@@ -3,6 +3,9 @@
 
 //! Background service (daemon), tray, notifications, and D-Bus server for Kestic.
 
+pub mod binary_watch;
+pub mod inhibit;
+
 /// Returns the daemon crate version via core.
 pub fn daemon_version() -> &'static str {
     kestic_core::version()
