@@ -12,6 +12,7 @@ publish = false
 
 [dependencies]
 kestic-core = { path = "../core" }
+notify-rust = { workspace = true }
 zbus = { workspace = true }
 
 [lints]

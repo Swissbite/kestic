@@ -15,6 +15,8 @@ pub mod ffi {
             engine: Pin<&mut QQmlApplicationEngine>,
             screenshot_path: &str,
             expected_list_count: i32,
+            layout_mode: &str,
+            trigger_shortcut: bool,
         );
     }
 }

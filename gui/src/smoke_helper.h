@@ -12,7 +12,9 @@ namespace kestic::smoke {
 void install_smoke_check(
     QQmlApplicationEngine& engine,
     rust::Str screenshot_path,
-    int32_t expected_list_count
+    int32_t expected_list_count,
+    rust::Str layout_mode,
+    bool trigger_shortcut
 );
 
 } // namespace kestic::smoke
