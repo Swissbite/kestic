@@ -10,6 +10,7 @@ default:
 verify:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo build --bin kestic
     cargo test --workspace
     cargo deny check
     reuse lint
@@ -18,4 +19,5 @@ fmt:
     cargo fmt --all
 
 test:
+    cargo build --bin kestic
     cargo test --workspace

@@ -22,7 +22,7 @@ Rust + CXX-Qt (`=0.10.0`) + Kirigami (QML). Workspace `core` (reines Rust) / `da
 
 ### CXX-Qt-Version (0.8.1 vs. 0.10.0, M0-S03)
 
-Gepinnt auf **`cxx-qt = "=0.10.0"`** (inkl. `cxx-qt-lib = "=0.10.0"`, `cxx-qt-build = "=0.10.0"`):
+Gepinnt auf **`cxx-qt = "=0.10.0"`** (inkl. `cxx-qt-lib = "=0.10.0"`, `cxx-qt-lib-extras = "=0.10.0"`, `cxx-qt-build = "=0.10.0"`):
 
 - `cxx-kde-frameworks` (`master` auf KDE Invent, benötigt u. a. für KI18n) setzt selbst bereits `cxx-qt = "0.10.0"` voraus; `0.8.1` ist damit nicht kompatibel.
 - Das Referenzsystem TUXEDO OS 24.04.5 verwendet Qt 6.10.2, das von `0.10.0` aktuell unterstützt wird.

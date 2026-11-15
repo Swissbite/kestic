@@ -6,3 +6,4 @@
 /skills/
 /.test-tmp/
 *.orig
+.qmlls.ini
