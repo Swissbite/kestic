@@ -5,6 +5,8 @@
 
 //! Core domain logic, restic integration, configuration, and scheduling for Kestic.
 
+pub mod snapshot;
+
 /// Returns the crate version string.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

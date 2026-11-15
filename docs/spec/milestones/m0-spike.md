@@ -109,5 +109,5 @@ Jeder Prüfpunkt: Ergebnis im Spike-Bericht; Abweichungen in [index.md](../ui/in
 | Erkennung ersetztes Binary nach Paket-Update (E11) | Spike |
 | SNI `Passive` zeigt den Eintrag im ausgeklappten Bereich (K1) | Spike |
 | GUI-Grundlagen (Kriterium 7) | Spike |
-| rest-server und rclone veröffentlichen PGP-Signaturen | Spike (M0-S02) |
+| rest-server und rclone veröffentlichen PGP-Signaturen | **geprüft (M0-S02):** `rest-server` v0.14.0 ist **signiert (PGP)** (`SHA256SUMS` + `SHA256SUMS.asc`, Key `CF8F 18F2 8445 7597 3F79 D4E1 91A6 868B D3F7 A907`, identisch mit restic); `rclone` v1.76.0 ist **signiert (PGP)** (clearsigned `SHA256SUMS`, Key `FBF7 37EC E9F8 AB18 604B D2AC 9393 5E02 FF3B 54FA`, Nick Craig-Wood). `scripts/bootstrap.sh` prüft beide per PGP-Fingerprint + SHA256 |
 | libsecret im Flatpak (Speicherort) | Phase 2 |
