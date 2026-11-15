@@ -5,6 +5,8 @@
 
 fn main() {
     let _ = kestic_daemon::daemon_version();
+    cxx_qt::init_crate!(cxx_qt);
+    let _ = cxx_qt_lib::QString::from("kestic");
 }
 
 #[cfg(test)]

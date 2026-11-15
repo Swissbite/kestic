@@ -18,7 +18,15 @@ Kestic ist eine native KDE-Plasma-App und wird agentisch umgesetzt. Kandidaten: 
 
 ## Entscheid
 
-Rust + CXX-Qt + Kirigami (QML). Workspace `core` (reines Rust) / `daemon` / `gui`. Im MVP ein Binary `kestic` mit Unterbefehlen, der Daemon lädt Qt; Trennung in `kestic-daemon` ohne Qt später (E17, FR-52, P3). Details: [architecture.md](../architecture.md), Abschnitt «Tech-Stack».
+Rust + CXX-Qt (`=0.10.0`) + Kirigami (QML). Workspace `core` (reines Rust) / `daemon` / `gui`. Im MVP ein Binary `kestic` mit Unterbefehlen, der Daemon lädt Qt; Trennung in `kestic-daemon` ohne Qt später (E17, FR-52, P3). Details: [architecture.md](../architecture.md), Abschnitt «Tech-Stack».
+
+### CXX-Qt-Version (0.8.1 vs. 0.10.0, M0-S03)
+
+Gepinnt auf **`cxx-qt = "=0.10.0"`** (inkl. `cxx-qt-lib = "=0.10.0"`, `cxx-qt-build = "=0.10.0"`):
+
+- `cxx-kde-frameworks` (`master` auf KDE Invent, benötigt u. a. für KI18n) setzt selbst bereits `cxx-qt = "0.10.0"` voraus; `0.8.1` ist damit nicht kompatibel.
+- Das Referenzsystem TUXEDO OS 24.04.5 verwendet Qt 6.10.2, das von `0.10.0` aktuell unterstützt wird.
+- Das ältere `0.8.1` aus dem KDE-Tutorial bringt keinen Vorteil gegenüber `0.10.0` und würde spätere KF6-Integration blockieren.
 
 ## Konsequenzen
 
