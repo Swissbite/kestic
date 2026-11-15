@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: CC0-1.0
+
+[Global]
+IconName=kestic
+Name=Kestic
+Comment=Kestic Backup Tool
+Comment[de]=Kestic-Datensicherung
+
+[Event/BackupFailed]
+Name=Backup failed
+Name[de]=Backup fehlgeschlagen
+Comment=A scheduled or manual backup failed
+Comment[de]=Ein geplantes oder manuelles Backup ist fehlgeschlagen
+Action=Popup
+Urgency=Normal
+
+[Event/BackupWarning]
+Name=Backup finished with warning
+Name[de]=Backup mit Warnung beendet
+Comment=A backup succeeded with unreadable files or open retention work
+Comment[de]=Ein Backup wurde mit nicht lesbaren Dateien oder offener Aufbewahrung beendet
+Action=Popup
+Urgency=Normal
+
+[Event/BackupOverdue]
+Name=Backup overdue
+Name[de]=Backup überfällig
+Comment=A backup missed scheduled runs
+Comment[de]=Ein Backup hat geplante Termine verpasst
+Action=Popup
+Urgency=Normal
+
+[Event/MaintenanceFailed]
+Name=Maintenance failed
+Name[de]=Wartung fehlgeschlagen
+Comment=Repository maintenance (prune or check) failed
+Comment[de]=Die Repository-Wartung (Aufräumen oder Prüfen) ist fehlgeschlagen
+Action=Popup
+Urgency=Normal
+
+[Event/ResticUpdateAvailable]
+Name=restic update available
+Name[de]=restic-Aktualisierung verfügbar
+Comment=A newer restic release is available
+Comment[de]=Eine neuere restic-Version ist verfügbar
+Action=Popup
+Urgency=Normal
+
+[Event/ManualRunBlocked]
+Name=Manual backup cannot start
+Name[de]=Manuelles Backup nicht startbar
+Comment=Source or destination became unavailable before starting
+Comment[de]=Quelle oder Ziel wurde vor dem Start nicht verfügbar
+Action=Popup
+Urgency=Normal
+
+[Event/RestoreFinished]
+Name=Restore finished
+Name[de]=Wiederherstellung abgeschlossen
+Comment=A restore operation finished while the window was in the background
+Comment[de]=Eine Wiederherstellung wurde abgeschlossen, während das Fenster im Hintergrund war
+Action=Popup
+Urgency=Normal

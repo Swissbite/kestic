@@ -9,7 +9,16 @@ mod smoke;
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, QUrl};
 use cxx_qt_lib_extras::QApplication;
 use std::env;
+use std::path::PathBuf;
 use std::process::ExitCode;
+
+fn has_kestic_config() -> bool {
+    let config_root = env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
+    config_root.is_some_and(|dir| dir.join("kestic").join("config.toml").is_file())
+}
 
 fn parse_smoke_args() -> Option<String> {
     let mut args = env::args().skip(1);
@@ -29,6 +38,14 @@ fn parse_smoke_args() -> Option<String> {
 
 fn main() -> ExitCode {
     let _ = kestic_daemon::daemon_version();
+    let raw_args: Vec<String> = env::args().skip(1).collect();
+    if raw_args.first().is_some_and(|a| a == "daemon") {
+        let autostart = raw_args.iter().any(|a| a == "--autostart");
+        if autostart && !has_kestic_config() {
+            return ExitCode::SUCCESS;
+        }
+    }
+
     cxx_qt::init_crate!(cxx_qt);
     cxx_qt::init_qml_module!("net.daester.kestic");
     let smoke_screenshot = parse_smoke_args();

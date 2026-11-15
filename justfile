@@ -11,6 +11,7 @@ verify:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo build --bin kestic
+    cargo deb -p kestic-gui --fast
     cargo test --workspace
     cargo deny check
     reuse lint
@@ -18,6 +19,10 @@ verify:
 fmt:
     cargo fmt --all
 
+deb:
+    cargo deb -p kestic-gui --fast
+
 test:
     cargo build --bin kestic
+    cargo deb -p kestic-gui --fast
     cargo test --workspace

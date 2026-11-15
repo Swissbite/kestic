@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: CC0-1.0
+
+[Desktop Entry]
+Type=Application
+Name=Kestic Background Service
+Name[de]=Kestic-Hintergrunddienst
+GenericName=Backup Monitor
+GenericName[de]=Sicherungs-Überwachung
+Exec=kestic daemon --autostart
+TryExec=/usr/bin/kestic
+Icon=kestic
+Terminal=false
+NoDisplay=true
+X-KDE-StartupNotify=false
+Categories=Qt;KDE;Utility;

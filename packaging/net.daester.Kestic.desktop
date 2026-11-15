@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: CC0-1.0
+
+[Desktop Entry]
+Type=Application
+Name=Kestic
+GenericName=Backup Tool
+GenericName[de]=Datensicherung
+Comment=Simple and powerful backups with restic
+Comment[de]=Einfache und mächtige Backups mit restic
+Exec=kestic
+Icon=kestic
+Terminal=false
+Categories=Qt;KDE;Utility;Archiving;
+StartupNotify=true
+SingleMainWindow=true
