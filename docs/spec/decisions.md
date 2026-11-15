@@ -1,0 +1,44 @@
+# Entscheide
+
+Index aller Entscheide (alle 2026-11-15), Details in der genannten Datei. Bestätigte Festlegungen stehen mit ID an ihrer fachlichen Stelle: E10–E17, F1–F20, Q1–Q9 (Rollen-Review), P1–P42 (Präzisierungen), K1–K3, U11, U15, U17, U18, U19 (GUI Design, [ui/index.md](ui/index.md)). **[verifiziert: Referenzsystem]** = auf TUXEDO OS geprüft.
+
+| Entscheid | Kernaussage | Details |
+| --- | --- | --- |
+| Zielgruppe | Endnutzer; die App vereinfacht restic-Backups (geführte Defaults), Expertenmodus für volle Syntax | [glossary.md](glossary.md), FR-02 |
+| Positionierung | «So einfach wie Déjà Dup, so mächtig wie restic.» Nativ für KDE; Hauptunterschied zu Déjà Dup: volle Ausschluss-Regeln | FR-02, Abschnitt «Positionierung und Marktumfeld» bzw. «Name und Lizenz» |
+| Make-or-Buy → Make | Backrest (lokales Web-UI) und resticprofile (CLI + Config-Dateien) sind nicht endnutzertauglich. Ziel ist eine Desktop-App aus dem Startmenü | Abschnitt «Positionierung und Marktumfeld» bzw. «Name und Lizenz» |
+| Name, Lizenz | Kestic; GPL nach KDE-Formel, REUSE-konform | Abschnitt «Positionierung und Marktumfeld» bzw. «Name und Lizenz», [ADR 0010](adr/0010-lizenz-und-reuse.md) |
+| Scope | läuft nur innerhalb einer Benutzer-Session; keine Root-/Systembackups, kein Betrieb ohne Login (kein Linger) | [architecture.md](architecture.md) |
+| GUI | für alle Funktionen notwendig (Konfiguration, Zeitsteuerung, Monitoring, Restore); kein CLI-only-Pfad für Endnutzer | FR-34, E16 |
+| Domänenmodell | Backups als Paare Quelle → Ziel; Ziel als eigene Einheit, von mehreren Backups genutzt | [domain-model.md](domain-model.md) |
+| Quellen | frei wählbar, auch ausserhalb `$HOME` (z. B. Mounts) | FR-28, FR-29 |
+| MVP-Kern | Restore + Snapshot-Browsing, Monitoring und Tray-Icon gehören ins MVP | [requirements.md](requirements.md) |
+| Backends, Secrets | alle restic-Backends wählbar; ein Secret-Speicher: Secret Service → KWallet auf Plasma. Bestehende Secrets werden in den Secret Service übernommen; andere Passwortmanager werden nicht angebunden | FR-01, [architecture.md](architecture.md), [ADR 0004](adr/0004-secret-service-als-einziger-speicher.md) |
+| Laufbedingungen | durch Benutzer definierbar, Default «nur am Strom + Netzwerk»; Zeitpläne pausierbar, Backups jederzeit manuell startbar | FR-13 |
+| Ausführung | Hintergrunddienst per XDG-Autostart führt alle Läufe selbst aus; keine systemd-Timer. Grund: keine für den Benutzer versteckten Hintergrund-Backups (NFR-11), gleicher Mechanismus nativ und im Flatpak | [architecture.md](architecture.md), [architecture.md](architecture.md), [ADR 0003](adr/0003-daemon-mit-xdg-autostart.md) |
+| Tray (K1 = B) | Tray-Eintrag immer registriert, solange der Daemon läuft («immer da, wenn die App läuft») | NFR-11, [architecture.md](architecture.md), [ADR 0009](adr/0009-tray-sichtbarkeit.md) |
+| Snapshot-Gruppierung | über den Backup-Tag; der Hostname ist für die Logik irrelevant | FR-28, [ADR 0006](adr/0006-snapshot-gruppierung-ueber-backup-tag.md) |
+| Wiederherstellungs-Kit | eigener restic-Key, unabhängig vom Alltags-Passwort, widerrufbar | FR-35, [ADR 0007](adr/0007-wiederherstellungs-kit-eigener-key.md) |
+| Packaging | nativ zuerst (`.deb`), Flatpak Phase 2 | [architecture.md](architecture.md), [ADR 0002](adr/0002-nativ-zuerst-flatpak-phase-2.md) |
+| Ziel-Distro | TUXEDO OS, danach Debian/Ubuntu-basierte Systeme mit gleicher oder neuerer KDE-/Qt-Basis | [architecture.md](architecture.md) |
+| restic | Mindestversion 0.18.0; System-restic bevorzugt, sonst lädt die App das offizielle Binary | FR-33, [ADR 0008](adr/0008-restic-mindestversion-und-bereitstellung.md) |
+| Tech-Stack | Rust + CXX-Qt + Kirigami (QML). Grund: Der Maintainer reviewt Rust eher als C++ | [architecture.md](architecture.md), [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md) |
+| Config | TOML, keine Secrets in der Datei | [domain-model.md](domain-model.md), [ADR 0005](adr/0005-config-toml.md) |
+| Config-Export | Shell-Script, Teil des MVP | FR-24 |
+| MVP-Schnitt | gemäss Prio-Spalte; Umsetzung in Meilensteinen M0–M6 (E15; Reihenfolge und Abhängigkeiten in [backlog.md](backlog.md)) | [requirements.md](requirements.md), [backlog.md](backlog.md) |
+| Qualität und Agenten-Betrieb | `cargo deny` in `just verify` (Q1); Integrationstests gegen restic 0.18.0 **und** aktuell (Q2); Offscreen-Screenshots pro Screen als Abnahme-Artefakt (Q3); Stop & Ask über `questions.md`, Story blockiert, nächste unabhängige Story (Q4); Spike-Kriterien mit akzeptiertem Datei-Backend-Fallback für Secrets und ohne «Nachholen nach Suspend» (Q5); Diagnose-Export P2 (Q6); SemVer und Changelog als späterer Meilenstein (Q7); manuelle Abnahme für Look & Feel, Deckel zu, PowerDevil, KWallet ohne PAM, Plasma-Autostart-Seite, Hotspot, echtes Netzwerk-Ziel (Q8); FRs nach Bereich gruppiert (Q9) | [test-strategy.md](test-strategy.md), [../../AGENTS.md](../../AGENTS.md), [manual-acceptance.md](manual-acceptance.md) |
+| GUI (K2, K3) | «Befehl anzeigen» für alle; Tab-Leiste mit 5 festen Bereichen; Fortschrittsanzeige in Plasma ist MVP; Kirigami Addons freigegeben | FR-34, [ui/index.md](ui/index.md), FR-53, [architecture.md](architecture.md) |
+| Qt im Daemon (E17) | MVP ein Binary mit Qt im Daemon, Trennung später | FR-52 |
+| Code-Repo | zuerst lokal, später GitHub; die Spec in `docs/spec/` ist die massgebliche Quelle (E14) | [test-strategy.md](test-strategy.md) |
+| restic-Fakten | [restic-integration.md](restic-integration.md) ist Besitzer aller restic-Fakten, die Kestic nutzt (E14) | [restic-integration.md](restic-integration.md) |
+| Agentische Umsetzung | werkzeugneutral: Spec funktioniert für Claude Code und Antigravity gleichermassen; Agenten setzen selbständig um und validieren selbst | [test-strategy.md](test-strategy.md) |
+
+## Positionierung und Marktumfeld
+
+**Déjà Dup** (GNOME/GTK, restic; einfach, aber keine erweiterten Ausschluss-Regeln) ist **UX-Referenz** für Onboarding und Restore; Kestic unterscheidet sich v. a. durch FR-02. Weitere restic-Frontends: Backrest (lokales Web-UI mit Zeitplänen), resticprofile (CLI mit Profil-Dateien, erzeugt systemd-/cron-Zeitpläne) – beide nicht endnutzertauglich als Desktop-App. Vorta und Pika Backup (borg-Frontends) sind Vorbilder für Flatpak + Zeitplanung.
+
+## Name und Lizenz
+
+**Name: Kestic.** KDE-Konvention: K-Präfix optional, K im Markennamen ok, zu generische Wörter meiden (HIG). `GenericName=` in der `.desktop`-Datei z. B. «Backup Tool» ([Desktop-Entry-Spezifikation](https://specifications.freedesktop.org/desktop-entry/latest/recognized-keys.html)). Namenskollisionen wurden am 2026-11-15 auf GitHub, crates.io, Flathub und apps.kde.org geprüft (keine Markenregister- oder Domainprüfung).
+
+**Lizenz:** KDE-Formel `GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL`, REUSE 3.0 mit `reuse lint` in `just verify`; Details pro Dateityp in [ADR 0010](adr/0010-lizenz-und-reuse.md).
