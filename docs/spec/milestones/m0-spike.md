@@ -102,7 +102,7 @@ Jeder Prüfpunkt: Ergebnis im Spike-Bericht; Abweichungen in [index.md](../ui/in
 | Punkt | Stand |
 | --- | --- |
 | Headless Keyring in `dbus-run-session` | erster Versuch (gnome-keyring + Python `secretstorage`) hing nach 30 s, vermutlich Entsperr-Dialog → im Spike lösen (z. B. Collection vorab anlegen, oder Trait mit Datei-Backend für Tests) |
-| QML-Offscreen-Smoke-Test (Qt-QML-Werkzeuge und Rust-Toolchain sind auf dem Referenzsystem vorab zu installieren), `cargo-deb` + CXX-Qt-Build | Spike |
+| QML-Offscreen-Smoke-Test (Qt-QML-Werkzeuge und Rust-Toolchain sind auf dem Referenzsystem vorab zu installieren), `cargo-deb` + CXX-Qt-Build | **geprüft (M0-S04–S06):** `cxx-qt =0.10.0` (inkl. `cxx-qt-lib-extras` für `QApplication` + `org.kde.desktop`) baut und linkt gegen Qt 6.10.2; `QT_QPA_PLATFORM=offscreen` + `QQuickWindow::grabWindow()` rendert Kirigami 6.24 + Rust-`QAbstractListModel` ohne QML-Warnungen als PNG-Artefakt in `just verify`; `cargo-deb 3.8.0` erzeugt `.deb` mit manuellen QML-`Depends`, `Recommends`, `kestic.notifyrc` und `/etc/xdg/autostart`-Conffile. Installation/`remove`/`purge` offen für manuelle Abnahme |
 | KWallet-Abfrage ohne PAM-Entsperrung | manuelle Abnahme |
 | PowerDevil respektiert das Portal-Inhibit bei Inaktivität (F9) | Spike / manuelle Abnahme |
 | Plasma-Autostart-Seite schaltet `/etc/xdg/autostart`-Eintrag per `Hidden=true` ab (E11) | manuelle Abnahme |
