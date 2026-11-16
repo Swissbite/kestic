@@ -26,6 +26,7 @@ APT_PACKAGES=(
     reuse
     cmake
     extra-cmake-modules
+    lld
     qt6-base-dev
     qt6-declarative-dev
     qt6-tools-dev
