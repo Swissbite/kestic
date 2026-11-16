@@ -6,20 +6,20 @@ Prüfungen, die ein Mensch auf dem Referenzsystem (TUXEDO OS mit Plasma) machen 
 
 Quelle: [milestones/m0-spike.md](milestones/m0-spike.md)
 
-- [ ] **AC-M0-02-1** – wenn `scripts/bootstrap.sh` läuft, dann sind vorhanden: Rust-Toolchain gemäss `rust-toolchain.toml`, restic 0.18.0 und aktuell, `rest-server`, `rclone` ≥ 1.65 (offizielles Release, nicht Ubuntu-Paket 1.60.1), `sshd`; jedes heruntergeladene Binary per SHA256 geprüft, restic zusätzlich per PGP, rest-server und rclone zusätzlich per PGP, sofern der Spike-Bericht eine veröffentlichte Signatur festhält
-- [ ] **AC-M0-02-6** – dann nennt der Spike-Bericht für rest-server und rclone je «signiert (PGP)» oder «nur SHA256», und `bootstrap.sh` prüft genau so
-- [ ] **AC-M0-03-1** – dann ist die CXX-Qt-Version in `Cargo.toml` exakt gepinnt und ADR-0001 begründet die Wahl zwischen 0.8.1 und 0.10.0
-- [ ] **AC-M0-05-1** – wenn es auf TUXEDO installiert wird, dann: `Depends` enthält `qml6-module-org-kde-kirigami (>= 6.24)`, `qml6-module-org-kde-kirigamiaddons-datetime (>= 1.11)`, `qml6-module-org-kde-kirigamiaddons-tableview (>= 1.11)`; `Recommends` `restic (>= 0.18.0)`; `kestic.notifyrc` liegt unter `/usr/share/knotifications6/`; die App startet aus dem Startmenü; `/etc/xdg/autostart/<app-id>.daemon.desktop` mit `Exec=kestic daemon --autostart` ist vorhanden
-- [ ] **AC-M0-05-2** – wenn `apt remove` läuft, dann ist `/etc/xdg/autostart/<app-id>.daemon.desktop` als Conffile noch da, enthält `TryExec=/usr/bin/kestic`, und beim nächsten Login startet kein Kestic-Prozess
-- [ ] **AC-M0-05-3** – wenn `apt purge` läuft, dann ist `/etc/xdg/autostart/<app-id>.daemon.desktop` weg; ein Benutzer-Override mit `Hidden=true` in `~/.config/autostart` darf bleiben (wirkungslos ohne Systemeintrag)
-- [ ] **AC-M0-08-1** – dann nennt ADR-0001 genau ein Secret-Backend für automatisierte Tests (headless Keyring in `dbus-run-session` oder Datei-Backend hinter dem Secret-Trait) mit Begründung
-- [ ] **AC-M0-10-1** – wenn die PowerDevil-Inaktivitätszeit abläuft, dann geht das Laptop nicht in den Ruhezustand; Ergebnis im Abschnitt «Spike-Kriterien und offene Prüfungen» unten
-- [ ] **AC-M0-11-2** – wenn er über `org.kde.JobViewServerV2.requestView` (zbus, aus Rust) eine Fortschrittsanzeige anmeldet und Fortschritt meldet, dann zeigt Plasma den Fortschritt mit «Abbrechen» im Benachrichtigungsbereich
-- [ ] **AC-M0-11-3** – wenn zwischen hellem und dunklem Farbschema gewechselt wird, dann passt sich die Icon-Farbe an
-- [ ] **AC-M0-11-4** – wenn der Benutzer in den Systemeinstellungen ein Ereignis abschaltet, dann kommt dafür kein Popup mehr; Ergebnis (wirkt / wirkt nicht) im Spike-Bericht
-- [ ] **AC-M0-11-5** – wenn er den SNI-Status von `Active` auf `Passive` und zurück setzt, dann wandert das Icon in den ausgeklappten Bereich und bei `Active` wieder sichtbar ins Panel
-- [ ] **AC-M0-11-6** – wenn ausgelöst, dann öffnet sich jeweils das richtige Modul der Systemeinstellungen; Modulnamen im Spike-Bericht
-- [ ] **AC-M0-11-8** – wenn Ctrl+Shift+B gedrückt wird, dann löst es «Jetzt sichern» aus; ein Konflikt mit einem globalen Plasma-Kürzel ist im Spike-Bericht festgehalten oder ausgeschlossen
+- [x] **AC-M0-02-1** – wenn `scripts/bootstrap.sh` läuft, dann sind vorhanden: Rust-Toolchain gemäss `rust-toolchain.toml`, restic 0.18.0 und aktuell, `rest-server`, `rclone` ≥ 1.65 (offizielles Release, nicht Ubuntu-Paket 1.60.1), `sshd`; jedes heruntergeladene Binary per SHA256 geprüft, restic zusätzlich per PGP, rest-server und rclone zusätzlich per PGP, sofern der Spike-Bericht eine veröffentlichte Signatur festhält
+- [x] **AC-M0-02-6** – dann nennt der Spike-Bericht für rest-server und rclone je «signiert (PGP)» oder «nur SHA256», und `bootstrap.sh` prüft genau so
+- [x] **AC-M0-03-1** – dann ist die CXX-Qt-Version in `Cargo.toml` exakt gepinnt und ADR-0001 begründet die Wahl zwischen 0.8.1 und 0.10.0
+- [x] **AC-M0-05-1** – wenn es auf TUXEDO installiert wird, dann: `Depends` enthält `qml6-module-org-kde-kirigami (>= 6.24)`, `qml6-module-org-kde-kirigamiaddons-datetime (>= 1.11)`, `qml6-module-org-kde-kirigamiaddons-tableview (>= 1.11)`; `Recommends` `restic (>= 0.18.0)`; `kestic.notifyrc` liegt unter `/usr/share/knotifications6/`; die App startet aus dem Startmenü; `/etc/xdg/autostart/<app-id>.daemon.desktop` mit `Exec=kestic daemon --autostart` ist vorhanden
+- [x] **AC-M0-05-2** – wenn `apt remove` läuft, dann ist `/etc/xdg/autostart/<app-id>.daemon.desktop` als Conffile noch da, enthält `TryExec=/usr/bin/kestic`, und beim nächsten Login startet kein Kestic-Prozess
+- [x] **AC-M0-05-3** – wenn `apt purge` läuft, dann ist `/etc/xdg/autostart/<app-id>.daemon.desktop` weg; ein Benutzer-Override mit `Hidden=true` in `~/.config/autostart` darf bleiben (wirkungslos ohne Systemeintrag)
+- [x] **AC-M0-08-1** – dann nennt ADR-0001 genau ein Secret-Backend für automatisierte Tests (headless Keyring in `dbus-run-session` oder Datei-Backend hinter dem Secret-Trait) mit Begründung
+- [x] **AC-M0-10-1** – wenn die PowerDevil-Inaktivitätszeit abläuft, dann geht das Laptop nicht in den Ruhezustand; Ergebnis im Abschnitt «Spike-Kriterien und offene Prüfungen» unten
+- [x] **AC-M0-11-2** – wenn er über `org.kde.JobViewServerV2.requestView` (zbus, aus Rust) eine Fortschrittsanzeige anmeldet und Fortschritt meldet, dann zeigt Plasma den Fortschritt mit «Abbrechen» im Benachrichtigungsbereich
+- [x] **AC-M0-11-3** – wenn zwischen hellem und dunklem Farbschema gewechselt wird, dann passt sich die Icon-Farbe an
+- [x] **AC-M0-11-4** – wenn der Benutzer in den Systemeinstellungen ein Ereignis abschaltet, dann kommt dafür kein Popup mehr; Ergebnis (wirkt / wirkt nicht) im Spike-Bericht
+- [x] **AC-M0-11-5** – wenn er den SNI-Status von `Active` auf `Passive` und zurück setzt, dann wandert das Icon in den ausgeklappten Bereich und bei `Active` wieder sichtbar ins Panel
+- [x] **AC-M0-11-6** – wenn ausgelöst, dann öffnet sich jeweils das richtige Modul der Systemeinstellungen; Modulnamen im Spike-Bericht
+- [x] **AC-M0-11-8** – wenn Ctrl+Shift+B gedrückt wird, dann löst es «Jetzt sichern» aus; ein Konflikt mit einem globalen Plasma-Kürzel ist im Spike-Bericht festgehalten oder ausgeschlossen
 
 ## M1 Walking Skeleton
 

@@ -142,20 +142,20 @@ Keine offenen Punkte.
 
 ## 15. Folgen für Spike und Meilensteine
 
-Prüfungen im Spike ([m0-spike.md](../milestones/m0-spike.md), Kriterium 7 «GUI-Grundlagen»; M0-S11):
+Prüfungen im Spike ([m0-spike.md](../milestones/m0-spike.md), Kriterium 7 «GUI-Grundlagen»; M0-S11) – **alle abgeschlossen**:
 
-| Prüfung | Abnahme |
+| Prüfung | Ergebnis (Spike, Referenzsystem Plasma 6.6.6 / Kirigami 6.24 / Qt 6.10.2) |
 | --- | --- |
-| `NavigationTabBar` + `pageStack`-Spalten + Breadcrumb in Kirigami 6.24 | Screenshot breit/schmal |
-| Tab-Bar bei Mindestbreite ohne abgeschnittene Labels («Wiederherstellen»), DE + EN | Offscreen-Screenshot bei 26 `gridUnit` |
-| SNI-Status `Passive` in Plasma 6.6: wird das Icon in den Überlauf geklappt, wechselt es bei `Active` sichtbar zurück | manuelle Abnahme |
-| Tray-Icon-Umfärbung per `IconThemePath` (hell/dunkel) | manuelle Abnahme |
-| `JobViewServerV2` aus Rust (zbus) | Prototyp zeigt Fortschritt + Abbrechen |
-| `notifyrc`-Ereignisse ohne KNotifications | Ereignis in Systemeinstellungen abschalten → keine Popup-Anzeige? |
-| Modulnamen Systemeinstellungen (Autostart, Benachrichtigungen) | Aufruf öffnet das richtige Modul |
-| Ctrl+Shift+B ohne Konflikt | Prüfung gegen globale Plasma-Kürzel |
+| `NavigationTabBar` + `pageStack`-Spalten + Breadcrumb in Kirigami 6.24 | **belegt (Offscreen breit/schmal):** lädt ohne QML-Warnungen. Finding für Qt 6.10: `Component`-Seiten beim `pageStack.push`/`replace` über `comp.createObject(pageStack, props)` instanziieren (sonst QML-Warnung `Created graphical object was not placed in the graphics scene`) |
+| Tab-Bar bei Mindestbreite ohne abgeschnittene Labels («Wiederherstellen»), DE + EN | **belegt (Offscreen bei 26 `gridUnit`):** kein Label abgeschnitten (`truncated == false`, alle 5 EN- und DE-Tabs lesbar). Finding: `Kirigami.NavigationTabBar` setzt `maximumContentWidth = gridUnit * 5 * count` (`~90 px`/Tab), sodass «Wiederherstellen» in zwei Zeilen umbricht (`Wiederherstel` / `len`); in M1-S13 im breiten Fenster `maximumContentWidth` pro Tab entsprechend erweitern |
+| SNI-Status `Passive` in Plasma 6.6: wird das Icon in den Überlauf geklappt, wechselt es bei `Active` sichtbar zurück | **belegt (manuelle Abnahme):** `Active` sichtbar im Panel, `Passive` wandert ins `^`-Überlauf-Menü, `NeedsAttention` mit Overlay + `Active` wieder sichtbar im Panel |
+| Tray-Icon-Umfärbung per `IconThemePath` (hell/dunkel) | **belegt (manuelle Abnahme):** SVG mit `.ColorScheme-Text` färbt sich beim Wechsel Breeze ↔ Breeze Dunkel automatisch um |
+| `JobViewServerV2` aus Rust (zbus) | **belegt (manuelle Abnahme + D-Bus):** zeigt Fortschrittsbalken, Text, Geschwindigkeit und «Abbrechen» (`cancelRequested` kommt an). Finding: `JobViewHandle` muss die `zbus::Connection` dauerhaft halten (sonst wertet `kuiserver` das Beenden der Verbindung sofort als Abbruch/Fehlschlag) |
+| `notifyrc`-Ereignisse ohne KNotifications | **belegt (manuelle Abnahme): wirkt nicht** – `kestic.notifyrc` erscheint in `kcm_notifications` separat unter *Systemdienste → Kestic*, `desktop-entry` unter *Anwendungen → Kestic*; Deaktivieren eines Ereignisses unterdrückt `notify-rust`-Popups nicht. Eigene F3-Schalter in Kestic (§9.6) sind erforderlich |
+| Modulnamen Systemeinstellungen (Autostart, Benachrichtigungen) | **belegt (manuelle Abnahme + `kcmshell6 --list`):** `kcm_autostart`, `kcm_notifications` |
+| Ctrl+Shift+B ohne Konflikt | **belegt (GUI-Smoke + manuelle Abnahme):** löst «Jetzt sichern» in Kestic aus; kein Konflikt mit globalen Plasma-Kürzeln |
 
-Weitere Folgen: M1-S13 nach §7 (Tab-Bar, Hamburger-Menü, Zustandsleiste, Placeholder); M2-S02/S06, M4-S03/S05, M6-S01 mit §7.3, §7.5, §7.6, §9.1 als Abnahmegrundlage; M6-S09-Checkliste = §12.3 + §13.
+Weitere Folgen: M1-S13 nach §7 (Tab-Bar, Hamburger-Menü, Zustandsleiste, Placeholder; `maximumContentWidth` im breiten Layout anpassen); M2-S02/S06, M4-S03/S05, M6-S01 mit §7.3, §7.5, §7.6, §9.1 als Abnahmegrundlage; M6-S09-Checkliste = §12.3 + §13.
 
 ## 16. Rückverfolgung FR → Screen
 
