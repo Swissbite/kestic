@@ -5,6 +5,7 @@
 
 //! Core domain logic, restic integration, configuration, and scheduling for Kestic.
 
+pub mod secrets;
 pub mod snapshot;
 
 /// Returns the crate version string.

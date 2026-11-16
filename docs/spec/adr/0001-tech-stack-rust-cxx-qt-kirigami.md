@@ -28,8 +28,13 @@ Gepinnt auf **`cxx-qt = "=0.10.0"`** (inkl. `cxx-qt-lib = "=0.10.0"`, `cxx-qt-li
 - Das Referenzsystem TUXEDO OS 24.04.5 verwendet Qt 6.10.2, das von `0.10.0` aktuell unterstützt wird.
 - Das ältere `0.8.1` aus dem KDE-Tutorial bringt keinen Vorteil gegenüber `0.10.0` und würde spätere KF6-Integration blockieren.
 
+### Secret Service und Test-Backend (M0-S08, AC-M0-08-1)
+
+- **Produktiv-Client:** Direkte Implementierung der `org.freedesktop.secrets`-Schnittstelle (`SecretServiceStore` in `daemon/src/secrets.rs` hinter `core::secrets::SecretStore`) über `zbus = "6.3.0"` (`plain`-Session). Grund: `secret-service` 5.2.0 aus der ursprünglichen Recherche existiert auf crates.io nicht (`5.1.0` bzw. `keyring 4.2.0` ziehen `zbus 5` mit den `unmaintained`-Advisories `RUSTSEC-2026-0370/0371/0372` nach), und `secret-service 6.0.0-rc.1` ist ein Pre-Release. Der direkte `zbus 6`-Client kommt ohne zusätzliche Crates aus und erkennt gesperrte Collections (`LockedOrPromptRequired`).
+- **Festgelegtes Test-Backend für automatisierte Integrationstests (AC-M0-08-1):** **Headless `gnome-keyring-daemon` in isolierter `dbus-run-session`** (`--foreground --unlock --components=secrets --control-directory <tempdir>` mit leerem Passwort auf `stdin` und bereinigten Host-Umgebungsvariablen). Begründung: Es prüft den echten D-Bus-Client `SecretServiceStore` inklusive `OpenSession`, `CreateItem`, `SearchItems`, `GetSecrets` und `Delete` Ende-zu-Ende in `just verify` (~0,12 s, ohne interaktiven Dialog und ohne Zugriff auf KWallet). Für reine Unit-Tests in `core` stehen daneben `InMemorySecretStore` und `FileSecretStore` hinter demselben `SecretStore`-Trait bereit.
+
 ## Konsequenzen
 
-- KF6-Bindings (`cxx-kde-frameworks`) sind jung; System-Integration über D-Bus-Crates (`notify-rust`, `ksni`, `secret-service`/`keyring`, `zbus`).
+- KF6-Bindings (`cxx-kde-frameworks`) sind jung; System-Integration über D-Bus-Crates (`notify-rust`, `ksni`, `zbus` inkl. direktem `org.freedesktop.secrets`-Client).
 - Risiko CXX-Qt → Spike zuerst ([milestones/m0-spike.md](../milestones/m0-spike.md)).
 - i18n über KI18n (E12, NFR-06).
