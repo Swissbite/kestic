@@ -14,6 +14,7 @@ pub const INHIBIT_IDLE_AND_SUSPEND: u32 = INHIBIT_SUSPEND | INHIBIT_IDLE;
 
 /// Active portal inhibit handle; automatically calls `Request.Close()` on drop if not released.
 pub struct PortalInhibitGuard {
+    conn: Connection,
     dest: String,
     handle_path: Option<OwnedObjectPath>,
 }
@@ -32,7 +33,7 @@ impl PortalInhibitGuard {
     pub fn acquire(dest: &str, reason: &str, flags: u32) -> zbus::Result<Self> {
         let dest_owned = dest.to_string();
         let reason_owned = reason.to_string();
-        let handle_path = block_on(async move {
+        let (conn, handle_path) = block_on(async move {
             let conn = Connection::session().await?;
             let proxy = Proxy::new(
                 &conn,
@@ -44,10 +45,11 @@ impl PortalInhibitGuard {
             let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
             options.insert("reason", Variant::from(reason_owned.as_str()));
             let handle: OwnedObjectPath = proxy.call("Inhibit", &("", flags, options)).await?;
-            Ok::<_, zbus::Error>(handle)
+            Ok::<_, zbus::Error>((conn, handle))
         })?;
 
         Ok(Self {
+            conn,
             dest: dest.to_string(),
             handle_path: Some(handle_path),
         })
@@ -70,9 +72,9 @@ impl PortalInhibitGuard {
         let Some(handle) = self.handle_path.take() else {
             return Ok(());
         };
+        let conn = self.conn.clone();
         let dest = self.dest.clone();
         block_on(async move {
-            let conn = Connection::session().await?;
             let proxy = Proxy::new(
                 &conn,
                 dest.as_str(),

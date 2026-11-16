@@ -85,6 +85,9 @@ struct JobViewRecorder {
     desktop_entry: Mutex<String>,
     capabilities: AtomicI32,
     immediate: AtomicBool,
+    request_sender: Mutex<String>,
+    update_sender: Mutex<String>,
+    terminate_sender: Mutex<String>,
     last_percent: AtomicU32,
     last_processed_bytes: Mutex<u64>,
     last_info_message: Mutex<String>,
@@ -102,10 +105,14 @@ impl FakeJobViewServerV2 {
     #[zbus(name = "requestView")]
     fn request_view(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         desktop_entry: &str,
         capabilities: i32,
         hints: HashMap<String, OwnedVariant>,
     ) -> OwnedObjectPath {
+        if let Some(sender) = hdr.sender() {
+            *self.recorder.request_sender.lock().expect("lock") = sender.to_string();
+        }
         *self.recorder.desktop_entry.lock().expect("lock") = desktop_entry.to_string();
         self.recorder
             .capabilities
@@ -124,7 +131,14 @@ struct FakeJobViewV3 {
 #[interface(name = "org.kde.JobViewV3")]
 impl FakeJobViewV3 {
     #[zbus(name = "update")]
-    fn update(&self, properties: HashMap<String, OwnedVariant>) {
+    fn update(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        properties: HashMap<String, OwnedVariant>,
+    ) {
+        if let Some(sender) = hdr.sender() {
+            *self.recorder.update_sender.lock().expect("lock") = sender.to_string();
+        }
         if let Some(pct) = properties
             .get("percent")
             .and_then(|v| u32::try_from(v).ok())
@@ -148,10 +162,14 @@ impl FakeJobViewV3 {
     #[zbus(name = "terminate")]
     fn terminate(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         error_code: u32,
         _error_message: &str,
         _hints: HashMap<String, OwnedVariant>,
     ) {
+        if let Some(sender) = hdr.sender() {
+            *self.recorder.terminate_sender.lock().expect("lock") = sender.to_string();
+        }
         self.recorder
             .terminate_code
             .store(error_code, Ordering::SeqCst);
@@ -253,6 +271,13 @@ fn ac_m0_11_2_job_view_server_v2_progress_and_cancel_in_isolated_dbus() {
         std::thread::sleep(Duration::from_millis(40));
         assert!(recorder.terminated.load(Ordering::SeqCst));
         assert_eq!(recorder.terminate_code.load(Ordering::SeqCst), 0);
+
+        let req_sender = recorder.request_sender.lock().expect("lock").clone();
+        let upd_sender = recorder.update_sender.lock().expect("lock").clone();
+        let term_sender = recorder.terminate_sender.lock().expect("lock").clone();
+        assert!(!req_sender.is_empty());
+        assert_eq!(req_sender, upd_sender);
+        assert_eq!(req_sender, term_sender);
         return;
     }
 

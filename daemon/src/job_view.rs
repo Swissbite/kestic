@@ -20,6 +20,7 @@ pub const JOB_VIEW_SERVER_PATH: &str = "/JobViewServer";
 
 /// Active handle to a registered Plasma job view (`org.kde.JobViewV3`).
 pub struct JobViewHandle {
+    conn: Connection,
     dest: String,
     view_path: OwnedObjectPath,
     terminated: bool,
@@ -58,7 +59,7 @@ impl JobViewHandle {
         let entry_owned = desktop_entry.to_string();
         let title_owned = title.to_string();
 
-        let view_path = block_on(async move {
+        let (conn, view_path) = block_on(async move {
             let conn = Connection::session().await?;
             let proxy = Proxy::new(
                 &conn,
@@ -75,10 +76,11 @@ impl JobViewHandle {
             let view_path: OwnedObjectPath = proxy
                 .call("requestView", &(entry_owned.as_str(), capabilities, hints))
                 .await?;
-            Ok::<_, zbus::Error>(view_path)
+            Ok::<_, zbus::Error>((conn, view_path))
         })?;
 
         Ok(Self {
+            conn,
             dest: dest.to_string(),
             view_path,
             terminated: false,
@@ -92,12 +94,12 @@ impl JobViewHandle {
 
     /// Pushes a progress update via `org.kde.JobViewV3.update`.
     pub fn update(&self, progress: &JobProgress) -> zbus::Result<()> {
+        let conn = self.conn.clone();
         let dest = self.dest.clone();
         let path = self.view_path.clone();
         let progress = progress.clone();
 
         block_on(async move {
-            let conn = Connection::session().await?;
             let proxy =
                 Proxy::new(&conn, dest.as_str(), path.as_str(), "org.kde.JobViewV3").await?;
 
@@ -116,11 +118,11 @@ impl JobViewHandle {
 
     /// Waits up to `timeout` for a `cancelRequested` signal from Plasma / the job view server.
     pub fn wait_cancel_requested(&self, timeout: Duration) -> zbus::Result<bool> {
+        let conn = self.conn.clone();
         let dest = self.dest.clone();
         let path = self.view_path.clone();
 
         block_on(async move {
-            let conn = Connection::session().await?;
             let proxy =
                 Proxy::new(&conn, dest.as_str(), path.as_str(), "org.kde.JobViewV3").await?;
             let mut stream = proxy.receive_signal("cancelRequested").await?;
@@ -143,12 +145,12 @@ impl JobViewHandle {
             return Ok(());
         }
         self.terminated = true;
+        let conn = self.conn.clone();
         let dest = self.dest.clone();
         let path = self.view_path.clone();
         let msg = error_message.to_string();
 
         block_on(async move {
-            let conn = Connection::session().await?;
             let proxy =
                 Proxy::new(&conn, dest.as_str(), path.as_str(), "org.kde.JobViewV3").await?;
             let hints: HashMap<&str, Variant<'_>> = HashMap::new();
