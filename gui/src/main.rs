@@ -6,7 +6,9 @@
 mod list_model;
 mod smoke;
 
-use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, QUrl};
+use cxx_kde_frameworks::ki18n::{self, KLocalizedString};
+use cxx_qt::casting::Upcast;
+use cxx_qt_lib::{QByteArray, QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, QUrl};
 use cxx_qt_lib_extras::QApplication;
 use std::env;
 use std::fs;
@@ -18,6 +20,7 @@ use std::time::{Duration, Instant};
 struct SmokeOptions {
     screenshot: String,
     layout: String,
+    lang: String,
     trigger_shortcut: bool,
 }
 
@@ -291,6 +294,7 @@ fn parse_smoke_args() -> Option<SmokeOptions> {
     let mut smoke = false;
     let mut screenshot = String::new();
     let mut layout = String::new();
+    let mut lang = String::from("en");
     let mut trigger_shortcut = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -301,6 +305,11 @@ fn parse_smoke_args() -> Option<SmokeOptions> {
             "--smoke-layout" => {
                 layout = args.next().unwrap_or_default();
             }
+            "--smoke-lang" => {
+                if let Some(val) = args.next() {
+                    lang = val;
+                }
+            }
             "--smoke-shortcut" => trigger_shortcut = true,
             _ => {}
         }
@@ -308,8 +317,33 @@ fn parse_smoke_args() -> Option<SmokeOptions> {
     smoke.then_some(SmokeOptions {
         screenshot,
         layout,
+        lang,
         trigger_shortcut,
     })
+}
+
+fn configure_dev_locale_search_path() {
+    let dev_locale_dir = PathBuf::from(env!("KESTIC_DEV_LOCALE_DIR"));
+    if !dev_locale_dir.is_dir() {
+        return;
+    }
+    let Some(data_root) = dev_locale_dir.parent() else {
+        return;
+    };
+    let current = env::var_os("XDG_DATA_DIRS")
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    if env::split_paths(&current).any(|p| p == data_root) {
+        return;
+    }
+    let mut paths: Vec<PathBuf> = env::split_paths(&current).collect();
+    paths.push(data_root.to_path_buf());
+    if let Ok(joined) = env::join_paths(paths) {
+        // SAFETY: Called in single-threaded `main` before constructing QApplication or spawning threads.
+        unsafe {
+            env::set_var("XDG_DATA_DIRS", joined);
+        }
+    }
 }
 
 fn run_daemon_subcommand(args: &[String]) -> ExitCode {
@@ -365,25 +399,28 @@ fn main() -> ExitCode {
     cxx_qt::init_crate!(cxx_qt);
     cxx_qt::init_qml_module!("net.daester.kestic");
     let smoke_opts = parse_smoke_args();
+    configure_dev_locale_search_path();
 
     let mut app = QApplication::new();
     QGuiApplication::set_desktop_file_name(&QString::from("net.daester.Kestic"));
+    KLocalizedString::set_application_domain(&QByteArray::from("kestic"));
     if env::var_os("QT_QUICK_CONTROLS_STYLE").is_none() {
         QQuickStyle::set_style(&QString::from("org.kde.desktop"));
     }
 
     let mut engine = QQmlApplicationEngine::new();
-    if let (Some(engine_pin), Some(opts)) = (engine.as_mut(), smoke_opts.as_ref()) {
-        smoke::ffi::install_smoke_check(
-            engine_pin,
-            &opts.screenshot,
-            3,
-            &opts.layout,
-            opts.trigger_shortcut,
-        );
-    }
-
-    if let Some(engine_pin) = engine.as_mut() {
+    if let Some(mut engine_pin) = engine.as_mut() {
+        ki18n::setup_localized_context(engine_pin.as_mut().upcast_pin());
+        if let Some(opts) = smoke_opts.as_ref() {
+            smoke::ffi::install_smoke_check(
+                engine_pin.as_mut(),
+                &opts.screenshot,
+                3,
+                &opts.layout,
+                &opts.lang,
+                opts.trigger_shortcut,
+            );
+        }
         engine_pin.load(&QUrl::from(
             "qrc:/qt/qml/net/daester/kestic/src/qml/Main.qml",
         ));

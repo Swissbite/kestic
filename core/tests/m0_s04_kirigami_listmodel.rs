@@ -78,7 +78,7 @@ fn ac_m0_04_1_kirigami_window_displays_three_rust_list_model_entries() {
     }
 
     let output = Command::new(&kestic_bin)
-        .args(["--smoke-test", "--screenshot"])
+        .args(["--smoke-test", "--smoke-lang", "en", "--screenshot"])
         .arg(&screenshot_path)
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &xdg_cfg)
@@ -86,6 +86,10 @@ fn ac_m0_04_1_kirigami_window_displays_three_rust_list_model_entries() {
         .env("XDG_CACHE_HOME", &xdg_cache)
         .env("XDG_STATE_HOME", &xdg_state)
         .env("XDG_RUNTIME_DIR", &xdg_run)
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .env("LANG", "C.UTF-8")
+        .env("LANGUAGE", "en")
         .env("QT_QPA_PLATFORM", "offscreen")
         .output()
         .expect("run kestic --smoke-test offscreen");

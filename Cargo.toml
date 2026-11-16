@@ -25,6 +25,7 @@ cxx-qt = "=0.10.0"
 cxx-qt-lib = { version = "=0.10.0", features = ["qt_full"] }
 cxx-qt-lib-extras = "=0.10.0"
 cxx-qt-build = "=0.10.0"
+cxx-kde-frameworks = { git = "https://invent.kde.org/libraries/cxx-kde-frameworks.git", rev = "5c51af42ad078feb89e4b7e590da9e3eab9e4d6d" }
 ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
 notify-rust = "4.19.0"
 zbus = "6.3.0"

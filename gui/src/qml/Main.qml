@@ -22,7 +22,7 @@ Kirigami.ApplicationWindow {
 
     function triggerBackupNow() {
         backupNowTriggerCount += 1;
-        showPassiveNotification("Back Up Now triggered (Ctrl+Shift+B)");
+        showPassiveNotification(i18n("Back Up Now triggered (Ctrl+Shift+B)"));
     }
 
     function pushFromComponent(comp, props) {
@@ -62,7 +62,7 @@ Kirigami.ApplicationWindow {
     property list<Kirigami.Action> navActions: [
         Kirigami.Action {
             icon.name: "dashboard-show"
-            text: "Overview"
+            text: i18n("Overview")
             checked: root.activeTab === 0
             onTriggered: {
                 root.activeTab = 0;
@@ -71,16 +71,16 @@ Kirigami.ApplicationWindow {
         },
         Kirigami.Action {
             icon.name: "document-revert"
-            text: "Restore"
+            text: i18n("Restore")
             checked: root.activeTab === 1
             onTriggered: {
                 root.activeTab = 1;
-                root.replaceFromComponent(placeholderTabPage, { pageTitle: "Restore" });
+                root.replaceFromComponent(placeholderTabPage, { pageTitle: i18n("Restore") });
             }
         },
         Kirigami.Action {
             icon.name: "folder-sync"
-            text: "Backups"
+            text: i18n("Backups")
             checked: root.activeTab === 2
             onTriggered: {
                 root.activeTab = 2;
@@ -92,20 +92,20 @@ Kirigami.ApplicationWindow {
         },
         Kirigami.Action {
             icon.name: "network-server"
-            text: "Destinations"
+            text: i18n("Destinations")
             checked: root.activeTab === 3
             onTriggered: {
                 root.activeTab = 3;
-                root.replaceFromComponent(placeholderTabPage, { pageTitle: "Destinations" });
+                root.replaceFromComponent(placeholderTabPage, { pageTitle: i18n("Destinations") });
             }
         },
         Kirigami.Action {
             icon.name: "view-history"
-            text: "History"
+            text: i18n("History")
             checked: root.activeTab === 4
             onTriggered: {
                 root.activeTab = 4;
-                root.replaceFromComponent(placeholderTabPage, { pageTitle: "History" });
+                root.replaceFromComponent(placeholderTabPage, { pageTitle: i18n("History") });
             }
         }
     ]
@@ -131,7 +131,7 @@ Kirigami.ApplicationWindow {
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.Breadcrumb
     pageStack.initialPage: Kirigami.ScrollablePage {
         id: backupsListPage
-        title: "Backups"
+        title: i18n("Backups")
 
         ListView {
             id: backupList
@@ -173,7 +173,7 @@ Kirigami.ApplicationWindow {
     Component {
         id: backupsListComponent
         Kirigami.ScrollablePage {
-            title: "Backups"
+            title: i18n("Backups")
 
             ListView {
                 objectName: "spikeBackupList"
@@ -206,39 +206,39 @@ Kirigami.ApplicationWindow {
     Component {
         id: backupDetailPage
         Kirigami.ScrollablePage {
-            title: "Personal folder"
+            title: i18n("Personal folder")
 
             actions: [
                 Kirigami.Action {
                     id: backupNowAction
                     objectName: "backupNowAction"
                     icon.name: "media-playback-start"
-                    text: "Back Up Now"
-                    tooltip: "Back Up Now (Ctrl+Shift+B)"
+                    text: i18n("Back Up Now")
+                    tooltip: i18n("Back Up Now (Ctrl+Shift+B)")
                     onTriggered: root.triggerBackupNow()
                 },
                 Kirigami.Action {
                     icon.name: "configure"
-                    text: "Retention…"
+                    text: i18n("Retention…")
                     onTriggered: root.pushFromComponent(retentionPage, {})
                 }
             ]
 
             Kirigami.FormLayout {
                 Controls.Label {
-                    Kirigami.FormData.label: "Destination:"
-                    text: "NAS (REST server)"
+                    Kirigami.FormData.label: i18n("Destination:")
+                    text: i18n("NAS (REST server)")
                 }
                 Controls.Label {
-                    Kirigami.FormData.label: "Schedule:"
-                    text: "Daily 12:00 · AC power and network"
+                    Kirigami.FormData.label: i18n("Schedule:")
+                    text: i18n("Daily 12:00 · AC power and network")
                 }
                 Controls.Label {
-                    Kirigami.FormData.label: "Last run:"
-                    text: "Today 12:00, ok, 312 MB new"
+                    Kirigami.FormData.label: i18n("Last run:")
+                    text: i18n("Today 12:00, ok, 312 MB new")
                 }
                 Controls.Button {
-                    text: "Configure Retention…"
+                    text: i18n("Configure Retention…")
                     onClicked: root.pushFromComponent(retentionPage, {})
                 }
             }
@@ -248,16 +248,16 @@ Kirigami.ApplicationWindow {
     Component {
         id: retentionPage
         Kirigami.ScrollablePage {
-            title: "Retention"
+            title: i18n("Retention")
 
             Kirigami.FormLayout {
                 Controls.Label {
-                    Kirigami.FormData.label: "Preset:"
-                    text: "Standard (7 daily, 4 weekly, 12 monthly)"
+                    Kirigami.FormData.label: i18n("Preset:")
+                    text: i18n("Standard (7 daily, 4 weekly, 12 monthly)")
                 }
                 Controls.Label {
-                    Kirigami.FormData.label: "Status:"
-                    text: "Triggered count: " + root.backupNowTriggerCount
+                    Kirigami.FormData.label: i18n("Status:")
+                    text: i18n("Triggered count: %1", root.backupNowTriggerCount)
                 }
             }
         }
@@ -266,12 +266,12 @@ Kirigami.ApplicationWindow {
     Component {
         id: overviewPage
         Kirigami.ScrollablePage {
-            title: "Overview"
+            title: i18n("Overview")
             Kirigami.PlaceholderMessage {
                 anchors.centerIn: parent
                 width: parent.width - Kirigami.Units.largeSpacing * 4
                 icon.name: "security-high"
-                text: "All data backed up"
+                text: i18n("All data backed up")
             }
         }
     }

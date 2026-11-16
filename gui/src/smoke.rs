@@ -16,6 +16,7 @@ pub mod ffi {
             screenshot_path: &str,
             expected_list_count: i32,
             layout_mode: &str,
+            expected_lang: &str,
             trigger_shortcut: bool,
         );
     }

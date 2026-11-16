@@ -35,10 +35,15 @@ void collect_visual_descendants(QQuickItem* root, QList<QQuickItem*>& out) {
     }
 }
 
-bool verify_tab_bar_labels(QQuickItem* nav_bar, int expected_tabs) {
+bool verify_tab_bar_labels(
+    QQuickItem* nav_bar,
+    int expected_tabs,
+    const QStringList& required_labels
+) {
     QList<QQuickItem*> items;
     collect_visual_descendants(nav_bar, items);
     int checked_labels = 0;
+    QStringList seen_labels;
     for (QQuickItem* item : items) {
         const QVariant truncated_var = item->property("truncated");
         const QVariant text_var = item->property("text");
@@ -50,6 +55,7 @@ bool verify_tab_bar_labels(QQuickItem* nav_bar, int expected_tabs) {
             continue;
         }
         checked_labels += 1;
+        seen_labels << text;
         if (truncated_var.toBool()) {
             std::fprintf(
                 stderr,
@@ -69,6 +75,17 @@ bool verify_tab_bar_labels(QQuickItem* nav_bar, int expected_tabs) {
         );
         return false;
     }
+    for (const QString& req : required_labels) {
+        if (!seen_labels.contains(req)) {
+            std::fprintf(
+                stderr,
+                "QML smoke failed: expected localized tab label '%s', saw [%s]\n",
+                qPrintable(req),
+                qPrintable(seen_labels.join(QStringLiteral(", ")))
+            );
+            return false;
+        }
+    }
     return true;
 }
 
@@ -79,10 +96,12 @@ void install_smoke_check(
     rust::Str screenshot_path,
     int32_t expected_list_count,
     rust::Str layout_mode,
+    rust::Str expected_lang,
     bool trigger_shortcut
 ) {
     const QString out_path = QString::fromUtf8(screenshot_path.data(), static_cast<qsizetype>(screenshot_path.size()));
     const QString mode = QString::fromUtf8(layout_mode.data(), static_cast<qsizetype>(layout_mode.size()));
+    const QString lang = QString::fromUtf8(expected_lang.data(), static_cast<qsizetype>(expected_lang.size()));
     auto warnings = std::make_shared<QStringList>();
 
     QObject::connect(
@@ -96,7 +115,7 @@ void install_smoke_check(
         }
     );
 
-    QTimer::singleShot(150, &engine, [&engine, warnings, out_path, expected_list_count, mode, trigger_shortcut]() {
+    QTimer::singleShot(150, &engine, [&engine, warnings, out_path, expected_list_count, mode, lang, trigger_shortcut]() {
         const auto roots = engine.rootObjects();
         if (roots.isEmpty()) {
             std::fprintf(stderr, "QML smoke failed: no root objects loaded\n");
@@ -128,7 +147,7 @@ void install_smoke_check(
             QCoreApplication::processEvents();
         }
 
-        QTimer::singleShot(250, &engine, [window, warnings, out_path, expected_list_count, mode, trigger_shortcut]() {
+        QTimer::singleShot(250, &engine, [window, warnings, out_path, expected_list_count, mode, lang, trigger_shortcut]() {
             if (!warnings->isEmpty()) {
                 for (const auto& w : *warnings) {
                     std::fprintf(stderr, "QML warning: %s\n", qPrintable(w));
@@ -182,15 +201,22 @@ void install_smoke_check(
                 for (int r = 0; r < item_model->rowCount(); ++r) {
                     titles << item_model->data(item_model->index(r, 0), title_role).toString();
                 }
-                const QStringList expected_titles = {
-                    QStringLiteral("Personal folder"),
-                    QStringLiteral("Photos"),
-                    QStringLiteral("Projects"),
-                };
+                const QStringList expected_titles = (lang == QLatin1String("de"))
+                    ? QStringList {
+                        QStringLiteral("Persönlicher Ordner"),
+                        QStringLiteral("Fotos"),
+                        QStringLiteral("Projekte"),
+                    }
+                    : QStringList {
+                        QStringLiteral("Personal folder"),
+                        QStringLiteral("Photos"),
+                        QStringLiteral("Projects"),
+                    };
                 if (titles != expected_titles) {
                     std::fprintf(
                         stderr,
-                        "QML smoke failed: unexpected titles: %s\n",
+                        "QML smoke failed (lang=%s): unexpected titles: %s\n",
+                        qPrintable(lang),
                         qPrintable(titles.join(QStringLiteral(", ")))
                     );
                     QCoreApplication::exit(9);
@@ -206,13 +232,28 @@ void install_smoke_check(
                     QCoreApplication::exit(11);
                     return;
                 }
+                const QStringList required_tabs = (lang == QLatin1String("de"))
+                    ? QStringList {
+                        QStringLiteral("Übersicht"),
+                        QStringLiteral("Wiederherstellen"),
+                        QStringLiteral("Backups"),
+                        QStringLiteral("Ziele"),
+                        QStringLiteral("Verlauf"),
+                    }
+                    : QStringList {
+                        QStringLiteral("Overview"),
+                        QStringLiteral("Restore"),
+                        QStringLiteral("Backups"),
+                        QStringLiteral("Destinations"),
+                        QStringLiteral("History"),
+                    };
                 if (mode == QLatin1String("wide")) {
                     if (!top_nav->isVisible() || bottom_nav->isVisible()) {
                         std::fprintf(stderr, "QML smoke failed: expected topNavBar visible in wide mode\n");
                         QCoreApplication::exit(12);
                         return;
                     }
-                    if (!verify_tab_bar_labels(top_nav, 5)) {
+                    if (!verify_tab_bar_labels(top_nav, 5, required_tabs)) {
                         QCoreApplication::exit(13);
                         return;
                     }
@@ -222,7 +263,7 @@ void install_smoke_check(
                         QCoreApplication::exit(14);
                         return;
                     }
-                    if (!verify_tab_bar_labels(bottom_nav, 5)) {
+                    if (!verify_tab_bar_labels(bottom_nav, 5, required_tabs)) {
                         QCoreApplication::exit(15);
                         return;
                     }

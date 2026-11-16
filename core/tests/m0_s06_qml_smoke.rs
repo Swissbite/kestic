@@ -64,7 +64,7 @@ fn ac_m0_06_1_offscreen_qml_smoke_and_screenshot_in_just_verify() {
 
     let screenshot = root.join("target/smoke-artifacts/m0-s06-main.png");
     let output = Command::new(kestic)
-        .args(["--smoke-test", "--screenshot"])
+        .args(["--smoke-test", "--smoke-lang", "en", "--screenshot"])
         .arg(&screenshot)
         .env("HOME", temp.join("home"))
         .env("XDG_CONFIG_HOME", temp.join("cfg"))
@@ -72,6 +72,10 @@ fn ac_m0_06_1_offscreen_qml_smoke_and_screenshot_in_just_verify() {
         .env("XDG_CACHE_HOME", temp.join("cache"))
         .env("XDG_STATE_HOME", temp.join("state"))
         .env("XDG_RUNTIME_DIR", temp.join("run"))
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .env("LANG", "C.UTF-8")
+        .env("LANGUAGE", "en")
         .env("QT_QPA_PLATFORM", "offscreen")
         .output()
         .expect("run kestic offscreen smoke test");

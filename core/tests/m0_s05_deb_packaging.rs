@@ -164,6 +164,7 @@ fn ac_m0_05_1_deb_contains_qml_depends_recommends_notifyrc_and_autostart() {
         "./usr/share/applications/net.daester.Kestic.desktop",
         "./etc/xdg/autostart/net.daester.Kestic.daemon.desktop",
         "./usr/share/icons/hicolor/scalable/status/kestic-symbolic.svg",
+        "./usr/share/locale/de/LC_MESSAGES/kestic.mo",
     ] {
         assert!(
             contents.contains(required_file),

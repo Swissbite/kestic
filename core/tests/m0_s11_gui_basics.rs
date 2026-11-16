@@ -30,10 +30,16 @@ fn find_kestic_binary(workspace_root: &Path) -> PathBuf {
     panic!("kestic binary not found under {}", target_dir.display());
 }
 
-fn run_isolated_smoke(root: &Path, tag: &str, args: &[&str], screenshot_rel: Option<&str>) {
+fn run_isolated_smoke(
+    root: &Path,
+    tag: &str,
+    lang: &str,
+    args: &[&str],
+    screenshot_rel: Option<&str>,
+) {
     let kestic = find_kestic_binary(root);
     let temp = root.join(format!(
-        "target/test-tmp-m0-s11-{tag}-{}",
+        "target/test-tmp-m0-s11-{tag}-{lang}-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&temp);
@@ -49,7 +55,9 @@ fn run_isolated_smoke(root: &Path, tag: &str, args: &[&str], screenshot_rel: Opt
     let _guard = TempDirGuard(temp.clone());
 
     let mut cmd = Command::new(kestic);
-    cmd.arg("--smoke-test").args(args);
+    cmd.arg("--smoke-test")
+        .args(["--smoke-lang", lang])
+        .args(args);
     let screenshot_path = screenshot_rel.map(|rel| root.join(rel));
     if let Some(ref p) = screenshot_path {
         if p.exists() {
@@ -66,20 +74,23 @@ fn run_isolated_smoke(root: &Path, tag: &str, args: &[&str], screenshot_rel: Opt
         .env("XDG_STATE_HOME", temp.join("state"))
         .env("XDG_RUNTIME_DIR", temp.join("run"))
         .env("QT_QPA_PLATFORM", "offscreen")
-        .env("LANGUAGE", "en")
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .env("LANG", "en_US.UTF-8")
+        .env("LANGUAGE", lang)
         .output()
         .expect("run kestic offscreen smoke check");
 
     assert!(
         output.status.success(),
-        "GUI smoke `{tag}` failed (status={:?}):\nstdout: {}\nstderr: {}",
+        "GUI smoke `{tag}` ({lang}) failed (status={:?}):\nstdout: {}\nstderr: {}",
         output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
         String::from_utf8_lossy(&output.stderr).trim().is_empty(),
-        "GUI smoke `{tag}` emitted QML/Qt warnings on stderr:\n{}",
+        "GUI smoke `{tag}` ({lang}) emitted QML/Qt warnings on stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -94,11 +105,12 @@ fn run_isolated_smoke(root: &Path, tag: &str, args: &[&str], screenshot_rel: Opt
     }
 }
 
-/// AC-M0-11-1 & AC-M0-11-7 (EN): Verifies `Kirigami.NavigationTabBar` (5 areas), `pageStack`
+/// AC-M0-11-1 & AC-M0-11-7 (EN + DE): Verifies `Kirigami.NavigationTabBar` (5 areas), `pageStack`
 /// columns, and `Breadcrumb` header load cleanly offscreen in wide (900x600) and minimum narrow
-/// (`26 * gridUnit` width) modes, with zero truncated English tab labels and PNG artifacts saved.
+/// (`26 * gridUnit` width) modes in both English and German (`Wiederherstellen`), with zero
+/// truncated tab labels and PNG artifacts saved.
 #[test]
-fn ac_m0_11_1_and_11_7_en_navigation_tab_bar_columns_breadcrumb_wide_and_narrow() {
+fn ac_m0_11_1_and_11_7_navigation_tab_bar_columns_breadcrumb_en_and_de() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("core crate has workspace root parent");
@@ -106,14 +118,23 @@ fn ac_m0_11_1_and_11_7_en_navigation_tab_bar_columns_breadcrumb_wide_and_narrow(
     run_isolated_smoke(
         root,
         "wide",
+        "en",
         &["--smoke-layout", "wide"],
         Some("target/smoke-artifacts/m0-s11-wide.png"),
     );
     run_isolated_smoke(
         root,
         "narrow",
+        "en",
         &["--smoke-layout", "narrow"],
-        Some("target/smoke-artifacts/m0-s11-narrow.png"),
+        Some("target/smoke-artifacts/m0-s11-narrow-en.png"),
+    );
+    run_isolated_smoke(
+        root,
+        "narrow",
+        "de",
+        &["--smoke-layout", "narrow"],
+        Some("target/smoke-artifacts/m0-s11-narrow-de.png"),
     );
 }
 
@@ -125,5 +146,5 @@ fn ac_m0_11_8_ctrl_shift_b_triggers_back_up_now() {
         .parent()
         .expect("core crate has workspace root parent");
 
-    run_isolated_smoke(root, "shortcut", &["--smoke-shortcut"], None);
+    run_isolated_smoke(root, "shortcut", "en", &["--smoke-shortcut"], None);
 }

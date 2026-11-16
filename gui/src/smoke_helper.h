@@ -14,6 +14,7 @@ void install_smoke_check(
     rust::Str screenshot_path,
     int32_t expected_list_count,
     rust::Str layout_mode,
+    rust::Str expected_lang,
     bool trigger_shortcut
 );
 

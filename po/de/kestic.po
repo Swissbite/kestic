@@ -1,0 +1,128 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+msgid ""
+msgstr ""
+"Project-Id-Version: kestic 0.1.0\n"
+"Report-Msgid-Bugs-To: david@daester.net\n"
+"POT-Creation-Date: 2026-11-16 08:25+0100\n"
+"PO-Revision-Date: 2026-11-16 08:25+0100\n"
+"Last-Translator: David Däster <david@daester.net>\n"
+"Language-Team: German\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: gui/src/list_model.rs
+msgid "Personal folder"
+msgstr "Persönlicher Ordner"
+
+#: gui/src/list_model.rs
+msgid "~ -> NAS · backed up 2 hours ago"
+msgstr "~ -> NAS · vor 2 Stunden gesichert"
+
+#: gui/src/list_model.rs
+msgid "Photos"
+msgstr "Fotos"
+
+#: gui/src/list_model.rs
+msgid "/media/photos -> USB-Disk · waiting"
+msgstr "/media/photos -> USB-Disk · wartet"
+
+#: gui/src/list_model.rs
+msgid "Projects"
+msgstr "Projekte"
+
+#: gui/src/list_model.rs
+msgid "~/Projects -> S3 · password rejected"
+msgstr "~/Projekte -> S3 · Passwort abgelehnt"
+
+#: gui/src/qml/Main.qml
+msgid "Overview"
+msgstr "Übersicht"
+
+#: gui/src/qml/Main.qml
+msgid "Restore"
+msgstr "Wiederherstellen"
+
+#: gui/src/qml/Main.qml
+msgid "Backups"
+msgstr "Backups"
+
+#: gui/src/qml/Main.qml
+msgid "Destinations"
+msgstr "Ziele"
+
+#: gui/src/qml/Main.qml
+msgid "History"
+msgstr "Verlauf"
+
+#: gui/src/qml/Main.qml
+msgid "Back Up Now"
+msgstr "Jetzt sichern"
+
+#: gui/src/qml/Main.qml
+msgid "Back Up Now (Ctrl+Shift+B)"
+msgstr "Jetzt sichern (Ctrl+Shift+B)"
+
+#: gui/src/qml/Main.qml
+msgid "Back Up Now triggered (Ctrl+Shift+B)"
+msgstr "Jetzt sichern ausgelöst (Ctrl+Shift+B)"
+
+#: gui/src/qml/Main.qml
+msgid "Retention…"
+msgstr "Aufbewahrung…"
+
+#: gui/src/qml/Main.qml
+msgid "Retention"
+msgstr "Aufbewahrung"
+
+#: gui/src/qml/Main.qml
+msgid "Configure Retention…"
+msgstr "Aufbewahrung einrichten…"
+
+#: gui/src/qml/Main.qml
+msgid "All data backed up"
+msgstr "Alle Daten gesichert"
+
+#: gui/src/qml/Main.qml
+msgid "Destination:"
+msgstr "Ziel:"
+
+#: gui/src/qml/Main.qml
+msgid "NAS (REST server)"
+msgstr "NAS (REST-Server)"
+
+#: gui/src/qml/Main.qml
+msgid "Schedule:"
+msgstr "Zeitplan:"
+
+#: gui/src/qml/Main.qml
+msgid "Daily 12:00 · AC power and network"
+msgstr "Täglich 12:00 · am Strom und mit Netzwerk"
+
+#: gui/src/qml/Main.qml
+msgid "Last run:"
+msgstr "Letzter Lauf:"
+
+#: gui/src/qml/Main.qml
+msgid "Today 12:00, ok, 312 MB new"
+msgstr "Heute 12:00, ok, 312 MB neu"
+
+#: gui/src/qml/Main.qml
+msgid "Preset:"
+msgstr "Vorlage:"
+
+#: gui/src/qml/Main.qml
+msgid "Standard (7 daily, 4 weekly, 12 monthly)"
+msgstr "Standard (7 tägliche, 4 wöchentliche, 12 monatliche)"
+
+#: gui/src/qml/Main.qml
+msgid "Status:"
+msgstr "Status:"
+
+#: gui/src/qml/Main.qml
+#, kde-format
+msgid "Triggered count: %1"
+msgstr "Auslösungen: %1"

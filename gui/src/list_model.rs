@@ -52,29 +52,21 @@ pub mod qobject {
     }
 }
 
-use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use cxx_kde_frameworks::ki18n::i18n;
+use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QVariant};
 
-/// Rust backing data for `SpikeListModel` with three entries (AC-M0-04-1).
+/// Rust backing data for `SpikeListModel` with three entries (AC-M0-04-1, AC-M0-09-1).
 pub struct SpikeListModelRust {
-    items: Vec<(String, String)>,
+    items: Vec<(&'static str, &'static str)>,
 }
 
 impl Default for SpikeListModelRust {
     fn default() -> Self {
         Self {
             items: vec![
-                (
-                    "Personal folder".to_string(),
-                    "~ -> NAS · backed up 2 hours ago".to_string(),
-                ),
-                (
-                    "Photos".to_string(),
-                    "/media/photos -> USB-Disk · waiting".to_string(),
-                ),
-                (
-                    "Projects".to_string(),
-                    "~/Projects -> S3 · password rejected".to_string(),
-                ),
+                ("Personal folder", "~ -> NAS · backed up 2 hours ago"),
+                ("Photos", "/media/photos -> USB-Disk · waiting"),
+                ("Projects", "~/Projects -> S3 · password rejected"),
             ],
         }
     }
@@ -90,9 +82,24 @@ impl qobject::SpikeListModel {
             return QVariant::default();
         };
 
+        // Call i18n directly in data() after KLocalizedString::set_application_domain("kestic")
+        // is initialized (AC-M0-09-1). Keep i18n literals extractable for xgettext below:
+        let localized_title = match *title {
+            "Personal folder" => i18n("Personal folder"),
+            "Photos" => i18n("Photos"),
+            "Projects" => i18n("Projects"),
+            other => i18n(other),
+        };
+        let localized_subtitle = match *subtitle {
+            "~ -> NAS · backed up 2 hours ago" => i18n("~ -> NAS · backed up 2 hours ago"),
+            "/media/photos -> USB-Disk · waiting" => i18n("/media/photos -> USB-Disk · waiting"),
+            "~/Projects -> S3 · password rejected" => i18n("~/Projects -> S3 · password rejected"),
+            other => i18n(other),
+        };
+
         match (qobject::Roles { repr: role }) {
-            qobject::Roles::Title => QVariant::from(&QString::from(title.as_str())),
-            qobject::Roles::Subtitle => QVariant::from(&QString::from(subtitle.as_str())),
+            qobject::Roles::Title => QVariant::from(&localized_title),
+            qobject::Roles::Subtitle => QVariant::from(&localized_subtitle),
             _ => QVariant::default(),
         }
     }

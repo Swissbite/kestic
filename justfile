@@ -37,8 +37,11 @@ smoke:
     XDG_CACHE_HOME="$tmpdir/cache" \
     XDG_STATE_HOME="$tmpdir/state" \
     XDG_RUNTIME_DIR="$tmpdir/run" \
+    LC_ALL= \
+    LANG=C.UTF-8 \
+    LANGUAGE=en \
     QT_QPA_PLATFORM=offscreen \
-    ./target/debug/kestic --smoke-test --screenshot target/smoke-artifacts/m0-s06-main.png
+    ./target/debug/kestic --smoke-test --smoke-lang en --screenshot target/smoke-artifacts/m0-s06-main.png
 
 test:
     cargo build --bin kestic
