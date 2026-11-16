@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+[package]
+name = "kestic-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+kestic-core = { path = "../core" }
+ksni = { workspace = true }
+notify-rust = { workspace = true }
+zbus = { workspace = true }
+
+[lints]
+workspace = true

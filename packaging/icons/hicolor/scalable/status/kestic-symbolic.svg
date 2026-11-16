@@ -1,0 +1,18 @@
+<!--
+SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <defs id="defs1">
+    <style type="text/css" id="current-color-scheme">
+      .ColorScheme-Text {
+        color:#232629;
+      }
+    </style>
+  </defs>
+  <path
+    class="ColorScheme-Text"
+    style="fill:currentColor;fill-opacity:1;stroke:none"
+    d="M 8 1 L 2 3 L 2 8 C 2 11.6 4.6 14.1 8 15 C 11.4 14.1 14 11.6 14 8 L 14 3 L 8 1 z M 8 2.08 L 13 3.74 L 13 8 C 13 11.02 10.82 13.18 8 13.96 C 5.18 13.18 3 11.02 3 8 L 3 3.74 L 8 2.08 z M 8 4 L 5 7 L 5.71 7.71 L 7.5 5.91 L 7.5 10 L 8.5 10 L 8.5 5.91 L 10.29 7.71 L 11 7 L 8 4 z M 5.5 10.5 L 5.5 11.5 L 10.5 11.5 L 10.5 10.5 L 5.5 10.5 z"
+  />
+</svg>

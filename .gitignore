@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: CC0-1.0
+
+/target/
+/.idea/
+/skills/
+/.test-tmp/
+*.orig
+.qmlls.ini

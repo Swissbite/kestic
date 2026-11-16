@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+    # Temporär für ksni 0.3.7 (zieht zbus 5.19.0 transitiv); siehe docs/spec/questions.md (M0-S07 Option A).
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+]
+
+[licenses]
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "GPL-2.0-only",
+    "GPL-3.0-only",
+    "ISC",
+    "LicenseRef-KDE-Accepted-GPL",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[[licenses.clarify]]
+name = "cxx-kde-frameworks"
+expression = "MPL-2.0"
+license-files = [
+    { path = "LICENSES/MPL-2.0.txt", hash = 0x00000000 },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://invent.kde.org/libraries/cxx-kde-frameworks.git"]
