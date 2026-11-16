@@ -182,6 +182,110 @@ fn run_spike_notify(args: &[String]) -> ExitCode {
     }
 }
 
+fn default_icon_theme_path() -> String {
+    let repo_icons = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../packaging/icons")
+        .canonicalize()
+        .ok();
+    if let Some(dir) = repo_icons
+        && dir
+            .join("hicolor/scalable/status/kestic-symbolic.svg")
+            .is_file()
+    {
+        return dir.to_string_lossy().into_owned();
+    }
+    let cwd_icons = PathBuf::from("packaging/icons").canonicalize().ok();
+    if let Some(dir) = cwd_icons
+        && dir
+            .join("hicolor/scalable/status/kestic-symbolic.svg")
+            .is_file()
+    {
+        return dir.to_string_lossy().into_owned();
+    }
+    String::new()
+}
+
+fn parse_tray_status(raw: &str) -> kestic_daemon::tray::TrayStatus {
+    match raw {
+        "passive" => kestic_daemon::tray::TrayStatus::Passive,
+        "needs-attention" => kestic_daemon::tray::TrayStatus::NeedsAttention,
+        _ => kestic_daemon::tray::TrayStatus::Active,
+    }
+}
+
+fn run_spike_tray(args: &[String]) -> ExitCode {
+    let seconds: u64 = flag_value(args, "--seconds")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    let cycle = args.iter().any(|a| a == "--cycle");
+    let assume_sni_available = !args.iter().any(|a| a == "--require-sni");
+    let icon_theme_path =
+        flag_value(args, "--icon-theme-path").unwrap_or_else(default_icon_theme_path);
+    let initial_status = flag_value(args, "--status")
+        .map(|s| parse_tray_status(&s))
+        .unwrap_or(kestic_daemon::tray::TrayStatus::Active);
+
+    let (quit_tx, quit_rx) = std::sync::mpsc::channel();
+    let state = kestic_daemon::tray::KesticTrayState {
+        status: initial_status,
+        icon_theme_path: icon_theme_path.clone(),
+        tooltip_description: format!("Spike tray ({initial_status:?})"),
+        ..Default::default()
+    };
+
+    let tray =
+        match kestic_daemon::tray::TrayHandle::spawn(state, assume_sni_available, Some(quit_tx)) {
+            Ok(t) => t,
+            Err(err) => {
+                eprintln!("tray spawn failed: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+    println!(
+        "Tray registered: icon=kestic-symbolic icon_theme_path={:?} status={initial_status:?}",
+        icon_theme_path
+    );
+
+    if cycle {
+        let steps = [
+            (
+                kestic_daemon::tray::TrayStatus::Active,
+                "",
+                "Active (visible in Plasma panel)",
+            ),
+            (
+                kestic_daemon::tray::TrayStatus::Passive,
+                "",
+                "Passive (hidden in Plasma expanded tray)",
+            ),
+            (
+                kestic_daemon::tray::TrayStatus::NeedsAttention,
+                "dialog-error",
+                "NeedsAttention (highlighted in Plasma panel)",
+            ),
+            (
+                kestic_daemon::tray::TrayStatus::Active,
+                "",
+                "Active again (returned to Plasma panel)",
+            ),
+        ];
+        let step_ms = ((seconds * 1000) / u64::try_from(steps.len()).unwrap_or(4)).max(500);
+        for (status, overlay, desc) in steps {
+            println!("SNI Status -> {status:?}: {desc}");
+            tray.update_state(status, overlay, desc);
+            if quit_rx.recv_timeout(Duration::from_millis(step_ms)).is_ok() {
+                break;
+            }
+        }
+    } else {
+        let _ = quit_rx.recv_timeout(Duration::from_secs(seconds));
+    }
+
+    tray.shutdown();
+    ExitCode::SUCCESS
+}
+
 fn parse_smoke_args() -> Option<SmokeOptions> {
     let mut args = env::args().skip(1);
     let mut smoke = false;
@@ -253,6 +357,7 @@ fn main() -> ExitCode {
             "spike-inhibit" => return run_spike_inhibit(&raw_args[1..]),
             "spike-jobview" => return run_spike_jobview(&raw_args[1..]),
             "spike-notify" => return run_spike_notify(&raw_args[1..]),
+            "spike-tray" => return run_spike_tray(&raw_args[1..]),
             _ => {}
         }
     }

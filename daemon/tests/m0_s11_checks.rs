@@ -3,10 +3,13 @@
 
 //! Isolated D-Bus integration tests for M0-S11:
 //! - AC-M0-11-2: `org.kde.JobViewServerV2` / `org.kde.JobViewV3` progress + Cancel
+//! - AC-M0-11-3: `kestic-symbolic` SVG `ColorScheme-Text` + custom `IconThemePath` on SNI
 //! - AC-M0-11-4: `notify-rust` `org.freedesktop.Notifications` with `desktop-entry` + event hint
+//! - AC-M0-11-5: `org.kde.StatusNotifierItem` `Status` transitions (`Passive` <-> `Active` <-> `NeedsAttention`)
 
 use kestic_daemon::job_view::{CAPABILITY_KILLABLE, JobProgress, JobViewHandle};
 use kestic_daemon::notifications::{KESTIC_DESKTOP_ENTRY, KesticEvent, send_event_notification};
+use kestic_daemon::tray::{KesticTrayState, TrayHandle, TrayStatus};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +18,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zbus::object_server::SignalEmitter;
 use zbus::{OwnedObjectPath, OwnedVariant, block_on, interface};
 
@@ -364,6 +367,166 @@ fn ac_m0_11_4_notify_rust_sends_desktop_entry_and_event_hint_in_isolated_dbus() 
 
     run_isolated_dbus_test(
         "ac_m0_11_4_notify_rust_sends_desktop_entry_and_event_hint_in_isolated_dbus",
+        INNER_ENV,
+    );
+}
+
+#[derive(Default)]
+struct FakeSniWatcher {
+    registered_items: Mutex<Vec<String>>,
+}
+
+#[interface(name = "org.kde.StatusNotifierWatcher")]
+impl FakeSniWatcher {
+    #[zbus(name = "RegisterStatusNotifierItem")]
+    fn register_status_notifier_item(&self, service: &str) {
+        self.registered_items
+            .lock()
+            .expect("lock")
+            .push(service.to_string());
+    }
+
+    #[zbus(name = "RegisterStatusNotifierHost")]
+    fn register_status_notifier_host(&self, _service: &str) {}
+
+    #[zbus(property, name = "RegisteredStatusNotifierItems")]
+    fn registered_status_notifier_items(&self) -> Vec<String> {
+        self.registered_items.lock().expect("lock").clone()
+    }
+
+    #[zbus(property, name = "IsStatusNotifierHostRegistered")]
+    fn is_status_notifier_host_registered(&self) -> bool {
+        true
+    }
+
+    #[zbus(property, name = "ProtocolVersion")]
+    fn protocol_version(&self) -> i32 {
+        0
+    }
+}
+
+fn read_sni_string_prop(conn: &zbus::Connection, dest: &str, prop: &str) -> String {
+    block_on(async {
+        let reply = conn
+            .call_method(
+                Some(dest),
+                "/StatusNotifierItem",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.kde.StatusNotifierItem", prop),
+            )
+            .await
+            .expect("call org.freedesktop.DBus.Properties.Get on StatusNotifierItem");
+        let val: OwnedVariant = reply.body().deserialize().expect("deserialize SNI variant");
+        <&str>::try_from(&val)
+            .expect("SNI property must be string")
+            .to_string()
+    })
+}
+
+/// AC-M0-11-3 & AC-M0-11-5 (K1): Verifies `kestic-symbolic.svg` uses Breeze `ColorScheme-Text`
+/// CSS recoloring classes, `IconThemePath` is exported over `org.kde.StatusNotifierItem`, and
+/// `Status` dynamically transitions `Passive` -> `Active` -> `NeedsAttention` -> `Passive`.
+#[test]
+fn ac_m0_11_3_and_11_5_sni_icon_theme_path_and_status_transitions() {
+    const INNER_ENV: &str = "KESTIC_M0_S11_SNI_STATUS_INNER";
+    if std::env::var_os(INNER_ENV).as_deref() == Some("1".as_ref()) {
+        let icons_dir = workspace_root().join("packaging/icons");
+        let svg_path = icons_dir.join("hicolor/scalable/status/kestic-symbolic.svg");
+        let svg = fs::read_to_string(&svg_path).expect("read kestic-symbolic.svg");
+        assert!(
+            svg.contains(".ColorScheme-Text") && svg.contains("currentColor"),
+            "kestic-symbolic.svg must use Breeze ColorScheme-Text + currentColor"
+        );
+
+        let watcher = FakeSniWatcher::default();
+        let watcher_conn = block_on(async {
+            zbus::connection::Builder::session()
+                .name("org.kde.StatusNotifierWatcher")
+                .serve_at("/StatusNotifierWatcher", watcher)
+                .build()
+                .await
+                .expect("build fake StatusNotifierWatcher")
+        });
+
+        let icons_str = icons_dir.to_string_lossy().into_owned();
+        let tray = TrayHandle::spawn(
+            KesticTrayState {
+                status: TrayStatus::Passive,
+                icon_theme_path: icons_str.clone(),
+                ..Default::default()
+            },
+            false,
+            None,
+        )
+        .expect("spawn ksni tray");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let sni_service = loop {
+            let items = block_on(async {
+                let iface = watcher_conn
+                    .object_server()
+                    .interface::<_, FakeSniWatcher>("/StatusNotifierWatcher")
+                    .await
+                    .expect("get FakeSniWatcher");
+                iface.get().await.registered_status_notifier_items()
+            });
+            if let Some(first) = items.into_iter().next() {
+                break first;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for ksni to register StatusNotifierItem"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+
+        let client_conn =
+            block_on(zbus::Connection::session()).expect("open session D-Bus connection");
+        assert_eq!(
+            read_sni_string_prop(&client_conn, &sni_service, "IconName"),
+            "kestic-symbolic"
+        );
+        assert_eq!(
+            read_sni_string_prop(&client_conn, &sni_service, "IconThemePath"),
+            icons_str
+        );
+        assert_eq!(
+            read_sni_string_prop(&client_conn, &sni_service, "Status"),
+            "Passive"
+        );
+
+        tray.update_state(TrayStatus::Active, "media-playback-start", "Backing up");
+        std::thread::sleep(Duration::from_millis(40));
+        assert_eq!(
+            read_sni_string_prop(&client_conn, &sni_service, "Status"),
+            "Active"
+        );
+        assert_eq!(
+            read_sni_string_prop(&client_conn, &sni_service, "OverlayIconName"),
+            "media-playback-start"
+        );
+
+        tray.update_state(TrayStatus::NeedsAttention, "dialog-error", "Backup failed");
+        std::thread::sleep(Duration::from_millis(40));
+        assert_eq!(
+            read_sni_string_prop(&client_conn, &sni_service, "Status"),
+            "NeedsAttention"
+        );
+
+        tray.update_state(TrayStatus::Passive, "", "Backups ready");
+        std::thread::sleep(Duration::from_millis(40));
+        assert_eq!(
+            read_sni_string_prop(&client_conn, &sni_service, "Status"),
+            "Passive"
+        );
+
+        tray.shutdown();
+        return;
+    }
+
+    run_isolated_dbus_test(
+        "ac_m0_11_3_and_11_5_sni_icon_theme_path_and_status_transitions",
         INNER_ENV,
     );
 }

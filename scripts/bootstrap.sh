@@ -35,6 +35,9 @@ APT_PACKAGES=(
     libkf6i18n-dev
     libkf6coreaddons-dev
     libkf6crash-dev
+    libkf6iconthemes-dev
+    libkf6configwidgets-dev
+    libkf6kcmutils-dev
     libssl-dev
     libdbus-1-dev
     openssh-server
