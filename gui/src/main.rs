@@ -381,12 +381,51 @@ fn run_daemon_subcommand(args: &[String]) -> ExitCode {
     }
 }
 
+fn run_secret_subcommand(args: &[String]) -> ExitCode {
+    use kestic_core::secrets::{FileSecretStore, SecretStore};
+    use std::io::Write;
+
+    let Some("get") = args.first().map(String::as_str) else {
+        return ExitCode::FAILURE;
+    };
+    let Some(dest_id) = args.get(1).map(String::as_str).filter(|s| !s.is_empty()) else {
+        return ExitCode::FAILURE;
+    };
+    let kind = args
+        .get(2)
+        .map(String::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("repo");
+
+    let secret_opt =
+        if let Some(file_path) = env::var_os("KESTIC_SECRET_FILE").filter(|v| !v.is_empty()) {
+            FileSecretStore::new(PathBuf::from(file_path)).get_secret(dest_id, kind)
+        } else {
+            kestic_daemon::secrets::SecretServiceStore::default().get_secret(dest_id, kind)
+        };
+
+    match secret_opt {
+        Ok(Some(secret)) => {
+            if let Ok(text) = secret.as_str()
+                && std::io::stdout().write_all(text.as_bytes()).is_ok()
+                && std::io::stdout().flush().is_ok()
+            {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Ok(None) | Err(_) => ExitCode::FAILURE,
+    }
+}
+
 fn main() -> ExitCode {
     let _ = kestic_daemon::daemon_version();
     let raw_args: Vec<String> = env::args().skip(1).collect();
     if let Some(subcmd) = raw_args.first().map(String::as_str) {
         match subcmd {
             "daemon" => return run_daemon_subcommand(&raw_args[1..]),
+            "secret" => return run_secret_subcommand(&raw_args[1..]),
             "spike-watch-exe" => return run_spike_watch_exe(&raw_args[1..]),
             "spike-inhibit" => return run_spike_inhibit(&raw_args[1..]),
             "spike-jobview" => return run_spike_jobview(&raw_args[1..]),
