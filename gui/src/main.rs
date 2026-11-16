@@ -208,17 +208,47 @@ fn parse_smoke_args() -> Option<SmokeOptions> {
     })
 }
 
+fn run_daemon_subcommand(args: &[String]) -> ExitCode {
+    let autostart = args.iter().any(|a| a == "--autostart");
+    if autostart && !has_kestic_config() {
+        return ExitCode::SUCCESS;
+    }
+
+    let duration = if args.iter().any(|a| a == "--once") {
+        Some(Duration::from_millis(50))
+    } else {
+        flag_value(args, "--duration-ms")
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_millis)
+    };
+
+    let config = kestic_daemon::service::DaemonRunConfig {
+        assume_sni_available: !args.iter().any(|a| a == "--require-sni"),
+        send_test_notification: args.iter().any(|a| a == "--notify-test"),
+        ready_file: flag_value(args, "--ready-file").map(PathBuf::from),
+        duration,
+        ..Default::default()
+    };
+
+    match kestic_daemon::service::run_daemon(config) {
+        Ok(kestic_daemon::service::DaemonOutcome::AlreadyRunning) => {
+            println!("Kestic daemon is already running; exiting.");
+            ExitCode::SUCCESS
+        }
+        Ok(kestic_daemon::service::DaemonOutcome::RanAndStopped) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("daemon error: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let _ = kestic_daemon::daemon_version();
     let raw_args: Vec<String> = env::args().skip(1).collect();
     if let Some(subcmd) = raw_args.first().map(String::as_str) {
         match subcmd {
-            "daemon" => {
-                let autostart = raw_args.iter().any(|a| a == "--autostart");
-                if autostart && !has_kestic_config() {
-                    return ExitCode::SUCCESS;
-                }
-            }
+            "daemon" => return run_daemon_subcommand(&raw_args[1..]),
             "spike-watch-exe" => return run_spike_watch_exe(&raw_args[1..]),
             "spike-inhibit" => return run_spike_inhibit(&raw_args[1..]),
             "spike-jobview" => return run_spike_jobview(&raw_args[1..]),

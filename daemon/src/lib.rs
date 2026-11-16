@@ -7,6 +7,9 @@ pub mod binary_watch;
 pub mod inhibit;
 pub mod job_view;
 pub mod notifications;
+pub mod service;
+pub mod single_instance;
+pub mod tray;
 
 /// Returns the daemon crate version via core.
 pub fn daemon_version() -> &'static str {

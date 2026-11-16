@@ -5,7 +5,12 @@
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    # Temporär für ksni 0.3.7 (zieht zbus 5.19.0 transitiv); siehe docs/spec/questions.md (M0-S07 Option A).
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+]
 
 [licenses]
 confidence-threshold = 0.8
@@ -20,6 +25,7 @@ allow = [
     "LicenseRef-KDE-Accepted-GPL",
     "MIT",
     "Unicode-3.0",
+    "Unlicense",
     "Zlib",
 ]
 

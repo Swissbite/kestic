@@ -25,5 +25,6 @@ cxx-qt = "=0.10.0"
 cxx-qt-lib = { version = "=0.10.0", features = ["qt_full"] }
 cxx-qt-lib-extras = "=0.10.0"
 cxx-qt-build = "=0.10.0"
+ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
 notify-rust = "4.19.0"
 zbus = "6.3.0"
