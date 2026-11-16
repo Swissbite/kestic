@@ -5,6 +5,11 @@
 
 //! Core domain logic, restic integration, configuration, and scheduling for Kestic.
 
+pub mod clock;
+pub mod config;
+pub mod model;
+pub mod provider;
+pub mod restic;
 pub mod secrets;
 pub mod snapshot;
 
