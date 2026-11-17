@@ -118,9 +118,9 @@ Gerüst; wächst je Meilenstein, vollständig in M6-S11. Unbekannte Exit-Codes g
 | Fall | Status | Text (DE) | Handlungsoption |
 | --- | --- | --- | --- |
 | Exit 0 | `ok` | – | – |
-| Exit 1 | `Fehler` | nach Meldung eingeteilt: Ziel nicht erreichbar / DNS / Auth / sonst (P32) | je Fall, in M1–M6 festzulegen |
+| Exit 1 | `Fehler` | nach Meldung eingeteilt: Ziel nicht erreichbar / DNS / Auth / sonst (P32, M1-S15) | je Fall (M1: Anzeige + Rohmeldung; Backoff/Retry folgt ab M3) |
 | Exit 3 | `Warnung` | Snapshot unvollständig: Liste der nicht gelesenen Dateien | «zu Ausschluss-Regeln hinzufügen» (F4) |
-| Exit 10 | `Fehler` | Repository fehlt | in M1-S15 festzulegen |
+| Exit 10 | `Fehler` | Repository fehlt | – (M1-S15: Fehler ohne direkte Recovery-Aktion; in «Verbindung bearbeiten» lässt sich bei fehlendem Repo neu initialisieren) |
 | Exit 11 | M1: `Fehler`; ab M3: vorübergehend → `ausstehend` + Backoff (`backup`) bzw. `Warnung` + «forget offen» (`forget`) (P2, F2) | Repository gesperrt | ggf. `unlock` bei veraltetem Lock (FR-19, P16) |
 | Exit 12 | `Fehler` (dauerhaft, sofort Alert, F2) | «Gespeichertes Passwort passt nicht» | «Gespeichertes Passwort aktualisieren…» ersetzt «Jetzt sichern»; «Trotzdem jetzt sichern» im ⋮-Menü |
 | unbekannter Code n | `Fehler` | «Unbekannter Fehler (Exit n)» + Rohmeldung (P6) | – |

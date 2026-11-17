@@ -2,7 +2,7 @@
 
 Native KDE-Plasma-App für Backups mit [restic](https://restic.net): so einfach wie ein Einsteiger-Backup-Tool, so mächtig wie restic selbst.
 
-**Status:** Spezifikation fertig, Umsetzung beginnt mit Meilenstein M0 (Spike). Noch kein Code.
+**Status:** Meilensteine M0 (Spike) und M1 (Walking Skeleton) abgeschlossen und auf TUXEDO OS manuell abgenommen; als Nächstes folgt M2 (Backup-Konfiguration).
 
 - Spezifikation: [docs/spec/](docs/spec/) – Einstieg über [backlog.md](docs/spec/backlog.md) und [requirements.md](docs/spec/requirements.md)
 - Für Agenten und Mitwirkende: [AGENTS.md](AGENTS.md)
