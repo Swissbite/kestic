@@ -1,0 +1,368 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import QtQuick
+import QtQuick.Controls as Controls
+import QtQuick.Layouts
+import org.kde.kirigami as Kirigami
+
+Kirigami.ScrollablePage {
+    id: page
+    objectName: "backupDetailPage"
+    title: currentData ? currentData.name : i18n("Backup")
+
+    required property var rootWindow
+    required property var appBackend
+    required property string backupId
+
+    property var currentData: null
+
+    function refreshFromModel() {
+        var found = rootWindow.findBackupData(backupId);
+        currentData = found;
+    }
+
+    Connections {
+        target: appBackend
+        function onModelsUpdated() {
+            page.refreshFromModel();
+        }
+    }
+
+    Component.onCompleted: refreshFromModel()
+
+    actions: [
+        Kirigami.Action {
+            id: detailBackupNowAction
+            objectName: "detailBackupNowAction"
+            icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
+            text: currentData && currentData.isRunning ? i18n("Cancel") : i18n("Back Up Now")
+            enabled: currentData !== null && (currentData.isRunning || (currentData.available && appBackend.blocking_kind === ""))
+            tooltip: currentData && !currentData.available
+                ? currentData.availabilityReason
+                : (appBackend.blocking_kind !== "" ? appBackend.blocking_message : i18n("Start backup now"))
+            onTriggered: {
+                if (!currentData) return;
+                if (currentData.isRunning) {
+                    appBackend.cancelRun(currentData.activeRunId);
+                } else {
+                    appBackend.startBackup(backupId);
+                }
+            }
+        },
+        Kirigami.Action {
+            objectName: "backupDetailRenameAction"
+            icon.name: "edit-rename"
+            text: i18n("Rename…")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: currentData !== null && appBackend.blocking_kind !== "daemon_unreachable"
+            onTriggered: if (currentData) rootWindow.openRenameBackupDialog(backupId, currentData.name)
+        },
+        Kirigami.Action {
+            objectName: "backupDetailShowCommandAction"
+            icon.name: "utilities-terminal"
+            text: i18n("Show Command")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: currentData !== null
+            onTriggered: if (currentData) rootWindow.openShowCommandDialog(
+                appBackend.getBackupTransparentCommand(backupId),
+                currentData.name
+            )
+        },
+        Kirigami.Action {
+            objectName: "backupDetailRemoveAction"
+            icon.name: "list-remove"
+            text: i18n("Remove from Kestic…")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: currentData !== null && appBackend.blocking_kind !== "daemon_unreachable"
+            onTriggered: if (currentData) rootWindow.openRemoveBackupDialog(backupId, currentData.name)
+        }
+    ]
+
+    ColumnLayout {
+        width: parent.width
+        spacing: Kirigami.Units.largeSpacing
+        visible: currentData !== null
+
+        Kirigami.InlineMessage {
+            id: errorBanner
+            objectName: "backupDetailErrorBanner"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Error
+            visible: currentData !== null && currentData.hasError
+            text: currentData ? currentData.errorSummary : ""
+            actions: [
+                Kirigami.Action {
+                    visible: currentData !== null && currentData.errorAction !== ""
+                    text: currentData ? appBackend.recoveryActionLabel(currentData.errorAction) : ""
+                    onTriggered: {
+                        if (!currentData) return;
+                        if (currentData.errorAction === "update_stored_password") {
+                            rootWindow.openUpdatePasswordDialog(currentData.destinationId, currentData.destinationName);
+                        } else if (currentData.errorAction === "add_to_excludes") {
+                            rootWindow.openBackupExcludesPage(backupId);
+                        } else if (currentData.errorAction === "check_restic_source") {
+                            rootWindow.openSettingsWindow();
+                        } else {
+                            appBackend.startBackup(backupId);
+                        }
+                    }
+                }
+            ]
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Kirigami.Icon {
+                    source: currentData ? currentData.statusIcon : "state-information"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+
+                Controls.Label {
+                    id: backupStatusLine
+                    objectName: "backupDetailStatusLine"
+                    text: currentData ? (currentData.statusText + (currentData.lastRunSummary !== "" ? " · " + currentData.lastRunSummary : "")) : ""
+                    color: Kirigami.Theme.textColor
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+
+            Controls.ProgressBar {
+                visible: currentData !== null && currentData.isRunning
+                from: 0
+                to: 100
+                value: currentData ? currentData.activePercent : 0
+                Layout.fillWidth: true
+            }
+
+            Controls.Button {
+                id: inlineBackUpNowButton
+                objectName: "backupDetailBackUpNowButton"
+                icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
+                text: currentData && currentData.isRunning ? i18n("Cancel") : i18n("Back Up Now")
+                enabled: currentData !== null && (currentData.isRunning || (currentData.available && appBackend.blocking_kind === ""))
+                Accessible.name: text
+                Controls.ToolTip.visible: hovered && !enabled
+                Controls.ToolTip.text: currentData && !currentData.available
+                    ? currentData.availabilityReason
+                    : appBackend.blocking_message
+                onClicked: {
+                    if (!currentData) return;
+                    if (currentData.isRunning) {
+                        appBackend.cancelRun(currentData.activeRunId);
+                    } else {
+                        appBackend.startBackup(backupId);
+                    }
+                }
+            }
+        }
+
+        Kirigami.Heading {
+            level: 3
+            text: i18n("Snapshots")
+        }
+
+        Controls.ItemDelegate {
+            id: showSnapshotsButton
+            objectName: "showSnapshotsButton"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("Show all snapshots")
+            onClicked: rootWindow.openBackupSnapshotsPage(backupId, currentData ? currentData.name : "")
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (showSnapshotsButton.activeFocus || showSnapshotsButton.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "view-list-details"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: i18n("Show all snapshots")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+
+        Kirigami.Heading {
+            level: 3
+            text: i18n("Settings")
+        }
+
+        Controls.ItemDelegate {
+            id: editSourceRow
+            objectName: "editSourceRow"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("Edit source folder")
+            onClicked: rootWindow.openBackupSourcePage(backupId)
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (editSourceRow.activeFocus || editSourceRow.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "folder"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: i18n("Source: %1", currentData ? currentData.sourcePath : "")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+
+        Controls.ItemDelegate {
+            id: editExcludesRow
+            objectName: "editExcludesRow"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("Edit exclude rules")
+            onClicked: rootWindow.openBackupExcludesPage(backupId)
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (editExcludesRow.activeFocus || editExcludesRow.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "filter-symbolic"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: i18n("Exclude rules")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+
+        Controls.ItemDelegate {
+            id: editDestinationRow
+            objectName: "editDestinationRow"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("Assign destination")
+            onClicked: rootWindow.openBackupReassignPage(backupId)
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (editDestinationRow.activeFocus || editDestinationRow.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "network-server"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: i18n("Destination: %1", currentData ? currentData.destinationName : "")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+
+        Controls.ItemDelegate {
+            id: viewFullConfigRow
+            objectName: "viewFullConfigRow"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("View full configuration")
+            onClicked: rootWindow.openBackupFullConfigPage(backupId)
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (viewFullConfigRow.activeFocus || viewFullConfigRow.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "document-properties"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: i18n("View full configuration")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+    }
+}

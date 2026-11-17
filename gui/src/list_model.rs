@@ -1,57 +1,9 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Spike QAbstractListModel exposed to QML via CXX-Qt (M0-S04).
 
-#[cxx_qt::bridge]
-pub mod qobject {
-    unsafe extern "C++Qt" {
-        include!(<QtCore/QAbstractListModel>);
-        #[qobject]
-        type QAbstractListModel;
-    }
-
-    unsafe extern "C++" {
-        include!("cxx-qt-lib/qhash.h");
-        type QHash_i32_QByteArray = cxx_qt_lib::QHash<cxx_qt_lib::QHashPair_i32_QByteArray>;
-
-        include!("cxx-qt-lib/qvariant.h");
-        type QVariant = cxx_qt_lib::QVariant;
-
-        include!("cxx-qt-lib/qmodelindex.h");
-        type QModelIndex = cxx_qt_lib::QModelIndex;
-    }
-
-    #[qenum(SpikeListModel)]
-    enum Roles {
-        Title,
-        Subtitle,
-    }
-
-    extern "RustQt" {
-        #[qobject]
-        #[base = QAbstractListModel]
-        #[qml_element]
-        type SpikeListModel = super::SpikeListModelRust;
-    }
-
-    extern "RustQt" {
-        #[qinvokable]
-        #[cxx_override]
-        fn data(self: &SpikeListModel, index: &QModelIndex, role: i32) -> QVariant;
-
-        #[qinvokable]
-        #[cxx_override]
-        #[cxx_name = "roleNames"]
-        fn role_names(self: &SpikeListModel) -> QHash_i32_QByteArray;
-
-        #[qinvokable]
-        #[cxx_override]
-        #[cxx_name = "rowCount"]
-        fn row_count(self: &SpikeListModel, _parent: &QModelIndex) -> i32;
-    }
-}
-
+use crate::models::qobject;
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QVariant};
 

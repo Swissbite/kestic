@@ -46,11 +46,38 @@ fn main() {
         dev_locale.display()
     );
 
-    CxxQtBuilder::new_qml_module(QmlModule::new("net.daester.kestic").qml_file("src/qml/Main.qml"))
-        .file("src/list_model.rs")
-        .file("src/smoke.rs")
-        .cpp_file("src/smoke_helper.cpp")
-        .qt_module("Widgets")
-        .qt_module("Quick")
-        .build();
+    let builder = CxxQtBuilder::new_qml_module(QmlModule::new("net.daester.kestic").qml_files([
+        "src/qml/Main.qml",
+        "src/qml/SpikeMain.qml",
+        "src/qml/OverviewPage.qml",
+        "src/qml/BackupsPage.qml",
+        "src/qml/BackupDetailPage.qml",
+        "src/qml/BackupSourceEditPage.qml",
+        "src/qml/BackupExcludesEditPage.qml",
+        "src/qml/BackupReassignPage.qml",
+        "src/qml/BackupSnapshotsPage.qml",
+        "src/qml/BackupFullConfigPage.qml",
+        "src/qml/DestinationsPage.qml",
+        "src/qml/DestinationDetailPage.qml",
+        "src/qml/DestinationEditPage.qml",
+        "src/qml/HistoryPage.qml",
+        "src/qml/RunDetailPage.qml",
+        "src/qml/AddDestinationWizard.qml",
+        "src/qml/NewBackupWizard.qml",
+        "src/qml/SettingsDialog.qml",
+    ]))
+    .file("src/backend.rs")
+    .file("src/models.rs")
+    .file("src/smoke.rs")
+    .cpp_file("src/smoke_helper.cpp")
+    .qt_module("Widgets")
+    .qt_module("Quick");
+
+    // SAFETY: Configures an additional C++ include path during build-script compilation.
+    let builder = unsafe {
+        builder.cc_builder(|cc| {
+            cc.flag("-isystem/usr/include/KF6/KI18n");
+        })
+    };
+    builder.build();
 }
