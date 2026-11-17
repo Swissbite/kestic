@@ -157,11 +157,45 @@ bool save_screenshot(QQuickWindow* window, const QString& out_path) {
     }
     const QFileInfo fi(out_path);
     QDir().mkpath(fi.absolutePath());
-    const QImage img = window->grabWindow();
-    if (img.isNull() || !img.save(out_path)) {
+    QImage img;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        if (window) {
+            window->requestUpdate();
+        }
+        wait_ms(40);
+        img = window ? window->grabWindow() : QImage();
+        if (!img.isNull() && img.width() > 0 && img.height() > 0) {
+            break;
+        }
+    }
+    const QString tmp_path = out_path + QStringLiteral(".tmp.%1").arg(QCoreApplication::applicationPid());
+    QFile::remove(tmp_path);
+    if (img.isNull() || !img.save(tmp_path, "PNG")) {
+        QFile::remove(tmp_path);
         std::fprintf(
             stderr,
             "QML smoke failed: could not save screenshot to %s\n",
+            qPrintable(out_path)
+        );
+        return false;
+    }
+    const QFileInfo tmp_fi(tmp_path);
+    if (!tmp_fi.exists() || tmp_fi.size() <= 2048) {
+        QFile::remove(tmp_path);
+        std::fprintf(
+            stderr,
+            "QML smoke failed: saved screenshot %s was empty or too small (%lld bytes)\n",
+            qPrintable(out_path),
+            static_cast<long long>(tmp_fi.size())
+        );
+        return false;
+    }
+    QFile::remove(out_path);
+    if (!QFile::rename(tmp_path, out_path)) {
+        QFile::remove(tmp_path);
+        std::fprintf(
+            stderr,
+            "QML smoke failed: could not rename screenshot %s\n",
             qPrintable(out_path)
         );
         return false;
@@ -793,6 +827,7 @@ void install_smoke_check(
                 return;
             }
 
+            wait_ms(60);
             QCoreApplication::exit(0);
         });
     });

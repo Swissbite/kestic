@@ -10,10 +10,9 @@ default:
 verify:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo build --bin kestic
     cargo deb -p kestic-gui --fast
     just smoke
-    cargo test --workspace
+    KESTIC_TEST_FAST_INIT=1 cargo nextest run --workspace
     cargo deny check
     reuse lint
 
@@ -46,4 +45,4 @@ smoke:
 test:
     cargo build --bin kestic
     cargo deb -p kestic-gui --fast
-    cargo test --workspace
+    KESTIC_TEST_FAST_INIT=1 cargo nextest run --workspace

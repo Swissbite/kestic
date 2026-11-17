@@ -16,6 +16,8 @@ REST_SERVER_VERSION="0.14.0"
 RCLONE_VERSION="1.76.0"
 CARGO_DENY_VERSION="0.20.2"
 CARGO_DEB_VERSION="3.8.0"
+CARGO_NEXTEST_VERSION="0.9.124"
+CARGO_NEXTEST_SHA256_X86_64="cf3694155011e6e19a7306448b7984e5d0d781417a31478996a9018b7ec78e25"
 
 # Official PGP key fingerprints (trust anchors)
 RESTIC_PGP_FPR="CF8F18F2844575973F79D4E191A6868BD3F7A907"
@@ -273,6 +275,27 @@ ensure_rust_toolchain() {
     else
         echo "[ok] cargo-deb $CARGO_DEB_VERSION already installed"
     fi
+
+    if ! "$CARGO_BIN_DIR/cargo-nextest" --version 2>/dev/null | grep -q "${CARGO_NEXTEST_VERSION}"; then
+        if [[ "$RUST_TARGET" == "x86_64-unknown-linux-gnu" && "${KESTIC_TEST_MOCK_URLS:-0}" != "1" ]]; then
+            echo "[cargo] Installing prebuilt cargo-nextest $CARGO_NEXTEST_VERSION"
+            local nextest_archive="cargo-nextest-${CARGO_NEXTEST_VERSION}-${RUST_TARGET}.tar.gz"
+            local nextest_url="https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${CARGO_NEXTEST_VERSION}/${nextest_archive}"
+            curl -fsSL "$nextest_url" -o "$TMP_DIR/$nextest_archive"
+            (
+                cd "$TMP_DIR"
+                printf '%s  %s\n' "$CARGO_NEXTEST_SHA256_X86_64" "$nextest_archive" | sha256sum -c -
+            )
+            mkdir -p "$CARGO_BIN_DIR"
+            tar -xzf "$TMP_DIR/$nextest_archive" -C "$CARGO_BIN_DIR" cargo-nextest
+            chmod 755 "$CARGO_BIN_DIR/cargo-nextest"
+        else
+            echo "[cargo] Installing cargo-nextest $CARGO_NEXTEST_VERSION"
+            cargo install --locked cargo-nextest --version "$CARGO_NEXTEST_VERSION"
+        fi
+    else
+        echo "[ok] cargo-nextest $CARGO_NEXTEST_VERSION already installed"
+    fi
 }
 
 install_restic_version() {
@@ -356,8 +379,14 @@ install_rest_server() {
 install_rclone() {
     local version="$RCLONE_VERSION"
     local dest="$TOOLS_DIR/rclone"
+    local marker="$TOOLS_DIR/.rclone.version"
 
-    if [[ -x "$dest" ]] && "$dest" version 2>/dev/null | head -n 1 | grep -q "v${version}$"; then
+    if [[ -x "$dest" && -f "$marker" ]] && [[ "$(cat "$marker")" == "$version" ]]; then
+        echo "[ok] rclone v${version} already installed at $dest"
+        return 0
+    fi
+    if [[ -x "$dest" ]] && "$dest" version 2>/dev/null | grep -q "v${version}$"; then
+        printf '%s\n' "$version" > "$marker"
         echo "[ok] rclone v${version} already installed at $dest"
         return 0
     fi
@@ -390,6 +419,7 @@ install_rclone() {
     chmod 755 "$extracted_bin"
     mkdir -p "$TOOLS_DIR"
     mv "$extracted_bin" "$dest"
+    printf '%s\n' "$version" > "$marker"
     echo "[ok] Installed $dest (v${version})"
 }
 

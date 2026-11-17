@@ -121,15 +121,29 @@ pub fn setup_destination(
 ) -> Result<ResticExecutionResult, DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
 
-    let res = run_with_temp_repo_password_file(
-        dest,
-        mode_subcommand(mode),
-        repo_password,
-        rest_password,
-        runtime.resolved,
-        runtime.kestic_binary,
-        runtime.clock,
-    )?;
+    let res = if matches!(mode, DestinationSetupMode::InitNew)
+        && let DestinationKind::Local { path } = &dest.kind
+        && std::env::var_os("KESTIC_TEST_FAST_INIT").as_deref() == Some("1".as_ref())
+    {
+        fast_init_local_from_cache(
+            dest,
+            path,
+            repo_password,
+            &runtime.resolved.binary,
+            runtime.kestic_binary,
+            runtime.clock,
+        )?
+    } else {
+        run_with_temp_repo_password_file(
+            dest,
+            mode_subcommand(mode),
+            repo_password,
+            rest_password,
+            runtime.resolved,
+            runtime.kestic_binary,
+            runtime.clock,
+        )?
+    };
 
     if res.exit_code != 0 {
         return Err(map_execution_failure(&res));
@@ -376,4 +390,128 @@ fn create_private_temp_dir() -> Result<std::path::PathBuf, DestinationError> {
     fs::create_dir_all(&dir)?;
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
     Ok(dir)
+}
+
+fn fast_init_local_from_cache(
+    dest: &Destination,
+    target_path: &Path,
+    repo_password: &SecretValue,
+    restic_binary: &Path,
+    kestic_binary: &Path,
+    clock: &dyn Clock,
+) -> Result<ResticExecutionResult, DestinationError> {
+    if target_path.join("config").exists() {
+        let spec = ResticCommandSpec::for_destination(
+            restic_binary,
+            kestic_binary,
+            dest,
+            vec!["init".to_string()],
+        );
+        let msg = "create key in repository failed: config file already exists".to_string();
+        let presentation = crate::restic::classify_exit(1, Some(&msg), Vec::new(), &msg);
+        return Ok(ResticExecutionResult {
+            exit_code: 1,
+            cancelled: false,
+            presentation,
+            stats: None,
+            command_record: crate::model::CommandRecord {
+                executable: restic_binary.to_string_lossy().into_owned(),
+                args: spec.restic_argv(),
+                env_keys: Vec::new(),
+                started_at: clock.now_utc(),
+                duration_ms: 1,
+                exit_code: 1,
+            },
+            log_lines: vec![msg],
+            errors: Vec::new(),
+        });
+    }
+
+    let pw_str = repo_password.as_str()?;
+    let canonical_bin = restic_binary
+        .canonicalize()
+        .unwrap_or_else(|_| restic_binary.to_path_buf());
+    let mut key_bytes = Vec::new();
+    key_bytes.extend_from_slice(canonical_bin.to_string_lossy().as_bytes());
+    key_bytes.push(0);
+    key_bytes.extend_from_slice(pw_str.as_bytes());
+    // FNV-1a 64-bit + length + reverse FNV-1a 64-bit for collision-free cache key
+    let mut h1: u64 = 0xcbf29ce484222325;
+    for &b in &key_bytes {
+        h1 ^= u64::from(b);
+        h1 = h1.wrapping_mul(0x100000001b3);
+    }
+    let mut h2: u64 = 0xcbf29ce484222325;
+    for &b in key_bytes.iter().rev() {
+        h2 ^= u64::from(b);
+        h2 = h2.wrapping_mul(0x100000001b3);
+    }
+    let cache_root = std::env::temp_dir().join("kestic-test-repo-cache-v1");
+    let _ = fs::create_dir_all(&cache_root);
+    let template_dir = cache_root.join(format!("{h1:016x}-{h2:016x}-{}", key_bytes.len()));
+
+    if !template_dir.join("config").is_file() {
+        let nonce =
+            crate::model::RunId::generate().map_err(|e| std::io::Error::other(e.to_string()))?;
+        let staging = cache_root.join(format!("staging-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&staging)?;
+        let out = Command::new(restic_binary)
+            .args(["-r", &staging.to_string_lossy(), "init", "--json"])
+            .env("RESTIC_PASSWORD", pw_str)
+            .env_remove("RESTIC_PASSWORD_COMMAND")
+            .env_remove("RESTIC_PASSWORD_FILE")
+            .output()?;
+        if !out.status.success() {
+            let _ = fs::remove_dir_all(&staging);
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            return Err(DestinationError::CommandFailed {
+                exit_code: out.status.code().unwrap_or(1),
+                message: stderr,
+            });
+        }
+        if fs::rename(&staging, &template_dir).is_err() {
+            let _ = fs::remove_dir_all(&staging);
+        }
+    }
+
+    copy_dir_recursive(&template_dir, target_path)?;
+
+    let spec = ResticCommandSpec::for_destination(
+        restic_binary,
+        kestic_binary,
+        dest,
+        vec!["init".to_string()],
+    );
+    let presentation = crate::restic::classify_exit(0, None, Vec::new(), "");
+    Ok(ResticExecutionResult {
+        exit_code: 0,
+        cancelled: false,
+        presentation,
+        stats: None,
+        command_record: crate::model::CommandRecord {
+            executable: restic_binary.to_string_lossy().into_owned(),
+            args: spec.restic_argv(),
+            env_keys: Vec::new(),
+            started_at: clock.now_utc(),
+            duration_ms: 1,
+            exit_code: 0,
+        },
+        log_lines: Vec::new(),
+        errors: Vec::new(),
+    })
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &dst_path)?;
+        } else {
+            fs::copy(entry.path(), &dst_path)?;
+        }
+    }
+    Ok(())
 }
