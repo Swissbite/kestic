@@ -25,14 +25,14 @@ Quelle: [milestones/m0-spike.md](milestones/m0-spike.md)
 
 Quelle: [milestones/m1-walking-skeleton.md](milestones/m1-walking-skeleton.md)
 
-- [ ] **AC-M1-09-5** – dann beschreibt `docs/spec/dbus-api.md` alle Methoden und Signale von v1, darunter `ManualRunBlocked`
-- [ ] **AC-M1-11-3** – wenn «Kestic beenden…», dann zuerst Warnung «Geplante Backups laufen erst wieder, wenn Kestic gestartet ist», Daemon endet erst nach Bestätigung
-- [ ] **AC-M1-11-5** – wenn der Tray abgefragt wird, dann Status `läuft` mit Fortschritt
-- [ ] **AC-M1-13-3** – wenn nur mit Tastatur bedient (Tab, Enter, Esc), dann sind alle Felder und Knöpfe erreichbar und auslösbar
-- [ ] **AC-M1-17-3** – wenn `.deb` installiert, Session neu gestartet und je ein Backup Lokal und REST manuell ausgeführt wird, dann laufen beide durch, auch bei geschlossenem Hauptfenster
-- [ ] **AC-M1-17-4** – wenn `apt remove` und Session-Neustart, dann ist `/etc/xdg/autostart/<app-id>.daemon.desktop` noch da mit `TryExec=/usr/bin/kestic`, und kein Kestic-Prozess startet
-- [ ] **AC-M1-17-5** – wenn `apt purge`, dann ist der Autostart-Eintrag unter `/etc/xdg/autostart` weg
-- [ ] **Exit-Kriterium** – Manuelle Abnahme: Tray, Notification, Look & Feel des Hauptfensters (Tab-Leiste, Zustandsleiste, Listen, Formulare).
+- [x] **AC-M1-09-5** – dann beschreibt `docs/spec/dbus-api.md` alle Methoden und Signale von v1, darunter `ManualRunBlocked`
+- [x] **AC-M1-11-3** – wenn «Kestic beenden…», dann zuerst Warnung «Geplante Backups laufen erst wieder, wenn Kestic gestartet ist», Daemon endet erst nach Bestätigung
+- [x] **AC-M1-11-5** – wenn der Tray abgefragt wird, dann Status `läuft` mit Fortschritt
+- [x] **AC-M1-13-3** – wenn nur mit Tastatur bedient (Tab, Enter, Esc), dann sind alle Felder und Knöpfe erreichbar und auslösbar
+- [x] **AC-M1-17-3** – wenn `.deb` installiert, Session neu gestartet und je ein Backup Lokal und REST manuell ausgeführt wird, dann laufen beide durch, auch bei geschlossenem Hauptfenster
+- [x] **AC-M1-17-4** – wenn `apt remove` und Session-Neustart, dann ist `/etc/xdg/autostart/<app-id>.daemon.desktop` noch da mit `TryExec=/usr/bin/kestic`, und kein Kestic-Prozess startet
+- [x] **AC-M1-17-5** – wenn `apt purge`, dann ist der Autostart-Eintrag unter `/etc/xdg/autostart` weg
+- [x] **Exit-Kriterium** – Manuelle Abnahme: Tray, Notification, Look & Feel des Hauptfensters (Tab-Leiste, Zustandsleiste, Listen, Formulare).
 
 ## M2 Backup-Konfiguration
 
