@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
-//! StatusNotifierItem tray integration via `ksni 0.3.7` (K1, AC-M0-07-2, AC-M0-11-3, AC-M0-11-5).
+//! StatusNotifierItem tray integration via `ksni 0.3.7`
+//! (`K1`, `NFR-11`, `M1-S11`, `AC-M1-11-1..5`, `AC-M1-23-4`, `tray-und-benachrichtigungen.md` §10.1).
 
+use crate::dbus_api::{ActiveRunProgressDto, OverallStatusKind};
+use crate::i18n::i18n;
 use ksni::blocking::TrayMethods;
-use ksni::menu::{MenuItem, StandardItem};
-use std::sync::mpsc;
+use ksni::menu::{MenuItem, StandardItem, SubMenu};
+use std::sync::{Arc, mpsc};
 
 /// Mapped StatusNotifierItem visibility state per `tray-und-benachrichtigungen.md` §10.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +16,16 @@ pub enum TrayStatus {
     Passive,
     Active,
     NeedsAttention,
+}
+
+impl TrayStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Passive => "Passive",
+            Self::Active => "Active",
+            Self::NeedsAttention => "NeedsAttention",
+        }
+    }
 }
 
 impl From<TrayStatus> for ksni::Status {
@@ -25,7 +38,63 @@ impl From<TrayStatus> for ksni::Status {
     }
 }
 
-/// Snapshot of tray metadata presented via `org.kde.StatusNotifierItem`.
+/// Action triggered by clicking the tray icon or a tray menu item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrayAction {
+    StartBackup(String),
+    StartAllBackups,
+    CancelRun(String),
+    OpenWindow,
+    RequestQuit,
+}
+
+/// Per-backup menu entry rendered inside `"Back Up Now"`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayBackupItem {
+    pub backup_id: String,
+    pub label: String,
+    pub enabled: bool,
+}
+
+/// Computes `(TrayStatus, overlay_icon_name)` strictly following `tray-und-benachrichtigungen.md` §10.1:
+/// - Blocking state or Error -> `NeedsAttention` + `"state-error"`
+/// - Overdue -> `NeedsAttention` + `"alarm-symbolic"`
+/// - Warning -> `Active` + `"state-warning"`
+/// - Running (Backup/Restore/Maintenance) -> `Active` + `"state-sync"`
+/// - Paused -> `Active` + `"state-pause"`
+/// - Waiting / Interrupted / Cancelled / NeverRun / ManualOnly / Ok -> `Passive` + `""`
+///   unless `running` or `paused` forces at least `Active`.
+pub fn compute_tray_presentation(
+    worst_kind: OverallStatusKind,
+    has_running_run: bool,
+    is_paused: bool,
+) -> (TrayStatus, &'static str) {
+    match worst_kind {
+        OverallStatusKind::Blocked | OverallStatusKind::Error => {
+            (TrayStatus::NeedsAttention, "state-error")
+        }
+        OverallStatusKind::Overdue => (TrayStatus::NeedsAttention, "alarm-symbolic"),
+        OverallStatusKind::Warning => (TrayStatus::Active, "state-warning"),
+        OverallStatusKind::Running => (TrayStatus::Active, "state-sync"),
+        OverallStatusKind::Paused => (TrayStatus::Active, "state-pause"),
+        OverallStatusKind::Pending
+        | OverallStatusKind::Interrupted
+        | OverallStatusKind::Cancelled
+        | OverallStatusKind::NeverRun
+        | OverallStatusKind::ManualOnly
+        | OverallStatusKind::Ok => {
+            if has_running_run {
+                (TrayStatus::Active, "state-sync")
+            } else if is_paused {
+                (TrayStatus::Active, "state-pause")
+            } else {
+                (TrayStatus::Passive, "")
+            }
+        }
+    }
+}
+
+/// Snapshot of tray metadata and M1 menu state presented via `org.kde.StatusNotifierItem`.
 #[derive(Debug, Clone)]
 pub struct KesticTrayState {
     pub status: TrayStatus,
@@ -34,6 +103,10 @@ pub struct KesticTrayState {
     pub overlay_icon_name: String,
     pub tooltip_title: String,
     pub tooltip_description: String,
+    pub status_line: String,
+    pub running_run: Option<ActiveRunProgressDto>,
+    pub backups: Vec<TrayBackupItem>,
+    pub blocking_active: bool,
 }
 
 impl Default for KesticTrayState {
@@ -44,14 +117,36 @@ impl Default for KesticTrayState {
             icon_theme_path: String::new(),
             overlay_icon_name: String::new(),
             tooltip_title: "Kestic".to_string(),
-            tooltip_description: "Backups ready".to_string(),
+            tooltip_description: i18n("Backups ready").into(),
+            status_line: i18n("All data backed up").into(),
+            running_run: None,
+            backups: Vec::new(),
+            blocking_active: false,
         }
     }
 }
 
+type AboutToShowHook = Arc<dyn Fn() -> Option<KesticTrayState> + Send + Sync>;
+
 struct KesticTray {
     state: KesticTrayState,
+    action_tx: Option<mpsc::Sender<TrayAction>>,
     quit_tx: Option<mpsc::Sender<()>>,
+    about_to_show: Option<AboutToShowHook>,
+}
+
+impl KesticTray {
+    fn emit(&self, action: TrayAction) {
+        if let Some(tx) = &self.action_tx {
+            let _ = tx.send(action.clone());
+        }
+        if matches!(action, TrayAction::RequestQuit)
+            && let Some(tx) = &self.quit_tx
+            && self.action_tx.is_none()
+        {
+            let _ = tx.send(());
+        }
+    }
 }
 
 impl ksni::Tray for KesticTray {
@@ -92,31 +187,133 @@ impl ksni::Tray for KesticTray {
         }
     }
 
+    fn activate(&mut self, _x: i32, _y: i32) {
+        self.emit(TrayAction::OpenWindow);
+    }
+
+    fn menu_about_to_show(&mut self) {
+        if let Some(hook) = &self.about_to_show
+            && let Some(fresh) = hook()
+        {
+            self.state = fresh;
+        }
+    }
+
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let mut items = vec![
+        let mut items: Vec<MenuItem<Self>> = vec![
             StandardItem {
-                label: self.state.tooltip_description.clone(),
+                label: self.state.status_line.clone(),
                 enabled: false,
                 ..Default::default()
             }
             .into(),
-            MenuItem::Separator,
         ];
 
-        if let Some(tx) = &self.quit_tx {
-            let quit_tx = tx.clone();
+        if let Some(active) = &self.state.running_run {
+            let pct = active.percent_done.round().clamp(0.0, 100.0) as u32;
+            let label = i18n("%1: backing up · %2%").subs(&[&active.backup_name, &pct.to_string()]);
             items.push(
                 StandardItem {
-                    label: "Quit Kestic...".to_string(),
-                    icon_name: "application-exit".to_string(),
-                    activate: Box::new(move |_| {
-                        let _ = quit_tx.send(());
-                    }),
+                    label,
+                    icon_name: "state-sync".to_string(),
+                    enabled: false,
                     ..Default::default()
                 }
                 .into(),
             );
         }
+
+        items.push(MenuItem::Separator);
+
+        // "Back Up Now" submenu (M1-S11, AC-M1-11-2)
+        let mut backup_submenu: Vec<MenuItem<Self>> = Vec::new();
+        let any_enabled =
+            !self.state.blocking_active && self.state.backups.iter().any(|b| b.enabled);
+        backup_submenu.push(
+            StandardItem {
+                label: i18n("All Backups").into(),
+                icon_name: "media-playback-start".to_string(),
+                enabled: any_enabled,
+                activate: Box::new(|this: &mut Self| {
+                    this.emit(TrayAction::StartAllBackups);
+                }),
+                ..Default::default()
+            }
+            .into(),
+        );
+        if !self.state.backups.is_empty() {
+            backup_submenu.push(MenuItem::Separator);
+            for entry in &self.state.backups {
+                let id = entry.backup_id.clone();
+                backup_submenu.push(
+                    StandardItem {
+                        label: entry.label.clone(),
+                        enabled: !self.state.blocking_active && entry.enabled,
+                        activate: Box::new(move |this: &mut Self| {
+                            this.emit(TrayAction::StartBackup(id.clone()));
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
+            }
+        }
+
+        items.push(
+            SubMenu {
+                label: i18n("Back Up Now").into(),
+                icon_name: "media-playback-start".to_string(),
+                enabled: !self.state.blocking_active && !self.state.backups.is_empty(),
+                submenu: backup_submenu,
+                ..Default::default()
+            }
+            .into(),
+        );
+
+        let running_id = self.state.running_run.as_ref().map(|r| r.run_id.clone());
+        items.push(
+            StandardItem {
+                label: i18n("Cancel Running Backup").into(),
+                icon_name: "process-stop".to_string(),
+                enabled: running_id.is_some(),
+                activate: Box::new(move |this: &mut Self| {
+                    if let Some(ref run_id) = running_id {
+                        this.emit(TrayAction::CancelRun(run_id.clone()));
+                    }
+                }),
+                ..Default::default()
+            }
+            .into(),
+        );
+
+        items.push(MenuItem::Separator);
+
+        items.push(
+            StandardItem {
+                label: i18n("Open Kestic").into(),
+                icon_name: "kestic-symbolic".to_string(),
+                activate: Box::new(|this: &mut Self| {
+                    this.emit(TrayAction::OpenWindow);
+                }),
+                ..Default::default()
+            }
+            .into(),
+        );
+
+        items.push(MenuItem::Separator);
+
+        items.push(
+            StandardItem {
+                label: i18n("Quit Kestic…").into(),
+                icon_name: "application-exit".to_string(),
+                activate: Box::new(|this: &mut Self| {
+                    this.emit(TrayAction::RequestQuit);
+                }),
+                ..Default::default()
+            }
+            .into(),
+        );
+
         items
     }
 }
@@ -127,13 +324,29 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
-    /// Spawns the `ksni` SNI service and registers it with `org.kde.StatusNotifierWatcher`.
+    /// Spawns the `ksni` SNI service with M0 legacy `quit_tx` compatibility.
     pub fn spawn(
         state: KesticTrayState,
         assume_sni_available: bool,
         quit_tx: Option<mpsc::Sender<()>>,
     ) -> Result<Self, ksni::Error> {
-        let tray = KesticTray { state, quit_tx };
+        Self::spawn_with_actions(state, assume_sni_available, None, quit_tx, None)
+    }
+
+    /// Spawns the `ksni` SNI service wired to full daemon actions and `menu_about_to_show` hook.
+    pub fn spawn_with_actions(
+        state: KesticTrayState,
+        assume_sni_available: bool,
+        action_tx: Option<mpsc::Sender<TrayAction>>,
+        quit_tx: Option<mpsc::Sender<()>>,
+        about_to_show: Option<AboutToShowHook>,
+    ) -> Result<Self, ksni::Error> {
+        let tray = KesticTray {
+            state,
+            action_tx,
+            quit_tx,
+            about_to_show,
+        };
         let inner = if assume_sni_available {
             tray.assume_sni_available(true).spawn()?
         } else {
@@ -150,6 +363,13 @@ impl TrayHandle {
             tray.state.status = status;
             tray.state.overlay_icon_name = overlay;
             tray.state.tooltip_description = desc;
+        });
+    }
+
+    /// Replaces the complete tray state snapshot (`Status`, overlay, tooltip, and menu entries).
+    pub fn set_full_state(&self, next: KesticTrayState) {
+        let _ = self.inner.update(|tray| {
+            tray.state = next;
         });
     }
 

@@ -97,6 +97,8 @@ Das gespeicherte Repo-Passwort wird hier nur geändert, wenn Adresse oder Pfad g
 - Neues Kit nach Fall 2 ist Pflicht (alte Schlüssel gelten im neuen Repo nicht): Der Ablauf «Kit erzeugen» startet direkt; bricht der Benutzer ab, bleibt der Ziel-Zustand «Kit fehlt» mit Tab-Emblem und Hinweis in der Übersicht; dieser Hinweis hat kein «Später» und kein «×» ([requirements.md](../requirements.md) FR-56/P42, AC-M5-09-6).
 - SFTP mit neuem Host → Host-Schlüssel-Dialog (§8.7).
 - Ohne Verbindung (z. B. Laufwerk nicht eingesteckt) lässt sich nur der Anzeigename ändern; Hinweis «Zum Ändern der Verbindung das Ziel erreichbar machen».
+- **Eindeutigkeit pro Speicherort:** Jede normalisierte Repository-Adresse (lokaler Pfad inkl. Symlink-/`.`/`..`-Auflösung bzw. REST-URL) darf höchstens von **einem** eingerichteten Ziel verwendet werden; beim Anlegen, Prüfen oder Bearbeiten wird eine Doppelbelegung unter Verweis auf das bestehende Ziel abgewiesen.
+- **Neues Repository im leeren Ordner (`init` beim Bearbeiten):** Fehlt das Repository an dem eingestellten Ort (z. B. nach Löschen des Ordners auf der Festplatte), kann in «Verbindung bearbeiten» über `Repository: [Bestehendes Repository verbinden | Neues Repository erstellen]` bzw. die Aktionsschaltfläche `[Neues Repository erstellen]` direkt am bestehenden Ziel (unter Beibehaltung der `DestinationId`, Backups und gespeicherten Passwörter) ein neues Repository initialisiert werden.
 
 ### 8.10 Quelle (FR-28, FR-29, FR-31, F10)
 
@@ -136,8 +138,9 @@ Unterseiten von «Wiederherstellen», nach Ziel gruppiert. Zeile: Datum, Host, P
 
 ### 8.15 Formulare in M1 (M1-S13, AC-M1-13-1)
 
-M1 baut die Assistenten bereits in reduzierter Form, damit Struktur und Texte nicht doppelt entstehen:
+M1 baut die Assistenten bereits in reduzierter Form, damit Struktur und Texte nicht doppelt entstehen. Alle Assistenten laufen vollflächig einspaltig ohne Tab-Leiste (`pageStack.layers`), nie als zusätzliche Nebenspalte:
 
-- **Ziel hinzufügen (M1):** Ziel-Typ (nur Lokal und REST) → Ziel-Details mit Prüfung (Felder §8.9) → Backup-Passwort (Schritt 4a). Kit (4b) kommt mit M6.
-- **Neues Backup (M1):** Quelle (§8.10) → Ziel wählen → Zusammenfassung mit Ausschluss-Regeln als **Textfeld in restic-Syntax** (wie Expertenabschnitt §7.3, ohne Linter); einfacher Editor, Zeitplan und Aufbewahrung kommen mit M2/M3, bis dahin Defaults.
+- **Ziel hinzufügen (M1):** Ziel-Typ (nur Lokal und REST) → Ziel-Details mit Prüfung (Felder §8.9) → Backup-Passwort (bei neuem Repo; bei «Vorhandenes verbinden» entfällt dieser Schritt). Kit (4b) kommt mit M6.
+- **Erstes Backup einrichten / Neues Backup ohne vorhandenes Ziel (M1):** Ein durchgängiger linearer Assistent ohne verschachtelten Unter-Assistenten: Quelle (§8.10) → Ziel-Typ → Ziel-Details mit Prüfung → Backup-Passwort (bei neuem Repo) → Zusammenfassung mit Ausschluss-Textfeld in restic-Syntax; Ziel und Backup werden erst beim Abschluss angelegt.
+- **Neues Backup mit vorhandenem Ziel (M1):** Quelle (§8.10) → Ziel wählen (oder «Neues Ziel hinzufügen…» auf demselben `layers`-Stapel) → Zusammenfassung mit Ausschluss-Textfeld in restic-Syntax (wie Expertenabschnitt §7.3, ohne Linter); einfacher Editor, Zeitplan und Aufbewahrung kommen mit M2/M3, bis dahin Defaults.
 - Bearbeiten in M1: Name (Umbenennen-Dialog), Quelle (§8.10), Ausschluss-Textfeld, Verbindung (§8.9 für Lokal und REST; Repo-ID-Abgleich mit Fall 1–3 ab M5).

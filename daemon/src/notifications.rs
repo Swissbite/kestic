@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Desktop notifications over `org.freedesktop.Notifications` via `notify-rust`
 //! with `desktop-entry` and `kestic.notifyrc` event hints (F3, U6, U7, AC-M0-11-4).

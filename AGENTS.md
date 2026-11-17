@@ -4,7 +4,7 @@ Einstieg für alle Agenten (Claude Code, Antigravity u. a.). Zuerst lesen, dann 
 
 ## Ziel
 
-Kestic ist eine native KDE-Plasma-Desktop-App, die restic-Backups für Endnutzer einfach macht und gleichzeitig die volle restic-Konfiguration erlaubt («So einfach wie Déjà Dup, so mächtig wie restic»). Stack: Rust + CXX-Qt + Kirigami (QML). Lizenz: `GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL`, REUSE 3.0.
+Kestic ist eine native KDE-Plasma-Desktop-App, die restic-Backups für Endnutzer einfach macht und gleichzeitig die volle restic-Konfiguration erlaubt («So einfach wie Déjà Dup, so mächtig wie restic»). Stack: Rust + CXX-Qt + Kirigami (QML). Lizenz: `GPL-3.0-or-later`, REUSE 3.0.
 
 ## Spec – was wann laden
 
@@ -26,19 +26,32 @@ Kestic ist eine native KDE-Plasma-Desktop-App, die restic-Backups für Endnutzer
 
 Sprache der Spec: Deutsch (Schweizer Rechtschreibung, ohne Eszett). Code, Bezeichner und `msgid` auf Englisch, deutsche Übersetzung in `.po` (U11).
 
+## Skills – wann welchen laden
+
+Projektspezifische Skills liegen agenten-neutral unter [.agents/skills/](.agents/skills/) (via Symlink auch unter `.gemini/skills/` und `.claude/skills/` eingebunden). Vor der Arbeit an passenden Stories die zugehörige `SKILL.md` lesen:
+
+| Skill | Datei | Laden, wenn … |
+| --- | --- | --- |
+| Story-Orchestrierung | [kestic-story-execution](.agents/skills/kestic-story-execution/SKILL.md) | neue Story oder Meilenstein startet (Subagent-Recherche, Parallelisierung) |
+| CXX-Qt & Kirigami | [kestic-cxxqt-kirigami](.agents/skills/kestic-cxxqt-kirigami/SKILL.md) | `gui/`, QML, `QAbstractListModel`, Offscreen-Smoke, Barrierefreiheit (NFR-09) |
+| D-Bus, Daemon & Fakes | [kestic-dbus-and-fakes](.agents/skills/kestic-dbus-and-fakes/SKILL.md) | `daemon/`, `zbus`, Tray, Notifications, Secret Service, System-Fakes (UPower/NM/logind/UDisks2) |
+| restic-Integration | [kestic-restic-integration](.agents/skills/kestic-restic-integration/SKILL.md) | `restic`-Aufrufe, JSON-Parsing, Exit-Codes, SFTP/S3/REST-Tests, Download/PGP |
+| i18n & Packaging | [kestic-i18n-packaging](.agents/skills/kestic-i18n-packaging/SKILL.md) | neue/geänderte UI-Strings (`po/de/kestic.po`), `packaging/`, `.deb` |
+| Manuelle Abnahme | [kestic-manual-acceptance](.agents/skills/kestic-manual-acceptance/SKILL.md) | Punkte in [docs/spec/manual-acceptance.md](docs/spec/manual-acceptance.md) mit dem Menschen geprüft werden |
+
 ## Arbeitsweise
 
 1. Story aus dem aktuellen Meilenstein wählen (Reihenfolge laut `backlog.md`, Abhängigkeiten beachten).
-2. Akzeptanzkriterien der Story lesen; jedes AC wird durch einen automatisierten Test belegt (ausser «Test: manuell»). Test-Namen bzw. Kommentare nennen die AC-ID.
-3. Umsetzen in kleinen Schritten; GUI-Schicht dünn, Logik in `core`.
-4. `just verify` ausführen. **Grün = Story erledigt.** Sonst nicht als erledigt melden.
-5. Manuelle ACs nicht selbst abhaken, sondern in `manual-acceptance.md` offen lassen.
+2. **Recherche & Parallelisierung:** Bei Stories mit mehreren Spec- oder Code-Abhängigkeiten zuerst mit Read-Only-Research-Subagenten eine kompakte AC-/UI-/Glossar-Checkliste extrahieren (falls das Agent-System Subagenten unterstützt). Unabhängige Teilaufgaben (`core` vs. `daemon` vs. `gui`, separate Testdateien) sinnvoll parallelisieren, jedoch nie zwei Schreibzugriffe gleichzeitig auf dieselbe Datei.
+3. Akzeptanzkriterien der Story lesen; jedes AC wird durch einen automatisierten Test belegt (ausser «Test: manuell»). Test-Namen bzw. Kommentare nennen die AC-ID.
+4. Umsetzen in kleinen Schritten; GUI-Schicht dünn, Logik in `core`; während der Arbeit gezielte Teil-Tests (`cargo test -p …`) für schnelles Feedback nutzen.
+5. Vor Abschluss einer GUI-Story erzeugte Offscreen-Screenshots unter `target/smoke-artifacts/` visuell prüfen und neue UI-Strings direkt in `po/de/kestic.po` nachführen.
+6. `just verify` ausführen. **Grün = Story erledigt.** Sonst nicht als erledigt melden.
+7. Manuelle ACs nicht selbst abhaken, sondern in `manual-acceptance.md` offen lassen (Prüfung mit Schritt-für-Schritt-Anleitung gemäss `kestic-manual-acceptance`).
 
 ## Prüfbefehl
 
 `just verify` = `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test` + `cargo deny check` (Lizenzen + Advisories) + Integrationstests gegen restic 0.18.0 **und** die aktuelle Version + QML-Smoke + Offscreen-Screenshots pro Screen (Artefakt für die menschliche Abnahme) + `reuse lint`.
-
-`justfile`, `rust-toolchain.toml` und `scripts/bootstrap.sh` entstehen in M0 (Stories M0-S01, M0-S02). Bis dahin gibt es keinen Code.
 
 ## Harte Regeln
 
@@ -52,6 +65,21 @@ Tests berühren nie echte Benutzerdaten oder -konfiguration:
 - SSH nur mit `-o UserKnownHostsFile=<Tempdir-Pfad>`, `-F <Test-ssh_config>`, `-o IdentitiesOnly=yes` (OpenSSH löst `~` über `/etc/passwd` auf, nicht über `$HOME`).
 - Nichts unter `/etc/xdg/autostart` voraussetzen oder schreiben; keine echten Autostart- oder systemd-Einträge anlegen.
 - Tests laufen nicht als root.
+
+### Zeitquelle (P36)
+
+Keine direkte Systemuhr-Abfrage (`SystemTime::now()`, `OffsetDateTime::now_utc()` o. ä.) in `core` oder `daemon`; jede zeitabhängige Logik nutzt den `Clock`-Trait aus `core/src/clock.rs`.
+
+### Warnungen & Lints (NFR-12)
+
+Jede Warnung in Rust (`clippy -D warnings`), C++ (`build.rs`), QML (`stderr` im Offscreen-Smoke), gettext/PO oder `reuse lint`, die sich sauber beheben lässt, muss an der Ursache behoben werden (Refactoring/Parameter-Structs, toten Code entfernen, Drittanbieter-/Systemheader via `-isystem` einbinden). Keine Warnungsunterdrückungen (`#[allow(...)]`, `#![allow(...)]`, `#pragma`, `#[ignore]` o. ä.) als Abkürzung — Ausnahmen nur lokal für unveränderliche externe Protokollsignaturen (z. B. `org.freedesktop.Notifications.Notify`) oder Cargo-Test-Hilfsmodule (`tests/common/mod.rs`), nie modul-/crateweit im Produktionscode.
+
+### Stack- & Werkzeug-Leitplanken (aus M0)
+
+- **Workspace-Grenzen:** Datei-Lesetools (`view_file`) nur im Repo aufrufen; bei Bedarf für System-QML (`/usr/lib/...`) oder `~/.cargo/...` über die Shell (`run_command`) nachschauen oder den passenden Skill laden.
+- **Umgebung:** Falls `cargo`/`just` in einer Non-Interactive-Shell fehlen, `~/.cargo/bin` in `PATH` einbinden; `rust-version = "1.85"` in `Cargo.toml` bei `clippy` beachten.
+- **D-Bus-Verbindungslebensdauer:** Zustandsbehaftete Handles (`JobViewHandle`, `PortalInhibitGuard`, später `logind`-Inhibitor) müssen ihre `zbus::Connection` dauerhaft halten.
+- **i18n-Tests:** `glibc` ignoriert `LANGUAGE` bei `LANG=C.UTF-8` → Tests mit `LANG=en_US.UTF-8` und `LANGUAGE=de|en` ausführen.
 
 ### Stop & Ask
 

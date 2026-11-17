@@ -2,7 +2,7 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: kestic
 Source: https://github.com/daviddaester/kestic
 
-Files: docs/* AGENTS.md README.md
+Files: docs/* .agents/skills/* AGENTS.md README.md
 Copyright: 2026 David Däster <david@daester.net>
 License: CC-BY-SA-4.0
 

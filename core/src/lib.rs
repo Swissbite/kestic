@@ -1,10 +1,18 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 #![forbid(unsafe_code)]
 
 //! Core domain logic, restic integration, configuration, and scheduling for Kestic.
 
+pub mod backup;
+pub mod clock;
+pub mod config;
+pub mod destination;
+pub mod history;
+pub mod model;
+pub mod provider;
+pub mod restic;
 pub mod secrets;
 pub mod snapshot;
 

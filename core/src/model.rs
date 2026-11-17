@@ -1,0 +1,906 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Core domain model and glossary types (`F15`, `P38`, `M1-S01`).
+
+use crate::clock::Clock;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeSet;
+use std::fmt;
+use std::path::PathBuf;
+use std::str::FromStr;
+use thiserror::Error;
+use time::OffsetDateTime;
+
+/// Base32 lowercase alphabet (`[a-z2-7]`, RFC 4648 without padding).
+const BASE32_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+
+/// Fixed character length for Kestic Base32 identifiers (`F15`, `AC-M1-01-1`).
+pub const ID_LEN: usize = 8;
+
+/// Validation errors for domain identifiers and model invariants.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ModelError {
+    #[error("invalid identifier '{0}': expected 8 characters in [a-z2-7]")]
+    InvalidId(String),
+    #[error("failed to obtain system entropy for ID generation: {0}")]
+    Entropy(String),
+    #[error("invalid destination configuration: {0}")]
+    InvalidDestination(String),
+    #[error("invalid backup configuration: {0}")]
+    InvalidBackup(String),
+}
+
+fn is_valid_base32_id(raw: &str) -> bool {
+    raw.len() == ID_LEN && raw.bytes().all(|b| matches!(b, b'a'..=b'z' | b'2'..=b'7'))
+}
+
+fn generate_base32_id() -> Result<String, ModelError> {
+    let mut buf = [0u8; ID_LEN];
+    getrandom::fill(&mut buf).map_err(|err| ModelError::Entropy(err.to_string()))?;
+    let mut out = String::with_capacity(ID_LEN);
+    for byte in buf {
+        out.push(BASE32_ALPHABET[(byte & 0x1f) as usize] as char);
+    }
+    Ok(out)
+}
+
+macro_rules! define_entity_id {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Generates a new random 8-character Base32 identifier (`[a-z2-7]{8}`).
+            pub fn generate() -> Result<Self, ModelError> {
+                Ok(Self(generate_base32_id()?))
+            }
+
+            /// Generates a new random identifier guaranteed not to be in `existing`.
+            pub fn generate_unique<'a>(
+                existing: impl IntoIterator<Item = &'a Self>,
+            ) -> Result<Self, ModelError> {
+                let taken: BTreeSet<&str> = existing.into_iter().map(|id| id.as_str()).collect();
+                for _ in 0..64 {
+                    let candidate = Self::generate()?;
+                    if !taken.contains(candidate.as_str()) {
+                        return Ok(candidate);
+                    }
+                }
+                unreachable!("collision across 64 40-bit Base32 samples is practically impossible")
+            }
+
+            /// Parses and validates an 8-character Base32 identifier.
+            pub fn parse(raw: impl Into<String>) -> Result<Self, ModelError> {
+                let raw = raw.into();
+                if is_valid_base32_id(&raw) {
+                    Ok(Self(raw))
+                } else {
+                    Err(ModelError::InvalidId(raw))
+                }
+            }
+
+            /// Returns the identifier as `&str`.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = ModelError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                Self::parse(s)
+            }
+        }
+
+        impl Serialize for $name {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(&self.0)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let raw = String::deserialize(deserializer)?;
+                Self::parse(raw).map_err(serde::de::Error::custom)
+            }
+        }
+    };
+}
+
+define_entity_id!(
+    DestinationId,
+    "Stable 8-char Base32 identifier for a [`Destination`] (`F15`)."
+);
+define_entity_id!(
+    BackupId,
+    "Stable 8-char Base32 identifier for a [`Backup`] (`F15`, tag `kestic:<backup-id>`)."
+);
+define_entity_id!(RunId, "Unique 8-char Base32 identifier for a [`Run`].");
+
+/// Configured restic executable source (glossary: `ResticProvider`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResticProvider {
+    /// System `restic` resolved from `$PATH`.
+    #[default]
+    System,
+    /// App-managed download under `$XDG_DATA_HOME/kestic/` (M5).
+    AppManaged { path: PathBuf },
+    /// User-configured explicit binary path (`FR-33`).
+    Custom { path: PathBuf },
+}
+
+/// Backend specification of a [`Destination`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DestinationKind {
+    /// Local directory or mounted external drive (`FR-01`).
+    Local { path: PathBuf },
+    /// restic REST server (`FR-01`).
+    Rest {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        username: Option<String>,
+    },
+}
+
+impl DestinationKind {
+    /// Returns the restic repository URI/path passed via `-r` or `RESTIC_REPOSITORY`.
+    /// Translates internationalized (IDN/Umlaut) REST hostnames to Punycode ASCII and
+    /// percent-encodes non-ASCII path characters so `restic` and HTTP clients accept them.
+    pub fn repository_uri(&self) -> String {
+        match self {
+            Self::Local { path } => path.to_string_lossy().into_owned(),
+            Self::Rest { url, .. } => {
+                let normalized =
+                    normalize_rest_url_to_ascii(url).unwrap_or_else(|_| url.trim().to_string());
+                format!("rest:{normalized}")
+            }
+        }
+    }
+
+    /// Whether this destination uses separate REST backend credentials.
+    pub fn uses_rest_credentials(&self) -> bool {
+        matches!(self, Self::Rest { username: Some(u), .. } if !u.is_empty())
+    }
+
+    /// Normalized comparison key identifying the target repository location regardless of
+    /// trailing slashes, `.` / `..` segments, symlinks, IDN/Punycode equivalence, or URL host casing.
+    pub fn canonical_location_key(&self) -> String {
+        match self {
+            Self::Local { path } => {
+                format!("local:{}", normalize_local_path(path).to_string_lossy())
+            }
+            Self::Rest { url, .. } => format!("rest:{}", normalize_rest_url(url)),
+        }
+    }
+
+    /// Returns `true` if `self` and `other` point to the same underlying repository location.
+    pub fn same_location(&self, other: &Self) -> bool {
+        self.canonical_location_key() == other.canonical_location_key()
+    }
+}
+
+fn normalize_local_path(path: &std::path::Path) -> PathBuf {
+    if let Ok(canon) = std::fs::canonicalize(path) {
+        return canon;
+    }
+
+    let mut base = PathBuf::new();
+    let mut tail_components: Vec<std::path::Component<'_>> = Vec::new();
+    let raw_components: Vec<std::path::Component<'_>> = path.components().collect();
+
+    // Try canonicalizing the deepest existing prefix so symlinks like `/var` or `/tmp` resolve
+    // consistently even when the leaf directory was deleted from disk.
+    for split in (1..=raw_components.len()).rev() {
+        let prefix: PathBuf = raw_components[..split].iter().collect();
+        if let Ok(canon) = std::fs::canonicalize(&prefix) {
+            base = canon;
+            tail_components = raw_components[split..].to_vec();
+            break;
+        }
+    }
+
+    let components = if base.as_os_str().is_empty() {
+        raw_components
+    } else {
+        let mut combined: Vec<std::path::Component<'_>> = Vec::new();
+        combined.extend(tail_components);
+        combined
+    };
+
+    let mut out = base;
+    for comp in components {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if matches!(
+                    out.components().next_back(),
+                    Some(std::path::Component::Normal(_))
+                ) {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push(comp);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn strip_invisible_url_chars(raw: &str) -> String {
+    raw.trim()
+        .chars()
+        .filter(|&c| {
+            !matches!(
+                c,
+                '\u{00AD}' // soft hyphen
+                    | '\u{200B}' // zero-width space
+                    | '\u{200C}' // zero-width non-joiner
+                    | '\u{200D}' // zero-width joiner
+                    | '\u{200E}' // left-to-right mark
+                    | '\u{200F}' // right-to-left mark
+                    | '\u{2060}' // word joiner
+                    | '\u{FEFF}' // BOM / zero-width no-break space
+            )
+        })
+        .collect()
+}
+
+/// Normalizes an `http://` or `https://` REST URL into RFC-3986 ASCII:
+/// internationalized (Umlaut/Unicode) domain labels are converted to Punycode (`xn--...`)
+/// and non-ASCII path/query characters are percent-encoded.
+pub fn normalize_rest_url_to_ascii(raw: &str) -> Result<String, ModelError> {
+    let cleaned = strip_invisible_url_chars(raw);
+    let trimmed = cleaned.as_str();
+    let lower = trimmed.to_ascii_lowercase();
+    if trimmed.is_empty() || (!lower.starts_with("http://") && !lower.starts_with("https://")) {
+        return Err(ModelError::InvalidDestination(
+            "REST destination URL must start with http:// or https://".to_string(),
+        ));
+    }
+    let parsed = url::Url::parse(trimmed).map_err(|err| {
+        ModelError::InvalidDestination(format!("invalid REST destination URL: {err}"))
+    })?;
+    if parsed.host_str().is_none_or(str::is_empty) {
+        return Err(ModelError::InvalidDestination(
+            "REST destination URL must include a host".to_string(),
+        ));
+    }
+    let mut formatted = parsed.to_string();
+    if parsed.path() == "/"
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+        && !trimmed.ends_with('/')
+        && formatted.ends_with('/')
+    {
+        formatted.pop();
+    }
+    Ok(formatted)
+}
+
+fn normalize_rest_url(raw: &str) -> String {
+    if let Ok(ascii) = normalize_rest_url_to_ascii(raw) {
+        return ascii.trim_end_matches('/').to_string();
+    }
+    let trimmed = raw.trim();
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return trimmed.trim_end_matches('/').to_string();
+    };
+    let (authority, path_part) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, ""),
+    };
+    let normalized_authority = match authority.rsplit_once('@') {
+        Some((userinfo, host)) => format!("{userinfo}@{}", host.to_ascii_lowercase()),
+        None => authority.to_ascii_lowercase(),
+    };
+    let normalized_path = path_part.trim_end_matches('/');
+    format!(
+        "{}://{}{}",
+        scheme.to_ascii_lowercase(),
+        normalized_authority,
+        normalized_path
+    )
+}
+
+/// Secret Service reference keys for a [`Destination`] (never plaintext values, `NFR-02`, `NFR-03`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DestinationSecretRefs {
+    /// Reference key for the repository password in [`crate::secrets::SecretStore`].
+    pub repo_password_ref: String,
+    /// Optional reference key for REST server password in [`crate::secrets::SecretStore`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_password_ref: Option<String>,
+}
+
+impl DestinationSecretRefs {
+    /// Derives canonical Secret Service reference keys for a destination ID.
+    pub fn for_destination(id: &DestinationId, with_rest_auth: bool) -> Self {
+        Self {
+            repo_password_ref: format!("kestic:dest:{id}:repo"),
+            rest_password_ref: with_rest_auth.then(|| format!("kestic:dest:{id}:rest")),
+        }
+    }
+}
+
+/// Placeholder maintenance schedule on a [`Destination`] (expanded in M3).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MaintenanceSchedule {
+    pub prune_interval_days: Option<u32>,
+    pub check_interval_days: Option<u32>,
+}
+
+/// Maintenance action types (glossary: `Maintenance::Prune`, `Maintenance::Check`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Maintenance {
+    Prune,
+    Check,
+}
+
+/// Configured backup repository (glossary: `Destination`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Destination {
+    pub id: DestinationId,
+    pub name: String,
+    pub kind: DestinationKind,
+    pub secrets: DestinationSecretRefs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_kit_key_id: Option<String>,
+    #[serde(default)]
+    pub maintenance: MaintenanceSchedule,
+}
+
+impl Destination {
+    /// Creates a new validated [`Destination`] with a freshly generated [`DestinationId`].
+    pub fn new(name: impl Into<String>, kind: DestinationKind) -> Result<Self, ModelError> {
+        let id = DestinationId::generate()?;
+        Self::with_id(id, name, kind)
+    }
+
+    /// Creates a validated [`Destination`] with a pre-assigned [`DestinationId`].
+    pub fn with_id(
+        id: DestinationId,
+        name: impl Into<String>,
+        kind: DestinationKind,
+    ) -> Result<Self, ModelError> {
+        let name = name.into();
+        let uses_rest_auth = kind.uses_rest_credentials();
+        let dest = Self {
+            secrets: DestinationSecretRefs::for_destination(&id, uses_rest_auth),
+            id,
+            name,
+            kind,
+            recovery_kit_key_id: None,
+            maintenance: MaintenanceSchedule::default(),
+        };
+        dest.validate()?;
+        Ok(dest)
+    }
+
+    /// Validates invariants on this destination.
+    pub fn validate(&self) -> Result<(), ModelError> {
+        if self.name.trim().is_empty() {
+            return Err(ModelError::InvalidDestination(
+                "destination name must not be empty".to_string(),
+            ));
+        }
+        match &self.kind {
+            DestinationKind::Local { path } => {
+                if path.as_os_str().is_empty() {
+                    return Err(ModelError::InvalidDestination(
+                        "local destination path must not be empty".to_string(),
+                    ));
+                }
+            }
+            DestinationKind::Rest { url, .. } => {
+                normalize_rest_url_to_ascii(url)?;
+            }
+        }
+        if self.secrets.repo_password_ref.trim().is_empty() {
+            return Err(ModelError::InvalidDestination(
+                "repo_password_ref must not be empty".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Kind of backup source (glossary: `Source`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    #[default]
+    Folder,
+    Drive,
+}
+
+/// Backup source directory/drive (glossary: `Source`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Source {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub kind: SourceKind,
+}
+
+impl Source {
+    /// Creates a [`Source`] of kind [`SourceKind::Folder`].
+    pub fn folder(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: SourceKind::Folder,
+        }
+    }
+
+    /// Creates a [`Source`] of kind [`SourceKind::Drive`].
+    pub fn drive(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: SourceKind::Drive,
+        }
+    }
+}
+
+/// Parsed single exclude rule entry (glossary: `ExcludeRule::Negated`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "pattern", rename_all = "snake_case")]
+pub enum ExcludeRule {
+    Pattern(String),
+    Negated(String),
+}
+
+impl ExcludeRule {
+    /// Parses a non-empty, non-comment line into an [`ExcludeRule`].
+    pub fn parse_line(line: &str) -> Option<Self> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        if let Some(rest) = trimmed.strip_prefix('!') {
+            Some(Self::Negated(rest.to_string()))
+        } else {
+            Some(Self::Pattern(trimmed.to_string()))
+        }
+    }
+
+    /// Formats the rule as a line for `--exclude-file`.
+    pub fn to_file_line(&self) -> String {
+        match self {
+            Self::Pattern(pat) => pat.clone(),
+            Self::Negated(pat) => format!("!{pat}"),
+        }
+    }
+}
+
+/// Exclude configuration for a [`Backup`] (glossary: `ExcludeRules`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExcludeRules {
+    /// Raw exclude lines (expert syntax in M1, structured editor added in M2).
+    pub lines: Vec<String>,
+    /// Passed to `--exclude-caches`.
+    pub exclude_caches: bool,
+}
+
+impl ExcludeRules {
+    /// Creates [`ExcludeRules`] from multi-line text input.
+    pub fn from_text(text: &str) -> Self {
+        let lines = text.lines().map(|l| l.to_string()).collect();
+        Self {
+            lines,
+            exclude_caches: false,
+        }
+    }
+
+    /// Parses all active [`ExcludeRule`] entries (ignoring comments and blank lines).
+    pub fn parsed_rules(&self) -> Vec<ExcludeRule> {
+        self.lines
+            .iter()
+            .filter_map(|line| ExcludeRule::parse_line(line))
+            .collect()
+    }
+
+    /// Serializes rules for writing `$XDG_STATE_HOME/kestic/excludes/<backup-id>.txt`.
+    pub fn to_exclude_file_contents(&self) -> String {
+        let mut out = String::new();
+        for line in &self.lines {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                out.push_str(trimmed);
+                out.push('\n');
+            }
+        }
+        out
+    }
+}
+
+/// Schedule definition (glossary: `Schedule`, expanded in M3).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Schedule {
+    #[default]
+    ManualOnly,
+    Hourly,
+    Daily {
+        hour: u8,
+        minute: u8,
+    },
+    Weekly {
+        weekday: u8,
+        hour: u8,
+        minute: u8,
+    },
+}
+
+/// Conditions controlling when scheduled runs may start (glossary: `RunConditions`, M3).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RunConditions {
+    pub skip_on_battery: bool,
+    pub skip_on_metered_network: bool,
+}
+
+/// Snapshot retention configuration (glossary: `RetentionPolicy`, M2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RetentionPolicy {
+    pub keep_last: Option<u32>,
+    pub keep_hourly: Option<u32>,
+    pub keep_daily: Option<u32>,
+    pub keep_weekly: Option<u32>,
+    pub keep_monthly: Option<u32>,
+    pub keep_yearly: Option<u32>,
+}
+
+/// Recovery kit metadata associated with a repository key (glossary: `RecoveryKit`, M6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryKit {
+    pub destination_id: DestinationId,
+    pub key_id: String,
+    pub created_at: OffsetDateTime,
+}
+
+/// Metadata snapshot reference (`kestic-meta:<backup-id>`, glossary: `MetaSnapshot`, M6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetaSnapshot {
+    pub snapshot_id: String,
+    pub backup_id: BackupId,
+    pub created_at: OffsetDateTime,
+}
+
+/// Backup definition: Source -> Destination pair (glossary: `Backup`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Backup {
+    pub id: BackupId,
+    pub name: String,
+    pub source: Source,
+    pub destination_id: DestinationId,
+    #[serde(default)]
+    pub excludes: ExcludeRules,
+    #[serde(default)]
+    pub schedule: Schedule,
+    #[serde(default)]
+    pub run_conditions: RunConditions,
+    #[serde(default)]
+    pub retention: RetentionPolicy,
+}
+
+impl Backup {
+    /// Creates a new validated [`Backup`] with a fresh random [`BackupId`].
+    pub fn new(
+        name: impl Into<String>,
+        source: Source,
+        destination_id: DestinationId,
+    ) -> Result<Self, ModelError> {
+        let id = BackupId::generate()?;
+        Self::with_id(id, name, source, destination_id)
+    }
+
+    /// Creates a validated [`Backup`] with a pre-assigned [`BackupId`].
+    pub fn with_id(
+        id: BackupId,
+        name: impl Into<String>,
+        source: Source,
+        destination_id: DestinationId,
+    ) -> Result<Self, ModelError> {
+        let backup = Self {
+            id,
+            name: name.into(),
+            source,
+            destination_id,
+            excludes: ExcludeRules::default(),
+            schedule: Schedule::default(),
+            run_conditions: RunConditions::default(),
+            retention: RetentionPolicy::default(),
+        };
+        backup.validate()?;
+        Ok(backup)
+    }
+
+    /// Renames the backup while keeping its [`BackupId`] immutable (`AC-M1-01-2`).
+    pub fn rename(&mut self, name: impl Into<String>) -> Result<(), ModelError> {
+        let next = name.into();
+        if next.trim().is_empty() {
+            return Err(ModelError::InvalidBackup(
+                "backup name must not be empty".to_string(),
+            ));
+        }
+        self.name = next;
+        Ok(())
+    }
+
+    /// Updates the backup source while keeping its [`BackupId`] immutable (`AC-M1-01-2`).
+    pub fn set_source(&mut self, source: Source) -> Result<(), ModelError> {
+        if source.path.as_os_str().is_empty() {
+            return Err(ModelError::InvalidBackup(
+                "backup source path must not be empty".to_string(),
+            ));
+        }
+        self.source = source;
+        Ok(())
+    }
+
+    /// Assigns this backup to another [`DestinationId`] (`M1-S22`), keeping `self.id` stable.
+    pub fn reassign_destination(&mut self, destination_id: DestinationId) {
+        self.destination_id = destination_id;
+    }
+
+    /// Returns the restic snapshot tag identifying this backup (`kestic:<backup-id>`, `FR-28`).
+    pub fn tag(&self) -> String {
+        format!("kestic:{}", self.id)
+    }
+
+    /// Returns the restic metadata snapshot tag (`kestic-meta:<backup-id>`, `FR-49`).
+    pub fn meta_tag(&self) -> String {
+        format!("kestic-meta:{}", self.id)
+    }
+
+    /// Validates invariants on this backup definition.
+    pub fn validate(&self) -> Result<(), ModelError> {
+        if self.name.trim().is_empty() {
+            return Err(ModelError::InvalidBackup(
+                "backup name must not be empty".to_string(),
+            ));
+        }
+        if self.source.path.as_os_str().is_empty() {
+            return Err(ModelError::InvalidBackup(
+                "backup source path must not be empty".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Kind of a [`Run`] (glossary: `RunKind`, `P38`, `AC-M1-01-3`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunKind {
+    /// Backup run (`backup` -> `forget`), always tied to a specific [`BackupId`].
+    Backup { backup_id: BackupId },
+    /// Destination maintenance (`forget`, `prune`, `check`), tied only to a [`DestinationId`].
+    Maintenance,
+    /// Restore run, tied to a [`DestinationId`] and optionally a [`BackupId`].
+    Restore {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        backup_id: Option<BackupId>,
+    },
+    /// Metadata snapshot run, tied only to a [`DestinationId`].
+    Meta,
+}
+
+/// Lifecycle state of a [`Run`] (`AC-M1-01-3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    /// Due, waiting to start (`ausstehend`).
+    Pending,
+    /// Currently executing (`läuft`).
+    Running,
+    /// Completed successfully (`ok`).
+    Ok,
+    /// Completed with warnings, e.g., restic exit 3 (`Warnung`).
+    Warning,
+    /// Failed (`Fehler`).
+    Error,
+    /// Cancelled by user via SIGTERM (`abgebrochen`).
+    Cancelled,
+    /// Interrupted by logout, shutdown, suspend, or process kill (`unterbrochen`).
+    Interrupted,
+}
+
+/// Reason a [`Run`] is in [`RunStatus::Pending`] (`domain-model.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingReason {
+    ConditionNotMet,
+    SourceUnavailable,
+    DestinationUnreachable,
+    Queued,
+    Backoff,
+}
+
+/// Record of an executed restic invocation for a [`Run`] (`FR-34`, `AC-M1-08-3`).
+///
+/// Must never contain plaintext secret values (`NFR-02`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandRecord {
+    pub executable: String,
+    pub args: Vec<String>,
+    pub env_keys: Vec<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub started_at: OffsetDateTime,
+    pub duration_ms: u64,
+    pub exit_code: i32,
+}
+
+/// Summary statistics parsed from restic `--json` output.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RunStats {
+    pub files_new: u64,
+    pub files_changed: u64,
+    pub files_unmodified: u64,
+    pub dirs_new: u64,
+    pub dirs_changed: u64,
+    pub dirs_unmodified: u64,
+    pub data_added: u64,
+    pub total_files_processed: u64,
+    pub total_bytes_processed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_id: Option<String>,
+}
+
+/// Single execution record (glossary: `Run`, `AC-M1-01-3`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Run {
+    pub id: RunId,
+    pub kind: RunKind,
+    pub destination_id: DestinationId,
+    pub status: RunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_reason: Option<PendingReason>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub started_at: OffsetDateTime,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub finished_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_message: Option<String>,
+    #[serde(default)]
+    pub commands: Vec<CommandRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats: Option<RunStats>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_path: Option<PathBuf>,
+}
+
+impl Run {
+    fn create(
+        clock: &dyn Clock,
+        kind: RunKind,
+        destination_id: DestinationId,
+        status: RunStatus,
+        pending_reason: Option<PendingReason>,
+    ) -> Result<Self, ModelError> {
+        Ok(Self {
+            id: RunId::generate()?,
+            kind,
+            destination_id,
+            status,
+            pending_reason,
+            started_at: clock.now_utc(),
+            finished_at: None,
+            duration_ms: None,
+            exit_code: None,
+            summary_message: None,
+            commands: Vec::new(),
+            stats: None,
+            log_path: None,
+        })
+    }
+
+    /// Creates a new backup run belonging to `backup` and its `destination_id` (`AC-M1-01-3`).
+    pub fn new_backup(clock: &dyn Clock, backup: &Backup) -> Result<Self, ModelError> {
+        Self::create(
+            clock,
+            RunKind::Backup {
+                backup_id: backup.id.clone(),
+            },
+            backup.destination_id.clone(),
+            RunStatus::Running,
+            None,
+        )
+    }
+
+    /// Creates a pending backup run with a [`PendingReason`].
+    pub fn new_pending_backup(
+        clock: &dyn Clock,
+        backup: &Backup,
+        reason: PendingReason,
+    ) -> Result<Self, ModelError> {
+        Self::create(
+            clock,
+            RunKind::Backup {
+                backup_id: backup.id.clone(),
+            },
+            backup.destination_id.clone(),
+            RunStatus::Pending,
+            Some(reason),
+        )
+    }
+
+    /// Creates a maintenance run belonging to `destination_id` (`AC-M1-01-3`).
+    pub fn new_maintenance(
+        clock: &dyn Clock,
+        destination_id: DestinationId,
+    ) -> Result<Self, ModelError> {
+        Self::create(
+            clock,
+            RunKind::Maintenance,
+            destination_id,
+            RunStatus::Running,
+            None,
+        )
+    }
+
+    /// Creates a restore run belonging to `destination_id` and optionally a [`BackupId`] (`AC-M1-01-3`).
+    pub fn new_restore(
+        clock: &dyn Clock,
+        destination_id: DestinationId,
+        backup_id: Option<BackupId>,
+    ) -> Result<Self, ModelError> {
+        Self::create(
+            clock,
+            RunKind::Restore { backup_id },
+            destination_id,
+            RunStatus::Running,
+            None,
+        )
+    }
+
+    /// Creates a metadata snapshot run belonging to `destination_id` (`AC-M1-01-3`).
+    pub fn new_meta(clock: &dyn Clock, destination_id: DestinationId) -> Result<Self, ModelError> {
+        Self::create(
+            clock,
+            RunKind::Meta,
+            destination_id,
+            RunStatus::Running,
+            None,
+        )
+    }
+
+    /// Returns the associated [`BackupId`], if any.
+    pub fn backup_id(&self) -> Option<&BackupId> {
+        match &self.kind {
+            RunKind::Backup { backup_id } => Some(backup_id),
+            RunKind::Restore { backup_id } => backup_id.as_ref(),
+            RunKind::Maintenance | RunKind::Meta => None,
+        }
+    }
+
+    /// Marks the run finished at `clock.now_utc()` with final status and exit code.
+    pub fn finish(&mut self, clock: &dyn Clock, status: RunStatus, exit_code: Option<i32>) {
+        let now = clock.now_utc();
+        let elapsed_ms = (now - self.started_at).whole_milliseconds().max(0) as u64;
+        self.status = status;
+        self.pending_reason = None;
+        self.finished_at = Some(now);
+        self.duration_ms = Some(elapsed_ms);
+        self.exit_code = exit_code;
+    }
+}

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Isolated D-Bus integration tests for M0-S07:
 //! - AC-M0-07-1: Single-instance D-Bus name lock (second daemon detects taken name and exits 0)
@@ -80,6 +80,7 @@ fn run_isolated_dbus_test(test_name: &str, env_key: &str) {
         .env("XDG_STATE_HOME", temp.join("state"))
         .env("XDG_RUNTIME_DIR", temp.join("run"))
         .env("KESTIC_M0_S07_TMP", &temp)
+        .env("KESTIC_SECRET_FILE", temp.join("secrets.hex"))
         .output()
         .expect("run test inside dbus-run-session");
 

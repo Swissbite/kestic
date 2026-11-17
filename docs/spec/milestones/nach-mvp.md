@@ -26,6 +26,7 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | FR-55 | Keine Systembenachrichtigung bei aktivem Fenster |
 | – | Flatpak ([architecture.md](../architecture.md) «Packaging», «Secrets») |
 | – | Release-Prozess: SemVer, Changelog (Q7) |
+| – | Projekt-Website auf GitHub Pages (inkl. automatisch generierter & aktualisierter GUI-Screenshots aus den QML-Offscreen-Smoke-Tests, optional über `kestic.daester.net` / GitHub Pages) |
 
 ## Luxus
 

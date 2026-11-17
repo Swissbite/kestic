@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Secret storage abstraction and in-memory / file fallback backends (FR-08, NFR-02, M0-S08).
 
@@ -85,6 +85,18 @@ pub trait SecretStore {
     ) -> Result<(), SecretError>;
     fn get_secret(&self, target_id: &str, kind: &str) -> Result<Option<SecretValue>, SecretError>;
     fn delete_secret(&self, target_id: &str, kind: &str) -> Result<(), SecretError>;
+
+    /// Non-interactive probe checking whether the secret store is unlocked and usable
+    /// without blocking on UI prompts.
+    fn check_availability(&self) -> Result<(), SecretError> {
+        self.get_secret("kestic_health_probe", "probe").map(|_| ())
+    }
+
+    /// Attempts an interactive unlock (e.g. via `org.freedesktop.Secret.Prompt`) when the
+    /// secret store is locked.
+    fn unlock_interactive(&self) -> Result<(), SecretError> {
+        self.check_availability()
+    }
 }
 
 /// In-memory [`SecretStore`] for fast unit tests.
@@ -273,7 +285,7 @@ fn from_hex_nibble(b: u8) -> Result<u8, SecretError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::TempDir;
 
     #[test]
     fn secret_value_debug_is_redacted() {
@@ -295,13 +307,8 @@ mod tests {
         mem.delete_secret("nas", "repo-password").expect("delete");
         assert_eq!(mem.get_secret("nas", "repo-password").expect("get"), None);
 
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let tmp =
-            std::env::temp_dir().join(format!("kestic-s08-file-{}-{nanos}", std::process::id()));
-        let file_store = FileSecretStore::new(tmp.join("secrets.hex"));
+        let tmp = TempDir::new().expect("tempdir");
+        let file_store = FileSecretStore::new(tmp.path().join("secrets.hex"));
         file_store
             .set_secret("nas", "repo-password", &val)
             .expect("set");
@@ -316,6 +323,5 @@ mod tests {
             file_store.get_secret("nas", "repo-password").expect("get"),
             None
         );
-        let _ = fs::remove_dir_all(&tmp);
     }
 }

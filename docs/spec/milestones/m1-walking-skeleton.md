@@ -194,6 +194,8 @@ Test-Isolation gemäss [test-strategy.md](../test-strategy.md); Temp-Repos, loka
 
 ## Exit-Kriterien
 
+**Stand (2026-11-17): M1 abgeschlossen.** Alle 23 Stories (`M1-S01`–`M1-S23`), `just verify` (inkl. Integrationstests gegen restic 0.18.0 und 0.19.1) sowie alle manuellen Prüfpunkte in [manual-acceptance.md](../manual-acceptance.md) sind erfüllt und abgenommen:
+
 - Auf TUXEDO installiert: Backup Lokal und REST manuell gestartet, Fortschritt im Tray, Ergebnis in Historie, Fehler als Notification.
 - `just verify` grün inkl. Tests gegen restic 0.18.0 und aktuell.
 - Manuelle Abnahme: Tray, Notification, Look & Feel des Hauptfensters (Tab-Leiste, Zustandsleiste, Listen, Formulare).

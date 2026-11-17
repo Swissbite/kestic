@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Isolated integration tests for M0-S08:
 //! - AC-M0-08-1 / AC-M0-08-2: Direct `zbus 6.3.0` `org.freedesktop.secrets` roundtrip
@@ -302,13 +302,15 @@ impl FakeLockedSecretService {
     }
 }
 
-struct FakeLockedCollection;
+struct FakeLockedCollection {
+    locked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
 
 #[interface(name = "org.freedesktop.Secret.Collection")]
 impl FakeLockedCollection {
     #[zbus(property, name = "Locked")]
     fn locked(&self) -> bool {
-        true
+        self.locked.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -320,27 +322,81 @@ impl FakeSecretSession {
     fn close(&self) {}
 }
 
+struct FakeSecretPrompt {
+    locked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    dismiss: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[interface(name = "org.freedesktop.Secret.Prompt")]
+impl FakeSecretPrompt {
+    #[zbus(name = "Prompt")]
+    async fn prompt(
+        &self,
+        _window_id: &str,
+        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+    ) {
+        let dismissed = self.dismiss.load(std::sync::atomic::Ordering::SeqCst);
+        if !dismissed {
+            self.locked
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        let result: OwnedVariant = zbus::Variant::from(vec![
+            OwnedObjectPath::try_from("/org/freedesktop/secrets/collection/locked").expect("path"),
+        ])
+        .try_into()
+        .expect("owned variant");
+        let _ = Self::completed(&emitter, dismissed, result).await;
+    }
+
+    #[zbus(signal, name = "Completed")]
+    async fn completed(
+        emitter: &zbus::object_server::SignalEmitter<'_>,
+        dismissed: bool,
+        result: OwnedVariant,
+    ) -> zbus::Result<()>;
+}
+
 /// Verifies `SecretServiceStore` detects locked Secret Service collections requiring an
-/// interactive prompt instead of hanging indefinitely (ADR-0004 / KWallet without PAM risk).
+/// interactive prompt non-blockingly, and unlocks cleanly when `unlock_interactive()`
+/// drives `org.freedesktop.Secret.Prompt` (ADR-0004 / KWallet / GNOME Keyring).
 #[test]
 fn secret_service_reports_locked_collection_prompt_without_hanging() {
     const INNER_ENV: &str = "KESTIC_M0_S08_LOCKED_INNER";
     if std::env::var_os(INNER_ENV).as_deref() == Some("1".as_ref()) {
+        let locked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let dismiss = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         let _conn = block_on(async {
             zbus::connection::Builder::session()
                 .name("net.daester.Kestic.FakeLockedSecrets")
                 .serve_at("/org/freedesktop/secrets", FakeLockedSecretService)
                 .serve_at(
                     "/org/freedesktop/secrets/collection/locked",
-                    FakeLockedCollection,
+                    FakeLockedCollection {
+                        locked: std::sync::Arc::clone(&locked),
+                    },
                 )
                 .serve_at("/org/freedesktop/secrets/session/s1", FakeSecretSession)
+                .serve_at(
+                    "/org/freedesktop/secrets/prompt/p1",
+                    FakeSecretPrompt {
+                        locked: std::sync::Arc::clone(&locked),
+                        dismiss: std::sync::Arc::clone(&dismiss),
+                    },
+                )
                 .build()
                 .await
                 .expect("build fake locked secret service")
         });
 
         let store = SecretServiceStore::new("net.daester.Kestic.FakeLockedSecrets", "default");
+        let avail_err = store
+            .check_availability()
+            .expect_err("locked collection must fail check_availability without hanging");
+        assert!(
+            matches!(avail_err, SecretError::LockedOrPromptRequired(_)),
+            "expected LockedOrPromptRequired from check_availability, got {avail_err:?}"
+        );
+
         let err = store
             .set_secret("nas", "repo-password", &SecretValue::from_str_secret("pw"))
             .expect_err("locked collection requiring prompt must return error");
@@ -348,6 +404,24 @@ fn secret_service_reports_locked_collection_prompt_without_hanging() {
             matches!(err, SecretError::LockedOrPromptRequired(_)),
             "expected LockedOrPromptRequired, got {err:?}"
         );
+
+        // Dismissed prompt keeps the collection locked.
+        let cancel_err = store
+            .unlock_interactive()
+            .expect_err("dismissed unlock prompt must stay locked");
+        assert!(
+            matches!(cancel_err, SecretError::LockedOrPromptRequired(_)),
+            "expected LockedOrPromptRequired on dismiss, got {cancel_err:?}"
+        );
+
+        // Accepted prompt unlocks the collection so check_availability succeeds.
+        dismiss.store(false, std::sync::atomic::Ordering::SeqCst);
+        store
+            .unlock_interactive()
+            .expect("accepted unlock prompt must unlock collection");
+        store
+            .check_availability()
+            .expect("check_availability must succeed after interactive unlock");
         return;
     }
 

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Plasma progress notification client via `org.kde.JobViewServerV2` / `org.kde.JobViewV3`
 //! (FR-53, U5, AC-M0-11-2).
@@ -140,6 +140,43 @@ impl JobViewHandle {
         self.terminate_inner(error_code, error_message)
     }
 
+    /// Spawns a background listener for `org.kde.JobViewV3.cancelRequested` that invokes `on_cancel`
+    /// if Plasma's notification cancel button is pressed. Call [`JobViewCancelGuard::stop`] when done.
+    pub fn start_cancel_watcher<F>(&self, on_cancel: F) -> JobViewCancelGuard
+    where
+        F: Fn() + Send + 'static,
+    {
+        let conn = self.conn.clone();
+        let dest = self.dest.clone();
+        let path = self.view_path.clone();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_bg = std::sync::Arc::clone(&stop);
+
+        let handle = std::thread::spawn(move || {
+            let watcher = Self {
+                conn,
+                dest,
+                view_path: path,
+                terminated: true,
+            };
+            while !stop_bg.load(std::sync::atomic::Ordering::SeqCst) {
+                match watcher.wait_cancel_requested(Duration::from_millis(120)) {
+                    Ok(true) => {
+                        on_cancel();
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(_) => break,
+                }
+            }
+        });
+
+        JobViewCancelGuard {
+            stop,
+            handle: Some(handle),
+        }
+    }
+
     fn terminate_inner(&mut self, error_code: u32, error_message: &str) -> zbus::Result<()> {
         if self.terminated {
             return Ok(());
@@ -159,6 +196,30 @@ impl JobViewHandle {
                 .await?;
             Ok::<_, zbus::Error>(())
         })
+    }
+}
+
+/// Guard for stopping the background `JobViewV3.cancelRequested` listener.
+pub struct JobViewCancelGuard {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl JobViewCancelGuard {
+    pub fn stop(mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl Drop for JobViewCancelGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
     }
 }
 

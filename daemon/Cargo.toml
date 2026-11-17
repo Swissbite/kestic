@@ -14,7 +14,14 @@ publish = false
 kestic-core = { path = "../core" }
 ksni = { workspace = true }
 notify-rust = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 zbus = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.27"
 
 [lints]
 workspace = true

@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+# SPDX-License-Identifier: GPL-3.0-or-later
 msgid ""
 msgstr ""
 "Project-Id-Version: kestic 0.1.0\n"
-"Report-Msgid-Bugs-To: david@daester.net\n"
-"POT-Creation-Date: 2026-11-16 08:25+0100\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-16 19:52+0100\n"
 "PO-Revision-Date: 2026-11-16 08:25+0100\n"
 "Last-Translator: David Däster <david@daester.net>\n"
 "Language-Team: German\n"
@@ -14,115 +14,1733 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: gui/src/list_model.rs
-msgid "Personal folder"
-msgstr "Persönlicher Ordner"
+#: daemon/src/i18n.rs:67
+msgid "Completed"
+msgstr "Abgeschlossen"
 
-#: gui/src/list_model.rs
-msgid "~ -> NAS · backed up 2 hours ago"
-msgstr "~ -> NAS · vor 2 Stunden gesichert"
+#: daemon/src/i18n.rs:69 daemon/src/service.rs:1985
+msgid "Snapshot incomplete: some files could not be read"
+msgstr "Snapshot unvollständig: Einige Dateien konnten nicht gelesen werden"
 
-#: gui/src/list_model.rs
-msgid "Photos"
-msgstr "Fotos"
+#: daemon/src/i18n.rs:71 daemon/src/service.rs:450 daemon/src/service.rs:1726
+#: daemon/src/service.rs:2017
+msgid "Destination unreachable"
+msgstr "Ziel nicht erreichbar"
 
-#: gui/src/list_model.rs
-msgid "/media/photos -> USB-Disk · waiting"
-msgstr "/media/photos -> USB-Disk · wartet"
+#: daemon/src/i18n.rs:73
+msgid "Destination hostname could not be resolved (DNS)"
+msgstr "Hostname des Ziels konnte nicht aufgelöst werden (DNS)"
 
-#: gui/src/list_model.rs
-msgid "Projects"
-msgstr "Projekte"
+#: daemon/src/i18n.rs:75
+msgid "Authentication at destination failed"
+msgstr "Authentifizierung am Ziel fehlgeschlagen"
 
-#: gui/src/list_model.rs
-msgid "~/Projects -> S3 · password rejected"
-msgstr "~/Projekte -> S3 · Passwort abgelehnt"
+#: daemon/src/i18n.rs:76 daemon/src/service.rs:1979
+msgid "Backup command failed"
+msgstr "Backup-Befehl fehlgeschlagen"
 
-#: gui/src/qml/Main.qml
-msgid "Overview"
-msgstr "Übersicht"
+#: daemon/src/i18n.rs:77
+msgid "Repository is missing"
+msgstr "Repository fehlt"
 
-#: gui/src/qml/Main.qml
-msgid "Restore"
-msgstr "Wiederherstellen"
+#: daemon/src/i18n.rs:78
+msgid "Repository is locked"
+msgstr "Repository ist gesperrt"
 
-#: gui/src/qml/Main.qml
-msgid "Backups"
-msgstr "Backups"
+#: daemon/src/i18n.rs:79 daemon/src/service.rs:1602 gui/src/state_cache.rs:630
+msgid "Stored password does not match"
+msgstr "Gespeichertes Passwort stimmt nicht überein"
 
-#: gui/src/qml/Main.qml
-msgid "Destinations"
-msgstr "Ziele"
+#: daemon/src/i18n.rs:81
+msgid "Unknown error (exit %1)"
+msgstr "Unbekannter Fehler (Exit %1)"
 
-#: gui/src/qml/Main.qml
-msgid "History"
-msgstr "Verlauf"
+#: daemon/src/i18n.rs:89 gui/src/backend.rs:1315
+#: gui/src/qml/DestinationDetailPage.qml:51
+#: gui/src/qml/DestinationDetailPage.qml:81 gui/src/qml/OverviewPage.qml:266
+msgid "Update Saved Password…"
+msgstr "Gespeichertes Passwort aktualisieren…"
 
-#: gui/src/qml/Main.qml
-msgid "Back Up Now"
-msgstr "Jetzt sichern"
+#: daemon/src/i18n.rs:90 gui/src/backend.rs:1316
+#: gui/src/qml/RunDetailPage.qml:237
+msgid "Add to Exclude Rules…"
+msgstr "Zu Ausschluss-Regeln hinzufügen…"
 
-#: gui/src/qml/Main.qml
-msgid "Back Up Now (Ctrl+Shift+B)"
-msgstr "Jetzt sichern (Ctrl+Shift+B)"
+#: daemon/src/i18n.rs:91 gui/src/backend.rs:1317
+msgid "Configure restic Source…"
+msgstr "restic-Quelle konfigurieren…"
 
-#: gui/src/qml/Main.qml
-msgid "Back Up Now triggered (Ctrl+Shift+B)"
-msgstr "Jetzt sichern ausgelöst (Ctrl+Shift+B)"
+#: daemon/src/i18n.rs:92 gui/src/backend.rs:1318
+msgid "Release Lock…"
+msgstr "Sperre aufheben…"
 
-#: gui/src/qml/Main.qml
-msgid "Retention…"
-msgstr "Aufbewahrung…"
+#: daemon/src/service.rs:276
+msgid "restic not found; at least %1 required"
+msgstr "restic nicht gefunden; mindestens %1 erforderlich"
 
-#: gui/src/qml/Main.qml
-msgid "Retention"
-msgstr "Aufbewahrung"
+#: daemon/src/service.rs:288
+msgid "restic %1 is too old; Kestic needs at least %2"
+msgstr "restic %1 ist zu alt; Kestic benötigt mindestens %2"
 
-#: gui/src/qml/Main.qml
-msgid "Configure Retention…"
-msgstr "Aufbewahrung einrichten…"
+#: daemon/src/service.rs:298
+msgid "Custom restic path is invalid (%1): %2"
+msgstr "Eigener restic-Pfad ist ungültig (%1): %2"
 
-#: gui/src/qml/Main.qml
+#: daemon/src/service.rs:308
+msgid "Unable to determine restic version (%1)"
+msgstr "restic-Version konnte nicht ermittelt werden (%1)"
+
+#: daemon/src/service.rs:334
+msgid ""
+"The system password store (Secret Service / KWallet) is locked. Kestic "
+"cannot access destinations."
+msgstr ""
+"Der System-Passwortspeicher (Secret Service / KWallet) ist gesperrt. Kestic "
+"kann nicht auf Ziele zugreifen."
+
+#: daemon/src/service.rs:441 daemon/src/service.rs:1724
+#: daemon/src/service.rs:2014
+msgid "Source unavailable"
+msgstr "Quelle nicht verfügbar"
+
+#: daemon/src/service.rs:723
+msgid "1 backup failed"
+msgstr "1 Backup fehlgeschlagen"
+
+#: daemon/src/service.rs:725
+msgid "%1 backups failed"
+msgstr "%1 Backups fehlgeschlagen"
+
+#: daemon/src/service.rs:729
+msgid "1 backup finished with warning"
+msgstr "1 Backup mit Warnung abgeschlossen"
+
+#: daemon/src/service.rs:731
+msgid "%1 backups finished with warnings"
+msgstr "%1 Backups mit Warnungen abgeschlossen"
+
+#: daemon/src/service.rs:735 daemon/src/tray.rs:214
+msgid "%1: backing up · %2%"
+msgstr "%1: sichert · %2%"
+
+#: daemon/src/service.rs:739 gui/src/qml/BackupsPage.qml:50
+msgid "No backups configured yet"
+msgstr "Noch keine Backups eingerichtet"
+
+#: daemon/src/service.rs:741
+msgid "Last run interrupted"
+msgstr "Letzter Lauf unterbrochen"
+
+#: daemon/src/service.rs:743
+msgid "Last run cancelled"
+msgstr "Letzter Lauf abgebrochen"
+
+#: daemon/src/service.rs:745 gui/src/state_cache.rs:618
+msgid "Not backed up yet"
+msgstr "Noch nicht gesichert"
+
+#: daemon/src/service.rs:747 daemon/src/tray.rs:121
+#: gui/src/qml/SpikeMain.qml:274
 msgid "All data backed up"
 msgstr "Alle Daten gesichert"
 
-#: gui/src/qml/Main.qml
-msgid "Destination:"
-msgstr "Ziel:"
+#: daemon/src/service.rs:753
+msgid "Currently running: %1 (%2%)"
+msgstr "Läuft gerade: %1 (%2%)"
 
-#: gui/src/qml/Main.qml
-msgid "NAS (REST server)"
-msgstr "NAS (REST-Server)"
+#: daemon/src/service.rs:794
+msgid "1 backup overdue"
+msgstr "1 Backup überfällig"
 
-#: gui/src/qml/Main.qml
-msgid "Schedule:"
-msgstr "Zeitplan:"
+#: daemon/src/service.rs:800
+msgid "Schedules paused"
+msgstr "Zeitpläne pausiert"
 
-#: gui/src/qml/Main.qml
-msgid "Daily 12:00 · AC power and network"
-msgstr "Täglich 12:00 · am Strom und mit Netzwerk"
+#: daemon/src/service.rs:806
+msgid "1 backup waiting"
+msgstr "1 Backup wartet"
 
-#: gui/src/qml/Main.qml
-msgid "Last run:"
-msgstr "Letzter Lauf:"
+#: daemon/src/service.rs:812
+msgid "Schedules paused · 1 backup waiting"
+msgstr "Zeitpläne pausiert · 1 Backup wartet"
 
-#: gui/src/qml/Main.qml
-msgid "Today 12:00, ok, 312 MB new"
-msgstr "Heute 12:00, ok, 312 MB neu"
+#: daemon/src/service.rs:818
+msgid "Maintenance running"
+msgstr "Wartung läuft"
 
-#: gui/src/qml/Main.qml
-msgid "Preset:"
-msgstr "Vorlage:"
+#: daemon/src/service.rs:824
+msgid "Restore running"
+msgstr "Wiederherstellung läuft"
 
-#: gui/src/qml/Main.qml
+#: daemon/src/service.rs:1013
+msgid "Reachable"
+msgstr "Erreichbar"
+
+#: daemon/src/service.rs:1666
+msgid "Password store is locked"
+msgstr "Passwortspeicher ist gesperrt"
+
+#: daemon/src/service.rs:1722
+msgid "%1: Backup cannot start"
+msgstr "%1: Backup kann nicht gestartet werden"
+
+#: daemon/src/service.rs:1804
+msgid "Backing up %1"
+msgstr "Sichere %1"
+
+#: daemon/src/service.rs:1849
+msgid "Backing up %1 (%2%)"
+msgstr "Sichere %1 (%2%)"
+
+#: daemon/src/service.rs:1914
+msgid "Cancelled by user"
+msgstr "Durch Benutzer abgebrochen"
+
+#: daemon/src/service.rs:1978
+msgid "%1: Backup failed"
+msgstr "%1: Backup fehlgeschlagen"
+
+#: daemon/src/service.rs:1983
+msgid "%1: Backup finished with warning"
+msgstr "%1: Backup mit Warnung abgeschlossen"
+
+#: daemon/src/service.rs:2021
+msgid "Another run is already running"
+msgstr "Ein anderer Lauf läuft bereits"
+
+#: daemon/src/service.rs:2500
+msgid "Kestic daemon test notification"
+msgstr "Testbenachrichtigung des Kestic-Hintergrunddienstes"
+
+#: daemon/src/service.rs:2501
+msgid "Tray registered and notification channel active."
+msgstr "Systemabschnitt registriert und Benachrichtigungskanal aktiv."
+
+#: daemon/src/tray.rs:120
+msgid "Backups ready"
+msgstr "Backups bereit"
+
+#: daemon/src/tray.rs:236 gui/src/qml/HistoryPage.qml:37
+msgid "All Backups"
+msgstr "Alle Backups"
+
+#: daemon/src/tray.rs:266 gui/src/qml/BackupDetailPage.qml:39
+#: gui/src/qml/BackupDetailPage.qml:150 gui/src/qml/NewBackupWizard.qml:339
+#: gui/src/qml/OverviewPage.qml:253 gui/src/qml/OverviewPage.qml:290
+#: gui/src/qml/SpikeMain.qml:216
+msgid "Back Up Now"
+msgstr "Jetzt sichern"
+
+#: daemon/src/tray.rs:278
+msgid "Cancel Running Backup"
+msgstr "Laufendes Backup abbrechen"
+
+#: daemon/src/tray.rs:295
+msgid "Open Kestic"
+msgstr "Kestic öffnen"
+
+#: daemon/src/tray.rs:309
+msgid "Quit Kestic…"
+msgstr "Kestic beenden…"
+
+#: gui/src/backend.rs:354
+msgid "Wrong password: the repository rejected this password."
+msgstr "Falsches Passwort: Das Repository hat dieses Passwort abgelehnt."
+
+#: gui/src/backend.rs:356
+msgid "Authentication at destination failed."
+msgstr "Authentifizierung am Ziel fehlgeschlagen."
+
+#: gui/src/backend.rs:358
+msgid "Destination unreachable."
+msgstr "Ziel nicht erreichbar."
+
+#: gui/src/backend.rs:360
+msgid "Remove or reassign all backups on this destination first."
+msgstr ""
+"Zuerst alle Backups auf diesem Ziel entfernen oder einem anderen Ziel "
+"zuweisen."
+
+#: gui/src/backend.rs:362
+msgid "Backup could not start because source or destination is unavailable."
+msgstr ""
+"Backup konnte nicht gestartet werden, da Quelle oder Ziel nicht verfügbar "
+"ist."
+
+#: gui/src/backend.rs:362
+msgid "The system password store (Secret Service / KWallet) is locked."
+msgstr "Der System-Passwortspeicher (Secret Service / KWallet) ist gesperrt."
+
+#: gui/src/qml/Main.qml:435
+msgid "Unlock…"
+msgstr "Entsperren…"
+
+#: gui/src/backend.rs:366
+msgid "restic is unavailable or too old."
+msgstr "restic ist nicht verfügbar oder zu alt."
+
+#: gui/src/backend.rs:368
+msgid "Another run is already active on this destination."
+msgstr "Auf diesem Ziel ist bereits ein anderer Lauf aktiv."
+
+#: gui/src/backend.rs:467
+msgid ""
+"The background service is not running. Scheduled backups will not take place."
+msgstr ""
+"Der Hintergrunddienst läuft nicht. Geplante Backups finden nicht statt."
+
+#: gui/src/backend.rs:471
+msgid "Background service not running"
+msgstr "Hintergrunddienst läuft nicht"
+
+#: gui/src/backend.rs:572 gui/src/backend.rs:708 gui/src/backend.rs:1194
+msgid "Background service unavailable."
+msgstr "Hintergrunddienst nicht verfügbar."
+
+#: gui/src/backend.rs:794
+msgid "Saved password updated"
+msgstr "Gespeichertes Passwort aktualisiert"
+
+#: gui/src/backend.rs:883
+msgid "Backup not found."
+msgstr "Backup nicht gefunden."
+
+#: gui/src/backend.rs:1016
+msgid "Exclude rule added"
+msgstr "Ausschluss-Regel hinzugefügt"
+
+#: gui/src/backend.rs:1033
+msgid "Run from %1"
+msgstr "Lauf vom %1"
+
+#: gui/src/backend.rs:1053
+msgid "%1 · %2 added"
+msgstr "%1 · %2 hinzugefügt"
+
+#: gui/src/backend.rs:1058
+msgid "%1 new · %2 changed · %3 unchanged · %4 processed"
+msgstr "%1 neu · %2 geändert · %3 unverändert · %4 verarbeitet"
+
+#: gui/src/backend.rs:1064
+msgid "No file statistics available for this run."
+msgstr "Keine Dateistatistiken für diesen Lauf verfügbar."
+
+#: gui/src/backend.rs:1082
+msgid "Exit %1 · %2"
+msgstr "Exit %1 · %2"
+
+#: gui/src/backend.rs:1319 gui/src/qml/BackupSnapshotsPage.qml:57
+#: gui/src/qml/Main.qml:374 gui/src/qml/Main.qml:380
+msgid "Retry"
+msgstr "Erneut versuchen"
+
+#: gui/src/list_model.rs:88 gui/src/qml/NewBackupWizard.qml:40
+#: gui/src/qml/SpikeMain.qml:209
+msgid "Personal folder"
+msgstr "Persönlicher Ordner"
+
+#: gui/src/list_model.rs:89
+msgid "Photos"
+msgstr "Fotos"
+
+#: gui/src/list_model.rs:90
+msgid "Projects"
+msgstr "Projekte"
+
+#: gui/src/list_model.rs:94
+msgid "~ -> NAS · backed up 2 hours ago"
+msgstr "~ -> NAS · vor 2 Stunden gesichert"
+
+#: gui/src/list_model.rs:95
+msgid "/media/photos -> USB-Disk · waiting"
+msgstr "/media/photos -> USB-Disk · wartet"
+
+#: gui/src/list_model.rs:96
+msgid "~/Projects -> S3 · password rejected"
+msgstr "~/Projekte -> S3 · Passwort abgelehnt"
+
+#: gui/src/models.rs:350
+msgid "%1% · %2 of %3"
+msgstr "%1% · %2 von %3"
+
+#: gui/src/models.rs:355
+msgid "%1%"
+msgstr "%1%"
+
+#: gui/src/models.rs:371
+msgid "%1 · %2 new"
+msgstr "%1 · %2 neu"
+
+#: gui/src/models.rs:373
+msgid "No runs yet"
+msgstr "Noch keine Läufe"
+
+#: gui/src/models.rs:424
+msgid "Manual only (schedules follow in a future update)"
+msgstr "Nur manuell (Zeitpläne folgen in einer späteren Version)"
+
+#: gui/src/models.rs:425 gui/src/qml/SpikeMain.qml:256
 msgid "Standard (7 daily, 4 weekly, 12 monthly)"
 msgstr "Standard (7 tägliche, 4 wöchentliche, 12 monatliche)"
 
-#: gui/src/qml/Main.qml
+#: gui/src/models.rs:426
+msgid "Always allowed on manual start"
+msgstr "Bei manuellem Start immer erlaubt"
+
+#: gui/src/models.rs:556
+msgid "Local Folder"
+msgstr "Lokaler Ordner"
+
+#: gui/src/models.rs:562 gui/src/qml/AddDestinationWizard.qml:172
+msgid "REST Server"
+msgstr "REST-Server"
+
+#: gui/src/models.rs:898
+msgid "%1 files · %2"
+msgstr "%1 Dateien · %2"
+
+#: gui/src/models.rs:925
+msgid "Current destination (%1)"
+msgstr "Aktuelles Ziel (%1)"
+
+#: gui/src/models.rs:931
+msgid "Earlier snapshots on '%1'"
+msgstr "Frühere Snapshots auf '%1'"
+
+#: gui/src/state_cache.rs:205
+msgid "Background service did not claim its D-Bus name."
+msgstr "Der Hintergrunddienst hat seinen D-Bus-Namen nicht registriert."
+
+#: gui/src/state_cache.rs:369 gui/src/qml/AddDestinationWizard.qml:56
+#: gui/src/qml/DestinationEditPage.qml:58
+msgid "Please fill in all required fields."
+msgstr "Bitte alle Pflichtfelder ausfüllen."
+
+#: gui/src/state_cache.rs:466
+msgid "Custom restic path must not be empty."
+msgstr "Der eigene restic-Pfad darf nicht leer sein."
+
+#: gui/src/state_cache.rs:479
+msgid "just now"
+msgstr "gerade eben"
+
+#: gui/src/state_cache.rs:483
+msgid "1 minute ago"
+msgstr "vor 1 Minute"
+
+#: gui/src/state_cache.rs:486
+msgid "%1 minutes ago"
+msgstr "vor %1 Minuten"
+
+#: gui/src/state_cache.rs:490
+msgid "1 hour ago"
+msgstr "vor 1 Stunde"
+
+#: gui/src/state_cache.rs:493
+msgid "%1 hours ago"
+msgstr "vor %1 Stunden"
+
+#: gui/src/state_cache.rs:497
+msgid "1 day ago"
+msgstr "vor 1 Tag"
+
+#: gui/src/state_cache.rs:499
+msgid "%1 days ago"
+msgstr "vor %1 Tagen"
+
+#: gui/src/state_cache.rs:505
+msgid "%1 s"
+msgstr "%1 s"
+
+#: gui/src/state_cache.rs:511
+msgid "%1 min"
+msgstr "%1 min"
+
+#: gui/src/state_cache.rs:513
+msgid "%1 min %2 s"
+msgstr "%1 min %2 s"
+
+#: gui/src/state_cache.rs:519
+msgid "%1 h %2 min"
+msgstr "%1 h %2 min"
+
+#: gui/src/state_cache.rs:549
+msgid "Backing up · %1%"
+msgstr "Sichert · %1%"
+
+#: gui/src/state_cache.rs:555
+msgid "Waiting: source unavailable"
+msgstr "Wartet: Quelle nicht verfügbar"
+
+#: gui/src/state_cache.rs:556
+msgid "Waiting: destination unreachable"
+msgstr "Wartet: Ziel nicht erreichbar"
+
+#: gui/src/state_cache.rs:557
+msgid "Waiting: unavailable"
+msgstr "Wartet: nicht verfügbar"
+
+#: gui/src/state_cache.rs:568
+msgid "Backup failed"
+msgstr "Backup fehlgeschlagen"
+
+#: gui/src/state_cache.rs:569
+msgid "Failed: %1"
+msgstr "Fehlgeschlagen: %1"
+
+#: gui/src/state_cache.rs:575
+msgid "Backed up, %1 files unreadable"
+msgstr "Gesichert, %1 Dateien nicht lesbar"
+
+#: gui/src/state_cache.rs:577
+msgid "Backed up with warning"
+msgstr "Mit Warnung gesichert"
+
+#: gui/src/state_cache.rs:583
+msgid "Backed up · %1"
+msgstr "Gesichert · %1"
+
+#: gui/src/state_cache.rs:588 gui/src/state_cache.rs:677
+msgid "Cancelled"
+msgstr "Abgebrochen"
+
+#: gui/src/state_cache.rs:595
+msgid "Interrupted (sleep)"
+msgstr "Unterbrochen (Ruhezustand)"
+
+#: gui/src/state_cache.rs:602 gui/src/state_cache.rs:676
+msgid "Waiting"
+msgstr "Wartet"
+
+#: gui/src/state_cache.rs:609
+msgid "Backing up · 0%"
+msgstr "Sichert · 0%"
+
+#: gui/src/state_cache.rs:636
+msgid "Lock from an interrupted run"
+msgstr "Sperre von einem unterbrochenen Lauf"
+
+#: gui/src/state_cache.rs:642
+msgid "Unreachable"
+msgstr "Nicht erreichbar"
+
+#: gui/src/state_cache.rs:649
+msgid "Reachable · last checked %1"
+msgstr "Erreichbar · zuletzt geprüft %1"
+
+#: gui/src/state_cache.rs:672
+msgid "Backed up"
+msgstr "Gesichert"
+
+#: gui/src/state_cache.rs:673
+msgid "Warning"
+msgstr "Warnung"
+
+#: gui/src/state_cache.rs:674
+msgid "Failed"
+msgstr "Fehlgeschlagen"
+
+#: gui/src/state_cache.rs:675
+msgid "Running"
+msgstr "Läuft"
+
+#: gui/src/state_cache.rs:678
+msgid "Interrupted"
+msgstr "Unterbrochen"
+
+#: gui/src/state_cache.rs:686
+msgid "Today"
+msgstr "Heute"
+
+#: gui/src/state_cache.rs:691
+msgid "Yesterday"
+msgstr "Gestern"
+
+#: gui/src/state_cache.rs:721
+msgid "Maintenance %1"
+msgstr "Wartung %1"
+
+#: gui/src/state_cache.rs:722
+msgid "Restore %1"
+msgstr "Wiederherstellen %1"
+
+#: gui/src/state_cache.rs:724
+msgid "Metadata %1"
+msgstr "Metadaten %1"
+
+#: gui/src/state_cache.rs:730
+msgid "Cannot back up '%1': source is unavailable."
+msgstr "'%1' kann nicht gesichert werden: Quelle ist nicht verfügbar."
+
+#: gui/src/state_cache.rs:732
+msgid "Cannot back up '%1': destination is unreachable."
+msgstr "'%1' kann nicht gesichert werden: Ziel ist nicht erreichbar."
+
+#: gui/src/state_cache.rs:746
+msgid "%1 backups skipped: %2"
+msgstr "%1 Backups übersprungen: %2"
+
+#: gui/src/qml/AddDestinationWizard.qml:13
+msgid "Add Destination"
+msgstr "Ziel hinzufügen"
+
+#: gui/src/qml/AddDestinationWizard.qml:86
+#: gui/src/qml/DestinationEditPage.qml:92
+msgid "Destination saved"
+msgstr "Ziel gespeichert"
+
+#: gui/src/qml/AddDestinationWizard.qml:99
+#: gui/src/qml/DestinationEditPage.qml:113
+msgid "Choose Repository Folder"
+msgstr "Repository-Ordner wählen"
+
+#: gui/src/qml/AddDestinationWizard.qml:111
+msgid "Discard new destination?"
+msgstr "Neues Ziel verwerfen?"
+
+#: gui/src/qml/AddDestinationWizard.qml:112
+msgid "No repository or configuration has been created yet."
+msgstr "Es wurde noch kein Repository und keine Konfiguration erstellt."
+
+#: gui/src/qml/AddDestinationWizard.qml:138 gui/src/qml/NewBackupWizard.qml:236
+msgid "Step %1 of %2"
+msgstr "Schritt %1 von %2"
+
+#: gui/src/qml/NewBackupWizard.qml:218
+msgid "Discard backup setup?"
+msgstr "Backup-Einrichtung verwerfen?"
+
+#: gui/src/qml/AddDestinationWizard.qml:146
+msgid "Where should encrypted backups be stored?"
+msgstr "Wo sollen verschlüsselte Backups gespeichert werden?"
+
+#: gui/src/qml/AddDestinationWizard.qml:152
+msgid "Local Folder or External Drive"
+msgstr "Lokaler Ordner oder externes Laufwerk"
+
+#: gui/src/qml/AddDestinationWizard.qml:162
+msgid "Store snapshots in a local directory or mounted drive path."
+msgstr ""
+"Snapshots in einem lokalen Verzeichnis oder auf einem eingehängten Laufwerk "
+"speichern."
+
+#: gui/src/qml/AddDestinationWizard.qml:182
+msgid "Connect to a restic REST server over HTTPS or HTTP."
+msgstr "Mit einem restic-REST-Server über HTTPS oder HTTP verbinden."
+
+#: gui/src/qml/AddDestinationWizard.qml:198
+msgid "Where is the REST server located?"
+msgstr "Wo befindet sich der REST-Server?"
+
+#: gui/src/qml/AddDestinationWizard.qml:198
+msgid "Where should the local repository be stored?"
+msgstr "Wo soll das lokale Repository gespeichert werden?"
+
+#: gui/src/qml/AddDestinationWizard.qml:214 gui/src/qml/NewBackupWizard.qml:254
+msgid "Name*:"
+msgstr "Name*:"
+
+#: gui/src/qml/AddDestinationWizard.qml:216
+msgid "NAS"
+msgstr "NAS"
+
+#: gui/src/qml/AddDestinationWizard.qml:216
+msgid "Local Backup"
+msgstr "Lokales Backup"
+
+#: gui/src/qml/AddDestinationWizard.qml:218
+#: gui/src/qml/DestinationEditPage.qml:154
+msgid "Destination name"
+msgstr "Name des Ziels"
+
+#: gui/src/qml/AddDestinationWizard.qml:225
+#: gui/src/qml/DestinationEditPage.qml:159
+msgid "Name is required."
+msgstr "Name ist erforderlich."
+
+#: gui/src/qml/AddDestinationWizard.qml:230
+msgid "Address*:"
+msgstr "Adresse*:"
+
+#: gui/src/qml/AddDestinationWizard.qml:230
+msgid "Path*:"
+msgstr "Pfad*:"
+
+#: gui/src/qml/AddDestinationWizard.qml:242
+#: gui/src/qml/DestinationEditPage.qml:176
+msgid "REST server address"
+msgstr "REST-Server-Adresse"
+
+#: gui/src/qml/AddDestinationWizard.qml:242
+#: gui/src/qml/DestinationEditPage.qml:176
+msgid "Repository path"
+msgstr "Repository-Pfad"
+
+#: gui/src/qml/AddDestinationWizard.qml:248
+#: gui/src/qml/BackupSourceEditPage.qml:115
+#: gui/src/qml/DestinationEditPage.qml:182
+msgid "Choose…"
+msgstr "Wählen…"
+
+#: gui/src/qml/AddDestinationWizard.qml:249
+msgid "Choose repository folder"
+msgstr "Repository-Ordner wählen"
+
+#: gui/src/qml/AddDestinationWizard.qml:259
+#: gui/src/qml/DestinationEditPage.qml:192
+msgid "Enter a valid http:// or https:// address."
+msgstr "Gültige http://- oder https://-Adresse eingeben."
+
+#: gui/src/qml/AddDestinationWizard.qml:260
+#: gui/src/qml/DestinationEditPage.qml:193
+msgid "Path is required."
+msgstr "Pfad ist erforderlich."
+
+#: gui/src/qml/AddDestinationWizard.qml:265
+msgid "Repository:"
+msgstr "Repository:"
+
+#: gui/src/qml/AddDestinationWizard.qml:266
+msgid "Create new repository"
+msgstr "Neues Repository erstellen"
+
+#: gui/src/qml/AddDestinationWizard.qml:266
+msgid "Connect existing repository"
+msgstr "Bestehendes Repository verbinden"
+
+#: gui/src/qml/AddDestinationWizard.qml:268
+msgid "Repository setup mode"
+msgstr "Repository-Einrichtungsmodus"
+
+#: gui/src/qml/AddDestinationWizard.qml:277
+#: gui/src/qml/DestinationDetailPage.qml:125
+#: gui/src/qml/DestinationEditPage.qml:199
+msgid "Username:"
+msgstr "Benutzername:"
+
+#: gui/src/qml/AddDestinationWizard.qml:283
+#: gui/src/qml/DestinationEditPage.qml:205
+msgid "REST username"
+msgstr "REST-Benutzername"
+
+#: gui/src/qml/AddDestinationWizard.qml:288
+#: gui/src/qml/DestinationEditPage.qml:210
+msgid "Server password:"
+msgstr "Server-Passwort:"
+
+#: gui/src/qml/AddDestinationWizard.qml:295
+#: gui/src/qml/DestinationEditPage.qml:218
+msgid "REST server password"
+msgstr "REST-Server-Passwort"
+
+#: gui/src/qml/AddDestinationWizard.qml:300
+msgid "Repository password*:"
+msgstr "Repository-Passwort*:"
+
+#: gui/src/qml/AddDestinationWizard.qml:307
+msgid "Existing repository password"
+msgstr "Passwort des bestehenden Repositorys"
+
+#: gui/src/qml/AddDestinationWizard.qml:314
+#: gui/src/qml/AddDestinationWizard.qml:316
+#: gui/src/qml/DestinationEditPage.qml:237
+#: gui/src/qml/DestinationEditPage.qml:239
+msgid "Test Connection"
+msgstr "Verbindung testen"
+
+#: gui/src/qml/AddDestinationWizard.qml:330
+msgid "Backup Encryption Password"
+msgstr "Verschlüsselungspasswort für das Backup"
+
+#: gui/src/qml/AddDestinationWizard.qml:334
+msgid ""
+"Your backups are encrypted with this password. Kestic stores it securely in "
+"your password store."
+msgstr ""
+"Ihre Backups werden mit diesem Passwort verschlüsselt. Kestic speichert es "
+"sicher in Ihrem Passwortspeicher."
+
+#: gui/src/qml/AddDestinationWizard.qml:352
+msgid "Backup password*:"
+msgstr "Backup-Passwort*:"
+
+#: gui/src/qml/AddDestinationWizard.qml:356
+msgid "Backup password"
+msgstr "Backup-Passwort"
+
+#: gui/src/qml/AddDestinationWizard.qml:363
+msgid "Repeat password*:"
+msgstr "Passwort wiederholen*:"
+
+#: gui/src/qml/AddDestinationWizard.qml:367
+msgid "Repeat backup password"
+msgstr "Backup-Passwort wiederholen"
+
+#: gui/src/qml/AddDestinationWizard.qml:372
+msgid "Passwords do not match."
+msgstr "Passwörter stimmen nicht überein."
+
+#: gui/src/qml/AddDestinationWizard.qml:384
+#: gui/src/qml/AddDestinationWizard.qml:385 gui/src/qml/BackupDetailPage.qml:39
+#: gui/src/qml/BackupDetailPage.qml:150 gui/src/qml/NewBackupWizard.qml:301
+#: gui/src/qml/NewBackupWizard.qml:302 gui/src/qml/OverviewPage.qml:275
+msgid "Cancel"
+msgstr "Abbrechen"
+
+#: gui/src/qml/AddDestinationWizard.qml:398
+#: gui/src/qml/AddDestinationWizard.qml:400 gui/src/qml/NewBackupWizard.qml:309
+#: gui/src/qml/NewBackupWizard.qml:311
+msgid "Back"
+msgstr "Zurück"
+
+#: gui/src/qml/AddDestinationWizard.qml:407 gui/src/qml/NewBackupWizard.qml:317
+#: gui/src/qml/NewBackupWizard.qml:320
+msgid "Next"
+msgstr "Weiter"
+
+#: gui/src/qml/AddDestinationWizard.qml:407
+msgid "Save Destination"
+msgstr "Ziel speichern"
+
+#: gui/src/qml/BackupDetailPage.qml:12
+msgid "Backup"
+msgstr "Backup"
+
+#: gui/src/qml/BackupDetailPage.qml:43
+msgid "Start backup now"
+msgstr "Backup jetzt starten"
+
+#: gui/src/qml/BackupDetailPage.qml:56 gui/src/qml/OverviewPage.qml:302
+msgid "Rename…"
+msgstr "Umbenennen…"
+
+#: gui/src/qml/BackupDetailPage.qml:64 gui/src/qml/BackupFullConfigPage.qml:23
+#: gui/src/qml/OverviewPage.qml:295 gui/src/qml/RunDetailPage.qml:77
+msgid "Show Command"
+msgstr "Befehl anzeigen"
+
+#: gui/src/qml/BackupDetailPage.qml:75 gui/src/qml/OverviewPage.qml:307
+msgid "Remove from Kestic…"
+msgstr "Aus Kestic entfernen…"
+
+#: gui/src/qml/BackupDetailPage.qml:170
+msgid "Snapshots"
+msgstr "Snapshots"
+
+#: gui/src/qml/BackupDetailPage.qml:177 gui/src/qml/BackupDetailPage.qml:179
+msgid "Show all snapshots"
+msgstr "Alle Snapshots anzeigen"
+
+#: gui/src/qml/BackupDetailPage.qml:191 gui/src/qml/Main.qml:396
+msgid "Settings"
+msgstr "Einstellungen"
+
+#: gui/src/qml/BackupDetailPage.qml:198
+msgid "Source: %1"
+msgstr "Quelle: %1"
+
+#: gui/src/qml/BackupDetailPage.qml:200
+msgid "Edit source folder"
+msgstr "Quellordner bearbeiten"
+
+#: gui/src/qml/BackupDetailPage.qml:213
+#: gui/src/qml/BackupExcludesEditPage.qml:12
+msgid "Exclude rules"
+msgstr "Ausschluss-Regeln"
+
+#: gui/src/qml/BackupDetailPage.qml:215
+msgid "Edit exclude rules"
+msgstr "Ausschluss-Regeln bearbeiten"
+
+#: gui/src/qml/BackupDetailPage.qml:228
+msgid "Destination: %1"
+msgstr "Ziel: %1"
+
+#: gui/src/qml/BackupDetailPage.qml:230
+msgid "Assign destination"
+msgstr "Ziel zuweisen"
+
+#: gui/src/qml/BackupDetailPage.qml:243 gui/src/qml/BackupDetailPage.qml:245
+msgid "View full configuration"
+msgstr "Vollständige Konfiguration anzeigen"
+
+#: gui/src/qml/BackupExcludesEditPage.qml:45
+msgid "Exclude rules saved"
+msgstr "Ausschluss-Regeln gespeichert"
+
+#: gui/src/qml/BackupExcludesEditPage.qml:56
+#: gui/src/qml/BackupSourceEditPage.qml:55
+#: gui/src/qml/DestinationEditPage.qml:105
+msgid "Save"
+msgstr "Speichern"
+
+#: gui/src/qml/BackupExcludesEditPage.qml:65
+#: gui/src/qml/BackupSourceEditPage.qml:75
+#: gui/src/qml/DestinationEditPage.qml:126
+msgid "Save changes?"
+msgstr "Änderungen speichern?"
+
+#: gui/src/qml/BackupExcludesEditPage.qml:66
+msgid "You have unsaved changes to exclude rules."
+msgstr "Es gibt ungespeicherte Änderungen an den Ausschluss-Regeln."
+
+#: gui/src/qml/BackupExcludesEditPage.qml:88
+msgid ""
+"Rules in restic syntax (one per line: globs, **, !exceptions, $VAR; no "
+"regex):"
+msgstr ""
+"Regeln in restic-Syntax (eine pro Zeile: Globs, **, !Ausnahmen, $VAR; keine "
+"Regex):"
+
+#: gui/src/qml/BackupExcludesEditPage.qml:104
+#: gui/src/qml/NewBackupWizard.qml:289
+msgid "Exclude rules in restic syntax"
+msgstr "Ausschluss-Regeln in restic-Syntax"
+
+#: gui/src/qml/BackupExcludesEditPage.qml:111
+msgid "Exclude cache folders (with CACHEDIR.TAG)"
+msgstr "Cache-Ordner ausschliessen (mit CACHEDIR.TAG)"
+
+#: gui/src/qml/BackupExcludesEditPage.qml:114
+msgid "Exclude cache folders with CACHEDIR.TAG"
+msgstr "Cache-Ordner mit CACHEDIR.TAG ausschliessen"
+
+#: gui/src/qml/BackupFullConfigPage.qml:12
+msgid "Full Configuration"
+msgstr "Vollständige Konfiguration"
+
+#: gui/src/qml/BackupFullConfigPage.qml:31
+msgid "Copy as Text"
+msgstr "Als Text kopieren"
+
+#: gui/src/qml/BackupFullConfigPage.qml:34
+msgid "Configuration copied to clipboard"
+msgstr "Konfiguration in die Zwischenablage kopiert"
+
+#: gui/src/qml/BackupFullConfigPage.qml:43
+#: gui/src/qml/DestinationEditPage.qml:151
+msgid "Name:"
+msgstr "Name:"
+
+#: gui/src/qml/BackupFullConfigPage.qml:47
+msgid "ID:"
+msgstr "ID:"
+
+#: gui/src/qml/BackupFullConfigPage.qml:52 gui/src/qml/NewBackupWizard.qml:264
+msgid "Source:"
+msgstr "Quelle:"
+
+#: gui/src/qml/BackupFullConfigPage.qml:56 gui/src/qml/NewBackupWizard.qml:269
+#: gui/src/qml/SpikeMain.qml:229
+msgid "Destination:"
+msgstr "Ziel:"
+
+#: gui/src/qml/BackupFullConfigPage.qml:60 gui/src/qml/NewBackupWizard.qml:280
+msgid "Exclude rules:"
+msgstr "Ausschluss-Regeln:"
+
+#: gui/src/qml/BackupFullConfigPage.qml:61
+msgid "None"
+msgstr "Keine"
+
+#: gui/src/qml/BackupFullConfigPage.qml:65 gui/src/qml/SpikeMain.qml:233
+msgid "Schedule:"
+msgstr "Zeitplan:"
+
+#: gui/src/qml/BackupFullConfigPage.qml:69
+msgid "Retention:"
+msgstr "Aufbewahrung:"
+
+#: gui/src/qml/BackupFullConfigPage.qml:73
+msgid "Run conditions:"
+msgstr "Laufbedingungen:"
+
+#: gui/src/qml/BackupReassignPage.qml:12
+#: gui/src/qml/DestinationDetailPage.qml:12
+msgid "Destination"
+msgstr "Ziel"
+
+#: gui/src/qml/BackupReassignPage.qml:30
+msgid "Switch Destination…"
+msgstr "Ziel wechseln…"
+
+#: gui/src/qml/BackupReassignPage.qml:40
+msgid "Back up '%1' to '%2'?"
+msgstr "'%1' auf '%2' sichern?"
+
+#: gui/src/qml/BackupReassignPage.qml:41
+msgid "Switch Destination?"
+msgstr "Ziel wechseln?"
+
+#: gui/src/qml/BackupReassignPage.qml:43
+msgid ""
+"The snapshot series will start anew on '%1'; the next backup will read "
+"everything again. Existing snapshots remain on '%2' and can still be "
+"restored there."
+msgstr ""
+"Die Snapshot-Reihe beginnt auf '%1' neu; das nächste Backup liest alles "
+"erneut. Bestehende Snapshots bleiben auf '%2' erhalten und können dort "
+"weiterhin wiederhergestellt werden."
+
+#: gui/src/qml/BackupReassignPage.qml:48
+msgid "Switch Destination"
+msgstr "Ziel wechseln"
+
+#: gui/src/qml/BackupReassignPage.qml:53
+msgid "Destination updated"
+msgstr "Ziel aktualisiert"
+
+#: gui/src/qml/BackupReassignPage.qml:67
+msgid "Current Destination"
+msgstr "Aktuelles Ziel"
+
+#: gui/src/qml/BackupReassignPage.qml:79
+msgid "Choose Another Destination"
+msgstr "Anderes Ziel wählen"
+
+#: gui/src/qml/BackupReassignPage.qml:138 gui/src/qml/NewBackupWizard.qml:219
+msgid "Add New Destination…"
+msgstr "Neues Ziel hinzufügen…"
+
+#: gui/src/qml/BackupReassignPage.qml:141 gui/src/qml/NewBackupWizard.qml:222
+msgid "Add New Destination"
+msgstr "Neues Ziel hinzufügen"
+
+#: gui/src/qml/BackupSnapshotsPage.qml:12
+msgid "Snapshots · %1"
+msgstr "Snapshots · %1"
+
+#: gui/src/qml/BackupSnapshotsPage.qml:35
+msgid "Refresh"
+msgstr "Aktualisieren"
+
+#: gui/src/qml/BackupSnapshotsPage.qml:47
+msgid "Loading snapshots…"
+msgstr "Snapshots werden geladen…"
+
+#: gui/src/qml/BackupSnapshotsPage.qml:68
+msgid "No snapshots yet – the first backup is still pending"
+msgstr "Noch keine Snapshots – das erste Backup steht noch aus"
+
+#: gui/src/qml/BackupSourceEditPage.qml:13
+msgid "Source"
+msgstr "Quelle"
+
+#: gui/src/qml/BackupSourceEditPage.qml:44
+msgid "Source saved"
+msgstr "Quelle gespeichert"
+
+#: gui/src/qml/BackupSourceEditPage.qml:63 gui/src/qml/NewBackupWizard.qml:82
+msgid "Choose Source Folder"
+msgstr "Quellordner wählen"
+
+#: gui/src/qml/BackupSourceEditPage.qml:76
+msgid "You have unsaved changes to the source folder."
+msgstr "Es gibt ungespeicherte Änderungen am Quellordner."
+
+#: gui/src/qml/BackupSourceEditPage.qml:95
+msgid "Source path must not be empty."
+msgstr "Quellpfad darf nicht leer sein."
+
+#: gui/src/qml/BackupSourceEditPage.qml:101
+msgid "Folder:"
+msgstr "Ordner:"
+
+#: gui/src/qml/BackupSourceEditPage.qml:110 gui/src/qml/NewBackupWizard.qml:143
+msgid "Source folder path"
+msgstr "Pfad des Quellordners"
+
+#: gui/src/qml/BackupSourceEditPage.qml:116 gui/src/qml/NewBackupWizard.qml:150
+msgid "Choose source folder"
+msgstr "Quellordner wählen"
+
+#: gui/src/qml/BackupSourceEditPage.qml:122
+msgid "Kind:"
+msgstr "Art:"
+
+#: gui/src/qml/BackupSourceEditPage.qml:123
+msgid "Drive"
+msgstr "Laufwerk"
+
+#: gui/src/qml/BackupSourceEditPage.qml:123
+msgid "Folder"
+msgstr "Ordner"
+
+#: gui/src/qml/BackupsPage.qml:32
+msgid "%1 Backups"
+msgstr "%1 Backups"
+
+#: gui/src/qml/BackupsPage.qml:38 gui/src/qml/BackupsPage.qml:54
+msgid "New Backup…"
+msgstr "Neues Backup…"
+
+#: gui/src/qml/BackupsPage.qml:51
+msgid "Create a backup to define what folder to back up and where to store it."
+msgstr ""
+"Erstellen Sie ein Backup, um festzulegen, welcher Ordner gesichert und wo er "
+"gespeichert wird."
+
+#: gui/src/qml/DestinationDetailPage.qml:36
+msgid "Check Connection"
+msgstr "Verbindung prüfen"
+
+#: gui/src/qml/DestinationDetailPage.qml:43
+msgid "Edit Connection…"
+msgstr "Verbindung bearbeiten…"
+
+#: gui/src/qml/DestinationDetailPage.qml:59
+msgid "Remove Destination…"
+msgstr "Ziel entfernen…"
+
+#: gui/src/qml/DestinationDetailPage.qml:63
+msgid "First remove backups from Kestic or assign them to another destination"
+msgstr ""
+"Entfernen Sie zuerst die Backups aus Kestic oder weisen Sie sie einem "
+"anderen Ziel zu"
+
+#: gui/src/qml/DestinationDetailPage.qml:64
+msgid "Remove destination from Kestic"
+msgstr "Ziel aus Kestic entfernen"
+
+#: gui/src/qml/DestinationDetailPage.qml:78
+msgid "The stored password does not match this destination."
+msgstr "Das gespeicherte Passwort stimmt nicht mit diesem Ziel überein."
+
+#: gui/src/qml/DestinationDetailPage.qml:91
+msgid "An interrupted run left a repository lock on this destination."
+msgstr ""
+"Ein unterbrochener Lauf hat eine Repository-Sperre auf diesem Ziel "
+"hinterlassen."
+
+#: gui/src/qml/DestinationDetailPage.qml:106
+msgid "%1 · %2 · %3"
+msgstr "%1 · %2 · %3"
+
+#: gui/src/qml/DestinationDetailPage.qml:115
+msgid "Type:"
+msgstr "Typ:"
+
+#: gui/src/qml/DestinationDetailPage.qml:119
+msgid "Location:"
+msgstr "Speicherort:"
+
+#: gui/src/qml/DestinationDetailPage.qml:129
+msgid "Backups:"
+msgstr "Backups:"
+
+#: gui/src/qml/DestinationDetailPage.qml:130
+msgid "%1 configured backups"
+msgstr "%1 konfigurierte Backups"
+
+#: gui/src/qml/DestinationDetailPage.qml:136
+msgid "Remove destination requires removing or reassigning its backups first."
+msgstr ""
+"Um das Ziel zu entfernen, müssen dessen Backups zuerst entfernt oder neu "
+"zugewiesen werden."
+
+#: gui/src/qml/DestinationEditPage.qml:13
+msgid "Edit Connection"
+msgstr "Verbindung bearbeiten"
+
+#: gui/src/qml/DestinationEditPage.qml:127
+msgid "You have unsaved changes to this destination."
+msgstr "Es gibt ungespeicherte Änderungen an diesem Ziel."
+
+#: gui/src/qml/DestinationEditPage.qml:164
+msgid "Address:"
+msgstr "Adresse:"
+
+#: gui/src/qml/DestinationEditPage.qml:164
+msgid "Path:"
+msgstr "Pfad:"
+
+#: gui/src/qml/DestinationEditPage.qml:212
+#: gui/src/qml/DestinationEditPage.qml:224
+msgid "Leave empty to keep stored password"
+msgstr "Leer lassen, um gespeichertes Passwort zu behalten"
+
+#: gui/src/qml/DestinationEditPage.qml:222
+msgid "Repository password:"
+msgstr "Repository-Passwort:"
+
+#: gui/src/qml/DestinationEditPage.qml:230 gui/src/qml/Main.qml:560
+#: gui/src/qml/Main.qml:561
+msgid "Repository password"
+msgstr "Repository-Passwort"
+
+#: gui/src/qml/DestinationsPage.qml:22
+msgid "%1 Destinations"
+msgstr "%1 Ziele"
+
+#: gui/src/qml/DestinationsPage.qml:28 gui/src/qml/DestinationsPage.qml:44
+msgid "Add Destination…"
+msgstr "Ziel hinzufügen…"
+
+#: gui/src/qml/DestinationsPage.qml:40
+msgid "No destinations configured yet"
+msgstr "Noch keine Ziele eingerichtet"
+
+#: gui/src/qml/DestinationsPage.qml:41
+msgid ""
+"Add a local folder or REST server destination to store encrypted backups."
+msgstr ""
+"Fügen Sie einen lokalen Ordner oder einen REST-Server als Ziel hinzu, um "
+"verschlüsselte Backups zu speichern."
+
+#: gui/src/qml/DestinationsPage.qml:99
+msgid "%1 · %2 backups"
+msgstr "%1 · %2 Backups"
+
+#: gui/src/qml/HistoryPage.qml:78
+msgid "Filter history by backup"
+msgstr "Verlauf nach Backup filtern"
+
+#: gui/src/qml/HistoryPage.qml:89
+msgid "Issues"
+msgstr "Probleme"
+
+#: gui/src/qml/HistoryPage.qml:92
+msgid "Filter runs with issues"
+msgstr "Läufe mit Problemen filtern"
+
+#: gui/src/qml/HistoryPage.qml:100
+msgid "Search history…"
+msgstr "Verlauf durchsuchen…"
+
+#: gui/src/qml/HistoryPage.qml:101
+msgid "Search history"
+msgstr "Verlauf durchsuchen"
+
+#: gui/src/qml/HistoryPage.qml:112
+msgid "No matching runs found"
+msgstr "Keine passenden Läufe gefunden"
+
+#: gui/src/qml/HistoryPage.qml:113
+msgid "Completed, failed, and active backup runs appear here."
+msgstr "Abgeschlossene, fehlgeschlagene und aktive Backup-Läufe erscheinen hier."
+
+#: gui/src/qml/HistoryPage.qml:167 gui/src/qml/HistoryPage.qml:175
+#: gui/src/qml/HistoryPage.qml:176
+msgid "%1 · %2"
+msgstr "%1 · %2"
+
+#: gui/src/qml/Main.qml:309
+msgid "Configure Kestic…"
+msgstr "Kestic einrichten…"
+
+#: gui/src/qml/Main.qml:315
+msgid "About Kestic"
+msgstr "Über Kestic"
+
+#: gui/src/qml/Main.qml:325 gui/src/qml/SpikeMain.qml:65
+#: gui/src/qml/SpikeMain.qml:269
+msgid "Overview"
+msgstr "Übersicht"
+
+#: gui/src/qml/Main.qml:332 gui/src/qml/SpikeMain.qml:83
+#: gui/src/qml/SpikeMain.qml:134 gui/src/qml/SpikeMain.qml:176
+msgid "Backups"
+msgstr "Backups"
+
+#: gui/src/qml/Main.qml:339 gui/src/qml/SpikeMain.qml:95
+#: gui/src/qml/SpikeMain.qml:99
+msgid "Destinations"
+msgstr "Ziele"
+
+#: gui/src/qml/Main.qml:346 gui/src/qml/SpikeMain.qml:104
+#: gui/src/qml/SpikeMain.qml:108
+msgid "History"
+msgstr "Verlauf"
+
+#: gui/src/qml/Main.qml:387
+msgid "Download restic…"
+msgstr "restic herunterladen…"
+
+#: gui/src/qml/Main.qml:389
+msgid "Automatic restic download will be added in a future release."
+msgstr ""
+"Der automatische Download von restic wird in einer zukünftigen Version "
+"hinzugefügt."
+
+#: gui/src/qml/Main.qml:489
+msgid "Command · %1"
+msgstr "Befehl · %1"
+
+#: gui/src/qml/Main.qml:489
+msgid "Command"
+msgstr "Befehl"
+
+#: gui/src/qml/Main.qml:496 gui/src/qml/RunDetailPage.qml:363
+msgid "Copy"
+msgstr "Kopieren"
+
+#: gui/src/qml/Main.qml:499 gui/src/qml/RunDetailPage.qml:367
+msgid "Command copied to clipboard"
+msgstr "Befehl in die Zwischenablage kopiert"
+
+#: gui/src/qml/Main.qml:509
+msgid "Transparent restic command without plaintext secrets:"
+msgstr "Transparenter restic-Befehl ohne Klartext-Passwörter:"
+
+#: gui/src/qml/Main.qml:530
+msgid "Update Saved Password"
+msgstr "Gespeichertes Passwort aktualisieren"
+
+#: gui/src/qml/Main.qml:537
+msgid "Verify and Save"
+msgstr "Prüfen und speichern"
+
+#: gui/src/qml/Main.qml:552
+msgid ""
+"The saved password in your password store for '%1' does not match. The "
+"destination's own password is not changed."
+msgstr ""
+"Das für '%1' im Passwortspeicher hinterlegte Passwort stimmt nicht überein. "
+"Das Passwort des Ziels selbst wird dadurch nicht geändert."
+
+#: gui/src/qml/Main.qml:578
+msgid "Rename Backup"
+msgstr "Backup umbenennen"
+
+#: gui/src/qml/Main.qml:584
+msgid "Rename"
+msgstr "Umbenennen"
+
+#: gui/src/qml/Main.qml:590
+msgid "Backup renamed"
+msgstr "Backup umbenannt"
+
+#: gui/src/qml/Main.qml:602
+msgid "New backup name"
+msgstr "Neuer Backup-Name"
+
+#: gui/src/qml/Main.qml:611 gui/src/qml/Main.qml:634
+msgid "Remove '%1' from Kestic?"
+msgstr "'%1' aus Kestic entfernen?"
+
+#: gui/src/qml/Main.qml:612
+msgid "Snapshots will remain in the destination."
+msgstr "Snapshots bleiben im Ziel erhalten."
+
+#: gui/src/qml/Main.qml:619
+msgid "Remove"
+msgstr "Entfernen"
+
+#: gui/src/qml/Main.qml:623
+msgid "Backup removed from Kestic"
+msgstr "Backup aus Kestic entfernt"
+
+#: gui/src/qml/Main.qml:635
+msgid "Snapshots on this destination remain untouched."
+msgstr "Snapshots auf diesem Ziel bleiben unangetastet."
+
+#: gui/src/qml/Main.qml:640
+msgid "Remove Destination"
+msgstr "Ziel entfernen"
+
+#: gui/src/qml/Main.qml:644
+msgid "Destination removed"
+msgstr "Ziel entfernt"
+
+#: gui/src/qml/Main.qml:655
+msgid "Quit Kestic?"
+msgstr "Kestic beenden?"
+
+#: gui/src/qml/Main.qml:657
+msgid ""
+"Scheduled backups will not run again until Kestic is started. The running "
+"backup '%1' will be cancelled."
+msgstr ""
+"Geplante Backups laufen erst wieder, wenn Kestic gestartet wird. Das "
+"laufende Backup '%1' wird abgebrochen."
+
+#: gui/src/qml/Main.qml:658
+msgid "Scheduled backups will not run again until Kestic is started."
+msgstr "Geplante Backups laufen erst wieder, wenn Kestic gestartet wird."
+
+#: gui/src/qml/Main.qml:665
+msgid "Quit Kestic"
+msgstr "Kestic beenden"
+
+#: gui/src/qml/Main.qml:812
+msgid "not available"
+msgstr "nicht verfügbar"
+
+#: gui/src/qml/Main.qml:812
+msgid "Encrypted backup manager for Plasma powered by restic (%1)"
+msgstr "Verschlüsselte Backup-Verwaltung für Plasma auf Basis von restic (%1)"
+
+#: gui/src/qml/NewBackupWizard.qml:13
+msgid "New Backup"
+msgstr "Neues Backup"
+
+#: gui/src/qml/NewBackupWizard.qml:60
+msgid "Backup saved"
+msgstr "Backup gespeichert"
+
+#: gui/src/qml/NewBackupWizard.qml:123
+msgid "What should be backed up?"
+msgstr "Was soll gesichert werden?"
+
+#: gui/src/qml/NewBackupWizard.qml:130
+msgid "Source folder*:"
+msgstr "Quellordner*:"
+
+#: gui/src/qml/NewBackupWizard.qml:148
+msgid "Choose Other Folder…"
+msgstr "Anderen Ordner wählen…"
+
+#: gui/src/qml/NewBackupWizard.qml:165
+msgid "Where should the backup be stored?"
+msgstr "Wo soll das Backup gespeichert werden?"
+
+#: gui/src/qml/NewBackupWizard.qml:238
+msgid "Summary"
+msgstr "Zusammenfassung"
+
+#: gui/src/qml/NewBackupWizard.qml:260
+msgid "Backup name"
+msgstr "Backup-Name"
+
+#: gui/src/qml/NewBackupWizard.qml:274
+msgid "Defaults:"
+msgstr "Standardwerte:"
+
+#: gui/src/qml/NewBackupWizard.qml:275
+msgid "Manual backups · Standard retention (7 daily, 4 weekly, 12 monthly)"
+msgstr ""
+"Manuelle Backups · Standard-Aufbewahrung (7 tägliche, 4 wöchentliche, 12 "
+"monatliche)"
+
+#: gui/src/qml/NewBackupWizard.qml:328 gui/src/qml/NewBackupWizard.qml:330
+msgid "Save, Back Up Later"
+msgstr "Speichern, später sichern"
+
+#: gui/src/qml/NewBackupWizard.qml:342
+msgid "Save and Back Up Now"
+msgstr "Speichern und jetzt sichern"
+
+#: gui/src/qml/OverviewPage.qml:23
+msgid "Back Up All Now"
+msgstr "Alle jetzt sichern"
+
+#: gui/src/qml/OverviewPage.qml:26
+msgid "Start all available backups"
+msgstr "Alle verfügbaren Backups starten"
+
+#: gui/src/qml/OverviewPage.qml:64
+msgid "Welcome to Kestic"
+msgstr "Willkommen bei Kestic"
+
+#: gui/src/qml/OverviewPage.qml:71
+msgid ""
+"Kestic regularly and securely encrypts and backs up your files to a drive, a "
+"server, or the cloud."
+msgstr ""
+"Kestic verschlüsselt und sichert Ihre Dateien regelmässig und sicher auf "
+"einem Laufwerk, einem Server oder in der Cloud."
+
+#: gui/src/qml/OverviewPage.qml:82 gui/src/qml/OverviewPage.qml:86
+msgid "Set Up First Backup"
+msgstr "Erstes Backup einrichten"
+
+#: gui/src/qml/OverviewPage.qml:94
+msgid "Connect Existing Backup…"
+msgstr "Bestehendes Backup verbinden…"
+
+#: gui/src/qml/OverviewPage.qml:96
+msgid "Connect Existing Backup"
+msgstr "Bestehendes Backup verbinden"
+
+#: gui/src/qml/OverviewPage.qml:204
+msgid "%1 → %2"
+msgstr "%1 → %2"
+
+#: gui/src/qml/OverviewPage.qml:255
+msgid "Back Up Now: %1"
+msgstr "Jetzt sichern: %1"
+
+#: gui/src/qml/OverviewPage.qml:268
+msgid "Update Saved Password for %1"
+msgstr "Gespeichertes Passwort für %1 aktualisieren"
+
+#: gui/src/qml/OverviewPage.qml:276
+msgid "Cancel backup %1"
+msgstr "Backup %1 abbrechen"
+
+#: gui/src/qml/OverviewPage.qml:284
+msgid "More actions for %1"
+msgstr "Weitere Aktionen für %1"
+
+#: gui/src/qml/RunDetailPage.qml:12
+msgid "Run Detail"
+msgstr "Laufdetails"
+
+#: gui/src/qml/RunDetailPage.qml:89
+msgid "Add to Exclude Rules?"
+msgstr "Zu Ausschluss-Regeln hinzufügen?"
+
+#: gui/src/qml/RunDetailPage.qml:90
+msgid ""
+"Rule: %1\n"
+"\n"
+"This path will no longer be backed up starting with the next backup. "
+"Existing snapshots remain unchanged."
+msgstr ""
+"Regel: %1\n"
+"\n"
+"Dieser Pfad wird ab dem nächsten Backup nicht mehr gesichert. Bestehende "
+"Snapshots bleiben unverändert."
+
+#: gui/src/qml/RunDetailPage.qml:97
+msgid "Add and Save"
+msgstr "Hinzufügen und speichern"
+
+#: gui/src/qml/RunDetailPage.qml:150 gui/src/qml/RunDetailPage.qml:151
+msgid "Result"
+msgstr "Ergebnis"
+
+#: gui/src/qml/RunDetailPage.qml:154 gui/src/qml/RunDetailPage.qml:155
+msgid "Log"
+msgstr "Protokoll"
+
+#: gui/src/qml/RunDetailPage.qml:158 gui/src/qml/RunDetailPage.qml:159
+msgid "Commands"
+msgstr "Befehle"
+
+#: gui/src/qml/RunDetailPage.qml:199
+msgid "Hide Details"
+msgstr "Details ausblenden"
+
+#: gui/src/qml/RunDetailPage.qml:199
+msgid "Details"
+msgstr "Details"
+
+#: gui/src/qml/RunDetailPage.qml:217
+msgid "Unreadable files"
+msgstr "Nicht lesbare Dateien"
+
+#: gui/src/qml/RunDetailPage.qml:239
+msgid "Add %1 to exclude rules"
+msgstr "%1 zu Ausschluss-Regeln hinzufügen"
+
+#: gui/src/qml/RunDetailPage.qml:262
+msgid "Filter log lines…"
+msgstr "Protokollzeilen filtern…"
+
+#: gui/src/qml/RunDetailPage.qml:263
+msgid "Filter log lines"
+msgstr "Protokollzeilen filtern"
+
+#: gui/src/qml/RunDetailPage.qml:270
+msgid "All"
+msgstr "Alle"
+
+#: gui/src/qml/RunDetailPage.qml:270
+msgid "Warnings"
+msgstr "Warnungen"
+
+#: gui/src/qml/RunDetailPage.qml:270
+msgid "Errors"
+msgstr "Fehler"
+
+#: gui/src/qml/RunDetailPage.qml:271
+msgid "Filter log severity"
+msgstr "Protokoll-Schweregrad filtern"
+
+#: gui/src/qml/RunDetailPage.qml:277 gui/src/qml/RunDetailPage.qml:278
+msgid "Copy Log"
+msgstr "Protokoll kopieren"
+
+#: gui/src/qml/RunDetailPage.qml:281
+msgid "Log copied to clipboard"
+msgstr "Protokoll in die Zwischenablage kopiert"
+
+#: gui/src/qml/RunDetailPage.qml:287 gui/src/qml/RunDetailPage.qml:289
+msgid "Open Log File"
+msgstr "Protokolldatei öffnen"
+
+#: gui/src/qml/RunDetailPage.qml:298
+msgid "No log available for this run"
+msgstr "Für diesen Lauf ist kein Protokoll verfügbar"
+
+#: gui/src/qml/RunDetailPage.qml:333
+msgid "No commands recorded for this run"
+msgstr "Für diesen Lauf sind keine Befehle aufgezeichnet"
+
+#: gui/src/qml/RunDetailPage.qml:364
+msgid "Copy command"
+msgstr "Befehl kopieren"
+
+#: gui/src/qml/SettingsDialog.qml:12 gui/src/qml/SettingsDialog.qml:97
+msgid "Configure Kestic"
+msgstr "Kestic einrichten"
+
+#: gui/src/qml/SettingsDialog.qml:38 gui/src/qml/SettingsDialog.qml:167
+msgid "Change restic Source"
+msgstr "restic-Quelle ändern"
+
+#: gui/src/qml/SettingsDialog.qml:47
+msgid "Apply"
+msgstr "Übernehmen"
+
+#: gui/src/qml/SettingsDialog.qml:62
+msgid "System restic (from PATH)"
+msgstr "System-restic (aus PATH)"
+
+#: gui/src/qml/SettingsDialog.qml:69
+msgid "Custom executable path"
+msgstr "Eigener Pfad zur ausführbaren Datei"
+
+#: gui/src/qml/SettingsDialog.qml:82
+msgid "Custom restic executable path"
+msgstr "Eigener Pfad zur ausführbaren restic-Datei"
+
+#: gui/src/qml/SettingsDialog.qml:102
+msgid "Appearance"
+msgstr "Erscheinungsbild"
+
+#: gui/src/qml/SettingsDialog.qml:108
+msgid "Expert mode:"
+msgstr "Expertenmodus:"
+
+#: gui/src/qml/SettingsDialog.qml:110
+msgid "Expert mode"
+msgstr "Expertenmodus"
+
+#: gui/src/qml/SettingsDialog.qml:115
+msgid "Shows technical identifiers, snapshot tags, and advanced fields."
+msgstr "Zeigt technische Kennungen, Snapshot-Tags und erweiterte Felder an."
+
+#: gui/src/qml/SettingsDialog.qml:123
+msgid "Background Service"
+msgstr "Hintergrunddienst"
+
+#: gui/src/qml/SettingsDialog.qml:127 gui/src/qml/SpikeMain.qml:259
 msgid "Status:"
 msgstr "Status:"
 
-#: gui/src/qml/Main.qml
-#, kde-format
+#: gui/src/qml/SettingsDialog.qml:129
+msgid "Running · starts with session"
+msgstr "Läuft · startet mit der Sitzung"
+
+#: gui/src/qml/SettingsDialog.qml:130
+msgid "Not running"
+msgstr "Läuft nicht"
+
+#: gui/src/qml/SettingsDialog.qml:134
+msgid ""
+"Closing the window does not exit Kestic; backups continue running. To quit, "
+"use the Kestic icon in the system tray."
+msgstr ""
+"Durch das Schliessen des Fensters wird Kestic nicht beendet; Backups laufen "
+"weiter. Verwenden Sie zum Beenden das Kestic-Symbol im Systemabschnitt."
+
+#: gui/src/qml/SettingsDialog.qml:142
+msgid "restic"
+msgstr "restic"
+
+#: gui/src/qml/SettingsDialog.qml:146
+msgid "restic source:"
+msgstr "restic-Quelle:"
+
+#: gui/src/qml/SettingsDialog.qml:148
+msgid "%1 (%2 · %3)"
+msgstr "%1 (%2 · %3)"
+
+#: gui/src/qml/SettingsDialog.qml:154
+msgid ""
+"Kestic requires restic 0.18.0 or newer for reliable JSON progress and lock "
+"handling."
+msgstr ""
+"Kestic benötigt restic 0.18.0 oder neuer für eine zuverlässige "
+"JSON-Fortschrittsanzeige und Sperrenbehandlung."
+
+#: gui/src/qml/SettingsDialog.qml:166
+msgid "Change restic Source…"
+msgstr "restic-Quelle ändern…"
+
+#: gui/src/qml/SettingsDialog.qml:178
+msgid "Update Now"
+msgstr "Jetzt aktualisieren"
+
+#: gui/src/qml/SettingsDialog.qml:180
+msgid "Update restic now"
+msgstr "restic jetzt aktualisieren"
+
+#: gui/src/qml/SettingsDialog.qml:182
+msgid "App-managed restic updates will arrive in a future version."
+msgstr "App-verwaltete restic-Aktualisierungen folgen in einer zukünftigen Version."
+
+#: gui/src/qml/SpikeMain.qml:25
+msgid "Back Up Now triggered (Ctrl+Shift+B)"
+msgstr "Jetzt sichern ausgelöst (Ctrl+Shift+B)"
+
+#: gui/src/qml/SpikeMain.qml:74 gui/src/qml/SpikeMain.qml:78
+msgid "Restore"
+msgstr "Wiederherstellen"
+
+#: gui/src/qml/SpikeMain.qml:217
+msgid "Back Up Now (Ctrl+Shift+B)"
+msgstr "Jetzt sichern (Ctrl+Shift+B)"
+
+#: gui/src/qml/SpikeMain.qml:222
+msgid "Retention…"
+msgstr "Aufbewahrung…"
+
+#: gui/src/qml/SpikeMain.qml:230
+msgid "NAS (REST server)"
+msgstr "NAS (REST-Server)"
+
+#: gui/src/qml/SpikeMain.qml:234
+msgid "Daily 12:00 · AC power and network"
+msgstr "Täglich 12:00 · am Strom und mit Netzwerk"
+
+#: gui/src/qml/SpikeMain.qml:237
+msgid "Last run:"
+msgstr "Letzter Lauf:"
+
+#: gui/src/qml/SpikeMain.qml:238
+msgid "Today 12:00, ok, 312 MB new"
+msgstr "Heute 12:00, ok, 312 MB neu"
+
+#: gui/src/qml/SpikeMain.qml:241
+msgid "Configure Retention…"
+msgstr "Aufbewahrung einrichten…"
+
+#: gui/src/qml/SpikeMain.qml:251
+msgid "Retention"
+msgstr "Aufbewahrung"
+
+#: gui/src/qml/SpikeMain.qml:255
+msgid "Preset:"
+msgstr "Vorlage:"
+
+#: gui/src/qml/SpikeMain.qml:260
 msgid "Triggered count: %1"
 msgstr "Auslösungen: %1"
+
+#: daemon/src/service.rs:953 gui/src/backend.rs:341
+msgid "This location is already used by destination '%1'."
+msgstr "Dieser Speicherort wird bereits vom Ziel '%1' verwendet."
+
+#: daemon/src/service.rs:989
+msgid ""
+"This folder already contains a restic repository. Choose 'Connect existing "
+"repository' instead."
+msgstr ""
+"Dieser Ordner enthält bereits ein restic-Repository. Wählen Sie stattdessen "
+"«Bestehendes Repository verbinden»."
+
+#: daemon/src/service.rs:1010
+msgid "Folder is not writable: %1"
+msgstr "Ordner ist nicht beschreibbar: %1"
+
+#: daemon/src/service.rs:1025 daemon/src/service.rs:1066
+msgid "No repository password provided or stored."
+msgstr "Kein Repository-Passwort angegeben oder gespeichert."
+
+#: gui/src/qml/DestinationEditPage.qml:163
+msgid "Create New Repository"
+msgstr "Neues Repository erstellen"
+
