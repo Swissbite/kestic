@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Isolated D-Bus integration tests for M0-S11:
 //! - AC-M0-11-2: `org.kde.JobViewServerV2` / `org.kde.JobViewV3` progress + Cancel

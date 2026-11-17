@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 #![forbid(unsafe_code)]
 
@@ -54,9 +54,7 @@ fn ac_m0_01_1_workspace_layout_exists() {
         "core/Cargo.toml",
         "daemon/Cargo.toml",
         "gui/Cargo.toml",
-        "LICENSES/GPL-2.0-only.txt",
-        "LICENSES/GPL-3.0-only.txt",
-        "LICENSES/LicenseRef-KDE-Accepted-GPL.txt",
+        "LICENSES/GPL-3.0-or-later.txt",
         "LICENSES/BSD-2-Clause.txt",
         "LICENSES/CC-BY-SA-4.0.txt",
         "LICENSES/CC0-1.0.txt",

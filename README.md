@@ -10,4 +10,4 @@ Native KDE-Plasma-App für Backups mit [restic](https://restic.net): so einfach 
 
 Stack: Rust + CXX-Qt + Kirigami (QML), Referenzsystem TUXEDO OS (Plasma 6.6, KDE Frameworks 6.24, Qt 6.10), Mindestversion restic 0.18.0.
 
-Lizenz: `GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL` (REUSE 3.0).
+Lizenz: `GPL-3.0-or-later` (REUSE 3.0).

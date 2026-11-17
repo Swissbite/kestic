@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 use kestic_core::clock::{Clock, FakeClock, SystemClock};
 use kestic_core::model::{Backup, Destination, DestinationKind, Run, Source};

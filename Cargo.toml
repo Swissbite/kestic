@@ -12,7 +12,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL"
+license = "GPL-3.0-or-later"
 authors = ["David Däster <david@daester.net>"]
 rust-version = "1.85"
 
