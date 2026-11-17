@@ -48,6 +48,7 @@ Projektspezifische Skills liegen agenten-neutral unter [.agents/skills/](.agents
 5. Vor Abschluss einer GUI-Story erzeugte Offscreen-Screenshots unter `target/smoke-artifacts/` visuell prüfen und neue UI-Strings direkt in `po/de/kestic.po` nachführen.
 6. `just verify` ausführen. **Grün = Story erledigt.** Sonst nicht als erledigt melden.
 7. Manuelle ACs nicht selbst abhaken, sondern in `manual-acceptance.md` offen lassen (Prüfung mit Schritt-für-Schritt-Anleitung gemäss `kestic-manual-acceptance`).
+8. **Meilenstein-Abschluss (Doku-Sync):** Bei Abschluss eines Meilensteins wird das englische [README.md](README.md) (und etwaige englische Einstiegsdoku) mit dem neuen Meilenstein-Stand abgeglichen; `docs/spec/` bleibt dabei einsprachig Deutsch.
 
 ## Prüfbefehl
 

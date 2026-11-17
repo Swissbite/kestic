@@ -24,15 +24,35 @@ RCLONE_PGP_FPR="FBF737ECE9F8AB18604BD2AC93935E02FF3B54FA"
 APT_PACKAGES=(
     just
     reuse
+    build-essential
+    pkg-config
     cmake
     extra-cmake-modules
     lld
+    gettext
+    desktop-file-utils
+    gnome-keyring
+    locales
+    procps
     qt6-base-dev
     qt6-declarative-dev
     qt6-tools-dev
     qt6-l10n-tools
+    qt6-qpa-plugins
+    qt6-svg-plugins
     libkirigami-dev
     kirigami-addons-dev
+    qml6-module-org-kde-kirigami
+    qml6-module-org-kde-kirigamiaddons-datetime
+    qml6-module-org-kde-kirigamiaddons-tableview
+    qml6-module-org-kde-desktop
+    qml6-module-qtquick-controls
+    qml6-module-qtquick-dialogs
+    qml6-module-qtquick-layouts
+    qml6-module-qtquick-templates
+    qml6-module-qtquick-window
+    qml6-module-qtqml-models
+    breeze-icon-theme
     libkf6i18n-dev
     libkf6coreaddons-dev
     libkf6crash-dev
@@ -185,8 +205,13 @@ ensure_apt_packages() {
     fi
 
     echo "[apt] Missing packages: ${missing[*]}"
-    sudo apt-get update
-    sudo apt-get install -y "${missing[@]}"
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        apt-get update
+        apt-get install -y "${missing[@]}"
+    else
+        sudo apt-get update
+        sudo apt-get install -y "${missing[@]}"
+    fi
 }
 
 ensure_rust_toolchain() {
