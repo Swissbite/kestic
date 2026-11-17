@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Restic command construction, tolerant `--json` stream parsing, execution, and error mapping
 //! (`NFR-02`, `NFR-10`, `FR-34`, `FR-37`, `FR-42`, `M1-S03`, `M1-S14`, `M1-S15`).
@@ -8,10 +8,11 @@ use crate::clock::Clock;
 use crate::model::{
     CommandRecord, Destination, DestinationId, DestinationKind, RunStats, RunStatus,
 };
+use crate::provider::ResolvedRestic;
 use crate::secrets::{SecretError, SecretStore, SecretValue};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,15 @@ use thiserror::Error;
 /// Secret kind selector passed to `kestic secret get <dest-id> [kind]`.
 pub const SECRET_KIND_REPO: &str = "repo";
 pub const SECRET_KIND_REST: &str = "rest";
+
+/// Shared runtime dependencies required to execute `restic` commands cleanly.
+#[derive(Clone, Copy)]
+pub struct ResticRuntime<'a> {
+    pub resolved: &'a ResolvedRestic,
+    pub kestic_binary: &'a Path,
+    pub secret_store: &'a dyn SecretStore,
+    pub clock: &'a dyn Clock,
+}
 
 /// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -345,6 +355,22 @@ impl ResticCommandSpec {
         }
     }
 
+    /// Creates a specification for running `restic unlock` against `destination` (`AC-M1-10-4`).
+    pub fn unlock(
+        restic_binary: impl Into<PathBuf>,
+        kestic_binary: impl Into<PathBuf>,
+        destination: &Destination,
+    ) -> Self {
+        let mut spec = Self::for_destination(
+            restic_binary,
+            kestic_binary,
+            destination,
+            vec!["unlock".to_string()],
+        );
+        spec.low_priority = false;
+        spec
+    }
+
     /// Formats the command invocation for user inspection / clipboard (`FR-34`, `AC-M1-14-1`, `AC-M1-14-2`).
     ///
     /// Never includes plaintext secrets.
@@ -433,6 +459,33 @@ impl ResticCommandSpec {
             (false, false) => (self.restic_binary.clone(), restic_args),
         }
     }
+}
+
+/// Builds an SSH command string for restic `sftp.command` / `sftp.args` that always enforces
+/// `-o UserKnownHostsFile=<path>` (`P24`, `NFR-07`, `AC-M1-Q-1`) and optionally adds
+/// `-F <ssh_config>` and `-o IdentitiesOnly=yes` for isolated test environments.
+pub fn build_isolated_ssh_sftp_command(
+    known_hosts_path: &Path,
+    ssh_config_path: Option<&Path>,
+    strict_identities: bool,
+) -> String {
+    let mut parts = vec![
+        "ssh".to_string(),
+        "-o".to_string(),
+        format!(
+            "UserKnownHostsFile={}",
+            quote_shell(&known_hosts_path.to_string_lossy())
+        ),
+    ];
+    if let Some(cfg) = ssh_config_path {
+        parts.push("-F".to_string());
+        parts.push(quote_shell(&cfg.to_string_lossy()));
+    }
+    if strict_identities {
+        parts.push("-o".to_string());
+        parts.push("IdentitiesOnly=yes".to_string());
+    }
+    parts.join(" ")
 }
 
 fn quote_shell(raw: &str) -> String {

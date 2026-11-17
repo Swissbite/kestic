@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! TOML configuration persistence with `config_version` checks (`ADR-0005`, `F13`, `NFR-03`, `M1-S02`).
 
-use crate::model::{Backup, Destination, ModelError, ResticProvider, RunId};
+use crate::model::{
+    Backup, BackupId, Destination, DestinationId, DestinationKind, ModelError, ResticProvider,
+    RunId,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::env;
@@ -118,14 +121,84 @@ impl AppConfig {
     }
 
     /// Looks up a [`Destination`] by ID.
-    pub fn destination(&self, id: &crate::model::DestinationId) -> Option<&Destination> {
+    pub fn destination(&self, id: &DestinationId) -> Option<&Destination> {
         self.destinations.iter().find(|d| &d.id == id)
     }
 
+    /// Finds another configured [`Destination`] targeting the same repository location as `kind`,
+    /// optionally excluding `exclude_id` (for editing an existing destination).
+    pub fn find_duplicate_destination(
+        &self,
+        kind: &DestinationKind,
+        exclude_id: Option<&DestinationId>,
+    ) -> Option<&Destination> {
+        self.destinations
+            .iter()
+            .find(|d| exclude_id != Some(&d.id) && d.kind.same_location(kind))
+    }
+
     /// Looks up a [`Backup`] by ID.
-    pub fn backup(&self, id: &crate::model::BackupId) -> Option<&Backup> {
+    pub fn backup(&self, id: &BackupId) -> Option<&Backup> {
         self.backups.iter().find(|b| &b.id == id)
     }
+
+    /// Removes and returns the [`Backup`] with `id`, or returns an error if not found (`M1-S19`).
+    pub fn remove_backup(&mut self, id: &BackupId) -> Result<Backup, ConfigError> {
+        let Some(pos) = self.backups.iter().position(|b| &b.id == id) else {
+            return Err(ConfigError::Validation(format!("backup '{id}' not found")));
+        };
+        Ok(self.backups.remove(pos))
+    }
+
+    /// Removes and returns the [`Destination`] with `id` if no [`Backup`] references it (`AC-M1-19-4`).
+    ///
+    /// If any backup references `id`, returns [`ConfigError::Validation`] listing the referencing
+    /// backup names and IDs without modifying `self`.
+    pub fn remove_destination(&mut self, id: &DestinationId) -> Result<Destination, ConfigError> {
+        let referencing: Vec<String> = self
+            .backups
+            .iter()
+            .filter(|b| &b.destination_id == id)
+            .map(|b| format!("{} ({})", b.name, b.id))
+            .collect();
+        if !referencing.is_empty() {
+            return Err(ConfigError::Validation(format!(
+                "destination '{id}' is still referenced by backup(s): {}",
+                referencing.join(", ")
+            )));
+        }
+        let Some(pos) = self.destinations.iter().position(|d| &d.id == id) else {
+            return Err(ConfigError::Validation(format!(
+                "destination '{id}' not found"
+            )));
+        };
+        Ok(self.destinations.remove(pos))
+    }
+
+    /// Reassigns `backup_id` to `new_dest_id` (`M1-S22`), keeping `backup.id` unchanged.
+    pub fn reassign_backup(
+        &mut self,
+        backup_id: &BackupId,
+        new_dest_id: &DestinationId,
+    ) -> Result<(), ConfigError> {
+        if self.destination(new_dest_id).is_none() {
+            return Err(ConfigError::Validation(format!(
+                "destination '{new_dest_id}' not found"
+            )));
+        }
+        let Some(backup) = self.backups.iter_mut().find(|b| &b.id == backup_id) else {
+            return Err(ConfigError::Validation(format!(
+                "backup '{backup_id}' not found"
+            )));
+        };
+        backup.reassign_destination(new_dest_id.clone());
+        Ok(())
+    }
+}
+
+/// Formats a single [`Backup`] configuration as pretty TOML without secrets (`§8.11`).
+pub fn backup_toml_snippet(backup: &crate::model::Backup) -> String {
+    toml::to_string_pretty(backup).unwrap_or_default()
 }
 
 /// Resolves the canonical configuration file path (`$XDG_CONFIG_HOME/kestic/config.toml`).

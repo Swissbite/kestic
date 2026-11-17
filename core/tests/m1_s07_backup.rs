@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 mod common;
 
@@ -10,7 +10,7 @@ use kestic_core::clock::FakeClock;
 use kestic_core::destination::{DestinationSetupMode, setup_destination};
 use kestic_core::model::{Backup, Destination, DestinationKind, ExcludeRules, RunStatus, Source};
 use kestic_core::provider::check_binary_version;
-use kestic_core::restic::CancelHandle;
+use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_core::secrets::{FileSecretStore, SecretValue};
 use std::fs;
 use std::process::Command;
@@ -41,6 +41,12 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
         let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
         let resolved = check_binary_version(&restic_bin).expect("resolved restic");
         let clock = FakeClock::new(datetime!(2026-12-01 11:00:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+        };
 
         let dest = Destination::new(
             "Local",
@@ -50,17 +56,8 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
         )
         .expect("dest");
         let pw = SecretValue::from_str_secret("backup-test-pw");
-        setup_destination(
-            &dest,
-            DestinationSetupMode::InitNew,
-            &pw,
-            None,
-            &store,
-            &resolved,
-            &helper,
-            &clock,
-        )
-        .expect("init repo");
+        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
+            .expect("init repo");
 
         let mut backup_a =
             Backup::new("Docs A", Source::folder(&src_a), dest.id.clone()).expect("backup a");
@@ -74,10 +71,7 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
             &backup_a,
             &dest,
             &state_dir,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &runtime,
             None,
             &[("RESTIC_HOST", "host-one")],
             |_| {},
@@ -100,10 +94,7 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
             &backup_a,
             &dest,
             &state_dir,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &runtime,
             None,
             &[("RESTIC_HOST", "host-two")],
             |_| {},
@@ -121,10 +112,7 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
             &backup_b,
             &dest,
             &state_dir,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &runtime,
             None,
             &[("RESTIC_HOST", "host-one")],
             |_| {},
@@ -222,6 +210,12 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
     let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
     let resolved = check_binary_version(&restic_bin).expect("resolved restic");
     let clock = FakeClock::new(datetime!(2026-12-01 11:30:00 UTC));
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: &store,
+        clock: &clock,
+    };
 
     let dest = Destination::new(
         "Local",
@@ -231,17 +225,7 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
     )
     .expect("dest");
     let pw = SecretValue::from_str_secret("cancel-test-pw");
-    setup_destination(
-        &dest,
-        DestinationSetupMode::InitNew,
-        &pw,
-        None,
-        &store,
-        &resolved,
-        &helper,
-        &clock,
-    )
-    .expect("init");
+    setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime).expect("init");
 
     let backup = Backup::new("Cancel Me", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     let cancel = Arc::new(CancelHandle::new());
@@ -256,10 +240,7 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
         &backup,
         &dest,
         &state_dir,
-        &resolved,
-        &helper,
-        &store,
-        &clock,
+        &runtime,
         Some(&cancel),
         &[],
         |_| {},

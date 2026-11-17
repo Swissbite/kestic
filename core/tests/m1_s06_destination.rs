@@ -1,19 +1,19 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 mod common;
 
 use kestic_core::clock::FakeClock;
 use kestic_core::destination::{
-    DestinationError, DestinationSetupMode, remove_destination_secrets, setup_destination,
-    verify_and_update_stored_password,
+    DestinationError, DestinationSetupMode, preflight_check_destination,
+    remove_destination_secrets, setup_destination, verify_and_update_stored_password,
 };
 use kestic_core::model::{Destination, DestinationKind};
 use kestic_core::provider::check_binary_version;
-use kestic_core::restic::{ResticCommandSpec, run_restic};
+use kestic_core::restic::{ResticCommandSpec, ResticRuntime, run_restic};
 use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
 use std::fs;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use time::macros::datetime;
 
@@ -28,6 +28,12 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
         let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
         let resolved = check_binary_version(&restic_bin).expect("resolved restic");
         let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+        };
 
         let dest = Destination::new(
             "Local Disk",
@@ -39,17 +45,8 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
         let pw = SecretValue::from_str_secret("correct-repo-password");
 
         // AC-M1-06-1: init empty folder -> repo exists and `restic snapshots` exits 0.
-        setup_destination(
-            &dest,
-            DestinationSetupMode::InitNew,
-            &pw,
-            None,
-            &store,
-            &resolved,
-            &helper,
-            &clock,
-        )
-        .unwrap_or_else(|e| panic!("{label}: local init failed: {e}"));
+        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
+            .unwrap_or_else(|e| panic!("{label}: local init failed: {e}"));
 
         let snap_spec = ResticCommandSpec::for_destination(
             &resolved.binary,
@@ -79,10 +76,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             DestinationSetupMode::ConnectExisting,
             &wrong_pw,
             None,
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &runtime,
         )
         .expect_err("wrong password must fail");
         assert!(
@@ -110,10 +104,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             DestinationSetupMode::ConnectExisting,
             &pw,
             None,
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &runtime,
         )
         .unwrap_or_else(|e| panic!("{label}: connect failed: {e}"));
         assert_eq!(
@@ -134,10 +125,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             DestinationSetupMode::ConnectExisting,
             &pw,
             None,
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &runtime,
         )
         .expect_err("missing folder must fail preflight");
         assert!(matches!(missing_err, DestinationError::Unreachable(_)));
@@ -163,6 +151,12 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
         let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
         let resolved = check_binary_version(&restic_bin).expect("resolved restic");
         let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+        };
 
         // AC-M1-06-2: REST init with separate REST credentials (`RESTIC_REST_USERNAME`/`PASSWORD`).
         let dest = Destination::new(
@@ -181,10 +175,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             DestinationSetupMode::InitNew,
             &repo_pw,
             Some(&rest_pw),
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &runtime,
         )
         .unwrap_or_else(|e| panic!("{label}: REST init failed: {e}"));
 
@@ -206,10 +197,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             DestinationSetupMode::ConnectExisting,
             &repo_pw,
             Some(&wrong_rest_pw),
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &runtime,
         )
         .expect_err("wrong REST auth must fail");
         assert!(
@@ -240,14 +228,28 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             DestinationSetupMode::ConnectExisting,
             &repo_pw,
             Some(&rest_pw),
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &runtime,
         )
         .expect_err("stopped server must fail");
         assert!(start.elapsed().as_secs() <= 15);
         assert!(matches!(down_err, DestinationError::Unreachable(_)));
+
+        // IDN / Umlaut hostnames must be translated to Punycode instead of failing URI parsing.
+        let idn_dest = Destination::new(
+            "REST IDN",
+            DestinationKind::Rest {
+                url: "http://ümlaut-test.invalid:1/pfäd".to_string(),
+                username: None,
+            },
+        )
+        .expect("idn dest");
+        let idn_err = preflight_check_destination(&idn_dest, Duration::from_secs(2))
+            .expect_err("nonexistent .invalid host should fail network/DNS, not URI syntax");
+        let idn_msg = idn_err.to_string();
+        assert!(
+            !idn_msg.contains("invalid uri character"),
+            "IDN URL must be Punycode-encoded before ureq call; got: {idn_msg}"
+        );
     }
 }
 
@@ -262,6 +264,12 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
         let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
         let resolved = check_binary_version(&restic_bin).expect("resolved restic");
         let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+        };
 
         let dest = Destination::new(
             "Local",
@@ -279,10 +287,7 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
             DestinationSetupMode::InitNew,
             &real_pw,
             None,
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &runtime,
         )
         .expect("init");
         store
@@ -332,4 +337,51 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
             "{label}: keys mutated!"
         );
     }
+}
+
+#[test]
+fn rest_preflight_handles_non_ascii_redirect_location_and_https_tls_without_panic() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    // 1. A 3xx redirect carrying an unescaped UTF-8 Location header still proves TCP+HTTP
+    //    reachability (`P32`) and must not fail with `http: invalid uri character`.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock 302 listener");
+    let port = listener.local_addr().expect("local_addr").port();
+    let handle = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 512];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(
+                b"HTTP/1.1 302 Found\r\nLocation: https://synology.d\xc3\xa4ster.ch:6789/tuxedo-dave/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            let _ = stream.flush();
+        }
+    });
+
+    let redirect_dest = Destination::new(
+        "REST Redirect",
+        DestinationKind::Rest {
+            url: format!("http://127.0.0.1:{port}/tuxedo-dave\u{200B}"),
+            username: None,
+        },
+    )
+    .expect("redirect dest");
+    preflight_check_destination(&redirect_dest, Duration::from_secs(2))
+        .expect("302 with UTF-8 Location must still satisfy HTTP reachability preflight");
+    let _ = handle.join();
+
+    // 2. HTTPS preflight must configure NativeTls + PlatformVerifier without panicking on `https://`.
+    let closed_port = common::unused_loopback_port();
+    let https_dest = Destination::new(
+        "REST HTTPS",
+        DestinationKind::Rest {
+            url: format!("https://127.0.0.1:{closed_port}/tuxedo-dave"),
+            username: None,
+        },
+    )
+    .expect("https dest");
+    let err = preflight_check_destination(&https_dest, Duration::from_secs(2))
+        .expect_err("closed HTTPS port must return Unreachable instead of panicking");
+    assert!(matches!(err, DestinationError::Unreachable(_)));
 }

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{
@@ -153,4 +153,97 @@ fn ac_m1_01_3_run_kinds_relations_and_statuses() {
         RunStatus::Interrupted,
     ];
     assert_eq!(all_statuses.len(), 7);
+}
+
+#[test]
+fn destination_location_normalization_and_duplicate_detection() {
+    use kestic_core::config::AppConfig;
+
+    let local_a = DestinationKind::Local {
+        path: "/tmp/kestic-dup-test/repo/".into(),
+    };
+    let local_b = DestinationKind::Local {
+        path: "/tmp/kestic-dup-test/sub/../repo".into(),
+    };
+    let local_c = DestinationKind::Local {
+        path: "/tmp/kestic-dup-test/other".into(),
+    };
+    assert!(local_a.same_location(&local_b));
+    assert!(!local_a.same_location(&local_c));
+
+    let rest_a = DestinationKind::Rest {
+        url: "HTTPS://Backup.Example.ORG:8000/alice/".to_string(),
+        username: Some("alice".to_string()),
+    };
+    let rest_b = DestinationKind::Rest {
+        url: "https://backup.example.org:8000/alice".to_string(),
+        username: Some("bob".to_string()),
+    };
+    assert!(rest_a.same_location(&rest_b));
+    assert!(!rest_a.same_location(&local_a));
+
+    let dest1 = Destination::new("Primary", local_a).expect("dest1");
+    let dest2 = Destination::new("Secondary", local_c).expect("dest2");
+    let cfg = AppConfig {
+        destinations: vec![dest1.clone(), dest2.clone()],
+        ..Default::default()
+    };
+
+    assert_eq!(
+        cfg.find_duplicate_destination(&local_b, None)
+            .map(|d| &d.id),
+        Some(&dest1.id)
+    );
+    assert_eq!(
+        cfg.find_duplicate_destination(&local_b, Some(&dest1.id))
+            .map(|d| &d.id),
+        None
+    );
+    assert_eq!(
+        cfg.find_duplicate_destination(&local_b, Some(&dest2.id))
+            .map(|d| &d.id),
+        Some(&dest1.id)
+    );
+}
+
+#[test]
+fn rest_idna_punycode_normalization_and_repository_uri() {
+    use kestic_core::model::normalize_rest_url_to_ascii;
+
+    assert_eq!(
+        normalize_rest_url_to_ascii("https://bäckup.example.org:8000").expect("idn root"),
+        "https://xn--bckup-gra.example.org:8000"
+    );
+    assert_eq!(
+        normalize_rest_url_to_ascii("https://Bäckup.Example.ORG:8000/pfäd/").expect("idn path"),
+        "https://xn--bckup-gra.example.org:8000/pf%C3%A4d/"
+    );
+
+    let unicode_rest = DestinationKind::Rest {
+        url: "https://müller.example.org:8000/alice".to_string(),
+        username: Some("alice".to_string()),
+    };
+    let puny_rest = DestinationKind::Rest {
+        url: "https://xn--mller-kva.example.org:8000/alice/".to_string(),
+        username: Some("alice".to_string()),
+    };
+
+    assert_eq!(
+        unicode_rest.repository_uri(),
+        "rest:https://xn--mller-kva.example.org:8000/alice"
+    );
+    assert!(unicode_rest.same_location(&puny_rest));
+
+    // Pasted URLs with invisible zero-width/BOM characters and Umlauts normalize cleanly.
+    assert_eq!(
+        normalize_rest_url_to_ascii("https://synology.däster.ch:6789/tuxedo-dave").expect("umlaut"),
+        "https://synology.xn--dster-gra.ch:6789/tuxedo-dave"
+    );
+    assert_eq!(
+        normalize_rest_url_to_ascii(
+            "https://synology.xn--dster-gra.ch:6789/tuxedo-dave\u{200B}\u{FEFF}"
+        )
+        .expect("invisible chars stripped"),
+        "https://synology.xn--dster-gra.ch:6789/tuxedo-dave"
+    );
 }

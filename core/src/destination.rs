@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Destination initialization, connection verification, password updates, and preflight reachability checks
 //! (`FR-01`, `FR-15`, `FR-57`, `P32`, `P40`, `M1-S06`, `M1-S20`).
 
 use crate::clock::Clock;
-use crate::model::{Destination, DestinationKind};
+use crate::model::{Destination, DestinationKind, normalize_rest_url_to_ascii};
 use crate::provider::ResolvedRestic;
 use crate::restic::{
-    ResticCommandSpec, ResticExecutionResult, ResticFailureKind, ResticRunError, SECRET_KIND_REPO,
-    SECRET_KIND_REST,
+    ResticCommandSpec, ResticExecutionResult, ResticFailureKind, ResticRunError, ResticRuntime,
+    SECRET_KIND_REPO, SECRET_KIND_REST,
 };
 use crate::secrets::{SecretError, SecretStore, SecretValue};
 use std::fs;
@@ -79,22 +79,27 @@ pub fn preflight_check_destination(
             Ok(())
         }
         DestinationKind::Rest { url, .. } => {
-            let trimmed = url.trim();
-            if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
-                return Err(DestinationError::Unreachable(format!(
-                    "ungültige REST-URL: {trimmed}"
-                )));
-            }
+            let ascii_url = normalize_rest_url_to_ascii(url)
+                .map_err(|err| DestinationError::Unreachable(err.to_string()))?;
 
+            let tls_config = ureq::tls::TlsConfig::builder()
+                .provider(ureq::tls::TlsProvider::NativeTls)
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build();
             let config = ureq::Agent::config_builder()
+                .tls_config(tls_config)
                 .timeout_connect(Some(connect_timeout))
                 .timeout_global(Some(connect_timeout + Duration::from_secs(2)))
                 .http_status_as_error(false)
+                // Any HTTP status (including 3xx redirects, which may carry unescaped/IDN Location
+                // headers) proves TCP+TLS+HTTP reachability for preflight (`P32`).
+                .max_redirects(0)
+                .max_redirects_will_error(false)
                 .build();
             let agent = ureq::Agent::new_with_config(config);
 
             agent
-                .get(trimmed)
+                .get(&ascii_url)
                 .call()
                 .map(|_| ())
                 .map_err(|err| DestinationError::Unreachable(err.to_string()))
@@ -107,16 +112,12 @@ pub fn preflight_check_destination(
 /// Uses `--password-file` inside a private `0700` temp directory during the initial probe/init so
 /// `SecretStore` is never polluted if verification fails (`AC-M1-06-3`, `AC-M1-06-5`, `AC-M1-06-6`),
 /// and no password ever appears in `/proc/<pid>/cmdline`.
-#[allow(clippy::too_many_arguments)]
 pub fn setup_destination(
     dest: &Destination,
     mode: DestinationSetupMode,
     repo_password: &SecretValue,
     rest_password: Option<&SecretValue>,
-    secret_store: &dyn SecretStore,
-    resolved: &ResolvedRestic,
-    kestic_binary: &Path,
-    clock: &dyn Clock,
+    runtime: &ResticRuntime<'_>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
 
@@ -125,9 +126,9 @@ pub fn setup_destination(
         mode_subcommand(mode),
         repo_password,
         rest_password,
-        resolved,
-        kestic_binary,
-        clock,
+        runtime.resolved,
+        runtime.kestic_binary,
+        runtime.clock,
     )?;
 
     if res.exit_code != 0 {
@@ -135,10 +136,18 @@ pub fn setup_destination(
     }
 
     // Persist secrets only after restic succeeded (`AC-M1-06-3`, `AC-M1-06-5`, `AC-M1-06-6`).
-    secret_store.set_secret(dest.id.as_str(), SECRET_KIND_REPO, repo_password)?;
+    runtime
+        .secret_store
+        .set_secret(dest.id.as_str(), SECRET_KIND_REPO, repo_password)?;
     if let Some(rest_pw) = rest_password {
-        if let Err(err) = secret_store.set_secret(dest.id.as_str(), SECRET_KIND_REST, rest_pw) {
-            let _ = secret_store.delete_secret(dest.id.as_str(), SECRET_KIND_REPO);
+        if let Err(err) =
+            runtime
+                .secret_store
+                .set_secret(dest.id.as_str(), SECRET_KIND_REST, rest_pw)
+        {
+            let _ = runtime
+                .secret_store
+                .delete_secret(dest.id.as_str(), SECRET_KIND_REPO);
             return Err(err.into());
         }
     }

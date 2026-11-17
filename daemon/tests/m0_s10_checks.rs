@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Integration tests for M0-S10: Portal-Inhibit (F9) and replaced-binary detection (E11).
 
@@ -13,7 +13,7 @@ use std::sync::{
 };
 use std::thread;
 use std::time::{Duration, Instant};
-use zbus::{Connection, OwnedObjectPath, OwnedVariant, block_on, interface};
+use zbus::{OwnedObjectPath, OwnedVariant, block_on, interface};
 
 struct TempDirGuard(PathBuf);
 
@@ -238,6 +238,3 @@ fn ac_m0_10_1_portal_inhibit_roundtrip_in_isolated_dbus_session() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
-
-#[allow(dead_code)]
-fn _keep_connection_imported(_: Connection) {}

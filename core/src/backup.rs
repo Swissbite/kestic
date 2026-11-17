@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Backup execution with `kestic:<backup-id>` tags, `--group-by tags`, and exclude files
 //! (`FR-28`, `F13`, `FR-30`, `M1-S07`).
@@ -9,8 +9,8 @@ use crate::destination::{DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_ch
 use crate::model::{Backup, BackupId, Destination, RunId, RunStatus};
 use crate::provider::ResolvedRestic;
 use crate::restic::{
-    CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticRunError, ResticStreamEvent,
-    run_restic,
+    CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticRunError, ResticRuntime,
+    ResticStreamEvent, run_restic,
 };
 use crate::secrets::SecretStore;
 use crate::snapshot::ResticSnapshot;
@@ -132,15 +132,11 @@ pub fn check_source_available(backup: &Backup) -> Result<(), BackupRunError> {
 }
 
 /// Executes a backup run with tag `kestic:<backup-id>`, `--group-by tags`, and exclude file (`M1-S07`).
-#[allow(clippy::too_many_arguments)]
 pub fn execute_backup<F>(
     backup: &Backup,
     destination: &Destination,
     state_dir: &Path,
-    resolved: &ResolvedRestic,
-    kestic_binary: &Path,
-    secret_store: &dyn SecretStore,
-    clock: &dyn Clock,
+    runtime: &ResticRuntime<'_>,
     cancel: Option<&CancelHandle>,
     extra_env: &[(&str, &str)],
     on_event: F,
@@ -151,12 +147,18 @@ where
     check_source_available(backup)?;
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
 
-    let spec = build_backup_command_spec(backup, destination, state_dir, resolved, kestic_binary)?;
+    let spec = build_backup_command_spec(
+        backup,
+        destination,
+        state_dir,
+        runtime.resolved,
+        runtime.kestic_binary,
+    )?;
     let res = run_restic(
         &spec,
         destination,
-        Some(secret_store),
-        clock,
+        Some(runtime.secret_store),
+        runtime.clock,
         cancel,
         extra_env,
         on_event,

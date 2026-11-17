@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Core domain model and glossary types (`F15`, `P38`, `M1-S01`).
 
@@ -155,10 +155,16 @@ pub enum DestinationKind {
 
 impl DestinationKind {
     /// Returns the restic repository URI/path passed via `-r` or `RESTIC_REPOSITORY`.
+    /// Translates internationalized (IDN/Umlaut) REST hostnames to Punycode ASCII and
+    /// percent-encodes non-ASCII path characters so `restic` and HTTP clients accept them.
     pub fn repository_uri(&self) -> String {
         match self {
             Self::Local { path } => path.to_string_lossy().into_owned(),
-            Self::Rest { url, .. } => format!("rest:{url}"),
+            Self::Rest { url, .. } => {
+                let normalized =
+                    normalize_rest_url_to_ascii(url).unwrap_or_else(|_| url.trim().to_string());
+                format!("rest:{normalized}")
+            }
         }
     }
 
@@ -166,6 +172,146 @@ impl DestinationKind {
     pub fn uses_rest_credentials(&self) -> bool {
         matches!(self, Self::Rest { username: Some(u), .. } if !u.is_empty())
     }
+
+    /// Normalized comparison key identifying the target repository location regardless of
+    /// trailing slashes, `.` / `..` segments, symlinks, IDN/Punycode equivalence, or URL host casing.
+    pub fn canonical_location_key(&self) -> String {
+        match self {
+            Self::Local { path } => {
+                format!("local:{}", normalize_local_path(path).to_string_lossy())
+            }
+            Self::Rest { url, .. } => format!("rest:{}", normalize_rest_url(url)),
+        }
+    }
+
+    /// Returns `true` if `self` and `other` point to the same underlying repository location.
+    pub fn same_location(&self, other: &Self) -> bool {
+        self.canonical_location_key() == other.canonical_location_key()
+    }
+}
+
+fn normalize_local_path(path: &std::path::Path) -> PathBuf {
+    if let Ok(canon) = std::fs::canonicalize(path) {
+        return canon;
+    }
+
+    let mut base = PathBuf::new();
+    let mut tail_components: Vec<std::path::Component<'_>> = Vec::new();
+    let raw_components: Vec<std::path::Component<'_>> = path.components().collect();
+
+    // Try canonicalizing the deepest existing prefix so symlinks like `/var` or `/tmp` resolve
+    // consistently even when the leaf directory was deleted from disk.
+    for split in (1..=raw_components.len()).rev() {
+        let prefix: PathBuf = raw_components[..split].iter().collect();
+        if let Ok(canon) = std::fs::canonicalize(&prefix) {
+            base = canon;
+            tail_components = raw_components[split..].to_vec();
+            break;
+        }
+    }
+
+    let components = if base.as_os_str().is_empty() {
+        raw_components
+    } else {
+        let mut combined: Vec<std::path::Component<'_>> = Vec::new();
+        combined.extend(tail_components);
+        combined
+    };
+
+    let mut out = base;
+    for comp in components {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if matches!(
+                    out.components().next_back(),
+                    Some(std::path::Component::Normal(_))
+                ) {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push(comp);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn strip_invisible_url_chars(raw: &str) -> String {
+    raw.trim()
+        .chars()
+        .filter(|&c| {
+            !matches!(
+                c,
+                '\u{00AD}' // soft hyphen
+                    | '\u{200B}' // zero-width space
+                    | '\u{200C}' // zero-width non-joiner
+                    | '\u{200D}' // zero-width joiner
+                    | '\u{200E}' // left-to-right mark
+                    | '\u{200F}' // right-to-left mark
+                    | '\u{2060}' // word joiner
+                    | '\u{FEFF}' // BOM / zero-width no-break space
+            )
+        })
+        .collect()
+}
+
+/// Normalizes an `http://` or `https://` REST URL into RFC-3986 ASCII:
+/// internationalized (Umlaut/Unicode) domain labels are converted to Punycode (`xn--...`)
+/// and non-ASCII path/query characters are percent-encoded.
+pub fn normalize_rest_url_to_ascii(raw: &str) -> Result<String, ModelError> {
+    let cleaned = strip_invisible_url_chars(raw);
+    let trimmed = cleaned.as_str();
+    let lower = trimmed.to_ascii_lowercase();
+    if trimmed.is_empty() || (!lower.starts_with("http://") && !lower.starts_with("https://")) {
+        return Err(ModelError::InvalidDestination(
+            "REST destination URL must start with http:// or https://".to_string(),
+        ));
+    }
+    let parsed = url::Url::parse(trimmed).map_err(|err| {
+        ModelError::InvalidDestination(format!("invalid REST destination URL: {err}"))
+    })?;
+    if parsed.host_str().is_none_or(str::is_empty) {
+        return Err(ModelError::InvalidDestination(
+            "REST destination URL must include a host".to_string(),
+        ));
+    }
+    let mut formatted = parsed.to_string();
+    if parsed.path() == "/"
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+        && !trimmed.ends_with('/')
+        && formatted.ends_with('/')
+    {
+        formatted.pop();
+    }
+    Ok(formatted)
+}
+
+fn normalize_rest_url(raw: &str) -> String {
+    if let Ok(ascii) = normalize_rest_url_to_ascii(raw) {
+        return ascii.trim_end_matches('/').to_string();
+    }
+    let trimmed = raw.trim();
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return trimmed.trim_end_matches('/').to_string();
+    };
+    let (authority, path_part) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, ""),
+    };
+    let normalized_authority = match authority.rsplit_once('@') {
+        Some((userinfo, host)) => format!("{userinfo}@{}", host.to_ascii_lowercase()),
+        None => authority.to_ascii_lowercase(),
+    };
+    let normalized_path = path_part.trim_end_matches('/');
+    format!(
+        "{}://{}{}",
+        scheme.to_ascii_lowercase(),
+        normalized_authority,
+        normalized_path
+    )
 }
 
 /// Secret Service reference keys for a [`Destination`] (never plaintext values, `NFR-02`, `NFR-03`).
@@ -260,14 +406,7 @@ impl Destination {
                 }
             }
             DestinationKind::Rest { url, .. } => {
-                let trimmed = url.trim();
-                if trimmed.is_empty()
-                    || (!trimmed.starts_with("http://") && !trimmed.starts_with("https://"))
-                {
-                    return Err(ModelError::InvalidDestination(
-                        "REST destination URL must start with http:// or https://".to_string(),
-                    ));
-                }
+                normalize_rest_url_to_ascii(url)?;
             }
         }
         if self.secrets.repo_password_ref.trim().is_empty() {

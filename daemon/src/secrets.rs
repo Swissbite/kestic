@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Direct `org.freedesktop.secrets` client over `zbus 6.3.0` (`plain` session),
 //! avoiding `zbus 5` / `secret-service 5.x` / `keyring 4.x` (M0-S08 Option B).
 
 use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use zbus::export::ordered_stream::OrderedStreamExt;
 use zbus::{Connection, OwnedObjectPath, OwnedVariant, Proxy, Variant, block_on};
 
 const SERVICE_PATH: &str = "/org/freedesktop/secrets";
@@ -13,6 +16,8 @@ const SERVICE_IFACE: &str = "org.freedesktop.Secret.Service";
 const COLLECTION_IFACE: &str = "org.freedesktop.Secret.Collection";
 const ITEM_IFACE: &str = "org.freedesktop.Secret.Item";
 const SESSION_IFACE: &str = "org.freedesktop.Secret.Session";
+const PROMPT_IFACE: &str = "org.freedesktop.Secret.Prompt";
+const INTERACTIVE_UNLOCK_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `org.freedesktop.secrets` implementation of [`SecretStore`] backed by `zbus 6.3.0`.
 #[derive(Debug, Clone)]
@@ -65,9 +70,7 @@ impl SecretServiceStore {
         }
     }
 
-    async fn resolve_unlocked_collection(
-        conn: &Connection,
-        dest: &str,
+    async fn resolve_default_collection(
         service: &Proxy<'_>,
         alias: &str,
     ) -> Result<OwnedObjectPath, SecretError> {
@@ -86,13 +89,31 @@ impl SecretServiceStore {
             })?;
         }
 
+        Ok(collection)
+    }
+
+    async fn is_collection_locked(
+        conn: &Connection,
+        dest: &str,
+        collection: &OwnedObjectPath,
+    ) -> Result<bool, SecretError> {
         let col_proxy = Proxy::new(conn, dest, collection.as_str(), COLLECTION_IFACE)
             .await
             .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
-        let locked: bool = col_proxy
+        col_proxy
             .get_property("Locked")
             .await
-            .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
+            .map_err(|e| SecretError::BackendUnavailable(e.to_string()))
+    }
+
+    async fn resolve_unlocked_collection(
+        conn: &Connection,
+        dest: &str,
+        service: &Proxy<'_>,
+        alias: &str,
+    ) -> Result<OwnedObjectPath, SecretError> {
+        let collection = Self::resolve_default_collection(service, alias).await?;
+        let locked = Self::is_collection_locked(conn, dest, &collection).await?;
 
         if locked {
             let (unlocked, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) = service
@@ -109,6 +130,177 @@ impl SecretServiceStore {
         }
 
         Ok(collection)
+    }
+
+    async fn wait_prompt_completed(
+        conn: &Connection,
+        dest: &str,
+        prompt_path: &OwnedObjectPath,
+        timeout: Duration,
+    ) -> Result<bool, SecretError> {
+        let prompt_proxy = Proxy::new(conn, dest, prompt_path.as_str(), PROMPT_IFACE)
+            .await
+            .map_err(|e| SecretError::Io(format!("Prompt proxy failed: {e}")))?;
+
+        // Subscribe to Completed before calling Prompt("") so fast responses are never missed.
+        let mut completed_stream = prompt_proxy
+            .receive_signal("Completed")
+            .await
+            .map_err(|e| SecretError::Io(format!("Prompt.Completed subscribe failed: {e}")))?;
+
+        let _: () = prompt_proxy
+            .call("Prompt", &("",))
+            .await
+            .map_err(|e| SecretError::Io(format!("Prompt.Prompt failed: {e}")))?;
+
+        let timer_done: Arc<Mutex<(bool, Option<std::task::Waker>)>> =
+            Arc::new(Mutex::new((false, None)));
+        let timer_bg = Arc::clone(&timer_done);
+        std::thread::spawn(move || {
+            std::thread::sleep(timeout);
+            let waker = {
+                let mut g = timer_bg.lock().unwrap_or_else(|p| p.into_inner());
+                g.0 = true;
+                g.1.take()
+            };
+            if let Some(w) = waker {
+                w.wake();
+            }
+        });
+
+        let msg_opt = {
+            let mut next_fut = std::pin::pin!(completed_stream.next());
+            let start = Instant::now();
+            std::future::poll_fn(|cx| {
+                if let std::task::Poll::Ready(item) = next_fut.as_mut().poll(cx) {
+                    return std::task::Poll::Ready(Some(item));
+                }
+                let mut g = timer_done.lock().unwrap_or_else(|p| p.into_inner());
+                if g.0 || start.elapsed() >= timeout {
+                    return std::task::Poll::Ready(None);
+                }
+                g.1 = Some(cx.waker().clone());
+                std::task::Poll::Pending
+            })
+            .await
+        };
+
+        let Some(Some(msg)) = msg_opt else {
+            return Err(SecretError::LockedOrPromptRequired(
+                "unlock prompt timed out".to_string(),
+            ));
+        };
+
+        let (dismissed, _result): (bool, OwnedVariant) = msg
+            .body()
+            .deserialize()
+            .map_err(|e| SecretError::Io(format!("Prompt.Completed decode failed: {e}")))?;
+        Ok(!dismissed)
+    }
+
+    async fn check_availability_async(&self) -> Result<(), SecretError> {
+        let conn = Connection::session()
+            .await
+            .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
+        let (service, session) = Self::open_plain_session(&conn, &self.dest).await?;
+
+        let res = async {
+            Self::resolve_unlocked_collection(&conn, &self.dest, &service, &self.collection_alias)
+                .await?;
+            let mut app_attrs = HashMap::new();
+            app_attrs.insert("application".to_string(), "net.daester.Kestic".to_string());
+            let (_unlocked, locked): (Vec<OwnedObjectPath>, Vec<OwnedObjectPath>) = service
+                .call("SearchItems", &(app_attrs,))
+                .await
+                .map_err(|e| SecretError::Io(format!("SearchItems failed: {e}")))?;
+            if !locked.is_empty() {
+                let (now_unlocked, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) = service
+                    .call("Unlock", &(locked.clone(),))
+                    .await
+                    .map_err(|e| SecretError::Io(format!("Unlock item failed: {e}")))?;
+                if prompt.as_str() != "/" || now_unlocked.len() < locked.len() {
+                    return Err(SecretError::LockedOrPromptRequired(format!(
+                        "locked secret items require interactive prompt ({})",
+                        prompt.as_str()
+                    )));
+                }
+            }
+            Ok(())
+        }
+        .await;
+
+        Self::close_session(&conn, &self.dest, &session).await;
+        res
+    }
+
+    async fn unlock_interactive_async(&self) -> Result<(), SecretError> {
+        let conn = Connection::session()
+            .await
+            .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
+        let (service, session) = Self::open_plain_session(&conn, &self.dest).await?;
+
+        let res = async {
+            let collection =
+                Self::resolve_default_collection(&service, &self.collection_alias).await?;
+            let mut to_unlock = Vec::new();
+            if Self::is_collection_locked(&conn, &self.dest, &collection).await? {
+                to_unlock.push(collection.clone());
+            }
+
+            let mut app_attrs = HashMap::new();
+            app_attrs.insert("application".to_string(), "net.daester.Kestic".to_string());
+            let (_unlocked, locked_items): (Vec<OwnedObjectPath>, Vec<OwnedObjectPath>) = service
+                .call("SearchItems", &(app_attrs,))
+                .await
+                .map_err(|e| SecretError::Io(format!("SearchItems failed: {e}")))?;
+            for item in locked_items {
+                if !to_unlock.contains(&item) {
+                    to_unlock.push(item);
+                }
+            }
+
+            if to_unlock.is_empty() {
+                return Ok(());
+            }
+
+            let (unlocked, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) = service
+                .call("Unlock", &(to_unlock,))
+                .await
+                .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
+
+            if prompt.as_str() == "/" {
+                if Self::is_collection_locked(&conn, &self.dest, &collection).await?
+                    && !unlocked.contains(&collection)
+                {
+                    return Err(SecretError::LockedOrPromptRequired(format!(
+                        "collection {} remained locked",
+                        collection.as_str()
+                    )));
+                }
+                return Ok(());
+            }
+
+            let accepted =
+                Self::wait_prompt_completed(&conn, &self.dest, &prompt, INTERACTIVE_UNLOCK_TIMEOUT)
+                    .await?;
+            if !accepted {
+                return Err(SecretError::LockedOrPromptRequired(
+                    "unlock prompt cancelled by user".to_string(),
+                ));
+            }
+
+            if Self::is_collection_locked(&conn, &self.dest, &collection).await? {
+                return Err(SecretError::LockedOrPromptRequired(format!(
+                    "collection {} remained locked after prompt",
+                    collection.as_str()
+                )));
+            }
+            Ok(())
+        }
+        .await;
+
+        Self::close_session(&conn, &self.dest, &session).await;
+        res
     }
 
     async fn set_secret_async(
@@ -272,14 +464,42 @@ impl SecretStore for SecretServiceStore {
         kind: &str,
         value: &SecretValue,
     ) -> Result<(), SecretError> {
-        block_on(self.set_secret_async(target_id, kind, value))
+        std::thread::scope(|s| {
+            s.spawn(|| block_on(self.set_secret_async(target_id, kind, value)))
+                .join()
+                .map_err(|_| SecretError::Io("secret helper thread panicked".into()))?
+        })
     }
 
     fn get_secret(&self, target_id: &str, kind: &str) -> Result<Option<SecretValue>, SecretError> {
-        block_on(self.get_secret_async(target_id, kind))
+        std::thread::scope(|s| {
+            s.spawn(|| block_on(self.get_secret_async(target_id, kind)))
+                .join()
+                .map_err(|_| SecretError::Io("secret helper thread panicked".into()))?
+        })
     }
 
     fn delete_secret(&self, target_id: &str, kind: &str) -> Result<(), SecretError> {
-        block_on(self.delete_secret_async(target_id, kind))
+        std::thread::scope(|s| {
+            s.spawn(|| block_on(self.delete_secret_async(target_id, kind)))
+                .join()
+                .map_err(|_| SecretError::Io("secret helper thread panicked".into()))?
+        })
+    }
+
+    fn check_availability(&self) -> Result<(), SecretError> {
+        std::thread::scope(|s| {
+            s.spawn(|| block_on(self.check_availability_async()))
+                .join()
+                .map_err(|_| SecretError::Io("secret helper thread panicked".into()))?
+        })
+    }
+
+    fn unlock_interactive(&self) -> Result<(), SecretError> {
+        std::thread::scope(|s| {
+            s.spawn(|| block_on(self.unlock_interactive_async()))
+                .join()
+                .map_err(|_| SecretError::Io("secret helper thread panicked".into()))?
+        })
     }
 }
