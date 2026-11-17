@@ -93,7 +93,20 @@ Kirigami.ApplicationWindow {
                     scheduleSummary: backupsModel.data(idx, 23),
                     retentionSummary: backupsModel.data(idx, 24),
                     conditionsSummary: backupsModel.data(idx, 25),
-                    lastRunId: backupsModel.data(idx, 26)
+                    lastRunId: backupsModel.data(idx, 26),
+                    excludesJson: backupsModel.data(idx, 29),
+                    excludeFoldersCount: backupsModel.data(idx, 30),
+                    expertRuleCount: backupsModel.data(idx, 31),
+                    excludeSummary: backupsModel.data(idx, 32),
+                    excludeFilePath: backupsModel.data(idx, 33),
+                    excludeLintJson: backupsModel.data(idx, 34),
+                    retentionJson: backupsModel.data(idx, 35),
+                    retentionPreset: backupsModel.data(idx, 36),
+                    sourceKindLabel: backupsModel.data(idx, 37),
+                    driveLabel: backupsModel.data(idx, 38),
+                    pendingForget: backupsModel.data(idx, 39),
+                    nestedWarningsJson: backupsModel.data(idx, 40),
+                    hasAttentionWarning: backupsModel.data(idx, 41)
                 };
             }
         }
@@ -119,7 +132,8 @@ Kirigami.ApplicationWindow {
                     passwordRejected: destinationsModel.data(idx, 10),
                     hasStaleLock: destinationsModel.data(idx, 11),
                     hasProblem: destinationsModel.data(idx, 12),
-                    detailText: destinationsModel.data(idx, 13)
+                    detailText: destinationsModel.data(idx, 13),
+                    pendingForgetCount: destinationsModel.data(idx, 14)
                 };
             }
         }
@@ -286,6 +300,26 @@ Kirigami.ApplicationWindow {
 
     function openBackupExcludesPage(backupId) {
         pageStack.push(backupExcludesEditComponent.createObject(pageStack, { backupId: backupId }));
+    }
+
+    function openBackupRetentionPage(backupId) {
+        pageStack.push(backupRetentionComponent.createObject(pageStack, { backupId: backupId }));
+    }
+
+    function openBackupDryRunPreviewPage(backupId, excludesJson) {
+        pageStack.push(backupPreviewComponent.createObject(pageStack, {
+            backupId: backupId,
+            mode: "dry_run",
+            excludesJson: excludesJson || ""
+        }));
+    }
+
+    function openRetentionPreviewPage(backupId, retentionPreviewJson) {
+        pageStack.push(backupPreviewComponent.createObject(pageStack, {
+            backupId: backupId,
+            mode: "retention",
+            retentionPreviewJson: retentionPreviewJson || ""
+        }));
     }
 
     function openBackupReassignPage(backupId) {
@@ -968,6 +1002,22 @@ Kirigami.ApplicationWindow {
     Component {
         id: backupExcludesEditComponent
         BackupExcludesEditPage {
+            rootWindow: root
+            appBackend: root.backendRef
+        }
+    }
+
+    Component {
+        id: backupRetentionComponent
+        BackupRetentionPage {
+            rootWindow: root
+            appBackend: root.backendRef
+        }
+    }
+
+    Component {
+        id: backupPreviewComponent
+        BackupPreviewPage {
             rootWindow: root
             appBackend: root.backendRef
         }

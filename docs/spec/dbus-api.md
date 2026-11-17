@@ -57,6 +57,19 @@ Strukturierte DTOs werden als UTF-8-JSON übergeben (mit festem Schema in `kesti
 | `RegisterGui` | `() -> ()` | Registriert die langlebige D-Bus-Verbindung der laufenden GUI (`NameHasOwner`-Lebendprüfung durch den Daemon vor Tray-Spawn von Fenster / `--confirm-quit`) | §10.1, AC-M1-11-2/3 |
 | `ConfirmQuit` | `() -> ()` | Beendet den Daemon sauber nach Bestätigung durch den Benutzer (bricht ggf. laufenden Lauf via `SIGTERM` ab) | NFR-11, §9.5, AC-M1-11-3 |
 | `UnlockSecretStore` | `() -> b` | Öffnet bei gesperrtem Passwortspeicher den interaktiven System-Entsperrdialog (`org.freedesktop.Secret.Prompt`), aktualisiert den Daemon-Status und liefert `true` bei Erfolg | ADR-0004, §6.1 |
+| `DetectSource` | `(path: s) -> s` (`Source`-JSON) | Erkennt anhand von `/proc/self/mountinfo` und FS-UUID / Mount-Quelle + Dateisystemtyp, ob `path` ein `Folder` oder ein `Drive` ist (inkl. `identity` und `drive_label`) | FR-29, F10, M2-S09 |
+| `CheckNestedSources` | `(candidate_id: s, candidate_path: s, destination_id: s) -> s` (`Vec<NestedSourceConflict>`-JSON) | Prüft nach Pfadkomponenten, ob eine Quelle sich mit einem anderen Backup auf demselben Ziel überschneidet (nicht-blockierender Hinweis) | FR-31, M2-S10 |
+| `LintExcludes` | `(excludes_json: s) -> s` (`Vec<ExcludeLintWarning>`-JSON) | Prüft Ausschluss-Regeln auf wirkungslose `!`-Negationen unter ganz ausgeschlossenen Ordnern und liefert Korrekturvorschlag (`dir/*`) | FR-02, M2-S03 |
+| `TestExcludePath` | `(backup_id: s, excludes_json: s, test_path: s) -> s` (`ExcludePathTestResult`-JSON) | Wertet einen Testpfad lokal anhand der Entwurfs-Ausschlussregeln aus («wird gesichert» / «ausgeschlossen durch Regel / Zeile») | FR-02, M2-S02 |
+| `PreviewRetention` | `(backup_id: s, retention_json: s) -> s` (`ForgetPreviewResult`-JSON) | Führt `restic forget --dry-run --no-lock --json` mit den übergebenen Aufbewahrungsregeln aus (`keep`/`remove` + `reasons`) | FR-05, NFR-08, P41, M2-S06 |
+| `StartBackupDryRun` | `(backup_id: s, excludes_json: s) -> s` (`preview_id`) | Startet Vorab-Erreichbarkeitsprüfung (`P32`) und asynchron `restic backup --dry-run -vv --json`; optionaler `excludes_json`-Entwurf (leer = gespeicherte Regeln) | FR-17, P32, M2-S04 |
+| `CancelBackupDryRun` | `(preview_id: s) -> ()` | Bricht eine laufende Trockenlauf-Vorschau ab (`CancelHandle`) | FR-17, M2-S04 |
+| `GetBackupDryRunStatus` | `(preview_id: s) -> s` (`BackupDryRunStatusDto`-JSON) | Liefert Status (`"running"` \| `"done"` \| `"cancelled"` \| `"error"`), Ergebnis oder Fehler einer Vorschau | FR-17, M2-S04 |
+| `FormatExcludeRuleForItem` | `(item_path: s) -> s` (`ExcludeRulePreviewDto`-JSON) | Formatiert die effektive Ausschluss-Regel für einen unlesbaren Pfad (Ordner → `$HOME/…`/absolut als Ordner-Regel, Datei → Expertenregel) | F4, P8, M2-S08 |
+| `AddExcludeRuleForItem` | `(backup_id: s, item_path: s) -> s` (`ExcludeRulePreviewDto`-JSON) | Fügt einen Pfad aus Exit 3 (`unreadable_files`) als Ausschluss-Regel hinzu, speichert `config.toml` und erzeugt die Exclude-Datei neu | F4, F14, M2-S08 |
+| `RunDestinationMaintenance` | `(destination_id: s) -> s` (`run_id`) | Führt einen Wartungslauf am Ziel aus und holt dabei alle Backups mit Status `pending_forget` («forget offen») nach | F4, P38, M2-S07 |
+
+Ergänzte DTO-Felder ab M2: `BackupSummaryDto` trägt zusätzlich `pending_forget` (M2-S07), `nested_warnings` (M2-S10) und `exclude_lint_warnings` (M2-S03); `BackupAvailabilityDto.reason_text` enthält den lokalisierten Laufwerks- oder Quellenfehler (`M2-S09`).
 
 ## Signale auf `net.daester.Kestic1`
 

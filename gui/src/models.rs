@@ -57,6 +57,19 @@ pub mod qobject {
         LastRunId,
         LastRunTimestampIso,
         LastRunTimeMs,
+        ExcludesJson,
+        ExcludeFoldersCount,
+        ExpertRuleCount,
+        ExcludeSummary,
+        ExcludeFilePath,
+        ExcludeLintJson,
+        RetentionJson,
+        RetentionPresetName,
+        SourceKindLabel,
+        DriveLabel,
+        PendingForget,
+        NestedWarningsJson,
+        HasAttentionWarning,
     }
 
     #[qenum(DestinationsModel)]
@@ -75,6 +88,7 @@ pub mod qobject {
         HasStaleLock,
         HasProblem,
         DetailText,
+        PendingForgetCount,
     }
 
     #[qenum(RunsModel)]
@@ -370,13 +384,14 @@ pub mod qobject {
 
 pub use crate::list_model::SpikeListModelRust;
 use crate::state_cache::{
-    current_now, format_backup_status, format_bytes, format_datetime_display, format_day_group,
-    format_destination_status, format_duration_ms, format_run_kind_name, format_run_status,
-    format_time_short, i18n, shared_state,
+    backup_exclude_file_path_str, current_now, format_backup_status, format_bytes,
+    format_datetime_display, format_day_group, format_destination_status, format_duration_ms,
+    format_exclude_summary, format_retention_summary, format_run_kind_name, format_run_status,
+    format_source_kind_label, format_time_short, i18n, shared_state,
 };
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
-use kestic_core::model::{DestinationKind, RunKind, RunStatus, SourceKind};
+use kestic_core::model::{DestinationKind, RetentionPreset, RunKind, RunStatus, SourceKind};
 use std::pin::Pin;
 use time::OffsetDateTime;
 
@@ -457,6 +472,19 @@ struct BackupRow {
     last_run_id: String,
     last_run_timestamp_iso: String,
     last_run_time_ms: f64,
+    excludes_json: String,
+    exclude_folders_count: i32,
+    expert_rule_count: i32,
+    exclude_summary: String,
+    exclude_file_path: String,
+    exclude_lint_json: String,
+    retention_json: String,
+    retention_preset_name: String,
+    source_kind_label: String,
+    drive_label: String,
+    pending_forget: bool,
+    nested_warnings_json: String,
+    has_attention_warning: bool,
 }
 
 #[derive(Default)]
@@ -529,6 +557,18 @@ impl BackupsModelRust {
             }
             .to_string();
 
+            let retention_preset_name = match b.backup.retention.preset() {
+                RetentionPreset::Standard => "standard",
+                RetentionPreset::Economical => "economical",
+                RetentionPreset::Long => "long",
+                RetentionPreset::Custom => "custom",
+            }
+            .to_string();
+
+            let has_attention_warning = b.pending_forget
+                || !b.nested_warnings.is_empty()
+                || !b.exclude_lint_warnings.is_empty();
+
             out.push(BackupRow {
                 backup_id: b.backup.id.as_str().to_string(),
                 name: b.backup.name.clone(),
@@ -560,11 +600,30 @@ impl BackupsModelRust {
                     .unwrap_or_else(|_| "[]".to_string()),
                 schedule_summary: i18n("Manual only (schedules follow in a future update)")
                     .to_string(),
-                retention_summary: i18n("Standard (7 daily, 4 weekly, 12 monthly)").to_string(),
+                retention_summary: format_retention_summary(&b.backup.retention),
                 conditions_summary: i18n("Always allowed on manual start").to_string(),
                 last_run_id,
                 last_run_timestamp_iso,
                 last_run_time_ms,
+                excludes_json: serde_json::to_string(&b.backup.excludes)
+                    .unwrap_or_else(|_| "{}".to_string()),
+                exclude_folders_count: i32::try_from(b.backup.excludes.folders.len())
+                    .unwrap_or(i32::MAX),
+                expert_rule_count: i32::try_from(b.backup.excludes.expert_rule_count())
+                    .unwrap_or(i32::MAX),
+                exclude_summary: format_exclude_summary(&b.backup.excludes),
+                exclude_file_path: backup_exclude_file_path_str(&b.backup.id),
+                exclude_lint_json: serde_json::to_string(&b.exclude_lint_warnings)
+                    .unwrap_or_else(|_| "[]".to_string()),
+                retention_json: serde_json::to_string(&b.backup.retention)
+                    .unwrap_or_else(|_| "{}".to_string()),
+                retention_preset_name,
+                source_kind_label: format_source_kind_label(&b.backup.source),
+                drive_label: b.backup.source.drive_label.clone().unwrap_or_default(),
+                pending_forget: b.pending_forget,
+                nested_warnings_json: serde_json::to_string(&b.nested_warnings)
+                    .unwrap_or_else(|_| "[]".to_string()),
+                has_attention_warning,
             });
         }
         out
@@ -714,6 +773,58 @@ impl qobject::BackupsModel {
             qobject::BackupRoles::LastRunTimeMs.repr,
             QByteArray::from("lastRunTimeMs"),
         );
+        roles.insert(
+            qobject::BackupRoles::ExcludesJson.repr,
+            QByteArray::from("excludesJson"),
+        );
+        roles.insert(
+            qobject::BackupRoles::ExcludeFoldersCount.repr,
+            QByteArray::from("excludeFoldersCount"),
+        );
+        roles.insert(
+            qobject::BackupRoles::ExpertRuleCount.repr,
+            QByteArray::from("expertRuleCount"),
+        );
+        roles.insert(
+            qobject::BackupRoles::ExcludeSummary.repr,
+            QByteArray::from("excludeSummary"),
+        );
+        roles.insert(
+            qobject::BackupRoles::ExcludeFilePath.repr,
+            QByteArray::from("excludeFilePath"),
+        );
+        roles.insert(
+            qobject::BackupRoles::ExcludeLintJson.repr,
+            QByteArray::from("excludeLintJson"),
+        );
+        roles.insert(
+            qobject::BackupRoles::RetentionJson.repr,
+            QByteArray::from("retentionJson"),
+        );
+        roles.insert(
+            qobject::BackupRoles::RetentionPresetName.repr,
+            QByteArray::from("retentionPreset"),
+        );
+        roles.insert(
+            qobject::BackupRoles::SourceKindLabel.repr,
+            QByteArray::from("sourceKindLabel"),
+        );
+        roles.insert(
+            qobject::BackupRoles::DriveLabel.repr,
+            QByteArray::from("driveLabel"),
+        );
+        roles.insert(
+            qobject::BackupRoles::PendingForget.repr,
+            QByteArray::from("pendingForget"),
+        );
+        roles.insert(
+            qobject::BackupRoles::NestedWarningsJson.repr,
+            QByteArray::from("nestedWarningsJson"),
+        );
+        roles.insert(
+            qobject::BackupRoles::HasAttentionWarning.repr,
+            QByteArray::from("hasAttentionWarning"),
+        );
         roles
     }
 
@@ -780,6 +891,35 @@ impl qobject::BackupsModel {
                 QVariant::from(&QString::from(&row.last_run_timestamp_iso))
             }
             qobject::BackupRoles::LastRunTimeMs => QVariant::from(&row.last_run_time_ms),
+            qobject::BackupRoles::ExcludesJson => {
+                QVariant::from(&QString::from(&row.excludes_json))
+            }
+            qobject::BackupRoles::ExcludeFoldersCount => QVariant::from(&row.exclude_folders_count),
+            qobject::BackupRoles::ExpertRuleCount => QVariant::from(&row.expert_rule_count),
+            qobject::BackupRoles::ExcludeSummary => {
+                QVariant::from(&QString::from(&row.exclude_summary))
+            }
+            qobject::BackupRoles::ExcludeFilePath => {
+                QVariant::from(&QString::from(&row.exclude_file_path))
+            }
+            qobject::BackupRoles::ExcludeLintJson => {
+                QVariant::from(&QString::from(&row.exclude_lint_json))
+            }
+            qobject::BackupRoles::RetentionJson => {
+                QVariant::from(&QString::from(&row.retention_json))
+            }
+            qobject::BackupRoles::RetentionPresetName => {
+                QVariant::from(&QString::from(&row.retention_preset_name))
+            }
+            qobject::BackupRoles::SourceKindLabel => {
+                QVariant::from(&QString::from(&row.source_kind_label))
+            }
+            qobject::BackupRoles::DriveLabel => QVariant::from(&QString::from(&row.drive_label)),
+            qobject::BackupRoles::PendingForget => QVariant::from(&row.pending_forget),
+            qobject::BackupRoles::NestedWarningsJson => {
+                QVariant::from(&QString::from(&row.nested_warnings_json))
+            }
+            qobject::BackupRoles::HasAttentionWarning => QVariant::from(&row.has_attention_warning),
             _ => QVariant::default(),
         }
     }
@@ -801,6 +941,7 @@ struct DestinationRow {
     has_stale_lock: bool,
     has_problem: bool,
     detail_text: String,
+    pending_forget_count: i32,
 }
 
 #[derive(Default)]
@@ -832,6 +973,11 @@ impl DestinationsModelRust {
                 ),
             };
             let (status_text, status_icon) = format_destination_status(d, now);
+            let pending_forget_count = state
+                .backups
+                .iter()
+                .filter(|b| b.backup.destination_id == d.destination.id && b.pending_forget)
+                .count();
             out.push(DestinationRow {
                 destination_id: d.destination.id.as_str().to_string(),
                 name: d.destination.name.clone(),
@@ -847,6 +993,7 @@ impl DestinationsModelRust {
                 has_stale_lock: d.has_stale_lock,
                 has_problem: d.has_problem,
                 detail_text: d.availability.detail.clone().unwrap_or_default(),
+                pending_forget_count: i32::try_from(pending_forget_count).unwrap_or(i32::MAX),
             });
         }
         out
@@ -941,6 +1088,10 @@ impl qobject::DestinationsModel {
             qobject::DestinationRoles::DetailText.repr,
             QByteArray::from("detailText"),
         );
+        roles.insert(
+            qobject::DestinationRoles::PendingForgetCount.repr,
+            QByteArray::from("pendingForgetCount"),
+        );
         roles
     }
 
@@ -973,6 +1124,9 @@ impl qobject::DestinationsModel {
             qobject::DestinationRoles::HasProblem => QVariant::from(&row.has_problem),
             qobject::DestinationRoles::DetailText => {
                 QVariant::from(&QString::from(&row.detail_text))
+            }
+            qobject::DestinationRoles::PendingForgetCount => {
+                QVariant::from(&row.pending_forget_count)
             }
             _ => QVariant::default(),
         }

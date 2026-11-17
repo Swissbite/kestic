@@ -5,8 +5,8 @@ use kestic_core::config::{
     AppConfig, CURRENT_CONFIG_VERSION, ConfigError, default_config_path, load_config, save_config,
 };
 use kestic_core::model::{
-    Backup, Destination, DestinationKind, ExcludeRules, ResticProvider, RetentionPolicy, Schedule,
-    Source,
+    Backup, Destination, DestinationKind, ExcludeRules, KeepCount, ResticProvider, RetentionPolicy,
+    Schedule, Source,
 };
 use std::fs;
 use tempfile::TempDir;
@@ -30,14 +30,15 @@ fn ac_m1_02_1_and_02_2_config_toml_roundtrip_contains_no_secrets() {
     backup.excludes = ExcludeRules {
         lines: vec![".cache".to_string(), "!important.cache".to_string()],
         exclude_caches: true,
+        ..ExcludeRules::default()
     };
     backup.schedule = Schedule::Daily {
         hour: 21,
         minute: 30,
     };
     backup.retention = RetentionPolicy {
-        keep_daily: Some(7),
-        keep_weekly: Some(4),
+        keep_daily: Some(KeepCount::Count(7)),
+        keep_weekly: Some(KeepCount::Count(4)),
         ..RetentionPolicy::default()
     };
 

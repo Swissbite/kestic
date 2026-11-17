@@ -2,7 +2,7 @@
 
 Native KDE Plasma backup manager powered by [restic](https://restic.net): as simple as a beginner-friendly backup tool, as powerful as restic itself.
 
-**Status:** Milestones M0 (Spike) and M1 (Walking Skeleton) are complete and manually accepted on TUXEDO OS; Milestone M2 (Backup Configuration) is currently in progress.
+**Status:** Milestones M0 (Spike) and M1 (Walking Skeleton) are complete and manually accepted on TUXEDO OS; Milestone M2 (Backup Configuration: exclude rules with simple/expert modes & negation linter, dry-run preview, retention rules & preview, automatic post-backup `forget` with lock catch-up, Exit 3 unreadable file handling, drive mount/UUID source checks, nested source overlap warnings, and full configuration overview) is implemented and verified (awaiting manual acceptance on TUXEDO OS).
 
 - **Specification (German):** [docs/spec/](docs/spec/) — start at [backlog.md](docs/spec/backlog.md) and [requirements.md](docs/spec/requirements.md). Internal working specifications under `docs/spec/` are maintained exclusively in German.
 - **Agent & contributor guide:** [AGENTS.md](AGENTS.md)

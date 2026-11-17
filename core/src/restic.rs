@@ -112,10 +112,23 @@ struct RawExitErrorMessage {
     message: String,
 }
 
+/// Parsed `message_type = "verbose_status"` line from `restic backup -vv --json` (`M2-S04`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ResticVerboseStatusMessage {
+    pub action: String,
+    pub item: String,
+    pub duration: Option<serde_json::Value>,
+    pub data_size: Option<u64>,
+    pub metadata_size: Option<u64>,
+    pub total_files: Option<u64>,
+}
+
 /// Tolerant event representation for NDJSON lines emitted by `restic --json` (`AC-M1-03-1`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResticStreamEvent {
     Status(ResticStatusMessage),
+    VerboseStatus(ResticVerboseStatusMessage),
     Summary(RunStats),
     Error(ResticErrorMessage),
     ExitError { code: Option<i32>, message: String },
@@ -134,6 +147,10 @@ pub fn parse_json_line(line: &str) -> Result<ResticStreamEvent, serde_json::Erro
         Some("status") => {
             let status: ResticStatusMessage = serde_json::from_value(value)?;
             Ok(ResticStreamEvent::Status(status))
+        }
+        Some("verbose_status") => {
+            let vstatus: ResticVerboseStatusMessage = serde_json::from_value(value)?;
+            Ok(ResticStreamEvent::VerboseStatus(vstatus))
         }
         Some("summary") => {
             let raw: RawSummaryMessage = serde_json::from_value(value)?;
@@ -669,7 +686,9 @@ where
                     ResticStreamEvent::ExitError { message, .. } => {
                         exit_error_msg = Some(message.clone());
                     }
-                    ResticStreamEvent::Status(_) | ResticStreamEvent::Unknown { .. } => {}
+                    ResticStreamEvent::Status(_)
+                    | ResticStreamEvent::VerboseStatus(_)
+                    | ResticStreamEvent::Unknown { .. } => {}
                 }
                 on_event(&event);
             }

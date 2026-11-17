@@ -5,7 +5,15 @@
 
 //! Tolerant restic snapshot JSON parser (NFR-10, FR-06, P17).
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+
+pub(crate) fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
 
 /// Optional snapshot summary introduced in restic 0.17+.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -21,9 +29,9 @@ pub struct ResticSnapshot {
     pub id: String,
     pub short_id: Option<String>,
     pub time: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub paths: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub tags: Vec<String>,
     pub hostname: Option<String>,
     pub program_version: Option<String>,

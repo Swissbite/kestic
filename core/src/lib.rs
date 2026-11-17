@@ -11,6 +11,7 @@ pub mod config;
 pub mod destination;
 pub mod history;
 pub mod model;
+pub mod mount;
 pub mod provider;
 pub mod restic;
 pub mod secrets;

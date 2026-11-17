@@ -91,6 +91,25 @@ Kirigami.ScrollablePage {
             text: i18n("An interrupted run left a repository lock on this destination.")
         }
 
+        Kirigami.InlineMessage {
+            id: pendingForgetBanner
+            objectName: "destPendingForgetBanner"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Warning
+            visible: currentData !== null && currentData.pendingForgetCount > 0
+            text: currentData
+                ? i18n("%1 backup has pending retention cleanup from a previous locked run.", currentData.pendingForgetCount)
+                : ""
+            actions: [
+                Kirigami.Action {
+                    objectName: "runDestinationMaintenanceAction"
+                    icon.name: "view-refresh"
+                    text: i18n("Run Maintenance Now")
+                    onTriggered: appBackend.runDestinationMaintenance(destinationId)
+                }
+            ]
+        }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing

@@ -1,0 +1,1063 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: BSD-2-Clause
+
+#![forbid(unsafe_code)]
+
+mod common;
+
+use kestic_core::backup::{
+    build_forget_command_spec, execute_forget, execute_forget_dry_run, list_snapshots_for_backup,
+};
+use kestic_core::clock::FakeClock;
+use kestic_core::config::{AppConfig, load_config, save_config};
+use kestic_core::destination::{DestinationSetupMode, setup_destination};
+use kestic_core::model::{
+    Backup, Destination, DestinationKind, KeepCount, ModelError, RetentionPolicy, RetentionPreset,
+    Source, validate_restic_duration,
+};
+use kestic_core::provider::{ResolvedRestic, check_binary_version};
+use kestic_core::restic::ResticRuntime;
+use kestic_core::secrets::{FileSecretStore, SecretValue};
+use kestic_core::snapshot::{ResticSnapshot, parse_snapshots_json};
+use semver::Version;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::time::{Duration, Instant};
+use tempfile::TempDir;
+use time::OffsetDateTime;
+use time::format_description::FormatItem;
+use time::macros::{datetime, format_description};
+
+const RESTIC_TIME_FMT: &[FormatItem<'_>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+
+fn dummy_resolved() -> ResolvedRestic {
+    ResolvedRestic {
+        binary: PathBuf::from("/usr/bin/restic"),
+        version: Version::new(0, 18, 0),
+    }
+}
+
+fn dummy_dest_and_backup() -> (Destination, Backup) {
+    let dest = Destination::new(
+        "Unit Dest",
+        DestinationKind::Local {
+            path: PathBuf::from("/tmp/kestic-unit-repo"),
+        },
+    )
+    .expect("dest");
+    let backup = Backup::new(
+        "Unit Backup",
+        Source::folder("/tmp/kestic-unit-src"),
+        dest.id.clone(),
+    )
+    .expect("backup");
+    (dest, backup)
+}
+
+fn create_snapshot_at_time(
+    restic_bin: &Path,
+    repo_dir: &Path,
+    password: &str,
+    src_dir: &Path,
+    tag: &str,
+    time_str: &str,
+) {
+    let out = Command::new(restic_bin)
+        .args([
+            "-r",
+            &repo_dir.to_string_lossy(),
+            "backup",
+            "--tag",
+            tag,
+            "--group-by",
+            "tags",
+            "--time",
+            time_str,
+            &src_dir.to_string_lossy(),
+        ])
+        .env("RESTIC_PASSWORD", password)
+        .env("TZ", "UTC")
+        .output()
+        .expect("spawn restic backup --time");
+    assert!(
+        out.status.success(),
+        "restic backup --time {time_str} failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn list_snapshots_by_tag(
+    restic_bin: &Path,
+    repo_dir: &Path,
+    password: &str,
+    tag: &str,
+) -> Vec<ResticSnapshot> {
+    let out = Command::new(restic_bin)
+        .args([
+            "-r",
+            &repo_dir.to_string_lossy(),
+            "snapshots",
+            "--no-lock",
+            "--tag",
+            tag,
+            "--json",
+        ])
+        .env("RESTIC_PASSWORD", password)
+        .output()
+        .expect("run restic snapshots --tag");
+    assert!(
+        out.status.success(),
+        "restic snapshots failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    parse_snapshots_json(String::from_utf8_lossy(&out.stdout).trim()).expect("parse snapshots")
+}
+
+fn find_lock_file(locks_dir: &Path) -> Option<PathBuf> {
+    let entries = fs::read_dir(locks_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
+            && fs::metadata(&path).is_ok_and(|m| m.len() > 0)
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
+struct LockHolderGuard {
+    stdin: Option<ChildStdin>,
+    child: Child,
+}
+
+impl Drop for LockHolderGuard {
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn ac_m2_05_1_all_keep_count_flags_numeric_and_unlimited() {
+    let (dest, mut backup) = dummy_dest_and_backup();
+    let resolved = dummy_resolved();
+    let kestic_bin = Path::new("/usr/bin/kestic");
+
+    // All 6 count rules with numeric values.
+    let numeric_policy = RetentionPolicy {
+        keep_last: Some(KeepCount::Count(1)),
+        keep_hourly: Some(KeepCount::Count(2)),
+        keep_daily: Some(KeepCount::Count(7)),
+        keep_weekly: Some(KeepCount::Count(4)),
+        keep_monthly: Some(KeepCount::Count(12)),
+        keep_yearly: Some(KeepCount::Count(3)),
+        ..RetentionPolicy::empty()
+    };
+    numeric_policy.validate().expect("numeric policy valid");
+    assert_eq!(
+        numeric_policy.to_forget_args(),
+        vec![
+            "--keep-last",
+            "1",
+            "--keep-hourly",
+            "2",
+            "--keep-daily",
+            "7",
+            "--keep-weekly",
+            "4",
+            "--keep-monthly",
+            "12",
+            "--keep-yearly",
+            "3",
+        ]
+    );
+
+    backup.retention = numeric_policy;
+    let spec_num = build_forget_command_spec(&backup, &dest, false, false, &resolved, kestic_bin)
+        .expect("build forget spec");
+    for pair in [
+        ("--keep-last", "1"),
+        ("--keep-hourly", "2"),
+        ("--keep-daily", "7"),
+        ("--keep-weekly", "4"),
+        ("--keep-monthly", "12"),
+        ("--keep-yearly", "3"),
+    ] {
+        let pos = spec_num
+            .subcommand_args
+            .iter()
+            .position(|a| a == pair.0)
+            .unwrap_or_else(|| panic!("missing {}", pair.0));
+        assert_eq!(spec_num.subcommand_args[pos + 1], pair.1);
+    }
+
+    // All 6 count rules with `unlimited`.
+    let unlimited_policy = RetentionPolicy {
+        keep_last: Some(KeepCount::Unlimited),
+        keep_hourly: Some(KeepCount::Unlimited),
+        keep_daily: Some(KeepCount::Unlimited),
+        keep_weekly: Some(KeepCount::Unlimited),
+        keep_monthly: Some(KeepCount::Unlimited),
+        keep_yearly: Some(KeepCount::Unlimited),
+        ..RetentionPolicy::empty()
+    };
+    unlimited_policy.validate().expect("unlimited policy valid");
+    assert_eq!(
+        unlimited_policy.to_forget_args(),
+        vec![
+            "--keep-last",
+            "unlimited",
+            "--keep-hourly",
+            "unlimited",
+            "--keep-daily",
+            "unlimited",
+            "--keep-weekly",
+            "unlimited",
+            "--keep-monthly",
+            "unlimited",
+            "--keep-yearly",
+            "unlimited",
+        ]
+    );
+
+    backup.retention = unlimited_policy;
+    let spec_unlim = build_forget_command_spec(&backup, &dest, true, true, &resolved, kestic_bin)
+        .expect("build forget spec unlimited");
+    for flag in [
+        "--keep-last",
+        "--keep-hourly",
+        "--keep-daily",
+        "--keep-weekly",
+        "--keep-monthly",
+        "--keep-yearly",
+    ] {
+        let pos = spec_unlim
+            .subcommand_args
+            .iter()
+            .position(|a| a == flag)
+            .unwrap_or_else(|| panic!("missing {flag}"));
+        assert_eq!(spec_unlim.subcommand_args[pos + 1], "unlimited");
+    }
+
+    // Zero count is rejected.
+    let zero_policy = RetentionPolicy {
+        keep_daily: Some(KeepCount::Count(0)),
+        ..RetentionPolicy::empty()
+    };
+    assert!(matches!(
+        zero_policy.validate(),
+        Err(ModelError::InvalidBackup(_))
+    ));
+}
+
+#[test]
+fn ac_m2_05_2_keep_within_durations_passed_verbatim_and_invalid_rejected() {
+    let (dest, mut backup) = dummy_dest_and_backup();
+    let resolved = dummy_resolved();
+    let kestic_bin = Path::new("/usr/bin/kestic");
+
+    for dur in ["30d", "6m", "2y"] {
+        assert_eq!(validate_restic_duration(dur).expect("valid dur"), dur);
+
+        let policy = RetentionPolicy {
+            keep_within: Some(dur.to_string()),
+            keep_within_hourly: Some(dur.to_string()),
+            keep_within_daily: Some(dur.to_string()),
+            keep_within_weekly: Some(dur.to_string()),
+            keep_within_monthly: Some(dur.to_string()),
+            keep_within_yearly: Some(dur.to_string()),
+            ..RetentionPolicy::empty()
+        };
+        policy.validate().expect("duration policy valid");
+        assert_eq!(
+            policy.to_forget_args(),
+            vec![
+                "--keep-within",
+                dur,
+                "--keep-within-hourly",
+                dur,
+                "--keep-within-daily",
+                dur,
+                "--keep-within-weekly",
+                dur,
+                "--keep-within-monthly",
+                dur,
+                "--keep-within-yearly",
+                dur,
+            ]
+        );
+
+        backup.retention = policy;
+        let spec = build_forget_command_spec(&backup, &dest, false, false, &resolved, kestic_bin)
+            .expect("build forget spec");
+        for flag in [
+            "--keep-within",
+            "--keep-within-hourly",
+            "--keep-within-daily",
+            "--keep-within-weekly",
+            "--keep-within-monthly",
+            "--keep-within-yearly",
+        ] {
+            let pos = spec
+                .subcommand_args
+                .iter()
+                .position(|a| a == flag)
+                .unwrap_or_else(|| panic!("missing {flag}"));
+            assert_eq!(spec.subcommand_args[pos + 1], dur);
+        }
+    }
+
+    // Invalid duration `30x` rejected across parser and every duration field.
+    assert!(matches!(
+        validate_restic_duration("30x"),
+        Err(ModelError::InvalidBackup(_))
+    ));
+    for invalid in ["30x", "0d", "d", "30", "-5d"] {
+        assert!(
+            validate_restic_duration(invalid).is_err(),
+            "expected '{invalid}' to be rejected"
+        );
+    }
+
+    let invalid_policies = [
+        RetentionPolicy {
+            keep_within: Some("30x".to_string()),
+            ..RetentionPolicy::empty()
+        },
+        RetentionPolicy {
+            keep_within_hourly: Some("30x".to_string()),
+            ..RetentionPolicy::empty()
+        },
+        RetentionPolicy {
+            keep_within_daily: Some("30x".to_string()),
+            ..RetentionPolicy::empty()
+        },
+        RetentionPolicy {
+            keep_within_weekly: Some("30x".to_string()),
+            ..RetentionPolicy::empty()
+        },
+        RetentionPolicy {
+            keep_within_monthly: Some("30x".to_string()),
+            ..RetentionPolicy::empty()
+        },
+        RetentionPolicy {
+            keep_within_yearly: Some("30x".to_string()),
+            ..RetentionPolicy::empty()
+        },
+    ];
+    for p in invalid_policies {
+        assert!(
+            matches!(p.validate(), Err(ModelError::InvalidBackup(_))),
+            "30x must be rejected: {p:?}"
+        );
+    }
+}
+
+#[test]
+fn ac_m2_05_3_standard_preset_flags() {
+    let policy = RetentionPolicy::standard();
+    assert_eq!(policy.preset(), RetentionPreset::Standard);
+    assert_eq!(
+        policy.to_forget_args(),
+        vec![
+            "--keep-daily",
+            "7",
+            "--keep-weekly",
+            "4",
+            "--keep-monthly",
+            "12",
+        ]
+    );
+
+    let (dest, mut backup) = dummy_dest_and_backup();
+    backup.retention = policy;
+    let resolved = dummy_resolved();
+    let spec =
+        build_forget_command_spec(&backup, &dest, false, false, &resolved, Path::new("kestic"))
+            .expect("build forget spec");
+    assert_eq!(
+        spec.subcommand_args,
+        vec![
+            "forget",
+            "--tag",
+            &backup.tag(),
+            "--group-by",
+            "tags",
+            "--keep-daily",
+            "7",
+            "--keep-weekly",
+            "4",
+            "--keep-monthly",
+            "12",
+        ]
+    );
+}
+
+#[test]
+fn ac_m2_05_4_empty_retention_policy_rejected_and_config_untouched() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = dir.path().join("config.toml");
+
+    let empty = RetentionPolicy::empty();
+    assert!(matches!(
+        empty.validate(),
+        Err(ModelError::InvalidBackup(_))
+    ));
+
+    let (dest, backup) = dummy_dest_and_backup();
+    let mut cfg = AppConfig {
+        destinations: vec![dest],
+        backups: vec![backup],
+        ..AppConfig::default()
+    };
+    save_config(&config_path, &cfg).expect("save valid initial config");
+    let before_raw = fs::read_to_string(&config_path).expect("read saved config");
+
+    // Mutate in-memory copy to empty retention and attempt validation & save.
+    cfg.backups[0].retention = RetentionPolicy::empty();
+    assert!(cfg.backups[0].validate().is_err());
+    assert!(cfg.validate().is_err());
+    assert!(save_config(&config_path, &cfg).is_err());
+
+    let after_raw = fs::read_to_string(&config_path).expect("read config after rejected save");
+    assert_eq!(
+        after_raw, before_raw,
+        "rejected empty retention must leave config.toml untouched"
+    );
+    let reloaded = load_config(&config_path).expect("reload valid config");
+    assert_eq!(reloaded.backups[0].retention, RetentionPolicy::standard());
+}
+
+#[test]
+fn ac_m2_05_5_never_passes_unsafe_allow_remove_all() {
+    let (dest, mut backup) = dummy_dest_and_backup();
+    let resolved = dummy_resolved();
+    let kestic_bin = Path::new("/usr/bin/kestic");
+
+    let policies = [
+        RetentionPolicy::standard(),
+        RetentionPolicy::economical(),
+        RetentionPolicy::long(),
+        RetentionPolicy {
+            keep_last: Some(KeepCount::Count(1)),
+            ..RetentionPolicy::empty()
+        },
+        RetentionPolicy {
+            keep_within: Some("30d".to_string()),
+            keep_yearly: Some(KeepCount::Unlimited),
+            ..RetentionPolicy::empty()
+        },
+        RetentionPolicy {
+            keep_last: Some(KeepCount::Count(5)),
+            keep_hourly: Some(KeepCount::Count(12)),
+            keep_daily: Some(KeepCount::Count(7)),
+            keep_weekly: Some(KeepCount::Count(4)),
+            keep_monthly: Some(KeepCount::Count(12)),
+            keep_yearly: Some(KeepCount::Unlimited),
+            keep_within: Some("1y".to_string()),
+            keep_within_hourly: Some("24h".to_string()),
+            keep_within_daily: Some("7d".to_string()),
+            keep_within_weekly: Some("1m".to_string()),
+            keep_within_monthly: Some("6m".to_string()),
+            keep_within_yearly: Some("2y".to_string()),
+        },
+    ];
+
+    for policy in policies {
+        policy.validate().expect("valid policy");
+        let args = policy.to_forget_args();
+        assert!(
+            !args.iter().any(|a| a == "--unsafe-allow-remove-all"),
+            "to_forget_args emitted forbidden flag: {args:?}"
+        );
+        backup.retention = policy;
+        for (dry_run, no_lock) in [(false, false), (true, false), (true, true)] {
+            let spec =
+                build_forget_command_spec(&backup, &dest, dry_run, no_lock, &resolved, kestic_bin)
+                    .expect("build spec");
+            let argv = spec.restic_argv();
+            assert!(
+                !argv.iter().any(|a| a == "--unsafe-allow-remove-all"),
+                "restic_argv emitted forbidden flag: {argv:?}"
+            );
+            assert!(
+                !spec
+                    .to_transparent_shell_command()
+                    .contains("--unsafe-allow-remove-all")
+            );
+        }
+    }
+}
+
+#[test]
+fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() {
+    for (label, restic_bin) in common::restic_test_binaries() {
+        let dir = TempDir::new().expect("tempdir");
+        let repo_dir = dir.path().join("repo");
+        let src_a = dir.path().join("src-a");
+        let src_b = dir.path().join("src-b");
+        let meta_src = dir.path().join("meta");
+        fs::create_dir_all(&repo_dir).expect("mkdir repo");
+        fs::create_dir_all(&src_a).expect("mkdir src-a");
+        fs::create_dir_all(&src_b).expect("mkdir src-b");
+        fs::create_dir_all(&meta_src).expect("mkdir meta");
+
+        fs::write(src_a.join("a.txt"), b"backup a data").expect("write a");
+        fs::write(src_b.join("b.txt"), b"backup b data").expect("write b");
+        fs::write(meta_src.join("meta.toml"), b"config_version = 1\n").expect("write meta");
+
+        let secrets_hex = dir.path().join("secrets.hex");
+        let store = FileSecretStore::new(&secrets_hex);
+        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
+        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
+        let clock = FakeClock::new(datetime!(2026-11-17 09:00:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+        };
+
+        let dest = Destination::new(
+            "Local Scope",
+            DestinationKind::Local {
+                path: repo_dir.clone(),
+            },
+        )
+        .expect("dest");
+        let pw = "scope-test-pw";
+        setup_destination(
+            &dest,
+            DestinationSetupMode::InitNew,
+            &SecretValue::from_str_secret(pw),
+            None,
+            &runtime,
+        )
+        .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+
+        let mut backup_a =
+            Backup::new("Backup A", Source::folder(&src_a), dest.id.clone()).expect("backup a");
+        backup_a.retention = RetentionPolicy {
+            keep_last: Some(KeepCount::Count(1)),
+            ..RetentionPolicy::empty()
+        };
+        let backup_b =
+            Backup::new("Backup B", Source::folder(&src_b), dest.id.clone()).expect("backup b");
+
+        // Create 3 snapshots for backup A, 3 for backup B, and 2 `kestic-meta:<id_a>` snapshots.
+        for day in [10, 11, 12] {
+            create_snapshot_at_time(
+                &resolved.binary,
+                &repo_dir,
+                pw,
+                &src_a,
+                &backup_a.tag(),
+                &format!("2026-11-{day:02} 12:00:00"),
+            );
+            create_snapshot_at_time(
+                &resolved.binary,
+                &repo_dir,
+                pw,
+                &src_b,
+                &backup_b.tag(),
+                &format!("2026-11-{day:02} 12:00:00"),
+            );
+        }
+        for day in [10, 11] {
+            create_snapshot_at_time(
+                &resolved.binary,
+                &repo_dir,
+                pw,
+                &meta_src,
+                &backup_a.meta_tag(),
+                &format!("2026-11-{day:02} 12:00:00"),
+            );
+        }
+
+        let spec = build_forget_command_spec(&backup_a, &dest, false, false, &resolved, &helper)
+            .expect("build forget spec");
+        assert!(
+            spec.subcommand_args
+                .windows(2)
+                .any(|w| w == ["--tag", backup_a.tag().as_str()]),
+            "{label}: missing `--tag kestic:<id>` in {:?}",
+            spec.subcommand_args
+        );
+        assert!(
+            spec.subcommand_args
+                .windows(2)
+                .any(|w| w == ["--group-by", "tags"]),
+            "{label}: missing `--group-by tags` in {:?}",
+            spec.subcommand_args
+        );
+
+        let res = execute_forget(&backup_a, &dest, &runtime, None, &[])
+            .unwrap_or_else(|e| panic!("{label}: execute_forget failed: {e}"));
+        assert_eq!(res.exit_code, 0, "{label}: forget exit code");
+
+        let snaps_a =
+            list_snapshots_for_backup(&backup_a.id, &dest, &resolved, &helper, &store, &clock, &[])
+                .expect("list snaps a");
+        let snaps_b =
+            list_snapshots_for_backup(&backup_b.id, &dest, &resolved, &helper, &store, &clock, &[])
+                .expect("list snaps b");
+        let snaps_meta =
+            list_snapshots_by_tag(&resolved.binary, &repo_dir, pw, &backup_a.meta_tag());
+
+        assert_eq!(snaps_a.len(), 1, "{label}: backup A should keep 1 snapshot");
+        assert_eq!(
+            snaps_b.len(),
+            3,
+            "{label}: backup B snapshots must remain untouched"
+        );
+        assert_eq!(
+            snaps_meta.len(),
+            2,
+            "{label}: kestic-meta:<id> snapshots must remain untouched"
+        );
+    }
+}
+
+#[test]
+fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
+    for (label, restic_bin) in common::restic_test_binaries() {
+        let dir = TempDir::new().expect("tempdir");
+        let repo_dir = dir.path().join("repo");
+        let src_dir = dir.path().join("src");
+        fs::create_dir_all(&repo_dir).expect("mkdir repo");
+        fs::create_dir_all(&src_dir).expect("mkdir src");
+        fs::write(src_dir.join("data.txt"), b"daily gap test").expect("write data");
+
+        let secrets_hex = dir.path().join("secrets.hex");
+        let store = FileSecretStore::new(&secrets_hex);
+        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
+        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
+        let clock = FakeClock::new(datetime!(2026-11-17 09:30:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+        };
+
+        let dest = Destination::new(
+            "Gap Test",
+            DestinationKind::Local {
+                path: repo_dir.clone(),
+            },
+        )
+        .expect("dest");
+        let pw = "gap-test-pw";
+        setup_destination(
+            &dest,
+            DestinationSetupMode::InitNew,
+            &SecretValue::from_str_secret(pw),
+            None,
+            &runtime,
+        )
+        .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+
+        let mut backup =
+            Backup::new("Gap Backup", Source::folder(&src_dir), dest.id.clone()).expect("backup");
+
+        // 2026-11-01..04 and 2026-11-12..15 at 12:00 UTC (gap Nov 5–11).
+        for day in [1u8, 2, 3, 4, 12, 13, 14, 15] {
+            create_snapshot_at_time(
+                &resolved.binary,
+                &repo_dir,
+                pw,
+                &src_dir,
+                &backup.tag(),
+                &format!("2026-11-{day:02} 12:00:00"),
+            );
+        }
+
+        // Case A: `--keep-daily 7` keeps 15,14,13,12,4,3,2 (removes 1).
+        backup.retention = RetentionPolicy {
+            keep_daily: Some(KeepCount::Count(7)),
+            ..RetentionPolicy::empty()
+        };
+        let preview_daily = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
+            .unwrap_or_else(|e| panic!("{label}: dry-run keep-daily 7 failed: {e}"));
+
+        assert_eq!(
+            preview_daily.keep_count, 7,
+            "{label}: keep-daily 7 keep_count"
+        );
+        assert_eq!(
+            preview_daily.remove_count, 1,
+            "{label}: keep-daily 7 remove_count"
+        );
+
+        let mut kept_dates_daily: Vec<String> = preview_daily
+            .snapshots
+            .iter()
+            .filter(|s| s.action == "keep")
+            .map(|s| s.time[..10].to_string())
+            .collect();
+        kept_dates_daily.sort();
+        assert_eq!(
+            kept_dates_daily,
+            vec![
+                "2026-11-02",
+                "2026-11-03",
+                "2026-11-04",
+                "2026-11-12",
+                "2026-11-13",
+                "2026-11-14",
+                "2026-11-15",
+            ],
+            "{label}: keep-daily 7 kept dates"
+        );
+        let removed_dates_daily: Vec<String> = preview_daily
+            .snapshots
+            .iter()
+            .filter(|s| s.action == "remove")
+            .map(|s| s.time[..10].to_string())
+            .collect();
+        assert_eq!(
+            removed_dates_daily,
+            vec!["2026-11-01"],
+            "{label}: removed date"
+        );
+
+        // Case B: `--keep-within-daily 7d` keeps 15,14,13,12 (removes 1..4).
+        backup.retention = RetentionPolicy {
+            keep_within_daily: Some("7d".to_string()),
+            ..RetentionPolicy::empty()
+        };
+        let preview_within = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
+            .unwrap_or_else(|e| panic!("{label}: dry-run keep-within-daily 7d failed: {e}"));
+
+        assert_eq!(
+            preview_within.keep_count, 4,
+            "{label}: keep-within-daily 7d keep_count"
+        );
+        assert_eq!(
+            preview_within.remove_count, 4,
+            "{label}: keep-within-daily 7d remove_count"
+        );
+
+        let mut kept_dates_within: Vec<String> = preview_within
+            .snapshots
+            .iter()
+            .filter(|s| s.action == "keep")
+            .map(|s| s.time[..10].to_string())
+            .collect();
+        kept_dates_within.sort();
+        assert_eq!(
+            kept_dates_within,
+            vec!["2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15"],
+            "{label}: keep-within-daily 7d kept dates"
+        );
+
+        let mut removed_dates_within: Vec<String> = preview_within
+            .snapshots
+            .iter()
+            .filter(|s| s.action == "remove")
+            .map(|s| s.time[..10].to_string())
+            .collect();
+        removed_dates_within.sort();
+        assert_eq!(
+            removed_dates_within,
+            vec!["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"],
+            "{label}: keep-within-daily 7d removed dates"
+        );
+    }
+}
+
+#[test]
+fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
+    for (label, restic_bin) in common::restic_test_binaries() {
+        let dir = TempDir::new().expect("tempdir");
+        let repo_dir = dir.path().join("repo");
+        let src_dir = dir.path().join("src");
+        fs::create_dir_all(&repo_dir).expect("mkdir repo");
+        fs::create_dir_all(&src_dir).expect("mkdir src");
+        fs::write(src_dir.join("data.txt"), b"old snapshot anchor").expect("write data");
+
+        let secrets_hex = dir.path().join("secrets.hex");
+        let store = FileSecretStore::new(&secrets_hex);
+        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
+        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
+        let clock = FakeClock::new(datetime!(2026-11-17 10:00:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+        };
+
+        let dest = Destination::new(
+            "Anchor Test",
+            DestinationKind::Local {
+                path: repo_dir.clone(),
+            },
+        )
+        .expect("dest");
+        let pw = "anchor-test-pw";
+        setup_destination(
+            &dest,
+            DestinationSetupMode::InitNew,
+            &SecretValue::from_str_secret(pw),
+            None,
+            &runtime,
+        )
+        .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+
+        let mut backup = Backup::new("Anchor Backup", Source::folder(&src_dir), dest.id.clone())
+            .expect("backup");
+        backup.retention = RetentionPolicy {
+            keep_within: Some("30d".to_string()),
+            ..RetentionPolicy::empty()
+        };
+
+        // Create two snapshots relative to real wall-clock `now`:
+        // 100 days old and 60 days old (so newest snapshot itself is 60 days old).
+        let now_utc = OffsetDateTime::now_utc();
+        let older_ts = (now_utc - time::Duration::days(100))
+            .format(RESTIC_TIME_FMT)
+            .expect("format older");
+        let newest_ts = (now_utc - time::Duration::days(60))
+            .format(RESTIC_TIME_FMT)
+            .expect("format newest");
+
+        create_snapshot_at_time(
+            &resolved.binary,
+            &repo_dir,
+            pw,
+            &src_dir,
+            &backup.tag(),
+            &older_ts,
+        );
+        create_snapshot_at_time(
+            &resolved.binary,
+            &repo_dir,
+            pw,
+            &src_dir,
+            &backup.tag(),
+            &newest_ts,
+        );
+
+        let preview = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
+            .unwrap_or_else(|e| panic!("{label}: dry-run failed: {e}"));
+        assert_eq!(
+            preview.keep_count, 1,
+            "{label}: 60-day-old newest snapshot must be kept by --keep-within 30d"
+        );
+        assert_eq!(
+            preview.remove_count, 1,
+            "{label}: 100-day-old snapshot (>30d older than newest) should be removed"
+        );
+
+        let kept_snap = preview
+            .snapshots
+            .iter()
+            .find(|s| s.action == "keep")
+            .expect("kept snapshot");
+        let expected_newest_date = &newest_ts[..10];
+        assert!(
+            kept_snap.time.starts_with(expected_newest_date),
+            "{label}: expected newest snapshot ({expected_newest_date}) kept, got {}",
+            kept_snap.time
+        );
+
+        // Also execute real `forget` to verify the 60-day-old newest snapshot remains in repo.
+        let res = execute_forget(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
+            .unwrap_or_else(|e| panic!("{label}: execute_forget failed: {e}"));
+        assert_eq!(res.exit_code, 0, "{label}");
+        let remaining =
+            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
+                .expect("list remaining");
+        assert_eq!(
+            remaining.len(),
+            1,
+            "{label}: newest snapshot must survive forget"
+        );
+        assert_eq!(remaining[0].id, kept_snap.snapshot_id);
+    }
+}
+
+#[test]
+fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_holds_non_exclusive_lock()
+ {
+    for (label, restic_bin) in common::restic_test_binaries() {
+        let dir = TempDir::new().expect("tempdir");
+        let repo_dir = dir.path().join("repo");
+        let src_dir = dir.path().join("src");
+        fs::create_dir_all(&repo_dir).expect("mkdir repo");
+        fs::create_dir_all(&src_dir).expect("mkdir src");
+        fs::write(src_dir.join("data.txt"), b"preview no-lock test").expect("write data");
+
+        let secrets_hex = dir.path().join("secrets.hex");
+        let store = FileSecretStore::new(&secrets_hex);
+        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
+        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
+        let clock = FakeClock::new(datetime!(2026-11-17 10:30:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+        };
+
+        let dest = Destination::new(
+            "Preview Lock Test",
+            DestinationKind::Local {
+                path: repo_dir.clone(),
+            },
+        )
+        .expect("dest");
+        let pw = "preview-lock-pw";
+        setup_destination(
+            &dest,
+            DestinationSetupMode::InitNew,
+            &SecretValue::from_str_secret(pw),
+            None,
+            &runtime,
+        )
+        .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+
+        let mut backup = Backup::new("Preview Backup", Source::folder(&src_dir), dest.id.clone())
+            .expect("backup");
+        backup.retention = RetentionPolicy {
+            keep_daily: Some(KeepCount::Count(1)),
+            ..RetentionPolicy::empty()
+        };
+
+        for day in [10u8, 11, 12] {
+            create_snapshot_at_time(
+                &resolved.binary,
+                &repo_dir,
+                pw,
+                &src_dir,
+                &backup.tag(),
+                &format!("2026-11-{day:02} 12:00:00"),
+            );
+        }
+
+        let before_ids: Vec<String> =
+            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
+                .expect("list before")
+                .into_iter()
+                .map(|s| s.id)
+                .collect();
+        assert_eq!(before_ids.len(), 3, "{label}");
+
+        // Verify spec passes `--dry-run` and `--no-lock` (P41 / AC-M2-06-6).
+        let preview_spec =
+            build_forget_command_spec(&backup, &dest, true, true, &resolved, &helper)
+                .expect("build preview spec");
+        assert!(
+            preview_spec
+                .subcommand_args
+                .iter()
+                .any(|a| a == "--dry-run")
+        );
+        assert!(
+            preview_spec
+                .subcommand_args
+                .iter()
+                .any(|a| a == "--no-lock")
+        );
+
+        // Spawn another `restic backup --stdin` holding a non-exclusive lock until stdin closes.
+        let mut child = Command::new(&resolved.binary)
+            .args([
+                "-r",
+                &repo_dir.to_string_lossy(),
+                "backup",
+                "--stdin",
+                "--stdin-filename",
+                "slow-input.txt",
+            ])
+            .env("RESTIC_PASSWORD", pw)
+            .env("RESTIC_HOST", "other-active-backup")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn restic backup --stdin");
+
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        stdin
+            .write_all(b"partial-chunk\n")
+            .expect("write initial stdin byte");
+        stdin.flush().expect("flush stdin");
+
+        let mut guard = LockHolderGuard {
+            stdin: Some(stdin),
+            child,
+        };
+
+        let locks_dir = repo_dir.join("locks");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while find_lock_file(&locks_dir).is_none() {
+            if let Some(status) = guard.child.try_wait().expect("try_wait lock holder") {
+                panic!("{label}: restic backup --stdin exited early with {status}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{label}: timed out waiting for non-exclusive lock in {}",
+                locks_dir.display()
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        // Preview must succeed (`--no-lock`), never fail with Exit 11, and report Keep/Remove + Reasons.
+        let preview = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
+            .unwrap_or_else(|e| {
+                panic!("{label}: preview failed under active non-exclusive lock: {e}")
+            });
+
+        assert_eq!(preview.keep_count, 1, "{label}: keep_count");
+        assert_eq!(preview.remove_count, 2, "{label}: remove_count");
+
+        let kept: Vec<_> = preview
+            .snapshots
+            .iter()
+            .filter(|s| s.action == "keep")
+            .collect();
+        let removed: Vec<_> = preview
+            .snapshots
+            .iter()
+            .filter(|s| s.action == "remove")
+            .collect();
+        assert_eq!(kept.len(), 1, "{label}");
+        assert_eq!(removed.len(), 2, "{label}");
+        assert!(
+            !kept[0].reasons.is_empty(),
+            "{label}: kept snapshot must include restic Reasons: {:?}",
+            kept[0]
+        );
+        assert!(
+            kept[0].time.starts_with("2026-11-12"),
+            "{label}: newest daily snapshot should be kept, got {}",
+            kept[0].time
+        );
+
+        drop(guard);
+
+        // Zero snapshots deleted in repo.
+        let after_ids: Vec<String> =
+            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
+                .expect("list after")
+                .into_iter()
+                .map(|s| s.id)
+                .collect();
+        assert_eq!(
+            after_ids, before_ids,
+            "{label}: forget --dry-run must delete zero snapshots"
+        );
+    }
+}

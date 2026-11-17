@@ -22,10 +22,11 @@ pub fn i18n(text: &str) -> PendingI18n<'_> {
     PendingI18n(text)
 }
 
+use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, DestinationKind, ResticProvider, Run, RunKind,
-    RunStatus, Source,
+    Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeRules, KeepCount,
+    ResticProvider, RetentionPolicy, RetentionPreset, Run, RunKind, RunStatus, Source, SourceKind,
 };
 use kestic_daemon::dbus_api::{
     ActiveRunProgressDto, BackupSnapshotsDto, BackupSummaryDto, ConnectionTestResultDto,
@@ -480,15 +481,13 @@ pub fn build_new_backup(
     source_path: &str,
     dest_id: &str,
     excludes_text: &str,
+    detected_source: Option<Source>,
 ) -> Result<Backup, String> {
     let d_id = DestinationId::parse(dest_id.trim()).map_err(|e| e.to_string())?;
-    let mut backup = Backup::new(
-        name.trim(),
-        Source::folder(PathBuf::from(source_path.trim())),
-        d_id,
-    )
-    .map_err(|e| e.to_string())?;
-    backup.excludes = kestic_core::model::ExcludeRules::from_text(excludes_text);
+    let source =
+        detected_source.unwrap_or_else(|| Source::folder(PathBuf::from(source_path.trim())));
+    let mut backup = Backup::new(name.trim(), source, d_id).map_err(|e| e.to_string())?;
+    backup.excludes = ExcludeRules::from_text(excludes_text);
     Ok(backup)
 }
 
@@ -499,22 +498,186 @@ pub fn clone_updated_backup(
     dest_id: &str,
     excludes_text: &str,
     exclude_caches: bool,
+    detected_source: Option<Source>,
 ) -> Result<Backup, String> {
     let mut updated = existing.clone();
     updated.rename(name.trim()).map_err(|e| e.to_string())?;
-    updated
-        .set_source(Source::folder(PathBuf::from(source_path.trim())))
-        .map_err(|e| e.to_string())?;
+    let trimmed_source = source_path.trim();
+    if trimmed_source != existing.source.path.to_string_lossy().as_ref() {
+        let new_src =
+            detected_source.unwrap_or_else(|| Source::folder(PathBuf::from(trimmed_source)));
+        updated.set_source(new_src).map_err(|e| e.to_string())?;
+    } else if let Some(det) = detected_source {
+        updated.set_source(det).map_err(|e| e.to_string())?;
+    }
     if !dest_id.trim().is_empty() {
         let d_id = DestinationId::parse(dest_id.trim()).map_err(|e| e.to_string())?;
         updated.reassign_destination(d_id);
     }
-    updated.excludes = kestic_core::model::ExcludeRules {
-        lines: excludes_text.lines().map(|l| l.to_string()).collect(),
-        exclude_caches,
-    };
+    let mut excludes = existing.excludes.clone();
+    excludes.lines = excludes_text.lines().map(|l| l.to_string()).collect();
+    excludes.exclude_caches = exclude_caches;
+    updated.excludes = excludes;
     updated.validate().map_err(|e| e.to_string())?;
     Ok(updated)
+}
+
+pub fn clone_updated_backup_excludes(
+    existing: &Backup,
+    excludes: ExcludeRules,
+) -> Result<Backup, String> {
+    let mut updated = existing.clone();
+    updated.excludes = excludes;
+    updated.validate().map_err(|e| e.to_string())?;
+    Ok(updated)
+}
+
+pub fn clone_updated_backup_retention(
+    existing: &Backup,
+    retention: RetentionPolicy,
+) -> Result<Backup, String> {
+    let mut updated = existing.clone();
+    updated.retention = retention;
+    updated.validate().map_err(|e| e.to_string())?;
+    Ok(updated)
+}
+
+pub fn clone_updated_backup_source(existing: &Backup, source: Source) -> Result<Backup, String> {
+    let mut updated = existing.clone();
+    updated.set_source(source).map_err(|e| e.to_string())?;
+    updated.validate().map_err(|e| e.to_string())?;
+    Ok(updated)
+}
+
+fn format_keep_count_part(kc: KeepCount, unit_singular_plural: &str) -> String {
+    match kc {
+        KeepCount::Unlimited => i18n("all %1").subs(&[unit_singular_plural]),
+        KeepCount::Count(n) => format!("{n} {unit_singular_plural}"),
+    }
+}
+
+pub fn format_retention_summary(policy: &RetentionPolicy) -> String {
+    match policy.preset() {
+        RetentionPreset::Standard => {
+            return i18n("Standard (7 daily, 4 weekly, 12 monthly)").to_string();
+        }
+        RetentionPreset::Economical => {
+            return i18n("Economical (7 daily, 4 weekly)").to_string();
+        }
+        RetentionPreset::Long => {
+            return i18n("Long (7 daily, 4 weekly, 12 monthly, all yearly)").to_string();
+        }
+        RetentionPreset::Custom => {}
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(kc) = policy.keep_last {
+        parts.push(match kc {
+            KeepCount::Unlimited => i18n("all snapshots").to_string(),
+            KeepCount::Count(n) => i18n("%1 last").subs(&[&n.to_string()]),
+        });
+    }
+    if let Some(kc) = policy.keep_hourly {
+        parts.push(format_keep_count_part(kc, &i18n("hourly").to_string()));
+    }
+    if let Some(kc) = policy.keep_daily {
+        parts.push(format_keep_count_part(kc, &i18n("daily").to_string()));
+    }
+    if let Some(kc) = policy.keep_weekly {
+        parts.push(format_keep_count_part(kc, &i18n("weekly").to_string()));
+    }
+    if let Some(kc) = policy.keep_monthly {
+        parts.push(format_keep_count_part(kc, &i18n("monthly").to_string()));
+    }
+    if let Some(kc) = policy.keep_yearly {
+        parts.push(format_keep_count_part(kc, &i18n("yearly").to_string()));
+    }
+    if let Some(w) = &policy.keep_within {
+        parts.push(i18n("all within %1").subs(&[w]));
+    }
+    if let Some(w) = &policy.keep_within_hourly {
+        parts.push(i18n("hourly within %1").subs(&[w]));
+    }
+    if let Some(w) = &policy.keep_within_daily {
+        parts.push(i18n("daily within %1").subs(&[w]));
+    }
+    if let Some(w) = &policy.keep_within_weekly {
+        parts.push(i18n("weekly within %1").subs(&[w]));
+    }
+    if let Some(w) = &policy.keep_within_monthly {
+        parts.push(i18n("monthly within %1").subs(&[w]));
+    }
+    if let Some(w) = &policy.keep_within_yearly {
+        parts.push(i18n("yearly within %1").subs(&[w]));
+    }
+    if parts.is_empty() {
+        i18n("No rules configured").to_string()
+    } else {
+        i18n("Custom (%1)").subs(&[&parts.join(", ")])
+    }
+}
+
+pub fn format_exclude_summary(excludes: &ExcludeRules) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let folder_count = excludes
+        .folders
+        .iter()
+        .filter(|f| !f.trim().is_empty())
+        .count();
+    if folder_count == 1 {
+        parts.push(i18n("1 folder").to_string());
+    } else if folder_count > 1 {
+        parts.push(i18n("%1 folders").subs(&[&folder_count.to_string()]));
+    }
+    if excludes.exclude_caches {
+        parts.push(i18n("caches").to_string());
+    }
+    if excludes.exclude_trash {
+        parts.push(i18n("trash").to_string());
+    }
+    if let Some(ref limit) = excludes.exclude_larger_than
+        && !limit.trim().is_empty()
+    {
+        parts.push(i18n("files > %1").subs(&[limit.trim()]));
+    }
+    let expert_count = excludes.expert_rule_count();
+    if expert_count == 1 {
+        parts.push(i18n("1 expert rule").to_string());
+    } else if expert_count > 1 {
+        parts.push(i18n("%1 expert rules").subs(&[&expert_count.to_string()]));
+    }
+    if !excludes.exclude_if_present.is_empty() {
+        parts.push(i18n("marker: %1").subs(&[&excludes.exclude_if_present.join(", ")]));
+    }
+    if parts.is_empty() {
+        i18n("None").to_string()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+pub fn format_source_kind_label(source: &Source) -> String {
+    match source.kind {
+        SourceKind::Drive => {
+            if let Some(lbl) = source
+                .drive_label
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+            {
+                i18n("Drive (%1)").subs(&[lbl.trim()])
+            } else {
+                i18n("Drive").to_string()
+            }
+        }
+        SourceKind::Folder => i18n("Folder").to_string(),
+    }
+}
+
+pub fn backup_exclude_file_path_str(backup_id: &BackupId) -> String {
+    let state_dir = default_state_dir().unwrap_or_else(|_| PathBuf::from("~/.local/state/kestic"));
+    exclude_file_path(&state_dir, backup_id)
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub fn build_provider(kind: &str, custom_path: &str) -> Result<ResticProvider, String> {
@@ -607,7 +770,12 @@ pub fn format_backup_status(
 
     if !summary.availability.available {
         let reason_line = match summary.availability.blocked_reason.as_deref() {
-            Some(REASON_SOURCE_UNAVAILABLE) => i18n("Waiting: source unavailable").to_string(),
+            Some(REASON_SOURCE_UNAVAILABLE) => summary
+                .availability
+                .reason_text
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| i18n("Waiting: source unavailable").to_string()),
             Some(REASON_DESTINATION_UNREACHABLE) => {
                 i18n("Waiting: destination unreachable").to_string()
             }
@@ -630,6 +798,8 @@ pub fn format_backup_status(
                 let count = summary.unreadable_files.len();
                 let text = if count > 0 {
                     i18n("Backed up, %1 files unreadable").subs(&[&count.to_string()])
+                } else if summary.pending_forget {
+                    i18n("Backed up, retention not executed (forget pending)").to_string()
                 } else {
                     i18n("Backed up with warning").to_string()
                 };

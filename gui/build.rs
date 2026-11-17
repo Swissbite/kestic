@@ -54,6 +54,8 @@ fn main() {
         "src/qml/BackupDetailPage.qml",
         "src/qml/BackupSourceEditPage.qml",
         "src/qml/BackupExcludesEditPage.qml",
+        "src/qml/BackupRetentionPage.qml",
+        "src/qml/BackupPreviewPage.qml",
         "src/qml/BackupReassignPage.qml",
         "src/qml/BackupSnapshotsPage.qml",
         "src/qml/BackupFullConfigPage.qml",
@@ -70,6 +72,8 @@ fn main() {
     .file("src/models.rs")
     .file("src/smoke.rs")
     .cpp_file("src/smoke_helper.cpp")
+    .cpp_file("src/smoke_m1.cpp")
+    .cpp_file("src/smoke_m2.cpp")
     .qt_module("Widgets")
     .qt_module("Quick");
 
