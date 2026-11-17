@@ -37,6 +37,14 @@ Tests berühren nie echte Benutzerdaten oder -konfiguration:
 - Tests setzen nichts unter `/etc/xdg/autostart` voraus.
 - Tests laufen nicht als root (Rechte-Tests mit `chmod 000` wären sonst wirkungslos).
 
+## Warnungsfreiheit und Lints (NFR-12)
+
+Alle Build-, Lint- und Smoke-Stufen laufen warnungsfrei (`cargo clippy --workspace --all-targets -- -D warnings`, C++-Compiler für CXX-Qt/Smoke-Helper, `QT_QPA_PLATFORM=offscreen` ohne Qt-/QML-Warnungen auf `stderr`, `.po`-Validierung, `reuse lint`):
+
+- **Ursache beheben statt abschalten:** Warnungen durch sauberes Refactoring lösen (z. B. Kontext-/Optionen-Structs bei vielen Parametern, ungenutzten Code entfernen, Drittanbieter-/Systemheader wie KF6 in `gui/build.rs` über `-isystem` statt `-I` einbinden, damit Warnungen im eigenen Code aktiv bleiben).
+- **Keine Unterdrückungen:** Keine `#[allow(...)]`, `#![allow(...)]`, `#pragma`, QML-Filter oder `#[ignore]`, um reale Warnungen oder Tests zu verstecken.
+- **Enge Ausnahmen:** Nur dort zulässig, wo eine externe Schnittstelle die Signatur erzwingt (z. B. `org.freedesktop.Notifications.Notify` mit 8 D-Bus-Parametern in Test-Fakes) oder Cargo jedes Test-Binary separat kompiliert (`#![allow(dead_code)]` in `tests/common/mod.rs`); nie modul-/crateweit im Produktionscode.
+
 ## Reproduzierbarkeit
 
 `rust-toolchain.toml`, `Cargo.lock`, gepinnte CXX-Qt-Version, `scripts/bootstrap.sh`: installiert Abhängigkeiten (apt, rustup) und lädt restic 0.18.0 und aktuell sowie `rest-server` geprüft (SHA256 + PGP) und rclone ≥ 1.65 (mindestens SHA256; PGP, wenn das Projekt Signaturen veröffentlicht – Ergebnis im Spike-Bericht). Download-Mechanismus wie FR-33 wiederverwenden.

@@ -14,6 +14,7 @@ FR-02, FR-04, FR-05, FR-17, FR-29 (Prüfung beim manuellen Lauf; zeitplangesteue
 
 | ID | Story |
 | --- | --- |
+| M2-S00 | Projekt-Setup GitHub: Remote `Swissbite/kestic` verknüpfen, `ubuntu:26.04`-Container-CI für `just verify`, `README.md` auf Englisch + Sync-Regel je Meilenstein |
 | M2-S01 | Ausschluss-Regeln: Modell (einfache Ordner-Regeln + Expertenregeln), Erzeugung der Exclude-Datei (Env-Variablen, `!`, `**`) (FR-02) |
 | M2-S02 | Ausschluss-Regeln GUI: einfacher Modus (Ordner wählen), Expertenmodus (Syntax), Expertenregeln im einfachen Modus schreibgeschützt (F12, E16) |
 | M2-S03 | Hinweis im Editor: Negation unter ganz ausgeschlossenem Ordner wirkt nicht |
@@ -29,6 +30,12 @@ FR-02, FR-04, FR-05, FR-17, FR-29 (Prüfung beim manuellen Lauf; zeitplangesteue
 ## Akzeptanzkriterien
 
 Test-Isolation gemäss [test-strategy.md](../test-strategy.md). `<state>` = `$XDG_STATE_HOME/kestic`.
+
+### M2-S00 GitHub-Repository, Verify-CI & englisches README
+- **AC-M2-00-1** – *Gegeben* das öffentliche GitHub-Repository `Swissbite/kestic`, *wenn* M2 startet, *dann* ist es als `origin` verknüpft, der abgeschlossene M1-Stand liegt auf `main`, und für den Meilenstein besteht auf GitHub ein schlankes Tracking-Issue (Feinsteuerung und Story-ACs bleiben allein in `docs/spec/`) · Test: manuell (Git-/GitHub-Prüfung)
+- **AC-M2-00-2** – *Gegeben* ein Push oder Pull Request auf GitHub, *wenn* `.github/workflows/verify.yml` in einem sauberen `ubuntu:26.04`-Container (mit den Abhängigkeiten aus `scripts/bootstrap.sh` inkl. `gnome-keyring`, `gettext`, `desktop-file-utils`, `locales` mit `en_US.UTF-8` und QML-Laufzeitmodulen) läuft, *dann* läuft `just verify` grün durch und lädt das `.deb` sowie `target/smoke-artifacts/*.png` als Artefakte hoch · Test: Integration (GitHub-Actions-Lauf)
+- **AC-M2-00-3** – *Gegeben* das öffentliche Repository, *wenn* `README.md` gelesen wird, *dann* ist es auf Englisch, beschreibt den aktuellen Stand (inkl. Build-, Test- und Paket-Hinweisen) und vermerkt, dass die interne Arbeitsspezifikation unter `docs/spec/` auf Deutsch geführt wird · Test: manuell (Review) + `reuse lint`
+- **AC-M2-00-4** – *Gegeben* `AGENTS.md`, *wenn* ein Meilenstein abgeschlossen wird, *dann* ist dort verankert, das englische `README.md` (und etwaige englische Einstiegsdoku) jeweils mit dem neuen Meilenstein-Stand abzugleichen, während `docs/spec/` einsprachig Deutsch bleibt · Test: manuell (Review)
 
 ### M2-S01 Ausschluss-Regeln Modell und Exclude-Datei
 - **AC-M2-01-1** (FR-02, F13) – *Gegeben* Backup mit Ausschluss-Regeln, *wenn* ein Lauf startet, *dann* liegt die Exclude-Datei unter `<state>/excludes/<backup-id>.txt`, und der restic-Aufruf enthält `--exclude-file` mit genau diesem Pfad · Test: Unit
@@ -113,6 +120,7 @@ Test-Isolation gemäss [test-strategy.md](../test-strategy.md). `<state>` = `$XD
 
 ## Exit-Kriterien
 
+- Öffentliches GitHub-Repo (`Swissbite/kestic`), `ubuntu:26.04`-Verify-CI und englisches `README.md` (mit Sync-Regel in `AGENTS.md`) stehen.
 - Backup mit einfachen und Expertenregeln, Aufbewahrung mit Vorschau, Quellen-Prüfung funktioniert.
 - `just verify` grün; Screenshots für Editor, Aufbewahrung, Übersicht.
 - Manuelle Abnahme: Verständlichkeit von Ausschluss- und Aufbewahrungs-Editor.
