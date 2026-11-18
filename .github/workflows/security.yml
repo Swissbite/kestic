@@ -5,13 +5,17 @@ name: Security
 
 on:
   push:
-    branches: [main, "m*"]
+    branches: [main]
   pull_request:
     branches: [main]
   schedule:
     # Run every Monday at 05:30 UTC to catch newly published RustSec advisories on main.
     - cron: "30 5 * * 1"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -33,17 +37,7 @@ jobs:
         with:
           fail-on-severity: moderate
           comment-summary-in-pr: on-failure
-          allow-licenses: |
-            Apache-2.0
-            BSD-2-Clause
-            BSD-3-Clause
-            GPL-3.0-or-later
-            ISC
-            MIT
-            MPL-2.0
-            Unicode-3.0
-            Unlicense
-            Zlib
+          allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, GPL-3.0-or-later, ISC, MIT, MPL-2.0, Unicode-3.0, Unlicense, Zlib
 
   cargo-deny:
     name: RustSec & License Audit (cargo-deny)

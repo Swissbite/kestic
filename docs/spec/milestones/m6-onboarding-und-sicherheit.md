@@ -25,6 +25,7 @@ FR-24, FR-35, FR-38, FR-39, FR-49, FR-56 · NFR-08, NFR-09 · E10, F7, F8, F16, 
 | M6-S09 | Querschnitt: NFR-08 (destruktive Aktionen) und NFR-09 (Tastatur, Barrierefreiheit) über alle Screens prüfen, Checkliste je Screen |
 | M6-S10 | Kit für bestehendes Ziel erzeugen (Ziele aus M1–M5 bzw. ohne Kit); Hinweis in Status und Tray, solange das Kit fehlt (FR-35) |
 | M6-S11 | Fehlerabbildung vollständig: alle bekannten Fehler aus M1–M6 (Exit-Codes, JSON `exit_error`, Backend-Fehler wie DNS/Auth/Timeout, KWallet gesperrt) mit Text + Aktion (FR-37) |
+| M6-S12 | Log-Ansicht aufbereiten: restic-JSON-Einträge im Lauf-Detail lesbar darstellen, strukturiert nach Schweregrad (Alle/Warnungen/Fehler) filtern und durchsuchen; Roh-JSON optional im Expertenmodus bzw. über Log-Datei (FR-18, NFR-10) |
 
 ## Akzeptanzkriterien
 
@@ -109,6 +110,11 @@ Test-Isolation gemäss [test-strategy.md](../test-strategy.md). Zusätzlich: Sec
 ### M6-S11 Fehlerabbildung vollständig
 - **AC-M6-11-1** (FR-37) – *Gegeben* die Fehlertabelle in `restic-integration.md`, *wenn* M6 abgeschlossen ist, *dann* enthält sie mindestens Exit 1, 3, 10, 11, 12, unbekannte Codes, JSON `exit_error`, DNS-Fehler, Auth-Fehler am Backend, Timeout, KWallet gesperrt, restic zu alt bzw. nicht gefunden, je mit Text DE/EN und Handlungsoption · Test: Unit (Tabelle vollständig)
 - **AC-M6-11-2** (FR-37) – *Gegeben* je Tabelleneintrag ein provozierter Fehler (Temp-Repo, gestoppter `rest-server`, falsches Passwort, gesperrter Secret-Fake), *wenn* er auftritt, *dann* zeigt Kestic genau Text und Aktion aus der Tabelle · Test: Integration
+
+### M6-S12 Log-Ansicht aufbereiten
+- **AC-M6-12-1** (FR-18, NFR-10, NFR-02) – *Gegeben* ein Lauf mit restic-JSON-Zeilen (`verbose_status`, `status`, `summary`, `error`/`exit_error`, `forget`), *wenn* die Log-Ansicht im Lauf-Detail geöffnet wird, *dann* zeigt sie verständliche, übersetzte Textzeilen statt roher JSON-Blöcke; unbekannte Message-Typen fallen tolerant auf einen lesbaren Fallback zurück, und Secrets bleiben redacted · Test: Unit + GUI-Smoke
+- **AC-M6-12-2** (FR-18) – *Gegeben* Filter `[Alle ▾]` (Alle · Warnungen · Fehler) und Suchfeld in der Log-Ansicht, *wenn* nach Schweregrad oder Suchbegriff gefiltert wird, *dann* filtert Kestic anhand des strukturierten Log-Levels und des angezeigten Texts statt per Substring-Suche im rohen JSON · Test: Unit + GUI-Smoke
+- **AC-M6-12-3** (FR-18) – *Gegeben* «Log kopieren» bzw. aktiver Expertenmodus, *wenn* der Benutzer das Log kopiert oder Rohdaten prüft, *dann* ist das kopierte Log direkt lesbar und frei von Secrets, während das Roh-Log weiterhin über «Log-Datei öffnen» (bzw. optional im Expertenmodus) zugänglich bleibt · Test: Unit + GUI-Smoke
 
 ## Exit-Kriterien (= MVP fertig)
 
