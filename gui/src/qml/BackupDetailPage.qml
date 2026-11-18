@@ -169,10 +169,14 @@ Kirigami.ScrollablePage {
             }
 
             Controls.Button {
+                id: reviewExcludeRulesButton
                 Layout.alignment: Qt.AlignRight
                 text: i18n("Review Exclude Rules…")
                 Accessible.name: text
-                onClicked: rootWindow.openBackupExcludesPage(backupId)
+                onClicked: {
+                    rootWindow.nextTriggerItem = reviewExcludeRulesButton;
+                    rootWindow.openBackupExcludesPage(backupId);
+                }
             }
         }
 
@@ -256,7 +260,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Show all snapshots")
-            onClicked: rootWindow.openBackupSnapshotsPage(backupId, currentData ? currentData.name : "")
+            onClicked: {
+                rootWindow.nextTriggerItem = showSnapshotsButton;
+                rootWindow.openBackupSnapshotsPage(backupId, currentData ? currentData.name : "");
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -299,7 +306,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Edit source folder")
-            onClicked: rootWindow.openBackupSourcePage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = editSourceRow;
+                rootWindow.openBackupSourcePage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -339,7 +349,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Edit exclude rules")
-            onClicked: rootWindow.openBackupExcludesPage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = editExcludesRow;
+                rootWindow.openBackupExcludesPage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -379,7 +392,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Edit retention policy")
-            onClicked: rootWindow.openBackupRetentionPage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = editRetentionRow;
+                rootWindow.openBackupRetentionPage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -419,7 +435,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Assign destination")
-            onClicked: rootWindow.openBackupReassignPage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = editDestinationRow;
+                rootWindow.openBackupReassignPage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -457,7 +476,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("View full configuration")
-            onClicked: rootWindow.openBackupFullConfigPage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = viewFullConfigRow;
+                rootWindow.openBackupFullConfigPage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent

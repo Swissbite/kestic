@@ -9,13 +9,25 @@ import org.kde.kirigami as Kirigami
 Kirigami.ScrollablePage {
     id: page
     objectName: "destinationsListPage"
-    title: ""
+    title: i18n("Destinations")
 
     required property var rootWindow
     required property var appBackend
     required property var destinationsModel
 
     property string selectedDestinationId: ""
+
+    function focusSelectedRow() {
+        for (var i = 0; i < destinationsListView.count; ++i) {
+            var item = destinationsListView.itemAtIndex(i);
+            if (item && item.highlighted) {
+                destinationsListView.currentIndex = i;
+                rootWindow.focusItemInPageStack(item);
+                return true;
+            }
+        }
+        return false;
+    }
 
     header: Kirigami.InlineViewHeader {
         width: parent.width
@@ -83,19 +95,24 @@ Kirigami.ScrollablePage {
             required property bool hasProblem
 
             width: ListView.view.width
+            activeFocusOnTab: true
             highlighted: page.selectedDestinationId === destinationId
             Accessible.name: name
 
             onClicked: {
                 ListView.view.currentIndex = index;
                 page.selectedDestinationId = destinationId;
+                row.forceActiveFocus(Qt.TabFocusReason);
                 rootWindow.openDestinationDetailById(destinationId);
             }
 
             Rectangle {
                 anchors.fill: parent
+                anchors.margins: row.highlighted ? 2 : 0
                 z: 10
-                color: "transparent"
+                color: (row.activeFocus || row.visualFocus) && row.highlighted
+                    ? Qt.rgba(1, 1, 1, 0.14)
+                    : "transparent"
                 radius: Kirigami.Units.cornerRadius
                 border.width: (row.activeFocus || row.visualFocus) ? 2 : 0
                 border.color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor

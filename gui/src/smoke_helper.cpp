@@ -200,6 +200,7 @@ bool save_screenshot(QQuickWindow* window, const QString& out_path) {
         );
         return false;
     }
+    wait_ms(60);
     return true;
 }
 
@@ -512,6 +513,16 @@ public:
         }
 
         const int key = ke->key();
+        if (key == Qt::Key_Tab || key == Qt::Key_Backtab) {
+            if (et == QEvent::KeyPress) {
+                if (auto* win = qobject_cast<QQuickWindow*>(watched)) {
+                    if (win->objectName() == QLatin1String("kesticMainWindow")) {
+                        QMetaObject::invokeMethod(win, "cancelFocusRestoreTimer", Qt::DirectConnection);
+                    }
+                }
+            }
+            return QObject::eventFilter(watched, event);
+        }
         if (key != Qt::Key_Escape && key != Qt::Key_Return && key != Qt::Key_Enter) {
             return QObject::eventFilter(watched, event);
         }

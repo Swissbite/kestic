@@ -51,7 +51,15 @@ void run_m2_smoke_scenario(
             return;
         }
         QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
-        QMetaObject::invokeMethod(window, "openBackupExcludesPage", Q_ARG(QVariant, bid));
+        wait_ms(200);
+        QQuickItem* excl_row = window->findChild<QQuickItem*>(QStringLiteral("editExcludesRow"));
+        if (!excl_row) {
+            finish_m2(201, "editExcludesRow missing on BackupDetailPage");
+            return;
+        }
+        QMetaObject::invokeMethod(window, "focusItemInPageStack", Q_ARG(QVariant, QVariant::fromValue<QObject*>(excl_row)));
+        wait_ms(80);
+        send_key(window, Qt::Key_Return);
         wait_ms(200);
 
         QQuickItem* excl_page = window->findChild<QQuickItem*>(QStringLiteral("backupExcludesEditPage"));
@@ -60,7 +68,26 @@ void run_m2_smoke_scenario(
         QQuickItem* add_btn = window->findChild<QQuickItem*>(QStringLiteral("addExcludeFolderButton"));
         QQuickItem* cache_cb = window->findChild<QQuickItem*>(QStringLiteral("excludeCachesCheckbox"));
         if (!excl_page || !expert_sec || !readonly_info || !add_btn || !cache_cb) {
+            std::fprintf(
+                stderr,
+                "Missing controls: page=%p expert=%p info=%p add=%p cb=%p activeFocus=%s\n",
+                static_cast<void*>(excl_page),
+                static_cast<void*>(expert_sec),
+                static_cast<void*>(readonly_info),
+                static_cast<void*>(add_btn),
+                static_cast<void*>(cache_cb),
+                qPrintable(describe_focus_item(window->activeFocusItem()))
+            );
             finish_m2(202, "BackupExcludesEditPage controls missing");
+            return;
+        }
+        if (window->activeFocusItem() != add_btn) {
+            std::fprintf(
+                stderr,
+                "Expected focus on addExcludeFolderButton, got: %s\n",
+                qPrintable(describe_focus_item(window->activeFocusItem()))
+            );
+            finish_m2(202, "opening BackupExcludesEditPage must focus addExcludeFolderButton immediately");
             return;
         }
         if (expert_sec->isVisible() || !readonly_info->isVisible()) {
@@ -72,12 +99,12 @@ void run_m2_smoke_scenario(
             return;
         }
 
-        // AC-M2-02-7: dirty Escape opens unsavedExcludesDialog; clean Escape closes immediately.
+        // AC-M2-02-7: dirty Escape opens unsavedExcludesDialog; clean Escape closes immediately and restores focus to editExcludesRow.
         cache_cb->forceActiveFocus(Qt::TabFocusReason);
         QCoreApplication::processEvents();
         send_key(window, Qt::Key_Return);
-        if (!excl_page->property("dirty").toBool()) {
-            finish_m2(205, "toggling excludeCachesCheckbox did not mark dirty");
+        if (!excl_page->property("dirty").toBool() || window->activeFocusItem() != cache_cb) {
+            finish_m2(205, "toggling excludeCachesCheckbox did not mark dirty or lost focus");
             return;
         }
         send_key(window, Qt::Key_Escape);
@@ -91,15 +118,87 @@ void run_m2_smoke_scenario(
         for (int i = 0; i < 10 && (unsaved_dlg->property("visible").toBool() || unsaved_dlg->property("opened").toBool()); ++i) {
             wait_ms(60);
         }
+        cache_cb->forceActiveFocus(Qt::TabFocusReason);
+        QCoreApplication::processEvents();
         send_key(window, Qt::Key_Return);
-        if (excl_page->property("dirty").toBool()) {
-            finish_m2(207, "toggling back did not restore clean state");
+        if (excl_page->property("dirty").toBool() || window->activeFocusItem() != cache_cb) {
+            finish_m2(207, "toggling back did not restore clean state or lost focus");
             return;
         }
         send_key(window, Qt::Key_Escape);
         wait_ms(150);
         if (window->findChild<QQuickItem*>(QStringLiteral("backupExcludesEditPage"))) {
             finish_m2(208, "clean Escape did not close BackupExcludesEditPage");
+            return;
+        }
+        if (window->activeFocusItem() != excl_row) {
+            std::fprintf(
+                stderr,
+                "Expected focus on editExcludesRow, got: %s\n",
+                qPrintable(describe_focus_item(window->activeFocusItem()))
+            );
+            finish_m2(208, "closing BackupExcludesEditPage with Escape did not restore focus to editExcludesRow");
+            return;
+        }
+
+        // Second cycle: pressing Return on editExcludesRow and Escape again must behave identically (no alternating columnView scroll/stack leak).
+        send_key(window, Qt::Key_Return);
+        wait_ms(200);
+        add_btn = window->findChild<QQuickItem*>(QStringLiteral("addExcludeFolderButton"));
+        if (!add_btn || window->activeFocusItem() != add_btn) {
+            finish_m2(208, "second Return on editExcludesRow did not focus addExcludeFolderButton");
+            return;
+        }
+        // Verify 2-column Shift-Left invariant (in wide mode: Lv1 disabled off-screen, Lv2 + Lv3 visible at ~50% width each) and accessible breadcrumb bar.
+        QQuickItem* crumb_bar = find_visual_item(window, QStringLiteral("breadcrumbToolBar"));
+        QQuickItem* crumb_back = find_visual_item(window, QStringLiteral("breadcrumbBackButton"));
+        QQuickItem* crumb_0 = find_visual_item(window, QStringLiteral("breadcrumbButton_0"));
+        QQuickItem* crumb_1 = find_visual_item(window, QStringLiteral("breadcrumbButton_1"));
+        if (!crumb_bar || !crumb_bar->isVisible() || !crumb_back || !crumb_back->isVisible()
+            || !crumb_0 || !crumb_0->isVisible() || crumb_0->property("text").toString().isEmpty()
+            || !crumb_1 || !crumb_1->isVisible() || crumb_1->property("text").toString().isEmpty()) {
+            std::fprintf(
+                stderr,
+                "Breadcrumb check: bar=%p(%d) back=%p(%d) c0=%p(%d,'%s') c1=%p(%d,'%s')\n",
+                static_cast<void*>(crumb_bar),
+                crumb_bar ? static_cast<int>(crumb_bar->isVisible()) : -1,
+                static_cast<void*>(crumb_back),
+                crumb_back ? static_cast<int>(crumb_back->isVisible()) : -1,
+                static_cast<void*>(crumb_0),
+                crumb_0 ? static_cast<int>(crumb_0->isVisible()) : -1,
+                crumb_0 ? qPrintable(crumb_0->property("text").toString()) : "",
+                static_cast<void*>(crumb_1),
+                crumb_1 ? static_cast<int>(crumb_1->isVisible()) : -1,
+                crumb_1 ? qPrintable(crumb_1->property("text").toString()) : ""
+            );
+            finish_m2(208, "breadcrumbToolBar / Back button / ancestor breadcrumb buttons missing or empty");
+            return;
+        }
+        if (!window->property("narrowMode").toBool()) {
+            QQuickItem* lv1_page = window->findChild<QQuickItem*>(QStringLiteral("backupsListPage"));
+            QQuickItem* lv2_page = window->findChild<QQuickItem*>(QStringLiteral("backupDetailPage"));
+            QQuickItem* lv3_page = window->findChild<QQuickItem*>(QStringLiteral("backupExcludesEditPage"));
+            if (!lv1_page || lv1_page->isEnabled() || !lv2_page || !lv2_page->isEnabled()
+                || !lv3_page || !lv3_page->isEnabled()
+                || lv2_page->width() < (window->width() / 2.0 - 10.0)
+                || lv3_page->width() < (window->width() / 2.0 - 10.0)) {
+                finish_m2(208, "wide mode at depth 3 must disable off-screen Lv1 and show Lv2 + Lv3 at 50% width each");
+                return;
+            }
+        }
+        // Opening another Lv3 page (Source) while Excludes is open must REPLACE Lv3 at depth 3, never stack to depth 4.
+        QMetaObject::invokeMethod(window, "openBackupSourcePage", Q_ARG(QVariant, bid));
+        wait_ms(180);
+        if (window->findChild<QQuickItem*>(QStringLiteral("backupExcludesEditPage"))
+            || !window->findChild<QQuickItem*>(QStringLiteral("backupSourceEditPage"))) {
+            finish_m2(208, "opening BackupSourceEditPage from Lv2 did not replace BackupExcludesEditPage at depth 3");
+            return;
+        }
+        send_key(window, Qt::Key_Escape);
+        wait_ms(150);
+        if (window->findChild<QQuickItem*>(QStringLiteral("backupSourceEditPage"))
+            || window->activeFocusItem() != excl_row) {
+            finish_m2(208, "Escape after Lv3 replacement did not close subpage or restore focus to editExcludesRow");
             return;
         }
 
@@ -320,12 +419,22 @@ void run_m2_smoke_scenario(
             return;
         }
         QMetaObject::invokeMethod(prev_act, "trigger");
-        wait_ms(250);
+        wait_ms(100);
         QQuickItem* prev_page = window->findChild<QQuickItem*>(QStringLiteral("backupPreviewPage"));
+        if (!prev_page || prev_page->property("mode").toString() != QLatin1String("retention")) {
+            finish_m2(247, "retention preview page missing");
+            return;
+        }
+        for (int i = 0; i < 120; ++i) {
+            if (prev_page->property("retentionPreviewState").toString() != QLatin1String("running")) {
+                break;
+            }
+            wait_ms(50);
+        }
         QQuickItem* ret_banner = window->findChild<QQuickItem*>(QStringLiteral("retentionPreviewSummaryBanner"));
-        if (!prev_page || prev_page->property("mode").toString() != QLatin1String("retention")
+        if (prev_page->property("retentionPreviewState").toString() != QLatin1String("done")
             || !ret_banner || !ret_banner->isVisible()) {
-            finish_m2(247, "retention preview page or summary banner missing");
+            finish_m2(247, "retention preview summary banner missing or preview did not complete");
             return;
         }
         if (!save_screenshot(window, out_path)) {
@@ -342,8 +451,13 @@ void run_m2_smoke_scenario(
             return;
         }
         QMetaObject::invokeMethod(save_act, "trigger");
-        wait_ms(250);
         QObject* confirm_dlg = window->findChild<QObject*>(QStringLiteral("confirmRetentionRemoveDialog"));
+        for (int i = 0; i < 120; ++i) {
+            if (confirm_dlg && confirm_dlg->property("visible").toBool()) {
+                break;
+            }
+            wait_ms(50);
+        }
         QObject* confirm_act = window->findChild<QObject*>(QStringLiteral("confirmRetentionSaveAction"));
         if (!confirm_dlg || !confirm_dlg->property("visible").toBool() || !confirm_act
             || ret_page->property("pendingRemoveCount").toInt() != 2) {
@@ -351,7 +465,7 @@ void run_m2_smoke_scenario(
             return;
         }
         QMetaObject::invokeMethod(confirm_act, "trigger");
-        wait_ms(250);
+        wait_ms(200);
         if (ret_page->property("dirty").toBool()) {
             finish_m2(250, "retention rules still dirty after confirming save");
             return;
@@ -362,7 +476,12 @@ void run_m2_smoke_scenario(
         QMetaObject::invokeMethod(ret_page, "onFieldEdited");
         wait_ms(80);
         QMetaObject::invokeMethod(save_act, "trigger");
-        wait_ms(250);
+        for (int i = 0; i < 120; ++i) {
+            if (!ret_page->property("saveBusy").toBool() && !ret_page->property("dirty").toBool()) {
+                break;
+            }
+            wait_ms(50);
+        }
         if (confirm_dlg->property("visible").toBool() || confirm_dlg->property("opened").toBool()) {
             finish_m2(251, "confirmRetentionRemoveDialog must NOT open when 0 snapshots would be removed");
             return;

@@ -249,6 +249,19 @@ Kirigami.ScrollablePage {
             text: i18n("Save")
             enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.saveChanges()
+        },
+        Kirigami.Action {
+            id: closeExcludesAction
+            objectName: "closeExcludesAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: {
+                if (page.dirty) {
+                    unsavedDialog.open();
+                } else {
+                    rootWindow.popSubPage();
+                }
+            }
         }
     ]
 
@@ -271,13 +284,13 @@ Kirigami.ScrollablePage {
         standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
         onAccepted: {
             if (page.saveChanges()) {
-                rootWindow.pageStack.pop();
+                rootWindow.popSubPage();
             }
         }
         onDiscarded: {
             appBackend.has_unsaved_changes = false;
             page.loadFromExcludesJson(page.savedExcludesJson);
-            rootWindow.pageStack.pop();
+            rootWindow.popSubPage();
         }
     }
 
@@ -285,7 +298,7 @@ Kirigami.ScrollablePage {
         id: enableExpertModeDialog
         objectName: "enableExpertModeDialog"
         title: i18n("Enable Expert Mode?")
-        subtitle: i18n("Expert Mode unlocks raw restic exclude syntax across Kestic, including pattern rules and negated exceptions.")
+        subtitle: i18n("Expert Mode unlocks raw restic exclude syntax across Kestic, including pattern rules and negated exceptions. You can turn it off anytime in Settings (menu top right).")
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {
@@ -368,7 +381,10 @@ Kirigami.ScrollablePage {
                     objectName: "removeExcludeFolderButton"
                     icon.name: "edit-delete"
                     Accessible.name: i18n("Remove excluded folder %1", modelData)
-                    onClicked: page.removeExcludeFolder(index)
+                    onClicked: {
+                        page.removeExcludeFolder(index);
+                        addExcludeFolderButton.forceActiveFocus(Qt.TabFocusReason);
+                    }
                 }
             }
         }
@@ -384,7 +400,10 @@ Kirigami.ScrollablePage {
             objectName: "excludeCachesCheckbox"
             text: i18n("Exclude cache folders (with CACHEDIR.TAG)")
             checked: page.excludeCaches
-            onToggled: page.excludeCaches = checked
+            onToggled: {
+                page.excludeCaches = checked;
+                excludeCachesCheckbox.forceActiveFocus(Qt.TabFocusReason);
+            }
             Accessible.name: i18n("Exclude cache folders with CACHEDIR.TAG")
         }
 
@@ -393,7 +412,10 @@ Kirigami.ScrollablePage {
             objectName: "excludeTrashCheckbox"
             text: i18n("Exclude trash folders")
             checked: page.excludeTrash
-            onToggled: page.excludeTrash = checked
+            onToggled: {
+                page.excludeTrash = checked;
+                excludeTrashCheckbox.forceActiveFocus(Qt.TabFocusReason);
+            }
             Accessible.name: i18n("Exclude trash folders")
         }
 
@@ -406,7 +428,10 @@ Kirigami.ScrollablePage {
                 objectName: "excludeLargerThanCheckbox"
                 text: i18n("Exclude files larger than")
                 checked: page.sizeLimitEnabled
-                onToggled: page.sizeLimitEnabled = checked
+                onToggled: {
+                    page.sizeLimitEnabled = checked;
+                    excludeLargerThanCheckbox.forceActiveFocus(Qt.TabFocusReason);
+                }
                 Accessible.name: i18n("Exclude files larger than")
             }
 
@@ -490,7 +515,10 @@ Kirigami.ScrollablePage {
                 Controls.TextArea {
                     id: excludesTextArea
                     objectName: "excludesTextArea"
+                    Kirigami.Theme.colorSet: Kirigami.Theme.View
+                    Kirigami.Theme.inherit: false
                     font: Kirigami.Theme.fixedWidthFont
+                    color: Kirigami.Theme.textColor
                     text: page.excludesText
                     onTextChanged: {
                         page.excludesText = text;
@@ -498,6 +526,15 @@ Kirigami.ScrollablePage {
                     }
                     placeholderText: "*.tmp\n.cache\n!$HOME/.cache/keep"
                     Accessible.name: i18n("Exclude rules in restic syntax")
+
+                    background: Rectangle {
+                        color: Kirigami.Theme.backgroundColor
+                        radius: Kirigami.Units.cornerRadius
+                        border.width: excludesTextArea.activeFocus ? 2 : 1
+                        border.color: excludesTextArea.activeFocus
+                            ? Kirigami.Theme.highlightColor
+                            : Kirigami.ColorUtils.linearInterpolation(Kirigami.Theme.backgroundColor, Kirigami.Theme.textColor, 0.25)
+                    }
 
                     Keys.onTabPressed: function(event) {
                         var next = nextItemInFocusChain(true);
@@ -508,16 +545,6 @@ Kirigami.ScrollablePage {
                         var prev = nextItemInFocusChain(false);
                         if (prev) prev.forceActiveFocus(Qt.BacktabFocusReason);
                         event.accepted = true;
-                    }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        z: 10
-                        color: "transparent"
-                        radius: Kirigami.Units.cornerRadius
-                        border.width: excludesTextArea.activeFocus ? 2 : 0
-                        border.color: Kirigami.Theme.highlightColor
-                        visible: border.width > 0
                     }
                 }
             }
@@ -563,7 +590,10 @@ Kirigami.ScrollablePage {
                 objectName: "ignoreCaseCheckbox"
                 text: i18n("Ignore upper/lower case (--iexclude)")
                 checked: page.ignoreCase
-                onToggled: page.ignoreCase = checked
+                onToggled: {
+                    page.ignoreCase = checked;
+                    ignoreCaseCheckbox.forceActiveFocus(Qt.TabFocusReason);
+                }
                 Accessible.name: i18n("Ignore upper and lower case")
             }
 

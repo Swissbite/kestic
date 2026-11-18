@@ -9,13 +9,25 @@ import org.kde.kirigami as Kirigami
 Kirigami.ScrollablePage {
     id: page
     objectName: "backupsListPage"
-    title: ""
+    title: i18n("Backups")
 
     required property var rootWindow
     required property var appBackend
     required property var backupsModel
 
     property string selectedBackupId: ""
+
+    function focusSelectedRow() {
+        for (var i = 0; i < backupsListView.count; ++i) {
+            var item = backupsListView.itemAtIndex(i);
+            if (item && item.highlighted) {
+                backupsListView.currentIndex = i;
+                rootWindow.focusItemInPageStack(item);
+                return true;
+            }
+        }
+        return false;
+    }
 
     function iconColorFor(kind) {
         switch (kind) {
@@ -98,19 +110,24 @@ Kirigami.ScrollablePage {
             required property bool isRunning
 
             width: ListView.view.width
+            activeFocusOnTab: true
             highlighted: page.selectedBackupId === backupId
             Accessible.name: name
 
             onClicked: {
                 ListView.view.currentIndex = index;
                 page.selectedBackupId = backupId;
+                row.forceActiveFocus(Qt.TabFocusReason);
                 rootWindow.openBackupDetailById(backupId);
             }
 
             Rectangle {
                 anchors.fill: parent
+                anchors.margins: row.highlighted ? 2 : 0
                 z: 10
-                color: "transparent"
+                color: (row.activeFocus || row.visualFocus) && row.highlighted
+                    ? Qt.rgba(1, 1, 1, 0.14)
+                    : "transparent"
                 radius: Kirigami.Units.cornerRadius
                 border.width: (row.activeFocus || row.visualFocus) ? 2 : 0
                 border.color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor

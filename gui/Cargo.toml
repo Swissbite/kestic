@@ -46,6 +46,7 @@ assets = [
     ["../packaging/net.daester.Kestic.desktop", "usr/share/applications/net.daester.Kestic.desktop", "644"],
     ["../packaging/net.daester.Kestic.daemon.desktop", "etc/xdg/autostart/net.daester.Kestic.daemon.desktop", "644"],
     ["../packaging/kestic.notifyrc", "usr/share/knotifications6/kestic.notifyrc", "644"],
+    ["../packaging/icons/hicolor/scalable/apps/kestic.svg", "usr/share/icons/hicolor/scalable/apps/kestic.svg", "644"],
     ["../packaging/icons/hicolor/scalable/status/kestic-symbolic.svg", "usr/share/icons/hicolor/scalable/status/kestic-symbolic.svg", "644"],
     ["../target/locale/de/LC_MESSAGES/kestic.mo", "usr/share/locale/de/LC_MESSAGES/kestic.mo", "644"],
 ]

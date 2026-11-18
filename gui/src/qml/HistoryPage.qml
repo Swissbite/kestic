@@ -9,7 +9,7 @@ import org.kde.kirigami as Kirigami
 Kirigami.ScrollablePage {
     id: page
     objectName: "historyPage"
-    title: ""
+    title: i18n("History")
 
     required property var rootWindow
     required property var appBackend
@@ -18,6 +18,18 @@ Kirigami.ScrollablePage {
 
     property string selectedBackupId: ""
     property string selectedRunId: ""
+
+    function focusSelectedRow() {
+        for (var i = 0; i < runsListView.count; ++i) {
+            var item = runsListView.itemAtIndex(i);
+            if (item && item.highlighted) {
+                runsListView.currentIndex = i;
+                rootWindow.focusItemInPageStack(item);
+                return true;
+            }
+        }
+        return false;
+    }
 
     function applyFilter() {
         runsModel.setFilter(selectedBackupId, issuesChip.checked, historySearchField.text);
@@ -90,7 +102,10 @@ Kirigami.ScrollablePage {
                 checkable: true
                 closable: false
                 Accessible.name: i18n("Filter runs with issues")
-                onToggled: page.applyFilter()
+                onToggled: {
+                    page.applyFilter();
+                    issuesChip.forceActiveFocus(Qt.TabFocusReason);
+                }
 
                 Rectangle {
                     anchors.fill: parent
@@ -165,19 +180,24 @@ Kirigami.ScrollablePage {
             required property string summaryText
 
             width: ListView.view.width
+            activeFocusOnTab: true
             highlighted: page.selectedRunId === runId
             Accessible.name: title
 
             onClicked: {
                 ListView.view.currentIndex = index;
                 page.selectedRunId = runId;
+                runRow.forceActiveFocus(Qt.TabFocusReason);
                 rootWindow.openRunDetailById(runId);
             }
 
             Rectangle {
                 anchors.fill: parent
+                anchors.margins: runRow.highlighted ? 2 : 0
                 z: 10
-                color: "transparent"
+                color: (runRow.activeFocus || runRow.visualFocus) && runRow.highlighted
+                    ? Qt.rgba(1, 1, 1, 0.14)
+                    : "transparent"
                 radius: Kirigami.Units.cornerRadius
                 border.width: (runRow.activeFocus || runRow.visualFocus) ? 2 : 0
                 border.color: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor

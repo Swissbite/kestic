@@ -7,6 +7,7 @@ mod common;
 
 use kestic_core::backup::{
     build_forget_command_spec, execute_forget, execute_forget_dry_run, list_snapshots_for_backup,
+    parse_forget_json_output,
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::config::{AppConfig, load_config, save_config};
@@ -1060,4 +1061,37 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
             "{label}: forget --dry-run must delete zero snapshots"
         );
     }
+}
+
+#[test]
+fn parse_forget_json_output_sorts_mixed_offsets_and_fractional_seconds_newest_first() {
+    let dest = Destination::new(
+        "Unit",
+        DestinationKind::Local {
+            path: PathBuf::from("/tmp/unit-repo"),
+        },
+    )
+    .expect("dest");
+    let backup = Backup::new("Sort", Source::folder("/tmp/unit-src"), dest.id).expect("bk");
+
+    // Chronological order (newest -> oldest):
+    // 1) 2026-11-17T09:05:00-01:00 == 10:05:00Z
+    // 2) 2026-11-17T12:00:00.25+02:00 == 10:00:00.25Z
+    // 3) 2026-11-17T10:00:00.1Z == 10:00:00.10Z
+    // Note: lexicographically "2026-11-17T12:..." > "2026-11-17T10:..." > "2026-11-17T09:...",
+    // so only parsed OffsetDateTime sorting yields the true newest-first order.
+    let raw_json = r#"[{"keep":[
+        {"id":"snap_oldest_frac000000000000000000000000000000000000000000000000000","short_id":"oldest01","time":"2026-11-17T10:00:00.1Z","paths":["/tmp/unit-src"]},
+        {"id":"snap_middle_plus020000000000000000000000000000000000000000000000000","short_id":"middle02","time":"2026-11-17T12:00:00.25+02:00","paths":["/tmp/unit-src"]}
+    ],"remove":[
+        {"id":"snap_newest_minus01000000000000000000000000000000000000000000000000","short_id":"newest03","time":"2026-11-17T09:05:00-01:00","paths":["/tmp/unit-src"]}
+    ],"reasons":[]}]"#;
+
+    let parsed = parse_forget_json_output(&backup.id, &[raw_json.to_string()]).expect("parse");
+    let order: Vec<&str> = parsed
+        .snapshots
+        .iter()
+        .map(|s| s.short_id.as_str())
+        .collect();
+    assert_eq!(order, vec!["newest03", "middle02", "oldest01"]);
 }

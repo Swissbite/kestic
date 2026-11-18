@@ -4,8 +4,8 @@
 mod common;
 
 use kestic_core::backup::{
-    BackupRunError, check_source_available_with, execute_backup_with_inspector,
-    list_snapshots_for_backup,
+    BackupExecutionContext, BackupRunError, check_source_available_with,
+    execute_backup_with_inspector, list_snapshots_for_backup,
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::config::{AppConfig, load_config, save_config};
@@ -288,23 +288,30 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     let err_a = check_source_available_with(&backup_uuid, Some(&home_dir), &unmounted_inspector)
         .expect_err("unmounted drive must fail check");
     assert!(
-        err_a.to_string().contains("Quelle nicht verfügbar")
-            && err_a.to_string().contains("Laufwerk nicht eingehängt"),
-        "unexpected error message: {err_a}"
+        matches!(
+            err_a,
+            BackupRunError::SourceUnavailable(SourceCheckResult::DriveNotMounted)
+        ),
+        "unexpected error: {err_a:?}"
     );
     let exec_err_a = execute_backup_with_inspector(
         &backup_uuid,
         &dest,
-        &state_dir,
         &runtime,
-        Some(&home_dir),
-        &unmounted_inspector,
-        None,
-        &[],
+        &BackupExecutionContext {
+            state_dir: &state_dir,
+            home_dir: Some(&home_dir),
+            inspector: &unmounted_inspector,
+            cancel: None,
+            extra_env: &[],
+        },
         |_| {},
     )
     .expect_err("execute must abort when unmounted");
-    assert!(matches!(exec_err_a, BackupRunError::SourceUnavailable(_)));
+    assert!(matches!(
+        exec_err_a,
+        BackupRunError::SourceUnavailable(SourceCheckResult::DriveNotMounted)
+    ));
     assert!(
         !spy_log.exists(),
         "restic must not be invoked when drive is unmounted"
@@ -335,19 +342,23 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     let err_b1 = execute_backup_with_inspector(
         &backup_uuid,
         &dest,
-        &state_dir,
         &runtime,
-        Some(&home_dir),
-        &wrong_uuid_inspector,
-        None,
-        &[],
+        &BackupExecutionContext {
+            state_dir: &state_dir,
+            home_dir: Some(&home_dir),
+            inspector: &wrong_uuid_inspector,
+            cancel: None,
+            extra_env: &[],
+        },
         |_| {},
     )
     .expect_err("wrong FS-UUID must fail");
     assert!(
-        err_b1.to_string().contains("Quelle nicht verfügbar")
-            && err_b1.to_string().contains("anderes Laufwerk"),
-        "unexpected error: {err_b1}"
+        matches!(
+            err_b1,
+            BackupRunError::SourceUnavailable(SourceCheckResult::DriveMismatch)
+        ),
+        "unexpected error: {err_b1:?}"
     );
     assert!(
         !spy_log.exists(),
@@ -371,16 +382,21 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     let err_b2 = execute_backup_with_inspector(
         &backup_nfs,
         &dest,
-        &state_dir,
         &runtime,
-        Some(&home_dir),
-        &wrong_source_inspector,
-        None,
-        &[],
+        &BackupExecutionContext {
+            state_dir: &state_dir,
+            home_dir: Some(&home_dir),
+            inspector: &wrong_source_inspector,
+            cancel: None,
+            extra_env: &[],
+        },
         |_| {},
     )
     .expect_err("wrong mount_source must fail");
-    assert!(err_b2.to_string().contains("anderes Laufwerk"));
+    assert!(matches!(
+        err_b2,
+        BackupRunError::SourceUnavailable(SourceCheckResult::DriveMismatch)
+    ));
     assert!(!spy_log.exists());
 
     let wrong_fstype_inspector = FakeMountInspector::new(FakeMountState {
@@ -399,16 +415,21 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     let err_b3 = execute_backup_with_inspector(
         &backup_nfs,
         &dest,
-        &state_dir,
         &runtime,
-        Some(&home_dir),
-        &wrong_fstype_inspector,
-        None,
-        &[],
+        &BackupExecutionContext {
+            state_dir: &state_dir,
+            home_dir: Some(&home_dir),
+            inspector: &wrong_fstype_inspector,
+            cancel: None,
+            extra_env: &[],
+        },
         |_| {},
     )
     .expect_err("wrong fs_type must fail");
-    assert!(err_b3.to_string().contains("anderes Laufwerk"));
+    assert!(matches!(
+        err_b3,
+        BackupRunError::SourceUnavailable(SourceCheckResult::DriveMismatch)
+    ));
     assert!(!spy_log.exists());
 
     // Case (c): Drive mounted with matching FS-UUID, but mountpoint directory is empty.
@@ -437,19 +458,23 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     let err_c = execute_backup_with_inspector(
         &backup_uuid,
         &dest,
-        &state_dir,
         &runtime,
-        Some(&home_dir),
-        &empty_drive_inspector,
-        None,
-        &[],
+        &BackupExecutionContext {
+            state_dir: &state_dir,
+            home_dir: Some(&home_dir),
+            inspector: &empty_drive_inspector,
+            cancel: None,
+            extra_env: &[],
+        },
         |_| {},
     )
     .expect_err("empty drive mountpoint must fail");
     assert!(
-        err_c.to_string().contains("Quelle nicht verfügbar")
-            && err_c.to_string().contains("Quelle leer"),
-        "unexpected error: {err_c}"
+        matches!(
+            err_c,
+            BackupRunError::SourceUnavailable(SourceCheckResult::DriveEmpty)
+        ),
+        "unexpected error: {err_c:?}"
     );
     assert!(
         !spy_log.exists(),
@@ -538,12 +563,14 @@ fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_n
         let err = execute_backup_with_inspector(
             &backup,
             &dest,
-            &state_dir,
             &spy_runtime,
-            Some(&home_dir),
-            &inspector,
-            None,
-            &[],
+            &BackupExecutionContext {
+                state_dir: &state_dir,
+                home_dir: Some(&home_dir),
+                inspector: &inspector,
+                cancel: None,
+                extra_env: &[],
+            },
             |_| {},
         )
         .expect_err("empty unmounted drive must not execute backup");
@@ -619,12 +646,14 @@ fn ac_m2_09_6_empty_folder_on_home_filesystem_runs_backup_normally() {
         let res = execute_backup_with_inspector(
             &backup,
             &dest,
-            &state_dir,
             &runtime,
-            Some(&home_dir),
-            &inspector,
-            None,
-            &[],
+            &BackupExecutionContext {
+                state_dir: &state_dir,
+                home_dir: Some(&home_dir),
+                inspector: &inspector,
+                cancel: None,
+                extra_env: &[],
+            },
             |_| {},
         )
         .unwrap_or_else(|e| panic!("{label}: empty folder backup should succeed: {e}"));

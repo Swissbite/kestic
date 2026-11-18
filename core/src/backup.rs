@@ -27,14 +27,16 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 /// Errors occurring when preparing or running a backup, dry-run, or `forget`.
 #[derive(Debug, Error)]
 pub enum BackupRunError {
     #[error("unable to determine XDG_STATE_HOME or HOME for state directory")]
     MissingStateDir,
-    #[error("Quelle nicht verfügbar: {0}")]
-    SourceUnavailable(String),
+    #[error("source unavailable: {0:?}")]
+    SourceUnavailable(SourceCheckResult),
     #[error(transparent)]
     InvalidModel(#[from] ModelError),
     #[error(transparent)]
@@ -43,6 +45,8 @@ pub enum BackupRunError {
     Runner(#[from] ResticRunError),
     #[error("failed to parse JSON from restic: {0}")]
     SnapshotParse(#[from] serde_json::Error),
+    #[error("operation cancelled")]
+    Cancelled,
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -64,14 +68,11 @@ pub fn exclude_file_path(state_dir: &Path, backup_id: &BackupId) -> PathBuf {
     state_dir.join("excludes").join(format!("{backup_id}.txt"))
 }
 
-/// Atomically writes `backup.excludes` into `$XDG_STATE_HOME/kestic/excludes/<backup-id>.txt`
-/// using explicit `home_dir` (`P8`, `AC-M2-01-7`, `AC-M2-01-9`).
-pub fn write_exclude_file_with_home(
-    state_dir: &Path,
+fn write_exclude_file_at(
+    path: &Path,
     backup: &Backup,
     home_dir: Option<&Path>,
-) -> Result<PathBuf, BackupRunError> {
-    let path = exclude_file_path(state_dir, &backup.id);
+) -> Result<(), BackupRunError> {
     let parent = path
         .parent()
         .expect("exclude file path always has parent directory");
@@ -89,13 +90,35 @@ pub fn write_exclude_file_with_home(
         f.write_all(content.as_bytes())?;
         f.sync_all()?;
         drop(f);
-        fs::rename(&tmp, &path)?;
+        fs::rename(&tmp, path)?;
         Ok(())
     })();
     if write_res.is_err() {
         let _ = fs::remove_file(&tmp);
     }
     write_res?;
+    Ok(())
+}
+
+struct PreviewExcludeGuard(Option<PathBuf>);
+
+impl Drop for PreviewExcludeGuard {
+    fn drop(&mut self) {
+        if let Some(ref path) = self.0 {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Atomically writes `backup.excludes` into `$XDG_STATE_HOME/kestic/excludes/<backup-id>.txt`
+/// using explicit `home_dir` (`P8`, `AC-M2-01-7`, `AC-M2-01-9`).
+pub fn write_exclude_file_with_home(
+    state_dir: &Path,
+    backup: &Backup,
+    home_dir: Option<&Path>,
+) -> Result<PathBuf, BackupRunError> {
+    let path = exclude_file_path(state_dir, &backup.id);
+    write_exclude_file_at(&path, backup, home_dir)?;
     Ok(path)
 }
 
@@ -105,18 +128,14 @@ pub fn write_exclude_file(state_dir: &Path, backup: &Backup) -> Result<PathBuf, 
     write_exclude_file_with_home(state_dir, backup, home.as_deref())
 }
 
-/// Builds the [`ResticCommandSpec`] for running a backup (`FR-28`, `F13`, `FR-34`, `M2-S01`).
-pub fn build_backup_command_spec_with_home(
+fn build_backup_command_spec_for_exclude_path(
     backup: &Backup,
     destination: &Destination,
-    state_dir: &Path,
     resolved: &ResolvedRestic,
     kestic_binary: &Path,
-    home_dir: Option<&Path>,
-) -> Result<ResticCommandSpec, BackupRunError> {
-    backup.excludes.validate()?;
-    let exclude_path = write_exclude_file_with_home(state_dir, backup, home_dir)?;
-
+    exclude_path: &Path,
+    dry_run: bool,
+) -> ResticCommandSpec {
     let mut args = vec![
         "backup".to_string(),
         "--tag".to_string(),
@@ -150,14 +169,35 @@ pub fn build_backup_command_spec_with_home(
             args.push(trimmed.to_string());
         }
     }
+    if dry_run {
+        args.push("--dry-run".to_string());
+        args.push("-vv".to_string());
+    }
 
+    args.push("--".to_string());
     args.push(backup.source.path.to_string_lossy().into_owned());
 
-    Ok(ResticCommandSpec::for_destination(
-        &resolved.binary,
-        kestic_binary,
+    ResticCommandSpec::for_destination(&resolved.binary, kestic_binary, destination, args)
+}
+
+/// Builds the [`ResticCommandSpec`] for running a backup (`FR-28`, `F13`, `FR-34`, `M2-S01`).
+pub fn build_backup_command_spec_with_home(
+    backup: &Backup,
+    destination: &Destination,
+    state_dir: &Path,
+    resolved: &ResolvedRestic,
+    kestic_binary: &Path,
+    home_dir: Option<&Path>,
+) -> Result<ResticCommandSpec, BackupRunError> {
+    backup.excludes.validate()?;
+    let exclude_path = write_exclude_file_with_home(state_dir, backup, home_dir)?;
+    Ok(build_backup_command_spec_for_exclude_path(
+        backup,
         destination,
-        args,
+        resolved,
+        kestic_binary,
+        &exclude_path,
+        false,
     ))
 }
 
@@ -188,18 +228,7 @@ pub fn check_source_available_with(
 ) -> Result<(), BackupRunError> {
     match check_source_status_with(backup, home_dir, inspector) {
         SourceCheckResult::Available => Ok(()),
-        SourceCheckResult::PathMissing(path) => Err(BackupRunError::SourceUnavailable(format!(
-            "Quellpfad existiert nicht: {path}"
-        ))),
-        SourceCheckResult::DriveNotMounted => Err(BackupRunError::SourceUnavailable(
-            "Laufwerk nicht eingehängt".to_string(),
-        )),
-        SourceCheckResult::DriveMismatch => Err(BackupRunError::SourceUnavailable(
-            "anderes Laufwerk eingehängt".to_string(),
-        )),
-        SourceCheckResult::DriveEmpty => {
-            Err(BackupRunError::SourceUnavailable("Quelle leer".to_string()))
-        }
+        other => Err(BackupRunError::SourceUnavailable(other)),
     }
 }
 
@@ -209,40 +238,44 @@ pub fn check_source_available(backup: &Backup) -> Result<(), BackupRunError> {
     check_source_available_with(backup, home.as_deref(), &SystemMountInspector)
 }
 
-/// Executes a backup run using explicit [`MountInspector`] & `home_dir` (`M1-S07`, `M2-S09`).
-#[allow(clippy::too_many_arguments)]
+/// Execution context for running or dry-running a backup with an explicit [`MountInspector`].
+pub struct BackupExecutionContext<'a> {
+    pub state_dir: &'a Path,
+    pub home_dir: Option<&'a Path>,
+    pub inspector: &'a dyn MountInspector,
+    pub cancel: Option<&'a CancelHandle>,
+    pub extra_env: &'a [(&'a str, &'a str)],
+}
+
+/// Executes a backup run using explicit [`BackupExecutionContext`] (`M1-S07`, `M2-S09`).
 pub fn execute_backup_with_inspector<F>(
     backup: &Backup,
     destination: &Destination,
-    state_dir: &Path,
     runtime: &ResticRuntime<'_>,
-    home_dir: Option<&Path>,
-    inspector: &dyn MountInspector,
-    cancel: Option<&CancelHandle>,
-    extra_env: &[(&str, &str)],
+    ctx: &BackupExecutionContext<'_>,
     on_event: F,
 ) -> Result<ResticExecutionResult, BackupRunError>
 where
     F: FnMut(&ResticStreamEvent) + Send,
 {
-    check_source_available_with(backup, home_dir, inspector)?;
+    check_source_available_with(backup, ctx.home_dir, ctx.inspector)?;
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
 
     let spec = build_backup_command_spec_with_home(
         backup,
         destination,
-        state_dir,
+        ctx.state_dir,
         runtime.resolved,
         runtime.kestic_binary,
-        home_dir,
+        ctx.home_dir,
     )?;
     let res = run_restic(
         &spec,
         destination,
         Some(runtime.secret_store),
         runtime.clock,
-        cancel,
-        extra_env,
+        ctx.cancel,
+        ctx.extra_env,
         on_event,
     )?;
     Ok(res)
@@ -262,17 +295,14 @@ where
     F: FnMut(&ResticStreamEvent) + Send,
 {
     let home = current_home_dir();
-    execute_backup_with_inspector(
-        backup,
-        destination,
+    let ctx = BackupExecutionContext {
         state_dir,
-        runtime,
-        home.as_deref(),
-        &SystemMountInspector,
+        home_dir: home.as_deref(),
+        inspector: &SystemMountInspector,
         cancel,
         extra_env,
-        on_event,
-    )
+    };
+    execute_backup_with_inspector(backup, destination, runtime, &ctx, on_event)
 }
 
 /// Size estimate for one excluded folder reported alongside backup dry-run preview (`M2-S04`).
@@ -377,34 +407,41 @@ pub fn compute_largest_excluded_folders(
 }
 
 /// Executes `restic backup --dry-run -vv --json` with identical backup arguments (`M2-S04`, `AC-M2-04-1..3`).
-#[allow(clippy::too_many_arguments)]
+/// Writes any draft excludes to an isolated temporary preview file that is removed on completion.
 pub fn execute_backup_dry_run_with<F>(
     backup: &Backup,
     destination: &Destination,
-    state_dir: &Path,
     runtime: &ResticRuntime<'_>,
-    home_dir: Option<&Path>,
-    inspector: &dyn MountInspector,
-    cancel: Option<&CancelHandle>,
-    extra_env: &[(&str, &str)],
+    ctx: &BackupExecutionContext<'_>,
     mut on_event: F,
 ) -> Result<BackupDryRunResult, BackupRunError>
 where
     F: FnMut(&ResticStreamEvent) + Send,
 {
-    check_source_available_with(backup, home_dir, inspector)?;
+    check_source_available_with(backup, ctx.home_dir, ctx.inspector)?;
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    backup.excludes.validate()?;
 
-    let mut spec = build_backup_command_spec_with_home(
+    let preview_nonce = RunId::generate().map_err(|e| std::io::Error::other(e.to_string()))?;
+    let preview_exclude_path = ctx
+        .state_dir
+        .join("excludes")
+        .join(format!("{}.preview-{preview_nonce}.txt", backup.id));
+    let _preview_guard = if backup.excludes.has_exclude_file_entries() {
+        write_exclude_file_at(&preview_exclude_path, backup, ctx.home_dir)?;
+        PreviewExcludeGuard(Some(preview_exclude_path.clone()))
+    } else {
+        PreviewExcludeGuard(None)
+    };
+
+    let mut spec = build_backup_command_spec_for_exclude_path(
         backup,
         destination,
-        state_dir,
         runtime.resolved,
         runtime.kestic_binary,
-        home_dir,
-    )?;
-    spec.subcommand_args.push("--dry-run".to_string());
-    spec.subcommand_args.push("-vv".to_string());
+        &preview_exclude_path,
+        true,
+    );
     spec.low_priority = false;
 
     let transparent_command = format!(
@@ -422,8 +459,8 @@ where
         destination,
         Some(runtime.secret_store),
         runtime.clock,
-        cancel,
-        extra_env,
+        ctx.cancel,
+        ctx.extra_env,
         |ev| {
             if let ResticStreamEvent::VerboseStatus(vs) = ev {
                 if vs.action == "scan_finished" {
@@ -453,10 +490,7 @@ where
         return Err(BackupRunError::Destination(
             DestinationError::CommandFailed {
                 exit_code: res.exit_code,
-                message: res
-                    .presentation
-                    .raw_detail
-                    .unwrap_or(res.presentation.summary_de),
+                message: res.presentation.detail_or_summary(),
             },
         ));
     }
@@ -482,7 +516,7 @@ where
             )
         };
 
-    let largest_excluded_folders = compute_largest_excluded_folders(backup, home_dir, 10);
+    let largest_excluded_folders = compute_largest_excluded_folders(backup, ctx.home_dir, 10);
 
     Ok(BackupDryRunResult {
         total_files,
@@ -512,17 +546,14 @@ where
     F: FnMut(&ResticStreamEvent) + Send,
 {
     let home = current_home_dir();
-    execute_backup_dry_run_with(
-        backup,
-        destination,
+    let ctx = BackupExecutionContext {
         state_dir,
-        runtime,
-        home.as_deref(),
-        &SystemMountInspector,
+        home_dir: home.as_deref(),
+        inspector: &SystemMountInspector,
         cancel,
         extra_env,
-        on_event,
-    )
+    };
+    execute_backup_dry_run_with(backup, destination, runtime, &ctx, on_event)
 }
 
 /// Builds a [`ResticCommandSpec`] for `restic forget` scoped to `backup.tag()` (`M2-S05..S07`).
@@ -665,20 +696,25 @@ pub fn parse_forget_json_output(
         break;
     }
 
-    // Sort newest first by timestamp string (RFC 3339 sorts lexicographically).
+    // Sort newest first using parsed RFC 3339 timestamps (handling differing offsets/precision).
     result.snapshots.sort_by(|a, b| {
-        b.time
-            .cmp(&a.time)
-            .then_with(|| a.snapshot_id.cmp(&b.snapshot_id))
+        let ta = OffsetDateTime::parse(&a.time, &Rfc3339).ok();
+        let tb = OffsetDateTime::parse(&b.time, &Rfc3339).ok();
+        match (ta, tb) {
+            (Some(pa), Some(pb)) => pb.cmp(&pa),
+            _ => b.time.cmp(&a.time),
+        }
+        .then_with(|| a.snapshot_id.cmp(&b.snapshot_id))
     });
     Ok(result)
 }
 
-/// Runs `restic forget --dry-run --no-lock` to preview retention (`AC-M2-06-2`, `AC-M2-06-6`, `P41`).
-pub fn execute_forget_dry_run(
+/// Runs `restic forget --dry-run --no-lock` with explicit cancellation handle (`AC-M2-06-2`, `AC-M2-06-6`, `P41`).
+pub fn execute_forget_dry_run_with(
     backup: &Backup,
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
+    cancel: Option<&CancelHandle>,
     extra_env: &[(&str, &str)],
 ) -> Result<ForgetPreviewResult, BackupRunError> {
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
@@ -696,24 +732,35 @@ pub fn execute_forget_dry_run(
         destination,
         Some(runtime.secret_store),
         runtime.clock,
-        None,
+        cancel,
         extra_env,
         |_| {},
     )?;
+
+    if res.presentation.status == RunStatus::Cancelled {
+        return Err(BackupRunError::Cancelled);
+    }
 
     if res.presentation.status == RunStatus::Error {
         return Err(BackupRunError::Destination(
             DestinationError::CommandFailed {
                 exit_code: res.exit_code,
-                message: res
-                    .presentation
-                    .raw_detail
-                    .unwrap_or(res.presentation.summary_de),
+                message: res.presentation.detail_or_summary(),
             },
         ));
     }
 
     Ok(parse_forget_json_output(&backup.id, &res.log_lines)?)
+}
+
+/// Runs `restic forget --dry-run --no-lock` to preview retention (`AC-M2-06-2`, `AC-M2-06-6`, `P41`).
+pub fn execute_forget_dry_run(
+    backup: &Backup,
+    destination: &Destination,
+    runtime: &ResticRuntime<'_>,
+    extra_env: &[(&str, &str)],
+) -> Result<ForgetPreviewResult, BackupRunError> {
+    execute_forget_dry_run_with(backup, destination, runtime, None, extra_env)
 }
 
 /// Runs real `restic forget` for `backup` (`M2-S05`, `M2-S07`).
@@ -790,10 +837,7 @@ pub fn list_snapshots_for_backup(
         return Err(BackupRunError::Destination(
             DestinationError::CommandFailed {
                 exit_code: res.exit_code,
-                message: res
-                    .presentation
-                    .raw_detail
-                    .unwrap_or(res.presentation.summary_de),
+                message: res.presentation.detail_or_summary(),
             },
         ));
     }

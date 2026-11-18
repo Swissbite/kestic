@@ -4,8 +4,9 @@
 mod common;
 
 use kestic_core::backup::{
-    build_backup_command_spec_with_home, exclude_file_path, execute_backup,
-    execute_backup_with_inspector, list_snapshots_for_backup, write_exclude_file_with_home,
+    BackupExecutionContext, build_backup_command_spec_with_home, exclude_file_path, execute_backup,
+    execute_backup_dry_run_with, execute_backup_with_inspector, list_snapshots_for_backup,
+    write_exclude_file_with_home,
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::config::{AppConfig, CURRENT_CONFIG_VERSION, load_config, save_config};
@@ -536,12 +537,14 @@ fn ac_m2_01_10_portable_home_exclude_generated_under_alt_used_under_neu() {
         let res = execute_backup_with_inspector(
             &backup,
             &env.dest,
-            &env.state_dir,
             &env.runtime(),
-            Some(&home_neu),
-            &SystemMountInspector,
-            None,
-            &[("HOME", neu_str.as_str())],
+            &BackupExecutionContext {
+                state_dir: &env.state_dir,
+                home_dir: Some(&home_neu),
+                inspector: &SystemMountInspector,
+                cancel: None,
+                extra_env: &[("HOME", neu_str.as_str())],
+            },
             |_| {},
         )
         .unwrap_or_else(|e| panic!("{label}: execute_backup failed: {e}"));
@@ -852,6 +855,13 @@ fn exclude_options_validation_and_command_flags() {
             .windows(2)
             .any(|w| w[0] == "--exclude-if-present" && w[1] == ".kestic-ignore")
     );
+    assert!(
+        spec.subcommand_args
+            .windows(2)
+            .any(|w| w[0] == "--" && w[1] == "/tmp/src"),
+        "expected `--` immediately before source path: {:?}",
+        spec.subcommand_args
+    );
 
     let excl_content = fs::read_to_string(exclude_file_path(dir.path(), &backup.id)).unwrap();
     for pat in TRASH_EXCLUDE_PATTERNS {
@@ -895,12 +905,14 @@ fn exclude_options_integration_size_trash_ignore_case_and_if_present() {
         let res = execute_backup_with_inspector(
             &backup,
             &env.dest,
-            &env.state_dir,
             &env.runtime(),
-            Some(&fake_home),
-            &SystemMountInspector,
-            None,
-            &[("HOME", home_str.as_str())],
+            &BackupExecutionContext {
+                state_dir: &env.state_dir,
+                home_dir: Some(&fake_home),
+                inspector: &SystemMountInspector,
+                cancel: None,
+                extra_env: &[("HOME", home_str.as_str())],
+            },
             |_| {},
         )
         .unwrap_or_else(|e| panic!("{label}: execute_backup failed: {e}"));
@@ -933,5 +945,185 @@ fn exclude_options_integration_size_trash_ignore_case_and_if_present() {
             !paths.iter().any(|p| p == "marked/secret.txt"),
             "{label}: marked/secret.txt should be excluded by .nobackup: {paths:?}"
         );
+    }
+}
+
+#[test]
+fn dry_run_preview_uses_isolated_temp_exclude_file_and_cleans_up() {
+    for (label, restic_bin) in common::restic_test_binaries() {
+        let env = ResticTestEnv::new(&restic_bin);
+        let src = env.root().join("src");
+        write_file(&src, "keep.txt", b"keep");
+        write_file(&src, "draft_only.log", b"draft");
+
+        let mut saved_backup =
+            Backup::new("Saved", Source::folder(&src), env.dest.id.clone()).expect("backup");
+        saved_backup.excludes = ExcludeRules {
+            lines: vec!["*.tmp".to_string()],
+            exclude_caches: false,
+            exclude_trash: false,
+            ..ExcludeRules::default()
+        };
+        let saved_excl_path =
+            write_exclude_file_with_home(&env.state_dir, &saved_backup, Some(env.root()))
+                .expect("write saved excl");
+        let saved_before = fs::read_to_string(&saved_excl_path).expect("read saved excl");
+        assert_eq!(saved_before, "*.tmp\n");
+
+        let mut preview_backup = saved_backup.clone();
+        preview_backup.excludes.lines = vec!["*.log".to_string()];
+
+        let dry_res = execute_backup_dry_run_with(
+            &preview_backup,
+            &env.dest,
+            &env.runtime(),
+            &BackupExecutionContext {
+                state_dir: &env.state_dir,
+                home_dir: Some(env.root()),
+                inspector: &SystemMountInspector,
+                cancel: None,
+                extra_env: &[],
+            },
+            |_| {},
+        )
+        .unwrap_or_else(|e| panic!("{label}: dry run failed: {e}"));
+
+        assert_eq!(dry_res.total_files, 1, "{label}");
+        assert!(
+            dry_res.files.iter().any(|f| f.ends_with("/keep.txt")),
+            "{label}: expected keep.txt in {:?}",
+            dry_res.files
+        );
+        assert!(
+            !dry_res.files.iter().any(|f| f.ends_with("/draft_only.log")),
+            "{label}: draft_only.log should be excluded in preview: {:?}",
+            dry_res.files
+        );
+
+        let saved_after = fs::read_to_string(&saved_excl_path).expect("read saved excl after");
+        assert_eq!(
+            saved_after, saved_before,
+            "{label}: dry-run preview must not overwrite saved exclude file"
+        );
+
+        let leftovers: Vec<_> = fs::read_dir(env.state_dir.join("excludes"))
+            .expect("read excludes dir")
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|name| name.contains(".preview-"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "{label}: preview temp exclude files must be deleted: {leftovers:?}"
+        );
+    }
+}
+
+#[test]
+fn differential_evaluate_exclude_path_matches_restic_dry_run() {
+    for (label, restic_bin) in common::restic_test_binaries() {
+        for ignore_case in [false, true] {
+            let env = ResticTestEnv::new(&restic_bin);
+            let fake_home = env.root().join("home_diff");
+            let home_str = fake_home.to_string_lossy().into_owned();
+
+            let rel_files = [
+                "docs/readme.txt",
+                "docs/draft.tmp",
+                "docs/UPPER.TMP",
+                "build/app.o",
+                "a/b/c/deep/file.log",
+                "a/b/c/deep/keep.txt",
+                "cache/sub/item.bin",
+                "partial/temp1.dat",
+                "partial/important.dat",
+                "shadowed/nested/keep_me.txt",
+                "folder with spaces/skip me, please.txt",
+                "folder with spaces/keep me.txt",
+                ".local/share/Trash/files/old.doc",
+                "vol/.Trash-1000/trashed.txt",
+                "exact_anchor/hit.txt",
+                "sub/exact_anchor/miss.txt",
+                "glob_q/a1.dat",
+                "glob_q/a12.dat",
+                "glob_cls/x2.log",
+                "glob_cls/x9.log",
+                "multi/seg/match/z.bak",
+                "other/match/z.bak",
+                "tilde_or_dollar/secret.key",
+                "trailing_slash/inside.txt",
+                "case_dir/MixedCase.Log",
+            ];
+            for rel in &rel_files {
+                write_file(&fake_home, rel, b"diff-payload");
+            }
+
+            let anchored_exact = format!("{}/exact_anchor/*.txt", fake_home.display());
+            let mut backup = Backup::new(
+                "Differential",
+                Source::folder(&fake_home),
+                env.dest.id.clone(),
+            )
+            .expect("backup");
+            backup.excludes = ExcludeRules {
+                folders: vec![fake_home.join("cache").to_string_lossy().into_owned()],
+                lines: vec![
+                    "*.tmp".to_string(),
+                    "*.o".to_string(),
+                    "**/deep/*.log".to_string(),
+                    "partial/*".to_string(),
+                    "!partial/important.dat".to_string(),
+                    "shadowed".to_string(),
+                    "!shadowed/nested/keep_me.txt".to_string(),
+                    "folder with spaces/skip me, please.txt".to_string(),
+                    anchored_exact,
+                    "a?.dat".to_string(),
+                    "x[1-3].log".to_string(),
+                    "seg/match/*.bak".to_string(),
+                    "$HOME/tilde_or_dollar/*.key".to_string(),
+                    "trailing_slash/".to_string(),
+                    "*mixedcase*".to_string(),
+                ],
+                exclude_caches: false,
+                exclude_trash: true,
+                exclude_larger_than: None,
+                ignore_case,
+                exclude_if_present: Vec::new(),
+            };
+
+            let dry = execute_backup_dry_run_with(
+                &backup,
+                &env.dest,
+                &env.runtime(),
+                &BackupExecutionContext {
+                    state_dir: &env.state_dir,
+                    home_dir: Some(&fake_home),
+                    inspector: &SystemMountInspector,
+                    cancel: None,
+                    extra_env: &[("HOME", home_str.as_str())],
+                },
+                |_| {},
+            )
+            .unwrap_or_else(|e| panic!("{label} (ignore_case={ignore_case}): dry-run failed: {e}"));
+
+            let included_by_restic: std::collections::HashSet<PathBuf> =
+                dry.files.iter().map(PathBuf::from).collect();
+
+            for rel in &rel_files {
+                let abs_path = fake_home.join(rel);
+                let restic_included = included_by_restic.contains(&abs_path);
+                let eval = evaluate_exclude_path(
+                    &backup.excludes,
+                    &fake_home,
+                    Some(&fake_home),
+                    &abs_path.to_string_lossy(),
+                );
+                assert_eq!(
+                    eval.included, restic_included,
+                    "{label} (ignore_case={ignore_case}): mismatch for '{rel}': evaluate={eval:?}, restic_included={restic_included}, restic_files={:?}",
+                    dry.files
+                );
+            }
+        }
     }
 }

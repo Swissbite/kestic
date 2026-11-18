@@ -234,6 +234,10 @@ msgstr "%1: Backup fehlgeschlagen"
 msgid "%1: Backup finished with warning"
 msgstr "%1: Backup mit Warnung abgeschlossen"
 
+#: daemon/src/service.rs:2555
+msgid "Backed up, destination locked — retention will catch up later"
+msgstr "Gesichert, Ziel gesperrt — Aufbewahrung wird später nachgeholt"
+
 #: daemon/src/service.rs:2953
 msgid "Another run is already running"
 msgstr "Ein anderer Lauf läuft bereits"
@@ -1099,15 +1103,15 @@ msgstr "Änderungen speichern?"
 msgid "You have unsaved changes to exclude rules."
 msgstr "Es gibt ungespeicherte Änderungen an den Ausschluss-Regeln."
 
-#: gui/src/qml/BackupExcludesEditPage.qml:311
+#: gui/src/qml/BackupExcludesEditPage.qml:301
 msgid "Enable Expert Mode?"
 msgstr "Expertenmodus aktivieren?"
 
-#: gui/src/qml/BackupExcludesEditPage.qml:312
-msgid "Expert Mode unlocks raw restic exclude syntax across Kestic, including pattern rules and negated exceptions."
-msgstr "Der Expertenmodus schaltet in ganz Kestic die direkte restic-Ausschluss-Syntax frei, einschliesslich Musterregeln und negierten Ausnahmen."
+#: gui/src/qml/BackupExcludesEditPage.qml:302
+msgid "Expert Mode unlocks raw restic exclude syntax across Kestic, including pattern rules and negated exceptions. You can turn it off anytime in Settings (menu top right)."
+msgstr "Der Expertenmodus schaltet in ganz Kestic die direkte restic-Ausschluss-Syntax frei, einschliesslich Musterregeln und negierten Ausnahmen. Sie können ihn jederzeit in den Einstellungen (Menü oben rechts) wieder deaktivieren."
 
-#: gui/src/qml/BackupExcludesEditPage.qml:319
+#: gui/src/qml/BackupExcludesEditPage.qml:309
 msgid "Enable Expert Mode"
 msgstr "Expertenmodus aktivieren"
 
@@ -1394,7 +1398,15 @@ msgstr "%1 neu · %2 geändert · %3 unverändert"
 msgid "Estimated data added:"
 msgstr "Geschätzter Datenzuwachs:"
 
+#: gui/src/qml/BackupPreviewPage.qml:118
+msgid "Close"
+msgstr "Schliessen"
+
 #: gui/src/qml/BackupPreviewPage.qml:210
+msgid "Excluded folder"
+msgstr "Ausgeschlossener Ordner"
+
+#: gui/src/qml/BackupPreviewPage.qml:211
 msgid "Largest excluded folders"
 msgstr "Grösste ausgeschlossene Ordner"
 
@@ -1426,6 +1438,14 @@ msgstr "Behalten"
 #: gui/src/qml/BackupPreviewPage.qml:298
 msgid "Snapshot %1: %2"
 msgstr "Snapshot %1: %2"
+
+#: gui/src/qml/BackupPreviewPage.qml:334
+msgid "Calculating retention preview…"
+msgstr "Aufbewahrungsvorschau wird berechnet…"
+
+#: gui/src/qml/BackupPreviewPage.qml:349
+msgid "Cancel retention preview"
+msgstr "Aufbewahrungsvorschau abbrechen"
 
 #: gui/src/qml/BackupReassignPage.qml:38
 msgid "Switch Destination…"
@@ -1471,9 +1491,29 @@ msgstr "Neues Ziel hinzufügen"
 msgid "Retention rules saved"
 msgstr "Aufbewahrungsregeln gespeichert"
 
-#: gui/src/qml/BackupRetentionPage.qml:307
-msgid "Could not preview retention rules."
-msgstr "Vorschau der Aufbewahrungsregeln konnte nicht erstellt werden."
+#: gui/src/qml/BackupRetentionPage.qml:334
+msgid "How Retention Rules Work"
+msgstr "So funktionieren Aufbewahrungsregeln"
+
+#: gui/src/qml/BackupRetentionPage.qml:343
+msgid ""
+"1. By count ('keep last 7 daily'):\n"
+"Counts only days on which a backup was actually created. Days without backups are skipped.\n"
+"Example: If your PC only ran Mon–Thu each week (4 days/week), '7 daily' keeps the last 7 backup days across almost 2 weeks."
+msgstr ""
+"1. Nach Anzahl («letzte 7 tägliche behalten»):\n"
+"Zählt nur Tage, an denen tatsächlich ein Backup erstellt wurde. Tage ohne Backup werden übersprungen.\n"
+"Beispiel: Lief Ihr PC in den letzten 2 Wochen jeweils Mo–Do (4 Tage/Woche), behält «7 tägliche» die letzten 7 Sicherungstage über fast 2 Wochen hinweg."
+
+#: gui/src/qml/BackupRetentionPage.qml:349
+msgid ""
+"2. By time period ('daily for last 7 days'):\n"
+"Measures calendar time backwards from the newest snapshot.\n"
+"Example: 'Daily for last 7 days' keeps 1 daily backup for each calendar day within the 7-day window before the latest backup."
+msgstr ""
+"2. Nach Zeitraum («täglich für die letzten 7 Tage»):\n"
+"Misst die Kalenderzeit vom neuesten Snapshot rückwärts.\n"
+"Beispiel: «Täglich für die letzten 7 Tage» behält je 1 Tages-Backup für jeden Kalendertag innerhalb des 7-Tage-Fensters vor dem neuesten Backup."
 
 #: gui/src/qml/BackupRetentionPage.qml:336
 msgid "You have unsaved changes to retention rules."
@@ -1563,6 +1603,14 @@ msgstr "Aufbewahrungsvorlage"
 msgid "By count: keep last n…"
 msgstr "Nach Anzahl: letzte n behalten…"
 
+#: gui/src/qml/BackupRetentionPage.qml:565
+msgid "Explain count-based retention rules"
+msgstr "Anzahlbasierte Aufbewahrungsregeln erklären"
+
+#: gui/src/qml/BackupRetentionPage.qml:568
+msgid "Counts only days with backups (skips days without backups). Click for an example."
+msgstr "Zählt nur Tage mit Backups (überspringt Tage ohne Backup). Für ein Beispiel klicken."
+
 #: gui/src/qml/BackupRetentionPage.qml:526
 msgid "Last backups:"
 msgstr "Letzte Backups:"
@@ -1596,6 +1644,14 @@ msgstr "Jährlich:"
 msgid "By time period: keep all… for last"
 msgstr "Nach Zeitraum: alle… behalten für die letzten"
 
+#: gui/src/qml/BackupRetentionPage.qml:672
+msgid "Explain time-period retention rules"
+msgstr "Zeitraumbasierte Aufbewahrungsregeln erklären"
+
+#: gui/src/qml/BackupRetentionPage.qml:675
+msgid "Measures calendar time backwards from the newest snapshot. Click for an example."
+msgstr "Misst die Kalenderzeit vom neuesten Snapshot rückwärts. Für ein Beispiel klicken."
+
 #: gui/src/qml/BackupRetentionPage.qml:615
 msgid "All backups:"
 msgstr "Alle Backups:"
@@ -1603,6 +1659,10 @@ msgstr "Alle Backups:"
 #: gui/src/qml/BackupRetentionPage.qml:704
 msgid "Count rules ('last 7 daily') skip days without backups. Time-period rules ('daily of the last 7 days') measure calendar days backwards from the newest snapshot."
 msgstr "Anzahlregeln («letzte 7 tägliche») überspringen Tage ohne Backups. Zeitraumregeln («täglich in den letzten 7 Tagen») zählen Kalendertage vom neuesten Snapshot rückwärts."
+
+#: gui/src/qml/BackupRetentionPage.qml:762
+msgid "Show Example…"
+msgstr "Beispiel anzeigen…"
 
 #: gui/src/qml/BackupSnapshotsPage.qml:12
 msgid "Snapshots · %1"

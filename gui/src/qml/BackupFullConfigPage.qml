@@ -49,6 +49,13 @@ Kirigami.ScrollablePage {
                 appBackend.copyToClipboard(appBackend.buildBackupConfigTomlSnippet(backupId));
                 rootWindow.showPassiveNotification(i18n("Configuration copied to clipboard"));
             }
+        },
+        Kirigami.Action {
+            id: closeFullConfigAction
+            objectName: "closeFullConfigAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: rootWindow.popSubPage()
         }
     ]
 
@@ -64,7 +71,10 @@ Kirigami.ScrollablePage {
         Layout.fillWidth: true
         activeFocusOnTab: true
         Accessible.name: rowTitle + ": " + rowValue
-        onClicked: navigate()
+        onClicked: {
+            rootWindow.nextTriggerItem = navRow;
+            navigate();
+        }
 
         Rectangle {
             anchors.fill: parent

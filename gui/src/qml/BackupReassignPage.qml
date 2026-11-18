@@ -38,6 +38,13 @@ Kirigami.ScrollablePage {
             text: i18n("Switch Destination…")
             enabled: page.canSwitch && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: confirmReassignDialog.open()
+        },
+        Kirigami.Action {
+            id: closeReassignAction
+            objectName: "closeReassignAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: rootWindow.popSubPage()
         }
     ]
 
@@ -59,7 +66,7 @@ Kirigami.ScrollablePage {
                     if (appBackend.reassignBackup(backupId, page.selectedDestId)) {
                         confirmReassignDialog.close();
                         rootWindow.showPassiveNotification(i18n("Destination updated"));
-                        rootWindow.pageStack.pop();
+                        rootWindow.popSubPage();
                     }
                 }
             }

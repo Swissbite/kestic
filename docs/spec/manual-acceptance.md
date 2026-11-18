@@ -38,10 +38,10 @@ Quelle: [milestones/m1-walking-skeleton.md](milestones/m1-walking-skeleton.md)
 
 Quelle: [milestones/m2-backup-konfiguration.md](milestones/m2-backup-konfiguration.md)
 
-- [ ] **AC-M2-02-4** – wenn nur Tastatur (Tab, Enter, Leertaste, Esc), dann Regel hinzufügen, ändern, entfernen, speichern möglich; jedes Bedienelement mit zugänglichem Namen
-- [ ] **AC-M2-06-4** – wenn nur Tastatur, dann Felder, Vorlagen, Vorschau und Bestätigung erreichbar
-- [ ] **AC-M2-11-3** – (manuell) – Verständlichkeit von Ausschluss- und Aufbewahrungs-Editor durch eine Person ohne restic-Kenntnisse geprüft
-- [ ] **Exit-Kriterium** – Manuelle Abnahme: Verständlichkeit von Ausschluss- und Aufbewahrungs-Editor.
+- [x] **AC-M2-02-4** – wenn nur Tastatur (Tab, Enter, Leertaste, Esc), dann Regel hinzufügen, ändern, entfernen, speichern möglich; jedes Bedienelement mit zugänglichem Namen
+- [x] **AC-M2-06-4** – wenn nur Tastatur, dann Felder, Vorlagen, Vorschau und Bestätigung erreichbar
+- [x] **AC-M2-11-3** – (manuell) – Verständlichkeit von Ausschluss- und Aufbewahrungs-Editor durch eine Person ohne restic-Kenntnisse geprüft
+- [x] **Exit-Kriterium** – Manuelle Abnahme: Verständlichkeit von Ausschluss- und Aufbewahrungs-Editor.
 
 ## M3 Automatisierung
 

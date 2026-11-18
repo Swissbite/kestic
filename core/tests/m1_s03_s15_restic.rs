@@ -85,7 +85,7 @@ fn ac_m1_03_2_and_s15_exit_code_classification_and_exit_error() {
     assert_eq!(e99.status, RunStatus::Error);
     assert_eq!(e99.kind, ResticFailureKind::Unknown { exit_code: 99 });
     assert_eq!(e99.raw_detail.as_deref(), Some("weird backend boom"));
-    assert!(e99.summary_de.contains("99"));
+    assert!(e99.kind.default_summary().contains("99"));
 }
 
 #[test]

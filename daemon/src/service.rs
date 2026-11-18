@@ -11,8 +11,8 @@ use crate::dbus_api::{
     DaemonStateDto, DestinationAvailabilityDto, DestinationSummaryDto, ExcludeRulePreviewDto,
     KESTIC_BUS_NAME, KESTIC_OBJECT_PATH, KesticDbusError, OverallStatusDto, OverallStatusKind,
     PreviousDestinationSnapshotsDto, REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
-    ResticStatusDto, RunDetailDto, SecretStoreStatusDto, SkippedBackupDto, SnapshotSummaryDto,
-    StartAllResultDto,
+    ResticStatusDto, RetentionPreviewStatusDto, RunDetailDto, SecretStoreStatusDto,
+    SkippedBackupDto, SnapshotSummaryDto, StartAllResultDto,
 };
 use crate::i18n::{i18n, localized_failure_summary, localized_recovery_action_label};
 use crate::inhibit::PortalInhibitGuard;
@@ -24,9 +24,11 @@ use crate::tray::{
     KesticTrayState, TrayAction, TrayBackupItem, TrayHandle, TrayStatus, compute_tray_presentation,
 };
 use kestic_core::backup::{
-    BackupDryRunResult, BackupRunError, ForgetPreviewResult, default_state_dir, exclude_file_path,
-    execute_backup_dry_run_with, execute_backup_with_inspector, execute_forget,
-    execute_forget_dry_run, is_forget_lock_failure, list_snapshots_for_backup, write_exclude_file,
+    BackupDryRunResult, BackupExecutionContext, BackupRunError, ForgetPreviewResult,
+    default_state_dir, exclude_file_path, execute_backup_dry_run_with,
+    execute_backup_with_inspector, execute_forget, execute_forget_dry_run,
+    execute_forget_dry_run_with, is_forget_lock_failure, list_snapshots_for_backup,
+    write_exclude_file,
 };
 use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::config::{
@@ -153,6 +155,13 @@ struct DryRunEntry {
     cancel: CancelHandle,
 }
 
+struct RetentionPreviewEntry {
+    state: String,
+    result: Option<ForgetPreviewResult>,
+    error: Option<String>,
+    cancel: CancelHandle,
+}
+
 /// Core stateful daemon engine shared between D-Bus interface methods, tray actions, and unit tests.
 pub struct DaemonCore {
     config_path: PathBuf,
@@ -171,6 +180,7 @@ pub struct DaemonCore {
     availability_probe_count: u64,
     active_runs: HashMap<RunId, ActiveRunEntry>,
     dry_runs: HashMap<String, DryRunEntry>,
+    retention_previews: HashMap<String, RetentionPreviewEntry>,
     window_active: bool,
     window_page: String,
     registered_gui_sender: Option<String>,
@@ -221,7 +231,9 @@ impl DaemonCore {
 
         let history = RunHistory::open(&state_dir).map_err(|e| e.to_string())?;
         // AC-M1-10-2: any runs left in `running` state from a hard crash/kill become `interrupted`.
-        let _ = history.mark_interrupted_on_startup(run_config.clock.as_ref());
+        if let Err(err) = history.mark_interrupted_on_startup(run_config.clock.as_ref()) {
+            eprintln!("kestic-daemon: failed to mark interrupted runs on startup: {err}");
+        }
 
         let (config, has_config_file, config_load_error) = match load_optional_config(&config_path)
         {
@@ -251,6 +263,7 @@ impl DaemonCore {
             availability_probe_count: 0,
             active_runs: HashMap::new(),
             dry_runs: HashMap::new(),
+            retention_previews: HashMap::new(),
             window_active: false,
             window_page: String::new(),
             registered_gui_sender: None,
@@ -1483,7 +1496,9 @@ impl DaemonCore {
         self.persist_config(next)?;
         self.source_availability.remove(&id);
         let _ = fs::remove_file(exclude_file_path(&self.state_dir, &id));
-        let _ = self.history.clear_backup_state(&id);
+        if let Err(err) = self.history.clear_backup_state(&id) {
+            eprintln!("kestic-daemon: failed to clear history state for backup {id}: {err}");
+        }
         Ok(())
     }
 
@@ -1932,6 +1947,31 @@ impl DaemonCore {
         entry.cancel.cancel();
         Ok(())
     }
+
+    pub fn get_retention_preview_status(
+        &self,
+        preview_id: &str,
+    ) -> Result<RetentionPreviewStatusDto, KesticServiceErr> {
+        let entry = self
+            .retention_previews
+            .get(preview_id)
+            .ok_or_else(|| KesticServiceErr::NotFound(preview_id.to_string()))?;
+        Ok(RetentionPreviewStatusDto {
+            preview_id: preview_id.to_string(),
+            state: entry.state.clone(),
+            result: entry.result.clone(),
+            error: entry.error.clone(),
+        })
+    }
+
+    pub fn cancel_retention_preview(&self, preview_id: &str) -> Result<(), KesticServiceErr> {
+        let entry = self
+            .retention_previews
+            .get(preview_id)
+            .ok_or_else(|| KesticServiceErr::NotFound(preview_id.to_string()))?;
+        entry.cancel.cancel();
+        Ok(())
+    }
 }
 
 fn localized_source_check_reason(status: &SourceCheckResult) -> String {
@@ -1942,6 +1982,32 @@ fn localized_source_check_reason(status: &SourceCheckResult) -> String {
         SourceCheckResult::PathMissing(_) | SourceCheckResult::Available => {
             i18n("Source unavailable").into()
         }
+    }
+}
+
+fn localized_backup_run_error(err: &BackupRunError) -> String {
+    match err {
+        BackupRunError::SourceUnavailable(status) => localized_source_check_reason(status),
+        BackupRunError::Destination(dest_err) => match dest_err {
+            DestinationError::Unreachable(_) => {
+                localized_failure_summary(&ResticFailureKind::DestinationUnreachable)
+            }
+            DestinationError::AuthFailed(_) => {
+                localized_failure_summary(&ResticFailureKind::BackendAuthFailed)
+            }
+            DestinationError::WrongPassword => {
+                localized_failure_summary(&ResticFailureKind::WrongPassword)
+            }
+            DestinationError::RepositoryMissing(_) => {
+                localized_failure_summary(&ResticFailureKind::RepositoryMissing)
+            }
+            DestinationError::CommandFailed { exit_code, message } => {
+                let pres = classify_exit(*exit_code, None, Vec::new(), message);
+                localized_failure_summary(&pres.kind)
+            }
+            other => other.to_string(),
+        },
+        other => other.to_string(),
     }
 }
 
@@ -2338,68 +2404,65 @@ pub fn start_backup_async(
             secret_store: secret_store.as_ref(),
             clock: clock.as_ref(),
         };
-        let exec_res = execute_backup_with_inspector(
-            &backup,
-            &dest,
-            &state_dir,
-            &runtime,
-            home.as_deref(),
-            mount_inspector.as_ref(),
-            Some(&cancel),
-            &[],
-            |ev| {
-                if let ResticStreamEvent::Status(st) = ev {
-                    let pct = (st.percent_done * 100.0).clamp(0.0, 100.0);
-                    let bytes_done = st.bytes_done.unwrap_or(0);
-                    let total_bytes = st.total_bytes.unwrap_or(0);
-                    let elapsed_secs = (clock.now_unix_secs() - start_unix).max(1) as u64;
-                    let speed_bps = st
-                        .seconds_elapsed
-                        .filter(|s| *s > 0)
-                        .map(|s| bytes_done / s)
-                        .unwrap_or(bytes_done / elapsed_secs);
-                    let seconds_remaining = st.seconds_remaining.unwrap_or(0);
+        let exec_ctx = BackupExecutionContext {
+            state_dir: &state_dir,
+            home_dir: home.as_deref(),
+            inspector: mount_inspector.as_ref(),
+            cancel: Some(&cancel),
+            extra_env: &[],
+        };
+        let exec_res = execute_backup_with_inspector(&backup, &dest, &runtime, &exec_ctx, |ev| {
+            if let ResticStreamEvent::Status(st) = ev {
+                let pct = (st.percent_done * 100.0).clamp(0.0, 100.0);
+                let bytes_done = st.bytes_done.unwrap_or(0);
+                let total_bytes = st.total_bytes.unwrap_or(0);
+                let elapsed_secs = (clock.now_unix_secs() - start_unix).max(1) as u64;
+                let speed_bps = st
+                    .seconds_elapsed
+                    .filter(|s| *s > 0)
+                    .map(|s| bytes_done / s)
+                    .unwrap_or(bytes_done / elapsed_secs);
+                let seconds_remaining = st.seconds_remaining.unwrap_or(0);
 
-                    if let Some(ref jv) = job_view {
-                        let _ = jv.update(&JobProgress {
-                            percent: pct.round() as u32,
-                            processed_bytes: bytes_done,
-                            total_bytes,
-                            speed_bytes_per_sec: speed_bps,
-                            info_message: i18n("Backing up %1 (%2%)")
-                                .subs(&[&backup.name, &(pct.round() as u32).to_string()]),
-                            elapsed_ms: elapsed_secs * 1000,
-                        });
-                    }
-
-                    let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
-                    if let Some(entry) = guard.active_runs.get_mut(&run_id) {
-                        entry.progress.percent_done = pct;
-                        entry.progress.bytes_done = bytes_done;
-                        entry.progress.total_bytes = total_bytes;
-                        entry.progress.speed_bps = speed_bps;
-                        entry.progress.seconds_remaining = seconds_remaining;
-                    }
-                    let (_, tray_state) = guard.build_state_and_tray();
-                    if let Some(tray) = &tray_opt {
-                        tray.set_full_state(tray_state);
-                    }
-                    drop(guard);
-
-                    if let Some(conn) = &conn_opt {
-                        emit_run_progress(
-                            conn,
-                            run_id.as_str(),
-                            pct,
-                            bytes_done,
-                            total_bytes,
-                            speed_bps,
-                            seconds_remaining,
-                        );
-                    }
+                if let Some(ref jv) = job_view {
+                    let _ = jv.update(&JobProgress {
+                        percent: pct.round() as u32,
+                        processed_bytes: bytes_done,
+                        total_bytes,
+                        speed_bytes_per_sec: speed_bps,
+                        info_message: i18n("Backing up %1 (%2%)")
+                            .subs(&[&backup.name, &(pct.round() as u32).to_string()]),
+                        elapsed_ms: elapsed_secs * 1000,
+                    });
                 }
-            },
-        );
+
+                let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(entry) = guard.active_runs.get_mut(&run_id) {
+                    entry.progress.percent_done = pct;
+                    entry.progress.bytes_done = bytes_done;
+                    entry.progress.total_bytes = total_bytes;
+                    entry.progress.speed_bps = speed_bps;
+                    entry.progress.seconds_remaining = seconds_remaining;
+                }
+                let (_, tray_state) = guard.build_state_and_tray();
+                if let Some(tray) = &tray_opt {
+                    tray.set_full_state(tray_state);
+                }
+                drop(guard);
+
+                if let Some(conn) = &conn_opt {
+                    emit_run_progress(
+                        conn,
+                        run_id.as_str(),
+                        pct,
+                        bytes_done,
+                        total_bytes,
+                        speed_bps,
+                        seconds_remaining,
+                    );
+                }
+            }
+        });
         drop(job_view_cancel_guard);
 
         let mut secrets_owned: Vec<SecretValue> = Vec::new();
@@ -2428,7 +2491,6 @@ pub fn start_backup_async(
                 run.stats = res.stats;
 
                 let mut summary = match status {
-                    RunStatus::Cancelled => Some(i18n("Cancelled by user").into()),
                     RunStatus::Error | RunStatus::Warning => {
                         let base = localized_failure_summary(&res.presentation.kind);
                         let raw = res
@@ -2473,10 +2535,15 @@ pub fn start_backup_async(
                                 primary_forget_state = Some(true);
                                 status = RunStatus::Warning;
                                 if backup_exit == 0 {
-                                    summary =
-                                        Some(i18n("Backed up, retention not executed").into());
+                                    summary = Some(if is_forget_lock_failure(&f_res) {
+                                        i18n(
+                                            "Backed up, destination locked — retention will catch up later",
+                                        )
+                                        .into()
+                                    } else {
+                                        i18n("Backed up, retention not executed").into()
+                                    });
                                 }
-                                let _ = is_forget_lock_failure(&f_res);
                             }
                         }
                         Err(f_err) => {
@@ -2492,10 +2559,18 @@ pub fn start_backup_async(
 
                 let log_path = {
                     let guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
-                    guard
+                    match guard
                         .history
                         .write_redacted_log(&run_id, &combined_logs, &secret_strs)
-                        .ok()
+                    {
+                        Ok(path) => Some(path),
+                        Err(err) => {
+                            eprintln!(
+                                "kestic-daemon: failed to write redacted log for run {run_id}: {err}"
+                            );
+                            None
+                        }
+                    }
                 };
                 run.log_path = log_path;
                 run.summary_message = summary.clone();
@@ -2506,7 +2581,8 @@ pub fn start_backup_async(
                 (status, Some(backup_exit), summary, jv_err.0, jv_err.1)
             }
             Err(err) => {
-                let msg = redact_secrets(&err.to_string(), &secret_strs);
+                let localized = localized_backup_run_error(&err);
+                let msg = redact_secrets(&localized, &secret_strs);
                 let (status, exit_code) = match err {
                     BackupRunError::SourceUnavailable(_) | BackupRunError::Destination(_) => {
                         (RunStatus::Error, None)
@@ -2526,16 +2602,35 @@ pub fn start_backup_async(
         let state_dto = {
             let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
             guard.active_runs.remove(&run_id);
-            if let Some(pending) = primary_forget_state {
-                let _ = guard.history.set_pending_forget(&backup.id, pending);
+            if let Some(pending) = primary_forget_state
+                && let Err(err) = guard.history.set_pending_forget(&backup.id, pending)
+            {
+                eprintln!(
+                    "kestic-daemon: failed to update pending_forget for {}: {err}",
+                    backup.id
+                );
             }
             for other_id in &cleared_other_pending {
-                let _ = guard.history.set_pending_forget(other_id, false);
+                if let Err(err) = guard.history.set_pending_forget(other_id, false) {
+                    eprintln!(
+                        "kestic-daemon: failed to clear pending_forget for {other_id}: {err}"
+                    );
+                }
             }
-            let _ = guard.history.upsert_run(&run, &secret_strs);
-            let _ = guard
+            if let Err(err) = guard.history.upsert_run(&run, &secret_strs) {
+                eprintln!(
+                    "kestic-daemon: failed to record finished run {run_id} in history: {err}"
+                );
+            }
+            if let Err(err) = guard
                 .history
-                .prune_logs_for_backup(&backup.id, clock.as_ref());
+                .prune_logs_for_backup(&backup.id, clock.as_ref())
+            {
+                eprintln!(
+                    "kestic-daemon: failed to prune old logs for backup {}: {err}",
+                    backup.id
+                );
+            }
             let (state_dto, tray_state) = guard.build_state_and_tray();
             if let Some(tray) = &tray_opt {
                 tray.set_full_state(tray_state);
@@ -2547,13 +2642,17 @@ pub fn start_backup_async(
         match final_status {
             RunStatus::Error => {
                 let summary = i18n("%1: Backup failed").subs(&[&backup.name]);
-                let body = raw_detail.unwrap_or_else(|| i18n("Backup command failed").into());
+                let body = raw_detail.unwrap_or_else(|| {
+                    localized_failure_summary(&ResticFailureKind::GenericFailure)
+                });
                 let _ = send_event_notification(KesticEvent::BackupFailed, &summary, &body);
             }
             RunStatus::Warning => {
                 let summary = i18n("%1: Backup finished with warning").subs(&[&backup.name]);
                 let body = raw_detail.unwrap_or_else(|| {
-                    i18n("Snapshot incomplete: some files could not be read").into()
+                    localized_failure_summary(&ResticFailureKind::IncompleteSnapshot {
+                        unreadable_items: Vec::new(),
+                    })
                 });
                 let _ = send_event_notification(KesticEvent::BackupWarning, &summary, &body);
             }
@@ -2671,17 +2770,14 @@ pub fn start_backup_dry_run_async(
             secret_store: secret_store.as_ref(),
             clock: clock.as_ref(),
         };
-        let res = execute_backup_dry_run_with(
-            &backup,
-            &dest,
-            &state_dir,
-            &runtime,
-            home.as_deref(),
-            mount_inspector.as_ref(),
-            Some(&cancel),
-            &[],
-            |_| {},
-        );
+        let dry_ctx = BackupExecutionContext {
+            state_dir: &state_dir,
+            home_dir: home.as_deref(),
+            inspector: mount_inspector.as_ref(),
+            cancel: Some(&cancel),
+            extra_env: &[],
+        };
+        let res = execute_backup_dry_run_with(&backup, &dest, &runtime, &dry_ctx, |_| {});
         let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(entry) = guard.dry_runs.get_mut(&preview_id) {
             match res {
@@ -2694,19 +2790,113 @@ pub fn start_backup_dry_run_async(
                     entry.result = Some(dry);
                 }
                 Err(err) => {
+                    let msg = localized_backup_run_error(&err);
+                    entry.state = "error".to_string();
+                    entry.error = Some(msg);
+                }
+            }
+        }
+    });
+
+    Ok(pid_ret)
+}
+
+/// Starts an asynchronous retention preview (`restic forget --dry-run --no-lock --json`, `M2-S06`).
+pub fn start_retention_preview_async(
+    shared: &Arc<Mutex<DaemonCore>>,
+    backup_id: &str,
+    retention_json: &str,
+) -> Result<String, KesticServiceErr> {
+    let b_id =
+        BackupId::parse(backup_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+    let retention: RetentionPolicy = serde_json::from_str(retention_json)
+        .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid retention JSON: {e}")))?;
+    retention
+        .validate()
+        .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+
+    let (mut backup, dest, resolved, kestic_binary, secret_store, clock, preview_id, cancel) = {
+        let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let backup = guard
+            .config
+            .backup(&b_id)
+            .cloned()
+            .ok_or_else(|| KesticServiceErr::NotFound(backup_id.to_string()))?;
+        let dest = guard
+            .config
+            .destination(&backup.destination_id)
+            .cloned()
+            .ok_or_else(|| {
+                KesticServiceErr::NotFound(backup.destination_id.as_str().to_string())
+            })?;
+
+        let (_, secret_status, _) = guard.probe_restic_and_secrets();
+        if !secret_status.available {
+            return Err(KesticServiceErr::SecretStoreLocked(
+                secret_status
+                    .message
+                    .unwrap_or_else(|| i18n("Password store is locked").into()),
+            ));
+        }
+        let resolved =
+            resolve_and_check(&guard.config.restic_provider).map_err(map_provider_err)?;
+
+        let preview_id = RunId::generate()
+            .map(|r| r.as_str().to_string())
+            .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+        let cancel = CancelHandle::new();
+
+        if guard.retention_previews.len() > 16 {
+            guard.retention_previews.retain(|_, v| v.state == "running");
+        }
+        guard.retention_previews.insert(
+            preview_id.clone(),
+            RetentionPreviewEntry {
+                state: "running".to_string(),
+                result: None,
+                error: None,
+                cancel: cancel.clone(),
+            },
+        );
+
+        (
+            backup,
+            dest,
+            resolved,
+            guard.kestic_binary.clone(),
+            Arc::clone(&guard.secret_store),
+            Arc::clone(&guard.clock),
+            preview_id,
+            cancel,
+        )
+    };
+    backup.retention = retention;
+
+    let pid_ret = preview_id.clone();
+    let shared_worker = Arc::clone(shared);
+    thread::spawn(move || {
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &kestic_binary,
+            secret_store: secret_store.as_ref(),
+            clock: clock.as_ref(),
+        };
+        let res = execute_forget_dry_run_with(&backup, &dest, &runtime, Some(&cancel), &[]);
+        let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(entry) = guard.retention_previews.get_mut(&preview_id) {
+            match res {
+                Ok(preview) => {
+                    entry.state = "done".to_string();
+                    entry.result = Some(preview);
+                }
+                Err(BackupRunError::Cancelled) => {
+                    entry.state = "cancelled".to_string();
+                }
+                Err(err) => {
                     let msg = match err {
-                        BackupRunError::Destination(DestinationError::Unreachable(_)) => {
-                            i18n("Destination unreachable").into()
-                        }
-                        BackupRunError::SourceUnavailable(_) => {
-                            let status = check_source_status_with(
-                                &backup,
-                                home.as_deref(),
-                                mount_inspector.as_ref(),
-                            );
-                            localized_source_check_reason(&status)
-                        }
-                        other => other.to_string(),
+                        BackupRunError::Destination(d) => map_destination_err(d).to_string(),
+                        BackupRunError::InvalidModel(m) => m.to_string(),
+                        other => localized_backup_run_error(&other),
                     };
                     entry.state = "error".to_string();
                     entry.error = Some(msg);
@@ -2889,10 +3079,18 @@ pub fn run_destination_maintenance_async(
 
         let log_path = {
             let guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
-            guard
+            match guard
                 .history
                 .write_redacted_log(&run_id, &combined_logs, &secret_strs)
-                .ok()
+            {
+                Ok(path) => Some(path),
+                Err(err) => {
+                    eprintln!(
+                        "kestic-daemon: failed to write maintenance log for run {run_id}: {err}"
+                    );
+                    None
+                }
+            }
         };
         run.log_path = log_path;
 
@@ -2909,9 +3107,17 @@ pub fn run_destination_maintenance_async(
             let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
             guard.active_runs.remove(&run_id);
             for id in &cleared_ids {
-                let _ = guard.history.set_pending_forget(id, false);
+                if let Err(err) = guard.history.set_pending_forget(id, false) {
+                    eprintln!(
+                        "kestic-daemon: failed to clear pending_forget for {id} in maintenance: {err}"
+                    );
+                }
             }
-            let _ = guard.history.upsert_run(&run, &secret_strs);
+            if let Err(err) = guard.history.upsert_run(&run, &secret_strs) {
+                eprintln!(
+                    "kestic-daemon: failed to record maintenance run {run_id} in history: {err}"
+                );
+            }
             let (state_dto, tray_state) = guard.build_state_and_tray();
             if let Some(tray) = &tray_opt {
                 tray.set_full_state(tray_state);
@@ -3415,6 +3621,33 @@ impl KesticDbusV1Service {
         .await
         .map_err(KesticDbusError::from)?;
         serde_json::to_string(&preview).map_err(|e| KesticDbusError::Internal(e.to_string()))
+    }
+
+    #[zbus(name = "StartRetentionPreview")]
+    async fn start_retention_preview(
+        &self,
+        backup_id: &str,
+        retention_json: &str,
+    ) -> Result<String, KesticDbusError> {
+        let core = Arc::clone(&self.core);
+        let id = backup_id.to_string();
+        let ret = retention_json.to_string();
+        run_blocking_task(move || start_retention_preview_async(&core, &id, &ret))
+            .await
+            .map_err(KesticDbusError::from)
+    }
+
+    #[zbus(name = "CancelRetentionPreview")]
+    fn cancel_retention_preview(&self, preview_id: &str) -> Result<(), KesticDbusError> {
+        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        Ok(guard.cancel_retention_preview(preview_id)?)
+    }
+
+    #[zbus(name = "GetRetentionPreviewStatus")]
+    fn get_retention_preview_status(&self, preview_id: &str) -> Result<String, KesticDbusError> {
+        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let st = guard.get_retention_preview_status(preview_id)?;
+        serde_json::to_string(&st).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     #[zbus(name = "StartBackupDryRun")]

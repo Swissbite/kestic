@@ -111,6 +111,19 @@ Kirigami.ScrollablePage {
             text: i18n("Save")
             enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: confirmChangeDialog.open()
+        },
+        Kirigami.Action {
+            id: closeSourceAction
+            objectName: "closeSourceAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: {
+                if (page.dirty) {
+                    unsavedDialog.open();
+                } else {
+                    rootWindow.popSubPage();
+                }
+            }
         }
     ]
 
@@ -159,7 +172,7 @@ Kirigami.ScrollablePage {
                 page.sourcePath = page.initialData.sourcePath;
                 page.refreshSourceMetadata();
             }
-            rootWindow.pageStack.pop();
+            rootWindow.popSubPage();
         }
     }
 

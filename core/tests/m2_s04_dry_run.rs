@@ -111,8 +111,15 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
         let mut direct_spec =
             build_backup_command_spec(&backup, &dest, &state_dir, &resolved, &helper)
                 .expect("build spec");
-        direct_spec.subcommand_args.push("--dry-run".to_string());
-        direct_spec.subcommand_args.push("-vv".to_string());
+        let sep_idx = direct_spec
+            .subcommand_args
+            .iter()
+            .position(|a| a == "--")
+            .unwrap_or(direct_spec.subcommand_args.len());
+        direct_spec.subcommand_args.splice(
+            sep_idx..sep_idx,
+            ["--dry-run".to_string(), "-vv".to_string()],
+        );
         let direct_out = Command::new(&resolved.binary)
             .args(direct_spec.restic_argv())
             .env("RESTIC_PASSWORD", "dry-run-test-pw")

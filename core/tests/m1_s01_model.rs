@@ -247,3 +247,46 @@ fn rest_idna_punycode_normalization_and_repository_uri() {
         "https://synology.xn--dster-gra.ch:6789/tuxedo-dave"
     );
 }
+
+#[test]
+fn relative_local_destination_and_backup_source_paths_are_rejected() {
+    use kestic_core::model::ModelError;
+
+    let rel_dest = Destination::new(
+        "Relative Repo",
+        DestinationKind::Local {
+            path: "relative/repo".into(),
+        },
+    );
+    assert!(matches!(rel_dest, Err(ModelError::InvalidDestination(_))));
+
+    let valid_dest = Destination::new(
+        "Abs Repo",
+        DestinationKind::Local {
+            path: "/tmp/abs-repo".into(),
+        },
+    )
+    .expect("valid dest");
+
+    let rel_backup = Backup::new(
+        "Relative Src",
+        Source::folder("relative/src"),
+        valid_dest.id.clone(),
+    );
+    assert!(matches!(rel_backup, Err(ModelError::InvalidBackup(_))));
+
+    let dash_backup = Backup::new(
+        "Dash Src",
+        Source::folder("-weird-flag-src"),
+        valid_dest.id.clone(),
+    );
+    assert!(matches!(dash_backup, Err(ModelError::InvalidBackup(_))));
+
+    let mut abs_backup =
+        Backup::new("Abs Src", Source::folder("/tmp/abs-src"), valid_dest.id).expect("valid bk");
+    assert!(matches!(
+        abs_backup.set_source(Source::folder("relative/new-src")),
+        Err(ModelError::InvalidBackup(_))
+    ));
+    assert_eq!(abs_backup.source, Source::folder("/tmp/abs-src"));
+}

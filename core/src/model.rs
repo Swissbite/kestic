@@ -405,6 +405,12 @@ impl Destination {
                         "local destination path must not be empty".to_string(),
                     ));
                 }
+                if !path.is_absolute() {
+                    return Err(ModelError::InvalidDestination(format!(
+                        "local destination path must be absolute: '{}'",
+                        path.display()
+                    )));
+                }
             }
             DestinationKind::Rest { url, .. } => {
                 normalize_rest_url_to_ascii(url)?;
@@ -432,7 +438,7 @@ pub enum SourceKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SourceIdentity {
-    /// Block device filesystem UUID (resolved via udev/blkid, never mountinfo).
+    /// Block device filesystem UUID (resolved via udev / `/dev/disk/by-uuid`, never mountinfo).
     FsUuid { fs_uuid: String },
     /// Filesystem without UUID (e.g. `nfs4`, `sshfs`, `tmpfs`).
     MountSource {
@@ -1548,6 +1554,12 @@ impl Backup {
                 "backup source path must not be empty".to_string(),
             ));
         }
+        if !source.path.is_absolute() {
+            return Err(ModelError::InvalidBackup(format!(
+                "backup source path must be absolute: '{}'",
+                source.path.display()
+            )));
+        }
         self.source = source;
         Ok(())
     }
@@ -1578,6 +1590,12 @@ impl Backup {
             return Err(ModelError::InvalidBackup(
                 "backup source path must not be empty".to_string(),
             ));
+        }
+        if !self.source.path.is_absolute() {
+            return Err(ModelError::InvalidBackup(format!(
+                "backup source path must be absolute: '{}'",
+                self.source.path.display()
+            )));
         }
         self.excludes.validate()?;
         self.retention.validate()?;

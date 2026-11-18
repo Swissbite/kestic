@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 /// Single parsed entry from `/proc/self/mountinfo`.
@@ -29,7 +28,7 @@ pub trait MountInspector: Send + Sync {
     /// Returns raw `/proc/self/mountinfo` contents.
     fn read_mountinfo(&self) -> std::io::Result<String>;
 
-    /// Resolves `(fs_uuid, optional_label)` for a mounted block device (`blkid`/udev).
+    /// Resolves `(fs_uuid, optional_label)` for a mounted block device (udev / `/dev/disk/by-uuid`).
     /// Returns `None` for non-block/virtual filesystems without UUID (e.g. `nfs4`, `sshfs`, `tmpfs`).
     fn fs_uuid_for_device(
         &self,
@@ -49,8 +48,8 @@ pub trait MountInspector: Send + Sync {
     }
 }
 
-/// Real Linux inspector using `/proc/self/mountinfo`, udev/sysfs metadata, `/dev/disk/by-uuid`,
-/// and `blkid` fallback (without touching mountinfo for FS-UUIDs).
+/// Real Linux inspector using `/proc/self/mountinfo`, udev metadata, and `/dev/disk/by-uuid`
+/// (without relying on mountinfo for FS-UUIDs or external subprocesses).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemMountInspector;
 
@@ -77,15 +76,6 @@ impl MountInspector for SystemMountInspector {
         // 2. Canonicalized `/dev/disk/by-uuid` and `/dev/disk/by-label` symlinks.
         if let Some(res) = read_dev_disk_by_uuid(mount_source) {
             return Some(res);
-        }
-
-        // 3. `blkid` fallback (`AC-M2-09-3`).
-        if mount_source.starts_with("/dev/") {
-            let uuid = run_blkid(mount_source, "UUID");
-            if let Some(uuid) = uuid {
-                let label = run_blkid(mount_source, "LABEL");
-                return Some((uuid, label));
-            }
         }
 
         None
@@ -143,18 +133,6 @@ fn read_dev_disk_by_uuid(mount_source: &str) -> Option<(String, Option<String>)>
         }
     }
     Some((uuid, found_label))
-}
-
-fn run_blkid(device: &str, tag: &str) -> Option<String> {
-    let out = Command::new("blkid")
-        .args(["-o", "value", "-s", tag, device])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!s.is_empty()).then_some(s)
 }
 
 /// Configurable thread-safe fake [`MountInspector`] for unit and D-Bus integration tests.

@@ -637,6 +637,44 @@ impl KesticClient {
         serde_json::from_str(&raw).map_err(|e| e.to_string())
     }
 
+    pub fn start_retention_preview(
+        &self,
+        backup_id: &str,
+        retention: &RetentionPolicy,
+    ) -> zbus::Result<String> {
+        let json = serde_json::to_string(retention)
+            .map_err(|e| zbus::Error::Failure(format!("serialize retention: {e}")))?;
+        block_on(async {
+            self.proxy()
+                .await?
+                .call("StartRetentionPreview", &(backup_id, json.as_str()))
+                .await
+        })
+    }
+
+    pub fn cancel_retention_preview(&self, preview_id: &str) -> zbus::Result<()> {
+        block_on(async {
+            self.proxy()
+                .await?
+                .call("CancelRetentionPreview", &(preview_id,))
+                .await
+        })
+    }
+
+    pub fn get_retention_preview_status(
+        &self,
+        preview_id: &str,
+    ) -> Result<RetentionPreviewStatusDto, String> {
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call("GetRetentionPreviewStatus", &(preview_id,))
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
     pub fn start_backup_dry_run(
         &self,
         backup_id: &str,
@@ -724,6 +762,16 @@ pub struct BackupDryRunStatusDto {
     /// `"running"` | `"done"` | `"cancelled"` | `"error"`
     pub state: String,
     pub result: Option<BackupDryRunResult>,
+    pub error: Option<String>,
+}
+
+/// Asynchronous retention preview status returned by `GetRetentionPreviewStatus` (`M2-S06`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetentionPreviewStatusDto {
+    pub preview_id: String,
+    /// `"running"` | `"done"` | `"cancelled"` | `"error"`
+    pub state: String,
+    pub result: Option<ForgetPreviewResult>,
     pub error: Option<String>,
 }
 

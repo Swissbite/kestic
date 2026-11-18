@@ -16,21 +16,17 @@ Kirigami.ScrollablePage {
     required property string backupId
     required property string mode // "dry_run" | "retention"
     property string excludesJson: ""
-    property string retentionPreviewJson: ""
+    property string retentionJson: ""
 
     property string previewId: ""
     property string dryRunState: "running"
     property var dryRunResult: null
     property string dryRunError: ""
 
-    readonly property var retentionPreviewData: {
-        if (mode !== "retention" || retentionPreviewJson === "") return null;
-        try {
-            return JSON.parse(retentionPreviewJson);
-        } catch (e) {
-            return null;
-        }
-    }
+    property string retentionPreviewId: ""
+    property string retentionPreviewState: "running"
+    property var retentionPreviewData: null
+    property string retentionPreviewError: ""
 
     function formatSize(bytes) {
         var b = Number(bytes || 0);
@@ -42,6 +38,7 @@ Kirigami.ScrollablePage {
 
     function startDryRunIfNeeded() {
         if (mode !== "dry_run") return;
+        retentionPollTimer.stop();
         dryRunState = "running";
         dryRunResult = null;
         dryRunError = "";
@@ -54,12 +51,34 @@ Kirigami.ScrollablePage {
         }
     }
 
-    Component.onCompleted: startDryRunIfNeeded()
+    function startRetentionPreviewIfNeeded() {
+        if (mode !== "retention") return;
+        pollTimer.stop();
+        retentionPreviewState = "running";
+        retentionPreviewData = null;
+        retentionPreviewError = "";
+        retentionPreviewId = appBackend.startRetentionPreview(backupId, retentionJson);
+        if (retentionPreviewId === "") {
+            retentionPreviewState = "error";
+            retentionPreviewError = appBackend.retention_preview_error || appBackend.last_action_error || i18n("Preview could not be started.");
+        } else {
+            retentionPollTimer.start();
+        }
+    }
+
+    Component.onCompleted: {
+        startDryRunIfNeeded();
+        startRetentionPreviewIfNeeded();
+    }
 
     Component.onDestruction: {
         pollTimer.stop();
+        retentionPollTimer.stop();
         if (mode === "dry_run" && dryRunState === "running" && previewId !== "") {
             appBackend.cancelBackupDryRun(previewId);
+        }
+        if (mode === "retention" && retentionPreviewState === "running" && retentionPreviewId !== "") {
+            appBackend.cancelRetentionPreview(retentionPreviewId);
         }
     }
 
@@ -99,6 +118,42 @@ Kirigami.ScrollablePage {
         }
     }
 
+    Timer {
+        id: retentionPollTimer
+        interval: 50
+        repeat: true
+        onTriggered: {
+            if (page.retentionPreviewId === "") {
+                stop();
+                return;
+            }
+            var raw = appBackend.pollRetentionPreview(page.retentionPreviewId);
+            if (raw === "") {
+                stop();
+                page.retentionPreviewState = "error";
+                page.retentionPreviewError = appBackend.retention_preview_error || i18n("Preview failed.");
+                return;
+            }
+            try {
+                var dto = JSON.parse(raw);
+                page.retentionPreviewState = dto.state || "error";
+                if (dto.state !== "running") {
+                    stop();
+                }
+                if (dto.result) {
+                    page.retentionPreviewData = dto.result;
+                }
+                if (dto.error) {
+                    page.retentionPreviewError = dto.error;
+                }
+            } catch (e) {
+                stop();
+                page.retentionPreviewState = "error";
+                page.retentionPreviewError = i18n("Invalid preview response.");
+            }
+        }
+    }
+
     actions: [
         Kirigami.Action {
             id: showDryRunCommandAction
@@ -110,6 +165,13 @@ Kirigami.ScrollablePage {
                 page.dryRunResult.transparent_command,
                 i18n("Dry-Run Preview")
             )
+        },
+        Kirigami.Action {
+            id: closePreviewAction
+            objectName: "closePreviewAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: rootWindow.popSubPage()
         }
     ]
 
@@ -207,7 +269,9 @@ Kirigami.ScrollablePage {
                 Kirigami.Heading {
                     level: 4
                     visible: page.dryRunResult !== null && page.dryRunResult.largest_excluded_folders && page.dryRunResult.largest_excluded_folders.length > 0
-                    text: i18n("Largest excluded folders")
+                    text: page.dryRunResult && page.dryRunResult.largest_excluded_folders && page.dryRunResult.largest_excluded_folders.length === 1
+                        ? i18n("Excluded folder")
+                        : i18n("Largest excluded folders")
                 }
 
                 Repeater {
@@ -261,11 +325,53 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             spacing: Kirigami.Units.mediumSpacing
 
+            ColumnLayout {
+                visible: page.retentionPreviewState === "running"
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Label {
+                    text: i18n("Calculating retention preview…")
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Controls.ProgressBar {
+                    indeterminate: true
+                    Layout.fillWidth: true
+                }
+
+                Controls.Button {
+                    id: cancelRetentionPreviewButton
+                    objectName: "cancelRetentionPreviewButton"
+                    icon.name: "process-stop"
+                    text: i18n("Cancel")
+                    Accessible.name: i18n("Cancel retention preview")
+                    onClicked: appBackend.cancelRetentionPreview(page.retentionPreviewId)
+                }
+            }
+
+            Kirigami.InlineMessage {
+                id: retentionPreviewErrorBanner
+                objectName: "retentionPreviewErrorBanner"
+                Layout.fillWidth: true
+                type: Kirigami.MessageType.Error
+                visible: page.retentionPreviewState === "error"
+                text: page.retentionPreviewError !== "" ? page.retentionPreviewError : i18n("Preview failed.")
+            }
+
+            Kirigami.PlaceholderMessage {
+                Layout.fillWidth: true
+                visible: page.retentionPreviewState === "cancelled"
+                icon.name: "process-stop"
+                text: i18n("Preview cancelled")
+            }
+
             Kirigami.InlineMessage {
                 id: retentionPreviewSummaryBanner
                 objectName: "retentionPreviewSummaryBanner"
                 Layout.fillWidth: true
-                visible: page.retentionPreviewData !== null
+                visible: page.retentionPreviewState === "done" && page.retentionPreviewData !== null
                 type: page.retentionPreviewData && page.retentionPreviewData.remove_count > 0
                     ? Kirigami.MessageType.Warning
                     : Kirigami.MessageType.Information
@@ -282,13 +388,19 @@ Kirigami.ScrollablePage {
 
             Kirigami.PlaceholderMessage {
                 Layout.fillWidth: true
-                visible: page.retentionPreviewData !== null && (!page.retentionPreviewData.snapshots || page.retentionPreviewData.snapshots.length === 0)
+                visible: page.retentionPreviewState === "done"
+                    && page.retentionPreviewData !== null
+                    && (!page.retentionPreviewData.snapshots || page.retentionPreviewData.snapshots.length === 0)
                 icon.name: "view-list-details"
                 text: i18n("No snapshots in this backup yet")
             }
 
             Repeater {
-                model: page.retentionPreviewData && page.retentionPreviewData.snapshots ? page.retentionPreviewData.snapshots : []
+                model: page.retentionPreviewState === "done"
+                    && page.retentionPreviewData
+                    && page.retentionPreviewData.snapshots
+                    ? page.retentionPreviewData.snapshots
+                    : []
 
                 delegate: Controls.ItemDelegate {
                     id: snapRow

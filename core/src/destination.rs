@@ -233,11 +233,7 @@ fn mode_subcommand(mode: DestinationSetupMode) -> Vec<String> {
 }
 
 fn map_execution_failure(res: &ResticExecutionResult) -> DestinationError {
-    let detail = res
-        .presentation
-        .raw_detail
-        .clone()
-        .unwrap_or_else(|| res.presentation.summary_de.clone());
+    let detail = res.presentation.detail_or_summary();
     match res.presentation.kind {
         ResticFailureKind::WrongPassword => DestinationError::WrongPassword,
         ResticFailureKind::RepositoryMissing => DestinationError::RepositoryMissing(detail),

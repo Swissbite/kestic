@@ -68,6 +68,10 @@ pub mod qobject {
         #[qproperty(QString, dry_run_state)]
         #[qproperty(QString, dry_run_result_json)]
         #[qproperty(QString, dry_run_error)]
+        #[qproperty(QString, retention_preview_id)]
+        #[qproperty(QString, retention_preview_state)]
+        #[qproperty(QString, retention_preview_result_json)]
+        #[qproperty(QString, retention_preview_error)]
         type KesticApp = super::KesticAppRust;
 
         #[qsignal]
@@ -301,12 +305,20 @@ pub mod qobject {
         fn format_retention_summary_json(self: &KesticApp, retention_json: &QString) -> QString;
 
         #[qinvokable]
-        #[cxx_name = "previewRetention"]
-        fn preview_retention(
+        #[cxx_name = "startRetentionPreview"]
+        fn start_retention_preview(
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             retention_json: &QString,
         ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "pollRetentionPreview"]
+        fn poll_retention_preview(self: Pin<&mut KesticApp>, preview_id: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "cancelRetentionPreview"]
+        fn cancel_retention_preview(self: Pin<&mut KesticApp>, preview_id: &QString);
 
         #[qinvokable]
         #[cxx_name = "detectSource"]
@@ -452,6 +464,10 @@ pub struct KesticAppRust {
     dry_run_state: QString,
     dry_run_result_json: QString,
     dry_run_error: QString,
+    retention_preview_id: QString,
+    retention_preview_state: QString,
+    retention_preview_result_json: QString,
+    retention_preview_error: QString,
 }
 
 fn friendly_dbus_error(err: &zbus::Error) -> String {
@@ -1432,7 +1448,7 @@ impl qobject::KesticApp {
         QString::from(&format_retention_summary(&policy))
     }
 
-    pub fn preview_retention(
+    pub fn start_retention_preview(
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         retention_json: &QString,
@@ -1441,24 +1457,82 @@ impl qobject::KesticApp {
             Ok(r) => r,
             Err(err) => {
                 self.as_mut()
-                    .set_last_action_error(QString::from(&err.to_string()));
+                    .set_retention_preview_state(QString::from("error"));
+                self.as_mut()
+                    .set_retention_preview_error(QString::from(&err.to_string()));
                 return QString::from("");
             }
         };
         let Ok(client) = make_client() else {
             self.as_mut()
-                .set_last_action_error(i18n("Background service unavailable."));
+                .set_retention_preview_state(QString::from("error"));
+            self.as_mut()
+                .set_retention_preview_error(i18n("Background service unavailable."));
             return QString::from("");
         };
-        match client.preview_retention(&backup_id.to_string(), &retention) {
-            Ok(res) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                QString::from(&serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string()))
+        self.as_mut()
+            .set_retention_preview_result_json(QString::from(""));
+        self.as_mut().set_retention_preview_error(QString::from(""));
+        match client.start_retention_preview(&backup_id.to_string(), &retention) {
+            Ok(preview_id) => {
+                self.as_mut()
+                    .set_retention_preview_id(QString::from(&preview_id));
+                self.as_mut()
+                    .set_retention_preview_state(QString::from("running"));
+                QString::from(&preview_id)
             }
             Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
+                let msg = friendly_dbus_error(&err);
+                self.as_mut()
+                    .set_retention_preview_state(QString::from("error"));
+                self.as_mut()
+                    .set_retention_preview_error(QString::from(&msg));
                 QString::from("")
             }
+        }
+    }
+
+    pub fn poll_retention_preview(mut self: Pin<&mut Self>, preview_id: &QString) -> QString {
+        let pid = preview_id.to_string();
+        if pid.is_empty() {
+            return QString::from("");
+        }
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        match client.get_retention_preview_status(&pid) {
+            Ok(status) => {
+                self.as_mut()
+                    .set_retention_preview_state(QString::from(&status.state));
+                if let Some(ref res) = status.result {
+                    let rjson = serde_json::to_string(res).unwrap_or_else(|_| "{}".to_string());
+                    self.as_mut()
+                        .set_retention_preview_result_json(QString::from(&rjson));
+                }
+                if let Some(ref err) = status.error {
+                    self.as_mut()
+                        .set_retention_preview_error(QString::from(err));
+                }
+                QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
+            }
+            Err(err) => {
+                self.as_mut()
+                    .set_retention_preview_state(QString::from("error"));
+                self.as_mut()
+                    .set_retention_preview_error(QString::from(&err));
+                QString::from("")
+            }
+        }
+    }
+
+    pub fn cancel_retention_preview(mut self: Pin<&mut Self>, preview_id: &QString) {
+        let pid = preview_id.to_string();
+        if pid.is_empty() {
+            return;
+        }
+        if let Ok(client) = make_client() {
+            let _ = client.cancel_retention_preview(&pid);
+            let _ = self.as_mut().poll_retention_preview(preview_id);
         }
     }
 

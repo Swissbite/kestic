@@ -752,6 +752,27 @@ fn ac_m2_06_6_and_06_7_preview_retention_with_non_exclusive_lock_and_update_dual
                     "[{label}] PreviewRetention must pass --dry-run and --no-lock:\n{logged}"
                 );
 
+                // Also exercise non-blocking async StartRetentionPreview + GetRetentionPreviewStatus under the same lock.
+                let async_preview_id = client
+                    .start_retention_preview(&backup_id, &candidate_policy)
+                    .expect("StartRetentionPreview");
+                let async_deadline = Instant::now() + Duration::from_secs(15);
+                let async_dto = loop {
+                    let st = client
+                        .get_retention_preview_status(&async_preview_id)
+                        .expect("GetRetentionPreviewStatus");
+                    if st.state != "running" {
+                        break st;
+                    }
+                    assert!(
+                        Instant::now() < async_deadline,
+                        "[{label}] StartRetentionPreview timed out"
+                    );
+                    thread::sleep(Duration::from_millis(25));
+                };
+                assert_eq!(async_dto.state, "done", "[{label}] {async_dto:?}");
+                assert_eq!(async_dto.result.as_ref(), Some(&preview), "[{label}]");
+
                 // Dry-run preview must not delete snapshots.
                 let snaps = client
                     .list_backup_snapshots(&backup_id)
@@ -1194,6 +1215,12 @@ fn ac_m2_07_3_and_07_4_non_exclusive_lock_forget_exit_11_pending_forget_and_catc
                     detail2.run.commands[1].exit_code, 11,
                     "[{label}] forget must hit Exit 11 under non-exclusive lock: {:?}",
                     detail2.run.commands[1]
+                );
+                let lock_summary = fin2.summary_message.as_deref().unwrap_or("");
+                assert!(
+                    lock_summary.contains("locked") || lock_summary.contains("gesperrt"),
+                    "[{label}] expected locked summary_message on Exit 11 forget, got: {:?}",
+                    fin2.summary_message
                 );
 
                 let state2 = client.get_state().expect("GetState pending_forget");

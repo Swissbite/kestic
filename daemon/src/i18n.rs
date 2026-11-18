@@ -145,6 +145,7 @@ pub fn i18n(msgid: &'static str) -> PendingI18n {
 pub fn localized_failure_summary(kind: &ResticFailureKind) -> String {
     match kind {
         ResticFailureKind::None => i18n("Completed").into(),
+        ResticFailureKind::Cancelled => i18n("Cancelled by user").into(),
         ResticFailureKind::IncompleteSnapshot { .. } => {
             i18n("Snapshot incomplete: some files could not be read").into()
         }

@@ -74,6 +74,9 @@ Kirigami.ScrollablePage {
     property string pendingSaveRetentionJson: ""
     property int pendingRemoveCount: 0
     property var pendingRemoveSnapshots: []
+    property bool saveBusy: false
+    property string savePreviewId: ""
+    property bool pendingPopAfterSave: false
 
     readonly property var unitValues: ["h", "d", "m", "y"]
 
@@ -223,6 +226,13 @@ Kirigami.ScrollablePage {
         }
     }
 
+    Component.onDestruction: {
+        savePollTimer.stop();
+        if (saveBusy && savePreviewId !== "") {
+            appBackend.cancelRetentionPreview(savePreviewId);
+        }
+    }
+
     onBackRequested: function(event) {
         if (dirty) {
             event.accepted = true;
@@ -231,6 +241,10 @@ Kirigami.ScrollablePage {
     }
 
     function handleEscape() {
+        if (retentionExamplesDialog.opened || retentionExamplesDialog.visible) {
+            retentionExamplesDialog.close();
+            return true;
+        }
         if (confirmRemoveDialog.opened || confirmRemoveDialog.visible) {
             confirmRemoveDialog.close();
             return true;
@@ -261,39 +275,81 @@ Kirigami.ScrollablePage {
         return false;
     }
 
-    function triggerSave() {
-        if (!hasAnyRule) return false;
+    function finishSave(jsonStr, popOnSuccess) {
+        var ok = commitSave(jsonStr);
+        if (ok && popOnSuccess) {
+            rootWindow.popSubPage();
+        }
+        return ok;
+    }
+
+    function triggerSave(popAfterSave) {
+        if (!hasAnyRule || saveBusy) return false;
         validationError = "";
         var jsonStr = currentPolicyJson();
-        var previewRaw = appBackend.previewRetention(backupId, jsonStr);
-        if (previewRaw !== "") {
-            try {
-                var parsed = JSON.parse(previewRaw);
-                if (parsed.remove_count && parsed.remove_count > 0) {
-                    pendingSaveRetentionJson = jsonStr;
-                    pendingRemoveCount = parsed.remove_count;
-                    pendingRemoveSnapshots = (parsed.snapshots || [])
-                        .filter(s => s.action === "remove")
-                        .map(s => s.short_id + " (" + s.time + ")");
-                    confirmRemoveDialog.open();
-                    return false;
-                }
-            } catch (e) {
-            }
+        pendingSaveRetentionJson = jsonStr;
+        pendingPopAfterSave = Boolean(popAfterSave);
+        saveBusy = true;
+        savePreviewId = appBackend.startRetentionPreview(backupId, jsonStr);
+        if (savePreviewId === "") {
+            saveBusy = false;
+            return finishSave(jsonStr, pendingPopAfterSave);
         }
-        return commitSave(jsonStr);
+        savePollTimer.start();
+        return false;
     }
 
     function openPreviewPage() {
         if (!hasAnyRule) return;
         validationError = "";
-        var jsonStr = currentPolicyJson();
-        var previewRaw = appBackend.previewRetention(backupId, jsonStr);
-        if (previewRaw === "") {
-            validationError = appBackend.last_action_error || i18n("Could not preview retention rules.");
-            return;
+        rootWindow.openRetentionPreviewPage(backupId, currentPolicyJson());
+    }
+
+    Timer {
+        id: savePollTimer
+        interval: 50
+        repeat: true
+        onTriggered: {
+            if (page.savePreviewId === "") {
+                stop();
+                page.saveBusy = false;
+                return;
+            }
+            var raw = appBackend.pollRetentionPreview(page.savePreviewId);
+            if (raw === "") {
+                stop();
+                page.saveBusy = false;
+                page.savePreviewId = "";
+                page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
+                return;
+            }
+            try {
+                var dto = JSON.parse(raw);
+                if (dto.state === "running") {
+                    return;
+                }
+                stop();
+                page.saveBusy = false;
+                page.savePreviewId = "";
+                if (dto.state === "done" && dto.result && dto.result.remove_count && dto.result.remove_count > 0) {
+                    page.pendingRemoveCount = dto.result.remove_count;
+                    page.pendingRemoveSnapshots = (dto.result.snapshots || [])
+                        .filter(s => s.action === "remove")
+                        .map(s => s.short_id + " (" + s.time + ")");
+                    confirmRemoveDialog.open();
+                    return;
+                }
+                if (dto.state === "cancelled") {
+                    return;
+                }
+                page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
+            } catch (e) {
+                stop();
+                page.saveBusy = false;
+                page.savePreviewId = "";
+                page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
+            }
         }
-        rootWindow.openRetentionPreviewPage(backupId, previewRaw);
     }
 
     actions: [
@@ -310,10 +366,48 @@ Kirigami.ScrollablePage {
             objectName: "saveRetentionAction"
             icon.name: "document-save"
             text: i18n("Save")
-            enabled: page.dirty && page.hasAnyRule && appBackend.blocking_kind !== "daemon_unreachable"
-            onTriggered: page.triggerSave()
+            enabled: page.dirty && page.hasAnyRule && !page.saveBusy && appBackend.blocking_kind !== "daemon_unreachable"
+            onTriggered: page.triggerSave(false)
+        },
+        Kirigami.Action {
+            id: closeRetentionAction
+            objectName: "closeRetentionAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: {
+                if (page.dirty) {
+                    unsavedDialog.open();
+                } else {
+                    rootWindow.popSubPage();
+                }
+            }
         }
     ]
+
+    Kirigami.Dialog {
+        id: retentionExamplesDialog
+        objectName: "retentionExamplesDialog"
+        title: i18n("How Retention Rules Work")
+        standardButtons: Kirigami.Dialog.Close
+        padding: Kirigami.Units.largeSpacing
+
+        ColumnLayout {
+            implicitWidth: Kirigami.Units.gridUnit * 28
+            spacing: Kirigami.Units.mediumSpacing
+
+            Controls.Label {
+                text: i18n("1. By count ('keep last 7 daily'):\nCounts only days on which a backup was actually created. Days without backups are skipped.\nExample: If your PC only ran Mon–Thu each week (4 days/week), '7 daily' keeps the last 7 backup days across almost 2 weeks.")
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Controls.Label {
+                text: i18n("2. By time period ('daily for last 7 days'):\nMeasures calendar time backwards from the newest snapshot.\nExample: 'Daily for last 7 days' keeps 1 daily backup for each calendar day within the 7-day window before the latest backup.")
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+        }
+    }
 
     Kirigami.PromptDialog {
         id: unsavedDialog
@@ -321,15 +415,11 @@ Kirigami.ScrollablePage {
         title: i18n("Save changes?")
         subtitle: i18n("You have unsaved changes to retention rules.")
         standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onAccepted: {
-            if (page.triggerSave()) {
-                rootWindow.pageStack.pop();
-            }
-        }
+        onAccepted: page.triggerSave(true)
         onDiscarded: {
             appBackend.has_unsaved_changes = false;
             page.loadFromPolicyJson(page.savedPolicyJson);
-            rootWindow.pageStack.pop();
+            rootWindow.popSubPage();
         }
     }
 
@@ -349,11 +439,7 @@ Kirigami.ScrollablePage {
                 text: i18n("Save Rules")
                 onTriggered: {
                     confirmRemoveDialog.close();
-                    if (page.commitSave(page.pendingSaveRetentionJson)) {
-                        if (rootWindow.pageStack.currentItem === page && !page.dirty) {
-                            // stay on page after explicit save; if popped via unsavedDialog, user can go back
-                        }
-                    }
+                    page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
                 }
             }
         ]
@@ -372,6 +458,7 @@ Kirigami.ScrollablePage {
         spacing: Kirigami.Units.smallSpacing
 
         Controls.CheckBox {
+            id: countRuleCheck
             objectName: countRow.rowObjectPrefix + "Check"
             text: countRow.labelText
             checked: countRow.ruleEnabled
@@ -380,6 +467,7 @@ Kirigami.ScrollablePage {
             onToggled: {
                 countRow.ruleEnabled = checked;
                 countRow.edited();
+                countRuleCheck.forceActiveFocus(Qt.TabFocusReason);
             }
         }
 
@@ -398,6 +486,7 @@ Kirigami.ScrollablePage {
         }
 
         Controls.CheckBox {
+            id: countUnlimitedCheck
             objectName: countRow.rowObjectPrefix + "UnlimitedCheck"
             text: i18n("All (unlimited)")
             enabled: countRow.ruleEnabled
@@ -406,6 +495,7 @@ Kirigami.ScrollablePage {
             onToggled: {
                 countRow.ruleUnlimited = checked;
                 countRow.edited();
+                countUnlimitedCheck.forceActiveFocus(Qt.TabFocusReason);
             }
         }
     }
@@ -423,6 +513,7 @@ Kirigami.ScrollablePage {
         spacing: Kirigami.Units.smallSpacing
 
         Controls.CheckBox {
+            id: withinRuleCheck
             objectName: withinRow.rowObjectPrefix + "Check"
             text: withinRow.labelText
             checked: withinRow.ruleEnabled
@@ -431,6 +522,7 @@ Kirigami.ScrollablePage {
             onToggled: {
                 withinRow.ruleEnabled = checked;
                 withinRow.edited();
+                withinRuleCheck.forceActiveFocus(Qt.TabFocusReason);
             }
         }
 
@@ -464,6 +556,14 @@ Kirigami.ScrollablePage {
     ColumnLayout {
         width: parent.width
         spacing: Kirigami.Units.mediumSpacing
+
+        Controls.ProgressBar {
+            id: retentionSaveProgress
+            objectName: "retentionSaveProgress"
+            Layout.fillWidth: true
+            indeterminate: true
+            visible: page.saveBusy
+        }
 
         Kirigami.InlineMessage {
             id: retentionValidationError
@@ -503,9 +603,28 @@ Kirigami.ScrollablePage {
             }
         }
 
-        Kirigami.Heading {
-            level: 3
-            text: i18n("By count: keep last n…")
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+
+            Kirigami.Heading {
+                level: 3
+                text: i18n("By count: keep last n…")
+                Layout.fillWidth: true
+            }
+
+            Controls.ToolButton {
+                id: countRulesHelpButton
+                objectName: "countRulesHelpButton"
+                icon.name: "help-contextual"
+                text: "?"
+                display: Controls.AbstractButton.IconOnly
+                Accessible.name: i18n("Explain count-based retention rules")
+                Controls.ToolTip.visible: hovered || activeFocus
+                Controls.ToolTip.delay: 150
+                Controls.ToolTip.text: i18n("Counts only days with backups (skips days without backups). Click for an example.")
+                onClicked: retentionExamplesDialog.open()
+            }
         }
 
         CountRuleRow {
@@ -592,9 +711,28 @@ Kirigami.ScrollablePage {
             }
         }
 
-        Kirigami.Heading {
-            level: 3
-            text: i18n("By time period: keep all… for last")
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+
+            Kirigami.Heading {
+                level: 3
+                text: i18n("By time period: keep all… for last")
+                Layout.fillWidth: true
+            }
+
+            Controls.ToolButton {
+                id: withinRulesHelpButton
+                objectName: "withinRulesHelpButton"
+                icon.name: "help-contextual"
+                text: "?"
+                display: Controls.AbstractButton.IconOnly
+                Accessible.name: i18n("Explain time-period retention rules")
+                Controls.ToolTip.visible: hovered || activeFocus
+                Controls.ToolTip.delay: 150
+                Controls.ToolTip.text: i18n("Measures calendar time backwards from the newest snapshot. Click for an example.")
+                onClicked: retentionExamplesDialog.open()
+            }
         }
 
         WithinRuleRow {
@@ -688,6 +826,13 @@ Kirigami.ScrollablePage {
             type: Kirigami.MessageType.Information
             visible: true
             text: i18n("Count rules ('last 7 daily') skip days without backups. Time-period rules ('daily of the last 7 days') measure calendar days backwards from the newest snapshot.")
+            actions: [
+                Kirigami.Action {
+                    icon.name: "help-contextual"
+                    text: i18n("Show Example…")
+                    onTriggered: retentionExamplesDialog.open()
+                }
+            ]
         }
     }
 }
