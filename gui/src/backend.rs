@@ -64,6 +64,14 @@ pub mod qobject {
         #[qproperty(bool, show_quit_dialog_on_start)]
         #[qproperty(bool, quit_has_running_run)]
         #[qproperty(QString, quit_running_backup_name)]
+        #[qproperty(QString, dry_run_preview_id)]
+        #[qproperty(QString, dry_run_state)]
+        #[qproperty(QString, dry_run_result_json)]
+        #[qproperty(QString, dry_run_error)]
+        #[qproperty(QString, retention_preview_id)]
+        #[qproperty(QString, retention_preview_state)]
+        #[qproperty(QString, retention_preview_result_json)]
+        #[qproperty(QString, retention_preview_error)]
         type KesticApp = super::KesticAppRust;
 
         #[qsignal]
@@ -196,6 +204,30 @@ pub mod qobject {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "updateBackupExcludes"]
+        fn update_backup_excludes(
+            self: Pin<&mut KesticApp>,
+            backup_id: &QString,
+            excludes_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "updateBackupRetention"]
+        fn update_backup_retention(
+            self: Pin<&mut KesticApp>,
+            backup_id: &QString,
+            retention_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "updateBackupSource"]
+        fn update_backup_source(
+            self: Pin<&mut KesticApp>,
+            backup_id: &QString,
+            source_path: &QString,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "renameBackup"]
         fn rename_backup(
             self: Pin<&mut KesticApp>,
@@ -222,6 +254,91 @@ pub mod qobject {
             backup_id: &QString,
             path: &QString,
         ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "formatExcludeRuleForItem"]
+        fn format_exclude_rule_for_item(self: &KesticApp, item_path: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "lintExcludes"]
+        fn lint_excludes(self: &KesticApp, excludes_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "testExcludePath"]
+        fn test_exclude_path(
+            self: &KesticApp,
+            backup_id: &QString,
+            excludes_json: &QString,
+            test_path: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "normalizeExcludeFolder"]
+        fn normalize_exclude_folder(self: &KesticApp, folder_path: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "buildExcludeFilePreview"]
+        fn build_exclude_file_preview(self: &KesticApp, excludes_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "startBackupDryRun"]
+        fn start_backup_dry_run(
+            self: Pin<&mut KesticApp>,
+            backup_id: &QString,
+            excludes_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "pollBackupDryRun"]
+        fn poll_backup_dry_run(self: Pin<&mut KesticApp>, preview_id: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "cancelBackupDryRun"]
+        fn cancel_backup_dry_run(self: Pin<&mut KesticApp>, preview_id: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "retentionPresetJson"]
+        fn retention_preset_json(self: &KesticApp, preset_name: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "formatRetentionSummaryJson"]
+        fn format_retention_summary_json(self: &KesticApp, retention_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "startRetentionPreview"]
+        fn start_retention_preview(
+            self: Pin<&mut KesticApp>,
+            backup_id: &QString,
+            retention_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "pollRetentionPreview"]
+        fn poll_retention_preview(self: Pin<&mut KesticApp>, preview_id: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "cancelRetentionPreview"]
+        fn cancel_retention_preview(self: Pin<&mut KesticApp>, preview_id: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "detectSource"]
+        fn detect_source(self: &KesticApp, path: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "checkNestedSources"]
+        fn check_nested_sources(
+            self: &KesticApp,
+            candidate_id: &QString,
+            candidate_path: &QString,
+            destination_id: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "runDestinationMaintenance"]
+        fn run_destination_maintenance(
+            self: Pin<&mut KesticApp>,
+            destination_id: &QString,
+        ) -> QString;
 
         #[qinvokable]
         #[cxx_name = "loadRunDetail"]
@@ -272,18 +389,23 @@ pub mod qobject {
 use crate::smoke;
 use crate::state_cache::{
     build_destination, build_new_backup, build_provider, clone_updated_backup,
+    clone_updated_backup_excludes, clone_updated_backup_retention, clone_updated_backup_source,
     ensure_daemon_and_refresh, format_bytes, format_datetime_display, format_duration_ms,
-    format_overall_visual, format_run_kind_name, format_run_status, initialize_and_sync,
-    localized_manual_block_message, localized_start_all_summary, lookup_backup_summary,
-    make_client, refresh_state_now, shared_state, test_destination_connection,
+    format_overall_visual, format_retention_summary, format_run_kind_name, format_run_status,
+    initialize_and_sync, localized_manual_block_message, localized_start_all_summary,
+    lookup_backup_summary, make_client, refresh_state_now, shared_state,
+    test_destination_connection,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
-use kestic_core::model::{BackupId, ResticProvider};
+use kestic_core::model::{
+    BackupId, ExcludeRules, ResticProvider, RetentionPolicy, normalize_folder_rule,
+};
 use kestic_core::provider::resolve_and_check;
 use kestic_daemon::dbus_api::REASON_DESTINATION_UNREACHABLE;
 use std::env;
+use std::path::PathBuf;
 use std::pin::Pin;
 
 #[derive(Default)]
@@ -338,6 +460,14 @@ pub struct KesticAppRust {
     show_quit_dialog_on_start: bool,
     quit_has_running_run: bool,
     quit_running_backup_name: QString,
+    dry_run_preview_id: QString,
+    dry_run_state: QString,
+    dry_run_result_json: QString,
+    dry_run_error: QString,
+    retention_preview_id: QString,
+    retention_preview_state: QString,
+    retention_preview_result_json: QString,
+    retention_preview_error: QString,
 }
 
 fn friendly_dbus_error(err: &zbus::Error) -> String {
@@ -815,20 +945,23 @@ impl qobject::KesticApp {
         dest_id: &QString,
         excludes_text: &QString,
     ) -> QString {
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        let src_str = source_path.to_string();
+        let detected = client.detect_source(src_str.trim()).ok();
         let backup = match build_new_backup(
             &name.to_string(),
-            &source_path.to_string(),
+            &src_str,
             &dest_id.to_string(),
             &excludes_text.to_string(),
+            detected,
         ) {
             Ok(b) => b,
             Err(err) => {
                 self.as_mut().set_last_action_error(QString::from(&err));
                 return QString::from("");
             }
-        };
-        let Ok(client) = make_client() else {
-            return QString::from("");
         };
         match client.add_backup(&backup) {
             Ok(id) => {
@@ -868,14 +1001,74 @@ impl qobject::KesticApp {
                 .set_last_action_error(i18n("Backup not found."));
             return false;
         };
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        let src_str = source_path.to_string();
+        let detected = if src_str.trim() != existing.source.path.to_string_lossy().as_ref() {
+            client.detect_source(src_str.trim()).ok()
+        } else {
+            None
+        };
         let updated = match clone_updated_backup(
             &existing,
             &name.to_string(),
-            &source_path.to_string(),
+            &src_str,
             &dest_id.to_string(),
             &excludes_text.to_string(),
             exclude_caches,
+            detected,
         ) {
+            Ok(b) => b,
+            Err(err) => {
+                self.as_mut().set_last_action_error(QString::from(&err));
+                return false;
+            }
+        };
+        match client.update_backup(&updated) {
+            Ok(()) => {
+                self.as_mut().set_has_unsaved_changes(false);
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn update_backup_excludes(
+        mut self: Pin<&mut Self>,
+        backup_id: &QString,
+        excludes_json: &QString,
+    ) -> bool {
+        let id_str = backup_id.to_string();
+        let existing = {
+            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .state
+                .as_ref()
+                .and_then(|s| lookup_backup_summary(s, &id_str))
+                .map(|b| b.backup.clone())
+        };
+        let Some(existing) = existing else {
+            self.as_mut()
+                .set_last_action_error(i18n("Backup not found."));
+            return false;
+        };
+        let excludes: ExcludeRules = match serde_json::from_str(&excludes_json.to_string()) {
+            Ok(e) => e,
+            Err(err) => {
+                self.as_mut()
+                    .set_last_action_error(QString::from(&err.to_string()));
+                return false;
+            }
+        };
+        let updated = match clone_updated_backup_excludes(&existing, excludes) {
             Ok(b) => b,
             Err(err) => {
                 self.as_mut().set_last_action_error(QString::from(&err));
@@ -884,6 +1077,108 @@ impl qobject::KesticApp {
         };
         let Ok(client) = make_client() else {
             return false;
+        };
+        match client.update_backup(&updated) {
+            Ok(()) => {
+                self.as_mut().set_has_unsaved_changes(false);
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn update_backup_retention(
+        mut self: Pin<&mut Self>,
+        backup_id: &QString,
+        retention_json: &QString,
+    ) -> bool {
+        let id_str = backup_id.to_string();
+        let existing = {
+            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .state
+                .as_ref()
+                .and_then(|s| lookup_backup_summary(s, &id_str))
+                .map(|b| b.backup.clone())
+        };
+        let Some(existing) = existing else {
+            self.as_mut()
+                .set_last_action_error(i18n("Backup not found."));
+            return false;
+        };
+        let retention: RetentionPolicy = match serde_json::from_str(&retention_json.to_string()) {
+            Ok(r) => r,
+            Err(err) => {
+                self.as_mut()
+                    .set_last_action_error(QString::from(&err.to_string()));
+                return false;
+            }
+        };
+        let updated = match clone_updated_backup_retention(&existing, retention) {
+            Ok(b) => b,
+            Err(err) => {
+                self.as_mut().set_last_action_error(QString::from(&err));
+                return false;
+            }
+        };
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        match client.update_backup(&updated) {
+            Ok(()) => {
+                self.as_mut().set_has_unsaved_changes(false);
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn update_backup_source(
+        mut self: Pin<&mut Self>,
+        backup_id: &QString,
+        source_path: &QString,
+    ) -> bool {
+        let id_str = backup_id.to_string();
+        let existing = {
+            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .state
+                .as_ref()
+                .and_then(|s| lookup_backup_summary(s, &id_str))
+                .map(|b| b.backup.clone())
+        };
+        let Some(existing) = existing else {
+            self.as_mut()
+                .set_last_action_error(i18n("Backup not found."));
+            return false;
+        };
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        let trimmed = source_path.to_string().trim().to_string();
+        let source = client
+            .detect_source(&trimmed)
+            .unwrap_or_else(|_| kestic_core::model::Source::folder(PathBuf::from(&trimmed)));
+        let updated = match clone_updated_backup_source(&existing, source) {
+            Ok(b) => b,
+            Err(err) => {
+                self.as_mut().set_last_action_error(QString::from(&err));
+                return false;
+            }
         };
         match client.update_backup(&updated) {
             Ok(()) => {
@@ -972,29 +1267,15 @@ impl qobject::KesticApp {
         path: &QString,
     ) -> bool {
         let id_str = backup_id.to_string();
-        let new_line = path.to_string().trim().to_string();
-        if new_line.is_empty() {
+        let trimmed = path.to_string().trim().to_string();
+        if trimmed.is_empty() {
             return false;
-        }
-        let existing = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-            guard
-                .state
-                .as_ref()
-                .and_then(|s| lookup_backup_summary(s, &id_str))
-                .map(|b| b.backup.clone())
-        };
-        let Some(mut backup) = existing else {
-            return false;
-        };
-        if !backup.excludes.lines.iter().any(|l| l == &new_line) {
-            backup.excludes.lines.push(new_line);
         }
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.update_backup(&backup) {
-            Ok(()) => {
+        match client.add_exclude_rule_for_item(&id_str, &trimmed) {
+            Ok(_) => {
                 refresh_state_now();
                 self.as_mut().apply_cached_state();
                 self.as_mut()
@@ -1002,9 +1283,310 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
+                self.as_mut().set_last_action_error(QString::from(&err));
+                false
+            }
+        }
+    }
+
+    pub fn format_exclude_rule_for_item(&self, item_path: &QString) -> QString {
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        match client.format_exclude_rule_for_item(item_path.to_string().trim()) {
+            Ok(dto) => {
+                QString::from(&serde_json::to_string(&dto).unwrap_or_else(|_| "{}".to_string()))
+            }
+            Err(_) => QString::from(""),
+        }
+    }
+
+    pub fn lint_excludes(&self, excludes_json: &QString) -> QString {
+        let Ok(excludes) = serde_json::from_str::<ExcludeRules>(&excludes_json.to_string()) else {
+            return QString::from("[]");
+        };
+        let Ok(client) = make_client() else {
+            return QString::from("[]");
+        };
+        match client.lint_excludes(&excludes) {
+            Ok(warnings) => QString::from(
+                &serde_json::to_string(&warnings).unwrap_or_else(|_| "[]".to_string()),
+            ),
+            Err(_) => QString::from("[]"),
+        }
+    }
+
+    pub fn test_exclude_path(
+        &self,
+        backup_id: &QString,
+        excludes_json: &QString,
+        test_path: &QString,
+    ) -> QString {
+        let Ok(excludes) = serde_json::from_str::<ExcludeRules>(&excludes_json.to_string()) else {
+            return QString::from("");
+        };
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        match client.test_exclude_path(&backup_id.to_string(), &excludes, &test_path.to_string()) {
+            Ok(res) => {
+                QString::from(&serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string()))
+            }
+            Err(_) => QString::from(""),
+        }
+    }
+
+    pub fn normalize_exclude_folder(&self, folder_path: &QString) -> QString {
+        let home = env::var_os("HOME").map(PathBuf::from);
+        let normalized = normalize_folder_rule(&folder_path.to_string(), home.as_deref());
+        QString::from(&normalized)
+    }
+
+    pub fn build_exclude_file_preview(&self, excludes_json: &QString) -> QString {
+        let Ok(excludes) = serde_json::from_str::<ExcludeRules>(&excludes_json.to_string()) else {
+            return QString::from("");
+        };
+        QString::from(&excludes.to_exclude_file_contents())
+    }
+
+    pub fn start_backup_dry_run(
+        mut self: Pin<&mut Self>,
+        backup_id: &QString,
+        excludes_json: &QString,
+    ) -> QString {
+        let excludes_opt = if excludes_json.to_string().trim().is_empty() {
+            None
+        } else {
+            match serde_json::from_str::<ExcludeRules>(&excludes_json.to_string()) {
+                Ok(e) => Some(e),
+                Err(err) => {
+                    self.as_mut().set_dry_run_state(QString::from("error"));
+                    self.as_mut()
+                        .set_dry_run_error(QString::from(&err.to_string()));
+                    return QString::from("");
+                }
+            }
+        };
+        let Ok(client) = make_client() else {
+            self.as_mut().set_dry_run_state(QString::from("error"));
+            self.as_mut()
+                .set_dry_run_error(i18n("Background service unavailable."));
+            return QString::from("");
+        };
+        self.as_mut().set_dry_run_result_json(QString::from(""));
+        self.as_mut().set_dry_run_error(QString::from(""));
+        match client.start_backup_dry_run(&backup_id.to_string(), excludes_opt.as_ref()) {
+            Ok(preview_id) => {
+                self.as_mut()
+                    .set_dry_run_preview_id(QString::from(&preview_id));
+                self.as_mut().set_dry_run_state(QString::from("running"));
+                QString::from(&preview_id)
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_dry_run_state(QString::from("error"));
+                self.as_mut().set_dry_run_error(QString::from(&msg));
+                QString::from("")
+            }
+        }
+    }
+
+    pub fn poll_backup_dry_run(mut self: Pin<&mut Self>, preview_id: &QString) -> QString {
+        let pid = preview_id.to_string();
+        if pid.is_empty() {
+            return QString::from("");
+        }
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        match client.get_backup_dry_run_status(&pid) {
+            Ok(status) => {
+                self.as_mut()
+                    .set_dry_run_state(QString::from(&status.state));
+                if let Some(ref res) = status.result {
+                    let rjson = serde_json::to_string(res).unwrap_or_else(|_| "{}".to_string());
+                    self.as_mut().set_dry_run_result_json(QString::from(&rjson));
+                }
+                if let Some(ref err) = status.error {
+                    self.as_mut().set_dry_run_error(QString::from(err));
+                }
+                QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
+            }
+            Err(err) => {
+                self.as_mut().set_dry_run_state(QString::from("error"));
+                self.as_mut().set_dry_run_error(QString::from(&err));
+                QString::from("")
+            }
+        }
+    }
+
+    pub fn cancel_backup_dry_run(mut self: Pin<&mut Self>, preview_id: &QString) {
+        let pid = preview_id.to_string();
+        if pid.is_empty() {
+            return;
+        }
+        if let Ok(client) = make_client() {
+            let _ = client.cancel_backup_dry_run(&pid);
+            let _ = self.as_mut().poll_backup_dry_run(preview_id);
+        }
+    }
+
+    pub fn retention_preset_json(&self, preset_name: &QString) -> QString {
+        let policy = match preset_name.to_string().as_str() {
+            "economical" => RetentionPolicy::economical(),
+            "long" => RetentionPolicy::long(),
+            _ => RetentionPolicy::standard(),
+        };
+        QString::from(&serde_json::to_string(&policy).unwrap_or_else(|_| "{}".to_string()))
+    }
+
+    pub fn format_retention_summary_json(&self, retention_json: &QString) -> QString {
+        let Ok(policy) = serde_json::from_str::<RetentionPolicy>(&retention_json.to_string())
+        else {
+            return QString::from("");
+        };
+        QString::from(&format_retention_summary(&policy))
+    }
+
+    pub fn start_retention_preview(
+        mut self: Pin<&mut Self>,
+        backup_id: &QString,
+        retention_json: &QString,
+    ) -> QString {
+        let retention = match serde_json::from_str::<RetentionPolicy>(&retention_json.to_string()) {
+            Ok(r) => r,
+            Err(err) => {
+                self.as_mut()
+                    .set_retention_preview_state(QString::from("error"));
+                self.as_mut()
+                    .set_retention_preview_error(QString::from(&err.to_string()));
+                return QString::from("");
+            }
+        };
+        let Ok(client) = make_client() else {
+            self.as_mut()
+                .set_retention_preview_state(QString::from("error"));
+            self.as_mut()
+                .set_retention_preview_error(i18n("Background service unavailable."));
+            return QString::from("");
+        };
+        self.as_mut()
+            .set_retention_preview_result_json(QString::from(""));
+        self.as_mut().set_retention_preview_error(QString::from(""));
+        match client.start_retention_preview(&backup_id.to_string(), &retention) {
+            Ok(preview_id) => {
+                self.as_mut()
+                    .set_retention_preview_id(QString::from(&preview_id));
+                self.as_mut()
+                    .set_retention_preview_state(QString::from("running"));
+                QString::from(&preview_id)
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut()
+                    .set_retention_preview_state(QString::from("error"));
+                self.as_mut()
+                    .set_retention_preview_error(QString::from(&msg));
+                QString::from("")
+            }
+        }
+    }
+
+    pub fn poll_retention_preview(mut self: Pin<&mut Self>, preview_id: &QString) -> QString {
+        let pid = preview_id.to_string();
+        if pid.is_empty() {
+            return QString::from("");
+        }
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        match client.get_retention_preview_status(&pid) {
+            Ok(status) => {
+                self.as_mut()
+                    .set_retention_preview_state(QString::from(&status.state));
+                if let Some(ref res) = status.result {
+                    let rjson = serde_json::to_string(res).unwrap_or_else(|_| "{}".to_string());
+                    self.as_mut()
+                        .set_retention_preview_result_json(QString::from(&rjson));
+                }
+                if let Some(ref err) = status.error {
+                    self.as_mut()
+                        .set_retention_preview_error(QString::from(err));
+                }
+                QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
+            }
+            Err(err) => {
+                self.as_mut()
+                    .set_retention_preview_state(QString::from("error"));
+                self.as_mut()
+                    .set_retention_preview_error(QString::from(&err));
+                QString::from("")
+            }
+        }
+    }
+
+    pub fn cancel_retention_preview(mut self: Pin<&mut Self>, preview_id: &QString) {
+        let pid = preview_id.to_string();
+        if pid.is_empty() {
+            return;
+        }
+        if let Ok(client) = make_client() {
+            let _ = client.cancel_retention_preview(&pid);
+            let _ = self.as_mut().poll_retention_preview(preview_id);
+        }
+    }
+
+    pub fn detect_source(&self, path: &QString) -> QString {
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        match client.detect_source(path.to_string().trim()) {
+            Ok(src) => {
+                QString::from(&serde_json::to_string(&src).unwrap_or_else(|_| "{}".to_string()))
+            }
+            Err(_) => QString::from(""),
+        }
+    }
+
+    pub fn check_nested_sources(
+        &self,
+        candidate_id: &QString,
+        candidate_path: &QString,
+        destination_id: &QString,
+    ) -> QString {
+        let Ok(client) = make_client() else {
+            return QString::from("[]");
+        };
+        match client.check_nested_sources(
+            &candidate_id.to_string(),
+            candidate_path.to_string().trim(),
+            destination_id.to_string().trim(),
+        ) {
+            Ok(conflicts) => QString::from(
+                &serde_json::to_string(&conflicts).unwrap_or_else(|_| "[]".to_string()),
+            ),
+            Err(_) => QString::from("[]"),
+        }
+    }
+
+    pub fn run_destination_maintenance(
+        mut self: Pin<&mut Self>,
+        destination_id: &QString,
+    ) -> QString {
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        match client.run_destination_maintenance(&destination_id.to_string()) {
+            Ok(run_id) => {
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                QString::from(&run_id)
+            }
+            Err(err) => {
                 let msg = friendly_dbus_error(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
-                false
+                QString::from("")
             }
         }
     }

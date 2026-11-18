@@ -16,10 +16,27 @@ Kirigami.ScrollablePage {
     required property string backupId
 
     property var currentData: null
+    property var nestedWarnings: []
+    property var lintWarnings: []
 
     function refreshFromModel() {
         var found = rootWindow.findBackupData(backupId);
         currentData = found;
+        if (found) {
+            try {
+                nestedWarnings = JSON.parse(found.nestedWarningsJson || "[]");
+            } catch (e) {
+                nestedWarnings = [];
+            }
+            try {
+                lintWarnings = JSON.parse(found.excludeLintJson || "[]");
+            } catch (e) {
+                lintWarnings = [];
+            }
+        } else {
+            nestedWarnings = [];
+            lintWarnings = [];
+        }
     }
 
     Connections {
@@ -49,6 +66,14 @@ Kirigami.ScrollablePage {
                     appBackend.startBackup(backupId);
                 }
             }
+        },
+        Kirigami.Action {
+            objectName: "backupDetailPreviewAction"
+            icon.name: "document-preview"
+            text: i18n("Preview: What Would Be Backed Up?")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            enabled: currentData !== null && appBackend.blocking_kind !== "daemon_unreachable"
+            onTriggered: if (currentData) rootWindow.openBackupDryRunPreviewPage(backupId, "")
         },
         Kirigami.Action {
             objectName: "backupDetailRenameAction"
@@ -111,6 +136,50 @@ Kirigami.ScrollablePage {
             ]
         }
 
+        Kirigami.InlineMessage {
+            id: nestedSourceWarningBanner
+            objectName: "nestedSourceWarningBanner"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Warning
+            visible: page.nestedWarnings.length > 0
+            text: page.nestedWarnings.length > 0
+                ? i18n("Nested source overlap with backup '%1' (%2) on the same destination. Files may be stored redundantly or with conflicting exclusions.",
+                       page.nestedWarnings[0].other_backup_name,
+                       page.nestedWarnings[0].other_source_path)
+                : ""
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: page.lintWarnings.length > 0
+            spacing: Kirigami.Units.smallSpacing
+
+            Kirigami.InlineMessage {
+                id: excludeLintWarningBanner
+                objectName: "backupDetailLintWarningBanner"
+                Layout.fillWidth: true
+                type: Kirigami.MessageType.Warning
+                visible: page.lintWarnings.length > 0
+                text: page.lintWarnings.length > 0
+                    ? i18n("Exclude rule warning on line %1: '%2' has no effect with '%3'.",
+                           page.lintWarnings[0].line_number,
+                           page.lintWarnings[0].rule,
+                           page.lintWarnings[0].parent_rule)
+                    : ""
+            }
+
+            Controls.Button {
+                id: reviewExcludeRulesButton
+                Layout.alignment: Qt.AlignRight
+                text: i18n("Review Exclude Rules…")
+                Accessible.name: text
+                onClicked: {
+                    rootWindow.nextTriggerItem = reviewExcludeRulesButton;
+                    rootWindow.openBackupExcludesPage(backupId);
+                }
+            }
+        }
+
         ColumnLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
@@ -143,24 +212,39 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
             }
 
-            Controls.Button {
-                id: inlineBackUpNowButton
-                objectName: "backupDetailBackUpNowButton"
-                icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
-                text: currentData && currentData.isRunning ? i18n("Cancel") : i18n("Back Up Now")
-                enabled: currentData !== null && (currentData.isRunning || (currentData.available && appBackend.blocking_kind === ""))
-                Accessible.name: text
-                Controls.ToolTip.visible: hovered && !enabled
-                Controls.ToolTip.text: currentData && !currentData.available
-                    ? currentData.availabilityReason
-                    : appBackend.blocking_message
-                onClicked: {
-                    if (!currentData) return;
-                    if (currentData.isRunning) {
-                        appBackend.cancelRun(currentData.activeRunId);
-                    } else {
-                        appBackend.startBackup(backupId);
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Button {
+                    id: inlineBackUpNowButton
+                    objectName: "backupDetailBackUpNowButton"
+                    icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
+                    text: currentData && currentData.isRunning ? i18n("Cancel") : i18n("Back Up Now")
+                    enabled: currentData !== null && (currentData.isRunning || (currentData.available && appBackend.blocking_kind === ""))
+                    Accessible.name: text
+                    Controls.ToolTip.visible: hovered && !enabled
+                    Controls.ToolTip.text: currentData && !currentData.available
+                        ? currentData.availabilityReason
+                        : appBackend.blocking_message
+                    onClicked: {
+                        if (!currentData) return;
+                        if (currentData.isRunning) {
+                            appBackend.cancelRun(currentData.activeRunId);
+                        } else {
+                            appBackend.startBackup(backupId);
+                        }
                     }
+                }
+
+                Controls.Label {
+                    id: backupDetailUnavailableReason
+                    objectName: "backupDetailUnavailableReason"
+                    visible: currentData !== null && !currentData.isRunning && !currentData.available && currentData.availabilityReason !== ""
+                    text: currentData ? currentData.availabilityReason : ""
+                    opacity: 0.85
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
                 }
             }
         }
@@ -176,7 +260,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Show all snapshots")
-            onClicked: rootWindow.openBackupSnapshotsPage(backupId, currentData ? currentData.name : "")
+            onClicked: {
+                rootWindow.nextTriggerItem = showSnapshotsButton;
+                rootWindow.openBackupSnapshotsPage(backupId, currentData ? currentData.name : "");
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -219,7 +306,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Edit source folder")
-            onClicked: rootWindow.openBackupSourcePage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = editSourceRow;
+                rootWindow.openBackupSourcePage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -234,12 +324,14 @@ Kirigami.ScrollablePage {
             contentItem: RowLayout {
                 spacing: Kirigami.Units.smallSpacing
                 Kirigami.Icon {
-                    source: "folder"
+                    source: currentData && currentData.sourceKind === "drive" ? "drive-harddisk" : "folder"
                     Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
                     Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                 }
                 Controls.Label {
-                    text: i18n("Source: %1", currentData ? currentData.sourcePath : "")
+                    text: currentData
+                        ? i18n("Source: %1 (%2)", currentData.sourcePath, currentData.sourceKindLabel)
+                        : i18n("Source")
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -257,7 +349,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Edit exclude rules")
-            onClicked: rootWindow.openBackupExcludesPage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = editExcludesRow;
+                rootWindow.openBackupExcludesPage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -277,7 +372,52 @@ Kirigami.ScrollablePage {
                     Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                 }
                 Controls.Label {
-                    text: i18n("Exclude rules")
+                    text: currentData
+                        ? i18n("Exclude rules: %1", currentData.excludeSummary)
+                        : i18n("Exclude rules")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+
+        Controls.ItemDelegate {
+            id: editRetentionRow
+            objectName: "editRetentionRow"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("Edit retention policy")
+            onClicked: {
+                rootWindow.nextTriggerItem = editRetentionRow;
+                rootWindow.openBackupRetentionPage(backupId);
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (editRetentionRow.activeFocus || editRetentionRow.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "chronometer"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: currentData
+                        ? i18n("Retention: %1", currentData.retentionSummary)
+                        : i18n("Retention")
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -295,7 +435,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("Assign destination")
-            onClicked: rootWindow.openBackupReassignPage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = editDestinationRow;
+                rootWindow.openBackupReassignPage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -333,7 +476,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             activeFocusOnTab: true
             Accessible.name: i18n("View full configuration")
-            onClicked: rootWindow.openBackupFullConfigPage(backupId)
+            onClicked: {
+                rootWindow.nextTriggerItem = viewFullConfigRow;
+                rootWindow.openBackupFullConfigPage(backupId);
+            }
 
             Rectangle {
                 anchors.fill: parent

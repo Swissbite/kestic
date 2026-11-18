@@ -45,6 +45,38 @@ Kirigami.ScrollablePage {
     property string excludesText: ""
     property bool nameManuallyEdited: false
     property string saveErrorText: ""
+    property string detectedSourceKind: "folder"
+    property string detectedDriveLabel: ""
+    property var nestedWarnings: []
+
+    function refreshSourceMetadata() {
+        var trimmed = sourcePath.trim();
+        if (trimmed === "") {
+            detectedSourceKind = "folder";
+            detectedDriveLabel = "";
+            nestedWarnings = [];
+            return;
+        }
+        var detRaw = appBackend.detectSource(trimmed);
+        if (detRaw !== "") {
+            try {
+                var det = JSON.parse(detRaw);
+                detectedSourceKind = det.kind || "folder";
+                detectedDriveLabel = det.drive_label || "";
+            } catch (e) {
+            }
+        }
+        if (!integratedDestFlow && selectedDestId !== "") {
+            var nestRaw = appBackend.checkNestedSources("", trimmed, selectedDestId);
+            try {
+                nestedWarnings = JSON.parse(nestRaw || "[]");
+            } catch (e) {
+                nestedWarnings = [];
+            }
+        } else {
+            nestedWarnings = [];
+        }
+    }
 
     // Integrated destination creation state (used when integratedDestFlow === true)
     property string destKind: "local"
@@ -301,6 +333,7 @@ Kirigami.ScrollablePage {
                                 if (!page.nameManuallyEdited) {
                                     page.backupName = page.deriveDefaultName(text);
                                 }
+                                page.refreshSourceMetadata();
                             }
                             Accessible.name: i18n("Source folder path")
                             Layout.fillWidth: true
@@ -313,6 +346,17 @@ Kirigami.ScrollablePage {
                             onClicked: sourcePickDialog.open()
                         }
                     }
+                }
+
+                Kirigami.InlineMessage {
+                    id: wizDriveDetectedBanner
+                    objectName: "wizDriveDetectedBanner"
+                    Layout.fillWidth: true
+                    type: Kirigami.MessageType.Information
+                    visible: page.detectedSourceKind === "drive"
+                    text: page.detectedDriveLabel !== ""
+                        ? i18n("External drive '%1' detected — backed up only when plugged in.", page.detectedDriveLabel)
+                        : i18n("External drive detected — backed up only when plugged in.")
                 }
             }
 
@@ -368,6 +412,7 @@ Kirigami.ScrollablePage {
                             ListView.view.currentIndex = index;
                             page.selectedDestId = destinationId;
                             page.selectedDestName = name;
+                            page.refreshSourceMetadata();
                         }
 
                         Rectangle {
@@ -661,6 +706,19 @@ Kirigami.ScrollablePage {
                     type: Kirigami.MessageType.Error
                     visible: page.saveErrorText !== "" || appBackend.last_action_error !== ""
                     text: page.saveErrorText !== "" ? page.saveErrorText : appBackend.last_action_error
+                }
+
+                Kirigami.InlineMessage {
+                    id: wizNestedSourceWarningBanner
+                    objectName: "wizNestedSourceWarningBanner"
+                    Layout.fillWidth: true
+                    type: Kirigami.MessageType.Warning
+                    visible: page.nestedWarnings.length > 0
+                    text: page.nestedWarnings.length > 0
+                        ? i18n("Nested source overlap with backup '%1' (%2) on the same destination. Both backups can still be created, but check exclude rules.",
+                               page.nestedWarnings[0].other_backup_name,
+                               page.nestedWarnings[0].other_source_path)
+                        : ""
                 }
 
                 Kirigami.FormLayout {

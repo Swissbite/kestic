@@ -124,7 +124,7 @@ Nur lesen. `FormLayout` mit Abschnitten Quelle, Ziel, Ausschluss-Regeln (alle, i
 
 ### 8.13 Log (Tab im Lauf-Detail, FR-18)
 
-Monospace, Secrets bereits redacted. Werkzeugleiste: `Kirigami.SearchField`, Filter `[Alle ▾]` (Alle · Warnungen · Fehler), `[Log kopieren]`, `[Log-Datei öffnen]` (Standard-Texteditor). Während eines Laufs scrollt die Ansicht mit, bis der Benutzer nach oben scrollt. Leer: «Für diesen Lauf gibt es kein Log» (z. B. nach Ablauf der Aufbewahrung, F13).
+Monospace, Secrets bereits redacted (ab M6-S12 lesbar aufbereitete Log-Einträge statt roher restic-JSON-Zeilen, Roh-JSON optional im Expertenmodus). Werkzeugleiste: `Kirigami.SearchField`, Filter `[Alle ▾]` (Alle · Warnungen · Fehler), `[Log kopieren]`, `[Log-Datei öffnen]` (Standard-Texteditor). Während eines Laufs scrollt die Ansicht mit, bis der Benutzer nach oben scrollt. Leer: «Für diesen Lauf gibt es kein Log» (z. B. nach Ablauf der Aufbewahrung, F13).
 
 ### 8.14 Nicht zugeordnete und verwaiste Snapshots (FR-36, FR-49, P20)
 

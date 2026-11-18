@@ -1,0 +1,456 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import QtQuick
+import QtQuick.Controls as Controls
+import QtQuick.Layouts
+import org.kde.kirigami as Kirigami
+
+Kirigami.ScrollablePage {
+    id: page
+    objectName: "backupPreviewPage"
+    title: mode === "retention" ? i18n("Retention Preview") : i18n("Backup Preview")
+
+    required property var rootWindow
+    required property var appBackend
+    required property string backupId
+    required property string mode // "dry_run" | "retention"
+    property string excludesJson: ""
+    property string retentionJson: ""
+
+    property string previewId: ""
+    property string dryRunState: "running"
+    property var dryRunResult: null
+    property string dryRunError: ""
+
+    property string retentionPreviewId: ""
+    property string retentionPreviewState: "running"
+    property var retentionPreviewData: null
+    property string retentionPreviewError: ""
+
+    function formatSize(bytes) {
+        var b = Number(bytes || 0);
+        if (b >= 1000000000) return (b / 1000000000).toFixed(1) + " GB";
+        if (b >= 1000000) return (b / 1000000).toFixed(1) + " MB";
+        if (b >= 1000) return Math.round(b / 1000) + " KB";
+        return b + " B";
+    }
+
+    function startDryRunIfNeeded() {
+        if (mode !== "dry_run") return;
+        retentionPollTimer.stop();
+        dryRunState = "running";
+        dryRunResult = null;
+        dryRunError = "";
+        previewId = appBackend.startBackupDryRun(backupId, excludesJson);
+        if (previewId === "") {
+            dryRunState = "error";
+            dryRunError = appBackend.dry_run_error || appBackend.last_action_error || i18n("Preview could not be started.");
+        } else {
+            pollTimer.start();
+        }
+    }
+
+    function startRetentionPreviewIfNeeded() {
+        if (mode !== "retention") return;
+        pollTimer.stop();
+        retentionPreviewState = "running";
+        retentionPreviewData = null;
+        retentionPreviewError = "";
+        retentionPreviewId = appBackend.startRetentionPreview(backupId, retentionJson);
+        if (retentionPreviewId === "") {
+            retentionPreviewState = "error";
+            retentionPreviewError = appBackend.retention_preview_error || appBackend.last_action_error || i18n("Preview could not be started.");
+        } else {
+            retentionPollTimer.start();
+        }
+    }
+
+    Component.onCompleted: {
+        startDryRunIfNeeded();
+        startRetentionPreviewIfNeeded();
+    }
+
+    Component.onDestruction: {
+        pollTimer.stop();
+        retentionPollTimer.stop();
+        if (mode === "dry_run" && dryRunState === "running" && previewId !== "") {
+            appBackend.cancelBackupDryRun(previewId);
+        }
+        if (mode === "retention" && retentionPreviewState === "running" && retentionPreviewId !== "") {
+            appBackend.cancelRetentionPreview(retentionPreviewId);
+        }
+    }
+
+    Timer {
+        id: pollTimer
+        interval: 150
+        repeat: true
+        onTriggered: {
+            if (page.previewId === "") {
+                stop();
+                return;
+            }
+            var raw = appBackend.pollBackupDryRun(page.previewId);
+            if (raw === "") {
+                stop();
+                page.dryRunState = "error";
+                page.dryRunError = appBackend.dry_run_error || i18n("Preview failed.");
+                return;
+            }
+            try {
+                var dto = JSON.parse(raw);
+                page.dryRunState = dto.state || "error";
+                if (dto.state !== "running") {
+                    stop();
+                }
+                if (dto.result) {
+                    page.dryRunResult = dto.result;
+                }
+                if (dto.error) {
+                    page.dryRunError = dto.error;
+                }
+            } catch (e) {
+                stop();
+                page.dryRunState = "error";
+                page.dryRunError = i18n("Invalid preview response.");
+            }
+        }
+    }
+
+    Timer {
+        id: retentionPollTimer
+        interval: 50
+        repeat: true
+        onTriggered: {
+            if (page.retentionPreviewId === "") {
+                stop();
+                return;
+            }
+            var raw = appBackend.pollRetentionPreview(page.retentionPreviewId);
+            if (raw === "") {
+                stop();
+                page.retentionPreviewState = "error";
+                page.retentionPreviewError = appBackend.retention_preview_error || i18n("Preview failed.");
+                return;
+            }
+            try {
+                var dto = JSON.parse(raw);
+                page.retentionPreviewState = dto.state || "error";
+                if (dto.state !== "running") {
+                    stop();
+                }
+                if (dto.result) {
+                    page.retentionPreviewData = dto.result;
+                }
+                if (dto.error) {
+                    page.retentionPreviewError = dto.error;
+                }
+            } catch (e) {
+                stop();
+                page.retentionPreviewState = "error";
+                page.retentionPreviewError = i18n("Invalid preview response.");
+            }
+        }
+    }
+
+    actions: [
+        Kirigami.Action {
+            id: showDryRunCommandAction
+            objectName: "showDryRunCommandAction"
+            icon.name: "utilities-terminal"
+            text: i18n("Show Command")
+            visible: page.mode === "dry_run" && page.dryRunResult !== null && (page.dryRunResult.transparent_command || "") !== ""
+            onTriggered: rootWindow.openShowCommandDialog(
+                page.dryRunResult.transparent_command,
+                i18n("Dry-Run Preview")
+            )
+        },
+        Kirigami.Action {
+            id: closePreviewAction
+            objectName: "closePreviewAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: rootWindow.popSubPage()
+        }
+    ]
+
+    ColumnLayout {
+        width: parent.width
+        spacing: Kirigami.Units.mediumSpacing
+
+        // --- DRY-RUN MODE (M2-S04) ---
+        ColumnLayout {
+            visible: page.mode === "dry_run"
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.mediumSpacing
+
+            ColumnLayout {
+                visible: page.dryRunState === "running"
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Label {
+                    text: i18n("Calculating files to back up…")
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Controls.ProgressBar {
+                    indeterminate: true
+                    Layout.fillWidth: true
+                }
+
+                Controls.Button {
+                    id: cancelDryRunButton
+                    objectName: "cancelDryRunButton"
+                    icon.name: "process-stop"
+                    text: i18n("Cancel")
+                    Accessible.name: i18n("Cancel backup preview")
+                    onClicked: appBackend.cancelBackupDryRun(page.previewId)
+                }
+            }
+
+            Kirigami.InlineMessage {
+                id: dryRunErrorBanner
+                objectName: "dryRunErrorBanner"
+                Layout.fillWidth: true
+                type: Kirigami.MessageType.Error
+                visible: page.dryRunState === "error"
+                text: page.dryRunError !== "" ? page.dryRunError : i18n("Preview failed.")
+            }
+
+            Kirigami.PlaceholderMessage {
+                Layout.fillWidth: true
+                visible: page.dryRunState === "cancelled"
+                icon.name: "process-stop"
+                text: i18n("Preview cancelled")
+            }
+
+            ColumnLayout {
+                visible: page.dryRunState === "done" && page.dryRunResult !== null
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.mediumSpacing
+
+                Kirigami.InlineMessage {
+                    Layout.fillWidth: true
+                    type: Kirigami.MessageType.Information
+                    visible: page.dryRunResult !== null && page.dryRunResult.total_files === 0
+                    text: i18n("Nothing to back up")
+                }
+
+                Kirigami.FormLayout {
+                    Layout.fillWidth: true
+                    visible: page.dryRunResult !== null
+
+                    Controls.Label {
+                        Kirigami.FormData.label: i18n("Files to back up:")
+                        text: page.dryRunResult ? String(page.dryRunResult.total_files) : "0"
+                    }
+                    Controls.Label {
+                        Kirigami.FormData.label: i18n("Total size:")
+                        text: page.dryRunResult ? page.formatSize(page.dryRunResult.total_bytes) : "0 B"
+                    }
+                    Controls.Label {
+                        Kirigami.FormData.label: i18n("Changes:")
+                        text: page.dryRunResult
+                            ? i18n("%1 new · %2 changed · %3 unchanged",
+                                   page.dryRunResult.files_new,
+                                   page.dryRunResult.files_changed,
+                                   page.dryRunResult.files_unmodified)
+                            : ""
+                    }
+                    Controls.Label {
+                        Kirigami.FormData.label: i18n("Estimated data added:")
+                        text: page.dryRunResult ? page.formatSize(page.dryRunResult.data_added) : "0 B"
+                    }
+                }
+
+                Kirigami.Heading {
+                    level: 4
+                    visible: page.dryRunResult !== null && page.dryRunResult.largest_excluded_folders && page.dryRunResult.largest_excluded_folders.length > 0
+                    text: page.dryRunResult && page.dryRunResult.largest_excluded_folders && page.dryRunResult.largest_excluded_folders.length === 1
+                        ? i18n("Excluded folder")
+                        : i18n("Largest excluded folders")
+                }
+
+                Repeater {
+                    model: page.dryRunResult && page.dryRunResult.largest_excluded_folders ? page.dryRunResult.largest_excluded_folders : []
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Controls.Label {
+                            text: modelData.path
+                            font: Kirigami.Theme.fixedWidthFont
+                            elide: Text.ElideMiddle
+                            Layout.fillWidth: true
+                        }
+                        Controls.Label {
+                            text: page.formatSize(modelData.bytes)
+                            opacity: 0.8
+                        }
+                    }
+                }
+
+                Kirigami.Heading {
+                    level: 4
+                    visible: page.dryRunResult !== null && page.dryRunResult.files && page.dryRunResult.files.length > 0
+                    text: i18n("Files (%1)", page.dryRunResult && page.dryRunResult.files ? page.dryRunResult.files.length : 0)
+                }
+
+                ListView {
+                    id: dryRunFilesListView
+                    objectName: "dryRunFilesListView"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(Kirigami.Units.gridUnit * 16, contentHeight + Kirigami.Units.smallSpacing)
+                    clip: true
+                    keyNavigationEnabled: true
+                    activeFocusOnTab: true
+                    visible: count > 0
+                    model: page.dryRunResult && page.dryRunResult.files ? page.dryRunResult.files : []
+                    delegate: Controls.Label {
+                        required property string modelData
+                        width: ListView.view.width
+                        text: modelData
+                        font: Kirigami.Theme.fixedWidthFont
+                        elide: Text.ElideMiddle
+                    }
+                }
+            }
+        }
+
+        // --- RETENTION MODE (M2-S06) ---
+        ColumnLayout {
+            visible: page.mode === "retention"
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.mediumSpacing
+
+            ColumnLayout {
+                visible: page.retentionPreviewState === "running"
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Label {
+                    text: i18n("Calculating retention preview…")
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Controls.ProgressBar {
+                    indeterminate: true
+                    Layout.fillWidth: true
+                }
+
+                Controls.Button {
+                    id: cancelRetentionPreviewButton
+                    objectName: "cancelRetentionPreviewButton"
+                    icon.name: "process-stop"
+                    text: i18n("Cancel")
+                    Accessible.name: i18n("Cancel retention preview")
+                    onClicked: appBackend.cancelRetentionPreview(page.retentionPreviewId)
+                }
+            }
+
+            Kirigami.InlineMessage {
+                id: retentionPreviewErrorBanner
+                objectName: "retentionPreviewErrorBanner"
+                Layout.fillWidth: true
+                type: Kirigami.MessageType.Error
+                visible: page.retentionPreviewState === "error"
+                text: page.retentionPreviewError !== "" ? page.retentionPreviewError : i18n("Preview failed.")
+            }
+
+            Kirigami.PlaceholderMessage {
+                Layout.fillWidth: true
+                visible: page.retentionPreviewState === "cancelled"
+                icon.name: "process-stop"
+                text: i18n("Preview cancelled")
+            }
+
+            Kirigami.InlineMessage {
+                id: retentionPreviewSummaryBanner
+                objectName: "retentionPreviewSummaryBanner"
+                Layout.fillWidth: true
+                visible: page.retentionPreviewState === "done" && page.retentionPreviewData !== null
+                type: page.retentionPreviewData && page.retentionPreviewData.remove_count > 0
+                    ? Kirigami.MessageType.Warning
+                    : Kirigami.MessageType.Information
+                text: {
+                    if (!page.retentionPreviewData) return "";
+                    if (page.retentionPreviewData.remove_count === 0) {
+                        return i18n("No snapshots would be removed (%1 kept).", page.retentionPreviewData.keep_count);
+                    }
+                    return i18n("%1 snapshots kept · %2 snapshots would be removed.",
+                                page.retentionPreviewData.keep_count,
+                                page.retentionPreviewData.remove_count);
+                }
+            }
+
+            Kirigami.PlaceholderMessage {
+                Layout.fillWidth: true
+                visible: page.retentionPreviewState === "done"
+                    && page.retentionPreviewData !== null
+                    && (!page.retentionPreviewData.snapshots || page.retentionPreviewData.snapshots.length === 0)
+                icon.name: "view-list-details"
+                text: i18n("No snapshots in this backup yet")
+            }
+
+            Repeater {
+                model: page.retentionPreviewState === "done"
+                    && page.retentionPreviewData
+                    && page.retentionPreviewData.snapshots
+                    ? page.retentionPreviewData.snapshots
+                    : []
+
+                delegate: Controls.ItemDelegate {
+                    id: snapRow
+                    required property var modelData
+                    Layout.fillWidth: true
+                    activeFocusOnTab: true
+                    Accessible.name: i18n("Snapshot %1: %2", modelData.short_id, modelData.action === "remove" ? i18n("Remove") : i18n("Keep"))
+
+                    Rectangle {
+                        anchors.fill: parent
+                        z: 10
+                        color: "transparent"
+                        radius: Kirigami.Units.cornerRadius
+                        border.width: (snapRow.activeFocus || snapRow.visualFocus) ? 2 : 0
+                        border.color: Kirigami.Theme.highlightColor
+                        visible: border.width > 0
+                    }
+
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Kirigami.Icon {
+                            source: modelData.action === "remove" ? "edit-delete" : "emblem-ok-symbolic"
+                            color: modelData.action === "remove" ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.positiveTextColor
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Controls.Label {
+                                text: modelData.short_id + " · " + modelData.time
+                                font: Kirigami.Theme.fixedWidthFont
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            Controls.Label {
+                                text: (modelData.action === "remove" ? i18n("Remove") : i18n("Keep"))
+                                    + (modelData.reasons && modelData.reasons.length > 0 ? " — " + modelData.reasons.join(", ") : "")
+                                opacity: 0.85
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

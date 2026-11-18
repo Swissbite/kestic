@@ -330,6 +330,63 @@ impl RunHistory {
         Ok(deleted_count)
     }
 
+    /// Sets or clears the persistent `pending_forget` flag for `backup_id` (`M2-S07`, `P11`).
+    pub fn set_pending_forget(
+        &self,
+        backup_id: &BackupId,
+        pending: bool,
+    ) -> Result<(), HistoryError> {
+        let flag: i64 = if pending { 1 } else { 0 };
+        self.conn.execute(
+            "INSERT INTO backup_state (backup_id, pending_forget)
+             VALUES (?1, ?2)
+             ON CONFLICT(backup_id) DO UPDATE SET pending_forget = excluded.pending_forget",
+            params![backup_id.as_str(), flag],
+        )?;
+        Ok(())
+    }
+
+    /// Returns whether `backup_id` currently has a pending `forget` (`"forget offen"`, `M2-S07`).
+    pub fn is_pending_forget(&self, backup_id: &BackupId) -> Result<bool, HistoryError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT pending_forget FROM backup_state WHERE backup_id = ?1")?;
+        let mut rows = stmt.query(params![backup_id.as_str()])?;
+        if let Some(row) = rows.next()? {
+            let val: i64 = row.get(0)?;
+            Ok(val != 0)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Lists all [`BackupId`]s currently flagged with `pending_forget = 1` (`M2-S07`).
+    pub fn list_pending_forget_backup_ids(&self) -> Result<Vec<BackupId>, HistoryError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT backup_id FROM backup_state WHERE pending_forget != 0 ORDER BY backup_id ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let raw: String = row.get(0)?;
+            Ok(raw)
+        })?;
+        let mut ids = Vec::new();
+        for row in rows {
+            let raw = row?;
+            let id = BackupId::parse(&raw)?;
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
+    /// Removes per-backup state row when a backup is deleted.
+    pub fn clear_backup_state(&self, backup_id: &BackupId) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "DELETE FROM backup_state WHERE backup_id = ?1",
+            params![backup_id.as_str()],
+        )?;
+        Ok(())
+    }
+
     fn load_commands(&self, run_id: &RunId) -> Result<Vec<CommandRecord>, HistoryError> {
         let mut stmt = self.conn.prepare(
             "SELECT executable, args_json, env_keys_json, started_at, duration_ms, exit_code
@@ -405,6 +462,10 @@ fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             duration_ms INTEGER NOT NULL,
             exit_code INTEGER NOT NULL,
             PRIMARY KEY (run_id, seq)
+        );
+        CREATE TABLE IF NOT EXISTS backup_state (
+            backup_id TEXT PRIMARY KEY NOT NULL,
+            pending_forget INTEGER NOT NULL DEFAULT 0
         );",
     )
 }

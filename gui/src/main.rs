@@ -367,22 +367,32 @@ fn parse_smoke_args() -> Option<SmokeOptions> {
 }
 
 fn configure_dev_locale_search_path() {
-    let dev_locale_dir = PathBuf::from(env!("KESTIC_DEV_LOCALE_DIR"));
-    if !dev_locale_dir.is_dir() {
-        return;
-    }
-    let Some(data_root) = dev_locale_dir.parent() else {
-        return;
-    };
     let current = env::var_os("XDG_DATA_DIRS")
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    if env::split_paths(&current).any(|p| p == data_root) {
-        return;
-    }
     let mut paths: Vec<PathBuf> = env::split_paths(&current).collect();
-    paths.push(data_root.to_path_buf());
-    if let Ok(joined) = env::join_paths(paths) {
+    let mut modified = false;
+
+    if let Ok(repo_packaging) = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../packaging")
+        .canonicalize()
+        && repo_packaging.join("icons/hicolor").is_dir()
+        && !paths.iter().any(|p| p == &repo_packaging)
+    {
+        paths.insert(0, repo_packaging);
+        modified = true;
+    }
+
+    let dev_locale_dir = PathBuf::from(env!("KESTIC_DEV_LOCALE_DIR"));
+    if dev_locale_dir.is_dir()
+        && let Some(data_root) = dev_locale_dir.parent()
+        && !paths.iter().any(|p| p == data_root)
+    {
+        paths.push(data_root.to_path_buf());
+        modified = true;
+    }
+
+    if modified && let Ok(joined) = env::join_paths(paths) {
         // SAFETY: Called in single-threaded `main` before constructing QApplication or spawning threads.
         unsafe {
             env::set_var("XDG_DATA_DIRS", joined);

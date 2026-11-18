@@ -291,7 +291,7 @@ impl ksni::Tray for KesticTray {
         items.push(
             StandardItem {
                 label: i18n("Open Kestic").into(),
-                icon_name: "kestic-symbolic".to_string(),
+                icon_name: "kestic".to_string(),
                 activate: Box::new(|this: &mut Self| {
                     this.emit(TrayAction::OpenWindow);
                 }),

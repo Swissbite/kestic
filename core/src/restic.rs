@@ -45,6 +45,7 @@ pub enum RecoveryAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResticFailureKind {
     None,
+    Cancelled,
     IncompleteSnapshot { unreadable_items: Vec<String> },
     DestinationUnreachable,
     DnsResolutionFailed,
@@ -56,15 +57,45 @@ pub enum ResticFailureKind {
     Unknown { exit_code: i32 },
 }
 
+impl ResticFailureKind {
+    /// Canonical English summary string (`NFR-06`; localized in daemon/GUI via gettext).
+    pub fn default_summary(&self) -> String {
+        match self {
+            Self::None => "Completed".to_string(),
+            Self::Cancelled => "Cancelled by user".to_string(),
+            Self::IncompleteSnapshot { .. } => {
+                "Snapshot incomplete: some files could not be read".to_string()
+            }
+            Self::DestinationUnreachable => "Destination unreachable".to_string(),
+            Self::DnsResolutionFailed => {
+                "Destination hostname could not be resolved (DNS)".to_string()
+            }
+            Self::BackendAuthFailed => "Authentication at destination failed".to_string(),
+            Self::GenericFailure => "Backup command failed".to_string(),
+            Self::RepositoryMissing => "Repository is missing".to_string(),
+            Self::RepositoryLocked => "Repository is locked".to_string(),
+            Self::WrongPassword => "Stored password does not match".to_string(),
+            Self::Unknown { exit_code } => format!("Unknown error (exit {exit_code})"),
+        }
+    }
+}
+
 /// User-facing error metadata derived from exit code and stderr/`exit_error` (`M1-S15`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorPresentation {
     pub status: RunStatus,
     pub kind: ResticFailureKind,
-    pub summary_de: String,
-    pub summary_en: String,
     pub action: Option<RecoveryAction>,
     pub raw_detail: Option<String>,
+}
+
+impl ErrorPresentation {
+    /// Returns `raw_detail` when present, falling back to [`ResticFailureKind::default_summary`].
+    pub fn detail_or_summary(&self) -> String {
+        self.raw_detail
+            .clone()
+            .unwrap_or_else(|| self.kind.default_summary())
+    }
 }
 
 /// Parsed `message_type = "status"` line from `restic backup --json`.
@@ -112,10 +143,23 @@ struct RawExitErrorMessage {
     message: String,
 }
 
+/// Parsed `message_type = "verbose_status"` line from `restic backup -vv --json` (`M2-S04`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ResticVerboseStatusMessage {
+    pub action: String,
+    pub item: String,
+    pub duration: Option<serde_json::Value>,
+    pub data_size: Option<u64>,
+    pub metadata_size: Option<u64>,
+    pub total_files: Option<u64>,
+}
+
 /// Tolerant event representation for NDJSON lines emitted by `restic --json` (`AC-M1-03-1`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResticStreamEvent {
     Status(ResticStatusMessage),
+    VerboseStatus(ResticVerboseStatusMessage),
     Summary(RunStats),
     Error(ResticErrorMessage),
     ExitError { code: Option<i32>, message: String },
@@ -134,6 +178,10 @@ pub fn parse_json_line(line: &str) -> Result<ResticStreamEvent, serde_json::Erro
         Some("status") => {
             let status: ResticStatusMessage = serde_json::from_value(value)?;
             Ok(ResticStreamEvent::Status(status))
+        }
+        Some("verbose_status") => {
+            let vstatus: ResticVerboseStatusMessage = serde_json::from_value(value)?;
+            Ok(ResticStreamEvent::VerboseStatus(vstatus))
         }
         Some("summary") => {
             let raw: RawSummaryMessage = serde_json::from_value(value)?;
@@ -189,41 +237,30 @@ pub fn classify_exit(
         0 => ErrorPresentation {
             status: RunStatus::Ok,
             kind: ResticFailureKind::None,
-            summary_de: "Abgeschlossen".to_string(),
-            summary_en: "Completed".to_string(),
             action: None,
             raw_detail,
         },
         3 => ErrorPresentation {
             status: RunStatus::Warning,
             kind: ResticFailureKind::IncompleteSnapshot { unreadable_items },
-            summary_de: "Snapshot unvollständig: Einige Dateien konnten nicht gelesen werden"
-                .to_string(),
-            summary_en: "Snapshot incomplete: some files could not be read".to_string(),
             action: Some(RecoveryAction::AddToExcludes),
             raw_detail,
         },
         10 => ErrorPresentation {
             status: RunStatus::Error,
             kind: ResticFailureKind::RepositoryMissing,
-            summary_de: "Repository fehlt".to_string(),
-            summary_en: "Repository is missing".to_string(),
             action: None,
             raw_detail,
         },
         11 => ErrorPresentation {
             status: RunStatus::Error,
             kind: ResticFailureKind::RepositoryLocked,
-            summary_de: "Repository gesperrt".to_string(),
-            summary_en: "Repository is locked".to_string(),
             action: Some(RecoveryAction::UnlockRepository),
             raw_detail,
         },
         12 => ErrorPresentation {
             status: RunStatus::Error,
             kind: ResticFailureKind::WrongPassword,
-            summary_de: "Gespeichertes Passwort passt nicht".to_string(),
-            summary_en: "Stored password does not match".to_string(),
             action: Some(RecoveryAction::UpdateStoredPassword),
             raw_detail,
         },
@@ -236,8 +273,6 @@ pub fn classify_exit(
                 ErrorPresentation {
                     status: RunStatus::Error,
                     kind: ResticFailureKind::DnsResolutionFailed,
-                    summary_de: "Ziel-Adresse konnte nicht aufgelöst werden (DNS)".to_string(),
-                    summary_en: "Destination hostname could not be resolved (DNS)".to_string(),
                     action: None,
                     raw_detail,
                 }
@@ -250,8 +285,6 @@ pub fn classify_exit(
                 ErrorPresentation {
                     status: RunStatus::Error,
                     kind: ResticFailureKind::BackendAuthFailed,
-                    summary_de: "Anmeldung am Ziel fehlgeschlagen".to_string(),
-                    summary_en: "Authentication at destination failed".to_string(),
                     action: None,
                     raw_detail,
                 }
@@ -265,8 +298,6 @@ pub fn classify_exit(
                 ErrorPresentation {
                     status: RunStatus::Error,
                     kind: ResticFailureKind::DestinationUnreachable,
-                    summary_de: "Ziel nicht erreichbar".to_string(),
-                    summary_en: "Destination unreachable".to_string(),
                     action: None,
                     raw_detail,
                 }
@@ -274,8 +305,6 @@ pub fn classify_exit(
                 ErrorPresentation {
                     status: RunStatus::Error,
                     kind: ResticFailureKind::GenericFailure,
-                    summary_de: "Backup-Befehl fehlgeschlagen".to_string(),
-                    summary_en: "Backup command failed".to_string(),
                     action: None,
                     raw_detail,
                 }
@@ -284,8 +313,6 @@ pub fn classify_exit(
         other => ErrorPresentation {
             status: RunStatus::Error,
             kind: ResticFailureKind::Unknown { exit_code: other },
-            summary_de: format!("Unbekannter Fehler (Exit {other})"),
-            summary_en: format!("Unknown error (exit {other})"),
             action: None,
             raw_detail,
         },
@@ -669,7 +696,9 @@ where
                     ResticStreamEvent::ExitError { message, .. } => {
                         exit_error_msg = Some(message.clone());
                     }
-                    ResticStreamEvent::Status(_) | ResticStreamEvent::Unknown { .. } => {}
+                    ResticStreamEvent::Status(_)
+                    | ResticStreamEvent::VerboseStatus(_)
+                    | ResticStreamEvent::Unknown { .. } => {}
                 }
                 on_event(&event);
             }
@@ -716,8 +745,8 @@ where
     );
     if cancelled {
         presentation.status = RunStatus::Cancelled;
-        presentation.summary_de = "Vom Benutzer abgebrochen".to_string();
-        presentation.summary_en = "Cancelled by user".to_string();
+        presentation.kind = ResticFailureKind::Cancelled;
+        presentation.action = None;
     }
 
     let command_record = CommandRecord {

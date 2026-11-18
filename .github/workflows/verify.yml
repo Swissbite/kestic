@@ -1,0 +1,108 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04
+
+    steps:
+      - name: Install container base tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git sudo locales
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Prepare non-root CI user and locale
+        run: |
+          set -euo pipefail
+          locale-gen en_US.UTF-8
+          if ! id -u kesticci >/dev/null 2>&1; then
+            useradd -m -s /bin/bash kesticci
+          fi
+          mkdir -p /home/kesticci/.cargo /home/kesticci/.rustup /home/kesticci/.local/share/kestic-dev
+          chown -R kesticci:kesticci /home/kesticci "$GITHUB_WORKSPACE"
+
+      - name: Cache Cargo, Rust toolchain, dev tools, and target
+        uses: actions/cache@v5
+        with:
+          path: |
+            /home/kesticci/.cargo/bin
+            /home/kesticci/.cargo/registry/index
+            /home/kesticci/.cargo/registry/cache
+            /home/kesticci/.cargo/git/db
+            /home/kesticci/.rustup
+            /home/kesticci/.local/share/kestic-dev
+            target
+          key: ${{ runner.os }}-kestic-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/bootstrap.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-kestic-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            ${{ runner.os }}-kestic-
+
+      - name: Fix cache ownership and clear stale build artifacts
+        run: |
+          chown -R kesticci:kesticci /home/kesticci "$GITHUB_WORKSPACE"
+          rm -rf target/debian target/smoke-artifacts
+
+      - name: Install apt dependencies via bootstrap.sh
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          KESTIC_BOOTSTRAP_COMPONENTS: apt
+        run: ./scripts/bootstrap.sh
+
+      - name: Bootstrap Rust toolchain and restic test binaries
+        env:
+          KESTIC_BOOTSTRAP_SKIP_APT: "1"
+          KESTIC_BOOTSTRAP_COMPONENTS: rust,restic-0.18.0,restic-latest,rest-server,rclone
+        run: |
+          su - kesticci -c "
+            set -euo pipefail
+            cd '$GITHUB_WORKSPACE'
+            KESTIC_BOOTSTRAP_SKIP_APT=1 \
+            KESTIC_BOOTSTRAP_COMPONENTS=rust,restic-0.18.0,restic-latest,rest-server,rclone \
+            ./scripts/bootstrap.sh
+          "
+
+      - name: Run just verify as non-root user
+        run: |
+          su - kesticci -c "
+            set -euo pipefail
+            cd '$GITHUB_WORKSPACE'
+            export PATH=\"\$HOME/.cargo/bin:\$PATH\"
+            export LANG=en_US.UTF-8
+            export NEXTEST_PROFILE=ci
+            just verify
+          "
+
+      - name: Upload Debian package artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kestic-deb
+          path: target/debian/*.deb
+          if-no-files-found: error
+
+      - name: Upload GUI smoke screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-artifacts
+          path: target/smoke-artifacts/*.png
+          if-no-files-found: error

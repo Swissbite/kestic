@@ -1,0 +1,30 @@
+<!--
+SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <defs>
+    <linearGradient id="bird" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0" stop-color="#ee9164"/>
+      <stop offset="0.55" stop-color="#d66e42"/>
+      <stop offset="1" stop-color="#b24e28"/>
+    </linearGradient>
+    <linearGradient id="l1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0" stop-color="#5ac2d8"/>
+      <stop offset="1" stop-color="#2a8aa3"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0" stop-color="#b8f2ff" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#6cd2e8" stop-opacity="0.35"/>
+    </linearGradient>
+  </defs>
+  <path d="M24 46 L5 39.5 L24 33 L43 39.5 Z" fill="#1b5e70"/>
+  <path d="M24 42.5 L5 36 L24 29.5 L43 36 Z" fill="#257b91"/>
+  <path d="M24 39 L5 32.5 L24 26 L43 32.5 Z" fill="url(#l1)"/>
+  <path d="M24 38.6 L6.1 32.5 L24 26.4 L41.9 32.5 Z" fill="none" stroke="url(#rim)" stroke-width="0.85"/>
+  <ellipse cx="24" cy="32.4" rx="8.8" ry="2.5" fill="#092c36" opacity="0.28"/>
+  <path d="M24.00 1.80 C25.75 1.80 26.65 3.10 26.55 5.15 C26.82 6.45 27.45 7.45 28.85 7.65 C33.90 7.50 40.15 9.35 45.80 14.85 C39.95 15.55 33.75 16.30 28.50 18.40 C27.05 19.35 26.50 20.45 26.50 21.85 L29.20 31.50 C27.45 32.95 25.95 33.40 24.85 33.50 L24.00 32.35 L23.15 33.50 C22.05 33.40 20.55 32.95 18.80 31.50 L21.50 21.85 C21.50 20.45 20.95 19.35 19.50 18.40 C14.25 16.30 8.05 15.55 2.20 14.85 C7.85 9.35 14.10 7.50 19.15 7.65 C20.55 7.45 21.18 6.45 21.45 5.15 C21.35 3.10 22.25 1.80 24.00 1.80 Z" fill="url(#bird)"/>
+  <path d="M8.28 10.35 C6.23 11.45 4.18 12.93 2.20 14.85 C4.25 15.10 6.34 15.35 8.42 15.66 Q7.85 13.00 8.28 10.35 Z" fill="#3a2a22"/>
+  <path d="M39.72 10.35 C41.77 11.45 43.82 12.93 45.80 14.85 C43.75 15.10 41.66 15.35 39.58 15.66 Q40.15 13.00 39.72 10.35 Z" fill="#3a2a22"/>
+  <path d="M28.72 29.80 L29.20 31.50 C27.45 32.95 25.95 33.40 24.85 33.50 L24.00 32.35 L23.15 33.50 C22.05 33.40 20.55 32.95 18.80 31.50 L19.28 29.80 Q24.00 30.45 28.72 29.80 Z" fill="#3a2a22"/>
+</svg>

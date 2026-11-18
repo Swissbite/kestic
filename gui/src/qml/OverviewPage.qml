@@ -9,7 +9,7 @@ import org.kde.kirigami as Kirigami
 Kirigami.ScrollablePage {
     id: page
     objectName: "overviewPage"
-    title: ""
+    title: i18n("Overview")
 
     required property var rootWindow
     required property var appBackend
@@ -52,8 +52,8 @@ Kirigami.ScrollablePage {
             spacing: rootWindow.narrowMode ? Kirigami.Units.mediumSpacing : Kirigami.Units.largeSpacing
 
             Kirigami.Icon {
-                source: "kestic-symbolic"
-                fallback: "folder-sync"
+                source: "kestic"
+                fallback: "kestic-symbolic"
                 Layout.alignment: Qt.AlignHCenter
                 Layout.preferredWidth: rootWindow.narrowMode ? 72 : 96
                 Layout.preferredHeight: rootWindow.narrowMode ? 72 : 96

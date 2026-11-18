@@ -46,7 +46,7 @@ fn main() {
         dev_locale.display()
     );
 
-    let builder = CxxQtBuilder::new_qml_module(QmlModule::new("net.daester.kestic").qml_files([
+    let qml_files = [
         "src/qml/Main.qml",
         "src/qml/SpikeMain.qml",
         "src/qml/OverviewPage.qml",
@@ -54,6 +54,8 @@ fn main() {
         "src/qml/BackupDetailPage.qml",
         "src/qml/BackupSourceEditPage.qml",
         "src/qml/BackupExcludesEditPage.qml",
+        "src/qml/BackupRetentionPage.qml",
+        "src/qml/BackupPreviewPage.qml",
         "src/qml/BackupReassignPage.qml",
         "src/qml/BackupSnapshotsPage.qml",
         "src/qml/BackupFullConfigPage.qml",
@@ -65,13 +67,30 @@ fn main() {
         "src/qml/AddDestinationWizard.qml",
         "src/qml/NewBackupWizard.qml",
         "src/qml/SettingsDialog.qml",
-    ]))
-    .file("src/backend.rs")
-    .file("src/models.rs")
-    .file("src/smoke.rs")
-    .cpp_file("src/smoke_helper.cpp")
-    .qt_module("Widgets")
-    .qt_module("Quick");
+    ];
+    for qml in qml_files {
+        println!("cargo:rerun-if-changed={qml}");
+    }
+    for cpp in [
+        "src/smoke_common.h",
+        "src/smoke_helper.h",
+        "src/smoke_helper.cpp",
+        "src/smoke_m1.cpp",
+        "src/smoke_m2.cpp",
+    ] {
+        println!("cargo:rerun-if-changed={cpp}");
+    }
+
+    let builder =
+        CxxQtBuilder::new_qml_module(QmlModule::new("net.daester.kestic").qml_files(qml_files))
+            .file("src/backend.rs")
+            .file("src/models.rs")
+            .file("src/smoke.rs")
+            .cpp_file("src/smoke_helper.cpp")
+            .cpp_file("src/smoke_m1.cpp")
+            .cpp_file("src/smoke_m2.cpp")
+            .qt_module("Widgets")
+            .qt_module("Quick");
 
     // SAFETY: Configures an additional C++ include path during build-script compilation.
     let builder = unsafe {

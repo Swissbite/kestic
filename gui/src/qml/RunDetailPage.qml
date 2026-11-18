@@ -18,6 +18,8 @@ Kirigami.ScrollablePage {
 
     property bool rawErrorExpanded: false
     property string pendingExcludePath: ""
+    property string pendingExcludeRuleLabel: ""
+    property bool pendingExcludeIsDir: false
 
     readonly property var unreadableFiles: {
         try {
@@ -95,7 +97,9 @@ Kirigami.ScrollablePage {
         id: addExcludeDialog
         objectName: "addExcludePromptDialog"
         title: i18n("Add to Exclude Rules?")
-        subtitle: i18n("Rule: %1\n\nThis path will no longer be backed up starting with the next backup. Existing snapshots remain unchanged.", page.pendingExcludePath)
+        subtitle: i18n("Generated rule (%1): %2\n\nThis path will no longer be backed up starting with the next backup. Existing snapshots remain unchanged.",
+                       page.pendingExcludeIsDir ? i18n("folder rule") : i18n("expert file rule"),
+                       page.pendingExcludeRuleLabel !== "" ? page.pendingExcludeRuleLabel : page.pendingExcludePath)
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {
@@ -318,6 +322,17 @@ Kirigami.ScrollablePage {
                             Accessible.name: i18n("Add %1 to exclude rules", modelData)
                             onClicked: {
                                 page.pendingExcludePath = modelData;
+                                page.pendingExcludeRuleLabel = modelData;
+                                page.pendingExcludeIsDir = false;
+                                var previewRaw = appBackend.formatExcludeRuleForItem(modelData);
+                                if (previewRaw !== "") {
+                                    try {
+                                        var dto = JSON.parse(previewRaw);
+                                        page.pendingExcludeRuleLabel = dto.rule || modelData;
+                                        page.pendingExcludeIsDir = Boolean(dto.is_dir);
+                                    } catch (e) {
+                                    }
+                                }
                                 addExcludeDialog.open();
                             }
                         }

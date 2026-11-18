@@ -143,6 +143,19 @@ Kirigami.ScrollablePage {
             text: i18n("Save")
             enabled: page.canSave
             onTriggered: page.saveChanges()
+        },
+        Kirigami.Action {
+            id: closeDestinationEditAction
+            objectName: "closeDestinationEditAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: {
+                if (page.dirty) {
+                    unsavedDialog.open();
+                } else {
+                    rootWindow.popSubPage();
+                }
+            }
         }
     ]
 
@@ -166,12 +179,12 @@ Kirigami.ScrollablePage {
         standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
         onAccepted: {
             if (page.canSave && page.saveChanges()) {
-                rootWindow.pageStack.pop();
+                rootWindow.popSubPage();
             }
         }
         onDiscarded: {
             appBackend.has_unsaved_changes = false;
-            rootWindow.pageStack.pop();
+            rootWindow.popSubPage();
         }
     }
 

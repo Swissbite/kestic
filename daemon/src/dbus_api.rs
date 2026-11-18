@@ -4,8 +4,12 @@
 //! Versioned D-Bus API v1 (`net.daester.Kestic1`) shared DTOs, error types, and client proxy
 //! (`F14`, `FR-30`, `M1-S09`, `docs/spec/dbus-api.md`).
 
+use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult};
 use kestic_core::config::AppConfig;
-use kestic_core::model::{Backup, Destination, Run};
+use kestic_core::model::{
+    Backup, Destination, ExcludeLintWarning, ExcludePathTestResult, ExcludeRules,
+    NestedSourceConflict, RetentionPolicy, Run, Source,
+};
 use serde::{Deserialize, Serialize};
 use zbus::{Connection, DBusError, Proxy, block_on};
 
@@ -154,6 +158,12 @@ pub struct BackupSummaryDto {
     pub error_action: Option<String>,
     pub error_summary: Option<String>,
     pub unreadable_files: Vec<String>,
+    #[serde(default)]
+    pub pending_forget: bool,
+    #[serde(default)]
+    pub nested_warnings: Vec<NestedSourceConflict>,
+    #[serde(default)]
+    pub exclude_lint_warnings: Vec<ExcludeLintWarning>,
 }
 
 /// Enriched destination item returned in `DaemonStateDto`.
@@ -552,4 +562,223 @@ impl KesticClient {
     pub fn unlock_secret_store(&self) -> zbus::Result<bool> {
         block_on(async { self.proxy().await?.call("UnlockSecretStore", &()).await })
     }
+
+    pub fn detect_source(&self, path: &str) -> Result<Source, String> {
+        let raw: String =
+            block_on(async { self.proxy().await?.call("DetectSource", &(path,)).await })
+                .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn check_nested_sources(
+        &self,
+        candidate_id: &str,
+        candidate_path: &str,
+        destination_id: &str,
+    ) -> Result<Vec<NestedSourceConflict>, String> {
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call(
+                    "CheckNestedSources",
+                    &(candidate_id, candidate_path, destination_id),
+                )
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn lint_excludes(
+        &self,
+        excludes: &ExcludeRules,
+    ) -> Result<Vec<ExcludeLintWarning>, String> {
+        let json = serde_json::to_string(excludes).map_err(|e| e.to_string())?;
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call("LintExcludes", &(json.as_str(),))
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn test_exclude_path(
+        &self,
+        backup_id: &str,
+        excludes: &ExcludeRules,
+        test_path: &str,
+    ) -> Result<ExcludePathTestResult, String> {
+        let json = serde_json::to_string(excludes).map_err(|e| e.to_string())?;
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call("TestExcludePath", &(backup_id, json.as_str(), test_path))
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn preview_retention(
+        &self,
+        backup_id: &str,
+        retention: &RetentionPolicy,
+    ) -> Result<ForgetPreviewResult, String> {
+        let json = serde_json::to_string(retention).map_err(|e| e.to_string())?;
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call("PreviewRetention", &(backup_id, json.as_str()))
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn start_retention_preview(
+        &self,
+        backup_id: &str,
+        retention: &RetentionPolicy,
+    ) -> zbus::Result<String> {
+        let json = serde_json::to_string(retention)
+            .map_err(|e| zbus::Error::Failure(format!("serialize retention: {e}")))?;
+        block_on(async {
+            self.proxy()
+                .await?
+                .call("StartRetentionPreview", &(backup_id, json.as_str()))
+                .await
+        })
+    }
+
+    pub fn cancel_retention_preview(&self, preview_id: &str) -> zbus::Result<()> {
+        block_on(async {
+            self.proxy()
+                .await?
+                .call("CancelRetentionPreview", &(preview_id,))
+                .await
+        })
+    }
+
+    pub fn get_retention_preview_status(
+        &self,
+        preview_id: &str,
+    ) -> Result<RetentionPreviewStatusDto, String> {
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call("GetRetentionPreviewStatus", &(preview_id,))
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn start_backup_dry_run(
+        &self,
+        backup_id: &str,
+        excludes: Option<&ExcludeRules>,
+    ) -> zbus::Result<String> {
+        let json = match excludes {
+            Some(ex) => serde_json::to_string(ex)
+                .map_err(|e| zbus::Error::Failure(format!("serialize excludes: {e}")))?,
+            None => String::new(),
+        };
+        block_on(async {
+            self.proxy()
+                .await?
+                .call("StartBackupDryRun", &(backup_id, json.as_str()))
+                .await
+        })
+    }
+
+    pub fn cancel_backup_dry_run(&self, preview_id: &str) -> zbus::Result<()> {
+        block_on(async {
+            self.proxy()
+                .await?
+                .call("CancelBackupDryRun", &(preview_id,))
+                .await
+        })
+    }
+
+    pub fn get_backup_dry_run_status(
+        &self,
+        preview_id: &str,
+    ) -> Result<BackupDryRunStatusDto, String> {
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call("GetBackupDryRunStatus", &(preview_id,))
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn format_exclude_rule_for_item(
+        &self,
+        item_path: &str,
+    ) -> Result<ExcludeRulePreviewDto, String> {
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call("FormatExcludeRuleForItem", &(item_path,))
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn add_exclude_rule_for_item(
+        &self,
+        backup_id: &str,
+        item_path: &str,
+    ) -> Result<ExcludeRulePreviewDto, String> {
+        let raw: String = block_on(async {
+            self.proxy()
+                .await?
+                .call("AddExcludeRuleForItem", &(backup_id, item_path))
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())
+    }
+
+    pub fn run_destination_maintenance(&self, destination_id: &str) -> zbus::Result<String> {
+        block_on(async {
+            self.proxy()
+                .await?
+                .call("RunDestinationMaintenance", &(destination_id,))
+                .await
+        })
+    }
+}
+
+/// Asynchronous dry-run preview status returned by `GetBackupDryRunStatus` (`M2-S04`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupDryRunStatusDto {
+    pub preview_id: String,
+    /// `"running"` | `"done"` | `"cancelled"` | `"error"`
+    pub state: String,
+    pub result: Option<BackupDryRunResult>,
+    pub error: Option<String>,
+}
+
+/// Asynchronous retention preview status returned by `GetRetentionPreviewStatus` (`M2-S06`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetentionPreviewStatusDto {
+    pub preview_id: String,
+    /// `"running"` | `"done"` | `"cancelled"` | `"error"`
+    pub state: String,
+    pub result: Option<ForgetPreviewResult>,
+    pub error: Option<String>,
+}
+
+/// Preview of the exclude rule generated for an unreadable path (`M2-S08`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExcludeRulePreviewDto {
+    pub is_dir: bool,
+    pub rule: String,
+    pub is_expert_rule: bool,
 }

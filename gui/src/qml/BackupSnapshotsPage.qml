@@ -34,6 +34,13 @@ Kirigami.ScrollablePage {
             icon.name: "view-refresh"
             text: i18n("Refresh")
             onTriggered: appBackend.loadBackupSnapshots(backupId)
+        },
+        Kirigami.Action {
+            id: closeSnapshotsAction
+            objectName: "closeSnapshotsAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: rootWindow.popSubPage()
         }
     ]
 

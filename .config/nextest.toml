@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Tune nextest concurrency so heavy multi-process GUI smoke and dual-restic
+# integration suites do not saturate all 20 CPU threads or exhaust workstation RAM.
+
+[profile.default]
+# Cap overall concurrency below physical core count so the IDE, desktop session,
+# and test child processes (Qt offscreen, daemon, restic) stay responsive.
+test-threads = 8
+
+[test-groups.gui-smoke]
+max-threads = 2
+
+[test-groups.heavy-integration]
+max-threads = 4
+
+[[profile.default.overrides]]
+filter = "binary(m0_s04_kirigami_listmodel) | binary(m0_s06_qml_smoke) | binary(m0_s09_i18n) | binary(m0_s11_gui_basics) | binary(m1_gui_smoke) | binary(m2_gui_smoke)"
+test-group = "gui-smoke"
+
+[[profile.default.overrides]]
+filter = "binary(m0_s02_bootstrap) | binary(m0_s07_checks) | binary(m0_s08_checks) | binary(m0_s10_checks) | binary(m0_s11_checks) | binary(m1_s05_secrets) | binary(m1_s06_destination) | binary(m1_s07_backup) | binary(m1_s09_dbus) | binary(m1_s10_cancel) | binary(m1_s11_tray_notify) | binary(m1_s12_autostart) | binary(m1_s23_availability) | binary(m2_s01_s03_excludes) | binary(m2_s04_dry_run) | binary(m2_s05_retention) | binary(m2_s09_s10_mount_nested) | binary(m2_integration)"
+test-group = "heavy-integration"
+
+[profile.ci]
+test-threads = "num-cpus"
