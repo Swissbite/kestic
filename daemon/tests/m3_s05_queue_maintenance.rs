@@ -303,10 +303,18 @@ fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
                     .max()
                     .expect("maintenance end");
                 let beta_start = rig.wrapper.of('S', "backup")[1].at_ms;
+                // The full call log helps tell a real overlap from a timing artefact (CI only).
+                let call_log: Vec<String> = rig
+                    .wrapper
+                    .entries()
+                    .iter()
+                    .map(|e| format!("{} {} {} {}", e.kind, e.at_ms, e.sub, e.detail))
+                    .collect();
                 assert!(
                     beta_start >= maintenance_end,
-                    "{}: (b) backup started ({beta_start}) after maintenance ended ({maintenance_end})",
-                    variant.label
+                    "{}: (b) backup started ({beta_start}) after maintenance ended ({maintenance_end}); calls:\n{}",
+                    variant.label,
+                    call_log.join("\n")
                 );
                 rig.daemon.stop();
             }
