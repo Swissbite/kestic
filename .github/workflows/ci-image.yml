@@ -11,8 +11,12 @@
 # once. This avoids a race between a separate path-triggered build and the
 # verify run of the same commit.
 #
-# Manual dispatch with `force` rebuilds and overwrites the current tag, e.g. to
-# pick up Ubuntu security updates without touching bootstrap.sh.
+# Keeping the image current: every Monday the schedule rebuilds and overwrites
+# the main tag (`force`), so Ubuntu security updates arrive within a week even
+# if bootstrap.sh does not change. The previous version becomes untagged and is
+# removed by ci-image-cleanup.yml. PR/branch tags are rebuilt from scratch at
+# the latest after 10 days because the cleanup deletes them. Manual dispatch
+# with `force` does the same on demand.
 
 name: CI image
 
@@ -27,6 +31,9 @@ on:
       image:
         description: Fully qualified reference of the CI image matching the current bootstrap inputs.
         value: ${{ jobs.ensure.outputs.image }}
+  schedule:
+    # Every Monday at 03:00 UTC (before ci-image-cleanup.yml at 04:00).
+    - cron: "0 3 * * 1"
   workflow_dispatch:
     inputs:
       force:
@@ -73,7 +80,7 @@ jobs:
         id: exists
         env:
           IMAGE: ${{ steps.ref.outputs.image }}
-          FORCE: ${{ inputs.force }}
+          FORCE: ${{ inputs.force || github.event_name == 'schedule' }}
         run: |
           set -euo pipefail
           if [[ "$FORCE" != "true" ]] && docker manifest inspect "$IMAGE" >/dev/null 2>&1; then

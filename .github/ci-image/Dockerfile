@@ -18,18 +18,24 @@
 #
 # The image must keep running as root: GitHub Actions executes container steps
 # as the image user, and verify.yml needs root for chown and `su - kesticci`.
+#
+# Freshness: CI builds run on ephemeral runners without a layer cache and with
+# `--pull`, so every build starts from the newest ubuntu:26.04 and runs a fresh
+# `apt-get update` + `apt-get upgrade`. bootstrap.sh is copied first and all
+# apt work happens in a single RUN, so local builds also redo everything as
+# soon as bootstrap.sh changes. To keep an unchanged tag current, ci-image.yml
+# rebuilds the main tag weekly (schedule, `force`).
 
 FROM ubuntu:26.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+COPY bootstrap.sh /opt/kestic-ci/scripts/bootstrap.sh
+
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates git sudo locales \
     && locale-gen en_US.UTF-8 \
     && useradd -m -s /bin/bash kesticci \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY bootstrap.sh /opt/kestic-ci/scripts/bootstrap.sh
-
-RUN KESTIC_BOOTSTRAP_COMPONENTS=apt bash /opt/kestic-ci/scripts/bootstrap.sh \
+    && KESTIC_BOOTSTRAP_COMPONENTS=apt bash /opt/kestic-ci/scripts/bootstrap.sh \
     && rm -rf /var/lib/apt/lists/*
