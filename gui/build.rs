@@ -112,6 +112,8 @@ fn main() {
         println!("cargo:rerun-if-changed={cpp}");
     }
 
+    remove_stale_qmltypes("net/daester/kestic");
+
     let builder =
         CxxQtBuilder::new_qml_module(QmlModule::new("net.daester.kestic").qml_files(qml_files))
             .file("src/backend.rs")
@@ -132,4 +134,28 @@ fn main() {
         })
     };
     builder.build();
+}
+
+/// Deletes the module's `plugin.qmltypes` left in `OUT_DIR` by a previous build.
+///
+/// qt-build-utils 0.10 runs qmlcachegen *before* qmltyperegistrar writes the
+/// current `plugin.qmltypes`, while the generated `qmldir` already points at it.
+/// On a rebuild qmlcachegen therefore compiles QML against the C++ types of the
+/// previous build; when the bridges changed in between (e.g. a CI cache from
+/// another commit), the AOT-compiled bindings crash with SIGSEGV. Without the
+/// file every build behaves like a clean one.
+///
+/// Upstream: KDAB/cxx-qt#1508, fixed by #1509 (not yet released as of 0.10.0).
+/// Remove this workaround once the pinned cxx-qt version contains that fix.
+fn remove_stale_qmltypes(module_dirs: &str) {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let qmltypes = out_dir
+        .join("qt-build-utils/qml_modules")
+        .join(module_dirs)
+        .join("plugin.qmltypes");
+    match fs::remove_file(&qmltypes) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => panic!("cannot remove stale {}: {e}", qmltypes.display()),
+    }
 }
