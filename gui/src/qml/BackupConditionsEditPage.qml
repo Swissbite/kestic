@@ -24,13 +24,19 @@ Kirigami.ScrollablePage {
     property bool skipOnMetered: false
     property var allowedNetworks: []
     property var knownNetworks: []
+    // Network conditions only apply to network destinations, not to a local folder or drive
+    // (decision 2026-11-20).
+    readonly property bool networkDestination: {
+        var dest = initialData ? rootWindow.findDestinationData(initialData.destinationId) : null;
+        return dest ? dest.kindName !== "local" : true;
+    }
 
     function currentConditionsObj() {
         return {
             require_ac_power: requireAcPower,
-            require_network: requireNetwork,
-            skip_on_metered_network: skipOnMetered,
-            allowed_networks: allowedNetworks.slice()
+            require_network: networkDestination && requireNetwork,
+            skip_on_metered_network: networkDestination && skipOnMetered,
+            allowed_networks: networkDestination ? allowedNetworks.slice() : []
         };
     }
 
@@ -42,11 +48,12 @@ Kirigami.ScrollablePage {
         try {
             var obj = JSON.parse(rawJson || "{}");
             var nets = (obj.allowed_networks || []).slice();
+            var net = page.networkDestination;
             return JSON.stringify({
                 require_ac_power: obj.require_ac_power !== undefined ? Boolean(obj.require_ac_power) : true,
-                require_network: obj.require_network !== undefined ? Boolean(obj.require_network) : true,
-                skip_on_metered_network: Boolean(obj.skip_on_metered_network),
-                allowed_networks: nets
+                require_network: net && (obj.require_network !== undefined ? Boolean(obj.require_network) : true),
+                skip_on_metered_network: net && Boolean(obj.skip_on_metered_network),
+                allowed_networks: net ? nets : []
             });
         } catch (e) {
             return "{}";
@@ -215,7 +222,7 @@ Kirigami.ScrollablePage {
 
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
-                Kirigami.FormData.label: i18n("Power & Network")
+                Kirigami.FormData.label: page.networkDestination ? i18n("Power & Network") : i18n("Power")
             }
 
             Controls.CheckBox {
@@ -231,6 +238,7 @@ Kirigami.ScrollablePage {
             Controls.CheckBox {
                 id: requireNetworkCheck
                 objectName: "requireNetworkCheck"
+                visible: page.networkDestination
                 Kirigami.FormData.label: i18n("Network:")
                 text: i18n("Require network connection")
                 checked: page.requireNetwork
@@ -241,6 +249,7 @@ Kirigami.ScrollablePage {
             Controls.CheckBox {
                 id: skipMeteredCheck
                 objectName: "skipMeteredCheck"
+                visible: page.networkDestination
                 text: i18n("Skip on metered network (e.g. mobile hotspot)")
                 checked: page.skipOnMetered
                 enabled: page.requireNetwork
@@ -249,10 +258,20 @@ Kirigami.ScrollablePage {
             }
         }
 
+        Controls.Label {
+            objectName: "localDestinationNetworkHint"
+            visible: !page.networkDestination
+            text: i18n("Network conditions do not apply: the destination is a local folder or drive.")
+            opacity: 0.75
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+
         ColumnLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
             enabled: page.requireNetwork
+            visible: page.networkDestination
 
             Kirigami.Heading {
                 level: 4

@@ -491,17 +491,34 @@ pub fn build_destination(
     Ok(dest)
 }
 
+/// Kind of the cached destination `dest_id`, if the daemon state knows it.
+pub fn cached_destination_kind(dest_id: &str) -> Option<DestinationKind> {
+    let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+    guard.state.as_ref().and_then(|s| {
+        s.destinations
+            .iter()
+            .find(|d| d.destination.id.as_str() == dest_id.trim())
+            .map(|d| d.destination.kind.clone())
+    })
+}
+
+/// New backup as the wizard creates it; on a local destination it has no network run
+/// conditions (decision 2026-11-20).
 pub fn build_new_backup(
     name: &str,
     source_path: &str,
     dest_id: &str,
     excludes_text: &str,
     detected_source: Option<Source>,
+    dest_kind: Option<&DestinationKind>,
 ) -> Result<Backup, String> {
     let d_id = DestinationId::parse(dest_id.trim()).map_err(|e| e.to_string())?;
     let source =
         detected_source.unwrap_or_else(|| Source::folder(PathBuf::from(source_path.trim())));
     let mut backup = Backup::new(name.trim(), source, d_id).map_err(|e| e.to_string())?;
+    if let Some(kind) = dest_kind {
+        backup.run_conditions = backup.run_conditions.clone().for_destination(kind);
+    }
     backup.schedule = Schedule::default_scheduled();
     backup.excludes = ExcludeRules::from_text(excludes_text);
     Ok(backup)
@@ -577,12 +594,18 @@ pub fn clone_updated_backup_schedule(
     Ok(updated)
 }
 
+/// Backup with the edited run conditions; network conditions are dropped for a local
+/// destination (decision 2026-11-20).
 pub fn clone_updated_backup_conditions(
     existing: &Backup,
     run_conditions: RunConditions,
+    dest_kind: Option<&DestinationKind>,
 ) -> Result<Backup, String> {
     let mut updated = existing.clone();
-    updated.run_conditions = run_conditions;
+    updated.run_conditions = match dest_kind {
+        Some(kind) => run_conditions.for_destination(kind),
+        None => run_conditions,
+    };
     updated.validate().map_err(|e| e.to_string())?;
     Ok(updated)
 }

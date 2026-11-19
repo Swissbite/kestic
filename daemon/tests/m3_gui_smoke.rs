@@ -15,8 +15,8 @@ mod common;
 
 use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
 use common::{
-    find_kestic_binary, restic_test_binaries, run_isolated_test, start_fake_notifications,
-    start_fake_sni_watcher, wait_for_file,
+    RestServerGuard, find_kestic_binary, restic_test_binaries, run_isolated_test,
+    start_fake_notifications, start_fake_sni_watcher, wait_for_file,
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::config::load_config;
@@ -583,6 +583,32 @@ fn m3_08_5_exit12_replaces_back_up_now_in_overview_and_detail() {
 
 /// One editor fixture: a single default backup (daily 12:00, AC power + network) on a vault
 /// with the known networks `HomeWifi` and `OfficeWifi`.
+/// Editor fixture on a REST destination (local `rest-server`): network run conditions only
+/// apply to network destinations (decision 2026-11-20), so the run-condition editor tests use one.
+fn network_editor_env(root: &Path) -> (Env, RestServerGuard, BackupId) {
+    let env = start_env(
+        root,
+        false,
+        &["HomeWifi", "OfficeWifi"],
+        datetime!(2026-12-01 10:00:00 UTC),
+        false,
+    );
+    let server = RestServerGuard::start_no_auth(&root.join("rest-data"));
+    let dest = Destination::new(
+        "Network Vault",
+        DestinationKind::Rest {
+            url: server.url.clone(),
+            username: None,
+        },
+    )
+    .expect("rest dest");
+    env.client
+        .add_destination(&dest, "init", "m3-smoke-pw", "")
+        .expect("init rest dest");
+    let id = add_default_backup(&env, root, &dest, "Documents");
+    (env, server, id)
+}
+
 fn editor_env(root: &Path) -> (Env, Destination, BackupId) {
     let env = start_env(
         root,
@@ -721,7 +747,7 @@ fn m3_14_3_conditions_editor_of_new_backup_defaults_to_ac_power_and_network() {
         "m3_14_3_conditions_editor_of_new_backup_defaults_to_ac_power_and_network",
         "KESTIC_M3_GUI_COND_DEFAULTS_INNER",
         |root| {
-            let (env, _dest, id) = editor_env(root);
+            let (env, _server, id) = network_editor_env(root);
             assert_eq!(
                 saved_backup(&env, &id).run_conditions,
                 RunConditions::default(),
@@ -741,6 +767,29 @@ fn m3_14_3_conditions_editor_of_new_backup_defaults_to_ac_power_and_network() {
     );
 }
 
+/// M3 manual acceptance (2026-11-19, decision 2026-11-20): on a local destination the
+/// run-condition editor shows no network conditions, only a hint, and is not dirty.
+#[test]
+fn m3_acceptance_conditions_editor_hides_network_for_local_destination() {
+    run_isolated_test(
+        "m3_acceptance_conditions_editor_hides_network_for_local_destination",
+        "KESTIC_M3_GUI_COND_LOCAL_INNER",
+        |root| {
+            let (env, _dest, _id) = editor_env(root);
+            for lang in ["en", "de"] {
+                run_m3_gui_smoke(
+                    root,
+                    "m3-conditions-editor-local",
+                    "wide",
+                    lang,
+                    &smoke_artifact("conditions-local", "wide", lang),
+                );
+            }
+            stop_env(env);
+        },
+    );
+}
+
 /// AC-M3-14-9 for the run-conditions editor.
 #[test]
 fn m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config() {
@@ -748,7 +797,7 @@ fn m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config() {
         "m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config",
         "KESTIC_M3_GUI_COND_UNSAVED_INNER",
         |root| {
-            let (env, _dest, id) = editor_env(root);
+            let (env, _server, id) = network_editor_env(root);
             run_m3_gui_smoke(
                 root,
                 "m3-conditions-editor-unsaved",

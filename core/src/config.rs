@@ -20,7 +20,8 @@ use thiserror::Error;
 /// - `1`: M1 (retention not yet configurable, an empty `retention` table means
 ///   «no rule set»).
 /// - `2`: M2 onwards (every backup needs at least one active keep rule).
-pub const CURRENT_CONFIG_VERSION: u32 = 2;
+/// - `3`: network run conditions only for network destinations (decision 2026-11-20).
+pub const CURRENT_CONFIG_VERSION: u32 = 3;
 
 fn default_overdue_threshold() -> u32 {
     DEFAULT_OVERDUE_THRESHOLD
@@ -262,6 +263,21 @@ fn migrate(config: &mut AppConfig) {
             }
         }
         config.config_version = 2;
+    }
+    if config.config_version < 3 {
+        // A local directory or drive needs no network: drop network conditions that the GUI
+        // no longer shows for such destinations, so none stays active unseen.
+        let kinds: std::collections::HashMap<_, _> = config
+            .destinations
+            .iter()
+            .map(|d| (d.id.clone(), d.kind.clone()))
+            .collect();
+        for backup in &mut config.backups {
+            if let Some(kind) = kinds.get(&backup.destination_id) {
+                backup.run_conditions = backup.run_conditions.clone().for_destination(kind);
+            }
+        }
+        config.config_version = 3;
     }
 }
 

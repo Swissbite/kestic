@@ -157,6 +157,12 @@ pub enum DestinationKind {
 }
 
 impl DestinationKind {
+    /// Whether the destination is reached over the network (all but a local directory or drive):
+    /// only then do the network run conditions apply (decision 2026-11-20).
+    pub fn is_network(&self) -> bool {
+        !matches!(self, Self::Local { .. })
+    }
+
     /// Returns the restic repository URI/path passed via `-r` or `RESTIC_REPOSITORY`.
     /// Translates internationalized (IDN/Umlaut) REST hostnames to Punycode ASCII and
     /// percent-encodes non-ASCII path characters so `restic` and HTTP clients accept them.
@@ -315,6 +321,19 @@ fn normalize_rest_url(raw: &str) -> String {
         normalized_authority,
         normalized_path
     )
+}
+
+/// Run conditions as they apply to a destination of `kind`: a local directory or drive needs
+/// no network, so its network conditions are dropped (decision 2026-11-20).
+impl RunConditions {
+    pub fn for_destination(mut self, kind: &DestinationKind) -> Self {
+        if !kind.is_network() {
+            self.require_network = false;
+            self.skip_on_metered_network = false;
+            self.allowed_networks.clear();
+        }
+        self
+    }
 }
 
 /// Secret Service reference keys for a [`Destination`] (never plaintext values, `NFR-02`, `NFR-03`).

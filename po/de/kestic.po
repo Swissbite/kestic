@@ -3562,3 +3562,11 @@ msgstr "Gelöschtes Backup"
 #: gui/src/models/runs_model.rs daemon/src/service/backups.rs
 msgid "Deleted destination"
 msgstr "Gelöschtes Ziel"
+
+#: gui/src/qml/BackupConditionsEditPage.qml
+msgid "Power"
+msgstr "Strom"
+
+#: gui/src/qml/BackupConditionsEditPage.qml
+msgid "Network conditions do not apply: the destination is a local folder or drive."
+msgstr "Netzwerk-Bedingungen gelten hier nicht: Das Ziel ist ein lokaler Ordner oder ein Laufwerk."

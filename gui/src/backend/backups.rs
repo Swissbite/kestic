@@ -6,7 +6,7 @@
 
 use super::{friendly_dbus_error, qobject};
 use crate::state_cache::{
-    build_new_backup, clone_updated_backup, clone_updated_backup_excludes,
+    build_new_backup, cached_destination_kind, clone_updated_backup, clone_updated_backup_excludes,
     clone_updated_backup_retention, clone_updated_backup_source,
     localized_condition_override_message, localized_manual_block_message,
     localized_start_all_summary, lookup_backup_summary, make_client, refresh_state_now,
@@ -207,6 +207,7 @@ impl qobject::KesticApp {
             &dest_id.to_string(),
             &excludes_text.to_string(),
             detected,
+            cached_destination_kind(&dest_id.to_string()).as_ref(),
         ) {
             Ok(b) => b,
             Err(err) => {

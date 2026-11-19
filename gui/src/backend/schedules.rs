@@ -7,11 +7,12 @@
 use super::{friendly_dbus_error, qobject};
 use crate::smoke;
 use crate::state_cache::{
-    build_provider, cached_daemon_now, cached_today_iso_date, clone_updated_backup_conditions,
-    clone_updated_backup_schedule, format_bytes, format_conditions_summary,
-    format_datetime_display, format_duration_ms, format_maintenance_summary, format_run_kind_name,
-    format_run_status, format_schedule_summary, lookup_backup_summary, make_client,
-    preview_next_schedule_slots, refresh_state_now, shared_state,
+    build_provider, cached_daemon_now, cached_destination_kind, cached_today_iso_date,
+    clone_updated_backup_conditions, clone_updated_backup_schedule, format_bytes,
+    format_conditions_summary, format_datetime_display, format_duration_ms,
+    format_maintenance_summary, format_run_kind_name, format_run_status, format_schedule_summary,
+    lookup_backup_summary, make_client, preview_next_schedule_slots, refresh_state_now,
+    shared_state,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
@@ -171,13 +172,15 @@ impl qobject::KesticApp {
                 return false;
             }
         };
-        let updated = match clone_updated_backup_conditions(&existing, conditions) {
-            Ok(b) => b,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return false;
-            }
-        };
+        let dest_kind = cached_destination_kind(existing.destination_id.as_str());
+        let updated =
+            match clone_updated_backup_conditions(&existing, conditions, dest_kind.as_ref()) {
+                Ok(b) => b,
+                Err(err) => {
+                    self.as_mut().set_last_action_error(QString::from(&err));
+                    return false;
+                }
+            };
         let Ok(client) = make_client() else {
             return false;
         };

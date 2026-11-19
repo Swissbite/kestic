@@ -372,6 +372,25 @@ int scenario_conditions_defaults(const Ctx& c) {
 }
 
 // AC-M3-14-9 for the run-conditions editor.
+// M3 manual acceptance (2026-11-19, decision 2026-11-20): local destination, no network
+// conditions in the run-condition editor.
+int scenario_conditions_local(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString bid = backup_id_at(w, 0);
+    M3_CHECK(3780, !bid.isEmpty(), "no backup found");
+    open_backup_detail(w, bid);
+    QQuickItem* page = open_editor(w, "editConditionsRow", "backupConditionsEditPage");
+    M3_CHECK(3781, page != nullptr, "backupConditionsEditPage did not open");
+    QQuickItem* hint = item_named(w, "localDestinationNetworkHint");
+    QQuickItem* net = item_named(w, "requireNetworkCheck");
+    QQuickItem* metered = item_named(w, "skipMeteredCheck");
+    M3_CHECK(3782, hint && hint->isVisible(), "(a) local destination hint must be visible");
+    M3_CHECK(3783, net && !net->isVisible() && metered && !metered->isVisible(), "(b) network conditions must be hidden");
+    M3_CHECK(3784, !page->property("dirty").toBool(), "(c) untouched editor must not be dirty");
+    M3_CHECK(3785, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 int scenario_conditions_unsaved(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString bid = backup_id_at(w, 0);
@@ -621,6 +640,7 @@ int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handle
     if (scen == QLatin1String("m3-schedule-editor-unsaved")) return scenario_schedule_unsaved(ctx);
     if (scen == QLatin1String("m3-conditions-editor-defaults")) return scenario_conditions_defaults(ctx);
     if (scen == QLatin1String("m3-conditions-editor-unsaved")) return scenario_conditions_unsaved(ctx);
+    if (scen == QLatin1String("m3-conditions-editor-local")) return scenario_conditions_local(ctx);
     if (scen == QLatin1String("m3-pause-menu-keyboard")) return scenario_pause_menu(ctx);
     if (scen == QLatin1String("m3-maintenance-editor")) return scenario_maintenance(ctx);
     if (scen == QLatin1String("m3-settings-monitoring")) return scenario_settings(ctx);

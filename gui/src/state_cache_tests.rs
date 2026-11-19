@@ -101,3 +101,50 @@ fn m3_acceptance_successful_maintenance_is_completed_not_backed_up() {
         "Backed up"
     );
 }
+
+/// Decision 2026-11-20 (M3 acceptance, finding 9): a new backup on a local destination gets
+/// no network run conditions; on a network destination it keeps the defaults (AC-M3-03-1).
+#[test]
+fn m3_acceptance_new_backup_has_network_conditions_only_on_network_destinations() {
+    let local = DestinationKind::Local {
+        path: "/srv/vault".into(),
+    };
+    let rest = DestinationKind::Rest {
+        url: "https://nas.example.invalid/kestic".to_string(),
+        username: None,
+    };
+    let dest_id = sample_backup().destination_id.as_str().to_string();
+
+    let on_local =
+        build_new_backup("Docs", "/home/u/docs", &dest_id, "", None, Some(&local)).expect("local");
+    let on_rest =
+        build_new_backup("Docs", "/home/u/docs", &dest_id, "", None, Some(&rest)).expect("rest");
+
+    // (a) local: power yes, network no.
+    assert!(on_local.run_conditions.require_ac_power);
+    assert!(!on_local.run_conditions.require_network);
+    // (b) network destination: power and network (AC-M3-03-1).
+    assert!(on_rest.run_conditions.require_ac_power);
+    assert!(on_rest.run_conditions.require_network);
+}
+
+/// Saving the run conditions of a backup on a local destination drops network conditions.
+#[test]
+fn m3_acceptance_saved_conditions_drop_network_for_local_destination() {
+    let local = DestinationKind::Local {
+        path: "/srv/vault".into(),
+    };
+    let edited = RunConditions {
+        require_ac_power: true,
+        require_network: true,
+        skip_on_metered_network: true,
+        allowed_networks: vec!["Heim".to_string()],
+    };
+
+    let updated =
+        clone_updated_backup_conditions(&sample_backup(), edited, Some(&local)).expect("updated");
+
+    assert!(!updated.run_conditions.require_network);
+    assert!(!updated.run_conditions.skip_on_metered_network);
+    assert!(updated.run_conditions.allowed_networks.is_empty());
+}

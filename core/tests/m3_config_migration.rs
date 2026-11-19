@@ -128,3 +128,90 @@ fn current_config_with_empty_retention_is_still_rejected() {
         "unexpected error: {err}"
     );
 }
+
+/// Version 2 config (M2/M3 before 2026-11-20): one backup on a local folder and one on a REST
+/// server, both with all network run conditions set.
+const V2_CONFIG: &str = r#"config_version = 2
+
+[[destinations]]
+id = "locabcde"
+name = "USB"
+
+[destinations.kind]
+kind = "local"
+path = "/srv/kestic-test/repo"
+
+[destinations.secrets]
+repo_password_ref = "kestic:dest:locabcde:repo"
+
+[[destinations]]
+id = "rstabcde"
+name = "NAS"
+
+[destinations.kind]
+kind = "rest"
+url = "https://nas.example.invalid/kestic"
+
+[destinations.secrets]
+repo_password_ref = "kestic:dest:rstabcde:repo"
+
+[[backups]]
+id = "bklocabc"
+name = "Local"
+destination_id = "locabcde"
+
+[backups.source]
+path = "/srv/kestic-test/a"
+kind = "folder"
+
+[backups.run_conditions]
+require_ac_power = true
+require_network = true
+skip_on_metered_network = true
+allowed_networks = ["Heim"]
+
+[backups.retention]
+keep_daily = 7
+
+[[backups]]
+id = "bkrstabc"
+name = "Remote"
+destination_id = "rstabcde"
+
+[backups.source]
+path = "/srv/kestic-test/b"
+kind = "folder"
+
+[backups.run_conditions]
+require_ac_power = true
+require_network = true
+skip_on_metered_network = true
+allowed_networks = ["Heim"]
+
+[backups.retention]
+keep_daily = 7
+"#;
+
+/// M3 manual acceptance (2026-11-19, decision 2026-11-20): network run conditions apply only
+/// to network destinations; a version 2 config is migrated accordingly.
+#[test]
+fn v2_config_drops_network_conditions_of_local_destinations_only() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = write_config(&dir, V2_CONFIG);
+
+    let loaded = load_config(&path).expect("load v2 config");
+    let local = &loaded.backups[0].run_conditions;
+    let remote = &loaded.backups[1].run_conditions;
+
+    // (a) local destination: no network conditions left, power condition kept.
+    assert!(local.require_ac_power);
+    assert!(!local.require_network);
+    assert!(!local.skip_on_metered_network);
+    assert!(local.allowed_networks.is_empty());
+    // (b) network destination: unchanged.
+    assert!(remote.require_network);
+    assert!(remote.skip_on_metered_network);
+    assert_eq!(remote.allowed_networks, vec!["Heim".to_string()]);
+    // (c) migrated to the current version.
+    assert_eq!(loaded.config_version, CURRENT_CONFIG_VERSION);
+}
