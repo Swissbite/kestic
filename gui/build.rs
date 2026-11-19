@@ -32,6 +32,18 @@ fn main() {
     let default_target_locale = workspace_root.join("target/locale");
     compile_mo(&po_file, &default_target_locale);
 
+    // cargo-deb only maps asset paths starting with `target/release/` to the
+    // profile directory it actually builds; place the catalog there as well.
+    // OUT_DIR = <target>/<profile>/build/…/out (depth below `build` varies by
+    // Cargo version), so the profile directory is the parent of `build`.
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let profile_dir = out_dir
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "build"))
+        .and_then(Path::parent)
+        .expect("OUT_DIR lies below <target>/<profile>/build");
+    compile_mo(&po_file, &profile_dir.join("locale"));
+
     let custom_locale = env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .filter(|d| *d != workspace_root.join("target"))
