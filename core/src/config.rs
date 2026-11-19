@@ -5,7 +5,7 @@
 
 use crate::model::{
     Backup, BackupId, DEFAULT_OVERDUE_THRESHOLD, Destination, DestinationId, DestinationKind,
-    ModelError, NotificationSettings, ResticProvider, RunId,
+    KeepCount, ModelError, NotificationSettings, ResticProvider, RetentionPolicy, RunId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -16,7 +16,11 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// Highest configuration schema version supported by this build of Kestic.
-pub const CURRENT_CONFIG_VERSION: u32 = 1;
+///
+/// - `1`: M1 (retention not yet configurable, an empty `retention` table means
+///   «no rule set»).
+/// - `2`: M2 onwards (every backup needs at least one active keep rule).
+pub const CURRENT_CONFIG_VERSION: u32 = 2;
 
 fn default_overdue_threshold() -> u32 {
     DEFAULT_OVERDUE_THRESHOLD
@@ -238,9 +242,27 @@ pub fn parse_config_str(raw: &str) -> Result<AppConfig, ConfigError> {
             max_supported: CURRENT_CONFIG_VERSION,
         });
     }
-    let config: AppConfig = toml::from_str(raw)?;
+    let mut config: AppConfig = toml::from_str(raw)?;
+    migrate(&mut config);
     config.validate()?;
     Ok(config)
+}
+
+/// Upgrades an older configuration in memory to [`CURRENT_CONFIG_VERSION`] (F13).
+///
+/// The next save writes the migrated file; the file on disk stays untouched until then.
+fn migrate(config: &mut AppConfig) {
+    if config.config_version < 2 {
+        // M1 never ran `forget`: an empty retention meant «keep every snapshot».
+        // Keep that behaviour explicitly instead of silently applying a preset that
+        // would delete snapshots (docs/spec/questions.md, 2026-11-19).
+        for backup in &mut config.backups {
+            if backup.retention == RetentionPolicy::empty() {
+                backup.retention.keep_last = Some(KeepCount::Unlimited);
+            }
+        }
+        config.config_version = 2;
+    }
 }
 
 /// Loads and validates `config.toml` from `path`.
