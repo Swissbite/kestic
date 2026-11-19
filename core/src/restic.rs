@@ -543,6 +543,56 @@ impl ResticCommandSpec {
     }
 }
 
+/// A recorded restic invocation split back into its parts: the inverse of the low-priority
+/// wrapper `ionice -c 3 [nice -n 10] <restic>` / `nice -n 10 <restic>` that
+/// [`ResticCommandSpec`] adds when it runs restic, and of `-r <repo> [--json]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedInvocation {
+    pub restic_binary: String,
+    pub low_priority: bool,
+    pub json_output: bool,
+    pub subcommand_args: Vec<String>,
+}
+
+/// Splits a recorded `executable` + `args` (history `CommandRecord`) into a [`RecordedInvocation`].
+pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedInvocation {
+    let tokens: Vec<&str> = std::iter::once(executable)
+        .chain(args.iter().map(String::as_str))
+        .collect();
+    let is_program = |token: Option<&&str>, name: &str| {
+        token.is_some_and(|t| Path::new(t).file_name().is_some_and(|n| n == name))
+    };
+    let mut i = 0;
+    let mut low_priority = false;
+    if is_program(tokens.get(i), "ionice")
+        && tokens.get(i + 1) == Some(&"-c")
+        && tokens.len() > i + 3
+    {
+        i += 3;
+        low_priority = true;
+    }
+    if is_program(tokens.get(i), "nice") && tokens.get(i + 1) == Some(&"-n") && tokens.len() > i + 3
+    {
+        i += 3;
+        low_priority = true;
+    }
+    let restic_binary = tokens.get(i).copied().unwrap_or(executable).to_string();
+    let mut rest = tokens.get(i + 1..).unwrap_or(&[]);
+    if rest.first() == Some(&"-r") && rest.len() >= 2 {
+        rest = &rest[2..];
+    }
+    let json_output = rest.first() == Some(&"--json");
+    if json_output {
+        rest = &rest[1..];
+    }
+    RecordedInvocation {
+        restic_binary,
+        low_priority,
+        json_output,
+        subcommand_args: rest.iter().map(|s| (*s).to_string()).collect(),
+    }
+}
+
 /// Builds an SSH command string for restic `sftp.command` / `sftp.args` that always enforces
 /// `-o UserKnownHostsFile=<path>` (`P24`, `NFR-07`, `AC-M1-Q-1`) and optionally adds
 /// `-F <ssh_config>` and `-o IdentitiesOnly=yes` for isolated test environments.

@@ -20,7 +20,7 @@ use kestic_core::model::{
 };
 use kestic_core::mount::{current_home_dir, detect_source_with};
 use kestic_core::provider::resolve_and_check;
-use kestic_core::restic::{ResticCommandSpec, classify_exit};
+use kestic_core::restic::{ResticCommandSpec, classify_exit, parse_recorded_invocation};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -364,37 +364,6 @@ impl DaemonCore {
     }
 }
 
-fn strip_prefix_flags(args: &[String]) -> Vec<String> {
-    let mut i = 0;
-    let mut out = Vec::new();
-    while i < args.len() {
-        let cur = &args[i];
-        if (cur == "ionice" && args.get(i + 1).is_some_and(|s| s == "-c"))
-            || (cur == "-c" && args.get(i + 1).is_some_and(|s| s == "3"))
-            || (cur == "nice" && args.get(i + 1).is_some_and(|s| s == "-n"))
-            || (cur == "-n" && args.get(i + 1).is_some_and(|s| s == "10"))
-        {
-            i += 2;
-            continue;
-        }
-        if cur.ends_with("/restic") || cur == "restic" {
-            i += 1;
-            continue;
-        }
-        if cur == "-r" {
-            i += 2;
-            continue;
-        }
-        if cur == "--json" {
-            i += 1;
-            continue;
-        }
-        out.push(cur.clone());
-        i += 1;
-    }
-    out
-}
-
 /// Run detail inputs captured under the `DaemonCore` lock.
 struct RunDetailSnapshot {
     run: Run,
@@ -486,14 +455,15 @@ fn build_transparent_commands(snap: &RunDetailSnapshot) -> Vec<String> {
             .iter()
             .map(|c| {
                 if let Some(dest) = &snap.destination {
-                    let sub_args = strip_prefix_flags(&c.args);
+                    let inv = parse_recorded_invocation(&c.executable, &c.args);
                     let mut spec = ResticCommandSpec::for_destination(
-                        &c.executable,
+                        &inv.restic_binary,
                         &snap.kestic_binary,
                         dest,
-                        sub_args,
+                        inv.subcommand_args,
                     );
-                    spec.low_priority = true;
+                    spec.low_priority = inv.low_priority;
+                    spec.json_output = inv.json_output;
                     spec.to_transparent_shell_command()
                 } else {
                     format!("{} {}", c.executable, c.args.join(" "))
