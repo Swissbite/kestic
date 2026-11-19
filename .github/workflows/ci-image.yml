@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 # Builds the CI container image (.github/ci-image/Dockerfile) and pushes it to
-# GHCR, tagged with a content hash of the Dockerfile and scripts/bootstrap.sh.
+# GHCR, tagged with a content hash of the Dockerfile and scripts/bootstrap.sh
+# (computed by .github/ci-image/tag.sh).
 #
 # verify.yml calls this workflow as its first job (workflow_call). If an image
 # with the matching tag already exists, the job only checks the registry
@@ -53,16 +54,12 @@ jobs:
       - name: Compute image reference
         id: ref
         env:
-          INPUTS_HASH: ${{ hashFiles('.github/ci-image/Dockerfile', 'scripts/bootstrap.sh') }}
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          if [[ -z "$INPUTS_HASH" ]]; then
-            echo "::error::Could not hash .github/ci-image/Dockerfile and scripts/bootstrap.sh"
-            exit 1
-          fi
+          tag="$(.github/ci-image/tag.sh)"
           # GHCR requires lowercase repository names.
-          image="ghcr.io/${OWNER,,}/kestic-ci:${INPUTS_HASH:0:16}"
+          image="ghcr.io/${OWNER,,}/kestic-ci:$tag"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "CI image: $image"
 
