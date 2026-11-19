@@ -8,12 +8,13 @@
 use kestic_core::scheduler::SystemEnvironment;
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Poll, Waker};
 use std::thread;
 use std::time::Duration;
-use zbus::export::ordered_stream::OrderedStreamExt;
+use zbus::export::futures_core::Stream;
 use zbus::{
     Connection, MatchRule, MessageStream, OwnedFd, OwnedObjectPath, OwnedVariant, Proxy, block_on,
 };
@@ -558,23 +559,66 @@ fn monitor_match_rules() -> Vec<MatchRule<'static>> {
     .collect()
 }
 
-/// Listener loop of the monitor thread; every await point ends as soon as `stop` is requested.
-async fn run_monitor_loop(
-    cfg: MonitorBusConfig,
-    stop: StopSignal,
-    event_tx: mpsc::Sender<SystemMonitorEvent>,
-    wakeup_tx: Option<mpsc::Sender<()>>,
-) {
-    let Some(Ok(conn)) = stop.until_stopped(connect_target_bus(&cfg)).await else {
-        return;
-    };
+/// What a received signal means for the daemon.
+enum SignalKind {
+    /// Forwarded at once (`PrepareForSleep`, mount changes).
+    Event(SystemMonitorEvent),
+    /// Power or network changed: re-read the environment once the burst is drained.
+    EnvironmentChanged,
+    Other,
+}
 
-    match stop.until_stopped(zbus::fdo::DBusProxy::new(&conn)).await {
-        None => return,
+fn classify_signal(msg: &zbus::Message) -> SignalKind {
+    let hdr = msg.header();
+    let iface = hdr.interface().map(|i| i.as_str()).unwrap_or("");
+    let member = hdr.member().map(|m| m.as_str()).unwrap_or("");
+    let path = hdr.path().map(|p| p.as_str()).unwrap_or("");
+
+    if iface == "org.freedesktop.login1.Manager" && member == "PrepareForSleep" {
+        return msg
+            .body()
+            .deserialize::<bool>()
+            .map_or(SignalKind::Other, |start| {
+                SignalKind::Event(SystemMonitorEvent::PrepareForSleep(start))
+            });
+    }
+    if path.starts_with("/org/freedesktop/UDisks2")
+        && (iface == "org.freedesktop.DBus.ObjectManager"
+            || iface == "org.freedesktop.DBus.Properties")
+    {
+        return SignalKind::Event(SystemMonitorEvent::MountChanged);
+    }
+    if path.starts_with("/org/freedesktop/UPower")
+        || path.starts_with("/org/freedesktop/NetworkManager")
+        || iface == "org.freedesktop.NetworkManager"
+    {
+        return SignalKind::EnvironmentChanged;
+    }
+    SignalKind::Other
+}
+
+/// Waits for the next message of `stream` (`None` once it ended).
+async fn next_message(stream: &mut MessageStream) -> Option<zbus::Result<zbus::Message>> {
+    std::future::poll_fn(|cx| Pin::new(&mut *stream).poll_next(cx)).await
+}
+
+/// The next message of `stream` if one is ready right now, without waiting.
+async fn ready_message(stream: &mut MessageStream) -> Option<zbus::Result<zbus::Message>> {
+    std::future::poll_fn(|cx| match Pin::new(&mut *stream).poll_next(cx) {
+        Poll::Ready(item) => Poll::Ready(item),
+        Poll::Pending => Poll::Ready(None),
+    })
+    .await
+}
+
+/// Subscribes `conn` to the monitored signals; `false` once a stop is requested.
+async fn add_match_rules(conn: &Connection, stop: &StopSignal) -> bool {
+    match stop.until_stopped(zbus::fdo::DBusProxy::new(conn)).await {
+        None => return false,
         Some(Ok(dbus_proxy)) => {
             for rule in monitor_match_rules() {
                 match stop.until_stopped(dbus_proxy.add_match_rule(rule)).await {
-                    None => return,
+                    None => return false,
                     Some(Err(err)) => eprintln!(
                         "kestic-daemon: failed to register system monitor match rule: {err}"
                     ),
@@ -586,47 +630,63 @@ async fn run_monitor_loop(
             "kestic-daemon: failed to create DBusProxy for system monitor match rules: {err}"
         ),
     }
+    true
+}
+
+/// Listener loop of the monitor thread; every await point ends as soon as `stop` is requested.
+///
+/// Signals arrive on one connection, environment reads use a second one: a reply never waits
+/// behind a full signal queue (zbus stops reading a connection whose queue is full, which
+/// deadlocked the listener during the burst of signals when the lid closes). Each burst is
+/// drained first, forwarding sleep and mount events at once, and the environment is then read
+/// once instead of once per signal.
+async fn run_monitor_loop(
+    cfg: MonitorBusConfig,
+    stop: StopSignal,
+    event_tx: mpsc::Sender<SystemMonitorEvent>,
+    wakeup_tx: Option<mpsc::Sender<()>>,
+) {
+    let Some(Ok(conn)) = stop.until_stopped(connect_target_bus(&cfg)).await else {
+        return;
+    };
+    let Some(Ok(env_conn)) = stop.until_stopped(connect_target_bus(&cfg)).await else {
+        return;
+    };
+    if !add_match_rules(&conn, &stop).await {
+        return;
+    }
+    let send = |ev: SystemMonitorEvent| {
+        let _ = event_tx.send(ev);
+        if let Some(ref wtx) = wakeup_tx {
+            let _ = wtx.send(());
+        }
+    };
 
     let mut stream = MessageStream::from(&conn);
-    while let Some(Some(msg_res)) = stop.until_stopped(stream.next()).await {
-        let Ok(msg) = msg_res else {
-            continue;
-        };
-        let hdr = msg.header();
-        let iface = hdr.interface().map(|i| i.as_str()).unwrap_or("");
-        let member = hdr.member().map(|m| m.as_str()).unwrap_or("");
-        let path = hdr.path().map(|p| p.as_str()).unwrap_or("");
-
-        let event = if iface == "org.freedesktop.login1.Manager" && member == "PrepareForSleep" {
-            msg.body()
-                .deserialize::<bool>()
-                .ok()
-                .map(SystemMonitorEvent::PrepareForSleep)
-        } else if path.starts_with("/org/freedesktop/UDisks2")
-            && (iface == "org.freedesktop.DBus.ObjectManager"
-                || iface == "org.freedesktop.DBus.Properties")
-        {
-            Some(SystemMonitorEvent::MountChanged)
-        } else if path.starts_with("/org/freedesktop/UPower")
-            || path.starts_with("/org/freedesktop/NetworkManager")
-            || iface == "org.freedesktop.NetworkManager"
-        {
+    while let Some(Some(first)) = stop.until_stopped(next_message(&mut stream)).await {
+        let mut env_changed = false;
+        let mut item = Some(first);
+        while let Some(msg_res) = item {
+            if let Ok(msg) = msg_res {
+                match classify_signal(&msg) {
+                    SignalKind::Event(ev) => send(ev),
+                    SignalKind::EnvironmentChanged => env_changed = true,
+                    SignalKind::Other => {}
+                }
+            }
+            item = match stop.until_stopped(ready_message(&mut stream)).await {
+                Some(next) => next,
+                None => return,
+            };
+        }
+        if env_changed {
             let Some(env) = stop
-                .until_stopped(read_system_environment_async(&conn, &cfg))
+                .until_stopped(read_system_environment_async(&env_conn, &cfg))
                 .await
             else {
                 return;
             };
-            Some(SystemMonitorEvent::EnvironmentChanged(env))
-        } else {
-            None
-        };
-
-        if let Some(ev) = event {
-            let _ = event_tx.send(ev);
-            if let Some(ref wtx) = wakeup_tx {
-                let _ = wtx.send(());
-            }
+            send(SystemMonitorEvent::EnvironmentChanged(env));
         }
     }
 }

@@ -299,3 +299,53 @@ fn ac_m3_09_3_after_wake_up_interrupted_backup_is_pending_then_starts() {
         },
     );
 }
+
+/// M3 manual acceptance (2026-11-19, lid closed during a run): a burst of UPower /
+/// NetworkManager signals, as when the lid closes and the network goes to sleep, must not keep
+/// the system monitor from delivering the `PrepareForSleep(true)` that follows. Before the fix
+/// the listener awaited its environment read on the same connection whose full signal queue
+/// blocked the reply: a deadlock, so the run was never interrupted.
+#[test]
+fn m3_acceptance_prepare_for_sleep_arrives_after_signal_burst() {
+    run_isolated_test(
+        "m3_acceptance_prepare_for_sleep_arrives_after_signal_burst",
+        "KESTIC_M3_ACC_SLEEP_BURST_INNER",
+        |_root| {
+            let fakes = start_fakes();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let monitor = kestic_daemon::monitors::SystemMonitorHandle::start(
+                kestic_daemon::monitors::MonitorBusConfig {
+                    use_session_bus: true,
+                    ..Default::default()
+                },
+                tx,
+                None,
+            );
+            std::thread::sleep(Duration::from_millis(500));
+
+            for i in 0..300 {
+                fakes.upower.set_on_battery(i % 2 == 0, 80.0);
+            }
+            fakes.logind.emit_prepare_for_sleep(true);
+
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut got_sleep = false;
+            while Instant::now() < deadline {
+                match rx.recv_timeout(Duration::from_millis(200)) {
+                    Ok(kestic_daemon::monitors::SystemMonitorEvent::PrepareForSleep(true)) => {
+                        got_sleep = true;
+                        break;
+                    }
+                    Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            monitor.stop();
+
+            assert!(
+                got_sleep,
+                "PrepareForSleep(true) must arrive within 10 s after a signal burst"
+            );
+        },
+    );
+}
