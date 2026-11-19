@@ -1,0 +1,804 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Core daemon state (`DaemonCore`), configuration, availability/run cache, and state/tray DTO builders.
+
+use super::error::{KesticServiceErr, map_provider_err};
+use super::run_errors::unreadable_items_from_lines;
+use crate::dbus_api::{
+    ActiveRunProgressDto, BlockingStateDto, DaemonStateDto, DestinationAvailabilityDto,
+    KESTIC_BUS_NAME, ResticStatusDto, SecretStoreStatusDto,
+};
+use crate::i18n::i18n;
+use crate::job_view::DEFAULT_JOB_VIEW_DEST;
+use crate::monitors::{MonitorBusConfig, list_known_networks, read_system_environment};
+use crate::secrets::SecretServiceStore;
+use crate::tray::{KesticTrayState, TrayHandle, TrayStatus};
+use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult, default_state_dir};
+use kestic_core::clock::{Clock, SystemClock};
+use kestic_core::config::{AppConfig, load_optional_config, save_config};
+use kestic_core::history::{
+    BackupRuntimeState, DestinationMaintenanceState, HistoryError, PauseState, RunHistory,
+};
+use kestic_core::model::{BackupId, DestinationId, ResticProvider, Run, RunId, RunKind, RunStatus};
+use kestic_core::mount::{MountInspector, SourceCheckResult, SystemMountInspector};
+use kestic_core::provider::{ResolvedRestic, ResticProviderError, resolve_and_check};
+use kestic_core::restic::CancelHandle;
+use kestic_core::scheduler::{
+    SystemEnvironment, TimezoneSpec, UnmetPrecondition, format_local_hhmm, format_local_slot_hint,
+};
+use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::env;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
+use time::OffsetDateTime;
+use zbus::Connection;
+
+/// Cache TTL for destination/source availability checks (`M1-S23`, `AC-M1-23-3`).
+pub const AVAILABILITY_CACHE_TTL_SECS: i64 = 60;
+
+/// Cooldown before scheduled runs re-probe a locked password store or unusable restic
+/// (`restic version` + Secret Service), so a blocking state is not re-probed on every tick.
+pub const BLOCKING_PROBE_RETRY_SECS: i64 = 60;
+
+/// Probe result tuple cached for the state DTO (`§6.1`).
+pub(super) type ProbeTuple = (
+    ResticStatusDto,
+    SecretStoreStatusDto,
+    Option<BlockingStateDto>,
+);
+
+/// Optional status override for D-Bus tests covering states added in M3/M4 (`AC-M1-11-1`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulatedOverallStatus {
+    Overdue,
+    Paused,
+    Waiting,
+    PausedAndWaiting,
+    MaintenanceRunning,
+    RestoreRunning,
+}
+
+/// Configuration for starting the Kestic daemon.
+#[derive(Clone)]
+pub struct DaemonRunConfig {
+    pub bus_name: String,
+    pub assume_sni_available: bool,
+    pub send_test_notification: bool,
+    pub tray_state: KesticTrayState,
+    pub ready_file: Option<PathBuf>,
+    pub duration: Option<Duration>,
+    pub config_path: Option<PathBuf>,
+    pub state_dir: Option<PathBuf>,
+    pub kestic_binary: Option<PathBuf>,
+    pub clock: Arc<dyn Clock>,
+    pub secret_store: Option<Arc<dyn SecretStore + Send + Sync>>,
+    pub mount_inspector: Option<Arc<dyn MountInspector>>,
+    pub suppress_ui_spawn: bool,
+    pub enable_job_view: bool,
+    pub job_view_dest: String,
+    pub enable_portal_inhibit: bool,
+    pub simulated_status: Option<SimulatedOverallStatus>,
+    pub timezone: TimezoneSpec,
+    pub monitor_bus: MonitorBusConfig,
+    pub enable_system_monitors: bool,
+    pub enable_scheduler: bool,
+    pub enable_binary_watch: bool,
+    pub binary_watch_args: Option<Vec<String>>,
+}
+
+impl Default for DaemonRunConfig {
+    fn default() -> Self {
+        Self {
+            bus_name: KESTIC_BUS_NAME.to_string(),
+            assume_sni_available: true,
+            send_test_notification: false,
+            tray_state: KesticTrayState {
+                status: TrayStatus::Passive,
+                ..Default::default()
+            },
+            ready_file: None,
+            duration: None,
+            config_path: None,
+            state_dir: None,
+            kestic_binary: None,
+            clock: Arc::new(SystemClock),
+            secret_store: None,
+            mount_inspector: None,
+            suppress_ui_spawn: false,
+            enable_job_view: true,
+            job_view_dest: DEFAULT_JOB_VIEW_DEST.to_string(),
+            enable_portal_inhibit: true,
+            simulated_status: None,
+            timezone: TimezoneSpec::System,
+            monitor_bus: MonitorBusConfig::default(),
+            enable_system_monitors: false,
+            enable_scheduler: false,
+            enable_binary_watch: false,
+            binary_watch_args: None,
+        }
+    }
+}
+
+/// Outcome of running [`super::run_daemon`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonOutcome {
+    /// Another daemon already owned the D-Bus name; this instance exited cleanly (`AC-M0-07-1`, `AC-M1-09-1`).
+    AlreadyRunning,
+    /// This instance acquired the D-Bus lock and ran until requested to stop.
+    RanAndStopped,
+}
+
+pub(super) struct ActiveRunEntry {
+    pub(super) run: Run,
+    pub(super) backup_id: Option<BackupId>,
+    pub(super) backup_name: String,
+    pub(super) progress: ActiveRunProgressDto,
+    pub(super) cancel: CancelHandle,
+    pub(super) sleep_interrupted: bool,
+}
+
+pub(super) struct DryRunEntry {
+    pub(super) state: String,
+    pub(super) result: Option<BackupDryRunResult>,
+    pub(super) error: Option<String>,
+    pub(super) cancel: CancelHandle,
+}
+
+pub(super) struct RetentionPreviewEntry {
+    pub(super) state: String,
+    pub(super) result: Option<ForgetPreviewResult>,
+    pub(super) error: Option<String>,
+    pub(super) cancel: CancelHandle,
+}
+
+/// Core stateful daemon engine shared between D-Bus interface methods, tray actions, and unit tests.
+pub struct DaemonCore {
+    pub(super) config_path: PathBuf,
+    pub(super) state_dir: PathBuf,
+    pub(super) kestic_binary: PathBuf,
+    pub(super) clock: Arc<dyn Clock>,
+    pub(crate) secret_store: Arc<dyn SecretStore + Send + Sync>,
+    pub(super) mount_inspector: Arc<dyn MountInspector>,
+    pub(super) config: AppConfig,
+    pub(super) has_config_file: bool,
+    pub(super) config_load_error: Option<String>,
+    pub(super) history: RunHistory,
+    pub(super) runs_cache: Vec<Run>,
+    pub(super) last_availability_check: Option<OffsetDateTime>,
+    pub(super) dest_availability: HashMap<DestinationId, DestinationAvailabilityDto>,
+    pub(super) source_availability: HashMap<BackupId, SourceCheckResult>,
+    pub(super) availability_probe_count: u64,
+    pub(super) availability_probe_in_flight: bool,
+    pub(super) availability_probe_started_at: Option<OffsetDateTime>,
+    pub(super) availability_probe_generation: u64,
+    pub(super) source_probe_in_flight: bool,
+    pub(super) source_probe_started_at: Option<OffsetDateTime>,
+    pub(super) source_probe_generation: u64,
+    pub(super) cached_probe: ProbeTuple,
+    pub(super) blocking_probe_retry_at: Option<OffsetDateTime>,
+    pub(super) backup_state_cache: HashMap<BackupId, BackupRuntimeState>,
+    pub(super) dest_state_cache: HashMap<DestinationId, DestinationMaintenanceState>,
+    pub(super) global_pause_cache: Option<PauseState>,
+    /// Destinations with a scheduled start/maintenance dispatched to a worker thread
+    /// (value: the backup being started, `None` for maintenance).
+    pub(super) scheduled_dispatch: HashMap<DestinationId, Option<BackupId>>,
+    /// Unreadable items of finished backup runs, parsed from their logs outside the
+    /// `DaemonCore` lock (startup / run worker), so state building never reads log files.
+    pub(super) run_unreadable_cache: HashMap<RunId, Vec<String>>,
+    pub(super) active_runs: HashMap<RunId, ActiveRunEntry>,
+    pub(super) claiming_destinations: HashSet<DestinationId>,
+    pub(super) queued_backups: VecDeque<BackupId>,
+    pub(super) sleep_in_progress: bool,
+    pub(super) dry_runs: HashMap<String, DryRunEntry>,
+    pub(super) retention_previews: HashMap<String, RetentionPreviewEntry>,
+    pub(super) window_active: bool,
+    pub(super) window_page: String,
+    pub(crate) registered_gui_sender: Option<String>,
+    pub(super) simulated_status: Option<SimulatedOverallStatus>,
+    pub(super) icon_theme_path: String,
+    pub(super) enable_job_view: bool,
+    pub(super) job_view_dest: String,
+    pub(super) enable_portal_inhibit: bool,
+    pub(super) suppress_ui_spawn: bool,
+    pub(super) timezone: TimezoneSpec,
+    pub(crate) monitor_bus: MonitorBusConfig,
+    pub(super) enable_system_monitors: bool,
+    pub(super) system_env: SystemEnvironment,
+    pub(super) dest_stale_locks: HashMap<DestinationId, usize>,
+    pub(super) sleep_interrupted_backups: HashSet<BackupId>,
+    pub(crate) conn: Option<Connection>,
+    pub(crate) tray: Option<Arc<TrayHandle>>,
+    pub(super) shutdown_flag: Arc<AtomicBool>,
+    pub(super) quit_tx: Option<mpsc::Sender<()>>,
+}
+
+impl DaemonCore {
+    /// Initializes daemon state, opens SQLite `RunHistory`, recovers stuck `Running` runs as
+    /// `Interrupted` (`AC-M1-10-2`, `AC-M3-10-3`), initializes baselines, and loads `config.toml` if present.
+    pub fn new(run_config: &DaemonRunConfig) -> Result<Self, String> {
+        let config_path = match &run_config.config_path {
+            Some(p) => p.clone(),
+            None => kestic_core::config::default_config_path().map_err(|e| e.to_string())?,
+        };
+        let state_dir = match &run_config.state_dir {
+            Some(d) => d.clone(),
+            None => default_state_dir().map_err(|e| e.to_string())?,
+        };
+        let kestic_binary = match &run_config.kestic_binary {
+            Some(p) => p.clone(),
+            None => env::current_exe().unwrap_or_else(|_| PathBuf::from("kestic")),
+        };
+
+        let secret_store: Arc<dyn SecretStore + Send + Sync> = if let Some(store) =
+            &run_config.secret_store
+        {
+            Arc::clone(store)
+        } else if let Some(file_path) = env::var_os("KESTIC_SECRET_FILE").filter(|v| !v.is_empty())
+        {
+            Arc::new(FileSecretStore::new(PathBuf::from(file_path)))
+        } else {
+            Arc::new(SecretServiceStore::default())
+        };
+
+        let mount_inspector: Arc<dyn MountInspector> = run_config
+            .mount_inspector
+            .clone()
+            .unwrap_or_else(|| Arc::new(SystemMountInspector));
+
+        let history = RunHistory::open(&state_dir).map_err(|e| e.to_string())?;
+        // AC-M1-10-2 / AC-M3-10-3: any runs left in `running` state from a hard crash/kill become `interrupted`.
+        if let Err(err) = history.mark_interrupted_on_startup(run_config.clock.as_ref()) {
+            eprintln!("kestic-daemon: failed to mark interrupted runs on startup: {err}");
+        }
+        let runs_cache = history.list_runs().unwrap_or_default();
+
+        let (config, has_config_file, config_load_error) = match load_optional_config(&config_path)
+        {
+            Ok(Some(cfg)) => (cfg, true, None),
+            Ok(None) => (AppConfig::default(), false, None),
+            Err(err) => (
+                AppConfig::default(),
+                config_path.exists(),
+                Some(err.to_string()),
+            ),
+        };
+
+        let run_unreadable_cache = load_run_unreadable_cache(&runs_cache, &config);
+
+        let system_env = if run_config.enable_system_monitors {
+            read_system_environment(&run_config.monitor_bus)
+        } else {
+            SystemEnvironment::desktop_connected()
+        };
+
+        let cached_probe =
+            probe_restic_and_secrets_raw(&config.restic_provider, secret_store.as_ref());
+
+        let mut core = Self {
+            config_path,
+            state_dir,
+            kestic_binary,
+            clock: Arc::clone(&run_config.clock),
+            secret_store,
+            mount_inspector,
+            config,
+            has_config_file,
+            config_load_error,
+            history,
+            runs_cache,
+            last_availability_check: None,
+            dest_availability: HashMap::new(),
+            source_availability: HashMap::new(),
+            availability_probe_count: 0,
+            availability_probe_in_flight: false,
+            availability_probe_started_at: None,
+            availability_probe_generation: 0,
+            source_probe_in_flight: false,
+            source_probe_started_at: None,
+            source_probe_generation: 0,
+            cached_probe,
+            blocking_probe_retry_at: None,
+            backup_state_cache: HashMap::new(),
+            dest_state_cache: HashMap::new(),
+            global_pause_cache: None,
+            scheduled_dispatch: HashMap::new(),
+            run_unreadable_cache,
+            active_runs: HashMap::new(),
+            claiming_destinations: HashSet::new(),
+            queued_backups: VecDeque::new(),
+            sleep_in_progress: false,
+            dry_runs: HashMap::new(),
+            retention_previews: HashMap::new(),
+            window_active: false,
+            window_page: String::new(),
+            registered_gui_sender: None,
+            simulated_status: run_config.simulated_status,
+            icon_theme_path: run_config.tray_state.icon_theme_path.clone(),
+            enable_job_view: run_config.enable_job_view,
+            job_view_dest: run_config.job_view_dest.clone(),
+            enable_portal_inhibit: run_config.enable_portal_inhibit,
+            suppress_ui_spawn: run_config.suppress_ui_spawn,
+            timezone: run_config.timezone.clone(),
+            monitor_bus: run_config.monitor_bus.clone(),
+            enable_system_monitors: run_config.enable_system_monitors,
+            system_env,
+            dest_stale_locks: HashMap::new(),
+            sleep_interrupted_backups: HashSet::new(),
+            conn: None,
+            tray: None,
+            shutdown_flag: Arc::new(AtomicBool::new(false)),
+            quit_tx: None,
+        };
+        core.load_state_caches();
+        core.ensure_baselines();
+        core.refresh_availability_if_needed(true);
+        Ok(core)
+    }
+
+    pub fn availability_probe_count(&self) -> u64 {
+        self.availability_probe_count
+    }
+
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    pub fn history(&self) -> &RunHistory {
+        &self.history
+    }
+
+    pub fn system_environment(&self) -> &SystemEnvironment {
+        &self.system_env
+    }
+
+    pub fn set_system_environment(&mut self, env: SystemEnvironment) {
+        self.system_env = env;
+    }
+
+    pub(super) fn is_destination_busy(&self, dest_id: &DestinationId) -> bool {
+        self.claiming_destinations.contains(dest_id)
+            || self
+                .active_runs
+                .values()
+                .any(|e| &e.run.destination_id == dest_id)
+    }
+
+    pub(super) fn upsert_run_cached(
+        &mut self,
+        run: &Run,
+        secrets: &[&str],
+    ) -> Result<(), HistoryError> {
+        self.history.upsert_run(run, secrets)?;
+        if let Some(existing) = self
+            .runs_cache
+            .iter_mut()
+            .find(|r| r.id == run.id && r.started_at == run.started_at)
+        {
+            *existing = run.clone();
+            return Ok(());
+        }
+        self.runs_cache.retain(|r| r.id != run.id);
+        let insert_idx = self
+            .runs_cache
+            .iter()
+            .position(|r| r.started_at <= run.started_at)
+            .unwrap_or(self.runs_cache.len());
+        self.runs_cache.insert(insert_idx, run.clone());
+        Ok(())
+    }
+
+    pub(super) fn delete_pending_runs_cached(
+        &mut self,
+        backup_id: &BackupId,
+    ) -> Result<(), HistoryError> {
+        if !self.has_pending_backup_run_cached(backup_id) {
+            return Ok(());
+        }
+        self.history.delete_pending_runs_for_backup(backup_id)?;
+        self.runs_cache
+            .retain(|r| !(r.backup_id() == Some(backup_id) && r.status == RunStatus::Pending));
+        Ok(())
+    }
+
+    pub(super) fn last_successful_backup_at_cached(
+        &self,
+        backup_id: &BackupId,
+    ) -> Option<OffsetDateTime> {
+        self.runs_cache
+            .iter()
+            .find(|r| {
+                r.backup_id() == Some(backup_id)
+                    && matches!(r.kind, RunKind::Backup { .. })
+                    && matches!(r.status, RunStatus::Ok | RunStatus::Warning)
+            })
+            .map(|r| r.finished_at.unwrap_or(r.started_at))
+    }
+
+    pub(super) fn ensure_baselines(&mut self) {
+        let now = self.clock.now_utc();
+        let backup_ids: Vec<BackupId> = self.config.backups.iter().map(|b| b.id.clone()).collect();
+        for id in &backup_ids {
+            let mut rs = self.load_backup_runtime_state(id);
+            if rs.baseline_at.is_none() {
+                rs.baseline_at = Some(now);
+                let _ = self.store_backup_runtime_state(id, &rs);
+            }
+        }
+        let dest_ids: Vec<DestinationId> = self
+            .config
+            .destinations
+            .iter()
+            .map(|d| d.id.clone())
+            .collect();
+        for id in &dest_ids {
+            let mut ds = self.load_destination_maintenance_state(id);
+            if ds.baseline_at.is_none() {
+                ds.baseline_at = Some(now);
+                let _ = self.store_destination_maintenance_state(id, &ds);
+            }
+        }
+    }
+
+    /// Stores a fresh probe result; a blocking result arms the scheduled re-probe cooldown
+    /// ([`BLOCKING_PROBE_RETRY_SECS`]), a clean result clears it.
+    pub(super) fn record_probe(&mut self, probe: ProbeTuple) {
+        self.blocking_probe_retry_at = if probe.2.is_some() {
+            Some(self.clock.now_utc() + time::Duration::seconds(BLOCKING_PROBE_RETRY_SECS))
+        } else {
+            None
+        };
+        self.cached_probe = probe;
+    }
+
+    /// Whether scheduled starts must wait because the last probe found a blocking state
+    /// (locked password store / unusable restic) and its re-probe cooldown is still running.
+    pub(super) fn scheduled_probe_blocked(&self, now: OffsetDateTime) -> bool {
+        self.cached_probe.2.is_some() && self.blocking_probe_retry_at.is_some_and(|t| now < t)
+    }
+
+    pub(super) fn format_pause_label(
+        &self,
+        paused_since: OffsetDateTime,
+        paused_until: Option<OffsetDateTime>,
+        now: OffsetDateTime,
+    ) -> String {
+        let since_str = format_local_hhmm(paused_since, &self.timezone);
+        if let Some(until) = paused_until {
+            let until_str = format_local_slot_hint(until, now, &self.timezone);
+            i18n("Paused since %1 (until %2)").subs(&[&since_str, &until_str])
+        } else {
+            i18n("Paused since %1").subs(&[&since_str])
+        }
+    }
+
+    pub(super) fn format_unmet_condition_item(&self, item: &UnmetPrecondition) -> String {
+        match item {
+            UnmetPrecondition::OnBattery => {
+                if let Some(pct) = self.system_env.battery_percent {
+                    i18n("AC power (battery %1%)").subs(&[&pct.to_string()])
+                } else {
+                    i18n("AC power").into()
+                }
+            }
+            UnmetPrecondition::NoNetwork => i18n("network connection").into(),
+            UnmetPrecondition::MeteredNetwork => i18n("unmetered connection").into(),
+            UnmetPrecondition::AllowedNetworkMismatch { allowed } => {
+                i18n("allowed network (%1)").subs(&[&allowed.join(", ")])
+            }
+            UnmetPrecondition::SourceUnavailable => i18n("source available").into(),
+            UnmetPrecondition::DestinationUnreachable => i18n("destination reachable").into(),
+            UnmetPrecondition::Queued => i18n("another run on this destination").into(),
+            UnmetPrecondition::Backoff => i18n("retry cooldown").into(),
+        }
+    }
+
+    pub(super) fn format_pending_reason_entry(
+        &self,
+        item: &UnmetPrecondition,
+        backoff_until: Option<OffsetDateTime>,
+        now: OffsetDateTime,
+    ) -> (&'static str, String) {
+        match item {
+            UnmetPrecondition::SourceUnavailable => (
+                "source_unavailable",
+                i18n("Waiting: source unavailable").into(),
+            ),
+            UnmetPrecondition::DestinationUnreachable => (
+                "destination_unreachable",
+                i18n("Waiting: destination unreachable").into(),
+            ),
+            UnmetPrecondition::OnBattery => ("on_battery", i18n("Waiting: AC power").into()),
+            UnmetPrecondition::NoNetwork => ("no_network", i18n("Waiting: network").into()),
+            UnmetPrecondition::MeteredNetwork => {
+                ("metered", i18n("Waiting: unmetered connection").into())
+            }
+            UnmetPrecondition::AllowedNetworkMismatch { .. } => {
+                ("wrong_network", i18n("Waiting: allowed network").into())
+            }
+            UnmetPrecondition::Queued => (
+                "queue",
+                i18n("Waiting: another run on this destination").into(),
+            ),
+            UnmetPrecondition::Backoff => {
+                let ts = backoff_until
+                    .map(|u| format_local_slot_hint(u, now, &self.timezone))
+                    .unwrap_or_else(|| "—".to_string());
+                ("backoff", i18n("Waiting: next attempt at %1").subs(&[&ts]))
+            }
+        }
+    }
+
+    pub(super) fn persist_config_without_probe(
+        &mut self,
+        next: AppConfig,
+    ) -> Result<(), KesticServiceErr> {
+        if let Some(ref load_err) = self.config_load_error {
+            return Err(KesticServiceErr::InvalidInput(format!(
+                "refusing to overwrite incompatible config.toml: {load_err}"
+            )));
+        }
+        save_config(&self.config_path, &next).map_err(super::error::map_config_err)?;
+        self.config = next;
+        self.has_config_file = true;
+        self.last_availability_check = None;
+        Ok(())
+    }
+
+    pub(super) fn persist_config(&mut self, next: AppConfig) -> Result<(), KesticServiceErr> {
+        self.persist_config_without_probe(next)
+    }
+
+    pub(crate) fn set_window_active_state(&mut self, active: bool, page: &str) {
+        self.window_active = active;
+        self.window_page = page.to_string();
+    }
+
+    pub fn set_expert_mode(&mut self, enabled: bool) -> Result<(), KesticServiceErr> {
+        let mut next = self.config.clone();
+        next.expert_mode = enabled;
+        self.persist_config(next)
+    }
+
+    pub fn cancel_run(&self, run_id: &str) -> Result<(), KesticServiceErr> {
+        let id = RunId::parse(run_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let entry = self
+            .active_runs
+            .get(&id)
+            .ok_or_else(|| KesticServiceErr::NotFound(run_id.to_string()))?;
+        entry.cancel.cancel();
+        Ok(())
+    }
+
+    pub fn cancel_any_active_run(&self) -> bool {
+        let mut any = false;
+        for entry in self.active_runs.values() {
+            entry.cancel.cancel();
+            any = true;
+        }
+        any
+    }
+
+    pub fn request_shutdown(&self) {
+        self.cancel_any_active_run();
+        self.shutdown_flag.store(true, Ordering::SeqCst);
+        if let Some(tx) = &self.quit_tx {
+            let _ = tx.send(());
+        }
+    }
+
+    pub fn list_known_networks(&self) -> Vec<String> {
+        list_known_networks(&self.monitor_bus)
+    }
+}
+
+/// Parses the unreadable items of the last finished run of every configured backup from its
+/// log file (startup only, before the `DaemonCore` is shared).
+fn load_run_unreadable_cache(runs: &[Run], config: &AppConfig) -> HashMap<RunId, Vec<String>> {
+    let mut cache = HashMap::new();
+    for backup in &config.backups {
+        let last = runs.iter().find(|r| {
+            r.backup_id() == Some(&backup.id)
+                && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
+        });
+        if let Some(run) = last
+            && run.status == RunStatus::Warning
+            && let Some(path) = &run.log_path
+            && std::fs::metadata(path).is_ok_and(|m| m.is_file())
+            && let Ok(content) = std::fs::read_to_string(path)
+        {
+            cache.insert(run.id.clone(), unreadable_items_from_lines(content.lines()));
+        }
+    }
+    cache
+}
+
+pub(super) fn probe_restic_and_secrets_raw(
+    provider: &ResticProvider,
+    secret_store: &dyn SecretStore,
+) -> ProbeTuple {
+    probe_restic_and_secrets_resolved(provider, secret_store).0
+}
+
+/// Probes restic and the password store once, returning the probe tuple and, if usable,
+/// the resolved restic binary (single `restic version` call per start).
+pub(super) fn probe_restic_and_secrets_resolved(
+    provider: &ResticProvider,
+    secret_store: &dyn SecretStore,
+) -> (ProbeTuple, Result<ResolvedRestic, ResticProviderError>) {
+    let resolved_res = resolve_and_check(provider);
+    let restic_status = match &resolved_res {
+        Ok(resolved) => ResticStatusDto {
+            valid: true,
+            binary_path: Some(resolved.binary.to_string_lossy().into_owned()),
+            version: Some(resolved.version.to_string()),
+            error_kind: None,
+            found_version: Some(resolved.version.to_string()),
+            message: format!("restic {}", resolved.version),
+            detail: None,
+        },
+        Err(ResticProviderError::NotFound { min_version }) => ResticStatusDto {
+            valid: false,
+            binary_path: None,
+            version: None,
+            error_kind: Some("not_found".to_string()),
+            found_version: None,
+            message: i18n("restic not found; at least %1 required").subs(&[min_version]),
+            detail: None,
+        },
+        Err(ResticProviderError::TooOld {
+            binary,
+            found,
+            min_version,
+        }) => ResticStatusDto {
+            valid: false,
+            binary_path: Some(binary.to_string_lossy().into_owned()),
+            version: None,
+            error_kind: Some("too_old".to_string()),
+            found_version: Some(found.to_string()),
+            message: i18n("restic %1 is too old; Kestic needs at least %2")
+                .subs(&[&found.to_string(), min_version]),
+            detail: None,
+        },
+        Err(ResticProviderError::InvalidCustomPath { path, reason }) => ResticStatusDto {
+            valid: false,
+            binary_path: Some(path.to_string_lossy().into_owned()),
+            version: None,
+            error_kind: Some("invalid_custom_path".to_string()),
+            found_version: None,
+            message: i18n("Custom restic path is invalid (%1): %2")
+                .subs(&[&path.to_string_lossy(), reason]),
+            detail: Some(reason.clone()),
+        },
+        Err(ResticProviderError::UnreadableVersion { binary, detail }) => ResticStatusDto {
+            valid: false,
+            binary_path: Some(binary.to_string_lossy().into_owned()),
+            version: None,
+            error_kind: Some("unreadable_version".to_string()),
+            found_version: None,
+            message: i18n("Unable to determine restic version (%1)").subs(&[detail]),
+            detail: Some(detail.clone()),
+        },
+    };
+
+    let secret_status = match secret_store.check_availability() {
+        Ok(()) => SecretStoreStatusDto {
+            available: true,
+            locked: false,
+            message: None,
+        },
+        Err(SecretError::LockedOrPromptRequired(msg)) => SecretStoreStatusDto {
+            available: false,
+            locked: true,
+            message: Some(msg),
+        },
+        Err(err) => SecretStoreStatusDto {
+            available: false,
+            locked: false,
+            message: Some(err.to_string()),
+        },
+    };
+
+    let blocking = if !secret_status.available {
+        Some(BlockingStateDto {
+            kind: "secret_store_locked".to_string(),
+            message: i18n(
+                "The system password store (Secret Service / KWallet) is locked. Kestic cannot access destinations.",
+            )
+            .into(),
+        })
+    } else if !restic_status.valid {
+        Some(BlockingStateDto {
+            kind: "restic_unavailable".to_string(),
+            message: restic_status.message.clone(),
+        })
+    } else {
+        None
+    };
+
+    ((restic_status, secret_status, blocking), resolved_res)
+}
+
+/// Probes the password store and restic before a backup/maintenance run (one `restic version`).
+///
+/// On failure the probe is cached (arming the scheduled re-probe cooldown), the destination
+/// claim is released, and the matching error is returned.
+pub(super) fn probe_before_run(
+    shared: &Arc<Mutex<DaemonCore>>,
+    provider: &ResticProvider,
+    secret_store: &dyn SecretStore,
+    dest_id: &DestinationId,
+    claim_guard: &mut super::availability::DestinationClaimGuard,
+) -> Result<(ProbeTuple, ResolvedRestic), KesticServiceErr> {
+    let (probe, resolved) = probe_restic_and_secrets_resolved(provider, secret_store);
+    let err = match resolved {
+        Ok(resolved) if probe.1.available => return Ok((probe, resolved)),
+        Ok(_) => KesticServiceErr::SecretStoreLocked(
+            probe
+                .1
+                .message
+                .clone()
+                .unwrap_or_else(|| i18n("Password store is locked").into()),
+        ),
+        Err(_) if !probe.1.available => KesticServiceErr::SecretStoreLocked(
+            probe
+                .1
+                .message
+                .clone()
+                .unwrap_or_else(|| i18n("Password store is locked").into()),
+        ),
+        Err(err) => map_provider_err(err),
+    };
+    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    guard.record_probe(probe);
+    guard.claiming_destinations.remove(dest_id);
+    claim_guard.disarm();
+    Err(err)
+}
+
+pub(crate) fn refresh_probe_unlocked(shared: &Arc<Mutex<DaemonCore>>) {
+    let (provider, secret_store) = {
+        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        (
+            guard.config.restic_provider.clone(),
+            Arc::clone(&guard.secret_store),
+        )
+    };
+    let probe = probe_restic_and_secrets_raw(&provider, secret_store.as_ref());
+    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    guard.record_probe(probe);
+}
+
+pub(crate) fn set_restic_provider_unlocked(
+    shared: &Arc<Mutex<DaemonCore>>,
+    provider_json: &str,
+) -> Result<
+    (
+        ResticStatusDto,
+        Option<Connection>,
+        DaemonStateDto,
+        KesticTrayState,
+    ),
+    KesticServiceErr,
+> {
+    let provider: ResticProvider = serde_json::from_str(provider_json)
+        .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid provider JSON: {e}")))?;
+    let _ = resolve_and_check(&provider).map_err(map_provider_err)?;
+    let secret_store = {
+        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        Arc::clone(&guard.secret_store)
+    };
+    let probe = probe_restic_and_secrets_raw(&provider, secret_store.as_ref());
+    let restic_status = probe.0.clone();
+
+    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let mut next = guard.config.clone();
+    next.restic_provider = provider;
+    guard.persist_config(next)?;
+    guard.record_probe(probe);
+    let (state_dto, tray_state) = guard.build_state_and_tray();
+    Ok((restic_status, guard.conn.clone(), state_dto, tray_state))
+}

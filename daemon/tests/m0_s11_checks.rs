@@ -7,6 +7,8 @@
 //! - AC-M0-11-4: `notify-rust` `org.freedesktop.Notifications` with `desktop-entry` + event hint
 //! - AC-M0-11-5: `org.kde.StatusNotifierItem` `Status` transitions (`Passive` <-> `Active` <-> `NeedsAttention`)
 
+mod common;
+
 use kestic_daemon::job_view::{CAPABILITY_KILLABLE, JobProgress, JobViewHandle};
 use kestic_daemon::notifications::{KESTIC_DESKTOP_ENTRY, KesticEvent, send_event_notification};
 use kestic_daemon::tray::{KesticTrayState, TrayHandle, TrayStatus};
@@ -58,6 +60,13 @@ fn run_isolated_dbus_test(test_name: &str, env_key: &str) {
 
     let current_exe = std::env::current_exe().expect("current test executable");
     let out = Command::new("dbus-run-session")
+        .arg(format!(
+            "--config-file={}",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/private-session-bus.xml"
+            )
+        ))
         .arg("--")
         .arg(current_exe)
         .arg(test_name)
@@ -287,87 +296,13 @@ fn ac_m0_11_2_job_view_server_v2_progress_and_cancel_in_isolated_dbus() {
     );
 }
 
-#[derive(Default)]
-struct NotificationCapture {
-    app_name: Mutex<String>,
-    summary: Mutex<String>,
-    desktop_entry: Mutex<String>,
-    event_id: Mutex<String>,
-    urgency: Mutex<Option<u8>>,
-    calls: AtomicU32,
-}
-
-struct FakeNotificationsServer {
-    capture: Arc<NotificationCapture>,
-}
-
-#[interface(name = "org.freedesktop.Notifications")]
-impl FakeNotificationsServer {
-    #[allow(clippy::too_many_arguments)]
-    fn notify(
-        &self,
-        app_name: &str,
-        _replaces_id: u32,
-        _app_icon: &str,
-        summary: &str,
-        _body: &str,
-        _actions: Vec<String>,
-        hints: HashMap<String, OwnedVariant>,
-        _expire_timeout: i32,
-    ) -> u32 {
-        *self.capture.app_name.lock().expect("lock") = app_name.to_string();
-        *self.capture.summary.lock().expect("lock") = summary.to_string();
-        if let Some(entry) = hints
-            .get("desktop-entry")
-            .and_then(|v| <&str>::try_from(v).ok())
-        {
-            *self.capture.desktop_entry.lock().expect("lock") = entry.to_string();
-        }
-        if let Some(ev) = hints
-            .get("x-kde-eventId")
-            .and_then(|v| <&str>::try_from(v).ok())
-        {
-            *self.capture.event_id.lock().expect("lock") = ev.to_string();
-        }
-        if let Some(urg) = hints.get("urgency").and_then(|v| u8::try_from(v).ok()) {
-            *self.capture.urgency.lock().expect("lock") = Some(urg);
-        }
-        self.capture.calls.fetch_add(1, Ordering::SeqCst) + 1
-    }
-
-    fn get_capabilities(&self) -> Vec<String> {
-        vec!["body".to_string(), "actions".to_string()]
-    }
-
-    fn get_server_information(&self) -> (String, String, String, String) {
-        (
-            "FakePlasmaNotifications".to_string(),
-            "KesticTest".to_string(),
-            "1.0".to_string(),
-            "1.2".to_string(),
-        )
-    }
-}
-
 /// AC-M0-11-4 (U6, U7): Verifies `notify-rust 4.19.0` sends `desktop-entry`, `x-kde-eventId`,
 /// and `Urgency::Normal` over `org.freedesktop.Notifications` inside `dbus-run-session`.
 #[test]
 fn ac_m0_11_4_notify_rust_sends_desktop_entry_and_event_hint_in_isolated_dbus() {
     const INNER_ENV: &str = "KESTIC_M0_S11_NOTIFY_INNER";
     if std::env::var_os(INNER_ENV).as_deref() == Some("1".as_ref()) {
-        let capture = Arc::new(NotificationCapture::default());
-        let iface = FakeNotificationsServer {
-            capture: Arc::clone(&capture),
-        };
-
-        let _conn = block_on(async move {
-            zbus::connection::Builder::session()
-                .name("org.freedesktop.Notifications")
-                .serve_at("/org/freedesktop/Notifications", iface)
-                .build()
-                .await
-                .expect("build fake notifications server")
-        });
+        let (_notif_conn, capture) = common::start_fake_notifications();
 
         let id = send_event_notification(
             KesticEvent::BackupFailed,
@@ -376,17 +311,15 @@ fn ac_m0_11_4_notify_rust_sends_desktop_entry_and_event_hint_in_isolated_dbus() 
         )
         .expect("send notification via notify-rust");
         assert_eq!(id, 1);
-        assert_eq!(capture.calls.load(Ordering::SeqCst), 1);
-        assert_eq!(capture.app_name.lock().expect("lock").as_str(), "Kestic");
+        let captured = capture.snapshot();
+        assert_eq!(captured.len(), 1, "expected exactly 1 Notify call");
+        assert_eq!(captured[0].app_name, "Kestic");
         assert_eq!(
-            capture.desktop_entry.lock().expect("lock").as_str(),
-            KESTIC_DESKTOP_ENTRY
+            captured[0].desktop_entry.as_deref(),
+            Some(KESTIC_DESKTOP_ENTRY)
         );
-        assert_eq!(
-            capture.event_id.lock().expect("lock").as_str(),
-            "BackupFailed"
-        );
-        assert_eq!(*capture.urgency.lock().expect("lock"), Some(1));
+        assert_eq!(captured[0].event_id.as_deref(), Some("BackupFailed"));
+        assert_eq!(captured[0].urgency, Some(1));
         return;
     }
 

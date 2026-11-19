@@ -84,11 +84,11 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             id: detailPauseAction
             objectName: "backupDetailPauseAction"
-            icon.name: currentData && currentData.isPaused ? "media-playback-start" : "media-playback-pause"
-            text: currentData && currentData.isPaused ? i18n("Paused…") : i18n("Pause…")
+            icon.name: currentData && currentData.isPaused ? "media-playback-start" : "state-pause"
+            text: currentData && currentData.isPaused ? i18n("Resume") : i18n("Pause…")
             enabled: currentData !== null && appBackend.blocking_kind !== "daemon_unreachable"
             tooltip: currentData && currentData.isPaused ? currentData.pausedLine : i18n("Temporarily pause this backup's schedule")
-            onTriggered: backupPauseMenu.popup()
+            onTriggered: currentData && currentData.isPaused ? appBackend.resumeBackup(backupId) : backupPauseMenu.popup()
         },
         Kirigami.Action {
             id: detailBackUpAnywayAction
@@ -144,33 +144,26 @@ Kirigami.ScrollablePage {
         Controls.MenuItem {
             objectName: "pauseBackup1hItem"
             text: i18n("1 Hour")
+            Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "1h")
         }
         Controls.MenuItem {
             objectName: "pauseBackup3hItem"
             text: i18n("3 Hours")
+            Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "3h")
         }
         Controls.MenuItem {
             objectName: "pauseBackupTomorrowItem"
             text: i18n("Until Tomorrow")
+            Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "tomorrow")
         }
         Controls.MenuItem {
             objectName: "pauseBackupIndefiniteItem"
             text: i18n("Until I Resume")
+            Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "indefinite")
-        }
-        Controls.MenuSeparator {
-            visible: currentData !== null && currentData.isPaused
-        }
-        Controls.MenuItem {
-            objectName: "resumeBackupMenuItem"
-            text: i18n("Resume")
-            icon.name: "media-playback-start"
-            visible: currentData !== null && currentData.isPaused
-            enabled: currentData !== null && currentData.isPaused
-            onTriggered: appBackend.resumeBackup(backupId)
         }
     }
 

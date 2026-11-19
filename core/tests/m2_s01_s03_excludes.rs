@@ -30,6 +30,7 @@ const TEST_REPO_PW: &str = "m2-excludes-test-pw";
 
 struct ResticTestEnv {
     _dir: TempDir,
+    cache_dir: PathBuf,
     repo_dir: PathBuf,
     state_dir: PathBuf,
     store: FileSecretStore,
@@ -42,6 +43,7 @@ struct ResticTestEnv {
 impl ResticTestEnv {
     fn new(restic_bin: &Path) -> Self {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         fs::create_dir_all(&repo_dir).expect("mkdir repo");
@@ -63,6 +65,7 @@ impl ResticTestEnv {
 
         let env = Self {
             _dir: dir,
+            cache_dir,
             repo_dir,
             state_dir,
             store,
@@ -94,6 +97,7 @@ impl ResticTestEnv {
             kestic_binary: &self.helper,
             secret_store: &self.store,
             clock: &self.clock,
+            cache_dir: Some(&self.cache_dir),
         }
     }
 
@@ -103,6 +107,7 @@ impl ResticTestEnv {
         src_root: &Path,
         label: &str,
     ) -> Vec<String> {
+        let cache_str = self.cache_dir.to_string_lossy();
         let snaps = list_snapshots_for_backup(
             &backup.id,
             &self.dest,
@@ -110,7 +115,7 @@ impl ResticTestEnv {
             &self.helper,
             &self.store,
             &self.clock,
-            &[],
+            &[("RESTIC_CACHE_DIR", cache_str.as_ref())],
         )
         .expect("list snapshots");
         assert_eq!(snaps.len(), 1, "{label}: expected exactly 1 snapshot");
@@ -125,6 +130,7 @@ impl ResticTestEnv {
                 snap_id,
             ])
             .env("RESTIC_PASSWORD", TEST_REPO_PW)
+            .env("RESTIC_CACHE_DIR", &self.cache_dir)
             .output()
             .expect("restic ls");
         assert!(

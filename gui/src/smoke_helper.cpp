@@ -630,6 +630,18 @@ rust::String i18n_subs(rust::Str msgid, rust::Slice<const rust::Str> args) {
     return rust::String(utf8.constData(), static_cast<size_t>(utf8.size()));
 }
 
+rust::String i18np_subs(rust::Str singular, rust::Str plural, std::int64_t n, rust::Slice<const rust::Str> args) {
+    const QByteArray raw_singular(singular.data(), static_cast<qsizetype>(singular.size()));
+    const QByteArray raw_plural(plural.data(), static_cast<qsizetype>(plural.size()));
+    KLocalizedString localized = ki18np(raw_singular.constData(), raw_plural.constData());
+    localized = localized.subs(static_cast<qlonglong>(n));
+    for (const rust::Str& arg : args) {
+        localized = localized.subs(QString::fromUtf8(arg.data(), static_cast<qsizetype>(arg.size())));
+    }
+    const QByteArray utf8 = localized.toString().toUtf8();
+    return rust::String(utf8.constData(), static_cast<size_t>(utf8.size()));
+}
+
 std::int32_t local_offset_seconds(std::int64_t unix_secs) {
     const QDateTime dt = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(unix_secs)).toLocalTime();
     return static_cast<std::int32_t>(dt.offsetFromUtc());

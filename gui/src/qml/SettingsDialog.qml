@@ -170,7 +170,7 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.Label {
-                text: i18n("Shows technical identifiers, snapshot tags, and advanced fields.")
+                text: i18n("Shows technical identifiers, snapshot tags, and expert options.")
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true

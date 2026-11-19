@@ -1,0 +1,23 @@
+<!--
+SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Private session bus for tests and `just smoke`. Deliberately has no
+<servicedir>/<standard_session_servicedirs/>: nothing (ksecretd, portals, …)
+is D-Bus-activated, so no service can escape the test with the real HOME
+or real KWallet and outlive the bus. Services a test needs are started
+explicitly by the test itself (fakes, headless gnome-keyring-daemon).
+-->
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <keep_umask/>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>

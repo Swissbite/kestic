@@ -13,6 +13,7 @@ use kestic_core::provider::check_binary_version;
 use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_core::secrets::{FileSecretStore, SecretValue};
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
@@ -20,10 +21,106 @@ use std::time::Duration;
 use tempfile::TempDir;
 use time::macros::datetime;
 
+fn verify_snapshots_ls_and_transparent_shell(
+    label: &str,
+    backup_a: &Backup,
+    backup_b: &Backup,
+    dest: &Destination,
+    repo_dir: &Path,
+    state_dir: &Path,
+    runtime: &ResticRuntime<'_>,
+) {
+    let cache_dir = runtime.cache_dir.expect("cache dir");
+    let cache_str = cache_dir.to_string_lossy().into_owned();
+    let snaps_a = list_snapshots_for_backup(
+        &backup_a.id,
+        dest,
+        runtime.resolved,
+        runtime.kestic_binary,
+        runtime.secret_store,
+        runtime.clock,
+        &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+    )
+    .expect("list snaps a");
+    let snaps_b = list_snapshots_for_backup(
+        &backup_b.id,
+        dest,
+        runtime.resolved,
+        runtime.kestic_binary,
+        runtime.secret_store,
+        runtime.clock,
+        &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+    )
+    .expect("list snaps b");
+
+    assert_eq!(snaps_a.len(), 2, "{label}: backup A snapshots");
+    assert!(
+        snaps_a
+            .iter()
+            .all(|s| s.tags.iter().any(|t| t == &backup_a.tag()))
+    );
+    assert_eq!(snaps_b.len(), 1, "{label}: backup B snapshots");
+    assert!(
+        snaps_b
+            .iter()
+            .all(|s| s.tags.iter().any(|t| t == &backup_b.tag()))
+    );
+
+    // AC-M1-07-3: Verify `skip.tmp` is absent from snapshot A via `restic ls`.
+    let snap_id = snaps_a[0].short_id.as_deref().unwrap_or(&snaps_a[0].id);
+    let ls_out = Command::new(&runtime.resolved.binary)
+        .args([
+            "-r",
+            &repo_dir.to_string_lossy(),
+            "ls",
+            "--no-lock",
+            snap_id,
+        ])
+        .env("RESTIC_PASSWORD", "backup-test-pw")
+        .env("RESTIC_CACHE_DIR", cache_dir)
+        .output()
+        .expect("restic ls");
+    assert!(ls_out.status.success());
+    let listing = String::from_utf8_lossy(&ls_out.stdout);
+    assert!(listing.contains("keep.txt"), "{label}: listing:\n{listing}");
+    assert!(
+        !listing.contains("skip.tmp"),
+        "{label}: excluded file present in snapshot:\n{listing}"
+    );
+
+    // AC-M1-14-3: Transparent shell command runs directly in `sh` with same exit 0.
+    let cmd_spec = build_backup_command_spec(
+        backup_a,
+        dest,
+        state_dir,
+        runtime.resolved,
+        runtime.kestic_binary,
+    )
+    .expect("build spec");
+    let mut sh_spec = cmd_spec.clone();
+    sh_spec.password_command_override = Some(format!(
+        "{} secret get {}",
+        runtime.kestic_binary.display(),
+        dest.id
+    ));
+    let shell_line = sh_spec.to_transparent_shell_command();
+    let sh_out = Command::new("sh")
+        .args(["-c", &shell_line])
+        .env("RESTIC_CACHE_DIR", cache_dir)
+        .output()
+        .expect("run transparent shell cmd");
+    assert!(
+        sh_out.status.success(),
+        "{label}: transparent shell command failed: {shell_line}\nstderr: {}",
+        String::from_utf8_lossy(&sh_out.stderr)
+    );
+}
+
 #[test]
 fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_a = dir.path().join("src-a");
@@ -46,6 +143,7 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -120,63 +218,8 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
         .unwrap_or_else(|e| panic!("{label}: backup B failed: {e}"));
         assert_eq!(res_b.exit_code, 0, "{label}");
 
-        // AC-M1-07-1 & AC-M1-07-4: Query snapshots strictly per backup tag.
-        let snaps_a =
-            list_snapshots_for_backup(&backup_a.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list snaps a");
-        let snaps_b =
-            list_snapshots_for_backup(&backup_b.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list snaps b");
-
-        assert_eq!(snaps_a.len(), 2, "{label}: backup A snapshots");
-        assert!(
-            snaps_a
-                .iter()
-                .all(|s| s.tags.iter().any(|t| t == &backup_a.tag()))
-        );
-        assert_eq!(snaps_b.len(), 1, "{label}: backup B snapshots");
-        assert!(
-            snaps_b
-                .iter()
-                .all(|s| s.tags.iter().any(|t| t == &backup_b.tag()))
-        );
-
-        // AC-M1-07-3: Verify `skip.tmp` is absent from snapshot A via `restic ls`.
-        let snap_id = snaps_a[0].short_id.as_deref().unwrap_or(&snaps_a[0].id);
-        let ls_out = Command::new(&resolved.binary)
-            .args([
-                "-r",
-                &repo_dir.to_string_lossy(),
-                "ls",
-                "--no-lock",
-                snap_id,
-            ])
-            .env("RESTIC_PASSWORD", "backup-test-pw")
-            .output()
-            .expect("restic ls");
-        assert!(ls_out.status.success());
-        let listing = String::from_utf8_lossy(&ls_out.stdout);
-        assert!(listing.contains("keep.txt"), "{label}: listing:\n{listing}");
-        assert!(
-            !listing.contains("skip.tmp"),
-            "{label}: excluded file present in snapshot:\n{listing}"
-        );
-
-        // AC-M1-14-3: Transparent shell command runs directly in `sh` with same exit 0.
-        let cmd_spec = build_backup_command_spec(&backup_a, &dest, &state_dir, &resolved, &helper)
-            .expect("build spec");
-        let mut sh_spec = cmd_spec.clone();
-        sh_spec.password_command_override =
-            Some(format!("{} secret get {}", helper.display(), dest.id));
-        let shell_line = sh_spec.to_transparent_shell_command();
-        let sh_out = Command::new("sh")
-            .args(["-c", &shell_line])
-            .output()
-            .expect("run transparent shell cmd");
-        assert!(
-            sh_out.status.success(),
-            "{label}: transparent shell command failed: {shell_line}\nstderr: {}",
-            String::from_utf8_lossy(&sh_out.stderr)
+        verify_snapshots_ls_and_transparent_shell(
+            label, &backup_a, &backup_b, &dest, &repo_dir, &state_dir, &runtime,
         );
     }
 }
@@ -189,6 +232,7 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
         .expect("restic binary");
 
     let dir = TempDir::new().expect("tempdir");
+    let cache_dir = common::restic_cache_dir(dir.path());
     let repo_dir = dir.path().join("repo");
     let state_dir = dir.path().join("state");
     let src_dir = dir.path().join("large-src");
@@ -215,6 +259,7 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
         kestic_binary: &helper,
         secret_store: &store,
         clock: &clock,
+        cache_dir: Some(&cache_dir),
     };
 
     let dest = Destination::new(
@@ -261,6 +306,7 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
             "--no-lock",
         ])
         .env("RESTIC_PASSWORD", "cancel-test-pw")
+        .env("RESTIC_CACHE_DIR", &cache_dir)
         .output()
         .expect("list locks");
     assert!(locks_out.status.success());

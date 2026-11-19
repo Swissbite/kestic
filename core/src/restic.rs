@@ -30,6 +30,7 @@ pub struct ResticRuntime<'a> {
     pub kestic_binary: &'a Path,
     pub secret_store: &'a dyn SecretStore,
     pub clock: &'a dyn Clock,
+    pub cache_dir: Option<&'a Path>,
 }
 
 /// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`).
@@ -58,6 +59,35 @@ pub enum ResticFailureKind {
 }
 
 impl ResticFailureKind {
+    /// Whether this failure is transient (`F2`: network, destination unreachable, DNS, lock /
+    /// Exit 11) and is therefore retried with backoff instead of blocking schedules like a
+    /// permanent error (Exit 12 wrong password, missing repository, configuration errors).
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::DestinationUnreachable | Self::DnsResolutionFailed | Self::RepositoryLocked
+        )
+    }
+
+    /// Stable, locale-independent error-kind code used in D-Bus DTOs (`error_kind`).
+    ///
+    /// The code set is deliberately small (`wrong_password`, `repo_missing`, `locked`,
+    /// `destination_unreachable`, `auth_failed`, `incomplete_snapshot`, `cancelled`, `unknown`);
+    /// DNS failures count as `destination_unreachable`, everything unrecognised as `unknown`.
+    /// The raw restic/daemon text is carried separately as detail.
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Self::WrongPassword => "wrong_password",
+            Self::RepositoryMissing => "repo_missing",
+            Self::RepositoryLocked => "locked",
+            Self::DestinationUnreachable | Self::DnsResolutionFailed => "destination_unreachable",
+            Self::BackendAuthFailed => "auth_failed",
+            Self::IncompleteSnapshot { .. } => "incomplete_snapshot",
+            Self::Cancelled => "cancelled",
+            Self::None | Self::GenericFailure | Self::Unknown { .. } => "unknown",
+        }
+    }
+
     /// Canonical English summary string (`NFR-06`; localized in daemon/GUI via gettext).
     pub fn default_summary(&self) -> String {
         match self {
@@ -289,11 +319,17 @@ pub fn classify_exit(
                     raw_detail,
                 }
             } else if detail_lower.contains("connection refused")
+                || detail_lower.contains("connection reset")
+                || detail_lower.contains("connection closed")
+                || detail_lower.contains("broken pipe")
+                || detail_lower.contains("unexpected eof")
+                || detail_lower.contains("use of closed network connection")
                 || detail_lower.contains("network is unreachable")
                 || detail_lower.contains("no route to host")
                 || detail_lower.contains("i/o timeout")
                 || detail_lower.contains("timed out")
-                || detail_lower.contains("does not exist")
+                || detail_lower.contains("handshake timeout")
+                || detail_lower.contains("context deadline exceeded")
             {
                 ErrorPresentation {
                     status: RunStatus::Error,
@@ -355,6 +391,7 @@ pub struct ResticCommandSpec {
     pub low_priority: bool,
     pub json_output: bool,
     pub password_command_override: Option<String>,
+    pub cache_dir: Option<PathBuf>,
 }
 
 impl ResticCommandSpec {
@@ -379,7 +416,14 @@ impl ResticCommandSpec {
             low_priority: true,
             json_output: true,
             password_command_override: None,
+            cache_dir: None,
         }
+    }
+
+    /// Sets an explicit `RESTIC_CACHE_DIR` for this command invocation.
+    pub fn with_cache_dir(mut self, dir: Option<&Path>) -> Self {
+        self.cache_dir = dir.map(Path::to_path_buf);
+        self
     }
 
     /// Creates a specification for running `restic unlock` against `destination` (`AC-M1-10-4`).
@@ -584,6 +628,121 @@ pub struct ResticExecutionResult {
     pub errors: Vec<ResticErrorMessage>,
 }
 
+struct ResolvedRunSecrets {
+    rest_password: Option<SecretValue>,
+    repo_password_for_redaction: Option<SecretValue>,
+}
+
+fn resolve_restic_secrets(
+    destination: &Destination,
+    secret_store: Option<&dyn SecretStore>,
+) -> Result<ResolvedRunSecrets, ResticRunError> {
+    let mut rest_password: Option<SecretValue> = None;
+    let mut repo_password_for_redaction: Option<SecretValue> = None;
+    if let Some(store) = secret_store {
+        if let Some(pw) = store.get_secret(destination.id.as_str(), SECRET_KIND_REPO)? {
+            repo_password_for_redaction = Some(pw);
+        }
+        if destination.kind.uses_rest_credentials() {
+            rest_password = Some(
+                store
+                    .get_secret(destination.id.as_str(), SECRET_KIND_REST)?
+                    .ok_or_else(|| ResticRunError::MissingRestPassword(destination.id.clone()))?,
+            );
+        }
+    }
+    Ok(ResolvedRunSecrets {
+        rest_password,
+        repo_password_for_redaction,
+    })
+}
+
+struct PreparedCommand {
+    cmd: Command,
+    executable: String,
+    args: Vec<String>,
+    env_keys: Vec<String>,
+}
+
+fn build_restic_command(
+    spec: &ResticCommandSpec,
+    rest_password: Option<&SecretValue>,
+    extra_env: &[(&str, &str)],
+) -> Result<PreparedCommand, ResticRunError> {
+    let pw_command = spec.password_command_override.clone().unwrap_or_else(|| {
+        format!(
+            "{} secret get {}",
+            quote_shell(&spec.kestic_binary.to_string_lossy()),
+            spec.destination_id
+        )
+    });
+
+    let (executable, args) = spec.resolve_invocation();
+    let mut cmd = Command::new(&executable);
+    cmd.args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("RESTIC_PASSWORD")
+        .env("RESTIC_PASSWORD_COMMAND", &pw_command);
+
+    let mut env_keys = vec!["RESTIC_PASSWORD_COMMAND".to_string()];
+
+    if let Some(ref cache_dir) = spec.cache_dir {
+        cmd.env("RESTIC_CACHE_DIR", cache_dir);
+        env_keys.push("RESTIC_CACHE_DIR".to_string());
+    }
+    if let Some(user) = spec.rest_username.as_deref().filter(|u| !u.is_empty()) {
+        cmd.env("RESTIC_REST_USERNAME", user);
+        env_keys.push("RESTIC_REST_USERNAME".to_string());
+    }
+    if let Some(rest_pw) = rest_password {
+        cmd.env("RESTIC_REST_PASSWORD", rest_pw.as_str()?);
+        env_keys.push("RESTIC_REST_PASSWORD".to_string());
+    }
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+        env_keys.push((*k).to_string());
+    }
+
+    Ok(PreparedCommand {
+        cmd,
+        executable: executable.to_string_lossy().into_owned(),
+        args,
+        env_keys,
+    })
+}
+
+fn handle_stream_line<F>(
+    line: &str,
+    secrets_to_redact: &[&str],
+    is_stdout: bool,
+    stats: &mut Option<RunStats>,
+    error_messages: &mut Vec<ResticErrorMessage>,
+    exit_error_msg: &mut Option<String>,
+    on_event: &mut F,
+) -> String
+where
+    F: FnMut(&ResticStreamEvent),
+{
+    let redacted = redact_secrets(line, secrets_to_redact);
+    if let Ok(event) = parse_json_line(&redacted) {
+        match &event {
+            ResticStreamEvent::Summary(s) if is_stdout => *stats = Some(s.clone()),
+            ResticStreamEvent::Error(e) => error_messages.push(e.clone()),
+            ResticStreamEvent::ExitError { message, .. } => {
+                *exit_error_msg = Some(message.clone());
+            }
+            ResticStreamEvent::Summary(_)
+            | ResticStreamEvent::Status(_)
+            | ResticStreamEvent::VerboseStatus(_)
+            | ResticStreamEvent::Unknown { .. } => {}
+        }
+        on_event(&event);
+    }
+    redacted
+}
+
 /// Executes `spec` with environment isolation (`RESTIC_PASSWORD_COMMAND`, `RESTIC_PASSWORD` unset).
 ///
 /// If `secret_store` is provided and `spec.rest_username` is set, looks up the optional REST backend
@@ -602,55 +761,10 @@ where
     F: FnMut(&ResticStreamEvent) + Send,
 {
     let started_at = clock.now_utc();
+    let secrets = resolve_restic_secrets(destination, secret_store)?;
+    let mut prepared = build_restic_command(spec, secrets.rest_password.as_ref(), extra_env)?;
 
-    let pw_command = spec.password_command_override.clone().unwrap_or_else(|| {
-        format!(
-            "{} secret get {}",
-            quote_shell(&spec.kestic_binary.to_string_lossy()),
-            spec.destination_id
-        )
-    });
-
-    let mut rest_password: Option<SecretValue> = None;
-    let mut repo_password_for_redaction: Option<SecretValue> = None;
-    if let Some(store) = secret_store {
-        if let Some(pw) = store.get_secret(destination.id.as_str(), SECRET_KIND_REPO)? {
-            repo_password_for_redaction = Some(pw);
-        }
-        if destination.kind.uses_rest_credentials() {
-            rest_password = Some(
-                store
-                    .get_secret(destination.id.as_str(), SECRET_KIND_REST)?
-                    .ok_or_else(|| ResticRunError::MissingRestPassword(destination.id.clone()))?,
-            );
-        }
-    }
-
-    let (executable, args) = spec.resolve_invocation();
-    let mut cmd = Command::new(&executable);
-    cmd.args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env_remove("RESTIC_PASSWORD")
-        .env("RESTIC_PASSWORD_COMMAND", &pw_command);
-
-    let mut env_keys = vec!["RESTIC_PASSWORD_COMMAND".to_string()];
-
-    if let Some(user) = spec.rest_username.as_deref().filter(|u| !u.is_empty()) {
-        cmd.env("RESTIC_REST_USERNAME", user);
-        env_keys.push("RESTIC_REST_USERNAME".to_string());
-    }
-    if let Some(rest_pw) = rest_password.as_ref() {
-        cmd.env("RESTIC_REST_PASSWORD", rest_pw.as_str()?);
-        env_keys.push("RESTIC_REST_PASSWORD".to_string());
-    }
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-        env_keys.push((*k).to_string());
-    }
-
-    let mut child: Child = cmd.spawn()?;
+    let mut child: Child = prepared.cmd.spawn()?;
     if let Some(handle) = cancel {
         handle.set_pid(Some(child.id()));
         if handle.is_cancelled() {
@@ -662,10 +776,10 @@ where
     let stderr = child.stderr.take();
 
     let mut secrets_to_redact: Vec<&str> = Vec::new();
-    if let Some(s) = repo_password_for_redaction.as_ref() {
+    if let Some(s) = secrets.repo_password_for_redaction.as_ref() {
         secrets_to_redact.push(s.as_str()?);
     }
-    if let Some(s) = rest_password.as_ref() {
+    if let Some(s) = secrets.rest_password.as_ref() {
         secrets_to_redact.push(s.as_str()?);
     }
 
@@ -673,9 +787,7 @@ where
         let mut lines = Vec::new();
         if let Some(err_stream) = stderr {
             let reader = BufReader::new(err_stream);
-            for line in reader.lines().map_while(Result::ok) {
-                lines.push(line);
-            }
+            lines.extend(reader.lines().map_while(Result::ok));
         }
         lines
     });
@@ -686,22 +798,16 @@ where
     let mut exit_error_msg: Option<String> = None;
 
     if let Some(out_stream) = stdout {
-        let reader = BufReader::new(out_stream);
-        for line in reader.lines().map_while(Result::ok) {
-            let redacted = redact_secrets(&line, &secrets_to_redact);
-            if let Ok(event) = parse_json_line(&redacted) {
-                match &event {
-                    ResticStreamEvent::Summary(s) => stats = Some(s.clone()),
-                    ResticStreamEvent::Error(e) => error_messages.push(e.clone()),
-                    ResticStreamEvent::ExitError { message, .. } => {
-                        exit_error_msg = Some(message.clone());
-                    }
-                    ResticStreamEvent::Status(_)
-                    | ResticStreamEvent::VerboseStatus(_)
-                    | ResticStreamEvent::Unknown { .. } => {}
-                }
-                on_event(&event);
-            }
+        for line in BufReader::new(out_stream).lines().map_while(Result::ok) {
+            let redacted = handle_stream_line(
+                &line,
+                &secrets_to_redact,
+                true,
+                &mut stats,
+                &mut error_messages,
+                &mut exit_error_msg,
+                &mut on_event,
+            );
             log_lines.push(redacted);
         }
     }
@@ -709,15 +815,15 @@ where
     let raw_stderr_lines = stderr_handle.join().unwrap_or_default();
     let mut redacted_stderr_lines = Vec::with_capacity(raw_stderr_lines.len());
     for line in raw_stderr_lines {
-        let redacted = redact_secrets(&line, &secrets_to_redact);
-        if let Ok(event) = parse_json_line(&redacted) {
-            if let ResticStreamEvent::ExitError { message, .. } = &event {
-                exit_error_msg = Some(message.clone());
-            } else if let ResticStreamEvent::Error(e) = &event {
-                error_messages.push(e.clone());
-            }
-            on_event(&event);
-        }
+        let redacted = handle_stream_line(
+            &line,
+            &secrets_to_redact,
+            false,
+            &mut stats,
+            &mut error_messages,
+            &mut exit_error_msg,
+            &mut on_event,
+        );
         redacted_stderr_lines.push(redacted.clone());
         log_lines.push(redacted);
     }
@@ -749,21 +855,19 @@ where
         presentation.action = None;
     }
 
-    let command_record = CommandRecord {
-        executable: executable.to_string_lossy().into_owned(),
-        args,
-        env_keys,
-        started_at,
-        duration_ms,
-        exit_code,
-    };
-
     Ok(ResticExecutionResult {
         exit_code,
         cancelled,
         presentation,
         stats,
-        command_record,
+        command_record: CommandRecord {
+            executable: prepared.executable,
+            args: prepared.args,
+            env_keys: prepared.env_keys,
+            started_at,
+            duration_ms,
+            exit_code,
+        },
         log_lines,
         errors: error_messages,
     })

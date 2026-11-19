@@ -11,7 +11,7 @@ use crate::model::{
 };
 use crate::restic::redact_secrets;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -224,8 +224,8 @@ impl RunHistory {
         }
     }
 
-    /// Lists all runs ordered newest first.
-    pub fn list_runs(&self) -> Result<Vec<Run>, HistoryError> {
+    /// Lists all runs ordered newest first without loading child `commands`.
+    pub fn list_runs_without_commands(&self) -> Result<Vec<Run>, HistoryError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, backup_id, destination_id, status, pending_reason,
                     started_at, finished_at, duration_ms, exit_code,
@@ -236,14 +236,27 @@ impl RunHistory {
         let rows = stmt.query_map([], read_run_row)?;
         let mut runs = Vec::new();
         for row in rows {
-            let mut run = row?;
-            run.commands = self.load_commands(&run.id)?;
-            runs.push(run);
+            runs.push(row?);
         }
         Ok(runs)
     }
 
-    /// Lists runs for a specific [`BackupId`], newest first.
+    /// Lists all runs ordered newest first (batch-loads all `run_commands` in a single query).
+    pub fn list_runs(&self) -> Result<Vec<Run>, HistoryError> {
+        let mut runs = self.list_runs_without_commands()?;
+        if runs.is_empty() {
+            return Ok(runs);
+        }
+        let mut cmds_by_run = self.load_all_commands_grouped()?;
+        for run in &mut runs {
+            if let Some(cmds) = cmds_by_run.remove(run.id.as_str()) {
+                run.commands = cmds;
+            }
+        }
+        Ok(runs)
+    }
+
+    /// Lists runs for a specific [`BackupId`], newest first (single batch query for commands).
     pub fn list_runs_for_backup(&self, backup_id: &BackupId) -> Result<Vec<Run>, HistoryError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, backup_id, destination_id, status, pending_reason,
@@ -256,9 +269,16 @@ impl RunHistory {
         let rows = stmt.query_map(params![backup_id.as_str()], read_run_row)?;
         let mut runs = Vec::new();
         for row in rows {
-            let mut run = row?;
-            run.commands = self.load_commands(&run.id)?;
-            runs.push(run);
+            runs.push(row?);
+        }
+        if runs.is_empty() {
+            return Ok(runs);
+        }
+        let mut cmds_by_run = self.load_commands_for_backup_grouped(backup_id)?;
+        for run in &mut runs {
+            if let Some(cmds) = cmds_by_run.remove(run.id.as_str()) {
+                run.commands = cmds;
+            }
         }
         Ok(runs)
     }
@@ -400,7 +420,7 @@ impl RunHistory {
             .query_row(
                 "SELECT pending_forget, baseline_at_unix, paused_since_unix, paused_until_unix,
                         backoff_attempt, backoff_until_unix, last_overdue_notified_at_unix,
-                        overdue_anchor_at_unix, last_failure_at_unix
+                        overdue_anchor_at_unix, last_failure_at_unix, backoff_kind
                  FROM backup_state WHERE backup_id = ?1",
                 params![backup_id.as_str()],
                 |r| {
@@ -413,6 +433,7 @@ impl RunHistory {
                     let last_overdue_notified_at_unix: Option<i64> = r.get(6)?;
                     let overdue_anchor_at_unix: Option<i64> = r.get(7)?;
                     let last_failure_at_unix: Option<i64> = r.get(8)?;
+                    let backoff_kind_raw: Option<String> = r.get(9)?;
                     Ok(BackupRuntimeState {
                         pending_forget: pf != 0,
                         baseline_at: baseline_at_unix.and_then(unix_to_utc),
@@ -423,6 +444,9 @@ impl RunHistory {
                         }),
                         backoff_attempt: backoff_attempt.max(0) as u32,
                         backoff_until: backoff_until_unix.and_then(unix_to_utc),
+                        backoff_kind: backoff_kind_raw
+                            .as_deref()
+                            .and_then(BackoffKind::from_db_str),
                         last_overdue_notified_at: last_overdue_notified_at_unix
                             .and_then(unix_to_utc),
                         overdue_anchor_at: overdue_anchor_at_unix.and_then(unix_to_utc),
@@ -444,9 +468,9 @@ impl RunHistory {
             "INSERT INTO backup_state (
                 backup_id, pending_forget, baseline_at_unix,
                 paused_since_unix, paused_until_unix,
-                backoff_attempt, backoff_until_unix, last_overdue_notified_at_unix,
+                backoff_attempt, backoff_until_unix, backoff_kind, last_overdue_notified_at_unix,
                 overdue_anchor_at_unix, last_failure_at_unix
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(backup_id) DO UPDATE SET
                 pending_forget = excluded.pending_forget,
                 baseline_at_unix = excluded.baseline_at_unix,
@@ -454,6 +478,7 @@ impl RunHistory {
                 paused_until_unix = excluded.paused_until_unix,
                 backoff_attempt = excluded.backoff_attempt,
                 backoff_until_unix = excluded.backoff_until_unix,
+                backoff_kind = excluded.backoff_kind,
                 last_overdue_notified_at_unix = excluded.last_overdue_notified_at_unix,
                 overdue_anchor_at_unix = excluded.overdue_anchor_at_unix,
                 last_failure_at_unix = excluded.last_failure_at_unix",
@@ -471,6 +496,7 @@ impl RunHistory {
                     .and_then(|p| p.paused_until.map(|t| t.unix_timestamp())),
                 state.backoff_attempt as i64,
                 state.backoff_until.map(|t| t.unix_timestamp()),
+                state.backoff_kind.map(BackoffKind::as_str),
                 state.last_overdue_notified_at.map(|t| t.unix_timestamp()),
                 state.overdue_anchor_at.map(|t| t.unix_timestamp()),
                 state.last_failure_at.map(|t| t.unix_timestamp()),
@@ -479,7 +505,7 @@ impl RunHistory {
         Ok(())
     }
 
-    /// Loads M3 maintenance timestamps for `destination_id`.
+    /// Loads M3 maintenance timestamps and backoff state for `destination_id`.
     pub fn get_destination_maintenance_state(
         &self,
         destination_id: &DestinationId,
@@ -487,17 +513,25 @@ impl RunHistory {
         let row = self
             .conn
             .query_row(
-                "SELECT baseline_at_unix, last_prune_at_unix, last_check_at_unix
+                "SELECT baseline_at_unix, last_prune_at_unix, last_check_at_unix,
+                        maintenance_backoff_attempt, maintenance_backoff_until_unix,
+                        last_maintenance_failure_at_unix
                  FROM destination_state WHERE destination_id = ?1",
                 params![destination_id.as_str()],
                 |r| {
                     let baseline: Option<i64> = r.get(0)?;
                     let prune: Option<i64> = r.get(1)?;
                     let check: Option<i64> = r.get(2)?;
+                    let maint_attempt: i64 = r.get(3)?;
+                    let maint_until: Option<i64> = r.get(4)?;
+                    let maint_failed: Option<i64> = r.get(5)?;
                     Ok(DestinationMaintenanceState {
                         baseline_at: baseline.and_then(unix_to_utc),
                         last_prune_at: prune.and_then(unix_to_utc),
                         last_check_at: check.and_then(unix_to_utc),
+                        maintenance_backoff_attempt: maint_attempt.max(0) as u32,
+                        maintenance_backoff_until: maint_until.and_then(unix_to_utc),
+                        last_maintenance_failure_at: maint_failed.and_then(unix_to_utc),
                     })
                 },
             )
@@ -505,7 +539,7 @@ impl RunHistory {
         Ok(row.unwrap_or_default())
     }
 
-    /// Persists M3 maintenance timestamps for `destination_id`.
+    /// Persists M3 maintenance timestamps and backoff state for `destination_id`.
     pub fn upsert_destination_maintenance_state(
         &self,
         destination_id: &DestinationId,
@@ -513,17 +547,27 @@ impl RunHistory {
     ) -> Result<(), HistoryError> {
         self.conn.execute(
             "INSERT INTO destination_state (
-                destination_id, baseline_at_unix, last_prune_at_unix, last_check_at_unix
-             ) VALUES (?1, ?2, ?3, ?4)
+                destination_id, baseline_at_unix, last_prune_at_unix, last_check_at_unix,
+                maintenance_backoff_attempt, maintenance_backoff_until_unix,
+                last_maintenance_failure_at_unix
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(destination_id) DO UPDATE SET
                 baseline_at_unix = excluded.baseline_at_unix,
                 last_prune_at_unix = excluded.last_prune_at_unix,
-                last_check_at_unix = excluded.last_check_at_unix",
+                last_check_at_unix = excluded.last_check_at_unix,
+                maintenance_backoff_attempt = excluded.maintenance_backoff_attempt,
+                maintenance_backoff_until_unix = excluded.maintenance_backoff_until_unix,
+                last_maintenance_failure_at_unix = excluded.last_maintenance_failure_at_unix",
             params![
                 destination_id.as_str(),
                 state.baseline_at.map(|t| t.unix_timestamp()),
                 state.last_prune_at.map(|t| t.unix_timestamp()),
                 state.last_check_at.map(|t| t.unix_timestamp()),
+                state.maintenance_backoff_attempt as i64,
+                state.maintenance_backoff_until.map(|t| t.unix_timestamp()),
+                state
+                    .last_maintenance_failure_at
+                    .map(|t| t.unix_timestamp()),
             ],
         )?;
         Ok(())
@@ -682,6 +726,70 @@ impl RunHistory {
         }
         Ok(commands)
     }
+
+    fn load_all_commands_grouped(
+        &self,
+    ) -> Result<HashMap<String, Vec<CommandRecord>>, HistoryError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id, executable, args_json, env_keys_json, started_at, duration_ms, exit_code
+             FROM run_commands
+             ORDER BY run_id ASC, seq ASC",
+        )?;
+        let rows = stmt.query_map([], read_grouped_command_row)?;
+        collect_grouped_commands(rows)
+    }
+
+    fn load_commands_for_backup_grouped(
+        &self,
+        backup_id: &BackupId,
+    ) -> Result<HashMap<String, Vec<CommandRecord>>, HistoryError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id, executable, args_json, env_keys_json, started_at, duration_ms, exit_code
+             FROM run_commands
+             WHERE run_id IN (SELECT id FROM runs WHERE backup_id = ?1)
+             ORDER BY run_id ASC, seq ASC",
+        )?;
+        let rows = stmt.query_map(params![backup_id.as_str()], read_grouped_command_row)?;
+        collect_grouped_commands(rows)
+    }
+}
+
+type RawGroupedCommandRow = (String, String, String, String, String, i64, i32);
+
+fn read_grouped_command_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawGroupedCommandRow> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+    ))
+}
+
+fn collect_grouped_commands<I>(rows: I) -> Result<HashMap<String, Vec<CommandRecord>>, HistoryError>
+where
+    I: Iterator<Item = rusqlite::Result<RawGroupedCommandRow>>,
+{
+    let mut map: HashMap<String, Vec<CommandRecord>> = HashMap::new();
+    for item in rows {
+        let (run_id, executable, args_json, env_keys_json, started_at_raw, duration_ms, exit_code) =
+            item?;
+        let args: Vec<String> = serde_json::from_str(&args_json)?;
+        let env_keys: Vec<String> = serde_json::from_str(&env_keys_json)?;
+        let started_at = OffsetDateTime::parse(&started_at_raw, &Rfc3339)
+            .map_err(|e| HistoryError::Time(e.to_string()))?;
+        map.entry(run_id).or_default().push(CommandRecord {
+            executable,
+            args,
+            env_keys,
+            started_at,
+            duration_ms: duration_ms.max(0) as u64,
+            exit_code,
+        });
+    }
+    Ok(map)
 }
 
 /// Persistent pause interval (`FR-13a`, `P14`).
@@ -692,6 +800,31 @@ pub struct PauseState {
     pub paused_until: Option<OffsetDateTime>,
 }
 
+/// Cause of active transient backoff so network reconnects only reset network/unreachable backoffs
+/// and never bypass Exit-11 repository lock backoffs (`AC-M3-04-2`, `AC-M3-04-4`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackoffKind {
+    Network,
+    Lock,
+}
+
+impl BackoffKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Network => "network",
+            Self::Lock => "lock",
+        }
+    }
+
+    pub fn from_db_str(raw: &str) -> Option<Self> {
+        match raw {
+            "network" => Some(Self::Network),
+            "lock" => Some(Self::Lock),
+            _ => None,
+        }
+    }
+}
+
 /// Persistent per-backup scheduling/pause/backoff state in `history.db` (`M3`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BackupRuntimeState {
@@ -700,17 +833,21 @@ pub struct BackupRuntimeState {
     pub pause: Option<PauseState>,
     pub backoff_attempt: u32,
     pub backoff_until: Option<OffsetDateTime>,
+    pub backoff_kind: Option<BackoffKind>,
     pub last_overdue_notified_at: Option<OffsetDateTime>,
     pub overdue_anchor_at: Option<OffsetDateTime>,
     pub last_failure_at: Option<OffsetDateTime>,
 }
 
-/// Persistent per-destination maintenance timestamps in `history.db` (`M3-S05`).
+/// Persistent per-destination maintenance timestamps & backoff state in `history.db` (`M3-S05`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DestinationMaintenanceState {
     pub baseline_at: Option<OffsetDateTime>,
     pub last_prune_at: Option<OffsetDateTime>,
     pub last_check_at: Option<OffsetDateTime>,
+    pub maintenance_backoff_attempt: u32,
+    pub maintenance_backoff_until: Option<OffsetDateTime>,
+    pub last_maintenance_failure_at: Option<OffsetDateTime>,
 }
 
 fn unix_to_utc(ts: i64) -> Option<OffsetDateTime> {

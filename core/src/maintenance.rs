@@ -124,7 +124,8 @@ pub fn execute_prune_dry_run(
         true,
         runtime.resolved,
         runtime.kestic_binary,
-    );
+    )
+    .with_cache_dir(runtime.cache_dir);
     let transparent_command = spec.to_transparent_shell_command();
 
     let res = run_restic(
@@ -169,7 +170,8 @@ pub fn execute_prune(
         false,
         runtime.resolved,
         runtime.kestic_binary,
-    );
+    )
+    .with_cache_dir(runtime.cache_dir);
     Ok(run_restic(
         &spec,
         destination,
@@ -189,7 +191,8 @@ pub fn execute_check(
     extra_env: &[(&str, &str)],
 ) -> Result<ResticExecutionResult, BackupRunError> {
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
-    let spec = build_check_command_spec(destination, runtime.resolved, runtime.kestic_binary);
+    let spec = build_check_command_spec(destination, runtime.resolved, runtime.kestic_binary)
+        .with_cache_dir(runtime.cache_dir);
     Ok(run_restic(
         &spec,
         destination,
@@ -301,7 +304,8 @@ pub fn list_and_inspect_locks(
             "locks".to_string(),
             "--no-lock".to_string(),
         ],
-    );
+    )
+    .with_cache_dir(runtime.cache_dir);
     list_spec.json_output = false;
     list_spec.low_priority = false;
 
@@ -343,7 +347,8 @@ pub fn list_and_inspect_locks(
                 lock_id.clone(),
                 "--no-lock".to_string(),
             ],
-        );
+        )
+        .with_cache_dir(runtime.cache_dir);
         cat_spec.json_output = false;
         cat_spec.low_priority = false;
 
@@ -395,15 +400,60 @@ pub fn detect_stale_locks(
     detect_stale_locks_with(destination, runtime, &host, is_local_pid_alive, extra_env)
 }
 
-/// Executes `restic unlock` on `destination` (`FR-19`, `AC-M3-06-1`).
-pub fn execute_unlock(
+/// Executes `restic unlock` on `destination` ONLY if lock inspection confirms stale local locks
+/// exist and neither foreign-host nor active local locks are present (`FR-19`, `P16`, `AC-M3-06-1..3`).
+pub fn execute_unlock_with<F>(
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
+    local_hostname: &str,
+    is_pid_alive: F,
     extra_env: &[(&str, &str)],
-) -> Result<ResticExecutionResult, BackupRunError> {
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+) -> Result<ResticExecutionResult, BackupRunError>
+where
+    F: Fn(u32) -> bool,
+{
+    let cls = detect_stale_locks_with(
+        destination,
+        runtime,
+        local_hostname,
+        is_pid_alive,
+        extra_env,
+    )?;
+    if !cls.foreign_host_locks.is_empty() {
+        return Err(BackupRunError::Destination(
+            DestinationError::CommandFailed {
+                exit_code: 11,
+                message: format!(
+                    "refusing unlock: foreign host locks present ({})",
+                    cls.foreign_host_locks
+                        .iter()
+                        .map(|l| l.hostname.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            },
+        ));
+    }
+    if !cls.active_local_locks.is_empty() {
+        return Err(BackupRunError::Destination(
+            DestinationError::CommandFailed {
+                exit_code: 11,
+                message: "refusing unlock: active local process lock present".to_string(),
+            },
+        ));
+    }
+    if !cls.has_stale_local_lock {
+        return Err(BackupRunError::Destination(
+            DestinationError::CommandFailed {
+                exit_code: 11,
+                message: "no stale local lock found".to_string(),
+            },
+        ));
+    }
+
     let spec =
-        ResticCommandSpec::unlock(&runtime.resolved.binary, runtime.kestic_binary, destination);
+        ResticCommandSpec::unlock(&runtime.resolved.binary, runtime.kestic_binary, destination)
+            .with_cache_dir(runtime.cache_dir);
     Ok(run_restic(
         &spec,
         destination,
@@ -413,4 +463,14 @@ pub fn execute_unlock(
         extra_env,
         |_| {},
     )?)
+}
+
+/// Executes `restic unlock` on `destination` using the real local hostname and `/proc` PID check (`FR-19`, `P16`).
+pub fn execute_unlock(
+    destination: &Destination,
+    runtime: &ResticRuntime<'_>,
+    extra_env: &[(&str, &str)],
+) -> Result<ResticExecutionResult, BackupRunError> {
+    let host = current_local_hostname();
+    execute_unlock_with(destination, runtime, &host, is_local_pid_alive, extra_env)
 }

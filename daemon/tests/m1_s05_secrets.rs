@@ -107,6 +107,13 @@ fn ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_re
 
         let current_exe = env::current_exe().expect("current test exe");
         let out = Command::new("dbus-run-session")
+            .arg(format!(
+                "--config-file={}",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/private-session-bus.xml"
+                )
+            ))
             .arg("--")
             .arg(&current_exe)
             .arg(
@@ -121,6 +128,7 @@ fn ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_re
             .env("XDG_CONFIG_HOME", temp.join("cfg"))
             .env("XDG_DATA_HOME", temp.join("data"))
             .env("XDG_CACHE_HOME", temp.join("cache"))
+            .env("RESTIC_CACHE_DIR", temp.join("cache"))
             .env("XDG_STATE_HOME", temp.join("state"))
             .env("XDG_RUNTIME_DIR", temp.join("run"))
             .env("KESTIC_M1_S05_KEYRING_DIR", temp.join("keyring"))

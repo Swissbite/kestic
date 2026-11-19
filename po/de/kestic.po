@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kestic 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-18 18:07+0100\n"
+"POT-Creation-Date: 2026-11-18 20:17+0100\n"
 "PO-Revision-Date: 2026-11-16 08:25+0100\n"
 "Last-Translator: David Däster <david@daester.net>\n"
 "Language-Team: German\n"
@@ -26,8 +26,9 @@ msgstr "Durch Benutzer abgebrochen"
 msgid "Snapshot incomplete: some files could not be read"
 msgstr "Snapshot unvollständig: Einige Dateien konnten nicht gelesen werden"
 
-#: daemon/src/i18n.rs:152 daemon/src/service.rs:585 daemon/src/service.rs:3009
-#: daemon/src/service.rs:4349
+#: daemon/src/i18n.rs:152 daemon/src/service/availability.rs:135
+#: daemon/src/service/backup_runner.rs:196
+#: daemon/src/service/maintenance.rs:874
 msgid "Destination unreachable"
 msgstr "Ziel nicht erreichbar"
 
@@ -51,8 +52,8 @@ msgstr "Repository fehlt"
 msgid "Repository is locked"
 msgstr "Repository ist gesperrt"
 
-#: daemon/src/i18n.rs:160 daemon/src/service.rs:2841
-#: gui/src/state_cache.rs:1110
+#: daemon/src/i18n.rs:160 daemon/src/service/error.rs:95
+#: gui/src/state_cache.rs:1147
 msgid "Stored password does not match"
 msgstr "Gespeichertes Passwort stimmt nicht überein"
 
@@ -60,227 +61,97 @@ msgstr "Gespeichertes Passwort stimmt nicht überein"
 msgid "Unknown error (exit %1)"
 msgstr "Unbekannter Fehler (Exit %1)"
 
-#: daemon/src/i18n.rs:170 gui/src/backend.rs:2127
-#: gui/src/qml/BackupDetailPage.qml:63 gui/src/qml/BackupDetailPage.qml:356
+#: daemon/src/i18n.rs:170 gui/src/backend/schedules.rs:522
+#: gui/src/qml/BackupDetailPage.qml:63 gui/src/qml/BackupDetailPage.qml:354
 #: gui/src/qml/DestinationDetailPage.qml:51
-#: gui/src/qml/DestinationDetailPage.qml:81 gui/src/qml/OverviewPage.qml:365
+#: gui/src/qml/DestinationDetailPage.qml:81 gui/src/qml/OverviewPage.qml:377
 msgid "Update Saved Password…"
 msgstr "Gespeichertes Passwort aktualisieren…"
 
-#: daemon/src/i18n.rs:171 gui/src/backend.rs:2128
+#: daemon/src/i18n.rs:171 gui/src/backend/schedules.rs:523
 #: gui/src/qml/RunDetailPage.qml:320
 msgid "Add to Exclude Rules…"
 msgstr "Zu Ausschluss-Regeln hinzufügen…"
 
-#: daemon/src/i18n.rs:172 gui/src/backend.rs:2129
+#: daemon/src/i18n.rs:172 gui/src/backend/schedules.rs:524
 msgid "Configure restic Source…"
 msgstr "restic-Quelle konfigurieren…"
 
-#: daemon/src/i18n.rs:173 gui/src/backend.rs:2130
+#: daemon/src/i18n.rs:173 gui/src/backend/schedules.rs:525
 msgid "Release Lock…"
 msgstr "Sperre aufheben…"
 
-#: daemon/src/service.rs:401
-msgid "restic not found; at least %1 required"
-msgstr "restic nicht gefunden; mindestens %1 erforderlich"
+#: daemon/src/service/availability.rs:414
+#: daemon/src/service/backup_runner.rs:387
+#: daemon/src/service/destinations.rs:323 daemon/src/service/maintenance.rs:246
+#: daemon/src/service/previews.rs:55 daemon/src/service/previews.rs:140
+#: daemon/src/service/previews.rs:247 daemon/src/service/previews.rs:368
+#: daemon/src/service/previews.rs:461 daemon/src/service/previews.rs:509
+msgid "Password store is locked"
+msgstr "Passwortspeicher ist gesperrt"
 
-#: daemon/src/service.rs:413
-msgid "restic %1 is too old; Kestic needs at least %2"
-msgstr "restic %1 ist zu alt; Kestic benötigt mindestens %2"
-
-#: daemon/src/service.rs:422
-msgid "Custom restic path is invalid (%1): %2"
-msgstr "Eigener restic-Pfad ist ungültig (%1): %2"
-
-#: daemon/src/service.rs:431
-msgid "Unable to determine restic version (%1)"
-msgstr "restic-Version konnte nicht ermittelt werden (%1)"
-
-#: daemon/src/service.rs:457
-msgid ""
-"The system password store (Secret Service / KWallet) is locked. Kestic "
-"cannot access destinations."
+#: daemon/src/service/availability.rs:436
+#: daemon/src/service/destinations.rs:345
+msgid "Cannot unlock: repository lock belongs to an active or remote process"
 msgstr ""
-"Der System-Passwortspeicher (Secret Service / KWallet) ist gesperrt. Kestic "
-"kann nicht auf Ziele zugreifen."
+"Entsperren nicht möglich: Die Repository-Sperre gehört zu einem aktiven oder "
+"entfernten Prozess"
 
-#: daemon/src/service.rs:608 gui/src/state_cache.rs:970
-msgid "Paused since %1 (until %2)"
-msgstr "Pausiert seit %1 (bis %2)"
+#: daemon/src/service/backup_runner.rs:220
+msgid "Destination unreachable · next attempt at %1"
+msgstr "Ziel nicht erreichbar · nächster Versuch um %1"
 
-#: daemon/src/service.rs:610 gui/src/state_cache.rs:972
-msgid "Paused since %1"
-msgstr "Pausiert seit %1"
+#: daemon/src/service/backup_runner.rs:222
+msgid "Destination unreachable · waiting for next scheduled run"
+msgstr "Ziel nicht erreichbar · wartet auf nächsten geplanten Lauf"
 
-#: daemon/src/service.rs:618
-msgid "AC power (battery %1%)"
-msgstr "Netzstrom (Akku %1 %)"
+#: daemon/src/service/backup_runner.rs:256
+#: daemon/src/service/backup_runner.rs:287
+msgid "%1: Backup cannot start"
+msgstr "%1: Backup kann nicht gestartet werden"
 
-#: daemon/src/service.rs:620
-msgid "AC power"
-msgstr "Netzstrom"
-
-#: daemon/src/service.rs:623
-msgid "network connection"
-msgstr "Netzwerkverbindung"
-
-#: daemon/src/service.rs:624
-msgid "unmetered connection"
-msgstr "ungetaktete Verbindung"
-
-#: daemon/src/service.rs:626
-msgid "allowed network (%1)"
-msgstr "erlaubtes Netzwerk (%1)"
-
-#: daemon/src/service.rs:628
-msgid "source available"
-msgstr "Quelle verfügbar"
-
-#: daemon/src/service.rs:629
-msgid "destination reachable"
-msgstr "Ziel erreichbar"
-
-#: daemon/src/service.rs:630
-msgid "another run on this destination"
-msgstr "anderer Lauf auf diesem Ziel"
-
-#: daemon/src/service.rs:631
-msgid "retry cooldown"
-msgstr "Wartezeit vor erneutem Versuch"
-
-#: daemon/src/service.rs:644 gui/src/state_cache.rs:1031
-msgid "Waiting: source unavailable"
-msgstr "Wartet: Quelle nicht verfügbar"
-
-#: daemon/src/service.rs:648 gui/src/state_cache.rs:1033
-msgid "Waiting: destination unreachable"
-msgstr "Wartet: Ziel nicht erreichbar"
-
-#: daemon/src/service.rs:650
-msgid "Waiting: AC power"
-msgstr "Wartet: Netzstrom"
-
-#: daemon/src/service.rs:651
-msgid "Waiting: network"
-msgstr "Wartet: Netzwerk"
-
-#: daemon/src/service.rs:653
-msgid "Waiting: unmetered connection"
-msgstr "Wartet: ungetaktete Verbindung"
-
-#: daemon/src/service.rs:656
-msgid "Waiting: allowed network"
-msgstr "Wartet: erlaubtes Netzwerk"
-
-#: daemon/src/service.rs:660
-msgid "Waiting: another run on this destination"
-msgstr "Wartet: anderer Lauf auf diesem Ziel"
-
-#: daemon/src/service.rs:666
-msgid "Waiting: next attempt at %1"
-msgstr "Wartet: nächster Versuch um %1"
-
-#: daemon/src/service.rs:751 daemon/src/service.rs:2063
-#: daemon/src/service.rs:3420 daemon/src/service.rs:3429
-msgid "Backed up, retention not executed"
-msgstr "Gesichert, Aufbewahrung nicht ausgeführt"
-
-#: daemon/src/service.rs:844 daemon/src/service.rs:3090
-#: daemon/src/service.rs:4324
+#: daemon/src/service/backup_runner.rs:273
+#: daemon/src/service/maintenance.rs:845
+#: daemon/src/service/state_summary.rs:327
 msgid "Condition not met: %1"
 msgstr "Bedingung nicht erfüllt: %1"
 
-#: daemon/src/service.rs:1011
-msgid "Next backup: %1 (%2)"
-msgstr "Nächstes Backup: %1 (%2)"
+#: daemon/src/service/backup_runner.rs:533
+msgid "Backing up %1 (%2%)"
+msgstr "Sichere %1 (%2%)"
 
-#: daemon/src/service.rs:1167
-msgid "1 backup failed"
-msgstr "1 Backup fehlgeschlagen"
+#: daemon/src/service/backup_runner.rs:607
+msgid "Backing up %1"
+msgstr "Sichere %1"
 
-#: daemon/src/service.rs:1169
-msgid "%1 backups failed"
-msgstr "%1 Backups fehlgeschlagen"
+#: daemon/src/service/backup_runner.rs:809
+#: daemon/src/service/backup_runner.rs:915
+msgid "Interrupted by system sleep"
+msgstr "Durch Ruhezustand unterbrochen"
 
-#: daemon/src/service.rs:1173 daemon/src/service.rs:1261
-msgid "1 backup overdue"
-msgstr "1 Backup überfällig"
+#: daemon/src/service/backup_runner.rs:997
+msgid "Backed up, destination locked — retention will catch up later"
+msgstr "Gesichert, Ziel gesperrt — Aufbewahrung wird später nachgeholt"
 
-#: daemon/src/service.rs:1175
-msgid "%1 backups overdue"
-msgstr "%1 Backups überfällig"
+#: daemon/src/service/backup_runner.rs:999
+#: daemon/src/service/backup_runner.rs:1008 daemon/src/service/backups.rs:258
+#: daemon/src/service/state_summary.rs:695
+msgid "Backed up, retention not executed"
+msgstr "Gesichert, Aufbewahrung nicht ausgeführt"
 
-#: daemon/src/service.rs:1179
-msgid "1 backup finished with warning"
-msgstr "1 Backup mit Warnung abgeschlossen"
+#: daemon/src/service/backup_runner.rs:1109
+msgid "%1: Backup failed"
+msgstr "%1: Backup fehlgeschlagen"
 
-#: daemon/src/service.rs:1181
-msgid "%1 backups finished with warnings"
-msgstr "%1 Backups mit Warnungen abgeschlossen"
+#: daemon/src/service/backup_runner.rs:1121
+msgid "%1: Backup finished with warning"
+msgstr "%1: Backup mit Warnung abgeschlossen"
 
-#: daemon/src/service.rs:1185 daemon/src/tray.rs:223
-msgid "%1: backing up · %2%"
-msgstr "%1: sichert · %2%"
-
-#: daemon/src/service.rs:1189 daemon/src/service.rs:1279
-msgid "Schedules paused · 1 backup waiting"
-msgstr "Zeitpläne pausiert · 1 Backup wartet"
-
-#: daemon/src/service.rs:1191
-msgid "Schedules paused · %1 backups waiting"
-msgstr "Zeitpläne pausiert · %1 Backups wartend"
-
-#: daemon/src/service.rs:1195 daemon/src/service.rs:1273
-msgid "1 backup waiting"
-msgstr "1 Backup wartet"
-
-#: daemon/src/service.rs:1197
-msgid "%1 of %2 backups waiting"
-msgstr "%1 von %2 Backups wartend"
-
-#: daemon/src/service.rs:1201 daemon/src/service.rs:1267
-#: daemon/src/service.rs:1312
-msgid "Schedules paused"
-msgstr "Zeitpläne pausiert"
-
-#: daemon/src/service.rs:1203 gui/src/qml/BackupsPage.qml:84
-msgid "No backups configured yet"
-msgstr "Noch keine Backups eingerichtet"
-
-#: daemon/src/service.rs:1205
-msgid "Last run interrupted"
-msgstr "Letzter Lauf unterbrochen"
-
-#: daemon/src/service.rs:1207
-msgid "Last run cancelled"
-msgstr "Letzter Lauf abgebrochen"
-
-#: daemon/src/service.rs:1209 gui/src/state_cache.rs:1098
-msgid "Not backed up yet"
-msgstr "Noch nicht gesichert"
-
-#: daemon/src/service.rs:1211 daemon/src/tray.rs:127
-#: gui/src/qml/SpikeMain.qml:274
-msgid "All data backed up"
-msgstr "Alle Daten gesichert"
-
-#: daemon/src/service.rs:1217
-msgid "Currently running: %1 (%2%)"
-msgstr "Läuft gerade: %1 (%2%)"
-
-#: daemon/src/service.rs:1285
-msgid "Maintenance running"
-msgstr "Wartung läuft"
-
-#: daemon/src/service.rs:1291
-msgid "Restore running"
-msgstr "Wiederherstellung läuft"
-
-#: daemon/src/service.rs:1434 gui/src/backend.rs:614
+#: daemon/src/service/destinations.rs:438 gui/src/backend.rs:614
 msgid "This location is already used by destination '%1'."
 msgstr "Dieser Speicherort wird bereits vom Ziel '%1' verwendet."
 
-#: daemon/src/service.rs:1464
+#: daemon/src/service/destinations.rs:485
 msgid ""
 "This folder already contains a restic repository. Choose 'Connect existing "
 "repository' instead."
@@ -288,178 +159,323 @@ msgstr ""
 "Dieser Ordner enthält bereits ein restic-Repository. Wählen Sie stattdessen "
 "«Bestehendes Repository verbinden»."
 
-#: daemon/src/service.rs:1484
+#: daemon/src/service/destinations.rs:505
 msgid "Folder is not writable: %1"
 msgstr "Ordner ist nicht beschreibbar: %1"
 
-#: daemon/src/service.rs:1499 daemon/src/service.rs:1539
-msgid "No repository password provided or stored."
-msgstr "Kein Repository-Passwort angegeben oder gespeichert."
-
-#: daemon/src/service.rs:1521 daemon/src/service.rs:1631
+#: daemon/src/service/destinations.rs:519
+#: daemon/src/service/destinations.rs:590
 msgid "Reachable"
 msgstr "Erreichbar"
 
-#: daemon/src/service.rs:2342 daemon/src/service.rs:2527
-#: daemon/src/service.rs:2588 daemon/src/service.rs:2958
-#: daemon/src/service.rs:3645 daemon/src/service.rs:3758
-#: daemon/src/service.rs:3889 daemon/src/service.rs:5108
-#: daemon/src/service.rs:5345
-msgid "Password store is locked"
-msgstr "Passwortspeicher ist gesperrt"
+#: daemon/src/service/destinations.rs:611
+msgid "No repository password provided or stored."
+msgstr "Kein Repository-Passwort angegeben oder gespeichert."
 
-#: daemon/src/service.rs:2550
-msgid "Cannot unlock: repository lock belongs to an active or remote process"
-msgstr "Entsperren nicht möglich: Die Repository-Sperre gehört zu einem aktiven oder entfernten Prozess"
-
-#: daemon/src/service.rs:2662
+#: daemon/src/service/error.rs:116
 msgid "Source unavailable: drive not mounted"
 msgstr "Quelle nicht verfügbar: Laufwerk nicht eingehängt"
 
-#: daemon/src/service.rs:2663
+#: daemon/src/service/error.rs:117
 msgid "Source unavailable: different drive"
 msgstr "Quelle nicht verfügbar: anderes Laufwerk"
 
-#: daemon/src/service.rs:2664
+#: daemon/src/service/error.rs:118
 msgid "Source unavailable: source empty"
 msgstr "Quelle nicht verfügbar: Quelle leer"
 
-#: daemon/src/service.rs:2666 daemon/src/service.rs:4343
+#: daemon/src/service/error.rs:120 daemon/src/service/maintenance.rs:868
 msgid "Source unavailable"
 msgstr "Quelle nicht verfügbar"
 
-#: daemon/src/service.rs:3037
-msgid "Destination unreachable · next attempt at %1"
-msgstr "Ziel nicht erreichbar · nächster Versuch um %1"
-
-#: daemon/src/service.rs:3039
-msgid "Destination unreachable · waiting for next scheduled run"
-msgstr "Ziel nicht erreichbar · wartet auf nächsten geplanten Lauf"
-
-#: daemon/src/service.rs:3075 daemon/src/service.rs:3104
-msgid "%1: Backup cannot start"
-msgstr "%1: Backup kann nicht gestartet werden"
-
-#: daemon/src/service.rs:3211
-msgid "Backing up %1"
-msgstr "Sichere %1"
-
-#: daemon/src/service.rs:3260
-msgid "Backing up %1 (%2%)"
-msgstr "Sichere %1 (%2%)"
-
-#: daemon/src/service.rs:3335 daemon/src/service.rs:3461
-msgid "Interrupted by system sleep"
-msgstr "Durch Ruhezustand unterbrochen"
-
-#: daemon/src/service.rs:3416
-msgid "Backed up, destination locked — retention will catch up later"
-msgstr "Gesichert, Ziel gesperrt — Aufbewahrung wird später nachgeholt"
-
-#: daemon/src/service.rs:3554
-msgid "%1: Backup failed"
-msgstr "%1: Backup fehlgeschlagen"
-
-#: daemon/src/service.rs:3566
-msgid "%1: Backup finished with warning"
-msgstr "%1: Backup mit Warnung abgeschlossen"
-
-#: daemon/src/service.rs:3984
+#: daemon/src/service/maintenance.rs:366
 msgid "Maintaining %1"
 msgstr "Wartung für %1"
 
-#: daemon/src/service.rs:4224
+#: daemon/src/service/maintenance.rs:688
 msgid "%1: Maintenance failed"
 msgstr "%1: Wartung fehlgeschlagen"
 
-#: daemon/src/service.rs:4226
+#: daemon/src/service/maintenance.rs:692
 msgid "Destination maintenance failed"
 msgstr "Ziel-Wartung fehlgeschlagen"
 
-#: daemon/src/service.rs:4298
+#: daemon/src/service/maintenance.rs:819
 msgid "Permanent error — fix required before backing up"
 msgstr "Dauerhafter Fehler — Behebung vor dem Backup erforderlich"
 
-#: daemon/src/service.rs:4346
+#: daemon/src/service/maintenance.rs:871
 msgid "Run condition not met"
 msgstr "Laufbedingung nicht erfüllt"
 
-#: daemon/src/service.rs:4353
-msgid "Another run is already running"
-msgstr "Ein anderer Lauf läuft bereits"
+#: daemon/src/service/maintenance.rs:912 daemon/src/service/state.rs:475
+#: gui/src/state_cache.rs:1004
+msgid "Waiting: another run on this destination"
+msgstr "Wartet: anderer Lauf auf diesem Ziel"
 
-#: daemon/src/service.rs:4373
+#: daemon/src/service/maintenance.rs:916
 msgid "Skipped during 'Back up all': %1"
 msgstr "Bei «Alle sichern» übersprungen: %1"
 
-#: daemon/src/service.rs:4398
+#: daemon/src/service/maintenance.rs:941
 msgid "%1: %2"
 msgstr "%1: %2"
 
-#: daemon/src/service.rs:4665
-msgid "%1: Backup overdue"
-msgstr "%1: Backup überfällig"
-
-#: daemon/src/service.rs:4666
-msgid "%1 scheduled backups missed"
-msgstr "%1 geplante Backups verpasst"
-
-#: daemon/src/service.rs:5650
+#: daemon/src/service/runtime.rs:92
 msgid "Kestic daemon test notification"
 msgstr "Testbenachrichtigung des Kestic-Hintergrunddienstes"
 
-#: daemon/src/service.rs:5651
+#: daemon/src/service/runtime.rs:93
 msgid "Tray registered and notification channel active."
 msgstr "Systemabschnitt registriert und Benachrichtigungskanal aktiv."
 
-#: daemon/src/service.rs:6007
+#: daemon/src/service/runtime.rs:598
 msgid "Some backups were skipped"
 msgstr "Einige Backups wurden übersprungen"
+
+#: daemon/src/service/scheduler.rs:226
+msgid "%1: Backup overdue"
+msgstr "%1: Backup überfällig"
+
+#: daemon/src/service/scheduler.rs:227
+msgid "%1 scheduled backups missed"
+msgstr "%1 geplante Backups verpasst"
+
+#: daemon/src/service/state.rs:423 gui/src/state_cache.rs:988
+msgid "Paused since %1 (until %2)"
+msgstr "Pausiert seit %1 (bis %2)"
+
+#: daemon/src/service/state.rs:425 gui/src/state_cache.rs:990
+msgid "Paused since %1"
+msgstr "Pausiert seit %1"
+
+#: daemon/src/service/state.rs:433
+msgid "AC power (battery %1%)"
+msgstr "Netzstrom (Akku %1 %)"
+
+#: daemon/src/service/state.rs:435
+msgid "AC power"
+msgstr "Netzstrom"
+
+#: daemon/src/service/state.rs:438
+msgid "network connection"
+msgstr "Netzwerkverbindung"
+
+#: daemon/src/service/state.rs:439
+msgid "unmetered connection"
+msgstr "ungetaktete Verbindung"
+
+#: daemon/src/service/state.rs:441
+msgid "allowed network (%1)"
+msgstr "erlaubtes Netzwerk (%1)"
+
+#: daemon/src/service/state.rs:443
+msgid "source available"
+msgstr "Quelle verfügbar"
+
+#: daemon/src/service/state.rs:444
+msgid "destination reachable"
+msgstr "Ziel erreichbar"
+
+#: daemon/src/service/state.rs:445
+msgid "another run on this destination"
+msgstr "anderer Lauf auf diesem Ziel"
+
+#: daemon/src/service/state.rs:446
+msgid "retry cooldown"
+msgstr "Wartezeit vor erneutem Versuch"
+
+#: daemon/src/service/state.rs:459 gui/src/state_cache.rs:998
+#: gui/src/state_cache.rs:1068
+msgid "Waiting: source unavailable"
+msgstr "Wartet: Quelle nicht verfügbar"
+
+#: daemon/src/service/state.rs:463 gui/src/state_cache.rs:999
+#: gui/src/state_cache.rs:1070
+msgid "Waiting: destination unreachable"
+msgstr "Wartet: Ziel nicht erreichbar"
+
+#: daemon/src/service/state.rs:465 gui/src/state_cache.rs:1000
+msgid "Waiting: AC power"
+msgstr "Wartet: Netzstrom"
+
+#: daemon/src/service/state.rs:466 gui/src/state_cache.rs:1001
+msgid "Waiting: network"
+msgstr "Wartet: Netzwerk"
+
+#: daemon/src/service/state.rs:468 gui/src/state_cache.rs:1002
+msgid "Waiting: unmetered connection"
+msgstr "Wartet: ungetaktete Verbindung"
+
+#: daemon/src/service/state.rs:471 gui/src/state_cache.rs:1003
+msgid "Waiting: allowed network"
+msgstr "Wartet: erlaubtes Netzwerk"
+
+#: daemon/src/service/state.rs:481
+msgid "Waiting: next attempt at %1"
+msgstr "Wartet: nächster Versuch um %1"
+
+#: daemon/src/service/state.rs:597
+msgid "restic not found; at least %1 required"
+msgstr "restic nicht gefunden; mindestens %1 erforderlich"
+
+#: daemon/src/service/state.rs:609
+msgid "restic %1 is too old; Kestic needs at least %2"
+msgstr "restic %1 ist zu alt; Kestic benötigt mindestens %2"
+
+#: daemon/src/service/state.rs:618
+msgid "Custom restic path is invalid (%1): %2"
+msgstr "Eigener restic-Pfad ist ungültig (%1): %2"
+
+#: daemon/src/service/state.rs:627
+msgid "Unable to determine restic version (%1)"
+msgstr "restic-Version konnte nicht ermittelt werden (%1)"
+
+#: daemon/src/service/state.rs:653
+msgid ""
+"The system password store (Secret Service / KWallet) is locked. Kestic "
+"cannot access destinations."
+msgstr ""
+"Der System-Passwortspeicher (Secret Service / KWallet) ist gesperrt. Kestic "
+"kann nicht auf Ziele zugreifen."
+
+#: daemon/src/service/state_summary.rs:471
+msgid "Next backup: %1 (%2)"
+msgstr "Nächstes Backup: %1 (%2)"
+
+#: daemon/src/service/state_summary.rs:546 gui/src/overall_text.rs:84
+msgid "Currently running: %1 (%2%)"
+msgstr "Läuft gerade: %1 (%2%)"
+
+#: daemon/src/service/state_summary.rs:585
+#: daemon/src/service/state_summary.rs:805 gui/src/overall_text.rs:27
+msgid "1 backup overdue"
+msgstr "1 Backup überfällig"
+
+#: daemon/src/service/state_summary.rs:591
+#: daemon/src/service/state_summary.rs:637
+#: daemon/src/service/state_summary.rs:832 gui/src/overall_text.rs:66
+msgid "Schedules paused"
+msgstr "Zeitpläne pausiert"
+
+#: daemon/src/service/state_summary.rs:597
+#: daemon/src/service/state_summary.rs:826 gui/src/overall_text.rs:57
+msgid "1 backup waiting"
+msgstr "1 Backup wartet"
+
+#: daemon/src/service/state_summary.rs:603
+#: daemon/src/service/state_summary.rs:821 gui/src/overall_text.rs:52
+msgid "Schedules paused · 1 backup waiting"
+msgstr "Zeitpläne pausiert · 1 Backup wartet"
+
+#: daemon/src/service/state_summary.rs:609
+msgid "Maintenance running"
+msgstr "Wartung läuft"
+
+#: daemon/src/service/state_summary.rs:615
+msgid "Restore running"
+msgstr "Wiederherstellung läuft"
+
+#: daemon/src/service/state_summary.rs:799 gui/src/overall_text.rs:20
+msgid "1 backup failed"
+msgstr "1 Backup fehlgeschlagen"
+
+#: daemon/src/service/state_summary.rs:801 gui/src/overall_text.rs:22
+msgid "%1 backups failed"
+msgstr "%1 Backups fehlgeschlagen"
+
+#: daemon/src/service/state_summary.rs:807 gui/src/overall_text.rs:29
+msgid "%1 backups overdue"
+msgstr "%1 Backups überfällig"
+
+#: daemon/src/service/state_summary.rs:811 gui/src/overall_text.rs:34
+msgid "1 backup finished with warning"
+msgstr "1 Backup mit Warnung abgeschlossen"
+
+#: daemon/src/service/state_summary.rs:813 gui/src/overall_text.rs:36
+msgid "%1 backups finished with warnings"
+msgstr "%1 Backups mit Warnungen abgeschlossen"
+
+#: daemon/src/service/state_summary.rs:817 daemon/src/tray.rs:172
+#: gui/src/overall_text.rs:41
+msgid "%1: backing up · %2%"
+msgstr "%1: sichert · %2%"
+
+#: daemon/src/service/state_summary.rs:823 gui/src/overall_text.rs:54
+msgid "Schedules paused · %1 backups waiting"
+msgstr "Zeitpläne pausiert · %1 Backups wartend"
+
+#: daemon/src/service/state_summary.rs:828 gui/src/overall_text.rs:59
+msgid "%1 of %2 backups waiting"
+msgstr "%1 von %2 Backups wartend"
+
+#: daemon/src/service/state_summary.rs:834 gui/src/overall_text.rs:68
+#: gui/src/qml/BackupsPage.qml:84
+msgid "No backups configured yet"
+msgstr "Noch keine Backups eingerichtet"
+
+#: daemon/src/service/state_summary.rs:836 gui/src/overall_text.rs:71
+msgid "Last run interrupted"
+msgstr "Letzter Lauf unterbrochen"
+
+#: daemon/src/service/state_summary.rs:838 gui/src/overall_text.rs:72
+msgid "Last run cancelled"
+msgstr "Letzter Lauf abgebrochen"
+
+#: daemon/src/service/state_summary.rs:840 gui/src/overall_text.rs:73
+#: gui/src/state_cache.rs:1135
+msgid "Not backed up yet"
+msgstr "Noch nicht gesichert"
+
+#: daemon/src/service/state_summary.rs:842 daemon/src/tray.rs:127
+#: gui/src/overall_text.rs:74 gui/src/qml/SpikeMain.qml:274
+msgid "All data backed up"
+msgstr "Alle Daten gesichert"
 
 #: daemon/src/tray.rs:126
 msgid "Backups ready"
 msgstr "Backups bereit"
 
-#: daemon/src/tray.rs:266 gui/src/qml/HistoryPage.qml:49
+#: daemon/src/tray.rs:217 gui/src/qml/HistoryPage.qml:49
 msgid "All Backups"
 msgstr "Alle Backups"
 
-#: daemon/src/tray.rs:296 gui/src/qml/BackupDetailPage.qml:64
-#: gui/src/qml/BackupDetailPage.qml:334 gui/src/qml/NewBackupWizard.qml:848
-#: gui/src/qml/OverviewPage.qml:352 gui/src/qml/OverviewPage.qml:391
+#: daemon/src/tray.rs:246 gui/src/qml/BackupDetailPage.qml:64
+#: gui/src/qml/BackupDetailPage.qml:332 gui/src/qml/NewBackupWizard.qml:848
+#: gui/src/qml/OverviewPage.qml:363 gui/src/qml/OverviewPage.qml:404
 #: gui/src/qml/SpikeMain.qml:216
 msgid "Back Up Now"
 msgstr "Jetzt sichern"
 
-#: daemon/src/tray.rs:309
+#: daemon/src/tray.rs:259 gui/src/qml/OverviewPage.qml:35
 msgid "Resume Schedules"
 msgstr "Zeitpläne fortsetzen"
 
-#: daemon/src/tray.rs:321
+#: daemon/src/tray.rs:269
 msgid "Pause Schedules"
 msgstr "Zeitpläne pausieren"
 
-#: daemon/src/tray.rs:325 gui/src/qml/BackupDetailPage.qml:146
-#: gui/src/qml/OverviewPage.qml:47
+#: daemon/src/tray.rs:273 gui/src/qml/BackupDetailPage.qml:146
+#: gui/src/qml/OverviewPage.qml:49
 msgid "1 Hour"
 msgstr "1 Stunde"
 
-#: daemon/src/tray.rs:335 gui/src/qml/BackupDetailPage.qml:151
-#: gui/src/qml/OverviewPage.qml:52
+#: daemon/src/tray.rs:281 gui/src/qml/BackupDetailPage.qml:152
+#: gui/src/qml/OverviewPage.qml:55
 msgid "3 Hours"
 msgstr "3 Stunden"
 
-#: daemon/src/tray.rs:345 gui/src/qml/BackupDetailPage.qml:156
-#: gui/src/qml/OverviewPage.qml:57
+#: daemon/src/tray.rs:289 gui/src/qml/BackupDetailPage.qml:158
+#: gui/src/qml/OverviewPage.qml:61
 msgid "Until Tomorrow"
 msgstr "Bis morgen"
 
-#: daemon/src/tray.rs:353 gui/src/qml/BackupDetailPage.qml:161
-#: gui/src/qml/OverviewPage.qml:62
+#: daemon/src/tray.rs:297 gui/src/qml/BackupDetailPage.qml:164
+#: gui/src/qml/OverviewPage.qml:67
 msgid "Until I Resume"
-msgstr "Bis zum Fortsetzen"
+msgstr "Bis ich fortsetze"
 
-#: daemon/src/tray.rs:370
+#: daemon/src/tray.rs:314
 msgid "Cancel Running Backup"
 msgstr "Laufendes Backup abbrechen"
 
@@ -467,9 +483,42 @@ msgstr "Laufendes Backup abbrechen"
 msgid "Open Kestic"
 msgstr "Kestic öffnen"
 
-#: daemon/src/tray.rs:401
+#: daemon/src/tray.rs:399
 msgid "Quit Kestic…"
 msgstr "Kestic beenden…"
+
+#: gui/src/backend/backups.rs:30 gui/src/backend/destinations.rs:53
+#: gui/src/backend/destinations.rs:169 gui/src/backend/destinations.rs:202
+#: gui/src/backend/previews.rs:98 gui/src/backend/previews.rs:195
+#: gui/src/backend/previews.rs:281
+msgid "Background service unavailable."
+msgstr "Hintergrunddienst nicht verfügbar."
+
+#: gui/src/backend/backups.rs:252 gui/src/backend/backups.rs:311
+#: gui/src/backend/backups.rs:364 gui/src/backend/backups.rs:417
+#: gui/src/backend/schedules.rs:109 gui/src/backend/schedules.rs:163
+msgid "Backup not found."
+msgstr "Backup nicht gefunden."
+
+#: gui/src/backend/backups.rs:533
+msgid "Exclude rule added"
+msgstr "Ausschluss-Regel hinzugefügt"
+
+#: gui/src/backend/destinations.rs:135
+msgid "Saved password updated"
+msgstr "Gespeichertes Passwort aktualisiert"
+
+#: gui/src/backend/destinations.rs:178
+msgid "No stale locks found."
+msgstr "Keine veralteten Sperren gefunden."
+
+#: gui/src/backend/destinations.rs:180
+msgid "1 stale lock removed."
+msgstr "1 veraltete Sperre entfernt."
+
+#: gui/src/backend/destinations.rs:182
+msgid "%1 stale locks removed."
+msgstr "%1 veraltete Sperren entfernt."
 
 #: gui/src/backend.rs:619
 msgid "Wrong password: the repository rejected this password."
@@ -507,71 +556,56 @@ msgstr "restic ist nicht verfügbar oder zu alt."
 msgid "Another run is already active on this destination."
 msgstr "Auf diesem Ziel ist bereits ein anderer Lauf aktiv."
 
-#: gui/src/backend.rs:747
+#: gui/src/backend/schedules.rs:390
+msgid "Run from %1"
+msgstr "Lauf vom %1"
+
+#: gui/src/backend/schedules.rs:410
+msgid "%1 · %2 added"
+msgstr "%1 · %2 hinzugefügt"
+
+#: gui/src/backend/schedules.rs:412
+msgid "%1 new · %2 changed · %3 unchanged · %4 processed"
+msgstr "%1 neu · %2 geändert · %3 unverändert · %4 verarbeitet"
+
+#: gui/src/backend/schedules.rs:419
+msgid "No file statistics available for this run."
+msgstr "Keine Dateistatistiken für diesen Lauf verfügbar."
+
+#: gui/src/backend/schedules.rs:431
+msgid "Exit %1 · %2"
+msgstr "Exit %1 · %2"
+
+#: gui/src/backend/schedules.rs:526 gui/src/qml/BackupSnapshotsPage.qml:64
+#: gui/src/qml/MainHeaderArea.qml:35 gui/src/qml/MainHeaderArea.qml:49
+msgid "Retry"
+msgstr "Erneut versuchen"
+
+#: gui/src/backend/schedules.rs:553
+msgid "Select at least one weekday."
+msgstr "Mindestens einen Wochentag auswählen."
+
+#: gui/src/backend/schedules.rs:560
+msgid "Interval must be between 2 and 365 days."
+msgstr "Das Intervall muss zwischen 2 und 365 Tagen liegen."
+
+#: gui/src/backend/schedules.rs:565
+msgid "Enter a valid start date in YYYY-MM-DD format."
+msgstr "Gültiges Startdatum im Format JJJJ-MM-TT eingeben."
+
+#: gui/src/backend/schedules.rs:567 gui/src/backend/schedules.rs:570
+msgid "Invalid schedule configuration."
+msgstr "Ungültige Zeitplan-Konfiguration."
+
+#: gui/src/backend/state.rs:140
 msgid ""
 "The background service is not running. Scheduled backups will not take place."
 msgstr ""
 "Der Hintergrunddienst läuft nicht. Geplante Backups finden nicht statt."
 
-#: gui/src/backend.rs:751
+#: gui/src/backend/state.rs:145
 msgid "Background service not running"
 msgstr "Hintergrunddienst läuft nicht"
-
-#: gui/src/backend.rs:900 gui/src/backend.rs:1071 gui/src/backend.rs:1616
-#: gui/src/backend.rs:1713 gui/src/backend.rs:2006 gui/src/backend.rs:2255
-#: gui/src/backend.rs:2289
-msgid "Background service unavailable."
-msgstr "Hintergrunddienst nicht verfügbar."
-
-#: gui/src/backend.rs:1153
-msgid "Saved password updated"
-msgstr "Gespeichertes Passwort aktualisiert"
-
-#: gui/src/backend.rs:1244 gui/src/backend.rs:1303 gui/src/backend.rs:1356
-#: gui/src/backend.rs:1409 gui/src/backend.rs:2360 gui/src/backend.rs:2414
-msgid "Backup not found."
-msgstr "Backup nicht gefunden."
-
-#: gui/src/backend.rs:1525
-msgid "Exclude rule added"
-msgstr "Ausschluss-Regel hinzugefügt"
-
-#: gui/src/backend.rs:1843
-msgid "Run from %1"
-msgstr "Lauf vom %1"
-
-#: gui/src/backend.rs:1864
-msgid "%1 · %2 added"
-msgstr "%1 · %2 hinzugefügt"
-
-#: gui/src/backend.rs:1867
-msgid "%1 new · %2 changed · %3 unchanged · %4 processed"
-msgstr "%1 neu · %2 geändert · %3 unverändert · %4 verarbeitet"
-
-#: gui/src/backend.rs:1875
-msgid "No file statistics available for this run."
-msgstr "Keine Dateistatistiken für diesen Lauf verfügbar."
-
-#: gui/src/backend.rs:1893
-msgid "Exit %1 · %2"
-msgstr "Exit %1 · %2"
-
-#: gui/src/backend.rs:2131 gui/src/qml/BackupSnapshotsPage.qml:64
-#: gui/src/qml/Main.qml:1125 gui/src/qml/Main.qml:1139
-msgid "Retry"
-msgstr "Erneut versuchen"
-
-#: gui/src/backend.rs:2264
-msgid "No stale locks found."
-msgstr "Keine veralteten Sperren gefunden."
-
-#: gui/src/backend.rs:2266
-msgid "1 stale lock removed."
-msgstr "1 veraltete Sperre entfernt."
-
-#: gui/src/backend.rs:2268
-msgid "%1 stale locks removed."
-msgstr "%1 veraltete Sperren entfernt."
 
 #: gui/src/list_model.rs:40 gui/src/qml/NewBackupWizard.qml:154
 #: gui/src/qml/SpikeMain.qml:209
@@ -598,508 +632,575 @@ msgstr "/media/photos -> USB-Disk · wartet"
 msgid "~/Projects -> S3 · password rejected"
 msgstr "~/Projekte -> S3 · Passwort abgelehnt"
 
-#: gui/src/models.rs:553
+#: gui/src/models/backups_model.rs:92
 msgid "%1% · %2 of %3"
 msgstr "%1% · %2 von %3"
 
-#: gui/src/models.rs:555
+#: gui/src/models/backups_model.rs:94
 msgid "%1%"
 msgstr "%1%"
 
-#: gui/src/models.rs:571
-msgid "%1 · %2 new"
-msgstr "%1 · %2 neu"
-
-#: gui/src/models.rs:573
+#: gui/src/models/backups_model.rs:101
 msgid "No runs yet"
 msgstr "Noch keine Läufe"
 
-#: gui/src/models.rs:1112
+#: gui/src/models/backups_model.rs:116
+msgid "%1 · %2 new"
+msgstr "%1 · %2 neu"
+
+#: gui/src/models/destinations_model.rs:59
 msgid "Local Folder"
 msgstr "Lokaler Ordner"
 
-#: gui/src/models.rs:1118 gui/src/qml/AddDestinationWizard.qml:198
-#: gui/src/qml/NewBackupWizard.qml:497
+#: gui/src/models/destinations_model.rs:65
+#: gui/src/qml/AddDestinationWizard.qml:198 gui/src/qml/NewBackupWizard.qml:497
 msgid "REST Server"
 msgstr "REST-Server"
 
-#: gui/src/models.rs:1694
+#: gui/src/models/snapshots_model.rs:45
 msgid "%1 files · %2"
 msgstr "%1 Dateien · %2"
 
-#: gui/src/models.rs:1720
+#: gui/src/models/snapshots_model.rs:71
 msgid "Current destination (%1)"
 msgstr "Aktuelles Ziel (%1)"
 
-#: gui/src/models.rs:1725
+#: gui/src/models/snapshots_model.rs:76
 msgid "Earlier snapshots on '%1'"
 msgstr "Frühere Snapshots auf '%1'"
 
-#: gui/src/state_cache.rs:225
+#: gui/src/overall_text.rs:102
+msgid "Only %2 of %1 backup can be backed up now."
+msgid_plural "Only %2 of %1 backups can be backed up now."
+msgstr[0] "Nur %2 von %1 Backup kann jetzt gesichert werden."
+msgstr[1] "Nur %2 von %1 Backups können jetzt gesichert werden."
+
+#: gui/src/state_cache.rs:232
 msgid "Background service did not claim its D-Bus name."
 msgstr "Der Hintergrunddienst hat seinen D-Bus-Namen nicht registriert."
 
-#: gui/src/state_cache.rs:424 gui/src/qml/AddDestinationWizard.qml:70
+#: gui/src/state_cache.rs:431 gui/src/qml/AddDestinationWizard.qml:70
 #: gui/src/qml/DestinationEditPage.qml:84 gui/src/qml/NewBackupWizard.qml:168
 msgid "Please fill in all required fields."
 msgstr "Bitte alle Pflichtfelder ausfüllen."
 
-#: gui/src/state_cache.rs:579
+#: gui/src/state_cache.rs:586
 msgid "all %1"
 msgstr "alle %1"
 
-#: gui/src/state_cache.rs:587 gui/src/qml/BackupRetentionPage.qml:587
+#: gui/src/state_cache.rs:594 gui/src/qml/BackupRetentionPage.qml:587
 #: gui/src/qml/SpikeMain.qml:256
 msgid "Standard (7 daily, 4 weekly, 12 monthly)"
 msgstr "Standard (7 tägliche, 4 wöchentliche, 12 monatliche)"
 
-#: gui/src/state_cache.rs:590 gui/src/qml/BackupRetentionPage.qml:588
+#: gui/src/state_cache.rs:597 gui/src/qml/BackupRetentionPage.qml:588
 msgid "Economical (7 daily, 4 weekly)"
 msgstr "Sparsam (7 tägliche, 4 wöchentliche)"
 
-#: gui/src/state_cache.rs:593 gui/src/qml/BackupRetentionPage.qml:589
+#: gui/src/state_cache.rs:600 gui/src/qml/BackupRetentionPage.qml:589
 msgid "Long (7 daily, 4 weekly, 12 monthly, all yearly)"
 msgstr "Lang (7 tägliche, 4 wöchentliche, 12 monatliche, alle jährlichen)"
 
-#: gui/src/state_cache.rs:601
+#: gui/src/state_cache.rs:608
 msgid "all snapshots"
 msgstr "alle Snapshots"
 
-#: gui/src/state_cache.rs:602
+#: gui/src/state_cache.rs:609
 msgid "%1 last"
 msgstr "letzte %1"
 
-#: gui/src/state_cache.rs:606
+#: gui/src/state_cache.rs:613
 msgid "hourly"
 msgstr "stündliche"
 
-#: gui/src/state_cache.rs:609
+#: gui/src/state_cache.rs:616
 msgid "daily"
 msgstr "tägliche"
 
-#: gui/src/state_cache.rs:612
+#: gui/src/state_cache.rs:619
 msgid "weekly"
 msgstr "wöchentliche"
 
-#: gui/src/state_cache.rs:615
+#: gui/src/state_cache.rs:622
 msgid "monthly"
 msgstr "monatliche"
 
-#: gui/src/state_cache.rs:618
+#: gui/src/state_cache.rs:625
 msgid "yearly"
 msgstr "jährliche"
 
-#: gui/src/state_cache.rs:621
+#: gui/src/state_cache.rs:628
 msgid "all within %1"
 msgstr "alle innerhalb von %1"
 
-#: gui/src/state_cache.rs:624
+#: gui/src/state_cache.rs:631
 msgid "hourly within %1"
 msgstr "stündliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:627
+#: gui/src/state_cache.rs:634
 msgid "daily within %1"
 msgstr "tägliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:630
+#: gui/src/state_cache.rs:637
 msgid "weekly within %1"
 msgstr "wöchentliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:633
+#: gui/src/state_cache.rs:640
 msgid "monthly within %1"
 msgstr "monatliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:636
+#: gui/src/state_cache.rs:643
 msgid "yearly within %1"
 msgstr "jährliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:639
+#: gui/src/state_cache.rs:646
 msgid "No rules configured"
 msgstr "Keine Regeln eingerichtet"
 
-#: gui/src/state_cache.rs:641
+#: gui/src/state_cache.rs:648
 msgid "Custom (%1)"
 msgstr "Benutzerdefiniert (%1)"
 
-#: gui/src/state_cache.rs:653
+#: gui/src/state_cache.rs:660
 msgid "1 folder"
 msgstr "1 Ordner"
 
-#: gui/src/state_cache.rs:655
+#: gui/src/state_cache.rs:662
 msgid "%1 folders"
 msgstr "%1 Ordner"
 
-#: gui/src/state_cache.rs:658
+#: gui/src/state_cache.rs:665
 msgid "caches"
 msgstr "Caches"
 
-#: gui/src/state_cache.rs:661
+#: gui/src/state_cache.rs:668
 msgid "trash"
 msgstr "Papierkorb"
 
-#: gui/src/state_cache.rs:666
+#: gui/src/state_cache.rs:673
 msgid "files > %1"
 msgstr "Dateien > %1"
 
-#: gui/src/state_cache.rs:670
+#: gui/src/state_cache.rs:677
 msgid "1 expert rule"
 msgstr "1 Expertenregel"
 
-#: gui/src/state_cache.rs:672
+#: gui/src/state_cache.rs:679
 msgid "%1 expert rules"
 msgstr "%1 Expertenregeln"
 
-#: gui/src/state_cache.rs:675
+#: gui/src/state_cache.rs:682
 msgid "marker: %1"
 msgstr "Markierungsdatei: %1"
 
-#: gui/src/state_cache.rs:678 gui/src/qml/BackupFullConfigPage.qml:183
+#: gui/src/state_cache.rs:685 gui/src/qml/BackupFullConfigPage.qml:183
 msgid "None"
 msgstr "Keine"
 
-#: gui/src/state_cache.rs:692 gui/src/qml/BackupSourceEditPage.qml:43
+#: gui/src/state_cache.rs:699 gui/src/qml/BackupSourceEditPage.qml:43
 msgid "Drive (%1)"
 msgstr "Laufwerk (%1)"
 
-#: gui/src/state_cache.rs:694 gui/src/qml/BackupSourceEditPage.qml:44
+#: gui/src/state_cache.rs:701 gui/src/qml/BackupSourceEditPage.qml:44
 msgid "Drive"
 msgstr "Laufwerk"
 
-#: gui/src/state_cache.rs:697 gui/src/qml/BackupSourceEditPage.qml:21
+#: gui/src/state_cache.rs:704 gui/src/qml/BackupSourceEditPage.qml:21
 #: gui/src/qml/BackupSourceEditPage.qml:33
 #: gui/src/qml/BackupSourceEditPage.qml:46
 msgid "Folder"
 msgstr "Ordner"
 
-#: gui/src/state_cache.rs:713
+#: gui/src/state_cache.rs:720
 msgid "Custom restic path must not be empty."
 msgstr "Der eigene restic-Pfad darf nicht leer sein."
 
-#: gui/src/state_cache.rs:726
+#: gui/src/state_cache.rs:733
 msgid "just now"
 msgstr "gerade eben"
 
-#: gui/src/state_cache.rs:730
+#: gui/src/state_cache.rs:737
 msgid "1 minute ago"
 msgstr "vor 1 Minute"
 
-#: gui/src/state_cache.rs:733
+#: gui/src/state_cache.rs:740
 msgid "%1 minutes ago"
 msgstr "vor %1 Minuten"
 
-#: gui/src/state_cache.rs:737
+#: gui/src/state_cache.rs:744
 msgid "1 hour ago"
 msgstr "vor 1 Stunde"
 
-#: gui/src/state_cache.rs:740
+#: gui/src/state_cache.rs:747
 msgid "%1 hours ago"
 msgstr "vor %1 Stunden"
 
-#: gui/src/state_cache.rs:744
+#: gui/src/state_cache.rs:751
 msgid "1 day ago"
 msgstr "vor 1 Tag"
 
-#: gui/src/state_cache.rs:746
+#: gui/src/state_cache.rs:753
 msgid "%1 days ago"
 msgstr "vor %1 Tagen"
 
-#: gui/src/state_cache.rs:752
+#: gui/src/state_cache.rs:759
 msgid "%1 s"
 msgstr "%1 s"
 
-#: gui/src/state_cache.rs:758
+#: gui/src/state_cache.rs:765
 msgid "%1 min"
 msgstr "%1 min"
 
-#: gui/src/state_cache.rs:760
+#: gui/src/state_cache.rs:767
 msgid "%1 min %2 s"
 msgstr "%1 min %2 s"
 
-#: gui/src/state_cache.rs:764
+#: gui/src/state_cache.rs:771
 msgid "%1 h %2 min"
 msgstr "%1 h %2 min"
 
-#: gui/src/state_cache.rs:785 gui/src/qml/BackupScheduleEditPage.qml:42
+#: gui/src/state_cache.rs:792 gui/src/qml/BackupScheduleEditPage.qml:42
 msgid "Mon"
 msgstr "Mo"
 
-#: gui/src/state_cache.rs:786 gui/src/qml/BackupScheduleEditPage.qml:43
+#: gui/src/state_cache.rs:793 gui/src/qml/BackupScheduleEditPage.qml:43
 msgid "Tue"
 msgstr "Di"
 
-#: gui/src/state_cache.rs:787 gui/src/qml/BackupScheduleEditPage.qml:44
+#: gui/src/state_cache.rs:794 gui/src/qml/BackupScheduleEditPage.qml:44
 msgid "Wed"
 msgstr "Mi"
 
-#: gui/src/state_cache.rs:788 gui/src/qml/BackupScheduleEditPage.qml:45
+#: gui/src/state_cache.rs:795 gui/src/qml/BackupScheduleEditPage.qml:45
 msgid "Thu"
 msgstr "Do"
 
-#: gui/src/state_cache.rs:789 gui/src/qml/BackupScheduleEditPage.qml:46
+#: gui/src/state_cache.rs:796 gui/src/qml/BackupScheduleEditPage.qml:46
 msgid "Fri"
 msgstr "Fr"
 
-#: gui/src/state_cache.rs:790 gui/src/qml/BackupScheduleEditPage.qml:47
+#: gui/src/state_cache.rs:797 gui/src/qml/BackupScheduleEditPage.qml:47
 msgid "Sat"
 msgstr "Sa"
 
-#: gui/src/state_cache.rs:791 gui/src/qml/BackupScheduleEditPage.qml:48
+#: gui/src/state_cache.rs:798 gui/src/qml/BackupScheduleEditPage.qml:48
 msgid "Sun"
 msgstr "So"
 
-#: gui/src/state_cache.rs:797 gui/src/qml/BackupScheduleEditPage.qml:42
-#: gui/src/qml/DestinationMaintenancePage.qml:56
+#: gui/src/state_cache.rs:804 gui/src/qml/BackupScheduleEditPage.qml:42
+#: gui/src/qml/DestinationMaintenancePage.qml:57
 msgid "Monday"
 msgstr "Montag"
 
-#: gui/src/state_cache.rs:798 gui/src/qml/BackupScheduleEditPage.qml:43
-#: gui/src/qml/DestinationMaintenancePage.qml:57
+#: gui/src/state_cache.rs:805 gui/src/qml/BackupScheduleEditPage.qml:43
+#: gui/src/qml/DestinationMaintenancePage.qml:58
 msgid "Tuesday"
 msgstr "Dienstag"
 
-#: gui/src/state_cache.rs:799 gui/src/qml/BackupScheduleEditPage.qml:44
-#: gui/src/qml/DestinationMaintenancePage.qml:58
+#: gui/src/state_cache.rs:806 gui/src/qml/BackupScheduleEditPage.qml:44
+#: gui/src/qml/DestinationMaintenancePage.qml:59
 msgid "Wednesday"
 msgstr "Mittwoch"
 
-#: gui/src/state_cache.rs:800 gui/src/qml/BackupScheduleEditPage.qml:45
-#: gui/src/qml/DestinationMaintenancePage.qml:59
+#: gui/src/state_cache.rs:807 gui/src/qml/BackupScheduleEditPage.qml:45
+#: gui/src/qml/DestinationMaintenancePage.qml:60
 msgid "Thursday"
 msgstr "Donnerstag"
 
-#: gui/src/state_cache.rs:801 gui/src/qml/BackupScheduleEditPage.qml:46
-#: gui/src/qml/DestinationMaintenancePage.qml:60
+#: gui/src/state_cache.rs:808 gui/src/qml/BackupScheduleEditPage.qml:46
+#: gui/src/qml/DestinationMaintenancePage.qml:61
 msgid "Friday"
 msgstr "Freitag"
 
-#: gui/src/state_cache.rs:802 gui/src/qml/BackupScheduleEditPage.qml:47
-#: gui/src/qml/DestinationMaintenancePage.qml:61
+#: gui/src/state_cache.rs:809 gui/src/qml/BackupScheduleEditPage.qml:47
+#: gui/src/qml/DestinationMaintenancePage.qml:62
 msgid "Saturday"
 msgstr "Samstag"
 
-#: gui/src/state_cache.rs:803 gui/src/qml/BackupScheduleEditPage.qml:48
-#: gui/src/qml/DestinationMaintenancePage.qml:62
+#: gui/src/state_cache.rs:810 gui/src/qml/BackupScheduleEditPage.qml:48
+#: gui/src/qml/DestinationMaintenancePage.qml:63
 msgid "Sunday"
 msgstr "Sonntag"
 
-#: gui/src/state_cache.rs:809
+#: gui/src/state_cache.rs:816
 msgid "first"
-msgstr "ersten"
+msgstr "erster"
 
-#: gui/src/state_cache.rs:810
+#: gui/src/state_cache.rs:817
 msgid "second"
-msgstr "zweiten"
+msgstr "zweiter"
 
-#: gui/src/state_cache.rs:811
+#: gui/src/state_cache.rs:818
 msgid "third"
-msgstr "dritten"
+msgstr "dritter"
 
-#: gui/src/state_cache.rs:812
+#: gui/src/state_cache.rs:819
 msgid "fourth"
-msgstr "vierten"
+msgstr "vierter"
 
-#: gui/src/state_cache.rs:813
+#: gui/src/state_cache.rs:820
 msgid "last"
-msgstr "letzten"
+msgstr "letzter"
 
-#: gui/src/state_cache.rs:819 gui/src/state_cache.rs:891
+#: gui/src/state_cache.rs:826
+msgid "Mondays"
+msgstr "montags"
+
+#: gui/src/state_cache.rs:827
+msgid "Tuesdays"
+msgstr "dienstags"
+
+#: gui/src/state_cache.rs:828
+msgid "Wednesdays"
+msgstr "mittwochs"
+
+#: gui/src/state_cache.rs:829
+msgid "Thursdays"
+msgstr "donnerstags"
+
+#: gui/src/state_cache.rs:830
+msgid "Fridays"
+msgstr "freitags"
+
+#: gui/src/state_cache.rs:831
+msgid "Saturdays"
+msgstr "samstags"
+
+#: gui/src/state_cache.rs:832
+msgid "Sundays"
+msgstr "sonntags"
+
+#: gui/src/state_cache.rs:838 gui/src/state_cache.rs:909
 #: gui/src/qml/BackupScheduleEditPage.qml:38
-#: gui/src/qml/DestinationMaintenancePage.qml:44
+#: gui/src/qml/DestinationMaintenancePage.qml:45
 msgid "Manual only"
 msgstr "Nur manuell"
 
-#: gui/src/state_cache.rs:820 gui/src/qml/BackupScheduleEditPage.qml:37
-msgid "Hourly"
-msgstr "Stündlich"
-
-#: gui/src/state_cache.rs:823 gui/src/state_cache.rs:894
+#: gui/src/state_cache.rs:841 gui/src/state_cache.rs:912
 msgid "Daily at %1"
 msgstr "Täglich um %1"
 
-#: gui/src/state_cache.rs:836
+#: gui/src/state_cache.rs:854
 msgid "On weekdays at %1"
 msgstr "Werktags um %1"
 
-#: gui/src/state_cache.rs:838
+#: gui/src/state_cache.rs:856
 msgid "On %1 at %2"
 msgstr "Am %1 um %2"
 
-#: gui/src/state_cache.rs:850 gui/src/state_cache.rs:902
+#: gui/src/state_cache.rs:868
 msgid "Weekly on %1 at %2"
 msgstr "Wöchentlich am %1 um %2"
 
-#: gui/src/state_cache.rs:859
+#: gui/src/state_cache.rs:877
 msgid "Every %1 days from %2 at %3"
 msgstr "Alle %1 Tage ab %2 um %3"
 
-#: gui/src/state_cache.rs:871
+#: gui/src/state_cache.rs:889
 msgid "AC power only"
 msgstr "Nur am Netzstrom"
 
-#: gui/src/state_cache.rs:874
+#: gui/src/state_cache.rs:892
 msgid "Network required"
 msgstr "Netzwerk erforderlich"
 
-#: gui/src/state_cache.rs:877
+#: gui/src/state_cache.rs:895
 msgid "Not on metered connection"
 msgstr "Nicht über getaktete Verbindung"
 
-#: gui/src/state_cache.rs:880
+#: gui/src/state_cache.rs:898
 msgid "Networks: %1"
 msgstr "Netzwerke: %1"
 
-#: gui/src/state_cache.rs:883
+#: gui/src/state_cache.rs:901
 msgid "No restrictions"
 msgstr "Keine Einschränkungen"
 
-#: gui/src/state_cache.rs:911
-msgid "Monthly (%1 %2) at %3"
-msgstr "Monatlich (%1 %2) um %3"
+#: gui/src/state_cache.rs:920
+msgid "%1 at %2"
+msgstr "%1 %2"
 
-#: gui/src/state_cache.rs:921
-msgid "Prune: %1 · Check: %2"
-msgstr "Bereinigung: %1 · Prüfung: %2"
+#: gui/src/state_cache.rs:929
+msgid "%1 %2 of month at %3"
+msgstr "%1 %2 im Monat %3"
 
-#: gui/src/state_cache.rs:944
+#: gui/src/state_cache.rs:939
+msgid "Clean up: %1 · Verify: %2"
+msgstr "Aufräumen: %1 · Prüfen: %2"
+
+#: gui/src/state_cache.rs:962
 msgid "Next: %1"
 msgstr "Nächster Lauf: %1"
 
-#: gui/src/state_cache.rs:947
+#: gui/src/state_cache.rs:965
 msgid "Schedule: Manual only"
 msgstr "Zeitplan: Nur manuell"
 
-#: gui/src/state_cache.rs:985
+#: gui/src/state_cache.rs:1018
 msgid "Backing up · %1%"
 msgstr "Sichert · %1%"
 
-#: gui/src/state_cache.rs:996 gui/src/state_cache.rs:1046
+#: gui/src/state_cache.rs:1029 gui/src/state_cache.rs:1083
 msgid "Backup failed"
 msgstr "Backup fehlgeschlagen"
 
-#: gui/src/state_cache.rs:997 gui/src/state_cache.rs:1047
+#: gui/src/state_cache.rs:1030 gui/src/state_cache.rs:1084
 msgid "Failed: %1"
 msgstr "Fehlgeschlagen: %1"
 
-#: gui/src/state_cache.rs:1003
+#: gui/src/state_cache.rs:1036
 msgid "Overdue (%1 missed)"
 msgstr "Überfällig (%1 verpasst)"
 
-#: gui/src/state_cache.rs:1005
+#: gui/src/state_cache.rs:1038
 msgid "Overdue"
 msgstr "Überfällig"
 
-#: gui/src/state_cache.rs:1035
+#: gui/src/state_cache.rs:1072
 msgid "Waiting: unavailable"
 msgstr "Wartet: nicht verfügbar"
 
-#: gui/src/state_cache.rs:1053
+#: gui/src/state_cache.rs:1090
 msgid "Backed up, %1 files unreadable"
 msgstr "Gesichert, %1 Dateien nicht lesbar"
 
-#: gui/src/state_cache.rs:1055
+#: gui/src/state_cache.rs:1092
 msgid "Backed up, retention not executed (forget pending)"
 msgstr "Gesichert, Aufbewahrung nicht ausgeführt (forget ausstehend)"
 
-#: gui/src/state_cache.rs:1057
+#: gui/src/state_cache.rs:1094
 msgid "Backed up with warning"
 msgstr "Mit Warnung gesichert"
 
-#: gui/src/state_cache.rs:1063
+#: gui/src/state_cache.rs:1100
 msgid "Backed up · %1"
 msgstr "Gesichert · %1"
 
-#: gui/src/state_cache.rs:1068 gui/src/state_cache.rs:1157
+#: gui/src/state_cache.rs:1105 gui/src/state_cache.rs:1194
 msgid "Cancelled"
 msgstr "Abgebrochen"
 
-#: gui/src/state_cache.rs:1075
+#: gui/src/state_cache.rs:1112
 msgid "Interrupted (sleep)"
 msgstr "Unterbrochen (Ruhezustand)"
 
-#: gui/src/state_cache.rs:1082 gui/src/state_cache.rs:1156
+#: gui/src/state_cache.rs:1119 gui/src/state_cache.rs:1193
 msgid "Waiting"
 msgstr "Wartet"
 
-#: gui/src/state_cache.rs:1089
+#: gui/src/state_cache.rs:1126
 msgid "Backing up · 0%"
 msgstr "Sichert · 0%"
 
-#: gui/src/state_cache.rs:1116
+#: gui/src/state_cache.rs:1153
 msgid "Lock from an interrupted run"
 msgstr "Sperre von einem unterbrochenen Lauf"
 
-#: gui/src/state_cache.rs:1122
+#: gui/src/state_cache.rs:1159
 msgid "Unreachable"
 msgstr "Nicht erreichbar"
 
-#: gui/src/state_cache.rs:1129
+#: gui/src/state_cache.rs:1166
 msgid "Reachable · last checked %1"
 msgstr "Erreichbar · zuletzt geprüft %1"
 
-#: gui/src/state_cache.rs:1152
+#: gui/src/state_cache.rs:1189
 msgid "Backed up"
 msgstr "Gesichert"
 
-#: gui/src/state_cache.rs:1153
+#: gui/src/state_cache.rs:1190
 msgid "Warning"
 msgstr "Warnung"
 
-#: gui/src/state_cache.rs:1154
+#: gui/src/state_cache.rs:1191
 msgid "Failed"
 msgstr "Fehlgeschlagen"
 
-#: gui/src/state_cache.rs:1155
+#: gui/src/state_cache.rs:1192
 msgid "Running"
 msgstr "Läuft"
 
-#: gui/src/state_cache.rs:1158
+#: gui/src/state_cache.rs:1195
 msgid "Interrupted"
 msgstr "Unterbrochen"
 
-#: gui/src/state_cache.rs:1172
+#: gui/src/state_cache.rs:1209
 msgid "Today"
 msgstr "Heute"
 
-#: gui/src/state_cache.rs:1177
+#: gui/src/state_cache.rs:1214
 msgid "Yesterday"
 msgstr "Gestern"
 
-#: gui/src/state_cache.rs:1214
+#: gui/src/state_cache.rs:1274
 msgid "Maintenance %1"
 msgstr "Wartung %1"
 
-#: gui/src/state_cache.rs:1215
+#: gui/src/state_cache.rs:1275
 msgid "Restore %1"
 msgstr "Wiederherstellen %1"
 
-#: gui/src/state_cache.rs:1216
+#: gui/src/state_cache.rs:1276
 msgid "Metadata %1"
 msgstr "Metadaten %1"
 
-#: gui/src/state_cache.rs:1222
+#: gui/src/state_cache.rs:1282
 msgid "Cannot back up '%1': source is unavailable."
 msgstr "'%1' kann nicht gesichert werden: Quelle ist nicht verfügbar."
 
-#: gui/src/state_cache.rs:1224
+#: gui/src/state_cache.rs:1284
 msgid "Cannot back up '%1': run conditions are not met."
 msgstr "'%1' kann nicht gesichert werden: Laufbedingungen sind nicht erfüllt."
 
-#: gui/src/state_cache.rs:1226
+#: gui/src/state_cache.rs:1286
 msgid "Cannot back up '%1': destination is unreachable."
 msgstr "'%1' kann nicht gesichert werden: Ziel ist nicht erreichbar."
 
-#: gui/src/state_cache.rs:1232
+#: gui/src/state_cache.rs:1292
 msgid ""
 "Run conditions for '%1' are currently not met (%2). Start backup anyway?"
-msgstr "Laufbedingungen für '%1' sind aktuell nicht erfüllt (%2). Backup trotzdem starten?"
+msgstr ""
+"Laufbedingungen für '%1' sind aktuell nicht erfüllt (%2). Backup trotzdem "
+"starten?"
 
-#: gui/src/state_cache.rs:1235
+#: gui/src/state_cache.rs:1295
 msgid "Run conditions for '%1' are currently not met. Start backup anyway?"
-msgstr "Laufbedingungen für '%1' sind aktuell nicht erfüllt. Backup trotzdem starten?"
+msgstr ""
+"Laufbedingungen für '%1' sind aktuell nicht erfüllt. Backup trotzdem starten?"
 
-#: gui/src/state_cache.rs:1250
-msgid "%1 backups skipped: %2"
-msgstr "%1 Backups übersprungen: %2"
+#: gui/src/state_cache.rs:1304
+msgid "permanent error, fix required"
+msgstr "dauerhafter Fehler, Behebung nötig"
+
+#: gui/src/state_cache.rs:1305
+msgid "source unavailable"
+msgstr "Quelle nicht verfügbar"
+
+#: gui/src/state_cache.rs:1306
+msgid "destination unreachable"
+msgstr "Ziel nicht erreichbar"
+
+#: gui/src/state_cache.rs:1307
+msgid "run conditions not met"
+msgstr "Laufbedingungen nicht erfüllt"
+
+#: gui/src/state_cache.rs:1326
+msgid "%1 backup queued behind active destination run"
+msgid_plural "%1 backups queued behind active destination run"
+msgstr[0] "%1 Backup wartet hinter dem laufenden Lauf auf dem Ziel"
+msgstr[1] "%1 Backups warten hinter dem laufenden Lauf auf dem Ziel"
+
+#: gui/src/state_cache.rs:1334 gui/src/state_cache.rs:1341
+msgid "%1 backup skipped: %2"
+msgid_plural "%1 backups skipped: %2"
+msgstr[0] "%1 Backup übersprungen: %2"
+msgstr[1] "%1 Backups übersprungen: %2"
+
+#: gui/src/state_cache.rs:1347
+msgid "%1 backup queued, %2"
+msgid_plural "%1 backups queued, %2"
+msgstr[0] "%1 Backup eingereiht, %2"
+msgstr[1] "%1 Backups eingereiht, %2"
 
 #: gui/src/qml/AddDestinationWizard.qml:13
 msgid "Add Destination"
@@ -1305,19 +1406,19 @@ msgstr "Passwörter stimmen nicht überein."
 
 #: gui/src/qml/AddDestinationWizard.qml:413
 #: gui/src/qml/AddDestinationWizard.qml:414
-#: gui/src/qml/BackupConditionsEditPage.qml:326
-#: gui/src/qml/BackupDetailPage.qml:61 gui/src/qml/BackupDetailPage.qml:334
+#: gui/src/qml/BackupConditionsEditPage.qml:324
+#: gui/src/qml/BackupDetailPage.qml:61 gui/src/qml/BackupDetailPage.qml:332
 #: gui/src/qml/BackupPreviewPage.qml:208 gui/src/qml/BackupPreviewPage.qml:348
-#: gui/src/qml/BackupScheduleEditPage.qml:624
-#: gui/src/qml/DestinationMaintenancePage.qml:486
+#: gui/src/qml/BackupScheduleEditPage.qml:649
+#: gui/src/qml/DestinationMaintenancePage.qml:537
 #: gui/src/qml/NewBackupWizard.qml:802 gui/src/qml/NewBackupWizard.qml:803
-#: gui/src/qml/OverviewPage.qml:374
+#: gui/src/qml/OverviewPage.qml:386 gui/src/qml/UnsavedChangesDialog.qml:40
 msgid "Cancel"
 msgstr "Abbrechen"
 
 #: gui/src/qml/AddDestinationWizard.qml:427
-#: gui/src/qml/AddDestinationWizard.qml:429 gui/src/qml/Main.qml:1244
-#: gui/src/qml/Main.qml:1246 gui/src/qml/NewBackupWizard.qml:816
+#: gui/src/qml/AddDestinationWizard.qml:429 gui/src/qml/MainHeaderArea.qml:154
+#: gui/src/qml/MainHeaderArea.qml:156 gui/src/qml/NewBackupWizard.qml:816
 #: gui/src/qml/NewBackupWizard.qml:818
 msgid "Back"
 msgstr "Zurück"
@@ -1340,15 +1441,16 @@ msgid "Run conditions saved"
 msgstr "Laufbedingungen gespeichert"
 
 #: gui/src/qml/BackupConditionsEditPage.qml:171
-#: gui/src/qml/BackupConditionsEditPage.qml:341
+#: gui/src/qml/BackupConditionsEditPage.qml:339
 #: gui/src/qml/BackupExcludesEditPage.qml:249
 #: gui/src/qml/BackupRetentionPage.qml:368
 #: gui/src/qml/BackupScheduleEditPage.qml:300
-#: gui/src/qml/BackupScheduleEditPage.qml:639
+#: gui/src/qml/BackupScheduleEditPage.qml:664
 #: gui/src/qml/BackupSourceEditPage.qml:111
 #: gui/src/qml/DestinationEditPage.qml:143
-#: gui/src/qml/DestinationMaintenancePage.qml:237
-#: gui/src/qml/DestinationMaintenancePage.qml:501
+#: gui/src/qml/DestinationMaintenancePage.qml:262
+#: gui/src/qml/DestinationMaintenancePage.qml:552
+#: gui/src/qml/UnsavedChangesDialog.qml:22
 msgid "Save"
 msgstr "Speichern"
 
@@ -1361,93 +1463,87 @@ msgstr "Speichern"
 #: gui/src/qml/BackupSnapshotsPage.qml:42
 #: gui/src/qml/BackupSourceEditPage.qml:119
 #: gui/src/qml/DestinationEditPage.qml:151
-#: gui/src/qml/DestinationMaintenancePage.qml:245
+#: gui/src/qml/DestinationMaintenancePage.qml:270
 msgid "Close"
 msgstr "Schliessen"
 
 #: gui/src/qml/BackupConditionsEditPage.qml:193
-#: gui/src/qml/BackupExcludesEditPage.qml:282
-#: gui/src/qml/BackupRetentionPage.qml:415
-#: gui/src/qml/BackupScheduleEditPage.qml:322
-#: gui/src/qml/BackupSourceEditPage.qml:165
-#: gui/src/qml/DestinationEditPage.qml:177
-#: gui/src/qml/DestinationMaintenancePage.qml:299
-msgid "Save changes?"
-msgstr "Änderungen speichern?"
-
-#: gui/src/qml/BackupConditionsEditPage.qml:194
 msgid "You have unsaved changes to run conditions."
 msgstr "Es gibt ungespeicherte Änderungen an den Laufbedingungen."
 
-#: gui/src/qml/BackupConditionsEditPage.qml:220
+#: gui/src/qml/BackupConditionsEditPage.qml:218
 msgid "Power & Network"
 msgstr "Strom & Netzwerk"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:226
+#: gui/src/qml/BackupConditionsEditPage.qml:224
 msgid "Power:"
 msgstr "Strom:"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:227
+#: gui/src/qml/BackupConditionsEditPage.qml:225
 msgid "Only on AC power (skip on battery)"
 msgstr "Nur am Netzstrom (im Akkubetrieb überspringen)"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:236
+#: gui/src/qml/BackupConditionsEditPage.qml:234
 msgid "Network:"
 msgstr "Netzwerk:"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:237
+#: gui/src/qml/BackupConditionsEditPage.qml:235
 msgid "Require network connection"
 msgstr "Netzwerkverbindung erforderlich"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:246
+#: gui/src/qml/BackupConditionsEditPage.qml:244
 msgid "Skip on metered network (e.g. mobile hotspot)"
 msgstr "Bei getaktetem Netzwerk überspringen (z. B. mobiler Hotspot)"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:261
+#: gui/src/qml/BackupConditionsEditPage.qml:259
 msgid "Allowed Wi-Fi Networks (optional)"
 msgstr "Erlaubte WLAN-Netzwerke (optional)"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:266
+#: gui/src/qml/BackupConditionsEditPage.qml:264
 msgid "Leave all unchecked to allow any network."
 msgstr "Alles abwählen, um jedes Netzwerk zu erlauben."
 
-#: gui/src/qml/BackupConditionsEditPage.qml:267
+#: gui/src/qml/BackupConditionsEditPage.qml:265
 msgid ""
 "Scheduled backups will only run when connected to one of the selected Wi-Fi "
 "networks."
-msgstr "Geplante Backups laufen nur bei Verbindung mit einem der ausgewählten WLAN-Netzwerke."
+msgstr ""
+"Geplante Backups laufen nur bei Verbindung mit einem der ausgewählten WLAN-"
+"Netzwerke."
 
-#: gui/src/qml/BackupConditionsEditPage.qml:280
+#: gui/src/qml/BackupConditionsEditPage.qml:278
 msgid "Allow network %1"
 msgstr "Netzwerk %1 erlauben"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:292
+#: gui/src/qml/BackupConditionsEditPage.qml:290
 msgid "Add Wi-Fi name (SSID)…"
 msgstr "WLAN-Name (SSID) hinzufügen…"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:293
+#: gui/src/qml/BackupConditionsEditPage.qml:291
 msgid "Add Wi-Fi network SSID"
 msgstr "WLAN-Netzwerk-SSID hinzufügen"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:302
+#: gui/src/qml/BackupConditionsEditPage.qml:300
 msgid "Add"
 msgstr "Hinzufügen"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:304
+#: gui/src/qml/BackupConditionsEditPage.qml:302
 msgid "Add Wi-Fi network"
 msgstr "WLAN-Netzwerk hinzufügen"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:311
+#: gui/src/qml/BackupConditionsEditPage.qml:309
 msgid ""
 "Manual backups ask for confirmation before running if any condition is "
 "currently unmet."
-msgstr "Manuelle Backups fragen vor dem Start nach einer Bestätigung, falls eine Bedingung aktuell nicht erfüllt ist."
+msgstr ""
+"Manuelle Backups fragen vor dem Start nach einer Bestätigung, falls eine "
+"Bedingung aktuell nicht erfüllt ist."
 
-#: gui/src/qml/BackupConditionsEditPage.qml:327
+#: gui/src/qml/BackupConditionsEditPage.qml:325
 msgid "Cancel run condition edits"
 msgstr "Änderungen an den Laufbedingungen abbrechen"
 
-#: gui/src/qml/BackupConditionsEditPage.qml:344
+#: gui/src/qml/BackupConditionsEditPage.qml:342
 msgid "Save run conditions"
 msgstr "Laufbedingungen speichern"
 
@@ -1463,9 +1559,10 @@ msgstr "Gespeichertes Repository-Passwort vor dem Backup aktualisieren"
 msgid "Start backup now"
 msgstr "Backup jetzt starten"
 
-#: gui/src/qml/BackupDetailPage.qml:88 gui/src/qml/OverviewPage.qml:33
-msgid "Paused…"
-msgstr "Pausiert…"
+#: gui/src/qml/BackupDetailPage.qml:88 gui/src/qml/BackupDetailPage.qml:186
+#: gui/src/qml/MainHeaderArea.qml:95
+msgid "Resume"
+msgstr "Fortsetzen"
 
 #: gui/src/qml/BackupDetailPage.qml:88
 msgid "Pause…"
@@ -1475,7 +1572,7 @@ msgstr "Pausieren…"
 msgid "Temporarily pause this backup's schedule"
 msgstr "Zeitplan dieses Backups vorübergehend pausieren"
 
-#: gui/src/qml/BackupDetailPage.qml:97 gui/src/qml/OverviewPage.qml:390
+#: gui/src/qml/BackupDetailPage.qml:97 gui/src/qml/OverviewPage.qml:403
 msgid "Back Up Now Anyway"
 msgstr "Trotzdem jetzt sichern"
 
@@ -1483,26 +1580,21 @@ msgstr "Trotzdem jetzt sichern"
 msgid "Preview: What Would Be Backed Up?"
 msgstr "Vorschau: Was würde gesichert?"
 
-#: gui/src/qml/BackupDetailPage.qml:114 gui/src/qml/OverviewPage.qml:403
+#: gui/src/qml/BackupDetailPage.qml:114 gui/src/qml/OverviewPage.qml:416
 msgid "Rename…"
 msgstr "Umbenennen…"
 
 #: gui/src/qml/BackupDetailPage.qml:122 gui/src/qml/BackupFullConfigPage.qml:39
-#: gui/src/qml/BackupPreviewPage.qml:162 gui/src/qml/OverviewPage.qml:396
+#: gui/src/qml/BackupPreviewPage.qml:162 gui/src/qml/OverviewPage.qml:409
 #: gui/src/qml/RunDetailPage.qml:87
 msgid "Show Command"
 msgstr "Befehl anzeigen"
 
-#: gui/src/qml/BackupDetailPage.qml:133 gui/src/qml/OverviewPage.qml:408
+#: gui/src/qml/BackupDetailPage.qml:133 gui/src/qml/OverviewPage.qml:421
 msgid "Remove from Kestic…"
 msgstr "Aus Kestic entfernen…"
 
-#: gui/src/qml/BackupDetailPage.qml:169 gui/src/qml/BackupDetailPage.qml:193
-#: gui/src/qml/Main.qml:1185 gui/src/qml/OverviewPage.qml:70
-msgid "Resume"
-msgstr "Fortsetzen"
-
-#: gui/src/qml/BackupDetailPage.qml:233
+#: gui/src/qml/BackupDetailPage.qml:226
 msgid ""
 "Nested source overlap with backup '%1' (%2) on the same destination. Files "
 "may be stored redundantly or with conflicting exclusions."
@@ -1511,103 +1603,103 @@ msgstr ""
 "Ziel. Dateien werden möglicherweise doppelt oder mit widersprüchlichen "
 "Ausschlüssen gespeichert."
 
-#: gui/src/qml/BackupDetailPage.qml:251
+#: gui/src/qml/BackupDetailPage.qml:244
 msgid "Exclude rule warning on line %1: '%2' has no effect with '%3'."
 msgstr ""
 "Warnung zur Ausschluss-Regel in Zeile %1: '%2' hat bei '%3' keine Wirkung."
 
-#: gui/src/qml/BackupDetailPage.qml:261
+#: gui/src/qml/BackupDetailPage.qml:254
 msgid "Review Exclude Rules…"
 msgstr "Ausschluss-Regeln überprüfen…"
 
-#: gui/src/qml/BackupDetailPage.qml:376
+#: gui/src/qml/BackupDetailPage.qml:374
 msgid "Snapshots"
 msgstr "Snapshots"
 
-#: gui/src/qml/BackupDetailPage.qml:384 gui/src/qml/BackupDetailPage.qml:408
+#: gui/src/qml/BackupDetailPage.qml:382 gui/src/qml/BackupDetailPage.qml:406
 msgid "Show all snapshots"
 msgstr "Alle Snapshots anzeigen"
 
-#: gui/src/qml/BackupDetailPage.qml:422 gui/src/qml/Main.qml:1155
+#: gui/src/qml/BackupDetailPage.qml:420 gui/src/qml/MainHeaderArea.qml:65
 msgid "Settings"
 msgstr "Einstellungen"
 
-#: gui/src/qml/BackupDetailPage.qml:430
+#: gui/src/qml/BackupDetailPage.qml:428
 msgid "Edit source folder"
 msgstr "Quellordner bearbeiten"
 
-#: gui/src/qml/BackupDetailPage.qml:455
+#: gui/src/qml/BackupDetailPage.qml:453
 msgid "Source: %1 (%2)"
 msgstr "Quelle: %1 (%2)"
 
-#: gui/src/qml/BackupDetailPage.qml:456
+#: gui/src/qml/BackupDetailPage.qml:454
 #: gui/src/qml/BackupFullConfigPage.qml:135
 #: gui/src/qml/BackupSourceEditPage.qml:13
 msgid "Source"
 msgstr "Quelle"
 
-#: gui/src/qml/BackupDetailPage.qml:473
+#: gui/src/qml/BackupDetailPage.qml:471
 msgid "Edit exclude rules"
 msgstr "Ausschluss-Regeln bearbeiten"
 
-#: gui/src/qml/BackupDetailPage.qml:498
+#: gui/src/qml/BackupDetailPage.qml:496
 msgid "Exclude rules: %1"
 msgstr "Ausschluss-Regeln: %1"
 
-#: gui/src/qml/BackupDetailPage.qml:499
+#: gui/src/qml/BackupDetailPage.qml:497
 msgid "Exclude rules"
 msgstr "Ausschluss-Regeln"
 
-#: gui/src/qml/BackupDetailPage.qml:516
+#: gui/src/qml/BackupDetailPage.qml:514
 msgid "Edit retention policy"
 msgstr "Aufbewahrungsrichtlinie bearbeiten"
 
-#: gui/src/qml/BackupDetailPage.qml:541
+#: gui/src/qml/BackupDetailPage.qml:539
 msgid "Retention: %1"
 msgstr "Aufbewahrung: %1"
 
-#: gui/src/qml/BackupDetailPage.qml:542
+#: gui/src/qml/BackupDetailPage.qml:540
 #: gui/src/qml/BackupFullConfigPage.qml:194
 #: gui/src/qml/BackupRetentionPage.qml:12 gui/src/qml/SpikeMain.qml:251
 msgid "Retention"
 msgstr "Aufbewahrung"
 
-#: gui/src/qml/BackupDetailPage.qml:559
+#: gui/src/qml/BackupDetailPage.qml:557
 msgid "Edit schedule"
 msgstr "Zeitplan bearbeiten"
 
-#: gui/src/qml/BackupDetailPage.qml:584
+#: gui/src/qml/BackupDetailPage.qml:582
 msgid "Schedule: %1"
 msgstr "Zeitplan: %1"
 
-#: gui/src/qml/BackupDetailPage.qml:585
+#: gui/src/qml/BackupDetailPage.qml:583
 #: gui/src/qml/BackupFullConfigPage.qml:211
-#: gui/src/qml/BackupScheduleEditPage.qml:12
+#: gui/src/qml/BackupScheduleEditPage.qml:13
 msgid "Schedule"
 msgstr "Zeitplan"
 
-#: gui/src/qml/BackupDetailPage.qml:602
+#: gui/src/qml/BackupDetailPage.qml:600
 msgid "Edit run conditions"
 msgstr "Laufbedingungen bearbeiten"
 
-#: gui/src/qml/BackupDetailPage.qml:627
+#: gui/src/qml/BackupDetailPage.qml:625
 msgid "Run conditions: %1"
 msgstr "Laufbedingungen: %1"
 
-#: gui/src/qml/BackupDetailPage.qml:628
+#: gui/src/qml/BackupDetailPage.qml:626
 #: gui/src/qml/BackupFullConfigPage.qml:218
 msgid "Run conditions"
 msgstr "Laufbedingungen"
 
-#: gui/src/qml/BackupDetailPage.qml:645
+#: gui/src/qml/BackupDetailPage.qml:643
 msgid "Assign destination"
 msgstr "Ziel zuweisen"
 
-#: gui/src/qml/BackupDetailPage.qml:669
+#: gui/src/qml/BackupDetailPage.qml:667
 msgid "Destination: %1"
 msgstr "Ziel: %1"
 
-#: gui/src/qml/BackupDetailPage.qml:686 gui/src/qml/BackupDetailPage.qml:710
+#: gui/src/qml/BackupDetailPage.qml:684 gui/src/qml/BackupDetailPage.qml:708
 msgid "View full configuration"
 msgstr "Vollständige Konfiguration anzeigen"
 
@@ -1640,6 +1732,14 @@ msgstr "Vorschau…"
 #: gui/src/qml/BackupExcludesEditPage.qml:270
 msgid "Choose Folder to Exclude"
 msgstr "Auszuschliessenden Ordner wählen"
+
+#: gui/src/qml/BackupExcludesEditPage.qml:282
+#: gui/src/qml/BackupRetentionPage.qml:415
+#: gui/src/qml/BackupSourceEditPage.qml:165
+#: gui/src/qml/DestinationEditPage.qml:177
+#: gui/src/qml/UnsavedChangesDialog.qml:11
+msgid "Save changes?"
+msgstr "Änderungen speichern?"
 
 #: gui/src/qml/BackupExcludesEditPage.qml:283
 msgid "You have unsaved changes to exclude rules."
@@ -1986,7 +2086,7 @@ msgid "No snapshots in this backup yet"
 msgstr "Noch keine Snapshots in diesem Backup"
 
 #: gui/src/qml/BackupPreviewPage.qml:410 gui/src/qml/BackupPreviewPage.qml:444
-#: gui/src/qml/Main.qml:1580
+#: gui/src/qml/RemoveBackupDialog.qml:26
 msgid "Remove"
 msgstr "Entfernen"
 
@@ -2245,129 +2345,126 @@ msgstr ""
 msgid "Show Example…"
 msgstr "Beispiel anzeigen…"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:34
-#: gui/src/qml/DestinationMaintenancePage.qml:43
+#: gui/src/qml/BackupScheduleEditPage.qml:35
+#: gui/src/qml/DestinationMaintenancePage.qml:44
 msgid "Daily"
 msgstr "Täglich"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:35
+#: gui/src/qml/BackupScheduleEditPage.qml:36
 msgid "On specific weekdays"
 msgstr "An bestimmten Wochentagen"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:36
-msgid "Every N days"
-msgstr "Alle N Tage"
+#: gui/src/qml/BackupScheduleEditPage.qml:37
+msgid "Every n days"
+msgstr "Alle n Tage"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:80
-msgid "Select at least one weekday."
-msgstr "Mindestens einen Wochentag auswählen."
-
-#: gui/src/qml/BackupScheduleEditPage.qml:81
-msgid "Interval must be between 2 and 365 days."
-msgstr "Das Intervall muss zwischen 2 und 365 Tagen liegen."
-
-#: gui/src/qml/BackupScheduleEditPage.qml:82
-msgid "Enter a valid start date in YYYY-MM-DD format."
-msgstr "Gültiges Startdatum im Format JJJJ-MM-TT eingeben."
-
-#: gui/src/qml/BackupScheduleEditPage.qml:256
+#: gui/src/qml/BackupScheduleEditPage.qml:252
 msgid "Schedule saved"
 msgstr "Zeitplan gespeichert"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:323
+#: gui/src/qml/BackupScheduleEditPage.qml:336
 msgid "You have unsaved changes to the backup schedule."
 msgstr "Es gibt ungespeicherte Änderungen am Backup-Zeitplan."
 
-#: gui/src/qml/BackupScheduleEditPage.qml:359
-#: gui/src/qml/DestinationMaintenancePage.qml:332
-#: gui/src/qml/DestinationMaintenancePage.qml:408
+#: gui/src/qml/BackupScheduleEditPage.qml:371
+#: gui/src/qml/DestinationMaintenancePage.qml:375
+#: gui/src/qml/DestinationMaintenancePage.qml:455
 msgid "Frequency:"
 msgstr "Häufigkeit:"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:364
+#: gui/src/qml/BackupScheduleEditPage.qml:376
 msgid "Backup frequency"
 msgstr "Backup-Häufigkeit"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:381
+#: gui/src/qml/BackupScheduleEditPage.qml:393
 msgid "Weekdays:"
 msgstr "Wochentage:"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:420
-msgid "Every:"
-msgstr "Alle:"
+#: gui/src/qml/BackupScheduleEditPage.qml:432
+msgid "Interval:"
+msgstr "Intervall:"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:436
+#: gui/src/qml/BackupScheduleEditPage.qml:437
+msgid "Every"
+msgstr "Alle"
+
+#: gui/src/qml/BackupScheduleEditPage.qml:452
 msgid "Interval in days"
 msgstr "Intervall in Tagen"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:463
+#: gui/src/qml/BackupScheduleEditPage.qml:479
 msgid "days"
 msgstr "Tage"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:470
+#: gui/src/qml/BackupScheduleEditPage.qml:484
 msgid "Start date:"
 msgstr "Startdatum:"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:474
-msgid "Schedule start date"
-msgstr "Startdatum des Zeitplans"
+#: gui/src/qml/BackupScheduleEditPage.qml:492
+msgid "Choose date…"
+msgstr "Datum wählen…"
 
 #: gui/src/qml/BackupScheduleEditPage.qml:493
-#: gui/src/qml/DestinationMaintenancePage.qml:372
-#: gui/src/qml/DestinationMaintenancePage.qml:448
+#: gui/src/qml/BackupScheduleEditPage.qml:495
+msgid "Choose start date"
+msgstr "Startdatum wählen"
+
+#: gui/src/qml/BackupScheduleEditPage.qml:515
+#: gui/src/qml/DestinationMaintenancePage.qml:415
+#: gui/src/qml/DestinationMaintenancePage.qml:495
 msgid "Time:"
 msgstr "Uhrzeit:"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:504
+#: gui/src/qml/BackupScheduleEditPage.qml:528
 msgid "Hour"
 msgstr "Stunde"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:528
+#: gui/src/qml/BackupScheduleEditPage.qml:554
 msgid "Minute"
 msgstr "Minute"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:546
-msgid "Overdue Detection"
-msgstr "Überfälligkeits-Erkennung"
+#: gui/src/qml/BackupScheduleEditPage.qml:572
+msgid "Monitoring"
+msgstr "Überwachung"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:554
-msgid "Overdue threshold:"
-msgstr "Überfälligkeits-Schwellenwert:"
+#: gui/src/qml/BackupScheduleEditPage.qml:580
+msgid "Report overdue after:"
+msgstr "Überfällig melden nach:"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:555
-msgid "Use global default (%1 missed runs)"
-msgstr "Globalen Standard verwenden (%1 verpasste Läufe)"
+#: gui/src/qml/BackupScheduleEditPage.qml:581
+msgid "Use global default (%1 missed slot)"
+msgid_plural "Use global default (%1 missed slots)"
+msgstr[0] "Globalen Standard verwenden (%1 verpasster Termin)"
+msgstr[1] "Globalen Standard verwenden (%1 verpasste Termine)"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:557
+#: gui/src/qml/BackupScheduleEditPage.qml:583
 msgid "Use global default overdue threshold"
 msgstr "Globalen Standard-Schwellenwert für Überfälligkeit verwenden"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:563
-msgid "Warn after:"
-msgstr "Warnen nach:"
+#: gui/src/qml/BackupScheduleEditPage.qml:598
+msgid "Missed slots before reporting overdue"
+msgstr "Verpasste Termine, bevor «überfällig» gemeldet wird"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:573
-msgid "Missed runs before overdue warning"
-msgstr "Verpasste Läufe vor Überfälligkeits-Warnung"
+#: gui/src/qml/BackupScheduleEditPage.qml:604
+msgid "missed slots"
+msgstr "verpassten Terminen"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:579
-msgid "missed runs"
-msgstr "verpassten Läufen"
-
-#: gui/src/qml/BackupScheduleEditPage.qml:590
+#: gui/src/qml/BackupScheduleEditPage.qml:615
 msgid ""
 "Manual backups do not run automatically and are never marked as overdue."
-msgstr "Manuelle Backups laufen nicht automatisch und werden nie als überfällig markiert."
+msgstr ""
+"Manuelle Backups laufen nicht automatisch und werden nie als überfällig "
+"markiert."
 
-#: gui/src/qml/BackupScheduleEditPage.qml:600
+#: gui/src/qml/BackupScheduleEditPage.qml:625
 msgid "Next 3 scheduled runs:"
 msgstr "Nächste 3 geplante Läufe:"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:625
+#: gui/src/qml/BackupScheduleEditPage.qml:650
 msgid "Cancel schedule edits"
 msgstr "Änderungen am Zeitplan abbrechen"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:642
+#: gui/src/qml/BackupScheduleEditPage.qml:667
 msgid "Save schedule"
 msgstr "Zeitplan speichern"
 
@@ -2448,8 +2545,8 @@ msgstr "Quellordner wählen"
 msgid "Kind:"
 msgstr "Art:"
 
-#: gui/src/qml/BackupsPage.qml:12 gui/src/qml/Main.qml:239
-#: gui/src/qml/Main.qml:1083 gui/src/qml/SpikeMain.qml:83
+#: gui/src/qml/BackupsPage.qml:12 gui/src/qml/Main.qml:716
+#: gui/src/qml/PageFocusManager.qml:132 gui/src/qml/SpikeMain.qml:83
 #: gui/src/qml/SpikeMain.qml:134 gui/src/qml/SpikeMain.qml:176
 msgid "Backups"
 msgstr "Backups"
@@ -2467,6 +2564,25 @@ msgid "Create a backup to define what folder to back up and where to store it."
 msgstr ""
 "Erstellen Sie ein Backup, um festzulegen, welcher Ordner gesichert und wo er "
 "gespeichert wird."
+
+#: gui/src/qml/ConditionOverrideDialog.qml:12
+msgid "Run Conditions Not Met"
+msgstr "Laufbedingungen nicht erfüllt"
+
+#: gui/src/qml/ConditionOverrideDialog.qml:23
+msgid "Run Anyway"
+msgstr "Trotzdem ausführen"
+
+#: gui/src/qml/ConditionOverrideDialog.qml:36
+msgid "Backup: %1"
+msgstr "Backup: %1"
+
+#: gui/src/qml/ConditionOverrideDialog.qml:46
+msgid ""
+"One or more run conditions are currently not met. Start this backup anyway?"
+msgstr ""
+"Eine oder mehrere Laufbedingungen sind aktuell nicht erfüllt. Dieses Backup "
+"trotzdem starten?"
 
 #: gui/src/qml/DestinationDetailPage.qml:36
 msgid "Check Connection"
@@ -2500,15 +2616,20 @@ msgstr ""
 "Ein unterbrochener Lauf hat eine Repository-Sperre auf diesem Ziel "
 "hinterlassen."
 
-#: gui/src/qml/DestinationDetailPage.qml:96 gui/src/qml/Main.qml:1133
+#: gui/src/qml/DestinationDetailPage.qml:96 gui/src/qml/MainHeaderArea.qml:43
 msgid "Unlock…"
 msgstr "Entsperren…"
 
 #: gui/src/qml/DestinationDetailPage.qml:110
-msgid "%1 backup has pending retention cleanup from a previous locked run."
-msgstr ""
-"Bei %1 Backup steht noch die Aufbewahrungsbereinigung aus einem früheren "
-"gesperrten Lauf aus."
+msgid "%1 backup still has retention pending from a previous locked run."
+msgid_plural ""
+"%1 backups still have retention pending from a previous locked run."
+msgstr[0] ""
+"Bei %1 Backup steht die Aufbewahrung aus einem früheren gesperrten Lauf noch "
+"aus."
+msgstr[1] ""
+"Bei %1 Backups steht die Aufbewahrung aus einem früheren gesperrten Lauf "
+"noch aus."
 
 #: gui/src/qml/DestinationDetailPage.qml:116
 msgid "Run Maintenance Now"
@@ -2540,28 +2661,28 @@ msgid "Maintenance"
 msgstr "Wartung"
 
 #: gui/src/qml/DestinationDetailPage.qml:171
-msgid "Cleanup (Prune):"
-msgstr "Bereinigung (Prune):"
+msgid "Clean up:"
+msgstr "Aufräumen:"
 
 #: gui/src/qml/DestinationDetailPage.qml:177
-msgid "Last cleanup:"
-msgstr "Letzte Bereinigung:"
+msgid "Last clean up:"
+msgstr "Letztes Aufräumen:"
 
 #: gui/src/qml/DestinationDetailPage.qml:183
-msgid "Next cleanup:"
-msgstr "Nächste Bereinigung:"
+msgid "Next clean up:"
+msgstr "Nächstes Aufräumen:"
 
 #: gui/src/qml/DestinationDetailPage.qml:188
-msgid "Integrity Check:"
-msgstr "Integritätsprüfung:"
+msgid "Verify:"
+msgstr "Prüfen:"
 
 #: gui/src/qml/DestinationDetailPage.qml:194
-msgid "Last check:"
-msgstr "Letzte Prüfung:"
+msgid "Last verify:"
+msgstr "Letztes Prüfen:"
 
 #: gui/src/qml/DestinationDetailPage.qml:200
-msgid "Next check:"
-msgstr "Nächste Prüfung:"
+msgid "Next verify:"
+msgstr "Nächstes Prüfen:"
 
 #: gui/src/qml/DestinationDetailPage.qml:211
 msgid "Edit maintenance schedule"
@@ -2606,143 +2727,162 @@ msgstr "Leer lassen, um gespeichertes Passwort zu behalten"
 msgid "Repository password:"
 msgstr "Repository-Passwort:"
 
-#: gui/src/qml/DestinationEditPage.qml:309 gui/src/qml/Main.qml:1509
-#: gui/src/qml/Main.qml:1510
+#: gui/src/qml/DestinationEditPage.qml:309
+#: gui/src/qml/UpdatePasswordDialog.qml:50
+#: gui/src/qml/UpdatePasswordDialog.qml:51
 msgid "Repository password"
 msgstr "Repository-Passwort"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:41
+#: gui/src/qml/DestinationMaintenancePage.qml:42
 msgid "Weekly"
 msgstr "Wöchentlich"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:42
+#: gui/src/qml/DestinationMaintenancePage.qml:43
 msgid "Monthly"
 msgstr "Monatlich"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:48
+#: gui/src/qml/DestinationMaintenancePage.qml:49
 msgid "First"
 msgstr "Erster"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:49
+#: gui/src/qml/DestinationMaintenancePage.qml:50
 msgid "Second"
 msgstr "Zweiter"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:50
+#: gui/src/qml/DestinationMaintenancePage.qml:51
 msgid "Third"
 msgstr "Dritter"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:51
+#: gui/src/qml/DestinationMaintenancePage.qml:52
 msgid "Fourth"
 msgstr "Vierter"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:52
+#: gui/src/qml/DestinationMaintenancePage.qml:53
 msgid "Last"
 msgstr "Letzter"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:149
+#: gui/src/qml/DestinationMaintenancePage.qml:150
 msgid "Maintenance schedule saved"
 msgstr "Wartungszeitplan gespeichert"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:169
+#: gui/src/qml/DestinationMaintenancePage.qml:166
 msgid "Packs to remove: %1"
 msgstr "Zu entfernende Packs: %1"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:172
+#: gui/src/qml/DestinationMaintenancePage.qml:169
 msgid "Packs to keep: %1"
 msgstr "Zu behaltende Packs: %1"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:185
+#: gui/src/qml/DestinationMaintenancePage.qml:176
+msgid "Space to free: %1"
+msgstr "Freizugebender Speicher: %1"
+
+#: gui/src/qml/DestinationMaintenancePage.qml:179
+msgid "The preview reported no data to remove."
+msgstr "Die Vorschau meldet keine Daten, die entfernt würden."
+
+#: gui/src/qml/DestinationMaintenancePage.qml:186
+#: gui/src/qml/DestinationMaintenancePage.qml:197
 msgid ""
 "Dry-run preview could not load repository statistics (the repository may "
 "currently be unreachable or locked)."
-msgstr "Die Trockenlauf-Vorschau konnte keine Repository-Statistiken laden (das Repository ist möglicherweise nicht erreichbar oder gesperrt)."
+msgstr ""
+"Die Trockenlauf-Vorschau konnte keine Repository-Statistiken laden (das "
+"Repository ist möglicherweise nicht erreichbar oder gesperrt)."
 
-#: gui/src/qml/DestinationMaintenancePage.qml:259
-msgid "Confirm Prune Schedule"
-msgstr "Bereinigungszeitplan bestätigen"
+#: gui/src/qml/DestinationMaintenancePage.qml:284
+msgid "Confirm Clean Up Schedule"
+msgstr "Aufräum-Zeitplan bestätigen"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:268
+#: gui/src/qml/DestinationMaintenancePage.qml:293
 msgid "Save Maintenance Schedule"
 msgstr "Wartungszeitplan speichern"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:281
+#: gui/src/qml/DestinationMaintenancePage.qml:308
 msgid ""
-"Prune permanently removes unreferenced pack data from the destination after "
-"snapshots have been forgotten. Removed data cannot be recovered."
-msgstr "Prune entfernt nicht mehr referenzierte Pack-Daten dauerhaft vom Ziel, nachdem Snapshots vergessen wurden. Entfernte Daten können nicht wiederhergestellt werden."
+"Cleaning up permanently removes unreferenced pack data from the destination "
+"after snapshots have been forgotten. Removed data cannot be recovered."
+msgstr ""
+"Aufräumen entfernt nicht mehr referenzierte Pack-Daten dauerhaft vom Ziel, "
+"nachdem Snapshots vergessen wurden. Entfernte Daten können nicht "
+"wiederhergestellt werden."
 
-#: gui/src/qml/DestinationMaintenancePage.qml:300
+#: gui/src/qml/DestinationMaintenancePage.qml:325
+msgid "Loading dry-run preview…"
+msgstr "Trockenlauf-Vorschau wird geladen…"
+
+#: gui/src/qml/DestinationMaintenancePage.qml:344
 msgid "You have unsaved changes to the maintenance schedule."
 msgstr "Es gibt ungespeicherte Änderungen am Wartungszeitplan."
 
-#: gui/src/qml/DestinationMaintenancePage.qml:326
-msgid "Cleanup (Prune)"
-msgstr "Bereinigung (Prune)"
+#: gui/src/qml/DestinationMaintenancePage.qml:369
+msgid "Clean up"
+msgstr "Aufräumen"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:337
-msgid "Prune frequency"
-msgstr "Häufigkeit der Bereinigung"
+#: gui/src/qml/DestinationMaintenancePage.qml:380
+msgid "Clean up frequency"
+msgstr "Häufigkeit des Aufräumens"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:346
-#: gui/src/qml/DestinationMaintenancePage.qml:422
+#: gui/src/qml/DestinationMaintenancePage.qml:389
+#: gui/src/qml/DestinationMaintenancePage.qml:469
 msgid "Week of month:"
 msgstr "Woche im Monat:"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:351
-msgid "Prune week of month"
-msgstr "Woche im Monat für Bereinigung"
+#: gui/src/qml/DestinationMaintenancePage.qml:394
+msgid "Clean up week of month"
+msgstr "Woche im Monat fürs Aufräumen"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:360
-#: gui/src/qml/DestinationMaintenancePage.qml:436
+#: gui/src/qml/DestinationMaintenancePage.qml:403
+#: gui/src/qml/DestinationMaintenancePage.qml:483
 msgid "Weekday:"
 msgstr "Wochentag:"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:365
-msgid "Prune weekday"
-msgstr "Wochentag für Bereinigung"
-
-#: gui/src/qml/DestinationMaintenancePage.qml:382
-msgid "Prune hour"
-msgstr "Stunde für Bereinigung"
-
-#: gui/src/qml/DestinationMaintenancePage.qml:394
-msgid "Prune minute"
-msgstr "Minute für Bereinigung"
-
-#: gui/src/qml/DestinationMaintenancePage.qml:402
-msgid "Integrity Check"
-msgstr "Integritätsprüfung"
-
-#: gui/src/qml/DestinationMaintenancePage.qml:413
-msgid "Check frequency"
-msgstr "Häufigkeit der Prüfung"
+#: gui/src/qml/DestinationMaintenancePage.qml:408
+msgid "Clean up weekday"
+msgstr "Wochentag fürs Aufräumen"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:427
-msgid "Check week of month"
-msgstr "Woche im Monat für Prüfung"
+msgid "Clean up hour"
+msgstr "Stunde fürs Aufräumen"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:441
-msgid "Check weekday"
-msgstr "Wochentag für Prüfung"
+msgid "Clean up minute"
+msgstr "Minute fürs Aufräumen"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:458
-msgid "Check hour"
-msgstr "Stunde für Prüfung"
+#: gui/src/qml/DestinationMaintenancePage.qml:449
+msgid "Verify"
+msgstr "Prüfen"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:470
-msgid "Check minute"
-msgstr "Minute für Prüfung"
+#: gui/src/qml/DestinationMaintenancePage.qml:460
+msgid "Verify frequency"
+msgstr "Häufigkeit des Prüfens"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:487
+#: gui/src/qml/DestinationMaintenancePage.qml:474
+msgid "Verify week of month"
+msgstr "Woche im Monat fürs Prüfen"
+
+#: gui/src/qml/DestinationMaintenancePage.qml:488
+msgid "Verify weekday"
+msgstr "Wochentag fürs Prüfen"
+
+#: gui/src/qml/DestinationMaintenancePage.qml:507
+msgid "Verify hour"
+msgstr "Stunde fürs Prüfen"
+
+#: gui/src/qml/DestinationMaintenancePage.qml:521
+msgid "Verify minute"
+msgstr "Minute fürs Prüfen"
+
+#: gui/src/qml/DestinationMaintenancePage.qml:538
 msgid "Cancel maintenance schedule edits"
 msgstr "Änderungen am Wartungszeitplan abbrechen"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:504
+#: gui/src/qml/DestinationMaintenancePage.qml:555
 msgid "Save maintenance schedule"
 msgstr "Wartungszeitplan speichern"
 
-#: gui/src/qml/DestinationsPage.qml:12 gui/src/qml/Main.qml:240
-#: gui/src/qml/Main.qml:1090 gui/src/qml/SpikeMain.qml:95
+#: gui/src/qml/DestinationsPage.qml:12 gui/src/qml/Main.qml:723
+#: gui/src/qml/PageFocusManager.qml:133 gui/src/qml/SpikeMain.qml:95
 #: gui/src/qml/SpikeMain.qml:99
 msgid "Destinations"
 msgstr "Ziele"
@@ -2770,8 +2910,8 @@ msgstr ""
 msgid "%1 · %2 backups"
 msgstr "%1 · %2 Backups"
 
-#: gui/src/qml/HistoryPage.qml:12 gui/src/qml/Main.qml:241
-#: gui/src/qml/Main.qml:1097 gui/src/qml/SpikeMain.qml:104
+#: gui/src/qml/HistoryPage.qml:12 gui/src/qml/Main.qml:730
+#: gui/src/qml/PageFocusManager.qml:134 gui/src/qml/SpikeMain.qml:104
 #: gui/src/qml/SpikeMain.qml:108
 msgid "History"
 msgstr "Verlauf"
@@ -2810,159 +2950,46 @@ msgstr ""
 msgid "%1 · %2"
 msgstr "%1 · %2"
 
-#: gui/src/qml/Main.qml:238 gui/src/qml/Main.qml:242 gui/src/qml/Main.qml:1076
-#: gui/src/qml/OverviewPage.qml:12 gui/src/qml/SpikeMain.qml:65
-#: gui/src/qml/SpikeMain.qml:269
-msgid "Overview"
-msgstr "Übersicht"
+#: gui/src/qml/MainAboutPage.qml:14
+msgid "not available"
+msgstr "nicht verfügbar"
 
-#: gui/src/qml/Main.qml:912 gui/src/qml/OverviewPage.qml:129
-#: gui/src/qml/OverviewPage.qml:133
-msgid "Set Up First Backup"
-msgstr "Erstes Backup einrichten"
+#: gui/src/qml/MainAboutPage.qml:14
+msgid "Encrypted backup manager for Plasma powered by restic (%1)"
+msgstr "Verschlüsselte Backup-Verwaltung für Plasma auf Basis von restic (%1)"
 
-#: gui/src/qml/Main.qml:912 gui/src/qml/NewBackupWizard.qml:19
-msgid "New Backup"
-msgstr "Neues Backup"
-
-#: gui/src/qml/Main.qml:1060
-msgid "Configure Kestic…"
-msgstr "Kestic einrichten…"
-
-#: gui/src/qml/Main.qml:1066
-msgid "About Kestic"
-msgstr "Über Kestic"
-
-#: gui/src/qml/Main.qml:1146
+#: gui/src/qml/MainHeaderArea.qml:56
 msgid "Download restic…"
 msgstr "restic herunterladen…"
 
-#: gui/src/qml/Main.qml:1148
+#: gui/src/qml/MainHeaderArea.qml:58
 msgid "Automatic restic download will be added in a future release."
 msgstr ""
 "Der automatische Download von restic wird in einer zukünftigen Version "
 "hinzugefügt."
 
-#: gui/src/qml/Main.qml:1418
-msgid "Command · %1"
-msgstr "Befehl · %1"
+#: gui/src/qml/Main.qml:533 gui/src/qml/OverviewPage.qml:124
+#: gui/src/qml/OverviewPage.qml:128
+msgid "Set Up First Backup"
+msgstr "Erstes Backup einrichten"
 
-#: gui/src/qml/Main.qml:1418
-msgid "Command"
-msgstr "Befehl"
+#: gui/src/qml/Main.qml:533 gui/src/qml/NewBackupWizard.qml:19
+msgid "New Backup"
+msgstr "Neues Backup"
 
-#: gui/src/qml/Main.qml:1425 gui/src/qml/RunDetailPage.qml:513
-msgid "Copy"
-msgstr "Kopieren"
+#: gui/src/qml/Main.qml:693
+msgid "Configure Kestic…"
+msgstr "Kestic einrichten…"
 
-#: gui/src/qml/Main.qml:1428 gui/src/qml/RunDetailPage.qml:517
-msgid "Command copied to clipboard"
-msgstr "Befehl in die Zwischenablage kopiert"
+#: gui/src/qml/Main.qml:699
+msgid "About Kestic"
+msgstr "Über Kestic"
 
-#: gui/src/qml/Main.qml:1438
-msgid "Transparent restic command without plaintext secrets:"
-msgstr "Transparenter restic-Befehl ohne Klartext-Passwörter:"
-
-#: gui/src/qml/Main.qml:1479
-msgid "Update Saved Password"
-msgstr "Gespeichertes Passwort aktualisieren"
-
-#: gui/src/qml/Main.qml:1486
-msgid "Verify and Save"
-msgstr "Prüfen und speichern"
-
-#: gui/src/qml/Main.qml:1501
-msgid ""
-"The saved password in your password store for '%1' does not match. The "
-"destination's own password is not changed."
-msgstr ""
-"Das für '%1' im Passwortspeicher hinterlegte Passwort stimmt nicht überein. "
-"Das Passwort des Ziels selbst wird dadurch nicht geändert."
-
-#: gui/src/qml/Main.qml:1532
-msgid "Rename Backup"
-msgstr "Backup umbenennen"
-
-#: gui/src/qml/Main.qml:1538
-msgid "Rename"
-msgstr "Umbenennen"
-
-#: gui/src/qml/Main.qml:1544 gui/src/qml/Main.qml:1562
-msgid "Backup renamed"
-msgstr "Backup umbenannt"
-
-#: gui/src/qml/Main.qml:1556
-msgid "New backup name"
-msgstr "Neuer Backup-Name"
-
-#: gui/src/qml/Main.qml:1572 gui/src/qml/Main.qml:1604
-msgid "Remove '%1' from Kestic?"
-msgstr "'%1' aus Kestic entfernen?"
-
-#: gui/src/qml/Main.qml:1584
-msgid "Backup removed from Kestic"
-msgstr "Backup aus Kestic entfernt"
-
-#: gui/src/qml/Main.qml:1594
-msgid "Snapshots will remain in the destination."
-msgstr "Snapshots bleiben im Ziel erhalten."
-
-#: gui/src/qml/Main.qml:1610
-msgid "Remove Destination"
-msgstr "Ziel entfernen"
-
-#: gui/src/qml/Main.qml:1614
-msgid "Destination removed"
-msgstr "Ziel entfernt"
-
-#: gui/src/qml/Main.qml:1624
-msgid "Snapshots on this destination remain untouched."
-msgstr "Snapshots auf diesem Ziel bleiben unangetastet."
-
-#: gui/src/qml/Main.qml:1634
-msgid "Quit Kestic?"
-msgstr "Kestic beenden?"
-
-#: gui/src/qml/Main.qml:1643
-msgid "Quit Kestic"
-msgstr "Kestic beenden"
-
-#: gui/src/qml/Main.qml:1656
-msgid ""
-"Scheduled backups will not run again until Kestic is started. The running "
-"backup '%1' will be cancelled."
-msgstr ""
-"Geplante Backups laufen erst wieder, wenn Kestic gestartet wird. Das "
-"laufende Backup '%1' wird abgebrochen."
-
-#: gui/src/qml/Main.qml:1657
-msgid "Scheduled backups will not run again until Kestic is started."
-msgstr "Geplante Backups laufen erst wieder, wenn Kestic gestartet wird."
-
-#: gui/src/qml/Main.qml:1667
-msgid "Run Conditions Not Met"
-msgstr "Laufbedingungen nicht erfüllt"
-
-#: gui/src/qml/Main.qml:1675
-msgid "Run Anyway"
-msgstr "Trotzdem ausführen"
-
-#: gui/src/qml/Main.qml:1688
-msgid "Backup: %1"
-msgstr "Backup: %1"
-
-#: gui/src/qml/Main.qml:1698
-msgid ""
-"One or more run conditions are currently not met. Start this backup anyway?"
-msgstr "Eine oder mehrere Laufbedingungen sind aktuell nicht erfüllt. Dieses Backup trotzdem starten?"
-
-#: gui/src/qml/Main.qml:1882
-msgid "not available"
-msgstr "nicht verfügbar"
-
-#: gui/src/qml/Main.qml:1882
-msgid "Encrypted backup manager for Plasma powered by restic (%1)"
-msgstr "Verschlüsselte Backup-Verwaltung für Plasma auf Basis von restic (%1)"
+#: gui/src/qml/Main.qml:709 gui/src/qml/OverviewPage.qml:12
+#: gui/src/qml/PageFocusManager.qml:131 gui/src/qml/PageFocusManager.qml:135
+#: gui/src/qml/SpikeMain.qml:65 gui/src/qml/SpikeMain.qml:269
+msgid "Overview"
+msgstr "Übersicht"
 
 #: gui/src/qml/NewBackupWizard.qml:225
 msgid "Backup saved"
@@ -3032,7 +3059,9 @@ msgstr "Standardwerte:"
 msgid ""
 "Daily at 12:00 (AC power & network) · Standard retention (7 daily, 4 weekly, "
 "12 monthly)"
-msgstr "Täglich um 12:00 (Netzstrom & Netzwerk) · Standard-Aufbewahrung (7 tägliche, 4 wöchentliche, 12 monatliche)"
+msgstr ""
+"Täglich um 12:00 (Netzstrom & Netzwerk) · Standard-Aufbewahrung (7 tägliche, "
+"4 wöchentliche, 12 monatliche)"
 
 #: gui/src/qml/NewBackupWizard.qml:757
 msgid "Exclude rules:"
@@ -3050,23 +3079,23 @@ msgstr "Speichern und jetzt sichern"
 msgid "Back Up All Now"
 msgstr "Alle jetzt sichern"
 
-#: gui/src/qml/OverviewPage.qml:26
+#: gui/src/qml/OverviewPage.qml:28
 msgid "Start all available backups"
 msgstr "Alle verfügbaren Backups starten"
 
-#: gui/src/qml/OverviewPage.qml:33
+#: gui/src/qml/OverviewPage.qml:35
 msgid "Pause Schedules…"
 msgstr "Zeitpläne pausieren…"
 
-#: gui/src/qml/OverviewPage.qml:36
+#: gui/src/qml/OverviewPage.qml:38
 msgid "Temporarily pause scheduled backups"
 msgstr "Geplante Backups vorübergehend pausieren"
 
-#: gui/src/qml/OverviewPage.qml:111
+#: gui/src/qml/OverviewPage.qml:106
 msgid "Welcome to Kestic"
 msgstr "Willkommen bei Kestic"
 
-#: gui/src/qml/OverviewPage.qml:118
+#: gui/src/qml/OverviewPage.qml:113
 msgid ""
 "Kestic regularly and securely encrypts and backs up your files to a drive, a "
 "server, or the cloud."
@@ -3074,33 +3103,94 @@ msgstr ""
 "Kestic verschlüsselt und sichert Ihre Dateien regelmässig und sicher auf "
 "einem Laufwerk, einem Server oder in der Cloud."
 
-#: gui/src/qml/OverviewPage.qml:141
+#: gui/src/qml/OverviewPage.qml:136
 msgid "Connect Existing Backup…"
 msgstr "Bestehendes Backup verbinden…"
 
-#: gui/src/qml/OverviewPage.qml:143
+#: gui/src/qml/OverviewPage.qml:138
 msgid "Connect Existing Backup"
 msgstr "Bestehendes Backup verbinden"
 
-#: gui/src/qml/OverviewPage.qml:284
+#: gui/src/qml/OverviewPage.qml:289
 msgid "%1 → %2"
 msgstr "%1 → %2"
 
-#: gui/src/qml/OverviewPage.qml:354
+#: gui/src/qml/OverviewPage.qml:365
 msgid "Back Up Now: %1"
 msgstr "Jetzt sichern: %1"
 
-#: gui/src/qml/OverviewPage.qml:367
+#: gui/src/qml/OverviewPage.qml:379
 msgid "Update Saved Password for %1"
 msgstr "Gespeichertes Passwort für %1 aktualisieren"
 
-#: gui/src/qml/OverviewPage.qml:375
+#: gui/src/qml/OverviewPage.qml:387
 msgid "Cancel backup %1"
 msgstr "Backup %1 abbrechen"
 
-#: gui/src/qml/OverviewPage.qml:383
+#: gui/src/qml/OverviewPage.qml:395
 msgid "More actions for %1"
 msgstr "Weitere Aktionen für %1"
+
+#: gui/src/qml/QuitConfirmDialog.qml:12
+msgid "Quit Kestic?"
+msgstr "Kestic beenden?"
+
+#: gui/src/qml/QuitConfirmDialog.qml:24
+msgid "Quit Kestic"
+msgstr "Kestic beenden"
+
+#: gui/src/qml/QuitConfirmDialog.qml:37
+msgid ""
+"Scheduled backups will not run again until Kestic is started. The running "
+"backup '%1' will be cancelled."
+msgstr ""
+"Geplante Backups laufen erst wieder, wenn Kestic gestartet wird. Das "
+"laufende Backup '%1' wird abgebrochen."
+
+#: gui/src/qml/QuitConfirmDialog.qml:38
+msgid "Scheduled backups will not run again until Kestic is started."
+msgstr "Geplante Backups laufen erst wieder, wenn Kestic gestartet wird."
+
+#: gui/src/qml/RemoveBackupDialog.qml:12
+#: gui/src/qml/RemoveDestinationDialog.qml:12
+msgid "Remove '%1' from Kestic?"
+msgstr "'%1' aus Kestic entfernen?"
+
+#: gui/src/qml/RemoveBackupDialog.qml:30
+msgid "Backup removed from Kestic"
+msgstr "Backup aus Kestic entfernt"
+
+#: gui/src/qml/RemoveBackupDialog.qml:40
+msgid "Snapshots will remain in the destination."
+msgstr "Snapshots bleiben im Ziel erhalten."
+
+#: gui/src/qml/RemoveDestinationDialog.qml:24
+msgid "Remove Destination"
+msgstr "Ziel entfernen"
+
+#: gui/src/qml/RemoveDestinationDialog.qml:28
+msgid "Destination removed"
+msgstr "Ziel entfernt"
+
+#: gui/src/qml/RemoveDestinationDialog.qml:38
+msgid "Snapshots on this destination remain untouched."
+msgstr "Snapshots auf diesem Ziel bleiben unangetastet."
+
+#: gui/src/qml/RenameBackupDialog.qml:12
+msgid "Rename Backup"
+msgstr "Backup umbenennen"
+
+#: gui/src/qml/RenameBackupDialog.qml:27
+msgid "Rename"
+msgstr "Umbenennen"
+
+#: gui/src/qml/RenameBackupDialog.qml:33 gui/src/qml/RenameBackupDialog.qml:51
+msgid "Backup renamed"
+msgstr "Backup umbenannt"
+
+#: gui/src/qml/RenameBackupDialog.qml:45
+msgid "New backup name"
+msgstr "Neuer Backup-Name"
 
 #: gui/src/qml/RunDetailPage.qml:12
 msgid "Run Detail"
@@ -3206,9 +3296,17 @@ msgstr "Für diesen Lauf ist kein Protokoll verfügbar"
 msgid "No commands recorded for this run"
 msgstr "Für diesen Lauf sind keine Befehle aufgezeichnet"
 
+#: gui/src/qml/RunDetailPage.qml:513 gui/src/qml/ShowCommandDialog.qml:24
+msgid "Copy"
+msgstr "Kopieren"
+
 #: gui/src/qml/RunDetailPage.qml:514
 msgid "Copy command"
 msgstr "Befehl kopieren"
+
+#: gui/src/qml/RunDetailPage.qml:517 gui/src/qml/ShowCommandDialog.qml:27
+msgid "Command copied to clipboard"
+msgstr "Befehl in die Zwischenablage kopiert"
 
 #: gui/src/qml/SettingsDialog.qml:12 gui/src/qml/SettingsDialog.qml:155
 msgid "Configure Kestic"
@@ -3247,8 +3345,8 @@ msgid "Expert mode"
 msgstr "Expertenmodus"
 
 #: gui/src/qml/SettingsDialog.qml:173
-msgid "Shows technical identifiers, snapshot tags, and advanced fields."
-msgstr "Zeigt technische Kennungen, Snapshot-Tags und erweiterte Felder an."
+msgid "Shows technical identifiers, snapshot tags, and expert options."
+msgstr "Zeigt technische Kennungen, Snapshot-Tags und Expertenoptionen an."
 
 #: gui/src/qml/SettingsDialog.qml:182
 msgid "Monitoring & Notifications"
@@ -3266,7 +3364,9 @@ msgstr "Als überfällig markieren nach verpassten Läufen"
 msgid ""
 "A scheduled backup is shown as overdue when at least this many scheduled "
 "runs could not execute in a row."
-msgstr "Ein geplantes Backup wird als überfällig angezeigt, wenn mindestens so viele geplante Läufe hintereinander nicht ausgeführt werden konnten."
+msgstr ""
+"Ein geplantes Backup wird als überfällig angezeigt, wenn mindestens so viele "
+"geplante Läufe hintereinander nicht ausgeführt werden konnten."
 
 #: gui/src/qml/SettingsDialog.qml:207
 msgid "Notify on backup errors:"
@@ -3369,6 +3469,18 @@ msgid "App-managed restic updates will arrive in a future version."
 msgstr ""
 "App-verwaltete restic-Aktualisierungen folgen in einer zukünftigen Version."
 
+#: gui/src/qml/ShowCommandDialog.qml:12
+msgid "Command · %1"
+msgstr "Befehl · %1"
+
+#: gui/src/qml/ShowCommandDialog.qml:12
+msgid "Command"
+msgstr "Befehl"
+
+#: gui/src/qml/ShowCommandDialog.qml:37
+msgid "Transparent restic command without plaintext secrets:"
+msgstr "Transparenter restic-Befehl ohne Klartext-Passwörter:"
+
 #: gui/src/qml/SpikeMain.qml:25
 msgid "Back Up Now triggered (Ctrl+Shift+B)"
 msgstr "Jetzt sichern ausgelöst (Ctrl+Shift+B)"
@@ -3412,3 +3524,29 @@ msgstr "Aufbewahrung einrichten…"
 #: gui/src/qml/SpikeMain.qml:260
 msgid "Triggered count: %1"
 msgstr "Auslösungen: %1"
+
+#: gui/src/qml/UnsavedChangesDialog.qml:31
+msgid "Discard"
+msgstr "Verwerfen"
+
+#: gui/src/qml/UnsavedTabSwitchDialog.qml:11
+msgid "You have unsaved changes. Save or discard them before leaving?"
+msgstr ""
+"Sie haben ungespeicherte Änderungen. Vor dem Verlassen speichern oder "
+"verwerfen?"
+
+#: gui/src/qml/UpdatePasswordDialog.qml:12
+msgid "Update Saved Password"
+msgstr "Gespeichertes Passwort aktualisieren"
+
+#: gui/src/qml/UpdatePasswordDialog.qml:27
+msgid "Verify and Save"
+msgstr "Prüfen und speichern"
+
+#: gui/src/qml/UpdatePasswordDialog.qml:42
+msgid ""
+"The saved password in your password store for '%1' does not match. The "
+"destination's own password is not changed."
+msgstr ""
+"Das für '%1' im Passwortspeicher hinterlegte Passwort stimmt nicht überein. "
+"Das Passwort des Ziels selbst wird dadurch nicht geändert."

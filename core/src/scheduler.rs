@@ -109,7 +109,7 @@ pub fn format_local_slot_hint(
 
 fn schedule_matches_date(schedule: &Schedule, date: Date) -> Option<(u8, u8)> {
     match schedule {
-        Schedule::ManualOnly | Schedule::Hourly => None,
+        Schedule::ManualOnly => None,
         Schedule::Daily { hour, minute } => Some((*hour, *minute)),
         Schedule::SpecificWeekdays {
             weekdays,
@@ -193,24 +193,8 @@ pub fn backup_slots_between(
     up_to_inclusive: OffsetDateTime,
     tz_spec: &TimezoneSpec,
 ) -> Vec<OffsetDateTime> {
-    if up_to_inclusive <= after_exclusive {
+    if up_to_inclusive <= after_exclusive || matches!(schedule, Schedule::ManualOnly) {
         return Vec::new();
-    }
-    if matches!(schedule, Schedule::ManualOnly) {
-        return Vec::new();
-    }
-    if matches!(schedule, Schedule::Hourly) {
-        let mut out = Vec::new();
-        let first_hour = after_exclusive.unix_timestamp().div_euclid(3600) * 3600 + 3600;
-        let end = up_to_inclusive.unix_timestamp();
-        let mut cur = first_hour;
-        while cur <= end {
-            if let Ok(dt) = OffsetDateTime::from_unix_timestamp(cur) {
-                out.push(dt);
-            }
-            cur += 3600;
-        }
-        return out;
     }
 
     let tz = tz_spec.resolve();
@@ -246,14 +230,6 @@ pub fn next_backup_slots(
 ) -> Vec<OffsetDateTime> {
     if count == 0 || matches!(schedule, Schedule::ManualOnly) {
         return Vec::new();
-    }
-    if matches!(schedule, Schedule::Hourly) {
-        let first_hour = after_exclusive.unix_timestamp().div_euclid(3600) * 3600 + 3600;
-        return (0..count)
-            .filter_map(|i| {
-                OffsetDateTime::from_unix_timestamp(first_hour + (i as i64) * 3600).ok()
-            })
-            .collect();
     }
 
     let tz = tz_spec.resolve();
@@ -339,6 +315,9 @@ pub fn next_maintenance_slot(
     None
 }
 
+/// Maximum supported finite pause duration in hours (10 years).
+pub const MAX_PAUSE_HOURS: u32 = 24 * 365 * 10;
+
 /// Preset durations for pausing schedules (`FR-13a`, `AC-M3-14-4`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -346,6 +325,18 @@ pub enum PauseDuration {
     Hours { hours: u32 },
     UntilTomorrow,
     Indefinite,
+}
+
+/// Validates a [`PauseDuration`] before persisting or passing it to [`compute_pause_until`].
+pub fn validate_pause_duration(duration: PauseDuration) -> Result<(), crate::model::ModelError> {
+    if let PauseDuration::Hours { hours } = duration {
+        if hours == 0 || hours > MAX_PAUSE_HOURS {
+            return Err(crate::model::ModelError::InvalidBackup(format!(
+                "pause hours must be between 1 and {MAX_PAUSE_HOURS}, got {hours}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Computes `paused_until` for a pause started at `now`.
@@ -360,7 +351,14 @@ pub fn compute_pause_until(
     tz_spec: &TimezoneSpec,
 ) -> Option<OffsetDateTime> {
     match duration {
-        PauseDuration::Hours { hours } => Some(now + time::Duration::hours(i64::from(hours))),
+        PauseDuration::Hours { hours } => {
+            let clamped = hours.min(MAX_PAUSE_HOURS);
+            let secs = i64::from(clamped).checked_mul(3600).unwrap_or(i64::MAX);
+            Some(
+                now.checked_add(time::Duration::seconds(secs))
+                    .unwrap_or(now),
+            )
+        }
         PauseDuration::Indefinite => None,
         PauseDuration::UntilTomorrow => {
             let tz = tz_spec.resolve();
@@ -370,12 +368,6 @@ pub fn compute_pause_until(
             for sched in schedules {
                 if let Some((hour, minute)) = schedule_matches_date(sched, tomorrow) {
                     let slot = resolve_local_slot(tomorrow, hour, minute, &tz);
-                    earliest = Some(match earliest {
-                        Some(cur) if cur <= slot => cur,
-                        _ => slot,
-                    });
-                } else if matches!(sched, Schedule::Hourly) {
-                    let slot = resolve_local_midnight(tomorrow, &tz);
                     earliest = Some(match earliest {
                         Some(cur) if cur <= slot => cur,
                         _ => slot,
@@ -408,6 +400,49 @@ pub fn compute_backoff_until(
     let idx = attempt.checked_sub(1)? as usize;
     let delay_secs = *BACKOFF_DELAYS_SECS.get(idx)?;
     Some(attempt_finished_at + time::Duration::seconds(delay_secs))
+}
+
+/// `backoff_attempt` value meaning "all retries used, wait for the next regular slot strictly
+/// after `last_failure_at`" (`AC-M3-04-1`); see [`evaluate_backup_schedule`].
+pub const BACKOFF_ATTEMPT_WAIT_FOR_NEXT_SLOT: u32 = BACKOFF_DELAYS_SECS.len() as u32 + 1;
+
+/// Records a transient failure finished at `now` on a backup's backoff state (`F2`, 5/15/60 min).
+pub fn record_backup_backoff_failure(
+    rs: &mut BackupRuntimeState,
+    now: OffsetDateTime,
+    kind: Option<crate::history::BackoffKind>,
+) {
+    rs.backoff_attempt = rs.backoff_attempt.saturating_add(1);
+    rs.last_failure_at = Some(now);
+    rs.backoff_until = compute_backoff_until(rs.backoff_attempt, now);
+    rs.backoff_kind = kind;
+}
+
+/// Marks the currently due slot of a backup as handled at `now` (e.g. the user cancelled the
+/// run): no retry until the next regular slot strictly after `now`.
+pub fn mark_backup_slot_handled(rs: &mut BackupRuntimeState, now: OffsetDateTime) {
+    rs.backoff_attempt = BACKOFF_ATTEMPT_WAIT_FOR_NEXT_SLOT;
+    rs.backoff_until = None;
+    rs.backoff_kind = None;
+    rs.last_failure_at = Some(now);
+}
+
+/// Records a failed maintenance attempt finished at `now` (`F2` backoff 5/15/60 min).
+pub fn record_maintenance_backoff_failure(
+    ds: &mut DestinationMaintenanceState,
+    now: OffsetDateTime,
+) {
+    ds.maintenance_backoff_attempt = ds.maintenance_backoff_attempt.saturating_add(1);
+    ds.last_maintenance_failure_at = Some(now);
+    ds.maintenance_backoff_until = compute_backoff_until(ds.maintenance_backoff_attempt, now);
+}
+
+/// Marks the currently due maintenance work of a destination as handled at `now` (e.g. the user
+/// cancelled the run): no retry until the next regular prune/check slot strictly after `now`.
+pub fn mark_maintenance_slot_handled(ds: &mut DestinationMaintenanceState, now: OffsetDateTime) {
+    ds.maintenance_backoff_attempt = BACKOFF_ATTEMPT_WAIT_FOR_NEXT_SLOT;
+    ds.maintenance_backoff_until = None;
+    ds.last_maintenance_failure_at = Some(now);
 }
 
 /// Live system condition snapshot from UPower / NetworkManager (`M3-S03`).
@@ -659,7 +694,7 @@ pub fn evaluate_backup_schedule(
             if now < backoff_until {
                 in_backoff = true;
             }
-        } else if rs.backoff_attempt >= 4 && due_slot.is_some() {
+        } else if rs.backoff_attempt >= BACKOFF_ATTEMPT_WAIT_FOR_NEXT_SLOT && due_slot.is_some() {
             backoff_exhausted = true;
         }
     }
@@ -708,6 +743,7 @@ pub struct DestinationMaintenanceNeed {
     pub check_due: bool,
     pub next_prune_at: Option<OffsetDateTime>,
     pub next_check_at: Option<OffsetDateTime>,
+    pub in_backoff: bool,
     pub due_now: bool,
 }
 
@@ -735,21 +771,50 @@ pub fn evaluate_destination_maintenance(
     let prune_anchor = state.last_prune_at.or(state.baseline_at).unwrap_or(now);
     let check_anchor = state.last_check_at.or(state.baseline_at).unwrap_or(now);
 
-    let prune_due =
-        !maintenance_slots_between(&destination.maintenance.prune, prune_anchor, now, tz_spec)
-            .is_empty();
-    let check_due =
-        !maintenance_slots_between(&destination.maintenance.check, check_anchor, now, tz_spec)
-            .is_empty();
+    let prune_slots =
+        maintenance_slots_between(&destination.maintenance.prune, prune_anchor, now, tz_spec);
+    let check_slots =
+        maintenance_slots_between(&destination.maintenance.check, check_anchor, now, tz_spec);
+    let prune_due = !prune_slots.is_empty();
+    let check_due = !check_slots.is_empty();
 
     let next_prune_at = next_maintenance_slot(&destination.maintenance.prune, now, tz_spec);
     let next_check_at = next_maintenance_slot(&destination.maintenance.check, now, tz_spec);
 
-    let any_work = input.has_pending_forget || prune_due || check_due;
+    // An open `forget` alone does not start maintenance: it is caught up by the backup's next
+    // run or by the next scheduled (or manual) maintenance run, which works it off first
+    // (FR-05 "Nachholen beim nächsten Lauf bzw. Wartungslauf", F4, AC-M3-05-4).
+    let any_work = prune_due || check_due;
+
+    let latest_due_slot = prune_slots
+        .last()
+        .copied()
+        .into_iter()
+        .chain(check_slots.last().copied())
+        .max();
+    let newer_slot_arrived = match (latest_due_slot, state.last_maintenance_failure_at) {
+        (Some(slot), Some(failed_at)) => slot > failed_at,
+        _ => false,
+    };
+
+    let mut in_backoff = false;
+    let mut backoff_exhausted = false;
+    if any_work && !newer_slot_arrived {
+        if let Some(backoff_until) = state.maintenance_backoff_until {
+            if now < backoff_until {
+                in_backoff = true;
+            }
+        } else if state.maintenance_backoff_attempt >= BACKOFF_ATTEMPT_WAIT_FOR_NEXT_SLOT {
+            backoff_exhausted = true;
+        }
+    }
+
     let due_now = any_work
         && !paused
         && !input.destination_busy
         && input.destination_reachable
+        && !in_backoff
+        && !backoff_exhausted
         && maintenance_conditions_met(env);
 
     DestinationMaintenanceNeed {
@@ -759,6 +824,7 @@ pub fn evaluate_destination_maintenance(
         check_due,
         next_prune_at,
         next_check_at,
+        in_backoff,
         due_now,
     }
 }

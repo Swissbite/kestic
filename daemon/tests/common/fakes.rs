@@ -9,8 +9,6 @@
 //! - `org.freedesktop.UDisks2` (`ObjectManager` `InterfacesAdded` / `InterfacesRemoved`)
 //! - `org.kde.JobViewServerV2` / `org.kde.JobViewV3` + `org.freedesktop.portal.Inhibit`
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::unix::net::UnixStream;
@@ -380,6 +378,11 @@ impl FakeLogindHandle {
         self.recorder.inhibit_calls.lock().expect("lock").len()
     }
 
+    /// Returns every recorded `Inhibit(what, who, why, mode)` call in arrival order.
+    pub fn inhibit_calls(&self) -> Vec<(String, String, String, String)> {
+        self.recorder.inhibit_calls.lock().expect("lock").clone()
+    }
+
     /// Returns how many previously acquired inhibitor FDs are still held open by clients.
     pub fn open_inhibitor_count(&self) -> usize {
         let mut peers = self.recorder.peer_sockets.lock().expect("lock");
@@ -495,6 +498,8 @@ pub struct FakeJobViewRecorder {
     pub updates: Mutex<Vec<(u32, String)>>,
     pub terminated: AtomicBool,
     pub terminate_code: AtomicU32,
+    /// Every `terminate(error_code, error_message, ..)` call in arrival order.
+    pub terminations: Mutex<Vec<(u32, String)>>,
 }
 
 struct FakeJobViewServerV2 {
@@ -544,9 +549,14 @@ impl FakeJobViewV3 {
     fn terminate(
         &self,
         error_code: u32,
-        _error_message: &str,
+        error_message: &str,
         _hints: HashMap<String, OwnedVariant>,
     ) {
+        self.recorder
+            .terminations
+            .lock()
+            .expect("lock")
+            .push((error_code, error_message.to_string()));
         self.recorder
             .terminate_code
             .store(error_code, Ordering::SeqCst);

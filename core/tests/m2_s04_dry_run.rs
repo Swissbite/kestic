@@ -26,10 +26,16 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use time::macros::datetime;
 
-fn count_all_repo_snapshots(restic_bin: &Path, repo_uri: &str, password: &str) -> usize {
+fn count_all_repo_snapshots(
+    restic_bin: &Path,
+    repo_uri: &str,
+    password: &str,
+    cache_dir: &Path,
+) -> usize {
     let out = Command::new(restic_bin)
         .args(["-r", repo_uri, "snapshots", "--no-lock", "--json"])
         .env("RESTIC_PASSWORD", password)
+        .env("RESTIC_CACHE_DIR", cache_dir)
         .output()
         .expect("run restic snapshots");
     assert!(
@@ -43,10 +49,68 @@ fn count_all_repo_snapshots(restic_bin: &Path, repo_uri: &str, password: &str) -
         .len()
 }
 
+fn run_direct_restic_dry_run(
+    label: &str,
+    backup: &Backup,
+    dest: &Destination,
+    state_dir: &Path,
+    resolved: &ResolvedRestic,
+    helper: &Path,
+    cache_dir: &Path,
+) -> (Vec<String>, Option<u64>, Option<u64>) {
+    let mut direct_spec =
+        build_backup_command_spec(backup, dest, state_dir, resolved, helper).expect("build spec");
+    let sep_idx = direct_spec
+        .subcommand_args
+        .iter()
+        .position(|a| a == "--")
+        .unwrap_or(direct_spec.subcommand_args.len());
+    direct_spec.subcommand_args.splice(
+        sep_idx..sep_idx,
+        ["--dry-run".to_string(), "-vv".to_string()],
+    );
+    let direct_out = Command::new(&resolved.binary)
+        .args(direct_spec.restic_argv())
+        .env("RESTIC_PASSWORD", "dry-run-test-pw")
+        .env("RESTIC_CACHE_DIR", cache_dir)
+        .output()
+        .expect("run direct restic dry-run");
+    assert!(
+        direct_out.status.success(),
+        "{label}: direct dry-run failed: {}",
+        String::from_utf8_lossy(&direct_out.stderr)
+    );
+
+    let mut direct_files = Vec::new();
+    let mut direct_total_bytes = None;
+    let mut direct_total_files = None;
+    for line in String::from_utf8_lossy(&direct_out.stdout).lines() {
+        if let Ok(ev) = parse_json_line(line) {
+            match ev {
+                ResticStreamEvent::VerboseStatus(vs)
+                    if vs.action != "scan_finished"
+                        && !vs.item.is_empty()
+                        && !vs.item.ends_with('/') =>
+                {
+                    direct_files.push(vs.item);
+                }
+                ResticStreamEvent::Summary(stats) => {
+                    direct_total_bytes = Some(stats.total_bytes_processed);
+                    direct_total_files = Some(stats.total_files_processed);
+                }
+                _ => {}
+            }
+        }
+    }
+    (direct_files, direct_total_bytes, direct_total_files)
+}
+
 #[test]
 fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let cache_str = cache_dir.to_string_lossy().into_owned();
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
@@ -56,10 +120,8 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
         fs::create_dir_all(&sub_dir).expect("mkdir sub");
         fs::create_dir_all(&excluded_dir).expect("mkdir excluded");
 
-        let alpha_bytes = vec![b'a'; 120];
-        let beta_bytes = vec![b'b'; 380];
-        fs::write(src_dir.join("alpha.txt"), &alpha_bytes).expect("write alpha");
-        fs::write(sub_dir.join("beta.bin"), &beta_bytes).expect("write beta");
+        fs::write(src_dir.join("alpha.txt"), vec![b'a'; 120]).expect("write alpha");
+        fs::write(sub_dir.join("beta.bin"), vec![b'b'; 380]).expect("write beta");
         fs::write(src_dir.join("ignored.tmp"), vec![b't'; 500]).expect("write tmp");
         fs::write(excluded_dir.join("garbage.dat"), vec![b'g'; 900]).expect("write garbage");
 
@@ -73,6 +135,7 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -107,51 +170,9 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
             dry_res.transparent_command
         );
 
-        // Run `restic backup --dry-run -vv` directly with the exact same arguments for comparison.
-        let mut direct_spec =
-            build_backup_command_spec(&backup, &dest, &state_dir, &resolved, &helper)
-                .expect("build spec");
-        let sep_idx = direct_spec
-            .subcommand_args
-            .iter()
-            .position(|a| a == "--")
-            .unwrap_or(direct_spec.subcommand_args.len());
-        direct_spec.subcommand_args.splice(
-            sep_idx..sep_idx,
-            ["--dry-run".to_string(), "-vv".to_string()],
+        let (mut direct_files, direct_total_bytes, direct_total_files) = run_direct_restic_dry_run(
+            label, &backup, &dest, &state_dir, &resolved, &helper, &cache_dir,
         );
-        let direct_out = Command::new(&resolved.binary)
-            .args(direct_spec.restic_argv())
-            .env("RESTIC_PASSWORD", "dry-run-test-pw")
-            .output()
-            .expect("run direct restic dry-run");
-        assert!(
-            direct_out.status.success(),
-            "{label}: direct dry-run failed: {}",
-            String::from_utf8_lossy(&direct_out.stderr)
-        );
-
-        let mut direct_files = Vec::new();
-        let mut direct_total_bytes = None;
-        let mut direct_total_files = None;
-        for line in String::from_utf8_lossy(&direct_out.stdout).lines() {
-            if let Ok(ev) = parse_json_line(line) {
-                match ev {
-                    ResticStreamEvent::VerboseStatus(vs)
-                        if vs.action != "scan_finished"
-                            && !vs.item.is_empty()
-                            && !vs.item.ends_with('/') =>
-                    {
-                        direct_files.push(vs.item);
-                    }
-                    ResticStreamEvent::Summary(stats) => {
-                        direct_total_bytes = Some(stats.total_bytes_processed);
-                        direct_total_files = Some(stats.total_files_processed);
-                    }
-                    _ => {}
-                }
-            }
-        }
 
         let mut kestic_files = dry_res.files.clone();
         kestic_files.sort();
@@ -202,19 +223,26 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
             dry_res.largest_excluded_folders
         );
 
-        // Zero snapshots created in repo.
         assert_eq!(
             count_all_repo_snapshots(
                 &resolved.binary,
                 &dest.kind.repository_uri(),
-                "dry-run-test-pw"
+                "dry-run-test-pw",
+                &cache_dir
             ),
             0,
             "{label}: dry-run must create zero snapshots"
         );
-        let snaps =
-            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list snapshots");
+        let snaps = list_snapshots_for_backup(
+            &backup.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .expect("list snapshots");
         assert!(snaps.is_empty(), "{label}: expected 0 snapshots for backup");
     }
 }
@@ -223,6 +251,7 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
 fn ac_m2_04_2_dry_run_with_zero_prior_snapshots_reports_first_backup_estimate() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
@@ -242,6 +271,7 @@ fn ac_m2_04_2_dry_run_with_zero_prior_snapshots_reports_first_backup_estimate() 
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -259,7 +289,8 @@ fn ac_m2_04_2_dry_run_with_zero_prior_snapshots_reports_first_backup_estimate() 
             count_all_repo_snapshots(
                 &resolved.binary,
                 &dest.kind.repository_uri(),
-                "first-backup-pw"
+                "first-backup-pw",
+                &cache_dir
             ),
             0,
             "{label}: precondition failed, repo should have 0 snapshots"
@@ -282,7 +313,8 @@ fn ac_m2_04_2_dry_run_with_zero_prior_snapshots_reports_first_backup_estimate() 
             count_all_repo_snapshots(
                 &resolved.binary,
                 &dest.kind.repository_uri(),
-                "first-backup-pw"
+                "first-backup-pw",
+                &cache_dir
             ),
             0,
             "{label}: dry-run must leave 0 snapshots in repo"
@@ -299,6 +331,7 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
     );
 
     let dir = TempDir::new().expect("tempdir");
+    let cache_dir = common::restic_cache_dir(dir.path());
     let server_dir = dir.path().join("rest-data");
     let state_dir = dir.path().join("state");
     let src_dir = dir.path().join("src");
@@ -322,6 +355,7 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
         kestic_binary: &helper,
         secret_store: &store,
         clock: &clock,
+        cache_dir: Some(&cache_dir),
     };
 
     let dest = Destination::new(
@@ -367,6 +401,7 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
         kestic_binary: &helper,
         secret_store: &store,
         clock: &clock,
+        cache_dir: Some(&cache_dir),
     };
 
     let backup =

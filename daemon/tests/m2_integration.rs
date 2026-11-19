@@ -151,7 +151,7 @@ fn spawn_daemon_on_bus(
     };
 
     let handle = thread::spawn(move || run_daemon(run_cfg));
-    wait_for_file(&ready_file, Duration::from_secs(5));
+    wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
 
     let client = KesticClient::connect(bus_name, KESTIC_OBJECT_PATH).expect("connect KesticClient");
     let status = client
@@ -212,6 +212,7 @@ struct NonExclusiveLockHolder {
 
 impl NonExclusiveLockHolder {
     fn start(restic_bin: &Path, repo_dir: &Path, password: &str) -> Self {
+        let cache_dir = repo_dir.parent().unwrap_or(repo_dir).join("restic-cache");
         let mut child = Command::new(restic_bin)
             .args([
                 "-r",
@@ -222,6 +223,7 @@ impl NonExclusiveLockHolder {
                 "lock-holder.txt",
             ])
             .env("RESTIC_PASSWORD", password)
+            .env("RESTIC_CACHE_DIR", cache_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -456,6 +458,188 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
     );
 }
 
+fn verify_dry_run_with_excludes(client: &KesticClient, backup_id: &str, label: &str) {
+    // AC-M2-04-1: StartBackupDryRun against real repo with excludes -> matches dry-run, 0 snapshots.
+    let preview_id = client
+        .start_backup_dry_run(backup_id, None)
+        .expect("StartBackupDryRun");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        let st = client
+            .get_backup_dry_run_status(&preview_id)
+            .expect("GetBackupDryRunStatus");
+        if st.state != "running" {
+            break st;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "[{label}] timed out waiting for dry-run"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(status.state, "done", "[{label}] dry-run failed: {status:?}");
+    let res = status.result.expect("dry-run result");
+    assert!(!res.cancelled, "[{label}]");
+    assert_eq!(res.total_files, 2, "[{label}] res={res:?}");
+    assert!(res.total_bytes >= 22, "[{label}] res={res:?}");
+    assert!(
+        res.files.iter().any(|f| f.ends_with("keep.txt")),
+        "[{label}] files={:?}",
+        res.files
+    );
+    assert!(
+        res.files.iter().any(|f| f.ends_with("doc.txt")),
+        "[{label}] files={:?}",
+        res.files
+    );
+    assert!(
+        !res.files.iter().any(|f| f.ends_with("skip.tmp")),
+        "[{label}] excluded file leaked into dry-run: {:?}",
+        res.files
+    );
+
+    // Verify draft exclude override works without mutating config.toml.
+    let draft_excludes = ExcludeRules::from_text("*.tmp\nsub");
+    let draft_preview_id = client
+        .start_backup_dry_run(backup_id, Some(&draft_excludes))
+        .expect("StartBackupDryRun with draft excludes");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let draft_status = loop {
+        let st = client
+            .get_backup_dry_run_status(&draft_preview_id)
+            .expect("GetBackupDryRunStatus draft");
+        if st.state != "running" {
+            break st;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(draft_status.state, "done", "[{label}] {draft_status:?}");
+    let draft_res = draft_status.result.expect("draft dry-run result");
+    assert_eq!(draft_res.total_files, 1, "[{label}] {draft_res:?}");
+
+    // No snapshot was created by dry-runs.
+    let snaps = client
+        .list_backup_snapshots(backup_id)
+        .expect("ListBackupSnapshots");
+    assert!(
+        snaps.current_snapshots.is_empty(),
+        "[{label}] dry-run must create 0 snapshots: {:?}",
+        snaps.current_snapshots
+    );
+}
+
+fn verify_stopped_rest_server_preflight(
+    sub: &Path,
+    restic_bin: &Path,
+    client: &KesticClient,
+    server: &mut RestServerGuard,
+    backup_id: &str,
+    label: &str,
+) {
+    // AC-M2-04-3: Stop rest-server, install restic spy -> preflight fails <= 15s, unreachable, 0 restic.
+    let spy_marker = sub.join("restic-dryrun-spy.marker");
+    let spy_script = sub.join("restic-dryrun-spy.sh");
+    let script_body = format!(
+        "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  touch \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
+        spy_marker.display(),
+        restic_bin.display()
+    );
+    fs::write(&spy_script, script_body).expect("write spy script");
+    fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755)).expect("chmod spy");
+    let prov = client
+        .set_restic_provider(&ResticProvider::Custom { path: spy_script })
+        .expect("install restic spy");
+    assert!(prov.valid);
+
+    server.stop();
+    let start = Instant::now();
+    let fail_preview_id = client
+        .start_backup_dry_run(backup_id, None)
+        .expect("StartBackupDryRun against stopped server");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let fail_status = loop {
+        let st = client
+            .get_backup_dry_run_status(&fail_preview_id)
+            .expect("GetBackupDryRunStatus stopped");
+        if st.state != "running" {
+            break st;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "[{label}] stopped rest-server preflight exceeded 15s"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed <= Duration::from_secs(15),
+        "[{label}] preflight took {elapsed:?} (> 15s)"
+    );
+    assert_eq!(
+        fail_status.state, "error",
+        "[{label}] expected error on stopped server: {fail_status:?}"
+    );
+    let err_msg = fail_status.error.unwrap_or_default().to_lowercase();
+    assert!(
+        err_msg.contains("unreachable") || err_msg.contains("nicht erreichbar"),
+        "[{label}] unexpected error message: {err_msg}"
+    );
+    assert!(
+        !spy_marker.exists(),
+        "[{label}] zero restic process must be spawned on unreachable preflight"
+    );
+}
+
+fn run_dry_run_and_stopped_server_case(root: &Path, label: &str, restic_bin: &Path) {
+    let sub = root.join(label);
+    let rest_data = sub.join("rest-data");
+    let src_dir = sub.join("src-dry");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::create_dir_all(src_dir.join("sub")).expect("mkdir sub");
+    fs::write(src_dir.join("keep.txt"), b"alpha 12345\n").expect("write keep");
+    fs::write(src_dir.join("sub").join("doc.txt"), b"beta 67890\n").expect("write doc");
+    fs::write(src_dir.join("skip.tmp"), b"should be excluded\n").expect("write tmp");
+
+    let mut server = RestServerGuard::start_with_auth(&rest_data);
+    let bus_name = format!(
+        "net.daester.Kestic.M2DryRun_{}",
+        label.replace(['.', '-'], "_")
+    );
+    let (client, handle) =
+        spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+
+    let dest = Destination::new(
+        format!("REST DryRun ({label})"),
+        DestinationKind::Rest {
+            url: server.url.clone(),
+            username: Some("alice".to_string()),
+        },
+    )
+    .expect("dest");
+    client
+        .add_destination(&dest, "init", "dry-repo-pw", "secret")
+        .expect("AddDestination REST");
+
+    let mut backup = Backup::new(
+        format!("DryRun Docs ({label})"),
+        Source::folder(&src_dir),
+        dest.id.clone(),
+    )
+    .expect("backup");
+    backup.excludes = ExcludeRules::from_text("*.tmp");
+    let backup_id = client.add_backup(&backup).expect("AddBackup");
+
+    verify_dry_run_with_excludes(&client, &backup_id, label);
+    verify_stopped_rest_server_preflight(&sub, restic_bin, &client, &mut server, &backup_id, label);
+
+    client.confirm_quit().expect("confirm quit");
+    assert_eq!(
+        handle.join().expect("join daemon"),
+        Ok(DaemonOutcome::RanAndStopped)
+    );
+}
+
 #[test]
 fn ac_m2_04_1_and_04_3_dry_run_over_dbus_and_stopped_rest_server_preflight_dual_restic() {
     run_isolated_test(
@@ -463,174 +647,191 @@ fn ac_m2_04_1_and_04_3_dry_run_over_dbus_and_stopped_rest_server_preflight_dual_
         "KESTIC_M2_S04_DRYRUN",
         |root| {
             for (label, restic_bin) in restic_test_binaries() {
-                let sub = root.join(label);
-                let rest_data = sub.join("rest-data");
-                let src_dir = sub.join("src-dry");
-                fs::create_dir_all(&src_dir).expect("mkdir src");
-                fs::create_dir_all(src_dir.join("sub")).expect("mkdir sub");
-                fs::write(src_dir.join("keep.txt"), b"alpha 12345\n").expect("write keep");
-                fs::write(src_dir.join("sub").join("doc.txt"), b"beta 67890\n").expect("write doc");
-                fs::write(src_dir.join("skip.tmp"), b"should be excluded\n").expect("write tmp");
-
-                let mut server = RestServerGuard::start_with_auth(&rest_data);
-                let bus_name = format!(
-                    "net.daester.Kestic.M2DryRun_{}",
-                    label.replace(['.', '-'], "_")
-                );
-                let (client, handle) =
-                    spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.clone(), None, true);
-
-                let dest = Destination::new(
-                    format!("REST DryRun ({label})"),
-                    DestinationKind::Rest {
-                        url: server.url.clone(),
-                        username: Some("alice".to_string()),
-                    },
-                )
-                .expect("dest");
-                client
-                    .add_destination(&dest, "init", "dry-repo-pw", "secret")
-                    .expect("AddDestination REST");
-
-                let mut backup = Backup::new(
-                    format!("DryRun Docs ({label})"),
-                    Source::folder(&src_dir),
-                    dest.id.clone(),
-                )
-                .expect("backup");
-                backup.excludes = ExcludeRules::from_text("*.tmp");
-                let backup_id = client.add_backup(&backup).expect("AddBackup");
-
-                // AC-M2-04-1: StartBackupDryRun against real repo with excludes -> matches dry-run, 0 snapshots.
-                let preview_id = client
-                    .start_backup_dry_run(&backup_id, None)
-                    .expect("StartBackupDryRun");
-                let deadline = Instant::now() + Duration::from_secs(20);
-                let status = loop {
-                    let st = client
-                        .get_backup_dry_run_status(&preview_id)
-                        .expect("GetBackupDryRunStatus");
-                    if st.state != "running" {
-                        break st;
-                    }
-                    assert!(
-                        Instant::now() < deadline,
-                        "[{label}] timed out waiting for dry-run"
-                    );
-                    thread::sleep(Duration::from_millis(25));
-                };
-                assert_eq!(status.state, "done", "[{label}] dry-run failed: {status:?}");
-                let res = status.result.expect("dry-run result");
-                assert!(!res.cancelled, "[{label}]");
-                assert_eq!(res.total_files, 2, "[{label}] res={res:?}");
-                assert!(res.total_bytes >= 22, "[{label}] res={res:?}");
-                assert!(
-                    res.files.iter().any(|f| f.ends_with("keep.txt")),
-                    "[{label}] files={:?}",
-                    res.files
-                );
-                assert!(
-                    res.files.iter().any(|f| f.ends_with("doc.txt")),
-                    "[{label}] files={:?}",
-                    res.files
-                );
-                assert!(
-                    !res.files.iter().any(|f| f.ends_with("skip.tmp")),
-                    "[{label}] excluded file leaked into dry-run: {:?}",
-                    res.files
-                );
-
-                // Verify draft exclude override works without mutating config.toml.
-                let draft_excludes = ExcludeRules::from_text("*.tmp\nsub");
-                let draft_preview_id = client
-                    .start_backup_dry_run(&backup_id, Some(&draft_excludes))
-                    .expect("StartBackupDryRun with draft excludes");
-                let deadline = Instant::now() + Duration::from_secs(20);
-                let draft_status = loop {
-                    let st = client
-                        .get_backup_dry_run_status(&draft_preview_id)
-                        .expect("GetBackupDryRunStatus draft");
-                    if st.state != "running" {
-                        break st;
-                    }
-                    assert!(Instant::now() < deadline);
-                    thread::sleep(Duration::from_millis(25));
-                };
-                assert_eq!(draft_status.state, "done", "[{label}] {draft_status:?}");
-                let draft_res = draft_status.result.expect("draft dry-run result");
-                assert_eq!(draft_res.total_files, 1, "[{label}] {draft_res:?}");
-
-                // No snapshot was created by dry-runs.
-                let snaps = client
-                    .list_backup_snapshots(&backup_id)
-                    .expect("ListBackupSnapshots");
-                assert!(
-                    snaps.current_snapshots.is_empty(),
-                    "[{label}] dry-run must create 0 snapshots: {:?}",
-                    snaps.current_snapshots
-                );
-
-                // AC-M2-04-3: Stop rest-server, install restic spy -> preflight fails <= 15s, unreachable, 0 restic.
-                let spy_marker = sub.join("restic-dryrun-spy.marker");
-                let spy_script = sub.join("restic-dryrun-spy.sh");
-                let script_body = format!(
-                    "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  touch \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
-                    spy_marker.display(),
-                    restic_bin.display()
-                );
-                fs::write(&spy_script, script_body).expect("write spy script");
-                fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755))
-                    .expect("chmod spy");
-                let prov = client
-                    .set_restic_provider(&ResticProvider::Custom { path: spy_script })
-                    .expect("install restic spy");
-                assert!(prov.valid);
-
-                server.stop();
-                let start = Instant::now();
-                let fail_preview_id = client
-                    .start_backup_dry_run(&backup_id, None)
-                    .expect("StartBackupDryRun against stopped server");
-                let deadline = Instant::now() + Duration::from_secs(15);
-                let fail_status = loop {
-                    let st = client
-                        .get_backup_dry_run_status(&fail_preview_id)
-                        .expect("GetBackupDryRunStatus stopped");
-                    if st.state != "running" {
-                        break st;
-                    }
-                    assert!(
-                        Instant::now() < deadline,
-                        "[{label}] stopped rest-server preflight exceeded 15s"
-                    );
-                    thread::sleep(Duration::from_millis(25));
-                };
-                let elapsed = start.elapsed();
-                assert!(
-                    elapsed <= Duration::from_secs(15),
-                    "[{label}] preflight took {elapsed:?} (> 15s)"
-                );
-                assert_eq!(
-                    fail_status.state, "error",
-                    "[{label}] expected error on stopped server: {fail_status:?}"
-                );
-                let err_msg = fail_status.error.unwrap_or_default().to_lowercase();
-                assert!(
-                    err_msg.contains("unreachable") || err_msg.contains("nicht erreichbar"),
-                    "[{label}] unexpected error message: {err_msg}"
-                );
-                assert!(
-                    !spy_marker.exists(),
-                    "[{label}] zero restic process must be spawned on unreachable preflight"
-                );
-
-                client.confirm_quit().expect("confirm quit");
-                assert_eq!(
-                    handle.join().expect("join daemon"),
-                    Ok(DaemonOutcome::RanAndStopped)
-                );
+                run_dry_run_and_stopped_server_case(root, label, &restic_bin);
             }
         },
+    );
+}
+
+fn verify_retention_preview_under_lock(
+    sub: &Path,
+    restic_bin: &Path,
+    client: &KesticClient,
+    bus_name: &str,
+    backup_id: &str,
+    label: &str,
+) {
+    let repo_dir = sub.join("repo");
+    // Install spy wrapper logging argv for non-`version` restic invocations to verify `--no-lock`.
+    let spy_log = sub.join("restic-args.log");
+    let spy_script = sub.join("restic-args-spy.sh");
+    let script_body = format!(
+        "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  echo \"$*\" >> \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
+        spy_log.display(),
+        restic_bin.display()
+    );
+    fs::write(&spy_script, script_body).expect("write spy");
+    fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755)).expect("chmod spy");
+    client
+        .set_restic_provider(&ResticProvider::Custom { path: spy_script })
+        .expect("install spy");
+
+    // AC-M2-06-6: Hold a non-exclusive lock via `restic backup --stdin`.
+    let lock_holder = NonExclusiveLockHolder::start(restic_bin, &repo_dir, "ret-pw-123");
+
+    let candidate_policy = RetentionPolicy {
+        keep_last: Some(KeepCount::Count(1)),
+        ..RetentionPolicy::empty()
+    };
+    let preview = preview_retention_explicit(client, bus_name, backup_id, &candidate_policy)
+        .unwrap_or_else(|e| {
+            panic!("[{label}] PreviewRetention failed under non-exclusive lock: {e}")
+        });
+    assert_eq!(preview.keep_count, 1, "[{label}] {preview:?}");
+    assert_eq!(preview.remove_count, 1, "[{label}] {preview:?}");
+    let kept = preview
+        .snapshots
+        .iter()
+        .find(|s| s.action == "keep")
+        .expect("kept snapshot");
+    assert!(
+        !kept.reasons.is_empty(),
+        "[{label}] kept snapshot must carry reasons: {kept:?}"
+    );
+    assert!(
+        preview.snapshots.iter().any(|s| s.action == "remove"),
+        "[{label}] expected one remove entry: {preview:?}"
+    );
+
+    let logged = fs::read_to_string(&spy_log).expect("read spy log");
+    assert!(
+        logged.lines().any(|line| line.contains("forget")
+            && line.contains("--dry-run")
+            && line.contains("--no-lock")),
+        "[{label}] PreviewRetention must pass --dry-run and --no-lock:\n{logged}"
+    );
+
+    // Also exercise non-blocking async StartRetentionPreview + GetRetentionPreviewStatus under the same lock.
+    let async_preview_id = client
+        .start_retention_preview(backup_id, &candidate_policy)
+        .expect("StartRetentionPreview");
+    let async_deadline = Instant::now() + Duration::from_secs(15);
+    let async_dto = loop {
+        let st = client
+            .get_retention_preview_status(&async_preview_id)
+            .expect("GetRetentionPreviewStatus");
+        if st.state != "running" {
+            break st;
+        }
+        assert!(
+            Instant::now() < async_deadline,
+            "[{label}] StartRetentionPreview timed out"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(async_dto.state, "done", "[{label}] {async_dto:?}");
+    assert_eq!(async_dto.result.as_ref(), Some(&preview), "[{label}]");
+
+    // Dry-run preview must not delete snapshots.
+    let snaps = client
+        .list_backup_snapshots(backup_id)
+        .expect("ListBackupSnapshots");
+    assert_eq!(snaps.current_snapshots.len(), 2, "[{label}]");
+
+    lock_holder.release(&repo_dir);
+}
+
+fn verify_retention_update_validation(
+    cfg_path: &Path,
+    client: &KesticClient,
+    bus_name: &str,
+    backup: &Backup,
+) {
+    // AC-M2-06-7: Invalid retention update rejected by core, config.toml untouched; valid updates config.toml.
+    let cfg_before = fs::read(cfg_path).expect("read config bytes");
+
+    let mut invalid_empty = backup.clone();
+    invalid_empty.retention = RetentionPolicy::empty();
+    let err_empty = update_backup_explicit(client, bus_name, &invalid_empty)
+        .expect_err("empty retention must fail");
+    assert_dbus_error_name(&err_empty, "net.daester.Kestic.Error.InvalidInput");
+    assert_eq!(fs::read(cfg_path).expect("cfg unchanged"), cfg_before);
+
+    let mut invalid_dur = backup.clone();
+    invalid_dur.retention = RetentionPolicy {
+        keep_within: Some("30x".to_string()),
+        ..RetentionPolicy::empty()
+    };
+    let err_dur = update_backup_explicit(client, bus_name, &invalid_dur)
+        .expect_err("invalid duration 30x must fail");
+    assert_dbus_error_name(&err_dur, "net.daester.Kestic.Error.InvalidInput");
+    assert_eq!(fs::read(cfg_path).expect("cfg unchanged"), cfg_before);
+
+    let mut valid_upd = backup.clone();
+    valid_upd.retention = RetentionPolicy::long();
+    update_backup_explicit(client, bus_name, &valid_upd).expect("UpdateBackup valid retention");
+    let reloaded = load_config(cfg_path).expect("reload config.toml");
+    assert_eq!(reloaded.backups[0].retention, RetentionPolicy::long());
+    let state = client.get_state().expect("GetState");
+    assert_eq!(state.backups[0].backup.retention, RetentionPolicy::long());
+}
+
+fn run_retention_preview_and_update_case(root: &Path, label: &str, restic_bin: &Path) {
+    let sub = root.join(label);
+    let repo_dir = sub.join("repo");
+    let src_dir = sub.join("src");
+    let cfg_path = sub.join("cfg").join("kestic").join("config.toml");
+    fs::create_dir_all(&repo_dir).expect("mkdir repo");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("file1.txt"), b"snapshot 1\n").expect("write file1");
+
+    let bus_name = format!(
+        "net.daester.Kestic.M2Retention_{}",
+        label.replace(['.', '-'], "_")
+    );
+    let (client, handle) =
+        spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
+
+    let dest = Destination::new(
+        format!("Retention Repo ({label})"),
+        DestinationKind::Local { path: repo_dir },
+    )
+    .expect("dest");
+    client
+        .add_destination(&dest, "init", "ret-pw-123", "")
+        .expect("AddDestination");
+
+    let mut backup = Backup::new(
+        format!("Retention Docs ({label})"),
+        Source::folder(&src_dir),
+        dest.id.clone(),
+    )
+    .expect("backup");
+    backup.retention = RetentionPolicy::standard();
+    let backup_id = client.add_backup(&backup).expect("AddBackup");
+
+    // Produce 2 distinct snapshots so retention preview has keep + remove items.
+    let run1 = client.start_backup(&backup_id).expect("StartBackup 1");
+    assert_eq!(
+        wait_for_run_finished(&signals, &run1, Duration::from_secs(20)).status,
+        RunStatus::Ok
+    );
+
+    fs::write(src_dir.join("file2.txt"), b"snapshot 2\n").expect("write file2");
+    let run2 = client.start_backup(&backup_id).expect("StartBackup 2");
+    assert_eq!(
+        wait_for_run_finished(&signals, &run2, Duration::from_secs(20)).status,
+        RunStatus::Ok
+    );
+
+    verify_retention_preview_under_lock(&sub, restic_bin, &client, &bus_name, &backup_id, label);
+    verify_retention_update_validation(&cfg_path, &client, &bus_name, &backup);
+
+    client.confirm_quit().expect("confirm quit");
+    assert_eq!(
+        handle.join().expect("join daemon"),
+        Ok(DaemonOutcome::RanAndStopped)
     );
 }
 
@@ -642,179 +843,7 @@ fn ac_m2_06_6_and_06_7_preview_retention_with_non_exclusive_lock_and_update_dual
         |root| {
             let _notif_guard = start_fake_notifications();
             for (label, restic_bin) in restic_test_binaries() {
-                let sub = root.join(label);
-                let repo_dir = sub.join("repo");
-                let src_dir = sub.join("src");
-                let cfg_path = sub.join("cfg").join("kestic").join("config.toml");
-                fs::create_dir_all(&repo_dir).expect("mkdir repo");
-                fs::create_dir_all(&src_dir).expect("mkdir src");
-                fs::write(src_dir.join("file1.txt"), b"snapshot 1\n").expect("write file1");
-
-                let bus_name = format!(
-                    "net.daester.Kestic.M2Retention_{}",
-                    label.replace(['.', '-'], "_")
-                );
-                let (client, handle) =
-                    spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.clone(), None, true);
-                let signals = KesticSignalCollector::start(
-                    &bus_name,
-                    KESTIC_OBJECT_PATH,
-                    KESTIC_INTERFACE_V1,
-                );
-
-                let dest = Destination::new(
-                    format!("Retention Repo ({label})"),
-                    DestinationKind::Local {
-                        path: repo_dir.clone(),
-                    },
-                )
-                .expect("dest");
-                client
-                    .add_destination(&dest, "init", "ret-pw-123", "")
-                    .expect("AddDestination");
-
-                let mut backup = Backup::new(
-                    format!("Retention Docs ({label})"),
-                    Source::folder(&src_dir),
-                    dest.id.clone(),
-                )
-                .expect("backup");
-                backup.retention = RetentionPolicy::standard();
-                let backup_id = client.add_backup(&backup).expect("AddBackup");
-
-                // Produce 2 distinct snapshots so retention preview has keep + remove items.
-                let run1 = client.start_backup(&backup_id).expect("StartBackup 1");
-                assert_eq!(
-                    wait_for_run_finished(&signals, &run1, Duration::from_secs(20)).status,
-                    RunStatus::Ok
-                );
-
-                fs::write(src_dir.join("file2.txt"), b"snapshot 2\n").expect("write file2");
-                let run2 = client.start_backup(&backup_id).expect("StartBackup 2");
-                assert_eq!(
-                    wait_for_run_finished(&signals, &run2, Duration::from_secs(20)).status,
-                    RunStatus::Ok
-                );
-
-                // Install spy wrapper logging argv for non-`version` restic invocations to verify `--no-lock`.
-                let spy_log = sub.join("restic-args.log");
-                let spy_script = sub.join("restic-args-spy.sh");
-                let script_body = format!(
-                    "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  echo \"$*\" >> \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
-                    spy_log.display(),
-                    restic_bin.display()
-                );
-                fs::write(&spy_script, script_body).expect("write spy");
-                fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755))
-                    .expect("chmod spy");
-                client
-                    .set_restic_provider(&ResticProvider::Custom { path: spy_script })
-                    .expect("install spy");
-
-                // AC-M2-06-6: Hold a non-exclusive lock via `restic backup --stdin`.
-                let lock_holder =
-                    NonExclusiveLockHolder::start(&restic_bin, &repo_dir, "ret-pw-123");
-
-                let candidate_policy = RetentionPolicy {
-                    keep_last: Some(KeepCount::Count(1)),
-                    ..RetentionPolicy::empty()
-                };
-                let preview =
-                    preview_retention_explicit(&client, &bus_name, &backup_id, &candidate_policy)
-                        .unwrap_or_else(|e| {
-                            panic!(
-                                "[{label}] PreviewRetention failed under non-exclusive lock: {e}"
-                            )
-                        });
-                assert_eq!(preview.keep_count, 1, "[{label}] {preview:?}");
-                assert_eq!(preview.remove_count, 1, "[{label}] {preview:?}");
-                let kept = preview
-                    .snapshots
-                    .iter()
-                    .find(|s| s.action == "keep")
-                    .expect("kept snapshot");
-                assert!(
-                    !kept.reasons.is_empty(),
-                    "[{label}] kept snapshot must carry reasons: {kept:?}"
-                );
-                assert!(
-                    preview.snapshots.iter().any(|s| s.action == "remove"),
-                    "[{label}] expected one remove entry: {preview:?}"
-                );
-
-                let logged = fs::read_to_string(&spy_log).expect("read spy log");
-                assert!(
-                    logged.lines().any(|line| {
-                        line.contains("forget")
-                            && line.contains("--dry-run")
-                            && line.contains("--no-lock")
-                    }),
-                    "[{label}] PreviewRetention must pass --dry-run and --no-lock:\n{logged}"
-                );
-
-                // Also exercise non-blocking async StartRetentionPreview + GetRetentionPreviewStatus under the same lock.
-                let async_preview_id = client
-                    .start_retention_preview(&backup_id, &candidate_policy)
-                    .expect("StartRetentionPreview");
-                let async_deadline = Instant::now() + Duration::from_secs(15);
-                let async_dto = loop {
-                    let st = client
-                        .get_retention_preview_status(&async_preview_id)
-                        .expect("GetRetentionPreviewStatus");
-                    if st.state != "running" {
-                        break st;
-                    }
-                    assert!(
-                        Instant::now() < async_deadline,
-                        "[{label}] StartRetentionPreview timed out"
-                    );
-                    thread::sleep(Duration::from_millis(25));
-                };
-                assert_eq!(async_dto.state, "done", "[{label}] {async_dto:?}");
-                assert_eq!(async_dto.result.as_ref(), Some(&preview), "[{label}]");
-
-                // Dry-run preview must not delete snapshots.
-                let snaps = client
-                    .list_backup_snapshots(&backup_id)
-                    .expect("ListBackupSnapshots");
-                assert_eq!(snaps.current_snapshots.len(), 2, "[{label}]");
-
-                lock_holder.release(&repo_dir);
-
-                // AC-M2-06-7: Invalid retention update rejected by core, config.toml untouched; valid updates config.toml.
-                let cfg_before = fs::read(&cfg_path).expect("read config bytes");
-
-                let mut invalid_empty = backup.clone();
-                invalid_empty.retention = RetentionPolicy::empty();
-                let err_empty = update_backup_explicit(&client, &bus_name, &invalid_empty)
-                    .expect_err("empty retention must fail");
-                assert_dbus_error_name(&err_empty, "net.daester.Kestic.Error.InvalidInput");
-                assert_eq!(fs::read(&cfg_path).expect("cfg unchanged"), cfg_before);
-
-                let mut invalid_dur = backup.clone();
-                invalid_dur.retention = RetentionPolicy {
-                    keep_within: Some("30x".to_string()),
-                    ..RetentionPolicy::empty()
-                };
-                let err_dur = update_backup_explicit(&client, &bus_name, &invalid_dur)
-                    .expect_err("invalid duration 30x must fail");
-                assert_dbus_error_name(&err_dur, "net.daester.Kestic.Error.InvalidInput");
-                assert_eq!(fs::read(&cfg_path).expect("cfg unchanged"), cfg_before);
-
-                let mut valid_upd = backup.clone();
-                valid_upd.retention = RetentionPolicy::long();
-                update_backup_explicit(&client, &bus_name, &valid_upd)
-                    .expect("UpdateBackup valid retention");
-                let reloaded = load_config(&cfg_path).expect("reload config.toml");
-                assert_eq!(reloaded.backups[0].retention, RetentionPolicy::long());
-                let state = client.get_state().expect("GetState");
-                assert_eq!(state.backups[0].backup.retention, RetentionPolicy::long());
-
-                client.confirm_quit().expect("confirm quit");
-                assert_eq!(
-                    handle.join().expect("join daemon"),
-                    Ok(DaemonOutcome::RanAndStopped)
-                );
+                run_retention_preview_and_update_case(root, label, &restic_bin);
             }
         },
     );
@@ -960,6 +989,170 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
     );
 }
 
+fn verify_exit_3_and_exclude_recovery(
+    sub: &Path,
+    client: &KesticClient,
+    signals: &KesticSignalCollector,
+    backup_id_str: &str,
+    label: &str,
+) {
+    let src_dir = sub.join("src");
+    let state_dir = sub.join("state").join("kestic");
+    let cfg_path = sub.join("cfg").join("kestic").join("config.toml");
+    let backup_id = kestic_core::model::BackupId::parse(backup_id_str).expect("backup id");
+
+    // Create an unreadable file (`chmod 000`) -> restic backup exits 3.
+    let unreadable = src_dir.join("secret_unreadable.txt");
+    fs::write(&unreadable, b"cannot read this\n").expect("write unreadable");
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).expect("chmod 000");
+
+    let r2 = client.start_backup(backup_id_str).expect("StartBackup 2");
+    let fin2 = wait_for_run_finished(signals, &r2, Duration::from_secs(20));
+    assert_eq!(fin2.status, RunStatus::Warning, "[{label}] {fin2:?}");
+    assert_eq!(fin2.exit_code, Some(3), "[{label}]");
+
+    // AC-M2-07-2 & AC-M2-08-1: `forget` still ran, `unreadable_files` captured in detail & state.
+    let detail2 = client.get_run_detail(&r2).expect("GetRunDetail 2");
+    assert_eq!(detail2.run.status, RunStatus::Warning, "[{label}]");
+    assert_eq!(detail2.run.exit_code, Some(3), "[{label}]");
+    assert_eq!(
+        detail2.run.commands.len(),
+        2,
+        "[{label}] forget must still run after Exit 3: {:?}",
+        detail2.run.commands
+    );
+    assert!(
+        detail2.run.commands[1].args.contains(&"forget".to_string()),
+        "[{label}]"
+    );
+    assert_eq!(detail2.run.commands[1].exit_code, 0, "[{label}]");
+    assert!(
+        detail2
+            .unreadable_files
+            .iter()
+            .any(|p| p.ends_with("secret_unreadable.txt")),
+        "[{label}] expected unreadable path in {:?}",
+        detail2.unreadable_files
+    );
+    assert_eq!(
+        detail2.error_action.as_deref(),
+        Some("add_to_excludes"),
+        "[{label}]"
+    );
+
+    // `forget` pruned older snapshot down to keep_last = 1.
+    assert_eq!(
+        client
+            .list_backup_snapshots(backup_id_str)
+            .expect("snaps after exit 3")
+            .current_snapshots
+            .len(),
+        1,
+        "[{label}]"
+    );
+
+    let state2 = client.get_state().expect("GetState after exit 3");
+    assert!(
+        state2.backups[0]
+            .unreadable_files
+            .iter()
+            .any(|p| p.ends_with("secret_unreadable.txt")),
+        "[{label}] {:?}",
+        state2.backups[0].unreadable_files
+    );
+
+    // AC-M2-08-2: Add unreadable path to excludes via D-Bus and re-run -> finishes Ok without warning.
+    let unreadable_item = detail2.unreadable_files[0].clone();
+    let preview = client
+        .add_exclude_rule_for_item(backup_id_str, &unreadable_item)
+        .expect("AddExcludeRuleForItem");
+    assert!(!preview.is_dir, "[{label}]");
+    assert_eq!(preview.rule, unreadable_item, "[{label}]");
+
+    let reloaded = load_config(&cfg_path).expect("reload config");
+    assert!(
+        reloaded.backups[0]
+            .excludes
+            .lines
+            .contains(&unreadable_item),
+        "[{label}]"
+    );
+    let excl_content =
+        fs::read_to_string(exclude_file_path(&state_dir, &backup_id)).expect("read exclude file");
+    assert!(
+        excl_content.contains(&unreadable_item),
+        "[{label}] {excl_content}"
+    );
+
+    let r3 = client.start_backup(backup_id_str).expect("StartBackup 3");
+    let fin3 = wait_for_run_finished(signals, &r3, Duration::from_secs(20));
+    assert_eq!(fin3.status, RunStatus::Ok, "[{label}] {fin3:?}");
+    assert_eq!(fin3.exit_code, Some(0), "[{label}]");
+
+    let detail3 = client.get_run_detail(&r3).expect("GetRunDetail 3");
+    assert!(
+        detail3.unreadable_files.is_empty(),
+        "[{label}] {:?}",
+        detail3.unreadable_files
+    );
+
+    // Restore permissions so directory cleanup never hits permission snags.
+    let _ = fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644));
+}
+
+fn run_exit_3_case(root: &Path, label: &str, restic_bin: &Path) {
+    let sub = root.join(label);
+    let repo_dir = sub.join("repo");
+    let src_dir = sub.join("src");
+    fs::create_dir_all(&repo_dir).expect("mkdir repo");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("readable.txt"), b"readable content\n").expect("write readable");
+
+    let bus_name = format!(
+        "net.daester.Kestic.M2Exit3_{}",
+        label.replace(['.', '-'], "_")
+    );
+    let (client, handle) =
+        spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
+
+    let dest = Destination::new(
+        format!("Exit3 Repo ({label})"),
+        DestinationKind::Local { path: repo_dir },
+    )
+    .expect("dest");
+    client
+        .add_destination(&dest, "init", "exit3-pw-123", "")
+        .expect("AddDestination");
+
+    let mut backup = Backup::new(
+        format!("Exit3 Docs ({label})"),
+        Source::folder(&src_dir),
+        dest.id.clone(),
+    )
+    .expect("backup");
+    backup.retention = RetentionPolicy {
+        keep_last: Some(KeepCount::Count(1)),
+        ..RetentionPolicy::empty()
+    };
+    let backup_id_str = add_backup_explicit(&client, &bus_name, &backup).expect("AddBackup");
+
+    // Run 1 produces 1 clean snapshot.
+    let r1 = client.start_backup(&backup_id_str).expect("StartBackup 1");
+    assert_eq!(
+        wait_for_run_finished(&signals, &r1, Duration::from_secs(20)).status,
+        RunStatus::Ok
+    );
+
+    verify_exit_3_and_exclude_recovery(&sub, &client, &signals, &backup_id_str, label);
+
+    client.confirm_quit().expect("confirm quit");
+    assert_eq!(
+        handle.join().expect("join daemon"),
+        Ok(DaemonOutcome::RanAndStopped)
+    );
+}
+
 #[test]
 fn ac_m2_07_2_08_1_08_2_exit_3_unreadable_file_runs_forget_and_add_to_excludes_dual_restic() {
     if is_running_as_root() {
@@ -973,167 +1166,217 @@ fn ac_m2_07_2_08_1_08_2_exit_3_unreadable_file_runs_forget_and_add_to_excludes_d
         |root| {
             let _notif_guard = start_fake_notifications();
             for (label, restic_bin) in restic_test_binaries() {
-                let sub = root.join(label);
-                let repo_dir = sub.join("repo");
-                let src_dir = sub.join("src");
-                let state_dir = sub.join("state").join("kestic");
-                let cfg_path = sub.join("cfg").join("kestic").join("config.toml");
-                fs::create_dir_all(&repo_dir).expect("mkdir repo");
-                fs::create_dir_all(&src_dir).expect("mkdir src");
-                fs::write(src_dir.join("readable.txt"), b"readable content\n")
-                    .expect("write readable");
-
-                let bus_name = format!(
-                    "net.daester.Kestic.M2Exit3_{}",
-                    label.replace(['.', '-'], "_")
-                );
-                let (client, handle) =
-                    spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin, None, true);
-                let signals = KesticSignalCollector::start(
-                    &bus_name,
-                    KESTIC_OBJECT_PATH,
-                    KESTIC_INTERFACE_V1,
-                );
-
-                let dest = Destination::new(
-                    format!("Exit3 Repo ({label})"),
-                    DestinationKind::Local {
-                        path: repo_dir.clone(),
-                    },
-                )
-                .expect("dest");
-                client
-                    .add_destination(&dest, "init", "exit3-pw-123", "")
-                    .expect("AddDestination");
-
-                let mut backup = Backup::new(
-                    format!("Exit3 Docs ({label})"),
-                    Source::folder(&src_dir),
-                    dest.id.clone(),
-                )
-                .expect("backup");
-                backup.retention = RetentionPolicy {
-                    keep_last: Some(KeepCount::Count(1)),
-                    ..RetentionPolicy::empty()
-                };
-                let backup_id_str =
-                    add_backup_explicit(&client, &bus_name, &backup).expect("AddBackup");
-                let backup_id =
-                    kestic_core::model::BackupId::parse(&backup_id_str).expect("backup id");
-
-                // Run 1 produces 1 clean snapshot.
-                let r1 = client.start_backup(&backup_id_str).expect("StartBackup 1");
-                assert_eq!(
-                    wait_for_run_finished(&signals, &r1, Duration::from_secs(20)).status,
-                    RunStatus::Ok
-                );
-
-                // Create an unreadable file (`chmod 000`) -> restic backup exits 3.
-                let unreadable = src_dir.join("secret_unreadable.txt");
-                fs::write(&unreadable, b"cannot read this\n").expect("write unreadable");
-                fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000))
-                    .expect("chmod 000");
-
-                let r2 = client.start_backup(&backup_id_str).expect("StartBackup 2");
-                let fin2 = wait_for_run_finished(&signals, &r2, Duration::from_secs(20));
-                assert_eq!(fin2.status, RunStatus::Warning, "[{label}] {fin2:?}");
-                assert_eq!(fin2.exit_code, Some(3), "[{label}]");
-
-                // AC-M2-07-2 & AC-M2-08-1: `forget` still ran, `unreadable_files` captured in detail & state.
-                let detail2 = client.get_run_detail(&r2).expect("GetRunDetail 2");
-                assert_eq!(detail2.run.status, RunStatus::Warning, "[{label}]");
-                assert_eq!(detail2.run.exit_code, Some(3), "[{label}]");
-                assert_eq!(
-                    detail2.run.commands.len(),
-                    2,
-                    "[{label}] forget must still run after Exit 3: {:?}",
-                    detail2.run.commands
-                );
-                assert!(
-                    detail2.run.commands[1].args.contains(&"forget".to_string()),
-                    "[{label}]"
-                );
-                assert_eq!(detail2.run.commands[1].exit_code, 0, "[{label}]");
-                assert!(
-                    detail2
-                        .unreadable_files
-                        .iter()
-                        .any(|p| p.ends_with("secret_unreadable.txt")),
-                    "[{label}] expected unreadable path in {:?}",
-                    detail2.unreadable_files
-                );
-                assert_eq!(
-                    detail2.error_action.as_deref(),
-                    Some("add_to_excludes"),
-                    "[{label}]"
-                );
-
-                // `forget` pruned older snapshot down to keep_last = 1.
-                assert_eq!(
-                    client
-                        .list_backup_snapshots(&backup_id_str)
-                        .expect("snaps after exit 3")
-                        .current_snapshots
-                        .len(),
-                    1,
-                    "[{label}]"
-                );
-
-                let state2 = client.get_state().expect("GetState after exit 3");
-                assert!(
-                    state2.backups[0]
-                        .unreadable_files
-                        .iter()
-                        .any(|p| p.ends_with("secret_unreadable.txt")),
-                    "[{label}] {:?}",
-                    state2.backups[0].unreadable_files
-                );
-
-                // AC-M2-08-2: Add unreadable path to excludes via D-Bus and re-run -> finishes Ok without warning.
-                let unreadable_item = detail2.unreadable_files[0].clone();
-                let preview = client
-                    .add_exclude_rule_for_item(&backup_id_str, &unreadable_item)
-                    .expect("AddExcludeRuleForItem");
-                assert!(!preview.is_dir, "[{label}]");
-                assert_eq!(preview.rule, unreadable_item, "[{label}]");
-
-                let reloaded = load_config(&cfg_path).expect("reload config");
-                assert!(
-                    reloaded.backups[0]
-                        .excludes
-                        .lines
-                        .contains(&unreadable_item),
-                    "[{label}]"
-                );
-                let excl_content = fs::read_to_string(exclude_file_path(&state_dir, &backup_id))
-                    .expect("read exclude file");
-                assert!(
-                    excl_content.contains(&unreadable_item),
-                    "[{label}] {excl_content}"
-                );
-
-                let r3 = client.start_backup(&backup_id_str).expect("StartBackup 3");
-                let fin3 = wait_for_run_finished(&signals, &r3, Duration::from_secs(20));
-                assert_eq!(fin3.status, RunStatus::Ok, "[{label}] {fin3:?}");
-                assert_eq!(fin3.exit_code, Some(0), "[{label}]");
-
-                let detail3 = client.get_run_detail(&r3).expect("GetRunDetail 3");
-                assert!(
-                    detail3.unreadable_files.is_empty(),
-                    "[{label}] {:?}",
-                    detail3.unreadable_files
-                );
-
-                // Restore permissions so directory cleanup never hits permission snags.
-                let _ = fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644));
-
-                client.confirm_quit().expect("confirm quit");
-                assert_eq!(
-                    handle.join().expect("join daemon"),
-                    Ok(DaemonOutcome::RanAndStopped)
-                );
+                run_exit_3_case(root, label, &restic_bin);
             }
         },
+    );
+}
+
+struct Lock11Ctx<'a> {
+    sub: &'a Path,
+    restic_bin: &'a Path,
+    client: &'a KesticClient,
+    signals: &'a KesticSignalCollector,
+    dest_id: &'a str,
+    backup_id_str: &'a str,
+    label: &'a str,
+}
+
+fn verify_exit_11_under_non_exclusive_lock(ctx: &Lock11Ctx<'_>) {
+    let repo_dir = ctx.sub.join("repo");
+    let src_dir = ctx.sub.join("src");
+    let state_dir = ctx.sub.join("state").join("kestic");
+    let backup_id = kestic_core::model::BackupId::parse(ctx.backup_id_str).expect("backup id");
+    let label = ctx.label;
+
+    // AC-M2-07-3: Start non-exclusive `restic backup --stdin` lock holder, then run Kestic backup.
+    fs::write(src_dir.join("two.txt"), b"second\n").expect("write two");
+    let lock_holder = NonExclusiveLockHolder::start(ctx.restic_bin, &repo_dir, "lock11-pw-123");
+
+    let r2 = ctx
+        .client
+        .start_backup(ctx.backup_id_str)
+        .expect("StartBackup 2");
+    let fin2 = wait_for_run_finished(ctx.signals, &r2, Duration::from_secs(20));
+    assert_eq!(fin2.status, RunStatus::Warning, "[{label}] {fin2:?}");
+    assert_eq!(fin2.exit_code, Some(0), "[{label}] backup exited 0");
+
+    let detail2 = ctx.client.get_run_detail(&r2).expect("GetRunDetail 2");
+    assert_eq!(detail2.run.commands.len(), 2, "[{label}]");
+    assert_eq!(detail2.run.commands[0].exit_code, 0, "[{label}]");
+    assert_eq!(
+        detail2.run.commands[1].exit_code, 11,
+        "[{label}] forget must hit Exit 11 under non-exclusive lock: {:?}",
+        detail2.run.commands[1]
+    );
+    let lock_summary = fin2.summary_message.as_deref().unwrap_or("");
+    assert!(
+        lock_summary.contains("locked") || lock_summary.contains("gesperrt"),
+        "[{label}] expected locked summary_message on Exit 11 forget, got: {:?}",
+        fin2.summary_message
+    );
+
+    let state2 = ctx.client.get_state().expect("GetState pending_forget");
+    assert!(
+        state2.backups[0].pending_forget,
+        "[{label}] pending_forget must be true"
+    );
+    let hist = RunHistory::open(&state_dir).expect("open RunHistory");
+    assert!(
+        hist.is_pending_forget(&backup_id)
+            .expect("check persisted pending_forget"),
+        "[{label}] pending_forget must be persisted in history.db"
+    );
+    drop(hist);
+
+    // 2 snapshots exist because forget failed with Exit 11.
+    assert_eq!(
+        ctx.client
+            .list_backup_snapshots(ctx.backup_id_str)
+            .expect("snaps before maint")
+            .current_snapshots
+            .len(),
+        2,
+        "[{label}]"
+    );
+
+    lock_holder.release(&repo_dir);
+}
+
+fn verify_exit_11_catchup_paths(ctx: &Lock11Ctx<'_>) {
+    let repo_dir = ctx.sub.join("repo");
+    let src_dir = ctx.sub.join("src");
+    let label = ctx.label;
+
+    // AC-M2-07-4 (Path A): RunDestinationMaintenance executes catch-up forget & clears pending_forget.
+    let maint_id = ctx
+        .client
+        .run_destination_maintenance(ctx.dest_id)
+        .expect("RunDestinationMaintenance");
+    let maint_fin = wait_for_run_finished(ctx.signals, &maint_id, Duration::from_secs(20));
+    assert_eq!(maint_fin.status, RunStatus::Ok, "[{label}] {maint_fin:?}");
+    assert!(
+        matches!(maint_fin.kind, RunKind::Maintenance),
+        "[{label}] {:?}",
+        maint_fin.kind
+    );
+
+    let state_after_maint = ctx.client.get_state().expect("GetState after maint");
+    assert!(
+        !state_after_maint.backups[0].pending_forget,
+        "[{label}] pending_forget must clear after maintenance"
+    );
+    assert_eq!(
+        ctx.client
+            .list_backup_snapshots(ctx.backup_id_str)
+            .expect("snaps after maint")
+            .current_snapshots
+            .len(),
+        1,
+        "[{label}] maintenance forget must prune back to keep_last=1"
+    );
+
+    // AC-M2-07-4 (Path B): Trigger pending_forget again, release lock, then next backup clears it.
+    fs::write(src_dir.join("three.txt"), b"third\n").expect("write three");
+    let lock_holder2 = NonExclusiveLockHolder::start(ctx.restic_bin, &repo_dir, "lock11-pw-123");
+    let r3 = ctx
+        .client
+        .start_backup(ctx.backup_id_str)
+        .expect("StartBackup 3");
+    let fin3 = wait_for_run_finished(ctx.signals, &r3, Duration::from_secs(20));
+    assert_eq!(fin3.status, RunStatus::Warning, "[{label}]");
+    assert!(
+        ctx.client.get_state().expect("GetState").backups[0].pending_forget,
+        "[{label}]"
+    );
+    lock_holder2.release(&repo_dir);
+
+    fs::write(src_dir.join("four.txt"), b"fourth\n").expect("write four");
+    let r4 = ctx
+        .client
+        .start_backup(ctx.backup_id_str)
+        .expect("StartBackup 4");
+    let fin4 = wait_for_run_finished(ctx.signals, &r4, Duration::from_secs(20));
+    assert_eq!(fin4.status, RunStatus::Ok, "[{label}] {fin4:?}");
+    assert!(
+        !ctx.client
+            .get_state()
+            .expect("GetState after next backup")
+            .backups[0]
+            .pending_forget,
+        "[{label}] next backup must clear pending_forget"
+    );
+    assert_eq!(
+        ctx.client
+            .list_backup_snapshots(ctx.backup_id_str)
+            .expect("snaps after r4")
+            .current_snapshots
+            .len(),
+        1,
+        "[{label}]"
+    );
+}
+
+fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
+    let sub = root.join(label);
+    let repo_dir = sub.join("repo");
+    let src_dir = sub.join("src");
+    fs::create_dir_all(&repo_dir).expect("mkdir repo");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("one.txt"), b"first\n").expect("write one");
+
+    let bus_name = format!(
+        "net.daester.Kestic.M2Lock11_{}",
+        label.replace(['.', '-'], "_")
+    );
+    let (client, handle) =
+        spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
+
+    let dest = Destination::new(
+        format!("Lock11 Repo ({label})"),
+        DestinationKind::Local { path: repo_dir },
+    )
+    .expect("dest");
+    let dest_id = client
+        .add_destination(&dest, "init", "lock11-pw-123", "")
+        .expect("AddDestination");
+
+    let mut backup = Backup::new(
+        format!("Lock11 Docs ({label})"),
+        Source::folder(&src_dir),
+        dest.id.clone(),
+    )
+    .expect("backup");
+    backup.retention = RetentionPolicy {
+        keep_last: Some(KeepCount::Count(1)),
+        ..RetentionPolicy::empty()
+    };
+    let backup_id_str = add_backup_explicit(&client, &bus_name, &backup).expect("AddBackup");
+
+    // Initial backup -> 1 snapshot, Ok.
+    let r1 = client.start_backup(&backup_id_str).expect("StartBackup 1");
+    assert_eq!(
+        wait_for_run_finished(&signals, &r1, Duration::from_secs(20)).status,
+        RunStatus::Ok
+    );
+
+    let ctx = Lock11Ctx {
+        sub: &sub,
+        restic_bin,
+        client: &client,
+        signals: &signals,
+        dest_id: &dest_id,
+        backup_id_str: &backup_id_str,
+        label,
+    };
+    verify_exit_11_under_non_exclusive_lock(&ctx);
+    verify_exit_11_catchup_paths(&ctx);
+
+    client.confirm_quit().expect("confirm quit");
+    assert_eq!(
+        handle.join().expect("join daemon"),
+        Ok(DaemonOutcome::RanAndStopped)
     );
 }
 
@@ -1145,177 +1388,7 @@ fn ac_m2_07_3_and_07_4_non_exclusive_lock_forget_exit_11_pending_forget_and_catc
         |root| {
             let _notif_guard = start_fake_notifications();
             for (label, restic_bin) in restic_test_binaries() {
-                let sub = root.join(label);
-                let repo_dir = sub.join("repo");
-                let src_dir = sub.join("src");
-                let state_dir = sub.join("state").join("kestic");
-                fs::create_dir_all(&repo_dir).expect("mkdir repo");
-                fs::create_dir_all(&src_dir).expect("mkdir src");
-                fs::write(src_dir.join("one.txt"), b"first\n").expect("write one");
-
-                let bus_name = format!(
-                    "net.daester.Kestic.M2Lock11_{}",
-                    label.replace(['.', '-'], "_")
-                );
-                let (client, handle) =
-                    spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.clone(), None, true);
-                let signals = KesticSignalCollector::start(
-                    &bus_name,
-                    KESTIC_OBJECT_PATH,
-                    KESTIC_INTERFACE_V1,
-                );
-
-                let dest = Destination::new(
-                    format!("Lock11 Repo ({label})"),
-                    DestinationKind::Local {
-                        path: repo_dir.clone(),
-                    },
-                )
-                .expect("dest");
-                let dest_id = client
-                    .add_destination(&dest, "init", "lock11-pw-123", "")
-                    .expect("AddDestination");
-
-                let mut backup = Backup::new(
-                    format!("Lock11 Docs ({label})"),
-                    Source::folder(&src_dir),
-                    dest.id.clone(),
-                )
-                .expect("backup");
-                backup.retention = RetentionPolicy {
-                    keep_last: Some(KeepCount::Count(1)),
-                    ..RetentionPolicy::empty()
-                };
-                let backup_id_str =
-                    add_backup_explicit(&client, &bus_name, &backup).expect("AddBackup");
-                let backup_id =
-                    kestic_core::model::BackupId::parse(&backup_id_str).expect("backup id");
-
-                // Initial backup -> 1 snapshot, Ok.
-                let r1 = client.start_backup(&backup_id_str).expect("StartBackup 1");
-                assert_eq!(
-                    wait_for_run_finished(&signals, &r1, Duration::from_secs(20)).status,
-                    RunStatus::Ok
-                );
-
-                // AC-M2-07-3: Start non-exclusive `restic backup --stdin` lock holder, then run Kestic backup.
-                fs::write(src_dir.join("two.txt"), b"second\n").expect("write two");
-                let lock_holder =
-                    NonExclusiveLockHolder::start(&restic_bin, &repo_dir, "lock11-pw-123");
-
-                let r2 = client.start_backup(&backup_id_str).expect("StartBackup 2");
-                let fin2 = wait_for_run_finished(&signals, &r2, Duration::from_secs(20));
-                assert_eq!(fin2.status, RunStatus::Warning, "[{label}] {fin2:?}");
-                assert_eq!(fin2.exit_code, Some(0), "[{label}] backup exited 0");
-
-                let detail2 = client.get_run_detail(&r2).expect("GetRunDetail 2");
-                assert_eq!(detail2.run.commands.len(), 2, "[{label}]");
-                assert_eq!(detail2.run.commands[0].exit_code, 0, "[{label}]");
-                assert_eq!(
-                    detail2.run.commands[1].exit_code, 11,
-                    "[{label}] forget must hit Exit 11 under non-exclusive lock: {:?}",
-                    detail2.run.commands[1]
-                );
-                let lock_summary = fin2.summary_message.as_deref().unwrap_or("");
-                assert!(
-                    lock_summary.contains("locked") || lock_summary.contains("gesperrt"),
-                    "[{label}] expected locked summary_message on Exit 11 forget, got: {:?}",
-                    fin2.summary_message
-                );
-
-                let state2 = client.get_state().expect("GetState pending_forget");
-                assert!(
-                    state2.backups[0].pending_forget,
-                    "[{label}] pending_forget must be true"
-                );
-                let hist = RunHistory::open(&state_dir).expect("open RunHistory");
-                assert!(
-                    hist.is_pending_forget(&backup_id)
-                        .expect("check persisted pending_forget"),
-                    "[{label}] pending_forget must be persisted in history.db"
-                );
-                drop(hist);
-
-                // 2 snapshots exist because forget failed with Exit 11.
-                assert_eq!(
-                    client
-                        .list_backup_snapshots(&backup_id_str)
-                        .expect("snaps before maint")
-                        .current_snapshots
-                        .len(),
-                    2,
-                    "[{label}]"
-                );
-
-                lock_holder.release(&repo_dir);
-
-                // AC-M2-07-4 (Path A): RunDestinationMaintenance executes catch-up forget & clears pending_forget.
-                let maint_id = client
-                    .run_destination_maintenance(&dest_id)
-                    .expect("RunDestinationMaintenance");
-                let maint_fin = wait_for_run_finished(&signals, &maint_id, Duration::from_secs(20));
-                assert_eq!(maint_fin.status, RunStatus::Ok, "[{label}] {maint_fin:?}");
-                assert!(
-                    matches!(maint_fin.kind, RunKind::Maintenance),
-                    "[{label}] {:?}",
-                    maint_fin.kind
-                );
-
-                let state_after_maint = client.get_state().expect("GetState after maint");
-                assert!(
-                    !state_after_maint.backups[0].pending_forget,
-                    "[{label}] pending_forget must clear after maintenance"
-                );
-                assert_eq!(
-                    client
-                        .list_backup_snapshots(&backup_id_str)
-                        .expect("snaps after maint")
-                        .current_snapshots
-                        .len(),
-                    1,
-                    "[{label}] maintenance forget must prune back to keep_last=1"
-                );
-
-                // AC-M2-07-4 (Path B): Trigger pending_forget again, release lock, then next backup clears it.
-                fs::write(src_dir.join("three.txt"), b"third\n").expect("write three");
-                let lock_holder2 =
-                    NonExclusiveLockHolder::start(&restic_bin, &repo_dir, "lock11-pw-123");
-                let r3 = client.start_backup(&backup_id_str).expect("StartBackup 3");
-                let fin3 = wait_for_run_finished(&signals, &r3, Duration::from_secs(20));
-                assert_eq!(fin3.status, RunStatus::Warning, "[{label}]");
-                assert!(
-                    client.get_state().expect("GetState").backups[0].pending_forget,
-                    "[{label}]"
-                );
-                lock_holder2.release(&repo_dir);
-
-                fs::write(src_dir.join("four.txt"), b"fourth\n").expect("write four");
-                let r4 = client.start_backup(&backup_id_str).expect("StartBackup 4");
-                let fin4 = wait_for_run_finished(&signals, &r4, Duration::from_secs(20));
-                assert_eq!(fin4.status, RunStatus::Ok, "[{label}] {fin4:?}");
-                assert!(
-                    !client
-                        .get_state()
-                        .expect("GetState after next backup")
-                        .backups[0]
-                        .pending_forget,
-                    "[{label}] next backup must clear pending_forget"
-                );
-                assert_eq!(
-                    client
-                        .list_backup_snapshots(&backup_id_str)
-                        .expect("snaps after r4")
-                        .current_snapshots
-                        .len(),
-                    1,
-                    "[{label}]"
-                );
-
-                client.confirm_quit().expect("confirm quit");
-                assert_eq!(
-                    handle.join().expect("join daemon"),
-                    Ok(DaemonOutcome::RanAndStopped)
-                );
+                run_lock11_case(root, label, &restic_bin);
             }
         },
     );
@@ -1447,6 +1520,213 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
     );
 }
 
+struct DriveTestCtx<'a> {
+    client: &'a KesticClient,
+    client_conn: &'a Connection,
+    sni_svc: &'a str,
+    signals: &'a KesticSignalCollector,
+    notif_capture: &'a common::NotificationCapture,
+    fake_inspector: &'a FakeMountInspector,
+    drive_mount: &'a Path,
+    root_only_mountinfo: &'a str,
+    mounted_mountinfo: &'a str,
+    backup_id: &'a str,
+    spy_marker: &'a Path,
+}
+
+fn install_drive_restic_spy(root: &Path, real_restic: &Path, client: &KesticClient) -> PathBuf {
+    let spy_marker = root.join("drive-restic-spy.marker");
+    let spy_script = root.join("drive-restic-spy.sh");
+    let script_body = format!(
+        "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  touch \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
+        spy_marker.display(),
+        real_restic.display()
+    );
+    fs::write(&spy_script, script_body).expect("write spy");
+    fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755)).expect("chmod spy");
+    client
+        .set_restic_provider(&ResticProvider::Custom { path: spy_script })
+        .expect("install spy");
+    spy_marker
+}
+
+fn verify_drive_available_and_unmounted_block(ctx: &DriveTestCtx<'_>) {
+    // Initially mounted & non-empty -> available and tray item enabled.
+    let avail_ok = ctx
+        .client
+        .check_availability(true)
+        .expect("CheckAvailability");
+    assert!(avail_ok.backups[0].source_available);
+    assert!(avail_ok.backups[0].available);
+    assert_eq!(avail_ok.backups[0].blocked_reason, None);
+    let menu_ok = fetch_dbusmenu_items(ctx.client_conn, ctx.sni_svc);
+    let item_ok = menu_ok
+        .iter()
+        .find(|m| m.label.starts_with("USB Photos"))
+        .expect("tray item USB Photos");
+    assert!(item_ok.enabled);
+
+    // AC-M2-09-1: Unmount drive -> CheckAvailability marks unavailable, tray item disabled.
+    ctx.fake_inspector.update(|st| {
+        st.mountinfo = ctx.root_only_mountinfo.to_string();
+    });
+    let avail_unmounted = ctx
+        .client
+        .check_availability(true)
+        .expect("CheckAvailability unmounted");
+    assert!(!avail_unmounted.backups[0].source_available);
+    assert!(!avail_unmounted.backups[0].available);
+    assert_eq!(
+        avail_unmounted.backups[0].blocked_reason.as_deref(),
+        Some(REASON_SOURCE_UNAVAILABLE)
+    );
+    assert!(
+        avail_unmounted.backups[0]
+            .reason_text
+            .as_deref()
+            .is_some_and(|t| t.to_lowercase().contains("not mounted")),
+        "{:?}",
+        avail_unmounted.backups[0]
+    );
+    let menu_unmounted = fetch_dbusmenu_items(ctx.client_conn, ctx.sni_svc);
+    let item_unmounted = menu_unmounted
+        .iter()
+        .find(|m| m.label.starts_with("USB Photos"))
+        .expect("tray item USB Photos");
+    assert!(
+        !item_unmounted.enabled,
+        "tray menu item must be disabled when drive is unmounted"
+    );
+
+    // AC-M2-09-1 / 09-2: StartBackup returns ManualRunBlocked(source_unavailable) & 0 restic process.
+    ctx.signals.clear();
+    ctx.notif_capture.clear();
+    let err_unmounted = ctx
+        .client
+        .start_backup(ctx.backup_id)
+        .expect_err("StartBackup while unmounted must fail");
+    assert_dbus_error_name(&err_unmounted, "net.daester.Kestic.Error.ManualRunBlocked");
+    assert!(
+        !ctx.spy_marker.exists(),
+        "zero restic process when unmounted"
+    );
+    ctx.signals.wait_until(Duration::from_secs(3), |sigs| {
+        sigs.iter().any(|s| {
+            matches!(
+                s,
+                CapturedKesticSignal::ManualRunBlocked { backup_id: b, reason }
+                if b == ctx.backup_id && reason == REASON_SOURCE_UNAVAILABLE
+            )
+        })
+    });
+}
+
+fn verify_drive_mismatch_empty_and_race_recovery(ctx: &DriveTestCtx<'_>) {
+    // Also verify DriveMismatch (different UUID mounted) & DriveEmpty block StartBackup with 0 restic.
+    ctx.fake_inspector.update(|st| {
+        st.mountinfo = ctx.mounted_mountinfo.to_string();
+        st.device_uuids.insert(
+            "/dev/sdb1".to_string(),
+            ("UUID-OTHER-999".to_string(), Some("OtherUSB".to_string())),
+        );
+    });
+    let avail_mismatch = ctx
+        .client
+        .check_availability(true)
+        .expect("CheckAvailability mismatch");
+    assert!(!avail_mismatch.backups[0].available);
+    assert_eq!(
+        avail_mismatch.backups[0].blocked_reason.as_deref(),
+        Some(REASON_SOURCE_UNAVAILABLE)
+    );
+    let err_mismatch = ctx
+        .client
+        .start_backup(ctx.backup_id)
+        .expect_err("StartBackup on wrong drive must fail");
+    assert_dbus_error_name(&err_mismatch, "net.daester.Kestic.Error.ManualRunBlocked");
+    assert!(
+        !ctx.spy_marker.exists(),
+        "zero restic process on wrong drive"
+    );
+
+    ctx.fake_inspector.update(|st| {
+        st.device_uuids.insert(
+            "/dev/sdb1".to_string(),
+            ("UUID-DRIVE-001".to_string(), Some("MyUSB".to_string())),
+        );
+        st.empty_dirs.insert(ctx.drive_mount.to_path_buf(), true);
+    });
+    let avail_empty = ctx
+        .client
+        .check_availability(true)
+        .expect("CheckAvailability empty");
+    assert!(!avail_empty.backups[0].available);
+    assert_eq!(
+        avail_empty.backups[0].blocked_reason.as_deref(),
+        Some(REASON_SOURCE_UNAVAILABLE)
+    );
+    let err_empty = ctx
+        .client
+        .start_backup(ctx.backup_id)
+        .expect_err("StartBackup on empty drive mount must fail");
+    assert_dbus_error_name(&err_empty, "net.daester.Kestic.Error.ManualRunBlocked");
+    assert!(
+        !ctx.spy_marker.exists(),
+        "zero restic process on empty drive"
+    );
+
+    // AC-M2-09-2: Mounted at display time (cached available), then unmounted right before click ->
+    // StartBackup still performs live check, returns ManualRunBlocked(source_unavailable), 0 restic.
+    ctx.fake_inspector.update(|st| {
+        st.mountinfo = ctx.mounted_mountinfo.to_string();
+        st.empty_dirs.clear();
+    });
+    let avail_remounted = ctx
+        .client
+        .check_availability(true)
+        .expect("CheckAvailability remounted");
+    assert!(avail_remounted.backups[0].available);
+
+    // Unmount silently without calling CheckAvailability.
+    ctx.fake_inspector.update(|st| {
+        st.mountinfo = ctx.root_only_mountinfo.to_string();
+    });
+    ctx.signals.clear();
+    let err_race = ctx
+        .client
+        .start_backup(ctx.backup_id)
+        .expect_err("StartBackup after unmount before click must fail");
+    assert_dbus_error_name(&err_race, "net.daester.Kestic.Error.ManualRunBlocked");
+    assert!(
+        !ctx.spy_marker.exists(),
+        "zero restic process on pre-click unmount"
+    );
+    ctx.signals.wait_until(Duration::from_secs(3), |sigs| {
+        sigs.iter().any(|s| {
+            matches!(
+                s,
+                CapturedKesticSignal::ManualRunBlocked { backup_id: b, reason }
+                if b == ctx.backup_id && reason == REASON_SOURCE_UNAVAILABLE
+            )
+        })
+    });
+
+    // Once remounted, StartBackup runs normally and completes Ok.
+    ctx.fake_inspector.update(|st| {
+        st.mountinfo = ctx.mounted_mountinfo.to_string();
+    });
+    let run_id = ctx
+        .client
+        .start_backup(ctx.backup_id)
+        .expect("StartBackup once remounted");
+    let fin = wait_for_run_finished(ctx.signals, &run_id, Duration::from_secs(20));
+    assert_eq!(fin.status, RunStatus::Ok);
+    assert!(
+        ctx.spy_marker.exists(),
+        "restic must run when drive is mounted"
+    );
+}
+
 #[test]
 fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
     run_isolated_test(
@@ -1499,9 +1779,7 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
 
             let dest = Destination::new(
                 "Local Drive Repo",
-                DestinationKind::Local {
-                    path: repo_dir.clone(),
-                },
+                DestinationKind::Local { path: repo_dir },
             )
             .expect("dest");
             client
@@ -1526,167 +1804,23 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
             let backup_id = client.add_backup(&backup).expect("AddBackup");
 
             // Install restic spy AFTER init so any blocked StartBackup guarantees 0 restic invocations.
-            let spy_marker = root.join("drive-restic-spy.marker");
-            let spy_script = root.join("drive-restic-spy.sh");
-            let script_body = format!(
-                "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  touch \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
-                spy_marker.display(),
-                real_restic.display()
-            );
-            fs::write(&spy_script, script_body).expect("write spy");
-            fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755)).expect("chmod spy");
-            client
-                .set_restic_provider(&ResticProvider::Custom { path: spy_script })
-                .expect("install spy");
+            let spy_marker = install_drive_restic_spy(root, &real_restic, &client);
+            let ctx = DriveTestCtx {
+                client: &client,
+                client_conn: &client_conn,
+                sni_svc: &sni_svc,
+                signals: &signals,
+                notif_capture: &notif_capture,
+                fake_inspector: &fake_inspector,
+                drive_mount: &drive_mount,
+                root_only_mountinfo,
+                mounted_mountinfo: &mounted_mountinfo,
+                backup_id: &backup_id,
+                spy_marker: &spy_marker,
+            };
 
-            // Initially mounted & non-empty -> available and tray item enabled.
-            let avail_ok = client.check_availability(true).expect("CheckAvailability");
-            assert!(avail_ok.backups[0].source_available);
-            assert!(avail_ok.backups[0].available);
-            assert_eq!(avail_ok.backups[0].blocked_reason, None);
-            let menu_ok = fetch_dbusmenu_items(&client_conn, &sni_svc);
-            let item_ok = menu_ok
-                .iter()
-                .find(|m| m.label.starts_with("USB Photos"))
-                .expect("tray item USB Photos");
-            assert!(item_ok.enabled);
-
-            // AC-M2-09-1: Unmount drive -> CheckAvailability marks unavailable, tray item disabled.
-            fake_inspector.update(|st| {
-                st.mountinfo = root_only_mountinfo.to_string();
-            });
-            let avail_unmounted = client
-                .check_availability(true)
-                .expect("CheckAvailability unmounted");
-            assert!(!avail_unmounted.backups[0].source_available);
-            assert!(!avail_unmounted.backups[0].available);
-            assert_eq!(
-                avail_unmounted.backups[0].blocked_reason.as_deref(),
-                Some(REASON_SOURCE_UNAVAILABLE)
-            );
-            assert!(
-                avail_unmounted.backups[0]
-                    .reason_text
-                    .as_deref()
-                    .is_some_and(|t| t.to_lowercase().contains("not mounted")),
-                "{:?}",
-                avail_unmounted.backups[0]
-            );
-            let menu_unmounted = fetch_dbusmenu_items(&client_conn, &sni_svc);
-            let item_unmounted = menu_unmounted
-                .iter()
-                .find(|m| m.label.starts_with("USB Photos"))
-                .expect("tray item USB Photos");
-            assert!(
-                !item_unmounted.enabled,
-                "tray menu item must be disabled when drive is unmounted"
-            );
-
-            // AC-M2-09-1 / 09-2: StartBackup returns ManualRunBlocked(source_unavailable) & 0 restic process.
-            signals.clear();
-            notif_capture.clear();
-            let err_unmounted = client
-                .start_backup(&backup_id)
-                .expect_err("StartBackup while unmounted must fail");
-            assert_dbus_error_name(&err_unmounted, "net.daester.Kestic.Error.ManualRunBlocked");
-            assert!(!spy_marker.exists(), "zero restic process when unmounted");
-            signals.wait_until(Duration::from_secs(3), |sigs| {
-                sigs.iter().any(|s| {
-                    matches!(
-                        s,
-                        CapturedKesticSignal::ManualRunBlocked { backup_id: b, reason }
-                        if b == &backup_id && reason == REASON_SOURCE_UNAVAILABLE
-                    )
-                })
-            });
-
-            // Also verify DriveMismatch (different UUID mounted) & DriveEmpty block StartBackup with 0 restic.
-            fake_inspector.update(|st| {
-                st.mountinfo = mounted_mountinfo.clone();
-                st.device_uuids.insert(
-                    "/dev/sdb1".to_string(),
-                    ("UUID-OTHER-999".to_string(), Some("OtherUSB".to_string())),
-                );
-            });
-            let avail_mismatch = client
-                .check_availability(true)
-                .expect("CheckAvailability mismatch");
-            assert!(!avail_mismatch.backups[0].available);
-            assert_eq!(
-                avail_mismatch.backups[0].blocked_reason.as_deref(),
-                Some(REASON_SOURCE_UNAVAILABLE)
-            );
-            let err_mismatch = client
-                .start_backup(&backup_id)
-                .expect_err("StartBackup on wrong drive must fail");
-            assert_dbus_error_name(&err_mismatch, "net.daester.Kestic.Error.ManualRunBlocked");
-            assert!(!spy_marker.exists(), "zero restic process on wrong drive");
-
-            fake_inspector.update(|st| {
-                st.device_uuids.insert(
-                    "/dev/sdb1".to_string(),
-                    ("UUID-DRIVE-001".to_string(), Some("MyUSB".to_string())),
-                );
-                st.empty_dirs.insert(drive_mount.clone(), true);
-            });
-            let avail_empty = client
-                .check_availability(true)
-                .expect("CheckAvailability empty");
-            assert!(!avail_empty.backups[0].available);
-            assert_eq!(
-                avail_empty.backups[0].blocked_reason.as_deref(),
-                Some(REASON_SOURCE_UNAVAILABLE)
-            );
-            let err_empty = client
-                .start_backup(&backup_id)
-                .expect_err("StartBackup on empty drive mount must fail");
-            assert_dbus_error_name(&err_empty, "net.daester.Kestic.Error.ManualRunBlocked");
-            assert!(!spy_marker.exists(), "zero restic process on empty drive");
-
-            // AC-M2-09-2: Mounted at display time (cached available), then unmounted right before click ->
-            // StartBackup still performs live check, returns ManualRunBlocked(source_unavailable), 0 restic.
-            fake_inspector.update(|st| {
-                st.mountinfo = mounted_mountinfo.clone();
-                st.empty_dirs.clear();
-            });
-            let avail_remounted = client
-                .check_availability(true)
-                .expect("CheckAvailability remounted");
-            assert!(avail_remounted.backups[0].available);
-
-            // Unmount silently without calling CheckAvailability.
-            fake_inspector.update(|st| {
-                st.mountinfo = root_only_mountinfo.to_string();
-            });
-            signals.clear();
-            let err_race = client
-                .start_backup(&backup_id)
-                .expect_err("StartBackup after unmount before click must fail");
-            assert_dbus_error_name(&err_race, "net.daester.Kestic.Error.ManualRunBlocked");
-            assert!(
-                !spy_marker.exists(),
-                "zero restic process on pre-click unmount"
-            );
-            signals.wait_until(Duration::from_secs(3), |sigs| {
-                sigs.iter().any(|s| {
-                    matches!(
-                        s,
-                        CapturedKesticSignal::ManualRunBlocked { backup_id: b, reason }
-                        if b == &backup_id && reason == REASON_SOURCE_UNAVAILABLE
-                    )
-                })
-            });
-
-            // Once remounted, StartBackup runs normally and completes Ok.
-            fake_inspector.update(|st| {
-                st.mountinfo = mounted_mountinfo;
-            });
-            let run_id = client
-                .start_backup(&backup_id)
-                .expect("StartBackup once remounted");
-            let fin = wait_for_run_finished(&signals, &run_id, Duration::from_secs(20));
-            assert_eq!(fin.status, RunStatus::Ok);
-            assert!(spy_marker.exists(), "restic must run when drive is mounted");
+            verify_drive_available_and_unmounted_block(&ctx);
+            verify_drive_mismatch_empty_and_race_recovery(&ctx);
 
             client.confirm_quit().expect("confirm quit");
             assert_eq!(

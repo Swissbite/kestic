@@ -74,6 +74,216 @@ fn assert_sni_matches(
     }
 }
 
+struct SniTestCtx<'a> {
+    root: &'a Path,
+    watcher_conn: &'a Connection,
+    client_conn: &'a Connection,
+    restic_bin: &'a Path,
+    kestic_bin: &'a Path,
+    sni_idx: usize,
+}
+
+fn assert_real_daemon_sni_state(
+    ctx: &mut SniTestCtx<'_>,
+    sub_name: &str,
+    cfg: AppConfig,
+    seeded_status: Option<(RunStatus, Option<i32>)>,
+    expected_status: &str,
+    expected_overlay: &str,
+) {
+    let sub = ctx.root.join(sub_name);
+    let cfg_path = sub.join("config.toml");
+    let state_dir = sub.join("state");
+    let secret_file = sub.join("secrets.hex");
+    let ready_file = sub.join("daemon.ready");
+    fs::create_dir_all(&state_dir).expect("mkdir state");
+
+    save_config(&cfg_path, &cfg).expect("save config");
+    if let Some((st, exit_code)) = seeded_status {
+        let clock = SystemClock;
+        let mut run = Run::new_backup(&clock, &cfg.backups[0]).expect("new run");
+        run.finish(&clock, st, exit_code);
+        let mut hist = RunHistory::open(&state_dir).expect("open history");
+        hist.upsert_run(&run, &[]).expect("seed run");
+    }
+
+    let run_cfg = DaemonRunConfig {
+        bus_name: KESTIC_BUS_NAME.to_string(),
+        assume_sni_available: false,
+        ready_file: Some(ready_file.clone()),
+        config_path: Some(cfg_path),
+        state_dir: Some(state_dir),
+        kestic_binary: Some(ctx.kestic_bin.to_path_buf()),
+        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
+        suppress_ui_spawn: true,
+        enable_job_view: false,
+        enable_portal_inhibit: false,
+        ..Default::default()
+    };
+
+    let handle = thread::spawn(move || run_daemon(run_cfg));
+    wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
+    let sni_svc = wait_for_sni_service_at(ctx.watcher_conn, ctx.sni_idx, Duration::from_secs(5));
+    ctx.sni_idx += 1;
+
+    assert_sni_matches(
+        ctx.client_conn,
+        &sni_svc,
+        expected_status,
+        expected_overlay,
+        sub_name,
+    );
+
+    let client = KesticClient::connect_default().expect("connect client");
+    client.confirm_quit().expect("confirm quit");
+    assert_eq!(
+        handle.join().expect("join daemon"),
+        Ok(DaemonOutcome::RanAndStopped)
+    );
+    wait_for_bus_name_released(ctx.client_conn, KESTIC_BUS_NAME, Duration::from_secs(3));
+}
+
+fn assert_running_backup_sni_state(ctx: &mut SniTestCtx<'_>) {
+    let sub = ctx.root.join("state_running");
+    let cfg_path = sub.join("config.toml");
+    let state_dir = sub.join("state");
+    let secret_file = ctx.root.join("secrets.hex");
+    let ready_file = sub.join("daemon.ready");
+    let run_repo = sub.join("repo");
+    let run_src = sub.join("large-src");
+    fs::create_dir_all(&run_repo).expect("mkdir run repo");
+    write_large_dataset(&run_src, 36, 4 * 1024 * 1024);
+
+    let run_cfg = DaemonRunConfig {
+        bus_name: KESTIC_BUS_NAME.to_string(),
+        assume_sni_available: false,
+        ready_file: Some(ready_file.clone()),
+        config_path: Some(cfg_path),
+        state_dir: Some(state_dir),
+        kestic_binary: Some(ctx.kestic_bin.to_path_buf()),
+        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
+        suppress_ui_spawn: true,
+        enable_job_view: false,
+        enable_portal_inhibit: false,
+        ..Default::default()
+    };
+    let handle = thread::spawn(move || run_daemon(run_cfg));
+    wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
+    let sni_svc = wait_for_sni_service_at(ctx.watcher_conn, ctx.sni_idx, Duration::from_secs(5));
+    ctx.sni_idx += 1;
+
+    let client = KesticClient::connect_default().expect("connect client");
+    client
+        .set_restic_provider(&ResticProvider::Custom {
+            path: ctx.restic_bin.to_path_buf(),
+        })
+        .expect("set provider");
+    let r_dest =
+        Destination::new("Run Repo", DestinationKind::Local { path: run_repo }).expect("dest");
+    client
+        .add_destination(&r_dest, "init", "run-pw-1", "")
+        .expect("add dest");
+    let r_backup = Backup::new("Live Run", Source::folder(&run_src), r_dest.id).expect("backup");
+    let b_id = client.add_backup(&r_backup).expect("add backup");
+
+    let signals =
+        KesticSignalCollector::start(KESTIC_BUS_NAME, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
+    let run_id = client.start_backup(&b_id).expect("StartBackup");
+    assert_sni_matches(ctx.client_conn, &sni_svc, "Active", "state-sync", "running");
+
+    client.cancel_run(&run_id).expect("CancelRun");
+    signals.wait_until(Duration::from_secs(15), |sigs| {
+        sigs.iter().any(|s| {
+            if let CapturedKesticSignal::RunUpdated(json) = s
+                && let Ok(run) = serde_json::from_str::<Run>(json)
+            {
+                return run.id.as_str() == run_id && run.status != RunStatus::Running;
+            }
+            false
+        })
+    });
+    client.confirm_quit().expect("confirm quit");
+    assert_eq!(
+        handle.join().expect("join daemon"),
+        Ok(DaemonOutcome::RanAndStopped)
+    );
+    wait_for_bus_name_released(ctx.client_conn, KESTIC_BUS_NAME, Duration::from_secs(3));
+    let _ = fs::remove_dir_all(&sub);
+}
+
+fn assert_simulated_sni_matrix(ctx: &mut SniTestCtx<'_>) {
+    let sim_cases = [
+        ("overdue", "NeedsAttention", "alarm-symbolic"),
+        ("paused", "Active", "state-pause"),
+        ("waiting", "Passive", ""),
+        ("paused_waiting", "Active", "state-pause"),
+        ("maintenance", "Active", "state-sync"),
+        ("restore", "Active", "state-sync"),
+    ];
+
+    for (sim_arg, exp_status, exp_overlay) in sim_cases {
+        let sub = ctx.root.join(format!("sim_{sim_arg}"));
+        let cfg_path = sub.join("config.toml");
+        let state_dir = sub.join("state");
+        let ready_file = sub.join("daemon.ready");
+        fs::create_dir_all(&state_dir).expect("mkdir state");
+        save_config(
+            &cfg_path,
+            &AppConfig {
+                restic_provider: ResticProvider::Custom {
+                    path: ctx.restic_bin.to_path_buf(),
+                },
+                ..Default::default()
+            },
+        )
+        .expect("save sim config");
+
+        let child = Command::new(ctx.kestic_bin)
+            .args([
+                "daemon",
+                "--require-sni",
+                "--no-job-view",
+                "--no-portal-inhibit",
+                "--suppress-ui-spawn",
+                "--simulate-status",
+                sim_arg,
+                "--config-path",
+            ])
+            .arg(&cfg_path)
+            .args(["--state-dir"])
+            .arg(&state_dir)
+            .args(["--ready-file"])
+            .arg(&ready_file)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn simulated kestic daemon");
+
+        wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
+        let sni_svc =
+            wait_for_sni_service_at(ctx.watcher_conn, ctx.sni_idx, Duration::from_secs(5));
+        ctx.sni_idx += 1;
+
+        assert_sni_matches(
+            ctx.client_conn,
+            &sni_svc,
+            exp_status,
+            exp_overlay,
+            &format!("simulate-status={sim_arg}"),
+        );
+
+        let client = KesticClient::connect_default().expect("connect client");
+        client.confirm_quit().expect("confirm quit");
+        let out = child.wait_with_output().expect("wait simulated daemon");
+        assert!(
+            out.status.success(),
+            "simulated daemon ({sim_arg}) failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        wait_for_bus_name_released(ctx.client_conn, KESTIC_BUS_NAME, Duration::from_secs(3));
+    }
+}
+
 #[test]
 fn ac_m1_11_1_full_section_10_1_sni_matrix_including_simulated_statuses() {
     run_isolated_test(
@@ -85,66 +295,13 @@ fn ac_m1_11_1_full_section_10_1_sni_matrix_including_simulated_statuses() {
             let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
             let kestic_bin = find_kestic_binary();
 
-            let mut sni_idx = 0usize;
-
-            // Helper to start `run_daemon` with a custom state & assert SNI properties.
-            let check_real_state = |sni_idx: &mut usize,
-                                    sub_name: &str,
-                                    cfg: AppConfig,
-                                    seeded_status: Option<(RunStatus, Option<i32>)>,
-                                    expected_status: &str,
-                                    expected_overlay: &str| {
-                let sub = root.join(sub_name);
-                let cfg_path = sub.join("config.toml");
-                let state_dir = sub.join("state");
-                let secret_file = sub.join("secrets.hex");
-                let ready_file = sub.join("daemon.ready");
-                fs::create_dir_all(&state_dir).expect("mkdir state");
-
-                save_config(&cfg_path, &cfg).expect("save config");
-                if let Some((st, exit_code)) = seeded_status {
-                    let clock = SystemClock;
-                    let mut run = Run::new_backup(&clock, &cfg.backups[0]).expect("new run");
-                    run.finish(&clock, st, exit_code);
-                    let mut hist = RunHistory::open(&state_dir).expect("open history");
-                    hist.upsert_run(&run, &[]).expect("seed run");
-                }
-
-                let run_cfg = DaemonRunConfig {
-                    bus_name: KESTIC_BUS_NAME.to_string(),
-                    assume_sni_available: false,
-                    ready_file: Some(ready_file.clone()),
-                    config_path: Some(cfg_path),
-                    state_dir: Some(state_dir),
-                    kestic_binary: Some(kestic_bin.clone()),
-                    secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
-                    suppress_ui_spawn: true,
-                    enable_job_view: false,
-                    enable_portal_inhibit: false,
-                    ..Default::default()
-                };
-
-                let handle = thread::spawn(move || run_daemon(run_cfg));
-                wait_for_file(&ready_file, Duration::from_secs(5));
-                let sni_svc =
-                    wait_for_sni_service_at(&watcher_conn, *sni_idx, Duration::from_secs(5));
-                *sni_idx += 1;
-
-                assert_sni_matches(
-                    &client_conn,
-                    &sni_svc,
-                    expected_status,
-                    expected_overlay,
-                    sub_name,
-                );
-
-                let client = KesticClient::connect_default().expect("connect client");
-                client.confirm_quit().expect("confirm quit");
-                assert_eq!(
-                    handle.join().expect("join daemon"),
-                    Ok(DaemonOutcome::RanAndStopped)
-                );
-                wait_for_bus_name_released(&client_conn, KESTIC_BUS_NAME, Duration::from_secs(3));
+            let mut ctx = SniTestCtx {
+                root,
+                watcher_conn: &watcher_conn,
+                client_conn: &client_conn,
+                restic_bin: &restic_bin,
+                kestic_bin: &kestic_bin,
+                sni_idx: 0,
             };
 
             let repo_dir = root.join("repo-matrix");
@@ -163,7 +320,7 @@ fn ac_m1_11_1_full_section_10_1_sni_matrix_including_simulated_statuses() {
             let mut hourly_backup =
                 Backup::new("Hourly Docs", Source::folder(&src_dir), dest.id.clone())
                     .expect("backup");
-            hourly_backup.schedule = Schedule::Hourly;
+            hourly_backup.schedule = Schedule::Daily { hour: 2, minute: 0 };
 
             let mut manual_backup =
                 Backup::new("Manual Docs", Source::folder(&src_dir), dest.id.clone())
@@ -174,244 +331,80 @@ fn ac_m1_11_1_full_section_10_1_sni_matrix_including_simulated_statuses() {
                 path: restic_bin.clone(),
             };
 
-            // 1. ok
-            check_real_state(
-                &mut sni_idx,
-                "state_ok",
-                AppConfig {
-                    restic_provider: valid_provider.clone(),
-                    destinations: vec![dest.clone()],
-                    backups: vec![hourly_backup.clone()],
-                    ..Default::default()
-                },
-                Some((RunStatus::Ok, Some(0))),
-                "Passive",
-                "",
-            );
-
-            // 2. never_run
-            check_real_state(
-                &mut sni_idx,
-                "state_never_run",
-                AppConfig {
-                    restic_provider: valid_provider.clone(),
-                    destinations: vec![dest.clone()],
-                    backups: vec![hourly_backup.clone()],
-                    ..Default::default()
-                },
-                None,
-                "Passive",
-                "",
-            );
-
-            // 3. manual_only
-            check_real_state(
-                &mut sni_idx,
-                "state_manual_only",
-                AppConfig {
-                    restic_provider: valid_provider.clone(),
-                    destinations: vec![dest.clone()],
-                    backups: vec![manual_backup],
-                    ..Default::default()
-                },
-                Some((RunStatus::Ok, Some(0))),
-                "Passive",
-                "",
-            );
-
-            // 4. warning
-            check_real_state(
-                &mut sni_idx,
-                "state_warning",
-                AppConfig {
-                    restic_provider: valid_provider.clone(),
-                    destinations: vec![dest.clone()],
-                    backups: vec![hourly_backup.clone()],
-                    ..Default::default()
-                },
-                Some((RunStatus::Warning, Some(3))),
-                "Active",
-                "state-warning",
-            );
-
-            // 5. error
-            check_real_state(
-                &mut sni_idx,
-                "state_error",
-                AppConfig {
-                    restic_provider: valid_provider,
-                    destinations: vec![dest.clone()],
-                    backups: vec![hourly_backup.clone()],
-                    ..Default::default()
-                },
-                Some((RunStatus::Error, Some(1))),
-                "NeedsAttention",
-                "state-error",
-            );
-
-            // 6. blocked (restic unavailable)
-            check_real_state(
-                &mut sni_idx,
-                "state_blocked",
-                AppConfig {
-                    restic_provider: ResticProvider::Custom {
+            let real_cases = [
+                (
+                    "state_ok",
+                    valid_provider.clone(),
+                    hourly_backup.clone(),
+                    Some((RunStatus::Ok, Some(0))),
+                    "Passive",
+                    "",
+                ),
+                (
+                    "state_never_run",
+                    valid_provider.clone(),
+                    hourly_backup.clone(),
+                    None,
+                    "Passive",
+                    "",
+                ),
+                (
+                    "state_manual_only",
+                    valid_provider.clone(),
+                    manual_backup,
+                    Some((RunStatus::Ok, Some(0))),
+                    "Passive",
+                    "",
+                ),
+                (
+                    "state_warning",
+                    valid_provider.clone(),
+                    hourly_backup.clone(),
+                    Some((RunStatus::Warning, Some(3))),
+                    "Active",
+                    "state-warning",
+                ),
+                (
+                    "state_error",
+                    valid_provider,
+                    hourly_backup.clone(),
+                    Some((RunStatus::Error, Some(1))),
+                    "NeedsAttention",
+                    "state-error",
+                ),
+                (
+                    "state_blocked",
+                    ResticProvider::Custom {
                         path: root.join("nonexistent-restic-bin"),
                     },
-                    destinations: vec![dest.clone()],
-                    backups: vec![hourly_backup],
-                    ..Default::default()
-                },
-                None,
-                "NeedsAttention",
-                "state-error",
-            );
-
-            // 7. running (real live backup in progress)
-            {
-                let sub = root.join("state_running");
-                let cfg_path = sub.join("config.toml");
-                let state_dir = sub.join("state");
-                let secret_file = root.join("secrets.hex");
-                let ready_file = sub.join("daemon.ready");
-                let run_repo = sub.join("repo");
-                let run_src = sub.join("large-src");
-                fs::create_dir_all(&run_repo).expect("mkdir run repo");
-                write_large_dataset(&run_src, 36, 4 * 1024 * 1024);
-
-                let run_cfg = DaemonRunConfig {
-                    bus_name: KESTIC_BUS_NAME.to_string(),
-                    assume_sni_available: false,
-                    ready_file: Some(ready_file.clone()),
-                    config_path: Some(cfg_path),
-                    state_dir: Some(state_dir),
-                    kestic_binary: Some(kestic_bin.clone()),
-                    secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
-                    suppress_ui_spawn: true,
-                    enable_job_view: false,
-                    enable_portal_inhibit: false,
-                    ..Default::default()
-                };
-                let handle = thread::spawn(move || run_daemon(run_cfg));
-                wait_for_file(&ready_file, Duration::from_secs(5));
-                let sni_svc =
-                    wait_for_sni_service_at(&watcher_conn, sni_idx, Duration::from_secs(5));
-                sni_idx += 1;
-
-                let client = KesticClient::connect_default().expect("connect client");
-                client
-                    .set_restic_provider(&ResticProvider::Custom {
-                        path: restic_bin.clone(),
-                    })
-                    .expect("set provider");
-                let r_dest =
-                    Destination::new("Run Repo", DestinationKind::Local { path: run_repo })
-                        .expect("dest");
-                client
-                    .add_destination(&r_dest, "init", "run-pw-1", "")
-                    .expect("add dest");
-                let r_backup =
-                    Backup::new("Live Run", Source::folder(&run_src), r_dest.id).expect("backup");
-                let b_id = client.add_backup(&r_backup).expect("add backup");
-
-                let signals = KesticSignalCollector::start(
-                    KESTIC_BUS_NAME,
-                    KESTIC_OBJECT_PATH,
-                    KESTIC_INTERFACE_V1,
-                );
-                let run_id = client.start_backup(&b_id).expect("StartBackup");
-                assert_sni_matches(&client_conn, &sni_svc, "Active", "state-sync", "running");
-
-                client.cancel_run(&run_id).expect("CancelRun");
-                signals.wait_until(Duration::from_secs(15), |sigs| {
-                    sigs.iter().any(|s| {
-                        if let CapturedKesticSignal::RunUpdated(json) = s
-                            && let Ok(run) = serde_json::from_str::<Run>(json)
-                        {
-                            return run.id.as_str() == run_id && run.status != RunStatus::Running;
-                        }
-                        false
-                    })
-                });
-                client.confirm_quit().expect("confirm quit");
-                assert_eq!(
-                    handle.join().expect("join daemon"),
-                    Ok(DaemonOutcome::RanAndStopped)
-                );
-                wait_for_bus_name_released(&client_conn, KESTIC_BUS_NAME, Duration::from_secs(3));
-                let _ = fs::remove_dir_all(&sub);
-            }
-
-            // 8-13. CLI `--simulate-status` matrix (overdue, paused, waiting, paused_waiting, maintenance, restore).
-            let sim_cases = [
-                ("overdue", "NeedsAttention", "alarm-symbolic"),
-                ("paused", "Active", "state-pause"),
-                ("waiting", "Passive", ""),
-                ("paused_waiting", "Active", "state-pause"),
-                ("maintenance", "Active", "state-sync"),
-                ("restore", "Active", "state-sync"),
+                    hourly_backup,
+                    None,
+                    "NeedsAttention",
+                    "state-error",
+                ),
             ];
 
-            for (sim_arg, exp_status, exp_overlay) in sim_cases {
-                let sub = root.join(format!("sim_{sim_arg}"));
-                let cfg_path = sub.join("config.toml");
-                let state_dir = sub.join("state");
-                let ready_file = sub.join("daemon.ready");
-                fs::create_dir_all(&state_dir).expect("mkdir state");
-                save_config(
-                    &cfg_path,
-                    &AppConfig {
-                        restic_provider: ResticProvider::Custom {
-                            path: restic_bin.clone(),
-                        },
+            for (name, provider, backup, seeded, exp_status, exp_overlay) in real_cases {
+                assert_real_daemon_sni_state(
+                    &mut ctx,
+                    name,
+                    AppConfig {
+                        restic_provider: provider,
+                        destinations: vec![dest.clone()],
+                        backups: vec![backup],
                         ..Default::default()
                     },
-                )
-                .expect("save sim config");
-
-                let child = Command::new(&kestic_bin)
-                    .args([
-                        "daemon",
-                        "--require-sni",
-                        "--no-job-view",
-                        "--no-portal-inhibit",
-                        "--suppress-ui-spawn",
-                        "--simulate-status",
-                        sim_arg,
-                        "--config-path",
-                    ])
-                    .arg(&cfg_path)
-                    .args(["--state-dir"])
-                    .arg(&state_dir)
-                    .args(["--ready-file"])
-                    .arg(&ready_file)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .expect("spawn simulated kestic daemon");
-
-                wait_for_file(&ready_file, Duration::from_secs(5));
-                let sni_svc =
-                    wait_for_sni_service_at(&watcher_conn, sni_idx, Duration::from_secs(5));
-                sni_idx += 1;
-
-                assert_sni_matches(
-                    &client_conn,
-                    &sni_svc,
+                    seeded,
                     exp_status,
                     exp_overlay,
-                    &format!("simulate-status={sim_arg}"),
                 );
-
-                let client = KesticClient::connect_default().expect("connect client");
-                client.confirm_quit().expect("confirm quit");
-                let out = child.wait_with_output().expect("wait simulated daemon");
-                assert!(
-                    out.status.success(),
-                    "simulated daemon ({sim_arg}) failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                wait_for_bus_name_released(&client_conn, KESTIC_BUS_NAME, Duration::from_secs(3));
             }
+
+            // 7. running (real live backup in progress)
+            assert_running_backup_sni_state(&mut ctx);
+
+            // 8-13. CLI `--simulate-status` matrix (overdue, paused, waiting, paused_waiting, maintenance, restore).
+            assert_simulated_sni_matrix(&mut ctx);
         },
     );
 }
@@ -447,7 +440,7 @@ fn ac_m1_11_2_11_3_11_5_dbusmenu_items_quit_confirmation_and_active_progress() {
             };
 
             let handle = thread::spawn(move || run_daemon(run_cfg));
-            wait_for_file(&ready_file, Duration::from_secs(5));
+            wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
 
             let client = KesticClient::connect_default().expect("connect client");
@@ -597,7 +590,7 @@ fn ac_m1_11_4_notifications_only_on_error_and_warning_with_desktop_entry() {
             };
 
             let handle = thread::spawn(move || run_daemon(run_cfg));
-            wait_for_file(&ready_file, Duration::from_secs(5));
+            wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
 
             let client = KesticClient::connect_default().expect("connect client");
             client
@@ -794,7 +787,7 @@ fn tray_open_and_quit_respect_live_gui_registration_and_recover_from_stale_windo
             };
 
             let handle = thread::spawn(move || run_daemon(run_cfg));
-            wait_for_file(&ready_file, Duration::from_secs(5));
+            wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
 
             let client = KesticClient::connect_default().expect("connect client");

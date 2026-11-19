@@ -63,6 +63,13 @@ fn run_isolated_dbus_test(test_name: &str, env_key: &str) {
 
     let current_exe = std::env::current_exe().expect("current test executable");
     let out = Command::new("dbus-run-session")
+        .arg(format!(
+            "--config-file={}",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/private-session-bus.xml"
+            )
+        ))
         .arg("--")
         .arg(current_exe)
         .arg(test_name)

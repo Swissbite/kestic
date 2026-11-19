@@ -97,6 +97,11 @@ fn ac_m3_01_1_daily_1200_due_exactly_once_next_day() {
     );
     assert!(at_due.should_start_now);
     assert_eq!(at_due.due_slot, Some(tue_1200));
+    // Exactly one run is due: a single slot lies between the last success and Tue 12:00.
+    assert_eq!(
+        backup_slots_between(&bk.schedule, mon_1200, tue_1200, &zurich()),
+        vec![tue_1200]
+    );
 }
 
 #[test]
@@ -110,9 +115,19 @@ fn ac_m3_01_2_specific_weekdays_mon_wed_fri_2000() {
     let mon_2001 = zdt(2026, 11, 16, 20, 1);
     let fri_2001 = zdt(2026, 11, 20, 20, 1);
     let slots = backup_slots_between(&sched, mon_2001, fri_2001, &zurich());
+    // (a) due exactly Wed 20:00 and Fri 20:00.
     assert_eq!(
         slots,
         vec![zdt(2026, 11, 18, 20, 0), zdt(2026, 11, 20, 20, 0)]
+    );
+    // (b) neither Tuesday nor Thursday.
+    assert!(
+        !slots.contains(&zdt(2026, 11, 17, 20, 0)),
+        "no Tuesday slot"
+    );
+    assert!(
+        !slots.contains(&zdt(2026, 11, 19, 20, 0)),
+        "no Thursday slot"
     );
 }
 
@@ -186,7 +201,17 @@ fn ac_m3_01_5_dst_spring_gap_0230_resolves_to_0300_next_valid_minute_once() {
     let start = datetime!(2027-03-28 00:00:00 UTC);
     let end = datetime!(2027-03-28 03:00:00 UTC);
     let slots = backup_slots_between(&sched, start, end, &zurich());
-    assert_eq!(slots, vec![datetime!(2027-03-28 01:00:00 UTC)]);
+    // (a) due at 03:00 CEST (= 01:00 UTC), the next valid minute after the gap.
+    assert_eq!(
+        slots.first().copied(),
+        Some(datetime!(2027-03-28 01:00:00 UTC))
+    );
+    // (b) exactly once that day.
+    assert_eq!(
+        slots.len(),
+        1,
+        "exactly one slot over the DST gap: {slots:?}"
+    );
 }
 
 #[test]
@@ -381,7 +406,7 @@ fn ac_m3_02_1_and_02_5_pending_reasons_and_strict_precedence_order() {
 }
 
 #[test]
-fn ac_m3_02_2_to_02_4_overdue_threshold_and_clearing() {
+fn ac_m3_02_2_and_02_3_overdue_threshold_is_configurable() {
     let (_dest, mut bk) = make_backup(
         "Overdue",
         Schedule::SpecificWeekdays {
@@ -478,42 +503,97 @@ fn ac_m3_02_2_to_02_4_overdue_threshold_and_clearing() {
         &zurich(),
     );
     assert!(eval_3.is_overdue);
+}
 
-    // AC-M3-02-4: Warning clears overdue; Error does not.
-    let dir = TempDir::new().expect("tempdir");
-    let mut history = RunHistory::open(dir.path()).expect("history");
-    let clock = FakeClock::new(wed_1200);
-    let mut err_run = Run::new_backup(&clock, &bk).expect("run");
-    err_run.finish(&clock, RunStatus::Error, Some(1));
-    history.upsert_run(&err_run, &[]).expect("save err");
-    assert_eq!(
-        history.last_successful_backup_at(&bk.id).expect("query"),
-        None
-    );
+/// AC-M3-02-4: an overdue backup is (a) no longer overdue after a run ending `ok` or `Warnung`,
+/// (b) still overdue after a run ending `Fehler`.
+#[test]
+fn ac_m3_02_4_ok_and_warning_clear_overdue_error_keeps_it() {
+    let sun_1200 = zdt(2026, 11, 15, 12, 0);
+    let wed_1200 = zdt(2026, 11, 18, 12, 0);
+    let wed_1205 = zdt(2026, 11, 18, 12, 5);
+    let rs = BackupRuntimeState::default();
 
-    let mut warn_run = Run::new_backup(&clock, &bk).expect("warn run");
-    warn_run.finish(&clock, RunStatus::Warning, Some(3));
-    history.upsert_run(&warn_run, &[]).expect("save warn");
-    let last_ok = history.last_successful_backup_at(&bk.id).expect("query");
-    assert!(last_ok.is_some());
-    let after_warn = evaluate_backup_schedule(
-        &BackupScheduleEvalInput {
-            backup: &bk,
-            runtime_state: &rs,
-            last_success_at: last_ok,
-            overdue_anchor_at: None,
-            global_pause: None,
-            global_overdue_threshold: 2,
-            source_available: true,
-            destination_reachable: true,
-            destination_busy: false,
-            has_permanent_error: false,
-        },
-        &SystemEnvironment::desktop_connected(),
-        wed_1200,
-        &zurich(),
+    // Overdue state of a backup: success on Sunday, Monday/Tuesday/Wednesday missed.
+    let overdue_after = |status: Option<RunStatus>| -> bool {
+        let (_dest, bk) = make_backup(
+            "Overdue02-4",
+            Schedule::Daily {
+                hour: 12,
+                minute: 0,
+            },
+        );
+        let dir = TempDir::new().expect("tempdir");
+        let mut history = RunHistory::open(dir.path()).expect("history");
+        let sun_clock = FakeClock::new(sun_1200);
+        let mut success = Run::new_backup(&sun_clock, &bk).expect("success run");
+        success.finish(&sun_clock, RunStatus::Ok, Some(0));
+        history.upsert_run(&success, &[]).expect("save success");
+
+        let before = evaluate_backup_schedule(
+            &BackupScheduleEvalInput {
+                backup: &bk,
+                runtime_state: &rs,
+                last_success_at: history.last_successful_backup_at(&bk.id).expect("query"),
+                overdue_anchor_at: None,
+                global_pause: None,
+                global_overdue_threshold: 2,
+                source_available: true,
+                destination_reachable: true,
+                destination_busy: false,
+                has_permanent_error: false,
+            },
+            &SystemEnvironment::desktop_connected(),
+            wed_1200,
+            &zurich(),
+        );
+        assert!(before.is_overdue, "precondition: overdue before the run");
+
+        if let Some(status) = status {
+            let clock = FakeClock::new(wed_1200);
+            let mut run = Run::new_backup(&clock, &bk).expect("run");
+            run.finish(
+                &clock,
+                status,
+                Some(match status {
+                    RunStatus::Ok => 0,
+                    RunStatus::Warning => 3,
+                    _ => 1,
+                }),
+            );
+            history.upsert_run(&run, &[]).expect("save run");
+        }
+        evaluate_backup_schedule(
+            &BackupScheduleEvalInput {
+                backup: &bk,
+                runtime_state: &rs,
+                last_success_at: history.last_successful_backup_at(&bk.id).expect("query"),
+                overdue_anchor_at: None,
+                global_pause: None,
+                global_overdue_threshold: 2,
+                source_available: true,
+                destination_reachable: true,
+                destination_busy: false,
+                has_permanent_error: false,
+            },
+            &SystemEnvironment::desktop_connected(),
+            wed_1205,
+            &zurich(),
+        )
+        .is_overdue
+    };
+
+    // (a) `ok` and `Warnung` end the overdue state.
+    assert!(!overdue_after(Some(RunStatus::Ok)), "(a) ok clears overdue");
+    assert!(
+        !overdue_after(Some(RunStatus::Warning)),
+        "(a) warning clears overdue"
     );
-    assert!(!after_warn.is_overdue);
+    // (b) `Fehler` keeps it overdue.
+    assert!(
+        overdue_after(Some(RunStatus::Error)),
+        "(b) error keeps the backup overdue"
+    );
 }
 
 #[test]
@@ -564,9 +644,75 @@ fn ac_m3_05_2_default_maintenance_schedule_december_2026() {
     assert_eq!(next_prune, zdt(2026, 12, 6, 12, 0));
     assert_eq!(next_check, zdt(2026, 12, 6, 12, 0));
 
+    // (a) `prune` every Sunday 12:00.
+    let next_prune_after =
+        next_maintenance_slot(&maint.prune, zdt(2026, 12, 6, 12, 1), &zurich()).expect("prune");
+    assert_eq!(next_prune_after, zdt(2026, 12, 13, 12, 0));
+    // (b) `check` only on the first Sunday of the month: after Dec 6 the next is Jan 3, 2027.
     let next_check_after =
         next_maintenance_slot(&maint.check, zdt(2026, 12, 6, 12, 1), &zurich()).expect("jan check");
     assert_eq!(next_check_after, zdt(2027, 1, 3, 12, 0));
+}
+
+/// AC-M3-05-4 / FR-05, F4: an open `forget` is caught up by the next maintenance run at its
+/// slot, not by an extra maintenance run of its own.
+#[test]
+fn ac_m3_05_4_open_forget_waits_for_the_maintenance_slot() {
+    let (dest, _bk) = make_backup("ForgetWaits", Schedule::ManualOnly);
+    let state = kestic_core::history::DestinationMaintenanceState {
+        baseline_at: Some(zdt(2026, 12, 1, 10, 0)),
+        ..Default::default()
+    };
+    let eval_at = |now| {
+        evaluate_destination_maintenance(
+            &DestinationMaintenanceEvalInput {
+                destination: &dest,
+                state: &state,
+                has_pending_forget: true,
+                global_pause: None,
+                destination_busy: false,
+                destination_reachable: true,
+            },
+            &SystemEnvironment::desktop_connected(),
+            now,
+            &zurich(),
+        )
+    };
+    // Tuesday after the failed forget: no prune/check slot yet -> no maintenance run.
+    let tuesday = eval_at(zdt(2026, 12, 1, 11, 0));
+    assert!(tuesday.has_pending_forget, "forget is open");
+    assert!(
+        !tuesday.due_now,
+        "open forget alone does not start maintenance"
+    );
+    // Sunday 12:00 prune slot -> maintenance is due (and works the open forget off first).
+    let sunday = eval_at(zdt(2026, 12, 6, 12, 0));
+    assert!(sunday.due_now, "maintenance due at the prune slot");
+}
+
+fn eval_pause_case(
+    backup: &Backup,
+    runtime_state: &BackupRuntimeState,
+    last_success_at: OffsetDateTime,
+    now: OffsetDateTime,
+) -> kestic_core::scheduler::BackupScheduleEvaluation {
+    evaluate_backup_schedule(
+        &BackupScheduleEvalInput {
+            backup,
+            runtime_state,
+            last_success_at: Some(last_success_at),
+            overdue_anchor_at: None,
+            global_pause: None,
+            global_overdue_threshold: 2,
+            source_available: true,
+            destination_reachable: true,
+            destination_busy: false,
+            has_permanent_error: false,
+        },
+        &SystemEnvironment::desktop_connected(),
+        now,
+        &zurich(),
+    )
 }
 
 #[test]
@@ -600,40 +746,8 @@ fn ac_m3_07_1_to_07_4_pause_per_backup_global_and_until_tomorrow() {
         ..Default::default()
     };
     let rs_b = BackupRuntimeState::default();
-    let eval_a = evaluate_backup_schedule(
-        &BackupScheduleEvalInput {
-            backup: &bk_a,
-            runtime_state: &rs_a,
-            last_success_at: Some(sun_1200),
-            overdue_anchor_at: None,
-            global_pause: None,
-            global_overdue_threshold: 2,
-            source_available: true,
-            destination_reachable: true,
-            destination_busy: false,
-            has_permanent_error: false,
-        },
-        &SystemEnvironment::desktop_connected(),
-        mon_1200,
-        &zurich(),
-    );
-    let eval_b = evaluate_backup_schedule(
-        &BackupScheduleEvalInput {
-            backup: &bk_b,
-            runtime_state: &rs_b,
-            last_success_at: Some(sun_1200),
-            overdue_anchor_at: None,
-            global_pause: None,
-            global_overdue_threshold: 2,
-            source_available: true,
-            destination_reachable: true,
-            destination_busy: false,
-            has_permanent_error: false,
-        },
-        &SystemEnvironment::desktop_connected(),
-        mon_1200,
-        &zurich(),
-    );
+    let eval_a = eval_pause_case(&bk_a, &rs_a, sun_1200, mon_1200);
+    let eval_b = eval_pause_case(&bk_b, &rs_b, sun_1200, mon_1200);
     assert!(eval_a.is_paused && !eval_a.should_start_now);
     assert!(!eval_b.is_paused && eval_b.should_start_now);
 
@@ -648,11 +762,35 @@ fn ac_m3_07_1_to_07_4_pause_per_backup_global_and_until_tomorrow() {
         paused_since: zdt(2026, 11, 16, 10, 0),
         paused_until: None,
     };
-    let state_default = Default::default();
+    // (a) no scheduled run for a due backup while globally paused.
+    let eval_global = evaluate_backup_schedule(
+        &BackupScheduleEvalInput {
+            backup: &bk_b,
+            runtime_state: &rs_b,
+            last_success_at: Some(sun_1200),
+            overdue_anchor_at: None,
+            global_pause: Some(&global_pause),
+            global_overdue_threshold: 2,
+            source_available: true,
+            destination_reachable: true,
+            destination_busy: false,
+            has_permanent_error: false,
+        },
+        &SystemEnvironment::desktop_connected(),
+        mon_1200,
+        &zurich(),
+    );
+    assert!(eval_global.is_paused, "(a) globally paused");
+    assert!(!eval_global.should_start_now, "(a) no scheduled run");
+    // (b) no maintenance run while globally paused (Sunday 15.11. prune slot is due).
+    let state_prune_due = kestic_core::history::DestinationMaintenanceState {
+        baseline_at: Some(zdt(2026, 11, 8, 13, 0)),
+        ..Default::default()
+    };
     let maint_need = evaluate_destination_maintenance(
         &DestinationMaintenanceEvalInput {
             destination: &dest,
-            state: &state_default,
+            state: &state_prune_due,
             has_pending_forget: true,
             global_pause: Some(&global_pause),
             destination_busy: false,
@@ -662,7 +800,7 @@ fn ac_m3_07_1_to_07_4_pause_per_backup_global_and_until_tomorrow() {
         mon_1200,
         &zurich(),
     );
-    assert!(!maint_need.due_now);
+    assert!(!maint_need.due_now, "(b) no maintenance run while paused");
 
     // AC-M3-07-3: Pause "for 4 hours" from 10:00 -> at 14:00 unpaused and catches up missed 12:00 once.
     let rs_4h = BackupRuntimeState {
@@ -678,23 +816,7 @@ fn ac_m3_07_1_to_07_4_pause_per_backup_global_and_until_tomorrow() {
         ..Default::default()
     };
     let mon_1400 = zdt(2026, 11, 16, 14, 0);
-    let eval_4h = evaluate_backup_schedule(
-        &BackupScheduleEvalInput {
-            backup: &bk_b,
-            runtime_state: &rs_4h,
-            last_success_at: Some(sun_1200),
-            overdue_anchor_at: None,
-            global_pause: None,
-            global_overdue_threshold: 2,
-            source_available: true,
-            destination_reachable: true,
-            destination_busy: false,
-            has_permanent_error: false,
-        },
-        &SystemEnvironment::desktop_connected(),
-        mon_1400,
-        &zurich(),
-    );
+    let eval_4h = eval_pause_case(&bk_b, &rs_4h, sun_1200, mon_1400);
     assert!(!eval_4h.is_paused);
     assert!(eval_4h.should_start_now);
     assert_eq!(eval_4h.due_slot, Some(mon_1200));
@@ -710,59 +832,11 @@ fn ac_m3_07_1_to_07_4_pause_per_backup_global_and_until_tomorrow() {
         }),
         ..Default::default()
     };
-    let during = evaluate_backup_schedule(
-        &BackupScheduleEvalInput {
-            backup: &bk_b,
-            runtime_state: &rs_3slots,
-            last_success_at: Some(sun_1200),
-            overdue_anchor_at: None,
-            global_pause: None,
-            global_overdue_threshold: 2,
-            source_available: true,
-            destination_reachable: true,
-            destination_busy: false,
-            has_permanent_error: false,
-        },
-        &SystemEnvironment::desktop_connected(),
-        zdt(2026, 11, 18, 12, 30),
-        &zurich(),
-    );
+    let during = eval_pause_case(&bk_b, &rs_3slots, sun_1200, zdt(2026, 11, 18, 12, 30));
     assert!(!during.is_overdue);
-    let after_1 = evaluate_backup_schedule(
-        &BackupScheduleEvalInput {
-            backup: &bk_b,
-            runtime_state: &rs_3slots,
-            last_success_at: Some(sun_1200),
-            overdue_anchor_at: None,
-            global_pause: None,
-            global_overdue_threshold: 2,
-            source_available: true,
-            destination_reachable: true,
-            destination_busy: false,
-            has_permanent_error: false,
-        },
-        &SystemEnvironment::desktop_connected(),
-        thu_1200,
-        &zurich(),
-    );
+    let after_1 = eval_pause_case(&bk_b, &rs_3slots, sun_1200, thu_1200);
     assert!(!after_1.is_overdue);
-    let after_2 = evaluate_backup_schedule(
-        &BackupScheduleEvalInput {
-            backup: &bk_b,
-            runtime_state: &rs_3slots,
-            last_success_at: Some(sun_1200),
-            overdue_anchor_at: None,
-            global_pause: None,
-            global_overdue_threshold: 2,
-            source_available: true,
-            destination_reachable: true,
-            destination_busy: false,
-            has_permanent_error: false,
-        },
-        &SystemEnvironment::desktop_connected(),
-        fri_1200,
-        &zurich(),
-    );
+    let after_2 = eval_pause_case(&bk_b, &rs_3slots, sun_1200, fri_1200);
     assert!(after_2.is_overdue);
 
     // "Until tomorrow" skips today's schedule until tomorrow's scheduled time (e.g. 08:00 -> tomorrow 08:00).
@@ -912,6 +986,7 @@ fn ac_m3_05_1_and_05_3_destination_queue_prefers_backups_over_maintenance() {
         check_due: false,
         next_prune_at: None,
         next_check_at: None,
+        in_backoff: false,
         due_now: true,
     };
     let mut map = HashMap::new();
@@ -926,7 +1001,7 @@ fn ac_m3_05_1_and_05_3_destination_queue_prefers_backups_over_maintenance() {
 }
 
 #[test]
-fn ac_m3_04_1_and_07_4_exhausted_backoff_next_slot_and_manual_resume_anchor() {
+fn ac_m3_04_1_exhausted_backoff_waits_for_next_regular_slot() {
     let (_dest, bk) = make_backup(
         "RetryAndResume",
         Schedule::Daily {
@@ -938,7 +1013,8 @@ fn ac_m3_04_1_and_07_4_exhausted_backoff_next_slot_and_manual_resume_anchor() {
     let mon_1400 = zdt(2026, 11, 16, 14, 0);
     let tue_1200 = zdt(2026, 11, 17, 12, 0);
 
-    // After 3 retries exhausted on Monday (at 13:20), stay idle at 14:00, then resume Tuesday 12:00.
+    // AC-M3-04-1 (d): after 3 retries exhausted on Monday (at 13:20) nothing happens at 14:00; the
+    // next attempt is the regular Tuesday 12:00 slot.
     let rs_exhausted = BackupRuntimeState {
         backoff_attempt: 4,
         backoff_until: None,
@@ -984,8 +1060,19 @@ fn ac_m3_04_1_and_07_4_exhausted_backoff_next_slot_and_manual_resume_anchor() {
     );
     assert!(next_day.should_start_now);
     assert!(!next_day.backoff_exhausted_until_next_slot);
+}
 
-    // AC-M3-07-4: Manual resume of indefinite pause stores overdue_anchor_at and resets overdue count.
+/// AC-M3-07-4 (c): a manual resume stores the overdue anchor, so only slots after the resume count.
+#[test]
+fn ac_m3_07_4_manual_resume_resets_overdue_anchor() {
+    let (_dest, bk) = make_backup(
+        "Resume",
+        Schedule::Daily {
+            hour: 12,
+            minute: 0,
+        },
+    );
+    let sun_1200 = zdt(2026, 11, 15, 12, 0);
     let dir = TempDir::new().expect("tempdir");
     let history = RunHistory::open(dir.path()).expect("history");
     let thu_1000 = zdt(2026, 11, 19, 10, 0);
@@ -1020,4 +1107,164 @@ fn ac_m3_04_1_and_07_4_exhausted_backoff_next_slot_and_manual_resume_anchor() {
     );
     assert!(!after_resume.is_overdue);
     assert_eq!(after_resume.missed_slots_for_overdue, 1);
+}
+
+#[test]
+fn pause_duration_u32_max_is_rejected_and_compute_pause_until_never_panics() {
+    use kestic_core::scheduler::{MAX_PAUSE_HOURS, validate_pause_duration};
+    assert!(validate_pause_duration(PauseDuration::Hours { hours: 0 }).is_err());
+    assert!(validate_pause_duration(PauseDuration::Hours { hours: u32::MAX }).is_err());
+    assert!(
+        validate_pause_duration(PauseDuration::Hours {
+            hours: MAX_PAUSE_HOURS
+        })
+        .is_ok()
+    );
+
+    let now = zdt(2026, 11, 16, 12, 0);
+    let clamped = compute_pause_until(
+        now,
+        PauseDuration::Hours { hours: u32::MAX },
+        &[],
+        &zurich(),
+    )
+    .expect("finite pause_until");
+    assert!(clamped > now);
+}
+
+#[test]
+fn failed_maintenance_respects_backoff_and_does_not_restart_every_tick() {
+    use kestic_core::history::DestinationMaintenanceState;
+    use kestic_core::model::MaintenanceEntrySchedule;
+    use std::path::PathBuf;
+    let mut dest = Destination::new(
+        "Local",
+        DestinationKind::Local {
+            path: PathBuf::from("/tmp/kestic-maint-backoff-r"),
+        },
+    )
+    .unwrap();
+    dest.maintenance = MaintenanceSchedule {
+        prune: MaintenanceEntrySchedule::Daily {
+            hour: 12,
+            minute: 0,
+        },
+        check: MaintenanceEntrySchedule::ManualOnly,
+        ..MaintenanceSchedule::default()
+    };
+
+    let sun_1100 = zdt(2026, 11, 15, 11, 0);
+    let sun_1200 = zdt(2026, 11, 15, 12, 0);
+    let sun_1201 = zdt(2026, 11, 15, 12, 1);
+    let sun_1205 = zdt(2026, 11, 15, 12, 5);
+    let mon_1200 = zdt(2026, 11, 16, 12, 0);
+
+    let st_backoff = DestinationMaintenanceState {
+        baseline_at: Some(sun_1100),
+        last_prune_at: None,
+        last_check_at: None,
+        maintenance_backoff_attempt: 1,
+        maintenance_backoff_until: Some(sun_1205),
+        last_maintenance_failure_at: Some(sun_1200),
+    };
+    let need_1201 = evaluate_destination_maintenance(
+        &DestinationMaintenanceEvalInput {
+            destination: &dest,
+            state: &st_backoff,
+            has_pending_forget: false,
+            global_pause: None,
+            destination_busy: false,
+            destination_reachable: true,
+        },
+        &SystemEnvironment::desktop_connected(),
+        sun_1201,
+        &zurich(),
+    );
+    assert!(need_1201.in_backoff);
+    assert!(!need_1201.due_now);
+
+    let need_1205 = evaluate_destination_maintenance(
+        &DestinationMaintenanceEvalInput {
+            destination: &dest,
+            state: &st_backoff,
+            has_pending_forget: false,
+            global_pause: None,
+            destination_busy: false,
+            destination_reachable: true,
+        },
+        &SystemEnvironment::desktop_connected(),
+        sun_1205,
+        &zurich(),
+    );
+    assert!(!need_1205.in_backoff);
+    assert!(need_1205.due_now);
+
+    let st_exhausted = DestinationMaintenanceState {
+        baseline_at: Some(sun_1100),
+        last_prune_at: None,
+        last_check_at: None,
+        maintenance_backoff_attempt: 4,
+        maintenance_backoff_until: None,
+        last_maintenance_failure_at: Some(sun_1205),
+    };
+    let need_same_day = evaluate_destination_maintenance(
+        &DestinationMaintenanceEvalInput {
+            destination: &dest,
+            state: &st_exhausted,
+            has_pending_forget: false,
+            global_pause: None,
+            destination_busy: false,
+            destination_reachable: true,
+        },
+        &SystemEnvironment::desktop_connected(),
+        sun_1205,
+        &zurich(),
+    );
+    assert!(!need_same_day.due_now);
+
+    let need_next_slot = evaluate_destination_maintenance(
+        &DestinationMaintenanceEvalInput {
+            destination: &dest,
+            state: &st_exhausted,
+            has_pending_forget: false,
+            global_pause: None,
+            destination_busy: false,
+            destination_reachable: true,
+        },
+        &SystemEnvironment::desktop_connected(),
+        mon_1200,
+        &zurich(),
+    );
+    assert!(need_next_slot.due_now);
+}
+
+/// AC-M3-14-2 (FR-03, negative, unit part): "on weekdays" without a weekday and "every 0 days" are
+/// rejected by `Schedule::validate` (the editor blocks saving), a valid schedule passes.
+#[test]
+fn ac_m3_14_2_schedule_validate_rejects_empty_weekdays_and_zero_day_interval() {
+    let no_weekday = Schedule::SpecificWeekdays {
+        weekdays: Vec::new(),
+        hour: 20,
+        minute: 0,
+    };
+    assert!(
+        no_weekday.validate().is_err(),
+        "(a) weekday schedule without a weekday must be rejected"
+    );
+    let every_zero_days = Schedule::EveryNDays {
+        interval_days: 0,
+        start_date: "2026-12-01".to_string(),
+        hour: 9,
+        minute: 0,
+    };
+    assert!(
+        every_zero_days.validate().is_err(),
+        "(a) \"every 0 days\" must be rejected"
+    );
+    let valid = Schedule::SpecificWeekdays {
+        weekdays: vec![Weekday::Monday],
+        hour: 20,
+        minute: 0,
+    };
+    assert!(valid.validate().is_ok(), "control: a valid schedule passes");
 }

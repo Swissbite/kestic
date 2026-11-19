@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.kirigamiaddons.dateandtime as DateAndTime
 
 Kirigami.ScrollablePage {
     id: page
@@ -33,8 +34,7 @@ Kirigami.ScrollablePage {
     readonly property var frequencyOptions: [
         { key: "daily", label: i18n("Daily") },
         { key: "specific_weekdays", label: i18n("On specific weekdays") },
-        { key: "every_n_days", label: i18n("Every N days") },
-        { key: "hourly", label: i18n("Hourly") },
+        { key: "every_n_days", label: i18n("Every n days") },
         { key: "manual_only", label: i18n("Manual only") }
     ]
 
@@ -49,11 +49,7 @@ Kirigami.ScrollablePage {
     ]
 
     function todayIsoDate() {
-        var d = new Date();
-        var yyyy = String(d.getFullYear());
-        var mm = String(d.getMonth() + 1).padStart(2, "0");
-        var dd = String(d.getDate()).padStart(2, "0");
-        return yyyy + "-" + mm + "-" + dd;
+        return appBackend.todayIsoDate();
     }
 
     function isoWeekdayToKey(num) {
@@ -62,34 +58,41 @@ Kirigami.ScrollablePage {
         return "monday";
     }
 
-    function isValidDateString(s) {
+    function parseIsoDateOrToday(s) {
         var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((s || "").trim());
-        if (!m) return false;
-        var y = parseInt(m[1], 10);
-        var mo = parseInt(m[2], 10);
-        var d = parseInt(m[3], 10);
-        if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
-        var dt = new Date(Date.UTC(y, mo - 1, d));
-        return dt.getUTCFullYear() === y && dt.getUTCMonth() === (mo - 1) && dt.getUTCDate() === d;
+        if (m) {
+            var y = parseInt(m[1], 10);
+            var mo = parseInt(m[2], 10);
+            var d = parseInt(m[3], 10);
+            var dt = new Date(y, mo - 1, d);
+            if (!isNaN(dt.getTime())) {
+                return dt;
+            }
+        }
+        var fallback = /^(\d{4})-(\d{2})-(\d{2})$/.exec(todayIsoDate());
+        if (fallback) {
+            return new Date(parseInt(fallback[1], 10), parseInt(fallback[2], 10) - 1, parseInt(fallback[3], 10));
+        }
+        return new Date();
     }
 
-    readonly property bool intervalInvalid: scheduleKind === "every_n_days" && (intervalDays < 2 || intervalDays > 365)
-    readonly property bool startDateInvalid: scheduleKind === "every_n_days" && !isValidDateString(startDate)
-    readonly property bool weekdaysInvalid: scheduleKind === "specific_weekdays" && selectedWeekdays.length === 0
-    readonly property string validationError: {
-        if (weekdaysInvalid) return i18n("Select at least one weekday.");
-        if (intervalInvalid) return i18n("Interval must be between 2 and 365 days.");
-        if (startDateInvalid) return i18n("Enter a valid start date in YYYY-MM-DD format.");
-        return "";
+    readonly property var validationResult: {
+        try {
+            return JSON.parse(appBackend.validateScheduleJson(currentScheduleJson()));
+        } catch (e) {
+            return { field: "", message: "" };
+        }
     }
+    readonly property string validationField: validationResult.field || ""
+    readonly property string validationError: validationResult.message || ""
+    readonly property bool intervalInvalid: validationField === "interval"
+    readonly property bool startDateInvalid: validationField === "start_date"
+    readonly property bool weekdaysInvalid: validationField === "weekdays"
     readonly property bool valid: validationError === ""
 
     function currentScheduleObj() {
         if (scheduleKind === "manual_only") {
             return { kind: "manual_only" };
-        }
-        if (scheduleKind === "hourly") {
-            return { kind: "hourly" };
         }
         if (scheduleKind === "specific_weekdays") {
             return {
@@ -149,9 +152,6 @@ Kirigami.ScrollablePage {
                     minute: obj.minute !== undefined ? obj.minute : 0
                 });
             }
-            if (obj.kind === "hourly") {
-                return JSON.stringify({ kind: "hourly" });
-            }
             if (obj.kind === "manual_only") {
                 return JSON.stringify({ kind: "manual_only" });
             }
@@ -210,10 +210,6 @@ Kirigami.ScrollablePage {
             startDate = obj.start_date || todayIsoDate();
             hour = obj.hour !== undefined ? obj.hour : 12;
             minute = obj.minute !== undefined ? obj.minute : 0;
-        } else if (obj.kind === "hourly") {
-            scheduleKind = "hourly";
-            hour = 12;
-            minute = 0;
         } else if (obj.kind === "manual_only") {
             scheduleKind = "manual_only";
             hour = 12;
@@ -281,6 +277,10 @@ Kirigami.ScrollablePage {
     }
 
     function handleEscape() {
+        if (startDatePickerPopup.opened || startDatePickerPopup.visible) {
+            startDatePickerPopup.close();
+            return true;
+        }
         if (unsavedDialog.opened || unsavedDialog.visible) {
             unsavedDialog.close();
             return true;
@@ -316,14 +316,26 @@ Kirigami.ScrollablePage {
         }
     ]
 
-    Kirigami.PromptDialog {
+    DateAndTime.DatePopup {
+        id: startDatePickerPopup
+        objectName: "scheduleStartDatePopup"
+        parent: page.rootWindow ? page.rootWindow.overlay : page
+        onAccepted: {
+            var dt = value;
+            var yyyy = String(dt.getFullYear());
+            var mm = String(dt.getMonth() + 1).padStart(2, "0");
+            var dd = String(dt.getDate()).padStart(2, "0");
+            page.startDate = yyyy + "-" + mm + "-" + dd;
+            page.refreshPreview();
+        }
+    }
+
+    UnsavedChangesDialog {
         id: unsavedDialog
         objectName: "unsavedScheduleDialog"
-        title: i18n("Save changes?")
         subtitle: i18n("You have unsaved changes to the backup schedule.")
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onAccepted: page.commitSave(true)
-        onDiscarded: {
+        onSaveRequested: page.commitSave(true)
+        onDiscardRequested: {
             appBackend.has_unsaved_changes = false;
             page.loadFromSaved(page.savedScheduleJson, page.savedOverdueThreshold);
             rootWindow.popSubPage();
@@ -370,7 +382,7 @@ Kirigami.ScrollablePage {
                 }
                 onActivated: function(idx) {
                     page.scheduleKind = page.frequencyOptions[idx].key;
-                    if (page.scheduleKind === "every_n_days" && !page.isValidDateString(page.startDate)) {
+                    if (page.scheduleKind === "every_n_days" && page.startDateInvalid) {
                         page.startDate = page.todayIsoDate();
                     }
                     page.refreshPreview();
@@ -417,9 +429,13 @@ Kirigami.ScrollablePage {
             }
 
             RowLayout {
-                Kirigami.FormData.label: i18n("Every:")
+                Kirigami.FormData.label: i18n("Interval:")
                 visible: page.scheduleKind === "every_n_days"
                 spacing: Kirigami.Units.smallSpacing
+
+                Controls.Label {
+                    text: i18n("Every")
+                }
 
                 Item {
                     implicitWidth: intervalSpinBox.implicitWidth + 4
@@ -464,28 +480,34 @@ Kirigami.ScrollablePage {
                 }
             }
 
-            Controls.TextField {
-                id: startDateField
-                objectName: "scheduleStartDateField"
+            RowLayout {
                 Kirigami.FormData.label: i18n("Start date:")
                 visible: page.scheduleKind === "every_n_days"
-                text: page.startDate
-                placeholderText: "YYYY-MM-DD"
-                Accessible.name: i18n("Schedule start date")
-                onTextChanged: {
-                    if (!page.hydrating) {
-                        page.startDate = text;
-                        page.refreshPreview();
-                    }
-                }
+                spacing: Kirigami.Units.smallSpacing
 
-                Rectangle {
-                    anchors.fill: parent
-                    color: "transparent"
-                    radius: Kirigami.Units.cornerRadius
-                    border.width: page.startDateInvalid ? 2 : 0
-                    border.color: Kirigami.Theme.negativeTextColor
-                    visible: page.startDateInvalid
+                Controls.Button {
+                    id: startDatePickerButton
+                    objectName: "scheduleStartDatePickerButton"
+                    icon.name: "view-calendar"
+                    text: page.startDate !== "" ? page.startDate : i18n("Choose date…")
+                    Accessible.name: i18n("Choose start date")
+                    Controls.ToolTip.visible: hovered
+                    Controls.ToolTip.text: i18n("Choose start date")
+
+                    Rectangle {
+                        objectName: "scheduleStartDateInvalidBorder"
+                        anchors.fill: parent
+                        color: "transparent"
+                        radius: Kirigami.Units.cornerRadius
+                        border.width: 2
+                        border.color: Kirigami.Theme.negativeTextColor
+                        visible: page.startDateInvalid
+                    }
+
+                    onClicked: {
+                        startDatePickerPopup.value = page.parseIsoDateOrToday(page.startDate);
+                        startDatePickerPopup.open();
+                    }
                 }
             }
 
@@ -501,6 +523,8 @@ Kirigami.ScrollablePage {
                     to: 23
                     value: page.hour
                     editable: true
+                    textFromValue: function(v) { return v < 10 ? "0" + v : String(v); }
+                    valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? hourSpinBox.value : n; }
                     Accessible.name: i18n("Hour")
                     onValueModified: {
                         if (!page.hydrating) {
@@ -525,6 +549,8 @@ Kirigami.ScrollablePage {
                     to: 59
                     value: page.minute
                     editable: true
+                    textFromValue: function(v) { return v < 10 ? "0" + v : String(v); }
+                    valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? minuteSpinBox.value : n; }
                     Accessible.name: i18n("Minute")
                     onValueModified: {
                         if (!page.hydrating) {
@@ -543,7 +569,7 @@ Kirigami.ScrollablePage {
 
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
-                Kirigami.FormData.label: i18n("Overdue Detection")
+                Kirigami.FormData.label: i18n("Monitoring")
                 visible: page.scheduleKind !== "manual_only"
             }
 
@@ -551,8 +577,8 @@ Kirigami.ScrollablePage {
                 id: useGlobalOverdueCheck
                 objectName: "useGlobalOverdueCheck"
                 visible: page.scheduleKind !== "manual_only"
-                Kirigami.FormData.label: i18n("Overdue threshold:")
-                text: i18n("Use global default (%1 missed runs)", appBackend.default_overdue_threshold)
+                Kirigami.FormData.label: i18n("Report overdue after:")
+                text: i18np("Use global default (%1 missed slot)", "Use global default (%1 missed slots)", appBackend.default_overdue_threshold)
                 checked: page.useGlobalOverdue
                 Accessible.name: i18n("Use global default overdue threshold")
                 onToggled: if (!page.hydrating) page.useGlobalOverdue = checked
@@ -560,7 +586,6 @@ Kirigami.ScrollablePage {
 
             RowLayout {
                 visible: page.scheduleKind !== "manual_only" && !page.useGlobalOverdue
-                Kirigami.FormData.label: i18n("Warn after:")
                 spacing: Kirigami.Units.smallSpacing
 
                 Controls.SpinBox {
@@ -570,13 +595,13 @@ Kirigami.ScrollablePage {
                     to: 99
                     value: page.customOverdueThreshold
                     editable: true
-                    Accessible.name: i18n("Missed runs before overdue warning")
+                    Accessible.name: i18n("Missed slots before reporting overdue")
                     onValueModified: if (!page.hydrating) page.customOverdueThreshold = value
                     onValueChanged: if (!page.hydrating && page.customOverdueThreshold !== value) page.customOverdueThreshold = value
                 }
 
                 Controls.Label {
-                    text: i18n("missed runs")
+                    text: i18n("missed slots")
                 }
             }
         }

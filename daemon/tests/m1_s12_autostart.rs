@@ -69,7 +69,7 @@ fn ac_m1_12_1_12_2_12_3_daemon_autostart_lifecycle() {
                 .spawn()
                 .expect("spawn kestic daemon without --autostart");
 
-            wait_for_file(&ready_no_auto, Duration::from_secs(5));
+            wait_for_file(&ready_no_auto, common::DAEMON_READY_TIMEOUT);
             assert!(client.is_bus_owned().expect("is_bus_owned"));
 
             let init_state = client.get_state().expect("GetState");
@@ -129,7 +129,7 @@ fn ac_m1_12_1_12_2_12_3_daemon_autostart_lifecycle() {
                 .spawn()
                 .expect("spawn kestic daemon --autostart with valid config");
 
-            wait_for_file(&ready_auto, Duration::from_secs(5));
+            wait_for_file(&ready_auto, common::DAEMON_READY_TIMEOUT);
             assert!(
                 auto_child
                     .try_wait()

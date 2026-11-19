@@ -36,6 +36,7 @@ Kirigami.ScrollablePage {
     property string pendingPreviewJson: ""
     property bool pendingPopAfterConfirm: false
     property string previewSummaryText: ""
+    property bool previewSettled: false
 
     readonly property var freqOptions: [
         { key: "weekly", label: i18n("Weekly") },
@@ -155,35 +156,59 @@ Kirigami.ScrollablePage {
         return false;
     }
 
+    function formatPreviewSummary(rawJson) {
+        var txt = "";
+        if (rawJson !== "") {
+            try {
+                var sum = JSON.parse(rawJson);
+                var parts = [];
+                if (sum.delete_packs !== null && sum.delete_packs !== undefined) {
+                    parts.push(i18n("Packs to remove: %1", sum.delete_packs));
+                }
+                if (sum.keep_packs !== null && sum.keep_packs !== undefined) {
+                    parts.push(i18n("Packs to keep: %1", sum.keep_packs));
+                }
+                // restic's own summary line is English text: show only the localized size.
+                var sizeMatch = sum.freed_summary
+                    ? /(\d+(?:\.\d+)?\s?(?:B|KiB|MiB|GiB|TiB))/.exec(sum.freed_summary)
+                    : null;
+                if (sizeMatch) {
+                    parts.push(i18n("Space to free: %1", sizeMatch[1]));
+                }
+                if (parts.length === 0) {
+                    parts.push(i18n("The preview reported no data to remove."));
+                }
+                txt = parts.join("\n");
+            } catch (e) {
+                txt = "";
+            }
+        }
+        return txt !== "" ? txt : i18n("Dry-run preview could not load repository statistics (the repository may currently be unreachable or locked).");
+    }
+
+    Connections {
+        target: appBackend
+        function onMaintenancePreviewReady(destId, summaryJson, errorMessage) {
+            if (destId !== page.destinationId) {
+                return;
+            }
+            page.previewSettled = true;
+            if (errorMessage !== "") {
+                page.previewSummaryText = i18n("Dry-run preview could not load repository statistics (the repository may currently be unreachable or locked).");
+            } else {
+                page.previewSummaryText = page.formatPreviewSummary(summaryJson);
+            }
+        }
+    }
+
     function requestSave(popOnSuccess) {
         if (!dirty) return;
         pendingPopAfterConfirm = Boolean(popOnSuccess);
         if (pruneDirty) {
-            var raw = appBackend.previewDestinationMaintenance(destinationId);
-            var txt = "";
-            if (raw !== "") {
-                try {
-                    var sum = JSON.parse(raw);
-                    var parts = [];
-                    if (sum.delete_packs !== null && sum.delete_packs !== undefined) {
-                        parts.push(i18n("Packs to remove: %1", sum.delete_packs));
-                    }
-                    if (sum.keep_packs !== null && sum.keep_packs !== undefined) {
-                        parts.push(i18n("Packs to keep: %1", sum.keep_packs));
-                    }
-                    if (sum.freed_summary) {
-                        parts.push(sum.freed_summary);
-                    }
-                    if (parts.length === 0 && sum.raw_lines && sum.raw_lines.length > 0) {
-                        parts.push(sum.raw_lines.slice(0, 6).join("\n"));
-                    }
-                    txt = parts.join("\n");
-                } catch (e) {
-                    txt = "";
-                }
-            }
-            previewSummaryText = txt !== "" ? txt : i18n("Dry-run preview could not load repository statistics (the repository may currently be unreachable or locked).");
+            previewSummaryText = "";
+            previewSettled = false;
             pruneConfirmDialog.open();
+            appBackend.previewDestinationMaintenance(destinationId);
         } else {
             commitSave(popOnSuccess);
         }
@@ -256,7 +281,7 @@ Kirigami.ScrollablePage {
     Kirigami.Dialog {
         id: pruneConfirmDialog
         objectName: "pruneConfirmDialog"
-        title: i18n("Confirm Prune Schedule")
+        title: i18n("Confirm Clean Up Schedule")
         standardButtons: Kirigami.Dialog.Cancel
         padding: Kirigami.Units.largeSpacing
 
@@ -266,6 +291,8 @@ Kirigami.ScrollablePage {
                 objectName: "confirmPruneSaveAction"
                 icon.name: "document-save"
                 text: i18n("Save Maintenance Schedule")
+                // AC-M3-05-7(a): confirmation is only possible once the preview loaded or failed.
+                enabled: page.previewSettled && !appBackend.maintenance_preview_loading
                 onTriggered: {
                     pruneConfirmDialog.close();
                     page.commitSave(page.pendingPopAfterConfirm);
@@ -278,13 +305,31 @@ Kirigami.ScrollablePage {
             spacing: Kirigami.Units.mediumSpacing
 
             Controls.Label {
-                text: i18n("Prune permanently removes unreferenced pack data from the destination after snapshots have been forgotten. Removed data cannot be recovered.")
+                text: i18n("Cleaning up permanently removes unreferenced pack data from the destination after snapshots have been forgotten. Removed data cannot be recovered.")
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
 
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+                visible: appBackend.maintenance_preview_loading
+
+                Controls.BusyIndicator {
+                    running: appBackend.maintenance_preview_loading
+                    implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                    implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+
+                Controls.Label {
+                    text: i18n("Loading dry-run preview…")
+                    Layout.fillWidth: true
+                }
+            }
+
             Controls.Label {
                 objectName: "prunePreviewSummaryLabel"
+                visible: !appBackend.maintenance_preview_loading
                 text: page.previewSummaryText
                 font.bold: true
                 wrapMode: Text.WordWrap
@@ -293,14 +338,12 @@ Kirigami.ScrollablePage {
         }
     }
 
-    Kirigami.PromptDialog {
+    UnsavedChangesDialog {
         id: unsavedDialog
         objectName: "unsavedMaintenanceDialog"
-        title: i18n("Save changes?")
         subtitle: i18n("You have unsaved changes to the maintenance schedule.")
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onAccepted: page.requestSave(true)
-        onDiscarded: {
+        onSaveRequested: page.requestSave(true)
+        onDiscardRequested: {
             appBackend.has_unsaved_changes = false;
             page.loadFromSaved(page.savedMaintenanceJson);
             rootWindow.popSubPage();
@@ -323,7 +366,7 @@ Kirigami.ScrollablePage {
 
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
-                Kirigami.FormData.label: i18n("Cleanup (Prune)")
+                Kirigami.FormData.label: i18n("Clean up")
             }
 
             Controls.ComboBox {
@@ -334,7 +377,7 @@ Kirigami.ScrollablePage {
                 textRole: "label"
                 valueRole: "key"
                 focusPolicy: Qt.StrongFocus
-                Accessible.name: i18n("Prune frequency")
+                Accessible.name: i18n("Clean up frequency")
                 currentIndex: page.indexOfOption(page.freqOptions, page.pruneKind)
                 onActivated: function(idx) { page.pruneKind = page.freqOptions[idx].key; }
             }
@@ -348,7 +391,7 @@ Kirigami.ScrollablePage {
                 textRole: "label"
                 valueRole: "key"
                 focusPolicy: Qt.StrongFocus
-                Accessible.name: i18n("Prune week of month")
+                Accessible.name: i18n("Clean up week of month")
                 currentIndex: page.indexOfOption(page.nthOptions, page.pruneNth)
                 onActivated: function(idx) { page.pruneNth = page.nthOptions[idx].key; }
             }
@@ -362,7 +405,7 @@ Kirigami.ScrollablePage {
                 textRole: "label"
                 valueRole: "key"
                 focusPolicy: Qt.StrongFocus
-                Accessible.name: i18n("Prune weekday")
+                Accessible.name: i18n("Clean up weekday")
                 currentIndex: page.indexOfOption(page.weekdayOptions, page.pruneWeekday)
                 onActivated: function(idx) { page.pruneWeekday = page.weekdayOptions[idx].key; }
             }
@@ -379,7 +422,9 @@ Kirigami.ScrollablePage {
                     to: 23
                     value: page.pruneHour
                     editable: true
-                    Accessible.name: i18n("Prune hour")
+                    textFromValue: function(v) { return v < 10 ? "0" + v : String(v); }
+                    valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? pruneHourSpin.value : n; }
+                    Accessible.name: i18n("Clean up hour")
                     onValueModified: if (!page.hydrating) page.pruneHour = value
                     onValueChanged: if (!page.hydrating && page.pruneHour !== value) page.pruneHour = value
                 }
@@ -391,7 +436,9 @@ Kirigami.ScrollablePage {
                     to: 59
                     value: page.pruneMinute
                     editable: true
-                    Accessible.name: i18n("Prune minute")
+                    textFromValue: function(v) { return v < 10 ? "0" + v : String(v); }
+                    valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? pruneMinuteSpin.value : n; }
+                    Accessible.name: i18n("Clean up minute")
                     onValueModified: if (!page.hydrating) page.pruneMinute = value
                     onValueChanged: if (!page.hydrating && page.pruneMinute !== value) page.pruneMinute = value
                 }
@@ -399,7 +446,7 @@ Kirigami.ScrollablePage {
 
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
-                Kirigami.FormData.label: i18n("Integrity Check")
+                Kirigami.FormData.label: i18n("Verify")
             }
 
             Controls.ComboBox {
@@ -410,7 +457,7 @@ Kirigami.ScrollablePage {
                 textRole: "label"
                 valueRole: "key"
                 focusPolicy: Qt.StrongFocus
-                Accessible.name: i18n("Check frequency")
+                Accessible.name: i18n("Verify frequency")
                 currentIndex: page.indexOfOption(page.freqOptions, page.checkKind)
                 onActivated: function(idx) { page.checkKind = page.freqOptions[idx].key; }
             }
@@ -424,7 +471,7 @@ Kirigami.ScrollablePage {
                 textRole: "label"
                 valueRole: "key"
                 focusPolicy: Qt.StrongFocus
-                Accessible.name: i18n("Check week of month")
+                Accessible.name: i18n("Verify week of month")
                 currentIndex: page.indexOfOption(page.nthOptions, page.checkNth)
                 onActivated: function(idx) { page.checkNth = page.nthOptions[idx].key; }
             }
@@ -438,7 +485,7 @@ Kirigami.ScrollablePage {
                 textRole: "label"
                 valueRole: "key"
                 focusPolicy: Qt.StrongFocus
-                Accessible.name: i18n("Check weekday")
+                Accessible.name: i18n("Verify weekday")
                 currentIndex: page.indexOfOption(page.weekdayOptions, page.checkWeekday)
                 onActivated: function(idx) { page.checkWeekday = page.weekdayOptions[idx].key; }
             }
@@ -455,7 +502,9 @@ Kirigami.ScrollablePage {
                     to: 23
                     value: page.checkHour
                     editable: true
-                    Accessible.name: i18n("Check hour")
+                    textFromValue: function(v) { return v < 10 ? "0" + v : String(v); }
+                    valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? checkHourSpin.value : n; }
+                    Accessible.name: i18n("Verify hour")
                     onValueModified: if (!page.hydrating) page.checkHour = value
                     onValueChanged: if (!page.hydrating && page.checkHour !== value) page.checkHour = value
                 }
@@ -467,7 +516,9 @@ Kirigami.ScrollablePage {
                     to: 59
                     value: page.checkMinute
                     editable: true
-                    Accessible.name: i18n("Check minute")
+                    textFromValue: function(v) { return v < 10 ? "0" + v : String(v); }
+                    valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? checkMinuteSpin.value : n; }
+                    Accessible.name: i18n("Verify minute")
                     onValueModified: if (!page.hydrating) page.checkMinute = value
                     onValueChanged: if (!page.hydrating && page.checkMinute !== value) page.checkMinute = value
                 }

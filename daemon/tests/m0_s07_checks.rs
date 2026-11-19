@@ -5,19 +5,17 @@
 //! - AC-M0-07-1: Single-instance D-Bus name lock (second daemon detects taken name and exits 0)
 //! - AC-M0-07-2: Daemon registers StatusNotifierItem via `ksni` and sends 1 `Notify` call via `notify-rust`
 
+mod common;
+
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
 use kestic_daemon::single_instance::KESTIC_BUS_NAME;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{
-    Mutex,
-    atomic::{AtomicU32, Ordering},
-};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
-use zbus::{OwnedVariant, block_on, interface};
+use zbus::{block_on, interface};
 
 struct TempDirGuard(PathBuf);
 
@@ -68,6 +66,13 @@ fn run_isolated_dbus_test(test_name: &str, env_key: &str) {
 
     let current_exe = std::env::current_exe().expect("current test executable");
     let out = Command::new("dbus-run-session")
+        .arg(format!(
+            "--config-file={}",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/private-session-bus.xml"
+            )
+        ))
         .arg("--")
         .arg(current_exe)
         .arg(test_name)
@@ -123,51 +128,6 @@ impl FakeSniWatcher {
     #[zbus(property, name = "ProtocolVersion")]
     fn protocol_version(&self) -> i32 {
         0
-    }
-}
-
-#[derive(Default)]
-struct FakeNotifications {
-    calls: AtomicU32,
-    last_desktop_entry: Mutex<String>,
-    last_summary: Mutex<String>,
-}
-
-#[interface(name = "org.freedesktop.Notifications")]
-impl FakeNotifications {
-    #[allow(clippy::too_many_arguments)]
-    fn notify(
-        &self,
-        _app_name: &str,
-        _replaces_id: u32,
-        _app_icon: &str,
-        summary: &str,
-        _body: &str,
-        _actions: Vec<String>,
-        hints: HashMap<String, OwnedVariant>,
-        _expire_timeout: i32,
-    ) -> u32 {
-        *self.last_summary.lock().expect("lock") = summary.to_string();
-        if let Some(entry) = hints
-            .get("desktop-entry")
-            .and_then(|v| <&str>::try_from(v).ok())
-        {
-            *self.last_desktop_entry.lock().expect("lock") = entry.to_string();
-        }
-        self.calls.fetch_add(1, Ordering::SeqCst) + 1
-    }
-
-    fn get_capabilities(&self) -> Vec<String> {
-        vec!["body".to_string()]
-    }
-
-    fn get_server_information(&self) -> (String, String, String, String) {
-        (
-            "FakePlasmaNotifications".to_string(),
-            "KesticTest".to_string(),
-            "1.0".to_string(),
-            "1.2".to_string(),
-        )
     }
 }
 
@@ -245,15 +205,7 @@ fn ac_m0_07_2_daemon_registers_sni_and_sends_single_notify() {
                 .expect("build fake StatusNotifierWatcher")
         });
 
-        let notif = FakeNotifications::default();
-        let notif_conn = block_on(async {
-            zbus::connection::Builder::session()
-                .name("org.freedesktop.Notifications")
-                .serve_at("/org/freedesktop/Notifications", notif)
-                .build()
-                .await
-                .expect("build fake org.freedesktop.Notifications")
-        });
+        let (_notif_conn, notif) = common::start_fake_notifications();
 
         let outcome = run_daemon(DaemonRunConfig {
             bus_name: KESTIC_BUS_NAME.to_string(),
@@ -284,19 +236,16 @@ fn ac_m0_07_2_daemon_registers_sni_and_sends_single_notify() {
             registered[0]
         );
 
-        let (calls, summary, desktop_entry) = block_on(async {
-            let iface_ref = notif_conn
-                .object_server()
-                .interface::<_, FakeNotifications>("/org/freedesktop/Notifications")
-                .await
-                .expect("get FakeNotifications interface");
-            let guard = iface_ref.get().await;
-            (
-                guard.calls.load(Ordering::SeqCst),
-                guard.last_summary.lock().expect("lock").clone(),
-                guard.last_desktop_entry.lock().expect("lock").clone(),
-            )
-        });
+        let captured = notif.snapshot();
+        let calls = captured.len();
+        let summary = captured
+            .last()
+            .map(|n| n.summary.clone())
+            .unwrap_or_default();
+        let desktop_entry = captured
+            .last()
+            .and_then(|n| n.desktop_entry.clone())
+            .unwrap_or_default();
         assert_eq!(calls, 1, "expected exactly 1 Notify call");
         assert_eq!(desktop_entry, "net.daester.Kestic");
         assert!(!summary.is_empty());

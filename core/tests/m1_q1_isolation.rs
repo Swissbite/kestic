@@ -109,6 +109,7 @@ fn ac_m1_q1_non_root_and_real_home_directories_stay_untouched() {
 
     // Perform isolated config, secret store, repo init, backup, and SQLite history operations in TempDir.
     let dir = TempDir::new().expect("tempdir");
+    let cache_dir = common::restic_cache_dir(dir.path());
     let cfg_path = dir.path().join("config.toml");
     let repo_dir = dir.path().join("repo");
     let state_dir = dir.path().join("state");
@@ -131,6 +132,7 @@ fn ac_m1_q1_non_root_and_real_home_directories_stay_untouched() {
         kestic_binary: &helper,
         secret_store: &store,
         clock: &clock,
+        cache_dir: Some(&cache_dir),
     };
 
     let dest = Destination::new(

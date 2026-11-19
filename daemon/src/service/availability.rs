@@ -1,0 +1,550 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Destination/source availability probing, background probe workers, queue draining, and repository unlock.
+
+use super::backup_runner::start_backup_async;
+use super::error::{KesticServiceErr, map_destination_err, map_provider_err};
+use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, probe_restic_and_secrets_raw};
+use crate::dbus_api::{
+    AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto,
+    REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
+};
+use crate::dbus_server::emit_status_changed;
+use crate::i18n::i18n;
+use kestic_core::backup::BackupRunError;
+use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
+use kestic_core::maintenance::{LockClassification, detect_stale_locks, execute_unlock};
+use kestic_core::model::{Backup, Destination, DestinationId};
+use kestic_core::mount::{
+    MountInspector, SourceCheckResult, check_source_status_with, current_home_dir,
+};
+use kestic_core::provider::resolve_and_check;
+use kestic_core::restic::ResticRuntime;
+use std::path::Path;
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::time::Duration;
+
+impl DaemonCore {
+    /// Refreshes availability (`M1-S23`) if `force == true` or > 60 s elapsed since last check.
+    pub fn refresh_availability_if_needed(&mut self, force: bool) -> AvailabilitySnapshotDto {
+        let now = self.clock.now_utc();
+        let should_run = force
+            || match self.last_availability_check {
+                None => true,
+                Some(prev) => (now - prev) > time::Duration::seconds(AVAILABILITY_CACHE_TTL_SECS),
+            };
+
+        if should_run {
+            let now_unix = now.unix_timestamp();
+            for dest in &self.config.destinations {
+                let res = preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT);
+                self.availability_probe_count += 1;
+                let dto = match res {
+                    Ok(()) => DestinationAvailabilityDto {
+                        destination_id: dest.id.as_str().to_string(),
+                        reachable: true,
+                        detail: None,
+                        checked_at_unix: now_unix,
+                    },
+                    Err(err) => DestinationAvailabilityDto {
+                        destination_id: dest.id.as_str().to_string(),
+                        reachable: false,
+                        detail: Some(err.to_string()),
+                        checked_at_unix: now_unix,
+                    },
+                };
+                self.dest_availability.insert(dest.id.clone(), dto);
+            }
+
+            for backup in &self.config.backups {
+                let status = check_source_status_with(
+                    backup,
+                    current_home_dir().as_deref(),
+                    self.mount_inspector.as_ref(),
+                );
+                self.source_availability.insert(backup.id.clone(), status);
+            }
+            self.last_availability_check = Some(now);
+        }
+
+        self.current_availability_snapshot()
+    }
+
+    pub(super) fn current_availability_snapshot(&self) -> AvailabilitySnapshotDto {
+        let backups = self
+            .config
+            .backups
+            .iter()
+            .map(|b| self.availability_for_backup(b))
+            .collect();
+        let destinations = self
+            .config
+            .destinations
+            .iter()
+            .map(|d| self.availability_for_destination(d))
+            .collect();
+        AvailabilitySnapshotDto {
+            checked_at_unix: self.last_availability_check.map(|t| t.unix_timestamp()),
+            backups,
+            destinations,
+        }
+    }
+
+    pub(super) fn availability_for_destination(
+        &self,
+        dest: &Destination,
+    ) -> DestinationAvailabilityDto {
+        self.dest_availability
+            .get(&dest.id)
+            .cloned()
+            .unwrap_or_else(|| DestinationAvailabilityDto {
+                destination_id: dest.id.as_str().to_string(),
+                reachable: true,
+                detail: None,
+                checked_at_unix: self.clock.now_unix_secs(),
+            })
+    }
+
+    pub(super) fn availability_for_backup(&self, backup: &Backup) -> BackupAvailabilityDto {
+        let source_status = self
+            .source_availability
+            .get(&backup.id)
+            .cloned()
+            .unwrap_or(SourceCheckResult::Available);
+        let source_available = source_status.is_ok();
+        let dest_available = self
+            .dest_availability
+            .get(&backup.destination_id)
+            .map(|d| d.reachable)
+            .unwrap_or(true);
+
+        if !source_available {
+            BackupAvailabilityDto {
+                backup_id: backup.id.as_str().to_string(),
+                source_available: false,
+                destination_available: dest_available,
+                available: false,
+                blocked_reason: Some(REASON_SOURCE_UNAVAILABLE.to_string()),
+                reason_text: Some(super::error::localized_source_check_reason(&source_status)),
+                source_status: super::error::source_status_code(&source_status).map(str::to_string),
+            }
+        } else if !dest_available {
+            BackupAvailabilityDto {
+                backup_id: backup.id.as_str().to_string(),
+                source_available: true,
+                destination_available: false,
+                available: false,
+                blocked_reason: Some(REASON_DESTINATION_UNREACHABLE.to_string()),
+                reason_text: Some(i18n("Destination unreachable").into()),
+                source_status: None,
+            }
+        } else {
+            BackupAvailabilityDto {
+                backup_id: backup.id.as_str().to_string(),
+                source_available: true,
+                destination_available: true,
+                available: true,
+                blocked_reason: None,
+                reason_text: None,
+                source_status: None,
+            }
+        }
+    }
+}
+
+pub(super) struct DestinationClaimGuard {
+    shared: Arc<Mutex<DaemonCore>>,
+    dest_id: DestinationId,
+    armed: bool,
+}
+
+impl DestinationClaimGuard {
+    pub(super) fn new(shared: Arc<Mutex<DaemonCore>>, dest_id: DestinationId) -> Self {
+        Self {
+            shared,
+            dest_id,
+            armed: true,
+        }
+    }
+
+    pub(super) fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for DestinationClaimGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let mut guard = self.shared.lock().unwrap_or_else(|p| p.into_inner());
+            guard.claiming_destinations.remove(&self.dest_id);
+        }
+    }
+}
+
+pub(crate) fn refresh_availability_unlocked(
+    shared: &Arc<Mutex<DaemonCore>>,
+    force: bool,
+) -> AvailabilitySnapshotDto {
+    let (should_run, destinations, backups, mount_inspector, clock, current_snapshot) = {
+        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let now = guard.clock.now_utc();
+        let should_run = force
+            || match guard.last_availability_check {
+                None => true,
+                Some(prev) => (now - prev) > time::Duration::seconds(AVAILABILITY_CACHE_TTL_SECS),
+            };
+        (
+            should_run,
+            guard.config.destinations.clone(),
+            guard.config.backups.clone(),
+            Arc::clone(&guard.mount_inspector),
+            Arc::clone(&guard.clock),
+            guard.current_availability_snapshot(),
+        )
+    };
+
+    if !should_run {
+        return current_snapshot;
+    }
+
+    let now = clock.now_utc();
+    let now_unix = now.unix_timestamp();
+    let home = current_home_dir();
+    let mut dest_updates = Vec::with_capacity(destinations.len());
+    for dest in &destinations {
+        let res = preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT);
+        let dto = match res {
+            Ok(()) => DestinationAvailabilityDto {
+                destination_id: dest.id.as_str().to_string(),
+                reachable: true,
+                detail: None,
+                checked_at_unix: now_unix,
+            },
+            Err(err) => DestinationAvailabilityDto {
+                destination_id: dest.id.as_str().to_string(),
+                reachable: false,
+                detail: Some(err.to_string()),
+                checked_at_unix: now_unix,
+            },
+        };
+        dest_updates.push((dest.id.clone(), dto));
+    }
+
+    let mut source_updates = Vec::with_capacity(backups.len());
+    for backup in &backups {
+        let status = check_source_status_bounded(backup, home.as_deref(), &mount_inspector);
+        source_updates.push((backup.id.clone(), status));
+    }
+
+    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let dest_count = dest_updates.len() as u64;
+    for (id, dto) in dest_updates {
+        guard.dest_availability.insert(id, dto);
+    }
+    for (id, status) in source_updates {
+        guard.source_availability.insert(id, status);
+    }
+    guard.availability_probe_count += dest_count;
+    guard.last_availability_check = Some(now);
+    guard.current_availability_snapshot()
+}
+
+/// A background availability probe running longer than this is treated as hung (e.g. a local
+/// destination on a stale NFS mount blocking `stat`) and no longer blocks new probes.
+pub(super) const AVAILABILITY_PROBE_STALE_SECS: i64 = 120;
+
+/// Upper bound for one source check (`stat` / mountinfo) on a start path; a source that does
+/// not answer in time (hung mount) counts as unavailable instead of blocking forever.
+pub(super) const SOURCE_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// [`check_source_status_with`] bounded by [`SOURCE_CHECK_TIMEOUT`] (the check runs on a helper
+/// thread; on timeout the source is reported unavailable and the helper is left behind).
+pub(super) fn check_source_status_bounded(
+    backup: &Backup,
+    home: Option<&Path>,
+    inspector: &Arc<dyn MountInspector>,
+) -> SourceCheckResult {
+    let (tx, rx) = mpsc::channel();
+    let backup_bg = backup.clone();
+    let home_bg = home.map(Path::to_path_buf);
+    let inspector_bg = Arc::clone(inspector);
+    thread::spawn(move || {
+        let status =
+            check_source_status_with(&backup_bg, home_bg.as_deref(), inspector_bg.as_ref());
+        // The receiver is gone after a timeout; nothing left to report then.
+        let _ = tx.send(status);
+    });
+    rx.recv_timeout(SOURCE_CHECK_TIMEOUT).unwrap_or_else(|_| {
+        SourceCheckResult::PathMissing(backup.source.path.display().to_string())
+    })
+}
+
+pub(crate) fn trigger_background_availability_probe(shared: Arc<Mutex<DaemonCore>>) {
+    let generation = {
+        let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let now = guard.clock.now_utc();
+        let ttl_elapsed = match guard.last_availability_check {
+            None => true,
+            Some(prev) => (now - prev) > time::Duration::seconds(AVAILABILITY_CACHE_TTL_SECS),
+        };
+        let fresh_in_flight = guard.availability_probe_in_flight
+            && guard
+                .availability_probe_started_at
+                .is_some_and(|t| now - t < time::Duration::seconds(AVAILABILITY_PROBE_STALE_SECS));
+        if !ttl_elapsed || fresh_in_flight {
+            return;
+        }
+        guard.availability_probe_in_flight = true;
+        guard.availability_probe_started_at = Some(now);
+        guard.availability_probe_generation = guard.availability_probe_generation.wrapping_add(1);
+        guard.availability_probe_generation
+    };
+
+    thread::spawn(move || {
+        let _ = refresh_availability_unlocked(&shared, false);
+        let (conn_opt, state_dto, tray_opt, tray_state) = {
+            let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+            if guard.availability_probe_generation == generation {
+                guard.availability_probe_in_flight = false;
+                guard.availability_probe_started_at = None;
+            }
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (
+                guard.conn.clone(),
+                state_dto,
+                guard.tray.clone(),
+                tray_state,
+            )
+        };
+        if let Some(tray) = tray_opt {
+            tray.set_full_state(tray_state);
+        }
+        if let Some(conn) = &conn_opt {
+            emit_status_changed(conn, &state_dto);
+        }
+    });
+}
+
+/// A background source probe running longer than this is treated as hung (e.g. a stale NFS
+/// mount blocking `stat`) and replaced by a fresh probe; the late result is discarded.
+pub(super) const SOURCE_PROBE_STALE_SECS: i64 = 120;
+
+pub(super) fn trigger_background_source_probe(shared: Arc<Mutex<DaemonCore>>) {
+    let (backups, mount_inspector, generation) = {
+        let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let now = guard.clock.now_utc();
+        let fresh_in_flight = guard.source_probe_in_flight
+            && guard
+                .source_probe_started_at
+                .is_some_and(|t| now - t < time::Duration::seconds(SOURCE_PROBE_STALE_SECS));
+        if fresh_in_flight {
+            return;
+        }
+        guard.source_probe_in_flight = true;
+        guard.source_probe_started_at = Some(now);
+        guard.source_probe_generation = guard.source_probe_generation.wrapping_add(1);
+        (
+            guard.config.backups.clone(),
+            Arc::clone(&guard.mount_inspector),
+            guard.source_probe_generation,
+        )
+    };
+
+    thread::spawn(move || {
+        let home = current_home_dir();
+        let mut updates = Vec::with_capacity(backups.len());
+        for backup in &backups {
+            let status =
+                check_source_status_with(backup, home.as_deref(), mount_inspector.as_ref());
+            updates.push((backup.id.clone(), status));
+        }
+
+        let changed_conn = {
+            let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+            if guard.source_probe_generation != generation {
+                // Superseded after being considered hung: a newer probe owns the state.
+                return;
+            }
+            guard.source_probe_in_flight = false;
+            guard.source_probe_started_at = None;
+            let mut any_changed = false;
+            for (bid, status) in updates {
+                if guard.source_availability.get(&bid) != Some(&status) {
+                    any_changed = true;
+                }
+                guard.source_availability.insert(bid, status);
+            }
+            if any_changed {
+                let (state_dto, tray_state) = guard.build_state_and_tray();
+                if let Some(tray) = &guard.tray {
+                    tray.set_full_state(tray_state);
+                }
+                guard.conn.clone().map(|c| (c, state_dto))
+            } else {
+                None
+            }
+        };
+        if let Some((conn, state_dto)) = changed_conn {
+            emit_status_changed(&conn, &state_dto);
+        }
+    });
+}
+
+pub(crate) fn drain_queued_backups_async(shared: &Arc<Mutex<DaemonCore>>) {
+    loop {
+        let next_backup_id = {
+            let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+            if guard.sleep_in_progress || guard.queued_backups.is_empty() {
+                None
+            } else {
+                let mut picked_idx = None;
+                for (idx, bid) in guard.queued_backups.iter().enumerate() {
+                    if let Some(backup) = guard.config.backup(bid) {
+                        if !guard.is_destination_busy(&backup.destination_id) {
+                            picked_idx = Some(idx);
+                            break;
+                        }
+                    } else {
+                        picked_idx = Some(idx);
+                        break;
+                    }
+                }
+                picked_idx.and_then(|idx| guard.queued_backups.remove(idx))
+            }
+        };
+
+        let Some(bid) = next_backup_id else {
+            break;
+        };
+
+        let still_configured = {
+            let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+            guard.config.backup(&bid).is_some()
+        };
+        if !still_configured {
+            continue;
+        }
+
+        if let Err(KesticServiceErr::AlreadyRunning(_)) = start_backup_async(shared, bid.as_str()) {
+            // Lost the race for the destination (another start claimed it after the pick):
+            // keep the backup queued; the finishing run drains the queue again.
+            let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+            if !guard.queued_backups.contains(&bid) && guard.config.backup(&bid).is_some() {
+                guard.queued_backups.push_front(bid);
+            }
+            break;
+        }
+    }
+}
+
+/// Unlocks stale local locks on a destination repository without holding `DaemonCore` lock.
+pub fn unlock_destination_async(
+    shared: &Arc<Mutex<DaemonCore>>,
+    destination_id: &str,
+) -> Result<u32, KesticServiceErr> {
+    let d_id = DestinationId::parse(destination_id)
+        .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+
+    let (dest, kestic_binary, secret_store, clock, resolved, mut claim_guard) = {
+        let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let dest = guard
+            .config
+            .destination(&d_id)
+            .cloned()
+            .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
+
+        if guard.is_destination_busy(&dest.id) {
+            return Err(KesticServiceErr::AlreadyRunning(format!(
+                "another run is already active on destination '{}'",
+                dest.name
+            )));
+        }
+
+        guard.claiming_destinations.insert(d_id.clone());
+        (
+            dest,
+            guard.kestic_binary.clone(),
+            Arc::clone(&guard.secret_store),
+            Arc::clone(&guard.clock),
+            guard.config.restic_provider.clone(),
+            DestinationClaimGuard::new(Arc::clone(shared), d_id.clone()),
+        )
+    };
+
+    let (_, secret_status, _) = probe_restic_and_secrets_raw(&resolved, secret_store.as_ref());
+    if !secret_status.available {
+        return Err(KesticServiceErr::SecretStoreLocked(
+            secret_status
+                .message
+                .unwrap_or_else(|| i18n("Password store is locked").into()),
+        ));
+    }
+    let resolved_bin = resolve_and_check(&resolved).map_err(map_provider_err)?;
+    let runtime = ResticRuntime {
+        resolved: &resolved_bin,
+        kestic_binary: &kestic_binary,
+        secret_store: secret_store.as_ref(),
+        clock: clock.as_ref(),
+        cache_dir: None,
+    };
+
+    let classification = detect_stale_locks(&dest, &runtime, &[]).map_err(|err| match err {
+        BackupRunError::Destination(d) => map_destination_err(d),
+        other => KesticServiceErr::Internal(other.to_string()),
+    })?;
+
+    if !classification.active_local_locks.is_empty()
+        || !classification.foreign_host_locks.is_empty()
+    {
+        release_unlock_claim(shared, &d_id, &mut claim_guard);
+        return Err(KesticServiceErr::InvalidInput(
+            i18n("Cannot unlock: repository lock belongs to an active or remote process").into(),
+        ));
+    }
+
+    if !classification.has_stale_local_lock {
+        release_unlock_claim(shared, &d_id, &mut claim_guard);
+        return Ok(0);
+    }
+
+    let stale_count = classification.stale_lock_ids.len() as u32;
+    let res = execute_unlock(&dest, &runtime, &[]).map_err(|err| match err {
+        BackupRunError::Destination(d) => map_destination_err(d),
+        other => KesticServiceErr::Internal(other.to_string()),
+    })?;
+    if res.exit_code != 0 {
+        return Err(KesticServiceErr::Internal(
+            res.presentation.detail_or_summary(),
+        ));
+    }
+
+    release_unlock_claim(shared, &d_id, &mut claim_guard);
+    Ok(stale_count)
+}
+
+fn release_unlock_claim(
+    shared: &Arc<Mutex<DaemonCore>>,
+    d_id: &DestinationId,
+    claim_guard: &mut DestinationClaimGuard,
+) {
+    {
+        let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        guard.dest_stale_locks.insert(d_id.clone(), 0);
+        guard.claiming_destinations.remove(d_id);
+        claim_guard.disarm();
+    }
+    drain_queued_backups_async(shared);
+}
+
+pub(super) fn unlockable_stale_lock_count(cls: &LockClassification) -> usize {
+    if cls.has_stale_local_lock
+        && cls.foreign_host_locks.is_empty()
+        && cls.active_local_locks.is_empty()
+    {
+        cls.stale_lock_ids.len()
+    } else {
+        0
+    }
+}

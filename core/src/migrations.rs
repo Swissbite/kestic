@@ -115,6 +115,11 @@ const HISTORY_MIGRATIONS: &[Migration] = &[
         name: "m3_automation_state",
         apply: apply_v2_m3_automation_state,
     },
+    Migration {
+        version: 3,
+        name: "m3_backoff_tracking",
+        apply: apply_v3_backoff_tracking,
+    },
 ];
 
 fn apply_v1_base_schema(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
@@ -189,6 +194,29 @@ fn apply_v2_m3_automation_state(tx: &Transaction<'_>) -> Result<(), rusqlite::Er
     )?;
     add_column_if_missing(tx, "backup_state", "overdue_anchor_at_unix", "INTEGER")?;
     add_column_if_missing(tx, "backup_state", "last_failure_at_unix", "INTEGER")?;
+    Ok(())
+}
+
+fn apply_v3_backoff_tracking(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
+    add_column_if_missing(tx, "backup_state", "backoff_kind", "TEXT")?;
+    add_column_if_missing(
+        tx,
+        "destination_state",
+        "maintenance_backoff_attempt",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(
+        tx,
+        "destination_state",
+        "maintenance_backoff_until_unix",
+        "INTEGER",
+    )?;
+    add_column_if_missing(
+        tx,
+        "destination_state",
+        "last_maintenance_failure_at_unix",
+        "INTEGER",
+    )?;
     Ok(())
 }
 
@@ -277,7 +305,7 @@ mod tests {
         assert_eq!(current_schema_version(&conn).unwrap(), 0);
 
         run_migrations(&mut conn, history_migrations()).expect("upgrade M2 -> M3");
-        assert_eq!(current_schema_version(&conn).unwrap(), 2);
+        assert_eq!(current_schema_version(&conn).unwrap(), 3);
 
         let pending_reason: Option<String> = conn
             .query_row("SELECT pending_reason FROM runs WHERE id = 'r1'", [], |r| {
@@ -286,15 +314,16 @@ mod tests {
             .expect("pending_reason column exists");
         assert!(pending_reason.is_none());
 
-        let (pf, backoff): (i64, i64) = conn
+        let (pf, backoff, bkind): (i64, i64, Option<String>) = conn
             .query_row(
-                "SELECT pending_forget, backoff_attempt FROM backup_state WHERE backup_id = 'b1'",
+                "SELECT pending_forget, backoff_attempt, backoff_kind FROM backup_state WHERE backup_id = 'b1'",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .expect("M2 row preserved with M3 default column");
         assert_eq!(pf, 1);
         assert_eq!(backoff, 0);
+        assert!(bkind.is_none());
     }
 
     #[test]
@@ -306,7 +335,7 @@ mod tests {
             err,
             MigrationError::UnsupportedFutureVersion {
                 current: 999,
-                max_supported: 2
+                max_supported: 3
             }
         ));
     }

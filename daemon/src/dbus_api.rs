@@ -76,6 +76,10 @@ pub struct ResticStatusDto {
     pub error_kind: Option<String>,
     pub found_version: Option<String>,
     pub message: String,
+    /// Raw reason for `invalid_custom_path` / detail for `unreadable_version` (parameter for the
+    /// GUI's own localized text; `message` stays daemon-locale text for tray/notifications).
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 /// Secret store probe state reported to GUI (`U19`, `§6.1`).
@@ -113,6 +117,10 @@ pub struct BackupAvailabilityDto {
     /// `"source_unavailable"` | `"destination_unreachable"` when `!available`.
     pub blocked_reason: Option<String>,
     pub reason_text: Option<String>,
+    /// Source check code when the source is unavailable: `"path_missing"` |
+    /// `"drive_not_mounted"` | `"drive_mismatch"` | `"drive_empty"` (locale independent).
+    #[serde(default)]
+    pub source_status: Option<String>,
 }
 
 /// Progress snapshot for an active run (`AC-M1-11-5`).
@@ -144,6 +152,8 @@ pub struct OverallStatusDto {
     pub waiting_count: usize,
     pub paused: bool,
     #[serde(default)]
+    pub now_unix: i64,
+    #[serde(default)]
     pub paused_since_unix: Option<i64>,
     #[serde(default)]
     pub paused_until_unix: Option<i64>,
@@ -170,6 +180,17 @@ pub struct BackupSummaryDto {
     pub is_overdue: bool,
     pub error_action: Option<String>,
     pub error_summary: Option<String>,
+    /// Stable error-kind code of the last run (`Error`/`Warning`): `wrong_password` |
+    /// `repo_missing` | `locked` | `destination_unreachable` | `source_unavailable` |
+    /// `auth_failed` | `incomplete_snapshot` | `retention_pending` | `cancelled` | `unknown`.
+    #[serde(default)]
+    pub error_kind: Option<String>,
+    /// Raw restic/daemon text of the last run's error (detail for `error_kind`).
+    #[serde(default)]
+    pub error_detail: Option<String>,
+    /// restic exit code of the last run's error, if restic ran.
+    #[serde(default)]
+    pub error_exit_code: Option<i32>,
     pub unreadable_files: Vec<String>,
     #[serde(default)]
     pub pending_forget: bool,
@@ -191,6 +212,12 @@ pub struct BackupSummaryDto {
     pub pending_primary_code: Option<String>,
     #[serde(default)]
     pub pending_reasons: Vec<String>,
+    /// Reason codes parallel to `pending_reasons` (same codes as `pending_primary_code`).
+    #[serde(default)]
+    pub pending_reason_codes: Vec<String>,
+    /// Next retry time while a `backoff` reason is listed.
+    #[serde(default)]
+    pub pending_retry_at_unix: Option<i64>,
     #[serde(default)]
     pub missed_slots_count: usize,
     #[serde(default)]
@@ -224,6 +251,13 @@ pub struct DestinationSummaryDto {
     pub pending_forget_count: usize,
     #[serde(default)]
     pub stale_lock_count: usize,
+    /// Why due maintenance waits (`ausstehend`, AC-M3-05-5): `destination_unreachable` |
+    /// `on_battery` | `metered` | `queue` | `backoff` (same codes as backup pending reasons).
+    #[serde(default)]
+    pub maintenance_pending_reason: Option<String>,
+    /// Next maintenance retry while `maintenance_pending_reason == "backoff"`.
+    #[serde(default)]
+    pub maintenance_retry_at_unix: Option<i64>,
 }
 
 /// Full daemon state snapshot returned by `GetState`.
@@ -254,6 +288,11 @@ pub struct RunDetailDto {
     pub error_action: Option<String>,
     pub error_raw_detail: Option<String>,
     pub unreadable_files: Vec<String>,
+    /// Stable error-kind code (see [`BackupSummaryDto::error_kind`]); detail: `error_raw_detail`.
+    #[serde(default)]
+    pub error_kind: Option<String>,
+    #[serde(default)]
+    pub error_exit_code: Option<i32>,
 }
 
 /// Compact snapshot DTO (`AC-M1-22-4`).
@@ -303,6 +342,10 @@ pub struct SkippedBackupDto {
     pub backup_name: String,
     pub reason: String,
     pub reason_text: String,
+    /// Error-kind code for `reason == "permanent_error"` (last run's `error_kind`) and
+    /// `reason == "error"` (`secret_store_locked` | `restic_unavailable` | `unknown`).
+    #[serde(default)]
+    pub error_kind: Option<String>,
 }
 
 /// Summary returned by `StartAllBackups`.
@@ -310,6 +353,8 @@ pub struct SkippedBackupDto {
 pub struct StartAllResultDto {
     pub started_run_ids: Vec<String>,
     pub skipped: Vec<SkippedBackupDto>,
+    #[serde(default)]
+    pub queued_backup_ids: Vec<String>,
 }
 
 /// Result of `CheckAvailability`.

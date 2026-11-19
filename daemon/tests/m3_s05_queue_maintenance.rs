@@ -1,0 +1,628 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! M3-S05 per-destination queue and maintenance runs (`AC-M3-05-1`, `-3`, `-4`, `-5`, `-6`).
+
+mod common;
+
+use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
+use common::m3::{
+    M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, add_local_backup, backup_summary,
+    dest_summary, hold_repo_lock, restic_repo_cmd, restic_variants, settle, spawn_m3_daemon,
+    wait_for_state,
+};
+use common::{run_isolated_test, start_fake_notifications, start_fake_sni_watcher};
+use kestic_core::clock::FakeClock;
+use kestic_core::model::{
+    Backup, BackupId, Destination, DestinationId, DestinationKind, RunKind, RunStatus, Schedule,
+    Source,
+};
+use kestic_daemon::dbus_api::DaemonStateDto;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+use time::OffsetDateTime;
+use time::macros::datetime;
+
+/// Friday 2026-12-04 11:59:30 Europe/Zurich, before the first-Sunday maintenance slot.
+const FRIDAY: OffsetDateTime = datetime!(2026-12-04 10:59:30 UTC);
+/// Sunday 2026-12-06 12:00:05 Europe/Zurich: `prune` (every Sunday) and `check` (first Sunday) due.
+const SUNDAY_1200: OffsetDateTime = datetime!(2026-12-06 11:00:05 UTC);
+/// Sunday 2026-12-06 12:40 Europe/Zurich.
+const SUNDAY_1240: OffsetDateTime = datetime!(2026-12-06 11:40:00 UTC);
+/// 2026-12-01 12:00:05 Europe/Zurich.
+const TUESDAY_1200: OffsetDateTime = datetime!(2026-12-01 11:00:05 UTC);
+
+struct Fakes {
+    upower: FakeUPowerHandle,
+    nm: FakeNetworkManagerHandle,
+    _notif: zbus::Connection,
+    _sni: zbus::Connection,
+}
+
+fn start_fakes() -> Fakes {
+    let (notif, _capture) = start_fake_notifications();
+    Fakes {
+        _sni: start_fake_sni_watcher(),
+        upower: FakeUPowerHandle::start(false, 100.0),
+        nm: FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]),
+        _notif: notif,
+    }
+}
+
+struct Rig {
+    daemon: M3Daemon,
+    clock: Arc<FakeClock>,
+    wrapper: ResticWrapper,
+    variant: ResticVariant,
+}
+
+fn start_rig(root: &Path, variant: &ResticVariant, base: &str, start: OffsetDateTime) -> Rig {
+    let sub = variant.sub(base);
+    let wrapper = ResticWrapper::create(&root.join(&sub).join("wrapper"), &variant.bin);
+    let clock = Arc::new(FakeClock::new(start));
+    let bus = variant.bus_name(base);
+    let daemon = spawn_m3_daemon(
+        root,
+        M3DaemonOpts::new(&sub, &bus, &wrapper.path, Arc::clone(&clock) as _),
+    );
+    Rig {
+        daemon,
+        clock,
+        wrapper,
+        variant: variant.clone(),
+    }
+}
+
+/// Adds a backup (given schedule) to an existing destination through the daemon API.
+fn add_backup_on(
+    rig: &Rig,
+    root: &Path,
+    dest_id: &DestinationId,
+    name: &str,
+    schedule: Schedule,
+) -> (BackupId, String) {
+    let src = root.join(rig.variant.sub("src")).join(name);
+    fs::create_dir_all(&src).expect("mkdir src");
+    fs::write(src.join("f.txt"), format!("data {name}")).expect("write src");
+    let mut backup = Backup::new(name, Source::folder(&src), dest_id.clone()).expect("backup");
+    backup.schedule = schedule;
+    let id_str = rig.daemon.client.add_backup(&backup).expect("add backup");
+    (BackupId::parse(&id_str).expect("id"), id_str)
+}
+
+/// Adds an empty local destination (maintenance only) and waits one tick for its baseline.
+fn add_local_dest(rig: &Rig, root: &Path, name: &str) -> Destination {
+    let repo = root.join(rig.variant.sub("repo")).join(name);
+    fs::create_dir_all(&repo).expect("mkdir repo");
+    let dest = Destination::new(name, DestinationKind::Local { path: repo }).expect("dest");
+    rig.daemon
+        .client
+        .add_destination(&dest, "init", &format!("pw-{name}"), "")
+        .expect("init destination");
+    std::thread::sleep(Duration::from_millis(1300));
+    dest
+}
+
+fn maintenance_done(state: &DaemonStateDto, dest_id: &DestinationId) -> bool {
+    let d = dest_summary(state, dest_id);
+    d.last_prune_at_unix.is_some() && d.last_check_at_unix.is_some() && !d.maintenance_running
+}
+
+/// AC-M3-05-1 (§5.1 queue): backups A and B on the same destination, both due 12:00 ->
+/// (a) they run one after the other, (b) B is `ausstehend` (queue) while A runs.
+#[test]
+fn ac_m3_05_1_backups_on_same_destination_run_sequentially_second_is_queued() {
+    run_isolated_test(
+        "ac_m3_05_1_backups_on_same_destination_run_sequentially_second_is_queued",
+        "KESTIC_M3_05_1_INNER",
+        |root| {
+            let _fakes = start_fakes();
+            for variant in restic_variants() {
+                let rig = start_rig(
+                    root,
+                    &variant,
+                    "M3Q1",
+                    TUESDAY_1200 - time::Duration::seconds(35),
+                );
+                let client = &rig.daemon.client;
+                let fx = add_local_backup(client, root, &variant.sub("M3Q1"), "Alpha", |_| {});
+                let (beta_id, _) = add_backup_on(
+                    &rig,
+                    root,
+                    &fx.dest.id,
+                    "Beta",
+                    Schedule::Daily {
+                        hour: 12,
+                        minute: 0,
+                    },
+                );
+                let alpha_id = fx.backup.id.clone();
+                rig.wrapper.hold("backup");
+
+                rig.clock.set(TUESDAY_1200);
+                let running = wait_for_state(client, Duration::from_secs(15), "one running", |s| {
+                    backup_summary(s, &alpha_id).active_run.is_some()
+                        || backup_summary(s, &beta_id).active_run.is_some()
+                });
+                let (first, second) = if backup_summary(&running, &alpha_id).active_run.is_some() {
+                    (&alpha_id, &beta_id)
+                } else {
+                    (&beta_id, &alpha_id)
+                };
+                // (b) the other backup waits in the destination queue.
+                let queued =
+                    wait_for_state(client, Duration::from_secs(10), "second queued", |s| {
+                        backup_summary(s, second).pending_primary_code.as_deref() == Some("queue")
+                    });
+                assert!(
+                    backup_summary(&queued, first).active_run.is_some(),
+                    "{}: (b) first backup is still running while the second is queued",
+                    variant.label
+                );
+                assert_eq!(
+                    backup_summary(&queued, second).active_run,
+                    None,
+                    "{}: (b) second backup has not started",
+                    variant.label
+                );
+                settle();
+                assert_eq!(
+                    rig.wrapper.of('S', "backup").len(),
+                    1,
+                    "{}: (a) only one restic backup process while the first holds the destination",
+                    variant.label
+                );
+
+                // (a) after the first one ends the second runs: start/end never interleave.
+                rig.wrapper.release("backup");
+                wait_for_state(client, Duration::from_secs(30), "both Ok", |s| {
+                    [&alpha_id, &beta_id].iter().all(|id| {
+                        backup_summary(s, id)
+                            .last_run
+                            .as_ref()
+                            .is_some_and(|r| r.status == RunStatus::Ok)
+                    })
+                });
+                let kinds: String = rig
+                    .wrapper
+                    .entries()
+                    .iter()
+                    .filter(|e| e.sub == "backup" && (e.kind == 'S' || e.kind == 'E'))
+                    .map(|e| e.kind)
+                    .collect();
+                assert_eq!(
+                    kinds, "SESE",
+                    "{}: (a) sequential, no overlap",
+                    variant.label
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M3-05-3 (FR-45): (a) a due maintenance run starts only after the running backup ended, and
+/// (b) no backup starts on the destination while maintenance runs.
+#[test]
+fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
+    run_isolated_test(
+        "ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination",
+        "KESTIC_M3_05_3_INNER",
+        |root| {
+            let _fakes = start_fakes();
+            for variant in restic_variants() {
+                let rig = start_rig(root, &variant, "M3Q3", datetime!(2026-12-06 10:59:30 UTC));
+                let client = &rig.daemon.client;
+                let alpha = add_local_backup(client, root, &variant.sub("M3Q3"), "Alpha", |_| {});
+                let (beta_id, _) = add_backup_on(
+                    &rig,
+                    root,
+                    &alpha.dest.id,
+                    "Beta",
+                    Schedule::Daily {
+                        hour: 12,
+                        minute: 30,
+                    },
+                );
+                let dest_id = alpha.dest.id.clone();
+                std::thread::sleep(Duration::from_millis(1300));
+                rig.wrapper.hold("backup");
+                rig.wrapper.hold("prune");
+
+                // Alpha (12:00) and the maintenance (Sunday 12:00) are due together; Alpha runs first.
+                rig.clock.set(SUNDAY_1200);
+                wait_for_state(client, Duration::from_secs(15), "alpha running", |s| {
+                    backup_summary(s, &alpha.backup.id).active_run.is_some()
+                });
+                settle();
+                // (a) no maintenance process while the backup runs.
+                assert_eq!(
+                    rig.wrapper.of('S', "prune").len() + rig.wrapper.of('S', "check").len(),
+                    0,
+                    "{}: (a) maintenance must wait for the running backup",
+                    variant.label
+                );
+                let during_backup = client.get_state().expect("GetState");
+                assert!(
+                    !dest_summary(&during_backup, &dest_id).maintenance_running,
+                    "{}: (a) maintenance not running yet",
+                    variant.label
+                );
+
+                // Backup ends -> maintenance starts (its `prune` is held by the wrapper).
+                rig.wrapper.release("backup");
+                rig.wrapper
+                    .wait_for('S', "prune", 1, Duration::from_secs(30));
+                let backup_end = rig
+                    .wrapper
+                    .of('E', "backup")
+                    .last()
+                    .expect("backup end")
+                    .at_ms;
+                let prune_start = rig.wrapper.of('S', "prune")[0].at_ms;
+                assert!(
+                    prune_start >= backup_end,
+                    "{}: (a) maintenance started ({prune_start}) after the backup ended ({backup_end})",
+                    variant.label
+                );
+
+                // (b) Beta becomes due (12:30) while maintenance runs: it must queue, not start.
+                rig.clock.set(SUNDAY_1240);
+                wait_for_state(client, Duration::from_secs(10), "beta queued", |s| {
+                    backup_summary(s, &beta_id).pending_primary_code.as_deref() == Some("queue")
+                });
+                settle();
+                let during_maintenance = client.get_state().expect("GetState");
+                assert!(
+                    dest_summary(&during_maintenance, &dest_id).maintenance_running,
+                    "{}: (b) maintenance is running",
+                    variant.label
+                );
+                assert_eq!(
+                    rig.wrapper.of('S', "backup").len(),
+                    1,
+                    "{}: (b) no backup process starts during maintenance",
+                    variant.label
+                );
+
+                // After maintenance Beta runs.
+                rig.wrapper.release("prune");
+                wait_for_state(client, Duration::from_secs(40), "beta Ok", |s| {
+                    backup_summary(s, &beta_id)
+                        .last_run
+                        .as_ref()
+                        .is_some_and(|r| r.status == RunStatus::Ok)
+                });
+                let maintenance_end = ["prune", "check"]
+                    .iter()
+                    .flat_map(|sub| rig.wrapper.of('E', sub))
+                    .map(|e| e.at_ms)
+                    .max()
+                    .expect("maintenance end");
+                let beta_start = rig.wrapper.of('S', "backup")[1].at_ms;
+                assert!(
+                    beta_start >= maintenance_end,
+                    "{}: (b) backup started ({beta_start}) after maintenance ended ({maintenance_end})",
+                    variant.label
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M3-05-4 (F4): backup A with an open `forget` (last run `Warnung`, Exit 11) -> when the
+/// maintenance run starts, (a) first `forget --tag kestic:<A> --group-by tags`, (b) then `prune`.
+#[test]
+fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
+    run_isolated_test(
+        "ac_m3_05_4_maintenance_runs_open_forget_before_prune",
+        "KESTIC_M3_05_4_INNER",
+        |root| {
+            let _fakes = start_fakes();
+            for variant in restic_variants() {
+                let rig = start_rig(root, &variant, "M3Q4", FRIDAY);
+                let client = &rig.daemon.client;
+                let alpha = add_local_backup(client, root, &variant.sub("M3Q4"), "Alpha", |b| {
+                    b.schedule = Schedule::ManualOnly;
+                });
+                let alpha_id = alpha.backup.id.clone();
+                client.start_backup(&alpha.backup_id_str).expect("seed run");
+                wait_for_state(client, Duration::from_secs(30), "seed Ok", |s| {
+                    backup_summary(s, &alpha_id)
+                        .last_run
+                        .as_ref()
+                        .is_some_and(|r| r.status == RunStatus::Ok)
+                });
+
+                // Non-exclusive foreign lock -> backup Exit 0, forget Exit 11 -> Warning + open forget.
+                let mut cmd = restic_repo_cmd(
+                    &variant.bin,
+                    &alpha.repo_dir,
+                    "pw-Alpha",
+                    &root.join("restic-cache"),
+                );
+                cmd.args(["backup", "--stdin", "--stdin-filename", "hold.txt"]);
+                let mut holder = hold_repo_lock(cmd, &alpha.repo_dir);
+                std::thread::sleep(Duration::from_millis(30));
+                client
+                    .start_backup(&alpha.backup_id_str)
+                    .expect("run under lock");
+                let warned = wait_for_state(client, Duration::from_secs(30), "Warning", |s| {
+                    backup_summary(s, &alpha_id)
+                        .last_run
+                        .as_ref()
+                        .is_some_and(|r| r.status == RunStatus::Warning)
+                });
+                assert!(
+                    backup_summary(&warned, &alpha_id).pending_forget,
+                    "{}: precondition: forget is open",
+                    variant.label
+                );
+                if let Some(mut stdin) = holder.0.stdin.take() {
+                    let _ = stdin.write_all(b"done");
+                }
+                // Let the foreign backup finish cleanly so it removes its lock (no stale lock).
+                holder.0.wait().expect("foreign backup finishes");
+                let seen = rig.wrapper.entries().len();
+
+                // Sunday 12:00: maintenance starts.
+                rig.clock.set(SUNDAY_1200);
+                let done =
+                    wait_for_state(client, Duration::from_secs(40), "maintenance done", |s| {
+                        maintenance_done(s, &alpha.dest.id)
+                    });
+                assert_eq!(
+                    dest_summary(&done, &alpha.dest.id).pending_forget_count,
+                    0,
+                    "{}: open forget was worked off",
+                    variant.label
+                );
+                let calls: Vec<_> = rig
+                    .wrapper
+                    .entries()
+                    .into_iter()
+                    .skip(seen)
+                    .filter(|e| e.kind == 'S' && (e.sub == "forget" || e.sub == "prune"))
+                    .collect();
+                let forget_pos = calls
+                    .iter()
+                    .position(|e| e.sub == "forget")
+                    .expect("maintenance runs forget");
+                let prune_pos = calls
+                    .iter()
+                    .position(|e| e.sub == "prune")
+                    .expect("maintenance runs prune");
+                let forget = &calls[forget_pos];
+                // (a) `forget --tag kestic:<A> --group-by tags` comes first.
+                assert!(
+                    forget
+                        .detail
+                        .contains(&format!("--tag kestic:{}", alpha_id.as_str())),
+                    "{}: (a) forget is limited to the tag of backup A: {}",
+                    variant.label,
+                    forget.detail
+                );
+                assert!(
+                    forget.detail.contains("--group-by tags"),
+                    "{}: (a) forget groups by tags: {}",
+                    variant.label,
+                    forget.detail
+                );
+                // (b) `prune` runs after it.
+                assert!(
+                    forget_pos < prune_pos,
+                    "{}: (b) prune after forget: {calls:?}",
+                    variant.label
+                );
+                let forget_end = rig
+                    .wrapper
+                    .of('E', "forget")
+                    .into_iter()
+                    .find(|e| e.at_ms >= forget.at_ms)
+                    .expect("forget end");
+                assert!(
+                    calls[prune_pos].at_ms >= forget_end.at_ms,
+                    "{}: (b) prune starts only after forget ended",
+                    variant.label
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M3-05-5 (F11, negative): a due maintenance run is held back (a) on battery and (b-neg) on a
+/// metered connection, and (b) starts as soon as AC power and an unmetered connection are present.
+#[test]
+fn ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection() {
+    run_isolated_test(
+        "ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection",
+        "KESTIC_M3_05_5_INNER",
+        |root| {
+            let fakes = start_fakes();
+            for variant in restic_variants() {
+                fakes.upower.set_on_battery(true, 80.0);
+                fakes.nm.update(true, false, Some("Heim"));
+                let rig = start_rig(root, &variant, "M3Q5", FRIDAY);
+                let client = &rig.daemon.client;
+                let dest = add_local_dest(&rig, root, "Z");
+                let repo_calls_before = rig.wrapper.started_repo_count();
+
+                // On battery: the due maintenance does not start.
+                rig.clock.set(SUNDAY_1200);
+                settle();
+                let on_battery = client.get_state().expect("GetState");
+                let d = dest_summary(&on_battery, &dest.id);
+                assert!(
+                    !d.maintenance_running && d.last_prune_at_unix.is_none(),
+                    "{}: (a) no maintenance on battery",
+                    variant.label
+                );
+                assert_eq!(
+                    rig.wrapper.started_repo_count(),
+                    repo_calls_before,
+                    "{}: (a) no restic process on battery: {:?}",
+                    variant.label,
+                    rig.wrapper.entries()
+                );
+                assert_eq!(
+                    d.maintenance_pending_reason.as_deref(),
+                    Some("on_battery"),
+                    "{}: (a) maintenance visibly waits (ausstehend) for AC power",
+                    variant.label
+                );
+
+                // AC power but metered connection: still deferred.
+                fakes.upower.set_on_battery(false, 100.0);
+                fakes.nm.update(true, true, Some("Heim"));
+                settle();
+                let metered = client.get_state().expect("GetState");
+                let d = dest_summary(&metered, &dest.id);
+                assert!(
+                    !d.maintenance_running && d.last_prune_at_unix.is_none(),
+                    "{}: (a) no maintenance on a metered connection",
+                    variant.label
+                );
+                assert_eq!(
+                    rig.wrapper.started_repo_count(),
+                    repo_calls_before,
+                    "{}: (a) no restic process on a metered connection",
+                    variant.label
+                );
+                assert_eq!(
+                    d.maintenance_pending_reason.as_deref(),
+                    Some("metered"),
+                    "{}: (a) maintenance visibly waits (ausstehend) for an unmetered connection",
+                    variant.label
+                );
+
+                // AC power and unmetered: starts.
+                fakes.nm.update(true, false, Some("Heim"));
+                let done = wait_for_state(client, Duration::from_secs(40), "maintenance", |s| {
+                    maintenance_done(s, &dest.id)
+                });
+                assert!(
+                    dest_summary(&done, &dest.id).last_prune_at_unix.is_some(),
+                    "{}: (b) prune ran after power + unmetered",
+                    variant.label
+                );
+                assert_eq!(
+                    dest_summary(&done, &dest.id).maintenance_pending_reason,
+                    None,
+                    "{}: (b) no waiting reason once maintenance ran",
+                    variant.label
+                );
+                assert!(
+                    !rig.wrapper.of('S', "prune").is_empty(),
+                    "{}: (b) restic prune started",
+                    variant.label
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M3-05-6 (FR-11): a due `check` runs (a) without `--read-data` and (b) is recorded as a
+/// maintenance run in the destination's history.
+#[test]
+fn ac_m3_05_6_check_without_read_data_is_recorded_as_maintenance_run() {
+    run_isolated_test(
+        "ac_m3_05_6_check_without_read_data_is_recorded_as_maintenance_run",
+        "KESTIC_M3_05_6_INNER",
+        |root| {
+            let _fakes = start_fakes();
+            for variant in restic_variants() {
+                let rig = start_rig(root, &variant, "M3Q6", FRIDAY);
+                let client = &rig.daemon.client;
+                let dest = add_local_dest(&rig, root, "Z");
+
+                rig.clock.set(SUNDAY_1200);
+                let done = wait_for_state(client, Duration::from_secs(40), "maintenance", |s| {
+                    maintenance_done(s, &dest.id)
+                });
+                let checks = rig.wrapper.of('S', "check");
+                assert_eq!(checks.len(), 1, "{}: (a) one check call", variant.label);
+                assert!(
+                    !checks[0].detail.contains("--read-data"),
+                    "{}: (a) check without --read-data: {}",
+                    variant.label,
+                    checks[0].detail
+                );
+                let run = dest_summary(&done, &dest.id)
+                    .last_maintenance_run
+                    .clone()
+                    .expect("last maintenance run");
+                assert_eq!(run.kind, RunKind::Maintenance, "{}: (b)", variant.label);
+                assert_eq!(run.status, RunStatus::Ok, "{}: (b)", variant.label);
+                assert_eq!(run.destination_id, dest.id, "{}: (b)", variant.label);
+                assert!(
+                    done.recent_runs
+                        .iter()
+                        .any(|r| r.id == run.id && r.kind == RunKind::Maintenance),
+                    "{}: (b) maintenance run listed in the history",
+                    variant.label
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M3-05-8 (NFR-08, P41): with a running backup on the same destination (non-exclusive lock)
+/// the `prune` preview (a) returns a result instead of Exit 11 and (b) uses `--no-lock`.
+#[test]
+fn ac_m3_05_8_prune_preview_under_non_exclusive_lock_uses_no_lock() {
+    run_isolated_test(
+        "ac_m3_05_8_prune_preview_under_non_exclusive_lock_uses_no_lock",
+        "KESTIC_M3_05_8_INNER",
+        |root| {
+            let _fakes = start_fakes();
+            for variant in restic_variants() {
+                let rig = start_rig(root, &variant, "M3Q8", FRIDAY);
+                let client = &rig.daemon.client;
+                let fx = add_local_backup(client, root, &variant.sub("M3Q8"), "Docs", |_| {});
+                client.start_backup(&fx.backup_id_str).expect("seed run");
+                wait_for_state(client, Duration::from_secs(30), "seed Ok", |s| {
+                    backup_summary(s, &fx.backup.id)
+                        .last_run
+                        .as_ref()
+                        .is_some_and(|r| r.status == RunStatus::Ok)
+                });
+
+                let mut cmd = restic_repo_cmd(
+                    &variant.bin,
+                    &fx.repo_dir,
+                    "pw-Docs",
+                    &root.join("restic-cache"),
+                );
+                cmd.args(["backup", "--stdin", "--stdin-filename", "concurrent.txt"]);
+                let mut holder = hold_repo_lock(cmd, &fx.repo_dir);
+                let preview = client
+                    .preview_destination_maintenance(fx.dest.id.as_str())
+                    .expect("(a) the preview returns a result instead of failing with Exit 11");
+                assert!(
+                    preview.transparent_command.contains("--no-lock"),
+                    "{}: (b) preview command uses --no-lock: {}",
+                    variant.label,
+                    preview.transparent_command
+                );
+                assert!(
+                    preview.transparent_command.contains("--dry-run"),
+                    "{}: (b) preview is a dry run: {}",
+                    variant.label,
+                    preview.transparent_command
+                );
+                if let Some(mut stdin) = holder.0.stdin.take() {
+                    let _ = stdin.write_all(b"ok");
+                }
+                holder.0.wait().expect("foreign backup finishes");
+                rig.daemon.stop();
+            }
+        },
+    );
+}

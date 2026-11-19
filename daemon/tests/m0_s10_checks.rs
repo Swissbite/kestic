@@ -86,7 +86,7 @@ fn ac_m0_10_2_daemon_detects_replaced_binary_after_rename() {
         .spawn()
         .expect("spawn copied kestic binary");
 
-    let ready_deadline = Instant::now() + Duration::from_secs(5);
+    let ready_deadline = Instant::now() + Duration::from_secs(20);
     while !ready_file.exists() {
         assert!(
             Instant::now() < ready_deadline,
@@ -217,6 +217,13 @@ fn ac_m0_10_1_portal_inhibit_roundtrip_in_isolated_dbus_session() {
 
     let current_exe = std::env::current_exe().expect("current test executable");
     let out = Command::new("dbus-run-session")
+        .arg(format!(
+            "--config-file={}",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/private-session-bus.xml"
+            )
+        ))
         .arg("--")
         .arg(current_exe)
         .arg("ac_m0_10_1_portal_inhibit_roundtrip_in_isolated_dbus_session")

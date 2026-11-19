@@ -6,6 +6,7 @@
 mod backend;
 mod list_model;
 mod models;
+mod overall_text;
 mod smoke;
 mod state_cache;
 

@@ -56,21 +56,43 @@ pub enum SystemMonitorEvent {
 }
 
 async fn connect_target_bus(cfg: &MonitorBusConfig) -> zbus::Result<Connection> {
-    if cfg.use_session_bus {
+    let res = if cfg.use_session_bus {
         Connection::session().await
     } else {
         Connection::system().await
+    };
+    if let Err(ref err) = res {
+        let bus_kind = if cfg.use_session_bus {
+            "session"
+        } else {
+            "system"
+        };
+        eprintln!(
+            "kestic-daemon: failed to connect to {bus_kind} D-Bus for system monitors: {err}"
+        );
     }
+    res
 }
 
 async fn name_has_owner(conn: &Connection, dest: &str) -> bool {
-    let Ok(dbus) = zbus::fdo::DBusProxy::new(conn).await else {
-        return false;
+    let dbus = match zbus::fdo::DBusProxy::new(conn).await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("kestic-daemon: failed to create DBusProxy checking `{dest}`: {err}");
+            return false;
+        }
     };
     let Ok(bus_name) = zbus::names::BusName::try_from(dest) else {
+        eprintln!("kestic-daemon: invalid D-Bus name `{dest}`");
         return false;
     };
-    dbus.name_has_owner(bus_name).await.unwrap_or(false)
+    match dbus.name_has_owner(bus_name).await {
+        Ok(owned) => owned,
+        Err(err) => {
+            eprintln!("kestic-daemon: NameHasOwner failed for `{dest}`: {err}");
+            false
+        }
+    }
 }
 
 async fn get_prop_val(
@@ -80,10 +102,22 @@ async fn get_prop_val(
     iface: &str,
     prop: &str,
 ) -> Option<OwnedVariant> {
-    let proxy = Proxy::new(conn, dest, path, "org.freedesktop.DBus.Properties")
-        .await
-        .ok()?;
-    proxy.call("Get", &(iface, prop)).await.ok()
+    let proxy = match Proxy::new(conn, dest, path, "org.freedesktop.DBus.Properties").await {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!(
+                "kestic-daemon: failed to create Properties proxy for `{dest}` `{path}`: {err}"
+            );
+            return None;
+        }
+    };
+    match proxy.call("Get", &(iface, prop)).await {
+        Ok(v) => Some(v),
+        Err(err) => {
+            eprintln!("kestic-daemon: Properties.Get({iface}.{prop}) failed on `{dest}`: {err}");
+            None
+        }
+    }
 }
 
 /// Reads current UPower & NetworkManager state asynchronously.
@@ -121,6 +155,11 @@ pub async fn read_system_environment_async(
         {
             env.battery_percent = Some(pct.round().clamp(0.0, 100.0) as u8);
         }
+    } else if !cfg.use_session_bus {
+        eprintln!(
+            "kestic-daemon: UPower service `{}` is not owned on system bus; assuming AC power",
+            cfg.upower_dest
+        );
     }
 
     if name_has_owner(conn, &cfg.nm_dest).await {
@@ -192,6 +231,11 @@ pub async fn read_system_environment_async(
             }
             env.active_networks = active;
         }
+    } else if !cfg.use_session_bus {
+        eprintln!(
+            "kestic-daemon: NetworkManager service `{}` is not owned on system bus; assuming online unmetered",
+            cfg.nm_dest
+        );
     }
 
     env
@@ -281,17 +325,29 @@ impl LogindSleepInhibitor {
         block_on(async move {
             let conn = connect_target_bus(&cfg).await.ok()?;
             if !name_has_owner(&conn, &cfg.logind_dest).await {
+                if !cfg.use_session_bus {
+                    eprintln!(
+                        "kestic-daemon: logind service `{}` not owned; sleep inhibitor unavailable",
+                        cfg.logind_dest
+                    );
+                }
                 return None;
             }
-            let proxy = Proxy::new(
+            let proxy = match Proxy::new(
                 &conn,
                 cfg.logind_dest.as_str(),
                 "/org/freedesktop/login1",
                 "org.freedesktop.login1.Manager",
             )
             .await
-            .ok()?;
-            let fd: OwnedFd = proxy
+            {
+                Ok(p) => p,
+                Err(err) => {
+                    eprintln!("kestic-daemon: failed to create logind Manager proxy: {err}");
+                    return None;
+                }
+            };
+            let fd: OwnedFd = match proxy
                 .call(
                     "Inhibit",
                     &(
@@ -302,7 +358,13 @@ impl LogindSleepInhibitor {
                     ),
                 )
                 .await
-                .ok()?;
+            {
+                Ok(fd) => fd,
+                Err(err) => {
+                    eprintln!("kestic-daemon: logind Inhibit('sleep') failed: {err}");
+                    return None;
+                }
+            };
             Some(Self {
                 _conn: conn,
                 fd: Some(fd),
@@ -393,9 +455,20 @@ impl SystemMonitorHandle {
                     ),
                 ];
 
-                if let Ok(dbus_proxy) = zbus::fdo::DBusProxy::new(&conn).await {
-                    for rule in rules.into_iter().flatten() {
-                        let _ = dbus_proxy.add_match_rule(rule).await;
+                match zbus::fdo::DBusProxy::new(&conn).await {
+                    Ok(dbus_proxy) => {
+                        for rule in rules.into_iter().flatten() {
+                            if let Err(err) = dbus_proxy.add_match_rule(rule).await {
+                                eprintln!(
+                                    "kestic-daemon: failed to register system monitor match rule: {err}"
+                                );
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "kestic-daemon: failed to create DBusProxy for system monitor match rules: {err}"
+                        );
                     }
                 }
 

@@ -23,18 +23,20 @@ Kirigami.ScrollablePage {
             text: i18n("Back Up All Now")
             visible: appBackend.has_config_file && appBackend.backups_count > 0
             enabled: appBackend.blocking_kind === ""
-            tooltip: appBackend.blocking_kind !== "" ? appBackend.blocking_message : i18n("Start all available backups")
+            tooltip: appBackend.blocking_kind !== ""
+                ? appBackend.blocking_message
+                : (appBackend.back_up_all_hint !== "" ? appBackend.back_up_all_hint : i18n("Start all available backups"))
             onTriggered: appBackend.startAllBackups()
         },
         Kirigami.Action {
             id: pauseSchedulesAction
             objectName: "pauseSchedulesAction"
-            icon.name: appBackend.global_paused ? "media-playback-start" : "media-playback-pause"
-            text: appBackend.global_paused ? i18n("Paused…") : i18n("Pause Schedules…")
+            icon.name: appBackend.global_paused ? "media-playback-start" : "state-pause"
+            text: appBackend.global_paused ? i18n("Resume Schedules") : i18n("Pause Schedules…")
             visible: appBackend.has_config_file && appBackend.backups_count > 0
             enabled: appBackend.blocking_kind !== "daemon_unreachable"
             tooltip: appBackend.global_paused ? appBackend.global_paused_line : i18n("Temporarily pause scheduled backups")
-            onTriggered: globalPauseMenu.popup()
+            onTriggered: appBackend.global_paused ? appBackend.resumeGlobal() : globalPauseMenu.popup()
         }
     ]
 
@@ -45,33 +47,26 @@ Kirigami.ScrollablePage {
         Controls.MenuItem {
             objectName: "pauseGlobal1hItem"
             text: i18n("1 Hour")
+            Accessible.name: text
             onTriggered: appBackend.pauseGlobal("1h")
         }
         Controls.MenuItem {
             objectName: "pauseGlobal3hItem"
             text: i18n("3 Hours")
+            Accessible.name: text
             onTriggered: appBackend.pauseGlobal("3h")
         }
         Controls.MenuItem {
             objectName: "pauseGlobalTomorrowItem"
             text: i18n("Until Tomorrow")
+            Accessible.name: text
             onTriggered: appBackend.pauseGlobal("tomorrow")
         }
         Controls.MenuItem {
             objectName: "pauseGlobalIndefiniteItem"
             text: i18n("Until I Resume")
+            Accessible.name: text
             onTriggered: appBackend.pauseGlobal("indefinite")
-        }
-        Controls.MenuSeparator {
-            visible: appBackend.global_paused
-        }
-        Controls.MenuItem {
-            objectName: "resumeGlobalMenuItem"
-            text: i18n("Resume")
-            icon.name: "media-playback-start"
-            visible: appBackend.global_paused
-            enabled: appBackend.global_paused
-            onTriggered: appBackend.resumeGlobal()
         }
     }
 
@@ -185,6 +180,16 @@ Kirigami.ScrollablePage {
                         objectName: "overallHeadlineLabel"
                         level: 1
                         text: appBackend.overall_headline
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
+                    Controls.Label {
+                        objectName: "backUpAllHintLabel"
+                        visible: appBackend.back_up_all_hint !== ""
+                        text: appBackend.back_up_all_hint
+                        color: Kirigami.Theme.textColor
+                        opacity: 0.8
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -352,6 +357,7 @@ Kirigami.ScrollablePage {
                                 spacing: Kirigami.Units.smallSpacing
 
                                 Controls.Button {
+                                    objectName: "overviewBackUpNowButton"
                                     visible: !card.isRunning && !(card.hasError && card.errorAction === "update_stored_password")
                                     icon.name: "media-playback-start"
                                     text: i18n("Back Up Now")
@@ -365,6 +371,7 @@ Kirigami.ScrollablePage {
                                 }
 
                                 Controls.Button {
+                                    objectName: "overviewUpdatePasswordButton"
                                     visible: !card.isRunning && card.hasError && card.errorAction === "update_stored_password"
                                     icon.name: "dialog-password"
                                     text: i18n("Update Saved Password…")
@@ -391,6 +398,7 @@ Kirigami.ScrollablePage {
                                     Controls.Menu {
                                         id: cardMenu
                                         Controls.MenuItem {
+                                            objectName: "overviewCardBackUpMenuItem"
                                             text: (card.hasError && card.errorAction === "update_stored_password")
                                                 ? i18n("Back Up Now Anyway")
                                                 : i18n("Back Up Now")

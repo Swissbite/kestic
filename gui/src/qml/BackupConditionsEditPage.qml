@@ -187,14 +187,12 @@ Kirigami.ScrollablePage {
         }
     ]
 
-    Kirigami.PromptDialog {
+    UnsavedChangesDialog {
         id: unsavedDialog
         objectName: "unsavedConditionsDialog"
-        title: i18n("Save changes?")
         subtitle: i18n("You have unsaved changes to run conditions.")
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onAccepted: page.commitSave(true)
-        onDiscarded: {
+        onSaveRequested: page.commitSave(true)
+        onDiscardRequested: {
             appBackend.has_unsaved_changes = false;
             page.loadFromSaved(page.savedConditionsJson);
             rootWindow.popSubPage();
