@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# CodeQL advanced setup (replaces GitHub's default setup with the same
+# languages, query suite and weekly schedule). The only difference: the Rust
+# rule `rust/hard-coded-cryptographic-value` is filtered out for test code
+# (`**/tests/**`), where hard-coded passwords only protect temporary test
+# repositories. All other rules still cover tests; the rule still covers
+# production code. Decision: docs/spec/questions.md (2026-11-19, CI).
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, c-cpp, rust]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: default
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+          output: sarif-results
+          # Rust results are uploaded after filtering (below).
+          upload: ${{ matrix.language == 'rust' && 'failure-only' || 'always' }}
+
+      - name: Drop hard-coded test passwords from Rust results
+        if: matrix.language == 'rust'
+        # v1.1
+        uses: advanced-security/filter-sarif@2da736ff05ef065cb2894ac6892e47b5eac2c3c0
+        with:
+          patterns: |
+            -**/tests/**:rust/hard-coded-cryptographic-value
+          input: sarif-results/rust.sarif
+          output: sarif-results/rust.sarif
+
+      - name: Upload filtered Rust results
+        if: matrix.language == 'rust'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results/rust.sarif
+          category: /language:rust
