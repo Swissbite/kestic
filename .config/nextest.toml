@@ -25,3 +25,5 @@ test-group = "heavy-integration"
 
 [profile.ci]
 test-threads = "num-cpus"
+# Run every test even after a failure, so one CI run shows all failing tests.
+fail-fast = false

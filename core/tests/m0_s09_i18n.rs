@@ -107,8 +107,8 @@ fn run_i18n_smoke(root: &Path, lang: &str, screenshot_rel: &str) {
 
     assert!(
         output.status.success(),
-        "i18n smoke `{lang}` failed (status={:?}):\nstdout: {}\nstderr: {}",
-        output.status.code(),
+        "i18n smoke `{lang}` failed (status={}):\nstdout: {}\nstderr: {}",
+        output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

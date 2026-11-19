@@ -160,8 +160,8 @@ fn run_m3_gui_smoke(root: &Path, scenario: &str, layout: &str, lang: &str, scree
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "M3 GUI smoke `{scenario}` ({layout}/{lang}) failed (status={:?}):\nstdout:\n{}\nstderr:\n{}",
-        output.status.code(),
+        "M3 GUI smoke `{scenario}` ({layout}/{lang}) failed (status={}):\nstdout:\n{}\nstderr:\n{}",
+        output.status,
         String::from_utf8_lossy(&output.stdout),
         stderr
     );

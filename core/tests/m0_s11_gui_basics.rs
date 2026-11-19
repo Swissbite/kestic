@@ -83,8 +83,8 @@ fn run_isolated_smoke(
 
     assert!(
         output.status.success(),
-        "GUI smoke `{tag}` ({lang}) failed (status={:?}):\nstdout: {}\nstderr: {}",
-        output.status.code(),
+        "GUI smoke `{tag}` ({lang}) failed (status={}):\nstdout: {}\nstderr: {}",
+        output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
