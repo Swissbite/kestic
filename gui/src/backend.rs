@@ -72,6 +72,18 @@ pub mod qobject {
         #[qproperty(QString, retention_preview_state)]
         #[qproperty(QString, retention_preview_result_json)]
         #[qproperty(QString, retention_preview_error)]
+        #[qproperty(bool, global_paused)]
+        #[qproperty(QString, global_paused_line)]
+        #[qproperty(i32, default_overdue_threshold)]
+        #[qproperty(bool, notif_on_error)]
+        #[qproperty(bool, notif_on_warning)]
+        #[qproperty(bool, notif_on_overdue)]
+        #[qproperty(bool, notif_on_maintenance_failed)]
+        #[qproperty(bool, notif_on_restic_update)]
+        #[qproperty(QString, start_all_skipped_message)]
+        #[qproperty(QString, condition_override_backup_id)]
+        #[qproperty(QString, condition_override_backup_name)]
+        #[qproperty(QString, condition_override_message)]
         type KesticApp = super::KesticAppRust;
 
         #[qsignal]
@@ -96,6 +108,15 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             has_running_run: bool,
             running_backup_name: QString,
+        );
+
+        #[qsignal]
+        #[cxx_name = "conditionOverrideRequested"]
+        fn condition_override_requested(
+            self: Pin<&mut KesticApp>,
+            backup_id: QString,
+            backup_name: QString,
+            message: QString,
         );
 
         #[qinvokable]
@@ -383,27 +404,126 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "recoveryActionLabel"]
         fn recovery_action_label(self: &KesticApp, action_code: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "pauseGlobal"]
+        fn pause_global(self: Pin<&mut KesticApp>, duration_kind: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "resumeGlobal"]
+        fn resume_global(self: Pin<&mut KesticApp>) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "pauseBackup"]
+        fn pause_backup(
+            self: Pin<&mut KesticApp>,
+            backup_id: &QString,
+            duration_kind: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "resumeBackup"]
+        fn resume_backup(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "startBackupOverride"]
+        fn start_backup_override(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "dismissStartAllSkipped"]
+        fn dismiss_start_all_skipped(self: Pin<&mut KesticApp>);
+
+        #[qinvokable]
+        #[cxx_name = "unlockDestination"]
+        fn unlock_destination(self: Pin<&mut KesticApp>, dest_id: &QString) -> i32;
+
+        #[qinvokable]
+        #[cxx_name = "previewDestinationMaintenance"]
+        fn preview_destination_maintenance(self: Pin<&mut KesticApp>, dest_id: &QString)
+        -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "updateDestinationMaintenance"]
+        fn update_destination_maintenance(
+            self: Pin<&mut KesticApp>,
+            dest_id: &QString,
+            maintenance_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "updateBackupSchedule"]
+        fn update_backup_schedule(
+            self: Pin<&mut KesticApp>,
+            backup_id: &QString,
+            schedule_json: &QString,
+            overdue_threshold: i32,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "updateBackupConditions"]
+        fn update_backup_conditions(
+            self: Pin<&mut KesticApp>,
+            backup_id: &QString,
+            conditions_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "updateSettings"]
+        fn update_settings(
+            self: Pin<&mut KesticApp>,
+            default_overdue_threshold: i32,
+            on_error: bool,
+            on_warning: bool,
+            on_overdue: bool,
+            on_maintenance_failed: bool,
+            on_restic_update: bool,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "listKnownNetworksJson"]
+        fn list_known_networks_json(self: &KesticApp) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "previewScheduleSlotsJson"]
+        fn preview_schedule_slots_json(self: &KesticApp, schedule_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "formatScheduleSummaryJson"]
+        fn format_schedule_summary_json(self: &KesticApp, schedule_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "formatConditionsSummaryJson"]
+        fn format_conditions_summary_json(self: &KesticApp, conditions_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "formatMaintenanceSummaryJson"]
+        fn format_maintenance_summary_json(self: &KesticApp, maintenance_json: &QString)
+        -> QString;
     }
 }
 
 use crate::smoke;
 use crate::state_cache::{
     build_destination, build_new_backup, build_provider, clone_updated_backup,
-    clone_updated_backup_excludes, clone_updated_backup_retention, clone_updated_backup_source,
-    ensure_daemon_and_refresh, format_bytes, format_datetime_display, format_duration_ms,
-    format_overall_visual, format_retention_summary, format_run_kind_name, format_run_status,
-    initialize_and_sync, localized_manual_block_message, localized_start_all_summary,
-    lookup_backup_summary, make_client, refresh_state_now, shared_state,
-    test_destination_connection,
+    clone_updated_backup_conditions, clone_updated_backup_excludes, clone_updated_backup_retention,
+    clone_updated_backup_schedule, clone_updated_backup_source, current_now,
+    ensure_daemon_and_refresh, format_bytes, format_conditions_summary, format_datetime_display,
+    format_duration_ms, format_maintenance_summary, format_overall_visual, format_pause_line,
+    format_retention_summary, format_run_kind_name, format_run_status, format_schedule_summary,
+    initialize_and_sync, localized_condition_override_message, localized_manual_block_message,
+    localized_start_all_summary, lookup_backup_summary, make_client, preview_next_schedule_slots,
+    refresh_state_now, shared_state, test_destination_connection,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
 use kestic_core::model::{
-    BackupId, ExcludeRules, ResticProvider, RetentionPolicy, normalize_folder_rule,
+    BackupId, ExcludeRules, MaintenanceSchedule, NotificationSettings, ResticProvider,
+    RetentionPolicy, RunConditions, Schedule, normalize_folder_rule,
 };
 use kestic_core::provider::resolve_and_check;
-use kestic_daemon::dbus_api::REASON_DESTINATION_UNREACHABLE;
+use kestic_core::scheduler::PauseDuration;
+use kestic_daemon::dbus_api::{REASON_CONDITION_NOT_MET, REASON_DESTINATION_UNREACHABLE};
 use std::env;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -468,6 +588,18 @@ pub struct KesticAppRust {
     retention_preview_state: QString,
     retention_preview_result_json: QString,
     retention_preview_error: QString,
+    global_paused: bool,
+    global_paused_line: QString,
+    default_overdue_threshold: i32,
+    notif_on_error: bool,
+    notif_on_warning: bool,
+    notif_on_overdue: bool,
+    notif_on_maintenance_failed: bool,
+    notif_on_restic_update: bool,
+    start_all_skipped_message: QString,
+    condition_override_backup_id: QString,
+    condition_override_backup_name: QString,
+    condition_override_message: QString,
 }
 
 fn friendly_dbus_error(err: &zbus::Error) -> String {
@@ -551,20 +683,35 @@ impl qobject::KesticApp {
         }
 
         if let Some((backup_id, reason)) = blocked {
-            let backup_name = {
+            let (backup_name, unmet_text) = {
                 let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
                 guard
                     .state
                     .as_ref()
                     .and_then(|s| lookup_backup_summary(s, &backup_id))
-                    .map(|b| b.backup.name.clone())
-                    .unwrap_or_else(|| backup_id.clone())
+                    .map(|b| (b.backup.name.clone(), b.unmet_conditions_text.clone()))
+                    .unwrap_or_else(|| (backup_id.clone(), None))
             };
-            let msg = localized_manual_block_message(&backup_name, &reason);
-            self.as_mut()
-                .set_manual_run_blocked_backup_id(QString::from(&backup_id));
-            self.as_mut()
-                .set_manual_run_blocked_message(QString::from(&msg));
+            if reason == REASON_CONDITION_NOT_MET {
+                let msg = localized_condition_override_message(&backup_name, unmet_text.as_deref());
+                self.as_mut()
+                    .set_condition_override_backup_id(QString::from(&backup_id));
+                self.as_mut()
+                    .set_condition_override_backup_name(QString::from(&backup_name));
+                self.as_mut()
+                    .set_condition_override_message(QString::from(&msg));
+                self.as_mut().condition_override_requested(
+                    QString::from(&backup_id),
+                    QString::from(&backup_name),
+                    QString::from(&msg),
+                );
+            } else {
+                let msg = localized_manual_block_message(&backup_name, &reason);
+                self.as_mut()
+                    .set_manual_run_blocked_backup_id(QString::from(&backup_id));
+                self.as_mut()
+                    .set_manual_run_blocked_message(QString::from(&msg));
+            }
         }
 
         if show_win {
@@ -606,6 +753,14 @@ impl qobject::KesticApp {
             self.as_mut().set_backups_count(0);
             self.as_mut().set_destinations_count(0);
             self.as_mut().set_runs_count(0);
+            self.as_mut().set_global_paused(false);
+            self.as_mut().set_global_paused_line(QString::from(""));
+            self.as_mut().set_default_overdue_threshold(2);
+            self.as_mut().set_notif_on_error(true);
+            self.as_mut().set_notif_on_warning(true);
+            self.as_mut().set_notif_on_overdue(true);
+            self.as_mut().set_notif_on_maintenance_failed(true);
+            self.as_mut().set_notif_on_restic_update(false);
             self.as_mut().models_updated();
             return;
         }
@@ -664,6 +819,39 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_runs_count(i32::try_from(state.recent_runs.len()).unwrap_or(0));
 
+        let global_paused_line = if state.overall.paused {
+            state
+                .overall
+                .paused_label
+                .clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    format_pause_line(
+                        state.overall.paused_since_unix,
+                        state.overall.paused_until_unix,
+                        current_now(),
+                    )
+                })
+        } else {
+            String::new()
+        };
+        self.as_mut().set_global_paused(state.overall.paused);
+        self.as_mut()
+            .set_global_paused_line(QString::from(&global_paused_line));
+        self.as_mut().set_default_overdue_threshold(
+            i32::try_from(state.config.default_overdue_threshold).unwrap_or(2),
+        );
+        self.as_mut()
+            .set_notif_on_error(state.config.notifications.on_error);
+        self.as_mut()
+            .set_notif_on_warning(state.config.notifications.on_warning);
+        self.as_mut()
+            .set_notif_on_overdue(state.config.notifications.on_overdue);
+        self.as_mut()
+            .set_notif_on_maintenance_failed(state.config.notifications.on_maintenance_failed);
+        self.as_mut()
+            .set_notif_on_restic_update(state.config.notifications.on_restic_update);
+
         self.as_mut().models_updated();
     }
 
@@ -719,32 +907,73 @@ impl qobject::KesticApp {
             Err(err) => {
                 let raw = err.to_string();
                 let is_blocked = raw.contains("ManualRunBlocked");
+                let err_is_condition = raw.contains(REASON_CONDITION_NOT_MET);
                 refresh_state_now();
                 self.as_mut().apply_cached_state();
                 if is_blocked {
-                    let (backup_name, reason_code) = {
+                    {
+                        let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some((pending_id, _)) = &guard.pending_blocked
+                            && pending_id == &b_id
+                        {
+                            guard.pending_blocked = None;
+                        }
+                    }
+                    let (backup_name, reason_code, unmet_text) = {
                         let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
                         guard
                             .state
                             .as_ref()
                             .and_then(|s| lookup_backup_summary(s, &b_id))
                             .map(|b| {
-                                (
-                                    b.backup.name.clone(),
+                                let code = if err_is_condition {
+                                    REASON_CONDITION_NOT_MET.to_string()
+                                } else {
                                     b.availability.blocked_reason.clone().unwrap_or_else(|| {
-                                        REASON_DESTINATION_UNREACHABLE.to_string()
-                                    }),
-                                )
+                                        if b.has_unmet_run_condition {
+                                            REASON_CONDITION_NOT_MET.to_string()
+                                        } else {
+                                            REASON_DESTINATION_UNREACHABLE.to_string()
+                                        }
+                                    })
+                                };
+                                (b.backup.name.clone(), code, b.unmet_conditions_text.clone())
                             })
                             .unwrap_or_else(|| {
-                                (b_id.clone(), REASON_DESTINATION_UNREACHABLE.to_string())
+                                (
+                                    b_id.clone(),
+                                    if err_is_condition {
+                                        REASON_CONDITION_NOT_MET.to_string()
+                                    } else {
+                                        REASON_DESTINATION_UNREACHABLE.to_string()
+                                    },
+                                    None,
+                                )
                             })
                     };
-                    let msg = localized_manual_block_message(&backup_name, &reason_code);
-                    self.as_mut()
-                        .set_manual_run_blocked_backup_id(QString::from(&b_id));
-                    self.as_mut()
-                        .set_manual_run_blocked_message(QString::from(&msg));
+                    if reason_code == REASON_CONDITION_NOT_MET {
+                        let msg = localized_condition_override_message(
+                            &backup_name,
+                            unmet_text.as_deref(),
+                        );
+                        self.as_mut()
+                            .set_condition_override_backup_id(QString::from(&b_id));
+                        self.as_mut()
+                            .set_condition_override_backup_name(QString::from(&backup_name));
+                        self.as_mut()
+                            .set_condition_override_message(QString::from(&msg));
+                        self.as_mut().condition_override_requested(
+                            QString::from(&b_id),
+                            QString::from(&backup_name),
+                            QString::from(&msg),
+                        );
+                    } else {
+                        let msg = localized_manual_block_message(&backup_name, &reason_code);
+                        self.as_mut()
+                            .set_manual_run_blocked_backup_id(QString::from(&b_id));
+                        self.as_mut()
+                            .set_manual_run_blocked_message(QString::from(&msg));
+                    }
                 } else {
                     let msg = friendly_dbus_error(&err);
                     self.as_mut().set_last_action_error(QString::from(&msg));
@@ -762,7 +991,12 @@ impl qobject::KesticApp {
         match client.start_all_backups() {
             Ok(res) => {
                 if let Some(msg) = localized_start_all_summary(&res) {
+                    self.as_mut()
+                        .set_start_all_skipped_message(QString::from(&msg));
                     self.as_mut().passive_notification(QString::from(&msg));
+                } else {
+                    self.as_mut()
+                        .set_start_all_skipped_message(QString::from(""));
                 }
                 refresh_state_now();
                 self.as_mut().apply_cached_state();
@@ -1887,5 +2121,405 @@ impl qobject::KesticApp {
             "unlock_repository" => i18n("Release Lock…"),
             _ => i18n("Retry"),
         }
+    }
+
+    pub fn pause_global(mut self: Pin<&mut Self>, duration_kind: &QString) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        let duration = parse_pause_duration(&duration_kind.to_string());
+        match client.pause_global(&duration) {
+            Ok(()) => {
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                self.as_mut().passive_notification(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn resume_global(mut self: Pin<&mut Self>) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        match client.resume_global() {
+            Ok(()) => {
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                self.as_mut().passive_notification(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn pause_backup(
+        mut self: Pin<&mut Self>,
+        backup_id: &QString,
+        duration_kind: &QString,
+    ) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        let duration = parse_pause_duration(&duration_kind.to_string());
+        match client.pause_backup(&backup_id.to_string(), &duration) {
+            Ok(()) => {
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                self.as_mut().passive_notification(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn resume_backup(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        match client.resume_backup(&backup_id.to_string()) {
+            Ok(()) => {
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                self.as_mut().passive_notification(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn start_backup_override(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        match client.start_backup_override(&backup_id.to_string()) {
+            Ok(_) => {
+                self.as_mut()
+                    .set_condition_override_backup_id(QString::from(""));
+                self.as_mut()
+                    .set_condition_override_backup_name(QString::from(""));
+                self.as_mut()
+                    .set_condition_override_message(QString::from(""));
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                self.as_mut().passive_notification(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn dismiss_start_all_skipped(mut self: Pin<&mut Self>) {
+        self.as_mut()
+            .set_start_all_skipped_message(QString::from(""));
+    }
+
+    pub fn unlock_destination(mut self: Pin<&mut Self>, dest_id: &QString) -> i32 {
+        let Ok(client) = make_client() else {
+            self.as_mut()
+                .set_last_action_error(i18n("Background service unavailable."));
+            return -1;
+        };
+        match client.unlock_destination(&dest_id.to_string()) {
+            Ok(count) => {
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                let msg = if count == 0 {
+                    i18n("No stale locks found.").to_string()
+                } else if count == 1 {
+                    i18n("1 stale lock removed.").to_string()
+                } else {
+                    crate::state_cache::i18n("%1 stale locks removed.").subs(&[&count.to_string()])
+                };
+                self.as_mut().passive_notification(QString::from(&msg));
+                i32::try_from(count).unwrap_or(0)
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                self.as_mut().passive_notification(QString::from(&msg));
+                -1
+            }
+        }
+    }
+
+    pub fn preview_destination_maintenance(mut self: Pin<&mut Self>, dest_id: &QString) -> QString {
+        let Ok(client) = make_client() else {
+            self.as_mut()
+                .set_last_action_error(i18n("Background service unavailable."));
+            return QString::from("");
+        };
+        match client.preview_destination_maintenance(&dest_id.to_string()) {
+            Ok(summary) => {
+                self.as_mut().set_last_action_error(QString::from(""));
+                QString::from(&serde_json::to_string(&summary).unwrap_or_else(|_| "{}".to_string()))
+            }
+            Err(err) => {
+                self.as_mut().set_last_action_error(QString::from(&err));
+                QString::from("")
+            }
+        }
+    }
+
+    pub fn update_destination_maintenance(
+        mut self: Pin<&mut Self>,
+        dest_id: &QString,
+        maintenance_json: &QString,
+    ) -> bool {
+        let maint: MaintenanceSchedule = match serde_json::from_str(&maintenance_json.to_string()) {
+            Ok(m) => m,
+            Err(err) => {
+                self.as_mut()
+                    .set_last_action_error(QString::from(&err.to_string()));
+                return false;
+            }
+        };
+        if let Err(err) = maint.validate() {
+            self.as_mut()
+                .set_last_action_error(QString::from(&err.to_string()));
+            return false;
+        }
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        match client.update_destination_maintenance(&dest_id.to_string(), &maint) {
+            Ok(()) => {
+                self.as_mut().set_has_unsaved_changes(false);
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn update_backup_schedule(
+        mut self: Pin<&mut Self>,
+        backup_id: &QString,
+        schedule_json: &QString,
+        overdue_threshold: i32,
+    ) -> bool {
+        let id_str = backup_id.to_string();
+        let existing = {
+            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .state
+                .as_ref()
+                .and_then(|s| lookup_backup_summary(s, &id_str))
+                .map(|b| b.backup.clone())
+        };
+        let Some(existing) = existing else {
+            self.as_mut()
+                .set_last_action_error(i18n("Backup not found."));
+            return false;
+        };
+        let schedule: Schedule = match serde_json::from_str(&schedule_json.to_string()) {
+            Ok(s) => s,
+            Err(err) => {
+                self.as_mut()
+                    .set_last_action_error(QString::from(&err.to_string()));
+                return false;
+            }
+        };
+        let threshold_opt = (overdue_threshold > 0).then_some(overdue_threshold as u32);
+        let updated = match clone_updated_backup_schedule(&existing, schedule, threshold_opt) {
+            Ok(b) => b,
+            Err(err) => {
+                self.as_mut().set_last_action_error(QString::from(&err));
+                return false;
+            }
+        };
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        match client.update_backup(&updated) {
+            Ok(()) => {
+                self.as_mut().set_has_unsaved_changes(false);
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn update_backup_conditions(
+        mut self: Pin<&mut Self>,
+        backup_id: &QString,
+        conditions_json: &QString,
+    ) -> bool {
+        let id_str = backup_id.to_string();
+        let existing = {
+            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .state
+                .as_ref()
+                .and_then(|s| lookup_backup_summary(s, &id_str))
+                .map(|b| b.backup.clone())
+        };
+        let Some(existing) = existing else {
+            self.as_mut()
+                .set_last_action_error(i18n("Backup not found."));
+            return false;
+        };
+        let conditions: RunConditions = match serde_json::from_str(&conditions_json.to_string()) {
+            Ok(c) => c,
+            Err(err) => {
+                self.as_mut()
+                    .set_last_action_error(QString::from(&err.to_string()));
+                return false;
+            }
+        };
+        let updated = match clone_updated_backup_conditions(&existing, conditions) {
+            Ok(b) => b,
+            Err(err) => {
+                self.as_mut().set_last_action_error(QString::from(&err));
+                return false;
+            }
+        };
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        match client.update_backup(&updated) {
+            Ok(()) => {
+                self.as_mut().set_has_unsaved_changes(false);
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn update_settings(
+        mut self: Pin<&mut Self>,
+        default_overdue_threshold: i32,
+        on_error: bool,
+        on_warning: bool,
+        on_overdue: bool,
+        on_maintenance_failed: bool,
+        on_restic_update: bool,
+    ) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        let threshold = default_overdue_threshold.max(1) as u32;
+        let notifications = NotificationSettings {
+            on_error,
+            on_warning,
+            on_overdue,
+            on_maintenance_failed,
+            on_restic_update,
+        };
+        match client.update_settings(threshold, &notifications) {
+            Ok(()) => {
+                self.as_mut().set_last_action_error(QString::from(""));
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                true
+            }
+            Err(err) => {
+                let msg = friendly_dbus_error(&err);
+                self.as_mut().set_last_action_error(QString::from(&msg));
+                false
+            }
+        }
+    }
+
+    pub fn list_known_networks_json(&self) -> QString {
+        let Ok(client) = make_client() else {
+            return QString::from("[]");
+        };
+        match client.list_known_networks() {
+            Ok(list) => {
+                QString::from(&serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()))
+            }
+            Err(_) => QString::from("[]"),
+        }
+    }
+
+    pub fn preview_schedule_slots_json(&self, schedule_json: &QString) -> QString {
+        let Ok(schedule) = serde_json::from_str::<Schedule>(&schedule_json.to_string()) else {
+            return QString::from("[]");
+        };
+        if schedule.validate().is_err() {
+            return QString::from("[]");
+        }
+        let slots = preview_next_schedule_slots(&schedule, current_now());
+        QString::from(&serde_json::to_string(&slots).unwrap_or_else(|_| "[]".into()))
+    }
+
+    pub fn format_schedule_summary_json(&self, schedule_json: &QString) -> QString {
+        let Ok(schedule) = serde_json::from_str::<Schedule>(&schedule_json.to_string()) else {
+            return QString::from("");
+        };
+        QString::from(&format_schedule_summary(&schedule))
+    }
+
+    pub fn format_conditions_summary_json(&self, conditions_json: &QString) -> QString {
+        let Ok(conditions) = serde_json::from_str::<RunConditions>(&conditions_json.to_string())
+        else {
+            return QString::from("");
+        };
+        QString::from(&format_conditions_summary(&conditions))
+    }
+
+    pub fn format_maintenance_summary_json(&self, maintenance_json: &QString) -> QString {
+        let Ok(maint) = serde_json::from_str::<MaintenanceSchedule>(&maintenance_json.to_string())
+        else {
+            return QString::from("");
+        };
+        QString::from(&format_maintenance_summary(&maint))
+    }
+}
+
+fn parse_pause_duration(kind: &str) -> PauseDuration {
+    match kind {
+        "1h" => PauseDuration::Hours { hours: 1 },
+        "3h" => PauseDuration::Hours { hours: 3 },
+        "tomorrow" => PauseDuration::UntilTomorrow,
+        _ => PauseDuration::Indefinite,
     }
 }

@@ -106,6 +106,7 @@ Kirigami.ScrollablePage {
             required property string statusText
             required property string statusIcon
             required property string statusColorKind
+            required property string nextScheduledAtText
             required property bool available
             required property bool isRunning
 
@@ -158,6 +159,15 @@ Kirigami.ScrollablePage {
                         text: row.statusText
                         color: Kirigami.Theme.textColor
                         opacity: 0.8
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    Controls.Label {
+                        visible: !row.isRunning && row.nextScheduledAtText !== ""
+                        text: row.nextScheduledAtText
+                        color: Kirigami.Theme.textColor
+                        opacity: 0.65
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }

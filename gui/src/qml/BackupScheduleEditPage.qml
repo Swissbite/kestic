@@ -1,0 +1,647 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import QtQuick
+import QtQuick.Controls as Controls
+import QtQuick.Layouts
+import org.kde.kirigami as Kirigami
+
+Kirigami.ScrollablePage {
+    id: page
+    objectName: "backupScheduleEditPage"
+    title: i18n("Schedule")
+
+    required property var rootWindow
+    required property var appBackend
+    required property string backupId
+
+    property var initialData: null
+    property string savedScheduleJson: "{}"
+    property int savedOverdueThreshold: 0
+    property bool hydrating: false
+
+    property string scheduleKind: "daily"
+    property var selectedWeekdays: ["monday"]
+    property int intervalDays: 3
+    property string startDate: ""
+    property int hour: 12
+    property int minute: 0
+    property bool useGlobalOverdue: true
+    property int customOverdueThreshold: 2
+    property var previewSlots: []
+
+    readonly property var frequencyOptions: [
+        { key: "daily", label: i18n("Daily") },
+        { key: "specific_weekdays", label: i18n("On specific weekdays") },
+        { key: "every_n_days", label: i18n("Every N days") },
+        { key: "hourly", label: i18n("Hourly") },
+        { key: "manual_only", label: i18n("Manual only") }
+    ]
+
+    readonly property var weekdayOptions: [
+        { key: "monday", shortLabel: i18n("Mon"), fullLabel: i18n("Monday") },
+        { key: "tuesday", shortLabel: i18n("Tue"), fullLabel: i18n("Tuesday") },
+        { key: "wednesday", shortLabel: i18n("Wed"), fullLabel: i18n("Wednesday") },
+        { key: "thursday", shortLabel: i18n("Thu"), fullLabel: i18n("Thursday") },
+        { key: "friday", shortLabel: i18n("Fri"), fullLabel: i18n("Friday") },
+        { key: "saturday", shortLabel: i18n("Sat"), fullLabel: i18n("Saturday") },
+        { key: "sunday", shortLabel: i18n("Sun"), fullLabel: i18n("Sunday") }
+    ]
+
+    function todayIsoDate() {
+        var d = new Date();
+        var yyyy = String(d.getFullYear());
+        var mm = String(d.getMonth() + 1).padStart(2, "0");
+        var dd = String(d.getDate()).padStart(2, "0");
+        return yyyy + "-" + mm + "-" + dd;
+    }
+
+    function isoWeekdayToKey(num) {
+        var keys = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+        if (num >= 1 && num <= 7) return keys[num - 1];
+        return "monday";
+    }
+
+    function isValidDateString(s) {
+        var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((s || "").trim());
+        if (!m) return false;
+        var y = parseInt(m[1], 10);
+        var mo = parseInt(m[2], 10);
+        var d = parseInt(m[3], 10);
+        if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+        var dt = new Date(Date.UTC(y, mo - 1, d));
+        return dt.getUTCFullYear() === y && dt.getUTCMonth() === (mo - 1) && dt.getUTCDate() === d;
+    }
+
+    readonly property bool intervalInvalid: scheduleKind === "every_n_days" && (intervalDays < 2 || intervalDays > 365)
+    readonly property bool startDateInvalid: scheduleKind === "every_n_days" && !isValidDateString(startDate)
+    readonly property bool weekdaysInvalid: scheduleKind === "specific_weekdays" && selectedWeekdays.length === 0
+    readonly property string validationError: {
+        if (weekdaysInvalid) return i18n("Select at least one weekday.");
+        if (intervalInvalid) return i18n("Interval must be between 2 and 365 days.");
+        if (startDateInvalid) return i18n("Enter a valid start date in YYYY-MM-DD format.");
+        return "";
+    }
+    readonly property bool valid: validationError === ""
+
+    function currentScheduleObj() {
+        if (scheduleKind === "manual_only") {
+            return { kind: "manual_only" };
+        }
+        if (scheduleKind === "hourly") {
+            return { kind: "hourly" };
+        }
+        if (scheduleKind === "specific_weekdays") {
+            return {
+                kind: "specific_weekdays",
+                weekdays: selectedWeekdays.slice(),
+                hour: hour,
+                minute: minute
+            };
+        }
+        if (scheduleKind === "every_n_days") {
+            return {
+                kind: "every_n_days",
+                interval_days: intervalDays,
+                start_date: startDate.trim(),
+                hour: hour,
+                minute: minute
+            };
+        }
+        return {
+            kind: "daily",
+            hour: hour,
+            minute: minute
+        };
+    }
+
+    function currentScheduleJson() {
+        return JSON.stringify(currentScheduleObj());
+    }
+
+    function normalizedScheduleJson(rawJson) {
+        try {
+            var obj = JSON.parse(rawJson || "{}");
+            if (obj.kind === "weekly") {
+                return JSON.stringify({
+                    kind: "specific_weekdays",
+                    weekdays: [isoWeekdayToKey(obj.weekday || 1)],
+                    hour: obj.hour !== undefined ? obj.hour : 12,
+                    minute: obj.minute !== undefined ? obj.minute : 0
+                });
+            }
+            if (obj.kind === "specific_weekdays") {
+                var days = (obj.weekdays || []).slice();
+                days.sort();
+                return JSON.stringify({
+                    kind: "specific_weekdays",
+                    weekdays: days,
+                    hour: obj.hour !== undefined ? obj.hour : 12,
+                    minute: obj.minute !== undefined ? obj.minute : 0
+                });
+            }
+            if (obj.kind === "every_n_days") {
+                return JSON.stringify({
+                    kind: "every_n_days",
+                    interval_days: obj.interval_days !== undefined ? obj.interval_days : 3,
+                    start_date: (obj.start_date || todayIsoDate()).trim(),
+                    hour: obj.hour !== undefined ? obj.hour : 12,
+                    minute: obj.minute !== undefined ? obj.minute : 0
+                });
+            }
+            if (obj.kind === "hourly") {
+                return JSON.stringify({ kind: "hourly" });
+            }
+            if (obj.kind === "manual_only") {
+                return JSON.stringify({ kind: "manual_only" });
+            }
+            return JSON.stringify({
+                kind: "daily",
+                hour: obj.hour !== undefined ? obj.hour : 12,
+                minute: obj.minute !== undefined ? obj.minute : 0
+            });
+        } catch (e) {
+            return "{}";
+        }
+    }
+
+    readonly property int effectiveOverdueThreshold: useGlobalOverdue ? 0 : customOverdueThreshold
+    readonly property bool dirty: initialData !== null && (
+        normalizedScheduleJson(currentScheduleJson()) !== normalizedScheduleJson(savedScheduleJson)
+        || effectiveOverdueThreshold !== savedOverdueThreshold
+    )
+
+    onDirtyChanged: appBackend.has_unsaved_changes = dirty
+
+    function refreshPreview() {
+        if (!valid || scheduleKind === "manual_only") {
+            previewSlots = [];
+            return;
+        }
+        try {
+            var raw = appBackend.previewScheduleSlotsJson(currentScheduleJson());
+            previewSlots = JSON.parse(raw || "[]");
+        } catch (e) {
+            previewSlots = [];
+        }
+    }
+
+    function loadFromSaved(schedJson, thresholdVal) {
+        hydrating = true;
+        var obj = {};
+        try {
+            obj = JSON.parse(schedJson || "{}");
+        } catch (e) {
+            obj = {};
+        }
+        if (obj.kind === "weekly") {
+            scheduleKind = "specific_weekdays";
+            selectedWeekdays = [isoWeekdayToKey(obj.weekday || 1)];
+            hour = obj.hour !== undefined ? obj.hour : 12;
+            minute = obj.minute !== undefined ? obj.minute : 0;
+        } else if (obj.kind === "specific_weekdays") {
+            scheduleKind = "specific_weekdays";
+            selectedWeekdays = (obj.weekdays && obj.weekdays.length > 0) ? obj.weekdays.slice() : ["monday"];
+            hour = obj.hour !== undefined ? obj.hour : 12;
+            minute = obj.minute !== undefined ? obj.minute : 0;
+        } else if (obj.kind === "every_n_days") {
+            scheduleKind = "every_n_days";
+            intervalDays = obj.interval_days !== undefined ? obj.interval_days : 3;
+            startDate = obj.start_date || todayIsoDate();
+            hour = obj.hour !== undefined ? obj.hour : 12;
+            minute = obj.minute !== undefined ? obj.minute : 0;
+        } else if (obj.kind === "hourly") {
+            scheduleKind = "hourly";
+            hour = 12;
+            minute = 0;
+        } else if (obj.kind === "manual_only") {
+            scheduleKind = "manual_only";
+            hour = 12;
+            minute = 0;
+        } else {
+            scheduleKind = "daily";
+            hour = obj.hour !== undefined ? obj.hour : 12;
+            minute = obj.minute !== undefined ? obj.minute : 0;
+        }
+        if (!startDate || startDate === "") {
+            startDate = todayIsoDate();
+        }
+        useGlobalOverdue = thresholdVal <= 0;
+        customOverdueThreshold = thresholdVal > 0 ? thresholdVal : Math.max(1, appBackend.default_overdue_threshold);
+        hydrating = false;
+        refreshPreview();
+    }
+
+    function toggleWeekday(key) {
+        var idx = selectedWeekdays.indexOf(key);
+        var next = selectedWeekdays.slice();
+        if (idx >= 0) {
+            next.splice(idx, 1);
+        } else {
+            next.push(key);
+        }
+        selectedWeekdays = next;
+        refreshPreview();
+    }
+
+    function commitSave(popOnSuccess) {
+        if (!dirty || !valid) return false;
+        if (appBackend.updateBackupSchedule(backupId, currentScheduleJson(), effectiveOverdueThreshold)) {
+            initialData = rootWindow.findBackupData(backupId);
+            if (initialData) {
+                savedScheduleJson = initialData.scheduleJson;
+                savedOverdueThreshold = initialData.overdueThreshold;
+                loadFromSaved(savedScheduleJson, savedOverdueThreshold);
+            }
+            rootWindow.showPassiveNotification(i18n("Schedule saved"));
+            if (popOnSuccess) {
+                rootWindow.popSubPage();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    Component.onCompleted: {
+        initialData = rootWindow.findBackupData(backupId);
+        if (initialData) {
+            savedScheduleJson = initialData.scheduleJson;
+            savedOverdueThreshold = initialData.overdueThreshold;
+            loadFromSaved(savedScheduleJson, savedOverdueThreshold);
+        } else {
+            loadFromSaved("{\"kind\":\"daily\",\"hour\":12,\"minute\":0}", 0);
+        }
+    }
+
+    onBackRequested: function(event) {
+        if (dirty) {
+            event.accepted = true;
+            unsavedDialog.open();
+        }
+    }
+
+    function handleEscape() {
+        if (unsavedDialog.opened || unsavedDialog.visible) {
+            unsavedDialog.close();
+            return true;
+        }
+        if (dirty) {
+            unsavedDialog.open();
+            return true;
+        }
+        return false;
+    }
+
+    actions: [
+        Kirigami.Action {
+            id: saveScheduleAction
+            objectName: "saveScheduleAction"
+            icon.name: "document-save"
+            text: i18n("Save")
+            enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
+            onTriggered: page.commitSave(false)
+        },
+        Kirigami.Action {
+            id: closeScheduleAction
+            objectName: "closeScheduleAction"
+            icon.name: "window-close"
+            text: i18n("Close")
+            onTriggered: {
+                if (page.dirty) {
+                    unsavedDialog.open();
+                } else {
+                    rootWindow.popSubPage();
+                }
+            }
+        }
+    ]
+
+    Kirigami.PromptDialog {
+        id: unsavedDialog
+        objectName: "unsavedScheduleDialog"
+        title: i18n("Save changes?")
+        subtitle: i18n("You have unsaved changes to the backup schedule.")
+        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
+        onAccepted: page.commitSave(true)
+        onDiscarded: {
+            appBackend.has_unsaved_changes = false;
+            page.loadFromSaved(page.savedScheduleJson, page.savedOverdueThreshold);
+            rootWindow.popSubPage();
+        }
+    }
+
+    ColumnLayout {
+        width: parent.width
+        spacing: Kirigami.Units.largeSpacing
+
+        Kirigami.InlineMessage {
+            id: scheduleValidationBanner
+            objectName: "scheduleValidationBanner"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Error
+            visible: page.validationError !== ""
+            text: page.validationError
+        }
+
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Error
+            visible: appBackend.last_action_error !== ""
+            text: appBackend.last_action_error
+        }
+
+        Kirigami.FormLayout {
+            Layout.fillWidth: true
+
+            Controls.ComboBox {
+                id: frequencyCombo
+                objectName: "scheduleFrequencyCombo"
+                Kirigami.FormData.label: i18n("Frequency:")
+                model: page.frequencyOptions
+                textRole: "label"
+                valueRole: "key"
+                focusPolicy: Qt.StrongFocus
+                Accessible.name: i18n("Backup frequency")
+                currentIndex: {
+                    for (var i = 0; i < page.frequencyOptions.length; ++i) {
+                        if (page.frequencyOptions[i].key === page.scheduleKind) return i;
+                    }
+                    return 0;
+                }
+                onActivated: function(idx) {
+                    page.scheduleKind = page.frequencyOptions[idx].key;
+                    if (page.scheduleKind === "every_n_days" && !page.isValidDateString(page.startDate)) {
+                        page.startDate = page.todayIsoDate();
+                    }
+                    page.refreshPreview();
+                }
+            }
+
+            ColumnLayout {
+                Kirigami.FormData.label: i18n("Weekdays:")
+                visible: page.scheduleKind === "specific_weekdays"
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Rectangle {
+                    id: weekdaysFrame
+                    objectName: "scheduleWeekdaysFrame"
+                    color: "transparent"
+                    radius: Kirigami.Units.cornerRadius
+                    border.width: page.weekdaysInvalid ? 2 : 0
+                    border.color: Kirigami.Theme.negativeTextColor
+                    implicitWidth: weekdaysFlow.implicitWidth + Kirigami.Units.smallSpacing * 2
+                    implicitHeight: weekdaysFlow.implicitHeight + Kirigami.Units.smallSpacing * 2
+                    Layout.fillWidth: true
+
+                    Flow {
+                        id: weekdaysFlow
+                        anchors.fill: parent
+                        anchors.margins: Kirigami.Units.smallSpacing
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Repeater {
+                            model: page.weekdayOptions
+                            delegate: Controls.Button {
+                                required property var modelData
+                                objectName: "weekdayButton_" + modelData.key
+                                text: modelData.shortLabel
+                                checkable: true
+                                checked: page.selectedWeekdays.indexOf(modelData.key) >= 0
+                                Accessible.name: modelData.fullLabel
+                                onClicked: page.toggleWeekday(modelData.key)
+                            }
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Kirigami.FormData.label: i18n("Every:")
+                visible: page.scheduleKind === "every_n_days"
+                spacing: Kirigami.Units.smallSpacing
+
+                Item {
+                    implicitWidth: intervalSpinBox.implicitWidth + 4
+                    implicitHeight: intervalSpinBox.implicitHeight + 4
+
+                    Controls.SpinBox {
+                        id: intervalSpinBox
+                        objectName: "scheduleIntervalSpinBox"
+                        anchors.centerIn: parent
+                        from: 0
+                        to: 365
+                        value: page.intervalDays
+                        editable: true
+                        Accessible.name: i18n("Interval in days")
+                        onValueModified: {
+                            if (!page.hydrating) {
+                                page.intervalDays = value;
+                                page.refreshPreview();
+                            }
+                        }
+                        onValueChanged: {
+                            if (!page.hydrating && page.intervalDays !== value) {
+                                page.intervalDays = value;
+                                page.refreshPreview();
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        objectName: "scheduleIntervalInvalidBorder"
+                        anchors.fill: parent
+                        color: "transparent"
+                        radius: Kirigami.Units.cornerRadius
+                        border.width: page.intervalInvalid ? 2 : 0
+                        border.color: Kirigami.Theme.negativeTextColor
+                        visible: page.intervalInvalid
+                    }
+                }
+
+                Controls.Label {
+                    text: i18n("days")
+                }
+            }
+
+            Controls.TextField {
+                id: startDateField
+                objectName: "scheduleStartDateField"
+                Kirigami.FormData.label: i18n("Start date:")
+                visible: page.scheduleKind === "every_n_days"
+                text: page.startDate
+                placeholderText: "YYYY-MM-DD"
+                Accessible.name: i18n("Schedule start date")
+                onTextChanged: {
+                    if (!page.hydrating) {
+                        page.startDate = text;
+                        page.refreshPreview();
+                    }
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: "transparent"
+                    radius: Kirigami.Units.cornerRadius
+                    border.width: page.startDateInvalid ? 2 : 0
+                    border.color: Kirigami.Theme.negativeTextColor
+                    visible: page.startDateInvalid
+                }
+            }
+
+            RowLayout {
+                Kirigami.FormData.label: i18n("Time:")
+                visible: page.scheduleKind === "daily" || page.scheduleKind === "specific_weekdays" || page.scheduleKind === "every_n_days"
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.SpinBox {
+                    id: hourSpinBox
+                    objectName: "scheduleHourSpinBox"
+                    from: 0
+                    to: 23
+                    value: page.hour
+                    editable: true
+                    Accessible.name: i18n("Hour")
+                    onValueModified: {
+                        if (!page.hydrating) {
+                            page.hour = value;
+                            page.refreshPreview();
+                        }
+                    }
+                    onValueChanged: {
+                        if (!page.hydrating && page.hour !== value) {
+                            page.hour = value;
+                            page.refreshPreview();
+                        }
+                    }
+                }
+
+                Controls.Label { text: ":" }
+
+                Controls.SpinBox {
+                    id: minuteSpinBox
+                    objectName: "scheduleMinuteSpinBox"
+                    from: 0
+                    to: 59
+                    value: page.minute
+                    editable: true
+                    Accessible.name: i18n("Minute")
+                    onValueModified: {
+                        if (!page.hydrating) {
+                            page.minute = value;
+                            page.refreshPreview();
+                        }
+                    }
+                    onValueChanged: {
+                        if (!page.hydrating && page.minute !== value) {
+                            page.minute = value;
+                            page.refreshPreview();
+                        }
+                    }
+                }
+            }
+
+            Kirigami.Separator {
+                Kirigami.FormData.isSection: true
+                Kirigami.FormData.label: i18n("Overdue Detection")
+                visible: page.scheduleKind !== "manual_only"
+            }
+
+            Controls.CheckBox {
+                id: useGlobalOverdueCheck
+                objectName: "useGlobalOverdueCheck"
+                visible: page.scheduleKind !== "manual_only"
+                Kirigami.FormData.label: i18n("Overdue threshold:")
+                text: i18n("Use global default (%1 missed runs)", appBackend.default_overdue_threshold)
+                checked: page.useGlobalOverdue
+                Accessible.name: i18n("Use global default overdue threshold")
+                onToggled: if (!page.hydrating) page.useGlobalOverdue = checked
+            }
+
+            RowLayout {
+                visible: page.scheduleKind !== "manual_only" && !page.useGlobalOverdue
+                Kirigami.FormData.label: i18n("Warn after:")
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.SpinBox {
+                    id: overdueThresholdSpinBox
+                    objectName: "overdueThresholdSpinBox"
+                    from: 1
+                    to: 99
+                    value: page.customOverdueThreshold
+                    editable: true
+                    Accessible.name: i18n("Missed runs before overdue warning")
+                    onValueModified: if (!page.hydrating) page.customOverdueThreshold = value
+                    onValueChanged: if (!page.hydrating && page.customOverdueThreshold !== value) page.customOverdueThreshold = value
+                }
+
+                Controls.Label {
+                    text: i18n("missed runs")
+                }
+            }
+        }
+
+        Kirigami.InlineMessage {
+            id: manualOnlyInfoBanner
+            objectName: "scheduleManualOnlyHint"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Information
+            visible: page.scheduleKind === "manual_only"
+            text: i18n("Manual backups do not run automatically and are never marked as overdue.")
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: page.scheduleKind !== "manual_only" && page.valid && page.previewSlots.length > 0
+            spacing: Kirigami.Units.smallSpacing
+
+            Kirigami.Heading {
+                level: 4
+                text: i18n("Next 3 scheduled runs:")
+            }
+
+            Repeater {
+                model: page.previewSlots
+                delegate: Controls.Label {
+                    required property string modelData
+                    objectName: "schedulePreviewSlotLabel"
+                    text: "• " + modelData
+                    opacity: 0.85
+                    Layout.fillWidth: true
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+
+            Item { Layout.fillWidth: true }
+
+            Controls.Button {
+                id: discardScheduleButton
+                objectName: "discardScheduleButton"
+                text: i18n("Cancel")
+                Accessible.name: i18n("Cancel schedule edits")
+                onClicked: {
+                    if (page.dirty) {
+                        unsavedDialog.open();
+                    } else {
+                        rootWindow.popSubPage();
+                    }
+                }
+            }
+
+            Controls.Button {
+                id: saveScheduleButton
+                objectName: "saveScheduleButton"
+                icon.name: "document-save"
+                text: i18n("Save")
+                highlighted: true
+                enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
+                Accessible.name: i18n("Save schedule")
+                onClicked: page.commitSave(false)
+            }
+        }
+    }
+}

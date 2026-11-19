@@ -335,12 +335,170 @@ impl DestinationSecretRefs {
     }
 }
 
-/// Placeholder maintenance schedule on a [`Destination`] (expanded in M3).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// ISO weekday for calendar schedules (`M3-S01`, `M3-S05`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Weekday {
+    Monday = 1,
+    Tuesday = 2,
+    Wednesday = 3,
+    Thursday = 4,
+    Friday = 5,
+    Saturday = 6,
+    Sunday = 7,
+}
+
+impl Weekday {
+    pub const ALL: [Self; 7] = [
+        Self::Monday,
+        Self::Tuesday,
+        Self::Wednesday,
+        Self::Thursday,
+        Self::Friday,
+        Self::Saturday,
+        Self::Sunday,
+    ];
+
+    pub fn from_iso_number(day: u8) -> Result<Self, ModelError> {
+        match day {
+            1 => Ok(Self::Monday),
+            2 => Ok(Self::Tuesday),
+            3 => Ok(Self::Wednesday),
+            4 => Ok(Self::Thursday),
+            5 => Ok(Self::Friday),
+            6 => Ok(Self::Saturday),
+            7 => Ok(Self::Sunday),
+            other => Err(ModelError::InvalidBackup(format!(
+                "weekday must be 1..=7, got {other}"
+            ))),
+        }
+    }
+
+    pub fn iso_number(self) -> u8 {
+        self as u8
+    }
+
+    pub fn to_jiff(self) -> jiff::civil::Weekday {
+        match self {
+            Self::Monday => jiff::civil::Weekday::Monday,
+            Self::Tuesday => jiff::civil::Weekday::Tuesday,
+            Self::Wednesday => jiff::civil::Weekday::Wednesday,
+            Self::Thursday => jiff::civil::Weekday::Thursday,
+            Self::Friday => jiff::civil::Weekday::Friday,
+            Self::Saturday => jiff::civil::Weekday::Saturday,
+            Self::Sunday => jiff::civil::Weekday::Sunday,
+        }
+    }
+
+    pub fn from_jiff(w: jiff::civil::Weekday) -> Self {
+        match w {
+            jiff::civil::Weekday::Monday => Self::Monday,
+            jiff::civil::Weekday::Tuesday => Self::Tuesday,
+            jiff::civil::Weekday::Wednesday => Self::Wednesday,
+            jiff::civil::Weekday::Thursday => Self::Thursday,
+            jiff::civil::Weekday::Friday => Self::Friday,
+            jiff::civil::Weekday::Saturday => Self::Saturday,
+            jiff::civil::Weekday::Sunday => Self::Sunday,
+        }
+    }
+}
+
+/// Ordinal weekday within a month for monthly maintenance schedules (`M3-S05`, `§8.1`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NthWeekday {
+    First,
+    Second,
+    Third,
+    Fourth,
+    Last,
+}
+
+/// Calendar schedule for `prune` / `check` destination maintenance (`FR-45`, `FR-11`, `P15`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MaintenanceEntrySchedule {
+    ManualOnly,
+    Daily {
+        hour: u8,
+        minute: u8,
+    },
+    Weekly {
+        weekday: Weekday,
+        hour: u8,
+        minute: u8,
+    },
+    Monthly {
+        nth: NthWeekday,
+        weekday: Weekday,
+        hour: u8,
+        minute: u8,
+    },
+}
+
+impl MaintenanceEntrySchedule {
+    pub fn default_prune() -> Self {
+        Self::Weekly {
+            weekday: Weekday::Sunday,
+            hour: 12,
+            minute: 0,
+        }
+    }
+
+    pub fn default_check() -> Self {
+        Self::Monthly {
+            nth: NthWeekday::First,
+            weekday: Weekday::Sunday,
+            hour: 12,
+            minute: 0,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ModelError> {
+        let (hour, minute) = match *self {
+            Self::ManualOnly => return Ok(()),
+            Self::Daily { hour, minute }
+            | Self::Weekly { hour, minute, .. }
+            | Self::Monthly { hour, minute, .. } => (hour, minute),
+        };
+        if hour >= 24 || minute >= 60 {
+            return Err(ModelError::InvalidDestination(format!(
+                "invalid maintenance time {hour:02}:{minute:02}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Maintenance schedule on a [`Destination`] (`FR-45`, `FR-11`, `P15`, `§8.1`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MaintenanceSchedule {
+    pub prune: MaintenanceEntrySchedule,
+    pub check: MaintenanceEntrySchedule,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prune_interval_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_interval_days: Option<u32>,
+}
+
+impl Default for MaintenanceSchedule {
+    fn default() -> Self {
+        Self {
+            prune: MaintenanceEntrySchedule::default_prune(),
+            check: MaintenanceEntrySchedule::default_check(),
+            prune_interval_days: None,
+            check_interval_days: None,
+        }
+    }
+}
+
+impl MaintenanceSchedule {
+    pub fn validate(&self) -> Result<(), ModelError> {
+        self.prune.validate()?;
+        self.check.validate()?;
+        Ok(())
+    }
 }
 
 /// Maintenance action types (glossary: `Maintenance::Prune`, `Maintenance::Check`).
@@ -421,6 +579,7 @@ impl Destination {
                 "repo_password_ref must not be empty".to_string(),
             ));
         }
+        self.maintenance.validate()?;
         Ok(())
     }
 }
@@ -1138,7 +1297,7 @@ pub fn evaluate_exclude_path(
     }
 }
 
-/// Schedule definition (glossary: `Schedule`, expanded in M3).
+/// Schedule definition (glossary: `Schedule`, `FR-03`, `P13`, `P35`, `M3-S01`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Schedule {
@@ -1149,20 +1308,143 @@ pub enum Schedule {
         hour: u8,
         minute: u8,
     },
+    SpecificWeekdays {
+        weekdays: Vec<Weekday>,
+        hour: u8,
+        minute: u8,
+    },
     Weekly {
         weekday: u8,
         hour: u8,
         minute: u8,
     },
+    EveryNDays {
+        interval_days: u32,
+        /// Start date in `YYYY-MM-DD` format (`§7.4`).
+        start_date: String,
+        hour: u8,
+        minute: u8,
+    },
 }
 
-/// Conditions controlling when scheduled runs may start (glossary: `RunConditions`, M3).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+impl Schedule {
+    /// Default schedule for newly configured scheduled backups (`P35`: daily 12:00).
+    pub fn default_scheduled() -> Self {
+        Self::Daily {
+            hour: 12,
+            minute: 0,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ModelError> {
+        match self {
+            Self::ManualOnly | Self::Hourly => Ok(()),
+            Self::Daily { hour, minute } => validate_hh_mm(*hour, *minute),
+            Self::SpecificWeekdays {
+                weekdays,
+                hour,
+                minute,
+            } => {
+                if weekdays.is_empty() {
+                    return Err(ModelError::InvalidBackup(
+                        "weekday schedule requires at least one weekday".to_string(),
+                    ));
+                }
+                validate_hh_mm(*hour, *minute)
+            }
+            Self::Weekly {
+                weekday,
+                hour,
+                minute,
+            } => {
+                Weekday::from_iso_number(*weekday)?;
+                validate_hh_mm(*hour, *minute)
+            }
+            Self::EveryNDays {
+                interval_days,
+                start_date,
+                hour,
+                minute,
+            } => {
+                if !(2..=365).contains(interval_days) {
+                    return Err(ModelError::InvalidBackup(format!(
+                        "interval_days must be between 2 and 365, got {interval_days}"
+                    )));
+                }
+                start_date.parse::<jiff::civil::Date>().map_err(|err| {
+                    ModelError::InvalidBackup(format!(
+                        "invalid schedule start_date '{start_date}': {err}"
+                    ))
+                })?;
+                validate_hh_mm(*hour, *minute)
+            }
+        }
+    }
+}
+
+fn validate_hh_mm(hour: u8, minute: u8) -> Result<(), ModelError> {
+    if hour >= 24 || minute >= 60 {
+        return Err(ModelError::InvalidBackup(format!(
+            "invalid schedule time {hour:02}:{minute:02}"
+        )));
+    }
+    Ok(())
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Conditions controlling when scheduled runs may start (glossary: `RunConditions`, `FR-13`, `P35`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RunConditions {
-    pub skip_on_battery: bool,
+    #[serde(alias = "skip_on_battery", default = "default_true")]
+    pub require_ac_power: bool,
+    #[serde(default = "default_true")]
+    pub require_network: bool,
+    #[serde(default)]
     pub skip_on_metered_network: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_networks: Vec<String>,
 }
+
+impl Default for RunConditions {
+    fn default() -> Self {
+        Self {
+            require_ac_power: true,
+            require_network: true,
+            skip_on_metered_network: false,
+            allowed_networks: Vec::new(),
+        }
+    }
+}
+
+/// Per-event notification toggles (`F3`, `§9.6`, `AC-M3-08-1`, `AC-M3-08-2`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationSettings {
+    pub on_error: bool,
+    pub on_warning: bool,
+    pub on_overdue: bool,
+    pub on_maintenance_failed: bool,
+    pub on_restic_update: bool,
+}
+
+impl Default for NotificationSettings {
+    fn default() -> Self {
+        Self {
+            on_error: true,
+            on_warning: true,
+            on_overdue: true,
+            on_maintenance_failed: true,
+            on_restic_update: true,
+        }
+    }
+}
+
+/// Default number of missed scheduled slots before a backup is marked overdue (`M3-S02`).
+pub const DEFAULT_OVERDUE_THRESHOLD: u32 = 2;
 
 /// Count specifier for retention rules (`--keep-daily 7` or `--keep-yearly unlimited`, `AC-M2-05-1`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1501,6 +1783,9 @@ pub struct Backup {
     pub run_conditions: RunConditions,
     #[serde(default)]
     pub retention: RetentionPolicy,
+    /// Optional per-backup override for missed-slot overdue threshold (`M3-S02`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overdue_threshold: Option<u32>,
 }
 
 impl Backup {
@@ -1530,9 +1815,15 @@ impl Backup {
             schedule: Schedule::default(),
             run_conditions: RunConditions::default(),
             retention: RetentionPolicy::default(),
+            overdue_threshold: None,
         };
         backup.validate()?;
         Ok(backup)
+    }
+
+    /// Effective overdue threshold in missed slots (`>= 1`), falling back to `global_default`.
+    pub fn effective_overdue_threshold(&self, global_default: u32) -> u32 {
+        self.overdue_threshold.unwrap_or(global_default).max(1)
     }
 
     /// Renames the backup while keeping its [`BackupId`] immutable (`AC-M1-01-2`).
@@ -1597,6 +1888,12 @@ impl Backup {
                 self.source.path.display()
             )));
         }
+        if matches!(self.overdue_threshold, Some(0)) {
+            return Err(ModelError::InvalidBackup(
+                "overdue_threshold must be at least 1".to_string(),
+            ));
+        }
+        self.schedule.validate()?;
         self.excludes.validate()?;
         self.retention.validate()?;
         Ok(())

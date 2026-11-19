@@ -5,6 +5,7 @@
 //! (`FR-18`, `F13`, `NFR-02`, `FR-21`, `M1-S08`, `M1-S10`).
 
 use crate::clock::Clock;
+use crate::migrations::{MigrationError, history_migrations, run_migrations};
 use crate::model::{
     BackupId, CommandRecord, DestinationId, PendingReason, Run, RunId, RunKind, RunStats, RunStatus,
 };
@@ -29,6 +30,8 @@ pub const LOG_KEEP_MIN_RUNS: usize = 100;
 pub enum HistoryError {
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("database schema migration error: {0}")]
+    Migration(#[from] MigrationError),
     #[error("JSON serialization error in run history: {0}")]
     Json(#[from] serde_json::Error),
     #[error("timestamp formatting/parsing error: {0}")]
@@ -52,10 +55,10 @@ impl RunHistory {
         fs::create_dir_all(state_dir)?;
         fs::create_dir_all(state_dir.join("logs"))?;
         let db_path = state_dir.join("history.db");
-        let conn = Connection::open(db_path)?;
+        let mut conn = Connection::open(db_path)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
-        init_schema(&conn)?;
+        run_migrations(&mut conn, history_migrations())?;
         Ok(Self {
             state_dir: state_dir.to_path_buf(),
             conn,
@@ -387,6 +390,255 @@ impl RunHistory {
         Ok(())
     }
 
+    /// Loads M3 scheduling, pause, backoff, and overdue-notification state for `backup_id`.
+    pub fn get_backup_runtime_state(
+        &self,
+        backup_id: &BackupId,
+    ) -> Result<BackupRuntimeState, HistoryError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT pending_forget, baseline_at_unix, paused_since_unix, paused_until_unix,
+                        backoff_attempt, backoff_until_unix, last_overdue_notified_at_unix,
+                        overdue_anchor_at_unix, last_failure_at_unix
+                 FROM backup_state WHERE backup_id = ?1",
+                params![backup_id.as_str()],
+                |r| {
+                    let pf: i64 = r.get(0)?;
+                    let baseline_at_unix: Option<i64> = r.get(1)?;
+                    let paused_since_unix: Option<i64> = r.get(2)?;
+                    let paused_until_unix: Option<i64> = r.get(3)?;
+                    let backoff_attempt: i64 = r.get(4)?;
+                    let backoff_until_unix: Option<i64> = r.get(5)?;
+                    let last_overdue_notified_at_unix: Option<i64> = r.get(6)?;
+                    let overdue_anchor_at_unix: Option<i64> = r.get(7)?;
+                    let last_failure_at_unix: Option<i64> = r.get(8)?;
+                    Ok(BackupRuntimeState {
+                        pending_forget: pf != 0,
+                        baseline_at: baseline_at_unix.and_then(unix_to_utc),
+                        pause: paused_since_unix.map(|since| PauseState {
+                            paused_since: OffsetDateTime::from_unix_timestamp(since)
+                                .unwrap_or(OffsetDateTime::UNIX_EPOCH),
+                            paused_until: paused_until_unix.and_then(unix_to_utc),
+                        }),
+                        backoff_attempt: backoff_attempt.max(0) as u32,
+                        backoff_until: backoff_until_unix.and_then(unix_to_utc),
+                        last_overdue_notified_at: last_overdue_notified_at_unix
+                            .and_then(unix_to_utc),
+                        overdue_anchor_at: overdue_anchor_at_unix.and_then(unix_to_utc),
+                        last_failure_at: last_failure_at_unix.and_then(unix_to_utc),
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row.unwrap_or_default())
+    }
+
+    /// Persists M3 scheduling, pause, backoff, and overdue-notification state for `backup_id`.
+    pub fn upsert_backup_runtime_state(
+        &self,
+        backup_id: &BackupId,
+        state: &BackupRuntimeState,
+    ) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "INSERT INTO backup_state (
+                backup_id, pending_forget, baseline_at_unix,
+                paused_since_unix, paused_until_unix,
+                backoff_attempt, backoff_until_unix, last_overdue_notified_at_unix,
+                overdue_anchor_at_unix, last_failure_at_unix
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(backup_id) DO UPDATE SET
+                pending_forget = excluded.pending_forget,
+                baseline_at_unix = excluded.baseline_at_unix,
+                paused_since_unix = excluded.paused_since_unix,
+                paused_until_unix = excluded.paused_until_unix,
+                backoff_attempt = excluded.backoff_attempt,
+                backoff_until_unix = excluded.backoff_until_unix,
+                last_overdue_notified_at_unix = excluded.last_overdue_notified_at_unix,
+                overdue_anchor_at_unix = excluded.overdue_anchor_at_unix,
+                last_failure_at_unix = excluded.last_failure_at_unix",
+            params![
+                backup_id.as_str(),
+                if state.pending_forget { 1i64 } else { 0i64 },
+                state.baseline_at.map(|t| t.unix_timestamp()),
+                state
+                    .pause
+                    .as_ref()
+                    .map(|p| p.paused_since.unix_timestamp()),
+                state
+                    .pause
+                    .as_ref()
+                    .and_then(|p| p.paused_until.map(|t| t.unix_timestamp())),
+                state.backoff_attempt as i64,
+                state.backoff_until.map(|t| t.unix_timestamp()),
+                state.last_overdue_notified_at.map(|t| t.unix_timestamp()),
+                state.overdue_anchor_at.map(|t| t.unix_timestamp()),
+                state.last_failure_at.map(|t| t.unix_timestamp()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Loads M3 maintenance timestamps for `destination_id`.
+    pub fn get_destination_maintenance_state(
+        &self,
+        destination_id: &DestinationId,
+    ) -> Result<DestinationMaintenanceState, HistoryError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT baseline_at_unix, last_prune_at_unix, last_check_at_unix
+                 FROM destination_state WHERE destination_id = ?1",
+                params![destination_id.as_str()],
+                |r| {
+                    let baseline: Option<i64> = r.get(0)?;
+                    let prune: Option<i64> = r.get(1)?;
+                    let check: Option<i64> = r.get(2)?;
+                    Ok(DestinationMaintenanceState {
+                        baseline_at: baseline.and_then(unix_to_utc),
+                        last_prune_at: prune.and_then(unix_to_utc),
+                        last_check_at: check.and_then(unix_to_utc),
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row.unwrap_or_default())
+    }
+
+    /// Persists M3 maintenance timestamps for `destination_id`.
+    pub fn upsert_destination_maintenance_state(
+        &self,
+        destination_id: &DestinationId,
+        state: &DestinationMaintenanceState,
+    ) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "INSERT INTO destination_state (
+                destination_id, baseline_at_unix, last_prune_at_unix, last_check_at_unix
+             ) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(destination_id) DO UPDATE SET
+                baseline_at_unix = excluded.baseline_at_unix,
+                last_prune_at_unix = excluded.last_prune_at_unix,
+                last_check_at_unix = excluded.last_check_at_unix",
+            params![
+                destination_id.as_str(),
+                state.baseline_at.map(|t| t.unix_timestamp()),
+                state.last_prune_at.map(|t| t.unix_timestamp()),
+                state.last_check_at.map(|t| t.unix_timestamp()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Removes per-destination state row when a destination is deleted.
+    pub fn clear_destination_state(
+        &self,
+        destination_id: &DestinationId,
+    ) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "DELETE FROM destination_state WHERE destination_id = ?1",
+            params![destination_id.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Loads global schedule pause state (`FR-13a`, `P14`).
+    pub fn get_global_pause(&self) -> Result<Option<PauseState>, HistoryError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT global_paused_since_unix, global_paused_until_unix
+                 FROM app_state WHERE id = 1",
+                [],
+                |r| {
+                    let since: Option<i64> = r.get(0)?;
+                    let until: Option<i64> = r.get(1)?;
+                    Ok(since.map(|s| PauseState {
+                        paused_since: OffsetDateTime::from_unix_timestamp(s)
+                            .unwrap_or(OffsetDateTime::UNIX_EPOCH),
+                        paused_until: until.and_then(unix_to_utc),
+                    }))
+                },
+            )
+            .optional()?;
+        Ok(row.flatten())
+    }
+
+    /// Persists or clears global schedule pause state (`FR-13a`, `P14`).
+    pub fn set_global_pause(&self, pause: Option<&PauseState>) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "INSERT INTO app_state (id, global_paused_since_unix, global_paused_until_unix)
+             VALUES (1, ?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET
+                global_paused_since_unix = excluded.global_paused_since_unix,
+                global_paused_until_unix = excluded.global_paused_until_unix",
+            params![
+                pause.map(|p| p.paused_since.unix_timestamp()),
+                pause.and_then(|p| p.paused_until.map(|t| t.unix_timestamp())),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Returns the timestamp of the latest `Ok` or `Warning` run for `backup_id` (`AC-M3-02-4`).
+    pub fn last_successful_backup_at(
+        &self,
+        backup_id: &BackupId,
+    ) -> Result<Option<OffsetDateTime>, HistoryError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(finished_at, started_at)
+                 FROM runs
+                 WHERE backup_id = ?1 AND kind = 'backup' AND status IN ('ok', 'warning')
+                 ORDER BY started_at_unix DESC, rowid DESC
+                 LIMIT 1",
+                params![backup_id.as_str()],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?;
+        row.map(|raw| {
+            OffsetDateTime::parse(&raw, &Rfc3339).map_err(|e| HistoryError::Time(e.to_string()))
+        })
+        .transpose()
+    }
+
+    /// Returns the newest existing `Pending` run for `backup_id`, if any.
+    pub fn get_pending_backup_run(
+        &self,
+        backup_id: &BackupId,
+    ) -> Result<Option<Run>, HistoryError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, kind, backup_id, destination_id, status, pending_reason,
+                        started_at, finished_at, duration_ms, exit_code,
+                        summary_message, stats_json, log_path
+                 FROM runs
+                 WHERE backup_id = ?1 AND kind = 'backup' AND status = 'pending'
+                 ORDER BY started_at_unix DESC, rowid DESC
+                 LIMIT 1",
+                params![backup_id.as_str()],
+                read_run_row,
+            )
+            .optional()?;
+        match row {
+            Some(mut run) => {
+                run.commands = self.load_commands(&run.id)?;
+                Ok(Some(run))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Deletes any leftover `Pending` rows for `backup_id` (e.g., when transitioning to `Running` or manual-only).
+    pub fn delete_pending_runs_for_backup(&self, backup_id: &BackupId) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "DELETE FROM runs WHERE backup_id = ?1 AND kind = 'backup' AND status = 'pending'",
+            params![backup_id.as_str()],
+        )?;
+        Ok(())
+    }
+
     fn load_commands(&self, run_id: &RunId) -> Result<Vec<CommandRecord>, HistoryError> {
         let mut stmt = self.conn.prepare(
             "SELECT executable, args_json, env_keys_json, started_at, duration_ms, exit_code
@@ -432,42 +684,37 @@ impl RunHistory {
     }
 }
 
-fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS runs (
-            id TEXT PRIMARY KEY NOT NULL,
-            kind TEXT NOT NULL,
-            backup_id TEXT,
-            destination_id TEXT NOT NULL,
-            status TEXT NOT NULL,
-            pending_reason TEXT,
-            started_at_unix INTEGER NOT NULL,
-            started_at TEXT NOT NULL,
-            finished_at TEXT,
-            duration_ms INTEGER,
-            exit_code INTEGER,
-            summary_message TEXT,
-            stats_json TEXT,
-            log_path TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_runs_backup_time
-            ON runs (backup_id, started_at_unix DESC);
-        CREATE TABLE IF NOT EXISTS run_commands (
-            run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-            seq INTEGER NOT NULL,
-            executable TEXT NOT NULL,
-            args_json TEXT NOT NULL,
-            env_keys_json TEXT NOT NULL,
-            started_at TEXT NOT NULL,
-            duration_ms INTEGER NOT NULL,
-            exit_code INTEGER NOT NULL,
-            PRIMARY KEY (run_id, seq)
-        );
-        CREATE TABLE IF NOT EXISTS backup_state (
-            backup_id TEXT PRIMARY KEY NOT NULL,
-            pending_forget INTEGER NOT NULL DEFAULT 0
-        );",
-    )
+/// Persistent pause interval (`FR-13a`, `P14`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PauseState {
+    pub paused_since: OffsetDateTime,
+    /// `None` means paused indefinitely ("bis ich fortsetze").
+    pub paused_until: Option<OffsetDateTime>,
+}
+
+/// Persistent per-backup scheduling/pause/backoff state in `history.db` (`M3`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BackupRuntimeState {
+    pub pending_forget: bool,
+    pub baseline_at: Option<OffsetDateTime>,
+    pub pause: Option<PauseState>,
+    pub backoff_attempt: u32,
+    pub backoff_until: Option<OffsetDateTime>,
+    pub last_overdue_notified_at: Option<OffsetDateTime>,
+    pub overdue_anchor_at: Option<OffsetDateTime>,
+    pub last_failure_at: Option<OffsetDateTime>,
+}
+
+/// Persistent per-destination maintenance timestamps in `history.db` (`M3-S05`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DestinationMaintenanceState {
+    pub baseline_at: Option<OffsetDateTime>,
+    pub last_prune_at: Option<OffsetDateTime>,
+    pub last_check_at: Option<OffsetDateTime>,
+}
+
+fn unix_to_utc(ts: i64) -> Option<OffsetDateTime> {
+    OffsetDateTime::from_unix_timestamp(ts).ok()
 }
 
 fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {

@@ -81,4 +81,14 @@ void run_m2_smoke_scenario(
     const QString& lang
 );
 
+void run_m3_smoke_scenario(
+    QQmlApplicationEngine& engine,
+    QQuickWindow* window,
+    QObject* backend,
+    const std::shared_ptr<QStringList>& warnings,
+    const QString& scen,
+    const QString& out_path,
+    const QString& lang
+);
+
 } // namespace kestic::smoke

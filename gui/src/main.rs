@@ -461,6 +461,9 @@ fn run_daemon_subcommand(args: &[String]) -> ExitCode {
         suppress_ui_spawn: args.iter().any(|a| a == "--suppress-ui-spawn"),
         enable_job_view: !args.iter().any(|a| a == "--no-job-view"),
         enable_portal_inhibit: !args.iter().any(|a| a == "--no-portal-inhibit"),
+        enable_system_monitors: !args.iter().any(|a| a == "--no-monitors"),
+        enable_scheduler: !args.iter().any(|a| a == "--no-scheduler"),
+        enable_binary_watch: !args.iter().any(|a| a == "--no-binary-watch"),
         simulated_status,
         ..Default::default()
     };

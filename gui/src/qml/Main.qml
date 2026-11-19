@@ -106,7 +106,19 @@ Kirigami.ApplicationWindow {
                     driveLabel: backupsModel.data(idx, 38),
                     pendingForget: backupsModel.data(idx, 39),
                     nestedWarningsJson: backupsModel.data(idx, 40),
-                    hasAttentionWarning: backupsModel.data(idx, 41)
+                    hasAttentionWarning: backupsModel.data(idx, 41),
+                    scheduleJson: backupsModel.data(idx, 42),
+                    conditionsJson: backupsModel.data(idx, 43),
+                    nextScheduledAtText: backupsModel.data(idx, 44),
+                    isPaused: backupsModel.data(idx, 45),
+                    pausedLine: backupsModel.data(idx, 46),
+                    pendingPrimaryCode: backupsModel.data(idx, 47),
+                    pendingPrimaryReason: backupsModel.data(idx, 48),
+                    pendingReasonsTooltip: backupsModel.data(idx, 49),
+                    missedSlotsCount: backupsModel.data(idx, 50),
+                    overdueThreshold: backupsModel.data(idx, 51),
+                    hasUnmetRunCondition: backupsModel.data(idx, 52),
+                    unmetConditionsText: backupsModel.data(idx, 53)
                 };
             }
         }
@@ -133,7 +145,16 @@ Kirigami.ApplicationWindow {
                     hasStaleLock: destinationsModel.data(idx, 11),
                     hasProblem: destinationsModel.data(idx, 12),
                     detailText: destinationsModel.data(idx, 13),
-                    pendingForgetCount: destinationsModel.data(idx, 14)
+                    pendingForgetCount: destinationsModel.data(idx, 14),
+                    maintenanceJson: destinationsModel.data(idx, 15),
+                    pruneSummary: destinationsModel.data(idx, 16),
+                    checkSummary: destinationsModel.data(idx, 17),
+                    nextPruneAtText: destinationsModel.data(idx, 18),
+                    nextCheckAtText: destinationsModel.data(idx, 19),
+                    lastPruneAtText: destinationsModel.data(idx, 20),
+                    lastCheckAtText: destinationsModel.data(idx, 21),
+                    maintenanceRunning: destinationsModel.data(idx, 22),
+                    staleLockCount: destinationsModel.data(idx, 23)
                 };
             }
         }
@@ -654,6 +675,10 @@ Kirigami.ApplicationWindow {
             showCommandDialog.close();
             return true;
         }
+        if (conditionOverrideDialog.opened || conditionOverrideDialog.visible) {
+            conditionOverrideDialog.close();
+            return true;
+        }
         if (root.inWizardLayer) {
             var wiz = wizardPageStack.currentItem;
             if (wiz && typeof wiz.handleEscape === "function") {
@@ -759,6 +784,10 @@ Kirigami.ApplicationWindow {
         pushSubPageAtDepth(destinationEditComponent.createObject(pageStack, { destinationId: destId }), 2);
     }
 
+    function openDestinationMaintenancePage(destId) {
+        pushSubPageAtDepth(destinationMaintenanceComponent.createObject(pageStack, { destinationId: destId }), 2);
+    }
+
     function openBackupSourcePage(backupId) {
         pushSubPageAtDepth(backupSourceEditComponent.createObject(pageStack, { backupId: backupId }), targetDepthForBackupEditor());
     }
@@ -769,6 +798,14 @@ Kirigami.ApplicationWindow {
 
     function openBackupRetentionPage(backupId) {
         pushSubPageAtDepth(backupRetentionComponent.createObject(pageStack, { backupId: backupId }), targetDepthForBackupEditor());
+    }
+
+    function openBackupSchedulePage(backupId) {
+        pushSubPageAtDepth(backupScheduleEditComponent.createObject(pageStack, { backupId: backupId }), targetDepthForBackupEditor());
+    }
+
+    function openBackupConditionsPage(backupId) {
+        pushSubPageAtDepth(backupConditionsEditComponent.createObject(pageStack, { backupId: backupId }), targetDepthForBackupEditor());
     }
 
     function openBackupDryRunPreviewPage(backupId, excludesJson) {
@@ -957,6 +994,9 @@ Kirigami.ApplicationWindow {
             root.requestActivate();
             quitConfirmDialog.open();
         }
+        onConditionOverrideRequested: function(backupId, backupName, message) {
+            conditionOverrideDialog.open();
+        }
     }
 
     BackupsModel { id: backupsModel; objectName: "backupsModel" }
@@ -1128,6 +1168,24 @@ Kirigami.ApplicationWindow {
             showCloseButton: true
             text: appBackend.manual_run_blocked_message
             onVisibleChanged: if (!visible && appBackend.manual_run_blocked_message !== "") appBackend.dismissManualRunBlocked()
+        }
+
+        Kirigami.InlineMessage {
+            id: globalPauseBanner
+            objectName: "globalPauseBanner"
+            Layout.fillWidth: true
+            position: Kirigami.InlineMessage.Position.Header
+            type: Kirigami.MessageType.Information
+            visible: appBackend.global_paused
+            text: appBackend.global_paused_line
+            actions: [
+                Kirigami.Action {
+                    objectName: "globalPauseResumeAction"
+                    icon.name: "media-playback-start"
+                    text: i18n("Resume")
+                    onTriggered: appBackend.resumeGlobal()
+                }
+            ]
         }
 
         Kirigami.NavigationTabBar {
@@ -1603,6 +1661,47 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    Kirigami.Dialog {
+        id: conditionOverrideDialog
+        objectName: "conditionOverrideDialog"
+        title: i18n("Run Conditions Not Met")
+        standardButtons: Kirigami.Dialog.Cancel
+        padding: Kirigami.Units.largeSpacing
+        customFooterActions: [
+            Kirigami.Action {
+                id: confirmConditionOverrideAction
+                objectName: "confirmConditionOverrideAction"
+                icon.name: "media-playback-start"
+                text: i18n("Run Anyway")
+                onTriggered: {
+                    appBackend.startBackupOverride(appBackend.condition_override_backup_id);
+                    conditionOverrideDialog.close();
+                }
+            }
+        ]
+
+        ColumnLayout {
+            implicitWidth: Kirigami.Units.gridUnit * 24
+            spacing: Kirigami.Units.smallSpacing
+            Controls.Label {
+                text: appBackend.condition_override_backup_name !== ""
+                    ? i18n("Backup: %1", appBackend.condition_override_backup_name)
+                    : ""
+                font.bold: true
+                visible: text !== ""
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            Controls.Label {
+                text: appBackend.condition_override_message !== ""
+                    ? appBackend.condition_override_message
+                    : i18n("One or more run conditions are currently not met. Start this backup anyway?")
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+        }
+    }
+
     // Page Components
     Component {
         id: overviewPageComponent
@@ -1649,6 +1748,22 @@ Kirigami.ApplicationWindow {
     Component {
         id: backupRetentionComponent
         BackupRetentionPage {
+            rootWindow: root
+            appBackend: root.backendRef
+        }
+    }
+
+    Component {
+        id: backupScheduleEditComponent
+        BackupScheduleEditPage {
+            rootWindow: root
+            appBackend: root.backendRef
+        }
+    }
+
+    Component {
+        id: backupConditionsEditComponent
+        BackupConditionsEditPage {
             rootWindow: root
             appBackend: root.backendRef
         }
@@ -1708,6 +1823,14 @@ Kirigami.ApplicationWindow {
     Component {
         id: destinationEditComponent
         DestinationEditPage {
+            rootWindow: root
+            appBackend: root.backendRef
+        }
+    }
+
+    Component {
+        id: destinationMaintenanceComponent
+        DestinationMaintenancePage {
             rootWindow: root
             appBackend: root.backendRef
         }

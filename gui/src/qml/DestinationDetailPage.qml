@@ -89,6 +89,15 @@ Kirigami.ScrollablePage {
             type: Kirigami.MessageType.Warning
             visible: currentData !== null && currentData.hasStaleLock
             text: i18n("An interrupted run left a repository lock on this destination.")
+            actions: [
+                Kirigami.Action {
+                    objectName: "destUnlockAction"
+                    icon.name: "unlock"
+                    text: i18n("Unlock…")
+                    enabled: appBackend.blocking_kind === ""
+                    onTriggered: appBackend.unlockDestination(destinationId)
+                }
+            ]
         }
 
         Kirigami.InlineMessage {
@@ -147,6 +156,91 @@ Kirigami.ScrollablePage {
             Controls.Label {
                 Kirigami.FormData.label: i18n("Backups:")
                 text: currentData ? i18n("%1 configured backups", currentData.backupCount) : ""
+            }
+        }
+
+        Kirigami.Heading {
+            level: 3
+            text: i18n("Maintenance")
+        }
+
+        Kirigami.FormLayout {
+            Layout.fillWidth: true
+
+            Controls.Label {
+                Kirigami.FormData.label: i18n("Cleanup (Prune):")
+                text: currentData ? currentData.pruneSummary : ""
+                wrapMode: Text.WordWrap
+            }
+            Controls.Label {
+                visible: currentData !== null && currentData.lastPruneAtText !== ""
+                Kirigami.FormData.label: i18n("Last cleanup:")
+                text: currentData ? currentData.lastPruneAtText : ""
+                wrapMode: Text.WordWrap
+            }
+            Controls.Label {
+                visible: currentData !== null && currentData.nextPruneAtText !== ""
+                Kirigami.FormData.label: i18n("Next cleanup:")
+                text: currentData ? currentData.nextPruneAtText : ""
+                wrapMode: Text.WordWrap
+            }
+            Controls.Label {
+                Kirigami.FormData.label: i18n("Integrity Check:")
+                text: currentData ? currentData.checkSummary : ""
+                wrapMode: Text.WordWrap
+            }
+            Controls.Label {
+                visible: currentData !== null && currentData.lastCheckAtText !== ""
+                Kirigami.FormData.label: i18n("Last check:")
+                text: currentData ? currentData.lastCheckAtText : ""
+                wrapMode: Text.WordWrap
+            }
+            Controls.Label {
+                visible: currentData !== null && currentData.nextCheckAtText !== ""
+                Kirigami.FormData.label: i18n("Next check:")
+                text: currentData ? currentData.nextCheckAtText : ""
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        Controls.ItemDelegate {
+            id: editMaintenanceRow
+            objectName: "editMaintenanceRow"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("Edit maintenance schedule")
+            onClicked: {
+                rootWindow.nextTriggerItem = editMaintenanceRow;
+                rootWindow.openDestinationMaintenancePage(destinationId);
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (editMaintenanceRow.activeFocus || editMaintenanceRow.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "tools-wizard"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: i18n("Edit maintenance schedule…")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
             }
         }
 

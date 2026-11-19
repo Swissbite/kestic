@@ -749,7 +749,7 @@ Kirigami.ScrollablePage {
 
                     Controls.Label {
                         Kirigami.FormData.label: i18n("Defaults:")
-                        text: i18n("Manual backups · Standard retention (7 daily, 4 weekly, 12 monthly)")
+                        text: i18n("Daily at 12:00 (AC power & network) · Standard retention (7 daily, 4 weekly, 12 monthly)")
                         wrapMode: Text.WordWrap
                     }
 

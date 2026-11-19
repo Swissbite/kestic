@@ -59,9 +59,12 @@ fn main() {
         "src/qml/BackupReassignPage.qml",
         "src/qml/BackupSnapshotsPage.qml",
         "src/qml/BackupFullConfigPage.qml",
+        "src/qml/BackupScheduleEditPage.qml",
+        "src/qml/BackupConditionsEditPage.qml",
         "src/qml/DestinationsPage.qml",
         "src/qml/DestinationDetailPage.qml",
         "src/qml/DestinationEditPage.qml",
+        "src/qml/DestinationMaintenancePage.qml",
         "src/qml/HistoryPage.qml",
         "src/qml/RunDetailPage.qml",
         "src/qml/AddDestinationWizard.qml",
@@ -77,6 +80,7 @@ fn main() {
         "src/smoke_helper.cpp",
         "src/smoke_m1.cpp",
         "src/smoke_m2.cpp",
+        "src/smoke_m3.cpp",
     ] {
         println!("cargo:rerun-if-changed={cpp}");
     }
@@ -89,6 +93,7 @@ fn main() {
             .cpp_file("src/smoke_helper.cpp")
             .cpp_file("src/smoke_m1.cpp")
             .cpp_file("src/smoke_m2.cpp")
+            .cpp_file("src/smoke_m3.cpp")
             .qt_module("Widgets")
             .qt_module("Quick");
 

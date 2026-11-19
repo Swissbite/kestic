@@ -485,15 +485,15 @@ fn ac_m1_11_2_11_3_11_5_dbusmenu_items_quit_confirmation_and_active_progress() {
                 "missing 'Quit Kestic…' in {labels:?}"
             );
 
-            for forbidden in [
-                "Pause",
-                "Restore Files…",
-                "Create Recovery Kit…",
-                "Update restic…",
-            ] {
+            assert!(
+                labels.contains(&"Pause Schedules"),
+                "missing 'Pause Schedules' in {labels:?}"
+            );
+
+            for forbidden in ["Restore Files…", "Create Recovery Kit…", "Update restic…"] {
                 assert!(
                     !labels.iter().any(|l| l.contains(forbidden)),
-                    "M3-M6 item `{forbidden}` must not exist in M1 tray menu: {labels:?}"
+                    "M4-M6 item `{forbidden}` must not exist yet in M3 tray menu: {labels:?}"
                 );
             }
 

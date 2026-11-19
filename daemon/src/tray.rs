@@ -6,6 +6,7 @@
 
 use crate::dbus_api::{ActiveRunProgressDto, OverallStatusKind};
 use crate::i18n::i18n;
+use kestic_core::scheduler::PauseDuration;
 use ksni::blocking::TrayMethods;
 use ksni::menu::{MenuItem, StandardItem, SubMenu};
 use std::sync::{Arc, mpsc};
@@ -44,6 +45,8 @@ pub enum TrayAction {
     StartBackup(String),
     StartAllBackups,
     CancelRun(String),
+    PauseGlobal(PauseDuration),
+    ResumeGlobal,
     OpenWindow,
     RequestQuit,
 }
@@ -94,7 +97,7 @@ pub fn compute_tray_presentation(
     }
 }
 
-/// Snapshot of tray metadata and M1 menu state presented via `org.kde.StatusNotifierItem`.
+/// Snapshot of tray metadata and M1/M3 menu state presented via `org.kde.StatusNotifierItem`.
 #[derive(Debug, Clone)]
 pub struct KesticTrayState {
     pub status: TrayStatus,
@@ -105,6 +108,9 @@ pub struct KesticTrayState {
     pub tooltip_description: String,
     pub status_line: String,
     pub running_run: Option<ActiveRunProgressDto>,
+    pub paused_line: Option<String>,
+    pub next_backup_line: Option<String>,
+    pub global_paused: bool,
     pub backups: Vec<TrayBackupItem>,
     pub blocking_active: bool,
 }
@@ -120,6 +126,9 @@ impl Default for KesticTrayState {
             tooltip_description: i18n("Backups ready").into(),
             status_line: i18n("All data backed up").into(),
             running_run: None,
+            paused_line: None,
+            next_backup_line: None,
+            global_paused: false,
             backups: Vec::new(),
             blocking_active: false,
         }
@@ -223,6 +232,29 @@ impl ksni::Tray for KesticTray {
             );
         }
 
+        if let Some(paused_line) = &self.state.paused_line {
+            items.push(
+                StandardItem {
+                    label: paused_line.clone(),
+                    icon_name: "state-pause".to_string(),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
+        if let Some(next_line) = &self.state.next_backup_line {
+            items.push(
+                StandardItem {
+                    label: next_line.clone(),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
         items.push(MenuItem::Separator);
 
         // "Back Up Now" submenu (M1-S11, AC-M1-11-2)
@@ -269,6 +301,68 @@ impl ksni::Tray for KesticTray {
             }
             .into(),
         );
+
+        // Pause / Resume Schedules (M3-S07, AC-M3-14-4, §10.1)
+        if self.state.global_paused {
+            items.push(
+                StandardItem {
+                    label: i18n("Resume Schedules").into(),
+                    icon_name: "media-playback-start".to_string(),
+                    activate: Box::new(|this: &mut Self| {
+                        this.emit(TrayAction::ResumeGlobal);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        } else {
+            items.push(
+                SubMenu {
+                    label: i18n("Pause Schedules").into(),
+                    icon_name: "media-playback-pause".to_string(),
+                    submenu: vec![
+                        StandardItem {
+                            label: i18n("1 Hour").into(),
+                            activate: Box::new(|this: &mut Self| {
+                                this.emit(TrayAction::PauseGlobal(PauseDuration::Hours {
+                                    hours: 1,
+                                }));
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StandardItem {
+                            label: i18n("3 Hours").into(),
+                            activate: Box::new(|this: &mut Self| {
+                                this.emit(TrayAction::PauseGlobal(PauseDuration::Hours {
+                                    hours: 3,
+                                }));
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StandardItem {
+                            label: i18n("Until Tomorrow").into(),
+                            activate: Box::new(|this: &mut Self| {
+                                this.emit(TrayAction::PauseGlobal(PauseDuration::UntilTomorrow));
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StandardItem {
+                            label: i18n("Until I Resume").into(),
+                            activate: Box::new(|this: &mut Self| {
+                                this.emit(TrayAction::PauseGlobal(PauseDuration::Indefinite));
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
 
         let running_id = self.state.running_run.as_ref().map(|r| r.run_id.clone());
         items.push(

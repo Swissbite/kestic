@@ -3,10 +3,11 @@
 
 set fallback := false
 
+# List available recipes
 default:
     @just --list
 
-# Run all verification checks (AC-M0-01-1, AC-M0-06-1)
+# Full suite pass (fmt, clippy, deb build, smoke, nextest, deny, reuse)
 verify:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
@@ -16,12 +17,15 @@ verify:
     cargo deny check
     reuse lint
 
+# Format all Rust code in the workspace
 fmt:
     cargo fmt --all
 
+# Build the Debian package (fast profile)
 deb:
     cargo deb -p kestic-gui --fast
 
+# Run offscreen QML smoke test and write screenshot
 smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -42,6 +46,7 @@ smoke:
     QT_QPA_PLATFORM=offscreen \
     ./target/debug/kestic --smoke-test --smoke-lang en --screenshot target/smoke-artifacts/m0-s06-main.png
 
+# Build binary and .deb package, then run workspace tests
 test:
     cargo build --bin kestic
     cargo deb -p kestic-gui --fast

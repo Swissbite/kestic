@@ -70,6 +70,18 @@ pub mod qobject {
         PendingForget,
         NestedWarningsJson,
         HasAttentionWarning,
+        ScheduleJson,
+        ConditionsJson,
+        NextScheduledAtText,
+        IsPaused,
+        PausedLine,
+        PendingPrimaryCode,
+        PendingPrimaryReason,
+        PendingReasonsTooltip,
+        MissedSlotsCount,
+        OverdueThreshold,
+        HasUnmetRunCondition,
+        UnmetConditionsText,
     }
 
     #[qenum(DestinationsModel)]
@@ -89,6 +101,15 @@ pub mod qobject {
         HasProblem,
         DetailText,
         PendingForgetCount,
+        MaintenanceJson,
+        PruneSummary,
+        CheckSummary,
+        NextPruneAtText,
+        NextCheckAtText,
+        LastPruneAtText,
+        LastCheckAtText,
+        MaintenanceRunning,
+        StaleLockCount,
     }
 
     #[qenum(RunsModel)]
@@ -385,9 +406,11 @@ pub mod qobject {
 pub use crate::list_model::SpikeListModelRust;
 use crate::state_cache::{
     backup_exclude_file_path_str, current_now, format_backup_status, format_bytes,
-    format_datetime_display, format_day_group, format_destination_status, format_duration_ms,
-    format_exclude_summary, format_retention_summary, format_run_kind_name, format_run_status,
-    format_source_kind_label, format_time_short, i18n, shared_state,
+    format_conditions_summary, format_datetime_display, format_day_group,
+    format_destination_status, format_duration_ms, format_exclude_summary,
+    format_maintenance_entry, format_next_scheduled_line, format_pause_line,
+    format_retention_summary, format_run_kind_name, format_run_status, format_schedule_summary,
+    format_slot_timestamp, format_source_kind_label, format_time_short, i18n, shared_state,
 };
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
@@ -485,6 +508,18 @@ struct BackupRow {
     pending_forget: bool,
     nested_warnings_json: String,
     has_attention_warning: bool,
+    schedule_json: String,
+    conditions_json: String,
+    next_scheduled_at_text: String,
+    is_paused: bool,
+    paused_line: String,
+    pending_primary_code: String,
+    pending_primary_reason: String,
+    pending_reasons_tooltip: String,
+    missed_slots_count: i32,
+    overdue_threshold: i32,
+    has_unmet_run_condition: bool,
+    unmet_conditions_text: String,
 }
 
 #[derive(Default)]
@@ -567,7 +602,22 @@ impl BackupsModelRust {
 
             let has_attention_warning = b.pending_forget
                 || !b.nested_warnings.is_empty()
-                || !b.exclude_lint_warnings.is_empty();
+                || !b.exclude_lint_warnings.is_empty()
+                || b.is_overdue
+                || b.has_error;
+
+            let schedule_json =
+                serde_json::to_string(&b.backup.schedule).unwrap_or_else(|_| "{}".to_string());
+            let conditions_json = serde_json::to_string(&b.backup.run_conditions)
+                .unwrap_or_else(|_| "{}".to_string());
+            let next_scheduled_at_text =
+                format_next_scheduled_line(b.next_scheduled_at_unix, &b.backup.schedule, now);
+            let paused_line = if b.is_paused {
+                format_pause_line(b.paused_since_unix, b.paused_until_unix, now)
+            } else {
+                String::new()
+            };
+            let pending_reasons_tooltip = b.pending_reasons.join("\n");
 
             out.push(BackupRow {
                 backup_id: b.backup.id.as_str().to_string(),
@@ -598,10 +648,9 @@ impl BackupsModelRust {
                 error_action: b.error_action.clone().unwrap_or_default(),
                 unreadable_files_json: serde_json::to_string(&b.unreadable_files)
                     .unwrap_or_else(|_| "[]".to_string()),
-                schedule_summary: i18n("Manual only (schedules follow in a future update)")
-                    .to_string(),
+                schedule_summary: format_schedule_summary(&b.backup.schedule),
                 retention_summary: format_retention_summary(&b.backup.retention),
-                conditions_summary: i18n("Always allowed on manual start").to_string(),
+                conditions_summary: format_conditions_summary(&b.backup.run_conditions),
                 last_run_id,
                 last_run_timestamp_iso,
                 last_run_time_ms,
@@ -624,6 +673,22 @@ impl BackupsModelRust {
                 nested_warnings_json: serde_json::to_string(&b.nested_warnings)
                     .unwrap_or_else(|_| "[]".to_string()),
                 has_attention_warning,
+                schedule_json,
+                conditions_json,
+                next_scheduled_at_text,
+                is_paused: b.is_paused,
+                paused_line,
+                pending_primary_code: b.pending_primary_code.clone().unwrap_or_default(),
+                pending_primary_reason: b.pending_primary_reason.clone().unwrap_or_default(),
+                pending_reasons_tooltip,
+                missed_slots_count: i32::try_from(b.missed_slots_count).unwrap_or(i32::MAX),
+                overdue_threshold: b
+                    .backup
+                    .overdue_threshold
+                    .map(|v| i32::try_from(v).unwrap_or(99))
+                    .unwrap_or(0),
+                has_unmet_run_condition: b.has_unmet_run_condition,
+                unmet_conditions_text: b.unmet_conditions_text.clone().unwrap_or_default(),
             });
         }
         out
@@ -825,6 +890,54 @@ impl qobject::BackupsModel {
             qobject::BackupRoles::HasAttentionWarning.repr,
             QByteArray::from("hasAttentionWarning"),
         );
+        roles.insert(
+            qobject::BackupRoles::ScheduleJson.repr,
+            QByteArray::from("scheduleJson"),
+        );
+        roles.insert(
+            qobject::BackupRoles::ConditionsJson.repr,
+            QByteArray::from("conditionsJson"),
+        );
+        roles.insert(
+            qobject::BackupRoles::NextScheduledAtText.repr,
+            QByteArray::from("nextScheduledAtText"),
+        );
+        roles.insert(
+            qobject::BackupRoles::IsPaused.repr,
+            QByteArray::from("isPaused"),
+        );
+        roles.insert(
+            qobject::BackupRoles::PausedLine.repr,
+            QByteArray::from("pausedLine"),
+        );
+        roles.insert(
+            qobject::BackupRoles::PendingPrimaryCode.repr,
+            QByteArray::from("pendingPrimaryCode"),
+        );
+        roles.insert(
+            qobject::BackupRoles::PendingPrimaryReason.repr,
+            QByteArray::from("pendingPrimaryReason"),
+        );
+        roles.insert(
+            qobject::BackupRoles::PendingReasonsTooltip.repr,
+            QByteArray::from("pendingReasonsTooltip"),
+        );
+        roles.insert(
+            qobject::BackupRoles::MissedSlotsCount.repr,
+            QByteArray::from("missedSlotsCount"),
+        );
+        roles.insert(
+            qobject::BackupRoles::OverdueThreshold.repr,
+            QByteArray::from("overdueThreshold"),
+        );
+        roles.insert(
+            qobject::BackupRoles::HasUnmetRunCondition.repr,
+            QByteArray::from("hasUnmetRunCondition"),
+        );
+        roles.insert(
+            qobject::BackupRoles::UnmetConditionsText.repr,
+            QByteArray::from("unmetConditionsText"),
+        );
         roles
     }
 
@@ -920,6 +1033,34 @@ impl qobject::BackupsModel {
                 QVariant::from(&QString::from(&row.nested_warnings_json))
             }
             qobject::BackupRoles::HasAttentionWarning => QVariant::from(&row.has_attention_warning),
+            qobject::BackupRoles::ScheduleJson => {
+                QVariant::from(&QString::from(&row.schedule_json))
+            }
+            qobject::BackupRoles::ConditionsJson => {
+                QVariant::from(&QString::from(&row.conditions_json))
+            }
+            qobject::BackupRoles::NextScheduledAtText => {
+                QVariant::from(&QString::from(&row.next_scheduled_at_text))
+            }
+            qobject::BackupRoles::IsPaused => QVariant::from(&row.is_paused),
+            qobject::BackupRoles::PausedLine => QVariant::from(&QString::from(&row.paused_line)),
+            qobject::BackupRoles::PendingPrimaryCode => {
+                QVariant::from(&QString::from(&row.pending_primary_code))
+            }
+            qobject::BackupRoles::PendingPrimaryReason => {
+                QVariant::from(&QString::from(&row.pending_primary_reason))
+            }
+            qobject::BackupRoles::PendingReasonsTooltip => {
+                QVariant::from(&QString::from(&row.pending_reasons_tooltip))
+            }
+            qobject::BackupRoles::MissedSlotsCount => QVariant::from(&row.missed_slots_count),
+            qobject::BackupRoles::OverdueThreshold => QVariant::from(&row.overdue_threshold),
+            qobject::BackupRoles::HasUnmetRunCondition => {
+                QVariant::from(&row.has_unmet_run_condition)
+            }
+            qobject::BackupRoles::UnmetConditionsText => {
+                QVariant::from(&QString::from(&row.unmet_conditions_text))
+            }
             _ => QVariant::default(),
         }
     }
@@ -942,6 +1083,15 @@ struct DestinationRow {
     has_problem: bool,
     detail_text: String,
     pending_forget_count: i32,
+    maintenance_json: String,
+    prune_summary: String,
+    check_summary: String,
+    next_prune_at_text: String,
+    next_check_at_text: String,
+    last_prune_at_text: String,
+    last_check_at_text: String,
+    maintenance_running: bool,
+    stale_lock_count: i32,
 }
 
 #[derive(Default)]
@@ -978,6 +1128,22 @@ impl DestinationsModelRust {
                 .iter()
                 .filter(|b| b.backup.destination_id == d.destination.id && b.pending_forget)
                 .count();
+            let maintenance_json = serde_json::to_string(&d.destination.maintenance)
+                .unwrap_or_else(|_| "{}".to_string());
+            let prune_summary = format_maintenance_entry(&d.destination.maintenance.prune);
+            let check_summary = format_maintenance_entry(&d.destination.maintenance.check);
+            let next_prune_at_text = format_slot_timestamp(d.next_prune_at_unix, now);
+            let next_check_at_text = format_slot_timestamp(d.next_check_at_unix, now);
+            let last_prune_at_text = d
+                .last_prune_at_unix
+                .and_then(|ts| OffsetDateTime::from_unix_timestamp(ts).ok())
+                .map(format_datetime_display)
+                .unwrap_or_default();
+            let last_check_at_text = d
+                .last_check_at_unix
+                .and_then(|ts| OffsetDateTime::from_unix_timestamp(ts).ok())
+                .map(format_datetime_display)
+                .unwrap_or_default();
             out.push(DestinationRow {
                 destination_id: d.destination.id.as_str().to_string(),
                 name: d.destination.name.clone(),
@@ -994,6 +1160,15 @@ impl DestinationsModelRust {
                 has_problem: d.has_problem,
                 detail_text: d.availability.detail.clone().unwrap_or_default(),
                 pending_forget_count: i32::try_from(pending_forget_count).unwrap_or(i32::MAX),
+                maintenance_json,
+                prune_summary,
+                check_summary,
+                next_prune_at_text,
+                next_check_at_text,
+                last_prune_at_text,
+                last_check_at_text,
+                maintenance_running: d.maintenance_running,
+                stale_lock_count: i32::try_from(d.stale_lock_count).unwrap_or(i32::MAX),
             });
         }
         out
@@ -1092,6 +1267,42 @@ impl qobject::DestinationsModel {
             qobject::DestinationRoles::PendingForgetCount.repr,
             QByteArray::from("pendingForgetCount"),
         );
+        roles.insert(
+            qobject::DestinationRoles::MaintenanceJson.repr,
+            QByteArray::from("maintenanceJson"),
+        );
+        roles.insert(
+            qobject::DestinationRoles::PruneSummary.repr,
+            QByteArray::from("pruneSummary"),
+        );
+        roles.insert(
+            qobject::DestinationRoles::CheckSummary.repr,
+            QByteArray::from("checkSummary"),
+        );
+        roles.insert(
+            qobject::DestinationRoles::NextPruneAtText.repr,
+            QByteArray::from("nextPruneAtText"),
+        );
+        roles.insert(
+            qobject::DestinationRoles::NextCheckAtText.repr,
+            QByteArray::from("nextCheckAtText"),
+        );
+        roles.insert(
+            qobject::DestinationRoles::LastPruneAtText.repr,
+            QByteArray::from("lastPruneAtText"),
+        );
+        roles.insert(
+            qobject::DestinationRoles::LastCheckAtText.repr,
+            QByteArray::from("lastCheckAtText"),
+        );
+        roles.insert(
+            qobject::DestinationRoles::MaintenanceRunning.repr,
+            QByteArray::from("maintenanceRunning"),
+        );
+        roles.insert(
+            qobject::DestinationRoles::StaleLockCount.repr,
+            QByteArray::from("staleLockCount"),
+        );
         roles
     }
 
@@ -1128,6 +1339,31 @@ impl qobject::DestinationsModel {
             qobject::DestinationRoles::PendingForgetCount => {
                 QVariant::from(&row.pending_forget_count)
             }
+            qobject::DestinationRoles::MaintenanceJson => {
+                QVariant::from(&QString::from(&row.maintenance_json))
+            }
+            qobject::DestinationRoles::PruneSummary => {
+                QVariant::from(&QString::from(&row.prune_summary))
+            }
+            qobject::DestinationRoles::CheckSummary => {
+                QVariant::from(&QString::from(&row.check_summary))
+            }
+            qobject::DestinationRoles::NextPruneAtText => {
+                QVariant::from(&QString::from(&row.next_prune_at_text))
+            }
+            qobject::DestinationRoles::NextCheckAtText => {
+                QVariant::from(&QString::from(&row.next_check_at_text))
+            }
+            qobject::DestinationRoles::LastPruneAtText => {
+                QVariant::from(&QString::from(&row.last_prune_at_text))
+            }
+            qobject::DestinationRoles::LastCheckAtText => {
+                QVariant::from(&QString::from(&row.last_check_at_text))
+            }
+            qobject::DestinationRoles::MaintenanceRunning => {
+                QVariant::from(&row.maintenance_running)
+            }
+            qobject::DestinationRoles::StaleLockCount => QVariant::from(&row.stale_lock_count),
             _ => QVariant::default(),
         }
     }

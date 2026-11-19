@@ -206,19 +206,23 @@ Kirigami.ScrollablePage {
             text: i18n("Schedule & Run Conditions")
         }
 
+        NavSummaryRow {
+            rowObjectName: "fullConfigScheduleRow"
+            rowTitle: i18n("Schedule")
+            rowValue: backupData ? backupData.scheduleSummary : ""
+            onNavigate: rootWindow.openBackupSchedulePage(backupId)
+        }
+
+        NavSummaryRow {
+            rowObjectName: "fullConfigConditionsRow"
+            rowTitle: i18n("Run conditions")
+            rowValue: backupData ? backupData.conditionsSummary : ""
+            onNavigate: rootWindow.openBackupConditionsPage(backupId)
+        }
+
         Kirigami.FormLayout {
             Layout.fillWidth: true
 
-            Controls.Label {
-                Kirigami.FormData.label: i18n("Schedule:")
-                text: backupData ? backupData.scheduleSummary : ""
-                wrapMode: Text.WordWrap
-            }
-            Controls.Label {
-                Kirigami.FormData.label: i18n("Run conditions:")
-                text: backupData ? backupData.conditionsSummary : ""
-                wrapMode: Text.WordWrap
-            }
             Controls.Label {
                 Kirigami.FormData.label: i18n("Destination maintenance:")
                 text: backupData && backupData.pendingForget

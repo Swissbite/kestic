@@ -52,20 +52,53 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             id: detailBackupNowAction
             objectName: "detailBackupNowAction"
-            icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
-            text: currentData && currentData.isRunning ? i18n("Cancel") : i18n("Back Up Now")
-            enabled: currentData !== null && (currentData.isRunning || (currentData.available && appBackend.blocking_kind === ""))
-            tooltip: currentData && !currentData.available
-                ? currentData.availabilityReason
-                : (appBackend.blocking_kind !== "" ? appBackend.blocking_message : i18n("Start backup now"))
+            icon.name: currentData && currentData.isRunning
+                ? "process-stop"
+                : (currentData && currentData.hasError && currentData.errorAction === "update_stored_password"
+                    ? "dialog-password"
+                    : "media-playback-start")
+            text: currentData && currentData.isRunning
+                ? i18n("Cancel")
+                : (currentData && currentData.hasError && currentData.errorAction === "update_stored_password"
+                    ? i18n("Update Saved Password…")
+                    : i18n("Back Up Now"))
+            enabled: currentData !== null && (currentData.isRunning
+                || (currentData.hasError && currentData.errorAction === "update_stored_password" && appBackend.blocking_kind === "")
+                || (currentData.available && appBackend.blocking_kind === ""))
+            tooltip: currentData && currentData.hasError && currentData.errorAction === "update_stored_password"
+                ? i18n("Update saved repository password before backing up")
+                : (currentData && !currentData.available
+                    ? currentData.availabilityReason
+                    : (appBackend.blocking_kind !== "" ? appBackend.blocking_message : i18n("Start backup now")))
             onTriggered: {
                 if (!currentData) return;
                 if (currentData.isRunning) {
                     appBackend.cancelRun(currentData.activeRunId);
+                } else if (currentData.hasError && currentData.errorAction === "update_stored_password") {
+                    rootWindow.openUpdatePasswordDialog(currentData.destinationId, currentData.destinationName);
                 } else {
                     appBackend.startBackup(backupId);
                 }
             }
+        },
+        Kirigami.Action {
+            id: detailPauseAction
+            objectName: "backupDetailPauseAction"
+            icon.name: currentData && currentData.isPaused ? "media-playback-start" : "media-playback-pause"
+            text: currentData && currentData.isPaused ? i18n("Paused…") : i18n("Pause…")
+            enabled: currentData !== null && appBackend.blocking_kind !== "daemon_unreachable"
+            tooltip: currentData && currentData.isPaused ? currentData.pausedLine : i18n("Temporarily pause this backup's schedule")
+            onTriggered: backupPauseMenu.popup()
+        },
+        Kirigami.Action {
+            id: detailBackUpAnywayAction
+            objectName: "backupDetailBackUpAnywayAction"
+            icon.name: "media-playback-start"
+            text: i18n("Back Up Now Anyway")
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            visible: currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password"
+            enabled: currentData !== null && currentData.available && !currentData.isRunning && appBackend.blocking_kind === ""
+            onTriggered: appBackend.startBackup(backupId)
         },
         Kirigami.Action {
             objectName: "backupDetailPreviewAction"
@@ -104,10 +137,64 @@ Kirigami.ScrollablePage {
         }
     ]
 
+    Controls.Menu {
+        id: backupPauseMenu
+        objectName: "backupPauseMenu"
+
+        Controls.MenuItem {
+            objectName: "pauseBackup1hItem"
+            text: i18n("1 Hour")
+            onTriggered: appBackend.pauseBackup(backupId, "1h")
+        }
+        Controls.MenuItem {
+            objectName: "pauseBackup3hItem"
+            text: i18n("3 Hours")
+            onTriggered: appBackend.pauseBackup(backupId, "3h")
+        }
+        Controls.MenuItem {
+            objectName: "pauseBackupTomorrowItem"
+            text: i18n("Until Tomorrow")
+            onTriggered: appBackend.pauseBackup(backupId, "tomorrow")
+        }
+        Controls.MenuItem {
+            objectName: "pauseBackupIndefiniteItem"
+            text: i18n("Until I Resume")
+            onTriggered: appBackend.pauseBackup(backupId, "indefinite")
+        }
+        Controls.MenuSeparator {
+            visible: currentData !== null && currentData.isPaused
+        }
+        Controls.MenuItem {
+            objectName: "resumeBackupMenuItem"
+            text: i18n("Resume")
+            icon.name: "media-playback-start"
+            visible: currentData !== null && currentData.isPaused
+            enabled: currentData !== null && currentData.isPaused
+            onTriggered: appBackend.resumeBackup(backupId)
+        }
+    }
+
     ColumnLayout {
         width: parent.width
         spacing: Kirigami.Units.largeSpacing
         visible: currentData !== null
+
+        Kirigami.InlineMessage {
+            id: pausedBanner
+            objectName: "backupDetailPausedBanner"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Information
+            visible: currentData !== null && currentData.isPaused
+            text: currentData ? currentData.pausedLine : ""
+            actions: [
+                Kirigami.Action {
+                    objectName: "backupDetailResumeAction"
+                    icon.name: "media-playback-start"
+                    text: i18n("Resume")
+                    onTriggered: appBackend.resumeBackup(backupId)
+                }
+            ]
+        }
 
         Kirigami.InlineMessage {
             id: errorBanner
@@ -184,24 +271,52 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
 
-            RowLayout {
+            Item {
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
+                implicitHeight: detailStatusRow.implicitHeight
 
-                Kirigami.Icon {
-                    source: currentData ? currentData.statusIcon : "state-information"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                RowLayout {
+                    id: detailStatusRow
+                    anchors.fill: parent
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Kirigami.Icon {
+                        source: currentData ? currentData.statusIcon : "state-information"
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                    }
+
+                    Controls.Label {
+                        id: backupStatusLine
+                        objectName: "backupDetailStatusLine"
+                        text: currentData ? (currentData.statusText + (currentData.lastRunSummary !== "" ? " · " + currentData.lastRunSummary : "")) : ""
+                        color: Kirigami.Theme.textColor
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
                 }
 
-                Controls.Label {
-                    id: backupStatusLine
-                    objectName: "backupDetailStatusLine"
-                    text: currentData ? (currentData.statusText + (currentData.lastRunSummary !== "" ? " · " + currentData.lastRunSummary : "")) : ""
-                    color: Kirigami.Theme.textColor
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
+                MouseArea {
+                    id: detailStatusHoverArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
                 }
+
+                Controls.ToolTip.visible: detailStatusHoverArea.containsMouse
+                    && currentData !== null
+                    && currentData.pendingReasonsTooltip !== ""
+                Controls.ToolTip.text: currentData ? currentData.pendingReasonsTooltip : ""
+            }
+
+            Controls.Label {
+                id: backupNextScheduledLabel
+                objectName: "backupDetailNextScheduledLabel"
+                visible: currentData !== null && !currentData.isRunning && currentData.nextScheduledAtText !== ""
+                text: currentData ? currentData.nextScheduledAtText : ""
+                opacity: 0.75
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
             }
 
             Controls.ProgressBar {
@@ -219,6 +334,7 @@ Kirigami.ScrollablePage {
                 Controls.Button {
                     id: inlineBackUpNowButton
                     objectName: "backupDetailBackUpNowButton"
+                    visible: !(currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password")
                     icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
                     text: currentData && currentData.isRunning ? i18n("Cancel") : i18n("Back Up Now")
                     enabled: currentData !== null && (currentData.isRunning || (currentData.available && appBackend.blocking_kind === ""))
@@ -235,6 +351,17 @@ Kirigami.ScrollablePage {
                             appBackend.startBackup(backupId);
                         }
                     }
+                }
+
+                Controls.Button {
+                    id: inlineUpdatePasswordButton
+                    objectName: "backupDetailUpdatePasswordButton"
+                    visible: currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password"
+                    icon.name: "dialog-password"
+                    text: i18n("Update Saved Password…")
+                    enabled: appBackend.blocking_kind === ""
+                    Accessible.name: text
+                    onClicked: if (currentData) rootWindow.openUpdatePasswordDialog(currentData.destinationId, currentData.destinationName)
                 }
 
                 Controls.Label {
@@ -418,6 +545,92 @@ Kirigami.ScrollablePage {
                     text: currentData
                         ? i18n("Retention: %1", currentData.retentionSummary)
                         : i18n("Retention")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+
+        Controls.ItemDelegate {
+            id: editScheduleRow
+            objectName: "editScheduleRow"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("Edit schedule")
+            onClicked: {
+                rootWindow.nextTriggerItem = editScheduleRow;
+                rootWindow.openBackupSchedulePage(backupId);
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (editScheduleRow.activeFocus || editScheduleRow.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "view-calendar"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: currentData
+                        ? i18n("Schedule: %1", currentData.scheduleSummary)
+                        : i18n("Schedule")
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Kirigami.Icon {
+                    source: "go-next"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+
+        Controls.ItemDelegate {
+            id: editConditionsRow
+            objectName: "editConditionsRow"
+            Layout.fillWidth: true
+            activeFocusOnTab: true
+            Accessible.name: i18n("Edit run conditions")
+            onClicked: {
+                rootWindow.nextTriggerItem = editConditionsRow;
+                rootWindow.openBackupConditionsPage(backupId);
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                z: 10
+                color: "transparent"
+                radius: Kirigami.Units.cornerRadius
+                border.width: (editConditionsRow.activeFocus || editConditionsRow.visualFocus) ? 2 : 0
+                border.color: Kirigami.Theme.highlightColor
+                visible: border.width > 0
+            }
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.Icon {
+                    source: "preferences-system-power"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
+                Controls.Label {
+                    text: currentData
+                        ? i18n("Run conditions: %1", currentData.conditionsSummary)
+                        : i18n("Run conditions")
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }

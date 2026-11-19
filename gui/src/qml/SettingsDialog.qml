@@ -11,15 +11,26 @@ Kirigami.ApplicationWindow {
     objectName: "settingsWindow"
     title: i18n("Configure Kestic")
     width: 720
-    height: 560
+    height: 640
     minimumWidth: 520
-    minimumHeight: 440
+    minimumHeight: 460
     visible: false
 
     required property var appBackend
 
     property string pendingProviderKind: "system"
     property string pendingCustomPath: ""
+
+    function saveSettingsFromUi() {
+        appBackend.updateSettings(
+            defaultOverdueSpinBox.value,
+            notifErrorSwitch.checked,
+            notifWarningSwitch.checked,
+            notifOverdueSwitch.checked,
+            notifMaintenanceSwitch.checked,
+            notifResticUpdateSwitch.checked
+        );
+    }
 
     onClosing: function(close) {
         close.accepted = false;
@@ -164,6 +175,75 @@ Kirigami.ApplicationWindow {
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+            }
+
+            Kirigami.Separator {
+                Kirigami.FormData.isSection: true
+                Kirigami.FormData.label: i18n("Monitoring & Notifications")
+            }
+
+            Controls.SpinBox {
+                id: defaultOverdueSpinBox
+                objectName: "defaultOverdueSpinBox"
+                Kirigami.FormData.label: i18n("Mark overdue after missed slots:")
+                from: 1
+                to: 99
+                value: appBackend.default_overdue_threshold
+                Accessible.name: i18n("Mark overdue after missed slots")
+                onValueModified: settingsWindow.saveSettingsFromUi()
+            }
+
+            Controls.Label {
+                text: i18n("A scheduled backup is shown as overdue when at least this many scheduled runs could not execute in a row.")
+                opacity: 0.75
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+            }
+
+            Controls.Switch {
+                id: notifErrorSwitch
+                objectName: "notifErrorSwitch"
+                Kirigami.FormData.label: i18n("Notify on backup errors:")
+                checked: appBackend.notif_on_error
+                Accessible.name: i18n("Notify on backup errors")
+                onToggled: settingsWindow.saveSettingsFromUi()
+            }
+
+            Controls.Switch {
+                id: notifWarningSwitch
+                objectName: "notifWarningSwitch"
+                Kirigami.FormData.label: i18n("Notify on warnings:")
+                checked: appBackend.notif_on_warning
+                Accessible.name: i18n("Notify on warnings")
+                onToggled: settingsWindow.saveSettingsFromUi()
+            }
+
+            Controls.Switch {
+                id: notifOverdueSwitch
+                objectName: "notifOverdueSwitch"
+                Kirigami.FormData.label: i18n("Notify when backup is overdue:")
+                checked: appBackend.notif_on_overdue
+                Accessible.name: i18n("Notify when backup is overdue")
+                onToggled: settingsWindow.saveSettingsFromUi()
+            }
+
+            Controls.Switch {
+                id: notifMaintenanceSwitch
+                objectName: "notifMaintenanceSwitch"
+                Kirigami.FormData.label: i18n("Notify on maintenance failures:")
+                checked: appBackend.notif_on_maintenance_failed
+                Accessible.name: i18n("Notify on maintenance failures")
+                onToggled: settingsWindow.saveSettingsFromUi()
+            }
+
+            Controls.Switch {
+                id: notifResticUpdateSwitch
+                objectName: "notifResticUpdateSwitch"
+                Kirigami.FormData.label: i18n("Notify on restic updates:")
+                checked: appBackend.notif_on_restic_update
+                Accessible.name: i18n("Notify on restic updates")
+                onToggled: settingsWindow.saveSettingsFromUi()
             }
 
             Kirigami.Separator {

@@ -5,19 +5,26 @@
 //! async backup worker with cancellation & Plasma JobView/Portal Inhibit, 60s availability cache,
 //! SNI tray synchronization, and desktop notifications).
 
+use crate::binary_watch::{BinaryIdentity, BinaryStatus};
 use crate::dbus_api::{
     ActiveRunProgressDto, AvailabilitySnapshotDto, BackupAvailabilityDto, BackupDryRunStatusDto,
     BackupSnapshotsDto, BackupSummaryDto, BlockingStateDto, ConnectionTestResultDto,
     DaemonStateDto, DestinationAvailabilityDto, DestinationSummaryDto, ExcludeRulePreviewDto,
     KESTIC_BUS_NAME, KESTIC_OBJECT_PATH, KesticDbusError, OverallStatusDto, OverallStatusKind,
-    PreviousDestinationSnapshotsDto, REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
-    ResticStatusDto, RetentionPreviewStatusDto, RunDetailDto, SecretStoreStatusDto,
-    SkippedBackupDto, SnapshotSummaryDto, StartAllResultDto,
+    PreviousDestinationSnapshotsDto, REASON_CONDITION_NOT_MET, REASON_DESTINATION_UNREACHABLE,
+    REASON_SOURCE_UNAVAILABLE, ResticStatusDto, RetentionPreviewStatusDto, RunDetailDto,
+    SecretStoreStatusDto, SkippedBackupDto, SnapshotSummaryDto, StartAllResultDto,
 };
 use crate::i18n::{i18n, localized_failure_summary, localized_recovery_action_label};
 use crate::inhibit::PortalInhibitGuard;
 use crate::job_view::{CAPABILITY_KILLABLE, DEFAULT_JOB_VIEW_DEST, JobProgress, JobViewHandle};
-use crate::notifications::{KESTIC_DESKTOP_ENTRY, KesticEvent, send_event_notification};
+use crate::monitors::{
+    LogindSleepInhibitor, MonitorBusConfig, SystemMonitorEvent, SystemMonitorHandle,
+    list_known_networks, read_system_environment,
+};
+use crate::notifications::{
+    KESTIC_DESKTOP_ENTRY, KesticEvent, send_configured_notification, send_event_notification,
+};
 use crate::secrets::SecretServiceStore;
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::{
@@ -38,11 +45,16 @@ use kestic_core::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, DestinationSetupMode, preflight_check_destination,
     remove_destination_secrets, setup_destination, verify_and_update_stored_password,
 };
-use kestic_core::history::RunHistory;
+use kestic_core::history::{PauseState, RunHistory};
+use kestic_core::maintenance::{
+    PrunePreviewSummary, detect_stale_locks, execute_check, execute_prune, execute_prune_dry_run,
+    execute_unlock,
+};
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeLintWarning,
-    ExcludePathTestResult, ExcludeRules, NestedSourceConflict, RetentionPolicy, Run, RunId,
-    RunStatus, Source, SourceKind, check_nested_sources_for_candidate, evaluate_exclude_path,
+    ExcludePathTestResult, ExcludeRules, MaintenanceSchedule, NestedSourceConflict,
+    NotificationSettings, PendingReason, RetentionPolicy, Run, RunId, RunStatus, Schedule, Source,
+    SourceKind, check_nested_sources_for_candidate, evaluate_exclude_path,
     find_nested_source_warnings, lint_exclude_rules, normalize_folder_rule,
 };
 use kestic_core::mount::{
@@ -54,8 +66,15 @@ use kestic_core::restic::{
     CancelHandle, ResticCommandSpec, ResticFailureKind, ResticRuntime, ResticStreamEvent,
     SECRET_KIND_REPO, SECRET_KIND_REST, classify_exit, redact_secrets,
 };
+use kestic_core::scheduler::{
+    BackupScheduleEvalInput, DestinationMaintenanceEvalInput, DestinationTickAction, PauseDuration,
+    SystemEnvironment, TimezoneSpec, UnmetPrecondition, backup_slots_between,
+    collect_pending_preconditions, compute_backoff_until, compute_pause_until,
+    evaluate_backup_schedule, evaluate_destination_maintenance, evaluate_run_conditions,
+    format_local_hhmm, format_local_slot_hint, is_pause_active, plan_destination_actions,
+};
 use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore, SecretValue};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -102,6 +121,12 @@ pub struct DaemonRunConfig {
     pub job_view_dest: String,
     pub enable_portal_inhibit: bool,
     pub simulated_status: Option<SimulatedOverallStatus>,
+    pub timezone: TimezoneSpec,
+    pub monitor_bus: MonitorBusConfig,
+    pub enable_system_monitors: bool,
+    pub enable_scheduler: bool,
+    pub enable_binary_watch: bool,
+    pub binary_watch_args: Option<Vec<String>>,
 }
 
 impl Default for DaemonRunConfig {
@@ -127,6 +152,12 @@ impl Default for DaemonRunConfig {
             job_view_dest: DEFAULT_JOB_VIEW_DEST.to_string(),
             enable_portal_inhibit: true,
             simulated_status: None,
+            timezone: TimezoneSpec::System,
+            monitor_bus: MonitorBusConfig::default(),
+            enable_system_monitors: false,
+            enable_scheduler: false,
+            enable_binary_watch: false,
+            binary_watch_args: None,
         }
     }
 }
@@ -146,6 +177,7 @@ struct ActiveRunEntry {
     backup_name: String,
     progress: ActiveRunProgressDto,
     cancel: CancelHandle,
+    sleep_interrupted: bool,
 }
 
 struct DryRunEntry {
@@ -190,6 +222,12 @@ pub struct DaemonCore {
     job_view_dest: String,
     enable_portal_inhibit: bool,
     suppress_ui_spawn: bool,
+    timezone: TimezoneSpec,
+    monitor_bus: MonitorBusConfig,
+    enable_system_monitors: bool,
+    system_env: SystemEnvironment,
+    dest_stale_locks: HashMap<DestinationId, usize>,
+    sleep_interrupted_backups: HashSet<BackupId>,
     conn: Option<Connection>,
     tray: Option<Arc<TrayHandle>>,
     shutdown_flag: Arc<AtomicBool>,
@@ -198,7 +236,7 @@ pub struct DaemonCore {
 
 impl DaemonCore {
     /// Initializes daemon state, opens SQLite `RunHistory`, recovers stuck `Running` runs as
-    /// `Interrupted` (`AC-M1-10-2`), and loads `config.toml` if present (`AC-M1-12-2`).
+    /// `Interrupted` (`AC-M1-10-2`, `AC-M3-10-3`), initializes baselines, and loads `config.toml` if present.
     pub fn new(run_config: &DaemonRunConfig) -> Result<Self, String> {
         let config_path = match &run_config.config_path {
             Some(p) => p.clone(),
@@ -230,7 +268,7 @@ impl DaemonCore {
             .unwrap_or_else(|| Arc::new(SystemMountInspector));
 
         let history = RunHistory::open(&state_dir).map_err(|e| e.to_string())?;
-        // AC-M1-10-2: any runs left in `running` state from a hard crash/kill become `interrupted`.
+        // AC-M1-10-2 / AC-M3-10-3: any runs left in `running` state from a hard crash/kill become `interrupted`.
         if let Err(err) = history.mark_interrupted_on_startup(run_config.clock.as_ref()) {
             eprintln!("kestic-daemon: failed to mark interrupted runs on startup: {err}");
         }
@@ -244,6 +282,12 @@ impl DaemonCore {
                 config_path.exists(),
                 Some(err.to_string()),
             ),
+        };
+
+        let system_env = if run_config.enable_system_monitors {
+            read_system_environment(&run_config.monitor_bus)
+        } else {
+            SystemEnvironment::desktop_connected()
         };
 
         let mut core = Self {
@@ -273,11 +317,18 @@ impl DaemonCore {
             job_view_dest: run_config.job_view_dest.clone(),
             enable_portal_inhibit: run_config.enable_portal_inhibit,
             suppress_ui_spawn: run_config.suppress_ui_spawn,
+            timezone: run_config.timezone.clone(),
+            monitor_bus: run_config.monitor_bus.clone(),
+            enable_system_monitors: run_config.enable_system_monitors,
+            system_env,
+            dest_stale_locks: HashMap::new(),
+            sleep_interrupted_backups: HashSet::new(),
             conn: None,
             tray: None,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             quit_tx: None,
         };
+        core.ensure_baselines();
         core.refresh_availability_if_needed(true);
         Ok(core)
     }
@@ -292,6 +343,36 @@ impl DaemonCore {
 
     pub fn history(&self) -> &RunHistory {
         &self.history
+    }
+
+    pub fn system_environment(&self) -> &SystemEnvironment {
+        &self.system_env
+    }
+
+    pub fn set_system_environment(&mut self, env: SystemEnvironment) {
+        self.system_env = env;
+    }
+
+    fn ensure_baselines(&self) {
+        let now = self.clock.now_utc();
+        for backup in &self.config.backups {
+            if let Ok(mut rs) = self.history.get_backup_runtime_state(&backup.id)
+                && rs.baseline_at.is_none()
+            {
+                rs.baseline_at = Some(now);
+                let _ = self.history.upsert_backup_runtime_state(&backup.id, &rs);
+            }
+        }
+        for dest in &self.config.destinations {
+            if let Ok(mut ds) = self.history.get_destination_maintenance_state(&dest.id)
+                && ds.baseline_at.is_none()
+            {
+                ds.baseline_at = Some(now);
+                let _ = self
+                    .history
+                    .upsert_destination_maintenance_state(&dest.id, &ds);
+            }
+        }
     }
 
     /// Probes restic source and secret store health (`§6.1`, `M1-S04`, `AC-M1-13-5`).
@@ -515,15 +596,90 @@ impl DaemonCore {
         }
     }
 
+    fn format_pause_label(
+        &self,
+        paused_since: OffsetDateTime,
+        paused_until: Option<OffsetDateTime>,
+        now: OffsetDateTime,
+    ) -> String {
+        let since_str = format_local_hhmm(paused_since, &self.timezone);
+        if let Some(until) = paused_until {
+            let until_str = format_local_slot_hint(until, now, &self.timezone);
+            i18n("Paused since %1 (until %2)").subs(&[&since_str, &until_str])
+        } else {
+            i18n("Paused since %1").subs(&[&since_str])
+        }
+    }
+
+    fn format_unmet_condition_item(&self, item: &UnmetPrecondition) -> String {
+        match item {
+            UnmetPrecondition::OnBattery => {
+                if let Some(pct) = self.system_env.battery_percent {
+                    i18n("AC power (battery %1%)").subs(&[&pct.to_string()])
+                } else {
+                    i18n("AC power").into()
+                }
+            }
+            UnmetPrecondition::NoNetwork => i18n("network connection").into(),
+            UnmetPrecondition::MeteredNetwork => i18n("unmetered connection").into(),
+            UnmetPrecondition::AllowedNetworkMismatch { allowed } => {
+                i18n("allowed network (%1)").subs(&[&allowed.join(", ")])
+            }
+            UnmetPrecondition::SourceUnavailable => i18n("source available").into(),
+            UnmetPrecondition::DestinationUnreachable => i18n("destination reachable").into(),
+            UnmetPrecondition::Queued => i18n("another run on this destination").into(),
+            UnmetPrecondition::Backoff => i18n("retry cooldown").into(),
+        }
+    }
+
+    fn format_pending_reason_entry(
+        &self,
+        item: &UnmetPrecondition,
+        backoff_until: Option<OffsetDateTime>,
+        now: OffsetDateTime,
+    ) -> (&'static str, String) {
+        match item {
+            UnmetPrecondition::SourceUnavailable => (
+                "source_unavailable",
+                i18n("Waiting: source unavailable").into(),
+            ),
+            UnmetPrecondition::DestinationUnreachable => (
+                "destination_unreachable",
+                i18n("Waiting: destination unreachable").into(),
+            ),
+            UnmetPrecondition::OnBattery => ("on_battery", i18n("Waiting: AC power").into()),
+            UnmetPrecondition::NoNetwork => ("no_network", i18n("Waiting: network").into()),
+            UnmetPrecondition::MeteredNetwork => {
+                ("metered", i18n("Waiting: unmetered connection").into())
+            }
+            UnmetPrecondition::AllowedNetworkMismatch { .. } => {
+                ("wrong_network", i18n("Waiting: allowed network").into())
+            }
+            UnmetPrecondition::Queued => (
+                "queue",
+                i18n("Waiting: another run on this destination").into(),
+            ),
+            UnmetPrecondition::Backoff => {
+                let ts = backoff_until
+                    .map(|u| format_local_slot_hint(u, now, &self.timezone))
+                    .unwrap_or_else(|| "—".to_string());
+                ("backoff", i18n("Waiting: next attempt at %1").subs(&[&ts]))
+            }
+        }
+    }
+
     /// Computes full state snapshot (`DaemonStateDto`) and synchronized `KesticTrayState`.
     pub fn build_state_and_tray(&self) -> (DaemonStateDto, KesticTrayState) {
+        let now = self.clock.now_utc();
         let (restic_status, secret_store_status, blocking) = self.probe_restic_and_secrets();
         let all_runs = self.history.list_runs().unwrap_or_default();
         let nested_map = find_nested_source_warnings(&self.config.backups);
+        let global_pause_raw = self.history.get_global_pause().ok().flatten();
+        let global_paused = is_pause_active(global_pause_raw.as_ref(), now);
 
         let mut backup_summaries = Vec::with_capacity(self.config.backups.len());
         let mut dest_password_rejected: HashMap<DestinationId, bool> = HashMap::new();
-        let mut dest_stale_lock: HashMap<DestinationId, bool> = HashMap::new();
+        let mut paused_backup_window: Option<(OffsetDateTime, Option<OffsetDateTime>)> = None;
 
         for backup in &self.config.backups {
             let dest_name = self
@@ -540,8 +696,17 @@ impl DaemonCore {
 
             let last_run = all_runs
                 .iter()
-                .find(|r| r.backup_id() == Some(&backup.id))
-                .cloned();
+                .find(|r| {
+                    r.backup_id() == Some(&backup.id)
+                        && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
+                })
+                .cloned()
+                .or_else(|| {
+                    all_runs
+                        .iter()
+                        .find(|r| r.backup_id() == Some(&backup.id))
+                        .cloned()
+                });
 
             let pending_forget = self.history.is_pending_forget(&backup.id).unwrap_or(false);
             let mut has_error = false;
@@ -560,9 +725,6 @@ impl DaemonCore {
                         error_action = pres.action.map(|a| action_code(a).to_string());
                         if matches!(pres.kind, ResticFailureKind::WrongPassword) {
                             dest_password_rejected.insert(backup.destination_id.clone(), true);
-                        }
-                        if matches!(pres.kind, ResticFailureKind::RepositoryLocked) {
-                            dest_stale_lock.insert(backup.destination_id.clone(), true);
                         }
                     }
                     RunStatus::Warning => {
@@ -596,6 +758,94 @@ impl DaemonCore {
             }
 
             let availability = self.availability_for_backup(backup);
+            let dest_busy = self
+                .active_runs
+                .values()
+                .any(|e| e.run.destination_id == backup.destination_id);
+            let rs = self
+                .history
+                .get_backup_runtime_state(&backup.id)
+                .unwrap_or_default();
+            let last_success_at = self
+                .history
+                .last_successful_backup_at(&backup.id)
+                .ok()
+                .flatten();
+
+            let eval = evaluate_backup_schedule(
+                &BackupScheduleEvalInput {
+                    backup,
+                    runtime_state: &rs,
+                    last_success_at,
+                    overdue_anchor_at: None,
+                    global_pause: global_pause_raw.as_ref(),
+                    global_overdue_threshold: self.config.default_overdue_threshold,
+                    source_available: availability.source_available,
+                    destination_reachable: availability.destination_available,
+                    destination_busy: dest_busy,
+                    has_permanent_error: has_error,
+                },
+                &self.system_env,
+                now,
+                &self.timezone,
+            );
+
+            if eval.is_paused
+                && let Some(ps) = eval.paused_since
+                && paused_backup_window.is_none()
+            {
+                paused_backup_window = Some((ps, eval.paused_until));
+            }
+
+            let interrupted_recovery = active_run.is_none()
+                && !eval.is_paused
+                && !has_error
+                && eval.due_slot.is_none()
+                && last_run
+                    .as_ref()
+                    .is_some_and(|r| r.status == RunStatus::Interrupted);
+
+            let effective_unmet = if active_run.is_some() || eval.is_paused || has_error {
+                Vec::new()
+            } else if !eval.unmet_preconditions.is_empty() {
+                eval.unmet_preconditions.clone()
+            } else if interrupted_recovery {
+                collect_pending_preconditions(
+                    availability.source_available,
+                    availability.destination_available,
+                    &backup.run_conditions,
+                    &self.system_env,
+                    dest_busy,
+                    eval.in_backoff,
+                )
+            } else {
+                Vec::new()
+            };
+
+            let mut pending_primary_code = None;
+            let mut pending_primary_reason = None;
+            let mut pending_reasons = Vec::with_capacity(effective_unmet.len());
+            for (idx, item) in effective_unmet.iter().enumerate() {
+                let (code, text) = self.format_pending_reason_entry(item, rs.backoff_until, now);
+                if idx == 0 {
+                    pending_primary_code = Some(code.to_string());
+                    pending_primary_reason = Some(text.clone());
+                }
+                pending_reasons.push(text);
+            }
+
+            let cond_unmet = evaluate_run_conditions(&backup.run_conditions, &self.system_env);
+            let has_unmet_run_condition = !cond_unmet.is_empty();
+            let unmet_conditions_text = if has_unmet_run_condition {
+                let parts: Vec<String> = cond_unmet
+                    .iter()
+                    .map(|c| self.format_unmet_condition_item(c))
+                    .collect();
+                Some(i18n("Condition not met: %1").subs(&[&parts.join(", ")]))
+            } else {
+                None
+            };
+
             let nested_warnings = nested_map.get(&backup.id).cloned().unwrap_or_default();
             let exclude_lint_warnings = lint_exclude_rules(&backup.excludes);
 
@@ -606,13 +856,23 @@ impl DaemonCore {
                 active_run,
                 availability,
                 has_error,
-                is_overdue: false,
+                is_overdue: eval.is_overdue,
                 error_action,
                 error_summary,
                 unreadable_files,
                 pending_forget,
                 nested_warnings,
                 exclude_lint_warnings,
+                is_paused: eval.is_paused,
+                paused_since_unix: eval.paused_since.map(|t| t.unix_timestamp()),
+                paused_until_unix: eval.paused_until.map(|t| t.unix_timestamp()),
+                next_scheduled_at_unix: eval.next_scheduled_at.map(|t| t.unix_timestamp()),
+                pending_primary_reason,
+                pending_primary_code,
+                pending_reasons,
+                missed_slots_count: eval.missed_slots_for_overdue,
+                has_unmet_run_condition,
+                unmet_conditions_text,
             });
         }
 
@@ -629,8 +889,54 @@ impl DaemonCore {
                 .get(&dest.id)
                 .copied()
                 .unwrap_or(false);
-            let has_stale_lock = dest_stale_lock.get(&dest.id).copied().unwrap_or(false);
-            let has_problem = !avail.reachable || password_rejected || has_stale_lock;
+            let stale_lock_count = self.dest_stale_locks.get(&dest.id).copied().unwrap_or(0);
+            let has_stale_lock = stale_lock_count > 0;
+            let ds = self
+                .history
+                .get_destination_maintenance_state(&dest.id)
+                .unwrap_or_default();
+            let pending_forget_count = self
+                .config
+                .backups
+                .iter()
+                .filter(|b| {
+                    b.destination_id == dest.id
+                        && self.history.is_pending_forget(&b.id).unwrap_or(false)
+                })
+                .count();
+            let dest_busy = self
+                .active_runs
+                .values()
+                .any(|e| e.run.destination_id == dest.id);
+            let m_eval = evaluate_destination_maintenance(
+                &DestinationMaintenanceEvalInput {
+                    destination: dest,
+                    state: &ds,
+                    has_pending_forget: pending_forget_count > 0,
+                    global_pause: global_pause_raw.as_ref(),
+                    destination_busy: dest_busy,
+                    destination_reachable: avail.reachable,
+                },
+                &self.system_env,
+                now,
+                &self.timezone,
+            );
+            let last_maintenance_run = all_runs
+                .iter()
+                .find(|r| {
+                    r.destination_id == dest.id
+                        && matches!(r.kind, kestic_core::model::RunKind::Maintenance)
+                })
+                .cloned();
+            let maintenance_running = self.active_runs.values().any(|e| {
+                e.run.destination_id == dest.id
+                    && matches!(e.run.kind, kestic_core::model::RunKind::Maintenance)
+            });
+            let maint_failed = last_maintenance_run
+                .as_ref()
+                .is_some_and(|r| r.status == RunStatus::Error);
+            let has_problem =
+                !avail.reachable || password_rejected || has_stale_lock || maint_failed;
 
             dest_summaries.push(DestinationSummaryDto {
                 destination: dest.clone(),
@@ -639,11 +945,30 @@ impl DaemonCore {
                 password_rejected,
                 has_stale_lock,
                 has_problem,
+                next_prune_at_unix: m_eval.next_prune_at.map(|t| t.unix_timestamp()),
+                next_check_at_unix: m_eval.next_check_at.map(|t| t.unix_timestamp()),
+                last_prune_at_unix: ds.last_prune_at.map(|t| t.unix_timestamp()),
+                last_check_at_unix: ds.last_check_at.map(|t| t.unix_timestamp()),
+                last_maintenance_run,
+                maintenance_running,
+                pending_forget_count,
+                stale_lock_count,
             });
         }
 
-        let overall =
-            self.compute_overall_status(&backup_summaries, &dest_summaries, blocking.as_ref());
+        let global_pause_active = if global_paused {
+            global_pause_raw.as_ref()
+        } else {
+            None
+        };
+        let overall = self.compute_overall_status(
+            &backup_summaries,
+            &dest_summaries,
+            blocking.as_ref(),
+            global_pause_active,
+            paused_backup_window,
+            now,
+        );
 
         let tray_backups = backup_summaries
             .iter()
@@ -675,6 +1000,21 @@ impl DaemonCore {
             "Active" => TrayStatus::Active,
             _ => TrayStatus::Passive,
         };
+        let tray_paused_line = overall
+            .paused_label
+            .clone()
+            .or_else(|| paused_backup_window.map(|(ps, pu)| self.format_pause_label(ps, pu, now)));
+        let tray_next_backup_line = overall
+            .next_scheduled_backup_name
+            .as_ref()
+            .zip(overall.next_scheduled_at_unix)
+            .and_then(|(name, ts)| {
+                OffsetDateTime::from_unix_timestamp(ts).ok().map(|dt| {
+                    let when = format_local_slot_hint(dt, now, &self.timezone);
+                    i18n("Next backup: %1 (%2)").subs(&[name, &when])
+                })
+            });
+
         let tray_state = KesticTrayState {
             status: tray_status,
             icon_name: "kestic-symbolic".to_string(),
@@ -684,6 +1024,9 @@ impl DaemonCore {
             tooltip_description: overall.headline.clone(),
             status_line: overall.headline.clone(),
             running_run: overall.active_run_progress.clone(),
+            paused_line: tray_paused_line,
+            next_backup_line: tray_next_backup_line,
+            global_paused,
             backups: tray_backups,
             blocking_active: blocking.is_some(),
         };
@@ -711,6 +1054,9 @@ impl DaemonCore {
         backups: &[BackupSummaryDto],
         destinations: &[DestinationSummaryDto],
         blocking: Option<&BlockingStateDto>,
+        global_pause: Option<&PauseState>,
+        paused_backup_window: Option<(OffsetDateTime, Option<OffsetDateTime>)>,
+        now: OffsetDateTime,
     ) -> OverallStatusDto {
         let active_run_progress = self.active_runs.values().next().map(|e| e.progress.clone());
 
@@ -732,11 +1078,18 @@ impl DaemonCore {
         let waiting_count = backups
             .iter()
             .filter(|b| {
-                b.last_run
-                    .as_ref()
-                    .is_some_and(|r| r.status == RunStatus::Pending)
+                b.pending_primary_reason.is_some()
+                    || (b.active_run.is_none()
+                        && !b.is_paused
+                        && !b.has_error
+                        && b.last_run
+                            .as_ref()
+                            .is_some_and(|r| r.status == RunStatus::Pending))
             })
             .count();
+        let global_paused = global_pause.is_some();
+        let any_paused = global_paused || backups.iter().any(|b| b.is_paused);
+        let all_paused = !backups.is_empty() && backups.iter().all(|b| b.is_paused);
 
         let has_interrupted = backups.iter().any(|b| {
             b.last_run
@@ -754,7 +1107,7 @@ impl DaemonCore {
         let all_manual = !backups.is_empty()
             && backups
                 .iter()
-                .all(|b| matches!(b.backup.schedule, kestic_core::model::Schedule::ManualOnly));
+                .all(|b| matches!(b.backup.schedule, Schedule::ManualOnly));
 
         let worst_kind = if blocking.is_some() {
             OverallStatusKind::Blocked
@@ -768,6 +1121,8 @@ impl DaemonCore {
             OverallStatusKind::Running
         } else if waiting_count > 0 {
             OverallStatusKind::Pending
+        } else if global_paused || all_paused {
+            OverallStatusKind::Paused
         } else if has_interrupted {
             OverallStatusKind::Interrupted
         } else if has_cancelled {
@@ -781,7 +1136,30 @@ impl DaemonCore {
         };
 
         let (tray_status, overlay) =
-            compute_tray_presentation(worst_kind, running_count > 0, false);
+            compute_tray_presentation(worst_kind, running_count > 0, any_paused);
+
+        let paused_since_unix = global_pause
+            .map(|p| p.paused_since.unix_timestamp())
+            .or_else(|| paused_backup_window.map(|(ps, _)| ps.unix_timestamp()));
+        let paused_until_unix = global_pause
+            .and_then(|p| p.paused_until.map(|u| u.unix_timestamp()))
+            .or_else(|| paused_backup_window.and_then(|(_, pu)| pu.map(|u| u.unix_timestamp())));
+        let paused_label = global_pause
+            .map(|p| self.format_pause_label(p.paused_since, p.paused_until, now))
+            .or_else(|| paused_backup_window.map(|(ps, pu)| self.format_pause_label(ps, pu, now)));
+
+        let earliest_next = backups
+            .iter()
+            .filter(|b| !b.is_paused)
+            .filter_map(|b| {
+                b.next_scheduled_at_unix
+                    .map(|ts| (ts, b.backup.name.clone()))
+            })
+            .min_by_key(|(ts, _)| *ts);
+        let (next_scheduled_at_unix, next_scheduled_backup_name) = match earliest_next {
+            Some((ts, name)) => (Some(ts), Some(name)),
+            None => (None, None),
+        };
 
         let headline = if let Some(b) = blocking {
             b.message.clone()
@@ -790,6 +1168,12 @@ impl DaemonCore {
                 i18n("1 backup failed").into()
             } else {
                 i18n("%1 backups failed").subs(&[&failed_count.to_string()])
+            }
+        } else if overdue_count > 0 {
+            if overdue_count == 1 {
+                i18n("1 backup overdue").into()
+            } else {
+                i18n("%1 backups overdue").subs(&[&overdue_count.to_string()])
             }
         } else if warning_count > 0 {
             if warning_count == 1 {
@@ -800,6 +1184,22 @@ impl DaemonCore {
         } else if let Some(active) = &active_run_progress {
             let pct = active.percent_done.round().clamp(0.0, 100.0) as u32;
             i18n("%1: backing up · %2%").subs(&[&active.backup_name, &pct.to_string()])
+        } else if waiting_count > 0 {
+            if global_paused {
+                if waiting_count == 1 {
+                    i18n("Schedules paused · 1 backup waiting").into()
+                } else {
+                    i18n("Schedules paused · %1 backups waiting")
+                        .subs(&[&waiting_count.to_string()])
+                }
+            } else if waiting_count == 1 {
+                i18n("1 backup waiting").into()
+            } else {
+                i18n("%1 of %2 backups waiting")
+                    .subs(&[&waiting_count.to_string(), &backups.len().to_string()])
+            }
+        } else if global_paused || all_paused {
+            i18n("Schedules paused").into()
         } else if backups.is_empty() {
             i18n("No backups configured yet").into()
         } else if has_interrupted {
@@ -813,7 +1213,7 @@ impl DaemonCore {
         };
 
         let subtitle = if let Some(active) = &active_run_progress {
-            if failed_count > 0 {
+            if failed_count > 0 || overdue_count > 0 {
                 let pct = active.percent_done.round().clamp(0.0, 100.0) as u32;
                 i18n("Currently running: %1 (%2%)").subs(&[&active.backup_name, &pct.to_string()])
             } else {
@@ -837,7 +1237,12 @@ impl DaemonCore {
             overdue_count,
             running_count,
             waiting_count,
-            paused: false,
+            paused: global_paused,
+            paused_since_unix,
+            paused_until_unix,
+            paused_label,
+            next_scheduled_backup_name,
+            next_scheduled_at_unix,
             active_run_progress,
             backups_have_attention,
             destinations_have_attention,
@@ -903,6 +1308,11 @@ impl DaemonCore {
                 SimulatedOverallStatus::Waiting | SimulatedOverallStatus::PausedAndWaiting
             )),
             paused: is_paused,
+            paused_since_unix: None,
+            paused_until_unix: None,
+            paused_label: is_paused.then(|| i18n("Schedules paused").into()),
+            next_scheduled_backup_name: None,
+            next_scheduled_at_unix: None,
             active_run_progress,
             backups_have_attention: matches!(sim, SimulatedOverallStatus::Overdue),
             destinations_have_attention: false,
@@ -984,6 +1394,7 @@ impl DaemonCore {
         let mut next = self.config.clone();
         next.destinations.push(dest);
         self.persist_config(next)?;
+        self.ensure_baselines();
         Ok(new_id)
     }
 
@@ -1354,6 +1765,8 @@ impl DaemonCore {
         self.persist_config(next)?;
         remove_destination_secrets(&removed, self.secret_store.as_ref()).map_err(map_secret_err)?;
         self.dest_availability.remove(&id);
+        self.dest_stale_locks.remove(&id);
+        let _ = self.history.clear_destination_state(&id);
         Ok(())
     }
 
@@ -1393,6 +1806,7 @@ impl DaemonCore {
         let mut next = self.config.clone();
         next.backups.push(backup);
         self.persist_config(next)?;
+        self.ensure_baselines();
         write_exclude_file(&self.state_dir, &backup_for_file)
             .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
         Ok(new_id)
@@ -1412,6 +1826,7 @@ impl DaemonCore {
             .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
 
         let existing = &self.config.backups[idx];
+        let old_schedule = existing.schedule.clone();
         let detected = detect_source_with(
             &updated.source.path,
             home.as_deref(),
@@ -1434,11 +1849,34 @@ impl DaemonCore {
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
 
         let updated_for_file = updated.clone();
+        let updated_schedule = updated.schedule.clone();
         let mut next = self.config.clone();
         next.backups[idx] = updated;
         self.persist_config(next)?;
         write_exclude_file(&self.state_dir, &updated_for_file)
             .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+
+        if old_schedule != updated_schedule {
+            let now = self.clock.now_utc();
+            let _ = self
+                .history
+                .delete_pending_runs_for_backup(&updated_for_file.id);
+            if let Ok(mut rs) = self.history.get_backup_runtime_state(&updated_for_file.id) {
+                if matches!(updated_schedule, Schedule::ManualOnly) {
+                    rs.backoff_attempt = 0;
+                    rs.backoff_until = None;
+                    rs.last_failure_at = None;
+                    rs.last_overdue_notified_at = None;
+                } else if matches!(old_schedule, Schedule::ManualOnly) {
+                    rs.baseline_at = Some(now);
+                    rs.overdue_anchor_at = Some(now);
+                    rs.last_overdue_notified_at = None;
+                }
+                let _ = self
+                    .history
+                    .upsert_backup_runtime_state(&updated_for_file.id, &rs);
+            }
+        }
         Ok(())
     }
 
@@ -1972,6 +2410,251 @@ impl DaemonCore {
         entry.cancel.cancel();
         Ok(())
     }
+
+    pub fn pause_global(&mut self, duration_json: &str) -> Result<(), KesticServiceErr> {
+        let duration: PauseDuration = serde_json::from_str(duration_json).map_err(|e| {
+            KesticServiceErr::InvalidInput(format!("invalid pause duration JSON: {e}"))
+        })?;
+        let now = self.clock.now_utc();
+        let schedules: Vec<&Schedule> = self.config.backups.iter().map(|b| &b.schedule).collect();
+        let paused_until = compute_pause_until(now, duration, &schedules, &self.timezone);
+        let pause = PauseState {
+            paused_since: now,
+            paused_until,
+        };
+        self.history
+            .set_global_pause(Some(&pause))
+            .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+        for backup in &self.config.backups {
+            let _ = self.history.delete_pending_runs_for_backup(&backup.id);
+        }
+        Ok(())
+    }
+
+    pub fn resume_global(&mut self) -> Result<(), KesticServiceErr> {
+        let now = self.clock.now_utc();
+        self.history
+            .set_global_pause(None)
+            .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+        // AC-M3-07-4: reset overdue anchor on resume so paused slots do not count as overdue.
+        for backup in &self.config.backups {
+            if let Ok(mut rs) = self.history.get_backup_runtime_state(&backup.id)
+                && !is_pause_active(rs.pause.as_ref(), now)
+            {
+                rs.overdue_anchor_at = Some(now);
+                rs.last_overdue_notified_at = None;
+                let _ = self.history.upsert_backup_runtime_state(&backup.id, &rs);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn pause_backup(
+        &mut self,
+        backup_id: &str,
+        duration_json: &str,
+    ) -> Result<(), KesticServiceErr> {
+        let b_id = BackupId::parse(backup_id)
+            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let backup = self
+            .config
+            .backup(&b_id)
+            .ok_or_else(|| KesticServiceErr::NotFound(backup_id.to_string()))?;
+        let duration: PauseDuration = serde_json::from_str(duration_json).map_err(|e| {
+            KesticServiceErr::InvalidInput(format!("invalid pause duration JSON: {e}"))
+        })?;
+        let now = self.clock.now_utc();
+        let paused_until = compute_pause_until(now, duration, &[&backup.schedule], &self.timezone);
+        let mut rs = self
+            .history
+            .get_backup_runtime_state(&b_id)
+            .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+        rs.pause = Some(PauseState {
+            paused_since: now,
+            paused_until,
+        });
+        self.history
+            .upsert_backup_runtime_state(&b_id, &rs)
+            .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+        let _ = self.history.delete_pending_runs_for_backup(&b_id);
+        Ok(())
+    }
+
+    pub fn resume_backup(&mut self, backup_id: &str) -> Result<(), KesticServiceErr> {
+        let b_id = BackupId::parse(backup_id)
+            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        if self.config.backup(&b_id).is_none() {
+            return Err(KesticServiceErr::NotFound(backup_id.to_string()));
+        }
+        let now = self.clock.now_utc();
+        let mut rs = self
+            .history
+            .get_backup_runtime_state(&b_id)
+            .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+        rs.pause = None;
+        // AC-M3-07-4: reset overdue anchor to resume timestamp.
+        rs.overdue_anchor_at = Some(now);
+        rs.last_overdue_notified_at = None;
+        self.history
+            .upsert_backup_runtime_state(&b_id, &rs)
+            .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn unlock_destination(&mut self, destination_id: &str) -> Result<u32, KesticServiceErr> {
+        let d_id = DestinationId::parse(destination_id)
+            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let dest = self
+            .config
+            .destination(&d_id)
+            .cloned()
+            .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
+
+        if self
+            .active_runs
+            .values()
+            .any(|e| e.run.destination_id == dest.id)
+        {
+            return Err(KesticServiceErr::AlreadyRunning(format!(
+                "another run is already active on destination '{}'",
+                dest.name
+            )));
+        }
+
+        let (_, secret_status, _) = self.probe_restic_and_secrets();
+        if !secret_status.available {
+            return Err(KesticServiceErr::SecretStoreLocked(
+                secret_status
+                    .message
+                    .unwrap_or_else(|| i18n("Password store is locked").into()),
+            ));
+        }
+        let resolved = resolve_and_check(&self.config.restic_provider).map_err(map_provider_err)?;
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &self.kestic_binary,
+            secret_store: self.secret_store.as_ref(),
+            clock: self.clock.as_ref(),
+        };
+
+        let classification = detect_stale_locks(&dest, &runtime, &[]).map_err(|err| match err {
+            BackupRunError::Destination(d) => map_destination_err(d),
+            other => KesticServiceErr::Internal(other.to_string()),
+        })?;
+
+        if !classification.has_stale_local_lock {
+            self.dest_stale_locks.insert(d_id, 0);
+            if !classification.active_local_locks.is_empty()
+                || !classification.foreign_host_locks.is_empty()
+            {
+                return Err(KesticServiceErr::InvalidInput(
+                    i18n("Cannot unlock: repository lock belongs to an active or remote process")
+                        .into(),
+                ));
+            }
+            return Ok(0);
+        }
+
+        let stale_count = classification.stale_lock_ids.len() as u32;
+        let res = execute_unlock(&dest, &runtime, &[]).map_err(|err| match err {
+            BackupRunError::Destination(d) => map_destination_err(d),
+            other => KesticServiceErr::Internal(other.to_string()),
+        })?;
+        if res.exit_code != 0 {
+            return Err(KesticServiceErr::Internal(
+                res.presentation.detail_or_summary(),
+            ));
+        }
+        self.dest_stale_locks.insert(d_id, 0);
+        Ok(stale_count)
+    }
+
+    pub fn preview_destination_maintenance(
+        &self,
+        destination_id: &str,
+    ) -> Result<PrunePreviewSummary, KesticServiceErr> {
+        let d_id = DestinationId::parse(destination_id)
+            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let dest = self
+            .config
+            .destination(&d_id)
+            .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
+
+        let (_, secret_status, _) = self.probe_restic_and_secrets();
+        if !secret_status.available {
+            return Err(KesticServiceErr::SecretStoreLocked(
+                secret_status
+                    .message
+                    .unwrap_or_else(|| i18n("Password store is locked").into()),
+            ));
+        }
+        let resolved = resolve_and_check(&self.config.restic_provider).map_err(map_provider_err)?;
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &self.kestic_binary,
+            secret_store: self.secret_store.as_ref(),
+            clock: self.clock.as_ref(),
+        };
+        execute_prune_dry_run(dest, &runtime, None, &[]).map_err(|err| match err {
+            BackupRunError::Destination(d) => map_destination_err(d),
+            BackupRunError::InvalidModel(m) => KesticServiceErr::InvalidInput(m.to_string()),
+            other => KesticServiceErr::Internal(other.to_string()),
+        })
+    }
+
+    pub fn update_destination_maintenance(
+        &mut self,
+        destination_id: &str,
+        maintenance_json: &str,
+    ) -> Result<(), KesticServiceErr> {
+        let d_id = DestinationId::parse(destination_id)
+            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let maintenance: MaintenanceSchedule =
+            serde_json::from_str(maintenance_json).map_err(|e| {
+                KesticServiceErr::InvalidInput(format!("invalid maintenance JSON: {e}"))
+            })?;
+        maintenance
+            .validate()
+            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let idx = self
+            .config
+            .destinations
+            .iter()
+            .position(|d| d.id == d_id)
+            .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
+        let mut next = self.config.clone();
+        next.destinations[idx].maintenance = maintenance;
+        self.persist_config(next)?;
+        self.ensure_baselines();
+        Ok(())
+    }
+
+    pub fn update_settings(
+        &mut self,
+        default_overdue_threshold: u32,
+        notifications_json: &str,
+    ) -> Result<(), KesticServiceErr> {
+        if default_overdue_threshold == 0 {
+            return Err(KesticServiceErr::InvalidInput(
+                "default_overdue_threshold must be >= 1".to_string(),
+            ));
+        }
+        let notifications: NotificationSettings = serde_json::from_str(notifications_json)
+            .map_err(|e| {
+                KesticServiceErr::InvalidInput(format!("invalid notifications JSON: {e}"))
+            })?;
+        let mut next = self.config.clone();
+        next.default_overdue_threshold = default_overdue_threshold;
+        next.notifications = notifications;
+        next.validate()
+            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        self.persist_config(next)?;
+        Ok(())
+    }
+
+    pub fn list_known_networks(&self) -> Vec<String> {
+        list_known_networks(&self.monitor_bus)
+    }
 }
 
 fn localized_source_check_reason(status: &SourceCheckResult) -> String {
@@ -2069,7 +2752,7 @@ fn snapshot_to_dto(s: kestic_core::snapshot::ResticSnapshot) -> SnapshotSummaryD
 
 fn action_code(action: kestic_core::restic::RecoveryAction) -> &'static str {
     match action {
-        kestic_core::restic::RecoveryAction::UpdateStoredPassword => "update_password",
+        kestic_core::restic::RecoveryAction::UpdateStoredPassword => "update_stored_password",
         kestic_core::restic::RecoveryAction::AddToExcludes => "add_to_excludes",
         kestic_core::restic::RecoveryAction::CheckResticSource => "check_restic_source",
         kestic_core::restic::RecoveryAction::UnlockRepository => "unlock_repository",
@@ -2164,11 +2847,60 @@ fn map_destination_err(err: DestinationError) -> KesticServiceErr {
     }
 }
 
-/// Starts a backup asynchronously if source & destination preflight pass; otherwise emits
-/// `ManualRunBlocked` signal + optional notification (`AC-M1-09-6`, `AC-M1-09-7`, `AC-M1-23-1/2`, `M2-S07`, `M2-S09`).
+/// Starts a backup manually (enforcing `RunConditions`, `AC-M3-03-7`).
 pub fn start_backup_async(
     shared: &Arc<Mutex<DaemonCore>>,
     backup_id: &str,
+) -> Result<String, KesticServiceErr> {
+    start_backup_internal(shared, backup_id, false, false)
+}
+
+/// Starts a backup manually overriding unmet `RunConditions` for this single run (`FR-13b`, `AC-M3-03-7`).
+pub fn start_backup_override_async(
+    shared: &Arc<Mutex<DaemonCore>>,
+    backup_id: &str,
+) -> Result<String, KesticServiceErr> {
+    start_backup_internal(shared, backup_id, true, false)
+}
+
+/// Starts a scheduled backup triggered by the M3 scheduler (`M3-S01..S13`).
+pub(crate) fn start_scheduled_backup_async(
+    shared: &Arc<Mutex<DaemonCore>>,
+    backup_id: &str,
+) -> Result<String, KesticServiceErr> {
+    start_backup_internal(shared, backup_id, false, true)
+}
+
+fn upsert_pending_run_entry(
+    guard: &mut DaemonCore,
+    backup: &Backup,
+    reason: PendingReason,
+    summary_message: String,
+) {
+    let now = guard.clock.now_utc();
+    if let Ok(Some(mut existing)) = guard.history.get_pending_backup_run(&backup.id) {
+        if existing.pending_reason == Some(reason)
+            && existing.summary_message.as_deref() == Some(summary_message.as_str())
+        {
+            return;
+        }
+        existing.pending_reason = Some(reason);
+        existing.summary_message = Some(summary_message);
+        let _ = guard.history.upsert_run(&existing, &[]);
+        return;
+    }
+    if let Ok(mut run) = Run::new_pending_backup(guard.clock.as_ref(), backup, reason) {
+        run.started_at = now;
+        run.summary_message = Some(summary_message);
+        let _ = guard.history.upsert_run(&run, &[]);
+    }
+}
+
+fn start_backup_internal(
+    shared: &Arc<Mutex<DaemonCore>>,
+    backup_id: &str,
+    allow_condition_override: bool,
+    is_scheduled: bool,
 ) -> Result<String, KesticServiceErr> {
     let b_id =
         BackupId::parse(backup_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
@@ -2190,6 +2922,8 @@ pub fn start_backup_async(
         enable_job_view,
         job_view_dest,
         enable_portal_inhibit,
+        monitor_bus,
+        enable_system_monitors,
     ) = {
         let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
         let backup = guard
@@ -2274,6 +3008,56 @@ pub fn start_backup_async(
             } else {
                 i18n("Destination unreachable").to_string()
             };
+
+            if is_scheduled {
+                if !source_ok {
+                    upsert_pending_run_entry(
+                        &mut guard,
+                        &backup,
+                        PendingReason::SourceUnavailable,
+                        source_body,
+                    );
+                } else {
+                    let mut rs = guard
+                        .history
+                        .get_backup_runtime_state(&backup.id)
+                        .unwrap_or_default();
+                    rs.backoff_attempt = rs.backoff_attempt.saturating_add(1);
+                    rs.last_failure_at = Some(now);
+                    rs.backoff_until = compute_backoff_until(rs.backoff_attempt, now);
+                    let _ = guard.history.upsert_backup_runtime_state(&backup.id, &rs);
+                    let pending_reason = if rs.backoff_until.is_some() {
+                        PendingReason::DestinationUnreachable
+                    } else {
+                        PendingReason::Backoff
+                    };
+                    let msg = match rs.backoff_until {
+                        Some(until) => {
+                            let hint = format_local_slot_hint(until, now, &guard.timezone);
+                            i18n("Destination unreachable · next attempt at %1").subs(&[&hint])
+                        }
+                        None => {
+                            i18n("Destination unreachable · waiting for next scheduled run").into()
+                        }
+                    };
+                    upsert_pending_run_entry(&mut guard, &backup, pending_reason, msg);
+                }
+                let conn_opt = guard.conn.clone();
+                let (state_dto, tray_state) = guard.build_state_and_tray();
+                if let Some(tray) = &guard.tray {
+                    tray.set_full_state(tray_state);
+                }
+                drop(guard);
+                if let Some(conn) = &conn_opt {
+                    emit_status_changed(conn, &state_dto);
+                }
+                return Err(if !source_ok {
+                    KesticServiceErr::ManualRunBlocked(reason.to_string())
+                } else {
+                    KesticServiceErr::DestinationUnreachable(dest_res.unwrap_err().to_string())
+                });
+            }
+
             let window_active = guard.window_active;
             let conn_opt = guard.conn.clone();
             let (state_dto, tray_state) = guard.build_state_and_tray();
@@ -2293,6 +3077,40 @@ pub fn start_backup_async(
             }
             return Err(KesticServiceErr::ManualRunBlocked(reason.to_string()));
         }
+
+        // AC-M3-03-7 / FR-13b: manual start checks RunConditions unless overridden for this run.
+        if !is_scheduled && !allow_condition_override {
+            let unmet = evaluate_run_conditions(&backup.run_conditions, &guard.system_env);
+            if !unmet.is_empty() {
+                let parts: Vec<String> = unmet
+                    .iter()
+                    .map(|c| guard.format_unmet_condition_item(c))
+                    .collect();
+                let body = i18n("Condition not met: %1").subs(&[&parts.join(", ")]);
+                let window_active = guard.window_active;
+                let conn_opt = guard.conn.clone();
+                let (state_dto, tray_state) = guard.build_state_and_tray();
+                if let Some(tray) = &guard.tray {
+                    tray.set_full_state(tray_state);
+                }
+                drop(guard);
+
+                if let Some(conn) = &conn_opt {
+                    emit_manual_run_blocked(conn, &b_id, REASON_CONDITION_NOT_MET);
+                    emit_status_changed(conn, &state_dto);
+                }
+                if !window_active {
+                    let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
+                    let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &body);
+                }
+                return Err(KesticServiceErr::ManualRunBlocked(
+                    REASON_CONDITION_NOT_MET.to_string(),
+                ));
+            }
+        }
+
+        let _ = guard.history.delete_pending_runs_for_backup(&backup.id);
+        guard.sleep_interrupted_backups.remove(&backup.id);
 
         let pending_ids = guard
             .history
@@ -2331,6 +3149,7 @@ pub fn start_backup_async(
                 seconds_remaining: 0,
             },
             cancel: cancel.clone(),
+            sleep_interrupted: false,
         };
         guard.active_runs.insert(run.id.clone(), entry);
 
@@ -2357,6 +3176,8 @@ pub fn start_backup_async(
             guard.enable_job_view,
             guard.job_view_dest.clone(),
             guard.enable_portal_inhibit,
+            guard.monitor_bus.clone(),
+            guard.enable_system_monitors,
         );
         drop(guard);
 
@@ -2371,6 +3192,11 @@ pub fn start_backup_async(
     let shared_worker = Arc::clone(shared);
 
     thread::spawn(move || {
+        let mut _logind_sleep_guard = if enable_system_monitors {
+            LogindSleepInhibitor::acquire(&monitor_bus)
+        } else {
+            None
+        };
         let _inhibit_guard = if enable_portal_inhibit {
             PortalInhibitGuard::acquire_default(&format!("Kestic backup: {}", backup.name)).ok()
         } else {
@@ -2465,6 +3291,14 @@ pub fn start_backup_async(
         });
         drop(job_view_cancel_guard);
 
+        let sleep_interrupted = {
+            let guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .active_runs
+                .get(&run_id)
+                .is_some_and(|e| e.sleep_interrupted)
+        };
+
         let mut secrets_owned: Vec<SecretValue> = Vec::new();
         if let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REPO) {
             secrets_owned.push(s);
@@ -2481,35 +3315,70 @@ pub fn start_backup_async(
 
         let mut primary_forget_state: Option<bool> = None;
         let mut cleared_other_pending: Vec<BackupId> = Vec::new();
+        let mut detected_stale_locks: Option<usize> = None;
+        let mut transient_lock_backoff = false;
 
         let (final_status, exit_code, raw_detail, jv_code, jv_msg) = match exec_res {
             Ok(res) => {
-                let mut status = res.presentation.status;
+                let mut status = if sleep_interrupted {
+                    RunStatus::Interrupted
+                } else {
+                    res.presentation.status
+                };
                 let backup_exit = res.exit_code;
                 let mut combined_logs = res.log_lines;
                 run.commands = vec![res.command_record];
                 run.stats = res.stats;
 
-                let mut summary = match status {
-                    RunStatus::Error | RunStatus::Warning => {
-                        let base = localized_failure_summary(&res.presentation.kind);
-                        let raw = res
-                            .presentation
-                            .raw_detail
-                            .as_deref()
-                            .map(|d| redact_secrets(d, &secret_strs))
-                            .unwrap_or_default();
-                        if raw.is_empty() {
-                            Some(base)
-                        } else {
-                            Some(format!("{base}: {raw}"))
+                let mut summary = if sleep_interrupted {
+                    Some(i18n("Interrupted by system sleep").into())
+                } else {
+                    match status {
+                        RunStatus::Error | RunStatus::Warning => {
+                            let base = localized_failure_summary(&res.presentation.kind);
+                            let raw = res
+                                .presentation
+                                .raw_detail
+                                .as_deref()
+                                .map(|d| redact_secrets(d, &secret_strs))
+                                .unwrap_or_default();
+                            if raw.is_empty() {
+                                Some(base)
+                            } else {
+                                Some(format!("{base}: {raw}"))
+                            }
                         }
+                        _ => Some(localized_failure_summary(&res.presentation.kind)),
                     }
-                    _ => Some(localized_failure_summary(&res.presentation.kind)),
                 };
 
-                // M2-S07: Execute `forget` after backup with Exit 0 or Exit 3; never on Exit 1 / Cancelled.
-                if !cancel.is_cancelled() && (backup_exit == 0 || backup_exit == 3) {
+                // AC-M3-06-1..3: Inspect locks whenever `backup` fails with Exit 11.
+                if !sleep_interrupted
+                    && (backup_exit == 11
+                        || matches!(res.presentation.kind, ResticFailureKind::RepositoryLocked))
+                {
+                    if let Ok(lock_class) = detect_stale_locks(&dest, &runtime, &[]) {
+                        detected_stale_locks = Some(if lock_class.has_stale_local_lock {
+                            lock_class.stale_lock_ids.len()
+                        } else {
+                            0
+                        });
+                    }
+                    // AC-M3-04-4: Exit 11 on scheduled backup is transient -> Pending + Backoff.
+                    if is_scheduled {
+                        transient_lock_backoff = true;
+                        status = RunStatus::Pending;
+                        run.pending_reason = Some(PendingReason::Backoff);
+                    }
+                } else if !sleep_interrupted && (backup_exit == 0 || backup_exit == 3) {
+                    detected_stale_locks = Some(0);
+                }
+
+                // M2-S07: Execute `forget` after backup with Exit 0 or Exit 3; never on Exit 1 / Cancelled / Sleep.
+                if !sleep_interrupted
+                    && !cancel.is_cancelled()
+                    && (backup_exit == 0 || backup_exit == 3)
+                {
                     match execute_forget(&backup, &dest, &runtime, Some(&cancel), &[]) {
                         Ok(f_res) => {
                             run.commands.push(f_res.command_record.clone());
@@ -2534,6 +3403,16 @@ pub fn start_backup_async(
                             } else {
                                 primary_forget_state = Some(true);
                                 status = RunStatus::Warning;
+                                if is_forget_lock_failure(&f_res)
+                                    && let Ok(lock_class) = detect_stale_locks(&dest, &runtime, &[])
+                                {
+                                    detected_stale_locks =
+                                        Some(if lock_class.has_stale_local_lock {
+                                            lock_class.stale_lock_ids.len()
+                                        } else {
+                                            0
+                                        });
+                                }
                                 if backup_exit == 0 {
                                     summary = Some(if is_forget_lock_failure(&f_res) {
                                         i18n(
@@ -2581,16 +3460,22 @@ pub fn start_backup_async(
                 (status, Some(backup_exit), summary, jv_err.0, jv_err.1)
             }
             Err(err) => {
-                let localized = localized_backup_run_error(&err);
-                let msg = redact_secrets(&localized, &secret_strs);
-                let (status, exit_code) = match err {
-                    BackupRunError::SourceUnavailable(_) | BackupRunError::Destination(_) => {
-                        (RunStatus::Error, None)
-                    }
-                    _ => (RunStatus::Error, Some(1)),
-                };
-                run.summary_message = Some(msg.clone());
-                (status, exit_code, Some(msg.clone()), 1, msg)
+                if sleep_interrupted {
+                    let msg: String = i18n("Interrupted by system sleep").into();
+                    run.summary_message = Some(msg.clone());
+                    (RunStatus::Interrupted, None, Some(msg.clone()), 1, msg)
+                } else {
+                    let localized = localized_backup_run_error(&err);
+                    let msg = redact_secrets(&localized, &secret_strs);
+                    let (status, exit_code) = match err {
+                        BackupRunError::SourceUnavailable(_) | BackupRunError::Destination(_) => {
+                            (RunStatus::Error, None)
+                        }
+                        _ => (RunStatus::Error, Some(1)),
+                    };
+                    run.summary_message = Some(msg.clone());
+                    (status, exit_code, Some(msg.clone()), 1, msg)
+                }
             }
         };
 
@@ -2599,9 +3484,12 @@ pub fn start_backup_async(
             let _ = jv.terminate(jv_code, &jv_msg);
         }
 
-        let state_dto = {
+        let (state_dto, notif_settings) = {
             let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
             guard.active_runs.remove(&run_id);
+            if let Some(stale_count) = detected_stale_locks {
+                guard.dest_stale_locks.insert(dest.id.clone(), stale_count);
+            }
             if let Some(pending) = primary_forget_state
                 && let Err(err) = guard.history.set_pending_forget(&backup.id, pending)
             {
@@ -2617,6 +3505,26 @@ pub fn start_backup_async(
                     );
                 }
             }
+
+            let finish_now = clock.now_utc();
+            if transient_lock_backoff {
+                if let Ok(mut rs) = guard.history.get_backup_runtime_state(&backup.id) {
+                    rs.backoff_attempt = rs.backoff_attempt.saturating_add(1);
+                    rs.last_failure_at = Some(finish_now);
+                    rs.backoff_until = compute_backoff_until(rs.backoff_attempt, finish_now);
+                    let _ = guard.history.upsert_backup_runtime_state(&backup.id, &rs);
+                }
+            } else if matches!(final_status, RunStatus::Ok | RunStatus::Warning) {
+                if let Ok(mut rs) = guard.history.get_backup_runtime_state(&backup.id) {
+                    rs.backoff_attempt = 0;
+                    rs.backoff_until = None;
+                    rs.last_failure_at = None;
+                    rs.last_overdue_notified_at = None;
+                    rs.overdue_anchor_at = Some(finish_now);
+                    let _ = guard.history.upsert_backup_runtime_state(&backup.id, &rs);
+                }
+            }
+
             if let Err(err) = guard.history.upsert_run(&run, &secret_strs) {
                 eprintln!(
                     "kestic-daemon: failed to record finished run {run_id} in history: {err}"
@@ -2635,17 +3543,27 @@ pub fn start_backup_async(
             if let Some(tray) = &tray_opt {
                 tray.set_full_state(tray_state);
             }
-            state_dto
+            (state_dto, guard.config.notifications.clone())
         };
 
-        // AC-M1-11-4: Notification ONLY on Error or Warning, never on Ok or Cancelled.
+        if let Some(ref mut inh) = _logind_sleep_guard {
+            inh.release();
+        }
+
+        // AC-M1-11-4 / AC-M3-08-1 / AC-M3-08-2: Notification ONLY on Error or Warning (never on
+        // Ok, Cancelled, Interrupted, or transient Pending), honoring NotificationSettings (F3).
         match final_status {
             RunStatus::Error => {
                 let summary = i18n("%1: Backup failed").subs(&[&backup.name]);
                 let body = raw_detail.unwrap_or_else(|| {
                     localized_failure_summary(&ResticFailureKind::GenericFailure)
                 });
-                let _ = send_event_notification(KesticEvent::BackupFailed, &summary, &body);
+                let _ = send_configured_notification(
+                    &notif_settings,
+                    KesticEvent::BackupFailed,
+                    &summary,
+                    &body,
+                );
             }
             RunStatus::Warning => {
                 let summary = i18n("%1: Backup finished with warning").subs(&[&backup.name]);
@@ -2654,7 +3572,12 @@ pub fn start_backup_async(
                         unreadable_items: Vec::new(),
                     })
                 });
-                let _ = send_event_notification(KesticEvent::BackupWarning, &summary, &body);
+                let _ = send_configured_notification(
+                    &notif_settings,
+                    KesticEvent::BackupWarning,
+                    &summary,
+                    &body,
+                );
             }
             _ => {}
         }
@@ -2913,6 +3836,16 @@ pub fn run_destination_maintenance_async(
     shared: &Arc<Mutex<DaemonCore>>,
     destination_id: &str,
 ) -> Result<String, KesticServiceErr> {
+    run_destination_maintenance_with_options(shared, destination_id, false, false)
+}
+
+/// Runs destination maintenance (`pending_forget` -> optional `prune` -> optional `check`, `M3-S05`).
+pub fn run_destination_maintenance_with_options(
+    shared: &Arc<Mutex<DaemonCore>>,
+    destination_id: &str,
+    run_prune: bool,
+    run_check: bool,
+) -> Result<String, KesticServiceErr> {
     let d_id = DestinationId::parse(destination_id)
         .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
 
@@ -2927,6 +3860,11 @@ pub fn run_destination_maintenance_async(
         cancel,
         conn_opt,
         tray_opt,
+        enable_job_view,
+        job_view_dest,
+        enable_portal_inhibit,
+        monitor_bus,
+        enable_system_monitors,
     ) = {
         let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
         let dest = guard
@@ -2995,6 +3933,7 @@ pub fn run_destination_maintenance_async(
                 seconds_remaining: 0,
             },
             cancel: cancel.clone(),
+            sleep_interrupted: false,
         };
         guard.active_runs.insert(run.id.clone(), entry);
 
@@ -3020,12 +3959,43 @@ pub fn run_destination_maintenance_async(
             cancel,
             conn_opt,
             tray_opt,
+            guard.enable_job_view,
+            guard.job_view_dest.clone(),
+            guard.enable_portal_inhibit,
+            guard.monitor_bus.clone(),
+            guard.enable_system_monitors,
         )
     };
 
     let run_id_str = run.id.as_str().to_string();
     let shared_worker = Arc::clone(shared);
     thread::spawn(move || {
+        let mut _logind_sleep_guard = if enable_system_monitors {
+            LogindSleepInhibitor::acquire(&monitor_bus)
+        } else {
+            None
+        };
+        let _inhibit_guard = if enable_portal_inhibit {
+            PortalInhibitGuard::acquire_default(&format!("Kestic maintenance: {}", dest.name)).ok()
+        } else {
+            None
+        };
+        let job_view = if enable_job_view {
+            JobViewHandle::request(
+                &job_view_dest,
+                KESTIC_DESKTOP_ENTRY,
+                &i18n("Maintaining %1").subs(&[&dest.name]),
+                CAPABILITY_KILLABLE,
+            )
+            .ok()
+        } else {
+            None
+        };
+        let job_view_cancel_guard = job_view.as_ref().map(|jv| {
+            let cancel_for_jv = cancel.clone();
+            jv.start_cancel_watcher(move || cancel_for_jv.cancel())
+        });
+
         let mut run = run;
         let run_id = run.id.clone();
         let runtime = ResticRuntime {
@@ -3050,9 +4020,14 @@ pub fn run_destination_maintenance_async(
             .collect();
 
         let mut cleared_ids = Vec::new();
-        let mut any_failed = false;
+        let mut forget_failed = false;
+        let mut prune_or_check_failed = false;
+        let mut prune_succeeded_at: Option<OffsetDateTime> = None;
+        let mut check_succeeded_at: Option<OffsetDateTime> = None;
+        let mut detected_stale_locks: Option<usize> = None;
         let mut last_exit = 0i32;
         let mut combined_logs = Vec::new();
+        let mut failure_detail: Option<String> = None;
 
         for b in &pending_backups {
             if cancel.is_cancelled() {
@@ -3066,16 +4041,109 @@ pub fn run_destination_maintenance_async(
                     if res.exit_code == 0 {
                         cleared_ids.push(b.id.clone());
                     } else {
-                        any_failed = true;
+                        forget_failed = true;
+                        if is_forget_lock_failure(&res)
+                            && let Ok(lock_class) = detect_stale_locks(&dest, &runtime, &[])
+                        {
+                            detected_stale_locks = Some(if lock_class.has_stale_local_lock {
+                                lock_class.stale_lock_ids.len()
+                            } else {
+                                0
+                            });
+                        }
                     }
                 }
                 Err(err) => {
-                    any_failed = true;
+                    forget_failed = true;
                     last_exit = 1;
-                    combined_logs.push(redact_secrets(&err.to_string(), &secret_strs));
+                    let msg = redact_secrets(&err.to_string(), &secret_strs);
+                    failure_detail = Some(msg.clone());
+                    combined_logs.push(msg);
                 }
             }
         }
+
+        if run_prune && !cancel.is_cancelled() {
+            match execute_prune(&dest, &runtime, Some(&cancel), &[]) {
+                Ok(res) => {
+                    run.commands.push(res.command_record.clone());
+                    combined_logs.extend(res.log_lines.iter().cloned());
+                    last_exit = res.exit_code;
+                    if res.exit_code == 0 {
+                        prune_succeeded_at = Some(clock.now_utc());
+                    } else if !cancel.is_cancelled() {
+                        prune_or_check_failed = true;
+                        let detail =
+                            redact_secrets(&res.presentation.detail_or_summary(), &secret_strs);
+                        failure_detail = Some(detail);
+                        if res.exit_code == 11
+                            && let Ok(lock_class) = detect_stale_locks(&dest, &runtime, &[])
+                        {
+                            detected_stale_locks = Some(if lock_class.has_stale_local_lock {
+                                lock_class.stale_lock_ids.len()
+                            } else {
+                                0
+                            });
+                        }
+                    }
+                }
+                Err(err) => {
+                    if !cancel.is_cancelled() {
+                        prune_or_check_failed = true;
+                        last_exit = 1;
+                        let msg = redact_secrets(&err.to_string(), &secret_strs);
+                        failure_detail = Some(msg.clone());
+                        combined_logs.push(msg);
+                    }
+                }
+            }
+        }
+
+        if run_check && !cancel.is_cancelled() {
+            match execute_check(&dest, &runtime, Some(&cancel), &[]) {
+                Ok(res) => {
+                    run.commands.push(res.command_record.clone());
+                    combined_logs.extend(res.log_lines.iter().cloned());
+                    last_exit = res.exit_code;
+                    if res.exit_code == 0 {
+                        check_succeeded_at = Some(clock.now_utc());
+                    } else if !cancel.is_cancelled() {
+                        prune_or_check_failed = true;
+                        let detail =
+                            redact_secrets(&res.presentation.detail_or_summary(), &secret_strs);
+                        failure_detail = Some(detail);
+                        if res.exit_code == 11
+                            && let Ok(lock_class) = detect_stale_locks(&dest, &runtime, &[])
+                        {
+                            detected_stale_locks = Some(if lock_class.has_stale_local_lock {
+                                lock_class.stale_lock_ids.len()
+                            } else {
+                                0
+                            });
+                        }
+                    }
+                }
+                Err(err) => {
+                    if !cancel.is_cancelled() {
+                        prune_or_check_failed = true;
+                        last_exit = 1;
+                        let msg = redact_secrets(&err.to_string(), &secret_strs);
+                        failure_detail = Some(msg.clone());
+                        combined_logs.push(msg);
+                    }
+                }
+            }
+        }
+
+        drop(job_view_cancel_guard);
+
+        let sleep_interrupted = {
+            let guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .active_runs
+                .get(&run_id)
+                .is_some_and(|e| e.sleep_interrupted)
+        };
 
         let log_path = {
             let guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -3094,24 +4162,52 @@ pub fn run_destination_maintenance_async(
         };
         run.log_path = log_path;
 
-        let status = if cancel.is_cancelled() {
+        let status = if sleep_interrupted {
+            RunStatus::Interrupted
+        } else if cancel.is_cancelled() {
             RunStatus::Cancelled
-        } else if any_failed {
+        } else if prune_or_check_failed {
+            RunStatus::Error
+        } else if forget_failed {
             RunStatus::Warning
         } else {
             RunStatus::Ok
         };
+        if run.summary_message.is_none() {
+            run.summary_message = failure_detail.clone();
+        }
         run.finish(clock.as_ref(), status, Some(last_exit));
 
-        let state_dto = {
+        if let Some(jv) = job_view {
+            let jv_code = if status == RunStatus::Ok { 0 } else { 1 };
+            let _ = jv.terminate(jv_code, run.summary_message.as_deref().unwrap_or(""));
+        }
+
+        let (state_dto, notif_settings) = {
             let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
             guard.active_runs.remove(&run_id);
+            if let Some(stale_count) = detected_stale_locks {
+                guard.dest_stale_locks.insert(dest.id.clone(), stale_count);
+            }
             for id in &cleared_ids {
                 if let Err(err) = guard.history.set_pending_forget(id, false) {
                     eprintln!(
                         "kestic-daemon: failed to clear pending_forget for {id} in maintenance: {err}"
                     );
                 }
+            }
+            if (prune_succeeded_at.is_some() || check_succeeded_at.is_some())
+                && let Ok(mut ds) = guard.history.get_destination_maintenance_state(&dest.id)
+            {
+                if let Some(ts) = prune_succeeded_at {
+                    ds.last_prune_at = Some(ts);
+                }
+                if let Some(ts) = check_succeeded_at {
+                    ds.last_check_at = Some(ts);
+                }
+                let _ = guard
+                    .history
+                    .upsert_destination_maintenance_state(&dest.id, &ds);
             }
             if let Err(err) = guard.history.upsert_run(&run, &secret_strs) {
                 eprintln!(
@@ -3122,8 +4218,24 @@ pub fn run_destination_maintenance_async(
             if let Some(tray) = &tray_opt {
                 tray.set_full_state(tray_state);
             }
-            state_dto
+            (state_dto, guard.config.notifications.clone())
         };
+
+        if let Some(ref mut inh) = _logind_sleep_guard {
+            inh.release();
+        }
+
+        if status == RunStatus::Error {
+            let summary = i18n("%1: Maintenance failed").subs(&[&dest.name]);
+            let body = failure_detail
+                .unwrap_or_else(|| i18n("Destination maintenance failed").to_string());
+            let _ = send_configured_notification(
+                &notif_settings,
+                KesticEvent::MaintenanceFailed,
+                &summary,
+                &body,
+            );
+        }
 
         if let Some(conn) = &conn_opt {
             emit_run_updated(conn, &run);
@@ -3134,26 +4246,109 @@ pub fn run_destination_maintenance_async(
     Ok(run_id_str)
 }
 
+struct StartAllEntry {
+    backup: Backup,
+    has_error: bool,
+    error_summary: Option<String>,
+    source_status: kestic_core::mount::SourceCheckResult,
+    unmet_parts: Vec<String>,
+}
+
 pub fn start_all_backups_async(shared: &Arc<Mutex<DaemonCore>>) -> StartAllResultDto {
-    let backup_ids: Vec<(String, String)> = {
+    let entries: Vec<StartAllEntry> = {
         let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
-        guard
-            .config
+        let (state_dto, _) = guard.build_state_and_tray();
+        let home = current_home_dir();
+        state_dto
             .backups
-            .iter()
-            .map(|b| (b.id.as_str().to_string(), b.name.clone()))
+            .into_iter()
+            .map(|s| {
+                let source_status = check_source_status_with(
+                    &s.backup,
+                    home.as_deref(),
+                    guard.mount_inspector.as_ref(),
+                );
+                let unmet_parts: Vec<String> =
+                    evaluate_run_conditions(&s.backup.run_conditions, &guard.system_env)
+                        .iter()
+                        .map(|c| guard.format_unmet_condition_item(c))
+                        .collect();
+                StartAllEntry {
+                    backup: s.backup,
+                    has_error: s.has_error,
+                    error_summary: s.error_summary,
+                    source_status,
+                    unmet_parts,
+                }
+            })
             .collect()
     };
 
     let mut started_run_ids = Vec::new();
     let mut skipped = Vec::new();
-    for (id, name) in backup_ids {
+    let mut skipped_history_entries: Vec<(Backup, String, String)> = Vec::new();
+
+    for StartAllEntry {
+        backup,
+        has_error,
+        error_summary,
+        source_status,
+        unmet_parts,
+    } in entries
+    {
+        let id = backup.id.as_str().to_string();
+        let name = backup.name.clone();
+        if has_error {
+            let reason_text = error_summary
+                .unwrap_or_else(|| i18n("Permanent error — fix required before backing up").into());
+            skipped.push(SkippedBackupDto {
+                backup_id: id,
+                backup_name: name,
+                reason: "permanent_error".to_string(),
+                reason_text: reason_text.clone(),
+            });
+            skipped_history_entries.push((backup, "permanent_error".to_string(), reason_text));
+            continue;
+        }
+        if !source_status.is_ok() {
+            let reason_text = localized_source_check_reason(&source_status);
+            skipped.push(SkippedBackupDto {
+                backup_id: id,
+                backup_name: name,
+                reason: REASON_SOURCE_UNAVAILABLE.to_string(),
+                reason_text: reason_text.clone(),
+            });
+            skipped_history_entries.push((
+                backup,
+                REASON_SOURCE_UNAVAILABLE.to_string(),
+                reason_text,
+            ));
+            continue;
+        }
+        if !unmet_parts.is_empty() {
+            let reason_text = i18n("Condition not met: %1").subs(&[&unmet_parts.join(", ")]);
+            skipped.push(SkippedBackupDto {
+                backup_id: id,
+                backup_name: name,
+                reason: REASON_CONDITION_NOT_MET.to_string(),
+                reason_text: reason_text.clone(),
+            });
+            skipped_history_entries.push((
+                backup,
+                REASON_CONDITION_NOT_MET.to_string(),
+                reason_text,
+            ));
+            continue;
+        }
         match start_backup_async(shared, &id) {
             Ok(run_id) => started_run_ids.push(run_id),
             Err(err) => {
                 let (reason, reason_text) = match &err {
                     KesticServiceErr::ManualRunBlocked(r) if r == REASON_SOURCE_UNAVAILABLE => {
                         (r.clone(), i18n("Source unavailable").into())
+                    }
+                    KesticServiceErr::ManualRunBlocked(r) if r == REASON_CONDITION_NOT_MET => {
+                        (r.clone(), i18n("Run condition not met").into())
                     }
                     KesticServiceErr::ManualRunBlocked(r) => {
                         (r.clone(), i18n("Destination unreachable").into())
@@ -3164,6 +4359,7 @@ pub fn start_all_backups_async(shared: &Arc<Mutex<DaemonCore>>) -> StartAllResul
                     ),
                     other => ("error".to_string(), other.to_string()),
                 };
+                skipped_history_entries.push((backup, reason.clone(), reason_text.clone()));
                 skipped.push(SkippedBackupDto {
                     backup_id: id,
                     backup_name: name,
@@ -3173,9 +4369,332 @@ pub fn start_all_backups_async(shared: &Arc<Mutex<DaemonCore>>) -> StartAllResul
             }
         }
     }
+
+    // AC-M3-08-6: Record skipped backups from `StartAllBackups` so Verlauf reflects why they were skipped.
+    if !skipped_history_entries.is_empty() {
+        let (conn_opt, state_dto) = {
+            let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+            for (backup, reason, reason_text) in skipped_history_entries {
+                let note = i18n("Skipped during 'Back up all': %1").subs(&[&reason_text]);
+                match reason.as_str() {
+                    REASON_SOURCE_UNAVAILABLE => upsert_pending_run_entry(
+                        &mut guard,
+                        &backup,
+                        PendingReason::SourceUnavailable,
+                        note,
+                    ),
+                    REASON_DESTINATION_UNREACHABLE => upsert_pending_run_entry(
+                        &mut guard,
+                        &backup,
+                        PendingReason::DestinationUnreachable,
+                        note,
+                    ),
+                    REASON_CONDITION_NOT_MET => upsert_pending_run_entry(
+                        &mut guard,
+                        &backup,
+                        PendingReason::ConditionNotMet,
+                        note,
+                    ),
+                    _ => {
+                        if let Ok(mut meta_run) =
+                            Run::new_meta(guard.clock.as_ref(), backup.destination_id.clone())
+                        {
+                            meta_run.summary_message =
+                                Some(i18n("%1: %2").subs(&[&backup.name, &note]));
+                            meta_run.finish(guard.clock.as_ref(), RunStatus::Warning, None);
+                            let _ = guard.history.upsert_run(&meta_run, &[]);
+                        }
+                    }
+                }
+            }
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            if let Some(tray) = &guard.tray {
+                tray.set_full_state(tray_state);
+            }
+            (guard.conn.clone(), state_dto)
+        };
+        if let Some(conn) = &conn_opt {
+            emit_status_changed(conn, &state_dto);
+        }
+    }
+
     StartAllResultDto {
         started_run_ids,
         skipped,
+    }
+}
+
+/// Evaluates scheduled backups & destination maintenance for one tick (`M3-S01..S13`).
+pub fn tick_scheduler_async(shared: &Arc<Mutex<DaemonCore>>) {
+    let (actions, overdue_notices, conn_opt, state_dto_opt, notif_settings) = {
+        let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let now = guard.clock.now_utc();
+
+        // 1. Expire finished global pause and update overdue anchors (`AC-M3-07-3`, `AC-M3-07-4`).
+        let mut global_pause = guard.history.get_global_pause().ok().flatten();
+        if let Some(ref gp) = global_pause
+            && let Some(until) = gp.paused_until
+            && now >= until
+        {
+            let _ = guard.history.set_global_pause(None);
+            global_pause = None;
+            for backup in &guard.config.backups {
+                if let Ok(mut rs) = guard.history.get_backup_runtime_state(&backup.id)
+                    && !is_pause_active(rs.pause.as_ref(), now)
+                {
+                    let anchor = rs.overdue_anchor_at.map_or(until, |a| a.max(until));
+                    rs.overdue_anchor_at = Some(anchor);
+                    rs.last_overdue_notified_at = None;
+                    let _ = guard.history.upsert_backup_runtime_state(&backup.id, &rs);
+                }
+            }
+        }
+
+        // Refresh local source status for scheduled / sleep-interrupted backups (`AC-M3-13-5`).
+        let home = current_home_dir();
+        let backups_snapshot = guard.config.backups.clone();
+        for backup in &backups_snapshot {
+            let status =
+                check_source_status_with(backup, home.as_deref(), guard.mount_inspector.as_ref());
+            guard.source_availability.insert(backup.id.clone(), status);
+        }
+
+        let all_runs = guard.history.list_runs().unwrap_or_default();
+        let busy_dests: HashSet<DestinationId> = guard
+            .active_runs
+            .values()
+            .map(|e| e.run.destination_id.clone())
+            .collect();
+        let mut backup_dest_map = HashMap::new();
+        let mut evaluations = Vec::with_capacity(backups_snapshot.len());
+        let mut overdue_notices: Vec<(String, usize)> = Vec::new();
+
+        for backup in &backups_snapshot {
+            backup_dest_map.insert(backup.id.clone(), backup.destination_id.clone());
+            let mut rs = guard
+                .history
+                .get_backup_runtime_state(&backup.id)
+                .unwrap_or_default();
+
+            // Expire finished per-backup pause (`AC-M3-07-3`, `AC-M3-07-4`).
+            if let Some(ref p) = rs.pause
+                && let Some(until) = p.paused_until
+                && now >= until
+            {
+                rs.pause = None;
+                let anchor = rs.overdue_anchor_at.map_or(until, |a| a.max(until));
+                rs.overdue_anchor_at = Some(anchor);
+                rs.last_overdue_notified_at = None;
+                let _ = guard.history.upsert_backup_runtime_state(&backup.id, &rs);
+            }
+
+            // Reset stale backoff state from an earlier slot once a newer regular slot arrives (`AC-M3-04-1`).
+            let due_now_slots = {
+                let catchup_anchor = match (
+                    guard
+                        .history
+                        .last_successful_backup_at(&backup.id)
+                        .ok()
+                        .flatten(),
+                    rs.baseline_at,
+                ) {
+                    (Some(a), Some(b)) => a.max(b),
+                    (Some(a), None) => a,
+                    (None, Some(b)) => b,
+                    (None, None) => now,
+                };
+                backup_slots_between(&backup.schedule, catchup_anchor, now, &guard.timezone)
+            };
+            if let (Some(latest_slot), Some(failed_at)) =
+                (due_now_slots.last().copied(), rs.last_failure_at)
+                && latest_slot > failed_at
+                && (rs.backoff_attempt > 0 || rs.backoff_until.is_some())
+            {
+                rs.backoff_attempt = 0;
+                rs.backoff_until = None;
+                rs.last_failure_at = None;
+                let _ = guard.history.upsert_backup_runtime_state(&backup.id, &rs);
+            }
+
+            let backoff_elapsed = rs.backoff_until.is_some_and(|until| now >= until);
+
+            let last_run = all_runs.iter().find(|r| {
+                r.backup_id() == Some(&backup.id)
+                    && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
+            });
+            let has_error = last_run.is_some_and(|r| r.status == RunStatus::Error);
+            let source_ok = guard
+                .source_availability
+                .get(&backup.id)
+                .map(|s| s.is_ok())
+                .unwrap_or(true);
+            let cached_dest_ok = guard
+                .dest_availability
+                .get(&backup.destination_id)
+                .map(|d| d.reachable)
+                .unwrap_or(true);
+            let dest_busy = busy_dests.contains(&backup.destination_id);
+            let can_probe_unreachable_dest = !cached_dest_ok
+                && !dest_busy
+                && !has_error
+                && source_ok
+                && !due_now_slots.is_empty()
+                && !is_pause_active(rs.pause.as_ref(), now)
+                && !is_pause_active(global_pause.as_ref(), now)
+                && evaluate_run_conditions(&backup.run_conditions, &guard.system_env).is_empty()
+                && (backoff_elapsed || (rs.backoff_attempt == 0 && rs.backoff_until.is_none()));
+            let dest_ok = cached_dest_ok || can_probe_unreachable_dest;
+            let last_success_at = guard
+                .history
+                .last_successful_backup_at(&backup.id)
+                .ok()
+                .flatten();
+
+            let mut eval = evaluate_backup_schedule(
+                &BackupScheduleEvalInput {
+                    backup,
+                    runtime_state: &rs,
+                    last_success_at,
+                    overdue_anchor_at: None,
+                    global_pause: global_pause.as_ref(),
+                    global_overdue_threshold: guard.config.default_overdue_threshold,
+                    source_available: source_ok,
+                    destination_reachable: dest_ok,
+                    destination_busy: dest_busy,
+                    has_permanent_error: has_error,
+                },
+                &guard.system_env,
+                now,
+                &guard.timezone,
+            );
+
+            // AC-M3-09-3: Allow sleep-interrupted backups (even ManualOnly) to resume after wake.
+            if eval.due_slot.is_none()
+                && !eval.is_paused
+                && !has_error
+                && guard.sleep_interrupted_backups.contains(&backup.id)
+            {
+                let unmet = collect_pending_preconditions(
+                    source_ok,
+                    dest_ok,
+                    &backup.run_conditions,
+                    &guard.system_env,
+                    dest_busy,
+                    eval.in_backoff,
+                );
+                eval.due_slot = Some(now);
+                eval.should_start_now = unmet.is_empty();
+                eval.unmet_preconditions = unmet;
+            }
+
+            if eval.is_overdue && rs.last_overdue_notified_at.is_none() {
+                rs.last_overdue_notified_at = Some(now);
+                let _ = guard.history.upsert_backup_runtime_state(&backup.id, &rs);
+                overdue_notices.push((backup.name.clone(), eval.missed_slots_for_overdue));
+            }
+
+            if !eval.should_start_now
+                && !eval.is_paused
+                && !has_error
+                && !dest_busy
+                && !eval.unmet_preconditions.is_empty()
+            {
+                let primary = &eval.unmet_preconditions[0];
+                let (_, msg) = guard.format_pending_reason_entry(primary, rs.backoff_until, now);
+                upsert_pending_run_entry(&mut guard, backup, primary.to_pending_reason(), msg);
+            } else if eval.due_slot.is_none() || eval.is_paused || has_error {
+                let _ = guard.history.delete_pending_runs_for_backup(&backup.id);
+            }
+
+            evaluations.push(eval);
+        }
+
+        let mut maint_needs = Vec::with_capacity(guard.config.destinations.len());
+        for dest in &guard.config.destinations {
+            let ds = guard
+                .history
+                .get_destination_maintenance_state(&dest.id)
+                .unwrap_or_default();
+            let has_pending_forget = guard.config.backups.iter().any(|b| {
+                b.destination_id == dest.id
+                    && guard.history.is_pending_forget(&b.id).unwrap_or(false)
+            });
+            let dest_busy = busy_dests.contains(&dest.id);
+            let dest_ok = guard
+                .dest_availability
+                .get(&dest.id)
+                .map(|d| d.reachable)
+                .unwrap_or(true);
+            maint_needs.push(evaluate_destination_maintenance(
+                &DestinationMaintenanceEvalInput {
+                    destination: dest,
+                    state: &ds,
+                    has_pending_forget,
+                    global_pause: global_pause.as_ref(),
+                    destination_busy: dest_busy,
+                    destination_reachable: dest_ok,
+                },
+                &guard.system_env,
+                now,
+                &guard.timezone,
+            ));
+        }
+
+        let actions =
+            plan_destination_actions(&evaluations, &maint_needs, &busy_dests, &backup_dest_map);
+
+        let state_dto_opt = if !overdue_notices.is_empty() || !actions.is_empty() {
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            if let Some(tray) = &guard.tray {
+                tray.set_full_state(tray_state);
+            }
+            Some(state_dto)
+        } else {
+            None
+        };
+
+        (
+            actions,
+            overdue_notices,
+            guard.conn.clone(),
+            state_dto_opt,
+            guard.config.notifications.clone(),
+        )
+    };
+
+    for (name, missed) in overdue_notices {
+        let summary = i18n("%1: Backup overdue").subs(&[&name]);
+        let body = i18n("%1 scheduled backups missed").subs(&[&missed.to_string()]);
+        let _ = send_configured_notification(
+            &notif_settings,
+            KesticEvent::BackupOverdue,
+            &summary,
+            &body,
+        );
+    }
+
+    if let (Some(conn), Some(state_dto)) = (&conn_opt, &state_dto_opt) {
+        emit_status_changed(conn, state_dto);
+    }
+
+    for action in actions {
+        match action {
+            DestinationTickAction::StartBackup { backup_id, .. } => {
+                let _ = start_scheduled_backup_async(shared, backup_id.as_str());
+            }
+            DestinationTickAction::StartMaintenance {
+                destination_id,
+                run_prune,
+                run_check,
+            } => {
+                let _ = run_destination_maintenance_with_options(
+                    shared,
+                    destination_id.as_str(),
+                    run_prune,
+                    run_check,
+                );
+            }
+        }
     }
 }
 
@@ -3714,6 +5233,195 @@ impl KesticDbusV1Service {
             .map_err(KesticDbusError::from)
     }
 
+    #[zbus(name = "PauseGlobal")]
+    async fn pause_global(&self, duration_json: &str) -> Result<(), KesticDbusError> {
+        let (conn_opt, state_dto, tray_state) = {
+            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard.pause_global(duration_json)?;
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (guard.conn.clone(), state_dto, tray_state)
+        };
+        if let Some(conn) = &conn_opt {
+            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
+        }
+        Ok(())
+    }
+
+    #[zbus(name = "ResumeGlobal")]
+    async fn resume_global(&self) -> Result<(), KesticDbusError> {
+        let (conn_opt, state_dto, tray_state) = {
+            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard.resume_global()?;
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (guard.conn.clone(), state_dto, tray_state)
+        };
+        if let Some(conn) = &conn_opt {
+            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
+        }
+        Ok(())
+    }
+
+    #[zbus(name = "PauseBackup")]
+    async fn pause_backup(
+        &self,
+        backup_id: &str,
+        duration_json: &str,
+    ) -> Result<(), KesticDbusError> {
+        let (conn_opt, state_dto, tray_state) = {
+            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard.pause_backup(backup_id, duration_json)?;
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (guard.conn.clone(), state_dto, tray_state)
+        };
+        if let Some(conn) = &conn_opt {
+            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
+        }
+        Ok(())
+    }
+
+    #[zbus(name = "ResumeBackup")]
+    async fn resume_backup(&self, backup_id: &str) -> Result<(), KesticDbusError> {
+        let (conn_opt, state_dto, tray_state) = {
+            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard.resume_backup(backup_id)?;
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (guard.conn.clone(), state_dto, tray_state)
+        };
+        if let Some(conn) = &conn_opt {
+            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
+        }
+        Ok(())
+    }
+
+    #[zbus(name = "StartBackupOverride")]
+    async fn start_backup_override(&self, backup_id: &str) -> Result<String, KesticDbusError> {
+        let core = Arc::clone(&self.core);
+        let id = backup_id.to_string();
+        run_blocking_task(move || start_backup_override_async(&core, &id))
+            .await
+            .map_err(KesticDbusError::from)
+    }
+
+    #[zbus(name = "UnlockDestination")]
+    async fn unlock_destination(&self, destination_id: &str) -> Result<u32, KesticDbusError> {
+        let core = Arc::clone(&self.core);
+        let id = destination_id.to_string();
+        let count = run_blocking_task(move || {
+            let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+            guard.unlock_destination(&id)
+        })
+        .await
+        .map_err(KesticDbusError::from)?;
+
+        let (conn_opt, state_dto, tray_state) = {
+            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (guard.conn.clone(), state_dto, tray_state)
+        };
+        if let Some(conn) = &conn_opt {
+            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
+        }
+        Ok(count)
+    }
+
+    #[zbus(name = "PreviewDestinationMaintenance")]
+    async fn preview_destination_maintenance(
+        &self,
+        destination_id: &str,
+    ) -> Result<String, KesticDbusError> {
+        let (dest, resolved, kestic_binary, secret_store, clock) = {
+            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            let d_id = DestinationId::parse(destination_id)
+                .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+            let dest = guard
+                .config
+                .destination(&d_id)
+                .cloned()
+                .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
+            let (_, secret_status, _) = guard.probe_restic_and_secrets();
+            if !secret_status.available {
+                return Err(KesticServiceErr::SecretStoreLocked(
+                    secret_status
+                        .message
+                        .unwrap_or_else(|| i18n("Password store is locked").into()),
+                )
+                .into());
+            }
+            let resolved =
+                resolve_and_check(&guard.config.restic_provider).map_err(map_provider_err)?;
+            (
+                dest,
+                resolved,
+                guard.kestic_binary.clone(),
+                Arc::clone(&guard.secret_store),
+                Arc::clone(&guard.clock),
+            )
+        };
+
+        let preview = run_blocking_task(move || {
+            let runtime = ResticRuntime {
+                resolved: &resolved,
+                kestic_binary: &kestic_binary,
+                secret_store: secret_store.as_ref(),
+                clock: clock.as_ref(),
+            };
+            execute_prune_dry_run(&dest, &runtime, None, &[]).map_err(|err| match err {
+                BackupRunError::Destination(d) => map_destination_err(d),
+                BackupRunError::InvalidModel(m) => KesticServiceErr::InvalidInput(m.to_string()),
+                other => KesticServiceErr::Internal(other.to_string()),
+            })
+        })
+        .await
+        .map_err(KesticDbusError::from)?;
+        serde_json::to_string(&preview).map_err(|e| KesticDbusError::Internal(e.to_string()))
+    }
+
+    #[zbus(name = "UpdateDestinationMaintenance")]
+    async fn update_destination_maintenance(
+        &self,
+        destination_id: &str,
+        maintenance_json: &str,
+    ) -> Result<(), KesticDbusError> {
+        let (conn_opt, state_dto, tray_state) = {
+            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard.update_destination_maintenance(destination_id, maintenance_json)?;
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (guard.conn.clone(), state_dto, tray_state)
+        };
+        if let Some(conn) = &conn_opt {
+            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
+        }
+        Ok(())
+    }
+
+    #[zbus(name = "UpdateSettings")]
+    async fn update_settings(
+        &self,
+        default_overdue_threshold: u32,
+        notifications_json: &str,
+    ) -> Result<(), KesticDbusError> {
+        let (conn_opt, state_dto, tray_state) = {
+            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard.update_settings(default_overdue_threshold, notifications_json)?;
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (guard.conn.clone(), state_dto, tray_state)
+        };
+        if let Some(conn) = &conn_opt {
+            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
+        }
+        Ok(())
+    }
+
+    #[zbus(name = "ListKnownNetworks")]
+    async fn list_known_networks(&self) -> Result<String, KesticDbusError> {
+        let monitor_bus = {
+            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard.monitor_bus.clone()
+        };
+        let networks = run_blocking_task(move || list_known_networks(&monitor_bus)).await;
+        serde_json::to_string(&networks).map_err(|e| KesticDbusError::Internal(e.to_string()))
+    }
+
     #[zbus(signal, name = "StatusChanged")]
     async fn status_changed(
         ctxt: &SignalEmitter<'_>,
@@ -3951,10 +5659,70 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
             .map_err(|err| format!("failed to write ready file {}: {err}", ready_path.display()))?;
     }
 
+    let mut monitor_rx_and_handle: Option<(
+        mpsc::Receiver<SystemMonitorEvent>,
+        SystemMonitorHandle,
+    )> = if config.enable_system_monitors {
+        let (mon_tx, mon_rx) = mpsc::channel();
+        let handle = SystemMonitorHandle::start(config.monitor_bus.clone(), mon_tx, None);
+        Some((mon_rx, handle))
+    } else {
+        None
+    };
+
+    let bin_identity = if config.enable_binary_watch {
+        BinaryIdentity::capture_current().ok()
+    } else {
+        None
+    };
+
+    if config.enable_scheduler {
+        tick_scheduler_async(&core);
+    }
+
     let deadline = config.duration.map(|d| Instant::now() + d);
+    let mut last_sched_tick = Instant::now();
+    let mut last_bin_check = Instant::now();
+    let mut last_network_reconnect_probe: Option<time::OffsetDateTime> = None;
+    let mut pending_exec_path: Option<PathBuf> = None;
+
     loop {
         while let Ok(action) = action_rx.try_recv() {
             handle_tray_action(&core, &conn, &config, action);
+        }
+
+        if let Some((ref mon_rx, _)) = monitor_rx_and_handle {
+            while let Ok(ev) = mon_rx.try_recv() {
+                handle_system_monitor_event(
+                    &core,
+                    &conn,
+                    &tray,
+                    &config,
+                    ev,
+                    &mut last_network_reconnect_probe,
+                );
+            }
+        }
+
+        if config.enable_scheduler && last_sched_tick.elapsed() >= Duration::from_secs(1) {
+            last_sched_tick = Instant::now();
+            tick_scheduler_async(&core);
+        }
+
+        if let Some(ref bin_id) = bin_identity
+            && last_bin_check.elapsed() >= Duration::from_millis(500)
+        {
+            last_bin_check = Instant::now();
+            if matches!(bin_id.check(), BinaryStatus::Replaced(_)) {
+                let has_active_runs = {
+                    let guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                    !guard.active_runs.is_empty()
+                };
+                if !has_active_runs {
+                    pending_exec_path = Some(bin_id.exe_path().to_path_buf());
+                    break;
+                }
+            }
         }
 
         if core
@@ -3966,22 +5734,32 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
             break;
         }
 
+        let step_wait = if monitor_rx_and_handle.is_some() || bin_identity.is_some() {
+            Duration::from_millis(25)
+        } else {
+            Duration::from_millis(50)
+        };
+
         if let Some(end) = deadline {
             let now = Instant::now();
             if now >= end {
                 break;
             }
-            let wait = (end - now).min(Duration::from_millis(50));
+            let wait = (end - now).min(step_wait);
             if quit_rx.recv_timeout(wait).is_ok() {
                 break;
             }
-        } else if quit_rx.recv_timeout(Duration::from_millis(50)).is_ok() {
+        } else if quit_rx.recv_timeout(step_wait).is_ok() {
             break;
         }
     }
 
     while let Ok(action) = action_rx.try_recv() {
         handle_tray_action(&core, &conn, &config, action);
+    }
+
+    if let Some((_, handle)) = monitor_rx_and_handle.take() {
+        handle.stop();
     }
 
     {
@@ -3997,7 +5775,165 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     let _ = zbus::block_on(conn.release_name(config.bus_name.as_str()));
     drop(lock);
     let _ = zbus::block_on(conn.close());
+
+    if let Some(exe_path) = pending_exec_path {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = Command::new(&exe_path);
+        if let Some(args) = &config.binary_watch_args {
+            cmd.args(args);
+        } else {
+            cmd.args(env::args_os().skip(1));
+        }
+        let err = cmd.exec();
+        return Err(format!(
+            "failed to exec replaced binary {}: {err}",
+            exe_path.display()
+        ));
+    }
+
     Ok(DaemonOutcome::RanAndStopped)
+}
+
+fn handle_system_monitor_event(
+    core: &Arc<Mutex<DaemonCore>>,
+    conn: &Connection,
+    tray: &Arc<TrayHandle>,
+    config: &DaemonRunConfig,
+    ev: SystemMonitorEvent,
+    last_network_reconnect_probe: &mut Option<time::OffsetDateTime>,
+) {
+    match ev {
+        SystemMonitorEvent::EnvironmentChanged(new_env) => {
+            let (state_dto, tray_state) = {
+                let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                let old_env = guard.system_env.clone();
+                let network_changed = old_env.network_connected != new_env.network_connected
+                    || old_env.network_metered != new_env.network_metered
+                    || old_env.active_networks != new_env.active_networks;
+                let network_just_came_online =
+                    !old_env.network_connected && new_env.network_connected;
+                guard.system_env = new_env;
+
+                if network_changed {
+                    let now = guard.clock.now_utc();
+                    let cooldown_elapsed = match *last_network_reconnect_probe {
+                        None => true,
+                        Some(prev) => {
+                            (now - prev) > time::Duration::seconds(AVAILABILITY_CACHE_TTL_SECS)
+                        }
+                    };
+                    let force_probe = network_just_came_online && cooldown_elapsed;
+                    if force_probe {
+                        *last_network_reconnect_probe = Some(now);
+                    }
+                    let _ = guard.refresh_availability_if_needed(force_probe);
+
+                    for backup in guard.config.backups.clone() {
+                        let dest_ok = guard
+                            .dest_availability
+                            .get(&backup.destination_id)
+                            .map(|d| d.reachable)
+                            .unwrap_or(true);
+                        if dest_ok
+                            && let Ok(mut rs) = guard.history.get_backup_runtime_state(&backup.id)
+                            && (rs.backoff_until.is_some() || rs.backoff_attempt > 0)
+                        {
+                            rs.backoff_until = None;
+                            rs.backoff_attempt = 0;
+                            let _ = guard.history.upsert_backup_runtime_state(&backup.id, &rs);
+                        }
+                    }
+                }
+                guard.build_state_and_tray()
+            };
+            tray.set_full_state(tray_state);
+            emit_status_changed(conn, &state_dto);
+            if config.enable_scheduler {
+                tick_scheduler_async(core);
+            }
+        }
+        SystemMonitorEvent::MountChanged => {
+            let (state_dto, tray_state) = {
+                let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                let home = current_home_dir();
+                for backup in guard.config.backups.clone() {
+                    let status = check_source_status_with(
+                        &backup,
+                        home.as_deref(),
+                        guard.mount_inspector.as_ref(),
+                    );
+                    guard.source_availability.insert(backup.id.clone(), status);
+                }
+                let now_unix = guard.clock.now_unix_secs();
+                for dest in guard.config.destinations.clone() {
+                    if matches!(dest.kind, DestinationKind::Local { .. }) {
+                        let res = preflight_check_destination(&dest, DEFAULT_CONNECT_TIMEOUT);
+                        let dto = match res {
+                            Ok(()) => DestinationAvailabilityDto {
+                                destination_id: dest.id.as_str().to_string(),
+                                reachable: true,
+                                detail: None,
+                                checked_at_unix: now_unix,
+                            },
+                            Err(err) => DestinationAvailabilityDto {
+                                destination_id: dest.id.as_str().to_string(),
+                                reachable: false,
+                                detail: Some(err.to_string()),
+                                checked_at_unix: now_unix,
+                            },
+                        };
+                        guard.dest_availability.insert(dest.id.clone(), dto);
+                    }
+                }
+                guard.build_state_and_tray()
+            };
+            tray.set_full_state(tray_state);
+            emit_status_changed(conn, &state_dto);
+            if config.enable_scheduler {
+                tick_scheduler_async(core);
+            }
+        }
+        SystemMonitorEvent::PrepareForSleep(true) => {
+            // AC-M3-09-2: interrupt running jobs cleanly and mark them for post-wake resume.
+            let (state_dto, tray_state) = {
+                let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                let running_ids: Vec<BackupId> = guard
+                    .active_runs
+                    .values()
+                    .filter_map(|e| e.backup_id.clone())
+                    .collect();
+                for entry in guard.active_runs.values_mut() {
+                    entry.sleep_interrupted = true;
+                }
+                for bid in running_ids {
+                    guard.sleep_interrupted_backups.insert(bid);
+                }
+                guard.cancel_any_active_run();
+                guard.build_state_and_tray()
+            };
+            tray.set_full_state(tray_state);
+            emit_status_changed(conn, &state_dto);
+        }
+        SystemMonitorEvent::PrepareForSleep(false) => {
+            // AC-M3-09-3 / AC-M3-01-7: re-read environment, refresh availability, and catch up.
+            let new_env = if config.enable_system_monitors {
+                read_system_environment(&config.monitor_bus)
+            } else {
+                SystemEnvironment::desktop_connected()
+            };
+            let (state_dto, tray_state) = {
+                let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                guard.system_env = new_env;
+                let _ = guard.refresh_availability_if_needed(true);
+                guard.build_state_and_tray()
+            };
+            tray.set_full_state(tray_state);
+            emit_status_changed(conn, &state_dto);
+            if config.enable_scheduler {
+                tick_scheduler_async(core);
+            }
+        }
+    }
 }
 
 fn check_gui_sender_alive(conn: &Connection, sender: &str) -> Result<bool, zbus::Error> {
@@ -4061,11 +5997,64 @@ fn handle_tray_action(
             let _ = start_backup_async(core, &backup_id);
         }
         TrayAction::StartAllBackups => {
-            let _ = start_all_backups_async(core);
+            let res = start_all_backups_async(core);
+            if !res.skipped.is_empty() {
+                let notif_settings = {
+                    let guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                    guard.config.notifications.clone()
+                };
+                let summary: Vec<String> = res
+                    .skipped
+                    .iter()
+                    .map(|s| format!("• {}: {}", s.backup_name, s.reason_text))
+                    .collect();
+                let title = i18n("Some backups were skipped").to_string();
+                let body = summary.join("\n");
+                let _ = send_configured_notification(
+                    &notif_settings,
+                    KesticEvent::BackupWarning,
+                    &title,
+                    &body,
+                );
+            }
         }
         TrayAction::CancelRun(run_id) => {
             let guard = core.lock().unwrap_or_else(|p| p.into_inner());
             let _ = guard.cancel_run(&run_id);
+        }
+        TrayAction::PauseGlobal(duration) => {
+            if let Ok(dur_json) = serde_json::to_string(&duration) {
+                let mut pair = None;
+                let tray_opt = {
+                    let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                    if guard.pause_global(&dur_json).is_ok() {
+                        pair = Some(guard.build_state_and_tray());
+                    }
+                    guard.tray.clone()
+                };
+                if let Some((dto, ts)) = pair {
+                    if let Some(tray) = tray_opt {
+                        tray.set_full_state(ts);
+                    }
+                    emit_status_changed(conn, &dto);
+                }
+            }
+        }
+        TrayAction::ResumeGlobal => {
+            let mut pair = None;
+            let tray_opt = {
+                let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                if guard.resume_global().is_ok() {
+                    pair = Some(guard.build_state_and_tray());
+                }
+                guard.tray.clone()
+            };
+            if let Some((dto, ts)) = pair {
+                if let Some(tray) = tray_opt {
+                    tray.set_full_state(ts);
+                }
+                emit_status_changed(conn, &dto);
+            }
         }
         TrayAction::OpenWindow => {
             let gui_live = is_gui_live(core, conn);

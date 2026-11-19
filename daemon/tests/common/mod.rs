@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod fakes;
+
 use std::collections::HashMap;
 use std::env;
 use std::fs;

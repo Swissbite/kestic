@@ -213,6 +213,9 @@ void install_m1_smoke_check(
             if (scen.startsWith(QLatin1String("m2-"))) {
                 run_m2_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
                 return;
+            } else if (scen.startsWith(QLatin1String("m3-"))) {
+                run_m3_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
+                return;
             } else if (scen == QLatin1String("welcome")) {
                 QQuickItem* wv = window->findChild<QQuickItem*>(QStringLiteral("welcomeView"));
                 if (!wv || !wv->isVisible()) {

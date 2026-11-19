@@ -50,6 +50,7 @@ fn ac_m1_02_1_and_02_2_config_toml_roundtrip_contains_no_secrets() {
         expert_mode: true,
         destinations: vec![dest.clone()],
         backups: vec![backup],
+        ..Default::default()
     };
 
     save_config(&config_file, &cfg).expect("save config");
