@@ -28,6 +28,7 @@ void install_m1_smoke_check(
     const QString mode = QString::fromUtf8(layout_mode.data(), static_cast<qsizetype>(layout_mode.size()));
     const QString lang = QString::fromUtf8(expected_lang.data(), static_cast<qsizetype>(expected_lang.size()));
     auto warnings = std::make_shared<QStringList>();
+    finish_incubation_on_quit(engine);
 
     QObject::connect(
         &engine,

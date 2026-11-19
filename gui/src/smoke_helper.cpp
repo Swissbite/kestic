@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -19,6 +20,7 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QQmlError>
+#include <QQmlIncubationController>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QStringList>
@@ -647,6 +649,20 @@ std::int32_t local_offset_seconds(std::int64_t unix_secs) {
     return static_cast<std::int32_t>(dt.offsetFromUtc());
 }
 
+void finish_incubation_on_quit(QQmlApplicationEngine& engine) {
+    QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &engine, [&engine]() {
+        QQmlIncubationController* controller = engine.incubationController();
+        if (!controller) {
+            return;
+        }
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (controller->incubatingObjectCount() > 0 && elapsed.elapsed() < 2000) {
+            controller->incubateFor(10);
+        }
+    });
+}
+
 void install_keyboard_handlers(QQmlApplicationEngine& engine) {
     if (QCoreApplication* app = QCoreApplication::instance()) {
         app->installEventFilter(new KesticKeyNavFilter(&engine));
@@ -665,6 +681,7 @@ void install_smoke_check(
     const QString mode = QString::fromUtf8(layout_mode.data(), static_cast<qsizetype>(layout_mode.size()));
     const QString lang = QString::fromUtf8(expected_lang.data(), static_cast<qsizetype>(expected_lang.size()));
     auto warnings = std::make_shared<QStringList>();
+    finish_incubation_on_quit(engine);
 
     QObject::connect(
         &engine,
