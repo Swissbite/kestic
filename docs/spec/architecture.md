@@ -139,6 +139,21 @@ Stand recherchiert am 2026-11-15. Entscheid: [ADR 0001](adr/0001-tech-stack-rust
 
 **Packaging-Fallstricke (`.deb`):** Gebaut wird gegen die Qt-/KF-Version des Build-Systems → das ist die Mindestanforderung; ein nicht erfüllbares `Recommends: paket (>= x)` überspringt apt ohne Fehler (geprüft mit `apt-get -s install`); App-ID im Reverse-DNS-Format einer eigenen Domain bzw. `io.github.<owner>.<App>`, `org.kde.*` ist offiziellen KDE-Projekten vorbehalten.
 
+## Code-Struktur
+
+Verbindliche Ablage neuer und aufgeteilter Module über alle Meilensteine:
+
+| Art | Ablage | Hinweis |
+| --- | --- | --- |
+| D-Bus-Methode | `daemon/src/service/<bereich>.rs` + `daemon/src/dbus_server.rs` + `daemon/src/dbus_api.rs` | `service.rs` nur als dünner Einstieg bzw. Modul-Verteiler |
+| Fachlogik | `core/src/<bereich>.rs` | in der GUI nur Aufrufe, keine Geschäftslogik |
+| GUI-Modell | `gui/src/models/<modell>.rs` | pro Modell eine Datei statt monolithischem `models.rs` |
+| Dialog / Seite | eigene QML-Datei unter `gui/src/qml/` | nicht inline in `Main.qml` |
+
+**Grössengrenzen ohne Ausnahmen (NFR-12, durch `just verify` erzwungen):**
+
+- **Funktionslänge:** Clippy-Lint `too_many_lines` mit Schwelle 150 Zeilen in `clippy.toml`.
+- **Dateigrösse:** Maximal 1500 Zeilen pro `.rs`- und `.qml`-Datei unter `src/` (ohne Tests und generierten Code), geprüft durch `just verify`.
 
 ## Bedrohungsmodell (F18)
 

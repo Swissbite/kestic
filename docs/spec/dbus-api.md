@@ -84,6 +84,15 @@ Strukturierte DTOs werden als UTF-8-JSON übergeben (mit festem Schema in `kesti
 
 Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_forget` (M2-S07), `nested_warnings` (M2-S10), `exclude_lint_warnings` (M2-S03) sowie `is_paused`, `paused_since_unix`, `paused_until_unix`, `next_scheduled_at_unix`, `pending_primary_reason`, `pending_primary_code`, `pending_reasons`, `missed_slots_count`, `has_unmet_run_condition` und `unmet_conditions_text` (M3); `BackupAvailabilityDto.reason_text` enthält den lokalisierten Laufwerks- oder Quellenfehler (`M2-S09`); `DestinationSummaryDto` trägt Wartungszeitpunkte (`next_prune_at_unix`, `next_check_at_unix`, `last_prune_at_unix`, `last_check_at_unix`, `last_maintenance_run`, `maintenance_running`, `pending_forget_count`, `stale_lock_count`); `OverallStatusDto` trägt Pause-Metadaten (`paused_since_unix`, `paused_until_unix`, `paused_label`, `next_scheduled_backup_name`, `next_scheduled_at_unix`).
 
+**Sprachunabhängige Codes (nachgetragen, additive DTO-Felder):** Die Textfelder (`error_summary`, `reason_text`, `message`, `pending_reasons`) bleiben in der Sprache des Daemons für Tray, Benachrichtigungen und Rückwärtskompatibilität. Die GUI zeigt stattdessen eigene, in ihrer Sprache übersetzte Texte anhand dieser Codes (Detailfelder enthalten den Rohtext von restic bzw. Daemon):
+
+- `BackupSummaryDto.error_kind` + `error_detail` + `error_exit_code` (letzter Lauf `Fehler`/`Warnung`) und `RunDetailDto.error_kind` + `error_exit_code` (Detail: `error_raw_detail`). Codes: `wrong_password`, `repo_missing`, `locked`, `destination_unreachable` (inkl. DNS), `source_unavailable`, `auth_failed`, `incomplete_snapshot`, `retention_pending`, `cancelled`, `unknown` (alles Nichterkannte, nie ein vorübergehender Code). `error_action` ist bereits ein Code (`update_stored_password`, `add_to_excludes`, `check_restic_source`, `unlock_repository`).
+- `BackupSummaryDto.pending_reason_codes` (parallel zu `pending_reasons`, gleiche Codes wie `pending_primary_code`) und `pending_retry_at_unix` (nächster Versuch, solange `backoff` aufgeführt ist).
+- `DestinationSummaryDto.maintenance_pending_reason` (fällige Wartung `ausstehend`, AC-M3-05-5): `destination_unreachable` \| `on_battery` \| `metered` \| `queue` \| `backoff` (gleiche Codes wie bei Backups) und `maintenance_retry_at_unix` (nächster Versuch bei `backoff`).
+- `BackupAvailabilityDto.source_status`: `path_missing` \| `drive_not_mounted` \| `drive_mismatch` \| `drive_empty` (neben `blocked_reason`).
+- `SkippedBackupDto.error_kind`: bei `reason = "permanent_error"` der `error_kind` des letzten Laufs, bei `reason = "error"` `secret_store_locked` \| `restic_unavailable` \| `auth_failed` \| `wrong_password` \| `destination_unreachable` \| `unknown`.
+- `BlockingStateDto.kind` (`secret_store_locked` \| `restic_unavailable`) ist bereits ein Code; die Parameter für `restic_unavailable` liefert `ResticStatusDto` (`error_kind`, `found_version`, `binary_path`, neu `detail` = Rohgrund bei `invalid_custom_path` bzw. `unreadable_version`).
+
 ## Signale auf `net.daester.Kestic1`
 
 | Signal | Signatur | Inhalt | Quelle |

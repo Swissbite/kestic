@@ -4,7 +4,14 @@ Jedes Akzeptanzkriterium (AC) in [milestones/](milestones/) wird durch einen aut
 
 ## Prüfbefehl
 
-`just verify` = `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test` + `cargo deny check` (Lizenzen + Advisories, Q1) + Integrationstests gegen restic 0.18.0 **und** die aktuelle Version (`scripts/bootstrap.sh` lädt beide, Q2) + QML-Smoke + Offscreen-Screenshots pro Screen als Artefakt für die menschliche Abnahme (Q3) + `reuse lint`. Grün = Story erledigt.
+`just verify` = `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test` + `cargo deny check` (Lizenzen + Advisories, Q1) + Integrationstests gegen restic 0.18.0 **und** die aktuelle Version (`scripts/bootstrap.sh` lädt beide, Q2) + QML-Smoke + Offscreen-Screenshots pro Screen als Artefakt für die menschliche Abnahme (Q3) + `reuse lint` + Grössenprüfung gemäss [architecture.md](architecture.md) §Code-Struktur. Grün = Story erledigt.
+
+## AC-Struktur und Testqualität
+
+- **Nummerierte Teil-Aussagen:** Jede Aussage nach «dann» in Akzeptanzkriterien wird einzeln mit `(a)`, `(b)`, `(c)`, ... nummeriert; jede Teil-Aussage hat im zugehörigen Test eine eigene Assertion.
+- **Test-Zuschnitt:** Eine Testfunktion pro AC oder pro Story; keine Sammeltests über mehrere Stories hinweg.
+- **Strenge Assertions:** Keine Assertion mit `||` als Rückfallebene und kein `let _ =` auf Messwerte oder Prüfergebnisse.
+- **Wirksamkeitsprobe:** Jeder Test muss fehlschlagen, wenn man das geprüfte Feature entfernt.
 
 ## Testebenen
 
@@ -44,6 +51,7 @@ Alle Build-, Lint- und Smoke-Stufen laufen warnungsfrei (`cargo clippy --workspa
 - **Ursache beheben statt abschalten:** Warnungen durch sauberes Refactoring lösen (z. B. Kontext-/Optionen-Structs bei vielen Parametern, ungenutzten Code entfernen, Drittanbieter-/Systemheader wie KF6 in `gui/build.rs` über `-isystem` statt `-I` einbinden, damit Warnungen im eigenen Code aktiv bleiben).
 - **Keine Unterdrückungen:** Keine `#[allow(...)]`, `#![allow(...)]`, `#pragma`, QML-Filter oder `#[ignore]`, um reale Warnungen oder Tests zu verstecken.
 - **Enge Ausnahmen:** Nur dort zulässig, wo eine externe Schnittstelle die Signatur erzwingt (z. B. `org.freedesktop.Notifications.Notify` mit 8 D-Bus-Parametern in Test-Fakes) oder Cargo jedes Test-Binary separat kompiliert (`#![allow(dead_code)]` in `tests/common/mod.rs`); nie modul-/crateweit im Produktionscode.
+- **Grössengrenzen ohne Ausnahme:** Funktionslänge über Clippy-Lint `too_many_lines` (Schwelle 150 Zeilen in `clippy.toml`) und maximale Dateigrösse von 1500 Zeilen pro `.rs`- und `.qml`-Datei unter `src/` (ohne Tests und generierten Code), geprüft durch `just verify` gemäss [architecture.md](architecture.md) §Code-Struktur.
 
 ## Reproduzierbarkeit
 

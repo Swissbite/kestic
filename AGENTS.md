@@ -16,11 +16,11 @@ Kestic ist eine native KDE-Plasma-Desktop-App, die restic-Backups für Endnutzer
 | [docs/spec/requirements.md](docs/spec/requirements.md) | FR/NFR mit IDs, Prioritäten, Festlegungen | die IDs, die die Story nennt |
 | [docs/spec/decisions.md](docs/spec/decisions.md), [docs/spec/adr/](docs/spec/adr/) | Entscheide und Begründungen | wenn eine Story einen Entscheid berührt |
 | [docs/spec/domain-model.md](docs/spec/domain-model.md) | Ziel, Backup, Lauf, Zustände, Config, Persistenz | `core`-Stories |
-| [docs/spec/architecture.md](docs/spec/architecture.md) | Komponenten, Daemon, Packaging, Secrets, Zeitsteuerung, Tech-Stack, Bedrohungsmodell | `daemon`-, Packaging-, System-Stories |
+| [docs/spec/architecture.md](docs/spec/architecture.md) | Komponenten, Daemon, Packaging, Secrets, Zeitsteuerung, Tech-Stack, Code-Struktur, Bedrohungsmodell | `daemon`-, Packaging-, System-Stories, Modulablage |
 | [docs/spec/restic-integration.md](docs/spec/restic-integration.md) | restic-Befehle, Flags, JSON, Exit-Codes → Meldungen, Mindestversion | alles, was restic aufruft |
 | [docs/spec/dbus-api.md](docs/spec/dbus-api.md) | Daemon ↔ GUI | D-Bus-, GUI-Stories |
 | [docs/spec/ui/index.md](docs/spec/ui/index.md) + ein Teil aus `docs/spec/ui/` | GUI-Spec (Index + Teil laut «Teile»-Tabelle) | GUI-Stories |
-| [docs/spec/test-strategy.md](docs/spec/test-strategy.md) | Testebenen, Fixtures, Isolation | jede Story mit Tests |
+| [docs/spec/test-strategy.md](docs/spec/test-strategy.md) | Testebenen, AC-Struktur, Testqualität, Fixtures, Isolation | jede Story mit Tests |
 | [docs/spec/manual-acceptance.md](docs/spec/manual-acceptance.md) | Prüfungen, die ein Mensch macht | Meilenstein-Abschluss |
 | [docs/spec/questions.md](docs/spec/questions.md) | offene Fragen (Stop & Ask) | vor jeder Story kurz prüfen |
 
@@ -43,8 +43,8 @@ Projektspezifische Skills liegen agenten-neutral unter [.agents/skills/](.agents
 
 1. Story aus dem aktuellen Meilenstein wählen (Reihenfolge laut `backlog.md`, Abhängigkeiten beachten).
 2. **Recherche & Parallelisierung:** Bei Stories mit mehreren Spec- oder Code-Abhängigkeiten zuerst mit Read-Only-Research-Subagenten eine kompakte AC-/UI-/Glossar-Checkliste extrahieren (falls das Agent-System Subagenten unterstützt). Unabhängige Teilaufgaben (`core` vs. `daemon` vs. `gui`, separate Testdateien) sinnvoll parallelisieren, jedoch nie zwei Schreibzugriffe gleichzeitig auf dieselbe Datei.
-3. Akzeptanzkriterien der Story lesen; jedes AC wird durch einen automatisierten Test belegt (ausser «Test: manuell»). Test-Namen bzw. Kommentare nennen die AC-ID.
-4. Umsetzen in kleinen Schritten; GUI-Schicht dünn, Logik in `core`; während der Arbeit gezielte Teil-Tests (`cargo test -p …`) für schnelles Feedback nutzen.
+3. Akzeptanzkriterien der Story lesen; jedes AC wird durch einen automatisierten Test belegt (ausser «Test: manuell»). Test-Namen bzw. Kommentare nennen die AC-ID; jede nummerierte Teil-Aussage `(a)`, `(b)`, ... hat eine eigene Assertion, ohne `||`-Rückfallebene und ohne `let _ =` auf Messwerte (Details in [docs/spec/test-strategy.md](docs/spec/test-strategy.md)).
+4. Umsetzen in kleinen Schritten gemäss [docs/spec/architecture.md](docs/spec/architecture.md) §Code-Struktur (`core/src/<bereich>.rs`, `daemon/src/service/<bereich>.rs`, `gui/src/models/<modell>.rs`, eigene QML-Datei unter `gui/src/qml/` statt `Main.qml`); GUI-Schicht dünn, Logik in `core`; während der Arbeit gezielte Teil-Tests (`cargo test -p …`) für schnelles Feedback nutzen.
 5. Vor Abschluss einer GUI-Story erzeugte Offscreen-Screenshots unter `target/smoke-artifacts/` visuell prüfen und neue UI-Strings direkt in `po/de/kestic.po` nachführen.
 6. `just verify` ausführen. **Grün = Story erledigt.** Sonst nicht als erledigt melden.
 7. Manuelle ACs nicht selbst abhaken, sondern in `manual-acceptance.md` offen lassen (Prüfung mit Schritt-für-Schritt-Anleitung gemäss `kestic-manual-acceptance`).
@@ -52,7 +52,7 @@ Projektspezifische Skills liegen agenten-neutral unter [.agents/skills/](.agents
 
 ## Prüfbefehl
 
-`just verify` = `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test` + `cargo deny check` (Lizenzen + Advisories) + Integrationstests gegen restic 0.18.0 **und** die aktuelle Version + QML-Smoke + Offscreen-Screenshots pro Screen (Artefakt für die menschliche Abnahme) + `reuse lint`.
+`just verify` = `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test` + `cargo deny check` (Lizenzen + Advisories) + Integrationstests gegen restic 0.18.0 **und** die aktuelle Version + QML-Smoke + Offscreen-Screenshots pro Screen (Artefakt für die menschliche Abnahme) + `reuse lint` + Grössenprüfung gemäss [docs/spec/architecture.md](docs/spec/architecture.md) §Code-Struktur.
 
 ## Harte Regeln
 
@@ -67,6 +67,11 @@ Tests berühren nie echte Benutzerdaten oder -konfiguration:
 - Nichts unter `/etc/xdg/autostart` voraussetzen oder schreiben; keine echten Autostart- oder systemd-Einträge anlegen.
 - Tests laufen nicht als root.
 
+### Testqualität
+
+- Eine Testfunktion pro AC oder pro Story (keine Sammeltests über mehrere Stories); jede Teil-Aussage `(a)`, `(b)`, ... eines ACs erhält eine eigene Assertion.
+- Keine Assertion mit `||` als Rückfallebene, kein `let _ =` auf Messwerte; jeder Test muss fehlschlagen, wenn man das Feature entfernt ([docs/spec/test-strategy.md](docs/spec/test-strategy.md)).
+
 ### Zeitquelle (P36)
 
 Keine direkte Systemuhr-Abfrage (`SystemTime::now()`, `OffsetDateTime::now_utc()` o. ä.) in `core` oder `daemon`; jede zeitabhängige Logik nutzt den `Clock`-Trait aus `core/src/clock.rs`.
@@ -74,6 +79,8 @@ Keine direkte Systemuhr-Abfrage (`SystemTime::now()`, `OffsetDateTime::now_utc()
 ### Warnungen & Lints (NFR-12)
 
 Jede Warnung in Rust (`clippy -D warnings`), C++ (`build.rs`), QML (`stderr` im Offscreen-Smoke), gettext/PO oder `reuse lint`, die sich sauber beheben lässt, muss an der Ursache behoben werden (Refactoring/Parameter-Structs, toten Code entfernen, Drittanbieter-/Systemheader via `-isystem` einbinden). Keine Warnungsunterdrückungen (`#[allow(...)]`, `#![allow(...)]`, `#pragma`, `#[ignore]` o. ä.) als Abkürzung — Ausnahmen nur lokal für unveränderliche externe Protokollsignaturen (z. B. `org.freedesktop.Notifications.Notify`) oder Cargo-Test-Hilfsmodule (`tests/common/mod.rs`), nie modul-/crateweit im Produktionscode.
+
+Zusätzlich gelten ohne Ausnahmen die Grössengrenzen aus [docs/spec/architecture.md](docs/spec/architecture.md) §Code-Struktur: `too_many_lines` (Schwelle 150 Zeilen in `clippy.toml`) und maximal 1500 Zeilen pro `.rs`- und `.qml`-Datei unter `src/` (ohne Tests und generierten Code), geprüft durch `just verify`.
 
 ### Stack- & Werkzeug-Leitplanken (aus M0)
 
