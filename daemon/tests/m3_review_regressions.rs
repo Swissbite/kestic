@@ -1627,6 +1627,112 @@ fn m3_review2_manual_transient_error_does_not_block_schedule() {
     );
 }
 
+/// M3 manual acceptance (2026-11-19, docs/spec/questions.md, F2): a scheduled run that fails
+/// with a non-transient, non-permanent error (Exit 1 «disk full») is alerted but blocks nothing:
+/// (a) the same slot does not restart, (b) the next regular slot runs (no schedule block).
+#[test]
+fn m3_acceptance_disk_full_error_does_not_block_next_slot() {
+    assert!(
+        !classify_exit(
+            1,
+            Some("Fatal: unable to save snapshot: write /tmp/pack: no space left on device"),
+            vec![],
+            "",
+        )
+        .kind
+        .is_permanent(),
+        "disk full is no permanent error"
+    );
+
+    run_isolated_test(
+        "m3_acceptance_disk_full_error_does_not_block_next_slot",
+        "KESTIC_M3_ACC_DISKFULL_INNER",
+        |root| {
+            let (_notif_conn, _notif_capture) = start_fake_notifications();
+            let _sni_conn = start_fake_sni_watcher();
+            let sub = root.join("diskfull");
+            let markers = sub.join("markers");
+            let wrapper = sub.join("restic-diskfull-wrapper.sh");
+            let repo_dir = sub.join("repo");
+            let src_dir = sub.join("src");
+            fs::create_dir_all(&repo_dir).expect("mkdir repo");
+            fs::create_dir_all(&src_dir).expect("mkdir src");
+            fs::write(src_dir.join("f.txt"), b"disk full data").expect("write src");
+            write_round2_wrapper(
+                &wrapper,
+                &markers,
+                &default_restic_latest(),
+                "Fatal: unable to save snapshot: write /tmp/pack: no space left on device",
+            );
+
+            let clock = Arc::new(FakeClock::new(datetime!(2026-12-01 10:00:00 UTC)));
+            let (state_dir, client, handle) = spawn_round2_daemon(
+                root,
+                Round2DaemonOpts {
+                    sub_name: "diskfull",
+                    bus_name: "net.daester.Kestic.M3AccDiskFull",
+                    restic_bin: &wrapper,
+                    clock: Arc::clone(&clock),
+                    secret_store: None,
+                    mount_inspector: None,
+                    enable_monitors: false,
+                    enable_scheduler: true,
+                },
+            );
+
+            let dest = Destination::new("FullDest", DestinationKind::Local { path: repo_dir })
+                .expect("dest");
+            client
+                .add_destination(&dest, "init", "pw-full", "")
+                .expect("init dest");
+            let mut bk =
+                Backup::new("FullBk", Source::folder(&src_dir), dest.id.clone()).expect("bk");
+            bk.schedule = Schedule::Daily {
+                hour: 12,
+                minute: 0,
+            };
+            let bid = BackupId::parse(client.add_backup(&bk).expect("add bk")).expect("bid");
+
+            fs::write(markers.join("fail_backup"), b"1").expect("fail marker");
+            clock.set(datetime!(2026-12-01 11:00:05 UTC));
+            wait_for_state(&client, Duration::from_secs(20), "scheduled error", |s| {
+                backup_summary(s, &bid)
+                    .last_run
+                    .as_ref()
+                    .is_some_and(|r| r.status == RunStatus::Error)
+            });
+
+            fs::remove_file(markers.join("fail_backup")).expect("clear fail marker");
+            clock.set(datetime!(2026-12-01 11:30:00 UTC));
+            thread::sleep(Duration::from_secs(3));
+            assert_eq!(
+                count_runs(&state_dir, |r| r.backup_id() == Some(&bid)),
+                1,
+                "(a) the failed slot must not restart before the next regular slot"
+            );
+
+            clock.set(datetime!(2026-12-02 11:00:05 UTC));
+            wait_for_state(
+                &client,
+                Duration::from_secs(20),
+                "(b) next regular slot runs",
+                |s| {
+                    backup_summary(s, &bid)
+                        .last_run
+                        .as_ref()
+                        .is_some_and(|r| r.status == RunStatus::Ok)
+                },
+            );
+
+            client.confirm_quit().expect("quit");
+            assert_eq!(
+                handle.join().expect("join"),
+                Ok(DaemonOutcome::RanAndStopped)
+            );
+        },
+    );
+}
+
 /// Review issue 5: a user-cancelled scheduled backup or maintenance run counts as handling its
 /// slot and must not restart on the next scheduler tick; the next regular slot runs normally.
 #[test]

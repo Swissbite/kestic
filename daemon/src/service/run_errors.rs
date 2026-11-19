@@ -6,7 +6,7 @@
 //! unreadable-file list of incomplete snapshots (cached, never read from disk under the lock).
 //!
 //! The restic exit/text classification itself lives in `kestic_core::restic::classify_exit`
-//! (keyword matching) and `ResticFailureKind::{is_transient, error_code}`; this module only
+//! (keyword matching) and `ResticFailureKind::{is_transient, is_permanent, error_code}`; this module only
 //! maps a stored [`Run`] onto it.
 
 use super::error::action_code;
@@ -41,9 +41,10 @@ pub(super) struct LastRunErrorInfo {
 
 /// Whether `run` (the last finished backup run) ended with a **permanent** error that blocks
 /// scheduled runs until fixed (`F2`: Exit 12 wrong password, Exit 10 missing repository,
-/// authentication/configuration errors, unknown exit codes).
+/// rejected backend credentials, see [`ResticFailureKind::is_permanent`]).
 ///
-/// Transient failures (network/destination unreachable, DNS, lock / Exit 11) and pre-start
+/// Transient failures (network/destination unreachable, DNS, lock / Exit 11), other errors
+/// (e.g. disk full, unknown exit codes: the next regular slot runs again) and pre-start
 /// availability failures (source unavailable, destination unreachable — recorded without exit
 /// code, `FR-29`, `FR-30`) never block the schedule, also when they ended a manual run.
 pub(super) fn run_blocks_schedule(run: &Run) -> bool {
@@ -54,9 +55,9 @@ pub(super) fn run_blocks_schedule(run: &Run) -> bool {
         return false;
     };
     let raw_detail = run.summary_message.as_deref().unwrap_or("");
-    !classify_exit(exit_code, None, Vec::new(), raw_detail)
+    classify_exit(exit_code, None, Vec::new(), raw_detail)
         .kind
-        .is_transient()
+        .is_permanent()
 }
 
 /// Stable error-kind code of an `Error` run (see [`ResticFailureKind::error_code`]).

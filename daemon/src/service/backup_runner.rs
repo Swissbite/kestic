@@ -8,7 +8,7 @@ use super::availability::{
     unlockable_stale_lock_count,
 };
 use super::error::{KesticServiceErr, localized_backup_run_error, localized_source_check_reason};
-use super::run_errors::unreadable_items_from_lines;
+use super::run_errors::{run_blocks_schedule, unreadable_items_from_lines};
 use super::state::{ActiveRunEntry, DaemonCore, probe_before_run};
 use crate::dbus_api::{
     ActiveRunProgressDto, DestinationAvailabilityDto, REASON_CONDITION_NOT_MET,
@@ -1086,10 +1086,16 @@ fn finalize_backup_run_state(
             rs.last_overdue_notified_at = None;
             rs.overdue_anchor_at = Some(finish_now);
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);
-        } else if outcome.final_status == RunStatus::Cancelled
-            && !guard.shutdown_flag.load(Ordering::SeqCst)
+        } else if (outcome.final_status == RunStatus::Error
+            && outcome.exit_code.is_some()
+            && !run_blocks_schedule(&run))
+            || (outcome.final_status == RunStatus::Cancelled
+                && !guard.shutdown_flag.load(Ordering::SeqCst))
         {
-            // A user cancel handles the due slot: no restart before the next regular slot.
+            // A restic error that neither is transient nor blocks the schedule (`F2`: alert, no
+            // retry) or a user cancel handles the due slot: no restart before the next regular
+            // slot. Permanent errors block anyway; pre-start failures (no exit code: source or
+            // destination unavailable) stay retryable (`FR-29`, `FR-30`).
             let mut rs = guard.load_backup_runtime_state(&ctx.backup.id);
             mark_backup_slot_handled(&mut rs, finish_now);
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);

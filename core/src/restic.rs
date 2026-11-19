@@ -69,6 +69,17 @@ impl ResticFailureKind {
         )
     }
 
+    /// Whether this failure needs the user before any further scheduled run makes sense (`F2`:
+    /// Exit 12 wrong password, Exit 10 missing repository, rejected backend credentials). Other
+    /// non-transient failures (e.g. disk full, unknown errors) are alerted at once but do not
+    /// block the next regular slot (docs/spec/questions.md, 2026-11-19).
+    pub fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            Self::WrongPassword | Self::RepositoryMissing | Self::BackendAuthFailed
+        )
+    }
+
     /// Stable, locale-independent error-kind code used in D-Bus DTOs (`error_kind`).
     ///
     /// The code set is deliberately small (`wrong_password`, `repo_missing`, `locked`,
