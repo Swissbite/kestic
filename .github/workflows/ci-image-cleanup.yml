@@ -12,6 +12,11 @@
 # anything older than MAX_AGE_DAYS, and untagged versions left behind by
 # `force` rebuilds.
 #
+# For main this means only the newest image is kept: as soon as main moves
+# to a new tag, the previous main image counts as unused (unless an open PR
+# or another branch still has the same Dockerfile/bootstrap.sh, then it lives
+# at most MAX_AGE_DAYS like any other branch image).
+#
 # Deleting is self-healing: if an open PR still needs a deleted tag, the
 # ci-image job in verify.yml rebuilds it on the PR's next run.
 #
