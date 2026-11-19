@@ -52,7 +52,7 @@ Quelle: [milestones/m3-automatisierung.md](milestones/m3-automatisierung.md)
 - [x] **AC-M3-12-2** – wenn dort abgebrochen, dann endet der Lauf mit `abgebrochen`
 - [x] **AC-M3-14-6** – wenn nur Tastatur, dann alle Felder erreichbar, jedes Bedienelement mit zugänglichem Namen
 - [ ] **Exit-Kriterium** – Ein Backup läuft eine Woche lang nach Zeitplan auf dem Laptop (parallel zu M4/M5 möglich), inkl. Akku/Netzwechsel und Suspend (manuelle Abnahme).
-- [ ] **Exit-Kriterium** – Manuelle Abnahme: Deckel zu während Lauf, PowerDevil/Portal-Inhibit, Hotspot.
+- [x] **Exit-Kriterium** – Manuelle Abnahme: Deckel zu während Lauf, PowerDevil/Portal-Inhibit, Hotspot.
 
 ## M4 Restore
 
