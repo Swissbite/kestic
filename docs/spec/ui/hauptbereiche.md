@@ -67,7 +67,7 @@ Regeln:
 - «Vorschau…» = Dry-Run (FR-17) als Unterseite: Dateianzahl, Grösse, grösste ausgeschlossene Ordner; abbrechbar.
 - «Pfad testen…»: Pfad eingeben → «wird gesichert» / «ausgeschlossen durch Zeile n».
 - Ordner-Regeln werden als absolute, verankerte Pfade geschrieben (P8).
-- **Explizites Speichern** (U18): Editoren für Backups haben `[Speichern]`; der Zwischenstand lebt nur in der GUI; Speichern = D-Bus-Aufruf `UpdateBackup` (F14), Validierung in `core`. Verlassen mit ungespeicherten Änderungen → `PromptDialog` «Änderungen speichern?» `[Speichern]` `[Verwerfen]` `[Abbrechen]`.
+- **Explizites Speichern** (U18): Editoren für Backups haben `[Speichern]`; der Zwischenstand lebt nur in der GUI; Speichern = D-Bus-Aufruf `UpdateBackup` (F14), Validierung in `core`. Verlassen mit ungespeicherten Änderungen → `PromptDialog` «Änderungen speichern?» `[Speichern]` `[Verwerfen]` `[Abbrechen]`. `[Speichern]` und `[Schliessen]` stehen nur in der unteren Aktionsleiste der Seite, nicht zusätzlich im Formular (Entscheid 2026-11-20).
 
 ### 7.4 Zeitplan und Laufbedingungen (FR-03, FR-13, F1)
 

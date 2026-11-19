@@ -36,7 +36,9 @@ Eine Abbildung für Fenster, Tray, Benachrichtigung. Immer Icon **und** Text, Fa
 | unterbrochen | Unterbrochen (Ruhezustand) / Interrupted (sleep) | `state-offline` | Text | nein; nächster Lauf holt nach |
 | nie gelaufen | Noch nicht gesichert / Not backed up yet | `state-information` | Text | nein |
 | nur manuell | Nur manuell · zuletzt vor 5 Tagen / Manual only · last 5 days ago | `state-information` | Text | nein |
+| nur manuell, Quelle bzw. Ziel nicht verfügbar | Nur manuell · Ziel nicht erreichbar / Manual only · Destination unreachable | `state-information` | Text | nein; «Jetzt sichern» deaktiviert mit Grund (FR-30). Ein Backup «nur manuell» wird nie fällig und «wartet» daher nie (Entscheid 2026-11-20) |
 
+- **Gewählte Zeile in Listen** (Backups, Ziele, Verlauf): Texte in `highlightedTextColor`, kein zusätzlicher Farbschleier über dem Inhalt; der Fokus ist ein Rahmen (Entscheid 2026-11-20, Befund der Abnahme M3: helle Auswahl im dunklen Theme war unlesbar).
 - **Statustext immer in `textColor`**, nur das Icon ist farbig: `neutralTextColor` und `negativeTextColor` erreichen auf hellem Breeze-Hintergrund weniger als 4,5:1 Kontrast **[geschätzt, mit Breeze Hoher Kontrast prüfen]**. `disabledTextColor` nur für tatsächlich deaktivierte Elemente.
 - Alle Icons im Breeze-Thema vorhanden **[verifiziert: Referenzsystem]**.
 - **Gesamtstatus** (Übersicht, Tray) = schlechtester Einzelstatus: Fehler > überfällig > Warnung > läuft > wartet > pausiert > unterbrochen > abgebrochen > nie gelaufen > nur manuell = ok. Ausnahme für das Tray: Ein Lauf oder eine Pause erzwingt mindestens `Active`, bei «pausiert + wartet» zeigt das Overlay «pausiert» (§10.1). Text nennt die Anzahl: «Alle Daten gesichert» nur, wenn **alle** Backups ok sind; sonst z. B. «1 Backup fehlgeschlagen», «1 von 3 Backups wartet».

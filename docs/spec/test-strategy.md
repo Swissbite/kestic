@@ -57,6 +57,13 @@ Alle Build-, Lint- und Smoke-Stufen laufen warnungsfrei (`cargo clippy --workspa
 
 `rust-toolchain.toml`, `Cargo.lock`, gepinnte CXX-Qt-Version, `scripts/bootstrap.sh`: installiert Abhängigkeiten (apt, rustup) und lädt restic 0.18.0 und aktuell sowie `rest-server` geprüft (SHA256 + PGP) und rclone ≥ 1.65 (mindestens SHA256; PGP, wenn das Projekt Signaturen veröffentlicht – Ergebnis im Spike-Bericht). Download-Mechanismus wie FR-33 wiederverwenden.
 
+## Lehren aus der manuellen Abnahme (Entscheid 2026-11-20)
+
+- Jede Erkenntnis aus einer manuellen Abnahme wird, wo möglich, ein automatisierter Test (Name mit `acceptance` und Datum bzw. Befund im Kommentar).
+- Fakes können neben dem Normalfall auch **Schwall** (viele Signale kurz hintereinander), **Verzögerung** (langsame oder ausbleibende Antwort) und **Fehler** (typische restic-Meldungen wie «no space left on device»).
+- Configs **aller Vorversionen** bleiben als Fixtures erhalten und werden in einem Test geladen (Migration).
+- Smoke-Screenshots entstehen in **hell und dunkel**, mit fokussierten Elementen, dazu Text-Snapshots der sichtbaren Texte (de/en). Zugängliche Namen prüft der Smoke über Qts Accessibility-Schnittstelle (`QAccessible`, wie über AT-SPI exportiert); eine automatische Kontrastprüfung folgt, wenn die Laufzeit vertretbar bleibt. Orca bleibt eine Stichprobe in der manuellen Abnahme.
+
 ## Grenze der Automatisierung (Q8)
 
 Logik, Integration und Packaging sind voll automatisierbar. Nicht automatisierbar und daher in [manual-acceptance.md](manual-acceptance.md): Look & Feel, Deckel zu während eines Laufs, PowerDevil und Portal-Inhibit (F9), echte KWallet-Entsperrung beim Login bzw. KWallet ohne PAM, Plasma-Autostart-Seite (E11), Hotspot-Erkennung, echtes Netzwerk-Ziel (z. B. NAS), Verhalten unterwegs.
