@@ -50,6 +50,12 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
         InstanceAcquire::AlreadyRunning => return Ok(DaemonOutcome::AlreadyRunning),
     };
 
+    eprintln!(
+        "kestic-daemon {}: started (pid {})",
+        crate::daemon_version(),
+        std::process::id()
+    );
+
     let conn = lock.connection().clone();
     let (_, initial_tray_state) = {
         let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
@@ -206,12 +212,16 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
             && state.last_bin_check.elapsed() >= Duration::from_millis(500)
         {
             state.last_bin_check = Instant::now();
-            if matches!(bin_id.check(), BinaryStatus::Replaced(_)) {
+            if let BinaryStatus::Replaced(reason) = bin_id.check() {
                 let has_active_runs = {
                     let guard = core.lock().unwrap_or_else(|p| p.into_inner());
                     !guard.active_runs.is_empty()
                 };
                 if !has_active_runs {
+                    eprintln!(
+                        "kestic-daemon: event loop ends: binary replaced ({}), re-executing",
+                        reason.as_str()
+                    );
                     return Some(bin_id.exe_path().to_path_buf());
                 }
             }
@@ -223,6 +233,7 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
             .shutdown_flag
             .load(Ordering::SeqCst)
         {
+            eprintln!("kestic-daemon: event loop ends: shutdown requested");
             return None;
         }
 
@@ -235,13 +246,16 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
         if let Some(end) = state.deadline {
             let now = Instant::now();
             if now >= end {
+                eprintln!("kestic-daemon: event loop ends: run duration elapsed");
                 return None;
             }
             let wait = (end - now).min(step_wait);
             if quit_rx.recv_timeout(wait).is_ok() {
+                eprintln!("kestic-daemon: event loop ends: quit requested");
                 return None;
             }
         } else if quit_rx.recv_timeout(step_wait).is_ok() {
+            eprintln!("kestic-daemon: event loop ends: quit requested");
             return None;
         }
     }
@@ -286,6 +300,7 @@ fn shutdown_daemon_and_maybe_reexec(
         ));
     }
 
+    eprintln!("kestic-daemon: stopped");
     Ok(DaemonOutcome::RanAndStopped)
 }
 
@@ -562,9 +577,10 @@ fn spawn_gui_process(kestic_binary: &std::path::Path, bus_name: &str, confirm_qu
     if confirm_quit {
         cmd.arg("--confirm-quit");
     }
+    // stderr stays the daemon's, so GUI warnings land in the same journal as the daemon's own.
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     if let Ok(mut child) = cmd.spawn() {
         thread::spawn(move || {
             let _ = child.wait();

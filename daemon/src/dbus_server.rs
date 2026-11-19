@@ -354,7 +354,12 @@ impl KesticDbusV1Service {
     }
 
     #[zbus(name = "ConfirmQuit")]
-    fn confirm_quit(&self) -> Result<(), KesticDbusError> {
+    fn confirm_quit(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> Result<(), KesticDbusError> {
+        let sender = header.sender().map_or("unknown", |s| s.as_str());
+        eprintln!("kestic-daemon: quit confirmed by {sender}");
         let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
         guard.request_shutdown();
         Ok(())

@@ -7,9 +7,12 @@
 
 use kestic_core::scheduler::SystemEnvironment;
 use std::collections::{BTreeSet, HashMap};
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
+use std::task::{Poll, Waker};
 use std::thread;
+use std::time::Duration;
 use zbus::export::ordered_stream::OrderedStreamExt;
 use zbus::{
     Connection, MatchRule, MessageStream, OwnedFd, OwnedObjectPath, OwnedVariant, Proxy, block_on,
@@ -400,10 +403,70 @@ fn build_signal_rule<'a>(
     b.build().ok()
 }
 
+/// Longest time [`SystemMonitorHandle::stop`] waits for the listener thread to end.
+pub(crate) const MONITOR_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Cooperative stop request that reaches a `block_on` waiting in any await point.
+#[derive(Clone, Default)]
+pub(crate) struct StopSignal {
+    inner: Arc<StopInner>,
+}
+
+#[derive(Default)]
+struct StopInner {
+    stopped: AtomicBool,
+    waker: Mutex<Option<Waker>>,
+}
+
+impl StopSignal {
+    /// Requests the stop and wakes the task currently waiting in [`StopSignal::until_stopped`].
+    pub(crate) fn stop(&self) {
+        self.inner.stopped.store(true, Ordering::SeqCst);
+        let waker = self
+            .inner
+            .waker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(w) = waker {
+            w.wake();
+        }
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.inner.stopped.load(Ordering::SeqCst)
+    }
+
+    /// Awaits `fut`, or returns `None` as soon as a stop is requested, whichever comes first.
+    pub(crate) async fn until_stopped<F: Future>(&self, fut: F) -> Option<F::Output> {
+        let mut fut = std::pin::pin!(fut);
+        std::future::poll_fn(|cx| {
+            if self.is_stopped() {
+                return Poll::Ready(None);
+            }
+            *self.inner.waker.lock().unwrap_or_else(|p| p.into_inner()) = Some(cx.waker().clone());
+            if self.is_stopped() {
+                return Poll::Ready(None);
+            }
+            fut.as_mut().poll(cx).map(Some)
+        })
+        .await
+    }
+}
+
+/// Signals the end of a thread when dropped, also when the thread unwinds.
+struct DoneOnDrop(mpsc::Sender<()>);
+
+impl Drop for DoneOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
 /// Background D-Bus listener for UPower, NetworkManager, logind, and UDisks2 signals.
 pub struct SystemMonitorHandle {
-    stop: Arc<AtomicBool>,
-    stop_waker: Arc<Mutex<Option<std::task::Waker>>>,
+    stop: StopSignal,
+    done_rx: mpsc::Receiver<()>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -415,148 +478,155 @@ impl SystemMonitorHandle {
         event_tx: mpsc::Sender<SystemMonitorEvent>,
         wakeup_tx: Option<mpsc::Sender<()>>,
     ) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_bg = Arc::clone(&stop);
-        let stop_waker: Arc<Mutex<Option<std::task::Waker>>> = Arc::new(Mutex::new(None));
-        let stop_waker_bg = Arc::clone(&stop_waker);
+        let stop = StopSignal::default();
+        let stop_bg = stop.clone();
+        Self::spawn(stop, move || {
+            block_on(run_monitor_loop(cfg, stop_bg, event_tx, wakeup_tx));
+        })
+    }
 
+    /// Runs `body` on the listener thread; `stop` must be the signal `body` observes.
+    pub(crate) fn spawn(stop: StopSignal, body: impl FnOnce() + Send + 'static) -> Self {
+        let (done_tx, done_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
-            block_on(async move {
-                let Ok(conn) = connect_target_bus(&cfg).await else {
-                    return;
-                };
-
-                let rules = [
-                    build_signal_rule(
-                        "org.freedesktop.DBus.Properties",
-                        Some("PropertiesChanged"),
-                        Some("/org/freedesktop/UPower"),
-                    ),
-                    build_signal_rule(
-                        "org.freedesktop.DBus.Properties",
-                        Some("PropertiesChanged"),
-                        Some("/org/freedesktop/NetworkManager"),
-                    ),
-                    build_signal_rule("org.freedesktop.NetworkManager", Some("StateChanged"), None),
-                    build_signal_rule(
-                        "org.freedesktop.login1.Manager",
-                        Some("PrepareForSleep"),
-                        None,
-                    ),
-                    build_signal_rule(
-                        "org.freedesktop.DBus.ObjectManager",
-                        None,
-                        Some("/org/freedesktop/UDisks2"),
-                    ),
-                    build_signal_rule(
-                        "org.freedesktop.DBus.Properties",
-                        Some("PropertiesChanged"),
-                        Some("/org/freedesktop/UDisks2"),
-                    ),
-                ];
-
-                match zbus::fdo::DBusProxy::new(&conn).await {
-                    Ok(dbus_proxy) => {
-                        for rule in rules.into_iter().flatten() {
-                            if let Err(err) = dbus_proxy.add_match_rule(rule).await {
-                                eprintln!(
-                                    "kestic-daemon: failed to register system monitor match rule: {err}"
-                                );
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!(
-                            "kestic-daemon: failed to create DBusProxy for system monitor match rules: {err}"
-                        );
-                    }
-                }
-
-                let mut stream = MessageStream::from(&conn);
-                while !stop_bg.load(Ordering::SeqCst) {
-                    let next_msg = {
-                        let mut fut = std::pin::pin!(stream.next());
-                        std::future::poll_fn(|cx| {
-                            if stop_bg.load(Ordering::SeqCst) {
-                                return std::task::Poll::Ready(None);
-                            }
-                            *stop_waker_bg.lock().unwrap_or_else(|p| p.into_inner()) =
-                                Some(cx.waker().clone());
-                            if stop_bg.load(Ordering::SeqCst) {
-                                return std::task::Poll::Ready(None);
-                            }
-                            fut.as_mut().poll(cx)
-                        })
-                        .await
-                    };
-
-                    let Some(msg_res) = next_msg else {
-                        break;
-                    };
-                    let Ok(msg) = msg_res else {
-                        continue;
-                    };
-                    let hdr = msg.header();
-                    let iface = hdr.interface().map(|i| i.as_str()).unwrap_or("");
-                    let member = hdr.member().map(|m| m.as_str()).unwrap_or("");
-                    let path = hdr.path().map(|p| p.as_str()).unwrap_or("");
-
-                    let event = if iface == "org.freedesktop.login1.Manager"
-                        && member == "PrepareForSleep"
-                    {
-                        msg.body()
-                            .deserialize::<bool>()
-                            .ok()
-                            .map(SystemMonitorEvent::PrepareForSleep)
-                    } else if path.starts_with("/org/freedesktop/UDisks2")
-                        && (iface == "org.freedesktop.DBus.ObjectManager"
-                            || iface == "org.freedesktop.DBus.Properties")
-                    {
-                        Some(SystemMonitorEvent::MountChanged)
-                    } else if path.starts_with("/org/freedesktop/UPower")
-                        || path.starts_with("/org/freedesktop/NetworkManager")
-                        || iface == "org.freedesktop.NetworkManager"
-                    {
-                        let env = read_system_environment_async(&conn, &cfg).await;
-                        Some(SystemMonitorEvent::EnvironmentChanged(env))
-                    } else {
-                        None
-                    };
-
-                    if let Some(ev) = event {
-                        let _ = event_tx.send(ev);
-                        if let Some(ref wtx) = wakeup_tx {
-                            let _ = wtx.send(());
-                        }
-                    }
-                }
-            });
+            let _done = DoneOnDrop(done_tx);
+            body();
         });
-
         Self {
             stop,
-            stop_waker,
+            done_rx,
             thread: Some(handle),
         }
     }
 
-    /// Stops the monitor thread cleanly.
+    /// Stops the monitor thread; never waits longer than [`MONITOR_STOP_TIMEOUT`], so a listener
+    /// stuck in a D-Bus call cannot keep the daemon from shutting down.
     pub fn stop(mut self) {
         self.stop_inner();
     }
 
     fn stop_inner(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(w) = self
-            .stop_waker
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take()
-        {
-            w.wake();
+        self.stop.stop();
+        let Some(handle) = self.thread.take() else {
+            return;
+        };
+        match self.done_rx.recv_timeout(MONITOR_STOP_TIMEOUT) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = handle.join();
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                eprintln!(
+                    "kestic-daemon: system monitor thread did not stop within {} s; leaving it behind",
+                    MONITOR_STOP_TIMEOUT.as_secs()
+                );
+            }
         }
-        if let Some(h) = self.thread.take() {
-            let _ = h.join();
+    }
+}
+
+fn monitor_match_rules() -> Vec<MatchRule<'static>> {
+    [
+        build_signal_rule(
+            "org.freedesktop.DBus.Properties",
+            Some("PropertiesChanged"),
+            Some("/org/freedesktop/UPower"),
+        ),
+        build_signal_rule(
+            "org.freedesktop.DBus.Properties",
+            Some("PropertiesChanged"),
+            Some("/org/freedesktop/NetworkManager"),
+        ),
+        build_signal_rule("org.freedesktop.NetworkManager", Some("StateChanged"), None),
+        build_signal_rule(
+            "org.freedesktop.login1.Manager",
+            Some("PrepareForSleep"),
+            None,
+        ),
+        build_signal_rule(
+            "org.freedesktop.DBus.ObjectManager",
+            None,
+            Some("/org/freedesktop/UDisks2"),
+        ),
+        build_signal_rule(
+            "org.freedesktop.DBus.Properties",
+            Some("PropertiesChanged"),
+            Some("/org/freedesktop/UDisks2"),
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// Listener loop of the monitor thread; every await point ends as soon as `stop` is requested.
+async fn run_monitor_loop(
+    cfg: MonitorBusConfig,
+    stop: StopSignal,
+    event_tx: mpsc::Sender<SystemMonitorEvent>,
+    wakeup_tx: Option<mpsc::Sender<()>>,
+) {
+    let Some(Ok(conn)) = stop.until_stopped(connect_target_bus(&cfg)).await else {
+        return;
+    };
+
+    match stop.until_stopped(zbus::fdo::DBusProxy::new(&conn)).await {
+        None => return,
+        Some(Ok(dbus_proxy)) => {
+            for rule in monitor_match_rules() {
+                match stop.until_stopped(dbus_proxy.add_match_rule(rule)).await {
+                    None => return,
+                    Some(Err(err)) => eprintln!(
+                        "kestic-daemon: failed to register system monitor match rule: {err}"
+                    ),
+                    Some(Ok(())) => {}
+                }
+            }
+        }
+        Some(Err(err)) => eprintln!(
+            "kestic-daemon: failed to create DBusProxy for system monitor match rules: {err}"
+        ),
+    }
+
+    let mut stream = MessageStream::from(&conn);
+    while let Some(Some(msg_res)) = stop.until_stopped(stream.next()).await {
+        let Ok(msg) = msg_res else {
+            continue;
+        };
+        let hdr = msg.header();
+        let iface = hdr.interface().map(|i| i.as_str()).unwrap_or("");
+        let member = hdr.member().map(|m| m.as_str()).unwrap_or("");
+        let path = hdr.path().map(|p| p.as_str()).unwrap_or("");
+
+        let event = if iface == "org.freedesktop.login1.Manager" && member == "PrepareForSleep" {
+            msg.body()
+                .deserialize::<bool>()
+                .ok()
+                .map(SystemMonitorEvent::PrepareForSleep)
+        } else if path.starts_with("/org/freedesktop/UDisks2")
+            && (iface == "org.freedesktop.DBus.ObjectManager"
+                || iface == "org.freedesktop.DBus.Properties")
+        {
+            Some(SystemMonitorEvent::MountChanged)
+        } else if path.starts_with("/org/freedesktop/UPower")
+            || path.starts_with("/org/freedesktop/NetworkManager")
+            || iface == "org.freedesktop.NetworkManager"
+        {
+            let Some(env) = stop
+                .until_stopped(read_system_environment_async(&conn, &cfg))
+                .await
+            else {
+                return;
+            };
+            Some(SystemMonitorEvent::EnvironmentChanged(env))
+        } else {
+            None
+        };
+
+        if let Some(ev) = event {
+            let _ = event_tx.send(ev);
+            if let Some(ref wtx) = wakeup_tx {
+                let _ = wtx.send(());
+            }
         }
     }
 }
@@ -564,5 +634,72 @@ impl SystemMonitorHandle {
 impl Drop for SystemMonitorHandle {
     fn drop(&mut self) {
         self.stop_inner();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    /// M3 manual acceptance (2026-11-19): a stop request must end a listener waiting in an
+    /// await that never completes (e.g. a D-Bus reply that never arrives).
+    #[test]
+    fn m3_acceptance_stop_signal_interrupts_await_that_never_completes() {
+        let stop = StopSignal::default();
+        let stop_bg = stop.clone();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let res = block_on(stop_bg.until_stopped(std::future::pending::<()>()));
+            let _ = tx.send(res);
+        });
+        thread::sleep(Duration::from_millis(100));
+
+        stop.stop();
+
+        let res = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("until_stopped must return after stop()");
+        assert_eq!(res, None);
+    }
+
+    /// M3 manual acceptance (2026-11-19): `stop()` may not wait forever for a listener thread
+    /// that does not react, or the daemon hangs in shutdown with tray and D-Bus still alive.
+    #[test]
+    fn m3_acceptance_stop_returns_within_timeout_when_thread_ignores_stop() {
+        let release = Arc::new(AtomicBool::new(false));
+        let release_bg = Arc::clone(&release);
+        let handle = SystemMonitorHandle::spawn(StopSignal::default(), move || {
+            while !release_bg.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let started = Instant::now();
+        handle.stop();
+        let waited = started.elapsed();
+        release.store(true, Ordering::SeqCst);
+
+        assert!(
+            waited < MONITOR_STOP_TIMEOUT + Duration::from_secs(1),
+            "stop() waited {waited:?}"
+        );
+    }
+
+    /// The bounded wait does not cut short a thread that ends on its own after the stop.
+    #[test]
+    fn m3_acceptance_stop_joins_thread_that_reacts_to_stop() {
+        let stop = StopSignal::default();
+        let stop_bg = stop.clone();
+        let ended = Arc::new(AtomicBool::new(false));
+        let ended_bg = Arc::clone(&ended);
+        let handle = SystemMonitorHandle::spawn(stop, move || {
+            block_on(stop_bg.until_stopped(std::future::pending::<()>()));
+            ended_bg.store(true, Ordering::SeqCst);
+        });
+
+        handle.stop();
+
+        assert!(ended.load(Ordering::SeqCst));
     }
 }

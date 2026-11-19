@@ -203,9 +203,10 @@ pub fn ensure_daemon_and_refresh() {
         if launch.bus_name != KESTIC_BUS_NAME {
             cmd.arg("--bus-name").arg(&launch.bus_name);
         }
+        // stderr is inherited so the daemon's lifecycle messages reach the session journal.
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::inherit());
 
         match cmd.spawn() {
             Ok(_child) => {
