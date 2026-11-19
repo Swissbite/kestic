@@ -1,0 +1,148 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Deletes outdated versions of the CI image (ghcr.io/<owner>/kestic-ci).
+#
+# A version is kept if
+#   - its tag matches the current main branch (never deleted), or
+#   - its tag is still in use by an open PR (head or merge ref) or an existing
+#     branch AND it is younger than MAX_AGE_DAYS, or
+#   - it is younger than GRACE_HOURS (just pushed, may be pulled right now).
+# Everything else is deleted: images of closed PRs and deleted branches,
+# anything older than MAX_AGE_DAYS, and untagged versions left behind by
+# `force` rebuilds.
+#
+# For main this means only the newest image is kept: as soon as main moves
+# to a new tag, the previous main image counts as unused (unless an open PR
+# or another branch still has the same Dockerfile/bootstrap.sh, then it lives
+# at most MAX_AGE_DAYS like any other branch image).
+#
+# Deleting is self-healing: if an open PR still needs a deleted tag, the
+# ci-image job in verify.yml rebuilds it on the PR's next run.
+#
+# Tags are computed with .github/ci-image/tag.sh, the same script ci-image.yml
+# uses. Only gh, git and jq from the runner image are used (no third-party
+# actions).
+
+name: CI image cleanup
+
+on:
+  schedule:
+    # Daily at 04:00 UTC.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only list the versions that would be deleted.
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete outdated CI image versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      packages: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Collect tags still in use
+        id: active
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          main_tag="$(.github/ci-image/tag.sh)"
+          echo "main_tag=$main_tag" >> "$GITHUB_OUTPUT"
+          echo "main: $main_tag"
+
+          # Existing branches.
+          git fetch --no-tags --depth=1 origin '+refs/heads/*:refs/remotes/origin/*'
+
+          # Open PRs (including forks): the head ref and, if mergeable, the
+          # merge ref that pull_request runs actually check out.
+          for n in $(gh pr list --state open --limit 500 --json number --jq '.[].number'); do
+            git fetch --no-tags --depth=1 origin "+refs/pull/$n/head:refs/remotes/pull/$n/head"
+            git fetch --no-tags --depth=1 origin "+refs/pull/$n/merge:refs/remotes/pull/$n/merge" 2>/dev/null || true
+          done
+
+          : > active-tags.txt
+          while read -r ref rev; do
+            # Revisions without .github/ci-image/Dockerfile have no image.
+            if tag="$(.github/ci-image/tag.sh "$rev" 2>/dev/null)"; then
+              echo "in use: $tag ($ref)"
+              echo "$tag" >> active-tags.txt
+            fi
+          done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/remotes/origin refs/remotes/pull)
+          sort -u -o active-tags.txt active-tags.txt
+
+      - name: Delete outdated versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: kestic-ci
+          MAX_AGE_DAYS: "10"
+          GRACE_HOURS: "24"
+          MAIN_TAG: ${{ steps.active.outputs.main_tag }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+          if [[ "$(gh api "users/$OWNER" --jq .type)" == "Organization" ]]; then
+            base="orgs/$OWNER/packages/container/$PACKAGE"
+          else
+            base="users/$OWNER/packages/container/$PACKAGE"
+          fi
+
+          if ! gh api "$base" --silent 2>/dev/null; then
+            echo "::notice::Package $PACKAGE not found (not built yet?), nothing to clean up."
+            exit 0
+          fi
+
+          max_age_cutoff="$(date -u -d "-${MAX_AGE_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)"
+          grace_cutoff="$(date -u -d "-${GRACE_HOURS} hours" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Never deleting main tag $MAIN_TAG"
+          echo "Deleting unused versions older than $grace_cutoff and all versions older than $max_age_cutoff"
+
+          gh api --paginate "$base/versions?per_page=100" \
+            | jq -r \
+                --arg main "$MAIN_TAG" \
+                --arg max_age "$max_age_cutoff" \
+                --arg grace "$grace_cutoff" \
+                --rawfile active_raw active-tags.txt '
+                ($active_raw | split("\n") | map(select(. != ""))) as $active
+                | .[]
+                | .metadata.container.tags as $tags
+                | select(($tags | index($main)) | not)
+                | select(.updated_at < $grace)
+                | ([$tags[] | select(. as $t | $active | index($t))] | length > 0) as $in_use
+                | select((.updated_at < $max_age) or ($in_use | not))
+                | "\(.id)\t\(.updated_at)\t\($tags | join(",") | if . == "" then "<untagged>" else . end)\t\(if $in_use then "older than \(env.MAX_AGE_DAYS) days" else "no longer in use" end)"
+              ' > outdated.tsv
+
+          if [[ ! -s outdated.tsv ]]; then
+            echo "[ok] No outdated versions."
+            exit 0
+          fi
+
+          while IFS=$'\t' read -r id updated tags reason; do
+            if [[ "$DRY_RUN" == "true" ]]; then
+              echo "[dry-run] would delete version $id ($tags, updated $updated, $reason)"
+            else
+              echo "[delete] version $id ($tags, updated $updated, $reason)"
+              gh api -X DELETE "$base/versions/$id" --silent
+            fi
+          done < outdated.tsv
