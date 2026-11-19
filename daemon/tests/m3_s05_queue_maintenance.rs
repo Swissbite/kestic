@@ -296,23 +296,26 @@ fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
                         .as_ref()
                         .is_some_and(|r| r.status == RunStatus::Ok)
                 });
-                let maintenance_end = ["prune", "check"]
-                    .iter()
-                    .flat_map(|sub| rig.wrapper.of('E', sub))
-                    .map(|e| e.at_ms)
-                    .max()
-                    .expect("maintenance end");
-                let beta_start = rig.wrapper.of('S', "backup")[1].at_ms;
-                // The full call log helps tell a real overlap from a timing artefact (CI only).
-                let call_log: Vec<String> = rig
-                    .wrapper
-                    .entries()
+                // Ordering by log position, not by wall-clock timestamps (CI clocks may step).
+                let log = rig.wrapper.entries();
+                let call_log: Vec<String> = log
                     .iter()
                     .map(|e| format!("{} {} {} {}", e.kind, e.at_ms, e.sub, e.detail))
                     .collect();
+                let maintenance_end_idx = log
+                    .iter()
+                    .rposition(|e| e.kind == 'E' && (e.sub == "prune" || e.sub == "check"))
+                    .expect("maintenance end");
+                let beta_start_idx = log
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| e.kind == 'S' && e.sub == "backup")
+                    .map(|(i, _)| i)
+                    .nth(1)
+                    .expect("beta start");
                 assert!(
-                    beta_start >= maintenance_end,
-                    "{}: (b) backup started ({beta_start}) after maintenance ended ({maintenance_end}); calls:\n{}",
+                    beta_start_idx > maintenance_end_idx,
+                    "{}: (b) backup started after maintenance ended; calls:\n{}",
                     variant.label,
                     call_log.join("\n")
                 );
@@ -389,12 +392,16 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
                     "{}: open forget was worked off",
                     variant.label
                 );
-                let calls: Vec<_> = rig
-                    .wrapper
-                    .entries()
-                    .into_iter()
-                    .skip(seen)
+                // Ordering by log position, not by wall-clock timestamps (CI clocks may step).
+                let log: Vec<_> = rig.wrapper.entries().into_iter().skip(seen).collect();
+                let call_log: Vec<String> = log
+                    .iter()
+                    .map(|e| format!("{} {} {} {}", e.kind, e.at_ms, e.sub, e.detail))
+                    .collect();
+                let calls: Vec<_> = log
+                    .iter()
                     .filter(|e| e.kind == 'S' && (e.sub == "forget" || e.sub == "prune"))
+                    .cloned()
                     .collect();
                 let forget_pos = calls
                     .iter()
@@ -426,16 +433,24 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
                     "{}: (b) prune after forget: {calls:?}",
                     variant.label
                 );
-                let forget_end = rig
-                    .wrapper
-                    .of('E', "forget")
-                    .into_iter()
-                    .find(|e| e.at_ms >= forget.at_ms)
-                    .expect("forget end");
+                let forget_start_idx = log
+                    .iter()
+                    .position(|e| e.kind == 'S' && e.sub == "forget")
+                    .expect("forget start");
+                let forget_end_idx = log
+                    .iter()
+                    .skip(forget_start_idx)
+                    .position(|e| e.kind == 'E' && e.sub == "forget")
+                    .map(|i| i + forget_start_idx);
+                let prune_start_idx = log
+                    .iter()
+                    .position(|e| e.kind == 'S' && e.sub == "prune")
+                    .expect("prune start");
                 assert!(
-                    calls[prune_pos].at_ms >= forget_end.at_ms,
-                    "{}: (b) prune starts only after forget ended",
-                    variant.label
+                    forget_end_idx.is_some_and(|end| prune_start_idx > end),
+                    "{}: (b) prune starts only after forget ended; calls:\n{}",
+                    variant.label,
+                    call_log.join("\n")
                 );
                 rig.daemon.stop();
             }
