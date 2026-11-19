@@ -110,9 +110,8 @@ Kirigami.ScrollablePage {
                 anchors.fill: parent
                 anchors.margins: row.highlighted ? 2 : 0
                 z: 10
-                color: (row.activeFocus || row.visualFocus) && row.highlighted
-                    ? Qt.rgba(1, 1, 1, 0.14)
-                    : "transparent"
+                // Focus ring only: a white wash over the row made the selected text unreadable.
+                color: "transparent"
                 radius: Kirigami.Units.cornerRadius
                 border.width: (row.activeFocus || row.visualFocus) ? 2 : 0
                 border.color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
@@ -135,13 +134,14 @@ Kirigami.ScrollablePage {
                     Kirigami.Heading {
                         level: 4
                         text: row.name
+                        color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
 
                     Controls.Label {
-                        text: i18n("%1 · %2 backups", row.statusText, row.backupCount)
-                        color: Kirigami.Theme.textColor
+                        text: i18np("%2 · %1 backup", "%2 · %1 backups", row.backupCount, row.statusText)
+                        color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                         opacity: 0.8
                         elide: Text.ElideRight
                         Layout.fillWidth: true

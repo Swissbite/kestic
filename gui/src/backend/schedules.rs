@@ -389,7 +389,8 @@ impl qobject::KesticApp {
 
         let title = crate::state_cache::i18n("Run from %1")
             .subs(&[&format_datetime_display(detail.run.started_at)]);
-        let (status_text, status_icon, status_color) = format_run_status(detail.run.status);
+        let (status_text, status_icon, status_color) =
+            format_run_status(&detail.run.kind, detail.run.status);
         let dur = detail
             .run
             .duration_ms

@@ -216,7 +216,7 @@ impl DaemonCore {
             destination_name: destination
                 .as_ref()
                 .map(|d| d.name.clone())
-                .unwrap_or_else(|| run.destination_id.as_str().to_string()),
+                .unwrap_or_else(|| i18n("Deleted destination").to_string()),
             run,
             backup,
             destination,

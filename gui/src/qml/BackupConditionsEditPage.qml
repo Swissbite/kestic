@@ -311,37 +311,5 @@ Kirigami.ScrollablePage {
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
-
-            Item { Layout.fillWidth: true }
-
-            Controls.Button {
-                id: discardConditionsButton
-                objectName: "discardConditionsButton"
-                text: i18n("Cancel")
-                Accessible.name: i18n("Cancel run condition edits")
-                onClicked: {
-                    if (page.dirty) {
-                        unsavedDialog.open();
-                    } else {
-                        rootWindow.popSubPage();
-                    }
-                }
-            }
-
-            Controls.Button {
-                id: saveConditionsButton
-                objectName: "saveConditionsButton"
-                icon.name: "document-save"
-                text: i18n("Save")
-                highlighted: true
-                enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
-                Accessible.name: i18n("Save run conditions")
-                onClicked: page.commitSave(false)
-            }
-        }
     }
 }

@@ -177,8 +177,11 @@ impl KesticTray {
             .into(),
         ];
 
-        if let Some(active) = &self.state.running_run {
-            let label = active_run_line(active);
+        // With a single run the headline already is the run line: show it only once.
+        if let Some(active) = &self.state.running_run
+            && let label = active_run_line(active)
+            && label != self.state.status_line
+        {
             items.push(
                 StandardItem {
                     label,
@@ -476,5 +479,68 @@ impl TrayHandle {
     /// Gracefully shuts down the `ksni` D-Bus service.
     pub fn shutdown(self) {
         self.inner.shutdown().wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header_labels(state: KesticTrayState) -> Vec<String> {
+        let tray = KesticTray {
+            state,
+            action_tx: None,
+            quit_tx: None,
+            about_to_show: None,
+        };
+        tray.build_status_header_items()
+            .into_iter()
+            .filter_map(|item| match item {
+                MenuItem::Standard(s) => Some(s.label),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn running(name: &str, percent: f64) -> ActiveRunProgressDto {
+        ActiveRunProgressDto {
+            run_id: "r1".to_string(),
+            backup_id: Some("b1".to_string()),
+            backup_name: name.to_string(),
+            percent_done: percent,
+            bytes_done: 0,
+            total_bytes: 0,
+            speed_bps: 0,
+            seconds_remaining: 0,
+        }
+    }
+
+    /// M3 manual acceptance (2026-11-19): with one running backup the menu showed
+    /// «quelle: backing up · 46%» twice (headline and run line).
+    #[test]
+    fn m3_acceptance_single_running_backup_is_listed_once() {
+        let run = running("quelle", 46.0);
+        let headline = active_run_line(&run);
+        let labels = header_labels(KesticTrayState {
+            status_line: headline.clone(),
+            running_run: Some(run),
+            ..KesticTrayState::default()
+        });
+
+        assert_eq!(labels.iter().filter(|l| **l == headline).count(), 1);
+    }
+
+    /// The run line stays when the headline says something else (e.g. a failed backup).
+    #[test]
+    fn m3_acceptance_run_line_stays_below_a_different_headline() {
+        let run = running("quelle", 40.0);
+        let run_line = active_run_line(&run);
+        let labels = header_labels(KesticTrayState {
+            status_line: "1 backup failed".to_string(),
+            running_run: Some(run),
+            ..KesticTrayState::default()
+        });
+
+        assert_eq!(labels, vec!["1 backup failed".to_string(), run_line]);
     }
 }

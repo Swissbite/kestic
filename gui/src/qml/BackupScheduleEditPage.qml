@@ -636,37 +636,5 @@ Kirigami.ScrollablePage {
                 }
             }
         }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
-
-            Item { Layout.fillWidth: true }
-
-            Controls.Button {
-                id: discardScheduleButton
-                objectName: "discardScheduleButton"
-                text: i18n("Cancel")
-                Accessible.name: i18n("Cancel schedule edits")
-                onClicked: {
-                    if (page.dirty) {
-                        unsavedDialog.open();
-                    } else {
-                        rootWindow.popSubPage();
-                    }
-                }
-            }
-
-            Controls.Button {
-                id: saveScheduleButton
-                objectName: "saveScheduleButton"
-                icon.name: "document-save"
-                text: i18n("Save")
-                highlighted: true
-                enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
-                Accessible.name: i18n("Save schedule")
-                onClicked: page.commitSave(false)
-            }
-        }
     }
 }

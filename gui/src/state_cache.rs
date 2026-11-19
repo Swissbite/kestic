@@ -28,7 +28,8 @@ pub fn i18np(singular: &str, plural: &str, n: usize, args: &[&str]) -> String {
 }
 
 use crate::overall_text::{
-    localized_error_kind, localized_skip_error_kind, localized_source_status,
+    localized_availability_reason, localized_error_kind, localized_skip_error_kind,
+    localized_source_status,
 };
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
@@ -39,10 +40,11 @@ use kestic_core::model::{
 };
 use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_slots};
 use kestic_daemon::dbus_api::{
-    ActiveRunProgressDto, BackupSnapshotsDto, BackupSummaryDto, ConnectionTestResultDto,
-    DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME, KESTIC_INTERFACE_V1,
-    KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, REASON_CONDITION_NOT_MET,
-    REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE, RunDetailDto, StartAllResultDto,
+    ActiveRunProgressDto, BackupAvailabilityDto, BackupSnapshotsDto, BackupSummaryDto,
+    ConnectionTestResultDto, DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME,
+    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind,
+    REASON_CONDITION_NOT_MET, REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
+    RunDetailDto, StartAllResultDto,
 };
 use std::collections::HashMap;
 use std::env;
@@ -1043,6 +1045,33 @@ pub fn localized_last_error(summary: &BackupSummaryDto) -> String {
     }
 }
 
+/// Status line of a backup whose source or destination is unavailable.
+///
+/// A manual-only backup is never due, so it never waits (glossary «wartet»): it shows the
+/// availability only, e.g. «Manual only · Destination unreachable» (decision 2026-11-19).
+fn unavailable_status(
+    schedule: &Schedule,
+    availability: &BackupAvailabilityDto,
+) -> (String, String, String) {
+    if matches!(schedule, Schedule::ManualOnly) {
+        let text = i18n("%1 · %2").subs(&[
+            &i18n("Manual only").to_string(),
+            &localized_availability_reason(availability),
+        ]);
+        return (text, "state-information".to_string(), "text".to_string());
+    }
+    let reason_line = match availability.blocked_reason.as_deref() {
+        Some(REASON_SOURCE_UNAVAILABLE) => {
+            localized_source_status(availability.source_status.as_deref())
+        }
+        Some(REASON_DESTINATION_UNREACHABLE) => {
+            i18n("Waiting: destination unreachable").to_string()
+        }
+        _ => i18n("Waiting: unavailable").to_string(),
+    };
+    (reason_line, "chronometer".to_string(), "text".to_string())
+}
+
 pub fn format_backup_status(
     summary: &BackupSummaryDto,
     active_progress: Option<&ActiveRunProgressDto>,
@@ -1098,16 +1127,7 @@ pub fn format_backup_status(
     }
 
     if !summary.availability.available {
-        let reason_line = match summary.availability.blocked_reason.as_deref() {
-            Some(REASON_SOURCE_UNAVAILABLE) => {
-                localized_source_status(summary.availability.source_status.as_deref())
-            }
-            Some(REASON_DESTINATION_UNREACHABLE) => {
-                i18n("Waiting: destination unreachable").to_string()
-            }
-            _ => i18n("Waiting: unavailable").to_string(),
-        };
-        return (reason_line, "chronometer".to_string(), "text".to_string());
+        return unavailable_status(&summary.backup.schedule, &summary.availability);
     }
 
     if let Some(run) = &summary.last_run {
@@ -1217,8 +1237,15 @@ pub fn format_overall_visual(kind: OverallStatusKind) -> (&'static str, &'static
     }
 }
 
-pub fn format_run_status(status: RunStatus) -> (String, &'static str, &'static str) {
+pub fn format_run_status(
+    kind: &RunKind,
+    status: RunStatus,
+) -> (String, &'static str, &'static str) {
     match status {
+        // A maintenance run (`forget`/`prune`/`check`) backs nothing up.
+        RunStatus::Ok if matches!(kind, RunKind::Maintenance) => {
+            (i18n("Completed").to_string(), "state-ok", "positive")
+        }
         RunStatus::Ok => (i18n("Backed up").to_string(), "state-ok", "positive"),
         RunStatus::Warning => (i18n("Warning").to_string(), "state-warning", "neutral"),
         RunStatus::Error => (i18n("Failed").to_string(), "state-error", "negative"),
@@ -1299,11 +1326,13 @@ pub fn cached_today_iso_date() -> String {
     )
 }
 
+/// Title of a run in the history; a backup that no longer exists is named as deleted, never
+/// by its internal ID.
 pub fn format_run_kind_name(run: &Run, backup_name: Option<&str>, dest_name: &str) -> String {
     match &run.kind {
         RunKind::Backup { .. } => backup_name
             .map(ToOwned::to_owned)
-            .unwrap_or_else(|| dest_name.to_string()),
+            .unwrap_or_else(|| i18n("Deleted backup").to_string()),
         RunKind::Maintenance => i18n("Maintenance %1").subs(&[dest_name]),
         RunKind::Restore { .. } => i18n("Restore %1").subs(&[backup_name.unwrap_or(dest_name)]),
         RunKind::Meta => i18n("Metadata %1").subs(&[dest_name]),
@@ -1395,29 +1424,5 @@ pub fn lookup_backup_summary<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use time::macros::datetime;
-
-    #[test]
-    fn utc_and_offset_same_instant_format_identically_in_local_time() {
-        let ts_utc = datetime!(2026-11-16 23:30:00 UTC);
-        let ts_plus1 = datetime!(2026-11-17 00:30:00 +01:00);
-        let ts_minus5 = datetime!(2026-11-16 18:30:00 -05:00);
-        assert_eq!(ts_utc.unix_timestamp(), ts_plus1.unix_timestamp());
-        assert_eq!(ts_utc.unix_timestamp(), ts_minus5.unix_timestamp());
-
-        let disp_utc = format_datetime_display(ts_utc);
-        let disp_plus1 = format_datetime_display(ts_plus1);
-        let disp_minus5 = format_datetime_display(ts_minus5);
-        assert_eq!(disp_utc, disp_plus1);
-        assert_eq!(disp_utc, disp_minus5);
-        assert_eq!(format_time_short(ts_utc), &disp_plus1[11..16]);
-        assert_eq!(format_time_short(ts_plus1), &disp_plus1[11..16]);
-        assert_eq!(format_time_short(ts_minus5), &disp_plus1[11..16]);
-        assert_eq!(
-            format_day_group(ts_utc, datetime!(2026-11-17 12:00:00 UTC)),
-            format_day_group(ts_plus1, datetime!(2026-11-17 12:00:00 UTC))
-        );
-    }
-}
+#[path = "state_cache_tests.rs"]
+mod tests;

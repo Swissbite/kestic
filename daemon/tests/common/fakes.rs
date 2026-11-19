@@ -179,6 +179,7 @@ impl FakeNmSettings {
 
 pub struct FakeNmSavedConn {
     id: String,
+    conn_type: &'static str,
 }
 
 #[interface(name = "org.freedesktop.NetworkManager.Settings.Connection")]
@@ -192,11 +193,20 @@ impl FakeNmSavedConn {
                 .try_to_owned()
                 .expect("owned"),
         );
+        conn_map.insert(
+            "type".to_string(),
+            Variant::from(self.conn_type).try_to_owned().expect("owned"),
+        );
         let mut root = HashMap::new();
         root.insert("connection".to_string(), conn_map);
         root
     }
 }
+
+/// Saved wired profile the fake NetworkManager always lists (never an allowed network).
+pub const FAKE_NM_WIRED_ID: &str = "Kabelgebundene Verbindung 1";
+/// Loopback profile the fake NetworkManager always lists (never an allowed network).
+pub const FAKE_NM_LOOPBACK_ID: &str = "lo";
 
 pub struct FakeNetworkManagerHandle {
     conn: Connection,
@@ -238,8 +248,18 @@ impl FakeNetworkManagerHandle {
             id: Arc::clone(&active_id),
         };
 
+        // Known Wi-Fi networks plus the non-Wi-Fi profiles NetworkManager always lists
+        // (wired, loopback): only the Wi-Fi ones may be offered as allowed networks.
+        let saved: Vec<(String, &'static str)> = known_networks
+            .iter()
+            .map(|s| (s.to_string(), "802-11-wireless"))
+            .chain([
+                (FAKE_NM_WIRED_ID.to_string(), "802-3-ethernet"),
+                (FAKE_NM_LOOPBACK_ID.to_string(), "loopback"),
+            ])
+            .collect();
         let mut saved_paths = Vec::new();
-        for (idx, _) in known_networks.iter().enumerate() {
+        for (idx, _) in saved.iter().enumerate() {
             let p = OwnedObjectPath::try_from(format!(
                 "/org/freedesktop/NetworkManager/Settings/{idx}"
             ))
@@ -249,10 +269,8 @@ impl FakeNetworkManagerHandle {
         let settings_iface = FakeNmSettings {
             paths: saved_paths.clone(),
         };
-        let known_owned: Vec<(OwnedObjectPath, String)> = saved_paths
-            .into_iter()
-            .zip(known_networks.iter().map(|s| s.to_string()))
-            .collect();
+        let known_owned: Vec<(OwnedObjectPath, (String, &'static str))> =
+            saved_paths.into_iter().zip(saved).collect();
         let ap_clone = active_path.clone();
 
         let conn = block_on(async move {
@@ -261,8 +279,8 @@ impl FakeNetworkManagerHandle {
                 .serve_at("/org/freedesktop/NetworkManager", nm_iface)
                 .serve_at(ap_clone, active_iface)
                 .serve_at("/org/freedesktop/NetworkManager/Settings", settings_iface);
-            for (path, id) in known_owned {
-                builder = builder.serve_at(path, FakeNmSavedConn { id });
+            for (path, (id, conn_type)) in known_owned {
+                builder = builder.serve_at(path, FakeNmSavedConn { id, conn_type });
             }
             builder.build().await.expect("build fake NetworkManager")
         });

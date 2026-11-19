@@ -2652,8 +2652,10 @@ msgid "Backups:"
 msgstr "Backups:"
 
 #: gui/src/qml/DestinationDetailPage.qml:158
-msgid "%1 configured backups"
-msgstr "%1 konfigurierte Backups"
+msgid "%1 configured backup"
+msgid_plural "%1 configured backups"
+msgstr[0] "%1 konfiguriertes Backup"
+msgstr[1] "%1 konfigurierte Backups"
 
 #: gui/src/qml/DestinationDetailPage.qml:164
 #: gui/src/qml/DestinationMaintenancePage.qml:12
@@ -2907,8 +2909,10 @@ msgstr ""
 "verschlüsselte Backups zu speichern."
 
 #: gui/src/qml/DestinationsPage.qml:143
-msgid "%1 · %2 backups"
-msgstr "%1 · %2 Backups"
+msgid "%2 · %1 backup"
+msgid_plural "%2 · %1 backups"
+msgstr[0] "%2 · %1 Backup"
+msgstr[1] "%2 · %1 Backups"
 
 #: gui/src/qml/HistoryPage.qml:12 gui/src/qml/Main.qml:730
 #: gui/src/qml/PageFocusManager.qml:134 gui/src/qml/SpikeMain.qml:104
@@ -3550,3 +3554,11 @@ msgid ""
 msgstr ""
 "Das für '%1' im Passwortspeicher hinterlegte Passwort stimmt nicht überein. "
 "Das Passwort des Ziels selbst wird dadurch nicht geändert."
+
+#: gui/src/state_cache.rs
+msgid "Deleted backup"
+msgstr "Gelöschtes Backup"
+
+#: gui/src/models/runs_model.rs daemon/src/service/backups.rs
+msgid "Deleted destination"
+msgstr "Gelöschtes Ziel"

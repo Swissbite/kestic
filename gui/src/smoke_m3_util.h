@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <QAccessible>
+
 #include "src/smoke_common.h"
 
 #include <QByteArray>
@@ -107,9 +109,22 @@ inline QString destination_id_at(QQuickWindow* window, int row) {
 }
 
 /// Reads `Accessible.name` of an item (Qt keeps it on a QQuickAccessibleAttached child).
+/// The accessible name a screen reader gets for `obj` (Qt's accessibility interface, as exported
+/// over AT-SPI), falling back to an explicitly attached `Accessible.name`.
 inline QString accessible_name(QObject* obj) {
     if (!obj) {
         return QString();
+    }
+    // Offscreen there is no assistive technology connected: enable Qt's accessibility layer so
+    // the interface reports the name AT-SPI would export.
+    if (!QAccessible::isActive()) {
+        QAccessible::setActive(true);
+    }
+    if (QAccessibleInterface* iface = QAccessible::queryAccessibleInterface(obj)) {
+        const QString name = iface->text(QAccessible::Name);
+        if (!name.trimmed().isEmpty()) {
+            return name;
+        }
     }
     for (QObject* ch : obj->children()) {
         if (ch && QString::fromLatin1(ch->metaObject()->className()).contains(QLatin1String("Accessible"))) {

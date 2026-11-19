@@ -155,7 +155,7 @@ Kirigami.ScrollablePage {
             }
             Controls.Label {
                 Kirigami.FormData.label: i18n("Backups:")
-                text: currentData ? i18n("%1 configured backups", currentData.backupCount) : ""
+                text: currentData ? i18np("%1 configured backup", "%1 configured backups", currentData.backupCount) : ""
             }
         }
 

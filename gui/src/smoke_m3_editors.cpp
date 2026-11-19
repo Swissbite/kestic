@@ -18,6 +18,23 @@ void open_backup_detail(QQuickWindow* w, const QString& bid) {
     wait_ms(250);
 }
 
+/// The editors save and close through their page footer actions only (decision 2026-11-19).
+/// Names each visible button Kirigami generates for an action `<x>Action` as `<x>ActionButton`,
+/// so the checks below can click it and test its keyboard reachability and accessible name.
+void name_action_buttons(QQuickWindow* w) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(w->contentItem(), items);
+    for (QQuickItem* it : items) {
+        if (!it->isVisible()) {
+            continue;
+        }
+        QObject* act = it->property("action").value<QObject*>();
+        if (act && act->objectName().endsWith(QLatin1String("Action"))) {
+            it->setObjectName(act->objectName() + QStringLiteral("Button"));
+        }
+    }
+}
+
 QQuickItem* open_editor(QQuickWindow* w, const char* row, const char* page) {
     QQuickItem* r = find_visual_item(w, QString::fromLatin1(row));
     if (!r || !click_ui_item(w, r, row)) {
@@ -25,6 +42,7 @@ QQuickItem* open_editor(QQuickWindow* w, const char* row, const char* page) {
     }
     wait_until([&] { return item_named(w, page) != nullptr; }, 3000);
     wait_ms(200);
+    name_action_buttons(w);
     return item_named(w, page);
 }
 
@@ -98,7 +116,7 @@ int scenario_schedule_validation(const Ctx& c) {
     QQuickItem* page = open_editor(w, "editScheduleRow", "backupScheduleEditPage");
     M3_CHECK(3402, page != nullptr, "backupScheduleEditPage did not open");
     QQuickItem* combo = item_named(w, "scheduleFrequencyCombo");
-    QQuickItem* save_btn = item_named(w, "saveScheduleButton");
+    QQuickItem* save_btn = item_named(w, "saveScheduleActionButton");
     QObject* save_action = object_named(w, "saveScheduleAction");
     QQuickItem* banner = item_named(w, "scheduleValidationBanner");
     M3_CHECK(3403, combo && save_btn && save_action && banner, "schedule editor controls missing");
@@ -159,8 +177,8 @@ int scenario_schedule_validation(const Ctx& c) {
         QStringLiteral("scheduleHourSpinBox"),
         QStringLiteral("scheduleMinuteSpinBox"),
         QStringLiteral("useGlobalOverdueCheck"),
-        QStringLiteral("discardScheduleButton"),
-        QStringLiteral("saveScheduleButton"),
+        QStringLiteral("closeScheduleActionButton"),
+        QStringLiteral("saveScheduleActionButton"),
     };
     const QString unnamed = first_unnamed(w, controls);
     M3_CHECK(3435, unnamed.isEmpty(), qPrintable(QStringLiteral("(b) control without Accessible.name: ") + unnamed));
@@ -290,8 +308,8 @@ int scenario_schedule_unsaved(const Ctx& c) {
     wait_ms(150);
     item_named(w, "scheduleIntervalSpinBox")->setProperty("value", 4);
     wait_ms(200);
-    QQuickItem* save_btn = item_named(w, "saveScheduleButton");
-    M3_CHECK(3581, save_btn && click_ui_item(w, save_btn, "saveScheduleButton"), "failed to click Save");
+    QQuickItem* save_btn = item_named(w, "saveScheduleActionButton");
+    M3_CHECK(3581, save_btn && click_ui_item(w, save_btn, "saveScheduleActionButton"), "failed to click Save");
     M3_CHECK(3582, wait_until([&] { return read_config_bytes() != before; }, 5000), "Save must write config.toml");
     M3_CHECK(3583, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
@@ -305,8 +323,8 @@ const QStringList kConditionControls {
     QStringLiteral("knownNetworkCheck_OfficeWifi"),
     QStringLiteral("newNetworkField"),
     QStringLiteral("addNetworkButton"),
-    QStringLiteral("discardConditionsButton"),
-    QStringLiteral("saveConditionsButton"),
+    QStringLiteral("closeConditionsActionButton"),
+    QStringLiteral("saveConditionsActionButton"),
 };
 
 // AC-M3-14-3 (new backup defaults) and AC-M3-14-6 (conditions editor).
@@ -396,8 +414,8 @@ int scenario_conditions_unsaved(const Ctx& c) {
     QQuickItem* home = item_named(w, "knownNetworkCheck_HomeWifi");
     M3_CHECK(3742, click_ui_item(w, home, "knownNetworkCheck_HomeWifi"), "failed to click HomeWifi");
     wait_ms(150);
-    QQuickItem* close_btn = item_named(w, "discardConditionsButton");
-    M3_CHECK(3743, close_btn && click_ui_item(w, close_btn, "discardConditionsButton"), "failed to click Cancel button");
+    QQuickItem* close_btn = item_named(w, "closeConditionsActionButton");
+    M3_CHECK(3743, close_btn && click_ui_item(w, close_btn, "closeConditionsActionButton"), "failed to click Cancel button");
     QObject* own = object_named(w, "unsavedConditionsDialog");
     rc = check_unsaved_dialog_open(c, own, 3750);
     if (rc != 0) {
@@ -409,8 +427,8 @@ int scenario_conditions_unsaved(const Ctx& c) {
     }
     M3_CHECK(3762, page->property("dirty").toBool(), "edits must survive Cancel of the editor prompt");
     // [Save] persists (checked on the test side).
-    QQuickItem* save_btn = item_named(w, "saveConditionsButton");
-    M3_CHECK(3763, save_btn && click_ui_item(w, save_btn, "saveConditionsButton"), "failed to click Save");
+    QQuickItem* save_btn = item_named(w, "saveConditionsActionButton");
+    M3_CHECK(3763, save_btn && click_ui_item(w, save_btn, "saveConditionsActionButton"), "failed to click Save");
     M3_CHECK(3764, wait_until([&] { return read_config_bytes() != before; }, 5000), "Save must write config.toml");
     M3_CHECK(3765, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
@@ -493,6 +511,9 @@ int scenario_maintenance(const Ctx& c) {
     M3_CHECK(3903, summary.contains(loc(c.lang, "Verify: first Sunday of month at 12:00", "Prüfen: erster Sonntag im Monat 12:00")), "(a) verify default summary");
     QQuickItem* content = w->contentItem();
     M3_CHECK(3905, has_visible_text(content, loc(c.lang, "Next verify:", "Nächstes Prüfen:")), "detail must show «Next verify:»");
+    // M3 manual acceptance (2026-11-19): one backup is named in the singular.
+    M3_CHECK(3940, has_visible_text(content, loc(c.lang, "1 configured backup", "1 konfiguriertes Backup")), "detail must show the singular «1 configured backup»");
+    M3_CHECK(3941, !has_visible_text(content, loc(c.lang, "1 configured backups", "1 konfigurierte Backups")), "detail must not use the plural for one backup");
 
     QQuickItem* page = open_editor(w, "editMaintenanceRow", "destinationMaintenancePage");
     M3_CHECK(3906, page != nullptr, "destinationMaintenancePage did not open");
@@ -503,8 +524,8 @@ int scenario_maintenance(const Ctx& c) {
         QStringLiteral("checkFrequencyCombo"),
         QStringLiteral("checkHourSpin"),
         QStringLiteral("checkMinuteSpin"),
-        QStringLiteral("discardMaintenanceButton"),
-        QStringLiteral("saveMaintenanceButton"),
+        QStringLiteral("closeMaintenanceActionButton"),
+        QStringLiteral("saveMaintenanceActionButton"),
     };
     M3_CHECK_EQ(3907, spin_text(item_named(w, "pruneHourSpin")), QStringLiteral("12"), "prune hour field");
     M3_CHECK_EQ(3908, spin_text(item_named(w, "pruneMinuteSpin")), QStringLiteral("00"), "prune minute field is two-digit");
@@ -522,9 +543,9 @@ int scenario_maintenance(const Ctx& c) {
 
     // AC-M3-14-5 (b) / AC-M3-05-7 (a): changing the clean-up schedule asks for confirmation
     // and shows the dry-run preview result before it can be confirmed.
-    QQuickItem* save_btn = item_named(w, "saveMaintenanceButton");
+    QQuickItem* save_btn = item_named(w, "saveMaintenanceActionButton");
     M3_CHECK(3911, save_btn && save_btn->isEnabled(), "Save must be enabled after changing the clean-up schedule");
-    M3_CHECK(3912, click_ui_item(w, save_btn, "saveMaintenanceButton"), "failed to click Save");
+    M3_CHECK(3912, click_ui_item(w, save_btn, "saveMaintenanceActionButton"), "failed to click Save");
     QObject* dlg = object_named(w, "pruneConfirmDialog");
     M3_CHECK(3913, wait_until([&] { return dlg && dlg->property("visible").toBool(); }, 3000), "pruneConfirmDialog did not open");
     QObject* confirm = dialog_action(dlg, "confirmPruneSaveAction");

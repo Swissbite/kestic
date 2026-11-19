@@ -428,3 +428,31 @@ fn ac_m3_03_7_manual_override_applies_to_one_run_only() {
         },
     );
 }
+
+/// M3 manual acceptance (2026-11-19): «Erlaubte WLAN-Netzwerke» listed the wired profile and
+/// the loopback device. Only saved Wi-Fi profiles may be offered as allowed networks (FR-13).
+#[test]
+fn m3_acceptance_known_networks_lists_only_wifi_profiles() {
+    run_isolated_test(
+        "m3_acceptance_known_networks_lists_only_wifi_profiles",
+        "KESTIC_M3_ACC_KNOWN_NETS_INNER",
+        |_root| {
+            let _nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim", "Cafe"]);
+
+            let names = kestic_daemon::monitors::list_known_networks(
+                &kestic_daemon::monitors::MonitorBusConfig {
+                    use_session_bus: true,
+                    ..Default::default()
+                },
+            );
+
+            assert_eq!(names, vec!["Cafe".to_string(), "Heim".to_string()]);
+            assert!(!names.iter().any(|n| n == common::fakes::FAKE_NM_WIRED_ID));
+            assert!(
+                !names
+                    .iter()
+                    .any(|n| n == common::fakes::FAKE_NM_LOOPBACK_ID)
+            );
+        },
+    );
+}

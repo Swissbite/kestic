@@ -3,6 +3,7 @@
 
 #include "src/smoke_helper.h"
 #include "src/smoke_common.h"
+#include <QColor>
 
 namespace kestic::smoke {
 
@@ -1112,6 +1113,17 @@ void install_m1_smoke_check(
                 if (!window->findChild<QQuickItem*>(QStringLiteral("runDetailPage"))) {
                     fail_kbd(125, "Return on runListItem did not open RunDetailPage");
                     return;
+                }
+                // M3 manual acceptance (2026-11-19): the selected row must use the selection
+                // text colour, or it is unreadable on a light selection in the dark theme.
+                {
+                    QQuickItem* title = run_row->findChild<QQuickItem*>(QStringLiteral("runRowTitle"));
+                    if (!title || !run_row->property("highlighted").toBool()
+                        || title->property("color").value<QColor>()
+                            != run_row->property("selectedTextColor").value<QColor>()) {
+                        fail_kbd(155, "selected run row title does not use the selection text colour");
+                        return;
+                    }
                 }
 
                 // RunDetailPage TabBar arrow navigation + Tab 1 Log controls + Tab 2 Commands TextArea escape + Show Command Esc

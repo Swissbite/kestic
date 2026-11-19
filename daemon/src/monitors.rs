@@ -24,6 +24,9 @@ pub const DEFAULT_NM_DEST: &str = "org.freedesktop.NetworkManager";
 pub const DEFAULT_LOGIND_DEST: &str = "org.freedesktop.login1";
 pub const DEFAULT_UDISKS2_DEST: &str = "org.freedesktop.UDisks2";
 
+/// NetworkManager connection type of Wi-Fi profiles: only these are offered as allowed networks.
+const NM_WIFI_CONNECTION_TYPE: &str = "802-11-wireless";
+
 /// Configures which bus and service names the system monitors target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonitorBusConfig {
@@ -293,19 +296,16 @@ pub fn list_known_networks(cfg: &MonitorBusConfig) -> Vec<String> {
                         )
                         .await
                     && let Some(conn_section) = settings.get("connection")
+                    && conn_section
+                        .get("type")
+                        .and_then(|t| <&str>::try_from(t).ok())
+                        .is_some_and(|t| t == NM_WIFI_CONNECTION_TYPE)
                     && let Some(id_val) = conn_section.get("id")
                     && let Ok(id_str) = <&str>::try_from(id_val)
                     && !id_str.trim().is_empty()
                 {
                     names.insert(id_str.trim().to_string());
                 }
-            }
-        }
-
-        let env = read_system_environment_async(&conn, cfg).await;
-        for active in env.active_networks {
-            if !active.trim().is_empty() {
-                names.insert(active.trim().to_string());
             }
         }
 

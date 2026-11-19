@@ -6,7 +6,7 @@
 use super::{SyncPlan, plan_model_sync, qobject};
 use crate::state_cache::{
     daemon_now, format_bytes, format_day_group, format_duration_ms, format_run_kind_name,
-    format_run_status, format_time_short, shared_state,
+    format_run_status, format_time_short, i18n, shared_state,
 };
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
@@ -79,12 +79,14 @@ impl RunsModelRust {
                     .find(|b| &b.backup.id == bid)
                     .map(|b| b.backup.name.as_str())
             });
+            let deleted_destination = i18n("Deleted destination").to_string();
             let dest_name = state
                 .destinations
                 .iter()
                 .find(|d| d.destination.id == run.destination_id)
-                .map(|d| d.destination.name.as_str())
-                .unwrap_or_else(|| run.destination_id.as_str());
+                .map_or(deleted_destination.as_str(), |d| {
+                    d.destination.name.as_str()
+                });
 
             let title = format_run_kind_name(run, backup_name, dest_name);
             let summary_text = run.summary_message.clone().unwrap_or_default();
@@ -115,7 +117,8 @@ impl RunsModelRust {
             }
             .to_string();
 
-            let (status_text, status_icon, status_color_kind) = format_run_status(run.status);
+            let (status_text, status_icon, status_color_kind) =
+                format_run_status(&run.kind, run.status);
             let duration_text = run
                 .duration_ms
                 .map(format_duration_ms)
