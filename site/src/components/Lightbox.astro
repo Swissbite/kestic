@@ -1,0 +1,301 @@
+---
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// Wraps page content and shows every `a[data-lightbox]` inside it in a modal
+// <dialog>: previous/next by button, arrow key, or swipe; close by Esc, the
+// close button, or a click outside the picture. Without JavaScript the links
+// simply open the PNG.
+---
+
+<kestic-lightbox>
+  <slot />
+  <dialog class="lightbox" aria-label="Screenshot viewer">
+    <div class="top">
+      <p class="mono position" aria-live="polite" data-position></p>
+      <button type="button" class="control close" aria-label="Close" data-close>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"></path></svg>
+      </button>
+    </div>
+    <button type="button" class="control prev" aria-label="Previous screenshot" data-prev>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5"></path></svg>
+    </button>
+    <figure class="stage" data-stage>
+      <img alt="" data-image />
+      <figcaption class="mono">
+        <span data-caption></span>
+        <a class="full" href="" data-full>Full size&nbsp;↗</a>
+      </figcaption>
+    </figure>
+    <button type="button" class="control next" aria-label="Next screenshot" data-next>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"></path></svg>
+    </button>
+  </dialog>
+</kestic-lightbox>
+
+<script>
+  interface Slide {
+    readonly link: HTMLAnchorElement;
+    readonly image: HTMLImageElement;
+  }
+
+  const SWIPE_DISTANCE = 50;
+
+  function required<T extends Element>(root: ParentNode, selector: string, type: { new (): T }): T {
+    const element = root.querySelector(selector);
+    if (!(element instanceof type)) {
+      throw new Error(`kestic-lightbox: ${selector} missing`);
+    }
+    return element;
+  }
+
+  class KesticLightbox extends HTMLElement {
+    private slides: Slide[] = [];
+    private index = 0;
+    private opener: HTMLElement | null = null;
+    private swipeStart: { x: number; y: number } | null = null;
+
+    connectedCallback(): void {
+      const dialog = required(this, "dialog", HTMLDialogElement);
+      const image = required(dialog, "[data-image]", HTMLImageElement);
+      const caption = required(dialog, "[data-caption]", HTMLElement);
+      const position = required(dialog, "[data-position]", HTMLElement);
+      const full = required(dialog, "[data-full]", HTMLAnchorElement);
+      const stage = required(dialog, "[data-stage]", HTMLElement);
+
+      this.slides = Array.from(this.querySelectorAll<HTMLAnchorElement>("a[data-lightbox]")).flatMap(
+        (link) => {
+          const thumb = link.querySelector("img");
+          return thumb === null ? [] : [{ link, image: thumb }];
+        },
+      );
+
+      const show = (index: number): void => {
+        const count = this.slides.length;
+        this.index = (index + count) % count;
+        const slide = this.slides[this.index];
+        if (slide === undefined) {
+          return;
+        }
+        image.src = slide.link.href;
+        image.alt = slide.image.alt;
+        image.width = Number(slide.image.getAttribute("width"));
+        image.height = Number(slide.image.getAttribute("height"));
+        caption.textContent = slide.link.dataset["caption"] ?? "";
+        full.href = slide.link.href;
+        const pad = (n: number): string => String(n).padStart(2, "0");
+        position.textContent = `${pad(this.index + 1)} / ${pad(count)}`;
+      };
+
+      this.addEventListener("click", (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+          return;
+        }
+        const target = event.target instanceof Element ? event.target : null;
+        const link = target?.closest<HTMLAnchorElement>("a[data-lightbox]");
+        const slideIndex = this.slides.findIndex((slide) => slide.link === link);
+        if (slideIndex < 0) {
+          return;
+        }
+        event.preventDefault();
+        this.opener = link ?? null;
+        show(slideIndex);
+        dialog.showModal();
+      });
+
+      dialog.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target === null) {
+          return;
+        }
+        if (target.closest("[data-close]") !== null || target === dialog || target === stage) {
+          dialog.close();
+        } else if (target.closest("[data-prev]") !== null) {
+          show(this.index - 1);
+        } else if (target.closest("[data-next]") !== null) {
+          show(this.index + 1);
+        }
+      });
+
+      dialog.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          show(this.index - 1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          show(this.index + 1);
+        }
+      });
+
+      dialog.addEventListener("close", () => {
+        this.opener?.focus();
+        this.opener = null;
+      });
+
+      stage.addEventListener("pointerdown", (event) => {
+        if (event.pointerType === "touch") {
+          this.swipeStart = { x: event.clientX, y: event.clientY };
+        }
+      });
+      stage.addEventListener("pointerup", (event) => {
+        const start = this.swipeStart;
+        this.swipeStart = null;
+        if (start === null) {
+          return;
+        }
+        const dx = event.clientX - start.x;
+        const dy = event.clientY - start.y;
+        if (Math.abs(dx) >= SWIPE_DISTANCE && Math.abs(dx) > Math.abs(dy)) {
+          show(this.index + (dx < 0 ? 1 : -1));
+        }
+      });
+      stage.addEventListener("pointercancel", () => {
+        this.swipeStart = null;
+      });
+    }
+  }
+
+  customElements.define("kestic-lightbox", KesticLightbox);
+</script>
+
+<style>
+  kestic-lightbox {
+    display: block;
+  }
+  :global(html:has(dialog.lightbox[open])) {
+    overflow: hidden;
+  }
+  .lightbox {
+    --lb-bg: #0b0c0d;
+    --lb-text: #ece9e2;
+    --lb-mute: #a3a098;
+    --lb-rule: #4a4d52;
+    box-sizing: border-box;
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    padding: 16px var(--gutter) 24px;
+    border: 0;
+    background: var(--lb-bg);
+    color: var(--lb-text);
+    display: none;
+    grid-template-columns: 48px minmax(0, 1fr) 48px;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "top top top"
+      "prev stage next";
+    gap: 16px 20px;
+    align-items: center;
+  }
+  .lightbox[open] {
+    display: grid;
+  }
+  .lightbox::backdrop {
+    background: #0b0c0d;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .lightbox[open] {
+      animation: lightbox-in 140ms ease-out;
+    }
+  }
+  @keyframes lightbox-in {
+    from {
+      opacity: 0;
+    }
+  }
+  .top {
+    grid-area: top;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .position {
+    margin: 0;
+    color: var(--lb-mute);
+  }
+  .control {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    border: 1.5px solid var(--lb-rule);
+    border-radius: 2px;
+    background: transparent;
+    color: var(--lb-text);
+    cursor: pointer;
+  }
+  .control:hover {
+    border-color: var(--lb-text);
+  }
+  .control:focus-visible {
+    outline: 2px solid #ee9164;
+    outline-offset: 3px;
+  }
+  .control svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+  }
+  .prev {
+    grid-area: prev;
+  }
+  .next {
+    grid-area: next;
+  }
+  .stage {
+    grid-area: stage;
+    margin: 0;
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    justify-items: center;
+    align-items: center;
+    gap: 12px;
+  }
+  .stage img {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border: 1px solid var(--lb-rule);
+    touch-action: pan-y pinch-zoom;
+  }
+  .stage figcaption {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px 16px;
+    font-size: 13px;
+    text-align: center;
+  }
+  .full {
+    color: var(--lb-mute);
+  }
+  .full:hover {
+    color: #ee9164;
+  }
+  @media (max-width: 640px) {
+    .lightbox {
+      padding: 12px 16px 16px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-areas:
+        "top top"
+        "stage stage"
+        "prev next";
+      gap: 12px;
+    }
+    .prev,
+    .next {
+      width: 100%;
+    }
+  }
+</style>

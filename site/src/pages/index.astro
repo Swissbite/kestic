@@ -4,6 +4,7 @@
 
 import Base from "../layouts/Base.astro";
 import RetentionTimeline from "../components/RetentionTimeline.astro";
+import Lightbox from "../components/Lightbox.astro";
 import WindowFrame from "../components/WindowFrame.astro";
 import appIcon from "../../../packaging/icons/hicolor/scalable/apps/kestic.svg";
 import { heroShot, galleryShots } from "../screenshots.ts";
@@ -32,7 +33,7 @@ const features = [
   },
   {
     term: "Maintenance",
-    text: "Clean up and verify run per destination on their own calendar, queued behind backups, only on AC power and never on a metered network.",
+    text: "Clean up and Verify run per destination on a calendar you set. They wait for running backups and start only on AC power and an unmetered network.",
   },
   {
     term: "Pause",
@@ -45,13 +46,48 @@ const features = [
 ] as const;
 
 const milestones = [
-  { id: "M0", name: "Spike", done: true },
-  { id: "M1", name: "Walking skeleton", done: true },
-  { id: "M2", name: "Backup configuration", done: true },
-  { id: "M3", name: "Automation", done: true },
-  { id: "M4", name: "Restore", done: false },
-  { id: "M5", name: "Destinations and restic provisioning", done: false },
-  { id: "M6", name: "Onboarding and security", done: false },
+  {
+    id: "M0",
+    name: "Spike",
+    scope: "Toolchain proven: CXX-Qt, packaging, Secret Service, translations, tray.",
+    done: true,
+  },
+  {
+    id: "M1",
+    name: "Walking skeleton",
+    scope: "One backup through every layer, from the window to restic and back, installable as a .deb.",
+    done: true,
+  },
+  {
+    id: "M2",
+    name: "Backup configuration",
+    scope: "Exclude rules, retention with preview, source checks.",
+    done: true,
+  },
+  {
+    id: "M3",
+    name: "Automation",
+    scope: "Schedule, run conditions, retries, overdue backups, maintenance, sleep.",
+    done: true,
+  },
+  {
+    id: "M4",
+    name: "Restore",
+    scope: "Browse, compare, and restore snapshots without overwriting anything by accident.",
+    done: false,
+  },
+  {
+    id: "M5",
+    name: "Destinations and restic provisioning",
+    scope: "Every restic backend, and a bundled restic where the system one is too old.",
+    done: false,
+  },
+  {
+    id: "M6",
+    name: "Onboarding and security",
+    scope: "A first backup in five steps, a recovery kit, and your data back on a new computer.",
+    done: false,
+  },
 ] as const;
 
 const doneCount = milestones.filter((m) => m.done).length;
@@ -61,7 +97,7 @@ const buildFromSource = `${repoUrl}#building--testing`;
 
 <Base
   title="Kestic: restic backups for KDE Plasma"
-  description="A native KDE Plasma backup manager powered by restic. As simple as a beginner-friendly backup tool, as powerful as restic itself."
+  description="A native KDE Plasma backup manager powered by restic. Pick what and where. Kestic does the rest, with every restic option within reach."
 >
   <div class="preview-bar mono">
     <div class="wrap">
@@ -78,142 +114,158 @@ const buildFromSource = `${repoUrl}#building--testing`;
       </a>
       <nav aria-label="Sections" class="mono">
         <a href="#features">Features</a>
+        <a href="#roadmap">Roadmap</a>
         <a href="#screens">Screens</a>
         <a href="#how">How it works</a>
-        <a href="#roadmap">Roadmap</a>
         <a href={repoUrl}>GitHub&nbsp;↗</a>
       </nav>
     </div>
   </header>
 
-  <main id="main">
-    <section class="hero wrap">
-      <p class="mono accent eyebrow">
-        In development · {doneCount} of {milestones.length} milestones done
-      </p>
-      <h1>
-        <span>Backups that run themselves.</span>
-        <span class="second">On Plasma. With restic.</span>
-      </h1>
-      <p class="lede">
-        Kestic is a native KDE backup manager. As simple as a beginner-friendly backup tool, as
-        powerful as restic itself.
-      </p>
-      <div class="actions">
-        <a class="button primary" href={repoUrl}>View on GitHub</a>
-        <a class="button" href={buildFromSource}>Build from source</a>
+  <Lightbox>
+    <main id="main">
+      <section class="hero wrap">
+        <p class="mono accent eyebrow">
+          <a href="#roadmap">In development · {doneCount} of {milestones.length} milestones done</a>
+        </p>
+        <h1>
+          <span>Backups that run themselves.</span>
+          <span class="second">On Plasma. With restic.</span>
+        </h1>
+        <p class="lede">
+          Pick what and where. Kestic does the rest, with every restic option within reach.
+        </p>
+        <div class="actions">
+          <a class="button primary" href={repoUrl}>View on GitHub</a>
+          <a class="button" href={buildFromSource}>Build from source</a>
+        </div>
+        <p class="mono mute install">
+          For KDE Plasma 6 on Debian- and Ubuntu-based systems, with restic 0.18.0 or newer. No
+          release yet: build the .deb with <code>just deb</code>.
+        </p>
+      </section>
+
+      <div class="wrap timeline-hero">
+        <RetentionTimeline />
       </div>
-    </section>
 
-    <div class="wrap timeline-hero">
-      <RetentionTimeline />
-    </div>
-
-    <div class="wrap hero-shot">
-      <WindowFrame shot={heroShot} eager />
-      <p class="mono mute provenance">
-        Rendered by the test suite at <a href={commitUrl}>{buildShaShort}</a>. Every screenshot on
-        this page is.
-      </p>
-    </div>
-
-    <section id="features" class="section wrap">
-      <div class="section-head">
-        <h2>What it does</h2>
-        <p>Everything below works today. Restore and onboarding follow in the next milestones.</p>
-      </div>
-      <ol class="features">
-        {
-          features.map((f, i) => (
-            <li>
-              <span class="num mono accent">{String(i + 1).padStart(2, "0")}</span>
-              <span class="term">{f.term}</span>
-              <span class="text">{f.text}</span>
-            </li>
-          ))
-        }
-      </ol>
-    </section>
-
-    <section id="screens" class="section wrap">
-      <div class="section-head">
-        <h2>Screens</h2>
-        <p>Straight from the offscreen GUI tests, with their test data.</p>
-      </div>
-      <div class="gallery">
-        {galleryShots.map((shot) => <WindowFrame shot={shot} />)}
-      </div>
-    </section>
-
-    <div class="wrap section-divider" aria-hidden="true">
-      <RetentionTimeline divider />
-    </div>
-
-    <section id="how" class="section wrap">
-      <div class="section-head">
-        <h2>No magic</h2>
-        <p>
-          Every action is a restic command you can inspect. Kestic shows it next to each backup and
-          in the history of every run.
+      <div class="wrap hero-shot">
+        <WindowFrame shot={heroShot} number={1} eager />
+        <p class="mono mute provenance">
+          Rendered by the test suite at <a href={commitUrl}>{buildShaShort}</a>. Every screenshot on
+          this page is.
         </p>
       </div>
-      <pre class="command mono" aria-label="Example restic command run by Kestic"><code><span class="comment"># What "Back Up Now" runs, as shown by "Show Command"</span>
+
+      <section id="features" class="section wrap">
+        <div class="section-head">
+          <h2>What it does</h2>
+          <p>Everything below works today. Restore and onboarding follow in the next milestones.</p>
+        </div>
+        <ol class="features">
+          {
+            features.map((f, i) => (
+              <li>
+                <span class="num mono accent">{String(i + 1).padStart(2, "0")}</span>
+                <span class="term">{f.term}</span>
+                <span class="text">{f.text}</span>
+              </li>
+            ))
+          }
+        </ol>
+      </section>
+
+      <section id="roadmap" class="section wrap">
+        <div class="section-head">
+          <h2>Roadmap</h2>
+          <p>
+            {doneCount} of {milestones.length} milestones done.{" "}
+            {nextMilestone ? `Next up: ${nextMilestone.id} ${nextMilestone.name}.` : "All milestones done."}{" "}
+            Every story and acceptance criterion lives in the repository.
+          </p>
+        </div>
+        <ol class="milestones">
+          {
+            milestones.map((m) => {
+              const state = m.done ? "done" : m === nextMilestone ? "next" : "open";
+              return (
+                <li class={state}>
+                  <span class="id">{m.id}</span>
+                  <span class="bar" aria-hidden="true" />
+                  <span class="what">
+                    <span class="name">{m.name}</span>
+                    <span class="scope">{m.scope}</span>
+                  </span>
+                  <span class="mono state">{state}</span>
+                </li>
+              );
+            })
+          }
+        </ol>
+      </section>
+
+      <section id="screens" class="section wrap">
+        <div class="section-head">
+          <h2>Screens</h2>
+          <p>
+            Straight from the offscreen GUI tests, with their test data. Select a picture to see the
+            whole window.
+          </p>
+        </div>
+        <div class="gallery">
+          {galleryShots.map((shot, i) => <WindowFrame shot={shot} number={i + 2} />)}
+        </div>
+      </section>
+
+      <div class="wrap section-divider" aria-hidden="true">
+        <RetentionTimeline divider />
+      </div>
+
+      <section id="how" class="section wrap">
+        <div class="section-head">
+          <h2>No magic</h2>
+          <p>
+            Every action is a restic command you can inspect. Kestic shows it next to each backup and
+            in the history of every run.
+          </p>
+        </div>
+        <pre class="command mono" aria-label="Example restic command run by Kestic"><code><span class="comment"># What "Back Up Now" runs, as shown by "Show Command"</span>
 RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
   ionice -c 3 nice -n 10 restic -r rest:https://nas.example/kestic \
   --json backup --tag kestic:&lt;backup-id&gt; --group-by tags \
   --exclude-caches --exclude-file excludes.txt -- /home/you<span class="cursor" aria-hidden="true"></span></code></pre>
-      <p class="note">
-        Passwords never appear on the command line or in a config file. restic asks for them
-        through <code class="mono">RESTIC_PASSWORD_COMMAND</code>, and Kestic reads them from the
-        password store.
-      </p>
-
-      <ol class="flow" aria-label="How the parts work together">
-        <li>
-          <span class="mono accent">App</span>
-          <strong>Kestic</strong>
-          <span>Kirigami window for setup, status, and history.</span>
-        </li>
-        <li>
-          <span class="mono accent">D-Bus</span>
-          <strong>Background service</strong>
-          <span>Runs in your session, starts with Plasma, owns all runs. No root, no systemd timers.</span>
-        </li>
-        <li>
-          <span class="mono accent">Process</span>
-          <strong>restic</strong>
-          <span>System restic 0.18.0 or newer does the actual work.</span>
-        </li>
-        <li>
-          <span class="mono accent">Repository</span>
-          <strong>Destination</strong>
-          <span>A local folder or drive, or a REST server. More backends follow in M5.</span>
-        </li>
-      </ol>
-    </section>
-
-    <section id="roadmap" class="section wrap">
-      <div class="section-head">
-        <h2>Roadmap</h2>
-        <p>
-          {nextMilestone ? `Next up: ${nextMilestone.id} ${nextMilestone.name}.` : "All milestones done."}{" "}
-          The specification lives in the repository.
+        <p class="note">
+          Passwords never appear on the command line or in a config file. restic asks for them
+          through <code class="mono">RESTIC_PASSWORD_COMMAND</code>, and Kestic reads them from the
+          password store.
         </p>
-      </div>
-      <ol class="milestones">
-        {
-          milestones.map((m) => (
-            <li class:list={{ done: m.done }}>
-              <span class="bar" aria-hidden="true" />
-              <span class="mono id">{m.id}</span>
-              <span class="name">{m.name}</span>
-              <span class="mono state">{m.done ? "done" : "open"}</span>
-            </li>
-          ))
-        }
-      </ol>
-    </section>
-  </main>
+
+        <ol class="flow" aria-label="How the parts work together">
+          <li>
+            <span class="mono accent">App</span>
+            <strong>Kestic</strong>
+            <span>Kirigami window for setup, status, and history.</span>
+          </li>
+          <li>
+            <span class="mono accent">D-Bus</span>
+            <strong>Background service</strong>
+            <span>Runs in your session, starts with Plasma, owns all runs. No root, no systemd timers.</span>
+          </li>
+          <li>
+            <span class="mono accent">Process</span>
+            <strong>restic</strong>
+            <span>System restic 0.18.0 or newer does the actual work.</span>
+          </li>
+          <li>
+            <span class="mono accent">Repository</span>
+            <strong>Destination</strong>
+            <span>A local folder or drive, or a REST server. More backends follow in M5.</span>
+          </li>
+        </ol>
+      </section>
+
+    </main>
+  </Lightbox>
 
   <footer class="site-footer mono">
     <div class="wrap footer-inner">
@@ -274,6 +326,12 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
   .eyebrow {
     margin: 0 0 20px;
   }
+  .eyebrow a {
+    text-decoration: none;
+  }
+  .eyebrow a:hover {
+    text-decoration: underline;
+  }
   .eyebrow::before {
     content: "";
     display: inline-block;
@@ -327,6 +385,15 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
   .button.primary:hover {
     background: var(--accent);
     color: var(--paper);
+  }
+  .install {
+    max-width: 44em;
+    margin: 20px 0 0;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .install code {
+    color: var(--ink);
   }
   .timeline-hero {
     padding-top: clamp(48px, 7vw, 80px);
@@ -429,36 +496,57 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
     list-style: none;
     margin: 0;
     padding: 0;
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 6px;
+    border-bottom: 1px solid var(--rule);
   }
   .milestones li {
     display: grid;
-    gap: 6px;
-    align-content: start;
+    grid-template-columns: 88px 120px minmax(0, 1fr) 56px;
+    gap: 24px;
+    align-items: center;
+    padding: 18px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .milestones .id {
+    font-size: clamp(28px, 3.4vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
   }
   .milestones .bar {
-    height: 10px;
+    height: 16px;
     border: 1.5px solid var(--ink);
   }
   .milestones .done .bar {
     background: var(--ink);
   }
-  .milestones .id {
-    margin-top: 6px;
-    font-weight: 500;
+  .milestones .next .bar {
+    border-color: var(--accent);
+    border-width: 2px;
+  }
+  .milestones .next .id,
+  .milestones .next .state {
+    color: var(--accent);
+  }
+  .milestones .what {
+    display: grid;
+    gap: 2px;
   }
   .milestones .name {
-    font-size: 15px;
-    line-height: 1.3;
+    font-size: 19px;
+    font-weight: 500;
   }
-  .milestones li:not(.done) .name,
+  .milestones .scope {
+    color: var(--body);
+  }
+  .milestones .open .id,
+  .milestones .open .name,
+  .milestones .open .scope,
   .milestones .state {
     color: var(--mute);
   }
   .milestones .state {
     font-size: 12px;
+    text-align: right;
   }
   .site-footer {
     margin-top: clamp(64px, 10vw, 128px);
@@ -495,22 +583,27 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
       padding: 0 0 22px 18px;
       border-left: 0;
     }
-    .milestones {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0;
-    }
     .milestones li {
-      grid-template-columns: 14px 36px minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 0;
-      border-top: 1px solid var(--rule);
-    }
-    .milestones .bar {
-      height: 14px;
+      grid-template-columns: 52px minmax(0, 1fr) auto;
+      grid-template-areas:
+        "id bar state"
+        "id what what";
+      gap: 8px 14px;
+      align-items: start;
     }
     .milestones .id {
-      margin-top: 0;
+      grid-area: id;
+    }
+    .milestones .bar {
+      grid-area: bar;
+      align-self: center;
+      height: 12px;
+    }
+    .milestones .what {
+      grid-area: what;
+    }
+    .milestones .state {
+      grid-area: state;
     }
   }
 </style>

@@ -2,17 +2,28 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// A screenshot in a plain Breeze-like window frame with a mono caption.
+// A cropped screenshot in a plain Breeze-like window frame with a numbered
+// mono caption. The picture links to the full PNG; inside <Lightbox> the link
+// opens the lightbox instead.
 
 import type { Screenshot } from "../screenshots.ts";
 
 interface Props {
   shot: Screenshot;
+  number: number;
   eager?: boolean;
 }
 
-const { shot, eager = false } = Astro.props;
+const { shot, number, eager = false } = Astro.props;
 const src = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/screenshots/${shot.file}`;
+const { crop } = shot;
+const percent = (ratio: number): string => `${(ratio * 100).toFixed(4)}%`;
+const cropStyle = [
+  `aspect-ratio: ${crop.width} / ${crop.height}`,
+  `--img-width: ${percent(shot.width / crop.width)}`,
+  `--img-left: ${percent(-crop.x / crop.width)}`,
+  `--img-top: ${percent(-crop.y / crop.height)}`,
+].join("; ");
 ---
 
 <figure class="frame">
@@ -21,16 +32,21 @@ const src = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/screenshots/${shot.f
       <span class="title">Kestic</span>
       <span class="buttons"><span class="btn min"></span><span class="btn max"></span><span class="btn close"></span></span>
     </div>
-    <img
-      src={src}
-      alt={shot.alt}
-      width={shot.width}
-      height={shot.height}
-      loading={eager ? "eager" : "lazy"}
-      decoding="async"
-    />
+    <a class="open" href={src} data-lightbox data-caption={shot.caption} style={cropStyle}>
+      <img
+        src={src}
+        alt={shot.alt}
+        width={shot.width}
+        height={shot.height}
+        loading={eager ? "eager" : "lazy"}
+        decoding="async"
+      />
+    </a>
   </div>
-  <figcaption class="mono mute">{shot.caption}</figcaption>
+  <figcaption class="mono">
+    <span class="accent">{String(number).padStart(2, "0")}</span>
+    <span class="mute">{shot.caption}</span>
+  </figcaption>
 </figure>
 
 <style>
@@ -106,10 +122,37 @@ const src = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/screenshots/${shot.f
   .btn.close::after {
     transform: rotate(-45deg);
   }
-  img {
-    width: 100%;
+  .open {
+    display: block;
+    position: relative;
+    overflow: hidden;
+    cursor: zoom-in;
+  }
+  .open img {
+    position: absolute;
+    left: var(--img-left);
+    top: var(--img-top);
+    width: var(--img-width);
+    max-width: none;
+  }
+  .open:focus-visible {
+    outline-offset: -2px;
+  }
+  .window:has(.open:hover) {
+    border-color: var(--accent);
+  }
+  @media (prefers-color-scheme: dark) {
+    .open img {
+      filter: brightness(0.88);
+    }
+    .open:hover img,
+    .open:focus-visible img {
+      filter: none;
+    }
   }
   figcaption {
+    display: flex;
+    gap: 10px;
     margin-top: 10px;
     font-size: 12px;
   }
