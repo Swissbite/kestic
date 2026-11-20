@@ -1,11 +1,15 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: kestic
-Source: https://github.com/daviddaester/kestic
+Source: https://github.com/Swissbite/kestic
 
 Files: docs/* .agents/skills/* AGENTS.md README.md
 Copyright: 2026 David Däster <david@daester.net>
 License: CC-BY-SA-4.0
 
-Files: CLAUDE.md Cargo.lock core/tests/fixtures/*.json
+Files: CLAUDE.md Cargo.lock core/tests/fixtures/*.json site/pnpm-lock.yaml
 Copyright: 2026 David Däster <david@daester.net>
 License: CC0-1.0
+
+Files: site/package.json
+Copyright: 2026 David Däster <david@daester.net>
+License: BSD-2-Clause

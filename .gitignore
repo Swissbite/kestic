@@ -7,3 +7,10 @@
 /.test-tmp/
 *.orig
 .qmlls.ini
+
+# Showcase site (site/): dependencies, build output, generated types and the
+# screenshots copied from the smoke artifacts at build time.
+/site/node_modules/
+/site/dist/
+/site/.astro/
+/site/public/screenshots/

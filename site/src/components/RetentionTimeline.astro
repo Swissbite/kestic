@@ -1,0 +1,94 @@
+---
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// Signature element: the snapshots a retention of 12 monthly, 4 weekly and
+// 7 daily keeps, laid out on a time axis that ends at «now».
+
+interface Props {
+  /** Thin divider without labels. */
+  divider?: boolean;
+}
+
+const { divider = false } = Astro.props;
+
+const monthly = Array.from({ length: 12 }, (_, i) => 6 + i * 50);
+const weekly = Array.from({ length: 4 }, (_, i) => 640 + i * 52);
+const daily = Array.from({ length: 7 }, (_, i) => 852 + i * 19);
+const height = divider ? 24 : 76;
+const axis = divider ? 12 : 34;
+---
+
+<svg
+  class:list={["timeline", { divider }]}
+  viewBox={`0 0 1000 ${height}`}
+  preserveAspectRatio="none"
+  role={divider ? "presentation" : "img"}
+  aria-hidden={divider ? "true" : undefined}
+  aria-label={divider ? undefined : "Retention as a timeline: 12 monthly, 4 weekly and 7 daily snapshots are kept up to now."}
+>
+  <line x1="0" y1={axis} x2="1000" y2={axis} class="axis" />
+  {monthly.map((x) => <rect x={x} y={axis - (divider ? 8 : 14)} width="2.5" height={divider ? 16 : 28} class="tick" />)}
+  {weekly.map((x) => <rect x={x} y={axis - (divider ? 6 : 10)} width="2.5" height={divider ? 12 : 20} class="tick" />)}
+  {daily.map((x) => <rect x={x} y={axis - (divider ? 4 : 6)} width="2.5" height={divider ? 8 : 12} class="tick daily" />)}
+  <circle cx="992" cy={axis} r={divider ? 4 : 6} class="now" />
+</svg>
+{
+  !divider && (
+    <div class="labels mono mute" aria-hidden="true">
+      <span>12 monthly</span>
+      <span class="weekly">4 weekly</span>
+      <span class="daily-label">7 daily</span>
+      <span class="now-label accent">now</span>
+    </div>
+  )
+}
+
+<style>
+  .timeline {
+    width: 100%;
+    height: 76px;
+    color: var(--ink);
+  }
+  .timeline.divider {
+    height: 24px;
+    opacity: 0.55;
+  }
+  .axis {
+    stroke: currentColor;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  .tick {
+    fill: currentColor;
+  }
+  .tick.daily,
+  .now {
+    fill: var(--accent);
+  }
+  .labels {
+    position: relative;
+    height: 20px;
+    margin-top: 2px;
+    font-size: 12px;
+  }
+  .labels span {
+    position: absolute;
+    top: 0;
+    white-space: nowrap;
+  }
+  .labels .weekly {
+    left: 64%;
+  }
+  .labels .daily-label {
+    left: 85.2%;
+  }
+  .labels .now-label {
+    right: 0;
+  }
+  @media (max-width: 560px) {
+    .labels .daily-label {
+      display: none;
+    }
+  }
+</style>

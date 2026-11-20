@@ -65,6 +65,15 @@ Domänenmodell und Persistenz: [domain-model.md](domain-model.md). D-Bus-Schnitt
 - Mindest-Basis = TUXEDO. Breitere Basis nur durch Bauen auf dem ältesten Zielsystem (Container).
 - Andere Paketformate (rpm, AUR) nicht im MVP.
 
+## Showcase-Seite (GitHub Pages)
+
+Entscheid vom 2026-11-20 ([decisions.md](decisions.md)). Die englische Projektseite liegt in `site/` (Astro, TypeScript, pnpm) und erscheint unter `https://swissbite.github.io/kestic/`.
+
+- **Werkzeuge:** Versionen exakt in `site/package.json` und `site/pnpm-lock.yaml`; pnpm über `packageManager`, Node über `devEngines.runtime` (pnpm lädt die gepinnte Version selbst). `site/pnpm-workspace.yaml` verlangt ein Mindestalter neuer Paketversionen (`minimumReleaseAge`) und lässt den optionalen Bilddienst `sharp` weg. `astro check` läuft vor jedem Build.
+- **Screenshots:** `site/src/screenshots.ts` listet die gezeigten Bilder mit Grösse, Bildunterschrift und Alt-Text. Die Integration `site/src/integrations/screenshots.ts` kopiert genau diese Dateien aus `target/smoke-artifacts/` bzw. `KESTIC_SCREENSHOTS_DIR` nach `site/public/screenshots/`; fehlt ein Bild oder stimmt seine Grösse nicht, bricht der Build ab. Die Bilder werden nie committet.
+- **Pipeline:** `.github/workflows/pages.yml` startet nach jedem erfolgreichen Verify-Lauf eines Pushs auf `main` (`workflow_run`, nur Pushs dieses Repos), lädt dessen Artefakt `smoke-artifacts`, baut die Seite aus demselben Commit und veröffentlicht sie mit `actions/deploy-pages`; kein `gh-pages`-Branch. PRs, die `site/` ändern, bauen nur. Die Seite zeigt den Commit der Screenshots als «Development preview». Nach dem ersten Release (Release-Workflow, Q7) kommen die Screenshots aus dem Release, und die Seite erhält einen Download-Link.
+- **Lokal:** `just site` (setzt einen Smoke-Lauf voraus), `just site-dev`, `just site-preview`. `just verify` braucht weiterhin kein Node.
+
 ## Secrets
 
 - **Secret Service API** (`org.freedesktop.secrets`) über den direkten Client `SecretServiceStore` (`daemon/src/secrets.rs`) auf Basis von `zbus 6.3.0` (statt `secret-service`/`keyring`, vgl. [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md)) → auf Plasma KWallet, auf GNOME GNOME Keyring.

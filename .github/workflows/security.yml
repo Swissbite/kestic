@@ -37,7 +37,7 @@ jobs:
         with:
           fail-on-severity: moderate
           comment-summary-in-pr: on-failure
-          allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, GPL-3.0-or-later, ISC, MIT, MPL-2.0, Unicode-3.0, Unlicense, Zlib
+          allow-licenses: 0BSD, Apache-2.0, BlueOak-1.0.0, BSD-2-Clause, BSD-3-Clause, CC0-1.0, GPL-3.0-or-later, ISC, MIT, MPL-2.0, Unicode-3.0, Unlicense, Zlib
 
   cargo-deny:
     name: RustSec & License Audit (cargo-deny)

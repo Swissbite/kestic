@@ -1,0 +1,128 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Builds the showcase site in site/ and deploys it to GitHub Pages
+# (decision 2026-11-20, docs/spec/decisions.md «Showcase-Seite»).
+#
+# Screenshots come from the GUI smoke tests: the `smoke-artifacts` artifact of
+# the successful Verify run on main. Deploying after Verify keeps page text and
+# screenshots on the same commit; every push to main (site/** included) runs
+# Verify first, so no own push trigger is needed. Pull requests touching the
+# site only build it, with the screenshots of the latest successful main run.
+
+name: Pages
+
+on:
+  workflow_run:
+    workflows: [Verify]
+    types: [completed]
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build site
+    # workflow_run also fires for Verify runs of pull requests, and a fork's
+    # branch may be called main as well: only deploy pushes to this repository.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Find the Verify run that provides the screenshots
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            run_id="$RUN_ID"
+            sha="$RUN_SHA"
+          else
+            read -r run_id sha < <(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow verify.yml --branch main --event push --status success \
+              --limit 1 --json databaseId,headSha --jq '.[0] | "\(.databaseId) \(.headSha)"')
+          fi
+          if [ -z "${run_id:-}" ] || [ -z "${sha:-}" ]; then
+            echo "::error::No successful Verify run on main found" >&2
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          # Deploys build the site from the commit the screenshots were rendered
+          # from; pull requests build their own head.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || steps.source.outputs.sha }}
+          persist-credentials: false
+
+      # Downloaded outside the checkout; the build only copies the PNGs listed
+      # in site/src/screenshots.ts and executes nothing from the artifact.
+      - name: Download smoke screenshots
+        uses: actions/download-artifact@v8
+        with:
+          name: smoke-artifacts
+          path: ${{ runner.temp }}/smoke-artifacts
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: site/package.json
+
+      # pnpm provides Node itself (devEngines.runtime in site/package.json).
+      - name: Install site dependencies
+        working-directory: site
+        run: pnpm install --frozen-lockfile
+
+      - name: Check and build site
+        working-directory: site
+        env:
+          KESTIC_SCREENSHOTS_DIR: ${{ runner.temp }}/smoke-artifacts
+          KESTIC_BUILD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || steps.source.outputs.sha }}
+        run: pnpm build
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

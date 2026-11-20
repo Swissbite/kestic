@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Supply-chain hardening for the site toolchain (decision 2026-11-20).
+# A freshly published version is only resolved after one day.
+minimumReleaseAge: 1440
+
+# The site uses plain <img> tags and no image optimisation, so Astro's optional
+# image service is not installed (it would pull in native libvips binaries).
+ignoredOptionalDependencies:
+  - sharp

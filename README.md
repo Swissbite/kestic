@@ -2,7 +2,9 @@
 
 Native KDE Plasma backup manager powered by [restic](https://restic.net): as simple as a beginner-friendly backup tool, as powerful as restic itself.
 
-**Status:** Milestones M0 (Spike), M1 (Walking Skeleton), and M2 (Backup Configuration: exclude rules with simple/expert modes & negation linter, dry-run preview, retention rules & preview, automatic post-backup `forget` with lock catch-up, Exit 3 unreadable file handling, drive mount/UUID source checks, nested source overlap warnings, and full configuration overview) are complete and manually accepted on TUXEDO OS.
+**Status:** Milestones M0 (Spike), M1 (Walking Skeleton), M2 (Backup Configuration: exclude rules with simple/expert modes & negation linter, dry-run preview, retention rules & preview, automatic post-backup `forget` with lock catch-up, Exit 3 unreadable file handling, drive mount/UUID source checks, nested source overlap warnings, and full configuration overview), and M3 (Automation: schedules with catch-up after sleep or shutdown, run conditions for AC power, network, metered connections and allowed Wi-Fi networks, retries and overdue detection, per-destination maintenance with clean up and verify, pausing schedules, and sleep handling during runs: idle/suspend inhibit and a clean interruption on lid close) are complete and manually accepted on TUXEDO OS.
+
+- **Website:** [swissbite.github.io/kestic](https://swissbite.github.io/kestic/), a showcase built from [site/](site/) with screenshots rendered by the GUI test suite.
 
 - **Specification (German):** [docs/spec/](docs/spec/) — start at [backlog.md](docs/spec/backlog.md) and [requirements.md](docs/spec/requirements.md). Internal working specifications under `docs/spec/` are maintained exclusively in German.
 - **Agent & contributor guide:** [AGENTS.md](AGENTS.md)
