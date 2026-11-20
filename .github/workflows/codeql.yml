@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 # CodeQL advanced setup (replaces GitHub's default setup with the same
-# languages, query suite and weekly schedule). The only difference: the Rust
+# languages, default query suite and weekly schedule). The only difference: the Rust
 # rule `rust/hard-coded-cryptographic-value` is filtered out for test code
 # (`**/tests/**`), where hard-coded passwords only protect temporary test
 # repositories. All other rules still cover tests; the rule still covers
@@ -48,7 +48,6 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
-          queries: default
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
