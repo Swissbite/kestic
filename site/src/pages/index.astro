@@ -219,6 +219,7 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
     <div class="wrap footer-inner">
       <span>Kestic · GPL-3.0-or-later · <a href={repoUrl}>Source on GitHub</a></span>
       <span class="mute">Development preview · main @ <a href={commitUrl}>{buildShaShort}</a></span>
+      <span class="mute fonts">Set in Schibsted Grotesk and IBM Plex Mono, both under the SIL Open Font License 1.1.</span>
     </div>
   </footer>
 </Base>
@@ -464,6 +465,9 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
     border-top: 1px solid var(--rule);
     padding: 20px 0 28px;
     font-size: 12px;
+  }
+  .footer-inner .fonts {
+    flex-basis: 100%;
   }
   .footer-inner {
     display: flex;

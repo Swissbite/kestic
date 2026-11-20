@@ -37,7 +37,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [actions, c-cpp, rust]
+        # javascript-typescript covers the TypeScript of the showcase site (site/).
+        language: [actions, c-cpp, javascript-typescript, rust]
 
     steps:
       - name: Checkout repository
@@ -48,6 +49,12 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
+          # Site dependencies and build output are never analysed (they only
+          # exist after a local `pnpm install` / `just site`).
+          config: |
+            paths-ignore:
+              - site/node_modules
+              - site/dist
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
