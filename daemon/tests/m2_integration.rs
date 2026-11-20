@@ -580,10 +580,10 @@ fn verify_stopped_rest_server_preflight(
         fail_status.state, "error",
         "[{label}] expected error on stopped server: {fail_status:?}"
     );
-    let err_msg = fail_status.error.unwrap_or_default().to_lowercase();
-    assert!(
-        err_msg.contains("unreachable") || err_msg.contains("nicht erreichbar"),
-        "[{label}] unexpected error message: {err_msg}"
+    assert_eq!(
+        fail_status.error_kind.map(|k| k.as_str()),
+        Some("destination_unreachable"),
+        "[{label}] unexpected error: {fail_status:?}"
     );
     assert!(
         !spy_marker.exists(),

@@ -145,6 +145,10 @@ fn restic_blocking_and_connection_texts() {
     );
     assert_eq!(
         connection_test_text(false, Some(ConnectionTestCode::WrongPassword), "raw"),
+        UiText::Message(Message::new("Stored password does not match"))
+    );
+    assert_eq!(
+        connection_test_text(false, Some(ConnectionTestCode::CommandFailed), "raw"),
         UiText::Raw("raw".to_string())
     );
     assert_eq!(
@@ -237,4 +241,218 @@ fn overall_headline_follows_the_priority_order() {
 fn placeholders_are_substituted_once() {
     let m = Message::with_args("%1 · %2 (%1%) %3", &["a%2", "b"]);
     assert_eq!(m.english(), "a%2 · b (a%2%) %3");
+}
+
+/// Checks that `table` lists every variant of `all` exactly once and that each variant maps to
+/// its msgid (`None` = shown as raw detail).
+fn assert_table<T>(all: &[T], table: &[(T, Option<&str>)], text: impl Fn(T) -> UiText)
+where
+    T: Copy + std::fmt::Debug + PartialEq,
+{
+    assert_eq!(table.len(), all.len(), "table must list every variant once");
+    for variant in all {
+        let (_, expected) = table
+            .iter()
+            .find(|(v, _)| v == variant)
+            .unwrap_or_else(|| panic!("{variant:?} missing in table"));
+        let actual = match text(*variant) {
+            UiText::Message(m) => Some(m.msgid),
+            UiText::Raw(_) => None,
+        };
+        assert_eq!(actual, *expected, "{variant:?}");
+    }
+}
+
+fn msg(m: Message) -> UiText {
+    UiText::Message(m)
+}
+
+#[test]
+fn every_error_kind_maps_to_its_msgid() {
+    use ErrorKind as E;
+    let table = [
+        (E::WrongPassword, Some("Stored password does not match")),
+        (E::RepoMissing, Some("Repository is missing")),
+        (E::Locked, Some("Repository is locked")),
+        (E::DestinationUnreachable, Some("Destination unreachable")),
+        (E::SourceUnavailable, Some("Source unavailable")),
+        (E::AuthFailed, Some("Authentication at destination failed")),
+        (
+            E::IncompleteSnapshot,
+            Some("Snapshot incomplete: some files could not be read"),
+        ),
+        (
+            E::RetentionPending,
+            Some("Backed up, retention not executed"),
+        ),
+        (E::Cancelled, Some("Cancelled by user")),
+        (E::SecretStoreLocked, Some("Password store is locked")),
+        (
+            E::ResticUnavailable,
+            Some("restic is unavailable or too old."),
+        ),
+        (E::Unknown, Some("Backup command failed")),
+    ];
+    assert_table(&ErrorKind::ALL, &table, |k| msg(k.message(None, false)));
+    // `text`: only `unknown` with a detail shows the detail raw.
+    let raw_unknown = table.map(|(k, m)| (k, if k == E::Unknown { None } else { m }));
+    assert_table(&ErrorKind::ALL, &raw_unknown, |k| k.text(Some("raw")));
+}
+
+#[test]
+fn every_pending_reason_maps_to_its_msgids() {
+    use PendingReasonCode as P;
+    let waiting = [
+        (P::SourceUnavailable, Some("Waiting: source unavailable")),
+        (
+            P::DestinationUnreachable,
+            Some("Waiting: destination unreachable"),
+        ),
+        (P::OnBattery, Some("Waiting: AC power")),
+        (P::NoNetwork, Some("Waiting: network")),
+        (P::Metered, Some("Waiting: unmetered connection")),
+        (P::WrongNetwork, Some("Waiting: allowed network")),
+        (P::Queue, Some("Waiting: another run on this destination")),
+        (P::Backoff, Some("Waiting: next attempt at %1")),
+    ];
+    assert_table(&P::ALL, &waiting, |c| msg(c.waiting_message("")));
+    let condition = [
+        (P::SourceUnavailable, Some("source available")),
+        (P::DestinationUnreachable, Some("destination reachable")),
+        (P::OnBattery, Some("AC power")),
+        (P::NoNetwork, Some("network connection")),
+        (P::Metered, Some("unmetered connection")),
+        (P::WrongNetwork, Some("allowed network (%1)")),
+        (P::Queue, Some("another run on this destination")),
+        (P::Backoff, Some("retry cooldown")),
+    ];
+    assert_table(&P::ALL, &condition, |c| msg(c.condition_message(None, &[])));
+}
+
+#[test]
+fn every_source_blocked_and_skip_code_maps_to_its_msgid() {
+    use SourceStatus as S;
+    let source = [
+        (S::PathMissing, Some("Source unavailable")),
+        (
+            S::DriveNotMounted,
+            Some("Source unavailable: drive not mounted"),
+        ),
+        (
+            S::DriveMismatch,
+            Some("Source unavailable: different drive"),
+        ),
+        (S::DriveEmpty, Some("Source unavailable: source empty")),
+    ];
+    assert_table(&S::ALL, &source, |s| msg(SourceStatus::message(Some(s))));
+
+    use BlockedReason as B;
+    let reason = [
+        (B::SourceUnavailable, Some("Source unavailable")),
+        (B::DestinationUnreachable, Some("Destination unreachable")),
+        (B::ConditionNotMet, Some("Run condition not met")),
+    ];
+    assert_table(&B::ALL, &reason, |r| msg(r.message(None)));
+    let manual = [
+        (
+            B::SourceUnavailable,
+            Some("Cannot back up '%1': source is unavailable."),
+        ),
+        (
+            B::DestinationUnreachable,
+            Some("Cannot back up '%1': destination is unreachable."),
+        ),
+        (
+            B::ConditionNotMet,
+            Some("Cannot back up '%1': run conditions are not met."),
+        ),
+    ];
+    assert_table(&B::ALL, &manual, |r| msg(r.manual_block_message("B")));
+
+    use SkipReason as K;
+    let skip = [
+        (K::PermanentError, Some("permanent error, fix required")),
+        (K::SourceUnavailable, Some("source unavailable")),
+        (K::DestinationUnreachable, Some("destination unreachable")),
+        (K::ConditionNotMet, Some("run conditions not met")),
+        (K::Error, Some("Backup command failed")),
+    ];
+    assert_table(&K::ALL, &skip, |r| r.text(None, None));
+}
+
+#[test]
+fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
+    use ResticStatusCode as R;
+    let restic = [
+        (R::NotFound, Some("restic not found; at least %1 required")),
+        (
+            R::TooOld,
+            Some("restic %1 is too old; Kestic needs at least %2"),
+        ),
+        (
+            R::InvalidCustomPath,
+            Some("Custom restic path is invalid (%1): %2"),
+        ),
+        (
+            R::UnreadableVersion,
+            Some("Unable to determine restic version (%1)"),
+        ),
+    ];
+    assert_table(&R::ALL, &restic, |c| msg(c.message(None, None, None)));
+
+    let blocking = [
+        (
+            BlockingKind::SecretStoreLocked,
+            Some(
+                "The system password store (Secret Service / KWallet) is locked. Kestic cannot access destinations.",
+            ),
+        ),
+        (
+            BlockingKind::ResticUnavailable,
+            Some("restic is unavailable or too old."),
+        ),
+    ];
+    assert_table(&BlockingKind::ALL, &blocking, |k| msg(k.message(None)));
+
+    use ConnectionTestCode as C;
+    let connection = [
+        (C::InvalidInput, None),
+        (
+            C::DuplicateLocation,
+            Some("This location is already used by destination '%1'."),
+        ),
+        (C::DestinationUnreachable, Some("Destination unreachable")),
+        (
+            C::RepositoryExists,
+            Some(
+                "This folder already contains a restic repository. Choose 'Connect existing repository' instead.",
+            ),
+        ),
+        (C::NotWritable, Some("Folder is not writable: %1")),
+        (
+            C::MissingPassword,
+            Some("No repository password provided or stored."),
+        ),
+        (C::SecretStoreLocked, Some("Password store is locked")),
+        (C::Internal, None),
+        (
+            C::ResticUnavailable,
+            Some("restic is unavailable or too old."),
+        ),
+        (C::WrongPassword, Some("Stored password does not match")),
+        (C::AuthFailed, Some("Authentication at destination failed")),
+        (C::RepositoryMissing, Some("Repository is missing")),
+        (C::CommandFailed, None),
+        (C::DaemonUnreachable, None),
+    ];
+    assert_table(&C::ALL, &connection, |c| c.text("x"));
+
+    use crate::restic::RecoveryAction as A;
+    let actions = [
+        (A::UpdateStoredPassword, Some("Update Saved Password…")),
+        (A::AddToExcludes, Some("Add to Exclude Rules…")),
+        (A::CheckResticSource, Some("Configure restic Source…")),
+        (A::UnlockRepository, Some("Release Lock…")),
+    ];
+    assert_table(&A::ALL, &actions, |a| msg(a.label_message()));
 }

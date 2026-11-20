@@ -5,7 +5,7 @@
 //! and source detection / nested-warning checks for [`super::qobject::KesticApp`].
 
 use super::{friendly_dbus_error, qobject};
-use crate::state_cache::{format_retention_summary, make_client, shared_state};
+use crate::state_cache::{format_retention_summary, make_client, shared_state, tr_text};
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::model::{ExcludeRules, RetentionPolicy, normalize_folder_rule};
@@ -132,8 +132,9 @@ impl qobject::KesticApp {
                     let rjson = serde_json::to_string(res).unwrap_or_else(|_| "{}".to_string());
                     self.as_mut().set_dry_run_result_json(QString::from(&rjson));
                 }
-                if let Some(ref err) = status.error {
-                    self.as_mut().set_dry_run_error(QString::from(err));
+                if let Some(kind) = status.error_kind {
+                    let text = tr_text(&kind.text(status.error_detail.as_deref()));
+                    self.as_mut().set_dry_run_error(QString::from(&text));
                 }
                 QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
             }
@@ -234,9 +235,10 @@ impl qobject::KesticApp {
                     self.as_mut()
                         .set_retention_preview_result_json(QString::from(&rjson));
                 }
-                if let Some(ref err) = status.error {
+                if let Some(kind) = status.error_kind {
+                    let text = tr_text(&kind.text(status.error_detail.as_deref()));
                     self.as_mut()
-                        .set_retention_preview_error(QString::from(err));
+                        .set_retention_preview_error(QString::from(&text));
                 }
                 QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
             }

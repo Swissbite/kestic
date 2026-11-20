@@ -151,9 +151,7 @@ fn claim_backup_destination(
         .ok_or_else(|| KesticServiceErr::NotFound(backup.destination_id.as_str().to_string()))?;
 
     if is_scheduled && guard.sleep_in_progress {
-        return Err(KesticServiceErr::ManualRunBlocked(
-            "sleep_in_progress".to_string(),
-        ));
+        return Err(KesticServiceErr::SleepInProgress);
     }
     if guard.is_destination_busy(&dest.id) {
         return Err(KesticServiceErr::AlreadyRunning(format!(
@@ -237,7 +235,7 @@ fn handle_backup_precheck_failure(
             emit_status_changed(conn, &state_dto);
         }
         return if !source_ok {
-            KesticServiceErr::ManualRunBlocked(reason.as_str().to_string())
+            KesticServiceErr::ManualRunBlocked(reason)
         } else {
             KesticServiceErr::DestinationUnreachable(dest_res.unwrap_err().to_string())
         };
@@ -252,14 +250,14 @@ fn handle_backup_precheck_failure(
         tray.set_full_state(tray_state);
     }
     if let Some(conn) = &conn_opt {
-        emit_manual_run_blocked(conn, &backup.id, reason.as_str());
+        emit_manual_run_blocked(conn, &backup.id, reason);
         emit_status_changed(conn, &state_dto);
     }
     if !window_active {
         let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
         let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &source_body);
     }
-    KesticServiceErr::ManualRunBlocked(reason.as_str().to_string())
+    KesticServiceErr::ManualRunBlocked(reason)
 }
 
 fn handle_backup_unmet_conditions(
@@ -279,14 +277,14 @@ fn handle_backup_unmet_conditions(
         tray.set_full_state(tray_state);
     }
     if let Some(conn) = &conn_opt {
-        emit_manual_run_blocked(conn, &backup.id, BlockedReason::ConditionNotMet.as_str());
+        emit_manual_run_blocked(conn, &backup.id, BlockedReason::ConditionNotMet);
         emit_status_changed(conn, &state_dto);
     }
     if !window_active {
         let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
         let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &body);
     }
-    KesticServiceErr::ManualRunBlocked(BlockedReason::ConditionNotMet.as_str().to_string())
+    KesticServiceErr::ManualRunBlocked(BlockedReason::ConditionNotMet)
 }
 
 struct LaunchedBackupRun {
@@ -408,9 +406,7 @@ fn start_backup_internal(
         if is_scheduled && guard.sleep_in_progress {
             guard.claiming_destinations.remove(&ctx.dest.id);
             ctx.claim_guard.disarm();
-            return Err(KesticServiceErr::ManualRunBlocked(
-                "sleep_in_progress".to_string(),
-            ));
+            return Err(KesticServiceErr::SleepInProgress);
         }
 
         let now = guard.clock.now_utc();

@@ -12,12 +12,12 @@ use kestic_core::destination::{DestinationError, DestinationSetupMode};
 use kestic_core::mount::SourceCheckResult;
 use kestic_core::provider::ResticProviderError;
 use kestic_core::restic::{ResticFailureKind, classify_exit};
+use kestic_core::secrets::SecretError;
 
 /// Daemon-language summary of a classified restic failure (notifications, run history).
 pub(crate) fn localized_failure_summary(kind: &ResticFailureKind) -> String {
     tr(&kind.summary_message())
 }
-use kestic_core::secrets::SecretError;
 
 /// Internal service error mapped to `net.daester.Kestic.Error.*` D-Bus errors.
 #[derive(Debug)]
@@ -25,7 +25,11 @@ pub enum KesticServiceErr {
     InvalidInput(String),
     NotFound(String),
     InUse(String),
-    ManualRunBlocked(String),
+    /// Manual start blocked by an unavailable source/destination or unmet run conditions; the
+    /// D-Bus error payload is the reason code.
+    ManualRunBlocked(BlockedReason),
+    /// Scheduled start refused while the system prepares for sleep (internal, never shown).
+    SleepInProgress,
     DestinationUnreachable(String),
     WrongPassword(String),
     AuthFailed(String),
@@ -41,7 +45,6 @@ impl std::fmt::Display for KesticServiceErr {
             Self::InvalidInput(m)
             | Self::NotFound(m)
             | Self::InUse(m)
-            | Self::ManualRunBlocked(m)
             | Self::DestinationUnreachable(m)
             | Self::WrongPassword(m)
             | Self::AuthFailed(m)
@@ -49,6 +52,8 @@ impl std::fmt::Display for KesticServiceErr {
             | Self::ResticUnavailable(m)
             | Self::AlreadyRunning(m)
             | Self::Internal(m) => f.write_str(m),
+            Self::ManualRunBlocked(reason) => f.write_str(reason.as_str()),
+            Self::SleepInProgress => f.write_str("sleep_in_progress"),
         }
     }
 }
@@ -59,7 +64,9 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::InvalidInput(m) => KesticDbusError::InvalidInput(m),
             KesticServiceErr::NotFound(m) => KesticDbusError::NotFound(m),
             KesticServiceErr::InUse(m) => KesticDbusError::InUse(m),
-            KesticServiceErr::ManualRunBlocked(m) => KesticDbusError::ManualRunBlocked(m),
+            err @ (KesticServiceErr::ManualRunBlocked(_) | KesticServiceErr::SleepInProgress) => {
+                KesticDbusError::ManualRunBlocked(err.to_string())
+            }
             KesticServiceErr::DestinationUnreachable(m) => {
                 KesticDbusError::DestinationUnreachable(m)
             }
@@ -97,9 +104,7 @@ pub(super) fn map_secret_err(err: SecretError) -> KesticServiceErr {
 
 pub(super) fn map_destination_err(err: DestinationError) -> KesticServiceErr {
     match err {
-        DestinationError::WrongPassword => {
-            KesticServiceErr::WrongPassword(tr(&ErrorKind::WrongPassword.message(None, false)))
-        }
+        err @ DestinationError::WrongPassword => KesticServiceErr::WrongPassword(err.to_string()),
         DestinationError::AuthFailed(m) => KesticServiceErr::AuthFailed(m),
         DestinationError::Unreachable(m) => KesticServiceErr::DestinationUnreachable(m),
         DestinationError::Secret(e) => map_secret_err(e),
@@ -129,10 +134,10 @@ pub(super) fn service_error_kind(err: &KesticServiceErr) -> ErrorKind {
     }
 }
 
-/// Blocked reason carried by a [`KesticServiceErr::ManualRunBlocked`] (its message is the code).
+/// Blocked reason carried by a [`KesticServiceErr::ManualRunBlocked`].
 pub(super) fn manual_run_blocked_reason(err: &KesticServiceErr) -> Option<BlockedReason> {
     match err {
-        KesticServiceErr::ManualRunBlocked(code) => BlockedReason::parse(code),
+        KesticServiceErr::ManualRunBlocked(reason) => Some(*reason),
         _ => None,
     }
 }
@@ -140,6 +145,29 @@ pub(super) fn manual_run_blocked_reason(err: &KesticServiceErr) -> Option<Blocke
 /// Daemon-language reason of an unavailable source (run history, notifications).
 pub(super) fn localized_source_check_reason(status: &SourceCheckResult) -> String {
     tr(&SourceStatus::message(SourceStatus::from_check(status)))
+}
+
+/// Error kind of a failed run or preview (`BackupDryRunStatusDto`, `RetentionPreviewStatusDto`);
+/// the raw detail is `err.to_string()`.
+pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
+    match err {
+        BackupRunError::SourceUnavailable(_) => ErrorKind::SourceUnavailable,
+        BackupRunError::Cancelled => ErrorKind::Cancelled,
+        BackupRunError::Destination(dest_err) => match dest_err {
+            DestinationError::Unreachable(_) => ErrorKind::DestinationUnreachable,
+            DestinationError::AuthFailed(_) => ErrorKind::AuthFailed,
+            DestinationError::WrongPassword => ErrorKind::WrongPassword,
+            DestinationError::RepositoryMissing(_) => ErrorKind::RepoMissing,
+            DestinationError::Secret(_) => ErrorKind::SecretStoreLocked,
+            DestinationError::CommandFailed { exit_code, message } => {
+                classify_exit(*exit_code, None, Vec::new(), message)
+                    .kind
+                    .error_kind()
+            }
+            _ => ErrorKind::Unknown,
+        },
+        _ => ErrorKind::Unknown,
+    }
 }
 
 pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {

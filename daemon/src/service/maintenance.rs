@@ -100,9 +100,7 @@ fn claim_maintenance_destination(
         .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
 
     if is_scheduled && guard.sleep_in_progress {
-        return Err(KesticServiceErr::ManualRunBlocked(
-            "sleep_in_progress".to_string(),
-        ));
+        return Err(KesticServiceErr::SleepInProgress);
     }
     if guard.is_destination_busy(&dest.id) {
         return Err(KesticServiceErr::AlreadyRunning(format!(
@@ -250,9 +248,7 @@ fn run_destination_maintenance_internal(
         if is_scheduled && guard.sleep_in_progress {
             guard.claiming_destinations.remove(&d_id);
             ctx.claim_guard.disarm();
-            return Err(KesticServiceErr::ManualRunBlocked(
-                "sleep_in_progress".to_string(),
-            ));
+            return Err(KesticServiceErr::SleepInProgress);
         }
         let now = guard.clock.now_utc();
         guard.availability_probe_count += 1;

@@ -230,7 +230,7 @@ pub struct DestinationSummaryDto {
     /// `on_battery` | `metered` | `queue` | `backoff` (same codes as backup pending reasons).
     #[serde(default)]
     pub maintenance_pending_reason: Option<PendingReasonCode>,
-    /// Next maintenance retry while `maintenance_pending_reason == "backoff"`.
+    /// Next maintenance retry while `maintenance_pending_reason` is `backoff`.
     #[serde(default)]
     pub maintenance_retry_at_unix: Option<i64>,
 }
@@ -1011,7 +1011,10 @@ pub struct BackupDryRunStatusDto {
     /// `"running"` | `"done"` | `"cancelled"` | `"error"`
     pub state: String,
     pub result: Option<BackupDryRunResult>,
-    pub error: Option<String>,
+    /// Cause while `state == "error"`.
+    pub error_kind: Option<ErrorKind>,
+    /// Raw error text (shown for `unknown`).
+    pub error_detail: Option<String>,
 }
 
 /// Asynchronous retention preview status returned by `GetRetentionPreviewStatus` (`M2-S06`).
@@ -1021,7 +1024,10 @@ pub struct RetentionPreviewStatusDto {
     /// `"running"` | `"done"` | `"cancelled"` | `"error"`
     pub state: String,
     pub result: Option<ForgetPreviewResult>,
-    pub error: Option<String>,
+    /// Cause while `state == "error"`.
+    pub error_kind: Option<ErrorKind>,
+    /// Raw error text (shown for `unknown`).
+    pub error_detail: Option<String>,
 }
 
 /// Preview of the exclude rule generated for an unreadable path (`M2-S08`).

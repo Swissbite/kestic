@@ -91,7 +91,7 @@ fn ac_m1_04_4_missing_system_restic_reports_not_found() {
         min_version: MIN_RESTIC_VERSION.to_string(),
     };
     let msg = err.to_string();
-    assert!(msg.contains("restic nicht gefunden"));
+    assert!(msg.contains("restic not found"));
     assert!(msg.contains("0.18.0"));
 }
 
@@ -115,6 +115,6 @@ fn ac_m1_04_5_json_failure_falls_back_to_text_and_unreadable_is_rejected() {
     assert!(matches!(err, ResticProviderError::UnreadableVersion { .. }));
     assert!(
         err.to_string()
-            .contains("Version von restic nicht erkennbar")
+            .contains("unable to determine restic version")
     );
 }

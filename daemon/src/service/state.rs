@@ -16,7 +16,7 @@ use crate::secrets::SecretServiceStore;
 use crate::tray::{KesticTrayState, TrayHandle, TrayStatus};
 use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult, default_state_dir};
 use kestic_core::clock::{Clock, SystemClock};
-use kestic_core::codes::{BlockingKind, PendingReasonCode, ResticStatusCode};
+use kestic_core::codes::{BlockingKind, ErrorKind, PendingReasonCode, ResticStatusCode};
 use kestic_core::config::{AppConfig, load_optional_config, save_config};
 use kestic_core::history::{
     BackupRuntimeState, DestinationMaintenanceState, HistoryError, PauseState, RunHistory,
@@ -146,14 +146,16 @@ pub(super) struct ActiveRunEntry {
 pub(super) struct DryRunEntry {
     pub(super) state: String,
     pub(super) result: Option<BackupDryRunResult>,
-    pub(super) error: Option<String>,
+    /// Error kind and raw detail while `state == "error"`.
+    pub(super) error: Option<(ErrorKind, String)>,
     pub(super) cancel: CancelHandle,
 }
 
 pub(super) struct RetentionPreviewEntry {
     pub(super) state: String,
     pub(super) result: Option<ForgetPreviewResult>,
-    pub(super) error: Option<String>,
+    /// Error kind and raw detail while `state == "error"`.
+    pub(super) error: Option<(ErrorKind, String)>,
     pub(super) cancel: CancelHandle,
 }
 
@@ -700,14 +702,14 @@ pub(super) fn probe_before_run(
                 .1
                 .detail
                 .clone()
-                .unwrap_or_else(|| i18n("Password store is locked").into()),
+                .unwrap_or_else(|| "password store is locked".to_string()),
         ),
         Err(_) if !probe.1.available => KesticServiceErr::SecretStoreLocked(
             probe
                 .1
                 .detail
                 .clone()
-                .unwrap_or_else(|| i18n("Password store is locked").into()),
+                .unwrap_or_else(|| "password store is locked".to_string()),
         ),
         Err(err) => map_provider_err(err),
     };

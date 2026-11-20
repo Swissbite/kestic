@@ -280,6 +280,16 @@ impl ResticStatusCode {
         Self::InvalidCustomPath,
         Self::UnreadableVersion,
     ];
+
+    /// Code string, equal to the serde name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotFound => "not_found",
+            Self::TooOld => "too_old",
+            Self::InvalidCustomPath => "invalid_custom_path",
+            Self::UnreadableVersion => "unreadable_version",
+        }
+    }
 }
 
 /// Blocking state of the whole app (`BlockingStateDto.kind`, `zustaende.md` §6.1).
@@ -382,6 +392,41 @@ pub enum OverallStatusKind {
     Ok,
 }
 
+impl OverallStatusKind {
+    pub const ALL: [Self; 12] = [
+        Self::Blocked,
+        Self::Error,
+        Self::Overdue,
+        Self::Warning,
+        Self::Running,
+        Self::Paused,
+        Self::Pending,
+        Self::Interrupted,
+        Self::Cancelled,
+        Self::NeverRun,
+        Self::ManualOnly,
+        Self::Ok,
+    ];
+
+    /// Code string, equal to the serde name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blocked => "blocked",
+            Self::Error => "error",
+            Self::Overdue => "overdue",
+            Self::Warning => "warning",
+            Self::Running => "running",
+            Self::Paused => "paused",
+            Self::Pending => "pending",
+            Self::Interrupted => "interrupted",
+            Self::Cancelled => "cancelled",
+            Self::NeverRun => "never_run",
+            Self::ManualOnly => "manual_only",
+            Self::Ok => "ok",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,7 +459,7 @@ mod tests {
         assert_eq!(json(OverallStatusKind::NeverRun), "\"never_run\"");
     }
 
-    /// `as_str` and the serde name agree for every code that also travels as a plain string.
+    /// `as_str` and the serde name agree for every variant, which pins all JSON names.
     #[test]
     fn as_str_matches_serde_name() {
         for r in BlockedReason::ALL {
@@ -423,6 +468,12 @@ mod tests {
         }
         for r in SkipReason::ALL {
             assert_eq!(json(r), format!("\"{}\"", r.as_str()));
+        }
+        for k in ResticStatusCode::ALL {
+            assert_eq!(json(k), format!("\"{}\"", k.as_str()));
+        }
+        for k in OverallStatusKind::ALL {
+            assert_eq!(json(k), format!("\"{}\"", k.as_str()));
         }
         for k in ErrorKind::ALL {
             assert_eq!(json(k), format!("\"{}\"", k.as_str()));

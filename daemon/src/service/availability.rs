@@ -473,7 +473,7 @@ pub fn unlock_destination_async(
         return Err(KesticServiceErr::SecretStoreLocked(
             secret_status
                 .detail
-                .unwrap_or_else(|| i18n("Password store is locked").into()),
+                .unwrap_or_else(|| "password store is locked".to_string()),
         ));
     }
     let resolved_bin = resolve_and_check(&resolved).map_err(map_provider_err)?;

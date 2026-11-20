@@ -384,9 +384,20 @@ fn ac_m3_03_7_manual_override_applies_to_one_run_only() {
                     "{}: (a) state exposes the unmet run condition",
                     variant.label
                 );
-                assert!(
-                    !summary.unmet_run_conditions.is_empty(),
+                assert_eq!(
+                    summary
+                        .unmet_run_conditions
+                        .iter()
+                        .map(|c| c.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["on_battery"],
                     "{}: (a) state names the unmet condition",
+                    variant.label
+                );
+                assert_eq!(
+                    summary.battery_percent,
+                    Some(55),
+                    "{}: (a) state carries the battery level for the condition text",
                     variant.label
                 );
 

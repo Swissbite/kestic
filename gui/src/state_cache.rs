@@ -112,7 +112,7 @@ pub struct SharedGuiState {
     pub state_dirty: bool,
     pub progress_dirty: bool,
     pub listener_started: bool,
-    pub pending_blocked: Option<(String, String)>,
+    pub pending_blocked: Option<(String, BlockedReason)>,
     pub pending_show_window: bool,
     pub pending_quit: Option<(bool, String)>,
     pub maintenance_preview: Option<(String, Result<String, String>)>,
@@ -399,8 +399,9 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                         }
                     }
                     Some("ManualRunBlocked") => {
-                        if let Ok((backup_id, reason)) =
-                            msg.body().deserialize::<(String, String)>()
+                        // A reason code this GUI does not know is ignored, never guessed.
+                        if let Ok((backup_id, code)) = msg.body().deserialize::<(String, String)>()
+                            && let Some(reason) = BlockedReason::parse(&code)
                         {
                             let mut guard =
                                 shared_state().lock().unwrap_or_else(|p| p.into_inner());

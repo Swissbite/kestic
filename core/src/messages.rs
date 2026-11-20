@@ -116,6 +116,19 @@ impl ErrorKind {
     }
 }
 
+impl ErrorKind {
+    /// Text of an error without run context: the message of the kind, or for `unknown` the
+    /// raw `detail` (English restic, system or daemon error text) when there is one.
+    pub fn text(self, detail: Option<&str>) -> UiText {
+        match detail {
+            Some(raw) if self == Self::Unknown && !raw.trim().is_empty() => {
+                UiText::Raw(raw.to_string())
+            }
+            _ => UiText::Message(self.message(None, false)),
+        }
+    }
+}
+
 impl ResticFailureKind {
     /// One-sentence summary of a classified restic outcome (`FR-37`) for notifications and the
     /// run history; finer than [`ErrorKind`] (DNS, «Completed»).
@@ -265,15 +278,7 @@ impl SkipReason {
             Self::SourceUnavailable => i18n_noop("source unavailable"),
             Self::DestinationUnreachable => i18n_noop("destination unreachable"),
             Self::ConditionNotMet => i18n_noop("run conditions not met"),
-            Self::Error => {
-                return match (error_kind, detail) {
-                    (Some(kind), _) if kind != ErrorKind::Unknown => {
-                        UiText::Message(kind.message(None, false))
-                    }
-                    (_, Some(raw)) if !raw.trim().is_empty() => UiText::Raw(raw.to_string()),
-                    _ => UiText::Message(ErrorKind::Unknown.message(None, false)),
-                };
-            }
+            Self::Error => return error_kind.unwrap_or(ErrorKind::Unknown).text(detail),
         };
         UiText::Message(Message::new(msgid))
     }
@@ -338,7 +343,8 @@ impl BlockingKind {
 }
 
 impl ConnectionTestCode {
-    /// Failure text of a connection test; codes without own text show the raw `detail`.
+    /// Failure text of a connection test. Only codes whose `detail` is the actual information
+    /// (`invalid_input`, `internal`, `command_failed`, `daemon_unreachable`) show it raw.
     pub fn text(self, detail: &str) -> UiText {
         let message = match self {
             Self::DuplicateLocation => Message::with_args(
@@ -354,16 +360,15 @@ impl ConnectionTestCode {
             Self::MissingPassword => {
                 Message::new(i18n_noop("No repository password provided or stored."))
             }
-            Self::InvalidInput
-            | Self::DestinationUnreachable
-            | Self::SecretStoreLocked
-            | Self::Internal
-            | Self::ResticUnavailable
-            | Self::WrongPassword
-            | Self::AuthFailed
-            | Self::RepositoryMissing
-            | Self::CommandFailed
-            | Self::DaemonUnreachable => return UiText::Raw(detail.to_string()),
+            Self::DestinationUnreachable => ErrorKind::DestinationUnreachable.message(None, false),
+            Self::SecretStoreLocked => ErrorKind::SecretStoreLocked.message(None, false),
+            Self::ResticUnavailable => ErrorKind::ResticUnavailable.message(None, false),
+            Self::WrongPassword => ErrorKind::WrongPassword.message(None, false),
+            Self::AuthFailed => ErrorKind::AuthFailed.message(None, false),
+            Self::RepositoryMissing => ErrorKind::RepoMissing.message(None, false),
+            Self::InvalidInput | Self::Internal | Self::CommandFailed | Self::DaemonUnreachable => {
+                return UiText::Raw(detail.to_string());
+            }
         };
         UiText::Message(message)
     }

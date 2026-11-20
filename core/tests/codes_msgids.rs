@@ -158,8 +158,9 @@ fn all_messages() -> Vec<(String, Message)> {
     );
     for reason in SkipReason::ALL {
         for kind in ErrorKind::ALL.map(Some).into_iter().chain([None]) {
-            if let UiText::Message(m) = reason.text(kind, None) {
-                push(format!("{reason:?}/{kind:?}"), m);
+            match reason.text(kind, None) {
+                UiText::Message(m) => push(format!("{reason:?}/{kind:?}"), m),
+                UiText::Raw(raw) => panic!("{reason:?}/{kind:?}: raw text {raw:?} without detail"),
             }
         }
     }
@@ -172,14 +173,30 @@ fn all_messages() -> Vec<(String, Message)> {
     for kind in BlockingKind::ALL {
         push(format!("{kind:?}"), kind.message(None));
     }
+    // Codes whose detail is the information itself; every other code must have a msgid.
+    let raw_codes = [
+        ConnectionTestCode::InvalidInput,
+        ConnectionTestCode::Internal,
+        ConnectionTestCode::CommandFailed,
+        ConnectionTestCode::DaemonUnreachable,
+    ];
     for code in ConnectionTestCode::ALL {
-        if let UiText::Message(m) = connection_test_text(false, Some(code), "x") {
-            push(format!("{code:?}"), m);
+        match connection_test_text(false, Some(code), "x") {
+            UiText::Message(m) => push(format!("{code:?}"), m),
+            UiText::Raw(_) => assert!(raw_codes.contains(&code), "{code:?} must be translated"),
         }
     }
     if let UiText::Message(m) = connection_test_text(true, None, "") {
         push("reachable".into(), m);
     }
+    out.extend(overall_messages());
+    out
+}
+
+/// Headline, subtitle and active-run messages of the overall status.
+fn overall_messages() -> Vec<(String, Message)> {
+    let mut out: Vec<(String, Message)> = Vec::new();
+    let mut push = |label: String, m: Message| out.push((label, m));
     for (name, is_maintenance) in [("run", false), ("maint", true)] {
         let run = ActiveRunInfo {
             name,
@@ -237,7 +254,7 @@ fn all_messages() -> Vec<(String, Message)> {
 /// Every code variant has a non-empty msgid with a German translation, and msgid, translation
 /// and arguments agree on the placeholders.
 #[test]
-fn a_plus_every_code_maps_to_a_translated_msgid() {
+fn every_code_maps_to_a_translated_msgid() {
     let catalog = german_catalog();
     let messages = all_messages();
     assert!(

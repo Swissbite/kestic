@@ -104,7 +104,7 @@ impl qobject::KesticApp {
         }
     }
 
-    fn handle_pending_blocked(mut self: Pin<&mut Self>, backup_id: String, reason: String) {
+    fn handle_pending_blocked(mut self: Pin<&mut Self>, backup_id: String, reason: BlockedReason) {
         let (backup_name, unmet_text) = {
             let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
             guard
@@ -114,7 +114,6 @@ impl qobject::KesticApp {
                 .map(|b| (b.backup.name.clone(), localized_unmet_conditions(b)))
                 .unwrap_or_else(|| (backup_id.clone(), None))
         };
-        let reason = BlockedReason::parse(&reason).unwrap_or(BlockedReason::DestinationUnreachable);
         if reason == BlockedReason::ConditionNotMet {
             let msg = localized_condition_override_message(&backup_name, unmet_text.as_deref());
             self.as_mut()

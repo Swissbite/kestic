@@ -107,8 +107,8 @@ Kirigami.ScrollablePage {
                 if (dto.result) {
                     page.dryRunResult = dto.result;
                 }
-                if (dto.error) {
-                    page.dryRunError = dto.error;
+                if (dto.state === "error") {
+                    page.dryRunError = appBackend.dry_run_error || i18n("Preview failed.");
                 }
             } catch (e) {
                 stop();
@@ -143,8 +143,8 @@ Kirigami.ScrollablePage {
                 if (dto.result) {
                     page.retentionPreviewData = dto.result;
                 }
-                if (dto.error) {
-                    page.retentionPreviewError = dto.error;
+                if (dto.state === "error") {
+                    page.retentionPreviewError = appBackend.retention_preview_error || i18n("Preview failed.");
                 }
             } catch (e) {
                 stop();
