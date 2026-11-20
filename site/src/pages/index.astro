@@ -5,6 +5,7 @@
 import Base from "../layouts/Base.astro";
 import RetentionTimeline from "../components/RetentionTimeline.astro";
 import Lightbox from "../components/Lightbox.astro";
+import ThemeToggle from "../components/ThemeToggle.astro";
 import WindowFrame from "../components/WindowFrame.astro";
 import appIcon from "../../../packaging/icons/hicolor/scalable/apps/kestic.svg";
 import { heroShot, galleryShots } from "../screenshots.ts";
@@ -124,6 +125,7 @@ const buildFromSource = `${repoUrl}#building--testing`;
         <a href="#try">Try it</a>
         <a href={repoUrl}>GitHub&nbsp;↗</a>
       </nav>
+      <ThemeToggle />
     </div>
   </header>
 
@@ -333,6 +335,7 @@ sudo apt install ./target/debian/kestic_*.deb</code></pre>
     flex-wrap: wrap;
   }
   .wordmark {
+    margin-right: auto;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -620,6 +623,10 @@ sudo apt install ./target/debian/kestic_*.deb</code></pre>
     }
   }
   @media (max-width: 860px) {
+    .site-header nav {
+      order: 3;
+      flex-basis: 100%;
+    }
     .features li {
       grid-template-columns: 40px minmax(0, 1fr);
     }

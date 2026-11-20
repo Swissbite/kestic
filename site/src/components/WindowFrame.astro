@@ -63,15 +63,10 @@ const cropStyle = [
     margin: 0;
   }
   .window {
-    border: 1px solid #17191b;
+    border: 1px solid var(--frame-border);
     border-radius: 7px 7px 2px 2px;
     overflow: hidden;
     background: #eff0f1;
-  }
-  @media (prefers-color-scheme: dark) {
-    .window {
-      border-color: #4a4d52;
-    }
   }
   .titlebar {
     display: flex;
@@ -149,6 +144,7 @@ const cropStyle = [
   }
   .enlarge {
     position: absolute;
+    z-index: 1;
     right: 8px;
     bottom: 8px;
     padding: 3px 8px;
@@ -165,14 +161,16 @@ const cropStyle = [
   .window:has(.open:hover) {
     border-color: var(--accent);
   }
-  @media (prefers-color-scheme: dark) {
-    .open img {
-      filter: brightness(0.88);
-    }
-    .open:hover img,
-    .open:focus-visible img {
-      filter: none;
-    }
+  /* Takes the edge off the bright Breeze window on a dark page. */
+  .open::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--shot-dim);
+  }
+  .open:hover::after,
+  .open:focus-visible::after {
+    background: transparent;
   }
   figcaption {
     display: flex;
