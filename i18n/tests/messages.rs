@@ -5,12 +5,12 @@
 
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, ServiceErrorCode, SkipReason,
-    SourceStatus,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
+    SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
-    ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, connection_test_text,
-    overall_headline, overall_subtitle, restic_status_text,
+    ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
+    connection_test_text, overall_headline, overall_subtitle, restic_status_text,
 };
 
 /// The error kinds map to their texts; `unknown` depends on exit code and warning.
@@ -170,11 +170,13 @@ fn overall_headline_follows_the_priority_order() {
     let run = ActiveRunInfo {
         name: "Z",
         is_maintenance: false,
+        phase: RunProgressPhase::ScanFinished,
         percent_done: 45.6,
     };
     let maint = ActiveRunInfo {
         name: "NAS",
         is_maintenance: true,
+        phase: RunProgressPhase::Scanning,
         percent_done: 0.0,
     };
     let mut c = counts(OverallStatusKind::Error);
@@ -505,4 +507,37 @@ fn every_service_error_code_maps_to_its_msgid() {
         ),
     ];
     assert_table(&S::ALL, &table, |c| msg(c.message()));
+}
+
+/// While restic still finds files, headline, tray, progress view and subtitle name no
+/// percentage (`docs/spec/ui/hauptbereiche.md`, restic-integration «Fortschritt beim Sichern»).
+#[test]
+fn active_run_while_scanning_shows_no_percentage() {
+    let scanning = ActiveRunInfo {
+        name: "Z",
+        is_maintenance: false,
+        phase: RunProgressPhase::Scanning,
+        percent_done: 99.0,
+    };
+    let finished = ActiveRunInfo {
+        phase: RunProgressPhase::ScanFinished,
+        ..scanning
+    };
+    let mut c = counts(OverallStatusKind::Error);
+    c.failed = 1;
+    // (a) headline / tray / progress view text while scanning
+    assert_eq!(
+        active_run_message(&scanning).english(),
+        "Z: backing up · looking through files"
+    );
+    // (b) subtitle next to failed backups while scanning
+    assert_eq!(
+        overall_subtitle(&c, Some(&scanning)).map(|m| m.english()),
+        Some("Currently running: Z".to_string())
+    );
+    // (c) after the scan the percentage is back
+    assert_eq!(
+        active_run_message(&finished).english(),
+        "Z: backing up · 99%"
+    );
 }

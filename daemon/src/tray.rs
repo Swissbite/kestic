@@ -483,6 +483,7 @@ impl TrayHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dbus_api::RunProgressPhase;
 
     fn header_labels(state: KesticTrayState) -> Vec<String> {
         let tray = KesticTray {
@@ -505,9 +506,11 @@ mod tests {
             run_id: "r1".to_string(),
             backup_id: Some("b1".to_string()),
             backup_name: name.to_string(),
+            phase: RunProgressPhase::ScanFinished,
             percent_done: percent,
             bytes_done: 0,
             total_bytes: 0,
+            files_done: 0,
             speed_bps: 0,
             seconds_remaining: 0,
         }

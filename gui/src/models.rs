@@ -85,6 +85,7 @@ pub mod qobject {
         OverdueThreshold,
         HasUnmetRunCondition,
         UnmetConditionsText,
+        ActiveScanning,
     }
 
     #[qenum(DestinationsModel)]

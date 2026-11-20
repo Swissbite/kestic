@@ -333,6 +333,10 @@ msgstr "Nächstes Backup: %1 (%2)"
 msgid "Currently running: %1 (%2%)"
 msgstr "Läuft gerade: %1 (%2%)"
 
+#: i18n/src/messages.rs
+msgid "Currently running: %1"
+msgstr "Läuft gerade: %1"
+
 #: daemon/src/service/state_summary.rs:585
 #: daemon/src/service/state_summary.rs:805 gui/src/overall_text.rs:27
 msgid "1 backup overdue"
@@ -386,6 +390,10 @@ msgstr "%1 Backups mit Warnungen abgeschlossen"
 #: gui/src/overall_text.rs:41
 msgid "%1: backing up · %2%"
 msgstr "%1: sichert · %2%"
+
+#: i18n/src/messages.rs
+msgid "%1: backing up · looking through files"
+msgstr "%1: sichert · Dateien werden durchgesehen"
 
 #: daemon/src/service/state_summary.rs:823 gui/src/overall_text.rs:54
 msgid "Schedules paused · %1 backups waiting"
@@ -573,6 +581,16 @@ msgstr "Persönlicher Ordner"
 #: gui/src/models/backups_model.rs:92
 msgid "%1% · %2 of %3"
 msgstr "%1% · %2 von %3"
+
+#: gui/src/models/backups_model.rs
+msgid "%1% · %2 of %3 · about %4 left"
+msgstr "%1% · %2 von %3 · noch etwa %4"
+
+#: gui/src/models/backups_model.rs
+msgid "%2 · %1 file so far"
+msgid_plural "%2 · %1 files so far"
+msgstr[0] "%2 · %1 Datei bisher"
+msgstr[1] "%2 · %1 Dateien bisher"
 
 #: gui/src/models/backups_model.rs:94
 msgid "%1%"
@@ -977,6 +995,10 @@ msgstr "Zeitplan: Nur manuell"
 #: gui/src/state_cache.rs:1018
 msgid "Backing up · %1%"
 msgstr "Sichert · %1%"
+
+#: gui/src/state_cache.rs
+msgid "Backing up · looking through files"
+msgstr "Sichert · Dateien werden durchgesehen"
 
 #: gui/src/state_cache.rs:1029 gui/src/state_cache.rs:1083
 msgid "Backup failed"

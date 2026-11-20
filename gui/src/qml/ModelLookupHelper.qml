@@ -66,7 +66,8 @@ QtObject {
                     missedSlotsCount: lookup.backupsModel.data(idx, 50),
                     overdueThreshold: lookup.backupsModel.data(idx, 51),
                     hasUnmetRunCondition: lookup.backupsModel.data(idx, 52),
-                    unmetConditionsText: lookup.backupsModel.data(idx, 53)
+                    unmetConditionsText: lookup.backupsModel.data(idx, 53),
+                    activeScanning: lookup.backupsModel.data(idx, 54)
                 };
             }
         }

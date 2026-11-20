@@ -21,7 +21,8 @@ Aufbau:
 
 Regeln:
 - Karten (`Kirigami.Card`/`CardsLayout`) nur hier: heterogene Infos + Aktion pro Backup. Sonst Listen.
-- Läuft ein Backup: Karte zeigt `ProgressBar`, «42 % · 1,2 GB von 3 GB · noch etwa 4 Minuten» (P5) und `[■ Abbrechen]` statt «Jetzt sichern».
+- Läuft ein Backup: Karte zeigt `ProgressBar`, «42 % · 1,2 GB von 3 GB · noch etwa 4 Minuten» (P5) und `[■ Abbrechen]` statt «Jetzt sichern». Die Restzeit steht nur da, wenn restic sie liefert.
+- Solange restic Dateien sucht (Phase `scanning`, [restic-integration.md](../restic-integration.md) «Fortschritt beim Sichern»): Balken ohne festen Endpunkt (`indeterminate`) auf Karte und im Backup-Detail, darunter die durchgesehene Menge «247,6 GB · 142 032 Dateien bisher», keine Prozentzahl. Die Überschrift heisst «Persönlicher Ordner: sichert · Dateien werden durchgesehen», der Untertitel neben Fehlern «Läuft gerade: Persönlicher Ordner». Ist die Suche fertig, wechselt die Anzeige zu Prozent und bleibt dort; die Prozentzahl fällt nie. Ist ein Lauf vor dem Ende der Suche fertig, bleibt die Anzeige bis zum Ende ohne Prozentzahl.
 - **Keine Doppelmeldung:** Fehler und Überfälligkeit eines Backups stehen nur auf seiner Karte (Statuszeile + Handlungsknopf), die Überschrift fasst zusammen. `InlineMessage`s nur für Themen ohne Karte: Kit fehlt, restic-Update verfügbar (Information, `[Aktualisieren…]`, F20); blockierende Zustände in der Zustandsleiste (§6.1).
 - **Dauerhafter Fehler** (z. B. Exit 12, F2): Der Handlungsknopf aus FR-37 ersetzt «Jetzt sichern» auf Karte und im Detail («Gespeichertes Passwort aktualisieren…»); «Trotzdem jetzt sichern» bleibt im `⋮`-Menü.
 - **«Alle jetzt sichern»** startet alle Backups, die laufen können, und überspringt die anderen mit einer Meldung (`showPassiveNotification`, auch im Verlauf): «2 Backups übersprungen: Fotos (Quelle nicht verfügbar), Projekte (gespeichertes Passwort passt nicht)». Gleiches im Tray.

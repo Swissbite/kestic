@@ -13,6 +13,7 @@ Folgen für Kestic:
 - **Keys:** Master-Key ändert sich nie → Wiederherstellungs-Kit als eigener, widerrufbarer Key (FR-35).
 - **Backends & Releases:** Grundlage für Onboarding ([architecture.md](architecture.md)) und Download inkl. Signaturprüfung (FR-33).
 - **Mindestversion 0.18.0** (Fehler als JSON, Exit-Codes 10–12, `check --json`). Ubuntu 24.04 und Derivate (inkl. TUXEDO OS, KDE neon) liefern 0.16.4 → FR-33 ist MVP.
+- **Fortschritt beim Sichern:** Die Prozentzahl gilt erst, wenn restic mit der Suche fertig ist; bis dahin zeigt Kestic keine Prozentzahl (Abschnitt «Fortschritt beim Sichern»).
 - **Source of Truth (E14):** Dieses Dokument ist Besitzer aller restic-Fakten, die Kestic nutzt (Exit-Codes, Ausschluss-Semantik, Versionen), jeweils mit Datum.
 
 ## Fakten
@@ -84,6 +85,23 @@ _Geprüft 2026-11-15, restic 0.19.1._
 - Release-Assets: `restic_<v>_linux_amd64.bz2`, `restic_<v>_linux_arm64.bz2`, `SHA256SUMS`, `SHA256SUMS.asc`.
 - Signatur-Key-Fingerprint: `CF8F 18F2 8445 7597 3F79 D4E1 91A6 868B D3F7 A907` ([020_installation](https://restic.readthedocs.io/en/stable/020_installation.html)).
 - `self-update` nur bei offiziellen Release-Builds.
+
+### Fortschritt beim Sichern (`backup --json`)
+
+_Geprüft 2026-11-20 im Quellcode von restic 0.18.0 und 0.19.1 (`internal/ui/backup/progress.go`, `json.go`; Logik in beiden Versionen gleich) und an einem echten inkrementellen Lauf (0.19.1, 28 s, rund 288 GB, 166 000 Dateien)._
+
+- restic sucht die Dateien und sichert gleichzeitig. `total_files` und `total_bytes` der `status`-Zeilen wachsen, bis die Suche fertig ist. `percent_done` ist `bytes_done / total_bytes` und kann deshalb fallen (beobachtet: 100 % → 88,6 % → 100 %).
+- `seconds_remaining` setzt restic erst, wenn die Suche fertig ist, und nur bei einer Rate über 1 KiB/s. Der Wert ist eine ganze Zahl und fehlt bei 0 (`omitempty`). Fehlt er, läuft also die Suche, oder es bleibt weniger als 1 s, oder die Rate ist zu klein. Im beobachteten Lauf war die Suche nach 25 s fertig, `seconds_remaining` kam trotzdem nie.
+- Ein eigenes Signal «Suche fertig» (`verbose_status` mit `action: scan_finished`) gibt es nur mit `-vv`. Dann schreibt restic eine Zeile pro Datei, auch für unveränderte.
+- `data_added` steht nur in `summary`, nicht in `status`.
+
+Folgen für Kestic:
+
+- Ein Lauf ist in der Phase `scanning`, bis die erste `status`-Zeile mit `seconds_remaining > 0` kommt. Danach ist er bis zum Ende in `scan_finished`; ein späteres Fehlen von `seconds_remaining` schaltet nicht zurück.
+- In `scanning` zeigt Kestic keine Prozentzahl, sondern die durchgesehene Menge (`bytes_done`, `files_done`).
+- In `scan_finished` zeigt Kestic `percent_done`, nie kleiner als der zuletzt gezeigte Wert, und die Restzeit aus `seconds_remaining`, wenn vorhanden.
+- Endet ein Lauf, bevor `seconds_remaining` kommt (häufig bei schnellen inkrementellen Läufen), bleibt er bis zum Ende in `scanning`. Die neu geschriebene Menge steht nach dem Lauf aus `summary.data_added` auf der Karte.
+- Normale Läufe laufen ohne `-vv` (zu viel Ausgabe); `-vv` nur für den Dry-Run.
 
 ### Versionen
 

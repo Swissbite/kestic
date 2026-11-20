@@ -417,8 +417,10 @@ for a in "$@"; do
 done
 echo "S $(now) $sub $*" >> "$LOG"
 if [ -n "$sub" ] && [ -f "$HOLD.$sub" ]; then
-  if [ "$sub" = "backup" ]; then
-    printf '{{"message_type":"status","percent_done":0.25,"bytes_done":1048576,"total_bytes":4194304,"seconds_elapsed":1}}\n'
+  if [ -f "$HOLD.$sub.status" ]; then
+    cat "$HOLD.$sub.status"
+  elif [ "$sub" = "backup" ]; then
+    printf '{{"message_type":"status","percent_done":0.25,"files_done":3,"bytes_done":1048576,"total_bytes":4194304,"seconds_elapsed":1,"seconds_remaining":30}}\n'
   fi
   trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"; echo "E $(now) $sub 143" >> "$LOG"; exit 143' TERM INT
   while [ -f "$HOLD.$sub" ]; do sleep 0.1; done
@@ -448,14 +450,30 @@ exit $code
     }
 
     /// Makes every subsequent call of restic subcommand `sub` block until [`Self::release`]
-    /// (a held `backup` additionally reports 25 % progress).
+    /// (a held `backup` additionally reports 25 % progress after the search for files).
     pub fn hold(&self, sub: &str) {
         fs::write(self.hold_marker(sub), b"1").expect("create hold marker");
     }
 
-    /// Lets held (and future) calls of restic subcommand `sub` run on.
+    /// Like [`Self::hold`], but a held call first prints `ndjson` (restic `--json` lines)
+    /// instead of the default progress line.
+    pub fn hold_with_output(&self, sub: &str, ndjson: &str) {
+        fs::write(
+            PathBuf::from(format!("{}.{sub}.status", self.hold.display())),
+            ndjson,
+        )
+        .expect("write held output");
+        self.hold(sub);
+    }
+
+    /// Lets held (and future) calls of restic subcommand `sub` run on and drops the output
+    /// set by [`Self::hold_with_output`].
     pub fn release(&self, sub: &str) {
         let _ = fs::remove_file(self.hold_marker(sub));
+        let _ = fs::remove_file(PathBuf::from(format!(
+            "{}.{sub}.status",
+            self.hold.display()
+        )));
     }
 
     pub fn entries(&self) -> Vec<WrapperEntry> {

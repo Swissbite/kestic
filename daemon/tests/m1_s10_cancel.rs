@@ -109,9 +109,11 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
     // Wait briefly for restic progress (or at most 250ms so we catch it mid-flight on fast NVMe).
     let wait_deadline = Instant::now() + Duration::from_millis(250);
     while Instant::now() < wait_deadline {
-        if signals.snapshot().iter().any(|s| {
-            matches!(s, CapturedKesticSignal::RunProgress { run_id: rid, .. } if rid == &run_id)
-        }) {
+        if signals
+            .snapshot()
+            .iter()
+            .any(|s| matches!(s, CapturedKesticSignal::RunProgress(p) if p.run_id == run_id))
+        {
             break;
         }
         thread::sleep(Duration::from_millis(15));

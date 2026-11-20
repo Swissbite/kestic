@@ -205,6 +205,35 @@ impl BlockedReason {
     }
 }
 
+/// Phase of a running backup (`ActiveRunProgressDto.phase`, signal `RunProgress`). restic finds
+/// files and backs them up at the same time; only after its search the percentage is valid.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunProgressPhase {
+    /// restic is still finding files; the total grows, so there is no percentage.
+    #[default]
+    Scanning,
+    /// restic knows the total; the percentage is valid and never falls.
+    ScanFinished,
+}
+
+impl RunProgressPhase {
+    pub const ALL: [Self; 2] = [Self::Scanning, Self::ScanFinished];
+
+    /// Code string as sent in the `RunProgress` signal, equal to the serde name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Scanning => "scanning",
+            Self::ScanFinished => "scan_finished",
+        }
+    }
+
+    /// Parses a code string; `None` for unknown codes.
+    pub fn parse(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == code)
+    }
+}
+
 /// Why «Back Up All Now» skipped a backup (`SkippedBackupDto.reason`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -519,6 +548,10 @@ mod tests {
         }
         for c in ConnectionTestCode::ALL {
             assert_eq!(json(c), format!("\"{}\"", c.as_str()));
+        }
+        for p in RunProgressPhase::ALL {
+            assert_eq!(json(p), format!("\"{}\"", p.as_str()));
+            assert_eq!(RunProgressPhase::parse(p.as_str()), Some(p));
         }
         assert_eq!(BlockedReason::parse("nope"), None);
     }

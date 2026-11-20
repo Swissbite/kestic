@@ -1,0 +1,12 @@
+{"message_type":"status","percent_done":0.8035714285714286,"total_files":500,"files_done":300,"total_bytes":11200000,"bytes_done":9000000}
+{"message_type":"status","percent_done":0.8181818181818182,"total_files":3000,"files_done":2100,"total_bytes":330000000,"bytes_done":270000000}
+{"message_type":"status","percent_done":0.3333333333333333,"total_files":5700,"files_done":3800,"total_bytes":5100000000,"bytes_done":1700000000}
+{"message_type":"status","seconds_elapsed":1,"percent_done":0.5836092715231788,"total_files":23000,"files_done":16000,"total_bytes":120800000000,"bytes_done":70500000000}
+{"message_type":"status","seconds_elapsed":2,"percent_done":0.9995785924989464,"total_files":48600,"files_done":44500,"total_bytes":237300000000,"bytes_done":237200000000}
+{"message_type":"status","seconds_elapsed":10,"percent_done":0.9995866060355518,"total_files":96000,"files_done":93000,"total_bytes":241900000000,"bytes_done":241800000000}
+{"message_type":"status","seconds_elapsed":12,"percent_done":0.9909873002867677,"total_files":103000,"files_done":97000,"total_bytes":244100000000,"bytes_done":241900000000}
+{"message_type":"status","seconds_elapsed":22,"percent_done":0.8858676207513417,"total_files":155700,"files_done":142000,"total_bytes":279500000000,"bytes_done":247600000000}
+{"message_type":"status","seconds_elapsed":25,"percent_done":0.9691400832177531,"total_files":165900,"files_done":153600,"total_bytes":288400000000,"bytes_done":279500000000}
+{"message_type":"status","seconds_elapsed":27,"percent_done":0.9778085991678225,"total_files":165900,"files_done":165300,"total_bytes":288400000000,"bytes_done":282000000000}
+{"message_type":"status","seconds_elapsed":28,"percent_done":1.0,"total_files":165900,"files_done":165900,"total_bytes":288400000000,"bytes_done":288400000000}
+{"message_type":"summary","files_new":331,"files_changed":134,"files_unmodified":165435,"dirs_new":4,"dirs_changed":9,"dirs_unmodified":2500,"data_blobs":2,"tree_blobs":3,"data_added":1141257,"data_added_packed":380419,"total_files_processed":165900,"total_bytes_processed":288400000000,"total_duration":29.3,"snapshot_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}

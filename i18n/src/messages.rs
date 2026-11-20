@@ -11,8 +11,8 @@
 
 use crate::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, ServiceErrorCode, SkipReason,
-    SourceStatus,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
+    SkipReason, SourceStatus,
 };
 
 /// Marks `msgid` for extraction (`xgettext --keyword=i18n_noop:1`) without translating it.
@@ -544,18 +544,26 @@ pub struct ActiveRunInfo<'a> {
     /// Backup name, or destination name for maintenance.
     pub name: &'a str,
     pub is_maintenance: bool,
+    /// While `Scanning` there is no percentage (restic is still finding files).
+    pub phase: RunProgressPhase,
     pub percent_done: f64,
 }
 
-/// «‹Backup›: backing up · n%» or «Maintaining ‹Destination›» (glossary: Wartung).
+/// «‹Backup›: backing up · n%», while restic still finds files «‹Backup›: backing up · looking
+/// through files», or «Maintaining ‹Destination›» (glossary: Wartung, Dateien durchsehen).
 pub fn active_run_message(run: &ActiveRunInfo<'_>) -> Message {
     if run.is_maintenance {
-        maintaining_message(run.name)
-    } else {
-        Message::with_args(
+        return maintaining_message(run.name);
+    }
+    match run.phase {
+        RunProgressPhase::Scanning => Message::with_args(
+            i18n_noop("%1: backing up · looking through files"),
+            &[run.name],
+        ),
+        RunProgressPhase::ScanFinished => Message::with_args(
             i18n_noop("%1: backing up · %2%"),
             &[run.name, &percent(run.percent_done)],
-        )
+        ),
     }
 }
 
@@ -650,8 +658,13 @@ pub fn overall_subtitle(
     if active.is_maintenance {
         return Some(active_run_message(active));
     }
-    Some(Message::with_args(
-        i18n_noop("Currently running: %1 (%2%)"),
-        &[active.name, &percent(active.percent_done)],
-    ))
+    Some(match active.phase {
+        RunProgressPhase::Scanning => {
+            Message::with_args(i18n_noop("Currently running: %1"), &[active.name])
+        }
+        RunProgressPhase::ScanFinished => Message::with_args(
+            i18n_noop("Currently running: %1 (%2%)"),
+            &[active.name, &percent(active.percent_done)],
+        ),
+    })
 }

@@ -9,13 +9,13 @@ use crate::state_cache::{
     backup_exclude_file_path_str, daemon_now, format_backup_status, format_bytes,
     format_conditions_summary, format_duration_ms, format_exclude_summary,
     format_next_scheduled_line, format_pause_line, format_retention_summary,
-    format_schedule_summary, format_source_kind_label, i18n, localized_last_error,
+    format_schedule_summary, format_source_kind_label, i18n, i18np, localized_last_error,
     localized_unmet_conditions, pending_reason_line, shared_state,
 };
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
 use kestic_core::model::{RetentionPreset, Run, SourceKind};
-use kestic_daemon::dbus_api::{ActiveRunProgressDto, BackupSummaryDto};
+use kestic_daemon::dbus_api::{ActiveRunProgressDto, BackupSummaryDto, RunProgressPhase};
 use std::pin::Pin;
 use time::OffsetDateTime;
 
@@ -41,6 +41,8 @@ struct BackupRow {
     active_run_id: String,
     active_percent: f64,
     active_progress_text: String,
+    /// restic is still finding files: bar without end point, no percentage.
+    active_scanning: bool,
     error_summary: String,
     error_action: String,
     unreadable_files_json: String,
@@ -82,18 +84,37 @@ pub struct BackupsModelRust {
     rows: Vec<BackupRow>,
 }
 
+/// Line below the progress bar: the amount looked through while restic still finds files,
+/// afterwards percentage, amount and, when restic knows it, the time left.
 fn format_active_progress_text(active_progress: Option<&ActiveRunProgressDto>) -> String {
     let Some(p) = active_progress else {
         return String::new();
     };
-    let pct = p.percent_done.round().clamp(0.0, 100.0) as u32;
     let done_str = format_bytes(p.bytes_done);
-    let total_str = format_bytes(p.total_bytes);
-    if p.total_bytes > 0 {
-        i18n("%1% · %2 of %3").subs(&[&pct.to_string(), &done_str, &total_str])
-    } else {
-        i18n("%1%").subs(&[&pct.to_string()])
+    if p.phase == RunProgressPhase::Scanning {
+        let files = usize::try_from(p.files_done).unwrap_or(usize::MAX);
+        return i18np(
+            "%2 · %1 file so far",
+            "%2 · %1 files so far",
+            files,
+            &[&done_str],
+        );
     }
+    let pct = p.percent_done.round().clamp(0.0, 100.0) as u32;
+    let total_str = format_bytes(p.total_bytes);
+    if p.total_bytes == 0 {
+        return i18n("%1%").subs(&[&pct.to_string()]);
+    }
+    if p.seconds_remaining > 0 {
+        let left = format_duration_ms(p.seconds_remaining.saturating_mul(1000));
+        return i18n("%1% · %2 of %3 · about %4 left").subs(&[
+            &pct.to_string(),
+            &done_str,
+            &total_str,
+            &left,
+        ]);
+    }
+    i18n("%1% · %2 of %3").subs(&[&pct.to_string(), &done_str, &total_str])
 }
 
 fn format_last_run_info(last_run: Option<&Run>) -> (String, String, String, f64) {
@@ -185,6 +206,7 @@ fn build_backup_row(
             .unwrap_or_default(),
         active_percent,
         active_progress_text,
+        active_scanning: active_progress.is_some_and(|p| p.phase == RunProgressPhase::Scanning),
         error_summary: if b.error_kind.is_some() {
             localized_last_error(b)
         } else {
@@ -400,6 +422,7 @@ impl qobject::BackupsModel {
                 qobject::BackupRoles::UnmetConditionsText,
                 "unmetConditionsText",
             ),
+            (qobject::BackupRoles::ActiveScanning, "activeScanning"),
         ] {
             roles.insert(role.repr, QByteArray::from(name));
         }
@@ -526,6 +549,7 @@ impl qobject::BackupsModel {
             qobject::BackupRoles::UnmetConditionsText => {
                 QVariant::from(&QString::from(&row.unmet_conditions_text))
             }
+            qobject::BackupRoles::ActiveScanning => QVariant::from(&row.active_scanning),
             _ => QVariant::default(),
         }
     }

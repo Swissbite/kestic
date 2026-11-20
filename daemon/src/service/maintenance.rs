@@ -37,7 +37,7 @@ use kestic_core::scheduler::{
     evaluate_run_conditions, mark_maintenance_slot_handled, record_maintenance_backoff_failure,
 };
 use kestic_core::secrets::SecretStore;
-use kestic_i18n::codes::{ErrorKind, PendingReasonCode, SkipReason};
+use kestic_i18n::codes::{ErrorKind, PendingReasonCode, RunProgressPhase, SkipReason};
 use kestic_i18n::messages::maintaining_message;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -190,9 +190,12 @@ fn launch_maintenance_run_record(
             run_id: run.id.as_str().to_string(),
             backup_id: None,
             backup_name: dest.name.clone(),
+            // Maintenance has no percentage; its texts check `backup_id: None` first.
+            phase: RunProgressPhase::Scanning,
             percent_done: 0.0,
             bytes_done: 0,
             total_bytes: 0,
+            files_done: 0,
             speed_bps: 0,
             seconds_remaining: 0,
         },

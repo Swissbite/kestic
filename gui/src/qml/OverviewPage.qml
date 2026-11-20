@@ -235,6 +235,7 @@ Kirigami.ScrollablePage {
                         required property string activeRunId
                         required property double activePercent
                         required property string activeProgressText
+                        required property bool activeScanning
                         required property string errorAction
                         required property string errorSummary
                         required property string nextScheduledAtText
@@ -339,9 +340,11 @@ Kirigami.ScrollablePage {
                             }
 
                             Controls.ProgressBar {
+                                objectName: "backupCardProgressBar"
                                 visible: card.isRunning
                                 from: 0
                                 to: 100
+                                indeterminate: card.activeScanning
                                 value: card.activePercent
                                 Layout.fillWidth: true
                             }

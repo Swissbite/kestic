@@ -115,6 +115,7 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 | `ResticStatusDto.error_kind` (Parameter: `binary_path`, `found_version`, `detail`) | `codes::ResticStatusCode` | `not_found`, `too_old`, `invalid_custom_path`, `unreadable_version` |
 | `BlockingStateDto.kind` (Parameter für `restic_unavailable` aus `ResticStatusDto`) | `codes::BlockingKind` | `secret_store_locked`, `restic_unavailable` |
 | `ConnectionTestResultDto.error_kind` (Parameter bzw. Rohtext: `detail`) | `codes::ConnectionTestCode` | `invalid_input`, `duplicate_location` (`detail` = Name des Ziels), `destination_unreachable`, `repository_exists`, `not_writable`, `missing_password`, `secret_store_locked`, `internal`, `restic_unavailable`, `wrong_password`, `auth_failed`, `repository_missing`, `command_failed`, `daemon_unreachable` (nur GUI-seitig) |
+| `ActiveRunProgressDto.phase`, Signal `RunProgress.phase` | `codes::RunProgressPhase` | `scanning` (restic sucht noch Dateien, keine Prozentzahl), `scan_finished` |
 | `OverallStatusDto.kind` | `codes::OverallStatusKind` | `blocked`, `error`, `overdue`, `warning`, `running`, `paused`, `pending`, `interrupted`, `cancelled`, `never_run`, `manual_only`, `ok` |
 | `OverallStatusDto.tray_status` | `daemon::tray::TrayStatus` | `Passive`, `Active`, `NeedsAttention` (StatusNotifierItem-Werte) |
 
@@ -138,7 +139,7 @@ Jeder Text hat genau einen Ort:
 | --- | --- | --- | --- |
 | `StatusChanged` | `(overall_status_json: s)` | Gesamtstatus und aktualisierte Verfügbarkeit/Zustandsleiste nach jeder Konfigurations-, Lauf- oder Verfügbarkeitsänderung | F14, AC-M1-09-4 |
 | `RunUpdated` | `(run_json: s)` | Neuer oder aktualisierter Lauf (`pending`, `running`, `ok`, `warning`, `error`, `cancelled`, `interrupted`) | F14, FR-12, AC-M1-09-4 |
-| `RunProgress` | `(run_id: s, percent_done: d, bytes_done: t, total_bytes: t, speed_bps: t, seconds_remaining: t)` | Laufender Fortschritt aus dem restic-JSON-Stream (auch für Fortschrittsanzeige/Taskbar) | F14, FR-12, FR-53 |
+| `RunProgress` | `(progress_json: s)` (`ActiveRunProgressDto`-JSON: `run_id`, `backup_id`, `backup_name`, `phase`, `percent_done`, `bytes_done`, `total_bytes`, `files_done`, `speed_bps`, `seconds_remaining`) | Laufender Fortschritt aus dem restic-JSON-Stream (auch für Fortschrittsanzeige/Taskbar). `phase` nach [restic-integration.md](restic-integration.md) «Fortschritt beim Sichern»; in `scanning` sind `percent_done`, `total_bytes` und `speed_bps` 0; `percent_done` fällt in `scan_finished` nie; `seconds_remaining` 0 = unbekannt | F14, FR-12, FR-53 |
 | `ManualRunBlocked` | `(backup_id: s, reason: s)` | Manueller Start wegen Vorab-Check oder Laufbedingung blockiert; `reason` = `"source_unavailable"` \| `"destination_unreachable"` \| `"condition_not_met"`. Die offene GUI zeigt Meldung bzw. Rückfrage im Fenster; ohne offenes Fenster sendet der Daemon zusätzlich Notification (`ManualRunBlocked`) | FR-30, FR-13b, AC-M1-09-6/7 |
 | `ShowWindowRequested` | `()` | Angefordert durch Tray-Klick / «Kestic öffnen» | §10.1, AC-M1-11-2 |
 | `QuitConfirmationRequested` | `(has_running_run: b, running_backup_name: s)` | Ausgelöst durch Tray «Kestic beenden…»; GUI öffnet Bestätigungsdialog mit Warnung und ruft erst danach `ConfirmQuit` auf | NFR-11, §9.5, AC-M1-11-3 |

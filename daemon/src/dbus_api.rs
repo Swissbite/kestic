@@ -14,11 +14,11 @@ use kestic_core::model::{
 use kestic_core::provider::MIN_RESTIC_VERSION;
 use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
-pub use kestic_i18n::codes::OverallStatusKind;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
     ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
+pub use kestic_i18n::codes::{OverallStatusKind, RunProgressPhase};
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
 };
@@ -146,10 +146,18 @@ pub struct ActiveRunProgressDto {
     pub run_id: String,
     pub backup_id: Option<String>,
     pub backup_name: String,
+    /// `scanning` until restic knows the total, then `scan_finished`.
+    #[serde(default)]
+    pub phase: RunProgressPhase,
+    /// 0–100; 0 while scanning, never falls afterwards.
     pub percent_done: f64,
     pub bytes_done: u64,
+    /// 0 while scanning.
     pub total_bytes: u64,
+    #[serde(default)]
+    pub files_done: u64,
     pub speed_bps: u64,
+    /// 0 = unknown.
     pub seconds_remaining: u64,
 }
 
@@ -386,6 +394,7 @@ impl ActiveRunProgressDto {
         ActiveRunInfo {
             name: &self.backup_name,
             is_maintenance: self.backup_id.is_none(),
+            phase: self.phase,
             percent_done: self.percent_done,
         }
     }

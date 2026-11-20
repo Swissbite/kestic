@@ -72,7 +72,7 @@ use kestic_daemon::dbus_api::{
     KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto,
     StartAllResultDto,
 };
-use kestic_i18n::codes::{BlockedReason, ConnectionTestCode, PendingReasonCode};
+use kestic_i18n::codes::{BlockedReason, ConnectionTestCode, PendingReasonCode, RunProgressPhase};
 use kestic_i18n::codes::{ErrorKind, ServiceErrorCode};
 use kestic_i18n::messages::{
     Message, UiText, completed_message, interrupted_by_sleep_message, not_backed_up_message,
@@ -380,45 +380,23 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                         guard.state_dirty = true;
                     }
                     Some("RunProgress") => {
-                        if let Ok((run_id, pct, bytes_done, total_bytes, speed_bps, secs_rem)) = msg
-                            .body()
-                            .deserialize::<(String, f64, u64, u64, u64, u64)>()
+                        if let Ok(json) = msg.body().deserialize::<String>()
+                            && let Ok(progress) =
+                                serde_json::from_str::<ActiveRunProgressDto>(&json)
                         {
                             let mut guard =
                                 shared_state().lock().unwrap_or_else(|p| p.into_inner());
-                            let backup_name = guard
+                            if let Some(active) = guard
                                 .state
-                                .as_ref()
-                                .and_then(|st| {
-                                    st.backups.iter().find_map(|b| {
-                                        b.active_run
-                                            .as_ref()
-                                            .filter(|r| r.id.as_str() == run_id)
-                                            .map(|_| b.backup.name.clone())
-                                    })
-                                })
-                                .unwrap_or_default();
-                            let backup_id = guard.state.as_ref().and_then(|st| {
-                                st.backups.iter().find_map(|b| {
-                                    b.active_run
-                                        .as_ref()
-                                        .filter(|r| r.id.as_str() == run_id)
-                                        .map(|_| b.backup.id.as_str().to_string())
-                                })
-                            });
-                            guard.active_progress.insert(
-                                run_id.clone(),
-                                ActiveRunProgressDto {
-                                    run_id,
-                                    backup_id,
-                                    backup_name,
-                                    percent_done: pct,
-                                    bytes_done,
-                                    total_bytes,
-                                    speed_bps,
-                                    seconds_remaining: secs_rem,
-                                },
-                            );
+                                .as_mut()
+                                .and_then(|s| s.overall.active_run_progress.as_mut())
+                                .filter(|a| a.run_id == progress.run_id)
+                            {
+                                *active = progress.clone();
+                            }
+                            guard
+                                .active_progress
+                                .insert(progress.run_id.clone(), progress);
                             guard.progress_dirty = true;
                         }
                     }
@@ -1125,10 +1103,13 @@ pub fn format_backup_status(
     now: OffsetDateTime,
 ) -> (String, String, String) {
     if summary.active_run.is_some() {
-        let pct = active_progress
-            .map(|p| p.percent_done.round().clamp(0.0, 100.0) as u32)
-            .unwrap_or(0);
-        let text = i18n("Backing up · %1%").subs(&[&pct.to_string()]);
+        let text = match active_progress {
+            Some(p) if p.phase == RunProgressPhase::ScanFinished => {
+                let pct = p.percent_done.round().clamp(0.0, 100.0) as u32;
+                i18n("Backing up · %1%").subs(&[&pct.to_string()])
+            }
+            _ => i18n("Backing up · looking through files").to_string(),
+        };
         return (text, "state-sync".to_string(), "highlight".to_string());
     }
 

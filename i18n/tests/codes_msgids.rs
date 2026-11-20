@@ -9,8 +9,8 @@
 
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, ServiceErrorCode, SkipReason,
-    SourceStatus,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
+    SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
@@ -191,10 +191,15 @@ fn all_messages() -> Vec<(String, Message)> {
 fn overall_messages() -> Vec<(String, Message)> {
     let mut out: Vec<(String, Message)> = Vec::new();
     let mut push = |label: String, m: Message| out.push((label, m));
-    for (name, is_maintenance) in [("run", false), ("maint", true)] {
+    for (name, is_maintenance, phase) in [
+        ("run", false, RunProgressPhase::ScanFinished),
+        ("scan", false, RunProgressPhase::Scanning),
+        ("maint", true, RunProgressPhase::Scanning),
+    ] {
         let run = ActiveRunInfo {
             name,
             is_maintenance,
+            phase,
             percent_done: 50.0,
         };
         push(format!("active/{name}"), active_run_message(&run));

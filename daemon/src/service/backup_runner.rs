@@ -29,6 +29,7 @@ use kestic_core::backup::{
     BackupExecutionContext, BackupRunError, execute_backup_with_inspector, execute_forget,
     is_forget_lock_failure,
 };
+use kestic_core::backup_progress::BackupProgressTracker;
 use kestic_core::clock::Clock;
 use kestic_core::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
@@ -49,7 +50,7 @@ use kestic_core::scheduler::{
     mark_backup_slot_handled, record_backup_backoff_failure,
 };
 use kestic_core::secrets::{SecretStore, SecretValue};
-use kestic_i18n::codes::{BlockedReason, ErrorKind};
+use kestic_i18n::codes::{BlockedReason, ErrorKind, RunProgressPhase};
 use kestic_i18n::messages::{ActiveRunInfo, active_run_message, interrupted_by_sleep_message};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -333,9 +334,11 @@ fn launch_backup_run_record(
             run_id: run.id.as_str().to_string(),
             backup_id: Some(backup.id.as_str().to_string()),
             backup_name: backup.name.clone(),
+            phase: RunProgressPhase::Scanning,
             percent_done: 0.0,
             bytes_done: 0,
             total_bytes: 0,
+            files_done: 0,
             speed_bps: 0,
             seconds_remaining: 0,
         },
@@ -497,43 +500,47 @@ struct BackupProgressReporter<'a> {
     run_id: &'a RunId,
     tray_opt: Option<&'a Arc<TrayHandle>>,
     conn_opt: Option<&'a Connection>,
+    /// Phase and highest percentage shown so far (no jumping percentage).
+    tracker: BackupProgressTracker,
 }
 
 impl BackupProgressReporter<'_> {
-    fn report(&self, st: &ResticStatusMessage) {
-        let pct = (st.percent_done * 100.0).clamp(0.0, 100.0);
-        let bytes_done = st.bytes_done.unwrap_or(0);
-        let total_bytes = st.total_bytes.unwrap_or(0);
+    fn report(&mut self, st: &ResticStatusMessage) {
         let elapsed_secs = (self.clock.now_unix_secs() - self.start_unix).max(1) as u64;
-        let speed_bps = st
-            .seconds_elapsed
-            .filter(|s| *s > 0)
-            .map(|s| bytes_done / s)
-            .unwrap_or(bytes_done / elapsed_secs);
-        let seconds_remaining = st.seconds_remaining.unwrap_or(0);
+        let p = self.tracker.update(st, elapsed_secs);
 
         if let Some(jv) = self.job_view {
+            // Without a total, Plasma would show «4.9 GB of 0 B»; the text names the phase.
+            let processed_bytes = match p.phase {
+                RunProgressPhase::Scanning => 0,
+                RunProgressPhase::ScanFinished => p.bytes_done,
+            };
             let _ = jv.update(&JobProgress {
-                percent: pct.round() as u32,
-                processed_bytes: bytes_done,
-                total_bytes,
-                speed_bytes_per_sec: speed_bps,
+                percent: p.percent_done.round() as u32,
+                processed_bytes,
+                total_bytes: p.total_bytes,
+                speed_bytes_per_sec: p.speed_bps,
                 info_message: tr(&active_run_message(&ActiveRunInfo {
                     name: self.backup_name,
                     is_maintenance: false,
-                    percent_done: pct,
+                    phase: p.phase,
+                    percent_done: p.percent_done,
                 })),
                 elapsed_ms: elapsed_secs * 1000,
             });
         }
 
-        let mut guard = self.shared_worker.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.shared_worker.lock().unwrap_or_else(|e| e.into_inner());
+        let mut progress = None;
         if let Some(entry) = guard.active_runs.get_mut(self.run_id) {
-            entry.progress.percent_done = pct;
-            entry.progress.bytes_done = bytes_done;
-            entry.progress.total_bytes = total_bytes;
-            entry.progress.speed_bps = speed_bps;
-            entry.progress.seconds_remaining = seconds_remaining;
+            entry.progress.phase = p.phase;
+            entry.progress.percent_done = p.percent_done;
+            entry.progress.bytes_done = p.bytes_done;
+            entry.progress.total_bytes = p.total_bytes;
+            entry.progress.files_done = p.files_done;
+            entry.progress.speed_bps = p.speed_bps;
+            entry.progress.seconds_remaining = p.seconds_remaining.unwrap_or(0);
+            progress = Some(entry.progress.clone());
         }
         let (_, tray_state) = guard.build_state_and_tray();
         if let Some(tray) = self.tray_opt {
@@ -541,16 +548,8 @@ impl BackupProgressReporter<'_> {
         }
         drop(guard);
 
-        if let Some(conn) = self.conn_opt {
-            emit_run_progress(
-                conn,
-                self.run_id.as_str(),
-                pct,
-                bytes_done,
-                total_bytes,
-                speed_bps,
-                seconds_remaining,
-            );
+        if let (Some(conn), Some(progress)) = (self.conn_opt, progress) {
+            emit_run_progress(conn, &progress);
         }
     }
 }
@@ -627,7 +626,7 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         cancel: Some(&cancel),
         extra_env: &[],
     };
-    let reporter = BackupProgressReporter {
+    let mut reporter = BackupProgressReporter {
         backup_name: &ctx.backup.name,
         start_unix,
         clock: ctx.clock.as_ref(),
@@ -636,6 +635,7 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         run_id: &run_id,
         tray_opt: tray_opt.as_ref(),
         conn_opt: conn_opt.as_ref(),
+        tracker: BackupProgressTracker::new(),
     };
     let exec_res =
         execute_backup_with_inspector(&ctx.backup, &ctx.dest, &runtime, &exec_ctx, |ev| {
