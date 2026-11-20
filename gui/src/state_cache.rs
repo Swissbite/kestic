@@ -57,6 +57,7 @@ where
 }
 
 use crate::overall_text::localized_availability_reason;
+use crate::ui_texts::GuiText;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::model::{
@@ -475,7 +476,7 @@ pub fn test_destination_connection(
                 ok: false,
                 error_kind: Some(ConnectionTestCode::InvalidInput),
                 detail: if err.is_empty() {
-                    i18n("Please fill in all required fields.").to_string()
+                    GuiText::FillRequiredFields.text()
                 } else {
                     err
                 },
@@ -662,13 +663,13 @@ fn format_keep_count_part(kc: KeepCount, unit_singular_plural: &str) -> String {
 pub fn format_retention_summary(policy: &RetentionPolicy) -> String {
     match policy.preset() {
         RetentionPreset::Standard => {
-            return i18n("Standard (7 daily, 4 weekly, 12 monthly)").to_string();
+            return GuiText::PresetStandard.text();
         }
         RetentionPreset::Economical => {
-            return i18n("Economical (7 daily, 4 weekly)").to_string();
+            return GuiText::PresetEconomical.text();
         }
         RetentionPreset::Long => {
-            return i18n("Long (7 daily, 4 weekly, 12 monthly, all yearly)").to_string();
+            return GuiText::PresetLong.text();
         }
         RetentionPreset::Custom => {}
     }
@@ -753,7 +754,7 @@ pub fn format_exclude_summary(excludes: &ExcludeRules) -> String {
         parts.push(i18n("marker: %1").subs(&[&excludes.exclude_if_present.join(", ")]));
     }
     if parts.is_empty() {
-        i18n("None").to_string()
+        GuiText::None.text()
     } else {
         parts.join(" · ")
     }
@@ -767,12 +768,12 @@ pub fn format_source_kind_label(source: &Source) -> String {
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
             {
-                i18n("Drive (%1)").subs(&[lbl.trim()])
+                GuiText::DriveWithLabel.with_args(&[lbl.trim()])
             } else {
-                i18n("Drive").to_string()
+                GuiText::Drive.text()
             }
         }
-        SourceKind::Folder => i18n("Folder").to_string(),
+        SourceKind::Folder => GuiText::Folder.text(),
     }
 }
 
@@ -860,25 +861,25 @@ pub fn format_bytes(bytes: u64) -> String {
 
 fn weekday_short_label(w: Weekday) -> String {
     match w {
-        Weekday::Monday => i18n("Mon").to_string(),
-        Weekday::Tuesday => i18n("Tue").to_string(),
-        Weekday::Wednesday => i18n("Wed").to_string(),
-        Weekday::Thursday => i18n("Thu").to_string(),
-        Weekday::Friday => i18n("Fri").to_string(),
-        Weekday::Saturday => i18n("Sat").to_string(),
-        Weekday::Sunday => i18n("Sun").to_string(),
+        Weekday::Monday => GuiText::Mon.text(),
+        Weekday::Tuesday => GuiText::Tue.text(),
+        Weekday::Wednesday => GuiText::Wed.text(),
+        Weekday::Thursday => GuiText::Thu.text(),
+        Weekday::Friday => GuiText::Fri.text(),
+        Weekday::Saturday => GuiText::Sat.text(),
+        Weekday::Sunday => GuiText::Sun.text(),
     }
 }
 
 fn weekday_full_label(w: Weekday) -> String {
     match w {
-        Weekday::Monday => i18n("Monday").to_string(),
-        Weekday::Tuesday => i18n("Tuesday").to_string(),
-        Weekday::Wednesday => i18n("Wednesday").to_string(),
-        Weekday::Thursday => i18n("Thursday").to_string(),
-        Weekday::Friday => i18n("Friday").to_string(),
-        Weekday::Saturday => i18n("Saturday").to_string(),
-        Weekday::Sunday => i18n("Sunday").to_string(),
+        Weekday::Monday => GuiText::Monday.text(),
+        Weekday::Tuesday => GuiText::Tuesday.text(),
+        Weekday::Wednesday => GuiText::Wednesday.text(),
+        Weekday::Thursday => GuiText::Thursday.text(),
+        Weekday::Friday => GuiText::Friday.text(),
+        Weekday::Saturday => GuiText::Saturday.text(),
+        Weekday::Sunday => GuiText::Sunday.text(),
     }
 }
 
@@ -906,7 +907,7 @@ fn weekday_plural_label(weekday: Weekday) -> String {
 
 pub fn format_schedule_summary(schedule: &Schedule) -> String {
     match schedule {
-        Schedule::ManualOnly => i18n("Manual only").to_string(),
+        Schedule::ManualOnly => GuiText::ManualOnly.text(),
         Schedule::Daily { hour, minute } => {
             let hhmm = format!("{hour:02}:{minute:02}");
             i18n("Daily at %1").subs(&[&hhmm])
@@ -977,7 +978,7 @@ pub fn format_conditions_summary(conditions: &RunConditions) -> String {
 
 pub fn format_maintenance_entry(entry: &MaintenanceEntrySchedule) -> String {
     match entry {
-        MaintenanceEntrySchedule::ManualOnly => i18n("Manual only").to_string(),
+        MaintenanceEntrySchedule::ManualOnly => GuiText::ManualOnly.text(),
         MaintenanceEntrySchedule::Daily { hour, minute } => {
             let hhmm = format!("{hour:02}:{minute:02}");
             i18n("Daily at %1").subs(&[&hhmm])
@@ -1105,8 +1106,8 @@ fn unavailable_status(
     availability: &BackupAvailabilityDto,
 ) -> (String, String, String) {
     if matches!(schedule, Schedule::ManualOnly) {
-        let text = i18n("%1 · %2").subs(&[
-            &i18n("Manual only").to_string(),
+        let text = GuiText::TwoParts.with_args(&[
+            &GuiText::ManualOnly.text(),
             &localized_availability_reason(availability),
         ]);
         return (text, "state-information".to_string(), "text".to_string());

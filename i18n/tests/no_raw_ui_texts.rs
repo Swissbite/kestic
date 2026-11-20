@@ -4,9 +4,10 @@
 #![forbid(unsafe_code)]
 
 //! Every text the user sees goes through the catalog (`po/de/kestic.po`): QML shows texts only
-//! via `i18n(…)`, `sharedTexts.label(…)` or `appBackend.recoveryActionLabel(…)`, and daemon and
-//! GUI pass no raw sentence to the tray, notifications, the window or the system. Together with
-//! `simple_language.rs` (which checks every catalog entry) this covers all visible texts.
+//! via `i18n(…)`, `Texts.label(…)` / `Texts.labelArgs(…)` or `appBackend.recoveryActionLabel(…)`,
+//! and daemon and GUI pass no raw sentence to the tray, notifications, the window or the system.
+//! Together with `simple_language.rs` (which checks every catalog entry) this covers all visible
+//! texts.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -43,7 +44,14 @@ struct Literal {
     compared: bool,
 }
 
-const TRANSLATING_CALLS: &[&str] = &["i18n", "i18nc", "i18np", "label", "recoveryActionLabel"];
+const TRANSLATING_CALLS: &[&str] = &[
+    "i18n",
+    "i18nc",
+    "i18np",
+    "label",
+    "labelArgs",
+    "recoveryActionLabel",
+];
 
 /// String literals of a single-line expression with their call context.
 fn literals(expr: &str) -> Vec<Literal> {

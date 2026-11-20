@@ -4,11 +4,11 @@
 //! Kestic GUI and CLI entrypoint.
 
 mod backend;
-mod list_model;
 mod models;
 mod overall_text;
 mod smoke;
 mod state_cache;
+mod ui_texts;
 
 use cxx_kde_frameworks::ki18n::{self, KLocalizedString};
 use cxx_qt::casting::Upcast;
@@ -22,12 +22,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 struct SmokeOptions {
-    is_m1: bool,
     scenario: String,
     screenshot: String,
     layout: String,
     lang: String,
-    trigger_shortcut: bool,
 }
 
 fn has_kestic_config(explicit_path: Option<&PathBuf>) -> bool {
@@ -328,18 +326,14 @@ fn parse_gui_launch_config(args: &[String]) -> state_cache::GuiLaunchConfig {
 fn parse_smoke_args() -> Option<SmokeOptions> {
     let mut args = env::args().skip(1);
     let mut smoke = false;
-    let mut is_m1 = false;
     let mut scenario = String::new();
     let mut screenshot = String::new();
     let mut layout = String::new();
     let mut lang = String::from("en");
-    let mut trigger_shortcut = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--smoke-test" => smoke = true,
             "--smoke-m1" => {
                 smoke = true;
-                is_m1 = true;
                 scenario = args.next().unwrap_or_default();
             }
             "--screenshot" => {
@@ -353,17 +347,14 @@ fn parse_smoke_args() -> Option<SmokeOptions> {
                     lang = val;
                 }
             }
-            "--smoke-shortcut" => trigger_shortcut = true,
             _ => {}
         }
     }
     smoke.then_some(SmokeOptions {
-        is_m1,
         scenario,
         screenshot,
         layout,
         lang,
-        trigger_shortcut,
     })
 }
 
@@ -554,31 +545,18 @@ fn main() -> ExitCode {
     if let Some(mut engine_pin) = engine.as_mut() {
         ki18n::setup_localized_context(engine_pin.as_mut().upcast_pin());
         smoke::ffi::install_keyboard_handlers(engine_pin.as_mut());
-        let qml_url = match smoke_opts.as_ref() {
-            Some(opts) if !opts.is_m1 => {
-                smoke::ffi::install_smoke_check(
-                    engine_pin.as_mut(),
-                    &opts.screenshot,
-                    3,
-                    &opts.layout,
-                    &opts.lang,
-                    opts.trigger_shortcut,
-                );
-                "qrc:/qt/qml/net/daester/kestic/src/qml/SpikeMain.qml"
-            }
-            Some(opts) => {
-                smoke::ffi::install_m1_smoke_check(
-                    engine_pin.as_mut(),
-                    &opts.scenario,
-                    &opts.screenshot,
-                    &opts.layout,
-                    &opts.lang,
-                );
-                "qrc:/qt/qml/net/daester/kestic/src/qml/Main.qml"
-            }
-            None => "qrc:/qt/qml/net/daester/kestic/src/qml/Main.qml",
-        };
-        engine_pin.load(&QUrl::from(qml_url));
+        if let Some(opts) = smoke_opts.as_ref() {
+            smoke::ffi::install_m1_smoke_check(
+                engine_pin.as_mut(),
+                &opts.scenario,
+                &opts.screenshot,
+                &opts.layout,
+                &opts.lang,
+            );
+        }
+        engine_pin.load(&QUrl::from(
+            "qrc:/qt/qml/net/daester/kestic/src/qml/Main.qml",
+        ));
     }
 
     let code = if let Some(app_pin) = app.as_mut() {

@@ -124,6 +124,13 @@ int scenario_all_pages(const Ctx& c) {
         QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, i));
         M3_CHECK(4910 + i, page_visible(w, tabs[i].page), tabs[i].page);
         M3_CHECK(4915 + i, dump.record(QString::fromLatin1(tabs[i].name), w), "tab without texts or screenshot");
+        if (i == 1) {
+            // AC-M0-04-1: the QML list shows exactly the rows of the Rust list model.
+            QObject* list = object_named(w, "backupsListView");
+            QAbstractItemModel* backups = model_named(w, "backupsModel");
+            M3_CHECK(4904, list && backups && backups->rowCount() > 0, "backups list or model missing");
+            M3_CHECK(4905, list->property("count").toInt() == backups->rowCount(), "list shows other rows than the model");
+        }
     }
 
     M3_CHECK(4919, open_detail(w, bid), "backupDetailPage did not open");

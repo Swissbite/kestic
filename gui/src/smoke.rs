@@ -26,16 +26,6 @@ pub mod ffi {
         fn install_keyboard_handlers(engine: Pin<&mut QQmlApplicationEngine>);
 
         #[namespace = "kestic::smoke"]
-        fn install_smoke_check(
-            engine: Pin<&mut QQmlApplicationEngine>,
-            screenshot_path: &str,
-            expected_list_count: i32,
-            layout_mode: &str,
-            expected_lang: &str,
-            trigger_shortcut: bool,
-        );
-
-        #[namespace = "kestic::smoke"]
         fn install_m1_smoke_check(
             engine: Pin<&mut QQmlApplicationEngine>,
             scenario: &str,

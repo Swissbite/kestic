@@ -957,7 +957,8 @@ mod language;
 /// Every page, editor, wizard and the settings window, opened in English and in German: (a) the
 /// German window shows no English text that has a German translation, (b) every visible text in
 /// both languages has short sentences and (c) no technical words. The visible texts per page are
-/// kept as review lists (`target/smoke-artifacts/m3-all-pages-texts-<lang>.tsv`).
+/// kept as review lists (`target/smoke-artifacts/m3-all-pages-texts-<lang>.tsv`). The smoke also
+/// checks that the backups list shows exactly the rows of the Rust list model (AC-M0-04-1).
 #[test]
 fn every_page_shows_simple_texts_in_the_gui_language() {
     run_isolated_test(

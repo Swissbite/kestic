@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.Dialog {
     id: dialog
@@ -21,10 +22,10 @@ Kirigami.Dialog {
     customFooterActions: [
         Kirigami.Action {
             icon.name: "edit-copy"
-            text: i18n("Copy")
+            text: Texts.label("copy")
             onTriggered: {
                 dialog.appBackend.copyToClipboard(dialog.cmdText);
-                dialog.rootWindow.showPassiveNotification(i18n("Command copied to clipboard"));
+                dialog.rootWindow.showPassiveNotification(Texts.label("command_copied"));
             }
         }
     ]

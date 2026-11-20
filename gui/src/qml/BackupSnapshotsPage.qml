@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
@@ -39,7 +40,7 @@ Kirigami.ScrollablePage {
             id: closeSnapshotsAction
             objectName: "closeSnapshotsAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: rootWindow.popSubPage()
         }
     ]
@@ -61,7 +62,7 @@ Kirigami.ScrollablePage {
             text: appBackend.snapshots_error
             actions: [
                 Kirigami.Action {
-                    text: i18n("Retry")
+                    text: Texts.label("retry")
                     onTriggered: appBackend.loadBackupSnapshots(backupId)
                 }
             ]

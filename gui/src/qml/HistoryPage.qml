@@ -8,10 +8,9 @@ import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
-    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: page
     objectName: "historyPage"
-    title: i18n("History")
+    title: Texts.label("history")
 
     required property var rootWindow
     required property var appBackend
@@ -48,7 +47,7 @@ Kirigami.ScrollablePage {
     }
 
     function buildBackupFilterOptions() {
-        var opts = [{ backupId: "", label: sharedTexts.label("all_backups") }];
+        var opts = [{ backupId: "", label: Texts.label("all_backups") }];
         var count = backupsModel.rowCount(backupsModel.index(-1, -1));
         for (var i = 0; i < count; ++i) {
             var bid = backupsModel.data(backupsModel.index(i, 0), 0);
@@ -223,7 +222,7 @@ Kirigami.ScrollablePage {
 
                     Controls.Label {
                         objectName: "runRowTitle"
-                        text: i18n("%1 · %2", runRow.timeShort, runRow.title)
+                        text: Texts.labelArgs("two_parts", [runRow.timeShort, runRow.title])
                         font.bold: true
                         color: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                         elide: Text.ElideRight
@@ -232,8 +231,8 @@ Kirigami.ScrollablePage {
 
                     Controls.Label {
                         text: runRow.summaryText !== ""
-                            ? i18n("%1 · %2", runRow.statusText, runRow.summaryText)
-                            : i18n("%1 · %2", runRow.statusText, runRow.durationText)
+                            ? Texts.labelArgs("two_parts", [runRow.statusText, runRow.summaryText])
+                            : Texts.labelArgs("two_parts", [runRow.statusText, runRow.durationText])
                         opacity: 0.8
                         color: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                         elide: Text.ElideRight

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import QtQuick
+import net.daester.kestic 1.0
 
 QtObject {
     id: manager
@@ -128,11 +129,11 @@ QtObject {
     function defaultTitleForDepth(idx, rev) {
         if (rev >= 0 && idx === 0) {
             switch (rootWindow.activeTab) {
-            case 0: return i18n("Overview");
-            case 1: return i18n("Backups");
-            case 2: return i18n("Destinations");
-            case 3: return i18n("History");
-            default: return i18n("Overview");
+            case 0: return Texts.label("overview");
+            case 1: return Texts.label("backups");
+            case 2: return Texts.label("destinations");
+            case 3: return Texts.label("history");
+            default: return Texts.label("overview");
             }
         }
         return "";

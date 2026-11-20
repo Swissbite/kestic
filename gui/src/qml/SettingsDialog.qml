@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ApplicationWindow {
     id: settingsWindow
@@ -252,7 +253,7 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.Label {
-                Kirigami.FormData.label: i18n("Status:")
+                Kirigami.FormData.label: Texts.label("status_label")
                 text: appBackend.daemon_reachable
                     ? i18n("Running · starts when you log in")
                     : i18n("Not running")

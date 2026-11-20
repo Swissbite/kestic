@@ -8,10 +8,9 @@ import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
-    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: page
     objectName: "destinationDetailPage"
-    title: currentData ? currentData.name : i18n("Destination")
+    title: currentData ? currentData.name : Texts.label("destination")
 
     required property var rootWindow
     required property var appBackend
@@ -62,7 +61,7 @@ Kirigami.ScrollablePage {
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: currentData !== null && currentData.backupCount === 0 && appBackend.blocking_kind !== "daemon_unreachable"
             tooltip: currentData && currentData.backupCount > 0
-                ? sharedTexts.label("remove_backups_first")
+                ? Texts.label("remove_backups_first")
                 : i18n("Remove destination from Kestic")
             onTriggered: if (currentData) rootWindow.openRemoveDestinationDialog(destinationId, currentData.name)
         }
@@ -95,7 +94,7 @@ Kirigami.ScrollablePage {
                 Kirigami.Action {
                     objectName: "destUnlockAction"
                     icon.name: "unlock"
-                    text: i18n("Unlock…")
+                    text: Texts.label("unlock_ellipsis")
                     enabled: appBackend.blocking_kind === ""
                     onTriggered: appBackend.unlockDestination(destinationId)
                 }
@@ -152,7 +151,7 @@ Kirigami.ScrollablePage {
             }
             Controls.Label {
                 visible: currentData !== null && currentData.kindName === "rest" && currentData.username !== ""
-                Kirigami.FormData.label: i18n("Username:")
+                Kirigami.FormData.label: Texts.label("username_label")
                 text: currentData ? currentData.username : ""
             }
             Controls.Label {
@@ -163,7 +162,7 @@ Kirigami.ScrollablePage {
 
         Kirigami.Heading {
             level: 3
-            text: i18n("Maintenance")
+            text: Texts.label("maintenance")
         }
 
         Kirigami.FormLayout {
@@ -172,7 +171,7 @@ Kirigami.ScrollablePage {
             Controls.Label {
                 objectName: "maintenanceStatusLabel"
                 visible: currentData !== null && currentData.maintenanceStatusText !== ""
-                Kirigami.FormData.label: i18n("Status:")
+                Kirigami.FormData.label: Texts.label("status_label")
                 text: currentData ? currentData.maintenanceStatusText : ""
                 wrapMode: Text.WordWrap
             }
@@ -255,7 +254,7 @@ Kirigami.ScrollablePage {
 
         Controls.Label {
             visible: currentData !== null && currentData.backupCount > 0
-            text: sharedTexts.label("remove_backups_first")
+            text: Texts.label("remove_backups_first")
             opacity: 0.75
             wrapMode: Text.WordWrap
             Layout.fillWidth: true

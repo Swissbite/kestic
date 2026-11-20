@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "backupRetentionPage"
-    title: i18n("Retention")
+    title: Texts.label("retention")
 
     required property var rootWindow
     required property var appBackend
@@ -357,7 +358,7 @@ Kirigami.ScrollablePage {
             id: previewRetentionAction
             objectName: "previewRetentionAction"
             icon.name: "document-preview"
-            text: i18n("Preview…")
+            text: Texts.label("preview_ellipsis")
             enabled: page.hasAnyRule && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.openPreviewPage()
         },
@@ -365,7 +366,7 @@ Kirigami.ScrollablePage {
             id: saveRetentionAction
             objectName: "saveRetentionAction"
             icon.name: "document-save"
-            text: i18n("Save")
+            text: Texts.label("save")
             enabled: page.dirty && page.hasAnyRule && !page.saveBusy && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.triggerSave(false)
         },
@@ -373,7 +374,7 @@ Kirigami.ScrollablePage {
             id: closeRetentionAction
             objectName: "closeRetentionAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: {
                 if (page.dirty) {
                     unsavedDialog.open();
@@ -412,7 +413,7 @@ Kirigami.ScrollablePage {
     Kirigami.PromptDialog {
         id: unsavedDialog
         objectName: "unsavedRetentionDialog"
-        title: i18n("Save changes?")
+        title: Texts.label("save_changes_question")
         subtitle: i18n("You have unsaved changes to retention rules.")
         standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
         onAccepted: page.triggerSave(true)
@@ -584,9 +585,9 @@ Kirigami.ScrollablePage {
                 objectName: "retentionPresetCombo"
                 Kirigami.FormData.label: i18n("Preset:")
                 model: [
-                    i18n("Standard (7 daily, 4 weekly, 12 monthly)"),
-                    i18n("Economical (7 daily, 4 weekly)"),
-                    i18n("Long (7 daily, 4 weekly, 12 monthly, all yearly)"),
+                    Texts.label("preset_standard"),
+                    Texts.label("preset_economical"),
+                    Texts.label("preset_long"),
                     i18n("Custom")
                 ]
                 readonly property var presetKeys: ["standard", "economical", "long", "custom"]

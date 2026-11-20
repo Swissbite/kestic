@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.Dialog {
     id: dialog
     objectName: "removeDestinationDialog"
-    title: i18n("Remove '%1' from Kestic?", dialog.destName)
+    title: Texts.labelArgs("remove_from_kestic_question", [dialog.destName])
     standardButtons: Kirigami.Dialog.Cancel
     padding: Kirigami.Units.largeSpacing
 

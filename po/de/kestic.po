@@ -570,26 +570,6 @@ msgstr "Der Hintergrunddienst läuft nicht. Geplante Backups laufen nicht."
 msgid "Personal folder"
 msgstr "Persönlicher Ordner"
 
-#: gui/src/list_model.rs:41
-msgid "Photos"
-msgstr "Fotos"
-
-#: gui/src/list_model.rs:42
-msgid "Projects"
-msgstr "Projekte"
-
-#: gui/src/list_model.rs:46
-msgid "~ -> NAS · backed up 2 hours ago"
-msgstr "~ -> NAS · vor 2 Stunden gesichert"
-
-#: gui/src/list_model.rs:47
-msgid "/media/photos -> USB-Disk · waiting"
-msgstr "/media/photos -> USB-Disk · wartet"
-
-#: gui/src/list_model.rs:48
-msgid "~/Projects -> S3 · password rejected"
-msgstr "~/Projekte -> S3 · Passwort abgelehnt"
-
 #: gui/src/models/backups_model.rs:92
 msgid "%1% · %2 of %3"
 msgstr "%1% · %2 von %3"
@@ -3259,50 +3239,6 @@ msgstr "Befehl"
 #: gui/src/qml/ShowCommandDialog.qml:37
 msgid "restic command (without passwords):"
 msgstr "restic-Befehl (ohne Passwörter):"
-
-#: gui/src/qml/SpikeMain.qml:25
-msgid "Back Up Now started (Ctrl+Shift+B)"
-msgstr "Jetzt sichern gestartet (Ctrl+Shift+B)"
-
-#: gui/src/qml/SpikeMain.qml:74 gui/src/qml/SpikeMain.qml:78
-msgid "Restore"
-msgstr "Wiederherstellen"
-
-#: gui/src/qml/SpikeMain.qml:217
-msgid "Back Up Now (Ctrl+Shift+B)"
-msgstr "Jetzt sichern (Ctrl+Shift+B)"
-
-#: gui/src/qml/SpikeMain.qml:222
-msgid "Retention…"
-msgstr "Aufbewahrung…"
-
-#: gui/src/qml/SpikeMain.qml:230
-msgid "NAS (REST server)"
-msgstr "NAS (REST-Server)"
-
-#: gui/src/qml/SpikeMain.qml:233
-msgid "Schedule:"
-msgstr "Zeitplan:"
-
-#: gui/src/qml/SpikeMain.qml:234
-msgid "Daily 12:00 · AC power and network"
-msgstr "Täglich 12:00 · Netzstrom und Netzwerk"
-
-#: gui/src/qml/SpikeMain.qml:237
-msgid "Last run:"
-msgstr "Letzter Lauf:"
-
-#: gui/src/qml/SpikeMain.qml:238
-msgid "Today 12:00, ok, 312 MB new"
-msgstr "Heute 12:00, ok, 312 MB neu"
-
-#: gui/src/qml/SpikeMain.qml:241
-msgid "Configure Retention…"
-msgstr "Aufbewahrung einrichten…"
-
-#: gui/src/qml/SpikeMain.qml:260
-msgid "Times started: %1"
-msgstr "Anzahl Starts: %1"
 
 #: gui/src/qml/UnsavedChangesDialog.qml:31
 msgid "Discard"

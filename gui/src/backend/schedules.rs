@@ -14,6 +14,7 @@ use crate::state_cache::{
     lookup_backup_summary, make_client, not_found_text, preview_next_schedule_slots,
     refresh_state_now, shared_state,
 };
+use crate::ui_texts::GuiText;
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::model::{MaintenanceSchedule, NotificationSettings, RunConditions, Schedule};
@@ -534,7 +535,7 @@ impl qobject::KesticApp {
     pub fn recovery_action_label(&self, action_code: &QString) -> QString {
         let label = match kestic_core::restic::RecoveryAction::parse(&action_code.to_string()) {
             Some(action) => crate::state_cache::tr(&action.label_message()),
-            None => i18n("Retry").to_string(),
+            None => GuiText::Retry.text(),
         };
         QString::from(&label)
     }

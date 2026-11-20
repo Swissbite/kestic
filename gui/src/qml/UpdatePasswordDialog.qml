@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.Dialog {
     id: dialog
@@ -47,8 +48,8 @@ Kirigami.Dialog {
         Controls.TextField {
             id: updatePasswordField
             echoMode: TextInput.Password
-            placeholderText: i18n("Repository password")
-            Accessible.name: i18n("Repository password")
+            placeholderText: Texts.label("repository_password")
+            Accessible.name: Texts.label("repository_password")
             Layout.fillWidth: true
             onAccepted: {
                 if (text.length > 0 && dialog.appBackend.updateDestinationPassword(dialog.destId, text)) {

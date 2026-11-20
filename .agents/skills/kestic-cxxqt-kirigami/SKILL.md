@@ -16,7 +16,7 @@ Use this skill whenever implementing or modifying anything in `gui/`, QML files,
 
 ## CXX-Qt 0.10 Patterns
 
-- Follow `gui/src/list_model.rs` for exposing `QAbstractListModel` to QML:
+- Follow `gui/src/models/backups_model.rs` for exposing `QAbstractListModel` to QML:
   - `#[qobject] #[base = QAbstractListModel] #[qml_element]` inside `extern "RustQt"`.
   - Override `data`, `roleNames`, and `rowCount` with `#[qinvokable] #[cxx_override]` and explicit `#[cxx_name = "..."]` where camelCase is expected by Qt.
 - Initialize `QApplication` (`cxx-qt-lib-extras`) with desktop style (`org.kde.desktop`) and `KLocalizedString::set_application_domain("kestic")` + `setup_localized_context` before loading QML (see `gui/src/main.rs`).
@@ -26,7 +26,7 @@ Use this skill whenever implementing or modifying anything in `gui/`, QML files,
 - **Pushing/replacing pages:** Instantiate `Component` pages via `comp.createObject(pageStack, props || {})` before `pageStack.push(...)` / `pageStack.replace(...)` (see `pushFromComponent` / `replaceFromComponent` in `gui/src/qml/Main.qml`).
 - **`NavigationTabBar` width:** In wide layout, `maximumContentWidth` must be wide enough per tab so longer German labels like `"Wiederherstellen"` (added in M4) do not wrap onto two lines.
 - **Window title:** Main window title always stays `"Kestic"` regardless of active subpage (`AC-M1-13-6`); settings window title is `"Kestic einrichten"`.
-- **No silent QML warnings:** Treat any QML/Qt warning on `stderr` as a test failure (same assertion as `core/tests/m0_s09_i18n.rs`).
+- **No silent QML warnings:** Treat any QML/Qt warning on `stderr` as a test failure (same assertion as `core/tests/m1_gui_smoke.rs`).
 
 ## Accessibility & Keyboard Navigation (NFR-09, M6-S09)
 

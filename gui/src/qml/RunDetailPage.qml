@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
@@ -84,7 +85,7 @@ Kirigami.ScrollablePage {
             id: runDetailShowCommandAction
             objectName: "runDetailShowCommandAction"
             icon.name: "utilities-terminal"
-            text: i18n("Show Command")
+            text: Texts.label("show_command")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             onTriggered: rootWindow.openShowCommandDialog(
                 appBackend.selected_run_transparent_command,
@@ -510,11 +511,11 @@ Kirigami.ScrollablePage {
                                 }
                                 Controls.Button {
                                     icon.name: "edit-copy"
-                                    text: i18n("Copy")
+                                    text: Texts.label("copy")
                                     Accessible.name: i18n("Copy command")
                                     onClicked: {
                                         appBackend.copyToClipboard(modelData.command || "");
-                                        rootWindow.showPassiveNotification(i18n("Command copied to clipboard"));
+                                        rootWindow.showPassiveNotification(Texts.label("command_copied"));
                                     }
                                 }
                             }

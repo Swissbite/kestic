@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "destinationMaintenancePage"
-    title: i18n("Maintenance")
+    title: Texts.label("maintenance")
 
     required property var rootWindow
     required property var appBackend
@@ -41,8 +42,8 @@ Kirigami.ScrollablePage {
     readonly property var freqOptions: [
         { key: "weekly", label: i18n("Weekly") },
         { key: "monthly", label: i18n("Monthly") },
-        { key: "daily", label: i18n("Daily") },
-        { key: "manual_only", label: i18n("Manual only") }
+        { key: "daily", label: Texts.label("daily") },
+        { key: "manual_only", label: Texts.label("manual_only") }
     ]
 
     readonly property var nthOptions: [
@@ -54,13 +55,13 @@ Kirigami.ScrollablePage {
     ]
 
     readonly property var weekdayOptions: [
-        { key: "monday", label: i18n("Monday") },
-        { key: "tuesday", label: i18n("Tuesday") },
-        { key: "wednesday", label: i18n("Wednesday") },
-        { key: "thursday", label: i18n("Thursday") },
-        { key: "friday", label: i18n("Friday") },
-        { key: "saturday", label: i18n("Saturday") },
-        { key: "sunday", label: i18n("Sunday") }
+        { key: "monday", label: Texts.label("monday") },
+        { key: "tuesday", label: Texts.label("tuesday") },
+        { key: "wednesday", label: Texts.label("wednesday") },
+        { key: "thursday", label: Texts.label("thursday") },
+        { key: "friday", label: Texts.label("friday") },
+        { key: "saturday", label: Texts.label("saturday") },
+        { key: "sunday", label: Texts.label("sunday") }
     ]
 
     function buildEntryObj(kind, nth, weekday, hour, minute) {
@@ -259,7 +260,7 @@ Kirigami.ScrollablePage {
             id: saveMaintenanceAction
             objectName: "saveMaintenanceAction"
             icon.name: "document-save"
-            text: i18n("Save")
+            text: Texts.label("save")
             enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.requestSave(false)
         },
@@ -267,7 +268,7 @@ Kirigami.ScrollablePage {
             id: closeMaintenanceAction
             objectName: "closeMaintenanceAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: {
                 if (page.dirty) {
                     unsavedDialog.open();
@@ -372,7 +373,7 @@ Kirigami.ScrollablePage {
             Controls.ComboBox {
                 id: pruneFrequencyCombo
                 objectName: "pruneFrequencyCombo"
-                Kirigami.FormData.label: i18n("Frequency:")
+                Kirigami.FormData.label: Texts.label("frequency_label")
                 model: page.freqOptions
                 textRole: "label"
                 valueRole: "key"
@@ -412,7 +413,7 @@ Kirigami.ScrollablePage {
 
             RowLayout {
                 visible: page.pruneKind !== "manual_only"
-                Kirigami.FormData.label: i18n("Time:")
+                Kirigami.FormData.label: Texts.label("time_label")
                 spacing: Kirigami.Units.smallSpacing
 
                 Controls.SpinBox {
@@ -452,7 +453,7 @@ Kirigami.ScrollablePage {
             Controls.ComboBox {
                 id: checkFrequencyCombo
                 objectName: "checkFrequencyCombo"
-                Kirigami.FormData.label: i18n("Frequency:")
+                Kirigami.FormData.label: Texts.label("frequency_label")
                 model: page.freqOptions
                 textRole: "label"
                 valueRole: "key"
@@ -492,7 +493,7 @@ Kirigami.ScrollablePage {
 
             RowLayout {
                 visible: page.checkKind !== "manual_only"
-                Kirigami.FormData.label: i18n("Time:")
+                Kirigami.FormData.label: Texts.label("time_label")
                 spacing: Kirigami.Units.smallSpacing
 
                 Controls.SpinBox {

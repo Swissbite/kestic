@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "backupReassignPage"
-    title: i18n("Destination")
+    title: Texts.label("destination")
 
     required property var rootWindow
     required property var appBackend
@@ -43,7 +44,7 @@ Kirigami.ScrollablePage {
             id: closeReassignAction
             objectName: "closeReassignAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: rootWindow.popSubPage()
         }
     ]
@@ -209,10 +210,10 @@ Kirigami.ScrollablePage {
         }
 
         Controls.Button {
-            text: i18n("Add New Destination…")
+            text: Texts.label("add_new_destination_ellipsis")
             icon.name: "list-add"
             enabled: appBackend.blocking_kind === ""
-            Accessible.name: i18n("Add New Destination")
+            Accessible.name: Texts.label("add_new_destination")
             onClicked: rootWindow.openAddDestinationWizard()
         }
     }

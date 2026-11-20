@@ -8,10 +8,9 @@ import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
-    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: page
     objectName: "backupsListPage"
-    title: i18n("Backups")
+    title: Texts.label("backups")
 
     required property var rootWindow
     required property var appBackend
@@ -83,7 +82,7 @@ Kirigami.ScrollablePage {
             width: parent.width - Kirigami.Units.largeSpacing * 4
             visible: backupsListView.count === 0
             icon.name: "folder-sync"
-            text: sharedTexts.label("no_backups")
+            text: Texts.label("no_backups")
             explanation: i18n("Create a backup to define what folder to back up and where to store it.")
             helpfulAction: Kirigami.Action {
                 id: backupsEmptyAddAction
