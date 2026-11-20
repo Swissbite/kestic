@@ -16,7 +16,7 @@ use common::{
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{Run, RunStatus};
-use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
+use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, RunProgressPhase};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -235,6 +235,96 @@ fn ac_m3_12_2_cancel_in_plasma_progress_cancels_the_run() {
                 1,
                 "(a) restic was terminated"
             );
+            drop(signals);
+            rig.wrapper.release("backup");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// While restic still finds files (no `seconds_remaining`), the run shows no percentage
+/// (`docs/spec/ui/tray-und-benachrichtigungen.md` §10.3, restic-integration «Fortschritt beim
+/// Sichern»): (a) the Plasma progress view gets percent 0, (b) no total and (c) no speed, (d) its
+/// text says that files are looked through, (e) the `RunProgress` signal carries phase `scanning`
+/// with the amount looked through.
+#[test]
+fn progress_view_and_signal_show_no_percentage_while_restic_still_finds_files() {
+    run_isolated_test(
+        "progress_view_and_signal_show_no_percentage_while_restic_still_finds_files",
+        "KESTIC_M3_12_SCANNING_INNER",
+        |root| {
+            let (job_view, _conns, _upower, _nm) = start_fakes();
+            let rec = &job_view.recorder;
+            let variant = latest_variant();
+            let rig = start_rig(root, &variant, "M3JS");
+            let client = &rig.daemon.client;
+            let signals = KesticSignalCollector::start(
+                &variant.bus_name("M3JS"),
+                KESTIC_OBJECT_PATH,
+                KESTIC_INTERFACE_V1,
+            );
+            rig.wrapper.hold_with_output(
+                "backup",
+                concat!(
+                    r#"{"message_type":"status","percent_done":0.99,"total_files":4000,"#,
+                    r#""files_done":3500,"total_bytes":5000000000,"bytes_done":4950000000}"#,
+                    "\n",
+                ),
+            );
+
+            let run_id = client
+                .start_backup(&rig.fixture.backup_id_str)
+                .expect("start run");
+            wait_until("progress update while scanning", || {
+                rec.updates
+                    .lock()
+                    .expect("lock")
+                    .iter()
+                    .any(|(_, msg)| msg.contains("looking through files"))
+            });
+            let (index, pct) = {
+                let updates = rec.updates.lock().expect("lock");
+                let index = updates
+                    .iter()
+                    .position(|(_, msg)| msg.contains("looking through files"))
+                    .expect("scanning update");
+                (index, updates[index].0)
+            };
+            let (total, speed) = rec.sizes.lock().expect("lock")[index];
+            assert_eq!(pct, 0, "(a) percent while scanning");
+            assert_eq!(total, 0, "(b) totalBytes while scanning");
+            assert_eq!(speed, 0, "(c) speed while scanning");
+            assert_eq!(
+                rec.updates.lock().expect("lock")[index].1,
+                "Docs: backing up · looking through files",
+                "(d) progress view text"
+            );
+
+            signals.wait_until(Duration::from_secs(10), |sigs| {
+                sigs.iter().any(
+                    |s| matches!(s, CapturedKesticSignal::RunProgress(p) if p.run_id == run_id),
+                )
+            });
+            let progress = signals
+                .snapshot()
+                .into_iter()
+                .find_map(|s| match s {
+                    CapturedKesticSignal::RunProgress(p) if p.run_id == run_id => Some(p),
+                    _ => None,
+                })
+                .expect("RunProgress signal");
+            assert_eq!(
+                progress.phase,
+                RunProgressPhase::Scanning,
+                "(e) signal phase"
+            );
+            assert_eq!(progress.percent_done, 0.0, "(e) signal percent");
+            assert_eq!(
+                progress.bytes_done, 4_950_000_000,
+                "(e) amount looked through"
+            );
+            assert_eq!(progress.files_done, 3500, "(e) files looked through");
+
             drop(signals);
             rig.wrapper.release("backup");
             rig.daemon.stop();

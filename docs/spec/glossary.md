@@ -27,6 +27,7 @@ Verbindliche Begriffe für UI, Spec und Code. Nicht verwenden: «Profil», «Job
 | Löschen | Delete | – | Daten im Ziel vernichten (Snapshots, FR-48 «Gefahrenbereich») |
 | Gefahrenbereich | Danger Zone | – | abgesetzter Bereich für Löschen (FR-48) |
 | Sperre | Lock | – | restic-Lock (Exit 11, FR-19) |
+| Dateien durchsehen (Suche) | Looking through files | `RunProgressPhase::Scanning` | Phase eines Backup-Laufs, in der restic noch Dateien findet (`seconds_remaining` fehlt); keine Prozentzahl |
 | Fortschrittsanzeige | Progress view | – | Eintrag im Plasma-Benachrichtigungsbereich (FR-53) |
 | Passwortspeicher | Password store | `SecretStore` | Secret Service / KWallet |
 | Gespeichertes Passwort | Saved password | `SECRET_KIND_REPO` | Repository-Passwort, das Kestic im Passwortspeicher hält (nicht «stored password») |

@@ -323,6 +323,7 @@ Kirigami.ScrollablePage {
                 visible: currentData !== null && currentData.isRunning
                 from: 0
                 to: 100
+                indeterminate: currentData !== null && currentData.activeScanning
                 value: currentData ? currentData.activePercent : 0
                 Layout.fillWidth: true
             }

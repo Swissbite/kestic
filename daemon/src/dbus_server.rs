@@ -3,7 +3,7 @@
 
 //! D-Bus server (`net.daester.Kestic1`) and asynchronous signal emitters for the Kestic daemon.
 
-use crate::dbus_api::{DaemonStateDto, KESTIC_OBJECT_PATH, KesticDbusError};
+use crate::dbus_api::{ActiveRunProgressDto, DaemonStateDto, KESTIC_OBJECT_PATH, KesticDbusError};
 use crate::monitors::list_known_networks;
 use crate::service::{
     DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
@@ -702,15 +702,7 @@ impl KesticDbusV1Service {
     async fn run_updated(ctxt: &SignalEmitter<'_>, run_json: &str) -> zbus::Result<()>;
 
     #[zbus(signal, name = "RunProgress")]
-    async fn run_progress(
-        ctxt: &SignalEmitter<'_>,
-        run_id: &str,
-        percent_done: f64,
-        bytes_done: u64,
-        total_bytes: u64,
-        speed_bps: u64,
-        seconds_remaining: u64,
-    ) -> zbus::Result<()>;
+    async fn run_progress(ctxt: &SignalEmitter<'_>, progress_json: &str) -> zbus::Result<()>;
 
     #[zbus(signal, name = "ManualRunBlocked")]
     async fn manual_run_blocked(
@@ -802,32 +794,16 @@ pub(crate) fn emit_run_updated(conn: &Connection, run: &Run) {
     }
 }
 
-pub(crate) fn emit_run_progress(
-    conn: &Connection,
-    run_id: &str,
-    percent_done: f64,
-    bytes_done: u64,
-    total_bytes: u64,
-    speed_bps: u64,
-    seconds_remaining: u64,
-) {
-    let conn = conn.clone();
-    let run_id = run_id.to_string();
-    thread::spawn(move || {
-        let _ = zbus::block_on(async move {
-            let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
-            KesticDbusV1Service::run_progress(
-                &emitter,
-                &run_id,
-                percent_done,
-                bytes_done,
-                total_bytes,
-                speed_bps,
-                seconds_remaining,
-            )
-            .await
+pub(crate) fn emit_run_progress(conn: &Connection, progress: &ActiveRunProgressDto) {
+    if let Ok(json) = serde_json::to_string(progress) {
+        let conn = conn.clone();
+        thread::spawn(move || {
+            let _ = zbus::block_on(async move {
+                let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
+                KesticDbusV1Service::run_progress(&emitter, &json).await
+            });
         });
-    });
+    }
 }
 
 pub(crate) fn emit_manual_run_blocked(

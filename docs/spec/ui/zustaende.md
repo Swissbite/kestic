@@ -25,7 +25,7 @@ Eine Abbildung für Fenster, Tray, Benachrichtigung. Immer Icon **und** Text, Fa
 | Zustand | Text DE / EN | Icon (Breeze) | Farbe des Icons (`Kirigami.Theme`) | Benachrichtigung |
 | --- | --- | --- | --- | --- |
 | ok | Gesichert · vor 2 Stunden / Backed up · 2 hours ago | `state-ok` | positiv | nein |
-| läuft | Wird gesichert · 42 % / Backing up · 42% | `state-sync` | Highlight | Fortschrittsanzeige (FR-53) |
+| läuft | Sichert · 42 % / Backing up · 42%; solange restic Dateien sucht: Sichert · Dateien werden durchgesehen / Backing up · looking through files ([restic-integration.md](../restic-integration.md) «Fortschritt beim Sichern») | `state-sync` | Highlight | Fortschrittsanzeige (FR-53) |
 | ausstehend | Wartet: ‹Grund› / Waiting: ‹reason› (§6.3) | `chronometer` | Text | nein (Alert erst bei überfällig) |
 | Warnung: Dateien nicht lesbar (Exit 3) | Gesichert, 2 Dateien nicht lesbar / Backed up, 2 files unreadable | `state-warning` | neutral | ja (F3) |
 | Warnung: Teilerfolg (F4) | Gesichert, Aufbewahrung nicht ausgeführt / Backed up, retention not applied | `state-warning` | neutral | ja |

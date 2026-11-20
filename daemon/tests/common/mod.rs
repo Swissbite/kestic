@@ -909,14 +909,7 @@ pub fn wait_for_bus_name_released(conn: &Connection, bus_name: &str, timeout: Du
 pub enum CapturedKesticSignal {
     StatusChanged(String),
     RunUpdated(String),
-    RunProgress {
-        run_id: String,
-        percent_done: f64,
-        bytes_done: u64,
-        total_bytes: u64,
-        speed_bps: u64,
-        seconds_remaining: u64,
-    },
+    RunProgress(kestic_daemon::dbus_api::ActiveRunProgressDto),
     ManualRunBlocked {
         backup_id: String,
         reason: String,
@@ -1005,27 +998,10 @@ impl KesticSignalCollector {
                             .map(CapturedKesticSignal::RunUpdated),
                         "RunProgress" => msg
                             .body()
-                            .deserialize::<(String, f64, u64, u64, u64, u64)>()
+                            .deserialize::<String>()
                             .ok()
-                            .map(
-                                |(
-                                    run_id,
-                                    percent_done,
-                                    bytes_done,
-                                    total_bytes,
-                                    speed_bps,
-                                    seconds_remaining,
-                                )| {
-                                    CapturedKesticSignal::RunProgress {
-                                        run_id,
-                                        percent_done,
-                                        bytes_done,
-                                        total_bytes,
-                                        speed_bps,
-                                        seconds_remaining,
-                                    }
-                                },
-                            ),
+                            .and_then(|json| serde_json::from_str(&json).ok())
+                            .map(CapturedKesticSignal::RunProgress),
                         "ManualRunBlocked" => {
                             msg.body().deserialize::<(String, String)>().ok().map(
                                 |(backup_id, reason)| CapturedKesticSignal::ManualRunBlocked {

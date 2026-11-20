@@ -14,6 +14,7 @@
 mod common;
 
 use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
+use common::m3::ResticWrapper;
 use common::{
     RestServerGuard, find_kestic_binary, restic_test_binaries, run_isolated_test,
     start_fake_notifications, start_fake_sni_watcher, wait_for_file,
@@ -29,6 +30,7 @@ use kestic_core::scheduler::TimezoneSpec;
 use kestic_core::secrets::FileSecretStore;
 use kestic_daemon::dbus_api::{
     BackupSummaryDto, DaemonStateDto, KESTIC_BUS_NAME, KESTIC_OBJECT_PATH, KesticClient,
+    RunProgressPhase,
 };
 use kestic_daemon::monitors::MonitorBusConfig;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
@@ -258,18 +260,31 @@ fn start_env(
     start: time::OffsetDateTime,
     enable_scheduler: bool,
 ) -> Env {
+    start_env_with_restic(
+        root,
+        on_battery,
+        known_networks,
+        start,
+        enable_scheduler,
+        &default_restic_latest(),
+    )
+}
+
+fn start_env_with_restic(
+    root: &Path,
+    on_battery: bool,
+    known_networks: &[&str],
+    start: time::OffsetDateTime,
+    enable_scheduler: bool,
+    restic: &Path,
+) -> Env {
     let (notif_conn, _notif_capture) = start_fake_notifications();
     let sni_conn = start_fake_sni_watcher();
     let upower = FakeUPowerHandle::start(on_battery, 100.0);
     let nm = FakeNetworkManagerHandle::start(true, false, Some("HomeWifi"), known_networks);
     let clock = Arc::new(FakeClock::new(start));
-    let (cfg_path, _state_dir, client, handle) = spawn_m3_gui_daemon(
-        root,
-        &default_restic_latest(),
-        Arc::clone(&clock),
-        true,
-        enable_scheduler,
-    );
+    let (cfg_path, _state_dir, client, handle) =
+        spawn_m3_gui_daemon(root, restic, Arc::clone(&clock), true, enable_scheduler);
     Env {
         cfg_path,
         client,
@@ -412,6 +427,87 @@ fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slo
                     lang,
                     &smoke_artifact("overview-status", layout, lang),
                 );
+            }
+            stop_env(env);
+        },
+    );
+}
+
+/// Overview of a running backup (`docs/spec/ui/hauptbereiche.md`, restic-integration
+/// «Fortschritt beim Sichern»): while restic still finds files, (a) the card shows a bar without
+/// end point and the amount looked through and (b) the headline names no percentage; after the
+/// search (c) the card shows percentage, amount and time left and (d) the headline the
+/// percentage. The C++ scenarios check each text; screenshots in English and German.
+#[test]
+fn overview_shows_no_percentage_while_scanning_and_percentage_afterwards() {
+    run_isolated_test(
+        "overview_shows_no_percentage_while_scanning_and_percentage_afterwards",
+        "KESTIC_M3_GUI_PROGRESS_INNER",
+        |root| {
+            let wrapper = ResticWrapper::create(&root.join("wrapper"), &default_restic_latest());
+            let env = start_env_with_restic(
+                root,
+                false,
+                &["HomeWifi"],
+                datetime!(2026-12-01 10:00:00 UTC),
+                false,
+                &wrapper.path,
+            );
+            let dest = add_local_destination(&env, root, "Progress Vault");
+            let mut docs = Backup::new(
+                "Docs",
+                Source::folder(make_source(root, "docs")),
+                dest.id.clone(),
+            )
+            .expect("docs backup");
+            docs.run_conditions = no_conditions();
+            let docs_id =
+                BackupId::parse(env.client.add_backup(&docs).expect("add")).expect("parse id");
+
+            let scanning_line = concat!(
+                r#"{"message_type":"status","percent_done":0.99,"total_files":4000,"#,
+                r#""files_done":3500,"total_bytes":5000000000,"bytes_done":4900000000}"#,
+                "\n",
+            );
+            for (phase, scenario, name) in [
+                (
+                    RunProgressPhase::Scanning,
+                    "m3-overview-progress-scanning",
+                    "overview-progress-scanning",
+                ),
+                (
+                    RunProgressPhase::ScanFinished,
+                    "m3-overview-progress-percent",
+                    "overview-progress-percent",
+                ),
+            ] {
+                if phase == RunProgressPhase::Scanning {
+                    wrapper.hold_with_output("backup", scanning_line);
+                } else {
+                    wrapper.hold("backup");
+                }
+                env.client
+                    .start_backup(docs_id.as_str())
+                    .expect("start Docs");
+                wait_for_state(&env.client, Duration::from_secs(20), name, |s| {
+                    s.overall
+                        .active_run_progress
+                        .as_ref()
+                        .is_some_and(|p| p.phase == phase && p.bytes_done > 0)
+                });
+                for lang in ["en", "de"] {
+                    run_m3_gui_smoke(
+                        root,
+                        scenario,
+                        "wide",
+                        lang,
+                        &smoke_artifact(name, "wide", lang),
+                    );
+                }
+                wrapper.release("backup");
+                wait_for_state(&env.client, Duration::from_secs(30), "run done", |s| {
+                    backup_summary(s, &docs_id).active_run.is_none()
+                });
             }
             stop_env(env);
         },

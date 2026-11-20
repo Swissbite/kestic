@@ -232,6 +232,45 @@ int scenario_exit12_and_override(const Ctx& c) {
     return 0;
 }
 
+// A running backup «Docs» on the overview: while restic still finds files the card shows a bar
+// without end point and the amount looked through; afterwards percentage and time left.
+int scenario_backup_progress(const Ctx& c, bool scanning) {
+    QQuickWindow* w = c.window;
+    QAbstractItemModel* bm = model_named(w, "backupsModel");
+    M3_CHECK(3860, bm != nullptr, "backupsModel missing");
+    M3_CHECK(3878, bm->rowCount() == 1, "backupsModel must hold exactly 1 backup");
+    M3_CHECK(3861, role_value(bm, 0, "isRunning").toBool(), "backup must be running");
+
+    const QString status = role_value(bm, 0, "statusText").toString();
+    const QString line = role_value(bm, 0, "activeProgressText").toString();
+    const QString headline = c.backend->property("overall_headline").toString();
+    QQuickItem* bar = item_named(w, "backupCardProgressBar");
+    M3_CHECK(3862, bar != nullptr, "card progress bar missing");
+    M3_CHECK(3879, bar->isVisible(), "card progress bar must be visible");
+
+    if (scanning) {
+        // (a) status line, (b) amount looked through, (c) headline, (d) bar without end point
+        M3_CHECK_EQ(3863, status, loc(c.lang, "Backing up · looking through files", "Sichert · Dateien werden durchgesehen"), "status while scanning");
+        M3_CHECK_STARTS(3864, line, QStringLiteral("4.9 GB · "), "amount looked through");
+        M3_CHECK(3865, line.endsWith(loc(c.lang, " files", " Dateien")), "number of files looked through");
+        M3_CHECK(3866, !line.contains(QLatin1Char('%')), "no percentage while scanning");
+        M3_CHECK_EQ(3867, headline, loc(c.lang, "Docs: backing up · looking through files", "Docs: sichert · Dateien werden durchgesehen"), "headline while scanning");
+        M3_CHECK(3868, bar->property("indeterminate").toBool(), "bar must have no end point while scanning");
+        M3_CHECK(3869, role_value(bm, 0, "activeScanning").toBool(), "activeScanning role");
+    } else {
+        M3_CHECK_EQ(3870, status, loc(c.lang, "Backing up · 25%", "Sichert · 25%"), "status after the scan");
+        M3_CHECK_EQ(3871, line, loc(c.lang, "25% · 1.0 MB of 4.2 MB · about 30 s left", "25% · 1.0 MB von 4.2 MB · noch etwa 30 s"), "percentage, amount and time left");
+        M3_CHECK_EQ(3872, headline, loc(c.lang, "Docs: backing up · 25%", "Docs: sichert · 25%"), "headline after the scan");
+        M3_CHECK(3873, !bar->property("indeterminate").toBool(), "bar must have an end point after the scan");
+        M3_CHECK(3874, !role_value(bm, 0, "activeScanning").toBool(), "activeScanning role");
+    }
+    QQuickItem* content = w->contentItem();
+    M3_CHECK(3875, has_visible_text(content, status), "status not rendered on the card");
+    M3_CHECK(3876, has_visible_text(content, line), "progress line not rendered on the card");
+    M3_CHECK(3877, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled);
@@ -254,6 +293,10 @@ void run_m3_smoke_scenario(
         rc = scenario_status_rows(ctx);
     } else if (scen == QLatin1String("m3-overview-pause-and-start-all")) {
         rc = scenario_pause_and_start_all(ctx);
+    } else if (scen == QLatin1String("m3-overview-progress-scanning")) {
+        rc = scenario_backup_progress(ctx, true);
+    } else if (scen == QLatin1String("m3-overview-progress-percent")) {
+        rc = scenario_backup_progress(ctx, false);
     } else if (scen == QLatin1String("m3-exit12-and-condition-override")) {
         rc = scenario_exit12_and_override(ctx);
     } else {

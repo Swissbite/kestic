@@ -1,0 +1,13 @@
+{"message_type":"status","percent_done":0.8,"total_files":400,"files_done":250,"total_bytes":10000000,"bytes_done":8000000}
+{"message_type":"status","seconds_elapsed":1,"percent_done":0.9,"total_files":3000,"files_done":2000,"total_bytes":400000000,"bytes_done":360000000}
+{"message_type":"status","seconds_elapsed":2,"percent_done":0.3333333333333333,"total_files":6000,"files_done":4000,"total_bytes":6000000000,"bytes_done":2000000000}
+{"message_type":"status","seconds_elapsed":4,"percent_done":0.9983333333333333,"total_files":20000,"files_done":15000,"total_bytes":60000000000,"bytes_done":59900000000}
+{"message_type":"status","seconds_elapsed":6,"percent_done":0.8853333333333333,"total_files":30000,"files_done":22000,"total_bytes":75000000000,"bytes_done":66400000000}
+{"message_type":"status","seconds_elapsed":8,"percent_done":0.99875,"total_files":40000,"files_done":30000,"total_bytes":80000000000,"bytes_done":79900000000}
+{"message_type":"status","seconds_elapsed":10,"seconds_remaining":12,"percent_done":0.89,"total_files":42000,"files_done":31000,"total_bytes":90000000000,"bytes_done":80100000000}
+{"message_type":"status","seconds_elapsed":14,"seconds_remaining":6,"percent_done":0.9333333333333333,"total_files":42000,"files_done":35000,"total_bytes":90000000000,"bytes_done":84000000000}
+{"message_type":"status","seconds_elapsed":16,"seconds_remaining":5,"percent_done":0.9052631578947369,"total_files":42010,"files_done":37000,"total_bytes":95000000000,"bytes_done":86000000000}
+{"message_type":"status","seconds_elapsed":18,"seconds_remaining":2,"percent_done":0.9833333333333333,"total_files":42000,"files_done":40000,"total_bytes":90000000000,"bytes_done":88500000000}
+{"message_type":"status","seconds_elapsed":20,"percent_done":0.9988888888888889,"total_files":42000,"files_done":41900,"total_bytes":90000000000,"bytes_done":89900000000}
+{"message_type":"status","seconds_elapsed":21,"percent_done":1.0,"total_files":42000,"files_done":42000,"total_bytes":90000000000,"bytes_done":90000000000}
+{"message_type":"summary","files_new":120,"files_changed":40,"files_unmodified":41840,"dirs_new":4,"dirs_changed":9,"dirs_unmodified":2500,"data_blobs":2,"tree_blobs":3,"data_added":4200000,"data_added_packed":1400000,"total_files_processed":42000,"total_bytes_processed":90000000000,"total_duration":21.4,"snapshot_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}

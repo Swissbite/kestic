@@ -51,3 +51,5 @@ Teil von [index.md](index.md) (§10). Verbindlichkeit, Referenz-Datensatz (§0.2
 ### 10.3 Fortschrittsanzeige im Benachrichtigungsbereich (FR-53, U5)
 
 Plasma bietet `org.kde.JobViewServerV2.requestView(desktopEntry, capabilities, hints)` **[verifiziert: Referenzsystem, Interface vorhanden]**, in KDE als `KUiServerV2JobTracker` genutzt (Dolphin-Dateikopien). Ein Lauf erscheint damit im Benachrichtigungsbereich mit Fortschritt, Geschwindigkeit, Restzeit und «Abbrechen» – der von der HIG bevorzugte Weg für Fortschritt und wegen K1 der Weg, einen laufenden Lauf sichtbar zu machen (FR-53, MVP, M3). Ansteuerung aus Rust via `zbus` **[verifiziert: Referenzsystem Plasma 6.6.6, erfordert dauerhafte D-Bus-`Connection` im Handle]**.
+
+Solange restic Dateien sucht (Phase `scanning`), meldet Kestic `percent` 0, `totalBytes` 0 und keine Geschwindigkeit, damit Plasma einen Balken ohne festen Endpunkt zeigt **[Annahme aus `plasma-workspace` `JobItem.qml`, manuelle Abnahme]**; der Text ist derselbe wie die Überschrift («Persönlicher Ordner: sichert · Dateien werden durchgesehen»). Nach der Suche meldet Kestic Prozent, Mengen und Geschwindigkeit wie bisher.

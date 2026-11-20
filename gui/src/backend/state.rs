@@ -69,6 +69,7 @@ impl qobject::KesticApp {
             self.as_mut().apply_cached_state();
         } else if progress_dirty {
             self.as_mut().models_updated();
+            self.as_mut().apply_overall_texts();
         }
 
         if let Some((backup_id, reason)) = blocked {
@@ -166,6 +167,23 @@ impl qobject::KesticApp {
         self.as_mut().set_notif_on_maintenance_failed(true);
         self.as_mut().set_notif_on_restic_update(false);
         self.as_mut().models_updated();
+    }
+
+    /// Headline and subtitle after a progress update: they name the running backup's phase
+    /// and percentage, which change without a new state.
+    fn apply_overall_texts(mut self: Pin<&mut Self>) {
+        let texts = {
+            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .state
+                .as_ref()
+                .filter(|_| guard.daemon_reachable)
+                .map(|s| (overall_headline(s), overall_subtitle(s)))
+        };
+        if let Some((headline, subtitle)) = texts {
+            self.as_mut().set_overall_headline(QString::from(&headline));
+            self.as_mut().set_overall_subtitle(QString::from(&subtitle));
+        }
     }
 
     pub(super) fn apply_cached_state(mut self: Pin<&mut Self>) {

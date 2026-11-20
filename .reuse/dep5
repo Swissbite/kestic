@@ -6,7 +6,7 @@ Files: docs/* .agents/skills/* AGENTS.md README.md
 Copyright: 2026 David Däster <david@daester.net>
 License: CC-BY-SA-4.0
 
-Files: CLAUDE.md Cargo.lock core/tests/fixtures/*.json site/pnpm-lock.yaml
+Files: CLAUDE.md Cargo.lock core/tests/fixtures/*.json core/tests/fixtures/*.ndjson site/pnpm-lock.yaml
 Copyright: 2026 David Däster <david@daester.net>
 License: CC0-1.0
 
