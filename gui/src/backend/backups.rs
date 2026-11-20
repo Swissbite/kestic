@@ -4,7 +4,7 @@
 //! Backup CRUD, manual backup execution/cancellation, and exclude-rule helpers
 //! for [`super::qobject::KesticApp`].
 
-use super::{friendly_dbus_error, qobject};
+use super::{dbus_error_text, qobject};
 use crate::state_cache::{
     build_new_backup, cached_destination_kind, clone_updated_backup, clone_updated_backup_excludes,
     clone_updated_backup_retention, clone_updated_backup_source,
@@ -15,9 +15,10 @@ use crate::state_cache::{
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
-use kestic_core::codes::BlockedReason;
+use kestic_core::codes::{BlockedReason, ServiceErrorCode};
 use kestic_core::model::{BackupId, ExcludeRules, RetentionPolicy};
 use kestic_core::provider::resolve_and_check;
+use kestic_daemon::dbus_api::KesticDbusError;
 use std::env;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -47,13 +48,13 @@ impl qobject::KesticApp {
     }
 
     fn handle_start_backup_error(mut self: Pin<&mut Self>, b_id: &str, err: &zbus::Error) {
-        let raw = err.to_string();
-        let is_blocked = raw.contains("ManualRunBlocked");
-        let err_is_condition = raw.contains(BlockedReason::ConditionNotMet.as_str());
+        let typed = KesticDbusError::from(err.clone());
+        let is_blocked = typed.code() == ServiceErrorCode::ManualRunBlocked;
+        let err_is_condition = typed.blocked_reason() == Some(BlockedReason::ConditionNotMet);
         refresh_state_now();
         self.as_mut().apply_cached_state();
         if !is_blocked {
-            let msg = friendly_dbus_error(err);
+            let msg = dbus_error_text(err);
             self.as_mut().set_last_action_error(QString::from(&msg));
             self.as_mut().passive_notification(QString::from(&msg));
             return;
@@ -128,7 +129,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 false
@@ -154,7 +155,8 @@ impl qobject::KesticApp {
                 self.as_mut().apply_cached_state();
             }
             Err(err) => {
-                self.as_mut().passive_notification(QString::from(&err));
+                self.as_mut()
+                    .passive_notification(QString::from(&dbus_error_text(&err)));
             }
         }
     }
@@ -213,7 +215,7 @@ impl qobject::KesticApp {
                 QString::from(&id)
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 QString::from("")
             }
@@ -276,7 +278,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -329,7 +331,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -382,7 +384,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -431,7 +433,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -454,7 +456,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -477,7 +479,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -496,7 +498,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -525,7 +527,8 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
+                self.as_mut()
+                    .set_last_action_error(QString::from(&dbus_error_text(&err)));
                 false
             }
         }

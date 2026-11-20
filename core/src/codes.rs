@@ -373,6 +373,48 @@ impl ConnectionTestCode {
     }
 }
 
+/// Code of a D-Bus error: the error name `net.daester.Kestic.Error.<Name>`
+/// (`dbus-api.md` §Fehler-Namen). The error message is raw detail only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ServiceErrorCode {
+    InvalidInput,
+    NotFound,
+    InUse,
+    ManualRunBlocked,
+    DestinationUnreachable,
+    WrongPassword,
+    AuthFailed,
+    SecretStoreLocked,
+    ResticUnavailable,
+    AlreadyRunning,
+    /// Unlock refused: the lock belongs to an active or remote process.
+    LockInUse,
+    /// The repository location is already used by another destination.
+    DuplicateLocation,
+    Internal,
+    /// No D-Bus error name: the daemon could not be reached (transport error, set by the GUI).
+    DaemonUnreachable,
+}
+
+impl ServiceErrorCode {
+    pub const ALL: [Self; 14] = [
+        Self::InvalidInput,
+        Self::NotFound,
+        Self::InUse,
+        Self::ManualRunBlocked,
+        Self::DestinationUnreachable,
+        Self::WrongPassword,
+        Self::AuthFailed,
+        Self::SecretStoreLocked,
+        Self::ResticUnavailable,
+        Self::AlreadyRunning,
+        Self::LockInUse,
+        Self::DuplicateLocation,
+        Self::Internal,
+        Self::DaemonUnreachable,
+    ];
+}
+
 /// Aggregated overall status precedence (`tray-und-benachrichtigungen.md` §10.1,
 /// `zustaende.md` §6.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

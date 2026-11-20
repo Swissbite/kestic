@@ -13,6 +13,13 @@ Verbindliche Spezifikation für v1 (F14, U17, U18, M1-S09, AC-M1-09-5). Jede Erw
 
 ## Fehler-Namen (`net.daester.Kestic.Error.*`)
 
+Der Fehler-Name ist der Code: `KesticDbusError` (`kestic_daemon::dbus_api`, von Daemon und GUI gemeinsam genutzt) liefert ihn als `kestic_core::codes::ServiceErrorCode`, und `kestic_core::messages` bildet ihn auf die msgid ab, wie bei den DTO-Codes. Die GUI unterscheidet Varianten, nie Namens-Strings, und zeigt den Text des Codes in ihrer Sprache.
+
+- **Die Meldung ist Rohdetail.** Sie dient Log und Details-Ansicht und ist nie der Haupttext in der UI. Der Daemon übersetzt sie nicht; unerwartete Fehler (`InvalidInput`, `Internal`) schreibt er ins Session-Journal. Bei `ManualRunBlocked` ist die Meldung der Code aus `BlockedReason`.
+- **Eigener Text braucht eigenen Fehler-Namen** (z. B. `LockInUse`), nie eine Kennung in der Meldung.
+- **Ergebnisse mit Parametern sind keine Fehler.** Was die GUI mit Parametern anzeigen muss (z. B. «Ziel /x existiert bereits», ab M4 Restore), kommt als Status-DTO mit Code und typisierten Feldern zurück, wie `ConnectionTestResultDto` oder `BackupDryRunStatusDto`.
+- Ohne Fehler-Namen (Transportfehler, Daemon nicht erreichbar) gilt der Code `DaemonUnreachable`.
+
 | Fehler-Name | Bedeutung |
 | --- | --- |
 | `net.daester.Kestic.Error.InvalidInput` | Validierung in `core` oder D-Bus-Argument fehlgeschlagen (AC-M1-09-2) |
@@ -25,6 +32,8 @@ Verbindliche Spezifikation für v1 (F14, U17, U18, M1-S09, AC-M1-09-5). Jede Erw
 | `net.daester.Kestic.Error.SecretStoreLocked` | Passwortspeicher gesperrt oder nicht erreichbar |
 | `net.daester.Kestic.Error.ResticUnavailable` | `restic` fehlt, ist `< 0.18.0` oder nicht ausführbar |
 | `net.daester.Kestic.Error.AlreadyRunning` | Auf dem betroffenen Ziel bzw. Backup läuft bereits ein Lauf |
+| `net.daester.Kestic.Error.LockInUse` | Entsperren abgelehnt: Die Repository-Sperre gehört zu einem aktiven oder entfernten Prozess (P16) |
+| `net.daester.Kestic.Error.DuplicateLocation` | Der Speicherort wird bereits von einem anderen Ziel verwendet; Meldung = Name dieses Ziels (Rohdetail) |
 | `net.daester.Kestic.Error.Internal` | Unerwarteter I/O-, SQLite- oder Prozessfehler |
 
 ## Methoden auf `net.daester.Kestic1`
@@ -90,7 +99,7 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 - **Typisierte Codes.** Jeder Code ist ein Rust-Enum, in `kestic_core::codes` (ausser `RecoveryAction` in `kestic_core::restic` und `TrayStatus` im Daemon), und wird als `snake_case`-String serialisiert. Unbekannte Codes sind ein Deserialisierungsfehler; ein unbekannter Grund im Signal `ManualRunBlocked` wird ignoriert, nie geraten.
 - **Genau eine Abbildung Code → msgid.** `kestic_core::messages` liefert pro Code die englische msgid samt Parametern (`Message`); Rohdaten, die unverändert angezeigt werden, kommen als `UiText::Raw`. Die msgids sind mit `i18n_noop("…")` markiert und werden mit `xgettext --keyword=i18n_noop:1` extrahiert. Daemon und GUI haben keine eigenen `match`-Tabellen über Codes.
 - **Rohdaten bleiben Daten.** `error_detail` (auch in `SkippedBackupDto`, `BackupDryRunStatusDto`, `RetentionPreviewStatusDto`), `error_raw_detail`, `ResticStatusDto.detail`, `SecretStoreStatusDto.detail`, `ConnectionTestResultDto.detail`, `DestinationAvailabilityDto.detail`, `BackupSnapshotsDto.current_error` und `config_load_error` enthalten den unübersetzten, englischen Text von restic, System oder `core` (Fehlertexte in `core` sind englisch) und dienen als Detail bzw. Parameter. Angezeigt wird ein Rohtext nur dort, wo der Code keinen eigenen Text hat (`unknown`, bei `ConnectionTestResultDto` die Codes `invalid_input`, `internal`, `command_failed`, `daemon_unreachable`).
-- **Fehler-Nutzlast.** Bei `net.daester.Kestic.Error.ManualRunBlocked` ist die Meldung der Code aus `BlockedReason`. Wie die GUI die übrigen Fehler-Namen und -Meldungen in Text umsetzt, ist offen (siehe [questions.md](questions.md), 2026-11-20).
+- **Fehler.** D-Bus-Fehler folgen derselben Regel; siehe §Fehler-Namen.
 
 | Feld | Enum (`kestic_core`) | Codes |
 | --- | --- | --- |

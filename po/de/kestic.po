@@ -3570,3 +3570,15 @@ msgstr "Strom"
 #: gui/src/qml/BackupConditionsEditPage.qml
 msgid "Network conditions do not apply: the destination is a local folder or drive."
 msgstr "Netzwerk-Bedingungen gelten hier nicht: Das Ziel ist ein lokaler Ordner oder ein Laufwerk."
+
+msgid "Invalid input."
+msgstr "Ungültige Eingabe."
+
+msgid "The item no longer exists."
+msgstr "Der Eintrag existiert nicht mehr."
+
+msgid "This location is already used by another destination."
+msgstr "Dieser Speicherort wird bereits von einem anderen Ziel verwendet."
+
+msgid "Internal error in the background service."
+msgstr "Interner Fehler im Hintergrunddienst."

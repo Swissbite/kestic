@@ -609,7 +609,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             let add_dup_err = client
                 .add_destination(&dup_dest, "connect", "repo-pw-1", "")
                 .expect_err("AddDestination with duplicate location must fail");
-            assert_dbus_error_name(&add_dup_err, "net.daester.Kestic.Error.InvalidInput");
+            assert_dbus_error_name(&add_dup_err, "net.daester.Kestic.Error.DuplicateLocation");
             assert_eq!(
                 fs::read(&cfg_path).expect("read config after dup add"),
                 cfg_before
@@ -634,7 +634,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             let upd_dup_err = client
                 .update_destination(&dest2_collision, "connect", "", "", true)
                 .expect_err("UpdateDestination into dest1 location must fail");
-            assert_dbus_error_name(&upd_dup_err, "net.daester.Kestic.Error.InvalidInput");
+            assert_dbus_error_name(&upd_dup_err, "net.daester.Kestic.Error.DuplicateLocation");
 
             // Delete dest1's folder from disk and recreate it empty (simulating Dolphin / rm + mkdir).
             fs::remove_dir_all(&repo_dir).expect("delete repo_dir");

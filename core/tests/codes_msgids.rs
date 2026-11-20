@@ -9,7 +9,7 @@
 
 use kestic_core::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, ResticStatusCode, SkipReason, SourceStatus,
+    PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_core::messages::{
     ActiveRunInfo, Message, OverallCounts, UiText, active_run_message, connection_test_text,
@@ -188,6 +188,9 @@ fn all_messages() -> Vec<(String, Message)> {
     }
     if let UiText::Message(m) = connection_test_text(true, None, "") {
         push("reachable".into(), m);
+    }
+    for code in ServiceErrorCode::ALL {
+        push(format!("{code:?}"), code.message());
     }
     out.extend(overall_messages());
     out

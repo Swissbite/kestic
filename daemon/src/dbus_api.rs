@@ -8,7 +8,7 @@ use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult};
 pub use kestic_core::codes::OverallStatusKind;
 use kestic_core::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
-    ResticStatusCode, SkipReason, SourceStatus,
+    ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_core::config::AppConfig;
 use kestic_core::maintenance::PrunePreviewSummary;
@@ -49,7 +49,39 @@ pub enum KesticDbusError {
     SecretStoreLocked(String),
     ResticUnavailable(String),
     AlreadyRunning(String),
+    LockInUse(String),
+    DuplicateLocation(String),
     Internal(String),
+}
+
+impl KesticDbusError {
+    /// Code of the error (its D-Bus name); the message is raw detail only (`dbus-api.md`).
+    pub fn code(&self) -> ServiceErrorCode {
+        match self {
+            Self::ZBus(_) => ServiceErrorCode::DaemonUnreachable,
+            Self::InvalidInput(_) => ServiceErrorCode::InvalidInput,
+            Self::NotFound(_) => ServiceErrorCode::NotFound,
+            Self::InUse(_) => ServiceErrorCode::InUse,
+            Self::ManualRunBlocked(_) => ServiceErrorCode::ManualRunBlocked,
+            Self::DestinationUnreachable(_) => ServiceErrorCode::DestinationUnreachable,
+            Self::WrongPassword(_) => ServiceErrorCode::WrongPassword,
+            Self::AuthFailed(_) => ServiceErrorCode::AuthFailed,
+            Self::SecretStoreLocked(_) => ServiceErrorCode::SecretStoreLocked,
+            Self::ResticUnavailable(_) => ServiceErrorCode::ResticUnavailable,
+            Self::AlreadyRunning(_) => ServiceErrorCode::AlreadyRunning,
+            Self::LockInUse(_) => ServiceErrorCode::LockInUse,
+            Self::DuplicateLocation(_) => ServiceErrorCode::DuplicateLocation,
+            Self::Internal(_) => ServiceErrorCode::Internal,
+        }
+    }
+
+    /// Blocked reason of a `ManualRunBlocked` error (its message is the reason code).
+    pub fn blocked_reason(&self) -> Option<BlockedReason> {
+        match self {
+            Self::ManualRunBlocked(code) => BlockedReason::parse(code),
+            _ => None,
+        }
+    }
 }
 
 /// Restic binary probe state reported to GUI & Tray (`M1-S04`, `U19`).
@@ -473,28 +505,31 @@ impl KesticClient {
         block_on(async { self.proxy().await?.call("DaemonVersion", &()).await })
     }
 
-    pub fn get_state(&self) -> Result<DaemonStateDto, String> {
+    pub fn get_state(&self) -> Result<DaemonStateDto, KesticDbusError> {
         let raw: String = block_on(async { self.proxy().await?.call("GetState", &()).await })
-            .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+            .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
-    pub fn get_run_detail(&self, run_id: &str) -> Result<RunDetailDto, String> {
+    pub fn get_run_detail(&self, run_id: &str) -> Result<RunDetailDto, KesticDbusError> {
         let raw: String =
             block_on(async { self.proxy().await?.call("GetRunDetail", &(run_id,)).await })
-                .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+                .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
-    pub fn list_backup_snapshots(&self, backup_id: &str) -> Result<BackupSnapshotsDto, String> {
+    pub fn list_backup_snapshots(
+        &self,
+        backup_id: &str,
+    ) -> Result<BackupSnapshotsDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("ListBackupSnapshots", &(backup_id,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn test_destination_connection(
@@ -503,8 +538,9 @@ impl KesticClient {
         mode: &str,
         repo_password: &str,
         rest_password: &str,
-    ) -> Result<ConnectionTestResultDto, String> {
-        let json = serde_json::to_string(dest).map_err(|e| e.to_string())?;
+    ) -> Result<ConnectionTestResultDto, KesticDbusError> {
+        let json =
+            serde_json::to_string(dest).map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
@@ -514,8 +550,8 @@ impl KesticClient {
                 )
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn add_destination(
@@ -639,16 +675,17 @@ impl KesticClient {
     pub fn set_restic_provider(
         &self,
         provider: &kestic_core::model::ResticProvider,
-    ) -> Result<ResticStatusDto, String> {
-        let json = serde_json::to_string(provider).map_err(|e| e.to_string())?;
+    ) -> Result<ResticStatusDto, KesticDbusError> {
+        let json = serde_json::to_string(provider)
+            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("SetResticProvider", &(json.as_str(),))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn set_expert_mode(&self, enabled: bool) -> zbus::Result<()> {
@@ -659,26 +696,29 @@ impl KesticClient {
         block_on(async { self.proxy().await?.call("StartBackup", &(backup_id,)).await })
     }
 
-    pub fn start_all_backups(&self) -> Result<StartAllResultDto, String> {
+    pub fn start_all_backups(&self) -> Result<StartAllResultDto, KesticDbusError> {
         let raw: String =
             block_on(async { self.proxy().await?.call("StartAllBackups", &()).await })
-                .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+                .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn cancel_run(&self, run_id: &str) -> zbus::Result<()> {
         block_on(async { self.proxy().await?.call("CancelRun", &(run_id,)).await })
     }
 
-    pub fn check_availability(&self, force: bool) -> Result<AvailabilitySnapshotDto, String> {
+    pub fn check_availability(
+        &self,
+        force: bool,
+    ) -> Result<AvailabilitySnapshotDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("CheckAvailability", &(force,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn window_active(&self, active: bool, page: &str) -> zbus::Result<()> {
@@ -702,11 +742,11 @@ impl KesticClient {
         block_on(async { self.proxy().await?.call("UnlockSecretStore", &()).await })
     }
 
-    pub fn detect_source(&self, path: &str) -> Result<Source, String> {
+    pub fn detect_source(&self, path: &str) -> Result<Source, KesticDbusError> {
         let raw: String =
             block_on(async { self.proxy().await?.call("DetectSource", &(path,)).await })
-                .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+                .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn check_nested_sources(
@@ -714,7 +754,7 @@ impl KesticClient {
         candidate_id: &str,
         candidate_path: &str,
         destination_id: &str,
-    ) -> Result<Vec<NestedSourceConflict>, String> {
+    ) -> Result<Vec<NestedSourceConflict>, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
@@ -724,23 +764,24 @@ impl KesticClient {
                 )
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn lint_excludes(
         &self,
         excludes: &ExcludeRules,
-    ) -> Result<Vec<ExcludeLintWarning>, String> {
-        let json = serde_json::to_string(excludes).map_err(|e| e.to_string())?;
+    ) -> Result<Vec<ExcludeLintWarning>, KesticDbusError> {
+        let json = serde_json::to_string(excludes)
+            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("LintExcludes", &(json.as_str(),))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn test_exclude_path(
@@ -748,32 +789,34 @@ impl KesticClient {
         backup_id: &str,
         excludes: &ExcludeRules,
         test_path: &str,
-    ) -> Result<ExcludePathTestResult, String> {
-        let json = serde_json::to_string(excludes).map_err(|e| e.to_string())?;
+    ) -> Result<ExcludePathTestResult, KesticDbusError> {
+        let json = serde_json::to_string(excludes)
+            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("TestExcludePath", &(backup_id, json.as_str(), test_path))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn preview_retention(
         &self,
         backup_id: &str,
         retention: &RetentionPolicy,
-    ) -> Result<ForgetPreviewResult, String> {
-        let json = serde_json::to_string(retention).map_err(|e| e.to_string())?;
+    ) -> Result<ForgetPreviewResult, KesticDbusError> {
+        let json = serde_json::to_string(retention)
+            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("PreviewRetention", &(backup_id, json.as_str()))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn start_retention_preview(
@@ -803,15 +846,15 @@ impl KesticClient {
     pub fn get_retention_preview_status(
         &self,
         preview_id: &str,
-    ) -> Result<RetentionPreviewStatusDto, String> {
+    ) -> Result<RetentionPreviewStatusDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("GetRetentionPreviewStatus", &(preview_id,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn start_backup_dry_run(
@@ -844,44 +887,44 @@ impl KesticClient {
     pub fn get_backup_dry_run_status(
         &self,
         preview_id: &str,
-    ) -> Result<BackupDryRunStatusDto, String> {
+    ) -> Result<BackupDryRunStatusDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("GetBackupDryRunStatus", &(preview_id,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn format_exclude_rule_for_item(
         &self,
         item_path: &str,
-    ) -> Result<ExcludeRulePreviewDto, String> {
+    ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("FormatExcludeRuleForItem", &(item_path,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn add_exclude_rule_for_item(
         &self,
         backup_id: &str,
         item_path: &str,
-    ) -> Result<ExcludeRulePreviewDto, String> {
+    ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("AddExcludeRuleForItem", &(backup_id, item_path))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn run_destination_maintenance(&self, destination_id: &str) -> zbus::Result<String> {
@@ -949,15 +992,15 @@ impl KesticClient {
     pub fn preview_destination_maintenance(
         &self,
         destination_id: &str,
-    ) -> Result<PrunePreviewSummary, String> {
+    ) -> Result<PrunePreviewSummary, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("PreviewDestinationMaintenance", &(destination_id,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn update_destination_maintenance(
@@ -996,11 +1039,11 @@ impl KesticClient {
         })
     }
 
-    pub fn list_known_networks(&self) -> Result<Vec<String>, String> {
+    pub fn list_known_networks(&self) -> Result<Vec<String>, KesticDbusError> {
         let raw: String =
             block_on(async { self.proxy().await?.call("ListKnownNetworks", &()).await })
-                .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+                .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 }
 

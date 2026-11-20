@@ -46,6 +46,16 @@ pub fn tr_text(text: &UiText) -> String {
     }
 }
 
+/// Text of a failed D-Bus call in the GUI language: the error name is the code
+/// (`kestic_core::messages`), the error message is never shown as main text.
+pub fn dbus_error_text<E>(err: &E) -> String
+where
+    E: Clone + Into<kestic_daemon::dbus_api::KesticDbusError>,
+{
+    let err: kestic_daemon::dbus_api::KesticDbusError = err.clone().into();
+    tr(&err.code().message())
+}
+
 use crate::overall_text::localized_availability_reason;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
@@ -308,7 +318,7 @@ pub fn refresh_state_now() {
         Err(err) => {
             let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
             guard.daemon_reachable = false;
-            guard.daemon_error = Some(err);
+            guard.daemon_error = Some(err.to_string());
             guard.state_dirty = true;
         }
     }
@@ -471,10 +481,11 @@ pub fn test_destination_connection(
     };
     match client.test_destination_connection(&dest, mode, repo_pw, rest_pw) {
         Ok(res) => res,
+        // Already translated: the text of the D-Bus error name.
         Err(err) => ConnectionTestResultDto {
             ok: false,
             error_kind: Some(ConnectionTestCode::Internal),
-            detail: err,
+            detail: dbus_error_text(&err),
         },
     }
 }

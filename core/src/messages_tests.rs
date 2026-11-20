@@ -456,3 +456,55 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
     ];
     assert_table(&A::ALL, &actions, |a| msg(a.label_message()));
 }
+
+#[test]
+fn every_service_error_code_maps_to_its_msgid() {
+    use ServiceErrorCode as S;
+    let table = [
+        (S::InvalidInput, Some("Invalid input.")),
+        (S::NotFound, Some("The item no longer exists.")),
+        (
+            S::InUse,
+            Some("Remove or reassign all backups on this destination first."),
+        ),
+        (
+            S::ManualRunBlocked,
+            Some("Backup could not start because source or destination is unavailable."),
+        ),
+        (S::DestinationUnreachable, Some("Destination unreachable.")),
+        (
+            S::WrongPassword,
+            Some("Wrong password: the repository rejected this password."),
+        ),
+        (S::AuthFailed, Some("Authentication at destination failed.")),
+        (
+            S::SecretStoreLocked,
+            Some("The system password store (Secret Service / KWallet) is locked."),
+        ),
+        (
+            S::ResticUnavailable,
+            Some("restic is unavailable or too old."),
+        ),
+        (
+            S::AlreadyRunning,
+            Some("Another run is already active on this destination."),
+        ),
+        (
+            S::LockInUse,
+            Some("Cannot unlock: repository lock belongs to an active or remote process"),
+        ),
+        (
+            S::DuplicateLocation,
+            Some("This location is already used by another destination."),
+        ),
+        (
+            S::Internal,
+            Some("Internal error in the background service."),
+        ),
+        (
+            S::DaemonUnreachable,
+            Some("Background service unavailable."),
+        ),
+    ];
+    assert_table(&S::ALL, &table, |c| msg(c.message()));
+}

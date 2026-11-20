@@ -36,6 +36,10 @@ pub enum KesticServiceErr {
     SecretStoreLocked(String),
     ResticUnavailable(String),
     AlreadyRunning(String),
+    /// Unlock refused: the lock belongs to an active or remote process.
+    LockInUse(String),
+    /// Location already used; the message is the name of that destination (raw detail).
+    DuplicateLocation(String),
     Internal(String),
 }
 
@@ -51,6 +55,8 @@ impl std::fmt::Display for KesticServiceErr {
             | Self::SecretStoreLocked(m)
             | Self::ResticUnavailable(m)
             | Self::AlreadyRunning(m)
+            | Self::LockInUse(m)
+            | Self::DuplicateLocation(m)
             | Self::Internal(m) => f.write_str(m),
             Self::ManualRunBlocked(reason) => f.write_str(reason.as_str()),
             Self::SleepInProgress => f.write_str("sleep_in_progress"),
@@ -60,6 +66,11 @@ impl std::fmt::Display for KesticServiceErr {
 
 impl From<KesticServiceErr> for KesticDbusError {
     fn from(err: KesticServiceErr) -> Self {
+        // The GUI shows only the text of the error name; the raw detail of unexpected errors
+        // goes to the session journal.
+        if let KesticServiceErr::Internal(detail) | KesticServiceErr::InvalidInput(detail) = &err {
+            eprintln!("kestic-daemon: D-Bus call failed: {detail}");
+        }
         match err {
             KesticServiceErr::InvalidInput(m) => KesticDbusError::InvalidInput(m),
             KesticServiceErr::NotFound(m) => KesticDbusError::NotFound(m),
@@ -75,6 +86,8 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::SecretStoreLocked(m) => KesticDbusError::SecretStoreLocked(m),
             KesticServiceErr::ResticUnavailable(m) => KesticDbusError::ResticUnavailable(m),
             KesticServiceErr::AlreadyRunning(m) => KesticDbusError::AlreadyRunning(m),
+            KesticServiceErr::LockInUse(m) => KesticDbusError::LockInUse(m),
+            KesticServiceErr::DuplicateLocation(m) => KesticDbusError::DuplicateLocation(m),
             KesticServiceErr::Internal(m) => KesticDbusError::Internal(m),
         }
     }

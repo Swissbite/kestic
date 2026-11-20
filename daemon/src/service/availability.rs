@@ -8,7 +8,6 @@ use super::error::{KesticServiceErr, map_destination_err, map_provider_err};
 use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, probe_restic_and_secrets_raw};
 use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto};
 use crate::dbus_server::emit_status_changed;
-use crate::i18n::i18n;
 use kestic_core::backup::BackupRunError;
 use kestic_core::codes::{BlockedReason, SourceStatus};
 use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
@@ -494,8 +493,8 @@ pub fn unlock_destination_async(
         || !classification.foreign_host_locks.is_empty()
     {
         release_unlock_claim(shared, &d_id, &mut claim_guard);
-        return Err(KesticServiceErr::InvalidInput(
-            i18n("Cannot unlock: repository lock belongs to an active or remote process").into(),
+        return Err(KesticServiceErr::LockInUse(
+            "repository lock belongs to an active or remote process".to_string(),
         ));
     }
 

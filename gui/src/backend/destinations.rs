@@ -4,14 +4,16 @@
 //! Destination CRUD, connection testing, password updates, unlocking, and snapshot loading
 //! for [`super::qobject::KesticApp`].
 
-use super::{friendly_dbus_error, qobject};
+use super::{dbus_error_text, qobject};
 use crate::state_cache::{
     build_destination, make_client, refresh_state_now, shared_state, test_destination_connection,
     tr_text,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
+use kestic_core::codes::ServiceErrorCode;
 use kestic_core::messages::connection_test_text;
+use kestic_daemon::dbus_api::KesticDbusError;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
@@ -70,9 +72,9 @@ impl qobject::KesticApp {
                 QString::from(&id)
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
-                if err.to_string().contains("SecretStoreLocked") {
+                if KesticDbusError::from(err).code() == ServiceErrorCode::SecretStoreLocked {
                     refresh_state_now();
                     self.as_mut().apply_cached_state();
                 }
@@ -115,7 +117,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -140,7 +142,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -159,7 +161,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 false
@@ -189,7 +191,7 @@ impl qobject::KesticApp {
                 i32::try_from(count).unwrap_or(0)
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 -1
@@ -225,10 +227,11 @@ impl qobject::KesticApp {
                 {
                     let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
                     guard.snapshots = None;
-                    guard.snapshots_error = Some(err.clone());
+                    guard.snapshots_error = Some(dbus_error_text(&err));
                 }
                 self.as_mut().set_snapshots_loading(false);
-                self.as_mut().set_snapshots_error(QString::from(&err));
+                self.as_mut()
+                    .set_snapshots_error(QString::from(&dbus_error_text(&err)));
                 self.as_mut().set_snapshots_has_previous(false);
                 self.as_mut().snapshots_updated();
                 false

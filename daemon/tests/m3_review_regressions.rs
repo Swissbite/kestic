@@ -900,7 +900,7 @@ fn m3_review_unlock_refuses_foreign_host_lock() {
             let unlock_err = client
                 .unlock_destination(dest.id.as_str())
                 .expect_err("UnlockDestination must refuse when foreign lock exists");
-            assert_dbus_error_name(&unlock_err, "net.daester.Kestic.Error.InvalidInput");
+            assert_dbus_error_name(&unlock_err, "net.daester.Kestic.Error.LockInUse");
             assert!(
                 !unlock_marker.exists(),
                 "restic unlock must NEVER be invoked when foreign-host locks are present"

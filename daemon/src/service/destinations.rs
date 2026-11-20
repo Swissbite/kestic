@@ -57,10 +57,7 @@ impl DaemonCore {
         dest.validate()
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
         if let Some(existing) = self.config.find_duplicate_destination(&dest.kind, None) {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "DUPLICATE_LOCATION:{}",
-                existing.name
-            )));
+            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
 
         let setup_mode = parse_setup_mode(mode)?;
@@ -153,10 +150,7 @@ impl DaemonCore {
             .config
             .find_duplicate_destination(&updated.kind, Some(&updated.id))
         {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "DUPLICATE_LOCATION:{}",
-                existing.name
-            )));
+            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
 
         if verify_connection || matches!(setup_mode, DestinationSetupMode::InitNew) {
@@ -607,10 +601,7 @@ pub(crate) fn add_destination_unlocked(
         dest.validate()
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
         if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "DUPLICATE_LOCATION:{}",
-                existing.name
-            )));
+            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
         (
             guard.config.restic_provider.clone(),
@@ -635,10 +626,7 @@ pub(crate) fn add_destination_unlocked(
 
     let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
-        return Err(KesticServiceErr::InvalidInput(format!(
-            "DUPLICATE_LOCATION:{}",
-            existing.name
-        )));
+        return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
     }
     let new_id = dest.id.as_str().to_string();
     let mut next = guard.config.clone();
@@ -673,10 +661,7 @@ pub(crate) fn update_destination_unlocked(
             .config
             .find_duplicate_destination(&updated.kind, Some(&updated.id))
         {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "DUPLICATE_LOCATION:{}",
-                existing.name
-            )));
+            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
         (
             guard.config.restic_provider.clone(),
@@ -735,10 +720,7 @@ pub(crate) fn update_destination_unlocked(
         .config
         .find_duplicate_destination(&updated.kind, Some(&updated.id))
     {
-        return Err(KesticServiceErr::InvalidInput(format!(
-            "DUPLICATE_LOCATION:{}",
-            existing.name
-        )));
+        return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
     }
     let mut next = guard.config.clone();
     next.destinations[existing_idx] = updated;

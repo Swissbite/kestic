@@ -11,7 +11,7 @@
 
 use crate::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, ResticStatusCode, SkipReason, SourceStatus,
+    PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
 use crate::provider::MIN_RESTIC_VERSION;
 use crate::restic::{RecoveryAction, ResticFailureKind};
@@ -371,6 +371,38 @@ impl ConnectionTestCode {
             }
         };
         UiText::Message(message)
+    }
+}
+
+impl ServiceErrorCode {
+    /// Text of a failed D-Bus call; the error message itself is never shown as main text.
+    pub fn message(self) -> Message {
+        Message::new(match self {
+            Self::InvalidInput => i18n_noop("Invalid input."),
+            Self::NotFound => i18n_noop("The item no longer exists."),
+            Self::InUse => i18n_noop("Remove or reassign all backups on this destination first."),
+            Self::ManualRunBlocked => {
+                i18n_noop("Backup could not start because source or destination is unavailable.")
+            }
+            Self::DestinationUnreachable => i18n_noop("Destination unreachable."),
+            Self::WrongPassword => {
+                i18n_noop("Wrong password: the repository rejected this password.")
+            }
+            Self::AuthFailed => i18n_noop("Authentication at destination failed."),
+            Self::SecretStoreLocked => {
+                i18n_noop("The system password store (Secret Service / KWallet) is locked.")
+            }
+            Self::ResticUnavailable => i18n_noop("restic is unavailable or too old."),
+            Self::AlreadyRunning => i18n_noop("Another run is already active on this destination."),
+            Self::LockInUse => {
+                i18n_noop("Cannot unlock: repository lock belongs to an active or remote process")
+            }
+            Self::DuplicateLocation => {
+                i18n_noop("This location is already used by another destination.")
+            }
+            Self::Internal => i18n_noop("Internal error in the background service."),
+            Self::DaemonUnreachable => i18n_noop("Background service unavailable."),
+        })
     }
 }
 
