@@ -254,11 +254,12 @@ const buildFromSource = `${repoUrl}#building--testing`;
             each backup and in the history of every run.
           </p>
         </div>
-        <pre class="command mono" aria-label="Example restic command run by Kestic"><code><span class="comment"># What "Back Up Now" runs, as shown by "Show Command"</span>
-RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
-  ionice -c 3 nice -n 10 restic -r rest:https://nas.example/kestic \
-  --json backup --tag kestic:&lt;backup-id&gt; --group-by tags \
-  --exclude-caches --exclude-file excludes.txt -- /home/you<span class="cursor" aria-hidden="true"></span></code></pre>
+        <pre class="command mono" aria-label="Example restic command run by Kestic"><code><span class="comment"># What "Back Up Now" runs, as "Show Command" shows it (wrapped here)</span>
+RESTIC_PASSWORD_COMMAND='kestic secret get k3n8x2qd' \
+  ionice -c 3 nice -n 10 /usr/bin/restic -r rest:https://nas.example/kestic \
+  --json backup --tag kestic:va757a3y --group-by tags \
+  --exclude-file /home/you/.local/state/kestic/excludes/va757a3y.txt \
+  --exclude-caches -- /home/you<span class="cursor" aria-hidden="true"></span></code></pre>
         <p class="note">
           Passwords never appear on the command line or in a config file. restic asks for them
           through <code class="mono">RESTIC_PASSWORD_COMMAND</code>, and Kestic reads them from the
