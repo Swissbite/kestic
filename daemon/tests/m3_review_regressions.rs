@@ -2709,7 +2709,7 @@ fn m3_review3_running_maintenance_shows_maintenance_wording() {
             });
             let active = running.overall.active_run_info();
             assert_eq!(
-                kestic_core::messages::overall_headline(
+                kestic_i18n::messages::overall_headline(
                     &running.overall.counts(running.backups.len()),
                     active.as_ref(),
                     None,

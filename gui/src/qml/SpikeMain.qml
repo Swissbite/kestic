@@ -8,6 +8,7 @@ import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
 Kirigami.ApplicationWindow {
+    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: root
     title: "Kestic"
     width: 900
@@ -213,7 +214,7 @@ Kirigami.ApplicationWindow {
                     id: backupNowAction
                     objectName: "backupNowAction"
                     icon.name: "media-playback-start"
-                    text: i18n("Back Up Now")
+                    text: sharedTexts.label("back_up_now")
                     tooltip: i18n("Back Up Now (Ctrl+Shift+B)")
                     onTriggered: root.triggerBackupNow()
                 },
@@ -271,7 +272,7 @@ Kirigami.ApplicationWindow {
                 anchors.centerIn: parent
                 width: parent.width - Kirigami.Units.largeSpacing * 4
                 icon.name: "security-high"
-                text: i18n("All data backed up")
+                text: sharedTexts.label("all_data_backed_up")
             }
         }
     }

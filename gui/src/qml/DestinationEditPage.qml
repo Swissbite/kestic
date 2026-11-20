@@ -288,7 +288,7 @@ Kirigami.ScrollablePage {
             visible: page.kindIsRest
             Kirigami.FormData.label: i18n("Server password:")
             echoMode: TextInput.Password
-            placeholderText: i18n("Leave empty to keep stored password")
+            placeholderText: i18n("Leave empty to keep the saved password")
             text: page.restPassword
             onTextChanged: {
                 page.restPassword = text;
@@ -300,7 +300,7 @@ Kirigami.ScrollablePage {
         Controls.TextField {
             Kirigami.FormData.label: i18n("Repository password:")
             echoMode: TextInput.Password
-            placeholderText: i18n("Leave empty to keep stored password")
+            placeholderText: i18n("Leave empty to keep the saved password")
             text: page.repoPassword
             onTextChanged: {
                 page.repoPassword = text;

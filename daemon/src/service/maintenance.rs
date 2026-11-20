@@ -17,7 +17,7 @@ use crate::dbus_api::{
     ActiveRunProgressDto, DestinationAvailabilityDto, SkippedBackupDto, StartAllResultDto,
 };
 use crate::dbus_server::{emit_run_updated, emit_status_changed};
-use crate::i18n::{i18n, tr};
+use crate::i18n::{i18n, tr, tr_text};
 use crate::inhibit::PortalInhibitGuard;
 use crate::job_view::{CAPABILITY_KILLABLE, JobViewHandle};
 use crate::monitors::{LogindSleepInhibitor, MonitorBusConfig};
@@ -25,7 +25,6 @@ use crate::notifications::{KESTIC_DESKTOP_ENTRY, KesticEvent, send_configured_no
 use crate::tray::TrayHandle;
 use kestic_core::backup::{execute_forget, is_forget_lock_failure};
 use kestic_core::clock::Clock;
-use kestic_core::codes::{ErrorKind, PendingReasonCode, SkipReason};
 use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use kestic_core::maintenance::{detect_stale_locks, execute_check, execute_prune};
 use kestic_core::model::{
@@ -38,6 +37,8 @@ use kestic_core::scheduler::{
     evaluate_run_conditions, mark_maintenance_slot_handled, record_maintenance_backoff_failure,
 };
 use kestic_core::secrets::SecretStore;
+use kestic_i18n::codes::{ErrorKind, PendingReasonCode, SkipReason};
+use kestic_i18n::messages::maintaining_message;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -358,7 +359,7 @@ fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
         JobViewHandle::request(
             &ctx.job_view_dest,
             KESTIC_DESKTOP_ENTRY,
-            &i18n("Maintaining %1").subs(&[&ctx.dest.name]),
+            &tr(&maintaining_message(&ctx.dest.name)),
             CAPABILITY_KILLABLE,
         )
         .ok()
@@ -846,8 +847,8 @@ fn dispatch_start_all_entries(
             error_detail,
         };
         if has_error {
-            let text = error_text
-                .unwrap_or_else(|| i18n("Permanent error — fix required before backing up").into());
+            let text =
+                error_text.unwrap_or_else(|| tr_text(&SkipReason::PermanentError.text(None, None)));
             let skipped_dto = dto(SkipReason::PermanentError, error_kind, None);
             skip(backup, skipped_dto, text);
             continue;

@@ -9,12 +9,12 @@ use common::{
     wait_for_sni_service,
 };
 use kestic_core::clock::FakeClock;
-use kestic_core::codes::BlockedReason;
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{Backup, Destination, DestinationKind, ResticProvider, Source};
 use kestic_core::secrets::FileSecretStore;
 use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, KesticClient};
 use kestic_daemon::service::{DaemonCore, DaemonOutcome, DaemonRunConfig, run_daemon};
+use kestic_i18n::codes::BlockedReason;
 use std::fs;
 use std::sync::Arc;
 use std::thread;

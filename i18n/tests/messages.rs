@@ -1,16 +1,24 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Unit tests for the code → msgid mapping (`messages.rs`).
+//! Tests of the code → msgid mapping (`kestic_i18n::messages`).
 
-use super::*;
+use kestic_i18n::codes::{
+    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, ServiceErrorCode, SkipReason,
+    SourceStatus,
+};
+use kestic_i18n::messages::{
+    ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, connection_test_text,
+    overall_headline, overall_subtitle, restic_status_text,
+};
 
 /// The error kinds map to their texts; `unknown` depends on exit code and warning.
 #[test]
 fn m3_review3_error_kind_codes_map_to_gui_texts() {
     assert_eq!(
         ErrorKind::WrongPassword.message(Some(12), false).english(),
-        "Stored password does not match"
+        "Saved password does not match"
     );
     assert_eq!(
         ErrorKind::RepoMissing.message(Some(10), false).english(),
@@ -37,22 +45,6 @@ fn m3_review3_error_kind_codes_map_to_gui_texts() {
             .message(Some(3), true)
             .english(),
         "Snapshot incomplete: some files could not be read"
-    );
-}
-
-#[test]
-fn restic_failure_summary_keeps_dns_and_exit_code_detail() {
-    assert_eq!(
-        ResticFailureKind::DnsResolutionFailed.default_summary(),
-        "Destination hostname could not be resolved (DNS)"
-    );
-    assert_eq!(
-        ResticFailureKind::Unknown { exit_code: 99 }.default_summary(),
-        "Unknown error (exit 99)"
-    );
-    assert_eq!(
-        ResticFailureKind::WrongPassword.summary_message().msgid,
-        "Stored password does not match"
     );
 }
 
@@ -116,7 +108,7 @@ fn source_blocked_and_skip_codes_map_to_texts() {
     );
     assert_eq!(
         SkipReason::PermanentError.text(Some(ErrorKind::WrongPassword), None),
-        UiText::Message(Message::new("permanent error, fix required"))
+        UiText::Message(Message::new("Permanent error, fix required"))
     );
 }
 
@@ -124,12 +116,16 @@ fn source_blocked_and_skip_codes_map_to_texts() {
 fn restic_blocking_and_connection_texts() {
     assert_eq!(
         ResticStatusCode::TooOld
-            .message(None, Some("0.17.3"), None)
+            .message(&ResticStatusParams {
+                found_version: Some("0.17.3"),
+                min_version: "0.18.0",
+                ..ResticStatusParams::default()
+            })
             .english(),
         "restic 0.17.3 is too old; Kestic needs at least 0.18.0"
     );
     assert_eq!(
-        restic_status_text(None, Some("0.18.0"), None, None, None),
+        restic_status_text(None, Some("0.18.0"), &ResticStatusParams::default()),
         UiText::Raw("restic 0.18.0".to_string())
     );
     assert_eq!(
@@ -145,7 +141,7 @@ fn restic_blocking_and_connection_texts() {
     );
     assert_eq!(
         connection_test_text(false, Some(ConnectionTestCode::WrongPassword), "raw"),
-        UiText::Message(Message::new("Stored password does not match"))
+        UiText::Message(Message::new("Saved password does not match"))
     );
     assert_eq!(
         connection_test_text(false, Some(ConnectionTestCode::CommandFailed), "raw"),
@@ -271,7 +267,7 @@ fn msg(m: Message) -> UiText {
 fn every_error_kind_maps_to_its_msgid() {
     use ErrorKind as E;
     let table = [
-        (E::WrongPassword, Some("Stored password does not match")),
+        (E::WrongPassword, Some("Saved password does not match")),
         (E::RepoMissing, Some("Repository is missing")),
         (E::Locked, Some("Repository is locked")),
         (E::DestinationUnreachable, Some("Destination unreachable")),
@@ -283,7 +279,7 @@ fn every_error_kind_maps_to_its_msgid() {
         ),
         (
             E::RetentionPending,
-            Some("Backed up, retention not executed"),
+            Some("Backed up, retention not applied yet"),
         ),
         (E::Cancelled, Some("Cancelled by user")),
         (E::SecretStoreLocked, Some("Password store is locked")),
@@ -324,7 +320,7 @@ fn every_pending_reason_maps_to_its_msgids() {
         (P::Metered, Some("unmetered connection")),
         (P::WrongNetwork, Some("allowed network (%1)")),
         (P::Queue, Some("another run on this destination")),
-        (P::Backoff, Some("retry cooldown")),
+        (P::Backoff, Some("waiting time before next attempt")),
     ];
     assert_table(&P::ALL, &condition, |c| msg(c.condition_message(None, &[])));
 }
@@ -350,7 +346,7 @@ fn every_source_blocked_and_skip_code_maps_to_its_msgid() {
     let reason = [
         (B::SourceUnavailable, Some("Source unavailable")),
         (B::DestinationUnreachable, Some("Destination unreachable")),
-        (B::ConditionNotMet, Some("Run condition not met")),
+        (B::ConditionNotMet, Some("Run conditions not met")),
     ];
     assert_table(&B::ALL, &reason, |r| msg(r.message(None)));
     let manual = [
@@ -371,10 +367,10 @@ fn every_source_blocked_and_skip_code_maps_to_its_msgid() {
 
     use SkipReason as K;
     let skip = [
-        (K::PermanentError, Some("permanent error, fix required")),
-        (K::SourceUnavailable, Some("source unavailable")),
-        (K::DestinationUnreachable, Some("destination unreachable")),
-        (K::ConditionNotMet, Some("run conditions not met")),
+        (K::PermanentError, Some("Permanent error, fix required")),
+        (K::SourceUnavailable, Some("Source unavailable")),
+        (K::DestinationUnreachable, Some("Destination unreachable")),
+        (K::ConditionNotMet, Some("Run conditions not met")),
         (K::Error, Some("Backup command failed")),
     ];
     assert_table(&K::ALL, &skip, |r| r.text(None, None));
@@ -395,10 +391,12 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
         ),
         (
             R::UnreadableVersion,
-            Some("Unable to determine restic version (%1)"),
+            Some("Cannot read the restic version (%1)"),
         ),
     ];
-    assert_table(&R::ALL, &restic, |c| msg(c.message(None, None, None)));
+    assert_table(&R::ALL, &restic, |c| {
+        msg(c.message(&ResticStatusParams::default()))
+    });
 
     let blocking = [
         (
@@ -431,7 +429,7 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
         (C::NotWritable, Some("Folder is not writable: %1")),
         (
             C::MissingPassword,
-            Some("No repository password provided or stored."),
+            Some("No repository password entered or saved."),
         ),
         (C::SecretStoreLocked, Some("Password store is locked")),
         (C::Internal, None),
@@ -439,7 +437,7 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
             C::ResticUnavailable,
             Some("restic is unavailable or too old."),
         ),
-        (C::WrongPassword, Some("Stored password does not match")),
+        (C::WrongPassword, Some("Saved password does not match")),
         (C::AuthFailed, Some("Authentication at destination failed")),
         (C::RepositoryMissing, Some("Repository is missing")),
         (C::CommandFailed, None),
@@ -447,7 +445,7 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
     ];
     assert_table(&C::ALL, &connection, |c| c.text("x"));
 
-    use crate::restic::RecoveryAction as A;
+    use RecoveryAction as A;
     let actions = [
         (A::UpdateStoredPassword, Some("Update Saved Password…")),
         (A::AddToExcludes, Some("Add to Exclude Rules…")),
@@ -471,16 +469,13 @@ fn every_service_error_code_maps_to_its_msgid() {
             S::ManualRunBlocked,
             Some("Backup could not start because source or destination is unavailable."),
         ),
-        (S::DestinationUnreachable, Some("Destination unreachable.")),
+        (S::DestinationUnreachable, Some("Destination unreachable")),
         (
             S::WrongPassword,
             Some("Wrong password: the repository rejected this password."),
         ),
-        (S::AuthFailed, Some("Authentication at destination failed.")),
-        (
-            S::SecretStoreLocked,
-            Some("The system password store (Secret Service / KWallet) is locked."),
-        ),
+        (S::AuthFailed, Some("Authentication at destination failed")),
+        (S::SecretStoreLocked, Some("Password store is locked")),
         (
             S::ResticUnavailable,
             Some("restic is unavailable or too old."),
@@ -491,7 +486,7 @@ fn every_service_error_code_maps_to_its_msgid() {
         ),
         (
             S::LockInUse,
-            Some("Cannot unlock: repository lock belongs to an active or remote process"),
+            Some("Cannot release the lock: another process still uses the repository."),
         ),
         (
             S::DuplicateLocation,

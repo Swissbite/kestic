@@ -6,13 +6,13 @@
 use crate::dbus_api::KesticDbusError;
 use crate::i18n::tr;
 use kestic_core::backup::BackupRunError;
-use kestic_core::codes::{BlockedReason, ErrorKind, SourceStatus};
 use kestic_core::config::ConfigError;
 use kestic_core::destination::{DestinationError, DestinationSetupMode};
 use kestic_core::mount::SourceCheckResult;
 use kestic_core::provider::ResticProviderError;
 use kestic_core::restic::{ResticFailureKind, classify_exit};
 use kestic_core::secrets::SecretError;
+use kestic_i18n::codes::{BlockedReason, ErrorKind, SourceStatus};
 
 /// Daemon-language summary of a classified restic failure (notifications, run history).
 pub(crate) fn localized_failure_summary(kind: &ResticFailureKind) -> String {
@@ -157,7 +157,7 @@ pub(super) fn manual_run_blocked_reason(err: &KesticServiceErr) -> Option<Blocke
 
 /// Daemon-language reason of an unavailable source (run history, notifications).
 pub(super) fn localized_source_check_reason(status: &SourceCheckResult) -> String {
-    tr(&SourceStatus::message(SourceStatus::from_check(status)))
+    tr(&SourceStatus::message(status.status_code()))
 }
 
 /// Error kind of a failed run or preview (`BackupDryRunStatusDto`, `RetentionPreviewStatusDto`);

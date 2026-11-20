@@ -9,7 +9,6 @@ use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, probe_restic_and_sec
 use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto};
 use crate::dbus_server::emit_status_changed;
 use kestic_core::backup::BackupRunError;
-use kestic_core::codes::{BlockedReason, SourceStatus};
 use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use kestic_core::maintenance::{LockClassification, detect_stale_locks, execute_unlock};
 use kestic_core::model::{Backup, Destination, DestinationId};
@@ -18,6 +17,7 @@ use kestic_core::mount::{
 };
 use kestic_core::provider::resolve_and_check;
 use kestic_core::restic::ResticRuntime;
+use kestic_i18n::codes::BlockedReason;
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -124,7 +124,7 @@ impl DaemonCore {
                 destination_available: dest_available,
                 available: false,
                 blocked_reason: Some(BlockedReason::SourceUnavailable),
-                source_status: SourceStatus::from_check(&source_status),
+                source_status: source_status.status_code(),
             }
         } else if !dest_available {
             BackupAvailabilityDto {

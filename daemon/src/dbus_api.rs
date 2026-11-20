@@ -5,20 +5,23 @@
 //! (`F14`, `FR-30`, `M1-S09`, `docs/spec/dbus-api.md`).
 
 use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult};
-pub use kestic_core::codes::OverallStatusKind;
-use kestic_core::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
-    ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
-};
 use kestic_core::config::AppConfig;
 use kestic_core::maintenance::PrunePreviewSummary;
-use kestic_core::messages::{ActiveRunInfo, Message, OverallCounts, UiText, restic_status_text};
 use kestic_core::model::{
     Backup, Destination, ExcludeLintWarning, ExcludePathTestResult, ExcludeRules,
     MaintenanceSchedule, NestedSourceConflict, NotificationSettings, RetentionPolicy, Run, Source,
 };
+use kestic_core::provider::MIN_RESTIC_VERSION;
 use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
+pub use kestic_i18n::codes::OverallStatusKind;
+use kestic_i18n::codes::{
+    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
+    ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+};
+use kestic_i18n::messages::{
+    ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
+};
 
 use crate::tray::TrayStatus;
 use serde::{Deserialize, Serialize};
@@ -377,7 +380,7 @@ pub struct AvailabilitySnapshotDto {
 }
 
 impl ActiveRunProgressDto {
-    /// The active run as input for the shared texts in `kestic_core::messages` (a run without
+    /// The active run as input for the shared texts in `kestic_i18n::messages` (a run without
     /// backup id is destination maintenance).
     pub fn info(&self) -> ActiveRunInfo<'_> {
         ActiveRunInfo {
@@ -389,7 +392,7 @@ impl ActiveRunProgressDto {
 }
 
 impl OverallStatusDto {
-    /// Counts behind the headline (`kestic_core::messages::overall_headline`).
+    /// Counts behind the headline (`kestic_i18n::messages::overall_headline`).
     pub fn counts(&self, backups: usize) -> OverallCounts {
         OverallCounts {
             kind: self.kind,
@@ -411,25 +414,30 @@ impl OverallStatusDto {
 }
 
 impl ResticStatusDto {
+    /// Parameters of the restic status texts; `min_version` is the version Kestic needs.
+    fn text_params<'a>(&'a self, min_version: &'a str) -> ResticStatusParams<'a> {
+        ResticStatusParams {
+            binary_path: self.binary_path.as_deref(),
+            found_version: self.found_version.as_deref(),
+            detail: self.detail.as_deref(),
+            min_version,
+        }
+    }
+
     /// Why restic is unusable, `None` while it is usable.
     pub fn error_message(&self) -> Option<Message> {
-        self.error_kind.map(|code| {
-            code.message(
-                self.binary_path.as_deref(),
-                self.found_version.as_deref(),
-                self.detail.as_deref(),
-            )
-        })
+        let min = MIN_RESTIC_VERSION.to_string();
+        self.error_kind
+            .map(|code| code.message(&self.text_params(&min)))
     }
 
     /// Status line: «restic ‹version›» or the reason restic is unusable.
     pub fn status_text(&self) -> UiText {
+        let min = MIN_RESTIC_VERSION.to_string();
         restic_status_text(
             self.error_kind,
             self.version.as_deref(),
-            self.binary_path.as_deref(),
-            self.found_version.as_deref(),
-            self.detail.as_deref(),
+            &self.text_params(&min),
         )
     }
 }

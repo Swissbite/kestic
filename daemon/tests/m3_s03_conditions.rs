@@ -13,9 +13,9 @@ use common::m3::{
 };
 use common::{run_isolated_test, start_fake_notifications, start_fake_sni_watcher};
 use kestic_core::clock::FakeClock;
-use kestic_core::codes::BlockedReason;
 use kestic_core::model::{Backup, BackupId, RunStatus};
 use kestic_daemon::dbus_api::DaemonStateDto;
+use kestic_i18n::codes::BlockedReason;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;

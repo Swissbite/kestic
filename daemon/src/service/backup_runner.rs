@@ -30,7 +30,6 @@ use kestic_core::backup::{
     is_forget_lock_failure,
 };
 use kestic_core::clock::Clock;
-use kestic_core::codes::{BlockedReason, ErrorKind};
 use kestic_core::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
 };
@@ -50,6 +49,8 @@ use kestic_core::scheduler::{
     mark_backup_slot_handled, record_backup_backoff_failure,
 };
 use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_i18n::codes::{BlockedReason, ErrorKind};
+use kestic_i18n::messages::{ActiveRunInfo, active_run_message, interrupted_by_sleep_message};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -517,8 +518,11 @@ impl BackupProgressReporter<'_> {
                 processed_bytes: bytes_done,
                 total_bytes,
                 speed_bytes_per_sec: speed_bps,
-                info_message: i18n("Backing up %1 (%2%)")
-                    .subs(&[self.backup_name, &(pct.round() as u32).to_string()]),
+                info_message: tr(&active_run_message(&ActiveRunInfo {
+                    name: self.backup_name,
+                    is_maintenance: false,
+                    percent_done: pct,
+                })),
                 elapsed_ms: elapsed_secs * 1000,
             });
         }
@@ -795,7 +799,7 @@ fn process_backup_success_result(
     run.stats = res.stats;
 
     let mut summary = if sleep_interrupted {
-        Some(i18n("Interrupted by system sleep").into())
+        Some(tr(&interrupted_by_sleep_message()))
     } else if matches!(status, RunStatus::Error | RunStatus::Warning) {
         let base = localized_failure_summary(&res.presentation.kind);
         let raw = res
@@ -903,7 +907,7 @@ fn process_backup_error_result(
         (
             RunStatus::Interrupted,
             None,
-            i18n("Interrupted by system sleep").into(),
+            tr(&interrupted_by_sleep_message()),
         )
     } else if is_scheduled
         && matches!(
@@ -1005,7 +1009,7 @@ fn run_post_backup_forget(
                     *out.summary = Some(if is_forget_lock_failure(&f_res) {
                         i18n("Backed up, destination locked — retention will catch up later").into()
                     } else {
-                        i18n("Backed up, retention not executed").into()
+                        tr(&ErrorKind::RetentionPending.message(None, false))
                     });
                 }
             }
@@ -1014,7 +1018,7 @@ fn run_post_backup_forget(
             *out.primary_forget_state = Some(true);
             *out.status = RunStatus::Warning;
             if backup_exit == 0 {
-                *out.summary = Some(i18n("Backed up, retention not executed").into());
+                *out.summary = Some(tr(&ErrorKind::RetentionPending.message(None, false)));
             }
             combined_logs.push(redact_secrets(&f_err.to_string(), secret_strs));
         }

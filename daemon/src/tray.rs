@@ -6,8 +6,8 @@
 
 use crate::dbus_api::{ActiveRunProgressDto, OverallStatusKind};
 use crate::i18n::{i18n, tr};
-use kestic_core::messages::active_run_message;
 use kestic_core::scheduler::PauseDuration;
+use kestic_i18n::messages::{Label, active_run_message, all_backed_up_message};
 use ksni::blocking::TrayMethods;
 use ksni::menu::{MenuItem, StandardItem, SubMenu};
 use std::sync::{Arc, mpsc};
@@ -131,8 +131,8 @@ impl Default for KesticTrayState {
             icon_theme_path: String::new(),
             overlay_icon_name: String::new(),
             tooltip_title: "Kestic".to_string(),
-            tooltip_description: i18n("Backups ready").into(),
-            status_line: i18n("All data backed up").into(),
+            tooltip_description: tr(&all_backed_up_message()),
+            status_line: tr(&all_backed_up_message()),
             running_run: None,
             paused_line: None,
             next_backup_line: None,
@@ -224,7 +224,7 @@ impl KesticTray {
             !self.state.blocking_active && self.state.backups.iter().any(|b| b.enabled);
         backup_submenu.push(
             StandardItem {
-                label: i18n("All Backups").into(),
+                label: tr(&Label::AllBackups.message()),
                 icon_name: "media-playback-start".to_string(),
                 enabled: any_enabled,
                 activate: Box::new(|this: &mut Self| {
@@ -253,7 +253,7 @@ impl KesticTray {
         }
 
         SubMenu {
-            label: i18n("Back Up Now").into(),
+            label: tr(&Label::BackUpNow.message()),
             icon_name: "media-playback-start".to_string(),
             enabled: !self.state.blocking_active && !self.state.backups.is_empty(),
             submenu: backup_submenu,
@@ -266,7 +266,7 @@ impl KesticTray {
         // Pause / Resume Schedules (M3-S07, AC-M3-14-4, §10.1)
         if self.state.global_paused {
             StandardItem {
-                label: i18n("Resume Schedules").into(),
+                label: tr(&Label::ResumeSchedules.message()),
                 icon_name: "media-playback-start".to_string(),
                 activate: Box::new(|this: &mut Self| {
                     this.emit(TrayAction::ResumeGlobal);
@@ -276,11 +276,11 @@ impl KesticTray {
             .into()
         } else {
             SubMenu {
-                label: i18n("Pause Schedules").into(),
+                label: tr(&Label::PauseSchedules.message()),
                 icon_name: "media-playback-pause".to_string(),
                 submenu: vec![
                     StandardItem {
-                        label: i18n("1 Hour").into(),
+                        label: tr(&Label::PauseOneHour.message()),
                         activate: Box::new(|this: &mut Self| {
                             this.emit(TrayAction::PauseGlobal(PauseDuration::Hours { hours: 1 }));
                         }),
@@ -288,7 +288,7 @@ impl KesticTray {
                     }
                     .into(),
                     StandardItem {
-                        label: i18n("3 Hours").into(),
+                        label: tr(&Label::PauseThreeHours.message()),
                         activate: Box::new(|this: &mut Self| {
                             this.emit(TrayAction::PauseGlobal(PauseDuration::Hours { hours: 3 }));
                         }),
@@ -296,7 +296,7 @@ impl KesticTray {
                     }
                     .into(),
                     StandardItem {
-                        label: i18n("Until Tomorrow").into(),
+                        label: tr(&Label::PauseUntilTomorrow.message()),
                         activate: Box::new(|this: &mut Self| {
                             this.emit(TrayAction::PauseGlobal(PauseDuration::UntilTomorrow));
                         }),
@@ -304,7 +304,7 @@ impl KesticTray {
                     }
                     .into(),
                     StandardItem {
-                        label: i18n("Until I Resume").into(),
+                        label: tr(&Label::PauseUntilResume.message()),
                         activate: Box::new(|this: &mut Self| {
                             this.emit(TrayAction::PauseGlobal(PauseDuration::Indefinite));
                         }),

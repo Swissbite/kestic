@@ -7,9 +7,8 @@ use super::error::{KesticServiceErr, map_config_err};
 use super::run_errors::{error_run_kind, unreadable_items_from_lines};
 use super::state::DaemonCore;
 use crate::dbus_api::{ExcludeRulePreviewDto, RunDetailDto};
-use crate::i18n::i18n;
+use crate::i18n::tr;
 use kestic_core::backup::{exclude_file_path, write_exclude_file};
-use kestic_core::codes::ErrorKind;
 use kestic_core::config::ConfigError;
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, ExcludeLintWarning, ExcludePathTestResult,
@@ -20,6 +19,8 @@ use kestic_core::model::{
 use kestic_core::mount::{current_home_dir, detect_source_with};
 use kestic_core::provider::resolve_and_check;
 use kestic_core::restic::{ResticCommandSpec, classify_exit, parse_recorded_invocation};
+use kestic_i18n::codes::ErrorKind;
+use kestic_i18n::messages::deleted_destination_message;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -215,7 +216,7 @@ impl DaemonCore {
             destination_name: destination
                 .as_ref()
                 .map(|d| d.name.clone())
-                .unwrap_or_else(|| i18n("Deleted destination").to_string()),
+                .unwrap_or_else(|| tr(&deleted_destination_message())),
             run,
             backup,
             destination,

@@ -9,11 +9,11 @@
 //! (keyword matching) and `ResticFailureKind::{is_transient, is_permanent, error_kind}`; this
 //! module only maps a stored [`Run`] onto it.
 
-use kestic_core::codes::ErrorKind;
 use kestic_core::model::{PendingReason, Run, RunStatus};
 use kestic_core::restic::{
     RecoveryAction, ResticFailureKind, ResticStreamEvent, classify_exit, parse_json_line,
 };
+use kestic_i18n::codes::ErrorKind;
 
 /// Error details of the last finished run of a backup.
 pub(super) struct LastRunErrorInfo {

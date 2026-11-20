@@ -13,7 +13,7 @@ Verbindliche Spezifikation für v1 (F14, U17, U18, M1-S09, AC-M1-09-5). Jede Erw
 
 ## Fehler-Namen (`net.daester.Kestic.Error.*`)
 
-Der Fehler-Name ist der Code: `KesticDbusError` (`kestic_daemon::dbus_api`, von Daemon und GUI gemeinsam genutzt) liefert ihn als `kestic_core::codes::ServiceErrorCode`, und `kestic_core::messages` bildet ihn auf die msgid ab, wie bei den DTO-Codes. Die GUI unterscheidet Varianten, nie Namens-Strings, und zeigt den Text des Codes in ihrer Sprache.
+Der Fehler-Name ist der Code: `KesticDbusError` (`kestic_daemon::dbus_api`, von Daemon und GUI gemeinsam genutzt) liefert ihn als `kestic_i18n::codes::ServiceErrorCode`, und `kestic_i18n::messages` bildet ihn auf die msgid ab, wie bei den DTO-Codes. Die GUI unterscheidet Varianten, nie Namens-Strings, und zeigt den Text des Codes in ihrer Sprache.
 
 - **Die Meldung ist Rohdetail.** Sie dient Log und Details-Ansicht und ist nie der Haupttext in der UI. Der Daemon übersetzt sie nicht; unerwartete Fehler (`InvalidInput`, `Internal`) schreibt er ins Session-Journal. Bei `ManualRunBlocked` ist die Meldung der Code aus `BlockedReason`.
 - **Eigener Text braucht eigenen Fehler-Namen** (z. B. `LockInUse`), nie eine Kennung in der Meldung.
@@ -96,18 +96,18 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 **Sprachunabhängige Codes (Variante A+, Entscheid 2026-11-20):** Die API ist privat (Daemon und GUI im selben `.deb`, keine anderen Aufrufer), Rückwärtskompatibilität ist deshalb kein Ziel. Vertrag sind Codes, nicht Texte:
 
 - **Keine Texte in Daemon-Sprache in DTOs.** Die DTOs tragen Codes, Zahlen und Rohdaten. Texte entstehen erst dort, wo sie angezeigt werden: die GUI übersetzt in ihrer Sprache (KI18n), der Daemon für Tray, Benachrichtigungen und Lauf-Historie in seiner (`daemon/src/i18n.rs`). Beide lesen `po/de/kestic.po`. Die GUI kennt keinen Rückfall auf Daemon-Texte.
-- **Typisierte Codes.** Jeder Code ist ein Rust-Enum, in `kestic_core::codes` (ausser `RecoveryAction` in `kestic_core::restic` und `TrayStatus` im Daemon), und wird als `snake_case`-String serialisiert. Unbekannte Codes sind ein Deserialisierungsfehler; ein unbekannter Grund im Signal `ManualRunBlocked` wird ignoriert, nie geraten.
-- **Genau eine Abbildung Code → msgid.** `kestic_core::messages` liefert pro Code die englische msgid samt Parametern (`Message`); Rohdaten, die unverändert angezeigt werden, kommen als `UiText::Raw`. Die msgids sind mit `i18n_noop("…")` markiert und werden mit `xgettext --keyword=i18n_noop:1` extrahiert. Daemon und GUI haben keine eigenen `match`-Tabellen über Codes.
+- **Typisierte Codes.** Jeder Code ist ein Rust-Enum in `kestic_i18n::codes` (ausser `TrayStatus` im Daemon) und wird als `snake_case`-String serialisiert; `kestic-core` wandelt seine Fach-Typen in diese Codes um. Unbekannte Codes sind ein Deserialisierungsfehler; ein unbekannter Grund im Signal `ManualRunBlocked` wird ignoriert, nie geraten.
+- **Genau eine Abbildung Code → msgid.** `kestic_i18n::messages` liefert pro Code die englische msgid samt Parametern (`Message`); Rohdaten, die unverändert angezeigt werden, kommen als `UiText::Raw`. Die msgids sind mit `i18n_noop("…")` markiert und werden mit `xgettext --keyword=i18n_noop:1` extrahiert. Daemon und GUI haben keine eigenen `match`-Tabellen über Codes.
 - **Rohdaten bleiben Daten.** `error_detail` (auch in `SkippedBackupDto`, `BackupDryRunStatusDto`, `RetentionPreviewStatusDto`), `error_raw_detail`, `ResticStatusDto.detail`, `SecretStoreStatusDto.detail`, `ConnectionTestResultDto.detail`, `DestinationAvailabilityDto.detail`, `BackupSnapshotsDto.current_error` und `config_load_error` enthalten den unübersetzten, englischen Text von restic, System oder `core` (Fehlertexte in `core` sind englisch) und dienen als Detail bzw. Parameter. Angezeigt wird ein Rohtext nur dort, wo der Code keinen eigenen Text hat (`unknown`, bei `ConnectionTestResultDto` die Codes `invalid_input`, `internal`, `command_failed`, `daemon_unreachable`).
 - **Fehler.** D-Bus-Fehler folgen derselben Regel; siehe §Fehler-Namen.
 
-| Feld | Enum (`kestic_core`) | Codes |
+| Feld | Enum (`kestic_i18n`) | Codes |
 | --- | --- | --- |
 | `BackupSummaryDto.error_kind`, `RunDetailDto.error_kind` (Detail: `error_detail` bzw. `error_raw_detail`, dazu `error_exit_code`) | `codes::ErrorKind` | `wrong_password`, `repo_missing`, `locked`, `destination_unreachable` (inkl. DNS), `source_unavailable`, `auth_failed`, `incomplete_snapshot`, `retention_pending`, `cancelled`, `unknown` (alles Nichterkannte, nie ein vorübergehender Code) |
 | `SkippedBackupDto.error_kind` | `codes::ErrorKind` | bei `reason = permanent_error` der `error_kind` des letzten Laufs; bei `reason = error` `secret_store_locked` \| `restic_unavailable` \| `auth_failed` \| `wrong_password` \| `destination_unreachable` \| `unknown` (dann `error_detail` als Rohtext) |
 | `BackupDryRunStatusDto.error_kind`, `RetentionPreviewStatusDto.error_kind` (bei `state = "error"`, Rohtext: `error_detail`) | `codes::ErrorKind` | wie oben |
 | `SkippedBackupDto.reason` | `codes::SkipReason` | `permanent_error`, `source_unavailable`, `destination_unreachable`, `condition_not_met`, `error` |
-| `BackupSummaryDto.error_action`, `RunDetailDto.error_action` | `restic::RecoveryAction` | `update_stored_password`, `add_to_excludes`, `check_restic_source`, `unlock_repository` |
+| `BackupSummaryDto.error_action`, `RunDetailDto.error_action` | `codes::RecoveryAction` | `update_stored_password`, `add_to_excludes`, `check_restic_source`, `unlock_repository` |
 | `BackupSummaryDto.pending_primary_code`, `pending_reason_codes` (nächster Versuch bei `backoff`: `pending_retry_at_unix`); `DestinationSummaryDto.maintenance_pending_reason` (fällige Wartung `ausstehend`, AC-M3-05-5; nächster Versuch: `maintenance_retry_at_unix`) | `codes::PendingReasonCode` | `source_unavailable`, `destination_unreachable`, `on_battery`, `no_network`, `metered`, `wrong_network`, `queue`, `backoff` |
 | `BackupSummaryDto.unmet_run_conditions` (Parameter: `battery_percent`, erlaubte Netzwerke aus `backup.run_conditions`) | `codes::PendingReasonCode` | `on_battery`, `no_network`, `metered`, `wrong_network` |
 | `BackupAvailabilityDto.blocked_reason`; Signal `ManualRunBlocked.reason` und Fehler `Error.ManualRunBlocked` als String | `codes::BlockedReason` | `source_unavailable`, `destination_unreachable`, `condition_not_met` |
@@ -118,7 +118,18 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 | `OverallStatusDto.kind` | `codes::OverallStatusKind` | `blocked`, `error`, `overdue`, `warning`, `running`, `paused`, `pending`, `interrupted`, `cancelled`, `never_run`, `manual_only`, `ok` |
 | `OverallStatusDto.tray_status` | `daemon::tray::TrayStatus` | `Passive`, `Active`, `NeedsAttention` (StatusNotifierItem-Werte) |
 
-Überschrift und Untertitel des Gesamtstatus (Übersicht und Tray) berechnen GUI und Daemon mit derselben Funktion `kestic_core::messages::overall_headline` bzw. `overall_subtitle` aus `OverallStatusDto` (Art, Zähler, aktiver Lauf) und `BlockingStateDto`; das DTO trägt keine `headline`, `subtitle` oder `paused_label`.
+Überschrift und Untertitel des Gesamtstatus (Übersicht und Tray) berechnen GUI und Daemon mit derselben Funktion `kestic_i18n::messages::overall_headline` bzw. `overall_subtitle` aus `OverallStatusDto` (Art, Zähler, aktiver Lauf) und `BlockingStateDto`; das DTO trägt keine `headline`, `subtitle` oder `paused_label`.
+
+## Texte und Übersetzungen
+
+Jeder Text hat genau einen Ort:
+
+- **Gemeinsame Texte** (Daemon **und** GUI brauchen sie): im Crate `kestic-i18n` (`i18n/src/`). Das sind die Texte der Codes, Status-Texte wie «Schedules paused» oder «Paused since %1» und Labels, die Tray und Fenster zeigen (`messages::Label`, in QML über das Element `SharedTexts`). Markiert mit `i18n_noop("…")`.
+- **Nur GUI:** als `i18n("…")` in `gui/src` bzw. QML (Labels, Hilfetexte, Formular-Prüfungen, GUI-eigene Status-Zeilen).
+- **Nur Daemon:** als `i18n("…")` in `daemon/src` (Tray-Menü, Benachrichtigungen, Lauf-Historie).
+- `kestic-i18n` übersetzt nie; Daemon und GUI übersetzen mit ihrer eigenen i18n aus `po/de/kestic.po`.
+- Ein Text wird nie zweimal gepflegt: Kein `i18n("…")`-Literal wiederholt einen Text aus `kestic-i18n`, und kein Literal steht in Daemon und GUI zugleich. Gleicher Sinn heisst gleicher Wortlaut. Der Test `i18n/tests/text_ownership.rs` prüft beides.
+- Sprache: einfaches Englisch und einfaches Deutsch, Begriffe aus [glossary.md](glossary.md).
 
 ## Signale auf `net.daester.Kestic1`
 

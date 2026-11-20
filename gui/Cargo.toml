@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 kestic-core = { path = "../core" }
+kestic-i18n = { path = "../i18n" }
 kestic-daemon = { path = "../daemon" }
 cxx = { workspace = true }
 cxx-qt = { workspace = true }

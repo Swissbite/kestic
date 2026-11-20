@@ -3,14 +3,14 @@
 
 //! Overview headline and subtitle and the other code-based status texts, built in the GUI
 //! locale from the language-independent DTO codes via the shared mapping in
-//! `kestic_core::messages` (NFR-06); the DTOs carry no daemon-language texts.
+//! `kestic_i18n::messages` (NFR-06); the DTOs carry no daemon-language texts.
 
-use crate::state_cache::{i18n, i18np, tr};
-use kestic_core::codes::PendingReasonCode;
-use kestic_core::messages::overall_headline as headline_message;
+use crate::state_cache::{i18np, tr};
 use kestic_daemon::dbus_api::{BackupAvailabilityDto, DaemonStateDto, blocking_message};
+use kestic_i18n::codes::PendingReasonCode;
+use kestic_i18n::messages::{maintenance_running_message, overall_headline as headline_message};
 
-/// Headline for the status card (§6.2 priority order, `kestic_core::messages::overall_headline`).
+/// Headline for the status card (§6.2 priority order, `kestic_i18n::messages::overall_headline`).
 pub fn overall_headline(state: &DaemonStateDto) -> String {
     let o = &state.overall;
     let active = o.active_run_info();
@@ -25,7 +25,7 @@ pub fn overall_headline(state: &DaemonStateDto) -> String {
 pub fn overall_subtitle(state: &DaemonStateDto) -> String {
     let o = &state.overall;
     let active = o.active_run_info();
-    kestic_core::messages::overall_subtitle(&o.counts(state.backups.len()), active.as_ref())
+    kestic_i18n::messages::overall_subtitle(&o.counts(state.backups.len()), active.as_ref())
         .map(|m| tr(&m))
         .unwrap_or_default()
 }
@@ -62,7 +62,7 @@ pub fn maintenance_status_line(
     now: time::OffsetDateTime,
 ) -> String {
     if running {
-        return i18n("Maintenance running").to_string();
+        return tr(&maintenance_running_message());
     }
     pending
         .map(|code| crate::state_cache::pending_reason_line(code, retry_at_unix, now))

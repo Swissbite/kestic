@@ -7,13 +7,11 @@
 
 pub mod backup;
 pub mod clock;
-pub mod codes;
 pub mod config;
 pub mod destination;
 pub mod excludes;
 pub mod history;
 pub mod maintenance;
-pub mod messages;
 pub mod migrations;
 pub mod model;
 pub mod mount;

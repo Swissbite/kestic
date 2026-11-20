@@ -126,7 +126,7 @@ fn collect_files_with_ext(dir: &Path, ext: &str) -> Vec<PathBuf> {
 
 /// NFR-06 (M1-S16): Extracts every `i18n(...)` string from all `daemon/src/*.rs`,
 /// `gui/src/*.rs`, and `gui/src/qml/*.qml` files, plus every `i18n_noop(...)` msgid of the
-/// shared code → msgid mapping in `core/src/*.rs`, and enforces 100% Swiss-German coverage
+/// shared texts in `i18n/src/*.rs`, and enforces 100% Swiss-German coverage
 /// (0 untranslated, 0 fuzzy, 0 missing, 0 `ß`) in `po/de/kestic.po`.
 #[test]
 fn nfr_06_m1_all_rust_and_qml_i18n_strings_extracted_and_translated() {
@@ -135,13 +135,8 @@ fn nfr_06_m1_all_rust_and_qml_i18n_strings_extracted_and_translated() {
 
     let mut rust_files = collect_files_with_ext(&root.join("daemon/src"), "rs");
     rust_files.extend(collect_files_with_ext(&root.join("gui/src"), "rs"));
-    // `core` only marks msgids (`i18n_noop`); other core files are not scanned, xgettext's C
-    // parser stumbles over their raw strings.
-    rust_files.extend(
-        collect_files_with_ext(&root.join("core/src"), "rs")
-            .into_iter()
-            .filter(|f| fs::read_to_string(f).is_ok_and(|src| src.contains("i18n_noop("))),
-    );
+    // The shared texts of `kestic-i18n` are marked with `i18n_noop`.
+    rust_files.extend(collect_files_with_ext(&root.join("i18n/src"), "rs"));
     let qml_files = collect_files_with_ext(&root.join("gui/src/qml"), "qml");
     assert!(!rust_files.is_empty(), "expected Rust files");
     assert!(!qml_files.is_empty(), "expected QML files");

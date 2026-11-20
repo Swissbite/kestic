@@ -4,14 +4,44 @@
 //! Language-independent status and error codes shared by daemon and GUI over D-Bus
 //! (`docs/spec/dbus-api.md` §Sprachunabhängige Codes).
 //!
-//! Every code serialises as the same `snake_case` string the D-Bus API used before the codes
-//! became typed. The texts for these codes live in [`crate::messages`] (one mapping, translated
-//! by daemon and GUI with their own i18n).
+//! Every code serialises as a `snake_case` string. The texts for these codes live in
+//! [`crate::messages`]. `kestic-core` converts its domain types into these codes.
 
-use crate::mount::SourceCheckResult;
-use crate::restic::ResticFailureKind;
-use crate::scheduler::UnmetPrecondition;
 use serde::{Deserialize, Serialize};
+
+/// Action offered to the user for recoverable errors (`FR-37`, `error_action`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    UpdateStoredPassword,
+    AddToExcludes,
+    CheckResticSource,
+    UnlockRepository,
+}
+
+impl RecoveryAction {
+    pub const ALL: [Self; 4] = [
+        Self::UpdateStoredPassword,
+        Self::AddToExcludes,
+        Self::CheckResticSource,
+        Self::UnlockRepository,
+    ];
+
+    /// Code string as exposed to QML (`errorAction`), equal to the serde name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UpdateStoredPassword => "update_stored_password",
+            Self::AddToExcludes => "add_to_excludes",
+            Self::CheckResticSource => "check_restic_source",
+            Self::UnlockRepository => "unlock_repository",
+        }
+    }
+
+    /// Parses an `error_action` code; `None` for unknown codes.
+    pub fn parse(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.as_str() == code)
+    }
+}
 
 /// Cause of a failed run, a run with warning, or a skipped backup (`error_kind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -71,25 +101,6 @@ impl ErrorKind {
     }
 }
 
-impl From<&ResticFailureKind> for ErrorKind {
-    fn from(kind: &ResticFailureKind) -> Self {
-        match kind {
-            ResticFailureKind::WrongPassword => Self::WrongPassword,
-            ResticFailureKind::RepositoryMissing => Self::RepoMissing,
-            ResticFailureKind::RepositoryLocked => Self::Locked,
-            ResticFailureKind::DestinationUnreachable | ResticFailureKind::DnsResolutionFailed => {
-                Self::DestinationUnreachable
-            }
-            ResticFailureKind::BackendAuthFailed => Self::AuthFailed,
-            ResticFailureKind::IncompleteSnapshot { .. } => Self::IncompleteSnapshot,
-            ResticFailureKind::Cancelled => Self::Cancelled,
-            ResticFailureKind::None
-            | ResticFailureKind::GenericFailure
-            | ResticFailureKind::Unknown { .. } => Self::Unknown,
-        }
-    }
-}
-
 /// Why a due backup or due maintenance waits (`pending_reason_codes`,
 /// `maintenance_pending_reason`) and which run condition is not met (`unmet_run_conditions`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -134,21 +145,6 @@ impl PendingReasonCode {
     }
 }
 
-impl From<&UnmetPrecondition> for PendingReasonCode {
-    fn from(item: &UnmetPrecondition) -> Self {
-        match item {
-            UnmetPrecondition::SourceUnavailable => Self::SourceUnavailable,
-            UnmetPrecondition::DestinationUnreachable => Self::DestinationUnreachable,
-            UnmetPrecondition::OnBattery => Self::OnBattery,
-            UnmetPrecondition::NoNetwork => Self::NoNetwork,
-            UnmetPrecondition::MeteredNetwork => Self::Metered,
-            UnmetPrecondition::AllowedNetworkMismatch { .. } => Self::WrongNetwork,
-            UnmetPrecondition::Queued => Self::Queue,
-            UnmetPrecondition::Backoff => Self::Backoff,
-        }
-    }
-}
-
 /// Result of the source check when the source is unavailable (`source_status`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -174,17 +170,6 @@ impl SourceStatus {
             Self::DriveNotMounted => "drive_not_mounted",
             Self::DriveMismatch => "drive_mismatch",
             Self::DriveEmpty => "drive_empty",
-        }
-    }
-
-    /// Code of an unavailable source; `None` while the source is available.
-    pub fn from_check(status: &SourceCheckResult) -> Option<Self> {
-        match status {
-            SourceCheckResult::Available => None,
-            SourceCheckResult::PathMissing(_) => Some(Self::PathMissing),
-            SourceCheckResult::DriveNotMounted => Some(Self::DriveNotMounted),
-            SourceCheckResult::DriveMismatch => Some(Self::DriveMismatch),
-            SourceCheckResult::DriveEmpty => Some(Self::DriveEmpty),
         }
     }
 }
@@ -472,7 +457,6 @@ impl OverallStatusKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::restic::RecoveryAction;
 
     fn json<T: Serialize>(value: T) -> String {
         serde_json::to_string(&value).expect("serialize code")
@@ -537,21 +521,5 @@ mod tests {
             assert_eq!(json(c), format!("\"{}\"", c.as_str()));
         }
         assert_eq!(BlockedReason::parse("nope"), None);
-    }
-
-    #[test]
-    fn restic_failure_kinds_map_to_error_kinds() {
-        assert_eq!(
-            ErrorKind::from(&ResticFailureKind::DnsResolutionFailed),
-            ErrorKind::DestinationUnreachable
-        );
-        assert_eq!(
-            ErrorKind::from(&ResticFailureKind::RepositoryLocked),
-            ErrorKind::Locked
-        );
-        assert_eq!(
-            ErrorKind::from(&ResticFailureKind::Unknown { exit_code: 99 }),
-            ErrorKind::Unknown
-        );
     }
 }

@@ -13,6 +13,7 @@ use crate::model::{
 use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::{AmbiguousOffset, TimeZone};
+use kestic_i18n::codes::PendingReasonCode;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use time::OffsetDateTime;
@@ -480,6 +481,21 @@ pub enum UnmetPrecondition {
     AllowedNetworkMismatch { allowed: Vec<String> },
     Queued,
     Backoff,
+}
+
+impl From<&UnmetPrecondition> for PendingReasonCode {
+    fn from(item: &UnmetPrecondition) -> Self {
+        match item {
+            UnmetPrecondition::SourceUnavailable => Self::SourceUnavailable,
+            UnmetPrecondition::DestinationUnreachable => Self::DestinationUnreachable,
+            UnmetPrecondition::OnBattery => Self::OnBattery,
+            UnmetPrecondition::NoNetwork => Self::NoNetwork,
+            UnmetPrecondition::MeteredNetwork => Self::Metered,
+            UnmetPrecondition::AllowedNetworkMismatch { .. } => Self::WrongNetwork,
+            UnmetPrecondition::Queued => Self::Queue,
+            UnmetPrecondition::Backoff => Self::Backoff,
+        }
+    }
 }
 
 impl UnmetPrecondition {

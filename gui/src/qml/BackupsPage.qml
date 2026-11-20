@@ -5,8 +5,10 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
+    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: page
     objectName: "backupsListPage"
     title: i18n("Backups")
@@ -81,7 +83,7 @@ Kirigami.ScrollablePage {
             width: parent.width - Kirigami.Units.largeSpacing * 4
             visible: backupsListView.count === 0
             icon.name: "folder-sync"
-            text: i18n("No backups configured yet")
+            text: sharedTexts.label("no_backups")
             explanation: i18n("Create a backup to define what folder to back up and where to store it.")
             helpfulAction: Kirigami.Action {
                 id: backupsEmptyAddAction

@@ -7,8 +7,8 @@
 //! `net.daester.Kestic.Error.*` variant survives the trip over D-Bus as the same variant, its
 //! error name is its code, and together the variants cover every `ServiceErrorCode`.
 
-use kestic_core::codes::{BlockedReason, ServiceErrorCode};
 use kestic_daemon::dbus_api::KesticDbusError;
+use kestic_i18n::codes::{BlockedReason, ServiceErrorCode};
 use std::collections::HashSet;
 use zbus::DBusError;
 

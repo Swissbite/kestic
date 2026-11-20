@@ -5,8 +5,10 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
+    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: page
     objectName: "backupDetailPage"
     title: currentData ? currentData.name : i18n("Backup")
@@ -60,8 +62,8 @@ Kirigami.ScrollablePage {
             text: currentData && currentData.isRunning
                 ? i18n("Cancel")
                 : (currentData && currentData.hasError && currentData.errorAction === "update_stored_password"
-                    ? i18n("Update Saved Password…")
-                    : i18n("Back Up Now"))
+                    ? appBackend.recoveryActionLabel("update_stored_password")
+                    : sharedTexts.label("back_up_now"))
             enabled: currentData !== null && (currentData.isRunning
                 || (currentData.hasError && currentData.errorAction === "update_stored_password" && appBackend.blocking_kind === "")
                 || (currentData.available && appBackend.blocking_kind === ""))
@@ -143,25 +145,25 @@ Kirigami.ScrollablePage {
 
         Controls.MenuItem {
             objectName: "pauseBackup1hItem"
-            text: i18n("1 Hour")
+            text: sharedTexts.label("pause_one_hour")
             Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "1h")
         }
         Controls.MenuItem {
             objectName: "pauseBackup3hItem"
-            text: i18n("3 Hours")
+            text: sharedTexts.label("pause_three_hours")
             Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "3h")
         }
         Controls.MenuItem {
             objectName: "pauseBackupTomorrowItem"
-            text: i18n("Until Tomorrow")
+            text: sharedTexts.label("pause_until_tomorrow")
             Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "tomorrow")
         }
         Controls.MenuItem {
             objectName: "pauseBackupIndefiniteItem"
-            text: i18n("Until I Resume")
+            text: sharedTexts.label("pause_until_resume")
             Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "indefinite")
         }
@@ -329,7 +331,7 @@ Kirigami.ScrollablePage {
                     objectName: "backupDetailBackUpNowButton"
                     visible: !(currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password")
                     icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
-                    text: currentData && currentData.isRunning ? i18n("Cancel") : i18n("Back Up Now")
+                    text: currentData && currentData.isRunning ? i18n("Cancel") : sharedTexts.label("back_up_now")
                     enabled: currentData !== null && (currentData.isRunning || (currentData.available && appBackend.blocking_kind === ""))
                     Accessible.name: text
                     Controls.ToolTip.visible: hovered && !enabled
@@ -351,7 +353,7 @@ Kirigami.ScrollablePage {
                     objectName: "backupDetailUpdatePasswordButton"
                     visible: currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password"
                     icon.name: "dialog-password"
-                    text: i18n("Update Saved Password…")
+                    text: appBackend.recoveryActionLabel("update_stored_password")
                     enabled: appBackend.blocking_kind === ""
                     Accessible.name: text
                     onClicked: if (currentData) rootWindow.openUpdatePasswordDialog(currentData.destinationId, currentData.destinationName)

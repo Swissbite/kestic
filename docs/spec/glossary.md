@@ -29,6 +29,7 @@ Verbindliche Begriffe für UI, Spec und Code. Nicht verwenden: «Profil», «Job
 | Sperre | Lock | – | restic-Lock (Exit 11, FR-19) |
 | Fortschrittsanzeige | Progress view | – | Eintrag im Plasma-Benachrichtigungsbereich (FR-53) |
 | Passwortspeicher | Password store | `SecretStore` | Secret Service / KWallet |
+| Gespeichertes Passwort | Saved password | `SECRET_KIND_REPO` | Repository-Passwort, das Kestic im Passwortspeicher hält (nicht «stored password») |
 | Systemabschnitt | System Tray | – | Plasma-Bereich für Status-Symbole (StatusNotifierItem), in dem der Kestic-Tray-Eintrag erscheint |
 | Expertenmodus | Expert mode | `expert_mode` | – (ein einziger Schalter; Darstellungsart: volle Ausschluss-Syntax und Expertenoptionen in-place; E16, K2) |
 | Metadaten-Snapshot | Metadata snapshot | `MetaSnapshot` | Snapshot mit Tag `kestic-meta:<backup-id>` (E10, FR-49) |

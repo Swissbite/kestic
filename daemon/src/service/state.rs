@@ -9,19 +9,17 @@ use crate::dbus_api::{
     ActiveRunProgressDto, BlockingStateDto, DaemonStateDto, DestinationAvailabilityDto,
     KESTIC_BUS_NAME, ResticStatusDto, SecretStoreStatusDto,
 };
-use crate::i18n::{i18n, tr};
+use crate::i18n::tr;
 use crate::job_view::DEFAULT_JOB_VIEW_DEST;
 use crate::monitors::{MonitorBusConfig, list_known_networks, read_system_environment};
 use crate::secrets::SecretServiceStore;
 use crate::tray::{KesticTrayState, TrayHandle, TrayStatus};
 use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult, default_state_dir};
 use kestic_core::clock::{Clock, SystemClock};
-use kestic_core::codes::{BlockingKind, ErrorKind, PendingReasonCode, ResticStatusCode};
 use kestic_core::config::{AppConfig, load_optional_config, save_config};
 use kestic_core::history::{
     BackupRuntimeState, DestinationMaintenanceState, HistoryError, PauseState, RunHistory,
 };
-use kestic_core::messages::unmet_conditions_message;
 use kestic_core::model::{BackupId, DestinationId, ResticProvider, Run, RunId, RunKind, RunStatus};
 use kestic_core::mount::{MountInspector, SourceCheckResult, SystemMountInspector};
 use kestic_core::provider::{ResolvedRestic, ResticProviderError, resolve_and_check};
@@ -30,6 +28,8 @@ use kestic_core::scheduler::{
     SystemEnvironment, TimezoneSpec, UnmetPrecondition, format_local_hhmm, format_local_slot_hint,
 };
 use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore};
+use kestic_i18n::codes::{BlockingKind, ErrorKind, PendingReasonCode, ResticStatusCode};
+use kestic_i18n::messages::{pause_message, unmet_conditions_message};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::PathBuf;
@@ -471,12 +471,9 @@ impl DaemonCore {
         now: OffsetDateTime,
     ) -> String {
         let since_str = format_local_hhmm(paused_since, &self.timezone);
-        if let Some(until) = paused_until {
-            let until_str = format_local_slot_hint(until, now, &self.timezone);
-            i18n("Paused since %1 (until %2)").subs(&[&since_str, &until_str])
-        } else {
-            i18n("Paused since %1").subs(&[&since_str])
-        }
+        let until_str =
+            paused_until.map(|until| format_local_slot_hint(until, now, &self.timezone));
+        tr(&pause_message(&since_str, until_str.as_deref()))
     }
 
     /// Daemon-language «Condition not met: …» for the unmet preconditions (notifications, run

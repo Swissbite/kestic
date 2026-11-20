@@ -7,18 +7,18 @@
 use super::{dbus_error_text, qobject};
 use crate::state_cache::{
     build_new_backup, cached_destination_kind, clone_updated_backup, clone_updated_backup_excludes,
-    clone_updated_backup_retention, clone_updated_backup_source,
+    clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text,
     localized_condition_override_message, localized_manual_block_message,
     localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, make_client,
-    refresh_state_now, shared_state,
+    not_found_text, refresh_state_now, shared_state,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
-use kestic_core::codes::{BlockedReason, ServiceErrorCode};
 use kestic_core::model::{BackupId, ExcludeRules, RetentionPolicy};
 use kestic_core::provider::resolve_and_check;
 use kestic_daemon::dbus_api::KesticDbusError;
+use kestic_i18n::codes::{BlockedReason, ServiceErrorCode};
 use std::env;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -28,7 +28,7 @@ impl qobject::KesticApp {
         let b_id = backup_id.to_string();
         let Ok(client) = make_client() else {
             self.as_mut()
-                .set_last_action_error(i18n("Background service unavailable."));
+                .set_last_action_error(QString::from(&daemon_unavailable_text()));
             return false;
         };
         match client.start_backup(&b_id) {
@@ -242,7 +242,7 @@ impl qobject::KesticApp {
         };
         let Some(existing) = existing else {
             self.as_mut()
-                .set_last_action_error(i18n("Backup not found."));
+                .set_last_action_error(QString::from(&not_found_text()));
             return false;
         };
         let Ok(client) = make_client() else {
@@ -301,7 +301,7 @@ impl qobject::KesticApp {
         };
         let Some(existing) = existing else {
             self.as_mut()
-                .set_last_action_error(i18n("Backup not found."));
+                .set_last_action_error(QString::from(&not_found_text()));
             return false;
         };
         let excludes: ExcludeRules = match serde_json::from_str(&excludes_json.to_string()) {
@@ -354,7 +354,7 @@ impl qobject::KesticApp {
         };
         let Some(existing) = existing else {
             self.as_mut()
-                .set_last_action_error(i18n("Backup not found."));
+                .set_last_action_error(QString::from(&not_found_text()));
             return false;
         };
         let retention: RetentionPolicy = match serde_json::from_str(&retention_json.to_string()) {
@@ -407,7 +407,7 @@ impl qobject::KesticApp {
         };
         let Some(existing) = existing else {
             self.as_mut()
-                .set_last_action_error(i18n("Backup not found."));
+                .set_last_action_error(QString::from(&not_found_text()));
             return false;
         };
         let Ok(client) = make_client() else {

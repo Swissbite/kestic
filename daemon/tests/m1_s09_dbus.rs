@@ -7,7 +7,6 @@ use common::{
     CapturedKesticSignal, KesticSignalCollector, find_kestic_binary, free_loopback_port,
     restic_test_binaries, run_isolated_test, start_fake_notifications, wait_for_file,
 };
-use kestic_core::codes::BlockedReason;
 use kestic_core::config::load_config;
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Source,
@@ -18,6 +17,7 @@ use kestic_daemon::dbus_api::{
 };
 use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
+use kestic_i18n::codes::BlockedReason;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

@@ -7,15 +7,16 @@
 //! a non-empty English msgid with a German translation in `po/de/kestic.po`, and every message
 //! fills exactly the placeholders of its msgid.
 
-use kestic_core::codes::{
+use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, ServiceErrorCode, SkipReason,
+    SourceStatus,
 };
-use kestic_core::messages::{
-    ActiveRunInfo, Message, OverallCounts, UiText, active_run_message, connection_test_text,
-    overall_headline, overall_subtitle, unmet_conditions_message,
+use kestic_i18n::messages::{
+    ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
+    completed_message, connection_test_text, dns_failed_message, overall_headline,
+    overall_subtitle, unmet_conditions_message,
 };
-use kestic_core::restic::{RecoveryAction, ResticFailureKind};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
@@ -104,23 +105,8 @@ fn all_messages() -> Vec<(String, Message)> {
             );
         }
     }
-    for kind in [
-        ResticFailureKind::None,
-        ResticFailureKind::Cancelled,
-        ResticFailureKind::IncompleteSnapshot {
-            unreadable_items: Vec::new(),
-        },
-        ResticFailureKind::DestinationUnreachable,
-        ResticFailureKind::DnsResolutionFailed,
-        ResticFailureKind::BackendAuthFailed,
-        ResticFailureKind::GenericFailure,
-        ResticFailureKind::RepositoryMissing,
-        ResticFailureKind::RepositoryLocked,
-        ResticFailureKind::WrongPassword,
-        ResticFailureKind::Unknown { exit_code: 99 },
-    ] {
-        push(format!("{kind:?}"), kind.summary_message());
-    }
+    push("completed".into(), completed_message());
+    push("dns".into(), dns_failed_message());
     for action in RecoveryAction::ALL {
         push(format!("{action:?}"), action.label_message());
     }
@@ -167,7 +153,12 @@ fn all_messages() -> Vec<(String, Message)> {
     for code in ResticStatusCode::ALL {
         push(
             format!("{code:?}"),
-            code.message(Some("/p"), Some("0.1"), Some("d")),
+            code.message(&ResticStatusParams {
+                binary_path: Some("/p"),
+                found_version: Some("0.1"),
+                detail: Some("d"),
+                min_version: "0.18.0",
+            }),
         );
     }
     for kind in BlockingKind::ALL {

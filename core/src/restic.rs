@@ -10,7 +10,9 @@ use crate::model::{
 };
 use crate::provider::ResolvedRestic;
 use crate::secrets::{SecretError, SecretStore, SecretValue};
-use serde::{Deserialize, Serialize};
+use kestic_i18n::codes::ErrorKind;
+use kestic_i18n::messages::{Message, completed_message, dns_failed_message};
+use serde::Deserialize;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -33,40 +35,9 @@ pub struct ResticRuntime<'a> {
     pub cache_dir: Option<&'a Path>,
 }
 
-/// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`); serialised as the
-/// `error_action` code (`update_stored_password`, `add_to_excludes`, …).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RecoveryAction {
-    UpdateStoredPassword,
-    AddToExcludes,
-    CheckResticSource,
-    UnlockRepository,
-}
-
-impl RecoveryAction {
-    pub const ALL: [Self; 4] = [
-        Self::UpdateStoredPassword,
-        Self::AddToExcludes,
-        Self::CheckResticSource,
-        Self::UnlockRepository,
-    ];
-
-    /// Code string as exposed to QML (`errorAction`), equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::UpdateStoredPassword => "update_stored_password",
-            Self::AddToExcludes => "add_to_excludes",
-            Self::CheckResticSource => "check_restic_source",
-            Self::UnlockRepository => "unlock_repository",
-        }
-    }
-
-    /// Parses an `error_action` code; `None` for unknown codes.
-    pub fn parse(code: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|a| a.as_str() == code)
-    }
-}
+/// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`); a code from
+/// `kestic-i18n`, re-exported for the restic error mapping.
+pub use kestic_i18n::codes::RecoveryAction;
 
 /// Classified restic outcome (`AC-M1-03-2`, `FR-37`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,8 +81,30 @@ impl ResticFailureKind {
     ///
     /// DNS failures count as `destination_unreachable`, everything unrecognised as `unknown`;
     /// the raw restic/daemon text is carried separately as detail.
-    pub fn error_kind(&self) -> crate::codes::ErrorKind {
-        crate::codes::ErrorKind::from(self)
+    pub fn error_kind(&self) -> ErrorKind {
+        match self {
+            Self::WrongPassword => ErrorKind::WrongPassword,
+            Self::RepositoryMissing => ErrorKind::RepoMissing,
+            Self::RepositoryLocked => ErrorKind::Locked,
+            Self::DestinationUnreachable | Self::DnsResolutionFailed => {
+                ErrorKind::DestinationUnreachable
+            }
+            Self::BackendAuthFailed => ErrorKind::AuthFailed,
+            Self::IncompleteSnapshot { .. } => ErrorKind::IncompleteSnapshot,
+            Self::Cancelled => ErrorKind::Cancelled,
+            Self::None | Self::GenericFailure | Self::Unknown { .. } => ErrorKind::Unknown,
+        }
+    }
+
+    /// One-sentence summary for notifications and the run history (`FR-37`); finer than
+    /// [`ErrorKind`] (DNS, «Completed», exit code of unknown errors).
+    pub fn summary_message(&self) -> Message {
+        match self {
+            Self::None => completed_message(),
+            Self::DnsResolutionFailed => dns_failed_message(),
+            Self::Unknown { exit_code } => ErrorKind::Unknown.message(Some(*exit_code), false),
+            other => other.error_kind().message(None, false),
+        }
     }
 
     /// Canonical English summary (`NFR-06`); the translatable form is

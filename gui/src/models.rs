@@ -192,6 +192,11 @@ pub mod qobject {
         #[base = QAbstractListModel]
         #[qml_element]
         type RunLogsModel = super::RunLogsModelRust;
+
+        /// Labels shared with the tray, from `kestic-i18n` (no daemon connection).
+        #[qobject]
+        #[qml_element]
+        type SharedTexts = super::SharedTextsRust;
     }
 
     unsafe extern "RustQt" {
@@ -303,6 +308,10 @@ pub mod qobject {
     }
 
     extern "RustQt" {
+        /// Shared label by code (`kestic_i18n::messages::Label`), in the GUI language.
+        #[qinvokable]
+        fn label(self: &SharedTexts, code: &QString) -> QString;
+
         // SpikeListModel
         #[qinvokable]
         #[cxx_override]
@@ -416,6 +425,19 @@ pub use destinations_model::DestinationsModelRust;
 pub use run_logs_model::RunLogsModelRust;
 pub use runs_model::RunsModelRust;
 pub use snapshots_model::SnapshotsModelRust;
+
+/// Backing struct of the `SharedTexts` QML element.
+#[derive(Default)]
+pub struct SharedTextsRust;
+
+impl qobject::SharedTexts {
+    /// Shared label by code; an unknown code yields an empty text.
+    pub fn label(&self, code: &cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        kestic_i18n::messages::Label::parse(&code.to_string())
+            .map(|label| cxx_qt_lib::QString::from(&crate::state_cache::tr(&label.message())))
+            .unwrap_or_default()
+    }
+}
 
 pub(super) enum SyncPlan<T> {
     NoChange,

@@ -34,11 +34,11 @@ msgstr "Ziel nicht erreichbar"
 
 #: daemon/src/i18n.rs:154
 msgid "Destination hostname could not be resolved (DNS)"
-msgstr "Hostname des Ziels konnte nicht aufgelöst werden (DNS)"
+msgstr "Name des Ziels nicht gefunden (DNS)"
 
 #: daemon/src/i18n.rs:156
 msgid "Authentication at destination failed"
-msgstr "Authentifizierung am Ziel fehlgeschlagen"
+msgstr "Anmeldung am Ziel fehlgeschlagen"
 
 #: daemon/src/i18n.rs:157
 msgid "Backup command failed"
@@ -54,7 +54,7 @@ msgstr "Repository ist gesperrt"
 
 #: daemon/src/i18n.rs:160 daemon/src/service/error.rs:95
 #: gui/src/state_cache.rs:1147
-msgid "Stored password does not match"
+msgid "Saved password does not match"
 msgstr "Gespeichertes Passwort stimmt nicht überein"
 
 #: daemon/src/i18n.rs:162
@@ -92,10 +92,8 @@ msgstr "Passwortspeicher ist gesperrt"
 
 #: daemon/src/service/availability.rs:436
 #: daemon/src/service/destinations.rs:345
-msgid "Cannot unlock: repository lock belongs to an active or remote process"
-msgstr ""
-"Entsperren nicht möglich: Die Repository-Sperre gehört zu einem aktiven oder "
-"entfernten Prozess"
+msgid "Cannot release the lock: another process still uses the repository."
+msgstr "Sperre kann nicht aufgehoben werden: Ein anderer Prozess nutzt das Repository noch."
 
 #: daemon/src/service/backup_runner.rs:220
 msgid "Destination unreachable · next attempt at %1"
@@ -116,10 +114,6 @@ msgstr "%1: Backup kann nicht gestartet werden"
 msgid "Condition not met: %1"
 msgstr "Bedingung nicht erfüllt: %1"
 
-#: daemon/src/service/backup_runner.rs:533
-msgid "Backing up %1 (%2%)"
-msgstr "Sichere %1 (%2%)"
-
 #: daemon/src/service/backup_runner.rs:607
 msgid "Backing up %1"
 msgstr "Sichere %1"
@@ -136,8 +130,8 @@ msgstr "Gesichert, Ziel gesperrt — Aufbewahrung wird später nachgeholt"
 #: daemon/src/service/backup_runner.rs:999
 #: daemon/src/service/backup_runner.rs:1008 daemon/src/service/backups.rs:258
 #: daemon/src/service/state_summary.rs:695
-msgid "Backed up, retention not executed"
-msgstr "Gesichert, Aufbewahrung nicht ausgeführt"
+msgid "Backed up, retention not applied yet"
+msgstr "Gesichert, Aufbewahrung noch nicht angewendet"
 
 #: daemon/src/service/backup_runner.rs:1109
 msgid "%1: Backup failed"
@@ -169,8 +163,8 @@ msgid "Reachable"
 msgstr "Erreichbar"
 
 #: daemon/src/service/destinations.rs:611
-msgid "No repository password provided or stored."
-msgstr "Kein Repository-Passwort angegeben oder gespeichert."
+msgid "No repository password entered or saved."
+msgstr "Kein Repository-Passwort eingegeben oder gespeichert."
 
 #: daemon/src/service/error.rs:116
 msgid "Source unavailable: drive not mounted"
@@ -199,14 +193,6 @@ msgstr "%1: Wartung fehlgeschlagen"
 #: daemon/src/service/maintenance.rs:692
 msgid "Destination maintenance failed"
 msgstr "Ziel-Wartung fehlgeschlagen"
-
-#: daemon/src/service/maintenance.rs:819
-msgid "Permanent error — fix required before backing up"
-msgstr "Dauerhafter Fehler — Behebung vor dem Backup erforderlich"
-
-#: daemon/src/service/maintenance.rs:871
-msgid "Run condition not met"
-msgstr "Laufbedingung nicht erfüllt"
 
 #: daemon/src/service/maintenance.rs:912 daemon/src/service/state.rs:475
 #: gui/src/state_cache.rs:1004
@@ -282,8 +268,8 @@ msgid "another run on this destination"
 msgstr "anderer Lauf auf diesem Ziel"
 
 #: daemon/src/service/state.rs:446
-msgid "retry cooldown"
-msgstr "Wartezeit vor erneutem Versuch"
+msgid "waiting time before next attempt"
+msgstr "Wartezeit vor dem nächsten Versuch"
 
 #: daemon/src/service/state.rs:459 gui/src/state_cache.rs:998
 #: gui/src/state_cache.rs:1068
@@ -328,8 +314,8 @@ msgid "Custom restic path is invalid (%1): %2"
 msgstr "Eigener restic-Pfad ist ungültig (%1): %2"
 
 #: daemon/src/service/state.rs:627
-msgid "Unable to determine restic version (%1)"
-msgstr "restic-Version konnte nicht ermittelt werden (%1)"
+msgid "Cannot read the restic version (%1)"
+msgstr "restic-Version kann nicht gelesen werden (%1)"
 
 #: daemon/src/service/state.rs:653
 msgid ""
@@ -403,11 +389,11 @@ msgstr "%1: sichert · %2%"
 
 #: daemon/src/service/state_summary.rs:823 gui/src/overall_text.rs:54
 msgid "Schedules paused · %1 backups waiting"
-msgstr "Zeitpläne pausiert · %1 Backups wartend"
+msgstr "Zeitpläne pausiert · %1 Backups warten"
 
 #: daemon/src/service/state_summary.rs:828 gui/src/overall_text.rs:59
 msgid "%1 of %2 backups waiting"
-msgstr "%1 von %2 Backups wartend"
+msgstr "%1 von %2 Backups warten"
 
 #: daemon/src/service/state_summary.rs:834 gui/src/overall_text.rs:68
 #: gui/src/qml/BackupsPage.qml:84
@@ -431,10 +417,6 @@ msgstr "Noch nicht gesichert"
 #: gui/src/overall_text.rs:74 gui/src/qml/SpikeMain.qml:274
 msgid "All data backed up"
 msgstr "Alle Daten gesichert"
-
-#: daemon/src/tray.rs:126
-msgid "Backups ready"
-msgstr "Backups bereit"
 
 #: daemon/src/tray.rs:217 gui/src/qml/HistoryPage.qml:49
 msgid "All Backups"
@@ -494,12 +476,6 @@ msgstr "Kestic beenden…"
 msgid "Background service unavailable."
 msgstr "Hintergrunddienst nicht verfügbar."
 
-#: gui/src/backend/backups.rs:252 gui/src/backend/backups.rs:311
-#: gui/src/backend/backups.rs:364 gui/src/backend/backups.rs:417
-#: gui/src/backend/schedules.rs:109 gui/src/backend/schedules.rs:163
-msgid "Backup not found."
-msgstr "Backup nicht gefunden."
-
 #: gui/src/backend/backups.rs:533
 msgid "Exclude rule added"
 msgstr "Ausschluss-Regel hinzugefügt"
@@ -524,14 +500,6 @@ msgstr "%1 veraltete Sperren entfernt."
 msgid "Wrong password: the repository rejected this password."
 msgstr "Falsches Passwort: Das Repository hat dieses Passwort abgelehnt."
 
-#: gui/src/backend.rs:621
-msgid "Authentication at destination failed."
-msgstr "Authentifizierung am Ziel fehlgeschlagen."
-
-#: gui/src/backend.rs:623
-msgid "Destination unreachable."
-msgstr "Ziel nicht erreichbar."
-
 #: gui/src/backend.rs:625
 msgid "Remove or reassign all backups on this destination first."
 msgstr ""
@@ -543,10 +511,6 @@ msgid "Backup could not start because source or destination is unavailable."
 msgstr ""
 "Backup konnte nicht gestartet werden, da Quelle oder Ziel nicht verfügbar "
 "ist."
-
-#: gui/src/backend.rs:629
-msgid "The system password store (Secret Service / KWallet) is locked."
-msgstr "Der System-Passwortspeicher (Secret Service / KWallet) ist gesperrt."
 
 #: gui/src/backend.rs:631
 msgid "restic is unavailable or too old."
@@ -602,10 +566,6 @@ msgid ""
 "The background service is not running. Scheduled backups will not take place."
 msgstr ""
 "Der Hintergrunddienst läuft nicht. Geplante Backups finden nicht statt."
-
-#: gui/src/backend/state.rs:145
-msgid "Background service not running"
-msgstr "Hintergrunddienst läuft nicht"
 
 #: gui/src/list_model.rs:40 gui/src/qml/NewBackupWizard.qml:154
 #: gui/src/qml/SpikeMain.qml:209
@@ -1064,10 +1024,6 @@ msgstr "Wartet: nicht verfügbar"
 msgid "Backed up, %1 files unreadable"
 msgstr "Gesichert, %1 Dateien nicht lesbar"
 
-#: gui/src/state_cache.rs:1092
-msgid "Backed up, retention not executed (forget pending)"
-msgstr "Gesichert, Aufbewahrung nicht ausgeführt (forget ausstehend)"
-
 #: gui/src/state_cache.rs:1094
 msgid "Backed up with warning"
 msgstr "Mit Warnung gesichert"
@@ -1080,25 +1036,13 @@ msgstr "Gesichert · %1"
 msgid "Cancelled"
 msgstr "Abgebrochen"
 
-#: gui/src/state_cache.rs:1112
-msgid "Interrupted (sleep)"
-msgstr "Unterbrochen (Ruhezustand)"
-
 #: gui/src/state_cache.rs:1119 gui/src/state_cache.rs:1193
 msgid "Waiting"
 msgstr "Wartet"
 
-#: gui/src/state_cache.rs:1126
-msgid "Backing up · 0%"
-msgstr "Sichert · 0%"
-
 #: gui/src/state_cache.rs:1153
 msgid "Lock from an interrupted run"
 msgstr "Sperre von einem unterbrochenen Lauf"
-
-#: gui/src/state_cache.rs:1159
-msgid "Unreachable"
-msgstr "Nicht erreichbar"
 
 #: gui/src/state_cache.rs:1166
 msgid "Reachable · last checked %1"
@@ -1169,19 +1113,11 @@ msgstr ""
 "Laufbedingungen für '%1' sind aktuell nicht erfüllt. Backup trotzdem starten?"
 
 #: gui/src/state_cache.rs:1304
-msgid "permanent error, fix required"
-msgstr "dauerhafter Fehler, Behebung nötig"
-
-#: gui/src/state_cache.rs:1305
-msgid "source unavailable"
-msgstr "Quelle nicht verfügbar"
-
-#: gui/src/state_cache.rs:1306
-msgid "destination unreachable"
-msgstr "Ziel nicht erreichbar"
+msgid "Permanent error, fix required"
+msgstr "Dauerhafter Fehler, Behebung nötig"
 
 #: gui/src/state_cache.rs:1307
-msgid "run conditions not met"
+msgid "Run conditions not met"
 msgstr "Laufbedingungen nicht erfüllt"
 
 #: gui/src/state_cache.rs:1326
@@ -1538,14 +1474,6 @@ msgid ""
 msgstr ""
 "Manuelle Backups fragen vor dem Start nach einer Bestätigung, falls eine "
 "Bedingung aktuell nicht erfüllt ist."
-
-#: gui/src/qml/BackupConditionsEditPage.qml:325
-msgid "Cancel run condition edits"
-msgstr "Änderungen an den Laufbedingungen abbrechen"
-
-#: gui/src/qml/BackupConditionsEditPage.qml:342
-msgid "Save run conditions"
-msgstr "Laufbedingungen speichern"
 
 #: gui/src/qml/BackupDetailPage.qml:12
 msgid "Backup"
@@ -2460,14 +2388,6 @@ msgstr ""
 msgid "Next 3 scheduled runs:"
 msgstr "Nächste 3 geplante Läufe:"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:650
-msgid "Cancel schedule edits"
-msgstr "Änderungen am Zeitplan abbrechen"
-
-#: gui/src/qml/BackupScheduleEditPage.qml:667
-msgid "Save schedule"
-msgstr "Zeitplan speichern"
-
 #: gui/src/qml/BackupSnapshotsPage.qml:12
 msgid "Snapshots · %1"
 msgstr "Snapshots · %1"
@@ -2607,7 +2527,7 @@ msgid "Remove destination from Kestic"
 msgstr "Ziel aus Kestic entfernen"
 
 #: gui/src/qml/DestinationDetailPage.qml:78
-msgid "The stored password does not match this destination."
+msgid "The saved password does not match this destination."
 msgstr "Das gespeicherte Passwort stimmt nicht mit diesem Ziel überein."
 
 #: gui/src/qml/DestinationDetailPage.qml:91
@@ -2722,8 +2642,8 @@ msgstr "Pfad:"
 
 #: gui/src/qml/DestinationEditPage.qml:291
 #: gui/src/qml/DestinationEditPage.qml:303
-msgid "Leave empty to keep stored password"
-msgstr "Leer lassen, um gespeichertes Passwort zu behalten"
+msgid "Leave empty to keep the saved password"
+msgstr "Leer lassen, um das gespeicherte Passwort zu behalten"
 
 #: gui/src/qml/DestinationEditPage.qml:301
 msgid "Repository password:"
@@ -2874,14 +2794,6 @@ msgstr "Stunde fürs Prüfen"
 #: gui/src/qml/DestinationMaintenancePage.qml:521
 msgid "Verify minute"
 msgstr "Minute fürs Prüfen"
-
-#: gui/src/qml/DestinationMaintenancePage.qml:538
-msgid "Cancel maintenance schedule edits"
-msgstr "Änderungen am Wartungszeitplan abbrechen"
-
-#: gui/src/qml/DestinationMaintenancePage.qml:555
-msgid "Save maintenance schedule"
-msgstr "Wartungszeitplan speichern"
 
 #: gui/src/qml/DestinationsPage.qml:12 gui/src/qml/Main.qml:723
 #: gui/src/qml/PageFocusManager.qml:133 gui/src/qml/SpikeMain.qml:95
@@ -3086,10 +2998,6 @@ msgstr "Alle jetzt sichern"
 #: gui/src/qml/OverviewPage.qml:28
 msgid "Start all available backups"
 msgstr "Alle verfügbaren Backups starten"
-
-#: gui/src/qml/OverviewPage.qml:35
-msgid "Pause Schedules…"
-msgstr "Zeitpläne pausieren…"
 
 #: gui/src/qml/OverviewPage.qml:38
 msgid "Temporarily pause scheduled backups"

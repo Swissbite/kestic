@@ -11,8 +11,8 @@ use crate::state_cache::{
     clone_updated_backup_conditions, clone_updated_backup_schedule, format_bytes,
     format_conditions_summary, format_datetime_display, format_duration_ms,
     format_maintenance_summary, format_run_kind_name, format_run_status, format_schedule_summary,
-    lookup_backup_summary, make_client, preview_next_schedule_slots, refresh_state_now,
-    shared_state,
+    lookup_backup_summary, make_client, not_found_text, preview_next_schedule_slots,
+    refresh_state_now, shared_state,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
@@ -107,7 +107,7 @@ impl qobject::KesticApp {
         };
         let Some(existing) = existing else {
             self.as_mut()
-                .set_last_action_error(i18n("Backup not found."));
+                .set_last_action_error(QString::from(&not_found_text()));
             return false;
         };
         let schedule: Schedule = match serde_json::from_str(&schedule_json.to_string()) {
@@ -161,7 +161,7 @@ impl qobject::KesticApp {
         };
         let Some(existing) = existing else {
             self.as_mut()
-                .set_last_action_error(i18n("Backup not found."));
+                .set_last_action_error(QString::from(&not_found_text()));
             return false;
         };
         let conditions: RunConditions = match serde_json::from_str(&conditions_json.to_string()) {

@@ -14,6 +14,7 @@ Use this skill whenever adding or changing user-visible text in Rust or QML, edi
   - Code, identifiers, and `i18n(...)` source `msgid`s: **English**.
   - German translations: `po/de/kestic.po`.
 - **Every user-visible string** in Rust (`cxx_kde_frameworks::ki18n::i18n(...)`) and QML (`i18n(...)` / `i18nc(...)` / `i18np(...)`) must be wrapped so `xgettext` extracts it cleanly (`AC-M1-16-1`).
+- **One owner per text** (`docs/spec/dbus-api.md` §Texte und Übersetzungen): texts that daemon **and** GUI need (code texts, shared status lines, tray + window labels) live in the crate `kestic-i18n` (`i18n/src/messages.rs`, marked with `i18n_noop("…")`, translated by each side via `tr(&Message)`; QML gets shared labels from the `SharedTexts` element). Texts only one side needs stay there as `i18n("…")`. Same meaning, same wording. `i18n/tests/text_ownership.rs` fails on a repeated or shared literal.
 - Keep `i18n("literal")` calls with string literals (avoid passing opaque variables directly to `i18n(...)`, as `xgettext` cannot extract dynamic strings — see `gui/src/list_model.rs`).
 - Whenever you add, change, or remove `i18n(...)` strings:
   1. Update `po/de/kestic.po` immediately (do not wait until the end of the milestone).

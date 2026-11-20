@@ -27,7 +27,7 @@ pub fn i18np(singular: &str, plural: &str, n: usize, args: &[&str]) -> String {
     crate::smoke::ffi::i18np_subs(singular, plural, i64::try_from(n).unwrap_or(i64::MAX), args)
 }
 
-/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_core::messages`) in the
+/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
 /// GUI language with KI18n.
 pub fn tr(message: &Message) -> String {
     if message.args.is_empty() {
@@ -47,7 +47,7 @@ pub fn tr_text(text: &UiText) -> String {
 }
 
 /// Text of a failed D-Bus call in the GUI language: the error name is the code
-/// (`kestic_core::messages`), the error message is never shown as main text.
+/// (`kestic_i18n::messages`), the error message is never shown as main text.
 pub fn dbus_error_text<E>(err: &E) -> String
 where
     E: Clone + Into<kestic_daemon::dbus_api::KesticDbusError>,
@@ -59,8 +59,6 @@ where
 use crate::overall_text::localized_availability_reason;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
-use kestic_core::codes::{BlockedReason, ConnectionTestCode, PendingReasonCode};
-use kestic_core::messages::{Message, UiText, unmet_conditions_message};
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeRules, KeepCount,
     MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPolicy,
@@ -73,6 +71,22 @@ use kestic_daemon::dbus_api::{
     KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto,
     StartAllResultDto,
 };
+use kestic_i18n::codes::{BlockedReason, ConnectionTestCode, PendingReasonCode};
+use kestic_i18n::codes::{ErrorKind, ServiceErrorCode};
+use kestic_i18n::messages::{
+    Message, UiText, completed_message, interrupted_by_sleep_message, not_backed_up_message,
+    pause_message, unmet_conditions_message,
+};
+
+/// «Background service unavailable.» (text of `ServiceErrorCode::DaemonUnreachable`).
+pub fn daemon_unavailable_text() -> String {
+    tr(&ServiceErrorCode::DaemonUnreachable.message())
+}
+
+/// The requested item no longer exists (text of `ServiceErrorCode::NotFound`).
+pub fn not_found_text() -> String {
+    tr(&ServiceErrorCode::NotFound.message())
+}
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
@@ -1042,11 +1056,8 @@ pub fn format_pause_line(
         .map(format_time_short)
         .unwrap_or_else(|| "–".to_string());
     let until_str = format_slot_timestamp(until_unix, now);
-    if !until_str.is_empty() {
-        i18n("Paused since %1 (until %2)").subs(&[&since_str, &until_str])
-    } else {
-        i18n("Paused since %1").subs(&[&since_str])
-    }
+    let until = (!until_str.is_empty()).then_some(until_str.as_str());
+    tr(&pause_message(&since_str, until))
 }
 
 /// Waiting reason in the GUI locale from the daemon's reason code; the backoff reason uses
@@ -1171,9 +1182,9 @@ pub fn format_backup_status(
                 let text = if count > 0 {
                     i18n("Backed up, %1 files unreadable").subs(&[&count.to_string()])
                 } else if summary.pending_forget {
-                    i18n("Backed up, retention not executed (forget pending)").to_string()
+                    tr(&ErrorKind::RetentionPending.message(None, false))
                 } else {
-                    i18n("Backed up with warning").to_string()
+                    tr(&ErrorKind::Unknown.message(None, true))
                 };
                 return (text, "state-warning".to_string(), "neutral".to_string());
             }
@@ -1191,7 +1202,7 @@ pub fn format_backup_status(
             }
             RunStatus::Interrupted => {
                 return (
-                    i18n("Interrupted (sleep)").to_string(),
+                    tr(&interrupted_by_sleep_message()),
                     "state-offline".to_string(),
                     "text".to_string(),
                 );
@@ -1205,7 +1216,7 @@ pub fn format_backup_status(
             }
             RunStatus::Running => {
                 return (
-                    i18n("Backing up · 0%").to_string(),
+                    i18n("Backing up · %1%").subs(&["0"]),
                     "state-sync".to_string(),
                     "highlight".to_string(),
                 );
@@ -1214,7 +1225,7 @@ pub fn format_backup_status(
     }
 
     (
-        i18n("Not backed up yet").to_string(),
+        tr(&not_backed_up_message()),
         "state-information".to_string(),
         "text".to_string(),
     )
@@ -1226,7 +1237,7 @@ pub fn format_destination_status(
 ) -> (String, String) {
     if summary.password_rejected {
         return (
-            i18n("Stored password does not match").to_string(),
+            tr(&ErrorKind::WrongPassword.message(None, false)),
             "state-error".to_string(),
         );
     }
@@ -1238,7 +1249,7 @@ pub fn format_destination_status(
     }
     if !summary.availability.reachable {
         return (
-            i18n("Unreachable").to_string(),
+            tr(&ErrorKind::DestinationUnreachable.message(None, false)),
             "network-disconnect".to_string(),
         );
     }
@@ -1273,7 +1284,7 @@ pub fn format_run_status(
     match status {
         // A maintenance run (`forget`/`prune`/`check`) backs nothing up.
         RunStatus::Ok if matches!(kind, RunKind::Maintenance) => {
-            (i18n("Completed").to_string(), "state-ok", "positive")
+            (tr(&completed_message()), "state-ok", "positive")
         }
         RunStatus::Ok => (i18n("Backed up").to_string(), "state-ok", "positive"),
         RunStatus::Warning => (i18n("Warning").to_string(), "state-warning", "neutral"),

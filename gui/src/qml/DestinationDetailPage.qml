@@ -48,7 +48,7 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             objectName: "destUpdatePasswordAction"
             icon.name: "dialog-password"
-            text: i18n("Update Saved Password…")
+            text: appBackend.recoveryActionLabel("update_stored_password")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: currentData !== null && appBackend.blocking_kind === ""
             onTriggered: if (currentData) rootWindow.openUpdatePasswordDialog(destinationId, currentData.name)
@@ -75,10 +75,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
             visible: currentData !== null && currentData.passwordRejected
-            text: i18n("The stored password does not match this destination.")
+            text: i18n("The saved password does not match this destination.")
             actions: [
                 Kirigami.Action {
-                    text: i18n("Update Saved Password…")
+                    text: appBackend.recoveryActionLabel("update_stored_password")
                     onTriggered: rootWindow.openUpdatePasswordDialog(destinationId, currentData.name)
                 }
             ]

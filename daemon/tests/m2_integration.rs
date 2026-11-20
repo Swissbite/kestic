@@ -9,7 +9,6 @@ use common::{
     start_fake_sni_watcher, wait_for_file, wait_for_sni_service,
 };
 use kestic_core::backup::{ForgetPreviewResult, exclude_file_path};
-use kestic_core::codes::BlockedReason;
 use kestic_core::config::load_config;
 use kestic_core::history::RunHistory;
 use kestic_core::model::{
@@ -22,6 +21,7 @@ use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient,
 };
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
+use kestic_i18n::codes::BlockedReason;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;

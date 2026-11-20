@@ -9,14 +9,14 @@ use crate::overall_text::{
     back_up_all_availability, localized_blocking_message, overall_headline, overall_subtitle,
 };
 use crate::state_cache::{
-    daemon_now, ensure_daemon_and_refresh, format_overall_visual, format_pause_line, i18n,
-    initialize_and_sync, localized_condition_override_message, localized_manual_block_message,
-    localized_unmet_conditions, lookup_backup_summary, make_client, refresh_state_now,
-    shared_state, tr_text,
+    daemon_now, daemon_unavailable_text, ensure_daemon_and_refresh, format_overall_visual,
+    format_pause_line, i18n, initialize_and_sync, localized_condition_override_message,
+    localized_manual_block_message, localized_unmet_conditions, lookup_backup_summary, make_client,
+    refresh_state_now, shared_state, tr_text,
 };
 use cxx_qt_lib::QString;
-use kestic_core::codes::BlockedReason;
 use kestic_core::model::ResticProvider;
+use kestic_i18n::codes::BlockedReason;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
@@ -144,9 +144,8 @@ impl qobject::KesticApp {
                 .to_string(),
         ));
         self.as_mut().set_has_config_file(false);
-        self.as_mut().set_overall_headline(QString::from(
-            &i18n("Background service not running").to_string(),
-        ));
+        self.as_mut()
+            .set_overall_headline(QString::from(&daemon_unavailable_text()));
         self.as_mut().set_overall_subtitle(QString::from(""));
         self.as_mut().set_overall_icon(QString::from("state-error"));
         self.as_mut()

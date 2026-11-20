@@ -73,7 +73,7 @@ int scenario_status_rows(const Ctx& c) {
     M3_CHECK_EQ(
         3033,
         pause_act->property("text").toString(),
-        loc(c.lang, "Pause Schedules…", "Zeitpläne pausieren…"),
+        loc(c.lang, "Pause Schedules", "Zeitpläne pausieren"),
         "pause button text"
     );
 
@@ -143,7 +143,7 @@ int scenario_pause_and_start_all(const Ctx& c) {
     M3_CHECK_EQ(
         3132,
         pause_act->property("text").toString(),
-        loc(c.lang, "Pause Schedules…", "Zeitpläne pausieren…"),
+        loc(c.lang, "Pause Schedules", "Zeitpläne pausieren"),
         "pause button text after resume"
     );
 
@@ -161,8 +161,8 @@ int scenario_pause_and_start_all(const Ctx& c) {
     M3_CHECK(3142, skipped && skipped->isVisible(), "startAllSkippedBanner must be visible");
     const QString msg = skipped->property("text").toString();
     M3_CHECK_STARTS(3143, msg, loc(c.lang, "2 backups skipped: ", "2 Backups übersprungen: "), "message must count 2 skipped backups");
-    M3_CHECK(3144, msg.contains(QStringLiteral("Offline Media (") + loc(c.lang, "source unavailable", "Quelle nicht verfügbar") + QLatin1Char(')')), "message must name Offline Media with reason");
-    M3_CHECK(3145, msg.contains(QStringLiteral("Locked Docs (") + loc(c.lang, "permanent error, fix required", "dauerhafter Fehler, Behebung nötig") + QLatin1Char(')')), "message must name Locked Docs with reason");
+    M3_CHECK(3144, msg.contains(QStringLiteral("Offline Media (") + loc(c.lang, "Source unavailable", "Quelle nicht verfügbar") + QLatin1Char(')')), "message must name Offline Media with reason");
+    M3_CHECK(3145, msg.contains(QStringLiteral("Locked Docs (") + loc(c.lang, "Permanent error, fix required", "Dauerhafter Fehler, Behebung nötig") + QLatin1Char(')')), "message must name Locked Docs with reason");
     return 0;
 }
 

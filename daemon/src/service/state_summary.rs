@@ -12,9 +12,7 @@ use crate::dbus_api::{
 };
 use crate::i18n::{i18n, tr};
 use crate::tray::{KesticTrayState, TrayBackupItem, compute_tray_presentation};
-use kestic_core::codes::PendingReasonCode;
 use kestic_core::history::{BackupRuntimeState, PauseState};
-use kestic_core::messages::overall_headline;
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, NestedSourceConflict, Run, RunKind, RunStatus,
     Schedule, find_nested_source_warnings, lint_exclude_rules,
@@ -24,6 +22,10 @@ use kestic_core::scheduler::{
     UnmetPrecondition, collect_pending_preconditions, evaluate_backup_schedule,
     evaluate_destination_maintenance, evaluate_run_conditions, format_local_slot_hint,
     is_pause_active,
+};
+use kestic_i18n::codes::PendingReasonCode;
+use kestic_i18n::messages::{
+    maintenance_running_message, overall_headline, schedules_paused_message,
 };
 use std::collections::HashMap;
 use time::OffsetDateTime;
@@ -481,7 +483,7 @@ impl DaemonCore {
             .collect();
 
         let tray_paused_line = match (self.simulated_status, global_pause) {
-            (Some(_), _) if overall.paused => Some(i18n("Schedules paused").into()),
+            (Some(_), _) if overall.paused => Some(tr(&schedules_paused_message())),
             (_, Some(p)) => Some(self.format_pause_label(p.paused_since, p.paused_until, now)),
             _ => paused_backup_window.map(|(ps, pu)| self.format_pause_label(ps, pu, now)),
         };
@@ -714,7 +716,7 @@ fn select_worst_overall_kind(
 /// other simulated states use the regular headline).
 fn simulated_headline(sim: SimulatedOverallStatus) -> Option<String> {
     match sim {
-        SimulatedOverallStatus::MaintenanceRunning => Some(i18n("Maintenance running").into()),
+        SimulatedOverallStatus::MaintenanceRunning => Some(tr(&maintenance_running_message())),
         SimulatedOverallStatus::RestoreRunning => Some(i18n("Restore running").into()),
         _ => None,
     }

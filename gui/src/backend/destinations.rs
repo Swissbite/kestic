@@ -6,14 +6,14 @@
 
 use super::{dbus_error_text, qobject};
 use crate::state_cache::{
-    build_destination, make_client, refresh_state_now, shared_state, test_destination_connection,
-    tr_text,
+    build_destination, daemon_unavailable_text, make_client, refresh_state_now, shared_state,
+    test_destination_connection, tr_text,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
-use kestic_core::codes::ServiceErrorCode;
-use kestic_core::messages::connection_test_text;
 use kestic_daemon::dbus_api::KesticDbusError;
+use kestic_i18n::codes::ServiceErrorCode;
+use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
@@ -56,7 +56,7 @@ impl qobject::KesticApp {
         };
         let Ok(client) = make_client() else {
             self.as_mut()
-                .set_last_action_error(i18n("Background service unavailable."));
+                .set_last_action_error(QString::from(&daemon_unavailable_text()));
             return QString::from("");
         };
         match client.add_destination(
@@ -172,7 +172,7 @@ impl qobject::KesticApp {
     pub fn unlock_destination(mut self: Pin<&mut Self>, dest_id: &QString) -> i32 {
         let Ok(client) = make_client() else {
             self.as_mut()
-                .set_last_action_error(i18n("Background service unavailable."));
+                .set_last_action_error(QString::from(&daemon_unavailable_text()));
             return -1;
         };
         match client.unlock_destination(&dest_id.to_string()) {
@@ -205,7 +205,7 @@ impl qobject::KesticApp {
         let Ok(client) = make_client() else {
             self.as_mut().set_snapshots_loading(false);
             self.as_mut()
-                .set_snapshots_error(i18n("Background service unavailable."));
+                .set_snapshots_error(QString::from(&daemon_unavailable_text()));
             return false;
         };
         match client.list_backup_snapshots(&backup_id.to_string()) {

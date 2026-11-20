@@ -18,10 +18,10 @@ use common::{
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
-use kestic_core::messages::UiText;
 use kestic_core::model::{NotificationSettings, RunStatus, Schedule};
 use kestic_core::restic::SECRET_KIND_REPO;
 use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
+use kestic_i18n::messages::UiText;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;

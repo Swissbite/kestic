@@ -317,7 +317,7 @@ Kirigami.ScrollablePage {
 
                         Controls.Button {
                             objectName: "addUnreadableExcludeButton"
-                            text: i18n("Add to Exclude Rules…")
+                            text: appBackend.recoveryActionLabel("add_to_excludes")
                             visible: appBackend.selected_run_backup_id !== ""
                             Accessible.name: i18n("Add %1 to exclude rules", modelData)
                             onClicked: {

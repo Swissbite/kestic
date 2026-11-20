@@ -5,6 +5,7 @@
 //! detection (`M2-S09`, `FR-29`, `FR-30`).
 
 use crate::model::{Backup, Source, SourceIdentity, SourceKind};
+use kestic_i18n::codes::SourceStatus;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -375,6 +376,19 @@ pub enum SourceCheckResult {
     DriveMismatch,
     /// Drive mountpoint exists and matches, but directory is empty (`Quelle leer`).
     DriveEmpty,
+}
+
+impl SourceCheckResult {
+    /// Code of an unavailable source (`source_status`); `None` while the source is available.
+    pub fn status_code(&self) -> Option<SourceStatus> {
+        match self {
+            Self::Available => None,
+            Self::PathMissing(_) => Some(SourceStatus::PathMissing),
+            Self::DriveNotMounted => Some(SourceStatus::DriveNotMounted),
+            Self::DriveMismatch => Some(SourceStatus::DriveMismatch),
+            Self::DriveEmpty => Some(SourceStatus::DriveEmpty),
+        }
+    }
 }
 
 impl SourceCheckResult {

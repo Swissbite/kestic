@@ -6,7 +6,7 @@
 use super::{SyncPlan, plan_model_sync, qobject};
 use crate::state_cache::{
     daemon_now, format_bytes, format_day_group, format_duration_ms, format_run_kind_name,
-    format_run_status, format_time_short, i18n, shared_state,
+    format_run_status, format_time_short, shared_state,
 };
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
@@ -79,7 +79,8 @@ impl RunsModelRust {
                     .find(|b| &b.backup.id == bid)
                     .map(|b| b.backup.name.as_str())
             });
-            let deleted_destination = i18n("Deleted destination").to_string();
+            let deleted_destination =
+                crate::state_cache::tr(&kestic_i18n::messages::deleted_destination_message());
             let dest_name = state
                 .destinations
                 .iter()

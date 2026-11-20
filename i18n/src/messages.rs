@@ -11,10 +11,9 @@
 
 use crate::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, ServiceErrorCode, SkipReason,
+    SourceStatus,
 };
-use crate::provider::MIN_RESTIC_VERSION;
-use crate::restic::{RecoveryAction, ResticFailureKind};
 
 /// Marks `msgid` for extraction (`xgettext --keyword=i18n_noop:1`) without translating it.
 pub const fn i18n_noop(msgid: &'static str) -> &'static str {
@@ -88,7 +87,7 @@ impl ErrorKind {
     /// errors; an `unknown` warning is «Backed up with warning».
     pub fn message(self, exit_code: Option<i32>, is_warning: bool) -> Message {
         let msgid = match self {
-            Self::WrongPassword => i18n_noop("Stored password does not match"),
+            Self::WrongPassword => i18n_noop("Saved password does not match"),
             Self::RepoMissing => i18n_noop("Repository is missing"),
             Self::Locked => i18n_noop("Repository is locked"),
             Self::DestinationUnreachable => i18n_noop("Destination unreachable"),
@@ -97,7 +96,7 @@ impl ErrorKind {
             Self::IncompleteSnapshot => {
                 i18n_noop("Snapshot incomplete: some files could not be read")
             }
-            Self::RetentionPending => i18n_noop("Backed up, retention not executed"),
+            Self::RetentionPending => i18n_noop("Backed up, retention not applied yet"),
             Self::Cancelled => i18n_noop("Cancelled by user"),
             Self::SecretStoreLocked => i18n_noop("Password store is locked"),
             Self::ResticUnavailable => i18n_noop("restic is unavailable or too old."),
@@ -129,23 +128,16 @@ impl ErrorKind {
     }
 }
 
-impl ResticFailureKind {
-    /// One-sentence summary of a classified restic outcome (`FR-37`) for notifications and the
-    /// run history; finer than [`ErrorKind`] (DNS, «Completed»).
-    pub fn summary_message(&self) -> Message {
-        match self {
-            Self::None => Message::new(i18n_noop("Completed")),
-            Self::DnsResolutionFailed => Message::new(i18n_noop(
-                "Destination hostname could not be resolved (DNS)",
-            )),
-            Self::GenericFailure => Message::new(i18n_noop("Backup command failed")),
-            Self::Unknown { exit_code } => Message::with_args(
-                i18n_noop("Unknown error (exit %1)"),
-                &[&exit_code.to_string()],
-            ),
-            other => ErrorKind::from(other).message(None, false),
-        }
-    }
+/// «Completed»: a run that ended without error.
+pub fn completed_message() -> Message {
+    Message::new(i18n_noop("Completed"))
+}
+
+/// The destination host name could not be resolved.
+pub fn dns_failed_message() -> Message {
+    Message::new(i18n_noop(
+        "Destination hostname could not be resolved (DNS)",
+    ))
 }
 
 impl RecoveryAction {
@@ -211,7 +203,7 @@ impl PendingReasonCode {
             Self::SourceUnavailable => i18n_noop("source available"),
             Self::DestinationUnreachable => i18n_noop("destination reachable"),
             Self::Queue => i18n_noop("another run on this destination"),
-            Self::Backoff => i18n_noop("retry cooldown"),
+            Self::Backoff => i18n_noop("waiting time before next attempt"),
         };
         Message::new(msgid)
     }
@@ -240,7 +232,7 @@ impl BlockedReason {
         match self {
             Self::SourceUnavailable => SourceStatus::message(source_status),
             Self::DestinationUnreachable => Message::new(i18n_noop("Destination unreachable")),
-            Self::ConditionNotMet => Message::new(i18n_noop("Run condition not met")),
+            Self::ConditionNotMet => Message::new(i18n_noop("Run conditions not met")),
         }
     }
 
@@ -274,41 +266,53 @@ impl SkipReason {
     /// names the cause; an unknown cause shows the raw `detail`.
     pub fn text(self, error_kind: Option<ErrorKind>, detail: Option<&str>) -> UiText {
         let msgid = match self {
-            Self::PermanentError => i18n_noop("permanent error, fix required"),
-            Self::SourceUnavailable => i18n_noop("source unavailable"),
-            Self::DestinationUnreachable => i18n_noop("destination unreachable"),
-            Self::ConditionNotMet => i18n_noop("run conditions not met"),
+            Self::PermanentError => i18n_noop("Permanent error, fix required"),
+            Self::SourceUnavailable => return UiText::Message(SourceStatus::message(None)),
+            Self::DestinationUnreachable => {
+                return UiText::Message(ErrorKind::DestinationUnreachable.message(None, false));
+            }
+            Self::ConditionNotMet => {
+                return UiText::Message(BlockedReason::ConditionNotMet.message(None));
+            }
             Self::Error => return error_kind.unwrap_or(ErrorKind::Unknown).text(detail),
         };
         UiText::Message(Message::new(msgid))
     }
 }
 
+/// Parameters of the restic status texts (from `ResticStatusDto` and the minimum version).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ResticStatusParams<'a> {
+    pub binary_path: Option<&'a str>,
+    pub found_version: Option<&'a str>,
+    /// Raw reason for `invalid_custom_path`, raw detail for `unreadable_version`.
+    pub detail: Option<&'a str>,
+    /// Minimum restic version Kestic needs.
+    pub min_version: &'a str,
+}
+
 impl ResticStatusCode {
-    /// Why restic is unusable; `binary_path`, `found_version` and the raw `detail` fill in
-    /// the placeholders.
-    pub fn message(
-        self,
-        binary_path: Option<&str>,
-        found_version: Option<&str>,
-        detail: Option<&str>,
-    ) -> Message {
-        let min = MIN_RESTIC_VERSION.to_string();
+    /// Why restic is unusable, filled in from `params`.
+    pub fn message(self, params: &ResticStatusParams<'_>) -> Message {
+        let min = params.min_version;
         match self {
             Self::NotFound => {
-                Message::with_args(i18n_noop("restic not found; at least %1 required"), &[&min])
+                Message::with_args(i18n_noop("restic not found; at least %1 required"), &[min])
             }
             Self::TooOld => Message::with_args(
                 i18n_noop("restic %1 is too old; Kestic needs at least %2"),
-                &[found_version.unwrap_or_default(), &min],
+                &[params.found_version.unwrap_or_default(), min],
             ),
             Self::InvalidCustomPath => Message::with_args(
                 i18n_noop("Custom restic path is invalid (%1): %2"),
-                &[binary_path.unwrap_or_default(), detail.unwrap_or_default()],
+                &[
+                    params.binary_path.unwrap_or_default(),
+                    params.detail.unwrap_or_default(),
+                ],
             ),
             Self::UnreadableVersion => Message::with_args(
-                i18n_noop("Unable to determine restic version (%1)"),
-                &[detail.unwrap_or_default()],
+                i18n_noop("Cannot read the restic version (%1)"),
+                &[params.detail.unwrap_or_default()],
             ),
         }
     }
@@ -318,12 +322,10 @@ impl ResticStatusCode {
 pub fn restic_status_text(
     error_kind: Option<ResticStatusCode>,
     version: Option<&str>,
-    binary_path: Option<&str>,
-    found_version: Option<&str>,
-    detail: Option<&str>,
+    params: &ResticStatusParams<'_>,
 ) -> UiText {
     match error_kind {
-        Some(code) => UiText::Message(code.message(binary_path, found_version, detail)),
+        Some(code) => UiText::Message(code.message(params)),
         None => UiText::Raw(format!("restic {}", version.unwrap_or_default())),
     }
 }
@@ -358,7 +360,7 @@ impl ConnectionTestCode {
                 Message::with_args(i18n_noop("Folder is not writable: %1"), &[detail])
             }
             Self::MissingPassword => {
-                Message::new(i18n_noop("No repository password provided or stored."))
+                Message::new(i18n_noop("No repository password entered or saved."))
             }
             Self::DestinationUnreachable => ErrorKind::DestinationUnreachable.message(None, false),
             Self::SecretStoreLocked => ErrorKind::SecretStoreLocked.message(None, false),
@@ -376,33 +378,35 @@ impl ConnectionTestCode {
 
 impl ServiceErrorCode {
     /// Text of a failed D-Bus call; the error message itself is never shown as main text.
+    /// Codes with the same meaning as an [`ErrorKind`] use its text.
     pub fn message(self) -> Message {
-        Message::new(match self {
+        let msgid = match self {
             Self::InvalidInput => i18n_noop("Invalid input."),
             Self::NotFound => i18n_noop("The item no longer exists."),
             Self::InUse => i18n_noop("Remove or reassign all backups on this destination first."),
             Self::ManualRunBlocked => {
                 i18n_noop("Backup could not start because source or destination is unavailable.")
             }
-            Self::DestinationUnreachable => i18n_noop("Destination unreachable."),
+            Self::DestinationUnreachable => {
+                return ErrorKind::DestinationUnreachable.message(None, false);
+            }
             Self::WrongPassword => {
                 i18n_noop("Wrong password: the repository rejected this password.")
             }
-            Self::AuthFailed => i18n_noop("Authentication at destination failed."),
-            Self::SecretStoreLocked => {
-                i18n_noop("The system password store (Secret Service / KWallet) is locked.")
-            }
-            Self::ResticUnavailable => i18n_noop("restic is unavailable or too old."),
+            Self::AuthFailed => return ErrorKind::AuthFailed.message(None, false),
+            Self::SecretStoreLocked => return ErrorKind::SecretStoreLocked.message(None, false),
+            Self::ResticUnavailable => return ErrorKind::ResticUnavailable.message(None, false),
             Self::AlreadyRunning => i18n_noop("Another run is already active on this destination."),
             Self::LockInUse => {
-                i18n_noop("Cannot unlock: repository lock belongs to an active or remote process")
+                i18n_noop("Cannot release the lock: another process still uses the repository.")
             }
             Self::DuplicateLocation => {
                 i18n_noop("This location is already used by another destination.")
             }
             Self::Internal => i18n_noop("Internal error in the background service."),
             Self::DaemonUnreachable => i18n_noop("Background service unavailable."),
-        })
+        };
+        Message::new(msgid)
     }
 }
 
@@ -412,6 +416,121 @@ pub fn connection_test_text(ok: bool, code: Option<ConnectionTestCode>, detail: 
         (true, _) => UiText::Message(Message::new(i18n_noop("Reachable"))),
         (false, Some(code)) => code.text(detail),
         (false, None) => UiText::Raw(detail.to_string()),
+    }
+}
+
+/// «Schedules paused» (overview, tray).
+pub fn schedules_paused_message() -> Message {
+    Message::new(i18n_noop("Schedules paused"))
+}
+
+/// «No backups configured yet» (overview, tray, backup list).
+pub fn no_backups_message() -> Message {
+    Message::new(i18n_noop("No backups configured yet"))
+}
+
+/// «Not backed up yet» (overview, backup card).
+pub fn not_backed_up_message() -> Message {
+    Message::new(i18n_noop("Not backed up yet"))
+}
+
+/// «All data backed up» (overview, tray).
+pub fn all_backed_up_message() -> Message {
+    Message::new(i18n_noop("All data backed up"))
+}
+
+/// Maintenance of a destination is running right now (status line, tray).
+pub fn maintaining_message(destination_name: &str) -> Message {
+    Message::with_args(i18n_noop("Maintaining %1"), &[destination_name])
+}
+
+/// Maintenance is running, without naming the destination.
+pub fn maintenance_running_message() -> Message {
+    Message::new(i18n_noop("Maintenance running"))
+}
+
+/// Name shown for a destination that no longer exists (run history).
+pub fn deleted_destination_message() -> Message {
+    Message::new(i18n_noop("Deleted destination"))
+}
+
+/// A run stopped because the computer went to sleep (run history, backup card).
+pub fn interrupted_by_sleep_message() -> Message {
+    Message::new(i18n_noop("Interrupted by system sleep"))
+}
+
+/// Pause line: `since` and `until` are already formatted times.
+pub fn pause_message(since: &str, until: Option<&str>) -> Message {
+    match until {
+        Some(until) => Message::with_args(i18n_noop("Paused since %1 (until %2)"), &[since, until]),
+        None => Message::with_args(i18n_noop("Paused since %1"), &[since]),
+    }
+}
+
+/// UI labels that both the tray (daemon) and the window (GUI) show. QML asks for them by
+/// code (`appBackend.sharedLabel("back_up_now")`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Label {
+    BackUpNow,
+    PauseSchedules,
+    ResumeSchedules,
+    AllBackups,
+    PauseOneHour,
+    PauseThreeHours,
+    PauseUntilTomorrow,
+    PauseUntilResume,
+    NoBackups,
+    AllBackedUp,
+}
+
+impl Label {
+    pub const ALL: [Self; 10] = [
+        Self::BackUpNow,
+        Self::PauseSchedules,
+        Self::ResumeSchedules,
+        Self::AllBackups,
+        Self::PauseOneHour,
+        Self::PauseThreeHours,
+        Self::PauseUntilTomorrow,
+        Self::PauseUntilResume,
+        Self::NoBackups,
+        Self::AllBackedUp,
+    ];
+
+    /// Code used by QML.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BackUpNow => "back_up_now",
+            Self::PauseSchedules => "pause_schedules",
+            Self::ResumeSchedules => "resume_schedules",
+            Self::AllBackups => "all_backups",
+            Self::PauseOneHour => "pause_one_hour",
+            Self::PauseThreeHours => "pause_three_hours",
+            Self::PauseUntilTomorrow => "pause_until_tomorrow",
+            Self::PauseUntilResume => "pause_until_resume",
+            Self::NoBackups => "no_backups",
+            Self::AllBackedUp => "all_data_backed_up",
+        }
+    }
+
+    /// Parses a label code; `None` for unknown codes.
+    pub fn parse(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.as_str() == code)
+    }
+
+    pub fn message(self) -> Message {
+        match self {
+            Self::BackUpNow => Message::new(i18n_noop("Back Up Now")),
+            Self::PauseSchedules => Message::new(i18n_noop("Pause Schedules")),
+            Self::ResumeSchedules => Message::new(i18n_noop("Resume Schedules")),
+            Self::AllBackups => Message::new(i18n_noop("All Backups")),
+            Self::PauseOneHour => Message::new(i18n_noop("1 Hour")),
+            Self::PauseThreeHours => Message::new(i18n_noop("3 Hours")),
+            Self::PauseUntilTomorrow => Message::new(i18n_noop("Until Tomorrow")),
+            Self::PauseUntilResume => Message::new(i18n_noop("Until I Resume")),
+            Self::NoBackups => no_backups_message(),
+            Self::AllBackedUp => all_backed_up_message(),
+        }
     }
 }
 
@@ -427,7 +546,7 @@ pub struct ActiveRunInfo<'a> {
 /// «‹Backup›: backing up · n%» or «Maintaining ‹Destination›» (glossary: Wartung).
 pub fn active_run_message(run: &ActiveRunInfo<'_>) -> Message {
     if run.is_maintenance {
-        Message::with_args(i18n_noop("Maintaining %1"), &[run.name])
+        maintaining_message(run.name)
     } else {
         Message::with_args(
             i18n_noop("%1: backing up · %2%"),
@@ -485,17 +604,17 @@ pub fn overall_headline(
         return waiting_headline(counts);
     }
     if counts.paused || counts.kind == OverallStatusKind::Paused {
-        return Message::new(i18n_noop("Schedules paused"));
+        return schedules_paused_message();
     }
     if counts.backups == 0 {
-        return Message::new(i18n_noop("No backups configured yet"));
+        return no_backups_message();
     }
-    Message::new(match counts.kind {
-        OverallStatusKind::Interrupted => i18n_noop("Last run interrupted"),
-        OverallStatusKind::Cancelled => i18n_noop("Last run cancelled"),
-        OverallStatusKind::NeverRun => i18n_noop("Not backed up yet"),
-        _ => i18n_noop("All data backed up"),
-    })
+    match counts.kind {
+        OverallStatusKind::Interrupted => Message::new(i18n_noop("Last run interrupted")),
+        OverallStatusKind::Cancelled => Message::new(i18n_noop("Last run cancelled")),
+        OverallStatusKind::NeverRun => not_backed_up_message(),
+        _ => all_backed_up_message(),
+    }
 }
 
 fn waiting_headline(counts: &OverallCounts) -> Message {
@@ -532,7 +651,3 @@ pub fn overall_subtitle(
         &[active.name, &percent(active.percent_done)],
     ))
 }
-
-#[cfg(test)]
-#[path = "messages_tests.rs"]
-mod tests;

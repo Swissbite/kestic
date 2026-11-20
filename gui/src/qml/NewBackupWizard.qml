@@ -6,8 +6,10 @@ import QtQuick.Controls as Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
+    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: page
     objectName: "newBackupWizard"
     title: wizardTitle
@@ -845,7 +847,7 @@ Kirigami.ScrollablePage {
                 objectName: "wizBackupStartNowButton"
                 visible: page.currentStage === "summary"
                 icon.name: "media-playback-start"
-                text: i18n("Back Up Now")
+                text: sharedTexts.label("back_up_now")
                 highlighted: true
                 enabled: page.canAdvance
                 Accessible.name: i18n("Save and Back Up Now")

@@ -5,8 +5,10 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
+    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: page
     objectName: "historyPage"
     title: i18n("History")
@@ -46,7 +48,7 @@ Kirigami.ScrollablePage {
     }
 
     function buildBackupFilterOptions() {
-        var opts = [{ backupId: "", label: i18n("All Backups") }];
+        var opts = [{ backupId: "", label: sharedTexts.label("all_backups") }];
         var count = backupsModel.rowCount(backupsModel.index(-1, -1));
         for (var i = 0; i < count; ++i) {
             var bid = backupsModel.data(backupsModel.index(i, 0), 0);

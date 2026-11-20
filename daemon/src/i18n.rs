@@ -7,7 +7,7 @@
 //! daemon tray, notification, and error string into `po/de/kestic.po`, while
 //! allowing `gui` (`cxx-kde-frameworks`) or test doubles to supply translations.
 
-use kestic_core::messages::{Message, UiText, substitute_placeholders};
+use kestic_i18n::messages::{Message, UiText, substitute_placeholders};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use std::fmt;
@@ -117,7 +117,7 @@ pub fn i18n(msgid: &'static str) -> PendingI18n {
     PendingI18n(msgid)
 }
 
-/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_core::messages`) in the
+/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
 /// daemon language (tray, notifications, run history).
 pub fn tr(message: &Message) -> String {
     let guard = translator_lock()

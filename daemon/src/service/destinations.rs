@@ -15,7 +15,6 @@ use crate::dbus_api::{
 use crate::tray::KesticTrayState;
 use kestic_core::backup::list_snapshots_for_backup;
 use kestic_core::clock::Clock;
-use kestic_core::codes::ConnectionTestCode;
 use kestic_core::config::ConfigError;
 use kestic_core::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, DestinationSetupMode, preflight_check_destination,
@@ -29,6 +28,7 @@ use kestic_core::provider::resolve_and_check;
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO, SECRET_KIND_REST};
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
 use kestic_core::snapshot::ResticSnapshot;
+use kestic_i18n::codes::ConnectionTestCode;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
