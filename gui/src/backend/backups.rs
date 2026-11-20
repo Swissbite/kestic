@@ -9,15 +9,15 @@ use crate::state_cache::{
     build_new_backup, cached_destination_kind, clone_updated_backup, clone_updated_backup_excludes,
     clone_updated_backup_retention, clone_updated_backup_source,
     localized_condition_override_message, localized_manual_block_message,
-    localized_start_all_summary, lookup_backup_summary, make_client, refresh_state_now,
-    shared_state,
+    localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, make_client,
+    refresh_state_now, shared_state,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
+use kestic_core::codes::BlockedReason;
 use kestic_core::model::{BackupId, ExcludeRules, RetentionPolicy};
 use kestic_core::provider::resolve_and_check;
-use kestic_daemon::dbus_api::{REASON_CONDITION_NOT_MET, REASON_DESTINATION_UNREACHABLE};
 use std::env;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -49,7 +49,7 @@ impl qobject::KesticApp {
     fn handle_start_backup_error(mut self: Pin<&mut Self>, b_id: &str, err: &zbus::Error) {
         let raw = err.to_string();
         let is_blocked = raw.contains("ManualRunBlocked");
-        let err_is_condition = raw.contains(REASON_CONDITION_NOT_MET);
+        let err_is_condition = raw.contains(BlockedReason::ConditionNotMet.as_str());
         refresh_state_now();
         self.as_mut().apply_cached_state();
         if !is_blocked {
@@ -68,37 +68,27 @@ impl qobject::KesticApp {
         }
         let (backup_name, reason_code, unmet_text) = {
             let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-            guard
+            let summary = guard
                 .state
                 .as_ref()
-                .and_then(|s| lookup_backup_summary(s, b_id))
-                .map(|b| {
-                    let code = if err_is_condition {
-                        REASON_CONDITION_NOT_MET.to_string()
+                .and_then(|s| lookup_backup_summary(s, b_id));
+            let code = match summary {
+                _ if err_is_condition => BlockedReason::ConditionNotMet,
+                Some(b) => b.availability.blocked_reason.unwrap_or({
+                    if b.has_unmet_run_condition {
+                        BlockedReason::ConditionNotMet
                     } else {
-                        b.availability.blocked_reason.clone().unwrap_or_else(|| {
-                            if b.has_unmet_run_condition {
-                                REASON_CONDITION_NOT_MET.to_string()
-                            } else {
-                                REASON_DESTINATION_UNREACHABLE.to_string()
-                            }
-                        })
-                    };
-                    (b.backup.name.clone(), code, b.unmet_conditions_text.clone())
-                })
-                .unwrap_or_else(|| {
-                    (
-                        b_id.to_string(),
-                        if err_is_condition {
-                            REASON_CONDITION_NOT_MET.to_string()
-                        } else {
-                            REASON_DESTINATION_UNREACHABLE.to_string()
-                        },
-                        None,
-                    )
-                })
+                        BlockedReason::DestinationUnreachable
+                    }
+                }),
+                None => BlockedReason::DestinationUnreachable,
+            };
+            match summary {
+                Some(b) => (b.backup.name.clone(), code, localized_unmet_conditions(b)),
+                None => (b_id.to_string(), code, None),
+            }
         };
-        if reason_code == REASON_CONDITION_NOT_MET {
+        if reason_code == BlockedReason::ConditionNotMet {
             let msg = localized_condition_override_message(&backup_name, unmet_text.as_deref());
             self.as_mut()
                 .set_condition_override_backup_id(QString::from(b_id));
@@ -112,7 +102,7 @@ impl qobject::KesticApp {
                 QString::from(&msg),
             );
         } else {
-            let msg = localized_manual_block_message(&backup_name, &reason_code);
+            let msg = localized_manual_block_message(&backup_name, reason_code);
             self.as_mut()
                 .set_manual_run_blocked_backup_id(QString::from(b_id));
             self.as_mut()

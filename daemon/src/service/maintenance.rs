@@ -8,15 +8,16 @@ use super::availability::{
     unlockable_stale_lock_count,
 };
 use super::backup_runner::{load_dest_secrets, start_backup_async, upsert_pending_run_entry};
-use super::error::{KesticServiceErr, localized_source_check_reason, service_error_kind_code};
+use super::error::{
+    KesticServiceErr, localized_source_check_reason, manual_run_blocked_reason, service_error_kind,
+};
 use super::run_errors::run_blocks_schedule;
 use super::state::{ActiveRunEntry, DaemonCore, probe_before_run};
 use crate::dbus_api::{
-    ActiveRunProgressDto, DestinationAvailabilityDto, REASON_CONDITION_NOT_MET,
-    REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE, SkippedBackupDto, StartAllResultDto,
+    ActiveRunProgressDto, DestinationAvailabilityDto, SkippedBackupDto, StartAllResultDto,
 };
 use crate::dbus_server::{emit_run_updated, emit_status_changed};
-use crate::i18n::i18n;
+use crate::i18n::{i18n, tr};
 use crate::inhibit::PortalInhibitGuard;
 use crate::job_view::{CAPABILITY_KILLABLE, JobViewHandle};
 use crate::monitors::{LogindSleepInhibitor, MonitorBusConfig};
@@ -24,6 +25,7 @@ use crate::notifications::{KESTIC_DESKTOP_ENTRY, KesticEvent, send_configured_no
 use crate::tray::TrayHandle;
 use kestic_core::backup::{execute_forget, is_forget_lock_failure};
 use kestic_core::clock::Clock;
+use kestic_core::codes::{ErrorKind, PendingReasonCode, SkipReason};
 use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use kestic_core::maintenance::{detect_stale_locks, execute_check, execute_prune};
 use kestic_core::model::{
@@ -717,19 +719,21 @@ fn update_maintenance_state_after_run(
 struct StartAllCandidate {
     backup: Backup,
     has_error: bool,
-    error_summary: Option<String>,
-    error_kind: Option<String>,
+    error_kind: Option<ErrorKind>,
+    /// Daemon-language cause of the permanent error (run history only).
+    error_text: Option<String>,
     mount_inspector: Arc<dyn MountInspector>,
-    unmet_parts: Vec<String>,
+    /// Daemon-language «Condition not met: …» while run conditions are unmet.
+    unmet_text: Option<String>,
 }
 
 struct StartAllEntry {
     backup: Backup,
     has_error: bool,
-    error_summary: Option<String>,
-    error_kind: Option<String>,
+    error_kind: Option<ErrorKind>,
+    error_text: Option<String>,
     source_status: SourceCheckResult,
-    unmet_parts: Vec<String>,
+    unmet_text: Option<String>,
 }
 
 struct StartAllDispatchOutcome {
@@ -737,7 +741,7 @@ struct StartAllDispatchOutcome {
     queued_backup_ids: Vec<String>,
     queued_entries: Vec<Backup>,
     skipped: Vec<SkippedBackupDto>,
-    skipped_history_entries: Vec<(Backup, String, String)>,
+    skipped_history_entries: Vec<(Backup, SkipReason, String)>,
 }
 
 pub fn start_all_backups_async(shared: &Arc<Mutex<DaemonCore>>) -> StartAllResultDto {
@@ -771,11 +775,9 @@ fn collect_start_all_entries(shared: &Arc<Mutex<DaemonCore>>) -> Vec<StartAllEnt
             .backups
             .into_iter()
             .map(|s| {
-                let unmet_parts: Vec<String> =
-                    evaluate_run_conditions(&s.backup.run_conditions, &guard.system_env)
-                        .iter()
-                        .map(|c| guard.format_unmet_condition_item(c))
-                        .collect();
+                let unmet = evaluate_run_conditions(&s.backup.run_conditions, &guard.system_env);
+                let unmet_text =
+                    (!unmet.is_empty()).then(|| guard.localized_unmet_conditions(&unmet));
                 let has_error = guard
                     .runs_cache
                     .iter()
@@ -787,10 +789,12 @@ fn collect_start_all_entries(shared: &Arc<Mutex<DaemonCore>>) -> Vec<StartAllEnt
                 StartAllCandidate {
                     backup: s.backup,
                     has_error,
-                    error_summary: s.error_summary,
+                    error_text: s
+                        .error_kind
+                        .map(|k| tr(&k.message(s.error_exit_code, false))),
                     error_kind: s.error_kind,
                     mount_inspector: Arc::clone(&guard.mount_inspector),
-                    unmet_parts,
+                    unmet_text,
                 }
             })
             .collect()
@@ -805,10 +809,10 @@ fn collect_start_all_entries(shared: &Arc<Mutex<DaemonCore>>) -> Vec<StartAllEnt
             StartAllEntry {
                 backup: c.backup,
                 has_error: c.has_error,
-                error_summary: c.error_summary,
                 error_kind: c.error_kind,
+                error_text: c.error_text,
                 source_status,
-                unmet_parts: c.unmet_parts,
+                unmet_text: c.unmet_text,
             }
         })
         .collect()
@@ -822,62 +826,48 @@ fn dispatch_start_all_entries(
     let mut queued_backup_ids = Vec::new();
     let mut queued_entries: Vec<Backup> = Vec::new();
     let mut skipped = Vec::new();
-    let mut skipped_history_entries: Vec<(Backup, String, String)> = Vec::new();
+    let mut skipped_history_entries: Vec<(Backup, SkipReason, String)> = Vec::new();
+    let mut skip = |backup: Backup, skip: SkippedBackupDto, text: String| {
+        skipped_history_entries.push((backup, skip.reason, text));
+        skipped.push(skip);
+    };
 
     for StartAllEntry {
         backup,
         has_error,
-        error_summary,
         error_kind,
+        error_text,
         source_status,
-        unmet_parts,
+        unmet_text,
     } in entries
     {
         let id = backup.id.as_str().to_string();
-        let name = backup.name.clone();
+        let dto = |reason, error_kind, error_detail| SkippedBackupDto {
+            backup_id: id.clone(),
+            backup_name: backup.name.clone(),
+            reason,
+            error_kind,
+            error_detail,
+        };
         if has_error {
-            let reason_text = error_summary
+            let text = error_text
                 .unwrap_or_else(|| i18n("Permanent error — fix required before backing up").into());
-            skipped.push(SkippedBackupDto {
-                backup_id: id,
-                backup_name: name,
-                reason: "permanent_error".to_string(),
-                reason_text: reason_text.clone(),
-                error_kind,
-            });
-            skipped_history_entries.push((backup, "permanent_error".to_string(), reason_text));
+            let skipped_dto = dto(SkipReason::PermanentError, error_kind, None);
+            skip(backup, skipped_dto, text);
             continue;
         }
         if !source_status.is_ok() {
-            let reason_text = localized_source_check_reason(&source_status);
-            skipped.push(SkippedBackupDto {
-                backup_id: id,
-                backup_name: name,
-                reason: REASON_SOURCE_UNAVAILABLE.to_string(),
-                reason_text: reason_text.clone(),
-                error_kind: None,
-            });
-            skipped_history_entries.push((
+            let skipped_dto = dto(SkipReason::SourceUnavailable, None, None);
+            skip(
                 backup,
-                REASON_SOURCE_UNAVAILABLE.to_string(),
-                reason_text,
-            ));
+                skipped_dto,
+                localized_source_check_reason(&source_status),
+            );
             continue;
         }
-        if !unmet_parts.is_empty() {
-            let reason_text = i18n("Condition not met: %1").subs(&[&unmet_parts.join(", ")]);
-            skipped.push(SkippedBackupDto {
-                backup_id: id,
-                backup_name: name,
-                reason: REASON_CONDITION_NOT_MET.to_string(),
-                reason_text: reason_text.clone(),
-                error_kind: None,
-            });
-            skipped_history_entries.push((
-                backup,
-                REASON_CONDITION_NOT_MET.to_string(),
-                reason_text,
-            ));
+        if let Some(text) = unmet_text {
+            let skipped_dto = dto(SkipReason::ConditionNotMet, None, None);
+            skip(backup, skipped_dto, text);
             continue;
         }
         match start_backup_async(shared, &id) {
@@ -887,31 +877,21 @@ fn dispatch_start_all_entries(
                 queued_entries.push(backup);
             }
             Err(err) => {
-                let error_kind = if matches!(&err, KesticServiceErr::ManualRunBlocked(_)) {
-                    None
-                } else {
-                    Some(service_error_kind_code(&err).to_string())
+                let (skipped_dto, text) = match manual_run_blocked_reason(&err) {
+                    Some(reason) => (
+                        dto(SkipReason::from(reason), None, None),
+                        tr(&reason.message(None)),
+                    ),
+                    None => (
+                        dto(
+                            SkipReason::Error,
+                            Some(service_error_kind(&err)),
+                            Some(err.to_string()),
+                        ),
+                        err.to_string(),
+                    ),
                 };
-                let (reason, reason_text) = match &err {
-                    KesticServiceErr::ManualRunBlocked(r) if r == REASON_SOURCE_UNAVAILABLE => {
-                        (r.clone(), i18n("Source unavailable").into())
-                    }
-                    KesticServiceErr::ManualRunBlocked(r) if r == REASON_CONDITION_NOT_MET => {
-                        (r.clone(), i18n("Run condition not met").into())
-                    }
-                    KesticServiceErr::ManualRunBlocked(r) => {
-                        (r.clone(), i18n("Destination unreachable").into())
-                    }
-                    other => ("error".to_string(), other.to_string()),
-                };
-                skipped_history_entries.push((backup, reason.clone(), reason_text.clone()));
-                skipped.push(SkippedBackupDto {
-                    backup_id: id,
-                    backup_name: name,
-                    reason,
-                    reason_text,
-                    error_kind,
-                });
+                skip(backup, skipped_dto, text);
             }
         }
     }
@@ -928,7 +908,7 @@ fn dispatch_start_all_entries(
 fn record_start_all_pending_and_skipped(
     shared: &Arc<Mutex<DaemonCore>>,
     queued_entries: Vec<Backup>,
-    skipped_history_entries: Vec<(Backup, String, String)>,
+    skipped_history_entries: Vec<(Backup, SkipReason, String)>,
 ) {
     if skipped_history_entries.is_empty() && queued_entries.is_empty() {
         return;
@@ -939,31 +919,31 @@ fn record_start_all_pending_and_skipped(
             if !guard.queued_backups.contains(&backup.id) {
                 guard.queued_backups.push_back(backup.id.clone());
             }
-            let msg = i18n("Waiting: another run on this destination").into();
+            let msg = tr(&PendingReasonCode::Queue.waiting_message(""));
             upsert_pending_run_entry(&mut guard, &backup, PendingReason::Queued, msg);
         }
         for (backup, reason, reason_text) in skipped_history_entries {
             let note = i18n("Skipped during 'Back up all': %1").subs(&[&reason_text]);
-            match reason.as_str() {
-                REASON_SOURCE_UNAVAILABLE => upsert_pending_run_entry(
+            match reason {
+                SkipReason::SourceUnavailable => upsert_pending_run_entry(
                     &mut guard,
                     &backup,
                     PendingReason::SourceUnavailable,
                     note,
                 ),
-                REASON_DESTINATION_UNREACHABLE => upsert_pending_run_entry(
+                SkipReason::DestinationUnreachable => upsert_pending_run_entry(
                     &mut guard,
                     &backup,
                     PendingReason::DestinationUnreachable,
                     note,
                 ),
-                REASON_CONDITION_NOT_MET => upsert_pending_run_entry(
+                SkipReason::ConditionNotMet => upsert_pending_run_entry(
                     &mut guard,
                     &backup,
                     PendingReason::ConditionNotMet,
                     note,
                 ),
-                _ => {
+                SkipReason::PermanentError | SkipReason::Error => {
                     if let Ok(mut meta_run) =
                         Run::new_meta(guard.clock.as_ref(), backup.destination_id.clone())
                     {

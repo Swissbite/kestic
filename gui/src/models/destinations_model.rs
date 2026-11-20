@@ -113,7 +113,7 @@ fn build_destination_row(
         stale_lock_count: i32::try_from(d.stale_lock_count).unwrap_or(i32::MAX),
         maintenance_status_text: maintenance_status_line(
             d.maintenance_running,
-            d.maintenance_pending_reason.as_deref(),
+            d.maintenance_pending_reason,
             d.maintenance_retry_at_unix,
             now,
         ),

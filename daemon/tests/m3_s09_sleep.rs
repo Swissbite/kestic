@@ -253,7 +253,9 @@ fn ac_m3_09_3_after_wake_up_interrupted_backup_is_pending_then_starts() {
                 fakes.upower.set_on_battery(true, 60.0);
                 fakes.logind.emit_prepare_for_sleep(false);
                 let pending = wait_for_state(client, Duration::from_secs(10), "pending", |s| {
-                    backup_summary(s, &rig.bid).pending_primary_code.as_deref()
+                    backup_summary(s, &rig.bid)
+                        .pending_primary_code
+                        .map(|c| c.as_str())
                         == Some("on_battery")
                 });
                 assert!(

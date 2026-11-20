@@ -18,6 +18,7 @@ use common::{
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
+use kestic_core::messages::UiText;
 use kestic_core::model::{NotificationSettings, RunStatus, Schedule};
 use kestic_core::restic::SECRET_KIND_REPO;
 use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
@@ -213,7 +214,9 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
                     .id;
                 rig.clock.set(datetime!(2026-12-01 11:00:05 UTC));
                 wait_for_state(client, Duration::from_secs(10), "late pending", |s| {
-                    backup_summary(s, &late_id).pending_primary_code.as_deref()
+                    backup_summary(s, &late_id)
+                        .pending_primary_code
+                        .map(|c| c.as_str())
                         == Some("on_battery")
                 });
                 rig.clock.set(datetime!(2026-12-02 11:00:05 UTC));
@@ -445,7 +448,13 @@ fn ac_m3_08_6_back_up_all_starts_only_valid_backup_and_reports_skipped_with_reas
                 res.skipped
                     .iter()
                     .find(|s| s.backup_id == id)
-                    .map(|s| (s.reason.clone(), s.reason_text.clone()))
+                    .map(|s| {
+                        let text = match s.reason.text(s.error_kind, s.error_detail.as_deref()) {
+                            UiText::Message(m) => m.english(),
+                            UiText::Raw(raw) => raw,
+                        };
+                        (s.reason.as_str(), text)
+                    })
                     .expect("skipped entry")
             };
             assert_eq!(

@@ -205,7 +205,7 @@ where
                     &b.pending_primary_code,
                     b.is_overdue,
                     b.has_error,
-                    b.error_action.as_deref(),
+                    b.error_action.map(|c| c.as_str()),
                     b.active_run.as_ref().map(|r| &r.status),
                     b.last_run.as_ref().map(|r| &r.status),
                 ))
@@ -378,7 +378,7 @@ fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slo
                 backup_summary(s, &overdue_id).is_overdue
                     && backup_summary(s, &pending_id)
                         .pending_primary_code
-                        .as_deref()
+                        .map(|c| c.as_str())
                         == Some("on_battery")
             });
             assert!(
@@ -554,9 +554,11 @@ fn m3_08_5_exit12_replaces_back_up_now_in_overview_and_detail() {
                 Duration::from_secs(5),
                 "exit12 + on_battery",
                 |s| {
-                    backup_summary(s, &b0_id).error_action.as_deref()
+                    backup_summary(s, &b0_id).error_action.map(|c| c.as_str())
                         == Some("update_stored_password")
-                        && backup_summary(s, &b1_id).pending_primary_code.as_deref()
+                        && backup_summary(s, &b1_id)
+                            .pending_primary_code
+                            .map(|c| c.as_str())
                             == Some("on_battery")
                 },
             );

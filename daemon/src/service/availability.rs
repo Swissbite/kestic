@@ -6,13 +6,11 @@
 use super::backup_runner::start_backup_async;
 use super::error::{KesticServiceErr, map_destination_err, map_provider_err};
 use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, probe_restic_and_secrets_raw};
-use crate::dbus_api::{
-    AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto,
-    REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
-};
+use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto};
 use crate::dbus_server::emit_status_changed;
 use crate::i18n::i18n;
 use kestic_core::backup::BackupRunError;
+use kestic_core::codes::{BlockedReason, SourceStatus};
 use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use kestic_core::maintenance::{LockClassification, detect_stale_locks, execute_unlock};
 use kestic_core::model::{Backup, Destination, DestinationId};
@@ -126,9 +124,8 @@ impl DaemonCore {
                 source_available: false,
                 destination_available: dest_available,
                 available: false,
-                blocked_reason: Some(REASON_SOURCE_UNAVAILABLE.to_string()),
-                reason_text: Some(super::error::localized_source_check_reason(&source_status)),
-                source_status: super::error::source_status_code(&source_status).map(str::to_string),
+                blocked_reason: Some(BlockedReason::SourceUnavailable),
+                source_status: SourceStatus::from_check(&source_status),
             }
         } else if !dest_available {
             BackupAvailabilityDto {
@@ -136,8 +133,7 @@ impl DaemonCore {
                 source_available: true,
                 destination_available: false,
                 available: false,
-                blocked_reason: Some(REASON_DESTINATION_UNREACHABLE.to_string()),
-                reason_text: Some(i18n("Destination unreachable").into()),
+                blocked_reason: Some(BlockedReason::DestinationUnreachable),
                 source_status: None,
             }
         } else {
@@ -147,7 +143,6 @@ impl DaemonCore {
                 destination_available: true,
                 available: true,
                 blocked_reason: None,
-                reason_text: None,
                 source_status: None,
             }
         }
@@ -477,7 +472,7 @@ pub fn unlock_destination_async(
     if !secret_status.available {
         return Err(KesticServiceErr::SecretStoreLocked(
             secret_status
-                .message
+                .detail
                 .unwrap_or_else(|| i18n("Password store is locked").into()),
         ));
     }

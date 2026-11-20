@@ -7,6 +7,7 @@ use common::{
     CapturedKesticSignal, KesticSignalCollector, find_kestic_binary, free_loopback_port,
     restic_test_binaries, run_isolated_test, start_fake_notifications, wait_for_file,
 };
+use kestic_core::codes::BlockedReason;
 use kestic_core::config::load_config;
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Source,
@@ -14,7 +15,6 @@ use kestic_core::model::{
 use kestic_core::secrets::{FileSecretStore, SecretStore};
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusDto,
-    REASON_SOURCE_UNAVAILABLE,
 };
 use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
@@ -324,7 +324,7 @@ fn ac_m1_09_6_and_09_7_missing_source_blocks_without_restic_and_respects_window_
                         CapturedKesticSignal::ManualRunBlocked {
                             backup_id: bid,
                             reason,
-                        } if bid == &backup_id && reason == REASON_SOURCE_UNAVAILABLE
+                        } if bid == &backup_id && reason == BlockedReason::SourceUnavailable.as_str()
                     )
                 })
             });
@@ -357,7 +357,7 @@ fn ac_m1_09_6_and_09_7_missing_source_blocks_without_restic_and_respects_window_
                         CapturedKesticSignal::ManualRunBlocked {
                             backup_id: bid,
                             reason,
-                        } if bid == &backup_id && reason == REASON_SOURCE_UNAVAILABLE
+                        } if bid == &backup_id && reason == BlockedReason::SourceUnavailable.as_str()
                     )
                 })
             });
@@ -601,7 +601,10 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
                 .test_destination_connection(&dup_dest, "connect", "repo-pw-1", "")
                 .expect("TestDestinationConnection dup");
             assert!(!test_dup.ok, "duplicate location test must fail");
-            assert_eq!(test_dup.error_kind.as_deref(), Some("duplicate_location"));
+            assert_eq!(
+                test_dup.error_kind.map(|c| c.as_str()),
+                Some("duplicate_location")
+            );
 
             let add_dup_err = client
                 .add_destination(&dup_dest, "connect", "repo-pw-1", "")
@@ -644,7 +647,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
                 .expect("TestDestinationConnection connect on empty dir");
             assert!(!check_missing.ok);
             assert_eq!(
-                check_missing.error_kind.as_deref(),
+                check_missing.error_kind.map(|c| c.as_str()),
                 Some("repository_missing")
             );
 

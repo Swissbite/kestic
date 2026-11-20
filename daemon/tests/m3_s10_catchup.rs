@@ -211,7 +211,7 @@ fn ac_m3_10_2_daemon_start_with_unmet_condition_keeps_overdue_backup_pending() {
             let pending = wait_for_state(client, Duration::from_secs(10), "pending", |s| {
                 backup_summary(s, &seed.backup.id)
                     .pending_primary_code
-                    .as_deref()
+                    .map(|c| c.as_str())
                     == Some("on_battery")
             });
             assert!(

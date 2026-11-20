@@ -5,7 +5,8 @@
 //! (`K1`, `NFR-11`, `M1-S11`, `AC-M1-11-1..5`, `AC-M1-23-4`, `tray-und-benachrichtigungen.md` §10.1).
 
 use crate::dbus_api::{ActiveRunProgressDto, OverallStatusKind};
-use crate::i18n::i18n;
+use crate::i18n::{i18n, tr};
+use kestic_core::messages::active_run_message;
 use kestic_core::scheduler::PauseDuration;
 use ksni::blocking::TrayMethods;
 use ksni::menu::{MenuItem, StandardItem, SubMenu};
@@ -14,15 +15,12 @@ use std::sync::{Arc, mpsc};
 /// Status line of the active run: «‹Backup›: backing up · n%» for backups, maintenance
 /// wording («Maintaining ‹Destination›») for destination maintenance (no backup id).
 pub(crate) fn active_run_line(active: &ActiveRunProgressDto) -> String {
-    if active.backup_id.is_none() {
-        return i18n("Maintaining %1").subs(&[&active.backup_name]);
-    }
-    let pct = active.percent_done.round().clamp(0.0, 100.0) as u32;
-    i18n("%1: backing up · %2%").subs(&[&active.backup_name, &pct.to_string()])
+    tr(&active_run_message(&active.info()))
 }
 
-/// Mapped StatusNotifierItem visibility state per `tray-und-benachrichtigungen.md` §10.1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Mapped StatusNotifierItem visibility state per `tray-und-benachrichtigungen.md` §10.1
+/// (serialised as `"Passive"` | `"Active"` | `"NeedsAttention"` in `OverallStatusDto`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TrayStatus {
     Passive,
     Active,

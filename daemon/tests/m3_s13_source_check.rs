@@ -99,7 +99,7 @@ impl Rig {
             |s| {
                 backup_summary(s, &self.fixture.backup.id)
                     .pending_primary_code
-                    .as_deref()
+                    .map(|c| c.as_str())
                     == Some("source_unavailable")
             },
         );
@@ -159,7 +159,7 @@ fn ac_m3_13_1_unmounted_drive_keeps_backup_pending_without_restic_or_notificatio
             assert_eq!(
                 backup_summary(&state, &rig.fixture.backup.id)
                     .pending_primary_code
-                    .as_deref(),
+                    .map(|c| c.as_str()),
                 Some("source_unavailable"),
                 "(b)"
             );
@@ -235,7 +235,7 @@ fn ac_m3_13_3_mount_of_other_drive_leaves_backup_pending() {
             assert_eq!(
                 backup_summary(&state, &rig.fixture.backup.id)
                     .pending_primary_code
-                    .as_deref(),
+                    .map(|c| c.as_str()),
                 Some("source_unavailable"),
                 "still pending after mounting a different drive"
             );

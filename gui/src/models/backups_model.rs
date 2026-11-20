@@ -10,7 +10,7 @@ use crate::state_cache::{
     format_conditions_summary, format_duration_ms, format_exclude_summary,
     format_next_scheduled_line, format_pause_line, format_retention_summary,
     format_schedule_summary, format_source_kind_label, i18n, localized_last_error,
-    localized_pending_reason, shared_state,
+    localized_unmet_conditions, pending_reason_line, shared_state,
 };
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
@@ -185,12 +185,15 @@ fn build_backup_row(
             .unwrap_or_default(),
         active_percent,
         active_progress_text,
-        error_summary: if b.error_kind.is_some() || b.error_summary.is_some() {
+        error_summary: if b.error_kind.is_some() {
             localized_last_error(b)
         } else {
             String::new()
         },
-        error_action: b.error_action.clone().unwrap_or_default(),
+        error_action: b
+            .error_action
+            .map(|a| a.as_str().to_string())
+            .unwrap_or_default(),
         unreadable_files_json: serde_json::to_string(&b.unreadable_files)
             .unwrap_or_else(|_| "[]".to_string()),
         schedule_summary: format_schedule_summary(&b.backup.schedule),
@@ -227,35 +230,18 @@ fn build_backup_row(
         ),
         is_paused: b.is_paused,
         paused_line,
-        pending_primary_code: b.pending_primary_code.clone().unwrap_or_default(),
+        pending_primary_code: b
+            .pending_primary_code
+            .map(|code| code.as_str().to_string())
+            .unwrap_or_default(),
         pending_primary_reason: b
-            .pending_primary_reason
-            .as_deref()
-            .map(|t| {
-                localized_pending_reason(
-                    b.pending_primary_code.as_deref(),
-                    t,
-                    b.pending_retry_at_unix,
-                    now,
-                )
-            })
+            .pending_primary_code
+            .map(|code| pending_reason_line(code, b.pending_retry_at_unix, now))
             .unwrap_or_default(),
         pending_reasons_tooltip: b
-            .pending_reasons
+            .pending_reason_codes
             .iter()
-            .enumerate()
-            .map(|(idx, text)| {
-                let code = b
-                    .pending_reason_codes
-                    .get(idx)
-                    .map(String::as_str)
-                    .or(if idx == 0 {
-                        b.pending_primary_code.as_deref()
-                    } else {
-                        None
-                    });
-                localized_pending_reason(code, text, b.pending_retry_at_unix, now)
-            })
+            .map(|code| pending_reason_line(*code, b.pending_retry_at_unix, now))
             .collect::<Vec<_>>()
             .join("\n"),
         missed_slots_count: i32::try_from(b.missed_slots_count).unwrap_or(i32::MAX),
@@ -265,7 +251,7 @@ fn build_backup_row(
             .map(|v| i32::try_from(v).unwrap_or(99))
             .unwrap_or(0),
         has_unmet_run_condition: b.has_unmet_run_condition,
-        unmet_conditions_text: b.unmet_conditions_text.clone().unwrap_or_default(),
+        unmet_conditions_text: localized_unmet_conditions(b).unwrap_or_default(),
     }
 }
 

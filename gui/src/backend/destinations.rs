@@ -7,9 +7,11 @@
 use super::{friendly_dbus_error, qobject};
 use crate::state_cache::{
     build_destination, make_client, refresh_state_now, shared_state, test_destination_connection,
+    tr_text,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
+use kestic_core::messages::connection_test_text;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
@@ -27,10 +29,12 @@ impl qobject::KesticApp {
             &rest_pw.to_string(),
         );
         self.as_mut().set_connection_test_ok(res.ok);
+        let text = connection_test_text(res.ok, res.error_kind, &res.detail);
         self.as_mut()
-            .set_connection_test_message(QString::from(&res.message));
-        self.as_mut()
-            .set_connection_test_error_kind(QString::from(res.error_kind.as_deref().unwrap_or("")));
+            .set_connection_test_message(QString::from(&tr_text(&text)));
+        self.as_mut().set_connection_test_error_kind(QString::from(
+            res.error_kind.map(|k| k.as_str()).unwrap_or(""),
+        ));
         res.ok
     }
 

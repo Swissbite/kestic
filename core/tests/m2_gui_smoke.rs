@@ -926,7 +926,7 @@ fn m2_gui_smoke_drive_unmounted_nested_and_full_config_en_de_narrow() {
         );
     }
 
-    // 2. Wide / DE (daemon spawned with lang="de" so unavailable reason is German)
+    // 2. Wide / DE
     {
         let _daemon = DaemonProcessGuard::spawn(&kestic, &iso, &dbus.address, true, "de");
         ctx.run(
@@ -946,6 +946,22 @@ fn m2_gui_smoke_drive_unmounted_nested_and_full_config_en_de_narrow() {
             "narrow",
             "en",
             "target/smoke-artifacts/m2-full-config-narrow-en.png",
+            &[],
+        );
+    }
+    // 4. + 5. Mixed languages (variant A+, decision 2026-11-20): the DTOs carry only codes,
+    // so the GUI shows its own language whatever language the daemon runs in. The smoke
+    // checks the unavailable reason («drive not mounted» / «Laufwerk nicht eingehängt») in
+    // the GUI language.
+    for (daemon_lang, gui_lang) in [("de", "en"), ("en", "de")] {
+        let _daemon = DaemonProcessGuard::spawn(&kestic, &iso, &dbus.address, true, daemon_lang);
+        ctx.run(
+            "m2-drive-unmounted-nested-and-full-config",
+            "wide",
+            gui_lang,
+            &format!(
+                "target/smoke-artifacts/m2-full-config-wide-{gui_lang}-daemon-{daemon_lang}.png"
+            ),
             &[],
         );
     }

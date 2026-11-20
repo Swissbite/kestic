@@ -155,7 +155,10 @@ fn ac_m3_05_1_backups_on_same_destination_run_sequentially_second_is_queued() {
                 // (b) the other backup waits in the destination queue.
                 let queued =
                     wait_for_state(client, Duration::from_secs(10), "second queued", |s| {
-                        backup_summary(s, second).pending_primary_code.as_deref() == Some("queue")
+                        backup_summary(s, second)
+                            .pending_primary_code
+                            .map(|c| c.as_str())
+                            == Some("queue")
                     });
                 assert!(
                     backup_summary(&queued, first).active_run.is_some(),
@@ -272,7 +275,10 @@ fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
                 // (b) Beta becomes due (12:30) while maintenance runs: it must queue, not start.
                 rig.clock.set(SUNDAY_1240);
                 wait_for_state(client, Duration::from_secs(10), "beta queued", |s| {
-                    backup_summary(s, &beta_id).pending_primary_code.as_deref() == Some("queue")
+                    backup_summary(s, &beta_id)
+                        .pending_primary_code
+                        .map(|c| c.as_str())
+                        == Some("queue")
                 });
                 settle();
                 let during_maintenance = client.get_state().expect("GetState");
@@ -493,7 +499,7 @@ fn ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection() {
                     rig.wrapper.entries()
                 );
                 assert_eq!(
-                    d.maintenance_pending_reason.as_deref(),
+                    d.maintenance_pending_reason.map(|c| c.as_str()),
                     Some("on_battery"),
                     "{}: (a) maintenance visibly waits (ausstehend) for AC power",
                     variant.label
@@ -517,7 +523,7 @@ fn ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection() {
                     variant.label
                 );
                 assert_eq!(
-                    d.maintenance_pending_reason.as_deref(),
+                    d.maintenance_pending_reason.map(|c| c.as_str()),
                     Some("metered"),
                     "{}: (a) maintenance visibly waits (ausstehend) for an unmetered connection",
                     variant.label

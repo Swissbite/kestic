@@ -62,8 +62,7 @@ fn unreachable_destination() -> BackupAvailabilityDto {
         source_available: true,
         destination_available: false,
         available: false,
-        blocked_reason: Some(REASON_DESTINATION_UNREACHABLE.to_string()),
-        reason_text: None,
+        blocked_reason: Some(BlockedReason::DestinationUnreachable),
         source_status: None,
     }
 }

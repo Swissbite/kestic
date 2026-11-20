@@ -591,9 +591,13 @@ fn m3_review_network_switch_clears_network_backoff_but_preserves_lock_backoff() 
             // Trigger 12:00:05 CET -> RestNetBk enters Network backoff, LocalLockBk enters Lock backoff.
             clock.set(datetime!(2026-12-01 11:00:05 UTC));
             wait_for_state(&client, Duration::from_secs(15), "both in backoff", |s| {
-                backup_summary(s, &rest_id).pending_primary_code.as_deref()
+                backup_summary(s, &rest_id)
+                    .pending_primary_code
+                    .map(|c| c.as_str())
                     == Some("destination_unreachable")
-                    && backup_summary(s, &local_id).pending_primary_code.as_deref()
+                    && backup_summary(s, &local_id)
+                        .pending_primary_code
+                        .map(|c| c.as_str())
                         == Some("backoff")
             });
 
@@ -632,7 +636,7 @@ fn m3_review_network_switch_clears_network_backoff_but_preserves_lock_backoff() 
             assert_eq!(
                 backup_summary(&s_after, &local_id)
                     .pending_primary_code
-                    .as_deref(),
+                    .map(|c| c.as_str()),
                 Some("backoff")
             );
 
@@ -708,7 +712,9 @@ fn m3_review_mid_run_network_drop_is_pending_not_permanent_error() {
                 Duration::from_secs(15),
                 "mid-run drop pending",
                 |s| {
-                    backup_summary(s, &bid).pending_primary_code.as_deref()
+                    backup_summary(s, &bid)
+                        .pending_primary_code
+                        .map(|c| c.as_str())
                         == Some("destination_unreachable")
                 },
             );
@@ -2410,7 +2416,9 @@ fn m3_review3_hung_source_stat_releases_destination_claim() {
                 Duration::from_secs(25),
                 "hung source -> pending source unavailable",
                 |s| {
-                    backup_summary(s, &drive_id).pending_primary_code.as_deref()
+                    backup_summary(s, &drive_id)
+                        .pending_primary_code
+                        .map(|c| c.as_str())
                         == Some("source_unavailable")
                 },
             );
@@ -2579,7 +2587,7 @@ fn m3_review3_state_dtos_carry_stable_codes() {
                     .is_some_and(|r| r.status == RunStatus::Error)
             });
             let pw = backup_summary(&s_err, &pw_id);
-            assert_eq!(pw.error_kind.as_deref(), Some("wrong_password"));
+            assert_eq!(pw.error_kind.map(|c| c.as_str()), Some("wrong_password"));
             assert_eq!(pw.error_exit_code, Some(12));
             assert!(
                 pw.error_detail
@@ -2597,7 +2605,7 @@ fn m3_review3_state_dtos_carry_stable_codes() {
                 backup_summary(&s_avail, &missing_id)
                     .availability
                     .source_status
-                    .as_deref(),
+                    .map(|c| c.as_str()),
                 Some("path_missing")
             );
 
@@ -2608,8 +2616,11 @@ fn m3_review3_state_dtos_carry_stable_codes() {
                 .iter()
                 .find(|sk| sk.backup_id == pw_id.as_str())
                 .expect("pw backup skipped");
-            assert_eq!(skipped_pw.reason, "permanent_error");
-            assert_eq!(skipped_pw.error_kind.as_deref(), Some("wrong_password"));
+            assert_eq!(skipped_pw.reason.as_str(), "permanent_error");
+            assert_eq!(
+                skipped_pw.error_kind.map(|c| c.as_str()),
+                Some("wrong_password")
+            );
 
             // (d) Scheduled Exit 11 -> pending backoff with codes and retry time (+5 min).
             fs::write(markers.join("fail_backup"), b"11").expect("lock marker");
@@ -2622,11 +2633,19 @@ fn m3_review3_state_dtos_carry_stable_codes() {
             let lock_id = BackupId::parse(client.add_backup(&lock_bk).expect("add")).expect("id");
             clock.set(datetime!(2026-12-01 11:00:05 UTC));
             let s_backoff = wait_for_state(&client, Duration::from_secs(15), "lock backoff", |s| {
-                backup_summary(s, &lock_id).pending_primary_code.as_deref() == Some("backoff")
+                backup_summary(s, &lock_id)
+                    .pending_primary_code
+                    .map(|c| c.as_str())
+                    == Some("backoff")
             });
             let lb = backup_summary(&s_backoff, &lock_id);
-            assert_eq!(lb.pending_reason_codes, vec!["backoff".to_string()]);
-            assert_eq!(lb.pending_reasons.len(), lb.pending_reason_codes.len());
+            assert_eq!(
+                lb.pending_reason_codes
+                    .iter()
+                    .map(|c| c.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["backoff"]
+            );
             assert_eq!(
                 lb.pending_retry_at_unix,
                 Some(datetime!(2026-12-01 11:05:05 UTC).unix_timestamp())
@@ -2688,8 +2707,15 @@ fn m3_review3_running_maintenance_shows_maintenance_wording() {
             let running = wait_for_state(&client, Duration::from_secs(15), "maintenance", |s| {
                 dest_summary(s, &dest.id).maintenance_running
             });
+            let active = running.overall.active_run_info();
             assert_eq!(
-                running.overall.headline, "Maintaining MaintZiel",
+                kestic_core::messages::overall_headline(
+                    &running.overall.counts(running.backups.len()),
+                    active.as_ref(),
+                    None,
+                )
+                .english(),
+                "Maintaining MaintZiel",
                 "C3: overall headline uses maintenance wording"
             );
             let items = fetch_dbusmenu_items(client.connection(), &sni_service);

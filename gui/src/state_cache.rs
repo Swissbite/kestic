@@ -27,12 +27,30 @@ pub fn i18np(singular: &str, plural: &str, n: usize, args: &[&str]) -> String {
     crate::smoke::ffi::i18np_subs(singular, plural, i64::try_from(n).unwrap_or(i64::MAX), args)
 }
 
-use crate::overall_text::{
-    localized_availability_reason, localized_error_kind, localized_skip_error_kind,
-    localized_source_status,
-};
+/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_core::messages`) in the
+/// GUI language with KI18n.
+pub fn tr(message: &Message) -> String {
+    if message.args.is_empty() {
+        i18n(message.msgid).to_string()
+    } else {
+        let args: Vec<&str> = message.args.iter().map(String::as_str).collect();
+        i18n(message.msgid).subs(&args)
+    }
+}
+
+/// Translates a [`UiText`]: messages via [`tr`], raw detail unchanged.
+pub fn tr_text(text: &UiText) -> String {
+    match text {
+        UiText::Message(m) => tr(m),
+        UiText::Raw(raw) => raw.clone(),
+    }
+}
+
+use crate::overall_text::localized_availability_reason;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
+use kestic_core::codes::{BlockedReason, ConnectionTestCode, PendingReasonCode};
+use kestic_core::messages::{Message, UiText, unmet_conditions_message};
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeRules, KeepCount,
     MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPolicy,
@@ -42,9 +60,8 @@ use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_s
 use kestic_daemon::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSnapshotsDto, BackupSummaryDto,
     ConnectionTestResultDto, DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME,
-    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind,
-    REASON_CONDITION_NOT_MET, REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
-    RunDetailDto, StartAllResultDto,
+    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto,
+    StartAllResultDto,
 };
 use std::collections::HashMap;
 use std::env;
@@ -432,8 +449,8 @@ pub fn test_destination_connection(
         Err(err) => {
             return ConnectionTestResultDto {
                 ok: false,
-                error_kind: Some("invalid_input".to_string()),
-                message: if err.is_empty() {
+                error_kind: Some(ConnectionTestCode::InvalidInput),
+                detail: if err.is_empty() {
                     i18n("Please fill in all required fields.").to_string()
                 } else {
                     err
@@ -446,8 +463,8 @@ pub fn test_destination_connection(
         Err(err) => {
             return ConnectionTestResultDto {
                 ok: false,
-                error_kind: Some("daemon_unreachable".to_string()),
-                message: err,
+                error_kind: Some(ConnectionTestCode::DaemonUnreachable),
+                detail: err,
             };
         }
     };
@@ -455,8 +472,8 @@ pub fn test_destination_connection(
         Ok(res) => res,
         Err(err) => ConnectionTestResultDto {
             ok: false,
-            error_kind: Some("internal".to_string()),
-            message: err,
+            error_kind: Some(ConnectionTestCode::Internal),
+            detail: err,
         },
     }
 }
@@ -1020,33 +1037,14 @@ pub fn format_pause_line(
     }
 }
 
-/// Waiting reason in the GUI locale, derived from the daemon's reason code; the backoff
-/// reason uses `retry_at_unix` (`pending_retry_at_unix`), the daemon text is only the fallback.
-pub fn localized_pending_reason(
-    code: Option<&str>,
-    daemon_text: &str,
+/// Waiting reason in the GUI locale from the daemon's reason code; the backoff reason uses
+/// `retry_at_unix` (`pending_retry_at_unix`).
+pub fn pending_reason_line(
+    code: PendingReasonCode,
     retry_at_unix: Option<i64>,
     now: OffsetDateTime,
 ) -> String {
-    match code {
-        Some("backoff") => {
-            let hint = format_slot_timestamp(retry_at_unix, now);
-            let hint = if hint.is_empty() {
-                "–".to_string()
-            } else {
-                hint
-            };
-            i18n("Waiting: next attempt at %1").subs(&[&hint])
-        }
-        Some("source_unavailable") => i18n("Waiting: source unavailable").to_string(),
-        Some("destination_unreachable") => i18n("Waiting: destination unreachable").to_string(),
-        Some("on_battery") => i18n("Waiting: AC power").to_string(),
-        Some("no_network") => i18n("Waiting: network").to_string(),
-        Some("metered") => i18n("Waiting: unmetered connection").to_string(),
-        Some("wrong_network") => i18n("Waiting: allowed network").to_string(),
-        Some("queue") => i18n("Waiting: another run on this destination").to_string(),
-        _ => daemon_text.to_string(),
-    }
+    tr(&code.waiting_message(&format_slot_timestamp(retry_at_unix, now)))
 }
 
 /// Cause of the last run's error/warning of `summary` in the GUI locale (`error_kind`).
@@ -1055,17 +1053,25 @@ pub fn localized_last_error(summary: &BackupSummaryDto) -> String {
         .last_run
         .as_ref()
         .is_some_and(|r| r.status == RunStatus::Warning);
-    let text = localized_error_kind(
-        summary.error_kind.as_deref(),
-        summary.error_exit_code,
-        is_warning,
-        summary.error_summary.as_deref(),
-    );
-    if text.is_empty() && !is_warning {
-        i18n("Backup failed").to_string()
-    } else {
-        text
+    match summary.error_kind {
+        Some(kind) => tr(&kind.message(summary.error_exit_code, is_warning)),
+        None if is_warning => String::new(),
+        None => i18n("Backup failed").to_string(),
     }
+}
+
+/// Unmet run conditions of `summary` as «Condition not met: …» in the GUI locale.
+pub fn localized_unmet_conditions(summary: &BackupSummaryDto) -> Option<String> {
+    if summary.unmet_run_conditions.is_empty() {
+        return None;
+    }
+    let allowed = &summary.backup.run_conditions.allowed_networks;
+    let parts: Vec<String> = summary
+        .unmet_run_conditions
+        .iter()
+        .map(|code| tr(&code.condition_message(summary.battery_percent, allowed)))
+        .collect();
+    Some(tr(&unmet_conditions_message(&parts.join(", "))))
 }
 
 /// Status line of a backup whose source or destination is unavailable.
@@ -1083,15 +1089,10 @@ fn unavailable_status(
         ]);
         return (text, "state-information".to_string(), "text".to_string());
     }
-    let reason_line = match availability.blocked_reason.as_deref() {
-        Some(REASON_SOURCE_UNAVAILABLE) => {
-            localized_source_status(availability.source_status.as_deref())
-        }
-        Some(REASON_DESTINATION_UNREACHABLE) => {
-            i18n("Waiting: destination unreachable").to_string()
-        }
-        _ => i18n("Waiting: unavailable").to_string(),
-    };
+    let reason_line = tr(&BlockedReason::waiting_message(
+        availability.blocked_reason,
+        availability.source_status,
+    ));
     (reason_line, "chronometer".to_string(), "text".to_string())
 }
 
@@ -1134,16 +1135,9 @@ pub fn format_backup_status(
         );
     }
 
-    if let Some(primary) = &summary.pending_primary_reason
-        && !primary.trim().is_empty()
-    {
+    if let Some(code) = summary.pending_primary_code {
         return (
-            localized_pending_reason(
-                summary.pending_primary_code.as_deref(),
-                primary,
-                summary.pending_retry_at_unix,
-                now,
-            ),
+            pending_reason_line(code, summary.pending_retry_at_unix, now),
             "chronometer".to_string(),
             "text".to_string(),
         );
@@ -1362,14 +1356,8 @@ pub fn format_run_kind_name(run: &Run, backup_name: Option<&str>, dest_name: &st
     }
 }
 
-pub fn localized_manual_block_message(backup_name: &str, reason: &str) -> String {
-    if reason == REASON_SOURCE_UNAVAILABLE {
-        i18n("Cannot back up '%1': source is unavailable.").subs(&[backup_name])
-    } else if reason == REASON_CONDITION_NOT_MET {
-        i18n("Cannot back up '%1': run conditions are not met.").subs(&[backup_name])
-    } else {
-        i18n("Cannot back up '%1': destination is unreachable.").subs(&[backup_name])
-    }
+pub fn localized_manual_block_message(backup_name: &str, reason: BlockedReason) -> String {
+    tr(&reason.manual_block_message(backup_name))
 }
 
 pub fn localized_condition_override_message(backup_name: &str, unmet_text: Option<&str>) -> String {
@@ -1382,17 +1370,13 @@ pub fn localized_condition_override_message(backup_name: &str, unmet_text: Optio
     }
 }
 
-/// Localized reason for a skipped backup of «Back Up All Now» (FR-13b); the code is
-/// translated in the GUI locale, the daemon text is only the fallback for unknown codes.
+/// Localized reason for a skipped backup of «Back Up All Now» (FR-13b).
 fn localized_skip_reason(skipped: &kestic_daemon::dbus_api::SkippedBackupDto) -> String {
-    match skipped.reason.as_str() {
-        "permanent_error" => i18n("permanent error, fix required").to_string(),
-        REASON_SOURCE_UNAVAILABLE => i18n("source unavailable").to_string(),
-        REASON_DESTINATION_UNREACHABLE => i18n("destination unreachable").to_string(),
-        REASON_CONDITION_NOT_MET => i18n("run conditions not met").to_string(),
-        "error" => localized_skip_error_kind(skipped.error_kind.as_deref(), &skipped.reason_text),
-        _ => skipped.reason_text.clone(),
-    }
+    tr_text(
+        &skipped
+            .reason
+            .text(skipped.error_kind, skipped.error_detail.as_deref()),
+    )
 }
 
 pub fn localized_start_all_summary(res: &StartAllResultDto) -> Option<String> {

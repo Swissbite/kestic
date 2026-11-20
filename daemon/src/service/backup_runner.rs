@@ -7,17 +7,17 @@ use super::availability::{
     DestinationClaimGuard, check_source_status_bounded, drain_queued_backups_async,
     unlockable_stale_lock_count,
 };
-use super::error::{KesticServiceErr, localized_backup_run_error, localized_source_check_reason};
+use super::error::{
+    KesticServiceErr, localized_backup_run_error, localized_failure_summary,
+    localized_source_check_reason,
+};
 use super::run_errors::{run_blocks_schedule, unreadable_items_from_lines};
 use super::state::{ActiveRunEntry, DaemonCore, probe_before_run};
-use crate::dbus_api::{
-    ActiveRunProgressDto, DestinationAvailabilityDto, REASON_CONDITION_NOT_MET,
-    REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
-};
+use crate::dbus_api::{ActiveRunProgressDto, DestinationAvailabilityDto};
 use crate::dbus_server::{
     emit_manual_run_blocked, emit_run_progress, emit_run_updated, emit_status_changed,
 };
-use crate::i18n::{i18n, localized_failure_summary};
+use crate::i18n::{i18n, tr};
 use crate::inhibit::PortalInhibitGuard;
 use crate::job_view::{CAPABILITY_KILLABLE, JobProgress, JobViewHandle};
 use crate::monitors::{LogindSleepInhibitor, MonitorBusConfig};
@@ -30,6 +30,7 @@ use kestic_core::backup::{
     is_forget_lock_failure,
 };
 use kestic_core::clock::Clock;
+use kestic_core::codes::{BlockedReason, ErrorKind};
 use kestic_core::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
 };
@@ -194,14 +195,14 @@ fn handle_backup_precheck_failure(
     let now = guard.clock.now_utc();
     let source_ok = source_status.is_ok();
     let reason = if !source_ok {
-        REASON_SOURCE_UNAVAILABLE
+        BlockedReason::SourceUnavailable
     } else {
-        REASON_DESTINATION_UNREACHABLE
+        BlockedReason::DestinationUnreachable
     };
     let source_body = if !source_ok {
         localized_source_check_reason(source_status)
     } else {
-        i18n("Destination unreachable").to_string()
+        tr(&ErrorKind::DestinationUnreachable.message(None, false))
     };
 
     if is_scheduled {
@@ -236,7 +237,7 @@ fn handle_backup_precheck_failure(
             emit_status_changed(conn, &state_dto);
         }
         return if !source_ok {
-            KesticServiceErr::ManualRunBlocked(reason.to_string())
+            KesticServiceErr::ManualRunBlocked(reason.as_str().to_string())
         } else {
             KesticServiceErr::DestinationUnreachable(dest_res.unwrap_err().to_string())
         };
@@ -251,14 +252,14 @@ fn handle_backup_precheck_failure(
         tray.set_full_state(tray_state);
     }
     if let Some(conn) = &conn_opt {
-        emit_manual_run_blocked(conn, &backup.id, reason);
+        emit_manual_run_blocked(conn, &backup.id, reason.as_str());
         emit_status_changed(conn, &state_dto);
     }
     if !window_active {
         let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
         let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &source_body);
     }
-    KesticServiceErr::ManualRunBlocked(reason.to_string())
+    KesticServiceErr::ManualRunBlocked(reason.as_str().to_string())
 }
 
 fn handle_backup_unmet_conditions(
@@ -268,11 +269,7 @@ fn handle_backup_unmet_conditions(
     dest: &Destination,
     unmet_conditions: &[UnmetPrecondition],
 ) -> KesticServiceErr {
-    let parts: Vec<String> = unmet_conditions
-        .iter()
-        .map(|c| guard.format_unmet_condition_item(c))
-        .collect();
-    let body = i18n("Condition not met: %1").subs(&[&parts.join(", ")]);
+    let body = guard.localized_unmet_conditions(unmet_conditions);
     guard.claiming_destinations.remove(&dest.id);
     claim_guard.disarm();
     let window_active = guard.window_active;
@@ -282,14 +279,14 @@ fn handle_backup_unmet_conditions(
         tray.set_full_state(tray_state);
     }
     if let Some(conn) = &conn_opt {
-        emit_manual_run_blocked(conn, &backup.id, REASON_CONDITION_NOT_MET);
+        emit_manual_run_blocked(conn, &backup.id, BlockedReason::ConditionNotMet.as_str());
         emit_status_changed(conn, &state_dto);
     }
     if !window_active {
         let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
         let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &body);
     }
-    KesticServiceErr::ManualRunBlocked(REASON_CONDITION_NOT_MET.to_string())
+    KesticServiceErr::ManualRunBlocked(BlockedReason::ConditionNotMet.as_str().to_string())
 }
 
 struct LaunchedBackupRun {

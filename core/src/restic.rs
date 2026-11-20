@@ -10,7 +10,7 @@ use crate::model::{
 };
 use crate::provider::ResolvedRestic;
 use crate::secrets::{SecretError, SecretStore, SecretValue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -33,13 +33,39 @@ pub struct ResticRuntime<'a> {
     pub cache_dir: Option<&'a Path>,
 }
 
-/// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`); serialised as the
+/// `error_action` code (`update_stored_password`, `add_to_excludes`, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RecoveryAction {
     UpdateStoredPassword,
     AddToExcludes,
     CheckResticSource,
     UnlockRepository,
+}
+
+impl RecoveryAction {
+    pub const ALL: [Self; 4] = [
+        Self::UpdateStoredPassword,
+        Self::AddToExcludes,
+        Self::CheckResticSource,
+        Self::UnlockRepository,
+    ];
+
+    /// Code string as exposed to QML (`errorAction`), equal to the serde name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UpdateStoredPassword => "update_stored_password",
+            Self::AddToExcludes => "add_to_excludes",
+            Self::CheckResticSource => "check_restic_source",
+            Self::UnlockRepository => "unlock_repository",
+        }
+    }
+
+    /// Parses an `error_action` code; `None` for unknown codes.
+    pub fn parse(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.as_str() == code)
+    }
 }
 
 /// Classified restic outcome (`AC-M1-03-2`, `FR-37`).
@@ -82,42 +108,16 @@ impl ResticFailureKind {
 
     /// Stable, locale-independent error-kind code used in D-Bus DTOs (`error_kind`).
     ///
-    /// The code set is deliberately small (`wrong_password`, `repo_missing`, `locked`,
-    /// `destination_unreachable`, `auth_failed`, `incomplete_snapshot`, `cancelled`, `unknown`);
-    /// DNS failures count as `destination_unreachable`, everything unrecognised as `unknown`.
-    /// The raw restic/daemon text is carried separately as detail.
-    pub fn error_code(&self) -> &'static str {
-        match self {
-            Self::WrongPassword => "wrong_password",
-            Self::RepositoryMissing => "repo_missing",
-            Self::RepositoryLocked => "locked",
-            Self::DestinationUnreachable | Self::DnsResolutionFailed => "destination_unreachable",
-            Self::BackendAuthFailed => "auth_failed",
-            Self::IncompleteSnapshot { .. } => "incomplete_snapshot",
-            Self::Cancelled => "cancelled",
-            Self::None | Self::GenericFailure | Self::Unknown { .. } => "unknown",
-        }
+    /// DNS failures count as `destination_unreachable`, everything unrecognised as `unknown`;
+    /// the raw restic/daemon text is carried separately as detail.
+    pub fn error_kind(&self) -> crate::codes::ErrorKind {
+        crate::codes::ErrorKind::from(self)
     }
 
-    /// Canonical English summary string (`NFR-06`; localized in daemon/GUI via gettext).
+    /// Canonical English summary (`NFR-06`); the translatable form is
+    /// [`ResticFailureKind::summary_message`].
     pub fn default_summary(&self) -> String {
-        match self {
-            Self::None => "Completed".to_string(),
-            Self::Cancelled => "Cancelled by user".to_string(),
-            Self::IncompleteSnapshot { .. } => {
-                "Snapshot incomplete: some files could not be read".to_string()
-            }
-            Self::DestinationUnreachable => "Destination unreachable".to_string(),
-            Self::DnsResolutionFailed => {
-                "Destination hostname could not be resolved (DNS)".to_string()
-            }
-            Self::BackendAuthFailed => "Authentication at destination failed".to_string(),
-            Self::GenericFailure => "Backup command failed".to_string(),
-            Self::RepositoryMissing => "Repository is missing".to_string(),
-            Self::RepositoryLocked => "Repository is locked".to_string(),
-            Self::WrongPassword => "Stored password does not match".to_string(),
-            Self::Unknown { exit_code } => format!("Unknown error (exit {exit_code})"),
-        }
+        self.summary_message().english()
     }
 }
 

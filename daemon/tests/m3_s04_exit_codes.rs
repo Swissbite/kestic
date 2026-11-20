@@ -138,7 +138,9 @@ fn ac_m3_04_4_exclusive_lock_exit_11_backoff_5_15_60_without_notification() {
                 let state = client.get_state().expect("GetState");
                 // (a) `ausstehend` with the backoff reason, the backup ended with Exit 11.
                 assert_eq!(
-                    backup_summary(&state, bid).pending_primary_code.as_deref(),
+                    backup_summary(&state, bid)
+                        .pending_primary_code
+                        .map(|c| c.as_str()),
                     Some("backoff"),
                     "{}: (a)",
                     variant.label

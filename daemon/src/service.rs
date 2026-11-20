@@ -30,7 +30,7 @@ pub(crate) use destinations::{
     add_destination_unlocked, list_backup_snapshots_unlocked, test_destination_connection_unlocked,
     update_destination_password_unlocked, update_destination_unlocked,
 };
-pub use error::{KesticServiceErr, localized_action_title};
+pub use error::KesticServiceErr;
 pub use maintenance::{
     run_destination_maintenance_async, run_destination_maintenance_with_options,
     start_all_backups_async,

@@ -471,16 +471,19 @@ impl qobject::KesticApp {
             .set_selected_run_status_color(QString::from(status_color));
         self.as_mut()
             .set_selected_run_stats_summary(QString::from(&stats_summary));
-        let error_summary = crate::overall_text::localized_error_kind(
-            detail.error_kind.as_deref(),
-            detail.error_exit_code,
-            detail.run.status == kestic_core::model::RunStatus::Warning,
-            detail.error_summary.as_deref(),
-        );
+        let error_summary = detail
+            .error_kind
+            .map(|kind| {
+                crate::state_cache::tr(&kind.message(
+                    detail.error_exit_code,
+                    detail.run.status == kestic_core::model::RunStatus::Warning,
+                ))
+            })
+            .unwrap_or_default();
         self.as_mut()
             .set_selected_run_error_summary(QString::from(&error_summary));
         self.as_mut().set_selected_run_error_action(QString::from(
-            detail.error_action.as_deref().unwrap_or(""),
+            detail.error_action.map(|a| a.as_str()).unwrap_or(""),
         ));
         self.as_mut().set_selected_run_error_raw(QString::from(
             detail.error_raw_detail.as_deref().unwrap_or(""),
@@ -527,13 +530,11 @@ impl qobject::KesticApp {
     }
 
     pub fn recovery_action_label(&self, action_code: &QString) -> QString {
-        match action_code.to_string().as_str() {
-            "update_stored_password" => i18n("Update Saved Password…"),
-            "add_to_excludes" => i18n("Add to Exclude Rules…"),
-            "check_restic_source" => i18n("Configure restic Source…"),
-            "unlock_repository" => i18n("Release Lock…"),
-            _ => i18n("Retry"),
-        }
+        let label = match kestic_core::restic::RecoveryAction::parse(&action_code.to_string()) {
+            Some(action) => crate::state_cache::tr(&action.label_message()),
+            None => i18n("Retry").to_string(),
+        };
+        QString::from(&label)
     }
 
     pub fn list_known_networks_json(&self) -> QString {

@@ -3,14 +3,13 @@
 
 //! Backup CRUD, run details, and source/exclude helpers.
 
-use super::error::{KesticServiceErr, action_code, map_config_err};
-use super::run_errors::{
-    ERROR_KIND_RETENTION_PENDING, error_run_kind_code, unreadable_items_from_lines,
-};
+use super::error::{KesticServiceErr, map_config_err};
+use super::run_errors::{error_run_kind, unreadable_items_from_lines};
 use super::state::DaemonCore;
 use crate::dbus_api::{ExcludeRulePreviewDto, RunDetailDto};
-use crate::i18n::{i18n, localized_failure_summary};
+use crate::i18n::i18n;
 use kestic_core::backup::{exclude_file_path, write_exclude_file};
+use kestic_core::codes::ErrorKind;
 use kestic_core::config::ConfigError;
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, ExcludeLintWarning, ExcludePathTestResult,
@@ -395,7 +394,6 @@ pub(crate) fn get_run_detail_unlocked(
     let transparent_commands = build_transparent_commands(&snap);
     let run = snap.run;
 
-    let mut error_summary = None;
     let mut error_action = None;
     let mut error_kind = None;
     let mut error_raw_detail = run.summary_message.clone();
@@ -413,22 +411,17 @@ pub(crate) fn get_run_detail_unlocked(
                 unreadable_files.clone(),
                 "",
             );
-            error_summary = Some(localized_failure_summary(&pres.kind));
-            error_action = pres.action.map(|a| action_code(a).to_string());
+            error_action = pres.action;
             error_kind = Some(if run.status == RunStatus::Error {
-                error_run_kind_code(&run).to_string()
+                error_run_kind(&run)
             } else {
-                "incomplete_snapshot".to_string()
+                ErrorKind::IncompleteSnapshot
             });
             if error_raw_detail.is_none() {
                 error_raw_detail = pres.raw_detail;
             }
         } else {
-            error_summary = run
-                .summary_message
-                .clone()
-                .or_else(|| Some(i18n("Backed up, retention not executed").into()));
-            error_kind = Some(ERROR_KIND_RETENTION_PENDING.to_string());
+            error_kind = Some(ErrorKind::RetentionPending);
         }
     }
 
@@ -439,7 +432,6 @@ pub(crate) fn get_run_detail_unlocked(
         destination_name: snap.destination_name,
         log_lines,
         transparent_commands,
-        error_summary,
         error_action,
         error_raw_detail,
         unreadable_files,

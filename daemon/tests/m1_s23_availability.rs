@@ -9,12 +9,11 @@ use common::{
     wait_for_sni_service,
 };
 use kestic_core::clock::FakeClock;
+use kestic_core::codes::BlockedReason;
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{Backup, Destination, DestinationKind, ResticProvider, Source};
 use kestic_core::secrets::FileSecretStore;
-use kestic_daemon::dbus_api::{
-    KESTIC_BUS_NAME, KesticClient, REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
-};
+use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, KesticClient};
 use kestic_daemon::service::{DaemonCore, DaemonOutcome, DaemonRunConfig, run_daemon};
 use std::fs;
 use std::sync::Arc;
@@ -103,8 +102,8 @@ fn ac_m1_23_3_daemon_core_availability_cache_respects_60s_fake_clock_ttl() {
             assert!(!snap3.destinations[0].reachable);
             assert!(!snap3.backups[0].available);
             assert_eq!(
-                snap3.backups[0].blocked_reason.as_deref(),
-                Some(REASON_DESTINATION_UNREACHABLE)
+                snap3.backups[0].blocked_reason.map(|c| c.as_str()),
+                Some(BlockedReason::DestinationUnreachable.as_str())
             );
 
             // Restart server on the same port: within 60 s stays cached unreachable; after >60 s recovers!
@@ -203,8 +202,8 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
             assert!(!avail_down.destinations[0].reachable);
             assert!(!avail_down.backups[0].available);
             assert_eq!(
-                avail_down.backups[0].blocked_reason.as_deref(),
-                Some(REASON_DESTINATION_UNREACHABLE)
+                avail_down.backups[0].blocked_reason.map(|c| c.as_str()),
+                Some(BlockedReason::DestinationUnreachable.as_str())
             );
 
             let menu_down = fetch_dbusmenu_items(&client_conn, &sni_svc);
@@ -264,8 +263,8 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
             assert!(!avail_nosrc.backups[0].source_available);
             assert!(!avail_nosrc.backups[0].available);
             assert_eq!(
-                avail_nosrc.backups[0].blocked_reason.as_deref(),
-                Some(REASON_SOURCE_UNAVAILABLE)
+                avail_nosrc.backups[0].blocked_reason.map(|c| c.as_str()),
+                Some(BlockedReason::SourceUnavailable.as_str())
             );
 
             let menu_nosrc = fetch_dbusmenu_items(&client_conn, &sni_svc);

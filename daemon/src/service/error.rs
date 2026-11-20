@@ -4,13 +4,19 @@
 //! Service error types, error mappers, and localized failure/action helpers.
 
 use crate::dbus_api::KesticDbusError;
-use crate::i18n::{i18n, localized_failure_summary, localized_recovery_action_label};
+use crate::i18n::tr;
 use kestic_core::backup::BackupRunError;
+use kestic_core::codes::{BlockedReason, ErrorKind, SourceStatus};
 use kestic_core::config::ConfigError;
 use kestic_core::destination::{DestinationError, DestinationSetupMode};
 use kestic_core::mount::SourceCheckResult;
 use kestic_core::provider::ResticProviderError;
-use kestic_core::restic::{RecoveryAction, ResticFailureKind, classify_exit};
+use kestic_core::restic::{ResticFailureKind, classify_exit};
+
+/// Daemon-language summary of a classified restic failure (notifications, run history).
+pub(crate) fn localized_failure_summary(kind: &ResticFailureKind) -> String {
+    tr(&kind.summary_message())
+}
 use kestic_core::secrets::SecretError;
 
 /// Internal service error mapped to `net.daester.Kestic.Error.*` D-Bus errors.
@@ -92,7 +98,7 @@ pub(super) fn map_secret_err(err: SecretError) -> KesticServiceErr {
 pub(super) fn map_destination_err(err: DestinationError) -> KesticServiceErr {
     match err {
         DestinationError::WrongPassword => {
-            KesticServiceErr::WrongPassword(i18n("Stored password does not match").into())
+            KesticServiceErr::WrongPassword(tr(&ErrorKind::WrongPassword.message(None, false)))
         }
         DestinationError::AuthFailed(m) => KesticServiceErr::AuthFailed(m),
         DestinationError::Unreachable(m) => KesticServiceErr::DestinationUnreachable(m),
@@ -111,38 +117,29 @@ pub(super) fn parse_setup_mode(raw: &str) -> Result<DestinationSetupMode, Kestic
     }
 }
 
-/// Locale-independent source check code for `BackupAvailabilityDto::source_status`.
-pub(super) fn source_status_code(status: &SourceCheckResult) -> Option<&'static str> {
-    match status {
-        SourceCheckResult::Available => None,
-        SourceCheckResult::PathMissing(_) => Some("path_missing"),
-        SourceCheckResult::DriveNotMounted => Some("drive_not_mounted"),
-        SourceCheckResult::DriveMismatch => Some("drive_mismatch"),
-        SourceCheckResult::DriveEmpty => Some("drive_empty"),
-    }
-}
-
-/// Locale-independent error-kind code of a service error (`SkippedBackupDto::error_kind`).
-pub(super) fn service_error_kind_code(err: &KesticServiceErr) -> &'static str {
+/// Error kind of a service error (`SkippedBackupDto::error_kind`).
+pub(super) fn service_error_kind(err: &KesticServiceErr) -> ErrorKind {
     match err {
-        KesticServiceErr::SecretStoreLocked(_) => "secret_store_locked",
-        KesticServiceErr::ResticUnavailable(_) => "restic_unavailable",
-        KesticServiceErr::WrongPassword(_) => "wrong_password",
-        KesticServiceErr::AuthFailed(_) => "auth_failed",
-        KesticServiceErr::DestinationUnreachable(_) => "destination_unreachable",
-        _ => "unknown",
+        KesticServiceErr::SecretStoreLocked(_) => ErrorKind::SecretStoreLocked,
+        KesticServiceErr::ResticUnavailable(_) => ErrorKind::ResticUnavailable,
+        KesticServiceErr::WrongPassword(_) => ErrorKind::WrongPassword,
+        KesticServiceErr::AuthFailed(_) => ErrorKind::AuthFailed,
+        KesticServiceErr::DestinationUnreachable(_) => ErrorKind::DestinationUnreachable,
+        _ => ErrorKind::Unknown,
     }
 }
 
-pub(super) fn localized_source_check_reason(status: &SourceCheckResult) -> String {
-    match status {
-        SourceCheckResult::DriveNotMounted => i18n("Source unavailable: drive not mounted").into(),
-        SourceCheckResult::DriveMismatch => i18n("Source unavailable: different drive").into(),
-        SourceCheckResult::DriveEmpty => i18n("Source unavailable: source empty").into(),
-        SourceCheckResult::PathMissing(_) | SourceCheckResult::Available => {
-            i18n("Source unavailable").into()
-        }
+/// Blocked reason carried by a [`KesticServiceErr::ManualRunBlocked`] (its message is the code).
+pub(super) fn manual_run_blocked_reason(err: &KesticServiceErr) -> Option<BlockedReason> {
+    match err {
+        KesticServiceErr::ManualRunBlocked(code) => BlockedReason::parse(code),
+        _ => None,
     }
+}
+
+/// Daemon-language reason of an unavailable source (run history, notifications).
+pub(super) fn localized_source_check_reason(status: &SourceCheckResult) -> String {
+    tr(&SourceStatus::message(SourceStatus::from_check(status)))
 }
 
 pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
@@ -169,18 +166,4 @@ pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
         },
         other => other.to_string(),
     }
-}
-
-pub(super) fn action_code(action: RecoveryAction) -> &'static str {
-    match action {
-        RecoveryAction::UpdateStoredPassword => "update_stored_password",
-        RecoveryAction::AddToExcludes => "add_to_excludes",
-        RecoveryAction::CheckResticSource => "check_restic_source",
-        RecoveryAction::UnlockRepository => "unlock_repository",
-    }
-}
-
-/// Returns localized action label for recovery actions (compile-time check helper).
-pub fn localized_action_title(action: RecoveryAction) -> String {
-    localized_recovery_action_label(action)
 }

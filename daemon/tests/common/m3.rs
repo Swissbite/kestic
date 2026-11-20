@@ -211,7 +211,6 @@ where
                 .map(|b| (
                     &b.backup.name,
                     &b.pending_primary_code,
-                    &b.pending_reasons,
                     b.is_paused,
                     b.is_overdue,
                     b.has_error,
