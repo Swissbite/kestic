@@ -325,7 +325,7 @@ Kirigami.ScrollablePage {
         }
 
         Controls.Label {
-            text: i18n("If a condition is not met, manual backups ask before they start.")
+            text: i18n("If a condition is not met, Kestic asks before a manual backup starts.")
             opacity: 0.75
             wrapMode: Text.WordWrap
             Layout.fillWidth: true

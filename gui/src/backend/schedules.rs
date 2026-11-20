@@ -392,7 +392,7 @@ impl qobject::KesticApp {
             meta: String,
         }
 
-        let title = crate::state_cache::i18n("Run from %1")
+        let title = crate::state_cache::i18n("Run on %1")
             .subs(&[&format_datetime_display(detail.run.started_at)]);
         let (status_text, status_icon, status_color) =
             format_run_status(&detail.run.kind, detail.run.status);
@@ -434,7 +434,7 @@ impl qobject::KesticApp {
                     .commands
                     .get(idx)
                     .map(|c| {
-                        crate::state_cache::i18n("Exit %1 · %2")
+                        crate::state_cache::i18n("Exit code %1 · %2")
                             .subs(&[&c.exit_code.to_string(), &format_duration_ms(c.duration_ms)])
                     })
                     .unwrap_or_default();
@@ -576,10 +576,10 @@ impl qobject::KesticApp {
                         "start_date",
                         i18n("Enter a valid start date in YYYY-MM-DD format.").to_string(),
                     ),
-                    _ => ("", i18n("Invalid schedule configuration.").to_string()),
+                    _ => ("", i18n("Invalid schedule.").to_string()),
                 },
             },
-            Err(_) => ("", i18n("Invalid schedule configuration.").to_string()),
+            Err(_) => ("", i18n("Invalid schedule.").to_string()),
         };
         let payload = serde_json::json!({
             "field": field,

@@ -42,8 +42,8 @@ pub fn back_up_all_availability(state: &DaemonStateDto) -> (usize, String) {
         .count();
     let hint = if total > 0 && startable < total {
         i18np(
-            "Only %2 of %1 backup can be backed up now.",
-            "Only %2 of %1 backups can be backed up now.",
+            "Only %2 of %1 backup can start now.",
+            "Only %2 of %1 backups can start now.",
             total,
             &[&startable.to_string()],
         )

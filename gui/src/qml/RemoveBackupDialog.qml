@@ -37,7 +37,7 @@ Kirigami.Dialog {
     ColumnLayout {
         implicitWidth: Kirigami.Units.gridUnit * 22
         Controls.Label {
-            text: i18n("Snapshots will remain in the destination.")
+            text: i18n("Snapshots stay on the destination.")
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }

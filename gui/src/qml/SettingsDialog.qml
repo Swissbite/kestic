@@ -254,7 +254,7 @@ Kirigami.ApplicationWindow {
             Controls.Label {
                 Kirigami.FormData.label: i18n("Status:")
                 text: appBackend.daemon_reachable
-                    ? i18n("Running · starts with session")
+                    ? i18n("Running · starts when you log in")
                     : i18n("Not running")
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true

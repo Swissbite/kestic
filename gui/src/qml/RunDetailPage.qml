@@ -9,7 +9,7 @@ import org.kde.kirigami as Kirigami
 Kirigami.ScrollablePage {
     id: page
     objectName: "runDetailPage"
-    title: appBackend.selected_run_title !== "" ? appBackend.selected_run_title : i18n("Run Detail")
+    title: appBackend.selected_run_title !== "" ? appBackend.selected_run_title : i18n("Run Details")
 
     required property var rootWindow
     required property var appBackend

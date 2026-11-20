@@ -112,7 +112,7 @@ Kirigami.ScrollablePage {
             }
 
             Controls.Label {
-                text: i18n("Kestic regularly and securely encrypts and backs up your files to a drive, a server, or the cloud.")
+                text: i18n("Kestic encrypts your files and backs them up regularly to a drive, a server, or the cloud.")
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
                 Layout.alignment: Qt.AlignHCenter

@@ -20,7 +20,7 @@ msgstr "Abgeschlossen"
 
 #: daemon/src/i18n.rs:148
 msgid "Cancelled by user"
-msgstr "Durch Benutzer abgebrochen"
+msgstr "Vom Benutzer abgebrochen"
 
 #: daemon/src/i18n.rs:150
 msgid "Snapshot incomplete: some files could not be read"
@@ -37,7 +37,7 @@ msgid "Destination name not found (DNS)"
 msgstr "Name des Ziels nicht gefunden (DNS)"
 
 #: daemon/src/i18n.rs:156
-msgid "Authentication at destination failed"
+msgid "Login to the destination failed"
 msgstr "Anmeldung am Ziel fehlgeschlagen"
 
 #: daemon/src/i18n.rs:157
@@ -116,12 +116,12 @@ msgstr "Bedingung nicht erfüllt: %1"
 
 #: daemon/src/service/backup_runner.rs:607
 msgid "Backing up %1"
-msgstr "Sichere %1"
+msgstr "%1 wird gesichert"
 
 #: daemon/src/service/backup_runner.rs:809
 #: daemon/src/service/backup_runner.rs:915
 msgid "Interrupted by system sleep"
-msgstr "Durch Ruhezustand unterbrochen"
+msgstr "Vom Ruhezustand unterbrochen"
 
 #: daemon/src/service/backup_runner.rs:997
 msgid "Backed up; destination was locked, retention runs later"
@@ -143,7 +143,7 @@ msgstr "%1: Backup mit Warnung abgeschlossen"
 
 #: daemon/src/service/destinations.rs:438 gui/src/backend.rs:614
 msgid "This location is already used by destination '%1'."
-msgstr "Dieser Speicherort wird bereits vom Ziel '%1' verwendet."
+msgstr "Dieser Speicherort wird bereits vom Ziel «%1» verwendet."
 
 #: daemon/src/service/destinations.rs:485
 msgid ""
@@ -175,8 +175,8 @@ msgid "Source unavailable: different drive"
 msgstr "Quelle nicht verfügbar: anderes Laufwerk"
 
 #: daemon/src/service/error.rs:118
-msgid "Source unavailable: source empty"
-msgstr "Quelle nicht verfügbar: Quelle leer"
+msgid "Source unavailable: folder is empty"
+msgstr "Quelle nicht verfügbar: Ordner ist leer"
 
 #: daemon/src/service/error.rs:120 daemon/src/service/maintenance.rs:868
 msgid "Source unavailable"
@@ -237,7 +237,7 @@ msgstr "Pausiert seit %1"
 
 #: daemon/src/service/state.rs:433
 msgid "AC power (battery %1%)"
-msgstr "Netzstrom (Akku %1 %)"
+msgstr "Netzstrom (Akku %1%)"
 
 #: daemon/src/service/state.rs:435
 msgid "AC power"
@@ -521,7 +521,7 @@ msgid "Another run is already active on this destination."
 msgstr "Auf diesem Ziel ist bereits ein anderer Lauf aktiv."
 
 #: gui/src/backend/schedules.rs:390
-msgid "Run from %1"
+msgid "Run on %1"
 msgstr "Lauf vom %1"
 
 #: gui/src/backend/schedules.rs:410
@@ -537,8 +537,8 @@ msgid "No file statistics available for this run."
 msgstr "Keine Dateistatistiken für diesen Lauf verfügbar."
 
 #: gui/src/backend/schedules.rs:431
-msgid "Exit %1 · %2"
-msgstr "Exit %1 · %2"
+msgid "Exit code %1 · %2"
+msgstr "Beendet mit Code %1 · %2"
 
 #: gui/src/backend/schedules.rs:526 gui/src/qml/BackupSnapshotsPage.qml:64
 #: gui/src/qml/MainHeaderArea.qml:35 gui/src/qml/MainHeaderArea.qml:49
@@ -558,8 +558,8 @@ msgid "Enter a valid start date in YYYY-MM-DD format."
 msgstr "Gültiges Startdatum im Format JJJJ-MM-TT eingeben."
 
 #: gui/src/backend/schedules.rs:567 gui/src/backend/schedules.rs:570
-msgid "Invalid schedule configuration."
-msgstr "Ungültige Zeitplan-Konfiguration."
+msgid "Invalid schedule."
+msgstr "Ungültiger Zeitplan."
 
 #: gui/src/backend/state.rs:140
 msgid "The background service is not running. Scheduled backups will not run."
@@ -625,13 +625,13 @@ msgstr "Aktuelles Ziel (%1)"
 
 #: gui/src/models/snapshots_model.rs:76
 msgid "Earlier snapshots on '%1'"
-msgstr "Frühere Snapshots auf '%1'"
+msgstr "Frühere Snapshots auf «%1»"
 
 #: gui/src/overall_text.rs:102
-msgid "Only %2 of %1 backup can be backed up now."
-msgid_plural "Only %2 of %1 backups can be backed up now."
-msgstr[0] "Nur %2 von %1 Backup kann jetzt gesichert werden."
-msgstr[1] "Nur %2 von %1 Backups können jetzt gesichert werden."
+msgid "Only %2 of %1 backup can start now."
+msgid_plural "Only %2 of %1 backups can start now."
+msgstr[0] "Nur %2 von %1 Backup kann jetzt starten."
+msgstr[1] "Nur %2 von %1 Backups können jetzt starten."
 
 #: gui/src/state_cache.rs:232
 msgid "The background service did not start."
@@ -664,7 +664,7 @@ msgid "all snapshots"
 msgstr "alle Snapshots"
 
 #: gui/src/state_cache.rs:609
-msgid "%1 last"
+msgid "Last %1"
 msgstr "letzte %1"
 
 #: gui/src/state_cache.rs:613
@@ -736,8 +736,8 @@ msgid "trash"
 msgstr "Papierkorb"
 
 #: gui/src/state_cache.rs:673
-msgid "files > %1"
-msgstr "Dateien > %1"
+msgid "files over %1"
+msgstr "Dateien über %1"
 
 #: gui/src/state_cache.rs:677
 msgid "1 expert rule"
@@ -979,7 +979,7 @@ msgid "%1 at %2"
 msgstr "%1 %2"
 
 #: gui/src/state_cache.rs:929
-msgid "%1 %2 of month at %3"
+msgid "%1 %2 of the month at %3"
 msgstr "%1 %2 im Monat %3"
 
 #: gui/src/state_cache.rs:939
@@ -1080,7 +1080,7 @@ msgstr "Wartung %1"
 
 #: gui/src/state_cache.rs:1275
 msgid "Restore %1"
-msgstr "Wiederherstellen %1"
+msgstr "Wiederherstellung %1"
 
 #: gui/src/state_cache.rs:1276
 msgid "Metadata %1"
@@ -1088,27 +1088,27 @@ msgstr "Metadaten %1"
 
 #: gui/src/state_cache.rs:1282
 msgid "Cannot back up '%1': source is unavailable."
-msgstr "'%1' kann nicht gesichert werden: Quelle ist nicht verfügbar."
+msgstr "«%1» kann nicht gesichert werden: Quelle ist nicht verfügbar."
 
 #: gui/src/state_cache.rs:1284
 msgid "Cannot back up '%1': run conditions are not met."
-msgstr "'%1' kann nicht gesichert werden: Laufbedingungen sind nicht erfüllt."
+msgstr "«%1» kann nicht gesichert werden: Laufbedingungen sind nicht erfüllt."
 
 #: gui/src/state_cache.rs:1286
 msgid "Cannot back up '%1': destination is unreachable."
-msgstr "'%1' kann nicht gesichert werden: Ziel ist nicht erreichbar."
+msgstr "«%1» kann nicht gesichert werden: Ziel ist nicht erreichbar."
 
 #: gui/src/state_cache.rs:1292
 msgid ""
 "Run conditions for '%1' are currently not met (%2). Start backup anyway?"
 msgstr ""
-"Laufbedingungen für '%1' sind aktuell nicht erfüllt (%2). Backup trotzdem "
+"Laufbedingungen für «%1» sind aktuell nicht erfüllt (%2). Backup trotzdem "
 "starten?"
 
 #: gui/src/state_cache.rs:1295
 msgid "Run conditions for '%1' are currently not met. Start backup anyway?"
 msgstr ""
-"Laufbedingungen für '%1' sind aktuell nicht erfüllt. Backup trotzdem starten?"
+"Laufbedingungen für «%1» sind aktuell nicht erfüllt. Backup trotzdem starten?"
 
 #: gui/src/state_cache.rs:1304
 msgid "Permanent error, needs fixing"
@@ -1121,8 +1121,8 @@ msgstr "Laufbedingungen nicht erfüllt"
 #: gui/src/state_cache.rs:1326
 msgid "%1 backup waits for the current run on its destination"
 msgid_plural "%1 backups wait for the current run on their destination"
-msgstr[0] "%1 Backup wartet auf den laufenden Lauf seines Ziels"
-msgstr[1] "%1 Backups warten auf den laufenden Lauf ihres Ziels"
+msgstr[0] "%1 Backup wartet, bis der aktuelle Lauf auf seinem Ziel fertig ist"
+msgstr[1] "%1 Backups warten, bis der aktuelle Lauf auf ihrem Ziel fertig ist"
 
 #: gui/src/state_cache.rs:1334 gui/src/state_cache.rs:1341
 msgid "%1 backup skipped: %2"
@@ -1133,8 +1133,8 @@ msgstr[1] "%1 Backups übersprungen: %2"
 #: gui/src/state_cache.rs:1347
 msgid "%1 backup queued, %2"
 msgid_plural "%1 backups queued, %2"
-msgstr[0] "%1 Backup eingereiht, %2"
-msgstr[1] "%1 Backups eingereiht, %2"
+msgstr[0] "%1 Backup in der Warteschlange, %2"
+msgstr[1] "%1 Backups in der Warteschlange, %2"
 
 #: gui/src/qml/AddDestinationWizard.qml:13
 msgid "Add Destination"
@@ -1156,7 +1156,7 @@ msgstr "Neues Ziel verwerfen?"
 
 #: gui/src/qml/AddDestinationWizard.qml:133 gui/src/qml/NewBackupWizard.qml:276
 msgid "No repository or configuration has been created yet."
-msgstr "Es wurde noch kein Repository und keine Konfiguration erstellt."
+msgstr "Kestic hat noch kein Repository und keine Einstellungen erstellt."
 
 #: gui/src/qml/AddDestinationWizard.qml:152 gui/src/qml/NewBackupWizard.qml:297
 msgid "Step %1 of %2"
@@ -1464,8 +1464,8 @@ msgid "Add Wi-Fi network"
 msgstr "WLAN-Netzwerk hinzufügen"
 
 #: gui/src/qml/BackupConditionsEditPage.qml:309
-msgid "If a condition is not met, manual backups ask before they start."
-msgstr "Ist eine Bedingung nicht erfüllt, fragen manuelle Backups vor dem Start nach."
+msgid "If a condition is not met, Kestic asks before a manual backup starts."
+msgstr "Ist eine Bedingung nicht erfüllt, fragt Kestic vor dem Start eines manuellen Backups nach."
 
 #: gui/src/qml/BackupDetailPage.qml:12
 msgid "Backup"
@@ -1516,12 +1516,12 @@ msgstr "Aus Kestic entfernen…"
 
 #: gui/src/qml/BackupDetailPage.qml:226
 msgid "This source overlaps with backup '%1' (%2) on the same destination. Some files may be saved twice or with other exclude rules."
-msgstr "Diese Quelle überschneidet sich mit Backup '%1' (%2) auf demselben Ziel. Manche Dateien werden vielleicht doppelt oder mit anderen Ausschluss-Regeln gesichert."
+msgstr "Diese Quelle überschneidet sich mit Backup «%1» (%2) auf demselben Ziel. Manche Dateien werden vielleicht doppelt oder mit anderen Ausschluss-Regeln gesichert."
 
 #: gui/src/qml/BackupDetailPage.qml:244
 msgid "Exclude rule warning on line %1: '%2' has no effect with '%3'."
 msgstr ""
-"Warnung zur Ausschluss-Regel in Zeile %1: '%2' hat bei '%3' keine Wirkung."
+"Warnung zur Ausschluss-Regel in Zeile %1: «%2» hat bei «%3» keine Wirkung."
 
 #: gui/src/qml/BackupDetailPage.qml:254
 msgid "Review Exclude Rules…"
@@ -1762,12 +1762,12 @@ msgid ""
 "Line %1: '%2' has no effect because '%3' excludes the folder itself. Use "
 "'%4' instead."
 msgstr ""
-"Zeile %1: '%2' hat keine Wirkung, da '%3' den Ordner selbst ausschliesst. "
-"Verwenden Sie stattdessen '%4'."
+"Zeile %1: «%2» hat keine Wirkung, da «%3» den Ordner selbst ausschliesst. "
+"Verwenden Sie stattdessen «%4»."
 
 #: gui/src/qml/BackupExcludesEditPage.qml:577
 msgid "Use '%1'"
-msgstr "'%1' verwenden"
+msgstr "«%1» verwenden"
 
 #: gui/src/qml/BackupExcludesEditPage.qml:591
 msgid "Ignore upper/lower case (--iexclude)"
@@ -2012,7 +2012,7 @@ msgstr "Ziel wechseln…"
 
 #: gui/src/qml/BackupReassignPage.qml:55
 msgid "Back up '%1' to '%2'?"
-msgstr "'%1' auf '%2' sichern?"
+msgstr "«%1» auf «%2» sichern?"
 
 #: gui/src/qml/BackupReassignPage.qml:56
 msgid "Switch Destination?"
@@ -2020,7 +2020,7 @@ msgstr "Ziel wechseln?"
 
 #: gui/src/qml/BackupReassignPage.qml:58
 msgid "On '%1' the snapshots start fresh, so the next backup reads all files again. The old snapshots stay on '%2', and you can still restore them there."
-msgstr "Auf '%1' beginnen die Snapshots neu, das nächste Backup liest also alle Dateien wieder. Die alten Snapshots bleiben auf '%2', und Sie können sie dort weiterhin wiederherstellen."
+msgstr "Auf «%1» beginnen die Snapshots neu, das nächste Backup liest also alle Dateien wieder. Die alten Snapshots bleiben auf «%2», und Sie können sie dort weiterhin wiederherstellen."
 
 #: gui/src/qml/BackupReassignPage.qml:63
 msgid "Switch Destination"
@@ -2304,8 +2304,8 @@ msgstr[0] "Globalen Standard verwenden (%1 verpasster Termin)"
 msgstr[1] "Globalen Standard verwenden (%1 verpasste Termine)"
 
 #: gui/src/qml/BackupScheduleEditPage.qml:583
-msgid "Use global default overdue threshold"
-msgstr "Globalen Standard-Schwellenwert für Überfälligkeit verwenden"
+msgid "Use the global default for overdue"
+msgstr "Globalen Standard für «überfällig» verwenden"
 
 #: gui/src/qml/BackupScheduleEditPage.qml:598
 msgid "Missed runs before reporting overdue"
@@ -2367,8 +2367,8 @@ msgid "You have unsaved changes to the source folder."
 msgstr "Es gibt ungespeicherte Änderungen am Quellordner."
 
 #: gui/src/qml/BackupSourceEditPage.qml:191
-msgid "Drive is not mounted; backups wait until it is connected."
-msgstr "Laufwerk ist nicht eingehängt; Backups warten, bis es verbunden ist."
+msgid "The drive is not mounted; backups wait until it is mounted."
+msgstr "Das Laufwerk ist nicht eingehängt; Backups warten, bis es eingehängt ist."
 
 #: gui/src/qml/BackupSourceEditPage.qml:212
 msgid "Source path must not be empty."
@@ -2779,9 +2779,7 @@ msgstr "restic herunterladen…"
 
 #: gui/src/qml/MainHeaderArea.qml:58
 msgid "Automatic restic download will be added in a future release."
-msgstr ""
-"Der automatische Download von restic wird in einer zukünftigen Version "
-"hinzugefügt."
+msgstr "Kestic kann restic später selbst herunterladen."
 
 #: gui/src/qml/Main.qml:533 gui/src/qml/OverviewPage.qml:124
 #: gui/src/qml/OverviewPage.qml:128
@@ -2829,7 +2827,7 @@ msgstr "Anderen Ordner wählen…"
 #: gui/src/qml/NewBackupWizard.qml:358
 msgid "External drive '%1' detected — backed up only when plugged in."
 msgstr ""
-"Externes Laufwerk '%1' erkannt — wird nur gesichert, wenn es angeschlossen "
+"Externes Laufwerk «%1» erkannt — wird nur gesichert, wenn es angeschlossen "
 "ist."
 
 #: gui/src/qml/NewBackupWizard.qml:359
@@ -2847,7 +2845,7 @@ msgstr "Zusammenfassung"
 
 #: gui/src/qml/NewBackupWizard.qml:718
 msgid "This source overlaps with backup '%1' (%2) on the same destination. You can still create the backup, but check the exclude rules."
-msgstr "Diese Quelle überschneidet sich mit Backup '%1' (%2) auf demselben Ziel. Sie können das Backup trotzdem erstellen, prüfen Sie aber die Ausschluss-Regeln."
+msgstr "Diese Quelle überschneidet sich mit Backup «%1» (%2) auf demselben Ziel. Sie können das Backup trotzdem erstellen, prüfen Sie aber die Ausschluss-Regeln."
 
 #: gui/src/qml/NewBackupWizard.qml:736
 msgid "Backup name"
@@ -2902,12 +2900,8 @@ msgid "Welcome to Kestic"
 msgstr "Willkommen bei Kestic"
 
 #: gui/src/qml/OverviewPage.qml:113
-msgid ""
-"Kestic regularly and securely encrypts and backs up your files to a drive, a "
-"server, or the cloud."
-msgstr ""
-"Kestic verschlüsselt und sichert Ihre Dateien regelmässig und sicher auf "
-"einem Laufwerk, einem Server oder in der Cloud."
+msgid "Kestic encrypts your files and backs them up regularly to a drive, a server, or the cloud."
+msgstr "Kestic verschlüsselt Ihre Dateien und sichert sie regelmässig auf einem Laufwerk, einem Server oder in der Cloud."
 
 #: gui/src/qml/OverviewPage.qml:136
 msgid "Connect Existing Backup…"
@@ -2951,7 +2945,7 @@ msgid ""
 "backup '%1' will be cancelled."
 msgstr ""
 "Geplante Backups laufen erst wieder, wenn Kestic gestartet wird. Das "
-"laufende Backup '%1' wird abgebrochen."
+"laufende Backup «%1» wird abgebrochen."
 
 #: gui/src/qml/QuitConfirmDialog.qml:38
 msgid "Scheduled backups will not run again until Kestic is started."
@@ -2960,15 +2954,15 @@ msgstr "Geplante Backups laufen erst wieder, wenn Kestic gestartet wird."
 #: gui/src/qml/RemoveBackupDialog.qml:12
 #: gui/src/qml/RemoveDestinationDialog.qml:12
 msgid "Remove '%1' from Kestic?"
-msgstr "'%1' aus Kestic entfernen?"
+msgstr "«%1» aus Kestic entfernen?"
 
 #: gui/src/qml/RemoveBackupDialog.qml:30
 msgid "Backup removed from Kestic"
 msgstr "Backup aus Kestic entfernt"
 
 #: gui/src/qml/RemoveBackupDialog.qml:40
-msgid "Snapshots will remain in the destination."
-msgstr "Snapshots bleiben im Ziel erhalten."
+msgid "Snapshots stay on the destination."
+msgstr "Snapshots bleiben auf dem Ziel."
 
 #: gui/src/qml/RemoveDestinationDialog.qml:24
 msgid "Remove Destination"
@@ -2979,8 +2973,8 @@ msgid "Destination removed"
 msgstr "Ziel entfernt"
 
 #: gui/src/qml/RemoveDestinationDialog.qml:38
-msgid "Snapshots on this destination remain untouched."
-msgstr "Snapshots auf diesem Ziel bleiben unangetastet."
+msgid "Snapshots on this destination stay as they are."
+msgstr "Snapshots auf diesem Ziel bleiben unverändert."
 
 #: gui/src/qml/RenameBackupDialog.qml:12
 msgid "Rename Backup"
@@ -2999,7 +2993,7 @@ msgid "New backup name"
 msgstr "Neuer Backup-Name"
 
 #: gui/src/qml/RunDetailPage.qml:12
-msgid "Run Detail"
+msgid "Run Details"
 msgstr "Laufdetails"
 
 #: gui/src/qml/RunDetailPage.qml:99
@@ -3211,8 +3205,8 @@ msgid "Status:"
 msgstr "Status:"
 
 #: gui/src/qml/SettingsDialog.qml:257
-msgid "Running · starts with session"
-msgstr "Läuft · startet mit der Sitzung"
+msgid "Running · starts when you log in"
+msgstr "Läuft · startet bei der Anmeldung"
 
 #: gui/src/qml/SettingsDialog.qml:258
 msgid "Not running"
@@ -3267,8 +3261,8 @@ msgid "restic command (without passwords):"
 msgstr "restic-Befehl (ohne Passwörter):"
 
 #: gui/src/qml/SpikeMain.qml:25
-msgid "Back Up Now triggered (Ctrl+Shift+B)"
-msgstr "Jetzt sichern ausgelöst (Ctrl+Shift+B)"
+msgid "Back Up Now started (Ctrl+Shift+B)"
+msgstr "Jetzt sichern gestartet (Ctrl+Shift+B)"
 
 #: gui/src/qml/SpikeMain.qml:74 gui/src/qml/SpikeMain.qml:78
 msgid "Restore"
@@ -3292,7 +3286,7 @@ msgstr "Zeitplan:"
 
 #: gui/src/qml/SpikeMain.qml:234
 msgid "Daily 12:00 · AC power and network"
-msgstr "Täglich 12:00 · am Strom und mit Netzwerk"
+msgstr "Täglich 12:00 · Netzstrom und Netzwerk"
 
 #: gui/src/qml/SpikeMain.qml:237
 msgid "Last run:"
@@ -3307,8 +3301,8 @@ msgid "Configure Retention…"
 msgstr "Aufbewahrung einrichten…"
 
 #: gui/src/qml/SpikeMain.qml:260
-msgid "Triggered count: %1"
-msgstr "Auslösungen: %1"
+msgid "Times started: %1"
+msgstr "Anzahl Starts: %1"
 
 #: gui/src/qml/UnsavedChangesDialog.qml:31
 msgid "Discard"
@@ -3330,7 +3324,7 @@ msgstr "Prüfen und speichern"
 
 #: gui/src/qml/UpdatePasswordDialog.qml:42
 msgid "The saved password for '%1' does not match. Here you only change the saved password, not the password of the destination."
-msgstr "Das gespeicherte Passwort für '%1' stimmt nicht. Hier ändern Sie nur das gespeicherte Passwort, nicht das Passwort des Ziels."
+msgstr "Das gespeicherte Passwort für «%1» stimmt nicht überein. Hier ändern Sie nur das gespeicherte Passwort, nicht das Passwort des Ziels."
 
 #: gui/src/state_cache.rs
 msgid "Deleted backup"
@@ -3346,7 +3340,7 @@ msgstr "Strom"
 
 #: gui/src/qml/BackupConditionsEditPage.qml
 msgid "Network conditions do not apply: the destination is a local folder or drive."
-msgstr "Netzwerk-Bedingungen gelten hier nicht: Das Ziel ist ein lokaler Ordner oder ein Laufwerk."
+msgstr "Netzwerkbedingungen gelten hier nicht: Das Ziel ist ein lokaler Ordner oder ein Laufwerk."
 
 msgid "Invalid input."
 msgstr "Ungültige Eingabe."

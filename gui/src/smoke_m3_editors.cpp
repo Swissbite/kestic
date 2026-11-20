@@ -527,7 +527,7 @@ int scenario_maintenance(const Ctx& c) {
         Q_ARG(QString, QStringLiteral("{\"prune\":{\"kind\":\"weekly\",\"weekday\":\"sunday\",\"hour\":12,\"minute\":0},\"check\":{\"kind\":\"monthly\",\"nth\":\"first\",\"weekday\":\"sunday\",\"hour\":12,\"minute\":0}}"))
     );
     M3_CHECK(3902, summary.contains(loc(c.lang, "Clean up: Sundays at 12:00", "Aufräumen: sonntags 12:00")), "(a) clean-up default summary");
-    M3_CHECK(3903, summary.contains(loc(c.lang, "Verify: first Sunday of month at 12:00", "Prüfen: erster Sonntag im Monat 12:00")), "(a) verify default summary");
+    M3_CHECK(3903, summary.contains(loc(c.lang, "Verify: first Sunday of the month at 12:00", "Prüfen: erster Sonntag im Monat 12:00")), "(a) verify default summary");
     QQuickItem* content = w->contentItem();
     M3_CHECK(3905, has_visible_text(content, loc(c.lang, "Next verify:", "Nächstes Prüfen:")), "detail must show «Next verify:»");
     // M3 manual acceptance (2026-11-19): one backup is named in the singular.

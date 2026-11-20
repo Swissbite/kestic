@@ -23,7 +23,7 @@ Kirigami.ApplicationWindow {
 
     function triggerBackupNow() {
         backupNowTriggerCount += 1;
-        showPassiveNotification(i18n("Back Up Now triggered (Ctrl+Shift+B)"));
+        showPassiveNotification(i18n("Back Up Now started (Ctrl+Shift+B)"));
     }
 
     function pushFromComponent(comp, props) {
@@ -258,7 +258,7 @@ Kirigami.ApplicationWindow {
                 }
                 Controls.Label {
                     Kirigami.FormData.label: i18n("Status:")
-                    text: i18n("Triggered count: %1", root.backupNowTriggerCount)
+                    text: i18n("Times started: %1", root.backupNowTriggerCount)
                 }
             }
         }

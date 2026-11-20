@@ -677,7 +677,7 @@ pub fn format_retention_summary(policy: &RetentionPolicy) -> String {
     if let Some(kc) = policy.keep_last {
         parts.push(match kc {
             KeepCount::Unlimited => i18n("all snapshots").to_string(),
-            KeepCount::Count(n) => i18n("%1 last").subs(&[&n.to_string()]),
+            KeepCount::Count(n) => i18n("Last %1").subs(&[&n.to_string()]),
         });
     }
     if let Some(kc) = policy.keep_hourly {
@@ -741,7 +741,7 @@ pub fn format_exclude_summary(excludes: &ExcludeRules) -> String {
     if let Some(ref limit) = excludes.exclude_larger_than
         && !limit.trim().is_empty()
     {
-        parts.push(i18n("files > %1").subs(&[limit.trim()]));
+        parts.push(i18n("files over %1").subs(&[limit.trim()]));
     }
     let expert_count = excludes.expert_rule_count();
     if expert_count == 1 {
@@ -997,7 +997,7 @@ pub fn format_maintenance_entry(entry: &MaintenanceEntrySchedule) -> String {
             minute,
         } => {
             let hhmm = format!("{hour:02}:{minute:02}");
-            i18n("%1 %2 of month at %3").subs(&[
+            i18n("%1 %2 of the month at %3").subs(&[
                 &nth_weekday_label(*nth),
                 &weekday_full_label(*weekday),
                 &hhmm,

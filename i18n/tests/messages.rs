@@ -272,7 +272,7 @@ fn every_error_kind_maps_to_its_msgid() {
         (E::Locked, Some("Repository is locked")),
         (E::DestinationUnreachable, Some("Destination unreachable")),
         (E::SourceUnavailable, Some("Source unavailable")),
-        (E::AuthFailed, Some("Authentication at destination failed")),
+        (E::AuthFailed, Some("Login to the destination failed")),
         (
             E::IncompleteSnapshot,
             Some("Snapshot incomplete: some files could not be read"),
@@ -338,7 +338,7 @@ fn every_source_blocked_and_skip_code_maps_to_its_msgid() {
             S::DriveMismatch,
             Some("Source unavailable: different drive"),
         ),
-        (S::DriveEmpty, Some("Source unavailable: source empty")),
+        (S::DriveEmpty, Some("Source unavailable: folder is empty")),
     ];
     assert_table(&S::ALL, &source, |s| msg(SourceStatus::message(Some(s))));
 
@@ -441,7 +441,7 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
             Some("restic is unavailable or too old."),
         ),
         (C::WrongPassword, Some("Saved password does not match")),
-        (C::AuthFailed, Some("Authentication at destination failed")),
+        (C::AuthFailed, Some("Login to the destination failed")),
         (C::RepositoryMissing, Some("Repository is missing")),
         (C::CommandFailed, None),
         (C::DaemonUnreachable, None),
@@ -477,7 +477,7 @@ fn every_service_error_code_maps_to_its_msgid() {
             S::WrongPassword,
             Some("Wrong password: the repository rejected this password."),
         ),
-        (S::AuthFailed, Some("Authentication at destination failed")),
+        (S::AuthFailed, Some("Login to the destination failed")),
         (S::SecretStoreLocked, Some("Password store is locked")),
         (
             S::ResticUnavailable,

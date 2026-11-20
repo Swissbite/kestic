@@ -64,7 +64,7 @@ int scenario_status_rows(const Ctx& c) {
     M3_CHECK_EQ(
         3031,
         hint->property("text").toString(),
-        loc(c.lang, "Only 2 of 3 backups can be backed up now.", "Nur 2 von 3 Backups können jetzt gesichert werden."),
+        loc(c.lang, "Only 2 of 3 backups can start now.", "Nur 2 von 3 Backups können jetzt starten."),
         "back up all hint"
     );
     // Pause button while NOT paused offers pausing.

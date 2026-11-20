@@ -188,7 +188,7 @@ Kirigami.ScrollablePage {
             visible: page.initialData !== null && !page.dirty && page.initialData.sourceKind === "drive" && !page.initialData.available
             text: page.initialData && page.initialData.availabilityReason !== ""
                 ? page.initialData.availabilityReason
-                : i18n("Drive is not mounted; backups wait until it is connected.")
+                : i18n("The drive is not mounted; backups wait until it is mounted.")
         }
 
         Kirigami.InlineMessage {

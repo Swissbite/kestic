@@ -580,7 +580,7 @@ Kirigami.ScrollablePage {
                 Kirigami.FormData.label: i18n("Report overdue after:")
                 text: i18np("Use global default (%1 missed run)", "Use global default (%1 missed runs)", appBackend.default_overdue_threshold)
                 checked: page.useGlobalOverdue
-                Accessible.name: i18n("Use global default overdue threshold")
+                Accessible.name: i18n("Use the global default for overdue")
                 onToggled: if (!page.hydrating) page.useGlobalOverdue = checked
             }
 

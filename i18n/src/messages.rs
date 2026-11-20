@@ -92,7 +92,7 @@ impl ErrorKind {
             Self::Locked => i18n_noop("Repository is locked"),
             Self::DestinationUnreachable => i18n_noop("Destination unreachable"),
             Self::SourceUnavailable => i18n_noop("Source unavailable"),
-            Self::AuthFailed => i18n_noop("Authentication at destination failed"),
+            Self::AuthFailed => i18n_noop("Login to the destination failed"),
             Self::IncompleteSnapshot => {
                 i18n_noop("Snapshot incomplete: some files could not be read")
             }
@@ -218,7 +218,7 @@ impl SourceStatus {
         Message::new(match status {
             Some(Self::DriveNotMounted) => i18n_noop("Source unavailable: drive not mounted"),
             Some(Self::DriveMismatch) => i18n_noop("Source unavailable: different drive"),
-            Some(Self::DriveEmpty) => i18n_noop("Source unavailable: source empty"),
+            Some(Self::DriveEmpty) => i18n_noop("Source unavailable: folder is empty"),
             Some(Self::PathMissing) | None => i18n_noop("Source unavailable"),
         })
     }
