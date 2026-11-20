@@ -129,6 +129,11 @@ fn fast_run_whose_search_never_ends_before_the_end_shows_no_percentage() {
         lines.iter().all(|st| st.seconds_remaining.is_none()),
         "fixture never sends seconds_remaining"
     );
+    // restic's own percentage jumps back in this fixture, otherwise the test proves nothing.
+    assert!(
+        largest_drop(lines.iter().map(|st| st.percent_done)) > 0.05,
+        "fixture must contain a falling percent_done"
+    );
 
     let shown = track(&lines);
 

@@ -93,7 +93,12 @@ fn format_active_progress_text(active_progress: Option<&ActiveRunProgressDto>) -
     let done_str = format_bytes(p.bytes_done);
     if p.phase == RunProgressPhase::Scanning {
         let files = usize::try_from(p.files_done).unwrap_or(usize::MAX);
-        return i18np("%2 · %1 file", "%2 · %1 files", files, &[&done_str]);
+        return i18np(
+            "%2 · %1 file so far",
+            "%2 · %1 files so far",
+            files,
+            &[&done_str],
+        );
     }
     let pct = p.percent_done.round().clamp(0.0, 100.0) as u32;
     let total_str = format_bytes(p.total_bytes);

@@ -117,6 +117,34 @@ mod tests {
     }
 
     #[test]
+    fn scan_stays_finished_without_seconds_remaining() {
+        let mut t = BackupProgressTracker::new();
+        t.update(&status(0.5, Some(3)), 1);
+        let p = t.update(&status(0.6, None), 1);
+        assert_eq!(t.phase(), RunProgressPhase::ScanFinished);
+        assert_eq!(p.percent_done, 60.0);
+        assert_eq!(p.seconds_remaining, None);
+    }
+
+    #[test]
+    fn percent_above_one_is_capped_at_hundred() {
+        let mut t = BackupProgressTracker::new();
+        let p = t.update(&status(1.2, Some(1)), 1);
+        assert_eq!(p.percent_done, 100.0);
+    }
+
+    #[test]
+    fn speed_without_restic_elapsed_time_uses_the_fallback() {
+        let mut t = BackupProgressTracker::new();
+        let st = ResticStatusMessage {
+            seconds_elapsed: None,
+            ..status(0.5, Some(4))
+        };
+        let p = t.update(&st, 5);
+        assert_eq!(p.speed_bps, 2);
+    }
+
+    #[test]
     fn speed_after_scan_uses_restic_elapsed_time() {
         let mut t = BackupProgressTracker::new();
         let p = t.update(&status(0.5, Some(4)), 9);

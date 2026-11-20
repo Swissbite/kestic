@@ -146,14 +146,15 @@ pub struct ActiveRunProgressDto {
     pub run_id: String,
     pub backup_id: Option<String>,
     pub backup_name: String,
-    /// `scanning` until restic knows the total, then `scan_finished`
-    /// (`docs/spec/restic-integration.md` «Fortschritt beim Sichern»).
+    /// `scanning` until restic knows the total, then `scan_finished`.
+    #[serde(default)]
     pub phase: RunProgressPhase,
     /// 0–100; 0 while scanning, never falls afterwards.
     pub percent_done: f64,
     pub bytes_done: u64,
     /// 0 while scanning.
     pub total_bytes: u64,
+    #[serde(default)]
     pub files_done: u64,
     pub speed_bps: u64,
     /// 0 = unknown.

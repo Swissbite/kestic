@@ -514,8 +514,8 @@ pub struct FakeJobViewRecorder {
     pub desktop_entry: Mutex<String>,
     pub capabilities: AtomicI32,
     pub updates: Mutex<Vec<(u32, String)>>,
-    /// `(totalBytes, speed)` of every `update`, in the order of `updates`.
-    pub sizes: Mutex<Vec<(u64, u64)>>,
+    /// `(processedBytes, totalBytes, speed)` of every `update`, in the order of `updates`.
+    pub sizes: Mutex<Vec<(u64, u64, u64)>>,
     pub terminated: AtomicBool,
     pub terminate_code: AtomicU32,
     /// Every `terminate(error_code, error_message, ..)` call in arrival order.
@@ -568,11 +568,11 @@ impl FakeJobViewV3 {
                 .and_then(|v| u64::try_from(v).ok())
                 .unwrap_or(0)
         };
-        self.recorder
-            .sizes
-            .lock()
-            .expect("lock")
-            .push((number("totalBytes"), number("speed")));
+        self.recorder.sizes.lock().expect("lock").push((
+            number("processedBytes"),
+            number("totalBytes"),
+            number("speed"),
+        ));
         self.recorder.updates.lock().expect("lock").push((pct, msg));
     }
 

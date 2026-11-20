@@ -205,8 +205,8 @@ impl BlockedReason {
     }
 }
 
-/// Phase of a running backup (`ActiveRunProgressDto.phase`, signal `RunProgress`;
-/// `docs/spec/restic-integration.md` «Fortschritt beim Sichern»).
+/// Phase of a running backup (`ActiveRunProgressDto.phase`, signal `RunProgress`). restic finds
+/// files and backs them up at the same time; only after its search the percentage is valid.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunProgressPhase {

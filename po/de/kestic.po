@@ -587,10 +587,10 @@ msgid "%1% · %2 of %3 · about %4 left"
 msgstr "%1% · %2 von %3 · noch etwa %4"
 
 #: gui/src/models/backups_model.rs
-msgid "%2 · %1 file"
-msgid_plural "%2 · %1 files"
-msgstr[0] "%2 · %1 Datei"
-msgstr[1] "%2 · %1 Dateien"
+msgid "%2 · %1 file so far"
+msgid_plural "%2 · %1 files so far"
+msgstr[0] "%2 · %1 Datei bisher"
+msgstr[1] "%2 · %1 Dateien bisher"
 
 #: gui/src/models/backups_model.rs:94
 msgid "%1%"

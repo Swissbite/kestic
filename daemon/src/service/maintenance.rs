@@ -190,6 +190,7 @@ fn launch_maintenance_run_record(
             run_id: run.id.as_str().to_string(),
             backup_id: None,
             backup_name: dest.name.clone(),
+            // Maintenance has no percentage; its texts check `backup_id: None` first.
             phase: RunProgressPhase::Scanning,
             percent_done: 0.0,
             bytes_done: 0,

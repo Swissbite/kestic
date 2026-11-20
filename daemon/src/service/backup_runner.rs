@@ -510,9 +510,14 @@ impl BackupProgressReporter<'_> {
         let p = self.tracker.update(st, elapsed_secs);
 
         if let Some(jv) = self.job_view {
+            // Without a total, Plasma would show «4.9 GB of 0 B»; the text names the phase.
+            let processed_bytes = match p.phase {
+                RunProgressPhase::Scanning => 0,
+                RunProgressPhase::ScanFinished => p.bytes_done,
+            };
             let _ = jv.update(&JobProgress {
                 percent: p.percent_done.round() as u32,
-                processed_bytes: p.bytes_done,
+                processed_bytes,
                 total_bytes: p.total_bytes,
                 speed_bytes_per_sec: p.speed_bps,
                 info_message: tr(&active_run_message(&ActiveRunInfo {

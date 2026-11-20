@@ -252,7 +252,7 @@ int scenario_backup_progress(const Ctx& c, bool scanning) {
         // (a) status line, (b) amount looked through, (c) headline, (d) bar without end point
         M3_CHECK_EQ(3863, status, loc(c.lang, "Backing up · looking through files", "Sichert · Dateien werden durchgesehen"), "status while scanning");
         M3_CHECK_STARTS(3864, line, QStringLiteral("4.9 GB · "), "amount looked through");
-        M3_CHECK(3865, line.endsWith(loc(c.lang, " files", " Dateien")), "number of files looked through");
+        M3_CHECK(3865, line.endsWith(loc(c.lang, " files so far", " Dateien bisher")), "number of files looked through");
         M3_CHECK(3866, !line.contains(QLatin1Char('%')), "no percentage while scanning");
         M3_CHECK_EQ(3867, headline, loc(c.lang, "Docs: backing up · looking through files", "Docs: sichert · Dateien werden durchgesehen"), "headline while scanning");
         M3_CHECK(3868, bar->property("indeterminate").toBool(), "bar must have no end point while scanning");

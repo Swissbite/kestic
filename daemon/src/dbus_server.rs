@@ -794,14 +794,14 @@ pub(crate) fn emit_run_updated(conn: &Connection, run: &Run) {
     }
 }
 
+/// Sends `RunProgress` on the calling thread, so the signals of one run arrive in the order
+/// of restic's status lines (a thread per signal could reorder them and make the display jump
+/// back). Only called from the backup worker thread, never from the D-Bus executor.
 pub(crate) fn emit_run_progress(conn: &Connection, progress: &ActiveRunProgressDto) {
     if let Ok(json) = serde_json::to_string(progress) {
-        let conn = conn.clone();
-        thread::spawn(move || {
-            let _ = zbus::block_on(async move {
-                let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
-                KesticDbusV1Service::run_progress(&emitter, &json).await
-            });
+        let _ = zbus::block_on(async {
+            let emitter = SignalEmitter::new(conn, KESTIC_OBJECT_PATH)?;
+            KesticDbusV1Service::run_progress(&emitter, &json).await
         });
     }
 }

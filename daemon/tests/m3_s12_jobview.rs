@@ -244,7 +244,7 @@ fn ac_m3_12_2_cancel_in_plasma_progress_cancels_the_run() {
 
 /// While restic still finds files (no `seconds_remaining`), the run shows no percentage
 /// (`docs/spec/ui/tray-und-benachrichtigungen.md` §10.3, restic-integration «Fortschritt beim
-/// Sichern»): (a) the Plasma progress view gets percent 0, (b) no total and (c) no speed, (d) its
+/// Sichern»): (a) the Plasma progress view gets percent 0, (b) no amounts and (c) no speed, (d) its
 /// text says that files are looked through, (e) the `RunProgress` signal carries phase `scanning`
 /// with the amount looked through.
 #[test]
@@ -290,8 +290,9 @@ fn progress_view_and_signal_show_no_percentage_while_restic_still_finds_files() 
                     .expect("scanning update");
                 (index, updates[index].0)
             };
-            let (total, speed) = rec.sizes.lock().expect("lock")[index];
+            let (processed, total, speed) = rec.sizes.lock().expect("lock")[index];
             assert_eq!(pct, 0, "(a) percent while scanning");
+            assert_eq!(processed, 0, "(b) processedBytes while scanning");
             assert_eq!(total, 0, "(b) totalBytes while scanning");
             assert_eq!(speed, 0, "(c) speed while scanning");
             assert_eq!(
