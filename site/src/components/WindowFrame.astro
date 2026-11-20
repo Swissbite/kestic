@@ -32,7 +32,15 @@ const cropStyle = [
       <span class="title">Kestic</span>
       <span class="buttons"><span class="btn min"></span><span class="btn max"></span><span class="btn close"></span></span>
     </div>
-    <a class="open" href={src} data-lightbox data-caption={shot.caption} style={cropStyle}>
+    <a
+      class="open"
+      href={src}
+      data-lightbox
+      data-caption={shot.caption}
+      data-focus-x={crop.x / shot.width}
+      data-focus-y={crop.y / shot.height}
+      style={cropStyle}
+    >
       <img
         src={src}
         alt={shot.alt}
@@ -41,6 +49,7 @@ const cropStyle = [
         loading={eager ? "eager" : "lazy"}
         decoding="async"
       />
+      <span class="enlarge mono" aria-hidden="true">Enlarge&nbsp;⤢</span>
     </a>
   </div>
   <figcaption class="mono">
@@ -138,6 +147,21 @@ const cropStyle = [
   .open:focus-visible {
     outline-offset: -2px;
   }
+  .enlarge {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    padding: 3px 8px;
+    background: #17191b;
+    color: #ece9e2;
+    font-size: 12px;
+    border-radius: 2px;
+  }
+  .open:hover .enlarge,
+  .open:focus-visible .enlarge {
+    background: var(--accent);
+    color: #fff;
+  }
   .window:has(.open:hover) {
     border-color: var(--accent);
   }
@@ -154,6 +178,6 @@ const cropStyle = [
     display: flex;
     gap: 10px;
     margin-top: 10px;
-    font-size: 12px;
+    font-size: 13px;
   }
 </style>

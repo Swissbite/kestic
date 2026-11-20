@@ -1,6 +1,6 @@
 # Kestic
 
-Native KDE Plasma backup manager powered by [restic](https://restic.net). Pick what and where. Kestic does the rest, with every restic option within reach.
+Native KDE Plasma backup manager powered by [restic](https://restic.net). Pick what and where. Kestic does the rest and shows you the restic command behind every run.
 
 **Status:** Milestones M0 (Spike), M1 (Walking Skeleton), M2 (Backup Configuration: exclude rules with simple/expert modes & negation linter, dry-run preview, retention rules & preview, automatic post-backup `forget` with lock catch-up, Exit 3 unreadable file handling, drive mount/UUID source checks, nested source overlap warnings, and full configuration overview), and M3 (Automation: schedules with catch-up after sleep or shutdown, run conditions for AC power, network, metered connections and allowed Wi-Fi networks, retries and overdue detection, per-destination maintenance with clean up and verify, pausing schedules, and sleep handling during runs: idle/suspend inhibit and a clean interruption on lid close) are complete and manually accepted on TUXEDO OS.
 

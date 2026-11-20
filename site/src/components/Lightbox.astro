@@ -4,13 +4,14 @@
 
 // Wraps page content and shows every `a[data-lightbox]` inside it in a modal
 // <dialog>: previous/next by button, arrow key, or swipe; close by Esc, the
-// close button, or a click outside the picture. Without JavaScript the links
+// close button, or a click outside the picture. On phones the picture keeps a
+// readable size and pans by touch. Without JavaScript the links
 // simply open the PNG.
 ---
 
 <kestic-lightbox>
   <slot />
-  <dialog class="lightbox" aria-label="Screenshot viewer">
+  <dialog class="lightbox" aria-labelledby="lightbox-caption">
     <div class="top">
       <p class="mono position" aria-live="polite" data-position></p>
       <button type="button" class="control close" aria-label="Close" data-close>
@@ -21,9 +22,11 @@
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5"></path></svg>
     </button>
     <figure class="stage" data-stage>
-      <img alt="" data-image />
+      <div class="viewport" data-viewport>
+        <img alt="" data-image />
+      </div>
       <figcaption class="mono">
-        <span data-caption></span>
+        <span id="lightbox-caption" data-caption></span>
         <a class="full" href="" data-full>Full size&nbsp;↗</a>
       </figcaption>
     </figure>
@@ -62,6 +65,7 @@
       const position = required(dialog, "[data-position]", HTMLElement);
       const full = required(dialog, "[data-full]", HTMLAnchorElement);
       const stage = required(dialog, "[data-stage]", HTMLElement);
+      const viewport = required(dialog, "[data-viewport]", HTMLElement);
 
       this.slides = Array.from(this.querySelectorAll<HTMLAnchorElement>("a[data-lightbox]")).flatMap(
         (link) => {
@@ -85,6 +89,10 @@
         full.href = slide.link.href;
         const pad = (n: number): string => String(n).padStart(2, "0");
         position.textContent = `${pad(this.index + 1)} / ${pad(count)}`;
+        // On phones the viewport scrolls: start at the detail the thumbnail showed.
+        const focusX = Number(slide.link.dataset["focusX"] ?? 0);
+        const focusY = Number(slide.link.dataset["focusY"] ?? 0);
+        viewport.scrollTo(viewport.scrollWidth * focusX, viewport.scrollHeight * focusY);
       };
 
       this.addEventListener("click", (event) => {
@@ -99,8 +107,8 @@
         }
         event.preventDefault();
         this.opener = link ?? null;
-        show(slideIndex);
         dialog.showModal();
+        show(slideIndex);
       });
 
       dialog.addEventListener("click", (event) => {
@@ -108,7 +116,12 @@
         if (target === null) {
           return;
         }
-        if (target.closest("[data-close]") !== null || target === dialog || target === stage) {
+        if (
+          target.closest("[data-close]") !== null ||
+          target === dialog ||
+          target === stage ||
+          target === viewport
+        ) {
           dialog.close();
         } else if (target.closest("[data-prev]") !== null) {
           show(this.index - 1);
@@ -259,6 +272,13 @@
     align-items: center;
     gap: 12px;
   }
+  .viewport {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+  }
   .stage img {
     max-width: 100%;
     max-height: 100%;
@@ -266,7 +286,6 @@
     height: auto;
     object-fit: contain;
     border: 1px solid var(--lb-rule);
-    touch-action: pan-y pinch-zoom;
   }
   .stage figcaption {
     display: flex;
@@ -278,6 +297,8 @@
   }
   .full {
     color: var(--lb-mute);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
   .full:hover {
     color: #ee9164;
@@ -296,6 +317,17 @@
     .prev,
     .next {
       width: 100%;
+    }
+    /* Phones: the window at a readable size, panned by touch instead of shrunk to fit. */
+    .viewport {
+      overflow: auto;
+      place-items: start;
+      overscroll-behavior: contain;
+    }
+    .stage img {
+      width: 900px;
+      max-width: none;
+      max-height: none;
     }
   }
 </style>

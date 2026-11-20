@@ -21,11 +21,15 @@ const features = [
   },
   {
     term: "Retention",
-    text: "Keep the last n per hour, day, week, month, or year, or everything within a period. A preview shows which snapshots forget would remove.",
+    text: "Keep the last few snapshots per hour, day, week, month, or year, or everything from a recent period. A preview shows which snapshots would go before anything is removed.",
   },
   {
     term: "Schedule",
-    text: "Daily, on chosen weekdays, weekly, or every few days. Runs missed during sleep or shutdown are caught up, and overdue backups are flagged.",
+    text: "Daily, on chosen weekdays, weekly, or every few days. Runs missed during sleep or shutdown are caught up, an unreachable destination is tried again later, and overdue backups are flagged.",
+  },
+  {
+    term: "Source checks",
+    text: "A backup of an external drive waits until that drive is plugged in. Sources that overlap on the same destination are flagged.",
   },
   {
     term: "Run conditions",
@@ -33,15 +37,15 @@ const features = [
   },
   {
     term: "Maintenance",
-    text: "Clean up and Verify run per destination on a calendar you set. They wait for running backups and start only on AC power and an unmetered network.",
+    text: "Clean up frees the space of removed snapshots, Verify checks the repository for damage. Both run per destination on a calendar you set, wait for running backups, and start only on AC power and an unmetered network.",
   },
   {
     term: "Pause",
     text: "Hold all schedules for an hour, until tomorrow, or until you resume. Manual backups still run.",
   },
   {
-    term: "At home on Plasma",
-    text: "A Kirigami app, a tray entry, notifications, and progress in the Plasma panel. Passwords live in KWallet, through the Secret Service.",
+    term: "Native on Plasma",
+    text: "A tray entry, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store.",
   },
 ] as const;
 
@@ -73,19 +77,19 @@ const milestones = [
   {
     id: "M4",
     name: "Restore",
-    scope: "Browse, compare, and restore snapshots without overwriting anything by accident.",
+    scope: "Browse and compare snapshots, restore files without overwriting existing ones.",
     done: false,
   },
   {
     id: "M5",
     name: "Destinations and restic provisioning",
-    scope: "Every restic backend, and a bundled restic where the system one is too old.",
+    scope: "SFTP, S3, and the other restic backends, and a bundled restic where the system one is too old.",
     done: false,
   },
   {
     id: "M6",
     name: "Onboarding and security",
-    scope: "A first backup in five steps, a recovery kit, and your data back on a new computer.",
+    scope: "Guided first backup in five steps, a recovery kit, and getting your data back on a new computer.",
     done: false,
   },
 ] as const;
@@ -97,12 +101,13 @@ const buildFromSource = `${repoUrl}#building--testing`;
 
 <Base
   title="Kestic: restic backups for KDE Plasma"
-  description="A native KDE Plasma backup manager powered by restic. Pick what and where. Kestic does the rest, with every restic option within reach."
+  description="A native KDE Plasma backup manager powered by restic. Pick what and where. Kestic does the rest and shows you the restic command behind every run."
 >
   <div class="preview-bar mono">
     <div class="wrap">
-      <span>Development preview, built from main @ <a href={commitUrl}>{buildShaShort}</a>.</span>
-      <span class="mute">No release yet.</span>
+      Development preview · main @ <a href={commitUrl}>{buildShaShort}</a><span class="no-release">
+        · no release yet</span
+      >
     </div>
   </div>
 
@@ -114,9 +119,9 @@ const buildFromSource = `${repoUrl}#building--testing`;
       </a>
       <nav aria-label="Sections" class="mono">
         <a href="#features">Features</a>
-        <a href="#roadmap">Roadmap</a>
         <a href="#screens">Screens</a>
-        <a href="#how">How it works</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#try">Try it</a>
         <a href={repoUrl}>GitHub&nbsp;↗</a>
       </nav>
     </div>
@@ -126,41 +131,59 @@ const buildFromSource = `${repoUrl}#building--testing`;
     <main id="main">
       <section class="hero wrap">
         <p class="mono accent eyebrow">
-          <a href="#roadmap">In development · {doneCount} of {milestones.length} milestones done</a>
+          <a href="#roadmap">{doneCount} of {milestones.length} milestones done</a>
         </p>
         <h1>
           <span>Backups that run themselves.</span>
           <span class="second">On Plasma. With restic.</span>
         </h1>
         <p class="lede">
-          Pick what and where. Kestic does the rest, with every restic option within reach.
+          Pick what and where. Kestic does the rest and shows you the restic command behind every
+          run.
         </p>
         <div class="actions">
-          <a class="button primary" href={repoUrl}>View on GitHub</a>
-          <a class="button" href={buildFromSource}>Build from source</a>
+          <a class="button primary" href="#try">Try it</a>
+          <a class="button" href={repoUrl}>View on GitHub</a>
         </div>
-        <p class="mono mute install">
-          For KDE Plasma 6 on Debian- and Ubuntu-based systems, with restic 0.18.0 or newer. No
-          release yet: build the .deb with <code>just deb</code>.
-        </p>
+        <dl class="mono facts">
+          <dt>Today</dt>
+          <dd>Back up to a local folder or drive, or a REST server.</dd>
+          <dt>Not yet</dt>
+          <dd>
+            Restoring in the app (restic restores your snapshots meanwhile), SFTP, S3 and other
+            backends, guided first-run setup.
+          </dd>
+          <dt>Runs on</dt>
+          <dd>
+            Plasma 6.6 with KDE Frameworks 6.24 or newer: TUXEDO OS 24.04 (tested), Kubuntu 26.04,
+            KDE neon. Needs restic 0.18.0 or newer.
+          </dd>
+        </dl>
       </section>
-
-      <div class="wrap timeline-hero">
-        <RetentionTimeline />
-      </div>
 
       <div class="wrap hero-shot">
         <WindowFrame shot={heroShot} number={1} eager />
         <p class="mono mute provenance">
-          Rendered by the test suite at <a href={commitUrl}>{buildShaShort}</a>. Every screenshot on
-          this page is.
+          Rendered by the test suite at <a href={commitUrl}>{buildShaShort}</a>, like every
+          screenshot on this page.
         </p>
       </div>
+
+      <figure class="wrap timeline-hero">
+        <RetentionTimeline />
+        <figcaption class="mono mute">
+          Retention as Kestic keeps it by default: the last 7 daily, 4 weekly, and 12 monthly
+          snapshots.
+        </figcaption>
+      </figure>
 
       <section id="features" class="section wrap">
         <div class="section-head">
           <h2>What it does</h2>
-          <p>Everything below works today. Restore and onboarding follow in the next milestones.</p>
+          <p>
+            All of this works today. Still missing: restoring in the app, backends beyond local and
+            REST, and a guided first-run setup.
+          </p>
         </div>
         <ol class="features">
           {
@@ -175,6 +198,19 @@ const buildFromSource = `${repoUrl}#building--testing`;
         </ol>
       </section>
 
+      <section id="screens" class="section wrap">
+        <div class="section-head">
+          <h2>Screens</h2>
+          <p>
+            Real screenshots, taken by the project's automated GUI tests, so you see their test data.
+            Select a picture to see the whole window.
+          </p>
+        </div>
+        <div class="gallery">
+          {galleryShots.map((shot, i) => <WindowFrame shot={shot} number={i + 2} />)}
+        </div>
+      </section>
+
       <section id="roadmap" class="section wrap">
         <div class="section-head">
           <h2>Roadmap</h2>
@@ -187,7 +223,7 @@ const buildFromSource = `${repoUrl}#building--testing`;
         <ol class="milestones">
           {
             milestones.map((m) => {
-              const state = m.done ? "done" : m === nextMilestone ? "next" : "open";
+              const state = m.done ? "done" : m === nextMilestone ? "next" : "planned";
               return (
                 <li class={state}>
                   <span class="id">{m.id}</span>
@@ -204,29 +240,16 @@ const buildFromSource = `${repoUrl}#building--testing`;
         </ol>
       </section>
 
-      <section id="screens" class="section wrap">
-        <div class="section-head">
-          <h2>Screens</h2>
-          <p>
-            Straight from the offscreen GUI tests, with their test data. Select a picture to see the
-            whole window.
-          </p>
-        </div>
-        <div class="gallery">
-          {galleryShots.map((shot, i) => <WindowFrame shot={shot} number={i + 2} />)}
-        </div>
-      </section>
-
       <div class="wrap section-divider" aria-hidden="true">
         <RetentionTimeline divider />
       </div>
 
       <section id="how" class="section wrap">
         <div class="section-head">
-          <h2>No magic</h2>
+          <h2>Plain restic underneath</h2>
           <p>
-            Every action is a restic command you can inspect. Kestic shows it next to each backup and
-            in the history of every run.
+            Every backup and maintenance run is an ordinary restic command. Kestic shows it next to
+            each backup and in the history of every run.
           </p>
         </div>
         <pre class="command mono" aria-label="Example restic command run by Kestic"><code><span class="comment"># What "Back Up Now" runs, as shown by "Show Command"</span>
@@ -249,7 +272,7 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
           <li>
             <span class="mono accent">D-Bus</span>
             <strong>Background service</strong>
-            <span>Runs in your session, starts with Plasma, owns all runs. No root, no systemd timers.</span>
+            <span>Starts with your Plasma session and runs every backup, also with the window closed. No root rights, no systemd timers.</span>
           </li>
           <li>
             <span class="mono accent">Process</span>
@@ -259,19 +282,35 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
           <li>
             <span class="mono accent">Repository</span>
             <strong>Destination</strong>
-            <span>A local folder or drive, or a REST server. More backends follow in M5.</span>
+            <span>A local folder or drive, or a REST server. SFTP, S3, and the other restic backends follow later.</span>
           </li>
         </ol>
       </section>
 
+      <section id="try" class="section wrap">
+        <div class="section-head">
+          <h2>Try it</h2>
+          <p>
+            There is no release yet, so you build the package yourself. The bootstrap script installs
+            the Rust toolchain, the Qt and KDE development packages, and cargo-deb.
+          </p>
+        </div>
+        <pre class="command mono" aria-label="Commands to build and install Kestic"><code>git clone {repoUrl}.git && cd kestic
+./scripts/bootstrap.sh
+just deb
+sudo apt install ./target/debian/kestic_*.deb</code></pre>
+        <p class="note">
+          Then open Kestic from the application menu. From now on its background service starts
+          with your Plasma session. <a href={buildFromSource}>Building and testing in detail</a>
+        </p>
+      </section>
     </main>
   </Lightbox>
 
   <footer class="site-footer mono">
     <div class="wrap footer-inner">
       <span>Kestic · GPL-3.0-or-later · <a href={repoUrl}>Source on GitHub</a></span>
-      <span class="mute">Development preview · main @ <a href={commitUrl}>{buildShaShort}</a></span>
-      <span class="mute fonts">Set in Schibsted Grotesk and IBM Plex Mono, both under the SIL Open Font License 1.1.</span>
+      <span class="mute">Set in Schibsted Grotesk and IBM Plex Mono, both under the SIL Open Font License 1.1.</span>
     </div>
   </footer>
 </Base>
@@ -279,14 +318,8 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
 <style>
   .preview-bar {
     border-bottom: 1px solid var(--rule);
-    font-size: 12px;
+    font-size: 13px;
     padding: 8px 0;
-  }
-  .preview-bar .wrap {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 16px;
-    justify-content: space-between;
   }
   .site-header {
     border-bottom: 1px solid var(--rule);
@@ -315,6 +348,7 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
     color: var(--mute);
   }
   .site-header nav a {
+    padding: 10px 0;
     text-decoration: none;
   }
   .site-header nav a:last-child {
@@ -327,10 +361,7 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
     margin: 0 0 20px;
   }
   .eyebrow a {
-    text-decoration: none;
-  }
-  .eyebrow a:hover {
-    text-decoration: underline;
+    text-underline-offset: 4px;
   }
   .eyebrow::before {
     content: "";
@@ -386,24 +417,41 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
     background: var(--accent);
     color: var(--paper);
   }
-  .install {
-    max-width: 44em;
-    margin: 20px 0 0;
-    font-size: 12px;
+  .facts {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 6px 16px;
+    max-width: 48em;
+    margin: 32px 0 0;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule);
+    font-size: 13px;
     line-height: 1.6;
   }
-  .install code {
+  .facts dt {
+    color: var(--mute);
+  }
+  .facts dd {
+    margin: 0;
+    color: var(--body);
+  }
+  .facts code {
     color: var(--ink);
   }
-  .timeline-hero {
-    padding-top: clamp(48px, 7vw, 80px);
-  }
   .hero-shot {
-    padding-top: 40px;
+    padding-top: clamp(40px, 6vw, 64px);
   }
   .provenance {
     margin: 6px 0 0;
-    font-size: 12px;
+    font-size: 13px;
+  }
+  .timeline-hero {
+    margin-top: clamp(48px, 7vw, 80px);
+    margin-bottom: 0;
+  }
+  .timeline-hero figcaption {
+    margin-top: 8px;
+    font-size: 13px;
   }
   .features {
     list-style: none;
@@ -538,30 +586,38 @@ RESTIC_PASSWORD_COMMAND='kestic secret get &lt;destination-id&gt;' \
   .milestones .scope {
     color: var(--body);
   }
-  .milestones .open .id,
-  .milestones .open .name,
-  .milestones .open .scope,
+  .milestones .planned .id,
+  .milestones .planned .name,
+  .milestones .planned .scope,
   .milestones .state {
     color: var(--mute);
   }
   .milestones .state {
-    font-size: 12px;
+    font-size: 13px;
     text-align: right;
   }
   .site-footer {
     margin-top: clamp(64px, 10vw, 128px);
     border-top: 1px solid var(--rule);
     padding: 20px 0 28px;
-    font-size: 12px;
-  }
-  .footer-inner .fonts {
-    flex-basis: 100%;
+    font-size: 13px;
   }
   .footer-inner {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 24px;
-    justify-content: space-between;
+    display: grid;
+    gap: 6px;
+  }
+  @media (max-width: 480px) {
+    .site-header nav a:last-child,
+    .preview-bar .no-release {
+      display: none;
+    }
+    .facts {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 2px;
+    }
+    .facts dd + dt {
+      margin-top: 10px;
+    }
   }
   @media (max-width: 860px) {
     .features li {
