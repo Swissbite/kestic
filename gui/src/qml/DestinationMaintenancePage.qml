@@ -183,7 +183,7 @@ Kirigami.ScrollablePage {
                 txt = "";
             }
         }
-        return txt !== "" ? txt : i18n("Dry-run preview could not load repository statistics (the repository may currently be unreachable or locked).");
+        return txt !== "" ? txt : i18n("The preview could not read the repository. It may be unreachable or locked.");
     }
 
     Connections {
@@ -194,7 +194,7 @@ Kirigami.ScrollablePage {
             }
             page.previewSettled = true;
             if (errorMessage !== "") {
-                page.previewSummaryText = i18n("Dry-run preview could not load repository statistics (the repository may currently be unreachable or locked).");
+                page.previewSummaryText = i18n("The preview could not read the repository. It may be unreachable or locked.");
             } else {
                 page.previewSummaryText = page.formatPreviewSummary(summaryJson);
             }
@@ -305,7 +305,7 @@ Kirigami.ScrollablePage {
             spacing: Kirigami.Units.mediumSpacing
 
             Controls.Label {
-                text: i18n("Cleaning up permanently removes unreferenced pack data from the destination after snapshots have been forgotten. Removed data cannot be recovered.")
+                text: i18n("Cleaning up deletes data on the destination that no snapshot uses anymore. Deleted data cannot be restored.")
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }

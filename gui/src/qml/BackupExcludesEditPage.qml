@@ -298,7 +298,7 @@ Kirigami.ScrollablePage {
         id: enableExpertModeDialog
         objectName: "enableExpertModeDialog"
         title: i18n("Enable Expert Mode?")
-        subtitle: i18n("Expert Mode unlocks raw restic exclude syntax across Kestic, including pattern rules and negated exceptions. You can turn it off anytime in Settings (menu top right).")
+        subtitle: i18n("In Expert Mode you write exclude rules in restic syntax, including patterns and exceptions. You can turn it off at any time in Settings (menu at the top right).")
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {

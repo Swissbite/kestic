@@ -226,7 +226,7 @@ Kirigami.ScrollablePage {
             Controls.Label {
                 Kirigami.FormData.label: i18n("Destination maintenance:")
                 text: backupData && backupData.pendingForget
-                    ? i18n("Retention pending (forget not yet executed due to lock)")
+                    ? i18n("Retention pending: the destination was locked")
                     : i18n("Up to date")
                 wrapMode: Text.WordWrap
             }

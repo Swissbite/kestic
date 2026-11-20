@@ -140,7 +140,7 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_blocking_kind(QString::from("daemon_unreachable"));
         self.as_mut().set_blocking_message(QString::from(
-            &i18n("The background service is not running. Scheduled backups will not take place.")
+            &i18n("The background service is not running. Scheduled backups will not run.")
                 .to_string(),
         ));
         self.as_mut().set_has_config_file(false);

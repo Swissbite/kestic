@@ -124,8 +124,8 @@ msgid "Interrupted by system sleep"
 msgstr "Durch Ruhezustand unterbrochen"
 
 #: daemon/src/service/backup_runner.rs:997
-msgid "Backed up, destination locked — retention will catch up later"
-msgstr "Gesichert, Ziel gesperrt — Aufbewahrung wird später nachgeholt"
+msgid "Backed up; destination was locked, retention runs later"
+msgstr "Gesichert; Ziel war gesperrt, Aufbewahrung läuft später"
 
 #: daemon/src/service/backup_runner.rs:999
 #: daemon/src/service/backup_runner.rs:1008 daemon/src/service/backups.rs:258
@@ -191,8 +191,8 @@ msgid "%1: Maintenance failed"
 msgstr "%1: Wartung fehlgeschlagen"
 
 #: daemon/src/service/maintenance.rs:692
-msgid "Destination maintenance failed"
-msgstr "Ziel-Wartung fehlgeschlagen"
+msgid "Maintenance failed"
+msgstr "Wartung fehlgeschlagen"
 
 #: daemon/src/service/maintenance.rs:912 daemon/src/service/state.rs:475
 #: gui/src/state_cache.rs:1004
@@ -200,20 +200,20 @@ msgid "Waiting: another run on this destination"
 msgstr "Wartet: anderer Lauf auf diesem Ziel"
 
 #: daemon/src/service/maintenance.rs:916
-msgid "Skipped during 'Back up all': %1"
-msgstr "Bei «Alle sichern» übersprungen: %1"
+msgid "Skipped by 'Back Up All Now': %1"
+msgstr "Von «Alle jetzt sichern» übersprungen: %1"
 
 #: daemon/src/service/maintenance.rs:941
 msgid "%1: %2"
 msgstr "%1: %2"
 
 #: daemon/src/service/runtime.rs:92
-msgid "Kestic daemon test notification"
-msgstr "Testbenachrichtigung des Kestic-Hintergrunddienstes"
+msgid "Kestic test notification"
+msgstr "Testbenachrichtigung von Kestic"
 
 #: daemon/src/service/runtime.rs:93
-msgid "Tray registered and notification channel active."
-msgstr "Systemabschnitt registriert und Benachrichtigungskanal aktiv."
+msgid "Notifications work."
+msgstr "Benachrichtigungen funktionieren."
 
 #: daemon/src/service/runtime.rs:598
 msgid "Some backups were skipped"
@@ -562,10 +562,8 @@ msgid "Invalid schedule configuration."
 msgstr "Ungültige Zeitplan-Konfiguration."
 
 #: gui/src/backend/state.rs:140
-msgid ""
-"The background service is not running. Scheduled backups will not take place."
-msgstr ""
-"Der Hintergrunddienst läuft nicht. Geplante Backups finden nicht statt."
+msgid "The background service is not running. Scheduled backups will not run."
+msgstr "Der Hintergrunddienst läuft nicht. Geplante Backups laufen nicht."
 
 #: gui/src/list_model.rs:40 gui/src/qml/NewBackupWizard.qml:154
 #: gui/src/qml/SpikeMain.qml:209
@@ -636,8 +634,8 @@ msgstr[0] "Nur %2 von %1 Backup kann jetzt gesichert werden."
 msgstr[1] "Nur %2 von %1 Backups können jetzt gesichert werden."
 
 #: gui/src/state_cache.rs:232
-msgid "Background service did not claim its D-Bus name."
-msgstr "Der Hintergrunddienst hat seinen D-Bus-Namen nicht registriert."
+msgid "The background service did not start."
+msgstr "Der Hintergrunddienst ist nicht gestartet."
 
 #: gui/src/state_cache.rs:431 gui/src/qml/AddDestinationWizard.qml:70
 #: gui/src/qml/DestinationEditPage.qml:84 gui/src/qml/NewBackupWizard.qml:168
@@ -1121,10 +1119,10 @@ msgid "Run conditions not met"
 msgstr "Laufbedingungen nicht erfüllt"
 
 #: gui/src/state_cache.rs:1326
-msgid "%1 backup queued behind active destination run"
-msgid_plural "%1 backups queued behind active destination run"
-msgstr[0] "%1 Backup wartet hinter dem laufenden Lauf auf dem Ziel"
-msgstr[1] "%1 Backups warten hinter dem laufenden Lauf auf dem Ziel"
+msgid "%1 backup waits for the current run on its destination"
+msgid_plural "%1 backups wait for the current run on their destination"
+msgstr[0] "%1 Backup wartet auf den laufenden Lauf seines Ziels"
+msgstr[1] "%1 Backups warten auf den laufenden Lauf ihres Ziels"
 
 #: gui/src/state_cache.rs:1334 gui/src/state_cache.rs:1341
 msgid "%1 backup skipped: %2"
@@ -1523,13 +1521,8 @@ msgid "Remove from Kestic…"
 msgstr "Aus Kestic entfernen…"
 
 #: gui/src/qml/BackupDetailPage.qml:226
-msgid ""
-"Nested source overlap with backup '%1' (%2) on the same destination. Files "
-"may be stored redundantly or with conflicting exclusions."
-msgstr ""
-"Verschachtelte Quellenüberschneidung mit Backup '%1' (%2) auf demselben "
-"Ziel. Dateien werden möglicherweise doppelt oder mit widersprüchlichen "
-"Ausschlüssen gespeichert."
+msgid "This source overlaps with backup '%1' (%2) on the same destination. Some files may be saved twice or with other exclude rules."
+msgstr "Diese Quelle überschneidet sich mit Backup '%1' (%2) auf demselben Ziel. Manche Dateien werden vielleicht doppelt oder mit anderen Ausschluss-Regeln gesichert."
 
 #: gui/src/qml/BackupDetailPage.qml:244
 msgid "Exclude rule warning on line %1: '%2' has no effect with '%3'."
@@ -1678,15 +1671,8 @@ msgid "Enable Expert Mode?"
 msgstr "Expertenmodus aktivieren?"
 
 #: gui/src/qml/BackupExcludesEditPage.qml:301
-msgid ""
-"Expert Mode unlocks raw restic exclude syntax across Kestic, including "
-"pattern rules and negated exceptions. You can turn it off anytime in "
-"Settings (menu top right)."
-msgstr ""
-"Der Expertenmodus schaltet in ganz Kestic die direkte restic-Ausschluss-"
-"Syntax frei, einschliesslich Musterregeln und negierten Ausnahmen. Sie "
-"können ihn jederzeit in den Einstellungen (Menü oben rechts) wieder "
-"deaktivieren."
+msgid "In Expert Mode you write exclude rules in restic syntax, including patterns and exceptions. You can turn it off at any time in Settings (menu at the top right)."
+msgstr "Im Expertenmodus schreiben Sie Ausschluss-Regeln in restic-Syntax, auch mit Mustern und Ausnahmen. Sie können ihn jederzeit in den Einstellungen (Menü oben rechts) ausschalten."
 
 #: gui/src/qml/BackupExcludesEditPage.qml:308
 msgid "Enable Expert Mode"
@@ -1905,8 +1891,8 @@ msgid "Destination maintenance:"
 msgstr "Ziel-Wartung:"
 
 #: gui/src/qml/BackupFullConfigPage.qml:229
-msgid "Retention pending (forget not yet executed due to lock)"
-msgstr "Aufbewahrung ausstehend (forget wegen Sperre noch nicht ausgeführt)"
+msgid "Retention pending: the destination was locked"
+msgstr "Aufbewahrung ausstehend: Das Ziel war gesperrt"
 
 #: gui/src/qml/BackupFullConfigPage.qml:230
 msgid "Up to date"
@@ -2437,14 +2423,6 @@ msgstr "Es gibt ungespeicherte Änderungen am Quellordner."
 msgid "Drive is not mounted; backups wait until it is connected."
 msgstr "Laufwerk ist nicht eingehängt; Backups warten, bis es verbunden ist."
 
-#: gui/src/qml/BackupSourceEditPage.qml:201
-msgid ""
-"Overlaps with backup '%1' (%2) on the same destination. Files may be stored "
-"redundantly or with differing exclusions."
-msgstr ""
-"Überschneidung mit Backup '%1' (%2) auf demselben Ziel. Dateien werden "
-"möglicherweise doppelt oder mit unterschiedlichen Ausschlüssen gespeichert."
-
 #: gui/src/qml/BackupSourceEditPage.qml:212
 msgid "Source path must not be empty."
 msgstr "Quellpfad darf nicht leer sein."
@@ -2705,12 +2683,8 @@ msgstr "Die Vorschau meldet keine Daten, die entfernt würden."
 
 #: gui/src/qml/DestinationMaintenancePage.qml:186
 #: gui/src/qml/DestinationMaintenancePage.qml:197
-msgid ""
-"Dry-run preview could not load repository statistics (the repository may "
-"currently be unreachable or locked)."
-msgstr ""
-"Die Trockenlauf-Vorschau konnte keine Repository-Statistiken laden (das "
-"Repository ist möglicherweise nicht erreichbar oder gesperrt)."
+msgid "The preview could not read the repository. It may be unreachable or locked."
+msgstr "Die Vorschau konnte das Repository nicht lesen. Es ist vielleicht nicht erreichbar oder gesperrt."
 
 #: gui/src/qml/DestinationMaintenancePage.qml:284
 msgid "Confirm Clean Up Schedule"
@@ -2721,17 +2695,12 @@ msgid "Save Maintenance Schedule"
 msgstr "Wartungszeitplan speichern"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:308
-msgid ""
-"Cleaning up permanently removes unreferenced pack data from the destination "
-"after snapshots have been forgotten. Removed data cannot be recovered."
-msgstr ""
-"Aufräumen entfernt nicht mehr referenzierte Pack-Daten dauerhaft vom Ziel, "
-"nachdem Snapshots vergessen wurden. Entfernte Daten können nicht "
-"wiederhergestellt werden."
+msgid "Cleaning up deletes data on the destination that no snapshot uses anymore. Deleted data cannot be restored."
+msgstr "Aufräumen löscht Daten auf dem Ziel, die kein Snapshot mehr nutzt. Gelöschte Daten lassen sich nicht wiederherstellen."
 
 #: gui/src/qml/DestinationMaintenancePage.qml:325
 msgid "Loading dry-run preview…"
-msgstr "Trockenlauf-Vorschau wird geladen…"
+msgstr "Testlauf-Vorschau wird geladen…"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:344
 msgid "You have unsaved changes to the maintenance schedule."
@@ -2947,13 +2916,8 @@ msgid "Summary"
 msgstr "Zusammenfassung"
 
 #: gui/src/qml/NewBackupWizard.qml:718
-msgid ""
-"Nested source overlap with backup '%1' (%2) on the same destination. Both "
-"backups can still be created, but check exclude rules."
-msgstr ""
-"Verschachtelte Quellenüberschneidung mit Backup '%1' (%2) auf demselben "
-"Ziel. Beide Backups können trotzdem erstellt werden, prüfen Sie jedoch die "
-"Ausschluss-Regeln."
+msgid "This source overlaps with backup '%1' (%2) on the same destination. You can still create the backup, but check the exclude rules."
+msgstr "Diese Quelle überschneidet sich mit Backup '%1' (%2) auf demselben Ziel. Sie können das Backup trotzdem erstellen, prüfen Sie aber die Ausschluss-Regeln."
 
 #: gui/src/qml/NewBackupWizard.qml:736
 msgid "Backup name"
@@ -3273,12 +3237,8 @@ msgid "Mark overdue after missed slots"
 msgstr "Als überfällig markieren nach verpassten Läufen"
 
 #: gui/src/qml/SettingsDialog.qml:197
-msgid ""
-"A scheduled backup is shown as overdue when at least this many scheduled "
-"runs could not execute in a row."
-msgstr ""
-"Ein geplantes Backup wird als überfällig angezeigt, wenn mindestens so viele "
-"geplante Läufe hintereinander nicht ausgeführt werden konnten."
+msgid "A scheduled backup counts as overdue when this many scheduled runs in a row did not happen."
+msgstr "Ein geplantes Backup gilt als überfällig, wenn so viele geplante Läufe hintereinander nicht stattgefunden haben."
 
 #: gui/src/qml/SettingsDialog.qml:207
 msgid "Notify on backup errors:"
@@ -3357,12 +3317,8 @@ msgid "%1 (%2 · %3)"
 msgstr "%1 (%2 · %3)"
 
 #: gui/src/qml/SettingsDialog.qml:288
-msgid ""
-"Kestic requires restic 0.18.0 or newer for reliable JSON progress and lock "
-"handling."
-msgstr ""
-"Kestic benötigt restic 0.18.0 oder neuer für eine zuverlässige JSON-"
-"Fortschrittsanzeige und Sperrenbehandlung."
+msgid "Kestic needs restic 0.18.0 or newer."
+msgstr "Kestic benötigt restic 0.18.0 oder neuer."
 
 #: gui/src/qml/SettingsDialog.qml:301
 msgid "Change restic Source…"

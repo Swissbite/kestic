@@ -381,7 +381,7 @@ fn ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff
                     .and_then(|r| r.summary_message.clone())
                     .unwrap_or_default();
                 assert!(
-                    message.contains("retention will catch up later"),
+                    message.contains("retention runs later"),
                     "{}: (c) warning says the retention (forget) is still open: {message:?}",
                     variant.label
                 );

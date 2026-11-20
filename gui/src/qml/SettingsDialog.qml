@@ -194,7 +194,7 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.Label {
-                text: i18n("A scheduled backup is shown as overdue when at least this many scheduled runs could not execute in a row.")
+                text: i18n("A scheduled backup counts as overdue when this many scheduled runs in a row did not happen.")
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -285,7 +285,7 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.Label {
-                text: i18n("Kestic requires restic 0.18.0 or newer for reliable JSON progress and lock handling.")
+                text: i18n("Kestic needs restic 0.18.0 or newer.")
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true

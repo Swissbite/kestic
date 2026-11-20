@@ -275,8 +275,7 @@ pub fn ensure_daemon_and_refresh() {
     if !owned {
         let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
         guard.daemon_reachable = false;
-        guard.daemon_error =
-            Some(i18n("Background service did not claim its D-Bus name.").to_string());
+        guard.daemon_error = Some(i18n("The background service did not start.").to_string());
         guard.state_dirty = true;
         return;
     }
@@ -1416,8 +1415,8 @@ pub fn localized_start_all_summary(res: &StartAllResultDto) -> Option<String> {
     let details = details.join(", ");
     if skipped == 0 {
         return Some(i18np(
-            "%1 backup queued behind active destination run",
-            "%1 backups queued behind active destination run",
+            "%1 backup waits for the current run on its destination",
+            "%1 backups wait for the current run on their destination",
             queued,
             &[],
         ));

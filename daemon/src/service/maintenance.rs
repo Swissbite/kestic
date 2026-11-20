@@ -659,7 +659,7 @@ fn finalize_maintenance_run_state(input: MaintenanceFinalizeInput<'_>) {
         let body = run
             .summary_message
             .clone()
-            .unwrap_or_else(|| i18n("Destination maintenance failed").to_string());
+            .unwrap_or_else(|| i18n("Maintenance failed").to_string());
         let _ = send_configured_notification(
             &notif_settings,
             KesticEvent::MaintenanceFailed,
@@ -920,7 +920,7 @@ fn record_start_all_pending_and_skipped(
             upsert_pending_run_entry(&mut guard, &backup, PendingReason::Queued, msg);
         }
         for (backup, reason, reason_text) in skipped_history_entries {
-            let note = i18n("Skipped during 'Back up all': %1").subs(&[&reason_text]);
+            let note = i18n("Skipped by 'Back Up All Now': %1").subs(&[&reason_text]);
             match reason {
                 SkipReason::SourceUnavailable => upsert_pending_run_entry(
                     &mut guard,

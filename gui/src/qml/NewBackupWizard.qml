@@ -717,7 +717,7 @@ Kirigami.ScrollablePage {
                     type: Kirigami.MessageType.Warning
                     visible: page.nestedWarnings.length > 0
                     text: page.nestedWarnings.length > 0
-                        ? i18n("Nested source overlap with backup '%1' (%2) on the same destination. Both backups can still be created, but check exclude rules.",
+                        ? i18n("This source overlaps with backup '%1' (%2) on the same destination. You can still create the backup, but check the exclude rules.",
                                page.nestedWarnings[0].other_backup_name,
                                page.nestedWarnings[0].other_source_path)
                         : ""

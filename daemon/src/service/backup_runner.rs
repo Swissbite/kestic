@@ -1007,7 +1007,7 @@ fn run_post_backup_forget(
                 }
                 if backup_exit == 0 {
                     *out.summary = Some(if is_forget_lock_failure(&f_res) {
-                        i18n("Backed up, destination locked — retention will catch up later").into()
+                        i18n("Backed up; destination was locked, retention runs later").into()
                     } else {
                         tr(&ErrorKind::RetentionPending.message(None, false))
                     });

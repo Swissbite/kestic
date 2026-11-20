@@ -95,8 +95,8 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     if config.send_test_notification {
         send_event_notification(
             KesticEvent::BackupWarning,
-            &i18n("Kestic daemon test notification").to_string(),
-            &i18n("Tray registered and notification channel active.").to_string(),
+            &i18n("Kestic test notification").to_string(),
+            &i18n("Notifications work.").to_string(),
         )
         .map_err(|err| format!("failed to send test notification: {err}"))?;
     }
