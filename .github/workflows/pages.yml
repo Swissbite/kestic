@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 
-# Builds the showcase site in site/ and deploys it to GitHub Pages
-# (decision 2026-11-20, docs/spec/decisions.md «Showcase-Seite»).
+# Builds the showcase site in site/ and deploys it to GitHub Pages.
 #
 # Screenshots come from the GUI smoke tests: the `smoke-artifacts` artifact of
 # the successful Verify run on main. Every push to main (site/** included)

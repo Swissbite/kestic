@@ -71,7 +71,7 @@ test:
     cargo deb -p kestic-gui --fast
     KESTIC_TEST_FAST_INIT=1 cargo nextest run --workspace
 
-# Showcase site (site/, decision 2026-11-20). Needs pnpm; pnpm provides Node
+# Showcase site (site/). Needs pnpm; pnpm provides Node
 # itself (devEngines.runtime). Screenshots come from target/smoke-artifacts/,
 # so run `just verify` (or the GUI smoke tests) first.
 

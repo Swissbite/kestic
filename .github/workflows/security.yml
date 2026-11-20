@@ -41,7 +41,6 @@ jobs:
           # Microsoft's CSS/HTML language services (used only by the site's
           # typecheck, @astrojs/check) are MIT; GitHub also reports CC-BY-4.0 and
           # CC-BY-SA-2.5 for the bundled MDN reference texts. Never shipped.
-          # Decision 2026-11-20 (PR 9).
           allow-dependencies-licenses: pkg:npm/vscode-css-languageservice, pkg:npm/vscode-html-languageservice
 
   cargo-deny:
