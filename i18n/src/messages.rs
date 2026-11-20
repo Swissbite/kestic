@@ -104,7 +104,7 @@ impl ErrorKind {
             Self::Unknown => {
                 return match exit_code {
                     Some(code) if code != 1 => Message::with_args(
-                        i18n_noop("Unknown error (exit %1)"),
+                        i18n_noop("Unknown error (code %1)"),
                         &[&code.to_string()],
                     ),
                     _ => Message::new(i18n_noop("Backup command failed")),
@@ -397,7 +397,7 @@ impl ServiceErrorCode {
             Self::ResticUnavailable => return ErrorKind::ResticUnavailable.message(None, false),
             Self::AlreadyRunning => i18n_noop("Another run is already active on this destination."),
             Self::LockInUse => {
-                i18n_noop("Cannot release the lock: another process still uses the repository.")
+                i18n_noop("Cannot release the lock: another program still uses the repository.")
             }
             Self::DuplicateLocation => {
                 i18n_noop("This location is already used by another destination.")

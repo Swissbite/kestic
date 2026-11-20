@@ -117,7 +117,7 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.RadioButton {
-                text: i18n("Custom executable path")
+                text: i18n("Custom program path")
                 checked: settingsWindow.pendingProviderKind === "custom"
                 Accessible.name: text
                 onToggled: if (checked) settingsWindow.pendingProviderKind = "custom"
@@ -137,7 +137,7 @@ Kirigami.ApplicationWindow {
                     }
                 }
                 placeholderText: "/usr/local/bin/restic"
-                Accessible.name: i18n("Custom restic executable path")
+                Accessible.name: i18n("Custom restic program path")
                 Layout.fillWidth: true
             }
 

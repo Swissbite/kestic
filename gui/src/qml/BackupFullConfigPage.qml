@@ -151,7 +151,7 @@ Kirigami.ScrollablePage {
             rowObjectName: "fullConfigDestinationRow"
             rowTitle: i18n("Repository destination")
             rowValue: backupData
-                ? (backupData.destinationName + "\n" + i18n("Password in KWallet (Secret Service); never stored in plain text"))
+                ? (backupData.destinationName + "\n" + i18n("Password in KWallet (Secret Service); never stored unencrypted"))
                 : ""
             onNavigate: rootWindow.openBackupReassignPage(backupId)
         }

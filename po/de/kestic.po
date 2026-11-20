@@ -58,8 +58,8 @@ msgid "Saved password does not match"
 msgstr "Gespeichertes Passwort stimmt nicht überein"
 
 #: daemon/src/i18n.rs:162
-msgid "Unknown error (exit %1)"
-msgstr "Unbekannter Fehler (Exit %1)"
+msgid "Unknown error (code %1)"
+msgstr "Unbekannter Fehler (Code %1)"
 
 #: daemon/src/i18n.rs:170 gui/src/backend/schedules.rs:522
 #: gui/src/qml/BackupDetailPage.qml:63 gui/src/qml/BackupDetailPage.qml:354
@@ -92,8 +92,8 @@ msgstr "Passwortspeicher ist gesperrt"
 
 #: daemon/src/service/availability.rs:436
 #: daemon/src/service/destinations.rs:345
-msgid "Cannot release the lock: another process still uses the repository."
-msgstr "Sperre kann nicht aufgehoben werden: Ein anderer Prozess nutzt das Repository noch."
+msgid "Cannot release the lock: another program still uses the repository."
+msgstr "Sperre kann nicht aufgehoben werden: Ein anderes Programm nutzt das Repository noch."
 
 #: daemon/src/service/backup_runner.rs:220
 msgid "Destination unreachable · next attempt at %1"
@@ -249,7 +249,7 @@ msgstr "Netzwerkverbindung"
 
 #: daemon/src/service/state.rs:439
 msgid "unmetered connection"
-msgstr "ungetaktete Verbindung"
+msgstr "keine getaktete Verbindung"
 
 #: daemon/src/service/state.rs:441
 msgid "allowed network (%1)"
@@ -291,7 +291,7 @@ msgstr "Wartet: Netzwerk"
 
 #: daemon/src/service/state.rs:468 gui/src/state_cache.rs:1002
 msgid "Waiting: unmetered connection"
-msgstr "Wartet: ungetaktete Verbindung"
+msgstr "Wartet: keine getaktete Verbindung"
 
 #: daemon/src/service/state.rs:471 gui/src/state_cache.rs:1003
 msgid "Waiting: allowed network"
@@ -1837,8 +1837,8 @@ msgid "Repository destination"
 msgstr "Repository-Ziel"
 
 #: gui/src/qml/BackupFullConfigPage.qml:154
-msgid "Password in KWallet (Secret Service); never stored in plain text"
-msgstr "Passwort in KWallet (Secret Service); wird nie im Klartext gespeichert"
+msgid "Password in KWallet (Secret Service); never stored unencrypted"
+msgstr "Passwort in KWallet (Secret Service); nie unverschlüsselt gespeichert"
 
 #: gui/src/qml/BackupFullConfigPage.qml:166
 msgid "Configured exclude rules"
@@ -1922,7 +1922,7 @@ msgid "The preview result could not be read."
 msgstr "Das Ergebnis der Vorschau konnte nicht gelesen werden."
 
 #: gui/src/qml/BackupPreviewPage.qml:166
-msgid "Dry-Run Preview"
+msgid "Test Run Preview"
 msgstr "Testlauf-Vorschau"
 
 #: gui/src/qml/BackupPreviewPage.qml:194
@@ -2629,7 +2629,7 @@ msgid "Cleaning up deletes data on the destination that no snapshot uses anymore
 msgstr "Aufräumen löscht Daten auf dem Ziel, die kein Snapshot mehr nutzt. Gelöschte Daten lassen sich nicht wiederherstellen."
 
 #: gui/src/qml/DestinationMaintenancePage.qml:325
-msgid "Loading dry-run preview…"
+msgid "Loading test run preview…"
 msgstr "Testlauf-Vorschau wird geladen…"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:344
@@ -3123,12 +3123,12 @@ msgid "System restic (from PATH)"
 msgstr "System-restic (aus PATH)"
 
 #: gui/src/qml/SettingsDialog.qml:120
-msgid "Custom executable path"
-msgstr "Eigener Pfad zur ausführbaren Datei"
+msgid "Custom program path"
+msgstr "Eigener Programmpfad"
 
 #: gui/src/qml/SettingsDialog.qml:140
-msgid "Custom restic executable path"
-msgstr "Eigener Pfad zur ausführbaren restic-Datei"
+msgid "Custom restic program path"
+msgstr "Eigener Pfad zum restic-Programm"
 
 #: gui/src/qml/SettingsDialog.qml:160
 msgid "Appearance"

@@ -322,7 +322,7 @@ Kirigami.ScrollablePage {
                 }
 
                 Controls.Label {
-                    text: i18n("Loading dry-run preview…")
+                    text: i18n("Loading test run preview…")
                     Layout.fillWidth: true
                 }
             }

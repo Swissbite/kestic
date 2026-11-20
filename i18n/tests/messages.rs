@@ -30,7 +30,7 @@ fn m3_review3_error_kind_codes_map_to_gui_texts() {
     );
     assert_eq!(
         ErrorKind::Unknown.message(Some(42), false),
-        Message::with_args("Unknown error (exit %1)", &["42"])
+        Message::with_args("Unknown error (code %1)", &["42"])
     );
     assert_eq!(
         ErrorKind::Unknown.message(Some(1), false).english(),
@@ -489,7 +489,7 @@ fn every_service_error_code_maps_to_its_msgid() {
         ),
         (
             S::LockInUse,
-            Some("Cannot release the lock: another process still uses the repository."),
+            Some("Cannot release the lock: another program still uses the repository."),
         ),
         (
             S::DuplicateLocation,

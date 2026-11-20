@@ -163,7 +163,7 @@ Kirigami.ScrollablePage {
             visible: page.mode === "dry_run" && page.dryRunResult !== null && (page.dryRunResult.transparent_command || "") !== ""
             onTriggered: rootWindow.openShowCommandDialog(
                 page.dryRunResult.transparent_command,
-                i18n("Dry-Run Preview")
+                i18n("Test Run Preview")
             )
         },
         Kirigami.Action {

@@ -34,7 +34,7 @@ fn restic_failure_summary_keeps_dns_and_exit_code_detail() {
     );
     assert_eq!(
         ResticFailureKind::Unknown { exit_code: 99 }.default_summary(),
-        "Unknown error (exit 99)"
+        "Unknown error (code 99)"
     );
     assert_eq!(ResticFailureKind::None.default_summary(), "Completed");
 }
