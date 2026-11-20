@@ -949,8 +949,8 @@ fn m2_gui_smoke_drive_unmounted_nested_and_full_config_en_de_narrow() {
             &[],
         );
     }
-    // 4. + 5. Mixed languages (variant A+, decision 2026-11-20): the DTOs carry only codes,
-    // so the GUI shows its own language whatever language the daemon runs in. The smoke
+    // 4. + 5. Mixed languages: the DTOs carry only codes, so the GUI shows its own language
+    // whatever language the daemon runs in. The smoke
     // checks the unavailable reason («drive not mounted» / «Laufwerk nicht eingehängt») in
     // the GUI language.
     for (daemon_lang, gui_lang) in [("de", "en"), ("en", "de")] {

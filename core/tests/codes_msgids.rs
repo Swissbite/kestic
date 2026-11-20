@@ -3,9 +3,9 @@
 
 #![forbid(unsafe_code)]
 
-//! Variant A+ (decision 2026-11-20, `docs/spec/dbus-api.md` §Sprachunabhängige Codes): every
-//! language-independent code maps to a non-empty English msgid with a German translation in
-//! `po/de/kestic.po`, and every message fills exactly the placeholders of its msgid.
+//! Every language-independent code (`docs/spec/dbus-api.md` §Sprachunabhängige Codes) maps to
+//! a non-empty English msgid with a German translation in `po/de/kestic.po`, and every message
+//! fills exactly the placeholders of its msgid.
 
 use kestic_core::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
@@ -234,8 +234,8 @@ fn all_messages() -> Vec<(String, Message)> {
     out
 }
 
-/// A+ (2026-11-20): every code variant has a non-empty msgid with a German translation, and
-/// msgid, translation and arguments agree on the placeholders.
+/// Every code variant has a non-empty msgid with a German translation, and msgid, translation
+/// and arguments agree on the placeholders.
 #[test]
 fn a_plus_every_code_maps_to_a_translated_msgid() {
     let catalog = german_catalog();

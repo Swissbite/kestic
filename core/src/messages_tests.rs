@@ -5,8 +5,7 @@
 
 use super::*;
 
-/// AC (review M3, GUI-Sprache, Option A+): the error kinds map to the texts the GUI showed
-/// before; `unknown` depends on exit code and warning.
+/// The error kinds map to their texts; `unknown` depends on exit code and warning.
 #[test]
 fn m3_review3_error_kind_codes_map_to_gui_texts() {
     assert_eq!(
