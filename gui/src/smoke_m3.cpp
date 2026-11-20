@@ -235,6 +235,7 @@ int scenario_exit12_and_override(const Ctx& c) {
 } // namespace
 
 int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled);
+int run_m3_pages_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled);
 
 void run_m3_smoke_scenario(
     QQmlApplicationEngine& engine,
@@ -256,7 +257,10 @@ void run_m3_smoke_scenario(
     } else if (scen == QLatin1String("m3-exit12-and-condition-override")) {
         rc = scenario_exit12_and_override(ctx);
     } else {
-        rc = run_m3_editor_scenario(ctx, scen, &handled);
+        rc = run_m3_pages_scenario(ctx, scen, &handled);
+        if (!handled) {
+            rc = run_m3_editor_scenario(ctx, scen, &handled);
+        }
     }
     if (!handled) {
         std::fprintf(stderr, "M3 smoke failed (399): unknown m3 smoke scenario %s\n", qPrintable(scen));
