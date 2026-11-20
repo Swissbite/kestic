@@ -27,10 +27,37 @@ pub fn i18np(singular: &str, plural: &str, n: usize, args: &[&str]) -> String {
     crate::smoke::ffi::i18np_subs(singular, plural, i64::try_from(n).unwrap_or(i64::MAX), args)
 }
 
-use crate::overall_text::{
-    localized_availability_reason, localized_error_kind, localized_skip_error_kind,
-    localized_source_status,
-};
+/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
+/// GUI language with KI18n.
+pub fn tr(message: &Message) -> String {
+    if message.args.is_empty() {
+        i18n(message.msgid).to_string()
+    } else {
+        let args: Vec<&str> = message.args.iter().map(String::as_str).collect();
+        i18n(message.msgid).subs(&args)
+    }
+}
+
+/// Translates a [`UiText`]: messages via [`tr`], raw detail unchanged.
+pub fn tr_text(text: &UiText) -> String {
+    match text {
+        UiText::Message(m) => tr(m),
+        UiText::Raw(raw) => raw.clone(),
+    }
+}
+
+/// Text of a failed D-Bus call in the GUI language: the error name is the code
+/// (`kestic_i18n::messages`), the error message is never shown as main text.
+pub fn dbus_error_text<E>(err: &E) -> String
+where
+    E: Clone + Into<kestic_daemon::dbus_api::KesticDbusError>,
+{
+    let err: kestic_daemon::dbus_api::KesticDbusError = err.clone().into();
+    tr(&err.code().message())
+}
+
+use crate::overall_text::localized_availability_reason;
+use crate::ui_texts::GuiText;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::model::{
@@ -42,10 +69,25 @@ use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_s
 use kestic_daemon::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSnapshotsDto, BackupSummaryDto,
     ConnectionTestResultDto, DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME,
-    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind,
-    REASON_CONDITION_NOT_MET, REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
-    RunDetailDto, StartAllResultDto,
+    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto,
+    StartAllResultDto,
 };
+use kestic_i18n::codes::{BlockedReason, ConnectionTestCode, PendingReasonCode};
+use kestic_i18n::codes::{ErrorKind, ServiceErrorCode};
+use kestic_i18n::messages::{
+    Message, UiText, completed_message, interrupted_by_sleep_message, not_backed_up_message,
+    pause_message, unmet_conditions_message,
+};
+
+/// «Background service unavailable.» (text of `ServiceErrorCode::DaemonUnreachable`).
+pub fn daemon_unavailable_text() -> String {
+    tr(&ServiceErrorCode::DaemonUnreachable.message())
+}
+
+/// The requested item no longer exists (text of `ServiceErrorCode::NotFound`).
+pub fn not_found_text() -> String {
+    tr(&ServiceErrorCode::NotFound.message())
+}
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
@@ -95,7 +137,7 @@ pub struct SharedGuiState {
     pub state_dirty: bool,
     pub progress_dirty: bool,
     pub listener_started: bool,
-    pub pending_blocked: Option<(String, String)>,
+    pub pending_blocked: Option<(String, BlockedReason)>,
     pub pending_show_window: bool,
     pub pending_quit: Option<(bool, String)>,
     pub maintenance_preview: Option<(String, Result<String, String>)>,
@@ -234,8 +276,7 @@ pub fn ensure_daemon_and_refresh() {
     if !owned {
         let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
         guard.daemon_reachable = false;
-        guard.daemon_error =
-            Some(i18n("Background service did not claim its D-Bus name.").to_string());
+        guard.daemon_error = Some(i18n("The background service did not start.").to_string());
         guard.state_dirty = true;
         return;
     }
@@ -291,7 +332,7 @@ pub fn refresh_state_now() {
         Err(err) => {
             let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
             guard.daemon_reachable = false;
-            guard.daemon_error = Some(err);
+            guard.daemon_error = Some(err.to_string());
             guard.state_dirty = true;
         }
     }
@@ -382,8 +423,9 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                         }
                     }
                     Some("ManualRunBlocked") => {
-                        if let Ok((backup_id, reason)) =
-                            msg.body().deserialize::<(String, String)>()
+                        // A reason code this GUI does not know is ignored, never guessed.
+                        if let Ok((backup_id, code)) = msg.body().deserialize::<(String, String)>()
+                            && let Some(reason) = BlockedReason::parse(&code)
                         {
                             let mut guard =
                                 shared_state().lock().unwrap_or_else(|p| p.into_inner());
@@ -432,9 +474,9 @@ pub fn test_destination_connection(
         Err(err) => {
             return ConnectionTestResultDto {
                 ok: false,
-                error_kind: Some("invalid_input".to_string()),
-                message: if err.is_empty() {
-                    i18n("Please fill in all required fields.").to_string()
+                error_kind: Some(ConnectionTestCode::InvalidInput),
+                detail: if err.is_empty() {
+                    GuiText::FillRequiredFields.text()
                 } else {
                     err
                 },
@@ -446,17 +488,18 @@ pub fn test_destination_connection(
         Err(err) => {
             return ConnectionTestResultDto {
                 ok: false,
-                error_kind: Some("daemon_unreachable".to_string()),
-                message: err,
+                error_kind: Some(ConnectionTestCode::DaemonUnreachable),
+                detail: err,
             };
         }
     };
     match client.test_destination_connection(&dest, mode, repo_pw, rest_pw) {
         Ok(res) => res,
+        // Already translated: the text of the D-Bus error name.
         Err(err) => ConnectionTestResultDto {
             ok: false,
-            error_kind: Some("internal".to_string()),
-            message: err,
+            error_kind: Some(ConnectionTestCode::Internal),
+            detail: dbus_error_text(&err),
         },
     }
 }
@@ -620,13 +663,13 @@ fn format_keep_count_part(kc: KeepCount, unit_singular_plural: &str) -> String {
 pub fn format_retention_summary(policy: &RetentionPolicy) -> String {
     match policy.preset() {
         RetentionPreset::Standard => {
-            return i18n("Standard (7 daily, 4 weekly, 12 monthly)").to_string();
+            return GuiText::PresetStandard.text();
         }
         RetentionPreset::Economical => {
-            return i18n("Economical (7 daily, 4 weekly)").to_string();
+            return GuiText::PresetEconomical.text();
         }
         RetentionPreset::Long => {
-            return i18n("Long (7 daily, 4 weekly, 12 monthly, all yearly)").to_string();
+            return GuiText::PresetLong.text();
         }
         RetentionPreset::Custom => {}
     }
@@ -635,7 +678,7 @@ pub fn format_retention_summary(policy: &RetentionPolicy) -> String {
     if let Some(kc) = policy.keep_last {
         parts.push(match kc {
             KeepCount::Unlimited => i18n("all snapshots").to_string(),
-            KeepCount::Count(n) => i18n("%1 last").subs(&[&n.to_string()]),
+            KeepCount::Count(n) => i18n("Last %1").subs(&[&n.to_string()]),
         });
     }
     if let Some(kc) = policy.keep_hourly {
@@ -699,7 +742,7 @@ pub fn format_exclude_summary(excludes: &ExcludeRules) -> String {
     if let Some(ref limit) = excludes.exclude_larger_than
         && !limit.trim().is_empty()
     {
-        parts.push(i18n("files > %1").subs(&[limit.trim()]));
+        parts.push(i18n("files over %1").subs(&[limit.trim()]));
     }
     let expert_count = excludes.expert_rule_count();
     if expert_count == 1 {
@@ -711,7 +754,7 @@ pub fn format_exclude_summary(excludes: &ExcludeRules) -> String {
         parts.push(i18n("marker: %1").subs(&[&excludes.exclude_if_present.join(", ")]));
     }
     if parts.is_empty() {
-        i18n("None").to_string()
+        GuiText::None.text()
     } else {
         parts.join(" · ")
     }
@@ -725,12 +768,12 @@ pub fn format_source_kind_label(source: &Source) -> String {
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
             {
-                i18n("Drive (%1)").subs(&[lbl.trim()])
+                GuiText::DriveWithLabel.with_args(&[lbl.trim()])
             } else {
-                i18n("Drive").to_string()
+                GuiText::Drive.text()
             }
         }
-        SourceKind::Folder => i18n("Folder").to_string(),
+        SourceKind::Folder => GuiText::Folder.text(),
     }
 }
 
@@ -818,25 +861,25 @@ pub fn format_bytes(bytes: u64) -> String {
 
 fn weekday_short_label(w: Weekday) -> String {
     match w {
-        Weekday::Monday => i18n("Mon").to_string(),
-        Weekday::Tuesday => i18n("Tue").to_string(),
-        Weekday::Wednesday => i18n("Wed").to_string(),
-        Weekday::Thursday => i18n("Thu").to_string(),
-        Weekday::Friday => i18n("Fri").to_string(),
-        Weekday::Saturday => i18n("Sat").to_string(),
-        Weekday::Sunday => i18n("Sun").to_string(),
+        Weekday::Monday => GuiText::Mon.text(),
+        Weekday::Tuesday => GuiText::Tue.text(),
+        Weekday::Wednesday => GuiText::Wed.text(),
+        Weekday::Thursday => GuiText::Thu.text(),
+        Weekday::Friday => GuiText::Fri.text(),
+        Weekday::Saturday => GuiText::Sat.text(),
+        Weekday::Sunday => GuiText::Sun.text(),
     }
 }
 
 fn weekday_full_label(w: Weekday) -> String {
     match w {
-        Weekday::Monday => i18n("Monday").to_string(),
-        Weekday::Tuesday => i18n("Tuesday").to_string(),
-        Weekday::Wednesday => i18n("Wednesday").to_string(),
-        Weekday::Thursday => i18n("Thursday").to_string(),
-        Weekday::Friday => i18n("Friday").to_string(),
-        Weekday::Saturday => i18n("Saturday").to_string(),
-        Weekday::Sunday => i18n("Sunday").to_string(),
+        Weekday::Monday => GuiText::Monday.text(),
+        Weekday::Tuesday => GuiText::Tuesday.text(),
+        Weekday::Wednesday => GuiText::Wednesday.text(),
+        Weekday::Thursday => GuiText::Thursday.text(),
+        Weekday::Friday => GuiText::Friday.text(),
+        Weekday::Saturday => GuiText::Saturday.text(),
+        Weekday::Sunday => GuiText::Sunday.text(),
     }
 }
 
@@ -864,7 +907,7 @@ fn weekday_plural_label(weekday: Weekday) -> String {
 
 pub fn format_schedule_summary(schedule: &Schedule) -> String {
     match schedule {
-        Schedule::ManualOnly => i18n("Manual only").to_string(),
+        Schedule::ManualOnly => GuiText::ManualOnly.text(),
         Schedule::Daily { hour, minute } => {
             let hhmm = format!("{hour:02}:{minute:02}");
             i18n("Daily at %1").subs(&[&hhmm])
@@ -935,7 +978,7 @@ pub fn format_conditions_summary(conditions: &RunConditions) -> String {
 
 pub fn format_maintenance_entry(entry: &MaintenanceEntrySchedule) -> String {
     match entry {
-        MaintenanceEntrySchedule::ManualOnly => i18n("Manual only").to_string(),
+        MaintenanceEntrySchedule::ManualOnly => GuiText::ManualOnly.text(),
         MaintenanceEntrySchedule::Daily { hour, minute } => {
             let hhmm = format!("{hour:02}:{minute:02}");
             i18n("Daily at %1").subs(&[&hhmm])
@@ -955,7 +998,7 @@ pub fn format_maintenance_entry(entry: &MaintenanceEntrySchedule) -> String {
             minute,
         } => {
             let hhmm = format!("{hour:02}:{minute:02}");
-            i18n("%1 %2 of month at %3").subs(&[
+            i18n("%1 %2 of the month at %3").subs(&[
                 &nth_weekday_label(*nth),
                 &weekday_full_label(*weekday),
                 &hhmm,
@@ -1013,40 +1056,18 @@ pub fn format_pause_line(
         .map(format_time_short)
         .unwrap_or_else(|| "–".to_string());
     let until_str = format_slot_timestamp(until_unix, now);
-    if !until_str.is_empty() {
-        i18n("Paused since %1 (until %2)").subs(&[&since_str, &until_str])
-    } else {
-        i18n("Paused since %1").subs(&[&since_str])
-    }
+    let until = (!until_str.is_empty()).then_some(until_str.as_str());
+    tr(&pause_message(&since_str, until))
 }
 
-/// Waiting reason in the GUI locale, derived from the daemon's reason code; the backoff
-/// reason uses `retry_at_unix` (`pending_retry_at_unix`), the daemon text is only the fallback.
-pub fn localized_pending_reason(
-    code: Option<&str>,
-    daemon_text: &str,
+/// Waiting reason in the GUI locale from the daemon's reason code; the backoff reason uses
+/// `retry_at_unix` (`pending_retry_at_unix`).
+pub fn pending_reason_line(
+    code: PendingReasonCode,
     retry_at_unix: Option<i64>,
     now: OffsetDateTime,
 ) -> String {
-    match code {
-        Some("backoff") => {
-            let hint = format_slot_timestamp(retry_at_unix, now);
-            let hint = if hint.is_empty() {
-                "–".to_string()
-            } else {
-                hint
-            };
-            i18n("Waiting: next attempt at %1").subs(&[&hint])
-        }
-        Some("source_unavailable") => i18n("Waiting: source unavailable").to_string(),
-        Some("destination_unreachable") => i18n("Waiting: destination unreachable").to_string(),
-        Some("on_battery") => i18n("Waiting: AC power").to_string(),
-        Some("no_network") => i18n("Waiting: network").to_string(),
-        Some("metered") => i18n("Waiting: unmetered connection").to_string(),
-        Some("wrong_network") => i18n("Waiting: allowed network").to_string(),
-        Some("queue") => i18n("Waiting: another run on this destination").to_string(),
-        _ => daemon_text.to_string(),
-    }
+    tr(&code.waiting_message(&format_slot_timestamp(retry_at_unix, now)))
 }
 
 /// Cause of the last run's error/warning of `summary` in the GUI locale (`error_kind`).
@@ -1055,17 +1076,25 @@ pub fn localized_last_error(summary: &BackupSummaryDto) -> String {
         .last_run
         .as_ref()
         .is_some_and(|r| r.status == RunStatus::Warning);
-    let text = localized_error_kind(
-        summary.error_kind.as_deref(),
-        summary.error_exit_code,
-        is_warning,
-        summary.error_summary.as_deref(),
-    );
-    if text.is_empty() && !is_warning {
-        i18n("Backup failed").to_string()
-    } else {
-        text
+    match summary.error_kind {
+        Some(kind) => tr(&kind.message(summary.error_exit_code, is_warning)),
+        None if is_warning => String::new(),
+        None => i18n("Backup failed").to_string(),
     }
+}
+
+/// Unmet run conditions of `summary` as «Condition not met: …» in the GUI locale.
+pub fn localized_unmet_conditions(summary: &BackupSummaryDto) -> Option<String> {
+    if summary.unmet_run_conditions.is_empty() {
+        return None;
+    }
+    let allowed = &summary.backup.run_conditions.allowed_networks;
+    let parts: Vec<String> = summary
+        .unmet_run_conditions
+        .iter()
+        .map(|code| tr(&code.condition_message(summary.battery_percent, allowed)))
+        .collect();
+    Some(tr(&unmet_conditions_message(&parts.join(", "))))
 }
 
 /// Status line of a backup whose source or destination is unavailable.
@@ -1077,21 +1106,16 @@ fn unavailable_status(
     availability: &BackupAvailabilityDto,
 ) -> (String, String, String) {
     if matches!(schedule, Schedule::ManualOnly) {
-        let text = i18n("%1 · %2").subs(&[
-            &i18n("Manual only").to_string(),
+        let text = GuiText::TwoParts.with_args(&[
+            &GuiText::ManualOnly.text(),
             &localized_availability_reason(availability),
         ]);
         return (text, "state-information".to_string(), "text".to_string());
     }
-    let reason_line = match availability.blocked_reason.as_deref() {
-        Some(REASON_SOURCE_UNAVAILABLE) => {
-            localized_source_status(availability.source_status.as_deref())
-        }
-        Some(REASON_DESTINATION_UNREACHABLE) => {
-            i18n("Waiting: destination unreachable").to_string()
-        }
-        _ => i18n("Waiting: unavailable").to_string(),
-    };
+    let reason_line = tr(&BlockedReason::waiting_message(
+        availability.blocked_reason,
+        availability.source_status,
+    ));
     (reason_line, "chronometer".to_string(), "text".to_string())
 }
 
@@ -1134,16 +1158,9 @@ pub fn format_backup_status(
         );
     }
 
-    if let Some(primary) = &summary.pending_primary_reason
-        && !primary.trim().is_empty()
-    {
+    if let Some(code) = summary.pending_primary_code {
         return (
-            localized_pending_reason(
-                summary.pending_primary_code.as_deref(),
-                primary,
-                summary.pending_retry_at_unix,
-                now,
-            ),
+            pending_reason_line(code, summary.pending_retry_at_unix, now),
             "chronometer".to_string(),
             "text".to_string(),
         );
@@ -1165,9 +1182,9 @@ pub fn format_backup_status(
                 let text = if count > 0 {
                     i18n("Backed up, %1 files unreadable").subs(&[&count.to_string()])
                 } else if summary.pending_forget {
-                    i18n("Backed up, retention not executed (forget pending)").to_string()
+                    tr(&ErrorKind::RetentionPending.message(None, false))
                 } else {
-                    i18n("Backed up with warning").to_string()
+                    tr(&ErrorKind::Unknown.message(None, true))
                 };
                 return (text, "state-warning".to_string(), "neutral".to_string());
             }
@@ -1185,7 +1202,7 @@ pub fn format_backup_status(
             }
             RunStatus::Interrupted => {
                 return (
-                    i18n("Interrupted (sleep)").to_string(),
+                    tr(&interrupted_by_sleep_message()),
                     "state-offline".to_string(),
                     "text".to_string(),
                 );
@@ -1199,7 +1216,7 @@ pub fn format_backup_status(
             }
             RunStatus::Running => {
                 return (
-                    i18n("Backing up · 0%").to_string(),
+                    i18n("Backing up · %1%").subs(&["0"]),
                     "state-sync".to_string(),
                     "highlight".to_string(),
                 );
@@ -1208,7 +1225,7 @@ pub fn format_backup_status(
     }
 
     (
-        i18n("Not backed up yet").to_string(),
+        tr(&not_backed_up_message()),
         "state-information".to_string(),
         "text".to_string(),
     )
@@ -1220,7 +1237,7 @@ pub fn format_destination_status(
 ) -> (String, String) {
     if summary.password_rejected {
         return (
-            i18n("Stored password does not match").to_string(),
+            tr(&ErrorKind::WrongPassword.message(None, false)),
             "state-error".to_string(),
         );
     }
@@ -1232,7 +1249,7 @@ pub fn format_destination_status(
     }
     if !summary.availability.reachable {
         return (
-            i18n("Unreachable").to_string(),
+            tr(&ErrorKind::DestinationUnreachable.message(None, false)),
             "network-disconnect".to_string(),
         );
     }
@@ -1267,7 +1284,7 @@ pub fn format_run_status(
     match status {
         // A maintenance run (`forget`/`prune`/`check`) backs nothing up.
         RunStatus::Ok if matches!(kind, RunKind::Maintenance) => {
-            (i18n("Completed").to_string(), "state-ok", "positive")
+            (tr(&completed_message()), "state-ok", "positive")
         }
         RunStatus::Ok => (i18n("Backed up").to_string(), "state-ok", "positive"),
         RunStatus::Warning => (i18n("Warning").to_string(), "state-warning", "neutral"),
@@ -1362,14 +1379,8 @@ pub fn format_run_kind_name(run: &Run, backup_name: Option<&str>, dest_name: &st
     }
 }
 
-pub fn localized_manual_block_message(backup_name: &str, reason: &str) -> String {
-    if reason == REASON_SOURCE_UNAVAILABLE {
-        i18n("Cannot back up '%1': source is unavailable.").subs(&[backup_name])
-    } else if reason == REASON_CONDITION_NOT_MET {
-        i18n("Cannot back up '%1': run conditions are not met.").subs(&[backup_name])
-    } else {
-        i18n("Cannot back up '%1': destination is unreachable.").subs(&[backup_name])
-    }
+pub fn localized_manual_block_message(backup_name: &str, reason: BlockedReason) -> String {
+    tr(&reason.manual_block_message(backup_name))
 }
 
 pub fn localized_condition_override_message(backup_name: &str, unmet_text: Option<&str>) -> String {
@@ -1382,17 +1393,13 @@ pub fn localized_condition_override_message(backup_name: &str, unmet_text: Optio
     }
 }
 
-/// Localized reason for a skipped backup of «Back Up All Now» (FR-13b); the code is
-/// translated in the GUI locale, the daemon text is only the fallback for unknown codes.
+/// Localized reason for a skipped backup of «Back Up All Now» (FR-13b).
 fn localized_skip_reason(skipped: &kestic_daemon::dbus_api::SkippedBackupDto) -> String {
-    match skipped.reason.as_str() {
-        "permanent_error" => i18n("permanent error, fix required").to_string(),
-        REASON_SOURCE_UNAVAILABLE => i18n("source unavailable").to_string(),
-        REASON_DESTINATION_UNREACHABLE => i18n("destination unreachable").to_string(),
-        REASON_CONDITION_NOT_MET => i18n("run conditions not met").to_string(),
-        "error" => localized_skip_error_kind(skipped.error_kind.as_deref(), &skipped.reason_text),
-        _ => skipped.reason_text.clone(),
-    }
+    tr_text(
+        &skipped
+            .reason
+            .text(skipped.error_kind, skipped.error_detail.as_deref()),
+    )
 }
 
 pub fn localized_start_all_summary(res: &StartAllResultDto) -> Option<String> {
@@ -1409,8 +1416,8 @@ pub fn localized_start_all_summary(res: &StartAllResultDto) -> Option<String> {
     let details = details.join(", ");
     if skipped == 0 {
         return Some(i18np(
-            "%1 backup queued behind active destination run",
-            "%1 backups queued behind active destination run",
+            "%1 backup waits for the current run on its destination",
+            "%1 backups wait for the current run on their destination",
             queued,
             &[],
         ));

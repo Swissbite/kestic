@@ -3,9 +3,9 @@
 
 import QtQuick
 import QtQuick.Controls as Controls
-import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
@@ -17,45 +17,41 @@ Kirigami.ScrollablePage {
     required property string destinationId
 
     property var initialData: null
-    property string destName: ""
-    property string location: ""
-    property string setupMode: "connect"
-    property string username: ""
-    property string repoPassword: ""
-    property string restPassword: ""
-    property bool connectionVerified: false
-    property string testFeedback: ""
-    property bool testFeedbackOk: false
+    // Kept as page properties for callers and tests that read them directly.
+    property alias destName: destDraft.name
+    property alias setupMode: destDraft.setupMode
+
+    DestinationDraft {
+        id: destDraft
+        appBackend: page.appBackend
+        destinationId: page.destinationId
+        setupMode: "connect"
+    }
 
     function loadInitialData() {
         var data = rootWindow.findDestinationData(destinationId);
         initialData = data;
         if (data) {
-            destName = data.name;
-            location = data.location;
-            username = data.username;
+            destDraft.kind = data.kindName;
+            destDraft.name = data.name;
+            destDraft.location = data.location;
+            destDraft.username = data.username;
         }
     }
 
     Component.onCompleted: loadInitialData()
 
-    readonly property bool kindIsRest: initialData !== null && initialData.kindName === "rest"
     readonly property bool locationChanged: initialData !== null && (
-        location.trim() !== initialData.location
-        || username.trim() !== initialData.username
-        || repoPassword.length > 0
-        || restPassword.length > 0
+        destDraft.location.trim() !== initialData.location
+        || destDraft.username.trim() !== initialData.username
+        || destDraft.repoPassword.length > 0
+        || destDraft.restPassword.length > 0
     )
-    readonly property bool needsVerification: locationChanged || setupMode === "init"
+    readonly property bool needsVerification: locationChanged || destDraft.setupMode === "init"
     readonly property bool dirty: initialData !== null && (
-        destName.trim() !== initialData.name || needsVerification
+        destDraft.name.trim() !== initialData.name || needsVerification
     )
-    readonly property bool nameValid: destName.trim().length > 0
-    readonly property bool locationValid: kindIsRest
-        ? /^https?:\/\//i.test(location.trim())
-        : location.trim().length > 0
-    readonly property bool fieldsValid: nameValid && locationValid
-    readonly property bool canSave: dirty && fieldsValid && (!needsVerification || connectionVerified) && appBackend.blocking_kind === ""
+    readonly property bool canSave: dirty && destDraft.detailsValid && (!needsVerification || destDraft.connectionVerified) && appBackend.blocking_kind === ""
 
     onDirtyChanged: appBackend.has_unsaved_changes = dirty
 
@@ -78,60 +74,27 @@ Kirigami.ScrollablePage {
         return false;
     }
 
-    function runConnectionTest() {
-        if (!fieldsValid || !initialData) {
-            testFeedbackOk = false;
-            testFeedback = i18n("Please fill in all required fields.");
-            return false;
-        }
-        var fieldsJson = JSON.stringify({
-            id: destinationId,
-            kind: initialData.kindName,
-            name: destName.trim(),
-            location: location.trim(),
-            username: username.trim()
-        });
-        var ok = appBackend.testDestination(
-            fieldsJson,
-            page.setupMode,
-            repoPassword,
-            restPassword
-        );
-        connectionVerified = ok;
-        testFeedbackOk = ok;
-        testFeedback = appBackend.connection_test_message;
-        return ok;
-    }
-
     function saveChanges() {
         if (!canSave || !initialData) return false;
-        var fieldsJson = JSON.stringify({
-            id: destinationId,
-            kind: initialData.kindName,
-            name: destName.trim(),
-            location: location.trim(),
-            username: username.trim()
-        });
         if (appBackend.updateDestination(
                 destinationId,
-                fieldsJson,
-                page.setupMode,
-                repoPassword,
-                restPassword,
+                destDraft.fieldsJson(),
+                destDraft.setupMode,
+                destDraft.repoPassword,
+                destDraft.restPassword,
                 page.needsVerification
             )) {
             initialData = rootWindow.findDestinationData(destinationId);
-            setupMode = "connect";
-            repoPassword = "";
-            restPassword = "";
-            connectionVerified = false;
-            testFeedback = "";
-            testFeedbackOk = false;
-            rootWindow.showPassiveNotification(i18n("Destination saved"));
+            destDraft.setupMode = "connect";
+            destDraft.repoPassword = "";
+            destDraft.restPassword = "";
+            destDraft.connectionVerified = false;
+            destDraft.testFeedback = "";
+            destDraft.testFeedbackOk = false;
+            rootWindow.showPassiveNotification(Texts.label("destination_saved"));
             return true;
         }
-        testFeedbackOk = false;
-        testFeedback = appBackend.last_action_error;
+        destDraft.showError(appBackend.last_action_error);
         return false;
     }
 
@@ -140,7 +103,7 @@ Kirigami.ScrollablePage {
             id: saveDestinationAction
             objectName: "saveDestinationAction"
             icon.name: "document-save"
-            text: i18n("Save")
+            text: Texts.label("save")
             enabled: page.canSave
             onTriggered: page.saveChanges()
         },
@@ -148,7 +111,7 @@ Kirigami.ScrollablePage {
             id: closeDestinationEditAction
             objectName: "closeDestinationEditAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: {
                 if (page.dirty) {
                     unsavedDialog.open();
@@ -159,22 +122,10 @@ Kirigami.ScrollablePage {
         }
     ]
 
-    FolderDialog {
-        id: destFolderDialog
-        title: i18n("Choose Repository Folder")
-        onAccepted: {
-            var local = selectedFolder.toString().replace(/^file:\/\//, "");
-            if (local.length > 0) {
-                page.location = local;
-                page.connectionVerified = false;
-            }
-        }
-    }
-
     Kirigami.PromptDialog {
         id: unsavedDialog
         objectName: "unsavedDestinationDialog"
-        title: i18n("Save changes?")
+        title: Texts.label("save_changes_question")
         subtitle: i18n("You have unsaved changes to this destination.")
         standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
         onAccepted: {
@@ -188,135 +139,11 @@ Kirigami.ScrollablePage {
         }
     }
 
-    Kirigami.FormLayout {
-        Kirigami.InlineMessage {
-            id: destEditFeedbackBanner
-            objectName: "destEditFeedbackBanner"
-            Layout.fillWidth: true
-            type: testFeedbackOk ? Kirigami.MessageType.Positive : Kirigami.MessageType.Error
-            visible: testFeedback !== ""
-            text: testFeedback
-            actions: [
-                Kirigami.Action {
-                    objectName: "destEditSwitchToInitAction"
-                    icon.name: "folder-new"
-                    text: i18n("Create New Repository")
-                    visible: !page.testFeedbackOk && page.setupMode === "connect" && appBackend.connection_test_error_kind === "repository_missing"
-                    onTriggered: {
-                        page.setupMode = "init";
-                        page.connectionVerified = false;
-                        page.runConnectionTest();
-                    }
-                }
-            ]
-        }
-
-        Controls.TextField {
-            id: destNameField
-            objectName: "destEditNameField"
-            Kirigami.FormData.label: i18n("Name:")
-            text: page.destName
-            onTextChanged: page.destName = text
-            Accessible.name: i18n("Destination name")
-        }
-
-        Controls.Label {
-            visible: !page.nameValid
-            text: i18n("Name is required.")
-            color: Kirigami.Theme.negativeTextColor
-        }
-
-        RowLayout {
-            Kirigami.FormData.label: page.kindIsRest ? i18n("Address:") : i18n("Path:")
-            Layout.fillWidth: true
-
-            Controls.TextField {
-                id: destLocationField
-                objectName: "destEditLocationField"
-                text: page.location
-                onTextChanged: {
-                    page.location = text;
-                    page.connectionVerified = false;
-                }
-                placeholderText: page.kindIsRest ? "https://backup.example.org:8000/" : "/mnt/backups"
-                Accessible.name: page.kindIsRest ? i18n("REST server address") : i18n("Repository path")
-                Layout.fillWidth: true
-            }
-
-            Controls.Button {
-                visible: !page.kindIsRest
-                text: i18n("Choose…")
-                onClicked: destFolderDialog.open()
-            }
-        }
-
-        Controls.Label {
-            id: destLocationError
-            objectName: "destEditLocationError"
-            visible: !page.locationValid
-            text: page.kindIsRest
-                ? i18n("Enter a valid http:// or https:// address.")
-                : i18n("Path is required.")
-            color: Kirigami.Theme.negativeTextColor
-        }
-
-        Controls.ComboBox {
-            id: destEditSetupModeCombo
-            objectName: "destEditSetupModeCombo"
-            Kirigami.FormData.label: i18n("Repository:")
-            model: [i18n("Connect existing repository"), i18n("Create new repository")]
-            currentIndex: page.setupMode === "init" ? 1 : 0
-            Accessible.name: i18n("Repository setup mode")
-            onActivated: {
-                page.setupMode = (currentIndex === 1) ? "init" : "connect";
-                page.connectionVerified = false;
-            }
-        }
-
-        Controls.TextField {
-            visible: page.kindIsRest
-            Kirigami.FormData.label: i18n("Username:")
-            text: page.username
-            onTextChanged: {
-                page.username = text;
-                page.connectionVerified = false;
-            }
-            Accessible.name: i18n("REST username")
-        }
-
-        Controls.TextField {
-            visible: page.kindIsRest
-            Kirigami.FormData.label: i18n("Server password:")
-            echoMode: TextInput.Password
-            placeholderText: i18n("Leave empty to keep stored password")
-            text: page.restPassword
-            onTextChanged: {
-                page.restPassword = text;
-                page.connectionVerified = false;
-            }
-            Accessible.name: i18n("REST server password")
-        }
-
-        Controls.TextField {
-            Kirigami.FormData.label: i18n("Repository password:")
-            echoMode: TextInput.Password
-            placeholderText: i18n("Leave empty to keep stored password")
-            text: page.repoPassword
-            onTextChanged: {
-                page.repoPassword = text;
-                page.connectionVerified = false;
-            }
-            Accessible.name: i18n("Repository password")
-        }
-
-        Controls.Button {
-            id: testConnButton
-            objectName: "destEditTestButton"
-            icon.name: "network-connect"
-            text: i18n("Test Connection")
-            enabled: page.fieldsValid && appBackend.blocking_kind === ""
-            Accessible.name: i18n("Test Connection")
-            onClicked: page.runConnectionTest()
-        }
+    DestinationDetailsForm {
+        width: parent.width
+        draft: destDraft
+        namePrefix: "destEdit"
+        editing: true
+        setupModes: ["connect", "init"]
     }
 }

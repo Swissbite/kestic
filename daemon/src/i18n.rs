@@ -7,42 +7,18 @@
 //! daemon tray, notification, and error string into `po/de/kestic.po`, while
 //! allowing `gui` (`cxx-kde-frameworks`) or test doubles to supply translations.
 
-use kestic_core::restic::{RecoveryAction, ResticFailureKind};
+use kestic_i18n::messages::{Message, UiText, substitute_placeholders};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use std::fmt;
-
-/// Single-pass `%1`..`%9` placeholder substitution for fallback translators.
-fn substitute_placeholders(template: &str, args: &[&str]) -> String {
-    let mut out = String::with_capacity(template.len());
-    let bytes = template.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 1 < bytes.len()
-            && bytes[i + 1].is_ascii_digit()
-            && bytes[i + 1] != b'0'
-        {
-            let idx = (bytes[i + 1] - b'1') as usize;
-            if let Some(arg) = args.get(idx) {
-                out.push_str(arg);
-                i += 2;
-                continue;
-            }
-        }
-        let ch = template[i..].chars().next().expect("valid utf8 boundary");
-        out.push(ch);
-        i += ch.len_utf8();
-    }
-    out
-}
 
 /// Translation backend invoked by [`i18n`].
 pub trait DaemonTranslator: Send + Sync {
     fn translate(&self, msgid: &str) -> String;
 
     fn translate_subs(&self, msgid: &str, args: &[&str]) -> String {
-        substitute_placeholders(&self.translate(msgid), args)
+        let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
+        substitute_placeholders(&self.translate(msgid), &args)
     }
 }
 
@@ -141,35 +117,24 @@ pub fn i18n(msgid: &'static str) -> PendingI18n {
     PendingI18n(msgid)
 }
 
-/// Localized single-sentence summary for a classified restic failure (`FR-37`, `M1-S15`).
-pub fn localized_failure_summary(kind: &ResticFailureKind) -> String {
-    match kind {
-        ResticFailureKind::None => i18n("Completed").into(),
-        ResticFailureKind::Cancelled => i18n("Cancelled by user").into(),
-        ResticFailureKind::IncompleteSnapshot { .. } => {
-            i18n("Snapshot incomplete: some files could not be read").into()
-        }
-        ResticFailureKind::DestinationUnreachable => i18n("Destination unreachable").into(),
-        ResticFailureKind::DnsResolutionFailed => {
-            i18n("Destination hostname could not be resolved (DNS)").into()
-        }
-        ResticFailureKind::BackendAuthFailed => i18n("Authentication at destination failed").into(),
-        ResticFailureKind::GenericFailure => i18n("Backup command failed").into(),
-        ResticFailureKind::RepositoryMissing => i18n("Repository is missing").into(),
-        ResticFailureKind::RepositoryLocked => i18n("Repository is locked").into(),
-        ResticFailureKind::WrongPassword => i18n("Stored password does not match").into(),
-        ResticFailureKind::Unknown { exit_code } => {
-            i18n("Unknown error (exit %1)").subs(&[&exit_code.to_string()])
-        }
+/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
+/// daemon language (tray, notifications, run history).
+pub fn tr(message: &Message) -> String {
+    let guard = translator_lock()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if message.args.is_empty() {
+        guard.translate(message.msgid)
+    } else {
+        let args: Vec<&str> = message.args.iter().map(String::as_str).collect();
+        guard.translate_subs(message.msgid, &args)
     }
 }
 
-/// Localized label for a [`RecoveryAction`] (`FR-37`).
-pub fn localized_recovery_action_label(action: RecoveryAction) -> String {
-    match action {
-        RecoveryAction::UpdateStoredPassword => i18n("Update Saved Password…").into(),
-        RecoveryAction::AddToExcludes => i18n("Add to Exclude Rules…").into(),
-        RecoveryAction::CheckResticSource => i18n("Configure restic Source…").into(),
-        RecoveryAction::UnlockRepository => i18n("Release Lock…").into(),
+/// Translates a [`UiText`]: messages via [`tr`], raw detail unchanged.
+pub fn tr_text(text: &UiText) -> String {
+    match text {
+        UiText::Message(m) => tr(m),
+        UiText::Raw(raw) => raw.clone(),
     }
 }

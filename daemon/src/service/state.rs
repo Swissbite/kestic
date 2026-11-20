@@ -9,7 +9,7 @@ use crate::dbus_api::{
     ActiveRunProgressDto, BlockingStateDto, DaemonStateDto, DestinationAvailabilityDto,
     KESTIC_BUS_NAME, ResticStatusDto, SecretStoreStatusDto,
 };
-use crate::i18n::i18n;
+use crate::i18n::tr;
 use crate::job_view::DEFAULT_JOB_VIEW_DEST;
 use crate::monitors::{MonitorBusConfig, list_known_networks, read_system_environment};
 use crate::secrets::SecretServiceStore;
@@ -28,6 +28,8 @@ use kestic_core::scheduler::{
     SystemEnvironment, TimezoneSpec, UnmetPrecondition, format_local_hhmm, format_local_slot_hint,
 };
 use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore};
+use kestic_i18n::codes::{BlockingKind, ErrorKind, PendingReasonCode, ResticStatusCode};
+use kestic_i18n::messages::{pause_message, unmet_conditions_message};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::PathBuf;
@@ -144,14 +146,16 @@ pub(super) struct ActiveRunEntry {
 pub(super) struct DryRunEntry {
     pub(super) state: String,
     pub(super) result: Option<BackupDryRunResult>,
-    pub(super) error: Option<String>,
+    /// Error kind and raw detail while `state == "error"`.
+    pub(super) error: Option<(ErrorKind, String)>,
     pub(super) cancel: CancelHandle,
 }
 
 pub(super) struct RetentionPreviewEntry {
     pub(super) state: String,
     pub(super) result: Option<ForgetPreviewResult>,
-    pub(super) error: Option<String>,
+    /// Error kind and raw detail while `state == "error"`.
+    pub(super) error: Option<(ErrorKind, String)>,
     pub(super) cancel: CancelHandle,
 }
 
@@ -467,69 +471,39 @@ impl DaemonCore {
         now: OffsetDateTime,
     ) -> String {
         let since_str = format_local_hhmm(paused_since, &self.timezone);
-        if let Some(until) = paused_until {
-            let until_str = format_local_slot_hint(until, now, &self.timezone);
-            i18n("Paused since %1 (until %2)").subs(&[&since_str, &until_str])
-        } else {
-            i18n("Paused since %1").subs(&[&since_str])
-        }
+        let until_str =
+            paused_until.map(|until| format_local_slot_hint(until, now, &self.timezone));
+        tr(&pause_message(&since_str, until_str.as_deref()))
     }
 
-    pub(super) fn format_unmet_condition_item(&self, item: &UnmetPrecondition) -> String {
-        match item {
-            UnmetPrecondition::OnBattery => {
-                if let Some(pct) = self.system_env.battery_percent {
-                    i18n("AC power (battery %1%)").subs(&[&pct.to_string()])
-                } else {
-                    i18n("AC power").into()
-                }
-            }
-            UnmetPrecondition::NoNetwork => i18n("network connection").into(),
-            UnmetPrecondition::MeteredNetwork => i18n("unmetered connection").into(),
-            UnmetPrecondition::AllowedNetworkMismatch { allowed } => {
-                i18n("allowed network (%1)").subs(&[&allowed.join(", ")])
-            }
-            UnmetPrecondition::SourceUnavailable => i18n("source available").into(),
-            UnmetPrecondition::DestinationUnreachable => i18n("destination reachable").into(),
-            UnmetPrecondition::Queued => i18n("another run on this destination").into(),
-            UnmetPrecondition::Backoff => i18n("retry cooldown").into(),
-        }
+    /// Daemon-language «Condition not met: …» for the unmet preconditions (notifications, run
+    /// history of skipped backups).
+    pub(super) fn localized_unmet_conditions(&self, items: &[UnmetPrecondition]) -> String {
+        let parts: Vec<String> = items
+            .iter()
+            .map(|item| {
+                let allowed = match item {
+                    UnmetPrecondition::AllowedNetworkMismatch { allowed } => allowed.as_slice(),
+                    _ => &[],
+                };
+                tr(&PendingReasonCode::from(item)
+                    .condition_message(self.system_env.battery_percent, allowed))
+            })
+            .collect();
+        tr(&unmet_conditions_message(&parts.join(", ")))
     }
 
-    pub(super) fn format_pending_reason_entry(
+    /// Daemon-language «Waiting: …» line of an unmet precondition (run history).
+    pub(super) fn localized_pending_reason(
         &self,
         item: &UnmetPrecondition,
         backoff_until: Option<OffsetDateTime>,
         now: OffsetDateTime,
-    ) -> (&'static str, String) {
-        match item {
-            UnmetPrecondition::SourceUnavailable => (
-                "source_unavailable",
-                i18n("Waiting: source unavailable").into(),
-            ),
-            UnmetPrecondition::DestinationUnreachable => (
-                "destination_unreachable",
-                i18n("Waiting: destination unreachable").into(),
-            ),
-            UnmetPrecondition::OnBattery => ("on_battery", i18n("Waiting: AC power").into()),
-            UnmetPrecondition::NoNetwork => ("no_network", i18n("Waiting: network").into()),
-            UnmetPrecondition::MeteredNetwork => {
-                ("metered", i18n("Waiting: unmetered connection").into())
-            }
-            UnmetPrecondition::AllowedNetworkMismatch { .. } => {
-                ("wrong_network", i18n("Waiting: allowed network").into())
-            }
-            UnmetPrecondition::Queued => (
-                "queue",
-                i18n("Waiting: another run on this destination").into(),
-            ),
-            UnmetPrecondition::Backoff => {
-                let ts = backoff_until
-                    .map(|u| format_local_slot_hint(u, now, &self.timezone))
-                    .unwrap_or_else(|| "—".to_string());
-                ("backoff", i18n("Waiting: next attempt at %1").subs(&[&ts]))
-            }
-        }
+    ) -> String {
+        let hint = backoff_until
+            .map(|u| format_local_slot_hint(u, now, &self.timezone))
+            .unwrap_or_default();
+        tr(&PendingReasonCode::from(item).waiting_message(&hint))
     }
 
     pub(super) fn persist_config_without_probe(
@@ -637,49 +611,38 @@ pub(super) fn probe_restic_and_secrets_resolved(
             version: Some(resolved.version.to_string()),
             error_kind: None,
             found_version: Some(resolved.version.to_string()),
-            message: format!("restic {}", resolved.version),
             detail: None,
         },
-        Err(ResticProviderError::NotFound { min_version }) => ResticStatusDto {
+        Err(ResticProviderError::NotFound { .. }) => ResticStatusDto {
             valid: false,
             binary_path: None,
             version: None,
-            error_kind: Some("not_found".to_string()),
+            error_kind: Some(ResticStatusCode::NotFound),
             found_version: None,
-            message: i18n("restic not found; at least %1 required").subs(&[min_version]),
             detail: None,
         },
-        Err(ResticProviderError::TooOld {
-            binary,
-            found,
-            min_version,
-        }) => ResticStatusDto {
+        Err(ResticProviderError::TooOld { binary, found, .. }) => ResticStatusDto {
             valid: false,
             binary_path: Some(binary.to_string_lossy().into_owned()),
             version: None,
-            error_kind: Some("too_old".to_string()),
+            error_kind: Some(ResticStatusCode::TooOld),
             found_version: Some(found.to_string()),
-            message: i18n("restic %1 is too old; Kestic needs at least %2")
-                .subs(&[&found.to_string(), min_version]),
             detail: None,
         },
         Err(ResticProviderError::InvalidCustomPath { path, reason }) => ResticStatusDto {
             valid: false,
             binary_path: Some(path.to_string_lossy().into_owned()),
             version: None,
-            error_kind: Some("invalid_custom_path".to_string()),
+            error_kind: Some(ResticStatusCode::InvalidCustomPath),
             found_version: None,
-            message: i18n("Custom restic path is invalid (%1): %2")
-                .subs(&[&path.to_string_lossy(), reason]),
             detail: Some(reason.clone()),
         },
         Err(ResticProviderError::UnreadableVersion { binary, detail }) => ResticStatusDto {
             valid: false,
             binary_path: Some(binary.to_string_lossy().into_owned()),
             version: None,
-            error_kind: Some("unreadable_version".to_string()),
+            error_kind: Some(ResticStatusCode::UnreadableVersion),
             found_version: None,
-            message: i18n("Unable to determine restic version (%1)").subs(&[detail]),
             detail: Some(detail.clone()),
         },
     };
@@ -688,32 +651,27 @@ pub(super) fn probe_restic_and_secrets_resolved(
         Ok(()) => SecretStoreStatusDto {
             available: true,
             locked: false,
-            message: None,
+            detail: None,
         },
         Err(SecretError::LockedOrPromptRequired(msg)) => SecretStoreStatusDto {
             available: false,
             locked: true,
-            message: Some(msg),
+            detail: Some(msg),
         },
         Err(err) => SecretStoreStatusDto {
             available: false,
             locked: false,
-            message: Some(err.to_string()),
+            detail: Some(err.to_string()),
         },
     };
 
     let blocking = if !secret_status.available {
         Some(BlockingStateDto {
-            kind: "secret_store_locked".to_string(),
-            message: i18n(
-                "The system password store (Secret Service / KWallet) is locked. Kestic cannot access destinations.",
-            )
-            .into(),
+            kind: BlockingKind::SecretStoreLocked,
         })
     } else if !restic_status.valid {
         Some(BlockingStateDto {
-            kind: "restic_unavailable".to_string(),
-            message: restic_status.message.clone(),
+            kind: BlockingKind::ResticUnavailable,
         })
     } else {
         None
@@ -739,16 +697,16 @@ pub(super) fn probe_before_run(
         Ok(_) => KesticServiceErr::SecretStoreLocked(
             probe
                 .1
-                .message
+                .detail
                 .clone()
-                .unwrap_or_else(|| i18n("Password store is locked").into()),
+                .unwrap_or_else(|| "password store is locked".to_string()),
         ),
         Err(_) if !probe.1.available => KesticServiceErr::SecretStoreLocked(
             probe
                 .1
-                .message
+                .detail
                 .clone()
-                .unwrap_or_else(|| i18n("Password store is locked").into()),
+                .unwrap_or_else(|| "password store is locked".to_string()),
         ),
         Err(err) => map_provider_err(err),
     };

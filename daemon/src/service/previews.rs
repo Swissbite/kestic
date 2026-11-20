@@ -4,11 +4,10 @@
 //! Synchronous and asynchronous dry-run backup previews, retention previews, and prune previews.
 
 use super::error::{
-    KesticServiceErr, localized_backup_run_error, map_destination_err, map_provider_err,
+    KesticServiceErr, backup_run_error_kind, map_destination_err, map_provider_err,
 };
 use super::state::{DaemonCore, DryRunEntry, RetentionPreviewEntry, probe_restic_and_secrets_raw};
 use crate::dbus_api::{BackupDryRunStatusDto, RetentionPreviewStatusDto};
-use crate::i18n::i18n;
 use kestic_core::backup::{
     BackupExecutionContext, BackupRunError, ForgetPreviewResult, execute_backup_dry_run_with,
     execute_forget_dry_run, execute_forget_dry_run_with,
@@ -34,7 +33,8 @@ impl DaemonCore {
             preview_id: preview_id.to_string(),
             state: entry.state.clone(),
             result: entry.result.clone(),
-            error: entry.error.clone(),
+            error_kind: entry.error.as_ref().map(|(kind, _)| *kind),
+            error_detail: entry.error.as_ref().map(|(_, detail)| detail.clone()),
         })
     }
 
@@ -59,7 +59,8 @@ impl DaemonCore {
             preview_id: preview_id.to_string(),
             state: entry.state.clone(),
             result: entry.result.clone(),
-            error: entry.error.clone(),
+            error_kind: entry.error.as_ref().map(|(kind, _)| *kind),
+            error_detail: entry.error.as_ref().map(|(_, detail)| detail.clone()),
         })
     }
 
@@ -160,8 +161,8 @@ pub fn start_backup_dry_run_async(
         guard.dry_runs.remove(&preview_id);
         return Err(KesticServiceErr::SecretStoreLocked(
             secret_status
-                .message
-                .unwrap_or_else(|| i18n("Password store is locked").into()),
+                .detail
+                .unwrap_or_else(|| "password store is locked".to_string()),
         ));
     }
     let resolved = match resolve_and_check(&provider) {
@@ -204,9 +205,8 @@ pub fn start_backup_dry_run_async(
                     entry.result = Some(dry);
                 }
                 Err(err) => {
-                    let msg = localized_backup_run_error(&err);
                     entry.state = "error".to_string();
-                    entry.error = Some(msg);
+                    entry.error = Some((backup_run_error_kind(&err), err.to_string()));
                 }
             }
         }
@@ -281,8 +281,8 @@ pub fn start_retention_preview_async(
         guard.retention_previews.remove(&preview_id);
         return Err(KesticServiceErr::SecretStoreLocked(
             secret_status
-                .message
-                .unwrap_or_else(|| i18n("Password store is locked").into()),
+                .detail
+                .unwrap_or_else(|| "password store is locked".to_string()),
         ));
     }
     let resolved = match resolve_and_check(&provider) {
@@ -316,13 +316,8 @@ pub fn start_retention_preview_async(
                     entry.state = "cancelled".to_string();
                 }
                 Err(err) => {
-                    let msg = match err {
-                        BackupRunError::Destination(d) => map_destination_err(d).to_string(),
-                        BackupRunError::InvalidModel(m) => m.to_string(),
-                        other => localized_backup_run_error(&other),
-                    };
                     entry.state = "error".to_string();
-                    entry.error = Some(msg);
+                    entry.error = Some((backup_run_error_kind(&err), err.to_string()));
                 }
             }
         }
@@ -373,9 +368,9 @@ pub(crate) fn preview_retention_unlocked(
     if !probe.1.available {
         let msg = probe
             .1
-            .message
+            .detail
             .clone()
-            .unwrap_or_else(|| i18n("Password store is locked").into());
+            .unwrap_or_else(|| "password store is locked".to_string());
         let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
         guard.record_probe(probe);
         return Err(KesticServiceErr::SecretStoreLocked(msg));
@@ -421,9 +416,9 @@ pub(crate) fn preview_destination_maintenance_unlocked(
     if !probe.1.available {
         let msg = probe
             .1
-            .message
+            .detail
             .clone()
-            .unwrap_or_else(|| i18n("Password store is locked").into());
+            .unwrap_or_else(|| "password store is locked".to_string());
         let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
         guard.record_probe(probe);
         return Err(KesticServiceErr::SecretStoreLocked(msg));

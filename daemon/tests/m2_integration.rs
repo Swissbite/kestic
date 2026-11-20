@@ -19,9 +19,9 @@ use kestic_core::mount::{FakeMountInspector, FakeMountState};
 use kestic_core::secrets::FileSecretStore;
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient,
-    REASON_SOURCE_UNAVAILABLE,
 };
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
+use kestic_i18n::codes::BlockedReason;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -580,10 +580,10 @@ fn verify_stopped_rest_server_preflight(
         fail_status.state, "error",
         "[{label}] expected error on stopped server: {fail_status:?}"
     );
-    let err_msg = fail_status.error.unwrap_or_default().to_lowercase();
-    assert!(
-        err_msg.contains("unreachable") || err_msg.contains("nicht erreichbar"),
-        "[{label}] unexpected error message: {err_msg}"
+    assert_eq!(
+        fail_status.error_kind.map(|k| k.as_str()),
+        Some("destination_unreachable"),
+        "[{label}] unexpected error: {fail_status:?}"
     );
     assert!(
         !spy_marker.exists(),
@@ -1035,7 +1035,7 @@ fn verify_exit_3_and_exclude_recovery(
         detail2.unreadable_files
     );
     assert_eq!(
-        detail2.error_action.as_deref(),
+        detail2.error_action.map(|c| c.as_str()),
         Some("add_to_excludes"),
         "[{label}]"
     );
@@ -1577,14 +1577,14 @@ fn verify_drive_available_and_unmounted_block(ctx: &DriveTestCtx<'_>) {
     assert!(!avail_unmounted.backups[0].source_available);
     assert!(!avail_unmounted.backups[0].available);
     assert_eq!(
-        avail_unmounted.backups[0].blocked_reason.as_deref(),
-        Some(REASON_SOURCE_UNAVAILABLE)
-    );
-    assert!(
         avail_unmounted.backups[0]
-            .reason_text
-            .as_deref()
-            .is_some_and(|t| t.to_lowercase().contains("not mounted")),
+            .blocked_reason
+            .map(|c| c.as_str()),
+        Some(BlockedReason::SourceUnavailable.as_str())
+    );
+    assert_eq!(
+        avail_unmounted.backups[0].source_status.map(|c| c.as_str()),
+        Some("drive_not_mounted"),
         "{:?}",
         avail_unmounted.backups[0]
     );
@@ -1615,7 +1615,7 @@ fn verify_drive_available_and_unmounted_block(ctx: &DriveTestCtx<'_>) {
             matches!(
                 s,
                 CapturedKesticSignal::ManualRunBlocked { backup_id: b, reason }
-                if b == ctx.backup_id && reason == REASON_SOURCE_UNAVAILABLE
+                if b == ctx.backup_id && reason == BlockedReason::SourceUnavailable.as_str()
             )
         })
     });
@@ -1636,8 +1636,8 @@ fn verify_drive_mismatch_empty_and_race_recovery(ctx: &DriveTestCtx<'_>) {
         .expect("CheckAvailability mismatch");
     assert!(!avail_mismatch.backups[0].available);
     assert_eq!(
-        avail_mismatch.backups[0].blocked_reason.as_deref(),
-        Some(REASON_SOURCE_UNAVAILABLE)
+        avail_mismatch.backups[0].blocked_reason.map(|c| c.as_str()),
+        Some(BlockedReason::SourceUnavailable.as_str())
     );
     let err_mismatch = ctx
         .client
@@ -1662,8 +1662,8 @@ fn verify_drive_mismatch_empty_and_race_recovery(ctx: &DriveTestCtx<'_>) {
         .expect("CheckAvailability empty");
     assert!(!avail_empty.backups[0].available);
     assert_eq!(
-        avail_empty.backups[0].blocked_reason.as_deref(),
-        Some(REASON_SOURCE_UNAVAILABLE)
+        avail_empty.backups[0].blocked_reason.map(|c| c.as_str()),
+        Some(BlockedReason::SourceUnavailable.as_str())
     );
     let err_empty = ctx
         .client
@@ -1706,7 +1706,7 @@ fn verify_drive_mismatch_empty_and_race_recovery(ctx: &DriveTestCtx<'_>) {
             matches!(
                 s,
                 CapturedKesticSignal::ManualRunBlocked { backup_id: b, reason }
-                if b == ctx.backup_id && reason == REASON_SOURCE_UNAVAILABLE
+                if b == ctx.backup_id && reason == BlockedReason::SourceUnavailable.as_str()
             )
         })
     });

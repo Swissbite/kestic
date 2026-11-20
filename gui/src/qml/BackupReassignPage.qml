@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "backupReassignPage"
-    title: i18n("Destination")
+    title: Texts.label("destination")
 
     required property var rootWindow
     required property var appBackend
@@ -43,7 +44,7 @@ Kirigami.ScrollablePage {
             id: closeReassignAction
             objectName: "closeReassignAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: rootWindow.popSubPage()
         }
     ]
@@ -55,7 +56,7 @@ Kirigami.ScrollablePage {
             ? i18n("Back up '%1' to '%2'?", backupData.name, page.selectedDestName)
             : i18n("Switch Destination?")
         subtitle: backupData
-            ? i18n("The snapshot series will start anew on '%1'; the next backup will read everything again. Existing snapshots remain on '%2' and can still be restored there.", page.selectedDestName, backupData.destinationName)
+            ? i18n("On '%1' the snapshots start fresh, so the next backup reads all files again. The old snapshots stay on '%2', and you can still restore them there.", page.selectedDestName, backupData.destinationName)
             : ""
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
@@ -209,10 +210,10 @@ Kirigami.ScrollablePage {
         }
 
         Controls.Button {
-            text: i18n("Add New Destination…")
+            text: Texts.label("add_new_destination_ellipsis")
             icon.name: "list-add"
             enabled: appBackend.blocking_kind === ""
-            Accessible.name: i18n("Add New Destination")
+            Accessible.name: Texts.label("add_new_destination")
             onClicked: rootWindow.openAddDestinationWizard()
         }
     }

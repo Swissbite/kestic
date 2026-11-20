@@ -12,7 +12,6 @@ use crate::dbus_api::{
     BackupSnapshotsDto, ConnectionTestResultDto, DaemonStateDto, PreviousDestinationSnapshotsDto,
     SnapshotSummaryDto,
 };
-use crate::i18n::i18n;
 use crate::tray::KesticTrayState;
 use kestic_core::backup::list_snapshots_for_backup;
 use kestic_core::clock::Clock;
@@ -29,6 +28,7 @@ use kestic_core::provider::resolve_and_check;
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO, SECRET_KIND_REST};
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
 use kestic_core::snapshot::ResticSnapshot;
+use kestic_i18n::codes::ConnectionTestCode;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -57,10 +57,7 @@ impl DaemonCore {
         dest.validate()
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
         if let Some(existing) = self.config.find_duplicate_destination(&dest.kind, None) {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "DUPLICATE_LOCATION:{}",
-                existing.name
-            )));
+            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
 
         let setup_mode = parse_setup_mode(mode)?;
@@ -153,10 +150,7 @@ impl DaemonCore {
             .config
             .find_duplicate_destination(&updated.kind, Some(&updated.id))
         {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "DUPLICATE_LOCATION:{}",
-                existing.name
-            )));
+            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
 
         if verify_connection || matches!(setup_mode, DestinationSetupMode::InitNew) {
@@ -296,18 +290,28 @@ impl DaemonCore {
     }
 }
 
-fn parse_and_validate_dest(dest_json: &str) -> Result<Destination, ConnectionTestResultDto> {
-    let dest: Destination =
-        serde_json::from_str(dest_json).map_err(|e| ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some("invalid_input".to_string()),
-            message: e.to_string(),
-        })?;
-    dest.validate().map_err(|e| ConnectionTestResultDto {
+/// Failed connection test; `detail` is raw error text or the parameter of the code's text.
+fn test_failure(code: ConnectionTestCode, detail: String) -> ConnectionTestResultDto {
+    ConnectionTestResultDto {
         ok: false,
-        error_kind: Some("invalid_input".to_string()),
-        message: e.to_string(),
-    })?;
+        error_kind: Some(code),
+        detail,
+    }
+}
+
+fn test_ok() -> ConnectionTestResultDto {
+    ConnectionTestResultDto {
+        ok: true,
+        error_kind: None,
+        detail: String::new(),
+    }
+}
+
+fn parse_and_validate_dest(dest_json: &str) -> Result<Destination, ConnectionTestResultDto> {
+    let dest: Destination = serde_json::from_str(dest_json)
+        .map_err(|e| test_failure(ConnectionTestCode::InvalidInput, e.to_string()))?;
+    dest.validate()
+        .map_err(|e| test_failure(ConnectionTestCode::InvalidInput, e.to_string()))?;
     Ok(dest)
 }
 
@@ -326,30 +330,20 @@ struct DestinationTestInputs<'a> {
 
 fn test_destination_connection_impl(inputs: DestinationTestInputs<'_>) -> ConnectionTestResultDto {
     if let Some(existing_name) = inputs.dup_name {
-        return ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some("duplicate_location".to_string()),
-            message: i18n("This location is already used by destination '%1'.")
-                .subs(&[existing_name]),
-        };
+        return test_failure(
+            ConnectionTestCode::DuplicateLocation,
+            existing_name.to_string(),
+        );
     }
 
     if let Err(err) = preflight_check_destination(inputs.dest, DEFAULT_CONNECT_TIMEOUT) {
-        return ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some("destination_unreachable".to_string()),
-            message: err.to_string(),
-        };
+        return test_failure(ConnectionTestCode::DestinationUnreachable, err.to_string());
     }
 
     let setup_mode = match parse_setup_mode(inputs.mode) {
         Ok(m) => m,
         Err(e) => {
-            return ConnectionTestResultDto {
-                ok: false,
-                error_kind: Some("invalid_input".to_string()),
-                message: e.to_string(),
-            };
+            return test_failure(ConnectionTestCode::InvalidInput, e.to_string());
         }
     };
 
@@ -373,11 +367,7 @@ fn check_init_new_destination(
 ) -> ConnectionTestResultDto {
     if let DestinationKind::Local { path } = &dest.kind {
         if path.join("config").exists() {
-            return ConnectionTestResultDto {
-                ok: false,
-                error_kind: Some("repository_exists".to_string()),
-                message: i18n("This folder already contains a restic repository. Choose 'Connect existing repository' instead.").into(),
-            };
+            return test_failure(ConnectionTestCode::RepositoryExists, String::new());
         }
         let nonce = RunId::generate()
             .map(|r| r.as_str().to_string())
@@ -393,11 +383,7 @@ fn check_init_new_destination(
                 let _ = fs::remove_file(&probe_path);
             }
             Err(err) => {
-                return ConnectionTestResultDto {
-                    ok: false,
-                    error_kind: Some("not_writable".to_string()),
-                    message: i18n("Folder is not writable: %1").subs(&[&err.to_string()]),
-                };
+                return test_failure(ConnectionTestCode::NotWritable, err.to_string());
             }
         }
     }
@@ -407,11 +393,7 @@ fn check_init_new_destination(
     {
         return dto;
     }
-    ConnectionTestResultDto {
-        ok: true,
-        error_kind: None,
-        message: i18n("Reachable").into(),
-    }
+    test_ok()
 }
 
 fn check_connect_existing_destination(
@@ -441,11 +423,7 @@ fn check_connect_existing_destination(
         let resolved = match resolve_and_check(inputs.provider) {
             Ok(r) => r,
             Err(e) => {
-                return ConnectionTestResultDto {
-                    ok: false,
-                    error_kind: Some("restic_unavailable".to_string()),
-                    message: e.to_string(),
-                };
+                return test_failure(ConnectionTestCode::ResticUnavailable, e.to_string());
             }
         };
         let temp_store = InMemorySecretStore::new();
@@ -464,25 +442,17 @@ fn check_connect_existing_destination(
             &runtime,
         ) {
             let kind = match err {
-                DestinationError::WrongPassword => "wrong_password",
-                DestinationError::AuthFailed(_) => "auth_failed",
-                DestinationError::RepositoryMissing(_) => "repository_missing",
-                DestinationError::Unreachable(_) => "destination_unreachable",
-                _ => "command_failed",
+                DestinationError::WrongPassword => ConnectionTestCode::WrongPassword,
+                DestinationError::AuthFailed(_) => ConnectionTestCode::AuthFailed,
+                DestinationError::RepositoryMissing(_) => ConnectionTestCode::RepositoryMissing,
+                DestinationError::Unreachable(_) => ConnectionTestCode::DestinationUnreachable,
+                _ => ConnectionTestCode::CommandFailed,
             };
-            return ConnectionTestResultDto {
-                ok: false,
-                error_kind: Some(kind.to_string()),
-                message: err.to_string(),
-            };
+            return test_failure(kind, err.to_string());
         }
     }
 
-    ConnectionTestResultDto {
-        ok: true,
-        error_kind: None,
-        message: i18n("Reachable").into(),
-    }
+    test_ok()
 }
 
 fn resolve_stored_repo_password(
@@ -499,21 +469,14 @@ fn resolve_stored_repo_password(
     }
     match secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REPO) {
         Ok(Some(pw)) => Ok(Some(pw)),
-        Ok(None) => Err(ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some("invalid_input".to_string()),
-            message: i18n("No repository password provided or stored.").into(),
-        }),
-        Err(SecretError::LockedOrPromptRequired(msg)) => Err(ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some("secret_store_locked".to_string()),
-            message: msg,
-        }),
-        Err(err) => Err(ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some("internal".to_string()),
-            message: err.to_string(),
-        }),
+        Ok(None) => Err(test_failure(
+            ConnectionTestCode::MissingPassword,
+            String::new(),
+        )),
+        Err(SecretError::LockedOrPromptRequired(msg)) => {
+            Err(test_failure(ConnectionTestCode::SecretStoreLocked, msg))
+        }
+        Err(err) => Err(test_failure(ConnectionTestCode::Internal, err.to_string())),
     }
 }
 
@@ -531,16 +494,10 @@ fn resolve_stored_rest_password(
     }
     match secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REST) {
         Ok(pw) => Ok(pw),
-        Err(SecretError::LockedOrPromptRequired(msg)) => Err(ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some("secret_store_locked".to_string()),
-            message: msg,
-        }),
-        Err(err) => Err(ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some("internal".to_string()),
-            message: err.to_string(),
-        }),
+        Err(SecretError::LockedOrPromptRequired(msg)) => {
+            Err(test_failure(ConnectionTestCode::SecretStoreLocked, msg))
+        }
+        Err(err) => Err(test_failure(ConnectionTestCode::Internal, err.to_string())),
     }
 }
 
@@ -644,10 +601,7 @@ pub(crate) fn add_destination_unlocked(
         dest.validate()
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
         if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "DUPLICATE_LOCATION:{}",
-                existing.name
-            )));
+            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
         (
             guard.config.restic_provider.clone(),
@@ -672,10 +626,7 @@ pub(crate) fn add_destination_unlocked(
 
     let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
-        return Err(KesticServiceErr::InvalidInput(format!(
-            "DUPLICATE_LOCATION:{}",
-            existing.name
-        )));
+        return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
     }
     let new_id = dest.id.as_str().to_string();
     let mut next = guard.config.clone();
@@ -710,10 +661,7 @@ pub(crate) fn update_destination_unlocked(
             .config
             .find_duplicate_destination(&updated.kind, Some(&updated.id))
         {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "DUPLICATE_LOCATION:{}",
-                existing.name
-            )));
+            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
         (
             guard.config.restic_provider.clone(),
@@ -772,10 +720,7 @@ pub(crate) fn update_destination_unlocked(
         .config
         .find_duplicate_destination(&updated.kind, Some(&updated.id))
     {
-        return Err(KesticServiceErr::InvalidInput(format!(
-            "DUPLICATE_LOCATION:{}",
-            existing.name
-        )));
+        return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
     }
     let mut next = guard.config.clone();
     next.destinations[existing_idx] = updated;

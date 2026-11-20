@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
@@ -36,7 +37,7 @@ Kirigami.ScrollablePage {
     actions: [
         Kirigami.Action {
             icon.name: "utilities-terminal"
-            text: i18n("Show Command")
+            text: Texts.label("show_command")
             onTriggered: if (backupData) rootWindow.openShowCommandDialog(
                 appBackend.getBackupTransparentCommand(backupId),
                 backupData.name
@@ -54,7 +55,7 @@ Kirigami.ScrollablePage {
             id: closeFullConfigAction
             objectName: "closeFullConfigAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: rootWindow.popSubPage()
         }
     ]
@@ -120,7 +121,7 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
 
             Controls.Label {
-                Kirigami.FormData.label: i18n("Name:")
+                Kirigami.FormData.label: Texts.label("name_label")
                 text: backupData ? backupData.name : ""
             }
             Controls.Label {
@@ -132,7 +133,7 @@ Kirigami.ScrollablePage {
 
         Kirigami.Heading {
             level: 3
-            text: i18n("Source")
+            text: Texts.label("source")
         }
 
         NavSummaryRow {
@@ -144,21 +145,21 @@ Kirigami.ScrollablePage {
 
         Kirigami.Heading {
             level: 3
-            text: i18n("Destination")
+            text: Texts.label("destination")
         }
 
         NavSummaryRow {
             rowObjectName: "fullConfigDestinationRow"
             rowTitle: i18n("Repository destination")
             rowValue: backupData
-                ? (backupData.destinationName + "\n" + i18n("Password in KWallet (Secret Service); never stored in plain text"))
+                ? (backupData.destinationName + "\n" + i18n("Password in KWallet (Secret Service); never stored unencrypted"))
                 : ""
             onNavigate: rootWindow.openBackupReassignPage(backupId)
         }
 
         Kirigami.Heading {
             level: 3
-            text: i18n("Exclude Rules")
+            text: Texts.label("exclude_rules")
         }
 
         NavSummaryRow {
@@ -170,7 +171,7 @@ Kirigami.ScrollablePage {
                 var f = page.excludesObj.folders || [];
                 if (f.length > 0) lines.push(i18n("Folders:") + " " + f.join(", "));
                 if (page.excludesObj.exclude_caches) lines.push(i18n("Exclude cache folders (CACHEDIR.TAG)"));
-                if (page.excludesObj.exclude_trash) lines.push(i18n("Exclude trash folders"));
+                if (page.excludesObj.exclude_trash) lines.push(Texts.label("exclude_trash"));
                 if (page.excludesObj.exclude_larger_than) lines.push(i18n("Files larger than %1", page.excludesObj.exclude_larger_than));
                 if (page.excludesObj.ignore_case) lines.push(i18n("Case-insensitive (--iexclude)"));
                 if (page.excludesObj.exclude_if_present && page.excludesObj.exclude_if_present.length > 0) {
@@ -180,7 +181,7 @@ Kirigami.ScrollablePage {
                 if (expertLines.length > 0) {
                     lines.push(i18n("Expert rules:") + "\n" + expertLines.join("\n"));
                 }
-                if (lines.length === 0) lines.push(i18n("None"));
+                if (lines.length === 0) lines.push(Texts.label("none"));
                 if (backupData && backupData.excludeFilePath) {
                     lines.push(i18n("Exclude file:") + " " + backupData.excludeFilePath);
                 }
@@ -191,7 +192,7 @@ Kirigami.ScrollablePage {
 
         Kirigami.Heading {
             level: 3
-            text: i18n("Retention")
+            text: Texts.label("retention")
         }
 
         NavSummaryRow {
@@ -208,14 +209,14 @@ Kirigami.ScrollablePage {
 
         NavSummaryRow {
             rowObjectName: "fullConfigScheduleRow"
-            rowTitle: i18n("Schedule")
+            rowTitle: Texts.label("schedule")
             rowValue: backupData ? backupData.scheduleSummary : ""
             onNavigate: rootWindow.openBackupSchedulePage(backupId)
         }
 
         NavSummaryRow {
             rowObjectName: "fullConfigConditionsRow"
-            rowTitle: i18n("Run conditions")
+            rowTitle: Texts.label("run_conditions")
             rowValue: backupData ? backupData.conditionsSummary : ""
             onNavigate: rootWindow.openBackupConditionsPage(backupId)
         }
@@ -226,7 +227,7 @@ Kirigami.ScrollablePage {
             Controls.Label {
                 Kirigami.FormData.label: i18n("Destination maintenance:")
                 text: backupData && backupData.pendingForget
-                    ? i18n("Retention pending (forget not yet executed due to lock)")
+                    ? i18n("Retention pending: the destination was locked")
                     : i18n("Up to date")
                 wrapMode: Text.WordWrap
             }

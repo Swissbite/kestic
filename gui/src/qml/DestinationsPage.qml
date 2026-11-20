@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "destinationsListPage"
-    title: i18n("Destinations")
+    title: Texts.label("destinations")
 
     required property var rootWindow
     required property var appBackend

@@ -424,7 +424,7 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
         "expected DestinationError::Unreachable, got: {err:?}"
     );
     assert!(
-        err.to_string().contains("Ziel nicht erreichbar"),
+        err.to_string().contains("destination unreachable"),
         "error must report destination unreachable per FR-37, got: {err}"
     );
     assert!(

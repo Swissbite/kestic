@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 ColumnLayout {
     id: headerArea
@@ -32,7 +33,7 @@ ColumnLayout {
                 objectName: "retryDaemonAction"
                 visible: headerArea.appBackend.blocking_kind === "daemon_unreachable"
                 icon.name: "view-refresh"
-                text: i18n("Retry")
+                text: Texts.label("retry")
                 onTriggered: headerArea.appBackend.retryStartDaemon()
             },
             Kirigami.Action {
@@ -40,13 +41,13 @@ ColumnLayout {
                 objectName: "unlockSecretStoreAction"
                 visible: headerArea.appBackend.blocking_kind === "secret_store_locked"
                 icon.name: "dialog-password"
-                text: i18n("Unlock…")
+                text: Texts.label("unlock_ellipsis")
                 onTriggered: headerArea.appBackend.unlockSecretStore()
             },
             Kirigami.Action {
                 visible: headerArea.appBackend.blocking_kind === "secret_store_locked"
                 icon.name: "view-refresh"
-                text: i18n("Retry")
+                text: Texts.label("retry")
                 onTriggered: headerArea.appBackend.checkAvailability(true)
             },
             Kirigami.Action {
@@ -62,7 +63,7 @@ ColumnLayout {
                 objectName: "openResticSettingsAction"
                 visible: headerArea.appBackend.blocking_kind === "restic_unavailable"
                 icon.name: "configure"
-                text: i18n("Settings")
+                text: Texts.label("settings")
                 onTriggered: headerArea.rootWindow.openSettingsWindow()
             }
         ]
@@ -92,7 +93,7 @@ ColumnLayout {
             Kirigami.Action {
                 objectName: "globalPauseResumeAction"
                 icon.name: "media-playback-start"
-                text: i18n("Resume")
+                text: Texts.label("resume")
                 onTriggered: headerArea.appBackend.resumeGlobal()
             }
         ]
@@ -151,9 +152,9 @@ ColumnLayout {
                 enabled: visible
                 activeFocusOnTab: visible
                 icon.name: "go-previous"
-                text: i18n("Back")
+                text: Texts.label("back")
                 display: Controls.AbstractButton.TextBesideIcon
-                Accessible.name: i18n("Back")
+                Accessible.name: Texts.label("back")
                 onClicked: headerArea.rootWindow.handleGlobalEscape()
 
                 Rectangle {

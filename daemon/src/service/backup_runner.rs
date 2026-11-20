@@ -7,17 +7,17 @@ use super::availability::{
     DestinationClaimGuard, check_source_status_bounded, drain_queued_backups_async,
     unlockable_stale_lock_count,
 };
-use super::error::{KesticServiceErr, localized_backup_run_error, localized_source_check_reason};
+use super::error::{
+    KesticServiceErr, localized_backup_run_error, localized_failure_summary,
+    localized_source_check_reason,
+};
 use super::run_errors::{run_blocks_schedule, unreadable_items_from_lines};
 use super::state::{ActiveRunEntry, DaemonCore, probe_before_run};
-use crate::dbus_api::{
-    ActiveRunProgressDto, DestinationAvailabilityDto, REASON_CONDITION_NOT_MET,
-    REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
-};
+use crate::dbus_api::{ActiveRunProgressDto, DestinationAvailabilityDto};
 use crate::dbus_server::{
     emit_manual_run_blocked, emit_run_progress, emit_run_updated, emit_status_changed,
 };
-use crate::i18n::{i18n, localized_failure_summary};
+use crate::i18n::{i18n, tr};
 use crate::inhibit::PortalInhibitGuard;
 use crate::job_view::{CAPABILITY_KILLABLE, JobProgress, JobViewHandle};
 use crate::monitors::{LogindSleepInhibitor, MonitorBusConfig};
@@ -49,6 +49,8 @@ use kestic_core::scheduler::{
     mark_backup_slot_handled, record_backup_backoff_failure,
 };
 use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_i18n::codes::{BlockedReason, ErrorKind};
+use kestic_i18n::messages::{ActiveRunInfo, active_run_message, interrupted_by_sleep_message};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -150,9 +152,7 @@ fn claim_backup_destination(
         .ok_or_else(|| KesticServiceErr::NotFound(backup.destination_id.as_str().to_string()))?;
 
     if is_scheduled && guard.sleep_in_progress {
-        return Err(KesticServiceErr::ManualRunBlocked(
-            "sleep_in_progress".to_string(),
-        ));
+        return Err(KesticServiceErr::SleepInProgress);
     }
     if guard.is_destination_busy(&dest.id) {
         return Err(KesticServiceErr::AlreadyRunning(format!(
@@ -194,14 +194,14 @@ fn handle_backup_precheck_failure(
     let now = guard.clock.now_utc();
     let source_ok = source_status.is_ok();
     let reason = if !source_ok {
-        REASON_SOURCE_UNAVAILABLE
+        BlockedReason::SourceUnavailable
     } else {
-        REASON_DESTINATION_UNREACHABLE
+        BlockedReason::DestinationUnreachable
     };
     let source_body = if !source_ok {
         localized_source_check_reason(source_status)
     } else {
-        i18n("Destination unreachable").to_string()
+        tr(&ErrorKind::DestinationUnreachable.message(None, false))
     };
 
     if is_scheduled {
@@ -236,7 +236,7 @@ fn handle_backup_precheck_failure(
             emit_status_changed(conn, &state_dto);
         }
         return if !source_ok {
-            KesticServiceErr::ManualRunBlocked(reason.to_string())
+            KesticServiceErr::ManualRunBlocked(reason)
         } else {
             KesticServiceErr::DestinationUnreachable(dest_res.unwrap_err().to_string())
         };
@@ -258,7 +258,7 @@ fn handle_backup_precheck_failure(
         let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
         let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &source_body);
     }
-    KesticServiceErr::ManualRunBlocked(reason.to_string())
+    KesticServiceErr::ManualRunBlocked(reason)
 }
 
 fn handle_backup_unmet_conditions(
@@ -268,11 +268,7 @@ fn handle_backup_unmet_conditions(
     dest: &Destination,
     unmet_conditions: &[UnmetPrecondition],
 ) -> KesticServiceErr {
-    let parts: Vec<String> = unmet_conditions
-        .iter()
-        .map(|c| guard.format_unmet_condition_item(c))
-        .collect();
-    let body = i18n("Condition not met: %1").subs(&[&parts.join(", ")]);
+    let body = guard.localized_unmet_conditions(unmet_conditions);
     guard.claiming_destinations.remove(&dest.id);
     claim_guard.disarm();
     let window_active = guard.window_active;
@@ -282,14 +278,14 @@ fn handle_backup_unmet_conditions(
         tray.set_full_state(tray_state);
     }
     if let Some(conn) = &conn_opt {
-        emit_manual_run_blocked(conn, &backup.id, REASON_CONDITION_NOT_MET);
+        emit_manual_run_blocked(conn, &backup.id, BlockedReason::ConditionNotMet);
         emit_status_changed(conn, &state_dto);
     }
     if !window_active {
         let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
         let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &body);
     }
-    KesticServiceErr::ManualRunBlocked(REASON_CONDITION_NOT_MET.to_string())
+    KesticServiceErr::ManualRunBlocked(BlockedReason::ConditionNotMet)
 }
 
 struct LaunchedBackupRun {
@@ -411,9 +407,7 @@ fn start_backup_internal(
         if is_scheduled && guard.sleep_in_progress {
             guard.claiming_destinations.remove(&ctx.dest.id);
             ctx.claim_guard.disarm();
-            return Err(KesticServiceErr::ManualRunBlocked(
-                "sleep_in_progress".to_string(),
-            ));
+            return Err(KesticServiceErr::SleepInProgress);
         }
 
         let now = guard.clock.now_utc();
@@ -524,8 +518,11 @@ impl BackupProgressReporter<'_> {
                 processed_bytes: bytes_done,
                 total_bytes,
                 speed_bytes_per_sec: speed_bps,
-                info_message: i18n("Backing up %1 (%2%)")
-                    .subs(&[self.backup_name, &(pct.round() as u32).to_string()]),
+                info_message: tr(&active_run_message(&ActiveRunInfo {
+                    name: self.backup_name,
+                    is_maintenance: false,
+                    percent_done: pct,
+                })),
                 elapsed_ms: elapsed_secs * 1000,
             });
         }
@@ -591,7 +588,7 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         None
     };
     let _inhibit_guard = if ctx.enable_portal_inhibit {
-        PortalInhibitGuard::acquire_default(&format!("Kestic backup: {}", ctx.backup.name)).ok()
+        PortalInhibitGuard::acquire_default(&i18n("Backing up %1").subs(&[&ctx.backup.name])).ok()
     } else {
         None
     };
@@ -802,7 +799,7 @@ fn process_backup_success_result(
     run.stats = res.stats;
 
     let mut summary = if sleep_interrupted {
-        Some(i18n("Interrupted by system sleep").into())
+        Some(tr(&interrupted_by_sleep_message()))
     } else if matches!(status, RunStatus::Error | RunStatus::Warning) {
         let base = localized_failure_summary(&res.presentation.kind);
         let raw = res
@@ -910,7 +907,7 @@ fn process_backup_error_result(
         (
             RunStatus::Interrupted,
             None,
-            i18n("Interrupted by system sleep").into(),
+            tr(&interrupted_by_sleep_message()),
         )
     } else if is_scheduled
         && matches!(
@@ -1010,9 +1007,9 @@ fn run_post_backup_forget(
                 }
                 if backup_exit == 0 {
                     *out.summary = Some(if is_forget_lock_failure(&f_res) {
-                        i18n("Backed up, destination locked — retention will catch up later").into()
+                        i18n("Backed up; destination was locked, retention runs later").into()
                     } else {
-                        i18n("Backed up, retention not executed").into()
+                        tr(&ErrorKind::RetentionPending.message(None, false))
                     });
                 }
             }
@@ -1021,7 +1018,7 @@ fn run_post_backup_forget(
             *out.primary_forget_state = Some(true);
             *out.status = RunStatus::Warning;
             if backup_exit == 0 {
-                *out.summary = Some(i18n("Backed up, retention not executed").into());
+                *out.summary = Some(tr(&ErrorKind::RetentionPending.message(None, false)));
             }
             combined_logs.push(redact_secrets(&f_err.to_string(), secret_strs));
         }

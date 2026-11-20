@@ -5,12 +5,13 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 import org.kde.kirigamiaddons.dateandtime as DateAndTime
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "backupScheduleEditPage"
-    title: i18n("Schedule")
+    title: Texts.label("schedule")
 
     required property var rootWindow
     required property var appBackend
@@ -32,20 +33,20 @@ Kirigami.ScrollablePage {
     property var previewSlots: []
 
     readonly property var frequencyOptions: [
-        { key: "daily", label: i18n("Daily") },
+        { key: "daily", label: Texts.label("daily") },
         { key: "specific_weekdays", label: i18n("On specific weekdays") },
         { key: "every_n_days", label: i18n("Every n days") },
-        { key: "manual_only", label: i18n("Manual only") }
+        { key: "manual_only", label: Texts.label("manual_only") }
     ]
 
     readonly property var weekdayOptions: [
-        { key: "monday", shortLabel: i18n("Mon"), fullLabel: i18n("Monday") },
-        { key: "tuesday", shortLabel: i18n("Tue"), fullLabel: i18n("Tuesday") },
-        { key: "wednesday", shortLabel: i18n("Wed"), fullLabel: i18n("Wednesday") },
-        { key: "thursday", shortLabel: i18n("Thu"), fullLabel: i18n("Thursday") },
-        { key: "friday", shortLabel: i18n("Fri"), fullLabel: i18n("Friday") },
-        { key: "saturday", shortLabel: i18n("Sat"), fullLabel: i18n("Saturday") },
-        { key: "sunday", shortLabel: i18n("Sun"), fullLabel: i18n("Sunday") }
+        { key: "monday", shortLabel: Texts.label("mon"), fullLabel: Texts.label("monday") },
+        { key: "tuesday", shortLabel: Texts.label("tue"), fullLabel: Texts.label("tuesday") },
+        { key: "wednesday", shortLabel: Texts.label("wed"), fullLabel: Texts.label("wednesday") },
+        { key: "thursday", shortLabel: Texts.label("thu"), fullLabel: Texts.label("thursday") },
+        { key: "friday", shortLabel: Texts.label("fri"), fullLabel: Texts.label("friday") },
+        { key: "saturday", shortLabel: Texts.label("sat"), fullLabel: Texts.label("saturday") },
+        { key: "sunday", shortLabel: Texts.label("sun"), fullLabel: Texts.label("sunday") }
     ]
 
     function todayIsoDate() {
@@ -297,7 +298,7 @@ Kirigami.ScrollablePage {
             id: saveScheduleAction
             objectName: "saveScheduleAction"
             icon.name: "document-save"
-            text: i18n("Save")
+            text: Texts.label("save")
             enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.commitSave(false)
         },
@@ -305,7 +306,7 @@ Kirigami.ScrollablePage {
             id: closeScheduleAction
             objectName: "closeScheduleAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: {
                 if (page.dirty) {
                     unsavedDialog.open();
@@ -368,7 +369,7 @@ Kirigami.ScrollablePage {
             Controls.ComboBox {
                 id: frequencyCombo
                 objectName: "scheduleFrequencyCombo"
-                Kirigami.FormData.label: i18n("Frequency:")
+                Kirigami.FormData.label: Texts.label("frequency_label")
                 model: page.frequencyOptions
                 textRole: "label"
                 valueRole: "key"
@@ -512,7 +513,7 @@ Kirigami.ScrollablePage {
             }
 
             RowLayout {
-                Kirigami.FormData.label: i18n("Time:")
+                Kirigami.FormData.label: Texts.label("time_label")
                 visible: page.scheduleKind === "daily" || page.scheduleKind === "specific_weekdays" || page.scheduleKind === "every_n_days"
                 spacing: Kirigami.Units.smallSpacing
 
@@ -578,9 +579,9 @@ Kirigami.ScrollablePage {
                 objectName: "useGlobalOverdueCheck"
                 visible: page.scheduleKind !== "manual_only"
                 Kirigami.FormData.label: i18n("Report overdue after:")
-                text: i18np("Use global default (%1 missed slot)", "Use global default (%1 missed slots)", appBackend.default_overdue_threshold)
+                text: i18np("Use global default (%1 missed run)", "Use global default (%1 missed runs)", appBackend.default_overdue_threshold)
                 checked: page.useGlobalOverdue
-                Accessible.name: i18n("Use global default overdue threshold")
+                Accessible.name: i18n("Use the global default for overdue")
                 onToggled: if (!page.hydrating) page.useGlobalOverdue = checked
             }
 
@@ -595,13 +596,13 @@ Kirigami.ScrollablePage {
                     to: 99
                     value: page.customOverdueThreshold
                     editable: true
-                    Accessible.name: i18n("Missed slots before reporting overdue")
+                    Accessible.name: i18n("Missed runs before reporting overdue")
                     onValueModified: if (!page.hydrating) page.customOverdueThreshold = value
                     onValueChanged: if (!page.hydrating && page.customOverdueThreshold !== value) page.customOverdueThreshold = value
                 }
 
                 Controls.Label {
-                    text: i18n("missed slots")
+                    text: i18n("missed runs")
                 }
             }
         }

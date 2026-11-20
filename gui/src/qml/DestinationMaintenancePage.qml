@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "destinationMaintenancePage"
-    title: i18n("Maintenance")
+    title: Texts.label("maintenance")
 
     required property var rootWindow
     required property var appBackend
@@ -41,8 +42,8 @@ Kirigami.ScrollablePage {
     readonly property var freqOptions: [
         { key: "weekly", label: i18n("Weekly") },
         { key: "monthly", label: i18n("Monthly") },
-        { key: "daily", label: i18n("Daily") },
-        { key: "manual_only", label: i18n("Manual only") }
+        { key: "daily", label: Texts.label("daily") },
+        { key: "manual_only", label: Texts.label("manual_only") }
     ]
 
     readonly property var nthOptions: [
@@ -54,13 +55,13 @@ Kirigami.ScrollablePage {
     ]
 
     readonly property var weekdayOptions: [
-        { key: "monday", label: i18n("Monday") },
-        { key: "tuesday", label: i18n("Tuesday") },
-        { key: "wednesday", label: i18n("Wednesday") },
-        { key: "thursday", label: i18n("Thursday") },
-        { key: "friday", label: i18n("Friday") },
-        { key: "saturday", label: i18n("Saturday") },
-        { key: "sunday", label: i18n("Sunday") }
+        { key: "monday", label: Texts.label("monday") },
+        { key: "tuesday", label: Texts.label("tuesday") },
+        { key: "wednesday", label: Texts.label("wednesday") },
+        { key: "thursday", label: Texts.label("thursday") },
+        { key: "friday", label: Texts.label("friday") },
+        { key: "saturday", label: Texts.label("saturday") },
+        { key: "sunday", label: Texts.label("sunday") }
     ]
 
     function buildEntryObj(kind, nth, weekday, hour, minute) {
@@ -163,10 +164,10 @@ Kirigami.ScrollablePage {
                 var sum = JSON.parse(rawJson);
                 var parts = [];
                 if (sum.delete_packs !== null && sum.delete_packs !== undefined) {
-                    parts.push(i18n("Packs to remove: %1", sum.delete_packs));
+                    parts.push(i18n("Data blocks to remove: %1", sum.delete_packs));
                 }
                 if (sum.keep_packs !== null && sum.keep_packs !== undefined) {
-                    parts.push(i18n("Packs to keep: %1", sum.keep_packs));
+                    parts.push(i18n("Data blocks to keep: %1", sum.keep_packs));
                 }
                 // restic's own summary line is English text: show only the localized size.
                 var sizeMatch = sum.freed_summary
@@ -183,7 +184,7 @@ Kirigami.ScrollablePage {
                 txt = "";
             }
         }
-        return txt !== "" ? txt : i18n("Dry-run preview could not load repository statistics (the repository may currently be unreachable or locked).");
+        return txt !== "" ? txt : i18n("The preview could not read the repository. It may be unreachable or locked.");
     }
 
     Connections {
@@ -194,7 +195,7 @@ Kirigami.ScrollablePage {
             }
             page.previewSettled = true;
             if (errorMessage !== "") {
-                page.previewSummaryText = i18n("Dry-run preview could not load repository statistics (the repository may currently be unreachable or locked).");
+                page.previewSummaryText = i18n("The preview could not read the repository. It may be unreachable or locked.");
             } else {
                 page.previewSummaryText = page.formatPreviewSummary(summaryJson);
             }
@@ -259,7 +260,7 @@ Kirigami.ScrollablePage {
             id: saveMaintenanceAction
             objectName: "saveMaintenanceAction"
             icon.name: "document-save"
-            text: i18n("Save")
+            text: Texts.label("save")
             enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.requestSave(false)
         },
@@ -267,7 +268,7 @@ Kirigami.ScrollablePage {
             id: closeMaintenanceAction
             objectName: "closeMaintenanceAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: {
                 if (page.dirty) {
                     unsavedDialog.open();
@@ -305,7 +306,7 @@ Kirigami.ScrollablePage {
             spacing: Kirigami.Units.mediumSpacing
 
             Controls.Label {
-                text: i18n("Cleaning up permanently removes unreferenced pack data from the destination after snapshots have been forgotten. Removed data cannot be recovered.")
+                text: i18n("Cleaning up deletes data on the destination that no snapshot uses anymore. Deleted data cannot be restored.")
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
@@ -322,7 +323,7 @@ Kirigami.ScrollablePage {
                 }
 
                 Controls.Label {
-                    text: i18n("Loading dry-run preview…")
+                    text: i18n("Loading test run preview…")
                     Layout.fillWidth: true
                 }
             }
@@ -372,7 +373,7 @@ Kirigami.ScrollablePage {
             Controls.ComboBox {
                 id: pruneFrequencyCombo
                 objectName: "pruneFrequencyCombo"
-                Kirigami.FormData.label: i18n("Frequency:")
+                Kirigami.FormData.label: Texts.label("frequency_label")
                 model: page.freqOptions
                 textRole: "label"
                 valueRole: "key"
@@ -412,7 +413,7 @@ Kirigami.ScrollablePage {
 
             RowLayout {
                 visible: page.pruneKind !== "manual_only"
-                Kirigami.FormData.label: i18n("Time:")
+                Kirigami.FormData.label: Texts.label("time_label")
                 spacing: Kirigami.Units.smallSpacing
 
                 Controls.SpinBox {
@@ -452,7 +453,7 @@ Kirigami.ScrollablePage {
             Controls.ComboBox {
                 id: checkFrequencyCombo
                 objectName: "checkFrequencyCombo"
-                Kirigami.FormData.label: i18n("Frequency:")
+                Kirigami.FormData.label: Texts.label("frequency_label")
                 model: page.freqOptions
                 textRole: "label"
                 valueRole: "key"
@@ -492,7 +493,7 @@ Kirigami.ScrollablePage {
 
             RowLayout {
                 visible: page.checkKind !== "manual_only"
-                Kirigami.FormData.label: i18n("Time:")
+                Kirigami.FormData.label: Texts.label("time_label")
                 spacing: Kirigami.Units.smallSpacing
 
                 Controls.SpinBox {

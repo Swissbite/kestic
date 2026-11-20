@@ -19,6 +19,7 @@ use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
 use kestic_core::model::{BackupId, Run};
 use kestic_core::secrets::SecretError;
+use kestic_i18n::codes::BlockedReason;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use zbus::object_server::SignalEmitter;
@@ -829,14 +830,18 @@ pub(crate) fn emit_run_progress(
     });
 }
 
-pub(crate) fn emit_manual_run_blocked(conn: &Connection, backup_id: &BackupId, reason: &str) {
+pub(crate) fn emit_manual_run_blocked(
+    conn: &Connection,
+    backup_id: &BackupId,
+    reason: BlockedReason,
+) {
     let conn = conn.clone();
     let bid = backup_id.as_str().to_string();
-    let reason = reason.to_string();
+    let reason = reason.as_str();
     thread::spawn(move || {
         let _ = zbus::block_on(async move {
             let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
-            KesticDbusV1Service::manual_run_blocked(&emitter, &bid, &reason).await
+            KesticDbusV1Service::manual_run_blocked(&emitter, &bid, reason).await
         });
     });
 }

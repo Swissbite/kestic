@@ -1024,6 +1024,7 @@ version = "0.1.0"
 dependencies = [
  "getrandom",
  "jiff",
+ "kestic-i18n",
  "rusqlite",
  "semver",
  "serde",
@@ -1043,6 +1044,7 @@ name = "kestic-daemon"
 version = "0.1.0"
 dependencies = [
  "kestic-core",
+ "kestic-i18n",
  "ksni",
  "notify-rust",
  "serde",
@@ -1065,10 +1067,19 @@ dependencies = [
  "cxx-qt-lib-extras",
  "kestic-core",
  "kestic-daemon",
+ "kestic-i18n",
  "serde",
  "serde_json",
  "time",
  "zbus 6.3.0",
+]
+
+[[package]]
+name = "kestic-i18n"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

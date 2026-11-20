@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "overviewPage"
-    title: i18n("Overview")
+    title: Texts.label("overview")
 
     required property var rootWindow
     required property var appBackend
@@ -32,7 +33,7 @@ Kirigami.ScrollablePage {
             id: pauseSchedulesAction
             objectName: "pauseSchedulesAction"
             icon.name: appBackend.global_paused ? "media-playback-start" : "state-pause"
-            text: appBackend.global_paused ? i18n("Resume Schedules") : i18n("Pause Schedules…")
+            text: appBackend.global_paused ? Texts.label("resume_schedules") : Texts.label("pause_schedules")
             visible: appBackend.has_config_file && appBackend.backups_count > 0
             enabled: appBackend.blocking_kind !== "daemon_unreachable"
             tooltip: appBackend.global_paused ? appBackend.global_paused_line : i18n("Temporarily pause scheduled backups")
@@ -46,25 +47,25 @@ Kirigami.ScrollablePage {
 
         Controls.MenuItem {
             objectName: "pauseGlobal1hItem"
-            text: i18n("1 Hour")
+            text: Texts.label("pause_one_hour")
             Accessible.name: text
             onTriggered: appBackend.pauseGlobal("1h")
         }
         Controls.MenuItem {
             objectName: "pauseGlobal3hItem"
-            text: i18n("3 Hours")
+            text: Texts.label("pause_three_hours")
             Accessible.name: text
             onTriggered: appBackend.pauseGlobal("3h")
         }
         Controls.MenuItem {
             objectName: "pauseGlobalTomorrowItem"
-            text: i18n("Until Tomorrow")
+            text: Texts.label("pause_until_tomorrow")
             Accessible.name: text
             onTriggered: appBackend.pauseGlobal("tomorrow")
         }
         Controls.MenuItem {
             objectName: "pauseGlobalIndefiniteItem"
-            text: i18n("Until I Resume")
+            text: Texts.label("pause_until_resume")
             Accessible.name: text
             onTriggered: appBackend.pauseGlobal("indefinite")
         }
@@ -110,7 +111,7 @@ Kirigami.ScrollablePage {
             }
 
             Controls.Label {
-                text: i18n("Kestic regularly and securely encrypts and backs up your files to a drive, a server, or the cloud.")
+                text: i18n("Kestic encrypts your files and backs them up regularly to a drive, a server, or the cloud.")
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
                 Layout.alignment: Qt.AlignHCenter
@@ -121,11 +122,11 @@ Kirigami.ScrollablePage {
             Controls.Button {
                 id: setupFirstBackupButton
                 objectName: "setupFirstBackupButton"
-                text: i18n("Set Up First Backup")
+                text: Texts.label("set_up_first_backup")
                 icon.name: "list-add"
                 highlighted: true
                 enabled: appBackend.daemon_reachable && appBackend.blocking_kind !== "daemon_unreachable"
-                Accessible.name: i18n("Set Up First Backup")
+                Accessible.name: Texts.label("set_up_first_backup")
                 Layout.alignment: Qt.AlignHCenter
                 onClicked: rootWindow.openNewBackupWizard(true)
             }
@@ -360,7 +361,7 @@ Kirigami.ScrollablePage {
                                     objectName: "overviewBackUpNowButton"
                                     visible: !card.isRunning && !(card.hasError && card.errorAction === "update_stored_password")
                                     icon.name: "media-playback-start"
-                                    text: i18n("Back Up Now")
+                                    text: Texts.label("back_up_now")
                                     enabled: card.available && appBackend.blocking_kind === ""
                                     Accessible.name: i18n("Back Up Now: %1", card.name)
                                     Controls.ToolTip.visible: hovered && !enabled
@@ -374,7 +375,7 @@ Kirigami.ScrollablePage {
                                     objectName: "overviewUpdatePasswordButton"
                                     visible: !card.isRunning && card.hasError && card.errorAction === "update_stored_password"
                                     icon.name: "dialog-password"
-                                    text: i18n("Update Saved Password…")
+                                    text: appBackend.recoveryActionLabel("update_stored_password")
                                     enabled: appBackend.blocking_kind === ""
                                     Accessible.name: i18n("Update Saved Password for %1", card.name)
                                     onClicked: rootWindow.openUpdatePasswordDialog(card.destinationId, card.destinationName)
@@ -383,7 +384,7 @@ Kirigami.ScrollablePage {
                                 Controls.Button {
                                     visible: card.isRunning
                                     icon.name: "process-stop"
-                                    text: i18n("Cancel")
+                                    text: Texts.label("cancel")
                                     Accessible.name: i18n("Cancel backup %1", card.name)
                                     onClicked: appBackend.cancelRun(card.activeRunId)
                                 }
@@ -400,25 +401,25 @@ Kirigami.ScrollablePage {
                                         Controls.MenuItem {
                                             objectName: "overviewCardBackUpMenuItem"
                                             text: (card.hasError && card.errorAction === "update_stored_password")
-                                                ? i18n("Back Up Now Anyway")
-                                                : i18n("Back Up Now")
+                                                ? Texts.label("back_up_now_anyway")
+                                                : Texts.label("back_up_now")
                                             enabled: card.available && !card.isRunning && appBackend.blocking_kind === ""
                                             onTriggered: appBackend.startBackup(card.backupId)
                                         }
                                         Controls.MenuItem {
-                                            text: i18n("Show Command")
+                                            text: Texts.label("show_command")
                                             onTriggered: rootWindow.openShowCommandDialog(
                                                 appBackend.getBackupTransparentCommand(card.backupId),
                                                 card.name
                                             )
                                         }
                                         Controls.MenuItem {
-                                            text: i18n("Rename…")
+                                            text: Texts.label("rename_ellipsis")
                                             enabled: appBackend.blocking_kind !== "daemon_unreachable"
                                             onTriggered: rootWindow.openRenameBackupDialog(card.backupId, card.name)
                                         }
                                         Controls.MenuItem {
-                                            text: i18n("Remove from Kestic…")
+                                            text: Texts.label("remove_from_kestic_ellipsis")
                                             enabled: appBackend.blocking_kind !== "daemon_unreachable"
                                             onTriggered: rootWindow.openRemoveBackupDialog(card.backupId, card.name)
                                         }

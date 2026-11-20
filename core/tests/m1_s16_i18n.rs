@@ -125,7 +125,8 @@ fn collect_files_with_ext(dir: &Path, ext: &str) -> Vec<PathBuf> {
 }
 
 /// NFR-06 (M1-S16): Extracts every `i18n(...)` string from all `daemon/src/*.rs`,
-/// `gui/src/*.rs`, and `gui/src/qml/*.qml` files and enforces 100% Swiss-German coverage
+/// `gui/src/*.rs`, and `gui/src/qml/*.qml` files, plus every `i18n_noop(...)` msgid of the
+/// shared texts in `i18n/src/*.rs`, and enforces 100% Swiss-German coverage
 /// (0 untranslated, 0 fuzzy, 0 missing, 0 `ß`) in `po/de/kestic.po`.
 #[test]
 fn nfr_06_m1_all_rust_and_qml_i18n_strings_extracted_and_translated() {
@@ -134,6 +135,8 @@ fn nfr_06_m1_all_rust_and_qml_i18n_strings_extracted_and_translated() {
 
     let mut rust_files = collect_files_with_ext(&root.join("daemon/src"), "rs");
     rust_files.extend(collect_files_with_ext(&root.join("gui/src"), "rs"));
+    // The shared texts of `kestic-i18n` are marked with `i18n_noop`.
+    rust_files.extend(collect_files_with_ext(&root.join("i18n/src"), "rs"));
     let qml_files = collect_files_with_ext(&root.join("gui/src/qml"), "qml");
     assert!(!rust_files.is_empty(), "expected Rust files");
     assert!(!qml_files.is_empty(), "expected QML files");
@@ -152,6 +155,7 @@ fn nfr_06_m1_all_rust_and_qml_i18n_strings_extracted_and_translated() {
             "--from-code=UTF-8",
             "--language=C",
             "--keyword=i18n:1",
+            "--keyword=i18n_noop:1",
             "-o",
         ])
         .arg(&pot_file)

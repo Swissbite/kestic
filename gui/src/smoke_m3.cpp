@@ -64,7 +64,7 @@ int scenario_status_rows(const Ctx& c) {
     M3_CHECK_EQ(
         3031,
         hint->property("text").toString(),
-        loc(c.lang, "Only 2 of 3 backups can be backed up now.", "Nur 2 von 3 Backups können jetzt gesichert werden."),
+        loc(c.lang, "Only 2 of 3 backups can start now.", "Nur 2 von 3 Backups können jetzt starten."),
         "back up all hint"
     );
     // Pause button while NOT paused offers pausing.
@@ -73,7 +73,7 @@ int scenario_status_rows(const Ctx& c) {
     M3_CHECK_EQ(
         3033,
         pause_act->property("text").toString(),
-        loc(c.lang, "Pause Schedules…", "Zeitpläne pausieren…"),
+        loc(c.lang, "Pause Schedules", "Zeitpläne pausieren"),
         "pause button text"
     );
 
@@ -143,7 +143,7 @@ int scenario_pause_and_start_all(const Ctx& c) {
     M3_CHECK_EQ(
         3132,
         pause_act->property("text").toString(),
-        loc(c.lang, "Pause Schedules…", "Zeitpläne pausieren…"),
+        loc(c.lang, "Pause Schedules", "Zeitpläne pausieren"),
         "pause button text after resume"
     );
 
@@ -161,8 +161,8 @@ int scenario_pause_and_start_all(const Ctx& c) {
     M3_CHECK(3142, skipped && skipped->isVisible(), "startAllSkippedBanner must be visible");
     const QString msg = skipped->property("text").toString();
     M3_CHECK_STARTS(3143, msg, loc(c.lang, "2 backups skipped: ", "2 Backups übersprungen: "), "message must count 2 skipped backups");
-    M3_CHECK(3144, msg.contains(QStringLiteral("Offline Media (") + loc(c.lang, "source unavailable", "Quelle nicht verfügbar") + QLatin1Char(')')), "message must name Offline Media with reason");
-    M3_CHECK(3145, msg.contains(QStringLiteral("Locked Docs (") + loc(c.lang, "permanent error, fix required", "dauerhafter Fehler, Behebung nötig") + QLatin1Char(')')), "message must name Locked Docs with reason");
+    M3_CHECK(3144, msg.contains(QStringLiteral("Offline Media (") + loc(c.lang, "Source unavailable", "Quelle nicht verfügbar") + QLatin1Char(')')), "message must name Offline Media with reason");
+    M3_CHECK(3145, msg.contains(QStringLiteral("Locked Docs (") + loc(c.lang, "Permanent error, needs fixing", "Dauerhafter Fehler, muss behoben werden") + QLatin1Char(')')), "message must name Locked Docs with reason");
     return 0;
 }
 
@@ -235,6 +235,7 @@ int scenario_exit12_and_override(const Ctx& c) {
 } // namespace
 
 int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled);
+int run_m3_pages_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled);
 
 void run_m3_smoke_scenario(
     QQmlApplicationEngine& engine,
@@ -256,7 +257,10 @@ void run_m3_smoke_scenario(
     } else if (scen == QLatin1String("m3-exit12-and-condition-override")) {
         rc = scenario_exit12_and_override(ctx);
     } else {
-        rc = run_m3_editor_scenario(ctx, scen, &handled);
+        rc = run_m3_pages_scenario(ctx, scen, &handled);
+        if (!handled) {
+            rc = run_m3_editor_scenario(ctx, scen, &handled);
+        }
     }
     if (!handled) {
         std::fprintf(stderr, "M3 smoke failed (399): unknown m3 smoke scenario %s\n", qPrintable(scen));

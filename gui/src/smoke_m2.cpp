@@ -671,6 +671,28 @@ void run_m2_smoke_scenario(
             return;
         }
 
+        // D-Bus errors are shown by their error name in the GUI language, whatever language the
+        // daemon runs in: removing an unknown backup fails with `NotFound`.
+        {
+            bool removed = true;
+            QMetaObject::invokeMethod(
+                backend,
+                "removeBackup",
+                Qt::DirectConnection,
+                Q_RETURN_ARG(bool, removed),
+                Q_ARG(QString, QStringLiteral("aaaaaaaa"))
+            );
+            const QString not_found_text = backend->property("last_action_error").toString();
+            const QString expected_not_found = (lang == QLatin1String("de"))
+                ? QStringLiteral("Der Eintrag existiert nicht mehr.")
+                : QStringLiteral("The item no longer exists.");
+            if (removed || not_found_text != expected_not_found) {
+                std::fprintf(stderr, "M2 smoke failed: unexpected NotFound error text '%s'\n", qPrintable(not_found_text));
+                QCoreApplication::exit(289);
+                return;
+            }
+        }
+
         // AC-M2-10-1: Nested source warning visible on BackupDetailPage and BackupSourceEditPage
         QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, nested_bid));
         wait_ms(200);

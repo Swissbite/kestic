@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "destinationDetailPage"
-    title: currentData ? currentData.name : i18n("Destination")
+    title: currentData ? currentData.name : Texts.label("destination")
 
     required property var rootWindow
     required property var appBackend
@@ -48,7 +49,7 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             objectName: "destUpdatePasswordAction"
             icon.name: "dialog-password"
-            text: i18n("Update Saved Password…")
+            text: appBackend.recoveryActionLabel("update_stored_password")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: currentData !== null && appBackend.blocking_kind === ""
             onTriggered: if (currentData) rootWindow.openUpdatePasswordDialog(destinationId, currentData.name)
@@ -60,7 +61,7 @@ Kirigami.ScrollablePage {
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: currentData !== null && currentData.backupCount === 0 && appBackend.blocking_kind !== "daemon_unreachable"
             tooltip: currentData && currentData.backupCount > 0
-                ? i18n("First remove backups from Kestic or assign them to another destination")
+                ? Texts.label("remove_backups_first")
                 : i18n("Remove destination from Kestic")
             onTriggered: if (currentData) rootWindow.openRemoveDestinationDialog(destinationId, currentData.name)
         }
@@ -75,10 +76,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
             visible: currentData !== null && currentData.passwordRejected
-            text: i18n("The stored password does not match this destination.")
+            text: i18n("The saved password does not match this destination.")
             actions: [
                 Kirigami.Action {
-                    text: i18n("Update Saved Password…")
+                    text: appBackend.recoveryActionLabel("update_stored_password")
                     onTriggered: rootWindow.openUpdatePasswordDialog(destinationId, currentData.name)
                 }
             ]
@@ -93,7 +94,7 @@ Kirigami.ScrollablePage {
                 Kirigami.Action {
                     objectName: "destUnlockAction"
                     icon.name: "unlock"
-                    text: i18n("Unlock…")
+                    text: Texts.label("unlock_ellipsis")
                     enabled: appBackend.blocking_kind === ""
                     onTriggered: appBackend.unlockDestination(destinationId)
                 }
@@ -107,7 +108,7 @@ Kirigami.ScrollablePage {
             type: Kirigami.MessageType.Warning
             visible: currentData !== null && currentData.pendingForgetCount > 0
             text: currentData
-                ? i18np("%1 backup still has retention pending from a previous locked run.", "%1 backups still have retention pending from a previous locked run.", currentData.pendingForgetCount)
+                ? i18np("%1 backup still waits for retention because the destination was locked.", "%1 backups still wait for retention because the destination was locked.", currentData.pendingForgetCount)
                 : ""
             actions: [
                 Kirigami.Action {
@@ -150,7 +151,7 @@ Kirigami.ScrollablePage {
             }
             Controls.Label {
                 visible: currentData !== null && currentData.kindName === "rest" && currentData.username !== ""
-                Kirigami.FormData.label: i18n("Username:")
+                Kirigami.FormData.label: Texts.label("username_label")
                 text: currentData ? currentData.username : ""
             }
             Controls.Label {
@@ -161,7 +162,7 @@ Kirigami.ScrollablePage {
 
         Kirigami.Heading {
             level: 3
-            text: i18n("Maintenance")
+            text: Texts.label("maintenance")
         }
 
         Kirigami.FormLayout {
@@ -170,7 +171,7 @@ Kirigami.ScrollablePage {
             Controls.Label {
                 objectName: "maintenanceStatusLabel"
                 visible: currentData !== null && currentData.maintenanceStatusText !== ""
-                Kirigami.FormData.label: i18n("Status:")
+                Kirigami.FormData.label: Texts.label("status_label")
                 text: currentData ? currentData.maintenanceStatusText : ""
                 wrapMode: Text.WordWrap
             }
@@ -253,7 +254,7 @@ Kirigami.ScrollablePage {
 
         Controls.Label {
             visible: currentData !== null && currentData.backupCount > 0
-            text: i18n("Remove destination requires removing or reassigning its backups first.")
+            text: Texts.label("remove_backups_first")
             opacity: 0.75
             wrapMode: Text.WordWrap
             Layout.fillWidth: true

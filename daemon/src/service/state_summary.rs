@@ -7,12 +7,11 @@ use super::run_errors::extract_last_run_error_info;
 use super::state::{DaemonCore, SimulatedOverallStatus};
 use crate::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSummaryDto, BlockingStateDto,
-    DaemonStateDto, DestinationSummaryDto, OverallStatusDto, OverallStatusKind,
+    DaemonStateDto, DestinationSummaryDto, OverallStatusDto, OverallStatusKind, ResticStatusDto,
+    blocking_message,
 };
-use crate::i18n::i18n;
-use crate::tray::{
-    KesticTrayState, TrayBackupItem, TrayStatus, active_run_line, compute_tray_presentation,
-};
+use crate::i18n::{i18n, tr};
+use crate::tray::{KesticTrayState, TrayBackupItem, compute_tray_presentation};
 use kestic_core::history::{BackupRuntimeState, PauseState};
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, NestedSourceConflict, Run, RunKind, RunStatus,
@@ -23,6 +22,10 @@ use kestic_core::scheduler::{
     UnmetPrecondition, collect_pending_preconditions, evaluate_backup_schedule,
     evaluate_destination_maintenance, evaluate_run_conditions, format_local_slot_hint,
     is_pause_active,
+};
+use kestic_i18n::codes::PendingReasonCode;
+use kestic_i18n::messages::{
+    maintenance_running_message, overall_headline, schedules_paused_message,
 };
 use std::collections::HashMap;
 use time::OffsetDateTime;
@@ -43,13 +46,19 @@ struct OverallStatusCounts {
 }
 
 struct PendingReasonsSummary {
-    primary_code: Option<String>,
-    primary_reason: Option<String>,
-    reasons: Vec<String>,
-    codes: Vec<String>,
+    codes: Vec<PendingReasonCode>,
     retry_at_unix: Option<i64>,
-    has_unmet_run_condition: bool,
-    unmet_conditions_text: Option<String>,
+    unmet_run_conditions: Vec<PendingReasonCode>,
+}
+
+struct TrayInput<'a> {
+    backups: &'a [BackupSummaryDto],
+    overall: &'a OverallStatusDto,
+    blocking: Option<&'a BlockingStateDto>,
+    restic_status: &'a ResticStatusDto,
+    global_pause: Option<&'a PauseState>,
+    paused_backup_window: Option<(OffsetDateTime, Option<OffsetDateTime>)>,
+    now: OffsetDateTime,
 }
 
 struct BackupPendingSummaryInput<'a> {
@@ -61,7 +70,6 @@ struct BackupPendingSummaryInput<'a> {
     last_run: Option<&'a Run>,
     has_error: bool,
     dest_busy: bool,
-    now: OffsetDateTime,
 }
 
 impl DaemonCore {
@@ -117,14 +125,15 @@ impl DaemonCore {
             now,
         );
 
-        let tray_state = self.build_tray_state(
-            &backup_summaries,
-            &overall,
-            blocking.as_ref(),
-            global_paused,
+        let tray_state = self.build_tray_state(TrayInput {
+            backups: &backup_summaries,
+            overall: &overall,
+            blocking: blocking.as_ref(),
+            restic_status: &restic_status,
+            global_pause: global_pause_active,
             paused_backup_window,
             now,
-        );
+        });
 
         let recent_runs = self.runs_cache.iter().take(200).cloned().collect();
         let state = DaemonStateDto {
@@ -231,7 +240,6 @@ impl DaemonCore {
             last_run: last_run.as_ref(),
             has_error: err_info.blocks_schedule,
             dest_busy,
-            now,
         });
 
         BackupSummaryDto {
@@ -243,7 +251,6 @@ impl DaemonCore {
             has_error: err_info.has_error,
             is_overdue: eval.is_overdue,
             error_action: err_info.error_action,
-            error_summary: err_info.error_summary,
             error_kind: err_info.error_kind,
             error_detail: err_info.error_detail,
             error_exit_code: err_info.error_exit_code,
@@ -255,14 +262,17 @@ impl DaemonCore {
             paused_since_unix: eval.paused_since.map(|t| t.unix_timestamp()),
             paused_until_unix: eval.paused_until.map(|t| t.unix_timestamp()),
             next_scheduled_at_unix: eval.next_scheduled_at.map(|t| t.unix_timestamp()),
-            pending_primary_reason: pending.primary_reason,
-            pending_primary_code: pending.primary_code,
-            pending_reasons: pending.reasons,
+            pending_primary_code: pending.codes.first().copied(),
             pending_reason_codes: pending.codes,
             pending_retry_at_unix: pending.retry_at_unix,
             missed_slots_count: eval.missed_slots_for_overdue,
-            has_unmet_run_condition: pending.has_unmet_run_condition,
-            unmet_conditions_text: pending.unmet_conditions_text,
+            has_unmet_run_condition: !pending.unmet_run_conditions.is_empty(),
+            battery_percent: pending
+                .unmet_run_conditions
+                .contains(&PendingReasonCode::OnBattery)
+                .then_some(self.system_env.battery_percent)
+                .flatten(),
+            unmet_run_conditions: pending.unmet_run_conditions,
         }
     }
 
@@ -279,7 +289,6 @@ impl DaemonCore {
             last_run,
             has_error,
             dest_busy,
-            now,
         } = input;
         let interrupted_recovery = active_run.is_none()
             && !eval.is_paused
@@ -306,42 +315,25 @@ impl DaemonCore {
             Vec::new()
         };
 
-        let mut primary_code = None;
-        let mut primary_reason = None;
-        let mut reasons = Vec::with_capacity(effective_unmet.len());
-        let mut codes = Vec::with_capacity(effective_unmet.len());
-        for (idx, item) in effective_unmet.iter().enumerate() {
-            let (code, text) = self.format_pending_reason_entry(item, rs.backoff_until, now);
-            if idx == 0 {
-                primary_code = Some(code.to_string());
-                primary_reason = Some(text.clone());
-            }
-            reasons.push(text);
-            codes.push(code.to_string());
-        }
+        let codes = effective_unmet
+            .iter()
+            .map(PendingReasonCode::from)
+            .collect();
         let retry_at_unix = effective_unmet
             .contains(&UnmetPrecondition::Backoff)
             .then(|| rs.backoff_until.map(|t| t.unix_timestamp()))
             .flatten();
 
-        let cond_unmet = evaluate_run_conditions(&backup.run_conditions, &self.system_env);
-        let has_unmet_run_condition = !cond_unmet.is_empty();
-        let unmet_conditions_text = has_unmet_run_condition.then(|| {
-            let parts: Vec<String> = cond_unmet
+        let unmet_run_conditions =
+            evaluate_run_conditions(&backup.run_conditions, &self.system_env)
                 .iter()
-                .map(|c| self.format_unmet_condition_item(c))
+                .map(PendingReasonCode::from)
                 .collect();
-            i18n("Condition not met: %1").subs(&[&parts.join(", ")])
-        });
 
         PendingReasonsSummary {
-            primary_code,
-            primary_reason,
-            reasons,
             codes,
             retry_at_unix,
-            has_unmet_run_condition,
-            unmet_conditions_text,
+            unmet_run_conditions,
         }
     }
 
@@ -406,9 +398,10 @@ impl DaemonCore {
             && !is_pause_active(global_pause_raw, now))
         .then(|| self.maintenance_pending_code(&m_eval, avail.reachable, dest_busy))
         .flatten();
-        let maintenance_retry_at_unix = (maintenance_pending_reason == Some("backoff"))
-            .then(|| ds.maintenance_backoff_until.map(|t| t.unix_timestamp()))
-            .flatten();
+        let maintenance_retry_at_unix = (maintenance_pending_reason
+            == Some(PendingReasonCode::Backoff))
+        .then(|| ds.maintenance_backoff_until.map(|t| t.unix_timestamp()))
+        .flatten();
 
         DestinationSummaryDto {
             destination: dest.clone(),
@@ -425,7 +418,7 @@ impl DaemonCore {
             maintenance_running,
             pending_forget_count,
             stale_lock_count,
-            maintenance_pending_reason: maintenance_pending_reason.map(str::to_string),
+            maintenance_pending_reason,
             maintenance_retry_at_unix,
         }
     }
@@ -437,51 +430,49 @@ impl DaemonCore {
         m_eval: &kestic_core::scheduler::DestinationMaintenanceNeed,
         reachable: bool,
         dest_busy: bool,
-    ) -> Option<&'static str> {
+    ) -> Option<PendingReasonCode> {
         // An open `forget` alone is not due maintenance work (FR-05, F4).
         let any_work = m_eval.prune_due || m_eval.check_due;
         if !any_work || m_eval.due_now {
             None
         } else if !reachable {
-            Some("destination_unreachable")
+            Some(PendingReasonCode::DestinationUnreachable)
         } else if self.system_env.on_battery {
-            Some("on_battery")
+            Some(PendingReasonCode::OnBattery)
         } else if self.system_env.network_metered {
-            Some("metered")
+            Some(PendingReasonCode::Metered)
         } else if dest_busy {
-            Some("queue")
+            Some(PendingReasonCode::Queue)
         } else if m_eval.in_backoff {
-            Some("backoff")
+            Some(PendingReasonCode::Backoff)
         } else {
             None
         }
     }
 
-    fn build_tray_state(
-        &self,
-        backup_summaries: &[BackupSummaryDto],
-        overall: &OverallStatusDto,
-        blocking: Option<&BlockingStateDto>,
-        global_paused: bool,
-        paused_backup_window: Option<(OffsetDateTime, Option<OffsetDateTime>)>,
-        now: OffsetDateTime,
-    ) -> KesticTrayState {
-        let tray_backups = backup_summaries
+    fn build_tray_state(&self, input: TrayInput<'_>) -> KesticTrayState {
+        let TrayInput {
+            backups,
+            overall,
+            blocking,
+            restic_status,
+            global_pause,
+            paused_backup_window,
+            now,
+        } = input;
+        let tray_backups = backups
             .iter()
             .map(|b| {
                 let is_running_dest = self
                     .active_runs
                     .values()
                     .any(|r| r.run.destination_id == b.backup.destination_id);
-                let label = if !b.availability.available {
-                    let reason = b
-                        .availability
-                        .reason_text
-                        .as_deref()
-                        .unwrap_or("unavailable");
-                    format!("{} ({reason})", b.backup.name)
-                } else {
-                    b.backup.name.clone()
+                let label = match b.availability.blocked_reason {
+                    Some(reason) if !b.availability.available => {
+                        let reason = tr(&reason.message(b.availability.source_status));
+                        format!("{} ({reason})", b.backup.name)
+                    }
+                    _ => b.backup.name.clone(),
                 };
                 TrayBackupItem {
                     backup_id: b.backup.id.as_str().to_string(),
@@ -491,15 +482,11 @@ impl DaemonCore {
             })
             .collect();
 
-        let tray_status = match overall.tray_status.as_str() {
-            "NeedsAttention" => TrayStatus::NeedsAttention,
-            "Active" => TrayStatus::Active,
-            _ => TrayStatus::Passive,
+        let tray_paused_line = match (self.simulated_status, global_pause) {
+            (Some(_), _) if overall.paused => Some(tr(&schedules_paused_message())),
+            (_, Some(p)) => Some(self.format_pause_label(p.paused_since, p.paused_until, now)),
+            _ => paused_backup_window.map(|(ps, pu)| self.format_pause_label(ps, pu, now)),
         };
-        let tray_paused_line = overall
-            .paused_label
-            .clone()
-            .or_else(|| paused_backup_window.map(|(ps, pu)| self.format_pause_label(ps, pu, now)));
         let tray_next_backup_line = overall
             .next_scheduled_backup_name
             .as_ref()
@@ -510,19 +497,30 @@ impl DaemonCore {
                     i18n("Next backup: %1 (%2)").subs(&[name, &when])
                 })
             });
+        let headline = self
+            .simulated_status
+            .and_then(simulated_headline)
+            .unwrap_or_else(|| {
+                let active = overall.active_run_info();
+                tr(&overall_headline(
+                    &overall.counts(backups.len()),
+                    active.as_ref(),
+                    blocking_message(blocking, restic_status),
+                ))
+            });
 
         KesticTrayState {
-            status: tray_status,
+            status: overall.tray_status,
             icon_name: "kestic-symbolic".to_string(),
             icon_theme_path: self.icon_theme_path.clone(),
             overlay_icon_name: overall.overlay_icon.clone(),
             tooltip_title: "Kestic".to_string(),
-            tooltip_description: overall.headline.clone(),
-            status_line: overall.headline.clone(),
+            tooltip_description: headline.clone(),
+            status_line: headline,
             running_run: overall.active_run_progress.clone(),
             paused_line: tray_paused_line,
             next_backup_line: tray_next_backup_line,
-            global_paused,
+            global_paused: global_pause.is_some(),
             backups: tray_backups,
             blocking_active: blocking.is_some(),
         }
@@ -555,9 +553,6 @@ impl DaemonCore {
         let paused_until_unix = global_pause
             .and_then(|p| p.paused_until.map(|u| u.unix_timestamp()))
             .or_else(|| paused_backup_window.and_then(|(_, pu)| pu.map(|u| u.unix_timestamp())));
-        let paused_label = global_pause
-            .map(|p| self.format_pause_label(p.paused_since, p.paused_until, now))
-            .or_else(|| paused_backup_window.map(|(ps, pu)| self.format_pause_label(ps, pu, now)));
 
         let earliest_next = backups
             .iter()
@@ -572,31 +567,10 @@ impl DaemonCore {
             None => (None, None),
         };
 
-        let headline = format_overall_headline(
-            blocking,
-            backups.len(),
-            &counts,
-            active_run_progress.as_ref(),
-        );
-        let subtitle = if let Some(active) = &active_run_progress
-            && (counts.failed_count > 0 || counts.overdue_count > 0)
-        {
-            if active.backup_id.is_none() {
-                active_run_line(active)
-            } else {
-                let pct = active.percent_done.round().clamp(0.0, 100.0) as u32;
-                i18n("Currently running: %1 (%2%)").subs(&[&active.backup_name, &pct.to_string()])
-            }
-        } else {
-            String::new()
-        };
-
         OverallStatusDto {
             kind: worst_kind,
-            tray_status: tray_status.as_str().to_string(),
+            tray_status,
             overlay_icon: overlay.to_string(),
-            headline,
-            subtitle,
             failed_count: counts.failed_count,
             warning_count: counts.warning_count,
             overdue_count: counts.overdue_count,
@@ -606,7 +580,6 @@ impl DaemonCore {
             now_unix: now.unix_timestamp(),
             paused_since_unix,
             paused_until_unix,
-            paused_label,
             next_scheduled_backup_name,
             next_scheduled_at_unix,
             active_run_progress,
@@ -620,51 +593,20 @@ impl DaemonCore {
         sim: SimulatedOverallStatus,
         active_run_progress: Option<ActiveRunProgressDto>,
     ) -> OverallStatusDto {
-        let (kind, is_running, is_paused, headline) = match sim {
-            SimulatedOverallStatus::Overdue => (
-                OverallStatusKind::Overdue,
-                false,
-                false,
-                i18n("1 backup overdue").into(),
-            ),
-            SimulatedOverallStatus::Paused => (
-                OverallStatusKind::Paused,
-                false,
-                true,
-                i18n("Schedules paused").into(),
-            ),
-            SimulatedOverallStatus::Waiting => (
-                OverallStatusKind::Pending,
-                false,
-                false,
-                i18n("1 backup waiting").into(),
-            ),
-            SimulatedOverallStatus::PausedAndWaiting => (
-                OverallStatusKind::Pending,
-                false,
-                true,
-                i18n("Schedules paused · 1 backup waiting").into(),
-            ),
-            SimulatedOverallStatus::MaintenanceRunning => (
-                OverallStatusKind::Running,
-                true,
-                false,
-                i18n("Maintenance running").into(),
-            ),
-            SimulatedOverallStatus::RestoreRunning => (
-                OverallStatusKind::Running,
-                true,
-                false,
-                i18n("Restore running").into(),
-            ),
+        let (kind, is_running, is_paused) = match sim {
+            SimulatedOverallStatus::Overdue => (OverallStatusKind::Overdue, false, false),
+            SimulatedOverallStatus::Paused => (OverallStatusKind::Paused, false, true),
+            SimulatedOverallStatus::Waiting => (OverallStatusKind::Pending, false, false),
+            SimulatedOverallStatus::PausedAndWaiting => (OverallStatusKind::Pending, false, true),
+            SimulatedOverallStatus::MaintenanceRunning | SimulatedOverallStatus::RestoreRunning => {
+                (OverallStatusKind::Running, true, false)
+            }
         };
         let (tray_status, overlay) = compute_tray_presentation(kind, is_running, is_paused);
         OverallStatusDto {
             kind,
-            tray_status: tray_status.as_str().to_string(),
+            tray_status,
             overlay_icon: overlay.to_string(),
-            headline,
-            subtitle: String::new(),
             failed_count: 0,
             warning_count: 0,
             overdue_count: usize::from(matches!(sim, SimulatedOverallStatus::Overdue)),
@@ -677,7 +619,6 @@ impl DaemonCore {
             now_unix: self.clock.now_unix_secs(),
             paused_since_unix: None,
             paused_until_unix: None,
-            paused_label: is_paused.then(|| i18n("Schedules paused").into()),
             next_scheduled_backup_name: None,
             next_scheduled_at_unix: None,
             active_run_progress,
@@ -707,7 +648,7 @@ fn collect_overall_counts(
         waiting_count: backups
             .iter()
             .filter(|b| {
-                b.pending_primary_reason.is_some()
+                b.pending_primary_code.is_some()
                     || (b.active_run.is_none()
                         && !b.is_paused
                         && !b.has_error
@@ -771,58 +712,12 @@ fn select_worst_overall_kind(
     }
 }
 
-fn format_overall_headline(
-    blocking: Option<&BlockingStateDto>,
-    backup_count: usize,
-    c: &OverallStatusCounts,
-    active_run_progress: Option<&ActiveRunProgressDto>,
-) -> String {
-    if let Some(b) = blocking {
-        b.message.clone()
-    } else if c.failed_count > 0 {
-        if c.failed_count == 1 {
-            i18n("1 backup failed").into()
-        } else {
-            i18n("%1 backups failed").subs(&[&c.failed_count.to_string()])
-        }
-    } else if c.overdue_count > 0 {
-        if c.overdue_count == 1 {
-            i18n("1 backup overdue").into()
-        } else {
-            i18n("%1 backups overdue").subs(&[&c.overdue_count.to_string()])
-        }
-    } else if c.warning_count > 0 {
-        if c.warning_count == 1 {
-            i18n("1 backup finished with warning").into()
-        } else {
-            i18n("%1 backups finished with warnings").subs(&[&c.warning_count.to_string()])
-        }
-    } else if let Some(active) = active_run_progress {
-        active_run_line(active)
-    } else if c.waiting_count > 0 {
-        if c.global_paused {
-            if c.waiting_count == 1 {
-                i18n("Schedules paused · 1 backup waiting").into()
-            } else {
-                i18n("Schedules paused · %1 backups waiting").subs(&[&c.waiting_count.to_string()])
-            }
-        } else if c.waiting_count == 1 {
-            i18n("1 backup waiting").into()
-        } else {
-            i18n("%1 of %2 backups waiting")
-                .subs(&[&c.waiting_count.to_string(), &backup_count.to_string()])
-        }
-    } else if c.global_paused || c.all_paused {
-        i18n("Schedules paused").into()
-    } else if backup_count == 0 {
-        i18n("No backups configured yet").into()
-    } else if c.has_interrupted {
-        i18n("Last run interrupted").into()
-    } else if c.has_cancelled {
-        i18n("Last run cancelled").into()
-    } else if c.has_never_run {
-        i18n("Not backed up yet").into()
-    } else {
-        i18n("All data backed up").into()
+/// Tray headline of the simulated running states, which have no counts behind them (the
+/// other simulated states use the regular headline).
+fn simulated_headline(sim: SimulatedOverallStatus) -> Option<String> {
+    match sim {
+        SimulatedOverallStatus::MaintenanceRunning => Some(tr(&maintenance_running_message())),
+        SimulatedOverallStatus::RestoreRunning => Some(i18n("Restore running").into()),
+        _ => None,
     }
 }

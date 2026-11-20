@@ -4,9 +4,10 @@
 //! Exclude lint/path testing, dry-run previews, retention previews, maintenance previews,
 //! and source detection / nested-warning checks for [`super::qobject::KesticApp`].
 
-use super::{friendly_dbus_error, qobject};
-use crate::state_cache::{format_retention_summary, make_client, shared_state};
-use cxx_kde_frameworks::ki18n::i18n;
+use super::{dbus_error_text, qobject};
+use crate::state_cache::{
+    daemon_unavailable_text, format_retention_summary, make_client, shared_state, tr_text,
+};
 use cxx_qt_lib::QString;
 use kestic_core::model::{ExcludeRules, RetentionPolicy, normalize_folder_rule};
 use std::env;
@@ -95,7 +96,7 @@ impl qobject::KesticApp {
         let Ok(client) = make_client() else {
             self.as_mut().set_dry_run_state(QString::from("error"));
             self.as_mut()
-                .set_dry_run_error(i18n("Background service unavailable."));
+                .set_dry_run_error(QString::from(&daemon_unavailable_text()));
             return QString::from("");
         };
         self.as_mut().set_dry_run_result_json(QString::from(""));
@@ -108,7 +109,7 @@ impl qobject::KesticApp {
                 QString::from(&preview_id)
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_dry_run_state(QString::from("error"));
                 self.as_mut().set_dry_run_error(QString::from(&msg));
                 QString::from("")
@@ -132,14 +133,16 @@ impl qobject::KesticApp {
                     let rjson = serde_json::to_string(res).unwrap_or_else(|_| "{}".to_string());
                     self.as_mut().set_dry_run_result_json(QString::from(&rjson));
                 }
-                if let Some(ref err) = status.error {
-                    self.as_mut().set_dry_run_error(QString::from(err));
+                if let Some(kind) = status.error_kind {
+                    let text = tr_text(&kind.text(status.error_detail.as_deref()));
+                    self.as_mut().set_dry_run_error(QString::from(&text));
                 }
                 QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
             }
             Err(err) => {
                 self.as_mut().set_dry_run_state(QString::from("error"));
-                self.as_mut().set_dry_run_error(QString::from(&err));
+                self.as_mut()
+                    .set_dry_run_error(QString::from(&dbus_error_text(&err)));
                 QString::from("")
             }
         }
@@ -192,7 +195,7 @@ impl qobject::KesticApp {
             self.as_mut()
                 .set_retention_preview_state(QString::from("error"));
             self.as_mut()
-                .set_retention_preview_error(i18n("Background service unavailable."));
+                .set_retention_preview_error(QString::from(&daemon_unavailable_text()));
             return QString::from("");
         };
         self.as_mut()
@@ -207,7 +210,7 @@ impl qobject::KesticApp {
                 QString::from(&preview_id)
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut()
                     .set_retention_preview_state(QString::from("error"));
                 self.as_mut()
@@ -234,9 +237,10 @@ impl qobject::KesticApp {
                     self.as_mut()
                         .set_retention_preview_result_json(QString::from(&rjson));
                 }
-                if let Some(ref err) = status.error {
+                if let Some(kind) = status.error_kind {
+                    let text = tr_text(&kind.text(status.error_detail.as_deref()));
                     self.as_mut()
-                        .set_retention_preview_error(QString::from(err));
+                        .set_retention_preview_error(QString::from(&text));
                 }
                 QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
             }
@@ -244,7 +248,7 @@ impl qobject::KesticApp {
                 self.as_mut()
                     .set_retention_preview_state(QString::from("error"));
                 self.as_mut()
-                    .set_retention_preview_error(QString::from(&err));
+                    .set_retention_preview_error(QString::from(&dbus_error_text(&err)));
                 QString::from("")
             }
         }
@@ -275,11 +279,9 @@ impl qobject::KesticApp {
                     Ok(summary) => {
                         Ok(serde_json::to_string(&summary).unwrap_or_else(|_| "{}".to_string()))
                     }
-                    Err(err) => Err(err),
+                    Err(err) => Err(dbus_error_text(&err)),
                 },
-                Err(_) => {
-                    Err(crate::state_cache::i18n("Background service unavailable.").to_string())
-                }
+                Err(_) => Err(daemon_unavailable_text()),
             };
             let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
             guard.maintenance_preview = Some((dest, outcome));

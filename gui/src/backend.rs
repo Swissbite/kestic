@@ -527,7 +527,6 @@ mod previews;
 mod schedules;
 mod state;
 
-use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 
 #[derive(Default)]
@@ -607,31 +606,4 @@ pub struct KesticAppRust {
     maintenance_preview_loading: bool,
 }
 
-pub(super) fn friendly_dbus_error(err: &zbus::Error) -> String {
-    if let zbus::Error::MethodError(_, Some(detail), _) = err
-        && let Some(name) = detail.strip_prefix("DUPLICATE_LOCATION:")
-    {
-        return crate::state_cache::i18n("This location is already used by destination '%1'.")
-            .subs(&[name]);
-    }
-    let raw = err.to_string();
-    if raw.contains("WrongPassword") {
-        i18n("Wrong password: the repository rejected this password.").to_string()
-    } else if raw.contains("AuthFailed") {
-        i18n("Authentication at destination failed.").to_string()
-    } else if raw.contains("DestinationUnreachable") {
-        i18n("Destination unreachable.").to_string()
-    } else if raw.contains("InUse") {
-        i18n("Remove or reassign all backups on this destination first.").to_string()
-    } else if raw.contains("ManualRunBlocked") {
-        i18n("Backup could not start because source or destination is unavailable.").to_string()
-    } else if raw.contains("SecretStoreLocked") {
-        i18n("The system password store (Secret Service / KWallet) is locked.").to_string()
-    } else if raw.contains("ResticUnavailable") {
-        i18n("restic is unavailable or too old.").to_string()
-    } else if raw.contains("AlreadyRunning") {
-        i18n("Another run is already active on this destination.").to_string()
-    } else {
-        raw
-    }
-}
+pub(super) use crate::state_cache::dbus_error_text;

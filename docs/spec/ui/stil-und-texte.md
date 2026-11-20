@@ -120,7 +120,7 @@ Standardaktionen über `KStandardShortcut`; Kürzel nie nur Funktionstaste (HIG)
 | Ziel 1–5 der Navigation | Alt+1 … Alt+5 |
 | Zurück | Alt+← |
 | Umbenennen | F2 (zusätzlich ⋮ «Umbenennen…») |
-| Jetzt sichern (gewähltes Backup) | Ctrl+Shift+B **[U12, Spike: Konflikte]** |
+| Jetzt sichern (gewähltes Backup = das im Backup-Detail gezeigte; ohne geöffnetes Backup, z. B. auf Übersicht oder Liste, ohne Wirkung) | Ctrl+Shift+B **[U12, Spike: Konflikte]** |
 | Fenster schliessen | Ctrl+W, Ctrl+Q (beide nur GUI, §13.2) |
 
 ### 13.2 Fenster schliessen vs. Kestic beenden (U9)

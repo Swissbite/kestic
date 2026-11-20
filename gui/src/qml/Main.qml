@@ -530,7 +530,7 @@ Kirigami.ApplicationWindow {
         }
         var hasDestinations = destinationsModel.rowCount(destinationsModel.index(-1, -1)) > 0;
         var integrated = !hasDestinations;
-        var titleText = firstSetup ? i18n("Set Up First Backup") : i18n("New Backup");
+        var titleText = firstSetup ? Texts.label("set_up_first_backup") : Texts.label("new_backup");
         wizardPageStack.push(newBackupWizardComponent.createObject(wizardPageStack, {
             integratedDestFlow: integrated,
             wizardTitle: titleText
@@ -706,28 +706,28 @@ Kirigami.ApplicationWindow {
         Kirigami.Action {
             objectName: "overviewTabAction"
             icon.name: "dashboard-show"
-            text: i18n("Overview")
+            text: Texts.label("overview")
             checked: root.activeTab === 0
             onTriggered: root.switchTab(0)
         },
         Kirigami.Action {
             objectName: "backupsTabAction"
             icon.name: "folder-sync"
-            text: i18n("Backups")
+            text: Texts.label("backups")
             checked: root.activeTab === 1
             onTriggered: root.switchTab(1)
         },
         Kirigami.Action {
             objectName: "destinationsTabAction"
             icon.name: "network-server"
-            text: i18n("Destinations")
+            text: Texts.label("destinations")
             checked: root.activeTab === 2
             onTriggered: root.switchTab(2)
         },
         Kirigami.Action {
             objectName: "historyTabAction"
             icon.name: "view-history"
-            text: i18n("History")
+            text: Texts.label("history")
             checked: root.activeTab === 3
             onTriggered: root.switchTab(3)
         }

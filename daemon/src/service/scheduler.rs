@@ -447,7 +447,7 @@ fn evaluate_single_backup_tick(
         && !eval.unmet_preconditions.is_empty()
     {
         let primary = &eval.unmet_preconditions[0];
-        let (_, msg) = guard.format_pending_reason_entry(primary, rs.backoff_until, now);
+        let msg = guard.localized_pending_reason(primary, rs.backoff_until, now);
         upsert_pending_run_entry(guard, backup, primary.to_pending_reason(), msg);
     } else if (eval.is_paused || has_error) && !guard.queued_backups.contains(&backup.id) {
         // Without a due slot the scheduler never wrote a pending entry; pending entries of

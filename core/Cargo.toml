@@ -11,6 +11,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+kestic-i18n = { path = "../i18n" }
 getrandom = "0.4"
 jiff.workspace = true
 rusqlite = { version = "0.43", default-features = false, features = ["bundled"] }

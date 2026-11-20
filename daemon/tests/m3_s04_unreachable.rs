@@ -21,9 +21,8 @@ use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, RunStatus, Schedule, Source,
 };
 use kestic_core::scheduler::TimezoneSpec;
-use kestic_daemon::dbus_api::{
-    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, REASON_DESTINATION_UNREACHABLE,
-};
+use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
+use kestic_i18n::codes::BlockedReason;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -113,7 +112,7 @@ impl RestRig {
             |s| {
                 backup_summary(s, &self.backup_id)
                     .pending_primary_code
-                    .as_deref()
+                    .map(|c| c.as_str())
                     == Some("destination_unreachable")
             },
         );
@@ -181,7 +180,7 @@ fn ac_m3_04_1_unreachable_destination_retries_at_5_15_60_minutes_then_next_slot(
             assert_eq!(
                 backup_summary(&state, &rig.backup_id)
                     .pending_primary_code
-                    .as_deref(),
+                    .map(|c| c.as_str()),
                 Some("destination_unreachable"),
                 "(c)"
             );
@@ -367,12 +366,16 @@ fn ac_m3_04_3_no_alert_until_overdue_and_manual_run_blocked_only_on_state_change
             let summary = backup_summary(&state, &rig.backup_id);
             assert!(!summary.availability.available, "(b) backup not available");
             assert_eq!(
-                summary.availability.blocked_reason.as_deref(),
-                Some(REASON_DESTINATION_UNREACHABLE),
+                summary.availability.blocked_reason.map(|c| c.as_str()),
+                Some(BlockedReason::DestinationUnreachable.as_str()),
                 "(b) reason code"
             );
-            assert!(
-                summary.availability.reason_text.is_some(),
+            assert_eq!(
+                summary
+                    .availability
+                    .blocked_reason
+                    .map(|r| r.message(summary.availability.source_status).english()),
+                Some("Destination unreachable".to_string()),
                 "(b) visible reason text"
             );
             let tray_entry = fetch_dbusmenu_items(client.connection(), &sni_service)
@@ -435,7 +438,7 @@ fn ac_m3_04_3_no_alert_until_overdue_and_manual_run_blocked_only_on_state_change
                 sigs.iter().any(|s| matches!(
                     s,
                     CapturedKesticSignal::ManualRunBlocked { reason, .. }
-                        if reason == REASON_DESTINATION_UNREACHABLE
+                        if reason == BlockedReason::DestinationUnreachable.as_str()
                 )),
                 "(c) ManualRunBlocked reason: {sigs:?}"
             );
@@ -518,7 +521,9 @@ fn ac_m3_04_7_real_clock_status_pending_within_15_seconds_of_due_time() {
             // (a) measured status latency after the due time.
             let observed = loop {
                 let s = daemon.client.get_state().expect("GetState");
-                if backup_summary(&s, &bid).pending_primary_code.as_deref()
+                if backup_summary(&s, &bid)
+                    .pending_primary_code
+                    .map(|c| c.as_str())
                     == Some("destination_unreachable")
                 {
                     break SystemClock.now_utc();
@@ -583,8 +588,8 @@ fn ac_m3_04_11_network_change_renews_precheck_at_most_once_per_60_seconds() {
             let summary = backup_summary(&state, &rig.backup_id);
             assert!(!summary.availability.available, "(b) disabled");
             assert_eq!(
-                summary.availability.blocked_reason.as_deref(),
-                Some(REASON_DESTINATION_UNREACHABLE),
+                summary.availability.blocked_reason.map(|c| c.as_str()),
+                Some(BlockedReason::DestinationUnreachable.as_str()),
                 "(b) reason"
             );
 

@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
@@ -175,7 +176,7 @@ Kirigami.ScrollablePage {
             id: saveConditionsAction
             objectName: "saveConditionsAction"
             icon.name: "document-save"
-            text: i18n("Save")
+            text: Texts.label("save")
             enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.commitSave(false)
         },
@@ -183,7 +184,7 @@ Kirigami.ScrollablePage {
             id: closeConditionsAction
             objectName: "closeConditionsAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: {
                 if (page.dirty) {
                     unsavedDialog.open();
@@ -325,7 +326,7 @@ Kirigami.ScrollablePage {
         }
 
         Controls.Label {
-            text: i18n("Manual backups ask for confirmation before running if any condition is currently unmet.")
+            text: i18n("If a condition is not met, Kestic asks before a manual backup starts.")
             opacity: 0.75
             wrapMode: Text.WordWrap
             Layout.fillWidth: true

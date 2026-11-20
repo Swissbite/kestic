@@ -11,7 +11,19 @@ use kestic_core::model::{
     Backup, Destination, ExcludeLintWarning, ExcludePathTestResult, ExcludeRules,
     MaintenanceSchedule, NestedSourceConflict, NotificationSettings, RetentionPolicy, Run, Source,
 };
+use kestic_core::provider::MIN_RESTIC_VERSION;
+use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
+pub use kestic_i18n::codes::OverallStatusKind;
+use kestic_i18n::codes::{
+    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
+    ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+};
+use kestic_i18n::messages::{
+    ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
+};
+
+use crate::tray::TrayStatus;
 use serde::{Deserialize, Serialize};
 use zbus::{Connection, DBusError, Proxy, block_on};
 
@@ -23,11 +35,6 @@ pub const KESTIC_OBJECT_PATH: &str = "/net/daester/Kestic";
 
 /// Versioned v1 D-Bus interface name (`F14`).
 pub const KESTIC_INTERFACE_V1: &str = "net.daester.Kestic1";
-
-/// Machine-readable reason codes for `ManualRunBlocked` (`FR-30`, `FR-13b`, `AC-M1-09-6`).
-pub const REASON_SOURCE_UNAVAILABLE: &str = "source_unavailable";
-pub const REASON_DESTINATION_UNREACHABLE: &str = "destination_unreachable";
-pub const REASON_CONDITION_NOT_MET: &str = "condition_not_met";
 
 /// D-Bus error hierarchy under `net.daester.Kestic.Error.*`.
 #[derive(DBusError, Debug, Clone)]
@@ -45,25 +52,39 @@ pub enum KesticDbusError {
     SecretStoreLocked(String),
     ResticUnavailable(String),
     AlreadyRunning(String),
+    LockInUse(String),
+    DuplicateLocation(String),
     Internal(String),
 }
 
-/// Aggregated overall status precedence (`tray-und-benachrichtigungen.md` §10.1, `zustaende.md` §6.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OverallStatusKind {
-    Blocked,
-    Error,
-    Overdue,
-    Warning,
-    Running,
-    Paused,
-    Pending,
-    Interrupted,
-    Cancelled,
-    NeverRun,
-    ManualOnly,
-    Ok,
+impl KesticDbusError {
+    /// Code of the error (its D-Bus name); the message is raw detail only (`dbus-api.md`).
+    pub fn code(&self) -> ServiceErrorCode {
+        match self {
+            Self::ZBus(_) => ServiceErrorCode::DaemonUnreachable,
+            Self::InvalidInput(_) => ServiceErrorCode::InvalidInput,
+            Self::NotFound(_) => ServiceErrorCode::NotFound,
+            Self::InUse(_) => ServiceErrorCode::InUse,
+            Self::ManualRunBlocked(_) => ServiceErrorCode::ManualRunBlocked,
+            Self::DestinationUnreachable(_) => ServiceErrorCode::DestinationUnreachable,
+            Self::WrongPassword(_) => ServiceErrorCode::WrongPassword,
+            Self::AuthFailed(_) => ServiceErrorCode::AuthFailed,
+            Self::SecretStoreLocked(_) => ServiceErrorCode::SecretStoreLocked,
+            Self::ResticUnavailable(_) => ServiceErrorCode::ResticUnavailable,
+            Self::AlreadyRunning(_) => ServiceErrorCode::AlreadyRunning,
+            Self::LockInUse(_) => ServiceErrorCode::LockInUse,
+            Self::DuplicateLocation(_) => ServiceErrorCode::DuplicateLocation,
+            Self::Internal(_) => ServiceErrorCode::Internal,
+        }
+    }
+
+    /// Blocked reason of a `ManualRunBlocked` error (its message is the reason code).
+    pub fn blocked_reason(&self) -> Option<BlockedReason> {
+        match self {
+            Self::ManualRunBlocked(code) => BlockedReason::parse(code),
+            _ => None,
+        }
+    }
 }
 
 /// Restic binary probe state reported to GUI & Tray (`M1-S04`, `U19`).
@@ -72,12 +93,10 @@ pub struct ResticStatusDto {
     pub valid: bool,
     pub binary_path: Option<String>,
     pub version: Option<String>,
-    /// One of `"not_found"`, `"too_old"`, `"invalid_custom_path"`, `"unreadable_version"`.
-    pub error_kind: Option<String>,
+    /// Why restic is unusable (`None` while `valid`).
+    pub error_kind: Option<ResticStatusCode>,
     pub found_version: Option<String>,
-    pub message: String,
-    /// Raw reason for `invalid_custom_path` / detail for `unreadable_version` (parameter for the
-    /// GUI's own localized text; `message` stays daemon-locale text for tray/notifications).
+    /// Raw reason for `invalid_custom_path` / detail for `unreadable_version`.
     #[serde(default)]
     pub detail: Option<String>,
 }
@@ -87,15 +106,15 @@ pub struct ResticStatusDto {
 pub struct SecretStoreStatusDto {
     pub available: bool,
     pub locked: bool,
-    pub message: Option<String>,
+    /// Raw error of the password store (not translated).
+    pub detail: Option<String>,
 }
 
 /// Blocking state rendered in the window header (`zustaende.md` §6.1, `AC-M1-13-5`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockingStateDto {
-    /// One of `"secret_store_locked"`, `"restic_unavailable"`.
-    pub kind: String,
-    pub message: String,
+    /// Parameters for `restic_unavailable` come from `ResticStatusDto`.
+    pub kind: BlockingKind,
 }
 
 /// Cached destination reachability check (`P32`, `M1-S23`).
@@ -114,13 +133,11 @@ pub struct BackupAvailabilityDto {
     pub source_available: bool,
     pub destination_available: bool,
     pub available: bool,
-    /// `"source_unavailable"` | `"destination_unreachable"` when `!available`.
-    pub blocked_reason: Option<String>,
-    pub reason_text: Option<String>,
-    /// Source check code when the source is unavailable: `"path_missing"` |
-    /// `"drive_not_mounted"` | `"drive_mismatch"` | `"drive_empty"` (locale independent).
+    /// `source_unavailable` | `destination_unreachable` when `!available`.
+    pub blocked_reason: Option<BlockedReason>,
+    /// Source check code when the source is unavailable.
     #[serde(default)]
-    pub source_status: Option<String>,
+    pub source_status: Option<SourceStatus>,
 }
 
 /// Progress snapshot for an active run (`AC-M1-11-5`).
@@ -140,11 +157,8 @@ pub struct ActiveRunProgressDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OverallStatusDto {
     pub kind: OverallStatusKind,
-    /// `"Passive"` | `"Active"` | `"NeedsAttention"`
-    pub tray_status: String,
+    pub tray_status: TrayStatus,
     pub overlay_icon: String,
-    pub headline: String,
-    pub subtitle: String,
     pub failed_count: usize,
     pub warning_count: usize,
     pub overdue_count: usize,
@@ -157,8 +171,6 @@ pub struct OverallStatusDto {
     pub paused_since_unix: Option<i64>,
     #[serde(default)]
     pub paused_until_unix: Option<i64>,
-    #[serde(default)]
-    pub paused_label: Option<String>,
     #[serde(default)]
     pub next_scheduled_backup_name: Option<String>,
     #[serde(default)]
@@ -178,13 +190,10 @@ pub struct BackupSummaryDto {
     pub availability: BackupAvailabilityDto,
     pub has_error: bool,
     pub is_overdue: bool,
-    pub error_action: Option<String>,
-    pub error_summary: Option<String>,
-    /// Stable error-kind code of the last run (`Error`/`Warning`): `wrong_password` |
-    /// `repo_missing` | `locked` | `destination_unreachable` | `source_unavailable` |
-    /// `auth_failed` | `incomplete_snapshot` | `retention_pending` | `cancelled` | `unknown`.
+    pub error_action: Option<RecoveryAction>,
+    /// Cause of the last run's error or warning.
     #[serde(default)]
-    pub error_kind: Option<String>,
+    pub error_kind: Option<ErrorKind>,
     /// Raw restic/daemon text of the last run's error (detail for `error_kind`).
     #[serde(default)]
     pub error_detail: Option<String>,
@@ -206,15 +215,11 @@ pub struct BackupSummaryDto {
     pub paused_until_unix: Option<i64>,
     #[serde(default)]
     pub next_scheduled_at_unix: Option<i64>,
+    /// Why the due backup waits (first of `pending_reason_codes`).
     #[serde(default)]
-    pub pending_primary_reason: Option<String>,
+    pub pending_primary_code: Option<PendingReasonCode>,
     #[serde(default)]
-    pub pending_primary_code: Option<String>,
-    #[serde(default)]
-    pub pending_reasons: Vec<String>,
-    /// Reason codes parallel to `pending_reasons` (same codes as `pending_primary_code`).
-    #[serde(default)]
-    pub pending_reason_codes: Vec<String>,
+    pub pending_reason_codes: Vec<PendingReasonCode>,
     /// Next retry time while a `backoff` reason is listed.
     #[serde(default)]
     pub pending_retry_at_unix: Option<i64>,
@@ -222,8 +227,13 @@ pub struct BackupSummaryDto {
     pub missed_slots_count: usize,
     #[serde(default)]
     pub has_unmet_run_condition: bool,
+    /// Run conditions not met right now (`on_battery` | `no_network` | `metered` |
+    /// `wrong_network`); the allowed networks come from the backup's run conditions.
     #[serde(default)]
-    pub unmet_conditions_text: Option<String>,
+    pub unmet_run_conditions: Vec<PendingReasonCode>,
+    /// Battery level while `on_battery` is listed.
+    #[serde(default)]
+    pub battery_percent: Option<u8>,
 }
 
 /// Enriched destination item returned in `DaemonStateDto`.
@@ -254,8 +264,8 @@ pub struct DestinationSummaryDto {
     /// Why due maintenance waits (`ausstehend`, AC-M3-05-5): `destination_unreachable` |
     /// `on_battery` | `metered` | `queue` | `backoff` (same codes as backup pending reasons).
     #[serde(default)]
-    pub maintenance_pending_reason: Option<String>,
-    /// Next maintenance retry while `maintenance_pending_reason == "backoff"`.
+    pub maintenance_pending_reason: Option<PendingReasonCode>,
+    /// Next maintenance retry while `maintenance_pending_reason` is `backoff`.
     #[serde(default)]
     pub maintenance_retry_at_unix: Option<i64>,
 }
@@ -284,13 +294,12 @@ pub struct RunDetailDto {
     pub destination_name: String,
     pub log_lines: Vec<String>,
     pub transparent_commands: Vec<String>,
-    pub error_summary: Option<String>,
-    pub error_action: Option<String>,
+    pub error_action: Option<RecoveryAction>,
     pub error_raw_detail: Option<String>,
     pub unreadable_files: Vec<String>,
-    /// Stable error-kind code (see [`BackupSummaryDto::error_kind`]); detail: `error_raw_detail`.
+    /// Cause of the error (see [`BackupSummaryDto::error_kind`]); detail: `error_raw_detail`.
     #[serde(default)]
-    pub error_kind: Option<String>,
+    pub error_kind: Option<ErrorKind>,
     #[serde(default)]
     pub error_exit_code: Option<i32>,
 }
@@ -331,8 +340,10 @@ pub struct BackupSnapshotsDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionTestResultDto {
     pub ok: bool,
-    pub error_kind: Option<String>,
-    pub message: String,
+    pub error_kind: Option<ConnectionTestCode>,
+    /// Raw error detail, or the parameter of the code's text (e.g. the destination name for
+    /// `duplicate_location`).
+    pub detail: String,
 }
 
 /// Skipped backup reason returned by `StartAllBackups` (`§7.1`).
@@ -340,12 +351,15 @@ pub struct ConnectionTestResultDto {
 pub struct SkippedBackupDto {
     pub backup_id: String,
     pub backup_name: String,
-    pub reason: String,
-    pub reason_text: String,
-    /// Error-kind code for `reason == "permanent_error"` (last run's `error_kind`) and
-    /// `reason == "error"` (`secret_store_locked` | `restic_unavailable` | `unknown`).
+    pub reason: SkipReason,
+    /// Cause for `permanent_error` (last run's `error_kind`) and `error` (`secret_store_locked`
+    /// | `restic_unavailable` | `auth_failed` | `wrong_password` | `destination_unreachable` |
+    /// `unknown`).
     #[serde(default)]
-    pub error_kind: Option<String>,
+    pub error_kind: Option<ErrorKind>,
+    /// Raw start error for `reason == error` (shown when `error_kind` is `unknown`).
+    #[serde(default)]
+    pub error_detail: Option<String>,
 }
 
 /// Summary returned by `StartAllBackups`.
@@ -363,6 +377,77 @@ pub struct AvailabilitySnapshotDto {
     pub checked_at_unix: Option<i64>,
     pub backups: Vec<BackupAvailabilityDto>,
     pub destinations: Vec<DestinationAvailabilityDto>,
+}
+
+impl ActiveRunProgressDto {
+    /// The active run as input for the shared texts in `kestic_i18n::messages` (a run without
+    /// backup id is destination maintenance).
+    pub fn info(&self) -> ActiveRunInfo<'_> {
+        ActiveRunInfo {
+            name: &self.backup_name,
+            is_maintenance: self.backup_id.is_none(),
+            percent_done: self.percent_done,
+        }
+    }
+}
+
+impl OverallStatusDto {
+    /// Counts behind the headline (`kestic_i18n::messages::overall_headline`).
+    pub fn counts(&self, backups: usize) -> OverallCounts {
+        OverallCounts {
+            kind: self.kind,
+            failed: self.failed_count,
+            overdue: self.overdue_count,
+            warning: self.warning_count,
+            waiting: self.waiting_count,
+            backups,
+            paused: self.paused,
+        }
+    }
+
+    /// The active run, if any, for headline and subtitle.
+    pub fn active_run_info(&self) -> Option<ActiveRunInfo<'_>> {
+        self.active_run_progress
+            .as_ref()
+            .map(ActiveRunProgressDto::info)
+    }
+}
+
+impl ResticStatusDto {
+    /// Parameters of the restic status texts; `min_version` is the version Kestic needs.
+    fn text_params<'a>(&'a self, min_version: &'a str) -> ResticStatusParams<'a> {
+        ResticStatusParams {
+            binary_path: self.binary_path.as_deref(),
+            found_version: self.found_version.as_deref(),
+            detail: self.detail.as_deref(),
+            min_version,
+        }
+    }
+
+    /// Why restic is unusable, `None` while it is usable.
+    pub fn error_message(&self) -> Option<Message> {
+        let min = MIN_RESTIC_VERSION.to_string();
+        self.error_kind
+            .map(|code| code.message(&self.text_params(&min)))
+    }
+
+    /// Status line: «restic ‹version›» or the reason restic is unusable.
+    pub fn status_text(&self) -> UiText {
+        let min = MIN_RESTIC_VERSION.to_string();
+        restic_status_text(
+            self.error_kind,
+            self.version.as_deref(),
+            &self.text_params(&min),
+        )
+    }
+}
+
+/// Blocking-state text (§6.1) from `BlockingStateDto.kind` and the `ResticStatusDto` parameters.
+pub fn blocking_message(
+    blocking: Option<&BlockingStateDto>,
+    restic: &ResticStatusDto,
+) -> Option<Message> {
+    blocking.map(|b| b.kind.message(restic.error_message()))
 }
 
 /// Synchronous D-Bus client for `net.daester.Kestic1` used by the GUI and D-Bus integration tests.
@@ -428,28 +513,31 @@ impl KesticClient {
         block_on(async { self.proxy().await?.call("DaemonVersion", &()).await })
     }
 
-    pub fn get_state(&self) -> Result<DaemonStateDto, String> {
+    pub fn get_state(&self) -> Result<DaemonStateDto, KesticDbusError> {
         let raw: String = block_on(async { self.proxy().await?.call("GetState", &()).await })
-            .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+            .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
-    pub fn get_run_detail(&self, run_id: &str) -> Result<RunDetailDto, String> {
+    pub fn get_run_detail(&self, run_id: &str) -> Result<RunDetailDto, KesticDbusError> {
         let raw: String =
             block_on(async { self.proxy().await?.call("GetRunDetail", &(run_id,)).await })
-                .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+                .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
-    pub fn list_backup_snapshots(&self, backup_id: &str) -> Result<BackupSnapshotsDto, String> {
+    pub fn list_backup_snapshots(
+        &self,
+        backup_id: &str,
+    ) -> Result<BackupSnapshotsDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("ListBackupSnapshots", &(backup_id,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn test_destination_connection(
@@ -458,8 +546,9 @@ impl KesticClient {
         mode: &str,
         repo_password: &str,
         rest_password: &str,
-    ) -> Result<ConnectionTestResultDto, String> {
-        let json = serde_json::to_string(dest).map_err(|e| e.to_string())?;
+    ) -> Result<ConnectionTestResultDto, KesticDbusError> {
+        let json =
+            serde_json::to_string(dest).map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
@@ -469,8 +558,8 @@ impl KesticClient {
                 )
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn add_destination(
@@ -594,16 +683,17 @@ impl KesticClient {
     pub fn set_restic_provider(
         &self,
         provider: &kestic_core::model::ResticProvider,
-    ) -> Result<ResticStatusDto, String> {
-        let json = serde_json::to_string(provider).map_err(|e| e.to_string())?;
+    ) -> Result<ResticStatusDto, KesticDbusError> {
+        let json = serde_json::to_string(provider)
+            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("SetResticProvider", &(json.as_str(),))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn set_expert_mode(&self, enabled: bool) -> zbus::Result<()> {
@@ -614,26 +704,29 @@ impl KesticClient {
         block_on(async { self.proxy().await?.call("StartBackup", &(backup_id,)).await })
     }
 
-    pub fn start_all_backups(&self) -> Result<StartAllResultDto, String> {
+    pub fn start_all_backups(&self) -> Result<StartAllResultDto, KesticDbusError> {
         let raw: String =
             block_on(async { self.proxy().await?.call("StartAllBackups", &()).await })
-                .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+                .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn cancel_run(&self, run_id: &str) -> zbus::Result<()> {
         block_on(async { self.proxy().await?.call("CancelRun", &(run_id,)).await })
     }
 
-    pub fn check_availability(&self, force: bool) -> Result<AvailabilitySnapshotDto, String> {
+    pub fn check_availability(
+        &self,
+        force: bool,
+    ) -> Result<AvailabilitySnapshotDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("CheckAvailability", &(force,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn window_active(&self, active: bool, page: &str) -> zbus::Result<()> {
@@ -657,11 +750,11 @@ impl KesticClient {
         block_on(async { self.proxy().await?.call("UnlockSecretStore", &()).await })
     }
 
-    pub fn detect_source(&self, path: &str) -> Result<Source, String> {
+    pub fn detect_source(&self, path: &str) -> Result<Source, KesticDbusError> {
         let raw: String =
             block_on(async { self.proxy().await?.call("DetectSource", &(path,)).await })
-                .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+                .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn check_nested_sources(
@@ -669,7 +762,7 @@ impl KesticClient {
         candidate_id: &str,
         candidate_path: &str,
         destination_id: &str,
-    ) -> Result<Vec<NestedSourceConflict>, String> {
+    ) -> Result<Vec<NestedSourceConflict>, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
@@ -679,23 +772,24 @@ impl KesticClient {
                 )
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn lint_excludes(
         &self,
         excludes: &ExcludeRules,
-    ) -> Result<Vec<ExcludeLintWarning>, String> {
-        let json = serde_json::to_string(excludes).map_err(|e| e.to_string())?;
+    ) -> Result<Vec<ExcludeLintWarning>, KesticDbusError> {
+        let json = serde_json::to_string(excludes)
+            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("LintExcludes", &(json.as_str(),))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn test_exclude_path(
@@ -703,32 +797,34 @@ impl KesticClient {
         backup_id: &str,
         excludes: &ExcludeRules,
         test_path: &str,
-    ) -> Result<ExcludePathTestResult, String> {
-        let json = serde_json::to_string(excludes).map_err(|e| e.to_string())?;
+    ) -> Result<ExcludePathTestResult, KesticDbusError> {
+        let json = serde_json::to_string(excludes)
+            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("TestExcludePath", &(backup_id, json.as_str(), test_path))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn preview_retention(
         &self,
         backup_id: &str,
         retention: &RetentionPolicy,
-    ) -> Result<ForgetPreviewResult, String> {
-        let json = serde_json::to_string(retention).map_err(|e| e.to_string())?;
+    ) -> Result<ForgetPreviewResult, KesticDbusError> {
+        let json = serde_json::to_string(retention)
+            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("PreviewRetention", &(backup_id, json.as_str()))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn start_retention_preview(
@@ -758,15 +854,15 @@ impl KesticClient {
     pub fn get_retention_preview_status(
         &self,
         preview_id: &str,
-    ) -> Result<RetentionPreviewStatusDto, String> {
+    ) -> Result<RetentionPreviewStatusDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("GetRetentionPreviewStatus", &(preview_id,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn start_backup_dry_run(
@@ -799,44 +895,44 @@ impl KesticClient {
     pub fn get_backup_dry_run_status(
         &self,
         preview_id: &str,
-    ) -> Result<BackupDryRunStatusDto, String> {
+    ) -> Result<BackupDryRunStatusDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("GetBackupDryRunStatus", &(preview_id,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn format_exclude_rule_for_item(
         &self,
         item_path: &str,
-    ) -> Result<ExcludeRulePreviewDto, String> {
+    ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("FormatExcludeRuleForItem", &(item_path,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn add_exclude_rule_for_item(
         &self,
         backup_id: &str,
         item_path: &str,
-    ) -> Result<ExcludeRulePreviewDto, String> {
+    ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("AddExcludeRuleForItem", &(backup_id, item_path))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn run_destination_maintenance(&self, destination_id: &str) -> zbus::Result<String> {
@@ -904,15 +1000,15 @@ impl KesticClient {
     pub fn preview_destination_maintenance(
         &self,
         destination_id: &str,
-    ) -> Result<PrunePreviewSummary, String> {
+    ) -> Result<PrunePreviewSummary, KesticDbusError> {
         let raw: String = block_on(async {
             self.proxy()
                 .await?
                 .call("PreviewDestinationMaintenance", &(destination_id,))
                 .await
         })
-        .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+        .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn update_destination_maintenance(
@@ -951,11 +1047,11 @@ impl KesticClient {
         })
     }
 
-    pub fn list_known_networks(&self) -> Result<Vec<String>, String> {
+    pub fn list_known_networks(&self) -> Result<Vec<String>, KesticDbusError> {
         let raw: String =
             block_on(async { self.proxy().await?.call("ListKnownNetworks", &()).await })
-                .map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).map_err(|e| e.to_string())
+                .map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 }
 
@@ -966,7 +1062,10 @@ pub struct BackupDryRunStatusDto {
     /// `"running"` | `"done"` | `"cancelled"` | `"error"`
     pub state: String,
     pub result: Option<BackupDryRunResult>,
-    pub error: Option<String>,
+    /// Cause while `state == "error"`.
+    pub error_kind: Option<ErrorKind>,
+    /// Raw error text (shown for `unknown`).
+    pub error_detail: Option<String>,
 }
 
 /// Asynchronous retention preview status returned by `GetRetentionPreviewStatus` (`M2-S06`).
@@ -976,7 +1075,10 @@ pub struct RetentionPreviewStatusDto {
     /// `"running"` | `"done"` | `"cancelled"` | `"error"`
     pub state: String,
     pub result: Option<ForgetPreviewResult>,
-    pub error: Option<String>,
+    /// Cause while `state == "error"`.
+    pub error_kind: Option<ErrorKind>,
+    /// Raw error text (shown for `unknown`).
+    pub error_detail: Option<String>,
 }
 
 /// Preview of the exclude rule generated for an unreadable path (`M2-S08`).

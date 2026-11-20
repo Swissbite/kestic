@@ -14,7 +14,7 @@ use crate::dbus_server::{
     emit_quit_confirmation_requested, emit_show_window_requested, emit_status_changed,
     start_dbus_server,
 };
-use crate::i18n::i18n;
+use crate::i18n::{i18n, tr_text};
 use crate::monitors::{SystemMonitorEvent, SystemMonitorHandle, read_system_environment};
 use crate::notifications::{KesticEvent, send_configured_notification, send_event_notification};
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
@@ -95,8 +95,8 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     if config.send_test_notification {
         send_event_notification(
             KesticEvent::BackupWarning,
-            &i18n("Kestic daemon test notification").to_string(),
-            &i18n("Tray registered and notification channel active.").to_string(),
+            &i18n("Kestic test notification").to_string(),
+            &i18n("Notifications work.").to_string(),
         )
         .map_err(|err| format!("failed to send test notification: {err}"))?;
     }
@@ -613,7 +613,11 @@ fn handle_tray_action(
                     let summary: Vec<String> = res
                         .skipped
                         .iter()
-                        .map(|s| format!("• {}: {}", s.backup_name, s.reason_text))
+                        .map(|s| {
+                            let reason =
+                                tr_text(&s.reason.text(s.error_kind, s.error_detail.as_deref()));
+                            format!("• {}: {reason}", s.backup_name)
+                        })
                         .collect();
                     let title = i18n("Some backups were skipped").to_string();
                     let body = summary.join("\n");

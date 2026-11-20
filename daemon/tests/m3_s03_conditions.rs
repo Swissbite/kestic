@@ -14,7 +14,8 @@ use common::m3::{
 use common::{run_isolated_test, start_fake_notifications, start_fake_sni_watcher};
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{Backup, BackupId, RunStatus};
-use kestic_daemon::dbus_api::{DaemonStateDto, REASON_CONDITION_NOT_MET};
+use kestic_daemon::dbus_api::DaemonStateDto;
+use kestic_i18n::codes::BlockedReason;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,7 +64,7 @@ impl Rig {
         wait_for_state(&self.daemon.client, Duration::from_secs(10), code, |s| {
             backup_summary(s, self.bid())
                 .pending_primary_code
-                .as_deref()
+                .map(|c| c.as_str())
                 == Some(code)
         })
     }
@@ -115,7 +116,7 @@ fn ac_m3_03_2_on_battery_pending_then_starts_on_ac_power() {
                 assert_eq!(
                     backup_summary(&pending, rig.bid())
                         .pending_primary_code
-                        .as_deref(),
+                        .map(|c| c.as_str()),
                     Some("on_battery"),
                     "{}: (a) pending reason is the run condition",
                     variant.label
@@ -176,7 +177,7 @@ fn ac_m3_03_3_metered_connection_pending_then_starts_when_unmetered() {
                 assert_eq!(
                     backup_summary(&pending, rig.bid())
                         .pending_primary_code
-                        .as_deref(),
+                        .map(|c| c.as_str()),
                     Some("metered"),
                     "{}: (a)",
                     variant.label
@@ -230,7 +231,7 @@ fn ac_m3_03_4_allowed_network_pending_then_starts_on_home_network() {
                 assert_eq!(
                     backup_summary(&pending, rig.bid())
                         .pending_primary_code
-                        .as_deref(),
+                        .map(|c| c.as_str()),
                     Some("wrong_network"),
                     "{}: (a)",
                     variant.label
@@ -279,7 +280,7 @@ fn ac_m3_03_5_no_network_connection_is_pending() {
             assert_eq!(
                 backup_summary(&pending, rig.bid())
                     .pending_primary_code
-                    .as_deref(),
+                    .map(|c| c.as_str()),
                 Some("no_network"),
                 "(a) pending without network connection"
             );
@@ -370,9 +371,11 @@ fn ac_m3_03_7_manual_override_applies_to_one_run_only() {
                     .expect_err("manual start must be blocked on battery");
                 assert_dbus_error_name(&err, "net.daester.Kestic.Error.ManualRunBlocked");
                 assert!(
-                    err.to_string().contains(REASON_CONDITION_NOT_MET),
-                    "{}: (a) reason `{REASON_CONDITION_NOT_MET}` in {err}",
-                    variant.label
+                    err.to_string()
+                        .contains(BlockedReason::ConditionNotMet.as_str()),
+                    "{}: (a) reason `{}` in {err}",
+                    variant.label,
+                    BlockedReason::ConditionNotMet.as_str()
                 );
                 let blocked = client.get_state().expect("GetState");
                 let summary = backup_summary(&blocked, rig.bid());
@@ -381,9 +384,20 @@ fn ac_m3_03_7_manual_override_applies_to_one_run_only() {
                     "{}: (a) state exposes the unmet run condition",
                     variant.label
                 );
-                assert!(
-                    summary.unmet_conditions_text.is_some(),
+                assert_eq!(
+                    summary
+                        .unmet_run_conditions
+                        .iter()
+                        .map(|c| c.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["on_battery"],
                     "{}: (a) state names the unmet condition",
+                    variant.label
+                );
+                assert_eq!(
+                    summary.battery_percent,
+                    Some(55),
+                    "{}: (a) state carries the battery level for the condition text",
                     variant.label
                 );
 
@@ -393,7 +407,7 @@ fn ac_m3_03_7_manual_override_applies_to_one_run_only() {
                 assert_eq!(
                     backup_summary(&still, rig.bid())
                         .pending_primary_code
-                        .as_deref(),
+                        .map(|c| c.as_str()),
                     Some("on_battery"),
                     "{}: (c) still pending",
                     variant.label

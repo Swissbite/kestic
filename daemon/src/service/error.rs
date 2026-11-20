@@ -4,14 +4,20 @@
 //! Service error types, error mappers, and localized failure/action helpers.
 
 use crate::dbus_api::KesticDbusError;
-use crate::i18n::{i18n, localized_failure_summary, localized_recovery_action_label};
+use crate::i18n::tr;
 use kestic_core::backup::BackupRunError;
 use kestic_core::config::ConfigError;
 use kestic_core::destination::{DestinationError, DestinationSetupMode};
 use kestic_core::mount::SourceCheckResult;
 use kestic_core::provider::ResticProviderError;
-use kestic_core::restic::{RecoveryAction, ResticFailureKind, classify_exit};
+use kestic_core::restic::{ResticFailureKind, classify_exit};
 use kestic_core::secrets::SecretError;
+use kestic_i18n::codes::{BlockedReason, ErrorKind, SourceStatus};
+
+/// Daemon-language summary of a classified restic failure (notifications, run history).
+pub(crate) fn localized_failure_summary(kind: &ResticFailureKind) -> String {
+    tr(&kind.summary_message())
+}
 
 /// Internal service error mapped to `net.daester.Kestic.Error.*` D-Bus errors.
 #[derive(Debug)]
@@ -19,13 +25,21 @@ pub enum KesticServiceErr {
     InvalidInput(String),
     NotFound(String),
     InUse(String),
-    ManualRunBlocked(String),
+    /// Manual start blocked by an unavailable source/destination or unmet run conditions; the
+    /// D-Bus error payload is the reason code.
+    ManualRunBlocked(BlockedReason),
+    /// Scheduled start refused while the system prepares for sleep (internal, never shown).
+    SleepInProgress,
     DestinationUnreachable(String),
     WrongPassword(String),
     AuthFailed(String),
     SecretStoreLocked(String),
     ResticUnavailable(String),
     AlreadyRunning(String),
+    /// Unlock refused: the lock belongs to an active or remote process.
+    LockInUse(String),
+    /// Location already used; the message is the name of that destination (raw detail).
+    DuplicateLocation(String),
     Internal(String),
 }
 
@@ -35,25 +49,35 @@ impl std::fmt::Display for KesticServiceErr {
             Self::InvalidInput(m)
             | Self::NotFound(m)
             | Self::InUse(m)
-            | Self::ManualRunBlocked(m)
             | Self::DestinationUnreachable(m)
             | Self::WrongPassword(m)
             | Self::AuthFailed(m)
             | Self::SecretStoreLocked(m)
             | Self::ResticUnavailable(m)
             | Self::AlreadyRunning(m)
+            | Self::LockInUse(m)
+            | Self::DuplicateLocation(m)
             | Self::Internal(m) => f.write_str(m),
+            Self::ManualRunBlocked(reason) => f.write_str(reason.as_str()),
+            Self::SleepInProgress => f.write_str("sleep_in_progress"),
         }
     }
 }
 
 impl From<KesticServiceErr> for KesticDbusError {
     fn from(err: KesticServiceErr) -> Self {
+        // The GUI shows only the text of the error name; the raw detail of unexpected errors
+        // goes to the session journal.
+        if let KesticServiceErr::Internal(detail) | KesticServiceErr::InvalidInput(detail) = &err {
+            eprintln!("kestic-daemon: D-Bus call failed: {detail}");
+        }
         match err {
             KesticServiceErr::InvalidInput(m) => KesticDbusError::InvalidInput(m),
             KesticServiceErr::NotFound(m) => KesticDbusError::NotFound(m),
             KesticServiceErr::InUse(m) => KesticDbusError::InUse(m),
-            KesticServiceErr::ManualRunBlocked(m) => KesticDbusError::ManualRunBlocked(m),
+            err @ (KesticServiceErr::ManualRunBlocked(_) | KesticServiceErr::SleepInProgress) => {
+                KesticDbusError::ManualRunBlocked(err.to_string())
+            }
             KesticServiceErr::DestinationUnreachable(m) => {
                 KesticDbusError::DestinationUnreachable(m)
             }
@@ -62,6 +86,8 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::SecretStoreLocked(m) => KesticDbusError::SecretStoreLocked(m),
             KesticServiceErr::ResticUnavailable(m) => KesticDbusError::ResticUnavailable(m),
             KesticServiceErr::AlreadyRunning(m) => KesticDbusError::AlreadyRunning(m),
+            KesticServiceErr::LockInUse(m) => KesticDbusError::LockInUse(m),
+            KesticServiceErr::DuplicateLocation(m) => KesticDbusError::DuplicateLocation(m),
             KesticServiceErr::Internal(m) => KesticDbusError::Internal(m),
         }
     }
@@ -91,9 +117,7 @@ pub(super) fn map_secret_err(err: SecretError) -> KesticServiceErr {
 
 pub(super) fn map_destination_err(err: DestinationError) -> KesticServiceErr {
     match err {
-        DestinationError::WrongPassword => {
-            KesticServiceErr::WrongPassword(i18n("Stored password does not match").into())
-        }
+        err @ DestinationError::WrongPassword => KesticServiceErr::WrongPassword(err.to_string()),
         DestinationError::AuthFailed(m) => KesticServiceErr::AuthFailed(m),
         DestinationError::Unreachable(m) => KesticServiceErr::DestinationUnreachable(m),
         DestinationError::Secret(e) => map_secret_err(e),
@@ -111,37 +135,51 @@ pub(super) fn parse_setup_mode(raw: &str) -> Result<DestinationSetupMode, Kestic
     }
 }
 
-/// Locale-independent source check code for `BackupAvailabilityDto::source_status`.
-pub(super) fn source_status_code(status: &SourceCheckResult) -> Option<&'static str> {
-    match status {
-        SourceCheckResult::Available => None,
-        SourceCheckResult::PathMissing(_) => Some("path_missing"),
-        SourceCheckResult::DriveNotMounted => Some("drive_not_mounted"),
-        SourceCheckResult::DriveMismatch => Some("drive_mismatch"),
-        SourceCheckResult::DriveEmpty => Some("drive_empty"),
-    }
-}
-
-/// Locale-independent error-kind code of a service error (`SkippedBackupDto::error_kind`).
-pub(super) fn service_error_kind_code(err: &KesticServiceErr) -> &'static str {
+/// Error kind of a service error (`SkippedBackupDto::error_kind`).
+pub(super) fn service_error_kind(err: &KesticServiceErr) -> ErrorKind {
     match err {
-        KesticServiceErr::SecretStoreLocked(_) => "secret_store_locked",
-        KesticServiceErr::ResticUnavailable(_) => "restic_unavailable",
-        KesticServiceErr::WrongPassword(_) => "wrong_password",
-        KesticServiceErr::AuthFailed(_) => "auth_failed",
-        KesticServiceErr::DestinationUnreachable(_) => "destination_unreachable",
-        _ => "unknown",
+        KesticServiceErr::SecretStoreLocked(_) => ErrorKind::SecretStoreLocked,
+        KesticServiceErr::ResticUnavailable(_) => ErrorKind::ResticUnavailable,
+        KesticServiceErr::WrongPassword(_) => ErrorKind::WrongPassword,
+        KesticServiceErr::AuthFailed(_) => ErrorKind::AuthFailed,
+        KesticServiceErr::DestinationUnreachable(_) => ErrorKind::DestinationUnreachable,
+        _ => ErrorKind::Unknown,
     }
 }
 
+/// Blocked reason carried by a [`KesticServiceErr::ManualRunBlocked`].
+pub(super) fn manual_run_blocked_reason(err: &KesticServiceErr) -> Option<BlockedReason> {
+    match err {
+        KesticServiceErr::ManualRunBlocked(reason) => Some(*reason),
+        _ => None,
+    }
+}
+
+/// Daemon-language reason of an unavailable source (run history, notifications).
 pub(super) fn localized_source_check_reason(status: &SourceCheckResult) -> String {
-    match status {
-        SourceCheckResult::DriveNotMounted => i18n("Source unavailable: drive not mounted").into(),
-        SourceCheckResult::DriveMismatch => i18n("Source unavailable: different drive").into(),
-        SourceCheckResult::DriveEmpty => i18n("Source unavailable: source empty").into(),
-        SourceCheckResult::PathMissing(_) | SourceCheckResult::Available => {
-            i18n("Source unavailable").into()
-        }
+    tr(&SourceStatus::message(status.status_code()))
+}
+
+/// Error kind of a failed run or preview (`BackupDryRunStatusDto`, `RetentionPreviewStatusDto`);
+/// the raw detail is `err.to_string()`.
+pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
+    match err {
+        BackupRunError::SourceUnavailable(_) => ErrorKind::SourceUnavailable,
+        BackupRunError::Cancelled => ErrorKind::Cancelled,
+        BackupRunError::Destination(dest_err) => match dest_err {
+            DestinationError::Unreachable(_) => ErrorKind::DestinationUnreachable,
+            DestinationError::AuthFailed(_) => ErrorKind::AuthFailed,
+            DestinationError::WrongPassword => ErrorKind::WrongPassword,
+            DestinationError::RepositoryMissing(_) => ErrorKind::RepoMissing,
+            DestinationError::Secret(_) => ErrorKind::SecretStoreLocked,
+            DestinationError::CommandFailed { exit_code, message } => {
+                classify_exit(*exit_code, None, Vec::new(), message)
+                    .kind
+                    .error_kind()
+            }
+            _ => ErrorKind::Unknown,
+        },
+        _ => ErrorKind::Unknown,
     }
 }
 
@@ -169,18 +207,4 @@ pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
         },
         other => other.to_string(),
     }
-}
-
-pub(super) fn action_code(action: RecoveryAction) -> &'static str {
-    match action {
-        RecoveryAction::UpdateStoredPassword => "update_stored_password",
-        RecoveryAction::AddToExcludes => "add_to_excludes",
-        RecoveryAction::CheckResticSource => "check_restic_source",
-        RecoveryAction::UnlockRepository => "unlock_repository",
-    }
-}
-
-/// Returns localized action label for recovery actions (compile-time check helper).
-pub fn localized_action_title(action: RecoveryAction) -> String {
-    localized_recovery_action_label(action)
 }

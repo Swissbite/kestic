@@ -20,15 +20,6 @@ std::int32_t local_offset_seconds(std::int64_t unix_secs);
 
 void install_keyboard_handlers(QQmlApplicationEngine& engine);
 
-void install_smoke_check(
-    QQmlApplicationEngine& engine,
-    rust::Str screenshot_path,
-    int32_t expected_list_count,
-    rust::Str layout_mode,
-    rust::Str expected_lang,
-    bool trigger_shortcut
-);
-
 void install_m1_smoke_check(
     QQmlApplicationEngine& engine,
     rust::Str scenario,

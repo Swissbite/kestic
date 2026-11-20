@@ -122,6 +122,17 @@ fn spawn_m3_gui_daemon(
 }
 
 fn run_m3_gui_smoke(root: &Path, scenario: &str, layout: &str, lang: &str, screenshot_rel: &str) {
+    run_m3_gui_smoke_with_env(root, scenario, layout, lang, screenshot_rel, &[]);
+}
+
+fn run_m3_gui_smoke_with_env(
+    root: &Path,
+    scenario: &str,
+    layout: &str,
+    lang: &str,
+    screenshot_rel: &str,
+    extra_env: &[(&str, &Path)],
+) {
     install_compiled_german_catalog(root);
     let kestic_bin = find_kestic_binary();
     let screenshot = common::workspace_root().join(screenshot_rel);
@@ -155,6 +166,9 @@ fn run_m3_gui_smoke(root: &Path, scenario: &str, layout: &str, lang: &str, scree
     .env_remove("LC_MESSAGES")
     .env("LANG", "en_US.UTF-8")
     .env("LANGUAGE", lang);
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
 
     let output = cmd.output().expect("run kestic --smoke-m1");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -205,7 +219,7 @@ where
                     &b.pending_primary_code,
                     b.is_overdue,
                     b.has_error,
-                    b.error_action.as_deref(),
+                    b.error_action.map(|c| c.as_str()),
                     b.active_run.as_ref().map(|r| &r.status),
                     b.last_run.as_ref().map(|r| &r.status),
                 ))
@@ -378,7 +392,7 @@ fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slo
                 backup_summary(s, &overdue_id).is_overdue
                     && backup_summary(s, &pending_id)
                         .pending_primary_code
-                        .as_deref()
+                        .map(|c| c.as_str())
                         == Some("on_battery")
             });
             assert!(
@@ -554,9 +568,11 @@ fn m3_08_5_exit12_replaces_back_up_now_in_overview_and_detail() {
                 Duration::from_secs(5),
                 "exit12 + on_battery",
                 |s| {
-                    backup_summary(s, &b0_id).error_action.as_deref()
+                    backup_summary(s, &b0_id).error_action.map(|c| c.as_str())
                         == Some("update_stored_password")
-                        && backup_summary(s, &b1_id).pending_primary_code.as_deref()
+                        && backup_summary(s, &b1_id)
+                            .pending_primary_code
+                            .map(|c| c.as_str())
                             == Some("on_battery")
                 },
             );
@@ -930,6 +946,109 @@ fn m3_settings_monitoring_and_notification_controls_persist() {
             let saved = load_config(&env.cfg_path).expect("load config");
             assert_eq!(saved.default_overdue_threshold, 4);
             assert!(!saved.notifications.on_overdue);
+            stop_env(env);
+        },
+    );
+}
+
+/// AC-M0-11-8 (U12): Ctrl+Shift+B in the backup detail page starts "Back Up Now" for the shown
+/// backup, and the action shows the shortcut (a real key press in the product window). On the
+/// overview, where no backup is open, it starts nothing.
+#[test]
+fn ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page() {
+    run_isolated_test(
+        "ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page",
+        "KESTIC_M3_GUI_BACKUP_NOW_SHORTCUT_INNER",
+        |root| {
+            let (env, _dest, _id) = editor_env(root);
+            run_m3_gui_smoke(
+                root,
+                "m3-backup-now-shortcut",
+                "wide",
+                "en",
+                &smoke_artifact("backup-now-shortcut", "wide", "en"),
+            );
+            stop_env(env);
+        },
+    );
+}
+
+#[path = "../../i18n/tests/common/language.rs"]
+mod language;
+
+/// Every page, editor, wizard and the settings window, opened in English and in German: (a) the
+/// German window shows no English text that has a German translation, (b) every visible text in
+/// both languages has short sentences and (c) no technical words. The visible texts per page are
+/// kept as review lists (`target/smoke-artifacts/m3-all-pages-texts-<lang>.tsv`). The smoke also
+/// checks that the backups list shows exactly the rows of the Rust list model (AC-M0-04-1).
+#[test]
+fn every_page_shows_simple_texts_in_the_gui_language() {
+    run_isolated_test(
+        "every_page_shows_simple_texts_in_the_gui_language",
+        "KESTIC_M3_GUI_ALL_PAGES_INNER",
+        |root| {
+            let (env, _dest, _id) = editor_env(root);
+            let catalog = language::catalog(&common::workspace_root());
+            let english_with_translation: std::collections::HashSet<&str> = catalog
+                .iter()
+                .filter(|e| !e.msgid().is_empty())
+                .filter(|e| e.german().iter().any(|de| !e.english().contains(de)))
+                .flat_map(|e| e.english().iter().map(String::as_str))
+                .collect();
+            for lang in ["en", "de"] {
+                let dump = root.join(format!("texts-{lang}.tsv"));
+                run_m3_gui_smoke_with_env(
+                    root,
+                    "m3-all-pages-texts",
+                    "wide",
+                    lang,
+                    &smoke_artifact("all-pages", "wide", lang),
+                    &[("KESTIC_SMOKE_TEXT_DUMP", dump.as_path())],
+                );
+                let raw = fs::read_to_string(&dump).expect("read text dump");
+                fs::copy(
+                    &dump,
+                    common::workspace_root().join(format!(
+                        "target/smoke-artifacts/m3-all-pages-texts-{lang}.tsv"
+                    )),
+                )
+                .expect("keep text dump as artifact");
+                let texts: Vec<(&str, String)> = raw
+                    .lines()
+                    .filter_map(|l| l.split_once('\t'))
+                    .map(|(page, t)| (page, t.replace("\\n", "\n")))
+                    .collect();
+                let pages: std::collections::HashSet<&str> =
+                    texts.iter().map(|(p, _)| *p).collect();
+                assert_eq!(pages.len(), 19, "{lang}: every page recorded: {pages:?}");
+                if lang == "de" {
+                    let english: Vec<_> = texts
+                        .iter()
+                        .filter(|(_, t)| english_with_translation.contains(t.as_str()))
+                        .collect();
+                    assert!(
+                        english.is_empty(),
+                        "(a) English texts in the German window: {english:#?}"
+                    );
+                }
+                let long: Vec<_> = texts
+                    .iter()
+                    .filter(|(_, t)| !language::long_sentences(t).is_empty())
+                    .collect();
+                assert!(
+                    long.is_empty(),
+                    "(b) {lang}: sentences longer than {} words: {long:#?}",
+                    language::MAX_WORDS_PER_SENTENCE
+                );
+                let jargon: Vec<_> = texts
+                    .iter()
+                    .filter(|(_, t)| !language::jargon(t).is_empty())
+                    .collect();
+                assert!(
+                    jargon.is_empty(),
+                    "(c) {lang}: technical words: {jargon:#?}"
+                );
+            }
             stop_env(env);
         },
     );

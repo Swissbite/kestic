@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
@@ -107,13 +108,13 @@ Kirigami.ScrollablePage {
                 if (dto.result) {
                     page.dryRunResult = dto.result;
                 }
-                if (dto.error) {
-                    page.dryRunError = dto.error;
+                if (dto.state === "error") {
+                    page.dryRunError = appBackend.dry_run_error || i18n("Preview failed.");
                 }
             } catch (e) {
                 stop();
                 page.dryRunState = "error";
-                page.dryRunError = i18n("Invalid preview response.");
+                page.dryRunError = i18n("The preview result could not be read.");
             }
         }
     }
@@ -143,13 +144,13 @@ Kirigami.ScrollablePage {
                 if (dto.result) {
                     page.retentionPreviewData = dto.result;
                 }
-                if (dto.error) {
-                    page.retentionPreviewError = dto.error;
+                if (dto.state === "error") {
+                    page.retentionPreviewError = appBackend.retention_preview_error || i18n("Preview failed.");
                 }
             } catch (e) {
                 stop();
                 page.retentionPreviewState = "error";
-                page.retentionPreviewError = i18n("Invalid preview response.");
+                page.retentionPreviewError = i18n("The preview result could not be read.");
             }
         }
     }
@@ -159,18 +160,18 @@ Kirigami.ScrollablePage {
             id: showDryRunCommandAction
             objectName: "showDryRunCommandAction"
             icon.name: "utilities-terminal"
-            text: i18n("Show Command")
+            text: Texts.label("show_command")
             visible: page.mode === "dry_run" && page.dryRunResult !== null && (page.dryRunResult.transparent_command || "") !== ""
             onTriggered: rootWindow.openShowCommandDialog(
                 page.dryRunResult.transparent_command,
-                i18n("Dry-Run Preview")
+                i18n("Test Run Preview")
             )
         },
         Kirigami.Action {
             id: closePreviewAction
             objectName: "closePreviewAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: rootWindow.popSubPage()
         }
     ]
@@ -205,7 +206,7 @@ Kirigami.ScrollablePage {
                     id: cancelDryRunButton
                     objectName: "cancelDryRunButton"
                     icon.name: "process-stop"
-                    text: i18n("Cancel")
+                    text: Texts.label("cancel")
                     Accessible.name: i18n("Cancel backup preview")
                     onClicked: appBackend.cancelBackupDryRun(page.previewId)
                 }
@@ -345,7 +346,7 @@ Kirigami.ScrollablePage {
                     id: cancelRetentionPreviewButton
                     objectName: "cancelRetentionPreviewButton"
                     icon.name: "process-stop"
-                    text: i18n("Cancel")
+                    text: Texts.label("cancel")
                     Accessible.name: i18n("Cancel retention preview")
                     onClicked: appBackend.cancelRetentionPreview(page.retentionPreviewId)
                 }
@@ -407,7 +408,7 @@ Kirigami.ScrollablePage {
                     required property var modelData
                     Layout.fillWidth: true
                     activeFocusOnTab: true
-                    Accessible.name: i18n("Snapshot %1: %2", modelData.short_id, modelData.action === "remove" ? i18n("Remove") : i18n("Keep"))
+                    Accessible.name: i18n("Snapshot %1: %2", modelData.short_id, modelData.action === "remove" ? Texts.label("remove") : i18n("Keep"))
 
                     Rectangle {
                         anchors.fill: parent
@@ -441,7 +442,7 @@ Kirigami.ScrollablePage {
                             }
 
                             Controls.Label {
-                                text: (modelData.action === "remove" ? i18n("Remove") : i18n("Keep"))
+                                text: (modelData.action === "remove" ? Texts.label("remove") : i18n("Keep"))
                                     + (modelData.reasons && modelData.reasons.length > 0 ? " — " + modelData.reasons.join(", ") : "")
                                 opacity: 0.85
                                 wrapMode: Text.WordWrap

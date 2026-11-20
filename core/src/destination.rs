@@ -26,21 +26,21 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Errors returned during destination preflight, initialization, connection, or password verification.
 #[derive(Debug, Error)]
 pub enum DestinationError {
-    #[error("Ziel nicht erreichbar: {0}")]
+    #[error("destination unreachable: {0}")]
     Unreachable(String),
-    #[error("Anmeldung am Ziel fehlgeschlagen: {0}")]
+    #[error("authentication at destination failed: {0}")]
     AuthFailed(String),
-    #[error("Passwort falsch")]
+    #[error("wrong repository password")]
     WrongPassword,
-    #[error("Repository fehlt: {0}")]
+    #[error("repository missing: {0}")]
     RepositoryMissing(String),
-    #[error("Passwortspeicher-Fehler: {0}")]
+    #[error("password store error: {0}")]
     Secret(#[from] SecretError),
-    #[error("restic-Aufruf fehlgeschlagen: {0}")]
+    #[error("restic invocation failed: {0}")]
     Runner(#[from] ResticRunError),
-    #[error("restic fehlgeschlagen (Exit {exit_code}): {message}")]
+    #[error("restic failed (exit {exit_code}): {message}")]
     CommandFailed { exit_code: i32, message: String },
-    #[error("I/O-Fehler: {0}")]
+    #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
 
@@ -66,13 +66,13 @@ pub fn preflight_check_destination(
         DestinationKind::Local { path } => {
             if !path.exists() {
                 return Err(DestinationError::Unreachable(format!(
-                    "Ordner existiert nicht: {}",
+                    "folder does not exist: {}",
                     path.display()
                 )));
             }
             if !path.is_dir() {
                 return Err(DestinationError::Unreachable(format!(
-                    "Pfad ist kein Ordner: {}",
+                    "path is not a folder: {}",
                     path.display()
                 )));
             }

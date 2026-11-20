@@ -24,6 +24,9 @@ pub mod qobject {
 
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+
+        include!("cxx-qt-lib/qstringlist.h");
+        type QStringList = cxx_qt_lib::QStringList;
     }
 
     #[qenum(BackupsModel)]
@@ -156,18 +159,7 @@ pub mod qobject {
         Level,
     }
 
-    #[qenum(SpikeListModel)]
-    enum Roles {
-        Title,
-        Subtitle,
-    }
-
     extern "RustQt" {
-        #[qobject]
-        #[base = QAbstractListModel]
-        #[qml_element]
-        type SpikeListModel = super::SpikeListModelRust;
-
         #[qobject]
         #[base = QAbstractListModel]
         #[qml_element]
@@ -192,6 +184,13 @@ pub mod qobject {
         #[base = QAbstractListModel]
         #[qml_element]
         type RunLogsModel = super::RunLogsModelRust;
+
+        /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
+        /// with the tray (`kestic-i18n`) and GUI texts (`ui_texts`). No daemon connection.
+        #[qobject]
+        #[qml_element]
+        #[qml_singleton]
+        type Texts = super::TextsRust;
     }
 
     unsafe extern "RustQt" {
@@ -303,18 +302,14 @@ pub mod qobject {
     }
 
     extern "RustQt" {
-        // SpikeListModel
+        /// Text by code in the GUI language; an unknown code yields an empty text.
         #[qinvokable]
-        #[cxx_override]
-        fn data(self: &SpikeListModel, index: &QModelIndex, role: i32) -> QVariant;
+        fn label(self: &Texts, code: &QString) -> QString;
+
+        /// Text by code with its `%1`, `%2`, … filled from `args`.
         #[qinvokable]
-        #[cxx_override]
-        #[cxx_name = "roleNames"]
-        fn role_names(self: &SpikeListModel) -> QHash_i32_QByteArray;
-        #[qinvokable]
-        #[cxx_override]
-        #[cxx_name = "rowCount"]
-        fn row_count(self: &SpikeListModel, _parent: &QModelIndex) -> i32;
+        #[cxx_name = "labelArgs"]
+        fn label_args(self: &Texts, code: &QString, args: &QStringList) -> QString;
 
         // BackupsModel
         #[qinvokable]
@@ -410,12 +405,40 @@ mod run_logs_model;
 mod runs_model;
 mod snapshots_model;
 
-pub use crate::list_model::SpikeListModelRust;
 pub use backups_model::BackupsModelRust;
 pub use destinations_model::DestinationsModelRust;
 pub use run_logs_model::RunLogsModelRust;
 pub use runs_model::RunsModelRust;
 pub use snapshots_model::SnapshotsModelRust;
+
+/// Backing struct of the `Texts` QML singleton.
+#[derive(Default)]
+pub struct TextsRust;
+
+impl qobject::Texts {
+    pub fn label(&self, code: &cxx_qt_lib::QString) -> cxx_qt_lib::QString {
+        self.label_args(code, &cxx_qt_lib::QStringList::default())
+    }
+
+    pub fn label_args(
+        &self,
+        code: &cxx_qt_lib::QString,
+        args: &cxx_qt_lib::QStringList,
+    ) -> cxx_qt_lib::QString {
+        let code = code.to_string();
+        let args: Vec<String> = args.iter().map(ToString::to_string).collect();
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let text = if let Some(label) = kestic_i18n::messages::Label::parse(&code) {
+            crate::state_cache::tr(&label.message())
+        } else if let Some(text) = crate::ui_texts::GuiText::parse(&code) {
+            text.with_args(&args)
+        } else {
+            eprintln!("Kestic: unknown text code '{code}'");
+            String::new()
+        };
+        cxx_qt_lib::QString::from(&text)
+    }
+}
 
 pub(super) enum SyncPlan<T> {
     NoChange,

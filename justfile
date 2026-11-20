@@ -28,7 +28,7 @@ _check-file-sizes:
             echo "ERROR: $f has $lines lines (limit 1500, NFR-12)" >&2
             oversized=1
         fi
-    done < <(find core/src daemon/src gui/src -type f \( -name '*.rs' -o -name '*.qml' \) -print0 | sort -z)
+    done < <(find core/src i18n/src daemon/src gui/src -type f \( -name '*.rs' -o -name '*.qml' \) -print0 | sort -z)
     if [ "$oversized" -ne 0 ]; then
         exit 1
     fi
@@ -41,7 +41,7 @@ fmt:
 deb:
     cargo deb -p kestic-gui --fast
 
-# Run offscreen QML smoke test and write screenshot
+# Start the main window offscreen (QML smoke) and write a screenshot
 smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -50,8 +50,9 @@ smoke:
     trap 'rm -rf "$tmpdir"' EXIT
     mkdir -p "$tmpdir"/{home,cfg,data,cache,state,run}
     chmod 700 "$tmpdir/run"
-    # Private session bus without service activation (see the fixture): the GUI
-    # daemon never lands on the user's real bus, and no portal/ksecretd leaks.
+    # Private session bus without service activation (see the fixture): the daemon
+    # never lands on the user's real bus, and no portal/ksecretd leaks. The daemon is
+    # started and stopped here, so no process outlives the smoke.
     HOME="$tmpdir/home" \
     XDG_CONFIG_HOME="$tmpdir/cfg" \
     XDG_DATA_HOME="$tmpdir/data" \
@@ -62,8 +63,15 @@ smoke:
     LANG=C.UTF-8 \
     LANGUAGE=en \
     QT_QPA_PLATFORM=offscreen \
-    dbus-run-session --config-file=daemon/tests/fixtures/private-session-bus.xml -- \
-    ./target/debug/kestic --smoke-test --smoke-lang en --screenshot target/smoke-artifacts/m0-s06-main.png
+    dbus-run-session --config-file=daemon/tests/fixtures/private-session-bus.xml -- bash -c '
+        ./target/debug/kestic daemon --no-job-view --no-portal-inhibit --suppress-ui-spawn \
+            --ready-file "$HOME/daemon.ready" &
+        daemon=$!
+        trap "kill $daemon 2>/dev/null; wait $daemon 2>/dev/null" EXIT
+        for _ in $(seq 100); do [ -e "$HOME/daemon.ready" ] && break; sleep 0.1; done
+        ./target/debug/kestic --no-autostart --smoke-m1 welcome --smoke-layout wide --smoke-lang en \
+            --screenshot target/smoke-artifacts/m0-s06-main.png
+    '
 
 # Build binary and .deb package, then run workspace tests
 test:

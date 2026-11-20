@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.Dialog {
     id: dialog
     objectName: "removeBackupDialog"
-    title: i18n("Remove '%1' from Kestic?", dialog.backupName)
+    title: Texts.labelArgs("remove_from_kestic_question", [dialog.backupName])
     standardButtons: Kirigami.Dialog.Cancel
     padding: Kirigami.Units.largeSpacing
 
@@ -23,7 +24,7 @@ Kirigami.Dialog {
             id: confirmRemoveBackupAction
             objectName: "confirmRemoveBackupAction"
             icon.name: "list-remove"
-            text: i18n("Remove")
+            text: Texts.label("remove")
             onTriggered: {
                 if (dialog.appBackend.removeBackup(dialog.backupId)) {
                     dialog.close();
@@ -37,7 +38,7 @@ Kirigami.Dialog {
     ColumnLayout {
         implicitWidth: Kirigami.Units.gridUnit * 22
         Controls.Label {
-            text: i18n("Snapshots will remain in the destination.")
+            text: i18n("Snapshots stay on the destination.")
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }

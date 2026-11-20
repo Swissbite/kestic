@@ -5,11 +5,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "runDetailPage"
-    title: appBackend.selected_run_title !== "" ? appBackend.selected_run_title : i18n("Run Detail")
+    title: appBackend.selected_run_title !== "" ? appBackend.selected_run_title : i18n("Run Details")
 
     required property var rootWindow
     required property var appBackend
@@ -84,7 +85,7 @@ Kirigami.ScrollablePage {
             id: runDetailShowCommandAction
             objectName: "runDetailShowCommandAction"
             icon.name: "utilities-terminal"
-            text: i18n("Show Command")
+            text: Texts.label("show_command")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             onTriggered: rootWindow.openShowCommandDialog(
                 appBackend.selected_run_transparent_command,
@@ -97,7 +98,7 @@ Kirigami.ScrollablePage {
         id: addExcludeDialog
         objectName: "addExcludePromptDialog"
         title: i18n("Add to Exclude Rules?")
-        subtitle: i18n("Generated rule (%1): %2\n\nThis path will no longer be backed up starting with the next backup. Existing snapshots remain unchanged.",
+        subtitle: i18n("New rule (%1): %2\n\nFrom the next backup on, this path is no longer backed up. Existing snapshots do not change.",
                        page.pendingExcludeIsDir ? i18n("folder rule") : i18n("expert file rule"),
                        page.pendingExcludeRuleLabel !== "" ? page.pendingExcludeRuleLabel : page.pendingExcludePath)
         standardButtons: Kirigami.Dialog.Cancel
@@ -317,7 +318,7 @@ Kirigami.ScrollablePage {
 
                         Controls.Button {
                             objectName: "addUnreadableExcludeButton"
-                            text: i18n("Add to Exclude Rules…")
+                            text: appBackend.recoveryActionLabel("add_to_excludes")
                             visible: appBackend.selected_run_backup_id !== ""
                             Accessible.name: i18n("Add %1 to exclude rules", modelData)
                             onClicked: {
@@ -510,11 +511,11 @@ Kirigami.ScrollablePage {
                                 }
                                 Controls.Button {
                                     icon.name: "edit-copy"
-                                    text: i18n("Copy")
+                                    text: Texts.label("copy")
                                     Accessible.name: i18n("Copy command")
                                     onClicked: {
                                         appBackend.copyToClipboard(modelData.command || "");
-                                        rootWindow.showPassiveNotification(i18n("Command copied to clipboard"));
+                                        rootWindow.showPassiveNotification(Texts.label("command_copied"));
                                     }
                                 }
                             }

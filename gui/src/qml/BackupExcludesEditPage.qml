@@ -6,11 +6,12 @@ import QtQuick.Controls as Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "backupExcludesEditPage"
-    title: i18n("Exclude Rules")
+    title: Texts.label("exclude_rules")
     horizontalScrollBarPolicy: Qt.ScrollBarAlwaysOff
 
     required property var rootWindow
@@ -238,7 +239,7 @@ Kirigami.ScrollablePage {
             id: previewExcludesAction
             objectName: "previewExcludesAction"
             icon.name: "document-preview"
-            text: i18n("Preview…")
+            text: Texts.label("preview_ellipsis")
             enabled: appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: rootWindow.openBackupDryRunPreviewPage(backupId, page.currentExcludesJson())
         },
@@ -246,7 +247,7 @@ Kirigami.ScrollablePage {
             id: saveExcludesAction
             objectName: "saveExcludesAction"
             icon.name: "document-save"
-            text: i18n("Save")
+            text: Texts.label("save")
             enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.saveChanges()
         },
@@ -254,7 +255,7 @@ Kirigami.ScrollablePage {
             id: closeExcludesAction
             objectName: "closeExcludesAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: {
                 if (page.dirty) {
                     unsavedDialog.open();
@@ -279,7 +280,7 @@ Kirigami.ScrollablePage {
     Kirigami.PromptDialog {
         id: unsavedDialog
         objectName: "unsavedExcludesDialog"
-        title: i18n("Save changes?")
+        title: Texts.label("save_changes_question")
         subtitle: i18n("You have unsaved changes to exclude rules.")
         standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
         onAccepted: {
@@ -298,7 +299,7 @@ Kirigami.ScrollablePage {
         id: enableExpertModeDialog
         objectName: "enableExpertModeDialog"
         title: i18n("Enable Expert Mode?")
-        subtitle: i18n("Expert Mode unlocks raw restic exclude syntax across Kestic, including pattern rules and negated exceptions. You can turn it off anytime in Settings (menu top right).")
+        subtitle: i18n("In Expert Mode you write exclude rules in restic syntax, including patterns and exceptions. You can turn it off at any time in Settings (menu at the top right).")
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {
@@ -410,13 +411,13 @@ Kirigami.ScrollablePage {
         Controls.CheckBox {
             id: excludeTrashCheckbox
             objectName: "excludeTrashCheckbox"
-            text: i18n("Exclude trash folders")
+            text: Texts.label("exclude_trash")
             checked: page.excludeTrash
             onToggled: {
                 page.excludeTrash = checked;
                 excludeTrashCheckbox.forceActiveFocus(Qt.TabFocusReason);
             }
-            Accessible.name: i18n("Exclude trash folders")
+            Accessible.name: Texts.label("exclude_trash")
         }
 
         RowLayout {
@@ -525,7 +526,7 @@ Kirigami.ScrollablePage {
                         page.refreshLint();
                     }
                     placeholderText: "*.tmp\n.cache\n!$HOME/.cache/keep"
-                    Accessible.name: i18n("Exclude rules in restic syntax")
+                    Accessible.name: Texts.label("exclude_rules_syntax")
 
                     background: Rectangle {
                         color: Kirigami.Theme.backgroundColor

@@ -138,7 +138,9 @@ fn ac_m3_04_4_exclusive_lock_exit_11_backoff_5_15_60_without_notification() {
                 let state = client.get_state().expect("GetState");
                 // (a) `ausstehend` with the backoff reason, the backup ended with Exit 11.
                 assert_eq!(
-                    backup_summary(&state, bid).pending_primary_code.as_deref(),
+                    backup_summary(&state, bid)
+                        .pending_primary_code
+                        .map(|c| c.as_str()),
                     Some("backoff"),
                     "{}: (a)",
                     variant.label
@@ -379,7 +381,7 @@ fn ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff
                     .and_then(|r| r.summary_message.clone())
                     .unwrap_or_default();
                 assert!(
-                    message.contains("retention will catch up later"),
+                    message.contains("retention runs later"),
                     "{}: (c) warning says the retention (forget) is still open: {message:?}",
                     variant.label
                 );

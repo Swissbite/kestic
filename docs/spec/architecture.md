@@ -156,6 +156,7 @@ Verbindliche Ablage neuer und aufgeteilter Module über alle Meilensteine:
 | --- | --- | --- |
 | D-Bus-Methode | `daemon/src/service/<bereich>.rs` + `daemon/src/dbus_server.rs` + `daemon/src/dbus_api.rs` | `service.rs` nur als dünner Einstieg bzw. Modul-Verteiler |
 | Fachlogik | `core/src/<bereich>.rs` | in der GUI nur Aufrufe, keine Geschäftslogik |
+| Gemeinsame Texte und Codes | `i18n/src/` (Crate `kestic-i18n`) | nur was Daemon und GUI beide brauchen; Regel in [dbus-api.md](dbus-api.md) §Texte und Übersetzungen |
 | GUI-Modell | `gui/src/models/<modell>.rs` | pro Modell eine Datei statt monolithischem `models.rs` |
 | Dialog / Seite | eigene QML-Datei unter `gui/src/qml/` | nicht inline in `Main.qml` |
 

@@ -4,12 +4,16 @@
 //! Destination CRUD, connection testing, password updates, unlocking, and snapshot loading
 //! for [`super::qobject::KesticApp`].
 
-use super::{friendly_dbus_error, qobject};
+use super::{dbus_error_text, qobject};
 use crate::state_cache::{
-    build_destination, make_client, refresh_state_now, shared_state, test_destination_connection,
+    build_destination, daemon_unavailable_text, make_client, refresh_state_now, shared_state,
+    test_destination_connection, tr_text,
 };
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
+use kestic_daemon::dbus_api::KesticDbusError;
+use kestic_i18n::codes::ServiceErrorCode;
+use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
@@ -27,10 +31,12 @@ impl qobject::KesticApp {
             &rest_pw.to_string(),
         );
         self.as_mut().set_connection_test_ok(res.ok);
+        let text = connection_test_text(res.ok, res.error_kind, &res.detail);
         self.as_mut()
-            .set_connection_test_message(QString::from(&res.message));
-        self.as_mut()
-            .set_connection_test_error_kind(QString::from(res.error_kind.as_deref().unwrap_or("")));
+            .set_connection_test_message(QString::from(&tr_text(&text)));
+        self.as_mut().set_connection_test_error_kind(QString::from(
+            res.error_kind.map(|k| k.as_str()).unwrap_or(""),
+        ));
         res.ok
     }
 
@@ -50,7 +56,7 @@ impl qobject::KesticApp {
         };
         let Ok(client) = make_client() else {
             self.as_mut()
-                .set_last_action_error(i18n("Background service unavailable."));
+                .set_last_action_error(QString::from(&daemon_unavailable_text()));
             return QString::from("");
         };
         match client.add_destination(
@@ -66,9 +72,9 @@ impl qobject::KesticApp {
                 QString::from(&id)
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
-                if err.to_string().contains("SecretStoreLocked") {
+                if KesticDbusError::from(err).code() == ServiceErrorCode::SecretStoreLocked {
                     refresh_state_now();
                     self.as_mut().apply_cached_state();
                 }
@@ -111,7 +117,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -136,7 +142,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -155,7 +161,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 false
@@ -166,7 +172,7 @@ impl qobject::KesticApp {
     pub fn unlock_destination(mut self: Pin<&mut Self>, dest_id: &QString) -> i32 {
         let Ok(client) = make_client() else {
             self.as_mut()
-                .set_last_action_error(i18n("Background service unavailable."));
+                .set_last_action_error(QString::from(&daemon_unavailable_text()));
             return -1;
         };
         match client.unlock_destination(&dest_id.to_string()) {
@@ -185,7 +191,7 @@ impl qobject::KesticApp {
                 i32::try_from(count).unwrap_or(0)
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 -1
@@ -199,7 +205,7 @@ impl qobject::KesticApp {
         let Ok(client) = make_client() else {
             self.as_mut().set_snapshots_loading(false);
             self.as_mut()
-                .set_snapshots_error(i18n("Background service unavailable."));
+                .set_snapshots_error(QString::from(&daemon_unavailable_text()));
             return false;
         };
         match client.list_backup_snapshots(&backup_id.to_string()) {
@@ -221,10 +227,11 @@ impl qobject::KesticApp {
                 {
                     let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
                     guard.snapshots = None;
-                    guard.snapshots_error = Some(err.clone());
+                    guard.snapshots_error = Some(dbus_error_text(&err));
                 }
                 self.as_mut().set_snapshots_loading(false);
-                self.as_mut().set_snapshots_error(QString::from(&err));
+                self.as_mut()
+                    .set_snapshots_error(QString::from(&dbus_error_text(&err)));
                 self.as_mut().set_snapshots_has_previous(false);
                 self.as_mut().snapshots_updated();
                 false

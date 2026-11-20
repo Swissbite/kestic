@@ -4,16 +4,17 @@
 //! Schedule/condition/maintenance editing, pause/resume controls, settings, run details,
 //! clipboard, and quit confirmation for [`super::qobject::KesticApp`].
 
-use super::{friendly_dbus_error, qobject};
+use super::{dbus_error_text, qobject};
 use crate::smoke;
 use crate::state_cache::{
     build_provider, cached_daemon_now, cached_destination_kind, cached_today_iso_date,
     clone_updated_backup_conditions, clone_updated_backup_schedule, format_bytes,
     format_conditions_summary, format_datetime_display, format_duration_ms,
     format_maintenance_summary, format_run_kind_name, format_run_status, format_schedule_summary,
-    lookup_backup_summary, make_client, preview_next_schedule_slots, refresh_state_now,
-    shared_state,
+    lookup_backup_summary, make_client, not_found_text, preview_next_schedule_slots,
+    refresh_state_now, shared_state,
 };
+use crate::ui_texts::GuiText;
 use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::model::{MaintenanceSchedule, NotificationSettings, RunConditions, Schedule};
@@ -46,7 +47,7 @@ impl qobject::KesticApp {
                 QString::from(&run_id)
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 QString::from("")
             }
@@ -83,7 +84,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -107,7 +108,7 @@ impl qobject::KesticApp {
         };
         let Some(existing) = existing else {
             self.as_mut()
-                .set_last_action_error(i18n("Backup not found."));
+                .set_last_action_error(QString::from(&not_found_text()));
             return false;
         };
         let schedule: Schedule = match serde_json::from_str(&schedule_json.to_string()) {
@@ -138,7 +139,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -161,7 +162,7 @@ impl qobject::KesticApp {
         };
         let Some(existing) = existing else {
             self.as_mut()
-                .set_last_action_error(i18n("Backup not found."));
+                .set_last_action_error(QString::from(&not_found_text()));
             return false;
         };
         let conditions: RunConditions = match serde_json::from_str(&conditions_json.to_string()) {
@@ -193,7 +194,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -228,7 +229,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -258,7 +259,8 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
+                self.as_mut()
+                    .set_last_action_error(QString::from(&dbus_error_text(&err)));
                 false
             }
         }
@@ -275,7 +277,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -295,7 +297,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 false
@@ -315,7 +317,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 false
@@ -340,7 +342,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 false
@@ -360,7 +362,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 self.as_mut().passive_notification(QString::from(&msg));
                 false
@@ -375,7 +377,8 @@ impl qobject::KesticApp {
         let detail = match client.get_run_detail(&run_id.to_string()) {
             Ok(detail) => detail,
             Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
+                self.as_mut()
+                    .set_last_action_error(QString::from(&dbus_error_text(&err)));
                 return false;
             }
         };
@@ -390,7 +393,7 @@ impl qobject::KesticApp {
             meta: String,
         }
 
-        let title = crate::state_cache::i18n("Run from %1")
+        let title = crate::state_cache::i18n("Run on %1")
             .subs(&[&format_datetime_display(detail.run.started_at)]);
         let (status_text, status_icon, status_color) =
             format_run_status(&detail.run.kind, detail.run.status);
@@ -432,7 +435,7 @@ impl qobject::KesticApp {
                     .commands
                     .get(idx)
                     .map(|c| {
-                        crate::state_cache::i18n("Exit %1 · %2")
+                        crate::state_cache::i18n("Exit code %1 · %2")
                             .subs(&[&c.exit_code.to_string(), &format_duration_ms(c.duration_ms)])
                     })
                     .unwrap_or_default();
@@ -471,16 +474,19 @@ impl qobject::KesticApp {
             .set_selected_run_status_color(QString::from(status_color));
         self.as_mut()
             .set_selected_run_stats_summary(QString::from(&stats_summary));
-        let error_summary = crate::overall_text::localized_error_kind(
-            detail.error_kind.as_deref(),
-            detail.error_exit_code,
-            detail.run.status == kestic_core::model::RunStatus::Warning,
-            detail.error_summary.as_deref(),
-        );
+        let error_summary = detail
+            .error_kind
+            .map(|kind| {
+                crate::state_cache::tr(&kind.message(
+                    detail.error_exit_code,
+                    detail.run.status == kestic_core::model::RunStatus::Warning,
+                ))
+            })
+            .unwrap_or_default();
         self.as_mut()
             .set_selected_run_error_summary(QString::from(&error_summary));
         self.as_mut().set_selected_run_error_action(QString::from(
-            detail.error_action.as_deref().unwrap_or(""),
+            detail.error_action.map(|a| a.as_str()).unwrap_or(""),
         ));
         self.as_mut().set_selected_run_error_raw(QString::from(
             detail.error_raw_detail.as_deref().unwrap_or(""),
@@ -514,7 +520,7 @@ impl qobject::KesticApp {
         match client.confirm_quit() {
             Ok(()) => true,
             Err(err) => {
-                let msg = friendly_dbus_error(&err);
+                let msg = dbus_error_text(&err);
                 self.as_mut().set_last_action_error(QString::from(&msg));
                 false
             }
@@ -527,13 +533,11 @@ impl qobject::KesticApp {
     }
 
     pub fn recovery_action_label(&self, action_code: &QString) -> QString {
-        match action_code.to_string().as_str() {
-            "update_stored_password" => i18n("Update Saved Password…"),
-            "add_to_excludes" => i18n("Add to Exclude Rules…"),
-            "check_restic_source" => i18n("Configure restic Source…"),
-            "unlock_repository" => i18n("Release Lock…"),
-            _ => i18n("Retry"),
-        }
+        let label = match kestic_core::restic::RecoveryAction::parse(&action_code.to_string()) {
+            Some(action) => crate::state_cache::tr(&action.label_message()),
+            None => GuiText::Retry.text(),
+        };
+        QString::from(&label)
     }
 
     pub fn list_known_networks_json(&self) -> QString {
@@ -573,10 +577,10 @@ impl qobject::KesticApp {
                         "start_date",
                         i18n("Enter a valid start date in YYYY-MM-DD format.").to_string(),
                     ),
-                    _ => ("", i18n("Invalid schedule configuration.").to_string()),
+                    _ => ("", i18n("Invalid schedule.").to_string()),
                 },
             },
-            Err(_) => ("", i18n("Invalid schedule configuration.").to_string()),
+            Err(_) => ("", i18n("Invalid schedule.").to_string()),
         };
         let payload = serde_json::json!({
             "field": field,

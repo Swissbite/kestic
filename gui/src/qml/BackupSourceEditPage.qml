@@ -6,11 +6,12 @@ import QtQuick.Controls as Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
     objectName: "backupSourceEditPage"
-    title: i18n("Source")
+    title: Texts.label("source")
 
     required property var rootWindow
     required property var appBackend
@@ -18,7 +19,7 @@ Kirigami.ScrollablePage {
 
     property var initialData: null
     property string sourcePath: ""
-    property string detectedKindLabel: i18n("Folder")
+    property string detectedKindLabel: Texts.label("folder")
     property var nestedWarnings: []
     property bool hydrating: false
 
@@ -30,7 +31,7 @@ Kirigami.ScrollablePage {
     function refreshSourceMetadata() {
         var trimmed = sourcePath.trim();
         if (trimmed === "") {
-            detectedKindLabel = i18n("Folder");
+            detectedKindLabel = Texts.label("folder");
             nestedWarnings = [];
             return;
         }
@@ -40,10 +41,10 @@ Kirigami.ScrollablePage {
                 var det = JSON.parse(detRaw);
                 if (det.kind === "drive") {
                     detectedKindLabel = det.drive_label && det.drive_label !== ""
-                        ? i18n("Drive (%1)", det.drive_label)
-                        : i18n("Drive");
+                        ? Texts.labelArgs("drive_with_label", [det.drive_label])
+                        : Texts.label("drive");
                 } else {
-                    detectedKindLabel = i18n("Folder");
+                    detectedKindLabel = Texts.label("folder");
                 }
             } catch (e) {
             }
@@ -108,7 +109,7 @@ Kirigami.ScrollablePage {
             id: saveSourceAction
             objectName: "saveSourceAction"
             icon.name: "document-save"
-            text: i18n("Save")
+            text: Texts.label("save")
             enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: confirmChangeDialog.open()
         },
@@ -116,7 +117,7 @@ Kirigami.ScrollablePage {
             id: closeSourceAction
             objectName: "closeSourceAction"
             icon.name: "window-close"
-            text: i18n("Close")
+            text: Texts.label("close")
             onTriggered: {
                 if (page.dirty) {
                     unsavedDialog.open();
@@ -129,7 +130,7 @@ Kirigami.ScrollablePage {
 
     FolderDialog {
         id: folderDialog
-        title: i18n("Choose Source Folder")
+        title: Texts.label("choose_source_folder_title")
         onAccepted: {
             var local = selectedFolder.toString().replace(/^file:\/\//, "");
             if (local.length > 0) {
@@ -143,7 +144,7 @@ Kirigami.ScrollablePage {
         id: confirmChangeDialog
         objectName: "confirmChangeSourceDialog"
         title: i18n("Change Source?")
-        subtitle: i18n("Snapshot history is preserved; the next backup will scan the new folder completely. Please review any exclude rules with absolute paths.")
+        subtitle: i18n("Your snapshots stay. The next backup reads the new folder completely. Please check exclude rules that use full paths.")
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {
@@ -162,7 +163,7 @@ Kirigami.ScrollablePage {
     Kirigami.PromptDialog {
         id: unsavedDialog
         objectName: "unsavedSourceDialog"
-        title: i18n("Save changes?")
+        title: Texts.label("save_changes_question")
         subtitle: i18n("You have unsaved changes to the source folder.")
         standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
         onAccepted: confirmChangeDialog.open()
@@ -188,7 +189,7 @@ Kirigami.ScrollablePage {
             visible: page.initialData !== null && !page.dirty && page.initialData.sourceKind === "drive" && !page.initialData.available
             text: page.initialData && page.initialData.availabilityReason !== ""
                 ? page.initialData.availabilityReason
-                : i18n("Drive is not mounted; backups wait until it is connected.")
+                : i18n("The drive is not mounted; backups wait until it is mounted.")
         }
 
         Kirigami.InlineMessage {
@@ -198,9 +199,8 @@ Kirigami.ScrollablePage {
             type: Kirigami.MessageType.Warning
             visible: page.nestedWarnings.length > 0
             text: page.nestedWarnings.length > 0
-                ? i18n("Overlaps with backup '%1' (%2) on the same destination. Files may be stored redundantly or with differing exclusions.",
-                       page.nestedWarnings[0].other_backup_name,
-                       page.nestedWarnings[0].other_source_path)
+                ? Texts.labelArgs("source_overlap", [page.nestedWarnings[0].other_backup_name,
+                       page.nestedWarnings[0].other_source_path])
                 : ""
         }
 
@@ -230,13 +230,13 @@ Kirigami.ScrollablePage {
                     }
                     onAccepted: if (page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable") confirmChangeDialog.open()
                     placeholderText: "/home/user"
-                    Accessible.name: i18n("Source folder path")
+                    Accessible.name: Texts.label("source_folder_path")
                     Layout.fillWidth: true
                 }
 
                 Controls.Button {
-                    text: i18n("Choose…")
-                    Accessible.name: i18n("Choose source folder")
+                    text: Texts.label("choose")
+                    Accessible.name: Texts.label("choose_source_folder")
                     onClicked: folderDialog.open()
                 }
             }

@@ -16,7 +16,7 @@ max-threads = 2
 max-threads = 4
 
 [[profile.default.overrides]]
-filter = "binary(m0_s04_kirigami_listmodel) | binary(m0_s06_qml_smoke) | binary(m0_s09_i18n) | binary(m0_s11_gui_basics) | binary(m1_gui_smoke) | binary(m2_gui_smoke) | binary(m3_gui_smoke)"
+filter = "binary(m0_s09_i18n) | binary(m1_gui_smoke) | binary(m2_gui_smoke) | binary(m3_gui_smoke)"
 test-group = "gui-smoke"
 
 [[profile.default.overrides]]

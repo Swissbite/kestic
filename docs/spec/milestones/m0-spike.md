@@ -76,6 +76,18 @@ Jeder Prüfpunkt: Ergebnis im Spike-Bericht; Abweichungen in [index.md](../ui/in
 - **AC-M0-11-7** – *Gegeben* Prototyp-Fenster in Mindestgrösse (26 `gridUnit` breit), *wenn* offscreen in DE und EN gerendert, *dann* ist kein Tab-Label abgeschnitten (insbesondere «Wiederherstellen») · Test: GUI-Smoke (Screenshot je Sprache)
 - **AC-M0-11-8** (U12) – *Gegeben* Prototyp-Fenster, *wenn* Ctrl+Shift+B gedrückt wird, *dann* löst es «Jetzt sichern» aus; ein Konflikt mit einem globalen Plasma-Kürzel ist im Spike-Bericht festgehalten oder ausgeschlossen · Test: GUI-Smoke (Tastendruck) + manuell (Konfliktprüfung)
 
+## Belege nach Entfernen des Spike-Fensters
+
+Das Prototyp-Fenster des Spikes (`SpikeMain.qml`, `SpikeListModel`, `kestic --smoke-test`) ist seit 2026-11-20 entfernt; die GUI hat nur noch das Produktfenster `Main.qml`. Die M0-ACs, die das Prototyp-Fenster prüften, belegen jetzt diese Tests am Produktfenster:
+
+| AC | Test |
+| --- | --- |
+| AC-M0-04-1 | `daemon/tests/m3_gui_smoke.rs` `every_page_shows_simple_texts_in_the_gui_language` (Liste `backupsListView` zeigt genau die Zeilen des Rust-Modells `backupsModel`); Version gepinnt: `core/tests/m0_s03_cxx_qt_pin.rs` |
+| AC-M0-06-1 | `just smoke` (Hauptfenster offscreen, Screenshot `target/smoke-artifacts/m0-s06-main.png`) und jeder GUI-Smoke in `core/tests/m1_gui_smoke.rs` (Abbruch bei QML-Warnung) |
+| AC-M0-09-1 | `core/tests/m1_s16_i18n.rs` `ac_m1_16_1_and_16_2_ki18n_en_and_de_in_gui_and_daemon` und `every_page_shows_simple_texts_in_the_gui_language` (Texte aus Rust und QML auf Englisch und Deutsch); Lint: `core/tests/m0_s09_i18n.rs` `nfr_06_gettext_xgettext_and_po_lint` |
+| AC-M0-11-1, AC-M0-11-7 | `core/tests/m1_gui_smoke.rs` `m1_gui_smoke_welcome_wide_narrow_en_and_de` (Tab-Leiste breit oben, schmal unten, kein Label abgeschnitten, EN und DE; bis M3 vier Bereiche, «Wiederherstellen» kommt mit M4) |
+| AC-M0-11-8 | `daemon/tests/m3_gui_smoke.rs` `ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page` (Tastendruck im Backup-Detail startet «Jetzt sichern», die Aktion zeigt das Kürzel; auf der Übersicht startet es nichts). Konfliktprüfung mit globalen Plasma-Kürzeln: im Spike manuell abgenommen. |
+
 ## Exit-Kriterien
 
 - Spike-Kriterien 1–7 (unten) grün (Kriterium 7 = GUI-Grundlagen, M0-S11).

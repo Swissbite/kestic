@@ -9,6 +9,7 @@ use crate::state_cache::{
     daemon_now, format_datetime_display, format_destination_status, format_maintenance_entry,
     format_slot_timestamp, i18n, shared_state,
 };
+use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
 use kestic_core::model::DestinationKind;
@@ -64,7 +65,7 @@ fn build_destination_row(
         ),
         DestinationKind::Rest { url, username } => (
             "rest".to_string(),
-            i18n("REST Server").to_string(),
+            GuiText::RestServer.text(),
             url.clone(),
             username.clone().unwrap_or_default(),
         ),
@@ -113,7 +114,7 @@ fn build_destination_row(
         stale_lock_count: i32::try_from(d.stale_lock_count).unwrap_or(i32::MAX),
         maintenance_status_text: maintenance_status_line(
             d.maintenance_running,
-            d.maintenance_pending_reason.as_deref(),
+            d.maintenance_pending_reason,
             d.maintenance_retry_at_unix,
             now,
         ),

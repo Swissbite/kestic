@@ -6,6 +6,7 @@ import QtQuick.Controls as Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
@@ -16,7 +17,7 @@ Kirigami.ScrollablePage {
     required property var appBackend
     required property var destinationsModel
 
-    property string wizardTitle: i18n("New Backup")
+    property string wizardTitle: Texts.label("new_backup")
     property bool integratedDestFlow: false
 
     // Linear stage progression:
@@ -27,7 +28,7 @@ Kirigami.ScrollablePage {
         if (!integratedDestFlow) {
             return ["source", "choose_dest", "summary"];
         }
-        if (setupMode === "connect") {
+        if (destDraft.setupMode === "connect") {
             return ["source", "dest_type", "dest_details", "summary"];
         }
         return ["source", "dest_type", "dest_details", "dest_password", "summary"];
@@ -79,34 +80,22 @@ Kirigami.ScrollablePage {
     }
 
     // Integrated destination creation state (used when integratedDestFlow === true)
-    property string destKind: "local"
-    property string setupMode: "init"
-    property string destName: ""
-    property string destLocation: ""
-    property string destUsername: ""
-    property string restPassword: ""
-    property string repoPassword: ""
-    property string repoPasswordConfirm: ""
-    property bool connectionVerified: false
-    property string testFeedback: ""
-    property bool testFeedbackOk: false
     property string createdDestId: ""
 
-    readonly property bool kindIsRest: destKind === "rest"
+    DestinationDraft {
+        id: destDraft
+        appBackend: page.appBackend
+    }
+
+    readonly property bool destDetailsValid: destDraft.detailsValid && (destDraft.setupMode !== "connect" || destDraft.repoPassword.length > 0)
     readonly property bool sourceValid: sourcePath.trim().length > 0
     readonly property bool destValid: selectedDestId.length > 0
-    readonly property bool destNameValid: destName.trim().length > 0
-    readonly property bool destLocationValid: kindIsRest
-        ? /^https?:\/\//i.test(destLocation.trim())
-        : destLocation.trim().length > 0
-    readonly property bool destDetailsValid: destNameValid && destLocationValid && (setupMode !== "connect" || repoPassword.length > 0)
-    readonly property bool passwordsMatch: repoPassword.length > 0 && (setupMode === "connect" || repoPassword === repoPasswordConfirm)
-    readonly property bool hasAnyDestInput: integratedDestFlow && (destName.trim().length > 0 || destLocation.trim().length > 0 || repoPassword.length > 0)
+    readonly property bool hasAnyDestInput: integratedDestFlow && destDraft.hasAnyInput
 
     readonly property bool summaryValid: {
         if (backupName.trim().length === 0 || !sourceValid) return false;
         if (integratedDestFlow) {
-            return destDetailsValid && connectionVerified && passwordsMatch;
+            return destDetailsValid && destDraft.connectionVerified && destDraft.passwordsMatch;
         }
         return destValid;
     }
@@ -120,9 +109,9 @@ Kirigami.ScrollablePage {
         case "dest_type":
             return true;
         case "dest_details":
-            return destDetailsValid && connectionVerified;
+            return destDetailsValid && destDraft.connectionVerified;
         case "dest_password":
-            return passwordsMatch;
+            return destDraft.passwordsMatch;
         default:
             return summaryValid && appBackend.blocking_kind === "";
         }
@@ -162,47 +151,17 @@ Kirigami.ScrollablePage {
         }
     }
 
-    function runIntegratedConnectionTest() {
-        if (!destNameValid || !destLocationValid) {
-            testFeedbackOk = false;
-            testFeedback = i18n("Please fill in all required fields.");
-            return false;
-        }
-        var fieldsJson = JSON.stringify({
-            kind: destKind,
-            name: destName.trim(),
-            location: destLocation.trim(),
-            username: destUsername.trim()
-        });
-        var ok = appBackend.testDestination(
-            fieldsJson,
-            setupMode,
-            repoPassword,
-            restPassword
-        );
-        connectionVerified = ok;
-        testFeedbackOk = ok;
-        testFeedback = appBackend.connection_test_message;
-        return ok;
-    }
-
     function submitBackup(startImmediately) {
         if (!summaryValid) return;
         saveErrorText = "";
         var targetDestId = selectedDestId;
         if (integratedDestFlow) {
             if (createdDestId === "") {
-                var fieldsJson = JSON.stringify({
-                    kind: destKind,
-                    name: destName.trim(),
-                    location: destLocation.trim(),
-                    username: destUsername.trim()
-                });
                 var newDestId = appBackend.addDestination(
-                    fieldsJson,
-                    setupMode,
-                    repoPassword,
-                    restPassword
+                    destDraft.fieldsJson(),
+                    destDraft.setupMode,
+                    destDraft.repoPassword,
+                    destDraft.restPassword
                 );
                 if (newDestId === "") {
                     saveErrorText = appBackend.last_action_error;
@@ -212,7 +171,7 @@ Kirigami.ScrollablePage {
             }
             targetDestId = createdDestId;
             selectedDestId = createdDestId;
-            selectedDestName = destName.trim();
+            selectedDestName = destDraft.name.trim();
         }
 
         var createdId = appBackend.addBackup(
@@ -246,7 +205,7 @@ Kirigami.ScrollablePage {
 
     FolderDialog {
         id: sourcePickDialog
-        title: i18n("Choose Source Folder")
+        title: Texts.label("choose_source_folder_title")
         onAccepted: {
             var local = selectedFolder.toString().replace(/^file:\/\//, "");
             if (local.length > 0) {
@@ -258,22 +217,10 @@ Kirigami.ScrollablePage {
         }
     }
 
-    FolderDialog {
-        id: destFolderPickDialog
-        title: i18n("Choose Repository Folder")
-        onAccepted: {
-            var local = selectedFolder.toString().replace(/^file:\/\//, "");
-            if (local.length > 0) {
-                page.destLocation = local;
-                page.connectionVerified = false;
-            }
-        }
-    }
-
     Kirigami.PromptDialog {
         id: discardDialog
         title: i18n("Discard backup setup?")
-        subtitle: i18n("No repository or configuration has been created yet.")
+        subtitle: Texts.label("nothing_created_yet")
         standardButtons: Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
         onDiscarded: rootWindow.closeWizardLayer()
     }
@@ -287,23 +234,10 @@ Kirigami.ScrollablePage {
             Layout.alignment: Qt.AlignHCenter
             spacing: Kirigami.Units.largeSpacing
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.mediumSpacing
-
-                Controls.Label {
-                    id: wizStepCounterLabel
-                    objectName: "wizBackupStepLabel"
-                    text: i18n("Step %1 of %2", page.displayStep, page.totalSteps)
-                    font.bold: true
-                }
-
-                Controls.ProgressBar {
-                    from: 1
-                    to: page.totalSteps
-                    value: page.displayStep
-                    Layout.fillWidth: true
-                }
+            WizardProgress {
+                step: page.displayStep
+                totalSteps: page.totalSteps
+                labelObjectName: "wizBackupStepLabel"
             }
 
             // Stage: Source
@@ -335,14 +269,14 @@ Kirigami.ScrollablePage {
                                 }
                                 page.refreshSourceMetadata();
                             }
-                            Accessible.name: i18n("Source folder path")
+                            Accessible.name: Texts.label("source_folder_path")
                             Layout.fillWidth: true
                         }
 
                         Controls.Button {
                             text: i18n("Choose Other Folder…")
                             icon.name: "folder-open"
-                            Accessible.name: i18n("Choose source folder")
+                            Accessible.name: Texts.label("choose_source_folder")
                             onClicked: sourcePickDialog.open()
                         }
                     }
@@ -451,10 +385,10 @@ Kirigami.ScrollablePage {
                 }
 
                 Controls.Button {
-                    text: i18n("Add New Destination…")
+                    text: Texts.label("add_new_destination_ellipsis")
                     icon.name: "list-add"
                     enabled: appBackend.blocking_kind === ""
-                    Accessible.name: i18n("Add New Destination")
+                    Accessible.name: Texts.label("add_new_destination")
                     onClicked: rootWindow.openAddDestinationWizard(function(newId, newName) {
                         page.selectedDestId = newId;
                         page.selectedDestName = newName;
@@ -462,232 +396,25 @@ Kirigami.ScrollablePage {
                 }
             }
 
-            // Stage: Integrated Destination Type (when no destinations exist yet)
-            ColumnLayout {
+            DestinationTypeChooser {
                 visible: page.currentStage === "dest_type"
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.mediumSpacing
-
-                Kirigami.Heading {
-                    level: 2
-                    text: i18n("Where should encrypted backups be stored?")
-                }
-
-                Controls.RadioButton {
-                    objectName: "wizBackupDestLocalRadio"
-                    text: i18n("Local Folder or External Drive")
-                    checked: page.destKind === "local"
-                    Accessible.name: text
-                    onToggled: if (checked) {
-                        page.destKind = "local";
-                        page.connectionVerified = false;
-                    }
-                }
-
-                Controls.Label {
-                    text: i18n("Store snapshots in a local directory or mounted drive path.")
-                    opacity: 0.75
-                    Layout.leftMargin: Kirigami.Units.largeSpacing
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-
-                Controls.RadioButton {
-                    objectName: "wizBackupDestRestRadio"
-                    text: i18n("REST Server")
-                    checked: page.destKind === "rest"
-                    Accessible.name: text
-                    onToggled: if (checked) {
-                        page.destKind = "rest";
-                        page.connectionVerified = false;
-                    }
-                }
-
-                Controls.Label {
-                    text: i18n("Connect to a restic REST server over HTTPS or HTTP.")
-                    opacity: 0.75
-                    Layout.leftMargin: Kirigami.Units.largeSpacing
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
+                draft: destDraft
+                namePrefix: "wizBackupDest"
             }
 
-            // Stage: Integrated Destination Details & Connection Test
-            ColumnLayout {
+            DestinationDetailsForm {
                 visible: page.currentStage === "dest_details"
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.mediumSpacing
-
-                Kirigami.Heading {
-                    level: 2
-                    text: page.kindIsRest ? i18n("Where is the REST server located?") : i18n("Where should the local repository be stored?")
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    type: page.testFeedbackOk ? Kirigami.MessageType.Positive : Kirigami.MessageType.Error
-                    visible: page.testFeedback !== ""
-                    text: page.testFeedback
-                }
-
-                Kirigami.FormLayout {
-                    Layout.fillWidth: true
-
-                    Controls.TextField {
-                        id: wizBackupDestNameField
-                        objectName: "wizBackupDestNameField"
-                        Kirigami.FormData.label: i18n("Name*:")
-                        text: page.destName
-                        placeholderText: page.kindIsRest ? i18n("NAS") : i18n("Local Backup")
-                        onTextChanged: page.destName = text
-                        Accessible.name: i18n("Destination name")
-                    }
-
-                    Controls.Label {
-                        visible: !page.destNameValid
-                        text: i18n("Name is required.")
-                        color: Kirigami.Theme.negativeTextColor
-                    }
-
-                    RowLayout {
-                        Kirigami.FormData.label: page.kindIsRest ? i18n("Address*:") : i18n("Path*:")
-                        Layout.fillWidth: true
-
-                        Controls.TextField {
-                            id: wizBackupDestLocField
-                            objectName: "wizBackupDestLocationField"
-                            text: page.destLocation
-                            onTextChanged: {
-                                page.destLocation = text;
-                                page.connectionVerified = false;
-                            }
-                            placeholderText: page.kindIsRest ? "https://backup.example.org:8000/" : "/mnt/backups"
-                            Accessible.name: page.kindIsRest ? i18n("REST server address") : i18n("Repository path")
-                            Layout.fillWidth: true
-                        }
-
-                        Controls.Button {
-                            visible: !page.kindIsRest
-                            text: i18n("Choose…")
-                            Accessible.name: i18n("Choose repository folder")
-                            onClicked: destFolderPickDialog.open()
-                        }
-                    }
-
-                    Controls.Label {
-                        visible: !page.destLocationValid
-                        text: page.kindIsRest
-                            ? i18n("Enter a valid http:// or https:// address.")
-                            : i18n("Path is required.")
-                        color: Kirigami.Theme.negativeTextColor
-                    }
-
-                    Controls.ComboBox {
-                        Kirigami.FormData.label: i18n("Repository:")
-                        model: [i18n("Create new repository"), i18n("Connect existing repository")]
-                        currentIndex: page.setupMode === "connect" ? 1 : 0
-                        Accessible.name: i18n("Repository setup mode")
-                        onActivated: {
-                            page.setupMode = (currentIndex === 1) ? "connect" : "init";
-                            page.connectionVerified = false;
-                        }
-                    }
-
-                    Controls.TextField {
-                        visible: page.kindIsRest
-                        Kirigami.FormData.label: i18n("Username:")
-                        text: page.destUsername
-                        onTextChanged: {
-                            page.destUsername = text;
-                            page.connectionVerified = false;
-                        }
-                        Accessible.name: i18n("REST username")
-                    }
-
-                    Controls.TextField {
-                        visible: page.kindIsRest
-                        Kirigami.FormData.label: i18n("Server password:")
-                        echoMode: TextInput.Password
-                        text: page.restPassword
-                        onTextChanged: {
-                            page.restPassword = text;
-                            page.connectionVerified = false;
-                        }
-                        Accessible.name: i18n("REST server password")
-                    }
-
-                    Controls.TextField {
-                        visible: page.setupMode === "connect"
-                        Kirigami.FormData.label: i18n("Repository password*:")
-                        echoMode: TextInput.Password
-                        text: page.repoPassword
-                        onTextChanged: {
-                            if (visible && page.setupMode === "connect" && page.repoPassword !== text) {
-                                page.repoPassword = text;
-                                page.connectionVerified = false;
-                            }
-                        }
-                        Accessible.name: i18n("Existing repository password")
-                    }
-
-                    Controls.Button {
-                        id: wizBackupDestTestBtn
-                        objectName: "wizBackupDestTestButton"
-                        icon.name: "network-connect"
-                        text: i18n("Test Connection")
-                        enabled: page.destNameValid && page.destLocationValid && appBackend.blocking_kind === ""
-                        Accessible.name: i18n("Test Connection")
-                        onClicked: page.runIntegratedConnectionTest()
-                    }
-                }
+                draft: destDraft
+                namePrefix: "wizBackupDest"
             }
 
-            // Stage: Integrated Backup Encryption Password
-            ColumnLayout {
+            DestinationPasswordForm {
                 visible: page.currentStage === "dest_password"
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.mediumSpacing
-
-                Kirigami.Heading {
-                    level: 2
-                    text: i18n("Backup Encryption Password")
-                }
-
-                Controls.Label {
-                    text: i18n("Your backups are encrypted with this password. Kestic stores it securely in your password store.")
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-
-                Kirigami.FormLayout {
-                    Layout.fillWidth: true
-
-                    Controls.TextField {
-                        id: wizBackupDestPwField
-                        objectName: "wizBackupDestPasswordField"
-                        Kirigami.FormData.label: i18n("Backup password*:")
-                        echoMode: TextInput.Password
-                        text: page.repoPassword
-                        onTextChanged: page.repoPassword = text
-                        Accessible.name: i18n("Backup password")
-                    }
-
-                    Controls.TextField {
-                        id: wizBackupDestPwConfirmField
-                        objectName: "wizBackupDestPasswordConfirmField"
-                        Kirigami.FormData.label: i18n("Repeat password*:")
-                        echoMode: TextInput.Password
-                        text: page.repoPasswordConfirm
-                        onTextChanged: page.repoPasswordConfirm = text
-                        Accessible.name: i18n("Repeat backup password")
-                    }
-
-                    Controls.Label {
-                        visible: page.repoPasswordConfirm.length > 0 && page.repoPassword !== page.repoPasswordConfirm
-                        text: i18n("Passwords do not match.")
-                        color: Kirigami.Theme.negativeTextColor
-                    }
-                }
+                draft: destDraft
+                namePrefix: "wizBackupDest"
             }
 
             // Stage: Summary & Excludes
@@ -715,7 +442,7 @@ Kirigami.ScrollablePage {
                     type: Kirigami.MessageType.Warning
                     visible: page.nestedWarnings.length > 0
                     text: page.nestedWarnings.length > 0
-                        ? i18n("Nested source overlap with backup '%1' (%2) on the same destination. Both backups can still be created, but check exclude rules.",
+                        ? i18n("This source overlaps with backup '%1' (%2) on the same destination. You can still create the backup, but check the exclude rules.",
                                page.nestedWarnings[0].other_backup_name,
                                page.nestedWarnings[0].other_source_path)
                         : ""
@@ -727,7 +454,7 @@ Kirigami.ScrollablePage {
                     Controls.TextField {
                         id: wizBackupNameField
                         objectName: "wizBackupNameField"
-                        Kirigami.FormData.label: i18n("Name*:")
+                        Kirigami.FormData.label: Texts.label("required_name_label")
                         text: page.backupName
                         onTextEdited: {
                             page.nameManuallyEdited = true;
@@ -744,7 +471,7 @@ Kirigami.ScrollablePage {
 
                     Controls.Label {
                         Kirigami.FormData.label: i18n("Destination:")
-                        text: page.integratedDestFlow ? page.destName.trim() : page.selectedDestName
+                        text: page.integratedDestFlow ? destDraft.name.trim() : page.selectedDestName
                     }
 
                     Controls.Label {
@@ -765,7 +492,7 @@ Kirigami.ScrollablePage {
                             text: page.excludesText
                             onTextChanged: page.excludesText = text
                             placeholderText: "*.tmp\n.cache"
-                            Accessible.name: i18n("Exclude rules in restic syntax")
+                            Accessible.name: Texts.label("exclude_rules_syntax")
 
                             Keys.onTabPressed: function(event) {
                                 var next = nextItemInFocusChain(true);
@@ -799,8 +526,8 @@ Kirigami.ScrollablePage {
             spacing: Kirigami.Units.smallSpacing
 
             Controls.Button {
-                text: i18n("Cancel")
-                Accessible.name: i18n("Cancel")
+                text: Texts.label("cancel")
+                Accessible.name: Texts.label("cancel")
                 onClicked: {
                     if (page.hasAnyDestInput) {
                         discardDialog.open();
@@ -813,9 +540,9 @@ Kirigami.ScrollablePage {
             Item { Layout.fillWidth: true }
 
             Controls.Button {
-                text: i18n("Back")
+                text: Texts.label("back")
                 visible: page.stepIndex > 0
-                Accessible.name: i18n("Back")
+                Accessible.name: Texts.label("back")
                 onClicked: page.stepIndex -= 1
             }
 
@@ -823,10 +550,10 @@ Kirigami.ScrollablePage {
                 id: wizBackupNextBtn
                 objectName: "wizBackupNextButton"
                 visible: page.currentStage !== "summary"
-                text: i18n("Next")
+                text: Texts.label("next")
                 highlighted: true
                 enabled: page.canAdvance
-                Accessible.name: i18n("Next")
+                Accessible.name: Texts.label("next")
                 onClicked: page.stepIndex += 1
             }
 
@@ -845,7 +572,7 @@ Kirigami.ScrollablePage {
                 objectName: "wizBackupStartNowButton"
                 visible: page.currentStage === "summary"
                 icon.name: "media-playback-start"
-                text: i18n("Back Up Now")
+                text: Texts.label("back_up_now")
                 highlighted: true
                 enabled: page.canAdvance
                 Accessible.name: i18n("Save and Back Up Now")

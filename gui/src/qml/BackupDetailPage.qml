@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
     id: page
@@ -15,6 +16,8 @@ Kirigami.ScrollablePage {
     required property var appBackend
     required property string backupId
 
+    // Shortcut of «Back Up Now» for the backup shown here (U12).
+    readonly property string backUpNowShortcut: "Ctrl+Shift+B"
     property var currentData: null
     property var nestedWarnings: []
     property var lintWarnings: []
@@ -58,13 +61,17 @@ Kirigami.ScrollablePage {
                     ? "dialog-password"
                     : "media-playback-start")
             text: currentData && currentData.isRunning
-                ? i18n("Cancel")
+                ? Texts.label("cancel")
                 : (currentData && currentData.hasError && currentData.errorAction === "update_stored_password"
-                    ? i18n("Update Saved Password…")
-                    : i18n("Back Up Now"))
+                    ? appBackend.recoveryActionLabel("update_stored_password")
+                    : Texts.label("back_up_now"))
             enabled: currentData !== null && (currentData.isRunning
                 || (currentData.hasError && currentData.errorAction === "update_stored_password" && appBackend.blocking_kind === "")
                 || (currentData.available && appBackend.blocking_kind === ""))
+            // Ctrl+Shift+B starts this backup; it never cancels a run or opens the password dialog.
+            shortcut: currentData && !currentData.isRunning
+                && !(currentData.hasError && currentData.errorAction === "update_stored_password")
+                ? page.backUpNowShortcut : ""
             tooltip: currentData && currentData.hasError && currentData.errorAction === "update_stored_password"
                 ? i18n("Update saved repository password before backing up")
                 : (currentData && !currentData.available
@@ -85,7 +92,7 @@ Kirigami.ScrollablePage {
             id: detailPauseAction
             objectName: "backupDetailPauseAction"
             icon.name: currentData && currentData.isPaused ? "media-playback-start" : "state-pause"
-            text: currentData && currentData.isPaused ? i18n("Resume") : i18n("Pause…")
+            text: currentData && currentData.isPaused ? Texts.label("resume") : i18n("Pause…")
             enabled: currentData !== null && appBackend.blocking_kind !== "daemon_unreachable"
             tooltip: currentData && currentData.isPaused ? currentData.pausedLine : i18n("Temporarily pause this backup's schedule")
             onTriggered: currentData && currentData.isPaused ? appBackend.resumeBackup(backupId) : backupPauseMenu.popup()
@@ -94,10 +101,11 @@ Kirigami.ScrollablePage {
             id: detailBackUpAnywayAction
             objectName: "backupDetailBackUpAnywayAction"
             icon.name: "media-playback-start"
-            text: i18n("Back Up Now Anyway")
+            text: Texts.label("back_up_now_anyway")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             visible: currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password"
             enabled: currentData !== null && currentData.available && !currentData.isRunning && appBackend.blocking_kind === ""
+            shortcut: visible ? page.backUpNowShortcut : ""
             onTriggered: appBackend.startBackup(backupId)
         },
         Kirigami.Action {
@@ -111,7 +119,7 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             objectName: "backupDetailRenameAction"
             icon.name: "edit-rename"
-            text: i18n("Rename…")
+            text: Texts.label("rename_ellipsis")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: currentData !== null && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: if (currentData) rootWindow.openRenameBackupDialog(backupId, currentData.name)
@@ -119,7 +127,7 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             objectName: "backupDetailShowCommandAction"
             icon.name: "utilities-terminal"
-            text: i18n("Show Command")
+            text: Texts.label("show_command")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: currentData !== null
             onTriggered: if (currentData) rootWindow.openShowCommandDialog(
@@ -130,7 +138,7 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             objectName: "backupDetailRemoveAction"
             icon.name: "list-remove"
-            text: i18n("Remove from Kestic…")
+            text: Texts.label("remove_from_kestic_ellipsis")
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: currentData !== null && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: if (currentData) rootWindow.openRemoveBackupDialog(backupId, currentData.name)
@@ -143,25 +151,25 @@ Kirigami.ScrollablePage {
 
         Controls.MenuItem {
             objectName: "pauseBackup1hItem"
-            text: i18n("1 Hour")
+            text: Texts.label("pause_one_hour")
             Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "1h")
         }
         Controls.MenuItem {
             objectName: "pauseBackup3hItem"
-            text: i18n("3 Hours")
+            text: Texts.label("pause_three_hours")
             Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "3h")
         }
         Controls.MenuItem {
             objectName: "pauseBackupTomorrowItem"
-            text: i18n("Until Tomorrow")
+            text: Texts.label("pause_until_tomorrow")
             Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "tomorrow")
         }
         Controls.MenuItem {
             objectName: "pauseBackupIndefiniteItem"
-            text: i18n("Until I Resume")
+            text: Texts.label("pause_until_resume")
             Accessible.name: text
             onTriggered: appBackend.pauseBackup(backupId, "indefinite")
         }
@@ -183,7 +191,7 @@ Kirigami.ScrollablePage {
                 Kirigami.Action {
                     objectName: "backupDetailResumeAction"
                     icon.name: "media-playback-start"
-                    text: i18n("Resume")
+                    text: Texts.label("resume")
                     onTriggered: appBackend.resumeBackup(backupId)
                 }
             ]
@@ -223,9 +231,8 @@ Kirigami.ScrollablePage {
             type: Kirigami.MessageType.Warning
             visible: page.nestedWarnings.length > 0
             text: page.nestedWarnings.length > 0
-                ? i18n("Nested source overlap with backup '%1' (%2) on the same destination. Files may be stored redundantly or with conflicting exclusions.",
-                       page.nestedWarnings[0].other_backup_name,
-                       page.nestedWarnings[0].other_source_path)
+                ? Texts.labelArgs("source_overlap", [page.nestedWarnings[0].other_backup_name,
+                       page.nestedWarnings[0].other_source_path])
                 : ""
         }
 
@@ -329,7 +336,7 @@ Kirigami.ScrollablePage {
                     objectName: "backupDetailBackUpNowButton"
                     visible: !(currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password")
                     icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
-                    text: currentData && currentData.isRunning ? i18n("Cancel") : i18n("Back Up Now")
+                    text: currentData && currentData.isRunning ? Texts.label("cancel") : Texts.label("back_up_now")
                     enabled: currentData !== null && (currentData.isRunning || (currentData.available && appBackend.blocking_kind === ""))
                     Accessible.name: text
                     Controls.ToolTip.visible: hovered && !enabled
@@ -351,7 +358,7 @@ Kirigami.ScrollablePage {
                     objectName: "backupDetailUpdatePasswordButton"
                     visible: currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password"
                     icon.name: "dialog-password"
-                    text: i18n("Update Saved Password…")
+                    text: appBackend.recoveryActionLabel("update_stored_password")
                     enabled: appBackend.blocking_kind === ""
                     Accessible.name: text
                     onClicked: if (currentData) rootWindow.openUpdatePasswordDialog(currentData.destinationId, currentData.destinationName)
@@ -417,7 +424,7 @@ Kirigami.ScrollablePage {
 
         Kirigami.Heading {
             level: 3
-            text: i18n("Settings")
+            text: Texts.label("settings")
         }
 
         Controls.ItemDelegate {
@@ -451,7 +458,7 @@ Kirigami.ScrollablePage {
                 Controls.Label {
                     text: currentData
                         ? i18n("Source: %1 (%2)", currentData.sourcePath, currentData.sourceKindLabel)
-                        : i18n("Source")
+                        : Texts.label("source")
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -511,7 +518,7 @@ Kirigami.ScrollablePage {
             objectName: "editRetentionRow"
             Layout.fillWidth: true
             activeFocusOnTab: true
-            Accessible.name: i18n("Edit retention policy")
+            Accessible.name: i18n("Edit retention")
             onClicked: {
                 rootWindow.nextTriggerItem = editRetentionRow;
                 rootWindow.openBackupRetentionPage(backupId);
@@ -537,7 +544,7 @@ Kirigami.ScrollablePage {
                 Controls.Label {
                     text: currentData
                         ? i18n("Retention: %1", currentData.retentionSummary)
-                        : i18n("Retention")
+                        : Texts.label("retention")
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -580,7 +587,7 @@ Kirigami.ScrollablePage {
                 Controls.Label {
                     text: currentData
                         ? i18n("Schedule: %1", currentData.scheduleSummary)
-                        : i18n("Schedule")
+                        : Texts.label("schedule")
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -623,7 +630,7 @@ Kirigami.ScrollablePage {
                 Controls.Label {
                     text: currentData
                         ? i18n("Run conditions: %1", currentData.conditionsSummary)
-                        : i18n("Run conditions")
+                        : Texts.label("run_conditions")
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }

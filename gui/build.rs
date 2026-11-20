@@ -73,7 +73,6 @@ fn main() {
         "src/qml/ConditionOverrideDialog.qml",
         "src/qml/UnsavedChangesDialog.qml",
         "src/qml/UnsavedTabSwitchDialog.qml",
-        "src/qml/SpikeMain.qml",
         "src/qml/OverviewPage.qml",
         "src/qml/BackupsPage.qml",
         "src/qml/BackupDetailPage.qml",
@@ -92,6 +91,11 @@ fn main() {
         "src/qml/DestinationMaintenancePage.qml",
         "src/qml/HistoryPage.qml",
         "src/qml/RunDetailPage.qml",
+        "src/qml/DestinationDraft.qml",
+        "src/qml/DestinationTypeChooser.qml",
+        "src/qml/DestinationDetailsForm.qml",
+        "src/qml/DestinationPasswordForm.qml",
+        "src/qml/WizardProgress.qml",
         "src/qml/AddDestinationWizard.qml",
         "src/qml/NewBackupWizard.qml",
         "src/qml/SettingsDialog.qml",
@@ -107,6 +111,7 @@ fn main() {
         "src/smoke_m2.cpp",
         "src/smoke_m3.cpp",
         "src/smoke_m3_editors.cpp",
+        "src/smoke_m3_pages.cpp",
         "src/smoke_m3_util.h",
     ] {
         println!("cargo:rerun-if-changed={cpp}");
@@ -124,6 +129,7 @@ fn main() {
             .cpp_file("src/smoke_m2.cpp")
             .cpp_file("src/smoke_m3.cpp")
             .cpp_file("src/smoke_m3_editors.cpp")
+            .cpp_file("src/smoke_m3_pages.cpp")
             .qt_module("Widgets")
             .qt_module("Quick");
 

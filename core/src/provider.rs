@@ -24,13 +24,13 @@ pub struct ResolvedRestic {
 /// Errors returned when resolving or validating a [`ResticProvider`].
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ResticProviderError {
-    #[error("restic nicht gefunden (mindestens {min_version} nötig)")]
+    #[error("restic not found (at least {min_version} required)")]
     NotFound { min_version: String },
-    #[error("eigener restic-Pfad existiert nicht oder ist nicht ausführbar: {path}")]
+    #[error("custom restic path does not exist or is not executable: {path}")]
     InvalidCustomPath { path: PathBuf, reason: String },
-    #[error("Version von restic nicht erkennbar ({binary}): {detail}")]
+    #[error("unable to determine restic version ({binary}): {detail}")]
     UnreadableVersion { binary: PathBuf, detail: String },
-    #[error("restic {found} ist zu alt, mindestens {min_version} nötig ({binary})")]
+    #[error("restic {found} is too old, at least {min_version} required ({binary})")]
     TooOld {
         binary: PathBuf,
         found: Version,

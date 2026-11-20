@@ -10,6 +10,8 @@ use crate::model::{
 };
 use crate::provider::ResolvedRestic;
 use crate::secrets::{SecretError, SecretStore, SecretValue};
+use kestic_i18n::codes::ErrorKind;
+use kestic_i18n::messages::{Message, completed_message, dns_failed_message};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -33,14 +35,9 @@ pub struct ResticRuntime<'a> {
     pub cache_dir: Option<&'a Path>,
 }
 
-/// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecoveryAction {
-    UpdateStoredPassword,
-    AddToExcludes,
-    CheckResticSource,
-    UnlockRepository,
-}
+/// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`); a code from
+/// `kestic-i18n`, re-exported for the restic error mapping.
+pub use kestic_i18n::codes::RecoveryAction;
 
 /// Classified restic outcome (`AC-M1-03-2`, `FR-37`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,42 +79,38 @@ impl ResticFailureKind {
 
     /// Stable, locale-independent error-kind code used in D-Bus DTOs (`error_kind`).
     ///
-    /// The code set is deliberately small (`wrong_password`, `repo_missing`, `locked`,
-    /// `destination_unreachable`, `auth_failed`, `incomplete_snapshot`, `cancelled`, `unknown`);
-    /// DNS failures count as `destination_unreachable`, everything unrecognised as `unknown`.
-    /// The raw restic/daemon text is carried separately as detail.
-    pub fn error_code(&self) -> &'static str {
+    /// DNS failures count as `destination_unreachable`, everything unrecognised as `unknown`;
+    /// the raw restic/daemon text is carried separately as detail.
+    pub fn error_kind(&self) -> ErrorKind {
         match self {
-            Self::WrongPassword => "wrong_password",
-            Self::RepositoryMissing => "repo_missing",
-            Self::RepositoryLocked => "locked",
-            Self::DestinationUnreachable | Self::DnsResolutionFailed => "destination_unreachable",
-            Self::BackendAuthFailed => "auth_failed",
-            Self::IncompleteSnapshot { .. } => "incomplete_snapshot",
-            Self::Cancelled => "cancelled",
-            Self::None | Self::GenericFailure | Self::Unknown { .. } => "unknown",
+            Self::WrongPassword => ErrorKind::WrongPassword,
+            Self::RepositoryMissing => ErrorKind::RepoMissing,
+            Self::RepositoryLocked => ErrorKind::Locked,
+            Self::DestinationUnreachable | Self::DnsResolutionFailed => {
+                ErrorKind::DestinationUnreachable
+            }
+            Self::BackendAuthFailed => ErrorKind::AuthFailed,
+            Self::IncompleteSnapshot { .. } => ErrorKind::IncompleteSnapshot,
+            Self::Cancelled => ErrorKind::Cancelled,
+            Self::None | Self::GenericFailure | Self::Unknown { .. } => ErrorKind::Unknown,
         }
     }
 
-    /// Canonical English summary string (`NFR-06`; localized in daemon/GUI via gettext).
-    pub fn default_summary(&self) -> String {
+    /// One-sentence summary for notifications and the run history (`FR-37`); finer than
+    /// [`ErrorKind`] (DNS, «Completed», exit code of unknown errors).
+    pub fn summary_message(&self) -> Message {
         match self {
-            Self::None => "Completed".to_string(),
-            Self::Cancelled => "Cancelled by user".to_string(),
-            Self::IncompleteSnapshot { .. } => {
-                "Snapshot incomplete: some files could not be read".to_string()
-            }
-            Self::DestinationUnreachable => "Destination unreachable".to_string(),
-            Self::DnsResolutionFailed => {
-                "Destination hostname could not be resolved (DNS)".to_string()
-            }
-            Self::BackendAuthFailed => "Authentication at destination failed".to_string(),
-            Self::GenericFailure => "Backup command failed".to_string(),
-            Self::RepositoryMissing => "Repository is missing".to_string(),
-            Self::RepositoryLocked => "Repository is locked".to_string(),
-            Self::WrongPassword => "Stored password does not match".to_string(),
-            Self::Unknown { exit_code } => format!("Unknown error (exit {exit_code})"),
+            Self::None => completed_message(),
+            Self::DnsResolutionFailed => dns_failed_message(),
+            Self::Unknown { exit_code } => ErrorKind::Unknown.message(Some(*exit_code), false),
+            other => other.error_kind().message(None, false),
         }
+    }
+
+    /// Canonical English summary (`NFR-06`); the translatable form is
+    /// [`ResticFailureKind::summary_message`].
+    pub fn default_summary(&self) -> String {
+        self.summary_message().english()
     }
 }
 

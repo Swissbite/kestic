@@ -9,13 +9,14 @@ use crate::overall_text::{
     back_up_all_availability, localized_blocking_message, overall_headline, overall_subtitle,
 };
 use crate::state_cache::{
-    daemon_now, ensure_daemon_and_refresh, format_overall_visual, format_pause_line, i18n,
-    initialize_and_sync, localized_condition_override_message, localized_manual_block_message,
-    lookup_backup_summary, make_client, refresh_state_now, shared_state,
+    daemon_now, daemon_unavailable_text, ensure_daemon_and_refresh, format_overall_visual,
+    format_pause_line, i18n, initialize_and_sync, localized_condition_override_message,
+    localized_manual_block_message, localized_unmet_conditions, lookup_backup_summary, make_client,
+    refresh_state_now, shared_state, tr_text,
 };
 use cxx_qt_lib::QString;
 use kestic_core::model::ResticProvider;
-use kestic_daemon::dbus_api::REASON_CONDITION_NOT_MET;
+use kestic_i18n::codes::BlockedReason;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
@@ -103,17 +104,17 @@ impl qobject::KesticApp {
         }
     }
 
-    fn handle_pending_blocked(mut self: Pin<&mut Self>, backup_id: String, reason: String) {
+    fn handle_pending_blocked(mut self: Pin<&mut Self>, backup_id: String, reason: BlockedReason) {
         let (backup_name, unmet_text) = {
             let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
             guard
                 .state
                 .as_ref()
                 .and_then(|s| lookup_backup_summary(s, &backup_id))
-                .map(|b| (b.backup.name.clone(), b.unmet_conditions_text.clone()))
+                .map(|b| (b.backup.name.clone(), localized_unmet_conditions(b)))
                 .unwrap_or_else(|| (backup_id.clone(), None))
         };
-        if reason == REASON_CONDITION_NOT_MET {
+        if reason == BlockedReason::ConditionNotMet {
             let msg = localized_condition_override_message(&backup_name, unmet_text.as_deref());
             self.as_mut()
                 .set_condition_override_backup_id(QString::from(&backup_id));
@@ -127,7 +128,7 @@ impl qobject::KesticApp {
                 QString::from(&msg),
             );
         } else {
-            let msg = localized_manual_block_message(&backup_name, &reason);
+            let msg = localized_manual_block_message(&backup_name, reason);
             self.as_mut()
                 .set_manual_run_blocked_backup_id(QString::from(&backup_id));
             self.as_mut()
@@ -139,13 +140,12 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_blocking_kind(QString::from("daemon_unreachable"));
         self.as_mut().set_blocking_message(QString::from(
-            &i18n("The background service is not running. Scheduled backups will not take place.")
+            &i18n("The background service is not running. Scheduled backups will not run.")
                 .to_string(),
         ));
         self.as_mut().set_has_config_file(false);
-        self.as_mut().set_overall_headline(QString::from(
-            &i18n("Background service not running").to_string(),
-        ));
+        self.as_mut()
+            .set_overall_headline(QString::from(&daemon_unavailable_text()));
         self.as_mut().set_overall_subtitle(QString::from(""));
         self.as_mut().set_overall_icon(QString::from("state-error"));
         self.as_mut()
@@ -205,11 +205,12 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_restic_provider_kind(QString::from(provider_kind));
         self.as_mut()
-            .set_restic_message(QString::from(&state.restic_status.message));
+            .set_restic_message(QString::from(&tr_text(&state.restic_status.status_text())));
 
         // Blocking order (§6.1): Daemon -> SecretStore -> restic (Daemon checked above)
         if let Some(b) = &state.blocking {
-            self.as_mut().set_blocking_kind(QString::from(&b.kind));
+            self.as_mut()
+                .set_blocking_kind(QString::from(b.kind.as_str()));
             self.as_mut()
                 .set_blocking_message(QString::from(&localized_blocking_message(&state)));
         } else {
@@ -221,7 +222,7 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_overall_headline(QString::from(&overall_headline(&state)));
         self.as_mut()
-            .set_overall_subtitle(QString::from(&overall_subtitle(&state.overall)));
+            .set_overall_subtitle(QString::from(&overall_subtitle(&state)));
         self.as_mut().set_overall_icon(QString::from(o_icon));
         self.as_mut().set_overall_color_kind(QString::from(o_color));
         self.as_mut()
