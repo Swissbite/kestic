@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: BSD-2-Clause
+{
+  "extends": "astro/tsconfigs/strictest",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [".astro/types.d.ts", "**/*"],
+  "exclude": ["dist", "node_modules"]
+}

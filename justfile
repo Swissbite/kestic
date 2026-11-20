@@ -70,3 +70,21 @@ test:
     cargo build --bin kestic
     cargo deb -p kestic-gui --fast
     KESTIC_TEST_FAST_INIT=1 cargo nextest run --workspace
+
+# Showcase site (site/). Needs pnpm; pnpm provides Node
+# itself (devEngines.runtime). Screenshots come from target/smoke-artifacts/,
+# so run `just verify` (or the GUI smoke tests) first.
+
+# Check and build the showcase site into site/dist/
+site:
+    pnpm --dir site install --frozen-lockfile
+    pnpm --dir site build
+
+# Run the showcase site dev server
+site-dev:
+    pnpm --dir site install --frozen-lockfile
+    pnpm --dir site dev
+
+# Serve the built showcase site (after `just site`)
+site-preview:
+    pnpm --dir site preview

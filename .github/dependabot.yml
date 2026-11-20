@@ -29,3 +29,21 @@ updates:
       time: "06:00"
       timezone: "Europe/Zurich"
     open-pull-requests-limit: 5
+
+  # Showcase site toolchain (site/, pnpm-lock.yaml). The cooldown matches
+  # minimumReleaseAge in site/pnpm-workspace.yaml.
+  - package-ecosystem: "npm"
+    directory: "/site"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Zurich"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 1
+    groups:
+      site-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
