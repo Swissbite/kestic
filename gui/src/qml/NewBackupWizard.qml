@@ -487,7 +487,7 @@ Kirigami.ScrollablePage {
                 }
 
                 Controls.Label {
-                    text: i18n("Store snapshots in a local directory or mounted drive path.")
+                    text: i18n("Store snapshots in a local folder or on a connected drive.")
                     opacity: 0.75
                     Layout.leftMargin: Kirigami.Units.largeSpacing
                     Layout.fillWidth: true

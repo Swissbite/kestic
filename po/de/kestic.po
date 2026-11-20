@@ -33,7 +33,7 @@ msgid "Destination unreachable"
 msgstr "Ziel nicht erreichbar"
 
 #: daemon/src/i18n.rs:154
-msgid "Destination hostname could not be resolved (DNS)"
+msgid "Destination name not found (DNS)"
 msgstr "Name des Ziels nicht gefunden (DNS)"
 
 #: daemon/src/i18n.rs:156
@@ -154,8 +154,8 @@ msgstr ""
 "«Bestehendes Repository verbinden»."
 
 #: daemon/src/service/destinations.rs:505
-msgid "Folder is not writable: %1"
-msgstr "Ordner ist nicht beschreibbar: %1"
+msgid "Kestic cannot write to the folder: %1"
+msgstr "Kestic kann nicht in den Ordner schreiben: %1"
 
 #: daemon/src/service/destinations.rs:519
 #: daemon/src/service/destinations.rs:590
@@ -184,7 +184,7 @@ msgstr "Quelle nicht verfügbar"
 
 #: daemon/src/service/maintenance.rs:366
 msgid "Maintaining %1"
-msgstr "Wartung für %1"
+msgstr "%1 wird gewartet"
 
 #: daemon/src/service/maintenance.rs:688
 msgid "%1: Maintenance failed"
@@ -1111,8 +1111,8 @@ msgstr ""
 "Laufbedingungen für '%1' sind aktuell nicht erfüllt. Backup trotzdem starten?"
 
 #: gui/src/state_cache.rs:1304
-msgid "Permanent error, fix required"
-msgstr "Dauerhafter Fehler, Behebung nötig"
+msgid "Permanent error, needs fixing"
+msgstr "Dauerhafter Fehler, muss behoben werden"
 
 #: gui/src/state_cache.rs:1307
 msgid "Run conditions not met"
@@ -1171,10 +1171,8 @@ msgid "Local Folder or External Drive"
 msgstr "Lokaler Ordner oder externes Laufwerk"
 
 #: gui/src/qml/AddDestinationWizard.qml:188 gui/src/qml/NewBackupWizard.qml:488
-msgid "Store snapshots in a local directory or mounted drive path."
-msgstr ""
-"Snapshots in einem lokalen Verzeichnis oder auf einem eingehängten Laufwerk "
-"speichern."
+msgid "Store snapshots in a local folder or on a connected drive."
+msgstr "Snapshots in einem lokalen Ordner oder auf einem angeschlossenen Laufwerk speichern."
 
 #: gui/src/qml/AddDestinationWizard.qml:208 gui/src/qml/NewBackupWizard.qml:507
 msgid "Connect to a restic REST server over HTTPS or HTTP."
@@ -1466,12 +1464,8 @@ msgid "Add Wi-Fi network"
 msgstr "WLAN-Netzwerk hinzufügen"
 
 #: gui/src/qml/BackupConditionsEditPage.qml:309
-msgid ""
-"Manual backups ask for confirmation before running if any condition is "
-"currently unmet."
-msgstr ""
-"Manuelle Backups fragen vor dem Start nach einer Bestätigung, falls eine "
-"Bedingung aktuell nicht erfüllt ist."
+msgid "If a condition is not met, manual backups ask before they start."
+msgstr "Ist eine Bedingung nicht erfüllt, fragen manuelle Backups vor dem Start nach."
 
 #: gui/src/qml/BackupDetailPage.qml:12
 msgid "Backup"
@@ -1572,8 +1566,8 @@ msgid "Exclude rules"
 msgstr "Ausschluss-Regeln"
 
 #: gui/src/qml/BackupDetailPage.qml:514
-msgid "Edit retention policy"
-msgstr "Aufbewahrungsrichtlinie bearbeiten"
+msgid "Edit retention"
+msgstr "Aufbewahrung bearbeiten"
 
 #: gui/src/qml/BackupDetailPage.qml:539
 msgid "Retention: %1"
@@ -1924,8 +1918,8 @@ msgid "Preview failed."
 msgstr "Vorschau fehlgeschlagen."
 
 #: gui/src/qml/BackupPreviewPage.qml:116 gui/src/qml/BackupPreviewPage.qml:152
-msgid "Invalid preview response."
-msgstr "Ungültige Vorschau-Antwort."
+msgid "The preview result could not be read."
+msgstr "Das Ergebnis der Vorschau konnte nicht gelesen werden."
 
 #: gui/src/qml/BackupPreviewPage.qml:166
 msgid "Dry-Run Preview"
@@ -2025,14 +2019,8 @@ msgid "Switch Destination?"
 msgstr "Ziel wechseln?"
 
 #: gui/src/qml/BackupReassignPage.qml:58
-msgid ""
-"The snapshot series will start anew on '%1'; the next backup will read "
-"everything again. Existing snapshots remain on '%2' and can still be "
-"restored there."
-msgstr ""
-"Die Snapshot-Reihe beginnt auf '%1' neu; das nächste Backup liest alles "
-"erneut. Bestehende Snapshots bleiben auf '%2' erhalten und können dort "
-"weiterhin wiederhergestellt werden."
+msgid "On '%1' the snapshots start fresh, so the next backup reads all files again. The old snapshots stay on '%2', and you can still restore them there."
+msgstr "Auf '%1' beginnen die Snapshots neu, das nächste Backup liest also alle Dateien wieder. Die alten Snapshots bleiben auf '%2', und Sie können sie dort weiterhin wiederherstellen."
 
 #: gui/src/qml/BackupReassignPage.qml:63
 msgid "Switch Destination"
@@ -2067,30 +2055,12 @@ msgid "How Retention Rules Work"
 msgstr "So funktionieren Aufbewahrungsregeln"
 
 #: gui/src/qml/BackupRetentionPage.qml:399
-msgid ""
-"1. By count ('keep last 7 daily'):\n"
-"Counts only days on which a backup was actually created. Days without "
-"backups are skipped.\n"
-"Example: If your PC only ran Mon–Thu each week (4 days/week), '7 daily' "
-"keeps the last 7 backup days across almost 2 weeks."
-msgstr ""
-"1. Nach Anzahl («letzte 7 tägliche behalten»):\n"
-"Zählt nur Tage, an denen tatsächlich ein Backup erstellt wurde. Tage ohne "
-"Backup werden übersprungen.\n"
-"Beispiel: Lief Ihr PC in den letzten 2 Wochen jeweils Mo–Do (4 Tage/Woche), "
-"behält «7 tägliche» die letzten 7 Sicherungstage über fast 2 Wochen hinweg."
+msgid "1. By count ('keep last 7 daily'):\nOnly days with a backup count. Days without a backup are skipped.\nExample: Your PC runs only from Monday to Thursday. Then '7 daily' keeps the backups of the last 7 days with a backup, which covers almost 2 weeks."
+msgstr "1. Nach Anzahl («letzte 7 tägliche behalten»):\nEs zählen nur Tage mit einem Backup. Tage ohne Backup werden übersprungen.\nBeispiel: Ihr PC läuft nur von Montag bis Donnerstag. Dann behält «7 tägliche» die Backups der letzten 7 Tage mit Backup, also fast 2 Wochen."
 
 #: gui/src/qml/BackupRetentionPage.qml:405
-msgid ""
-"2. By time period ('daily for last 7 days'):\n"
-"Measures calendar time backwards from the newest snapshot.\n"
-"Example: 'Daily for last 7 days' keeps 1 daily backup for each calendar day "
-"within the 7-day window before the latest backup."
-msgstr ""
-"2. Nach Zeitraum («täglich für die letzten 7 Tage»):\n"
-"Misst die Kalenderzeit vom neuesten Snapshot rückwärts.\n"
-"Beispiel: «Täglich für die letzten 7 Tage» behält je 1 Tages-Backup für "
-"jeden Kalendertag innerhalb des 7-Tage-Fensters vor dem neuesten Backup."
+msgid "2. By time period ('daily for the last 7 days'):\nCounts calendar days back from the newest snapshot.\nExample: 'Daily for the last 7 days' keeps one backup per day for the 7 days before the newest backup."
+msgstr "2. Nach Zeitraum («täglich für die letzten 7 Tage»):\nZählt Kalendertage ab dem neuesten Snapshot zurück.\nBeispiel: «Täglich für die letzten 7 Tage» behält ein Backup pro Tag für die 7 Tage vor dem neuesten Backup."
 
 #: gui/src/qml/BackupRetentionPage.qml:416
 msgid "You have unsaved changes to retention rules."
@@ -2109,12 +2079,8 @@ msgstr ""
 "%1"
 
 #: gui/src/qml/BackupRetentionPage.qml:432
-msgid ""
-"Saving these rules will mark %1 existing snapshots for removal on the next "
-"run."
-msgstr ""
-"Beim Speichern dieser Regeln werden %1 bestehende Snapshots beim nächsten "
-"Lauf zum Entfernen vorgemerkt."
+msgid "If you save these rules, the next run removes %1 existing snapshots."
+msgstr "Wenn Sie diese Regeln speichern, entfernt der nächste Lauf %1 bestehende Snapshots."
 
 #: gui/src/qml/BackupRetentionPage.qml:439
 msgid "Save Rules"
@@ -2185,16 +2151,12 @@ msgid "By count: keep last n…"
 msgstr "Nach Anzahl: letzte n behalten…"
 
 #: gui/src/qml/BackupRetentionPage.qml:622
-msgid "Explain count-based retention rules"
-msgstr "Anzahlbasierte Aufbewahrungsregeln erklären"
+msgid "Explain count rules"
+msgstr "Anzahlregeln erklären"
 
 #: gui/src/qml/BackupRetentionPage.qml:625
-msgid ""
-"Counts only days with backups (skips days without backups). Click for an "
-"example."
-msgstr ""
-"Zählt nur Tage mit Backups (überspringt Tage ohne Backup). Für ein Beispiel "
-"klicken."
+msgid "Only days with a backup count. Click for an example."
+msgstr "Es zählen nur Tage mit einem Backup. Für ein Beispiel klicken."
 
 #: gui/src/qml/BackupRetentionPage.qml:631
 msgid "Last backups:"
@@ -2230,30 +2192,20 @@ msgid "By time period: keep all… for last"
 msgstr "Nach Zeitraum: alle… behalten für die letzten"
 
 #: gui/src/qml/BackupRetentionPage.qml:730
-msgid "Explain time-period retention rules"
-msgstr "Zeitraumbasierte Aufbewahrungsregeln erklären"
+msgid "Explain time rules"
+msgstr "Zeitraumregeln erklären"
 
 #: gui/src/qml/BackupRetentionPage.qml:733
-msgid ""
-"Measures calendar time backwards from the newest snapshot. Click for an "
-"example."
-msgstr ""
-"Misst die Kalenderzeit vom neuesten Snapshot rückwärts. Für ein Beispiel "
-"klicken."
+msgid "Counts calendar days back from the newest snapshot. Click for an example."
+msgstr "Zählt Kalendertage ab dem neuesten Snapshot zurück. Für ein Beispiel klicken."
 
 #: gui/src/qml/BackupRetentionPage.qml:739
 msgid "All backups:"
 msgstr "Alle Backups:"
 
 #: gui/src/qml/BackupRetentionPage.qml:828
-msgid ""
-"Count rules ('last 7 daily') skip days without backups. Time-period rules "
-"('daily of the last 7 days') measure calendar days backwards from the newest "
-"snapshot."
-msgstr ""
-"Anzahlregeln («letzte 7 tägliche») überspringen Tage ohne Backups. "
-"Zeitraumregeln («täglich in den letzten 7 Tagen») zählen Kalendertage vom "
-"neuesten Snapshot rückwärts."
+msgid "Count rules ('last 7 daily') skip days without a backup. Time rules ('daily for the last 7 days') count calendar days back from the newest snapshot."
+msgstr "Anzahlregeln («letzte 7 tägliche») überspringen Tage ohne Backup. Zeitraumregeln («täglich für die letzten 7 Tage») zählen Kalendertage ab dem neuesten Snapshot zurück."
 
 #: gui/src/qml/BackupRetentionPage.qml:832
 msgid "Show Example…"
@@ -2346,8 +2298,8 @@ msgid "Report overdue after:"
 msgstr "Überfällig melden nach:"
 
 #: gui/src/qml/BackupScheduleEditPage.qml:581
-msgid "Use global default (%1 missed slot)"
-msgid_plural "Use global default (%1 missed slots)"
+msgid "Use global default (%1 missed run)"
+msgid_plural "Use global default (%1 missed runs)"
 msgstr[0] "Globalen Standard verwenden (%1 verpasster Termin)"
 msgstr[1] "Globalen Standard verwenden (%1 verpasste Termine)"
 
@@ -2356,11 +2308,11 @@ msgid "Use global default overdue threshold"
 msgstr "Globalen Standard-Schwellenwert für Überfälligkeit verwenden"
 
 #: gui/src/qml/BackupScheduleEditPage.qml:598
-msgid "Missed slots before reporting overdue"
+msgid "Missed runs before reporting overdue"
 msgstr "Verpasste Termine, bevor «überfällig» gemeldet wird"
 
 #: gui/src/qml/BackupScheduleEditPage.qml:604
-msgid "missed slots"
+msgid "missed runs"
 msgstr "verpassten Terminen"
 
 #: gui/src/qml/BackupScheduleEditPage.qml:615
@@ -2403,13 +2355,8 @@ msgid "Change Source?"
 msgstr "Quelle ändern?"
 
 #: gui/src/qml/BackupSourceEditPage.qml:146
-msgid ""
-"Snapshot history is preserved; the next backup will scan the new folder "
-"completely. Please review any exclude rules with absolute paths."
-msgstr ""
-"Die Snapshot-Historie bleibt erhalten; das nächste Backup durchsucht den "
-"neuen Ordner vollständig. Bitte prüfen Sie eventuelle Ausschluss-Regeln mit "
-"absoluten Pfaden."
+msgid "Your snapshots stay. The next backup reads the new folder completely. Please check exclude rules that use full paths."
+msgstr "Ihre Snapshots bleiben erhalten. Das nächste Backup liest den neuen Ordner vollständig. Bitte prüfen Sie Ausschluss-Regeln mit vollständigen Pfaden."
 
 #: gui/src/qml/BackupSourceEditPage.qml:153
 msgid "Change Source"
@@ -2494,12 +2441,6 @@ msgstr "Verbindung bearbeiten…"
 msgid "Remove Destination…"
 msgstr "Ziel entfernen…"
 
-#: gui/src/qml/DestinationDetailPage.qml:63
-msgid "First remove backups from Kestic or assign them to another destination"
-msgstr ""
-"Entfernen Sie zuerst die Backups aus Kestic oder weisen Sie sie einem "
-"anderen Ziel zu"
-
 #: gui/src/qml/DestinationDetailPage.qml:64
 msgid "Remove destination from Kestic"
 msgstr "Ziel aus Kestic entfernen"
@@ -2519,15 +2460,10 @@ msgid "Unlock…"
 msgstr "Entsperren…"
 
 #: gui/src/qml/DestinationDetailPage.qml:110
-msgid "%1 backup still has retention pending from a previous locked run."
-msgid_plural ""
-"%1 backups still have retention pending from a previous locked run."
-msgstr[0] ""
-"Bei %1 Backup steht die Aufbewahrung aus einem früheren gesperrten Lauf noch "
-"aus."
-msgstr[1] ""
-"Bei %1 Backups steht die Aufbewahrung aus einem früheren gesperrten Lauf "
-"noch aus."
+msgid "%1 backup still waits for retention because the destination was locked."
+msgid_plural "%1 backups still wait for retention because the destination was locked."
+msgstr[0] "%1 Backup wartet noch auf die Aufbewahrung, weil das Ziel gesperrt war."
+msgstr[1] "%1 Backups warten noch auf die Aufbewahrung, weil das Ziel gesperrt war."
 
 #: gui/src/qml/DestinationDetailPage.qml:116
 msgid "Run Maintenance Now"
@@ -2591,12 +2527,6 @@ msgstr "Wartungszeitplan bearbeiten"
 #: gui/src/qml/DestinationDetailPage.qml:235
 msgid "Edit maintenance schedule…"
 msgstr "Wartungszeitplan bearbeiten…"
-
-#: gui/src/qml/DestinationDetailPage.qml:249
-msgid "Remove destination requires removing or reassigning its backups first."
-msgstr ""
-"Um das Ziel zu entfernen, müssen dessen Backups zuerst entfernt oder neu "
-"zugewiesen werden."
 
 #: gui/src/qml/DestinationEditPage.qml:13
 msgid "Edit Connection"
@@ -2666,16 +2596,16 @@ msgid "Maintenance schedule saved"
 msgstr "Wartungszeitplan gespeichert"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:166
-msgid "Packs to remove: %1"
-msgstr "Zu entfernende Packs: %1"
+msgid "Data blocks to remove: %1"
+msgstr "Zu entfernende Datenblöcke: %1"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:169
-msgid "Packs to keep: %1"
-msgstr "Zu behaltende Packs: %1"
+msgid "Data blocks to keep: %1"
+msgstr "Zu behaltende Datenblöcke: %1"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:176
 msgid "Space to free: %1"
-msgstr "Freizugebender Speicher: %1"
+msgstr "Frei werdender Speicher: %1"
 
 #: gui/src/qml/DestinationMaintenancePage.qml:179
 msgid "The preview reported no data to remove."
@@ -3085,16 +3015,8 @@ msgid "expert file rule"
 msgstr "Experten-Dateiregel"
 
 #: gui/src/qml/RunDetailPage.qml:100
-msgid ""
-"Generated rule (%1): %2\n"
-"\n"
-"This path will no longer be backed up starting with the next backup. "
-"Existing snapshots remain unchanged."
-msgstr ""
-"Erstellte Regel (%1): %2\n"
-"\n"
-"Dieser Pfad wird ab dem nächsten Backup nicht mehr gesichert. Bestehende "
-"Snapshots bleiben unverändert."
+msgid "New rule (%1): %2\n\nFrom the next backup on, this path is no longer backed up. Existing snapshots do not change."
+msgstr "Neue Regel (%1): %2\n\nAb dem nächsten Backup wird dieser Pfad nicht mehr gesichert. Bestehende Snapshots ändern sich nicht."
 
 #: gui/src/qml/RunDetailPage.qml:109
 msgid "Add and Save"
@@ -3229,12 +3151,12 @@ msgid "Monitoring & Notifications"
 msgstr "Überwachung & Benachrichtigungen"
 
 #: gui/src/qml/SettingsDialog.qml:188
-msgid "Mark overdue after missed slots:"
-msgstr "Als überfällig markieren nach verpassten Läufen:"
+msgid "Mark overdue after missed runs:"
+msgstr "Als überfällig markieren nach verpassten Terminen:"
 
 #: gui/src/qml/SettingsDialog.qml:192
-msgid "Mark overdue after missed slots"
-msgstr "Als überfällig markieren nach verpassten Läufen"
+msgid "Mark overdue after missed runs"
+msgstr "Als überfällig markieren nach verpassten Terminen"
 
 #: gui/src/qml/SettingsDialog.qml:197
 msgid "A scheduled backup counts as overdue when this many scheduled runs in a row did not happen."
@@ -3297,12 +3219,8 @@ msgid "Not running"
 msgstr "Läuft nicht"
 
 #: gui/src/qml/SettingsDialog.qml:265
-msgid ""
-"Closing the window does not exit Kestic; backups continue running. To quit, "
-"use the Kestic icon in the system tray."
-msgstr ""
-"Durch das Schliessen des Fensters wird Kestic nicht beendet; Backups laufen "
-"weiter. Verwenden Sie zum Beenden das Kestic-Symbol im Systemabschnitt."
+msgid "Closing the window does not quit Kestic; backups keep running. To quit, use the Kestic icon in the system tray."
+msgstr "Wenn Sie das Fenster schliessen, läuft Kestic weiter, auch die Backups. Zum Beenden verwenden Sie das Kestic-Symbol im Systemabschnitt."
 
 #: gui/src/qml/SettingsDialog.qml:274
 msgid "restic"
@@ -3333,9 +3251,8 @@ msgid "Update restic now"
 msgstr "restic jetzt aktualisieren"
 
 #: gui/src/qml/SettingsDialog.qml:317
-msgid "App-managed restic updates will arrive in a future version."
-msgstr ""
-"App-verwaltete restic-Aktualisierungen folgen in einer zukünftigen Version."
+msgid "Kestic will update restic itself in a future version."
+msgstr "Kestic wird restic in einer zukünftigen Version selbst aktualisieren."
 
 #: gui/src/qml/ShowCommandDialog.qml:12
 msgid "Command · %1"
@@ -3346,8 +3263,8 @@ msgid "Command"
 msgstr "Befehl"
 
 #: gui/src/qml/ShowCommandDialog.qml:37
-msgid "Transparent restic command without plaintext secrets:"
-msgstr "Transparenter restic-Befehl ohne Klartext-Passwörter:"
+msgid "restic command (without passwords):"
+msgstr "restic-Befehl (ohne Passwörter):"
 
 #: gui/src/qml/SpikeMain.qml:25
 msgid "Back Up Now triggered (Ctrl+Shift+B)"
@@ -3412,12 +3329,8 @@ msgid "Verify and Save"
 msgstr "Prüfen und speichern"
 
 #: gui/src/qml/UpdatePasswordDialog.qml:42
-msgid ""
-"The saved password in your password store for '%1' does not match. The "
-"destination's own password is not changed."
-msgstr ""
-"Das für '%1' im Passwortspeicher hinterlegte Passwort stimmt nicht überein. "
-"Das Passwort des Ziels selbst wird dadurch nicht geändert."
+msgid "The saved password for '%1' does not match. Here you only change the saved password, not the password of the destination."
+msgstr "Das gespeicherte Passwort für '%1' stimmt nicht. Hier ändern Sie nur das gespeicherte Passwort, nicht das Passwort des Ziels."
 
 #: gui/src/state_cache.rs
 msgid "Deleted backup"

@@ -30,7 +30,7 @@ fn restic_failure_kinds_map_to_error_kinds() {
 fn restic_failure_summary_keeps_dns_and_exit_code_detail() {
     assert_eq!(
         ResticFailureKind::DnsResolutionFailed.default_summary(),
-        "Destination hostname could not be resolved (DNS)"
+        "Destination name not found (DNS)"
     );
     assert_eq!(
         ResticFailureKind::Unknown { exit_code: 99 }.default_summary(),

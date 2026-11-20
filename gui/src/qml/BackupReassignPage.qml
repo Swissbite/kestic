@@ -55,7 +55,7 @@ Kirigami.ScrollablePage {
             ? i18n("Back up '%1' to '%2'?", backupData.name, page.selectedDestName)
             : i18n("Switch Destination?")
         subtitle: backupData
-            ? i18n("The snapshot series will start anew on '%1'; the next backup will read everything again. Existing snapshots remain on '%2' and can still be restored there.", page.selectedDestName, backupData.destinationName)
+            ? i18n("On '%1' the snapshots start fresh, so the next backup reads all files again. The old snapshots stay on '%2', and you can still restore them there.", page.selectedDestName, backupData.destinationName)
             : ""
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [

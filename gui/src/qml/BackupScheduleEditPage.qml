@@ -578,7 +578,7 @@ Kirigami.ScrollablePage {
                 objectName: "useGlobalOverdueCheck"
                 visible: page.scheduleKind !== "manual_only"
                 Kirigami.FormData.label: i18n("Report overdue after:")
-                text: i18np("Use global default (%1 missed slot)", "Use global default (%1 missed slots)", appBackend.default_overdue_threshold)
+                text: i18np("Use global default (%1 missed run)", "Use global default (%1 missed runs)", appBackend.default_overdue_threshold)
                 checked: page.useGlobalOverdue
                 Accessible.name: i18n("Use global default overdue threshold")
                 onToggled: if (!page.hydrating) page.useGlobalOverdue = checked
@@ -595,13 +595,13 @@ Kirigami.ScrollablePage {
                     to: 99
                     value: page.customOverdueThreshold
                     editable: true
-                    Accessible.name: i18n("Missed slots before reporting overdue")
+                    Accessible.name: i18n("Missed runs before reporting overdue")
                     onValueModified: if (!page.hydrating) page.customOverdueThreshold = value
                     onValueChanged: if (!page.hydrating && page.customOverdueThreshold !== value) page.customOverdueThreshold = value
                 }
 
                 Controls.Label {
-                    text: i18n("missed slots")
+                    text: i18n("missed runs")
                 }
             }
         }

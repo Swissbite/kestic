@@ -163,10 +163,10 @@ Kirigami.ScrollablePage {
                 var sum = JSON.parse(rawJson);
                 var parts = [];
                 if (sum.delete_packs !== null && sum.delete_packs !== undefined) {
-                    parts.push(i18n("Packs to remove: %1", sum.delete_packs));
+                    parts.push(i18n("Data blocks to remove: %1", sum.delete_packs));
                 }
                 if (sum.keep_packs !== null && sum.keep_packs !== undefined) {
-                    parts.push(i18n("Packs to keep: %1", sum.keep_packs));
+                    parts.push(i18n("Data blocks to keep: %1", sum.keep_packs));
                 }
                 // restic's own summary line is English text: show only the localized size.
                 var sizeMatch = sum.freed_summary

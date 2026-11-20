@@ -325,7 +325,7 @@ Kirigami.ScrollablePage {
         }
 
         Controls.Label {
-            text: i18n("Manual backups ask for confirmation before running if any condition is currently unmet.")
+            text: i18n("If a condition is not met, manual backups ask before they start.")
             opacity: 0.75
             wrapMode: Text.WordWrap
             Layout.fillWidth: true

@@ -135,9 +135,7 @@ pub fn completed_message() -> Message {
 
 /// The destination host name could not be resolved.
 pub fn dns_failed_message() -> Message {
-    Message::new(i18n_noop(
-        "Destination hostname could not be resolved (DNS)",
-    ))
+    Message::new(i18n_noop("Destination name not found (DNS)"))
 }
 
 impl RecoveryAction {
@@ -266,7 +264,7 @@ impl SkipReason {
     /// names the cause; an unknown cause shows the raw `detail`.
     pub fn text(self, error_kind: Option<ErrorKind>, detail: Option<&str>) -> UiText {
         let msgid = match self {
-            Self::PermanentError => i18n_noop("Permanent error, fix required"),
+            Self::PermanentError => i18n_noop("Permanent error, needs fixing"),
             Self::SourceUnavailable => return UiText::Message(SourceStatus::message(None)),
             Self::DestinationUnreachable => {
                 return UiText::Message(ErrorKind::DestinationUnreachable.message(None, false));
@@ -356,9 +354,10 @@ impl ConnectionTestCode {
             Self::RepositoryExists => Message::new(i18n_noop(
                 "This folder already contains a restic repository. Choose 'Connect existing repository' instead.",
             )),
-            Self::NotWritable => {
-                Message::with_args(i18n_noop("Folder is not writable: %1"), &[detail])
-            }
+            Self::NotWritable => Message::with_args(
+                i18n_noop("Kestic cannot write to the folder: %1"),
+                &[detail],
+            ),
             Self::MissingPassword => {
                 Message::new(i18n_noop("No repository password entered or saved."))
             }
@@ -481,10 +480,12 @@ pub enum Label {
     PauseUntilResume,
     NoBackups,
     AllBackedUp,
+    /// A destination with backups cannot be removed (same text as the `InUse` error).
+    RemoveBackupsFirst,
 }
 
 impl Label {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::BackUpNow,
         Self::PauseSchedules,
         Self::ResumeSchedules,
@@ -495,6 +496,7 @@ impl Label {
         Self::PauseUntilResume,
         Self::NoBackups,
         Self::AllBackedUp,
+        Self::RemoveBackupsFirst,
     ];
 
     /// Code used by QML.
@@ -510,6 +512,7 @@ impl Label {
             Self::PauseUntilResume => "pause_until_resume",
             Self::NoBackups => "no_backups",
             Self::AllBackedUp => "all_data_backed_up",
+            Self::RemoveBackupsFirst => "remove_backups_first",
         }
     }
 
@@ -530,6 +533,7 @@ impl Label {
             Self::PauseUntilResume => Message::new(i18n_noop("Until I Resume")),
             Self::NoBackups => no_backups_message(),
             Self::AllBackedUp => all_backed_up_message(),
+            Self::RemoveBackupsFirst => ServiceErrorCode::InUse.message(),
         }
     }
 }

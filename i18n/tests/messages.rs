@@ -108,7 +108,7 @@ fn source_blocked_and_skip_codes_map_to_texts() {
     );
     assert_eq!(
         SkipReason::PermanentError.text(Some(ErrorKind::WrongPassword), None),
-        UiText::Message(Message::new("Permanent error, fix required"))
+        UiText::Message(Message::new("Permanent error, needs fixing"))
     );
 }
 
@@ -367,7 +367,7 @@ fn every_source_blocked_and_skip_code_maps_to_its_msgid() {
 
     use SkipReason as K;
     let skip = [
-        (K::PermanentError, Some("Permanent error, fix required")),
+        (K::PermanentError, Some("Permanent error, needs fixing")),
         (K::SourceUnavailable, Some("Source unavailable")),
         (K::DestinationUnreachable, Some("Destination unreachable")),
         (K::ConditionNotMet, Some("Run conditions not met")),
@@ -426,7 +426,10 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
                 "This folder already contains a restic repository. Choose 'Connect existing repository' instead.",
             ),
         ),
-        (C::NotWritable, Some("Folder is not writable: %1")),
+        (
+            C::NotWritable,
+            Some("Kestic cannot write to the folder: %1"),
+        ),
         (
             C::MissingPassword,
             Some("No repository password entered or saved."),

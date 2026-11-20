@@ -34,7 +34,7 @@ Kirigami.Dialog {
         spacing: Kirigami.Units.smallSpacing
 
         Controls.Label {
-            text: i18n("Transparent restic command without plaintext secrets:")
+            text: i18n("restic command (without passwords):")
             opacity: 0.8
             wrapMode: Text.WordWrap
             Layout.fillWidth: true

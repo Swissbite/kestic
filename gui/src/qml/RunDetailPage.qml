@@ -97,7 +97,7 @@ Kirigami.ScrollablePage {
         id: addExcludeDialog
         objectName: "addExcludePromptDialog"
         title: i18n("Add to Exclude Rules?")
-        subtitle: i18n("Generated rule (%1): %2\n\nThis path will no longer be backed up starting with the next backup. Existing snapshots remain unchanged.",
+        subtitle: i18n("New rule (%1): %2\n\nFrom the next backup on, this path is no longer backed up. Existing snapshots do not change.",
                        page.pendingExcludeIsDir ? i18n("folder rule") : i18n("expert file rule"),
                        page.pendingExcludeRuleLabel !== "" ? page.pendingExcludeRuleLabel : page.pendingExcludePath)
         standardButtons: Kirigami.Dialog.Cancel

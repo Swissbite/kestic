@@ -113,7 +113,7 @@ Kirigami.ScrollablePage {
             } catch (e) {
                 stop();
                 page.dryRunState = "error";
-                page.dryRunError = i18n("Invalid preview response.");
+                page.dryRunError = i18n("The preview result could not be read.");
             }
         }
     }
@@ -149,7 +149,7 @@ Kirigami.ScrollablePage {
             } catch (e) {
                 stop();
                 page.retentionPreviewState = "error";
-                page.retentionPreviewError = i18n("Invalid preview response.");
+                page.retentionPreviewError = i18n("The preview result could not be read.");
             }
         }
     }

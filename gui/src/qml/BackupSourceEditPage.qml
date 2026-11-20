@@ -143,7 +143,7 @@ Kirigami.ScrollablePage {
         id: confirmChangeDialog
         objectName: "confirmChangeSourceDialog"
         title: i18n("Change Source?")
-        subtitle: i18n("Snapshot history is preserved; the next backup will scan the new folder completely. Please review any exclude rules with absolute paths.")
+        subtitle: i18n("Your snapshots stay. The next backup reads the new folder completely. Please check exclude rules that use full paths.")
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {

@@ -579,7 +579,7 @@ int scenario_maintenance(const Ctx& c) {
     M3_CHECK_EQ(
         3918,
         result->property("text").toString(),
-        loc(c.lang, "Packs to remove: 0\nSpace to free: 0 B", "Zu entfernende Packs: 0\nFreizugebender Speicher: 0 B"),
+        loc(c.lang, "Data blocks to remove: 0\nSpace to free: 0 B", "Zu entfernende Datenblöcke: 0\nFrei werdender Speicher: 0 B"),
         "preview result text"
     );
     M3_CHECK(3919, confirm->property("enabled").toBool(), "confirmation must be enabled once the preview is shown");

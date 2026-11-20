@@ -513,7 +513,7 @@ Kirigami.ScrollablePage {
             objectName: "editRetentionRow"
             Layout.fillWidth: true
             activeFocusOnTab: true
-            Accessible.name: i18n("Edit retention policy")
+            Accessible.name: i18n("Edit retention")
             onClicked: {
                 rootWindow.nextTriggerItem = editRetentionRow;
                 rootWindow.openBackupRetentionPage(backupId);

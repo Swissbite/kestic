@@ -185,11 +185,11 @@ Kirigami.ApplicationWindow {
             Controls.SpinBox {
                 id: defaultOverdueSpinBox
                 objectName: "defaultOverdueSpinBox"
-                Kirigami.FormData.label: i18n("Mark overdue after missed slots:")
+                Kirigami.FormData.label: i18n("Mark overdue after missed runs:")
                 from: 1
                 to: 99
                 value: appBackend.default_overdue_threshold
-                Accessible.name: i18n("Mark overdue after missed slots")
+                Accessible.name: i18n("Mark overdue after missed runs")
                 onValueModified: settingsWindow.saveSettingsFromUi()
             }
 
@@ -262,7 +262,7 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.Label {
-                text: i18n("Closing the window does not exit Kestic; backups continue running. To quit, use the Kestic icon in the system tray.")
+                text: i18n("Closing the window does not quit Kestic; backups keep running. To quit, use the Kestic icon in the system tray.")
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -314,7 +314,7 @@ Kirigami.ApplicationWindow {
                     enabled: false
                     Accessible.name: i18n("Update restic now")
                     Controls.ToolTip.visible: hovered
-                    Controls.ToolTip.text: i18n("App-managed restic updates will arrive in a future version.")
+                    Controls.ToolTip.text: i18n("Kestic will update restic itself in a future version.")
                 }
             }
         }

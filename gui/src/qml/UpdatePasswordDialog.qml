@@ -39,7 +39,7 @@ Kirigami.Dialog {
         spacing: Kirigami.Units.smallSpacing
 
         Controls.Label {
-            text: i18n("The saved password in your password store for '%1' does not match. The destination's own password is not changed.", dialog.destName)
+            text: i18n("The saved password for '%1' does not match. Here you only change the saved password, not the password of the destination.", dialog.destName)
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }

@@ -396,13 +396,13 @@ Kirigami.ScrollablePage {
             spacing: Kirigami.Units.mediumSpacing
 
             Controls.Label {
-                text: i18n("1. By count ('keep last 7 daily'):\nCounts only days on which a backup was actually created. Days without backups are skipped.\nExample: If your PC only ran Mon–Thu each week (4 days/week), '7 daily' keeps the last 7 backup days across almost 2 weeks.")
+                text: i18n("1. By count ('keep last 7 daily'):\nOnly days with a backup count. Days without a backup are skipped.\nExample: Your PC runs only from Monday to Thursday. Then '7 daily' keeps the backups of the last 7 days with a backup, which covers almost 2 weeks.")
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
 
             Controls.Label {
-                text: i18n("2. By time period ('daily for last 7 days'):\nMeasures calendar time backwards from the newest snapshot.\nExample: 'Daily for last 7 days' keeps 1 daily backup for each calendar day within the 7-day window before the latest backup.")
+                text: i18n("2. By time period ('daily for the last 7 days'):\nCounts calendar days back from the newest snapshot.\nExample: 'Daily for the last 7 days' keeps one backup per day for the 7 days before the newest backup.")
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
@@ -429,7 +429,7 @@ Kirigami.ScrollablePage {
         title: i18n("%1 snapshots will be permanently removed on the next run", page.pendingRemoveCount)
         subtitle: page.pendingRemoveSnapshots.length > 0
             ? i18n("Snapshots that will be removed:\n%1", page.pendingRemoveSnapshots.slice(0, 8).join("\n"))
-            : i18n("Saving these rules will mark %1 existing snapshots for removal on the next run.", page.pendingRemoveCount)
+            : i18n("If you save these rules, the next run removes %1 existing snapshots.", page.pendingRemoveCount)
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {
@@ -619,10 +619,10 @@ Kirigami.ScrollablePage {
                 icon.name: "help-contextual"
                 text: "?"
                 display: Controls.AbstractButton.IconOnly
-                Accessible.name: i18n("Explain count-based retention rules")
+                Accessible.name: i18n("Explain count rules")
                 Controls.ToolTip.visible: hovered || activeFocus
                 Controls.ToolTip.delay: 150
-                Controls.ToolTip.text: i18n("Counts only days with backups (skips days without backups). Click for an example.")
+                Controls.ToolTip.text: i18n("Only days with a backup count. Click for an example.")
                 onClicked: retentionExamplesDialog.open()
             }
         }
@@ -727,10 +727,10 @@ Kirigami.ScrollablePage {
                 icon.name: "help-contextual"
                 text: "?"
                 display: Controls.AbstractButton.IconOnly
-                Accessible.name: i18n("Explain time-period retention rules")
+                Accessible.name: i18n("Explain time rules")
                 Controls.ToolTip.visible: hovered || activeFocus
                 Controls.ToolTip.delay: 150
-                Controls.ToolTip.text: i18n("Measures calendar time backwards from the newest snapshot. Click for an example.")
+                Controls.ToolTip.text: i18n("Counts calendar days back from the newest snapshot. Click for an example.")
                 onClicked: retentionExamplesDialog.open()
             }
         }
@@ -825,7 +825,7 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             type: Kirigami.MessageType.Information
             visible: true
-            text: i18n("Count rules ('last 7 daily') skip days without backups. Time-period rules ('daily of the last 7 days') measure calendar days backwards from the newest snapshot.")
+            text: i18n("Count rules ('last 7 daily') skip days without a backup. Time rules ('daily for the last 7 days') count calendar days back from the newest snapshot.")
             actions: [
                 Kirigami.Action {
                     icon.name: "help-contextual"

@@ -5,8 +5,10 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
+    readonly property SharedTexts sharedTexts: SharedTexts {}
     id: page
     objectName: "destinationDetailPage"
     title: currentData ? currentData.name : i18n("Destination")
@@ -60,7 +62,7 @@ Kirigami.ScrollablePage {
             displayHint: Kirigami.DisplayHint.AlwaysHide
             enabled: currentData !== null && currentData.backupCount === 0 && appBackend.blocking_kind !== "daemon_unreachable"
             tooltip: currentData && currentData.backupCount > 0
-                ? i18n("First remove backups from Kestic or assign them to another destination")
+                ? sharedTexts.label("remove_backups_first")
                 : i18n("Remove destination from Kestic")
             onTriggered: if (currentData) rootWindow.openRemoveDestinationDialog(destinationId, currentData.name)
         }
@@ -107,7 +109,7 @@ Kirigami.ScrollablePage {
             type: Kirigami.MessageType.Warning
             visible: currentData !== null && currentData.pendingForgetCount > 0
             text: currentData
-                ? i18np("%1 backup still has retention pending from a previous locked run.", "%1 backups still have retention pending from a previous locked run.", currentData.pendingForgetCount)
+                ? i18np("%1 backup still waits for retention because the destination was locked.", "%1 backups still wait for retention because the destination was locked.", currentData.pendingForgetCount)
                 : ""
             actions: [
                 Kirigami.Action {
@@ -253,7 +255,7 @@ Kirigami.ScrollablePage {
 
         Controls.Label {
             visible: currentData !== null && currentData.backupCount > 0
-            text: i18n("Remove destination requires removing or reassigning its backups first.")
+            text: sharedTexts.label("remove_backups_first")
             opacity: 0.75
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
