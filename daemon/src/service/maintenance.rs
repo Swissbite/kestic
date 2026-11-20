@@ -351,7 +351,7 @@ fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
         None
     };
     let _inhibit_guard = if ctx.enable_portal_inhibit {
-        PortalInhibitGuard::acquire_default(&format!("Kestic maintenance: {}", ctx.dest.name)).ok()
+        PortalInhibitGuard::acquire_default(&tr(&maintaining_message(&ctx.dest.name))).ok()
     } else {
         None
     };

@@ -129,7 +129,7 @@ Jeder Text hat genau einen Ort:
 - **Nur Daemon:** als `i18n("…")` in `daemon/src` (Tray-Menü, Benachrichtigungen, Lauf-Historie).
 - `kestic-i18n` übersetzt nie; Daemon und GUI übersetzen mit ihrer eigenen i18n aus `po/de/kestic.po`.
 - Ein Text wird nie zweimal gepflegt: Kein `i18n("…")`-Literal wiederholt einen Text aus `kestic-i18n`, und kein Literal steht in Daemon und GUI zugleich. Gleicher Sinn heisst gleicher Wortlaut. Der Test `i18n/tests/text_ownership.rs` prüft beides.
-- Sprache: einfaches Englisch und einfaches Deutsch, Begriffe aus [glossary.md](glossary.md). Sätze haben höchstens 20 Wörter, Fachwörter (z. B. «daemon», «D-Bus», «Packs», «dry-run», «Klartext») kommen in Texten für Benutzer nicht vor; Ausnahmen sind Spec-Begriffe wie «getaktet» und «eingehängt» sowie Hinweise im Expertenmodus. Der Test `i18n/tests/simple_language.rs` prüft jeden Eintrag in `po/de/kestic.po`.
+- Sprache: einfaches Englisch und einfaches Deutsch, Begriffe aus [glossary.md](glossary.md). Sätze haben höchstens 20 Wörter, Fachwörter (z. B. «daemon», «D-Bus», «Packs», «dry-run», «Klartext») kommen in Texten für Benutzer nicht vor; Ausnahmen sind Spec-Begriffe wie «getaktet» und «eingehängt» sowie Hinweise im Expertenmodus. Der Test `i18n/tests/simple_language.rs` prüft jeden Eintrag in `po/de/kestic.po`. Kein sichtbarer Text geht am Katalog vorbei: QML zeigt Texte nur über `i18n(…)`, `sharedTexts.label(…)` oder `appBackend.recoveryActionLabel(…)` (Beispielwerte in Platzhaltern wie Pfade ausgenommen), und Daemon und GUI geben keinen rohen Satz an Tray, Benachrichtigungen, Fenster oder System; das prüft `i18n/tests/no_raw_ui_texts.rs`.
 
 ## Signale auf `net.daester.Kestic1`
 

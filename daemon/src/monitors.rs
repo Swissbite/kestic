@@ -5,6 +5,7 @@
 //! with injectable bus mode (`system` vs isolated `session` fakes for `AC-M1-Q-1`) and safe
 //! headless fallbacks (`M3-S03`, `M3-S04`, `M3-S09`, `M3-S13`).
 
+use crate::i18n::i18n;
 use kestic_core::scheduler::SystemEnvironment;
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
@@ -351,16 +352,9 @@ impl LogindSleepInhibitor {
                     return None;
                 }
             };
+            let why = i18n("Stops the running backup cleanly before sleep").to_string();
             let fd: OwnedFd = match proxy
-                .call(
-                    "Inhibit",
-                    &(
-                        "sleep",
-                        "Kestic",
-                        "Interrupt active backup cleanly before sleep",
-                        "delay",
-                    ),
-                )
+                .call("Inhibit", &("sleep", "Kestic", why.as_str(), "delay"))
                 .await
             {
                 Ok(fd) => fd,

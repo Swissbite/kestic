@@ -3359,3 +3359,6 @@ msgstr "Dieser Speicherort wird bereits von einem anderen Ziel verwendet."
 
 msgid "Internal error in the background service."
 msgstr "Interner Fehler im Hintergrunddienst."
+
+msgid "Stops the running backup cleanly before sleep"
+msgstr "Beendet das laufende Backup sauber vor dem Ruhezustand"

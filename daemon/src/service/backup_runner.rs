@@ -588,7 +588,7 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         None
     };
     let _inhibit_guard = if ctx.enable_portal_inhibit {
-        PortalInhibitGuard::acquire_default(&format!("Kestic backup: {}", ctx.backup.name)).ok()
+        PortalInhibitGuard::acquire_default(&i18n("Backing up %1").subs(&[&ctx.backup.name])).ok()
     } else {
         None
     };
