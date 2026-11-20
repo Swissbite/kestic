@@ -951,6 +951,28 @@ fn m3_settings_monitoring_and_notification_controls_persist() {
     );
 }
 
+/// AC-M0-11-8 (U12): Ctrl+Shift+B in the backup detail page starts "Back Up Now" for the shown
+/// backup, and the action shows the shortcut (a real key press in the product window). On the
+/// overview, where no backup is open, it starts nothing.
+#[test]
+fn ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page() {
+    run_isolated_test(
+        "ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page",
+        "KESTIC_M3_GUI_BACKUP_NOW_SHORTCUT_INNER",
+        |root| {
+            let (env, _dest, _id) = editor_env(root);
+            run_m3_gui_smoke(
+                root,
+                "m3-backup-now-shortcut",
+                "wide",
+                "en",
+                &smoke_artifact("backup-now-shortcut", "wide", "en"),
+            );
+            stop_env(env);
+        },
+    );
+}
+
 #[path = "../../i18n/tests/common/language.rs"]
 mod language;
 

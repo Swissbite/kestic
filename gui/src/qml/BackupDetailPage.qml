@@ -16,6 +16,8 @@ Kirigami.ScrollablePage {
     required property var appBackend
     required property string backupId
 
+    // Shortcut of «Back Up Now» for the backup shown here (U12).
+    readonly property string backUpNowShortcut: "Ctrl+Shift+B"
     property var currentData: null
     property var nestedWarnings: []
     property var lintWarnings: []
@@ -66,6 +68,10 @@ Kirigami.ScrollablePage {
             enabled: currentData !== null && (currentData.isRunning
                 || (currentData.hasError && currentData.errorAction === "update_stored_password" && appBackend.blocking_kind === "")
                 || (currentData.available && appBackend.blocking_kind === ""))
+            // Ctrl+Shift+B starts this backup; it never cancels a run or opens the password dialog.
+            shortcut: currentData && !currentData.isRunning
+                && !(currentData.hasError && currentData.errorAction === "update_stored_password")
+                ? page.backUpNowShortcut : ""
             tooltip: currentData && currentData.hasError && currentData.errorAction === "update_stored_password"
                 ? i18n("Update saved repository password before backing up")
                 : (currentData && !currentData.available
@@ -99,6 +105,7 @@ Kirigami.ScrollablePage {
             displayHint: Kirigami.DisplayHint.AlwaysHide
             visible: currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password"
             enabled: currentData !== null && currentData.available && !currentData.isRunning && appBackend.blocking_kind === ""
+            shortcut: visible ? page.backUpNowShortcut : ""
             onTriggered: appBackend.startBackup(backupId)
         },
         Kirigami.Action {

@@ -10,6 +10,7 @@
 
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QKeySequence>
 #include <QQmlEngine>
 #include <QQmlIncubationController>
 #include <QTextStream>
@@ -218,9 +219,43 @@ int scenario_all_pages(const Ctx& c) {
     return 0;
 }
 
+/// AC-M0-11-8 (U12): in the backup detail page, Ctrl+Shift+B starts "Back Up Now" for the shown
+/// backup, and the action shows the shortcut. Without an open backup (overview) it starts nothing.
+int scenario_backup_now_shortcut(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString bid = backup_id_at(w, 0);
+    M3_CHECK(4801, !bid.isEmpty(), "needs one backup");
+    QAbstractItemModel* runs = model_named(w, "runsModel");
+    M3_CHECK(4806, runs != nullptr, "runsModel missing");
+    QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
+    w->requestActivate();
+    wait_ms(150);
+    const int on_overview = runs->rowCount();
+    send_key(w, Qt::Key_B, Qt::ControlModifier | Qt::ShiftModifier);
+    wait_ms(1500);
+    M3_CHECK(4809, runs->rowCount() == on_overview, "Ctrl+Shift+B on the overview must not start a run");
+    M3_CHECK(4802, open_detail(w, bid), "backupDetailPage did not open");
+    QObject* action = object_named(w, "detailBackupNowAction");
+    M3_CHECK(4803, action != nullptr, "detailBackupNowAction missing");
+    M3_CHECK(4804, action->property("enabled").toBool(), "Back Up Now must be enabled");
+    const QKeySequence shown = action->property("shortcut").value<QKeySequence>();
+    M3_CHECK(4805, shown == QKeySequence(QStringLiteral("Ctrl+Shift+B")), "action must show Ctrl+Shift+B");
+    const int before = runs->rowCount();
+    w->requestActivate();
+    wait_ms(100);
+    send_key(w, Qt::Key_B, Qt::ControlModifier | Qt::ShiftModifier);
+    M3_CHECK(4807, wait_until([&] { return runs->rowCount() > before; }, 15000), "Ctrl+Shift+B did not start a run");
+    M3_CHECK(4808, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 int run_m3_pages_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled) {
+    if (scen == QLatin1String("m3-backup-now-shortcut")) {
+        *handled = true;
+        return scenario_backup_now_shortcut(ctx);
+    }
     *handled = scen == QLatin1String("m3-all-pages-texts");
     return *handled ? scenario_all_pages(ctx) : 0;
 }
