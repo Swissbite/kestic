@@ -352,8 +352,8 @@ impl<'a> SmokeContext<'a> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
-            "M2 smoke `{scenario}` ({layout}/{lang}) failed (status={:?}):\nstdout:\n{}\nstderr:\n{}",
-            output.status.code(),
+            "M2 smoke `{scenario}` ({layout}/{lang}) failed (status={}):\nstdout:\n{}\nstderr:\n{}",
+            output.status,
             String::from_utf8_lossy(&output.stdout),
             stderr
         );
@@ -392,11 +392,13 @@ fn init_local_destination(
     let helper = common::write_secret_get_helper(&iso.root, &iso.secret_file);
     let resolved = check_binary_version(restic).expect("resolve restic");
     let clock = FakeClock::new(datetime!(2026-11-16 12:00:00 UTC));
+    let cache_dir = common::restic_cache_dir(&iso.root);
     let runtime = ResticRuntime {
         resolved: &resolved,
         kestic_binary: &helper,
         secret_store: &store,
         clock: &clock,
+        cache_dir: Some(&cache_dir),
     };
 
     let dest = Destination::new(
@@ -417,10 +419,11 @@ fn init_local_destination(
     dest
 }
 
-fn count_repo_snapshots(restic: &Path, repo_dir: &Path, password: &str) -> usize {
+fn count_repo_snapshots(restic: &Path, repo_dir: &Path, password: &str, cache_dir: &Path) -> usize {
     let out = Command::new(restic)
         .args(["-r", &repo_dir.to_string_lossy(), "snapshots", "--json"])
         .env("RESTIC_PASSWORD", password)
+        .env("RESTIC_CACHE_DIR", cache_dir)
         .output()
         .expect("run restic snapshots --json");
     assert!(
@@ -592,7 +595,12 @@ fn m2_gui_smoke_dry_run_preview_real_restic() {
     );
 
     assert_eq!(
-        count_repo_snapshots(&restic, &repo_dir, "m2-smoke-pw"),
+        count_repo_snapshots(
+            &restic,
+            &repo_dir,
+            "m2-smoke-pw",
+            &common::restic_cache_dir(&iso.root)
+        ),
         0,
         "dry-run preview must NOT create any real restic snapshot"
     );
@@ -603,6 +611,7 @@ fn m2_gui_smoke_retention_editor_preview_confirm_en_de_narrow() {
     let kestic = find_kestic_binary(workspace_root());
     let restic = restic_bin();
     let iso = IsolatedEnv::create("retention", Some(&restic));
+    let cache_dir = common::restic_cache_dir(&iso.root);
     let repo_dir = iso.root.join("repo-retention");
     let src_dir = iso.root.join("src-retention");
     fs::create_dir_all(&src_dir).expect("mkdir src");
@@ -635,6 +644,7 @@ fn m2_gui_smoke_retention_editor_preview_confirm_en_de_narrow() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
         let res = execute_backup(
             &backup,
@@ -649,7 +659,7 @@ fn m2_gui_smoke_retention_editor_preview_confirm_en_de_narrow() {
         assert_eq!(res.exit_code, 0);
     }
     assert_eq!(
-        count_repo_snapshots(&restic, &repo_dir, "m2-smoke-pw"),
+        count_repo_snapshots(&restic, &repo_dir, "m2-smoke-pw", &cache_dir),
         3,
         "expected 3 initial snapshots in repo"
     );
@@ -680,7 +690,7 @@ fn m2_gui_smoke_retention_editor_preview_confirm_en_de_narrow() {
             "[{label}] expected keep_last = Some(Count(5)) persisted in config.toml"
         );
         assert_eq!(
-            count_repo_snapshots(&restic, &repo_dir, "m2-smoke-pw"),
+            count_repo_snapshots(&restic, &repo_dir, "m2-smoke-pw", &cache_dir),
             3,
             "[{label}] retention preview/save must NOT delete snapshots from the repo"
         );

@@ -67,7 +67,7 @@ fn spawn_daemon_thread(
     };
 
     let handle = thread::spawn(move || run_daemon(run_cfg));
-    wait_for_file(&ready_file, Duration::from_secs(5));
+    wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
 
     let client = KesticClient::connect_default().expect("connect KesticClient");
     let status = client
@@ -458,9 +458,11 @@ fn ac_m1_19_1_19_4_19_6_and_20_1_20_2_20_3_rename_in_use_verify_update_and_passw
             );
 
             // AC-M1-20-2: UpdateDestinationPassword with wrong password fails & leaves stored secret intact.
+            let restic_cache = root.join("restic-cache");
             let keys_before = Command::new(&restic_bin)
                 .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
                 .env("RESTIC_PASSWORD", "initial-pw")
+                .env("RESTIC_CACHE_DIR", &restic_cache)
                 .output()
                 .expect("restic key list before");
             assert!(keys_before.status.success());
@@ -492,6 +494,7 @@ fn ac_m1_19_1_19_4_19_6_and_20_1_20_2_20_3_rename_in_use_verify_update_and_passw
                 ])
                 .arg(&new_pw_file)
                 .env("RESTIC_PASSWORD", "initial-pw")
+                .env("RESTIC_CACHE_DIR", &restic_cache)
                 .output()
                 .expect("restic key passwd");
             assert!(
@@ -503,6 +506,7 @@ fn ac_m1_19_1_19_4_19_6_and_20_1_20_2_20_3_rename_in_use_verify_update_and_passw
             let keys_after_external = Command::new(&restic_bin)
                 .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
                 .env("RESTIC_PASSWORD", "rotated-pw-2026")
+                .env("RESTIC_CACHE_DIR", &restic_cache)
                 .output()
                 .expect("restic key list after external change");
             assert!(keys_after_external.status.success());
@@ -524,6 +528,7 @@ fn ac_m1_19_1_19_4_19_6_and_20_1_20_2_20_3_rename_in_use_verify_update_and_passw
             let keys_after_update = Command::new(&restic_bin)
                 .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
                 .env("RESTIC_PASSWORD", "rotated-pw-2026")
+                .env("RESTIC_CACHE_DIR", &restic_cache)
                 .output()
                 .expect("restic key list after UpdateDestinationPassword");
             assert!(keys_after_update.status.success());
@@ -776,7 +781,7 @@ fn unlock_secret_store_over_dbus_clears_blocking_and_emits_status_changed() {
                 ..Default::default()
             };
             let handle = thread::spawn(move || run_daemon(cfg));
-            wait_for_file(&ready, Duration::from_secs(5));
+            wait_for_file(&ready, common::DAEMON_READY_TIMEOUT);
 
             let signals = KesticSignalCollector::start(
                 KESTIC_BUS_NAME,

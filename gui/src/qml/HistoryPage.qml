@@ -183,6 +183,8 @@ Kirigami.ScrollablePage {
             activeFocusOnTab: true
             highlighted: page.selectedRunId === runId
             Accessible.name: title
+            // Exposed for the smoke test: selected rows must use the selection text colour.
+            readonly property color selectedTextColor: Kirigami.Theme.highlightedTextColor
 
             onClicked: {
                 ListView.view.currentIndex = index;
@@ -195,9 +197,8 @@ Kirigami.ScrollablePage {
                 anchors.fill: parent
                 anchors.margins: runRow.highlighted ? 2 : 0
                 z: 10
-                color: (runRow.activeFocus || runRow.visualFocus) && runRow.highlighted
-                    ? Qt.rgba(1, 1, 1, 0.14)
-                    : "transparent"
+                // Focus ring only: a white wash over the row made the selected text unreadable.
+                color: "transparent"
                 radius: Kirigami.Units.cornerRadius
                 border.width: (runRow.activeFocus || runRow.visualFocus) ? 2 : 0
                 border.color: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
@@ -219,8 +220,10 @@ Kirigami.ScrollablePage {
                     spacing: 2
 
                     Controls.Label {
+                        objectName: "runRowTitle"
                         text: i18n("%1 · %2", runRow.timeShort, runRow.title)
                         font.bold: true
+                        color: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
@@ -230,6 +233,7 @@ Kirigami.ScrollablePage {
                             ? i18n("%1 · %2", runRow.statusText, runRow.summaryText)
                             : i18n("%1 · %2", runRow.statusText, runRow.durationText)
                         opacity: 0.8
+                        color: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }

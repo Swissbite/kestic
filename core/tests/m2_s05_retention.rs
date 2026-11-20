@@ -65,6 +65,7 @@ fn create_snapshot_at_time(
     src_dir: &Path,
     tag: &str,
     time_str: &str,
+    cache_dir: &Path,
 ) {
     let out = Command::new(restic_bin)
         .args([
@@ -80,6 +81,7 @@ fn create_snapshot_at_time(
             &src_dir.to_string_lossy(),
         ])
         .env("RESTIC_PASSWORD", password)
+        .env("RESTIC_CACHE_DIR", cache_dir)
         .env("TZ", "UTC")
         .output()
         .expect("spawn restic backup --time");
@@ -96,6 +98,7 @@ fn list_snapshots_by_tag(
     repo_dir: &Path,
     password: &str,
     tag: &str,
+    cache_dir: &Path,
 ) -> Vec<ResticSnapshot> {
     let out = Command::new(restic_bin)
         .args([
@@ -108,6 +111,7 @@ fn list_snapshots_by_tag(
             "--json",
         ])
         .env("RESTIC_PASSWORD", password)
+        .env("RESTIC_CACHE_DIR", cache_dir)
         .output()
         .expect("run restic snapshots --tag");
     assert!(
@@ -504,6 +508,8 @@ fn ac_m2_05_5_never_passes_unsafe_allow_remove_all() {
 fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let cache_str = cache_dir.to_string_lossy().into_owned();
         let repo_dir = dir.path().join("repo");
         let src_a = dir.path().join("src-a");
         let src_b = dir.path().join("src-b");
@@ -527,6 +533,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -564,6 +571,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
                 &src_a,
                 &backup_a.tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
+                &cache_dir,
             );
             create_snapshot_at_time(
                 &resolved.binary,
@@ -572,6 +580,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
                 &src_b,
                 &backup_b.tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
+                &cache_dir,
             );
         }
         for day in [10, 11] {
@@ -582,6 +591,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
                 &meta_src,
                 &backup_a.meta_tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
+                &cache_dir,
             );
         }
 
@@ -606,14 +616,33 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
             .unwrap_or_else(|e| panic!("{label}: execute_forget failed: {e}"));
         assert_eq!(res.exit_code, 0, "{label}: forget exit code");
 
-        let snaps_a =
-            list_snapshots_for_backup(&backup_a.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list snaps a");
-        let snaps_b =
-            list_snapshots_for_backup(&backup_b.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list snaps b");
-        let snaps_meta =
-            list_snapshots_by_tag(&resolved.binary, &repo_dir, pw, &backup_a.meta_tag());
+        let snaps_a = list_snapshots_for_backup(
+            &backup_a.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .expect("list snaps a");
+        let snaps_b = list_snapshots_for_backup(
+            &backup_b.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .expect("list snaps b");
+        let snaps_meta = list_snapshots_by_tag(
+            &resolved.binary,
+            &repo_dir,
+            pw,
+            &backup_a.meta_tag(),
+            &cache_dir,
+        );
 
         assert_eq!(snaps_a.len(), 1, "{label}: backup A should keep 1 snapshot");
         assert_eq!(
@@ -633,6 +662,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
 fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let src_dir = dir.path().join("src");
         fs::create_dir_all(&repo_dir).expect("mkdir repo");
@@ -649,6 +679,7 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -680,6 +711,7 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
                 &src_dir,
                 &backup.tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
+                &cache_dir,
             );
         }
 
@@ -781,6 +813,8 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
 fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let cache_str = cache_dir.to_string_lossy().into_owned();
         let repo_dir = dir.path().join("repo");
         let src_dir = dir.path().join("src");
         fs::create_dir_all(&repo_dir).expect("mkdir repo");
@@ -797,6 +831,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -840,6 +875,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
             &src_dir,
             &backup.tag(),
             &older_ts,
+            &cache_dir,
         );
         create_snapshot_at_time(
             &resolved.binary,
@@ -848,6 +884,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
             &src_dir,
             &backup.tag(),
             &newest_ts,
+            &cache_dir,
         );
 
         let preview = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
@@ -877,9 +914,16 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
         let res = execute_forget(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
             .unwrap_or_else(|e| panic!("{label}: execute_forget failed: {e}"));
         assert_eq!(res.exit_code, 0, "{label}");
-        let remaining =
-            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list remaining");
+        let remaining = list_snapshots_for_backup(
+            &backup.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .expect("list remaining");
         assert_eq!(
             remaining.len(),
             1,
@@ -889,11 +933,65 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
     }
 }
 
+fn spawn_non_exclusive_lock_holder(
+    label: &str,
+    restic_bin: &Path,
+    repo_dir: &Path,
+    pw: &str,
+    cache_dir: &Path,
+) -> LockHolderGuard {
+    let mut child = Command::new(restic_bin)
+        .args([
+            "-r",
+            &repo_dir.to_string_lossy(),
+            "backup",
+            "--stdin",
+            "--stdin-filename",
+            "slow-input.txt",
+        ])
+        .env("RESTIC_PASSWORD", pw)
+        .env("RESTIC_CACHE_DIR", cache_dir)
+        .env("RESTIC_HOST", "other-active-backup")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn restic backup --stdin");
+
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    stdin
+        .write_all(b"partial-chunk\n")
+        .expect("write initial stdin byte");
+    stdin.flush().expect("flush stdin");
+
+    let mut guard = LockHolderGuard {
+        stdin: Some(stdin),
+        child,
+    };
+
+    let locks_dir = repo_dir.join("locks");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while find_lock_file(&locks_dir).is_none() {
+        if let Some(status) = guard.child.try_wait().expect("try_wait lock holder") {
+            panic!("{label}: restic backup --stdin exited early with {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label}: timed out waiting for non-exclusive lock in {}",
+            locks_dir.display()
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    guard
+}
+
 #[test]
 fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_holds_non_exclusive_lock()
  {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let cache_str = cache_dir.to_string_lossy().into_owned();
         let repo_dir = dir.path().join("repo");
         let src_dir = dir.path().join("src");
         fs::create_dir_all(&repo_dir).expect("mkdir repo");
@@ -910,6 +1008,7 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -944,15 +1043,23 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
                 &src_dir,
                 &backup.tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
+                &cache_dir,
             );
         }
 
-        let before_ids: Vec<String> =
-            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list before")
-                .into_iter()
-                .map(|s| s.id)
-                .collect();
+        let before_ids: Vec<String> = list_snapshots_for_backup(
+            &backup.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .expect("list before")
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
         assert_eq!(before_ids.len(), 3, "{label}");
 
         // Verify spec passes `--dry-run` and `--no-lock` (P41 / AC-M2-06-6).
@@ -972,48 +1079,8 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
                 .any(|a| a == "--no-lock")
         );
 
-        // Spawn another `restic backup --stdin` holding a non-exclusive lock until stdin closes.
-        let mut child = Command::new(&resolved.binary)
-            .args([
-                "-r",
-                &repo_dir.to_string_lossy(),
-                "backup",
-                "--stdin",
-                "--stdin-filename",
-                "slow-input.txt",
-            ])
-            .env("RESTIC_PASSWORD", pw)
-            .env("RESTIC_HOST", "other-active-backup")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn restic backup --stdin");
-
-        let mut stdin = child.stdin.take().expect("piped stdin");
-        stdin
-            .write_all(b"partial-chunk\n")
-            .expect("write initial stdin byte");
-        stdin.flush().expect("flush stdin");
-
-        let mut guard = LockHolderGuard {
-            stdin: Some(stdin),
-            child,
-        };
-
-        let locks_dir = repo_dir.join("locks");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while find_lock_file(&locks_dir).is_none() {
-            if let Some(status) = guard.child.try_wait().expect("try_wait lock holder") {
-                panic!("{label}: restic backup --stdin exited early with {status}");
-            }
-            assert!(
-                Instant::now() < deadline,
-                "{label}: timed out waiting for non-exclusive lock in {}",
-                locks_dir.display()
-            );
-            std::thread::sleep(Duration::from_millis(25));
-        }
+        let guard =
+            spawn_non_exclusive_lock_holder(label, &resolved.binary, &repo_dir, pw, &cache_dir);
 
         // Preview must succeed (`--no-lock`), never fail with Exit 11, and report Keep/Remove + Reasons.
         let preview = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
@@ -1050,12 +1117,19 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
         drop(guard);
 
         // Zero snapshots deleted in repo.
-        let after_ids: Vec<String> =
-            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list after")
-                .into_iter()
-                .map(|s| s.id)
-                .collect();
+        let after_ids: Vec<String> = list_snapshots_for_backup(
+            &backup.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .expect("list after")
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
         assert_eq!(
             after_ids, before_ids,
             "{label}: forget --dry-run must delete zero snapshots"

@@ -202,6 +202,117 @@ fn ac_m2_09_7_detects_uuidless_filesystems_using_mount_source_and_fs_type() {
     );
 }
 
+struct PreflightTestHarness<'a> {
+    dest: &'a Destination,
+    runtime: &'a ResticRuntime<'a>,
+    state_dir: &'a Path,
+    home_dir: &'a Path,
+    spy_log: &'a Path,
+}
+
+impl PreflightTestHarness<'_> {
+    fn assert_blocked(
+        &self,
+        backup: &Backup,
+        inspector: &FakeMountInspector,
+        expected: SourceCheckResult,
+    ) {
+        assert_eq!(
+            check_source_status_with(backup, Some(self.home_dir), inspector),
+            expected
+        );
+        let err = execute_backup_with_inspector(
+            backup,
+            self.dest,
+            self.runtime,
+            &BackupExecutionContext {
+                state_dir: self.state_dir,
+                home_dir: Some(self.home_dir),
+                inspector,
+                cancel: None,
+                extra_env: &[],
+            },
+            |_| {},
+        )
+        .expect_err("drive preflight must block backup execution");
+        assert_eq!(
+            err.to_string(),
+            BackupRunError::SourceUnavailable(expected.clone()).to_string()
+        );
+        assert!(
+            matches!(err, BackupRunError::SourceUnavailable(ref got) if *got == expected),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            !self.spy_log.exists(),
+            "restic must not be invoked when preflight returns {expected:?}"
+        );
+    }
+}
+
+fn verify_drive_mismatch_cases(
+    harness: &PreflightTestHarness<'_>,
+    backup_uuid: &Backup,
+    backup_nfs: &Backup,
+    mount_uuid: &Path,
+    mount_nfs: &Path,
+) {
+    // Case (b1): Different FS-UUID mounted at the same mountpoint.
+    let mut wrong_uuid_devices = HashMap::new();
+    wrong_uuid_devices.insert(
+        "/dev/sdb1".to_string(),
+        (
+            "different-uuid-9999".to_string(),
+            Some("OtherUSB".to_string()),
+        ),
+    );
+    let wrong_uuid_inspector = FakeMountInspector::new(FakeMountState {
+        mountinfo: format!(
+            "{}101 25 8:17 / {} rw,nosuid,nodev - ext4 /dev/sdb1 rw\n",
+            base_mountinfo(harness.home_dir),
+            mount_uuid.display()
+        ),
+        device_uuids: wrong_uuid_devices,
+        empty_dirs: HashMap::new(),
+    });
+    harness.assert_blocked(
+        backup_uuid,
+        &wrong_uuid_inspector,
+        SourceCheckResult::DriveMismatch,
+    );
+
+    // Case (b2): Different mount_source or different fs_type on UUID-less mount.
+    let wrong_source_inspector = FakeMountInspector::new(FakeMountState {
+        mountinfo: format!(
+            "{}110 25 0:45 / {} rw,relatime - nfs4 nas:/musik rw\n",
+            base_mountinfo(harness.home_dir),
+            mount_nfs.display()
+        ),
+        device_uuids: HashMap::new(),
+        empty_dirs: HashMap::new(),
+    });
+    harness.assert_blocked(
+        backup_nfs,
+        &wrong_source_inspector,
+        SourceCheckResult::DriveMismatch,
+    );
+
+    let wrong_fstype_inspector = FakeMountInspector::new(FakeMountState {
+        mountinfo: format!(
+            "{}110 25 0:45 / {} rw,relatime - cifs nas:/fotos rw\n",
+            base_mountinfo(harness.home_dir),
+            mount_nfs.display()
+        ),
+        device_uuids: HashMap::new(),
+        empty_dirs: HashMap::new(),
+    });
+    harness.assert_blocked(
+        backup_nfs,
+        &wrong_fstype_inspector,
+        SourceCheckResult::DriveMismatch,
+    );
+}
+
 #[test]
 fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     let dir = TempDir::new().expect("tempdir");
@@ -228,12 +339,14 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
         binary: spy_bin,
         version: Version::new(0, 18, 0),
     };
+    let cache_dir = common::restic_cache_dir(dir.path());
     let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
     let runtime = ResticRuntime {
         resolved: &resolved,
         kestic_binary: &helper,
         secret_store: &store,
         clock: &clock,
+        cache_dir: Some(&cache_dir),
     };
 
     let dest = Destination::new(
@@ -271,6 +384,14 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     )
     .expect("backup nfs");
 
+    let harness = PreflightTestHarness {
+        dest: &dest,
+        runtime: &runtime,
+        state_dir: &state_dir,
+        home_dir: &home_dir,
+        spy_log: &spy_log,
+    };
+
     // Case (a): Drive not mounted (mountpoint falls back to `/` in mountinfo).
     let unmounted_inspector = FakeMountInspector::new(FakeMountState {
         mountinfo: format!(
@@ -281,10 +402,6 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
         device_uuids: HashMap::new(),
         empty_dirs: HashMap::new(),
     });
-    assert_eq!(
-        check_source_status_with(&backup_uuid, Some(&home_dir), &unmounted_inspector),
-        SourceCheckResult::DriveNotMounted
-    );
     let err_a = check_source_available_with(&backup_uuid, Some(&home_dir), &unmounted_inspector)
         .expect_err("unmounted drive must fail check");
     assert!(
@@ -294,143 +411,13 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
         ),
         "unexpected error: {err_a:?}"
     );
-    let exec_err_a = execute_backup_with_inspector(
+    harness.assert_blocked(
         &backup_uuid,
-        &dest,
-        &runtime,
-        &BackupExecutionContext {
-            state_dir: &state_dir,
-            home_dir: Some(&home_dir),
-            inspector: &unmounted_inspector,
-            cancel: None,
-            extra_env: &[],
-        },
-        |_| {},
-    )
-    .expect_err("execute must abort when unmounted");
-    assert!(matches!(
-        exec_err_a,
-        BackupRunError::SourceUnavailable(SourceCheckResult::DriveNotMounted)
-    ));
-    assert!(
-        !spy_log.exists(),
-        "restic must not be invoked when drive is unmounted"
+        &unmounted_inspector,
+        SourceCheckResult::DriveNotMounted,
     );
 
-    // Case (b1): Different FS-UUID mounted at the same mountpoint.
-    let mut wrong_uuid_devices = HashMap::new();
-    wrong_uuid_devices.insert(
-        "/dev/sdb1".to_string(),
-        (
-            "different-uuid-9999".to_string(),
-            Some("OtherUSB".to_string()),
-        ),
-    );
-    let wrong_uuid_inspector = FakeMountInspector::new(FakeMountState {
-        mountinfo: format!(
-            "{}101 25 8:17 / {} rw,nosuid,nodev - ext4 /dev/sdb1 rw\n",
-            base_mountinfo(&home_dir),
-            mount_uuid.display()
-        ),
-        device_uuids: wrong_uuid_devices,
-        empty_dirs: HashMap::new(),
-    });
-    assert_eq!(
-        check_source_status_with(&backup_uuid, Some(&home_dir), &wrong_uuid_inspector),
-        SourceCheckResult::DriveMismatch
-    );
-    let err_b1 = execute_backup_with_inspector(
-        &backup_uuid,
-        &dest,
-        &runtime,
-        &BackupExecutionContext {
-            state_dir: &state_dir,
-            home_dir: Some(&home_dir),
-            inspector: &wrong_uuid_inspector,
-            cancel: None,
-            extra_env: &[],
-        },
-        |_| {},
-    )
-    .expect_err("wrong FS-UUID must fail");
-    assert!(
-        matches!(
-            err_b1,
-            BackupRunError::SourceUnavailable(SourceCheckResult::DriveMismatch)
-        ),
-        "unexpected error: {err_b1:?}"
-    );
-    assert!(
-        !spy_log.exists(),
-        "restic must not be invoked on UUID mismatch"
-    );
-
-    // Case (b2): Different mount_source or different fs_type on UUID-less mount.
-    let wrong_source_inspector = FakeMountInspector::new(FakeMountState {
-        mountinfo: format!(
-            "{}110 25 0:45 / {} rw,relatime - nfs4 nas:/musik rw\n",
-            base_mountinfo(&home_dir),
-            mount_nfs.display()
-        ),
-        device_uuids: HashMap::new(),
-        empty_dirs: HashMap::new(),
-    });
-    assert_eq!(
-        check_source_status_with(&backup_nfs, Some(&home_dir), &wrong_source_inspector),
-        SourceCheckResult::DriveMismatch
-    );
-    let err_b2 = execute_backup_with_inspector(
-        &backup_nfs,
-        &dest,
-        &runtime,
-        &BackupExecutionContext {
-            state_dir: &state_dir,
-            home_dir: Some(&home_dir),
-            inspector: &wrong_source_inspector,
-            cancel: None,
-            extra_env: &[],
-        },
-        |_| {},
-    )
-    .expect_err("wrong mount_source must fail");
-    assert!(matches!(
-        err_b2,
-        BackupRunError::SourceUnavailable(SourceCheckResult::DriveMismatch)
-    ));
-    assert!(!spy_log.exists());
-
-    let wrong_fstype_inspector = FakeMountInspector::new(FakeMountState {
-        mountinfo: format!(
-            "{}110 25 0:45 / {} rw,relatime - cifs nas:/fotos rw\n",
-            base_mountinfo(&home_dir),
-            mount_nfs.display()
-        ),
-        device_uuids: HashMap::new(),
-        empty_dirs: HashMap::new(),
-    });
-    assert_eq!(
-        check_source_status_with(&backup_nfs, Some(&home_dir), &wrong_fstype_inspector),
-        SourceCheckResult::DriveMismatch
-    );
-    let err_b3 = execute_backup_with_inspector(
-        &backup_nfs,
-        &dest,
-        &runtime,
-        &BackupExecutionContext {
-            state_dir: &state_dir,
-            home_dir: Some(&home_dir),
-            inspector: &wrong_fstype_inspector,
-            cancel: None,
-            extra_env: &[],
-        },
-        |_| {},
-    )
-    .expect_err("wrong fs_type must fail");
-    assert!(matches!(
-        err_b3,
-        BackupRunError::SourceUnavailable(SourceCheckResult::DriveMismatch)
-    ));
-    assert!(!spy_log.exists());
+    verify_drive_mismatch_cases(&harness, &backup_uuid, &backup_nfs, &mount_uuid, &mount_nfs);
 
     // Case (c): Drive mounted with matching FS-UUID, but mountpoint directory is empty.
     fs::remove_file(mount_uuid.join("data.txt")).expect("remove file to make mountpoint empty");
@@ -451,34 +438,10 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
         device_uuids: matching_uuid_devices,
         empty_dirs: HashMap::new(),
     });
-    assert_eq!(
-        check_source_status_with(&backup_uuid, Some(&home_dir), &empty_drive_inspector),
-        SourceCheckResult::DriveEmpty
-    );
-    let err_c = execute_backup_with_inspector(
+    harness.assert_blocked(
         &backup_uuid,
-        &dest,
-        &runtime,
-        &BackupExecutionContext {
-            state_dir: &state_dir,
-            home_dir: Some(&home_dir),
-            inspector: &empty_drive_inspector,
-            cancel: None,
-            extra_env: &[],
-        },
-        |_| {},
-    )
-    .expect_err("empty drive mountpoint must fail");
-    assert!(
-        matches!(
-            err_c,
-            BackupRunError::SourceUnavailable(SourceCheckResult::DriveEmpty)
-        ),
-        "unexpected error: {err_c:?}"
-    );
-    assert!(
-        !spy_log.exists(),
-        "restic must not be invoked when drive is empty"
+        &empty_drive_inspector,
+        SourceCheckResult::DriveEmpty,
     );
 }
 
@@ -486,6 +449,8 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
 fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_no_backup() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let cache_str = cache_dir.to_string_lossy().into_owned();
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let home_dir = dir.path().join("home");
@@ -504,6 +469,7 @@ fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_n
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -534,6 +500,7 @@ fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_n
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let backup = Backup::new(
@@ -583,9 +550,16 @@ fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_n
             "{label}: restic backup must not be invoked on unmounted empty mountpoint"
         );
 
-        let snaps =
-            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .unwrap_or_else(|e| panic!("{label}: list snapshots failed: {e}"));
+        let snaps = list_snapshots_for_backup(
+            &backup.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .unwrap_or_else(|e| panic!("{label}: list snapshots failed: {e}"));
         assert!(
             snaps.is_empty(),
             "{label}: expected 0 snapshots, got {}",
@@ -598,6 +572,8 @@ fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_n
 fn ac_m2_09_6_empty_folder_on_home_filesystem_runs_backup_normally() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let cache_str = cache_dir.to_string_lossy().into_owned();
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let home_dir = dir.path().join("home");
@@ -629,6 +605,7 @@ fn ac_m2_09_6_empty_folder_on_home_filesystem_runs_backup_normally() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -661,9 +638,16 @@ fn ac_m2_09_6_empty_folder_on_home_filesystem_runs_backup_normally() {
         assert_eq!(res.exit_code, 0, "{label}");
         assert_eq!(res.presentation.status, RunStatus::Ok, "{label}");
 
-        let snaps =
-            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .unwrap_or_else(|e| panic!("{label}: list snapshots failed: {e}"));
+        let snaps = list_snapshots_for_backup(
+            &backup.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .unwrap_or_else(|e| panic!("{label}: list snapshots failed: {e}"));
         assert_eq!(
             snaps.len(),
             1,

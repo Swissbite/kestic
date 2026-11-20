@@ -43,6 +43,7 @@ fn find_lock_file(locks_dir: &Path) -> Option<std::path::PathBuf> {
 fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
@@ -70,6 +71,7 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -96,6 +98,7 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
         let mut check_child = Command::new(&resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
             .env("RESTIC_PASSWORD", "stale-lock-test-pw")
+            .env("RESTIC_CACHE_DIR", &cache_dir)
             .env("RESTIC_HOST", "stale-other-host")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -152,7 +155,8 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
         );
 
         // Unlock via `ResticCommandSpec::unlock`.
-        let unlock_spec = ResticCommandSpec::unlock(&resolved.binary, &helper, &dest);
+        let unlock_spec = ResticCommandSpec::unlock(&resolved.binary, &helper, &dest)
+            .with_cache_dir(Some(&cache_dir));
         let unlock_res = run_restic(&unlock_spec, &dest, Some(&store), &clock, None, &[], |_| {})
             .unwrap_or_else(|e| panic!("{label}: unlock runner failed: {e}"));
         assert_eq!(

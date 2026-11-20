@@ -3,6 +3,9 @@
 
 #![allow(dead_code)]
 
+pub mod fakes;
+pub mod m3;
+
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -216,7 +219,14 @@ pub struct PrivateDbusGuard {
 impl PrivateDbusGuard {
     pub fn start() -> Self {
         let out = Command::new("dbus-daemon")
-            .args(["--session", "--fork", "--print-address=1", "--print-pid=1"])
+            .arg(format!(
+                "--config-file={}",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/private-session-bus.xml"
+                )
+            ))
+            .args(["--fork", "--print-address=1", "--print-pid=1"])
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .output()
@@ -282,6 +292,7 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         .env("XDG_CONFIG_HOME", &dirs.cfg)
         .env("XDG_DATA_HOME", &dirs.data)
         .env("XDG_CACHE_HOME", &dirs.cache)
+        .env("RESTIC_CACHE_DIR", &dirs.cache)
         .env("XDG_STATE_HOME", &dirs.state)
         .env("XDG_RUNTIME_DIR", &dirs.run)
         .env("KESTIC_SECRET_FILE", &dirs.secret_file)
@@ -296,11 +307,15 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         .env("LANGUAGE", "en");
 
     let out = cmd.output().expect("run isolated test child");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         out.status.success(),
-        "isolated test `{test_name}` failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        "isolated test `{test_name}` failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("1 passed"),
+        "isolated test `{test_name}` did not match/execute exactly 1 test:\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 }
 
@@ -842,6 +857,11 @@ fn collect_menu_variant(node: &Variant<'_>, out: &mut Vec<TrayMenuEntry>) {
 }
 
 /// Polls until `ready_file` appears on disk.
+/// Upper bound for a test daemon to write its ready file. Generous because
+/// startup (SQLite with fsync) can queue behind other tests' disk writeback
+/// under full `just verify` load; waits return as soon as the file exists.
+pub const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(20);
+
 pub fn wait_for_file(path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while !path.exists() {

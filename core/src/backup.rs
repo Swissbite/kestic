@@ -268,7 +268,8 @@ where
         runtime.resolved,
         runtime.kestic_binary,
         ctx.home_dir,
-    )?;
+    )?
+    .with_cache_dir(runtime.cache_dir);
     let res = run_restic(
         &spec,
         destination,
@@ -441,7 +442,8 @@ where
         runtime.kestic_binary,
         &preview_exclude_path,
         true,
-    );
+    )
+    .with_cache_dir(runtime.cache_dir);
     spec.low_priority = false;
 
     let transparent_command = format!(
@@ -725,7 +727,8 @@ pub fn execute_forget_dry_run_with(
         true,
         runtime.resolved,
         runtime.kestic_binary,
-    )?;
+    )?
+    .with_cache_dir(runtime.cache_dir);
 
     let res = run_restic(
         &spec,
@@ -779,7 +782,8 @@ pub fn execute_forget(
         false,
         runtime.resolved,
         runtime.kestic_binary,
-    )?;
+    )?
+    .with_cache_dir(runtime.cache_dir);
 
     let res = run_restic(
         &spec,

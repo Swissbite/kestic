@@ -73,7 +73,7 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
     };
 
     let handle = thread::spawn(move || run_daemon(run_cfg));
-    wait_for_file(&ready_file, Duration::from_secs(5));
+    wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
 
     let client = KesticClient::connect(&bus_name, KESTIC_OBJECT_PATH).expect("connect client");
     let prov = client
@@ -165,6 +165,7 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
             "--no-lock",
         ])
         .env("RESTIC_PASSWORD", "cancel-pw-123")
+        .env("RESTIC_CACHE_DIR", sub.join("restic-cache"))
         .output()
         .expect("restic list locks");
     assert!(
@@ -275,7 +276,7 @@ fn ac_m1_10_2_preseeded_running_run_transitions_to_interrupted_on_daemon_startup
             let mut daemon_cfg = run_cfg;
             daemon_cfg.ready_file = Some(ready_file.clone());
             let handle = thread::spawn(move || run_daemon(daemon_cfg));
-            wait_for_file(&ready_file, Duration::from_secs(5));
+            wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
 
             let client = KesticClient::connect_default().expect("connect client");
             let detail = client

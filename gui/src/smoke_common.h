@@ -60,6 +60,11 @@ QString describe_focus_item(QQuickItem* it);
 
 void wait_ms(int ms);
 
+// Finishes pending asynchronous QML creations (e.g. ListView cache delegates)
+// once the event loop has quit, before the engine is destroyed. Otherwise a
+// smoke run that exits mid-incubation makes ~QQmlEngine warn on stderr.
+void finish_incubation_on_quit(QQmlApplicationEngine& engine);
+
 void send_key(
     QWindow* window,
     int key,
@@ -72,6 +77,16 @@ QQuickItem* tab_until_object(QQuickWindow* window, const QString& obj_name, int 
 QQuickItem* tab_until_text(QQuickWindow* window, const QString& text_needle, int max_steps);
 
 void run_m2_smoke_scenario(
+    QQmlApplicationEngine& engine,
+    QQuickWindow* window,
+    QObject* backend,
+    const std::shared_ptr<QStringList>& warnings,
+    const QString& scen,
+    const QString& out_path,
+    const QString& lang
+);
+
+void run_m3_smoke_scenario(
     QQmlApplicationEngine& engine,
     QQuickWindow* window,
     QObject* backend,

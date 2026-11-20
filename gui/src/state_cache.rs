@@ -22,17 +22,29 @@ pub fn i18n(text: &str) -> PendingI18n<'_> {
     PendingI18n(text)
 }
 
+/// Plural-aware translation (`i18np`): `%1` is `n`, further `%N` come from `args`.
+pub fn i18np(singular: &str, plural: &str, n: usize, args: &[&str]) -> String {
+    crate::smoke::ffi::i18np_subs(singular, plural, i64::try_from(n).unwrap_or(i64::MAX), args)
+}
+
+use crate::overall_text::{
+    localized_availability_reason, localized_error_kind, localized_skip_error_kind,
+    localized_source_status,
+};
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeRules, KeepCount,
-    ResticProvider, RetentionPolicy, RetentionPreset, Run, RunKind, RunStatus, Source, SourceKind,
+    MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPolicy,
+    RetentionPreset, Run, RunConditions, RunKind, RunStatus, Schedule, Source, SourceKind, Weekday,
 };
+use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_slots};
 use kestic_daemon::dbus_api::{
-    ActiveRunProgressDto, BackupSnapshotsDto, BackupSummaryDto, ConnectionTestResultDto,
-    DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME, KESTIC_INTERFACE_V1,
-    KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, REASON_DESTINATION_UNREACHABLE,
-    REASON_SOURCE_UNAVAILABLE, RunDetailDto, StartAllResultDto,
+    ActiveRunProgressDto, BackupAvailabilityDto, BackupSnapshotsDto, BackupSummaryDto,
+    ConnectionTestResultDto, DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME,
+    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind,
+    REASON_CONDITION_NOT_MET, REASON_DESTINATION_UNREACHABLE, REASON_SOURCE_UNAVAILABLE,
+    RunDetailDto, StartAllResultDto,
 };
 use std::collections::HashMap;
 use std::env;
@@ -86,6 +98,7 @@ pub struct SharedGuiState {
     pub pending_blocked: Option<(String, String)>,
     pub pending_show_window: bool,
     pub pending_quit: Option<(bool, String)>,
+    pub maintenance_preview: Option<(String, Result<String, String>)>,
     pub signal_conn: Option<zbus::Connection>,
 }
 
@@ -106,6 +119,7 @@ impl SharedGuiState {
             pending_blocked: None,
             pending_show_window: false,
             pending_quit: None,
+            maintenance_preview: None,
             signal_conn: None,
         }
     }
@@ -191,9 +205,10 @@ pub fn ensure_daemon_and_refresh() {
         if launch.bus_name != KESTIC_BUS_NAME {
             cmd.arg("--bus-name").arg(&launch.bus_name);
         }
+        // stderr is inherited so the daemon's lifecycle messages reach the session journal.
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::inherit());
 
         match cmd.spawn() {
             Ok(_child) => {
@@ -476,17 +491,35 @@ pub fn build_destination(
     Ok(dest)
 }
 
+/// Kind of the cached destination `dest_id`, if the daemon state knows it.
+pub fn cached_destination_kind(dest_id: &str) -> Option<DestinationKind> {
+    let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+    guard.state.as_ref().and_then(|s| {
+        s.destinations
+            .iter()
+            .find(|d| d.destination.id.as_str() == dest_id.trim())
+            .map(|d| d.destination.kind.clone())
+    })
+}
+
+/// New backup as the wizard creates it; on a local destination it has no network run
+/// conditions (decision 2026-11-20).
 pub fn build_new_backup(
     name: &str,
     source_path: &str,
     dest_id: &str,
     excludes_text: &str,
     detected_source: Option<Source>,
+    dest_kind: Option<&DestinationKind>,
 ) -> Result<Backup, String> {
     let d_id = DestinationId::parse(dest_id.trim()).map_err(|e| e.to_string())?;
     let source =
         detected_source.unwrap_or_else(|| Source::folder(PathBuf::from(source_path.trim())));
     let mut backup = Backup::new(name.trim(), source, d_id).map_err(|e| e.to_string())?;
+    if let Some(kind) = dest_kind {
+        backup.run_conditions = backup.run_conditions.clone().for_destination(kind);
+    }
+    backup.schedule = Schedule::default_scheduled();
     backup.excludes = ExcludeRules::from_text(excludes_text);
     Ok(backup)
 }
@@ -545,6 +578,34 @@ pub fn clone_updated_backup_retention(
 pub fn clone_updated_backup_source(existing: &Backup, source: Source) -> Result<Backup, String> {
     let mut updated = existing.clone();
     updated.set_source(source).map_err(|e| e.to_string())?;
+    updated.validate().map_err(|e| e.to_string())?;
+    Ok(updated)
+}
+
+pub fn clone_updated_backup_schedule(
+    existing: &Backup,
+    schedule: Schedule,
+    overdue_threshold: Option<u32>,
+) -> Result<Backup, String> {
+    let mut updated = existing.clone();
+    updated.schedule = schedule;
+    updated.overdue_threshold = overdue_threshold;
+    updated.validate().map_err(|e| e.to_string())?;
+    Ok(updated)
+}
+
+/// Backup with the edited run conditions; network conditions are dropped for a local
+/// destination (decision 2026-11-20).
+pub fn clone_updated_backup_conditions(
+    existing: &Backup,
+    run_conditions: RunConditions,
+    dest_kind: Option<&DestinationKind>,
+) -> Result<Backup, String> {
+    let mut updated = existing.clone();
+    updated.run_conditions = match dest_kind {
+        Some(kind) => run_conditions.for_destination(kind),
+        None => run_conditions,
+    };
     updated.validate().map_err(|e| e.to_string())?;
     Ok(updated)
 }
@@ -755,6 +816,285 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+fn weekday_short_label(w: Weekday) -> String {
+    match w {
+        Weekday::Monday => i18n("Mon").to_string(),
+        Weekday::Tuesday => i18n("Tue").to_string(),
+        Weekday::Wednesday => i18n("Wed").to_string(),
+        Weekday::Thursday => i18n("Thu").to_string(),
+        Weekday::Friday => i18n("Fri").to_string(),
+        Weekday::Saturday => i18n("Sat").to_string(),
+        Weekday::Sunday => i18n("Sun").to_string(),
+    }
+}
+
+fn weekday_full_label(w: Weekday) -> String {
+    match w {
+        Weekday::Monday => i18n("Monday").to_string(),
+        Weekday::Tuesday => i18n("Tuesday").to_string(),
+        Weekday::Wednesday => i18n("Wednesday").to_string(),
+        Weekday::Thursday => i18n("Thursday").to_string(),
+        Weekday::Friday => i18n("Friday").to_string(),
+        Weekday::Saturday => i18n("Saturday").to_string(),
+        Weekday::Sunday => i18n("Sunday").to_string(),
+    }
+}
+
+fn nth_weekday_label(nth: NthWeekday) -> String {
+    match nth {
+        NthWeekday::First => i18n("first").to_string(),
+        NthWeekday::Second => i18n("second").to_string(),
+        NthWeekday::Third => i18n("third").to_string(),
+        NthWeekday::Fourth => i18n("fourth").to_string(),
+        NthWeekday::Last => i18n("last").to_string(),
+    }
+}
+
+fn weekday_plural_label(weekday: Weekday) -> String {
+    match weekday {
+        Weekday::Monday => i18n("Mondays").to_string(),
+        Weekday::Tuesday => i18n("Tuesdays").to_string(),
+        Weekday::Wednesday => i18n("Wednesdays").to_string(),
+        Weekday::Thursday => i18n("Thursdays").to_string(),
+        Weekday::Friday => i18n("Fridays").to_string(),
+        Weekday::Saturday => i18n("Saturdays").to_string(),
+        Weekday::Sunday => i18n("Sundays").to_string(),
+    }
+}
+
+pub fn format_schedule_summary(schedule: &Schedule) -> String {
+    match schedule {
+        Schedule::ManualOnly => i18n("Manual only").to_string(),
+        Schedule::Daily { hour, minute } => {
+            let hhmm = format!("{hour:02}:{minute:02}");
+            i18n("Daily at %1").subs(&[&hhmm])
+        }
+        Schedule::SpecificWeekdays {
+            weekdays,
+            hour,
+            minute,
+        } => {
+            let mut sorted = weekdays.clone();
+            sorted.sort_by_key(|w| w.iso_number());
+            sorted.dedup();
+            let days: Vec<String> = sorted.into_iter().map(weekday_short_label).collect();
+            let hhmm = format!("{hour:02}:{minute:02}");
+            if days.is_empty() {
+                i18n("On weekdays at %1").subs(&[&hhmm])
+            } else {
+                i18n("On %1 at %2").subs(&[&days.join(", "), &hhmm])
+            }
+        }
+        Schedule::Weekly {
+            weekday,
+            hour,
+            minute,
+        } => {
+            let day = Weekday::from_iso_number(*weekday)
+                .map(weekday_full_label)
+                .unwrap_or_else(|_| weekday.to_string());
+            let hhmm = format!("{hour:02}:{minute:02}");
+            i18n("Weekly on %1 at %2").subs(&[&day, &hhmm])
+        }
+        Schedule::EveryNDays {
+            interval_days,
+            start_date,
+            hour,
+            minute,
+        } => {
+            let hhmm = format!("{hour:02}:{minute:02}");
+            i18n("Every %1 days from %2 at %3").subs(&[
+                &interval_days.to_string(),
+                start_date,
+                &hhmm,
+            ])
+        }
+    }
+}
+
+pub fn format_conditions_summary(conditions: &RunConditions) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if conditions.require_ac_power {
+        parts.push(i18n("AC power only").to_string());
+    }
+    if conditions.require_network {
+        parts.push(i18n("Network required").to_string());
+    }
+    if conditions.skip_on_metered_network {
+        parts.push(i18n("Not on metered connection").to_string());
+    }
+    if !conditions.allowed_networks.is_empty() {
+        parts.push(i18n("Networks: %1").subs(&[&conditions.allowed_networks.join(", ")]));
+    }
+    if parts.is_empty() {
+        i18n("No restrictions").to_string()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+pub fn format_maintenance_entry(entry: &MaintenanceEntrySchedule) -> String {
+    match entry {
+        MaintenanceEntrySchedule::ManualOnly => i18n("Manual only").to_string(),
+        MaintenanceEntrySchedule::Daily { hour, minute } => {
+            let hhmm = format!("{hour:02}:{minute:02}");
+            i18n("Daily at %1").subs(&[&hhmm])
+        }
+        MaintenanceEntrySchedule::Weekly {
+            weekday,
+            hour,
+            minute,
+        } => {
+            let hhmm = format!("{hour:02}:{minute:02}");
+            i18n("%1 at %2").subs(&[&weekday_plural_label(*weekday), &hhmm])
+        }
+        MaintenanceEntrySchedule::Monthly {
+            nth,
+            weekday,
+            hour,
+            minute,
+        } => {
+            let hhmm = format!("{hour:02}:{minute:02}");
+            i18n("%1 %2 of month at %3").subs(&[
+                &nth_weekday_label(*nth),
+                &weekday_full_label(*weekday),
+                &hhmm,
+            ])
+        }
+    }
+}
+
+pub fn format_maintenance_summary(maint: &MaintenanceSchedule) -> String {
+    i18n("Clean up: %1 · Verify: %2").subs(&[
+        &format_maintenance_entry(&maint.prune),
+        &format_maintenance_entry(&maint.check),
+    ])
+}
+
+pub fn format_slot_timestamp(unix_opt: Option<i64>, now: OffsetDateTime) -> String {
+    let Some(ts) = unix_opt else {
+        return String::new();
+    };
+    let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts) else {
+        return String::new();
+    };
+    format_local_slot_hint(dt, now, &TimezoneSpec::System)
+}
+
+pub fn format_next_scheduled_line(
+    next_unix: Option<i64>,
+    schedule: &Schedule,
+    now: OffsetDateTime,
+) -> String {
+    let hint = format_slot_timestamp(next_unix, now);
+    if !hint.is_empty() {
+        return i18n("Next: %1").subs(&[&hint]);
+    }
+    if matches!(schedule, Schedule::ManualOnly) {
+        return i18n("Schedule: Manual only").to_string();
+    }
+    String::new()
+}
+
+pub fn preview_next_schedule_slots(schedule: &Schedule, now: OffsetDateTime) -> Vec<String> {
+    next_backup_slots(schedule, now, 3, &TimezoneSpec::System)
+        .into_iter()
+        .map(format_datetime_display)
+        .collect()
+}
+
+pub fn format_pause_line(
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    now: OffsetDateTime,
+) -> String {
+    let since_str = since_unix
+        .and_then(|s| OffsetDateTime::from_unix_timestamp(s).ok())
+        .map(format_time_short)
+        .unwrap_or_else(|| "–".to_string());
+    let until_str = format_slot_timestamp(until_unix, now);
+    if !until_str.is_empty() {
+        i18n("Paused since %1 (until %2)").subs(&[&since_str, &until_str])
+    } else {
+        i18n("Paused since %1").subs(&[&since_str])
+    }
+}
+
+/// Waiting reason in the GUI locale, derived from the daemon's reason code; the backoff
+/// reason uses `retry_at_unix` (`pending_retry_at_unix`), the daemon text is only the fallback.
+pub fn localized_pending_reason(
+    code: Option<&str>,
+    daemon_text: &str,
+    retry_at_unix: Option<i64>,
+    now: OffsetDateTime,
+) -> String {
+    match code {
+        Some("backoff") => {
+            let hint = format_slot_timestamp(retry_at_unix, now);
+            let hint = if hint.is_empty() {
+                "–".to_string()
+            } else {
+                hint
+            };
+            i18n("Waiting: next attempt at %1").subs(&[&hint])
+        }
+        Some("source_unavailable") => i18n("Waiting: source unavailable").to_string(),
+        Some("destination_unreachable") => i18n("Waiting: destination unreachable").to_string(),
+        Some("on_battery") => i18n("Waiting: AC power").to_string(),
+        Some("no_network") => i18n("Waiting: network").to_string(),
+        Some("metered") => i18n("Waiting: unmetered connection").to_string(),
+        Some("wrong_network") => i18n("Waiting: allowed network").to_string(),
+        Some("queue") => i18n("Waiting: another run on this destination").to_string(),
+        _ => daemon_text.to_string(),
+    }
+}
+
+/// Cause of the last run's error/warning of `summary` in the GUI locale (`error_kind`).
+pub fn localized_last_error(summary: &BackupSummaryDto) -> String {
+    let is_warning = summary
+        .last_run
+        .as_ref()
+        .is_some_and(|r| r.status == RunStatus::Warning);
+    let text = localized_error_kind(
+        summary.error_kind.as_deref(),
+        summary.error_exit_code,
+        is_warning,
+        summary.error_summary.as_deref(),
+    );
+    if text.is_empty() && !is_warning {
+        i18n("Backup failed").to_string()
+    } else {
+        text
+    }
+}
+
+/// Status line of a backup whose source or destination is unavailable.
+///
+/// A manual-only backup is never due, so it never waits (glossary «wartet»): it shows the
+/// availability only, e.g. «Manual only · Destination unreachable» (decision 2026-11-19).
+fn unavailable_status(
+    schedule: &Schedule,
+    availability: &BackupAvailabilityDto,
+) -> (String, String, String) {
+    if matches!(schedule, Schedule::ManualOnly) {
+        let text = i18n("%1 · %2").subs(&[
+            &i18n("Manual only").to_string(),
+            &localized_availability_reason(availability),
+        ]);
+        return (text, "state-information".to_string(), "text".to_string());
+    }
+    let reason_line = match availability.blocked_reason.as_deref() {
+        Some(REASON_SOURCE_UNAVAILABLE) => {
+            localized_source_status(availability.source_status.as_deref())
+        }
+        Some(REASON_DESTINATION_UNREACHABLE) => {
+            i18n("Waiting: destination unreachable").to_string()
+        }
+        _ => i18n("Waiting: unavailable").to_string(),
+    };
+    (reason_line, "chronometer".to_string(), "text".to_string())
+}
+
 pub fn format_backup_status(
     summary: &BackupSummaryDto,
     active_progress: Option<&ActiveRunProgressDto>,
@@ -768,29 +1108,55 @@ pub fn format_backup_status(
         return (text, "state-sync".to_string(), "highlight".to_string());
     }
 
-    if !summary.availability.available {
-        let reason_line = match summary.availability.blocked_reason.as_deref() {
-            Some(REASON_SOURCE_UNAVAILABLE) => summary
-                .availability
-                .reason_text
-                .clone()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| i18n("Waiting: source unavailable").to_string()),
-            Some(REASON_DESTINATION_UNREACHABLE) => {
-                i18n("Waiting: destination unreachable").to_string()
-            }
-            _ => i18n("Waiting: unavailable").to_string(),
+    if summary.has_error
+        && let Some(run) = &summary.last_run
+        && run.status == RunStatus::Error
+    {
+        let cause = localized_last_error(summary);
+        let text = i18n("Failed: %1").subs(&[&cause]);
+        return (text, "state-error".to_string(), "negative".to_string());
+    }
+
+    if summary.is_overdue {
+        let text = if summary.missed_slots_count > 0 {
+            i18n("Overdue (%1 missed)").subs(&[&summary.missed_slots_count.to_string()])
+        } else {
+            i18n("Overdue").to_string()
         };
-        return (reason_line, "chronometer".to_string(), "text".to_string());
+        return (text, "alarm-symbolic".to_string(), "negative".to_string());
+    }
+
+    if summary.is_paused {
+        return (
+            format_pause_line(summary.paused_since_unix, summary.paused_until_unix, now),
+            "state-pause".to_string(),
+            "text".to_string(),
+        );
+    }
+
+    if let Some(primary) = &summary.pending_primary_reason
+        && !primary.trim().is_empty()
+    {
+        return (
+            localized_pending_reason(
+                summary.pending_primary_code.as_deref(),
+                primary,
+                summary.pending_retry_at_unix,
+                now,
+            ),
+            "chronometer".to_string(),
+            "text".to_string(),
+        );
+    }
+
+    if !summary.availability.available {
+        return unavailable_status(&summary.backup.schedule, &summary.availability);
     }
 
     if let Some(run) = &summary.last_run {
         match run.status {
             RunStatus::Error => {
-                let cause = summary
-                    .error_summary
-                    .clone()
-                    .unwrap_or_else(|| i18n("Backup failed").to_string());
+                let cause = localized_last_error(summary);
                 let text = i18n("Failed: %1").subs(&[&cause]);
                 return (text, "state-error".to_string(), "negative".to_string());
             }
@@ -894,8 +1260,15 @@ pub fn format_overall_visual(kind: OverallStatusKind) -> (&'static str, &'static
     }
 }
 
-pub fn format_run_status(status: RunStatus) -> (String, &'static str, &'static str) {
+pub fn format_run_status(
+    kind: &RunKind,
+    status: RunStatus,
+) -> (String, &'static str, &'static str) {
     match status {
+        // A maintenance run (`forget`/`prune`/`check`) backs nothing up.
+        RunStatus::Ok if matches!(kind, RunKind::Maintenance) => {
+            (i18n("Completed").to_string(), "state-ok", "positive")
+        }
         RunStatus::Ok => (i18n("Backed up").to_string(), "state-ok", "positive"),
         RunStatus::Warning => (i18n("Warning").to_string(), "state-warning", "neutral"),
         RunStatus::Error => (i18n("Failed").to_string(), "state-error", "negative"),
@@ -953,11 +1326,36 @@ pub fn current_now() -> OffsetDateTime {
     SystemClock.now_utc()
 }
 
+pub fn daemon_now(state: &DaemonStateDto) -> OffsetDateTime {
+    OffsetDateTime::from_unix_timestamp(state.overall.now_unix).unwrap_or_else(|_| current_now())
+}
+
+pub fn cached_daemon_now() -> OffsetDateTime {
+    let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+    guard
+        .state
+        .as_ref()
+        .map(daemon_now)
+        .unwrap_or_else(current_now)
+}
+
+pub fn cached_today_iso_date() -> String {
+    let date = to_local(cached_daemon_now()).date();
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        date.month() as u8,
+        date.day()
+    )
+}
+
+/// Title of a run in the history; a backup that no longer exists is named as deleted, never
+/// by its internal ID.
 pub fn format_run_kind_name(run: &Run, backup_name: Option<&str>, dest_name: &str) -> String {
     match &run.kind {
         RunKind::Backup { .. } => backup_name
             .map(ToOwned::to_owned)
-            .unwrap_or_else(|| dest_name.to_string()),
+            .unwrap_or_else(|| i18n("Deleted backup").to_string()),
         RunKind::Maintenance => i18n("Maintenance %1").subs(&[dest_name]),
         RunKind::Restore { .. } => i18n("Restore %1").subs(&[backup_name.unwrap_or(dest_name)]),
         RunKind::Meta => i18n("Metadata %1").subs(&[dest_name]),
@@ -967,23 +1365,76 @@ pub fn format_run_kind_name(run: &Run, backup_name: Option<&str>, dest_name: &st
 pub fn localized_manual_block_message(backup_name: &str, reason: &str) -> String {
     if reason == REASON_SOURCE_UNAVAILABLE {
         i18n("Cannot back up '%1': source is unavailable.").subs(&[backup_name])
+    } else if reason == REASON_CONDITION_NOT_MET {
+        i18n("Cannot back up '%1': run conditions are not met.").subs(&[backup_name])
     } else {
         i18n("Cannot back up '%1': destination is unreachable.").subs(&[backup_name])
     }
 }
 
+pub fn localized_condition_override_message(backup_name: &str, unmet_text: Option<&str>) -> String {
+    if let Some(detail) = unmet_text.filter(|s| !s.trim().is_empty()) {
+        i18n("Run conditions for '%1' are currently not met (%2). Start backup anyway?")
+            .subs(&[backup_name, detail])
+    } else {
+        i18n("Run conditions for '%1' are currently not met. Start backup anyway?")
+            .subs(&[backup_name])
+    }
+}
+
+/// Localized reason for a skipped backup of «Back Up All Now» (FR-13b); the code is
+/// translated in the GUI locale, the daemon text is only the fallback for unknown codes.
+fn localized_skip_reason(skipped: &kestic_daemon::dbus_api::SkippedBackupDto) -> String {
+    match skipped.reason.as_str() {
+        "permanent_error" => i18n("permanent error, fix required").to_string(),
+        REASON_SOURCE_UNAVAILABLE => i18n("source unavailable").to_string(),
+        REASON_DESTINATION_UNREACHABLE => i18n("destination unreachable").to_string(),
+        REASON_CONDITION_NOT_MET => i18n("run conditions not met").to_string(),
+        "error" => localized_skip_error_kind(skipped.error_kind.as_deref(), &skipped.reason_text),
+        _ => skipped.reason_text.clone(),
+    }
+}
+
 pub fn localized_start_all_summary(res: &StartAllResultDto) -> Option<String> {
-    if res.skipped.is_empty() {
+    let queued = res.queued_backup_ids.len();
+    let skipped = res.skipped.len();
+    if queued == 0 && skipped == 0 {
         return None;
     }
     let details: Vec<String> = res
         .skipped
         .iter()
-        .map(|s| format!("{} ({})", s.backup_name, s.reason_text))
+        .map(|s| format!("{} ({})", s.backup_name, localized_skip_reason(s)))
         .collect();
-    Some(
-        i18n("%1 backups skipped: %2").subs(&[&res.skipped.len().to_string(), &details.join(", ")]),
-    )
+    let details = details.join(", ");
+    if skipped == 0 {
+        return Some(i18np(
+            "%1 backup queued behind active destination run",
+            "%1 backups queued behind active destination run",
+            queued,
+            &[],
+        ));
+    }
+    if queued == 0 {
+        return Some(i18np(
+            "%1 backup skipped: %2",
+            "%1 backups skipped: %2",
+            skipped,
+            &[&details],
+        ));
+    }
+    let skipped_text = i18np(
+        "%1 backup skipped: %2",
+        "%1 backups skipped: %2",
+        skipped,
+        &[&details],
+    );
+    Some(i18np(
+        "%1 backup queued, %2",
+        "%1 backups queued, %2",
+        queued,
+        &[&skipped_text],
+    ))
 }
 
 pub fn lookup_backup_summary<'a>(
@@ -996,29 +1447,5 @@ pub fn lookup_backup_summary<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use time::macros::datetime;
-
-    #[test]
-    fn utc_and_offset_same_instant_format_identically_in_local_time() {
-        let ts_utc = datetime!(2026-11-16 23:30:00 UTC);
-        let ts_plus1 = datetime!(2026-11-17 00:30:00 +01:00);
-        let ts_minus5 = datetime!(2026-11-16 18:30:00 -05:00);
-        assert_eq!(ts_utc.unix_timestamp(), ts_plus1.unix_timestamp());
-        assert_eq!(ts_utc.unix_timestamp(), ts_minus5.unix_timestamp());
-
-        let disp_utc = format_datetime_display(ts_utc);
-        let disp_plus1 = format_datetime_display(ts_plus1);
-        let disp_minus5 = format_datetime_display(ts_minus5);
-        assert_eq!(disp_utc, disp_plus1);
-        assert_eq!(disp_utc, disp_minus5);
-        assert_eq!(format_time_short(ts_utc), &disp_plus1[11..16]);
-        assert_eq!(format_time_short(ts_plus1), &disp_plus1[11..16]);
-        assert_eq!(format_time_short(ts_minus5), &disp_plus1[11..16]);
-        assert_eq!(
-            format_day_group(ts_utc, datetime!(2026-11-17 12:00:00 UTC)),
-            format_day_group(ts_plus1, datetime!(2026-11-17 12:00:00 UTC))
-        );
-    }
-}
+#[path = "state_cache_tests.rs"]
+mod tests;

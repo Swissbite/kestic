@@ -160,7 +160,7 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
             };
 
             let handle = thread::spawn(move || run_daemon(run_cfg));
-            wait_for_file(&ready_file, Duration::from_secs(5));
+            wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
 
             let client = KesticClient::connect_default().expect("connect client");

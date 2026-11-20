@@ -12,6 +12,7 @@ publish = false
 
 [dependencies]
 getrandom = "0.4"
+jiff.workspace = true
 rusqlite = { version = "0.43", default-features = false, features = ["bundled"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }

@@ -62,6 +62,34 @@ fn notification_service_available() -> bool {
     })
 }
 
+/// Checks whether desktop notifications for `event` are enabled in F3 [`NotificationSettings`].
+pub fn is_event_enabled(
+    settings: &kestic_core::model::NotificationSettings,
+    event: KesticEvent,
+) -> bool {
+    match event {
+        KesticEvent::BackupFailed => settings.on_error,
+        KesticEvent::BackupWarning => settings.on_warning,
+        KesticEvent::BackupOverdue => settings.on_overdue,
+        KesticEvent::MaintenanceFailed => settings.on_maintenance_failed,
+        KesticEvent::ResticUpdateAvailable => settings.on_restic_update,
+        KesticEvent::ManualRunBlocked | KesticEvent::RestoreFinished => true,
+    }
+}
+
+/// Sends a notification only when enabled in [`NotificationSettings`] (`F3`, `AC-M3-08-2`).
+pub fn send_configured_notification(
+    settings: &kestic_core::model::NotificationSettings,
+    event: KesticEvent,
+    summary: &str,
+    body: &str,
+) -> notify_rust::error::Result<u32> {
+    if !is_event_enabled(settings, event) {
+        return Ok(0);
+    }
+    send_event_notification(event, summary, body)
+}
+
 /// Sends a notification via `org.freedesktop.Notifications` using `notify-rust`
 /// with `desktop-entry`, `x-kde-eventId`, and `Urgency::Normal` (U6, U7).
 pub fn send_event_notification(

@@ -92,6 +92,7 @@ fn ac_m1_03_2_and_s15_exit_code_classification_and_exit_error() {
 fn ac_m1_15_3_exit_error_json_from_real_restic_stderr_is_captured() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
         let missing_repo = dir.path().join("nonexistent-repo");
         let dest = Destination::new(
             "Missing",
@@ -107,7 +108,8 @@ fn ac_m1_15_3_exit_error_json_from_real_restic_stderr_is_captured() {
             "kestic",
             &dest,
             vec!["snapshots".to_string()],
-        );
+        )
+        .with_cache_dir(Some(&cache_dir));
         spec.low_priority = false;
         spec.password_command_override = Some("printf 'test-pw\\n'".to_string());
 

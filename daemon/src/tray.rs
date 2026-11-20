@@ -6,9 +6,20 @@
 
 use crate::dbus_api::{ActiveRunProgressDto, OverallStatusKind};
 use crate::i18n::i18n;
+use kestic_core::scheduler::PauseDuration;
 use ksni::blocking::TrayMethods;
 use ksni::menu::{MenuItem, StandardItem, SubMenu};
 use std::sync::{Arc, mpsc};
+
+/// Status line of the active run: «‹Backup›: backing up · n%» for backups, maintenance
+/// wording («Maintaining ‹Destination›») for destination maintenance (no backup id).
+pub(crate) fn active_run_line(active: &ActiveRunProgressDto) -> String {
+    if active.backup_id.is_none() {
+        return i18n("Maintaining %1").subs(&[&active.backup_name]);
+    }
+    let pct = active.percent_done.round().clamp(0.0, 100.0) as u32;
+    i18n("%1: backing up · %2%").subs(&[&active.backup_name, &pct.to_string()])
+}
 
 /// Mapped StatusNotifierItem visibility state per `tray-und-benachrichtigungen.md` §10.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +55,8 @@ pub enum TrayAction {
     StartBackup(String),
     StartAllBackups,
     CancelRun(String),
+    PauseGlobal(PauseDuration),
+    ResumeGlobal,
     OpenWindow,
     RequestQuit,
 }
@@ -94,7 +107,7 @@ pub fn compute_tray_presentation(
     }
 }
 
-/// Snapshot of tray metadata and M1 menu state presented via `org.kde.StatusNotifierItem`.
+/// Snapshot of tray metadata and M1/M3 menu state presented via `org.kde.StatusNotifierItem`.
 #[derive(Debug, Clone)]
 pub struct KesticTrayState {
     pub status: TrayStatus,
@@ -105,6 +118,9 @@ pub struct KesticTrayState {
     pub tooltip_description: String,
     pub status_line: String,
     pub running_run: Option<ActiveRunProgressDto>,
+    pub paused_line: Option<String>,
+    pub next_backup_line: Option<String>,
+    pub global_paused: bool,
     pub backups: Vec<TrayBackupItem>,
     pub blocking_active: bool,
 }
@@ -120,6 +136,9 @@ impl Default for KesticTrayState {
             tooltip_description: i18n("Backups ready").into(),
             status_line: i18n("All data backed up").into(),
             running_run: None,
+            paused_line: None,
+            next_backup_line: None,
+            global_paused: false,
             backups: Vec::new(),
             blocking_active: false,
         }
@@ -146,6 +165,175 @@ impl KesticTray {
         {
             let _ = tx.send(());
         }
+    }
+
+    fn build_status_header_items(&self) -> Vec<MenuItem<Self>> {
+        let mut items: Vec<MenuItem<Self>> = vec![
+            StandardItem {
+                label: self.state.status_line.clone(),
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
+        ];
+
+        // With a single run the headline already is the run line: show it only once.
+        if let Some(active) = &self.state.running_run
+            && let label = active_run_line(active)
+            && label != self.state.status_line
+        {
+            items.push(
+                StandardItem {
+                    label,
+                    icon_name: "state-sync".to_string(),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
+        if let Some(paused_line) = &self.state.paused_line {
+            items.push(
+                StandardItem {
+                    label: paused_line.clone(),
+                    icon_name: "state-pause".to_string(),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
+        if let Some(next_line) = &self.state.next_backup_line {
+            items.push(
+                StandardItem {
+                    label: next_line.clone(),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
+        items
+    }
+
+    fn build_backup_now_submenu(&self) -> MenuItem<Self> {
+        // "Back Up Now" submenu (M1-S11, AC-M1-11-2)
+        let mut backup_submenu: Vec<MenuItem<Self>> = Vec::new();
+        let any_enabled =
+            !self.state.blocking_active && self.state.backups.iter().any(|b| b.enabled);
+        backup_submenu.push(
+            StandardItem {
+                label: i18n("All Backups").into(),
+                icon_name: "media-playback-start".to_string(),
+                enabled: any_enabled,
+                activate: Box::new(|this: &mut Self| {
+                    this.emit(TrayAction::StartAllBackups);
+                }),
+                ..Default::default()
+            }
+            .into(),
+        );
+        if !self.state.backups.is_empty() {
+            backup_submenu.push(MenuItem::Separator);
+            for entry in &self.state.backups {
+                let id = entry.backup_id.clone();
+                backup_submenu.push(
+                    StandardItem {
+                        label: entry.label.clone(),
+                        enabled: !self.state.blocking_active && entry.enabled,
+                        activate: Box::new(move |this: &mut Self| {
+                            this.emit(TrayAction::StartBackup(id.clone()));
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
+            }
+        }
+
+        SubMenu {
+            label: i18n("Back Up Now").into(),
+            icon_name: "media-playback-start".to_string(),
+            enabled: !self.state.blocking_active && !self.state.backups.is_empty(),
+            submenu: backup_submenu,
+            ..Default::default()
+        }
+        .into()
+    }
+
+    fn build_schedule_pause_item(&self) -> MenuItem<Self> {
+        // Pause / Resume Schedules (M3-S07, AC-M3-14-4, §10.1)
+        if self.state.global_paused {
+            StandardItem {
+                label: i18n("Resume Schedules").into(),
+                icon_name: "media-playback-start".to_string(),
+                activate: Box::new(|this: &mut Self| {
+                    this.emit(TrayAction::ResumeGlobal);
+                }),
+                ..Default::default()
+            }
+            .into()
+        } else {
+            SubMenu {
+                label: i18n("Pause Schedules").into(),
+                icon_name: "media-playback-pause".to_string(),
+                submenu: vec![
+                    StandardItem {
+                        label: i18n("1 Hour").into(),
+                        activate: Box::new(|this: &mut Self| {
+                            this.emit(TrayAction::PauseGlobal(PauseDuration::Hours { hours: 1 }));
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                    StandardItem {
+                        label: i18n("3 Hours").into(),
+                        activate: Box::new(|this: &mut Self| {
+                            this.emit(TrayAction::PauseGlobal(PauseDuration::Hours { hours: 3 }));
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                    StandardItem {
+                        label: i18n("Until Tomorrow").into(),
+                        activate: Box::new(|this: &mut Self| {
+                            this.emit(TrayAction::PauseGlobal(PauseDuration::UntilTomorrow));
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                    StandardItem {
+                        label: i18n("Until I Resume").into(),
+                        activate: Box::new(|this: &mut Self| {
+                            this.emit(TrayAction::PauseGlobal(PauseDuration::Indefinite));
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                ],
+                ..Default::default()
+            }
+            .into()
+        }
+    }
+
+    fn build_cancel_item(&self) -> MenuItem<Self> {
+        let running_id = self.state.running_run.as_ref().map(|r| r.run_id.clone());
+        StandardItem {
+            label: i18n("Cancel Running Backup").into(),
+            icon_name: "process-stop".to_string(),
+            enabled: running_id.is_some(),
+            activate: Box::new(move |this: &mut Self| {
+                if let Some(ref run_id) = running_id {
+                    this.emit(TrayAction::CancelRun(run_id.clone()));
+                }
+            }),
+            ..Default::default()
+        }
+        .into()
     }
 }
 
@@ -200,94 +388,12 @@ impl ksni::Tray for KesticTray {
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let mut items: Vec<MenuItem<Self>> = vec![
-            StandardItem {
-                label: self.state.status_line.clone(),
-                enabled: false,
-                ..Default::default()
-            }
-            .into(),
-        ];
-
-        if let Some(active) = &self.state.running_run {
-            let pct = active.percent_done.round().clamp(0.0, 100.0) as u32;
-            let label = i18n("%1: backing up · %2%").subs(&[&active.backup_name, &pct.to_string()]);
-            items.push(
-                StandardItem {
-                    label,
-                    icon_name: "state-sync".to_string(),
-                    enabled: false,
-                    ..Default::default()
-                }
-                .into(),
-            );
-        }
-
+        let mut items = self.build_status_header_items();
         items.push(MenuItem::Separator);
-
-        // "Back Up Now" submenu (M1-S11, AC-M1-11-2)
-        let mut backup_submenu: Vec<MenuItem<Self>> = Vec::new();
-        let any_enabled =
-            !self.state.blocking_active && self.state.backups.iter().any(|b| b.enabled);
-        backup_submenu.push(
-            StandardItem {
-                label: i18n("All Backups").into(),
-                icon_name: "media-playback-start".to_string(),
-                enabled: any_enabled,
-                activate: Box::new(|this: &mut Self| {
-                    this.emit(TrayAction::StartAllBackups);
-                }),
-                ..Default::default()
-            }
-            .into(),
-        );
-        if !self.state.backups.is_empty() {
-            backup_submenu.push(MenuItem::Separator);
-            for entry in &self.state.backups {
-                let id = entry.backup_id.clone();
-                backup_submenu.push(
-                    StandardItem {
-                        label: entry.label.clone(),
-                        enabled: !self.state.blocking_active && entry.enabled,
-                        activate: Box::new(move |this: &mut Self| {
-                            this.emit(TrayAction::StartBackup(id.clone()));
-                        }),
-                        ..Default::default()
-                    }
-                    .into(),
-                );
-            }
-        }
-
-        items.push(
-            SubMenu {
-                label: i18n("Back Up Now").into(),
-                icon_name: "media-playback-start".to_string(),
-                enabled: !self.state.blocking_active && !self.state.backups.is_empty(),
-                submenu: backup_submenu,
-                ..Default::default()
-            }
-            .into(),
-        );
-
-        let running_id = self.state.running_run.as_ref().map(|r| r.run_id.clone());
-        items.push(
-            StandardItem {
-                label: i18n("Cancel Running Backup").into(),
-                icon_name: "process-stop".to_string(),
-                enabled: running_id.is_some(),
-                activate: Box::new(move |this: &mut Self| {
-                    if let Some(ref run_id) = running_id {
-                        this.emit(TrayAction::CancelRun(run_id.clone()));
-                    }
-                }),
-                ..Default::default()
-            }
-            .into(),
-        );
-
+        items.push(self.build_backup_now_submenu());
+        items.push(self.build_schedule_pause_item());
+        items.push(self.build_cancel_item());
         items.push(MenuItem::Separator);
-
         items.push(
             StandardItem {
                 label: i18n("Open Kestic").into(),
@@ -299,9 +405,7 @@ impl ksni::Tray for KesticTray {
             }
             .into(),
         );
-
         items.push(MenuItem::Separator);
-
         items.push(
             StandardItem {
                 label: i18n("Quit Kestic…").into(),
@@ -313,7 +417,6 @@ impl ksni::Tray for KesticTray {
             }
             .into(),
         );
-
         items
     }
 }
@@ -376,5 +479,68 @@ impl TrayHandle {
     /// Gracefully shuts down the `ksni` D-Bus service.
     pub fn shutdown(self) {
         self.inner.shutdown().wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header_labels(state: KesticTrayState) -> Vec<String> {
+        let tray = KesticTray {
+            state,
+            action_tx: None,
+            quit_tx: None,
+            about_to_show: None,
+        };
+        tray.build_status_header_items()
+            .into_iter()
+            .filter_map(|item| match item {
+                MenuItem::Standard(s) => Some(s.label),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn running(name: &str, percent: f64) -> ActiveRunProgressDto {
+        ActiveRunProgressDto {
+            run_id: "r1".to_string(),
+            backup_id: Some("b1".to_string()),
+            backup_name: name.to_string(),
+            percent_done: percent,
+            bytes_done: 0,
+            total_bytes: 0,
+            speed_bps: 0,
+            seconds_remaining: 0,
+        }
+    }
+
+    /// M3 manual acceptance (2026-11-19): with one running backup the menu showed
+    /// «quelle: backing up · 46%» twice (headline and run line).
+    #[test]
+    fn m3_acceptance_single_running_backup_is_listed_once() {
+        let run = running("quelle", 46.0);
+        let headline = active_run_line(&run);
+        let labels = header_labels(KesticTrayState {
+            status_line: headline.clone(),
+            running_run: Some(run),
+            ..KesticTrayState::default()
+        });
+
+        assert_eq!(labels.iter().filter(|l| **l == headline).count(), 1);
+    }
+
+    /// The run line stays when the headline says something else (e.g. a failed backup).
+    #[test]
+    fn m3_acceptance_run_line_stays_below_a_different_headline() {
+        let run = running("quelle", 40.0);
+        let run_line = active_run_line(&run);
+        let labels = header_labels(KesticTrayState {
+            status_line: "1 backup failed".to_string(),
+            running_run: Some(run),
+            ..KesticTrayState::default()
+        });
+
+        assert_eq!(labels, vec!["1 backup failed".to_string(), run_line]);
     }
 }

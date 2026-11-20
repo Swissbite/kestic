@@ -57,10 +57,12 @@ jobs:
             /home/kesticci/.rustup
             /home/kesticci/.local/share/kestic-dev
             target
-          key: ${{ runner.os }}-kestic-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/bootstrap.sh') }}
+          # v2: fresh start without the old multi-GB caches. No fallback across
+          # Cargo.lock changes: restoring an older cache would carry stale
+          # dependency builds forward, and cargo never deletes them.
+          key: ${{ runner.os }}-kestic-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('scripts/bootstrap.sh') }}
           restore-keys: |
-            ${{ runner.os }}-kestic-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
-            ${{ runner.os }}-kestic-
+            ${{ runner.os }}-kestic-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
 
       - name: Fix cache ownership and clear stale build artifacts
         run: |
@@ -88,6 +90,11 @@ jobs:
             export PATH=\"\$HOME/.cargo/bin:\$PATH\"
             export LANG=en_US.UTF-8
             export NEXTEST_PROFILE=ci
+            # Keep the cached target small: no incremental state (useless in a
+            # fresh CI checkout) and only line tables instead of full debuginfo
+            # (backtraces keep file:line).
+            export CARGO_INCREMENTAL=0
+            export CARGO_PROFILE_DEV_DEBUG=line-tables-only
             just verify
           "
 
@@ -106,3 +113,15 @@ jobs:
           name: smoke-artifacts
           path: target/smoke-artifacts/*.png
           if-no-files-found: error
+
+      # Runs before the cache post-step saves `target`: drop the workspace's own
+      # build units (rebuilt on every commit anyway), so only dependencies are
+      # cached.
+      - name: Drop workspace build artifacts before caching
+        if: always()
+        run: |
+          rm -rf target/debug/build/kestic-* target/release/build/kestic-* \
+            target/debug/incremental target/release/incremental \
+            target/debug/kestic target/release/kestic \
+            target/debian target/smoke-artifacts target/kestic-gui
+          du -sh target || true

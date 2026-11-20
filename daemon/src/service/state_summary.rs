@@ -1,0 +1,828 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! State DTO, backup/destination summary, overall status, and tray state builders for `DaemonCore`.
+
+use super::run_errors::extract_last_run_error_info;
+use super::state::{DaemonCore, SimulatedOverallStatus};
+use crate::dbus_api::{
+    ActiveRunProgressDto, BackupAvailabilityDto, BackupSummaryDto, BlockingStateDto,
+    DaemonStateDto, DestinationSummaryDto, OverallStatusDto, OverallStatusKind,
+};
+use crate::i18n::i18n;
+use crate::tray::{
+    KesticTrayState, TrayBackupItem, TrayStatus, active_run_line, compute_tray_presentation,
+};
+use kestic_core::history::{BackupRuntimeState, PauseState};
+use kestic_core::model::{
+    Backup, BackupId, Destination, DestinationId, NestedSourceConflict, Run, RunKind, RunStatus,
+    Schedule, find_nested_source_warnings, lint_exclude_rules,
+};
+use kestic_core::scheduler::{
+    BackupScheduleEvalInput, BackupScheduleEvaluation, DestinationMaintenanceEvalInput,
+    UnmetPrecondition, collect_pending_preconditions, evaluate_backup_schedule,
+    evaluate_destination_maintenance, evaluate_run_conditions, format_local_slot_hint,
+    is_pause_active,
+};
+use std::collections::HashMap;
+use time::OffsetDateTime;
+
+struct OverallStatusCounts {
+    failed_count: usize,
+    overdue_count: usize,
+    warning_count: usize,
+    running_count: usize,
+    waiting_count: usize,
+    global_paused: bool,
+    any_paused: bool,
+    all_paused: bool,
+    has_interrupted: bool,
+    has_cancelled: bool,
+    has_never_run: bool,
+    all_manual: bool,
+}
+
+struct PendingReasonsSummary {
+    primary_code: Option<String>,
+    primary_reason: Option<String>,
+    reasons: Vec<String>,
+    codes: Vec<String>,
+    retry_at_unix: Option<i64>,
+    has_unmet_run_condition: bool,
+    unmet_conditions_text: Option<String>,
+}
+
+struct BackupPendingSummaryInput<'a> {
+    backup: &'a Backup,
+    rs: &'a BackupRuntimeState,
+    eval: &'a BackupScheduleEvaluation,
+    availability: &'a BackupAvailabilityDto,
+    active_run: Option<&'a Run>,
+    last_run: Option<&'a Run>,
+    has_error: bool,
+    dest_busy: bool,
+    now: OffsetDateTime,
+}
+
+impl DaemonCore {
+    /// Computes full state snapshot (`DaemonStateDto`) and synchronized `KesticTrayState`.
+    pub fn build_state_and_tray(&self) -> (DaemonStateDto, KesticTrayState) {
+        let now = self.clock.now_utc();
+        let (restic_status, secret_store_status, blocking) = self.cached_probe.clone();
+        let nested_map = find_nested_source_warnings(&self.config.backups);
+        let global_pause_raw = self.global_pause_cached();
+        let global_paused = is_pause_active(global_pause_raw.as_ref(), now);
+
+        let mut backup_summaries = Vec::with_capacity(self.config.backups.len());
+        let mut dest_password_rejected: HashMap<DestinationId, bool> = HashMap::new();
+        let mut paused_backup_window: Option<(OffsetDateTime, Option<OffsetDateTime>)> = None;
+
+        for backup in &self.config.backups {
+            let summary = self.build_backup_summary(
+                backup,
+                &nested_map,
+                global_pause_raw.as_ref(),
+                now,
+                &mut dest_password_rejected,
+                &mut paused_backup_window,
+            );
+            backup_summaries.push(summary);
+        }
+
+        let dest_summaries: Vec<DestinationSummaryDto> = self
+            .config
+            .destinations
+            .iter()
+            .map(|dest| {
+                self.build_destination_summary(
+                    dest,
+                    &dest_password_rejected,
+                    global_pause_raw.as_ref(),
+                    now,
+                )
+            })
+            .collect();
+
+        let global_pause_active = if global_paused {
+            global_pause_raw.as_ref()
+        } else {
+            None
+        };
+        let overall = self.compute_overall_status(
+            &backup_summaries,
+            &dest_summaries,
+            blocking.as_ref(),
+            global_pause_active,
+            paused_backup_window,
+            now,
+        );
+
+        let tray_state = self.build_tray_state(
+            &backup_summaries,
+            &overall,
+            blocking.as_ref(),
+            global_paused,
+            paused_backup_window,
+            now,
+        );
+
+        let recent_runs = self.runs_cache.iter().take(200).cloned().collect();
+        let state = DaemonStateDto {
+            daemon_version: crate::daemon_version().to_string(),
+            has_config_file: self.has_config_file,
+            config_load_error: self.config_load_error.clone(),
+            config: self.config.clone(),
+            restic_status,
+            secret_store_status,
+            blocking,
+            overall,
+            backups: backup_summaries,
+            destinations: dest_summaries,
+            recent_runs,
+        };
+
+        (state, tray_state)
+    }
+
+    fn build_backup_summary(
+        &self,
+        backup: &Backup,
+        nested_map: &HashMap<BackupId, Vec<NestedSourceConflict>>,
+        global_pause_raw: Option<&PauseState>,
+        now: OffsetDateTime,
+        dest_password_rejected: &mut HashMap<DestinationId, bool>,
+        paused_backup_window: &mut Option<(OffsetDateTime, Option<OffsetDateTime>)>,
+    ) -> BackupSummaryDto {
+        let dest_name = self
+            .config
+            .destination(&backup.destination_id)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| backup.destination_id.as_str().to_string());
+
+        let active_run = self
+            .active_runs
+            .values()
+            .find(|entry| entry.backup_id.as_ref() == Some(&backup.id))
+            .map(|entry| entry.run.clone());
+
+        let last_run = self
+            .runs_cache
+            .iter()
+            .find(|r| {
+                r.backup_id() == Some(&backup.id)
+                    && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
+            })
+            .cloned()
+            .or_else(|| {
+                self.runs_cache
+                    .iter()
+                    .find(|r| r.backup_id() == Some(&backup.id))
+                    .cloned()
+            });
+
+        let pending_forget = self.is_pending_forget_cached(&backup.id);
+        let err_info = extract_last_run_error_info(
+            last_run.as_ref(),
+            pending_forget,
+            last_run
+                .as_ref()
+                .and_then(|r| self.run_unreadable_cache.get(&r.id)),
+        );
+        if err_info.wrong_password {
+            dest_password_rejected.insert(backup.destination_id.clone(), true);
+        }
+
+        let availability = self.availability_for_backup(backup);
+        let dest_busy = self.is_destination_busy(&backup.destination_id);
+        let rs = self.backup_runtime_state(&backup.id);
+        let last_success_at = self.last_successful_backup_at_cached(&backup.id);
+
+        let eval = evaluate_backup_schedule(
+            &BackupScheduleEvalInput {
+                backup,
+                runtime_state: &rs,
+                last_success_at,
+                overdue_anchor_at: None,
+                global_pause: global_pause_raw,
+                global_overdue_threshold: self.config.default_overdue_threshold,
+                source_available: availability.source_available,
+                destination_reachable: availability.destination_available,
+                destination_busy: dest_busy,
+                has_permanent_error: err_info.blocks_schedule,
+            },
+            &self.system_env,
+            now,
+            &self.timezone,
+        );
+
+        if eval.is_paused
+            && let Some(ps) = eval.paused_since
+            && paused_backup_window.is_none()
+        {
+            *paused_backup_window = Some((ps, eval.paused_until));
+        }
+
+        let pending = self.resolve_backup_pending_summary(BackupPendingSummaryInput {
+            backup,
+            rs: &rs,
+            eval: &eval,
+            availability: &availability,
+            active_run: active_run.as_ref(),
+            last_run: last_run.as_ref(),
+            has_error: err_info.blocks_schedule,
+            dest_busy,
+            now,
+        });
+
+        BackupSummaryDto {
+            backup: backup.clone(),
+            destination_name: dest_name,
+            last_run,
+            active_run,
+            availability,
+            has_error: err_info.has_error,
+            is_overdue: eval.is_overdue,
+            error_action: err_info.error_action,
+            error_summary: err_info.error_summary,
+            error_kind: err_info.error_kind,
+            error_detail: err_info.error_detail,
+            error_exit_code: err_info.error_exit_code,
+            unreadable_files: err_info.unreadable_files,
+            pending_forget,
+            nested_warnings: nested_map.get(&backup.id).cloned().unwrap_or_default(),
+            exclude_lint_warnings: lint_exclude_rules(&backup.excludes),
+            is_paused: eval.is_paused,
+            paused_since_unix: eval.paused_since.map(|t| t.unix_timestamp()),
+            paused_until_unix: eval.paused_until.map(|t| t.unix_timestamp()),
+            next_scheduled_at_unix: eval.next_scheduled_at.map(|t| t.unix_timestamp()),
+            pending_primary_reason: pending.primary_reason,
+            pending_primary_code: pending.primary_code,
+            pending_reasons: pending.reasons,
+            pending_reason_codes: pending.codes,
+            pending_retry_at_unix: pending.retry_at_unix,
+            missed_slots_count: eval.missed_slots_for_overdue,
+            has_unmet_run_condition: pending.has_unmet_run_condition,
+            unmet_conditions_text: pending.unmet_conditions_text,
+        }
+    }
+
+    fn resolve_backup_pending_summary(
+        &self,
+        input: BackupPendingSummaryInput<'_>,
+    ) -> PendingReasonsSummary {
+        let BackupPendingSummaryInput {
+            backup,
+            rs,
+            eval,
+            availability,
+            active_run,
+            last_run,
+            has_error,
+            dest_busy,
+            now,
+        } = input;
+        let interrupted_recovery = active_run.is_none()
+            && !eval.is_paused
+            && !has_error
+            && eval.due_slot.is_none()
+            && last_run.is_some_and(|r| r.status == RunStatus::Interrupted);
+
+        let effective_unmet = if active_run.is_some() || eval.is_paused || has_error {
+            Vec::new()
+        } else if !eval.unmet_preconditions.is_empty() {
+            eval.unmet_preconditions.clone()
+        } else if self.queued_backups.contains(&backup.id) {
+            vec![UnmetPrecondition::Queued]
+        } else if interrupted_recovery {
+            collect_pending_preconditions(
+                availability.source_available,
+                availability.destination_available,
+                &backup.run_conditions,
+                &self.system_env,
+                dest_busy,
+                eval.in_backoff,
+            )
+        } else {
+            Vec::new()
+        };
+
+        let mut primary_code = None;
+        let mut primary_reason = None;
+        let mut reasons = Vec::with_capacity(effective_unmet.len());
+        let mut codes = Vec::with_capacity(effective_unmet.len());
+        for (idx, item) in effective_unmet.iter().enumerate() {
+            let (code, text) = self.format_pending_reason_entry(item, rs.backoff_until, now);
+            if idx == 0 {
+                primary_code = Some(code.to_string());
+                primary_reason = Some(text.clone());
+            }
+            reasons.push(text);
+            codes.push(code.to_string());
+        }
+        let retry_at_unix = effective_unmet
+            .contains(&UnmetPrecondition::Backoff)
+            .then(|| rs.backoff_until.map(|t| t.unix_timestamp()))
+            .flatten();
+
+        let cond_unmet = evaluate_run_conditions(&backup.run_conditions, &self.system_env);
+        let has_unmet_run_condition = !cond_unmet.is_empty();
+        let unmet_conditions_text = has_unmet_run_condition.then(|| {
+            let parts: Vec<String> = cond_unmet
+                .iter()
+                .map(|c| self.format_unmet_condition_item(c))
+                .collect();
+            i18n("Condition not met: %1").subs(&[&parts.join(", ")])
+        });
+
+        PendingReasonsSummary {
+            primary_code,
+            primary_reason,
+            reasons,
+            codes,
+            retry_at_unix,
+            has_unmet_run_condition,
+            unmet_conditions_text,
+        }
+    }
+
+    fn build_destination_summary(
+        &self,
+        dest: &Destination,
+        dest_password_rejected: &HashMap<DestinationId, bool>,
+        global_pause_raw: Option<&PauseState>,
+        now: OffsetDateTime,
+    ) -> DestinationSummaryDto {
+        let backup_count = self
+            .config
+            .backups
+            .iter()
+            .filter(|b| b.destination_id == dest.id)
+            .count();
+        let avail = self.availability_for_destination(dest);
+        let password_rejected = dest_password_rejected
+            .get(&dest.id)
+            .copied()
+            .unwrap_or(false);
+        let stale_lock_count = self.dest_stale_locks.get(&dest.id).copied().unwrap_or(0);
+        let has_stale_lock = stale_lock_count > 0;
+        let ds = self.destination_maintenance_state(&dest.id);
+        let pending_forget_count = self
+            .config
+            .backups
+            .iter()
+            .filter(|b| b.destination_id == dest.id && self.is_pending_forget_cached(&b.id))
+            .count();
+        let dest_busy = self
+            .active_runs
+            .values()
+            .any(|e| e.run.destination_id == dest.id);
+        let m_eval = evaluate_destination_maintenance(
+            &DestinationMaintenanceEvalInput {
+                destination: dest,
+                state: &ds,
+                has_pending_forget: pending_forget_count > 0,
+                global_pause: global_pause_raw,
+                destination_busy: dest_busy,
+                destination_reachable: avail.reachable,
+            },
+            &self.system_env,
+            now,
+            &self.timezone,
+        );
+        let last_maintenance_run = self
+            .runs_cache
+            .iter()
+            .find(|r| r.destination_id == dest.id && matches!(r.kind, RunKind::Maintenance))
+            .cloned();
+        let maintenance_running = self
+            .active_runs
+            .values()
+            .any(|e| e.run.destination_id == dest.id && matches!(e.run.kind, RunKind::Maintenance));
+        let maint_failed = last_maintenance_run
+            .as_ref()
+            .is_some_and(|r| r.status == RunStatus::Error);
+        let has_problem = !avail.reachable || password_rejected || has_stale_lock || maint_failed;
+        let maintenance_pending_reason = (!maintenance_running
+            && !is_pause_active(global_pause_raw, now))
+        .then(|| self.maintenance_pending_code(&m_eval, avail.reachable, dest_busy))
+        .flatten();
+        let maintenance_retry_at_unix = (maintenance_pending_reason == Some("backoff"))
+            .then(|| ds.maintenance_backoff_until.map(|t| t.unix_timestamp()))
+            .flatten();
+
+        DestinationSummaryDto {
+            destination: dest.clone(),
+            backup_count,
+            availability: avail,
+            password_rejected,
+            has_stale_lock,
+            has_problem,
+            next_prune_at_unix: m_eval.next_prune_at.map(|t| t.unix_timestamp()),
+            next_check_at_unix: m_eval.next_check_at.map(|t| t.unix_timestamp()),
+            last_prune_at_unix: ds.last_prune_at.map(|t| t.unix_timestamp()),
+            last_check_at_unix: ds.last_check_at.map(|t| t.unix_timestamp()),
+            last_maintenance_run,
+            maintenance_running,
+            pending_forget_count,
+            stale_lock_count,
+            maintenance_pending_reason: maintenance_pending_reason.map(str::to_string),
+            maintenance_retry_at_unix,
+        }
+    }
+
+    /// Why due maintenance work waits (`AC-M3-05-5`), with the backup pending-reason codes:
+    /// `destination_unreachable`, `on_battery`, `metered`, `queue`, `backoff`.
+    fn maintenance_pending_code(
+        &self,
+        m_eval: &kestic_core::scheduler::DestinationMaintenanceNeed,
+        reachable: bool,
+        dest_busy: bool,
+    ) -> Option<&'static str> {
+        // An open `forget` alone is not due maintenance work (FR-05, F4).
+        let any_work = m_eval.prune_due || m_eval.check_due;
+        if !any_work || m_eval.due_now {
+            None
+        } else if !reachable {
+            Some("destination_unreachable")
+        } else if self.system_env.on_battery {
+            Some("on_battery")
+        } else if self.system_env.network_metered {
+            Some("metered")
+        } else if dest_busy {
+            Some("queue")
+        } else if m_eval.in_backoff {
+            Some("backoff")
+        } else {
+            None
+        }
+    }
+
+    fn build_tray_state(
+        &self,
+        backup_summaries: &[BackupSummaryDto],
+        overall: &OverallStatusDto,
+        blocking: Option<&BlockingStateDto>,
+        global_paused: bool,
+        paused_backup_window: Option<(OffsetDateTime, Option<OffsetDateTime>)>,
+        now: OffsetDateTime,
+    ) -> KesticTrayState {
+        let tray_backups = backup_summaries
+            .iter()
+            .map(|b| {
+                let is_running_dest = self
+                    .active_runs
+                    .values()
+                    .any(|r| r.run.destination_id == b.backup.destination_id);
+                let label = if !b.availability.available {
+                    let reason = b
+                        .availability
+                        .reason_text
+                        .as_deref()
+                        .unwrap_or("unavailable");
+                    format!("{} ({reason})", b.backup.name)
+                } else {
+                    b.backup.name.clone()
+                };
+                TrayBackupItem {
+                    backup_id: b.backup.id.as_str().to_string(),
+                    label,
+                    enabled: b.availability.available && !is_running_dest,
+                }
+            })
+            .collect();
+
+        let tray_status = match overall.tray_status.as_str() {
+            "NeedsAttention" => TrayStatus::NeedsAttention,
+            "Active" => TrayStatus::Active,
+            _ => TrayStatus::Passive,
+        };
+        let tray_paused_line = overall
+            .paused_label
+            .clone()
+            .or_else(|| paused_backup_window.map(|(ps, pu)| self.format_pause_label(ps, pu, now)));
+        let tray_next_backup_line = overall
+            .next_scheduled_backup_name
+            .as_ref()
+            .zip(overall.next_scheduled_at_unix)
+            .and_then(|(name, ts)| {
+                OffsetDateTime::from_unix_timestamp(ts).ok().map(|dt| {
+                    let when = format_local_slot_hint(dt, now, &self.timezone);
+                    i18n("Next backup: %1 (%2)").subs(&[name, &when])
+                })
+            });
+
+        KesticTrayState {
+            status: tray_status,
+            icon_name: "kestic-symbolic".to_string(),
+            icon_theme_path: self.icon_theme_path.clone(),
+            overlay_icon_name: overall.overlay_icon.clone(),
+            tooltip_title: "Kestic".to_string(),
+            tooltip_description: overall.headline.clone(),
+            status_line: overall.headline.clone(),
+            running_run: overall.active_run_progress.clone(),
+            paused_line: tray_paused_line,
+            next_backup_line: tray_next_backup_line,
+            global_paused,
+            backups: tray_backups,
+            blocking_active: blocking.is_some(),
+        }
+    }
+
+    fn compute_overall_status(
+        &self,
+        backups: &[BackupSummaryDto],
+        destinations: &[DestinationSummaryDto],
+        blocking: Option<&BlockingStateDto>,
+        global_pause: Option<&PauseState>,
+        paused_backup_window: Option<(OffsetDateTime, Option<OffsetDateTime>)>,
+        now: OffsetDateTime,
+    ) -> OverallStatusDto {
+        let active_run_progress = self.active_runs.values().next().map(|e| e.progress.clone());
+
+        if let Some(sim) = self.simulated_status {
+            return self.compute_simulated_overall_status(sim, active_run_progress);
+        }
+
+        let counts =
+            collect_overall_counts(backups, self.active_runs.len(), global_pause.is_some());
+        let worst_kind = select_worst_overall_kind(blocking, backups.is_empty(), &counts);
+        let (tray_status, overlay) =
+            compute_tray_presentation(worst_kind, counts.running_count > 0, counts.any_paused);
+
+        let paused_since_unix = global_pause
+            .map(|p| p.paused_since.unix_timestamp())
+            .or_else(|| paused_backup_window.map(|(ps, _)| ps.unix_timestamp()));
+        let paused_until_unix = global_pause
+            .and_then(|p| p.paused_until.map(|u| u.unix_timestamp()))
+            .or_else(|| paused_backup_window.and_then(|(_, pu)| pu.map(|u| u.unix_timestamp())));
+        let paused_label = global_pause
+            .map(|p| self.format_pause_label(p.paused_since, p.paused_until, now))
+            .or_else(|| paused_backup_window.map(|(ps, pu)| self.format_pause_label(ps, pu, now)));
+
+        let earliest_next = backups
+            .iter()
+            .filter(|b| !b.is_paused)
+            .filter_map(|b| {
+                b.next_scheduled_at_unix
+                    .map(|ts| (ts, b.backup.name.clone()))
+            })
+            .min_by_key(|(ts, _)| *ts);
+        let (next_scheduled_at_unix, next_scheduled_backup_name) = match earliest_next {
+            Some((ts, name)) => (Some(ts), Some(name)),
+            None => (None, None),
+        };
+
+        let headline = format_overall_headline(
+            blocking,
+            backups.len(),
+            &counts,
+            active_run_progress.as_ref(),
+        );
+        let subtitle = if let Some(active) = &active_run_progress
+            && (counts.failed_count > 0 || counts.overdue_count > 0)
+        {
+            if active.backup_id.is_none() {
+                active_run_line(active)
+            } else {
+                let pct = active.percent_done.round().clamp(0.0, 100.0) as u32;
+                i18n("Currently running: %1 (%2%)").subs(&[&active.backup_name, &pct.to_string()])
+            }
+        } else {
+            String::new()
+        };
+
+        OverallStatusDto {
+            kind: worst_kind,
+            tray_status: tray_status.as_str().to_string(),
+            overlay_icon: overlay.to_string(),
+            headline,
+            subtitle,
+            failed_count: counts.failed_count,
+            warning_count: counts.warning_count,
+            overdue_count: counts.overdue_count,
+            running_count: counts.running_count,
+            waiting_count: counts.waiting_count,
+            paused: counts.global_paused,
+            now_unix: now.unix_timestamp(),
+            paused_since_unix,
+            paused_until_unix,
+            paused_label,
+            next_scheduled_backup_name,
+            next_scheduled_at_unix,
+            active_run_progress,
+            backups_have_attention: counts.failed_count > 0 || counts.overdue_count > 0,
+            destinations_have_attention: destinations.iter().any(|d| d.has_problem),
+        }
+    }
+
+    fn compute_simulated_overall_status(
+        &self,
+        sim: SimulatedOverallStatus,
+        active_run_progress: Option<ActiveRunProgressDto>,
+    ) -> OverallStatusDto {
+        let (kind, is_running, is_paused, headline) = match sim {
+            SimulatedOverallStatus::Overdue => (
+                OverallStatusKind::Overdue,
+                false,
+                false,
+                i18n("1 backup overdue").into(),
+            ),
+            SimulatedOverallStatus::Paused => (
+                OverallStatusKind::Paused,
+                false,
+                true,
+                i18n("Schedules paused").into(),
+            ),
+            SimulatedOverallStatus::Waiting => (
+                OverallStatusKind::Pending,
+                false,
+                false,
+                i18n("1 backup waiting").into(),
+            ),
+            SimulatedOverallStatus::PausedAndWaiting => (
+                OverallStatusKind::Pending,
+                false,
+                true,
+                i18n("Schedules paused · 1 backup waiting").into(),
+            ),
+            SimulatedOverallStatus::MaintenanceRunning => (
+                OverallStatusKind::Running,
+                true,
+                false,
+                i18n("Maintenance running").into(),
+            ),
+            SimulatedOverallStatus::RestoreRunning => (
+                OverallStatusKind::Running,
+                true,
+                false,
+                i18n("Restore running").into(),
+            ),
+        };
+        let (tray_status, overlay) = compute_tray_presentation(kind, is_running, is_paused);
+        OverallStatusDto {
+            kind,
+            tray_status: tray_status.as_str().to_string(),
+            overlay_icon: overlay.to_string(),
+            headline,
+            subtitle: String::new(),
+            failed_count: 0,
+            warning_count: 0,
+            overdue_count: usize::from(matches!(sim, SimulatedOverallStatus::Overdue)),
+            running_count: usize::from(is_running),
+            waiting_count: usize::from(matches!(
+                sim,
+                SimulatedOverallStatus::Waiting | SimulatedOverallStatus::PausedAndWaiting
+            )),
+            paused: is_paused,
+            now_unix: self.clock.now_unix_secs(),
+            paused_since_unix: None,
+            paused_until_unix: None,
+            paused_label: is_paused.then(|| i18n("Schedules paused").into()),
+            next_scheduled_backup_name: None,
+            next_scheduled_at_unix: None,
+            active_run_progress,
+            backups_have_attention: matches!(sim, SimulatedOverallStatus::Overdue),
+            destinations_have_attention: false,
+        }
+    }
+}
+
+fn collect_overall_counts(
+    backups: &[BackupSummaryDto],
+    running_count: usize,
+    global_paused: bool,
+) -> OverallStatusCounts {
+    OverallStatusCounts {
+        failed_count: backups.iter().filter(|b| b.has_error).count(),
+        overdue_count: backups.iter().filter(|b| b.is_overdue).count(),
+        warning_count: backups
+            .iter()
+            .filter(|b| {
+                b.last_run
+                    .as_ref()
+                    .is_some_and(|r| r.status == RunStatus::Warning)
+            })
+            .count(),
+        running_count,
+        waiting_count: backups
+            .iter()
+            .filter(|b| {
+                b.pending_primary_reason.is_some()
+                    || (b.active_run.is_none()
+                        && !b.is_paused
+                        && !b.has_error
+                        && b.last_run
+                            .as_ref()
+                            .is_some_and(|r| r.status == RunStatus::Pending))
+            })
+            .count(),
+        global_paused,
+        any_paused: global_paused || backups.iter().any(|b| b.is_paused),
+        all_paused: !backups.is_empty() && backups.iter().all(|b| b.is_paused),
+        has_interrupted: backups.iter().any(|b| {
+            b.last_run
+                .as_ref()
+                .is_some_and(|r| r.status == RunStatus::Interrupted)
+        }),
+        has_cancelled: backups.iter().any(|b| {
+            b.last_run
+                .as_ref()
+                .is_some_and(|r| r.status == RunStatus::Cancelled)
+        }),
+        has_never_run: backups
+            .iter()
+            .any(|b| b.active_run.is_none() && b.last_run.is_none()),
+        all_manual: !backups.is_empty()
+            && backups
+                .iter()
+                .all(|b| matches!(b.backup.schedule, Schedule::ManualOnly)),
+    }
+}
+
+fn select_worst_overall_kind(
+    blocking: Option<&BlockingStateDto>,
+    no_backups: bool,
+    c: &OverallStatusCounts,
+) -> OverallStatusKind {
+    if blocking.is_some() {
+        OverallStatusKind::Blocked
+    } else if c.failed_count > 0 {
+        OverallStatusKind::Error
+    } else if c.overdue_count > 0 {
+        OverallStatusKind::Overdue
+    } else if c.warning_count > 0 {
+        OverallStatusKind::Warning
+    } else if c.running_count > 0 {
+        OverallStatusKind::Running
+    } else if c.waiting_count > 0 {
+        OverallStatusKind::Pending
+    } else if c.global_paused || c.all_paused {
+        OverallStatusKind::Paused
+    } else if c.has_interrupted {
+        OverallStatusKind::Interrupted
+    } else if c.has_cancelled {
+        OverallStatusKind::Cancelled
+    } else if c.has_never_run || no_backups {
+        OverallStatusKind::NeverRun
+    } else if c.all_manual {
+        OverallStatusKind::ManualOnly
+    } else {
+        OverallStatusKind::Ok
+    }
+}
+
+fn format_overall_headline(
+    blocking: Option<&BlockingStateDto>,
+    backup_count: usize,
+    c: &OverallStatusCounts,
+    active_run_progress: Option<&ActiveRunProgressDto>,
+) -> String {
+    if let Some(b) = blocking {
+        b.message.clone()
+    } else if c.failed_count > 0 {
+        if c.failed_count == 1 {
+            i18n("1 backup failed").into()
+        } else {
+            i18n("%1 backups failed").subs(&[&c.failed_count.to_string()])
+        }
+    } else if c.overdue_count > 0 {
+        if c.overdue_count == 1 {
+            i18n("1 backup overdue").into()
+        } else {
+            i18n("%1 backups overdue").subs(&[&c.overdue_count.to_string()])
+        }
+    } else if c.warning_count > 0 {
+        if c.warning_count == 1 {
+            i18n("1 backup finished with warning").into()
+        } else {
+            i18n("%1 backups finished with warnings").subs(&[&c.warning_count.to_string()])
+        }
+    } else if let Some(active) = active_run_progress {
+        active_run_line(active)
+    } else if c.waiting_count > 0 {
+        if c.global_paused {
+            if c.waiting_count == 1 {
+                i18n("Schedules paused · 1 backup waiting").into()
+            } else {
+                i18n("Schedules paused · %1 backups waiting").subs(&[&c.waiting_count.to_string()])
+            }
+        } else if c.waiting_count == 1 {
+            i18n("1 backup waiting").into()
+        } else {
+            i18n("%1 of %2 backups waiting")
+                .subs(&[&c.waiting_count.to_string(), &backup_count.to_string()])
+        }
+    } else if c.global_paused || c.all_paused {
+        i18n("Schedules paused").into()
+    } else if backup_count == 0 {
+        i18n("No backups configured yet").into()
+    } else if c.has_interrupted {
+        i18n("Last run interrupted").into()
+    } else if c.has_cancelled {
+        i18n("Last run cancelled").into()
+    } else if c.has_never_run {
+        i18n("Not backed up yet").into()
+    } else {
+        i18n("All data backed up").into()
+    }
+}

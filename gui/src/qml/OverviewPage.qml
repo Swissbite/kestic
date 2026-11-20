@@ -23,10 +23,52 @@ Kirigami.ScrollablePage {
             text: i18n("Back Up All Now")
             visible: appBackend.has_config_file && appBackend.backups_count > 0
             enabled: appBackend.blocking_kind === ""
-            tooltip: appBackend.blocking_kind !== "" ? appBackend.blocking_message : i18n("Start all available backups")
+            tooltip: appBackend.blocking_kind !== ""
+                ? appBackend.blocking_message
+                : (appBackend.back_up_all_hint !== "" ? appBackend.back_up_all_hint : i18n("Start all available backups"))
             onTriggered: appBackend.startAllBackups()
+        },
+        Kirigami.Action {
+            id: pauseSchedulesAction
+            objectName: "pauseSchedulesAction"
+            icon.name: appBackend.global_paused ? "media-playback-start" : "state-pause"
+            text: appBackend.global_paused ? i18n("Resume Schedules") : i18n("Pause Schedules…")
+            visible: appBackend.has_config_file && appBackend.backups_count > 0
+            enabled: appBackend.blocking_kind !== "daemon_unreachable"
+            tooltip: appBackend.global_paused ? appBackend.global_paused_line : i18n("Temporarily pause scheduled backups")
+            onTriggered: appBackend.global_paused ? appBackend.resumeGlobal() : globalPauseMenu.popup()
         }
     ]
+
+    Controls.Menu {
+        id: globalPauseMenu
+        objectName: "globalPauseMenu"
+
+        Controls.MenuItem {
+            objectName: "pauseGlobal1hItem"
+            text: i18n("1 Hour")
+            Accessible.name: text
+            onTriggered: appBackend.pauseGlobal("1h")
+        }
+        Controls.MenuItem {
+            objectName: "pauseGlobal3hItem"
+            text: i18n("3 Hours")
+            Accessible.name: text
+            onTriggered: appBackend.pauseGlobal("3h")
+        }
+        Controls.MenuItem {
+            objectName: "pauseGlobalTomorrowItem"
+            text: i18n("Until Tomorrow")
+            Accessible.name: text
+            onTriggered: appBackend.pauseGlobal("tomorrow")
+        }
+        Controls.MenuItem {
+            objectName: "pauseGlobalIndefiniteItem"
+            text: i18n("Until I Resume")
+            Accessible.name: text
+            onTriggered: appBackend.pauseGlobal("indefinite")
+        }
+    }
 
     function iconColorFor(kind) {
         switch (kind) {
@@ -107,6 +149,17 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             spacing: Kirigami.Units.largeSpacing
 
+            Kirigami.InlineMessage {
+                id: startAllSkippedBanner
+                objectName: "startAllSkippedBanner"
+                Layout.fillWidth: true
+                type: Kirigami.MessageType.Information
+                visible: appBackend.start_all_skipped_message !== ""
+                showCloseButton: true
+                text: appBackend.start_all_skipped_message
+                onVisibleChanged: if (!visible && appBackend.start_all_skipped_message !== "") appBackend.dismissStartAllSkipped()
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.largeSpacing
@@ -127,6 +180,16 @@ Kirigami.ScrollablePage {
                         objectName: "overallHeadlineLabel"
                         level: 1
                         text: appBackend.overall_headline
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
+                    Controls.Label {
+                        objectName: "backUpAllHintLabel"
+                        visible: appBackend.back_up_all_hint !== ""
+                        text: appBackend.back_up_all_hint
+                        color: Kirigami.Theme.textColor
+                        opacity: 0.8
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -166,12 +229,18 @@ Kirigami.ScrollablePage {
                         required property string availabilityReason
                         required property bool available
                         required property bool hasError
+                        required property bool isOverdue
                         required property bool isRunning
                         required property string activeRunId
                         required property double activePercent
                         required property string activeProgressText
                         required property string errorAction
                         required property string errorSummary
+                        required property string nextScheduledAtText
+                        required property bool isPaused
+                        required property string pausedLine
+                        required property string pendingPrimaryReason
+                        required property string pendingReasonsTooltip
 
                         showClickFeedback: true
                         activeFocusOnTab: true
@@ -225,23 +294,47 @@ Kirigami.ScrollablePage {
                                 }
                             }
 
-                            RowLayout {
+                            Item {
                                 Layout.fillWidth: true
-                                spacing: Kirigami.Units.smallSpacing
+                                implicitHeight: cardStatusRow.implicitHeight
 
-                                Kirigami.Icon {
-                                    source: card.statusIcon
-                                    color: page.iconColorFor(card.statusColorKind)
-                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                                RowLayout {
+                                    id: cardStatusRow
+                                    anchors.fill: parent
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    Kirigami.Icon {
+                                        source: card.statusIcon
+                                        color: page.iconColorFor(card.statusColorKind)
+                                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                                    }
+
+                                    Controls.Label {
+                                        text: card.statusText
+                                        color: Kirigami.Theme.textColor
+                                        wrapMode: Text.WordWrap
+                                        Layout.fillWidth: true
+                                    }
                                 }
 
-                                Controls.Label {
-                                    text: card.statusText
-                                    color: Kirigami.Theme.textColor
-                                    wrapMode: Text.WordWrap
-                                    Layout.fillWidth: true
+                                MouseArea {
+                                    id: statusHoverArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    acceptedButtons: Qt.NoButton
                                 }
+
+                                Controls.ToolTip.visible: statusHoverArea.containsMouse && card.pendingReasonsTooltip !== ""
+                                Controls.ToolTip.text: card.pendingReasonsTooltip
+                            }
+
+                            Controls.Label {
+                                visible: !card.isRunning && card.nextScheduledAtText !== ""
+                                text: card.nextScheduledAtText
+                                opacity: 0.7
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
                             }
 
                             Controls.ProgressBar {
@@ -264,6 +357,7 @@ Kirigami.ScrollablePage {
                                 spacing: Kirigami.Units.smallSpacing
 
                                 Controls.Button {
+                                    objectName: "overviewBackUpNowButton"
                                     visible: !card.isRunning && !(card.hasError && card.errorAction === "update_stored_password")
                                     icon.name: "media-playback-start"
                                     text: i18n("Back Up Now")
@@ -277,6 +371,7 @@ Kirigami.ScrollablePage {
                                 }
 
                                 Controls.Button {
+                                    objectName: "overviewUpdatePasswordButton"
                                     visible: !card.isRunning && card.hasError && card.errorAction === "update_stored_password"
                                     icon.name: "dialog-password"
                                     text: i18n("Update Saved Password…")
@@ -303,7 +398,10 @@ Kirigami.ScrollablePage {
                                     Controls.Menu {
                                         id: cardMenu
                                         Controls.MenuItem {
-                                            text: i18n("Back Up Now")
+                                            objectName: "overviewCardBackUpMenuItem"
+                                            text: (card.hasError && card.errorAction === "update_stored_password")
+                                                ? i18n("Back Up Now Anyway")
+                                                : i18n("Back Up Now")
                                             enabled: card.available && !card.isRunning && appBackend.blocking_kind === ""
                                             onTriggered: appBackend.startBackup(card.backupId)
                                         }

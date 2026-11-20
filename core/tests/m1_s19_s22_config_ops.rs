@@ -28,6 +28,7 @@ fn list_meta_snapshots(
     helper: &std::path::Path,
     store: &dyn SecretStore,
     clock: &FakeClock,
+    cache_dir: &std::path::Path,
 ) -> Vec<ResticSnapshot> {
     let mut spec = ResticCommandSpec::for_destination(
         &resolved.binary,
@@ -41,6 +42,7 @@ fn list_meta_snapshots(
         ],
     );
     spec.low_priority = false;
+    spec.cache_dir = Some(cache_dir.to_path_buf());
     let res = run_restic(&spec, dest, Some(store), clock, None, &[], |_| {})
         .expect("run snapshots for meta tag");
     assert_eq!(
@@ -61,6 +63,8 @@ fn list_meta_snapshots(
 fn ac_m1_19_2_remove_backup_keeps_snapshots() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let cache_str = cache_dir.to_string_lossy().into_owned();
         let cfg_path = dir.path().join("config.toml");
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
@@ -79,6 +83,7 @@ fn ac_m1_19_2_remove_backup_keeps_snapshots() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -108,9 +113,16 @@ fn ac_m1_19_2_remove_backup_keeps_snapshots() {
             assert_eq!(res.exit_code, 0, "{label}");
         }
 
-        let snaps_before =
-            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list snapshots before remove");
+        let snaps_before = list_snapshots_for_backup(
+            &backup.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .expect("list snapshots before remove");
         assert_eq!(snaps_before.len(), 2, "{label}");
 
         // Remove backup from config only; snapshots remain in destination.
@@ -122,9 +134,16 @@ fn ac_m1_19_2_remove_backup_keeps_snapshots() {
         assert!(reloaded.backup(&backup.id).is_none());
         assert!(reloaded.destination(&dest.id).is_some());
 
-        let snaps_after =
-            list_snapshots_for_backup(&backup.id, &dest, &resolved, &helper, &store, &clock, &[])
-                .expect("list snapshots after remove");
+        let snaps_after = list_snapshots_for_backup(
+            &backup.id,
+            &dest,
+            &resolved,
+            &helper,
+            &store,
+            &clock,
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
+        )
+        .expect("list snapshots after remove");
         assert_eq!(
             snaps_after.len(),
             2,
@@ -137,6 +156,7 @@ fn ac_m1_19_2_remove_backup_keeps_snapshots() {
 fn ac_m1_19_3_remove_unused_destination_deletes_secrets_keeps_repo() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
         let cfg_path = dir.path().join("config.toml");
         let repo_dir = dir.path().join("repo");
         fs::create_dir_all(&repo_dir).expect("mkdir repo");
@@ -151,6 +171,7 @@ fn ac_m1_19_3_remove_unused_destination_deletes_secrets_keeps_repo() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest = Destination::new(
@@ -200,6 +221,7 @@ fn ac_m1_19_3_remove_unused_destination_deletes_secrets_keeps_repo() {
         let snap_out = Command::new(&resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "snapshots", "--no-lock"])
             .env("RESTIC_PASSWORD", "remove-dest-pw")
+            .env("RESTIC_CACHE_DIR", &cache_dir)
             .output()
             .expect("restic snapshots");
         assert!(
@@ -325,6 +347,8 @@ fn ac_m1_19_5_aborting_removal_leaves_config_and_secrets_untouched() {
 fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let cache_str = cache_dir.to_string_lossy().into_owned();
         let cfg_path = dir.path().join("config.toml");
         let repo_a = dir.path().join("repo-a");
         let repo_b = dir.path().join("repo-b");
@@ -345,6 +369,7 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
 
         let dest_a =
@@ -439,7 +464,7 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
             &helper,
             &store,
             &clock,
-            &[],
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list B");
         assert_eq!(snaps_b.len(), 1, "{label}: B should have 1 snapshot");
@@ -455,6 +480,7 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
                 &snaps_b[0].id,
             ])
             .env("RESTIC_PASSWORD", "pw-b")
+            .env("RESTIC_CACHE_DIR", &cache_dir)
             .output()
             .expect("cat snapshot on B");
         assert!(cat_out.status.success(), "{label}");
@@ -474,7 +500,7 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
             &helper,
             &store,
             &clock,
-            &[],
+            &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list A");
         assert_eq!(
@@ -571,6 +597,7 @@ fn ac_m1_22_2_old_destination_a_can_be_removed_after_reassign() {
 fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_a = dir.path().join("repo-a");
         let repo_b = dir.path().join("repo-b");
         let state_dir = dir.path().join("state");
@@ -594,6 +621,7 @@ fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
         let dest_a = Destination::new("A", DestinationKind::Local { path: repo_a }).expect("a");
         let dest_b = Destination::new("B", DestinationKind::Local { path: repo_b }).expect("b");
@@ -635,11 +663,14 @@ fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
             ],
         );
         meta_spec.low_priority = false;
+        meta_spec.cache_dir = Some(cache_dir.clone());
         let meta_res = run_restic(&meta_spec, &dest_a, Some(&store), &clock, None, &[], |_| {})
             .expect("create meta snapshot");
         assert_eq!(meta_res.exit_code, 0, "{label}");
 
-        let meta_before = list_meta_snapshots(&backup, &dest_a, &resolved, &helper, &store, &clock);
+        let meta_before = list_meta_snapshots(
+            &backup, &dest_a, &resolved, &helper, &store, &clock, &cache_dir,
+        );
         assert_eq!(meta_before.len(), 1, "{label}");
 
         // Reassign backup to B and run backup on B.
@@ -659,11 +690,15 @@ fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
         assert_eq!(bk_b_res.exit_code, 0, "{label}");
 
         // Meta snapshots in A must remain unchanged.
-        let meta_after = list_meta_snapshots(&backup, &dest_a, &resolved, &helper, &store, &clock);
+        let meta_after = list_meta_snapshots(
+            &backup, &dest_a, &resolved, &helper, &store, &clock, &cache_dir,
+        );
         assert_eq!(meta_after.len(), 1, "{label}");
         assert_eq!(meta_after[0].id, meta_before[0].id, "{label}");
 
-        let meta_in_b = list_meta_snapshots(&backup, &dest_b, &resolved, &helper, &store, &clock);
+        let meta_in_b = list_meta_snapshots(
+            &backup, &dest_b, &resolved, &helper, &store, &clock, &cache_dir,
+        );
         assert!(meta_in_b.is_empty(), "{label}");
     }
 }

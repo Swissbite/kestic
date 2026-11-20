@@ -4,8 +4,8 @@
 //! TOML configuration persistence with `config_version` checks (`ADR-0005`, `F13`, `NFR-03`, `M1-S02`).
 
 use crate::model::{
-    Backup, BackupId, Destination, DestinationId, DestinationKind, ModelError, ResticProvider,
-    RunId,
+    Backup, BackupId, DEFAULT_OVERDUE_THRESHOLD, Destination, DestinationId, DestinationKind,
+    KeepCount, ModelError, NotificationSettings, ResticProvider, RetentionPolicy, RunId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -16,7 +16,16 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// Highest configuration schema version supported by this build of Kestic.
-pub const CURRENT_CONFIG_VERSION: u32 = 1;
+///
+/// - `1`: M1 (retention not yet configurable, an empty `retention` table means
+///   «no rule set»).
+/// - `2`: M2 onwards (every backup needs at least one active keep rule).
+/// - `3`: network run conditions only for network destinations (decision 2026-11-20).
+pub const CURRENT_CONFIG_VERSION: u32 = 3;
+
+fn default_overdue_threshold() -> u32 {
+    DEFAULT_OVERDUE_THRESHOLD
+}
 
 /// Errors occurring while locating, loading, validating, or saving `config.toml`.
 #[derive(Debug, Error)]
@@ -56,6 +65,10 @@ pub struct AppConfig {
     pub restic_provider: ResticProvider,
     #[serde(default)]
     pub expert_mode: bool,
+    #[serde(default = "default_overdue_threshold")]
+    pub default_overdue_threshold: u32,
+    #[serde(default)]
+    pub notifications: NotificationSettings,
     #[serde(default)]
     pub destinations: Vec<Destination>,
     #[serde(default)]
@@ -68,6 +81,8 @@ impl Default for AppConfig {
             config_version: CURRENT_CONFIG_VERSION,
             restic_provider: ResticProvider::default(),
             expert_mode: false,
+            default_overdue_threshold: DEFAULT_OVERDUE_THRESHOLD,
+            notifications: NotificationSettings::default(),
             destinations: Vec::new(),
             backups: Vec::new(),
         }
@@ -87,6 +102,11 @@ impl AppConfig {
                 found: self.config_version,
                 max_supported: CURRENT_CONFIG_VERSION,
             });
+        }
+        if self.default_overdue_threshold == 0 {
+            return Err(ConfigError::Validation(
+                "default_overdue_threshold must be >= 1".to_string(),
+            ));
         }
 
         let mut dest_ids = BTreeSet::new();
@@ -223,9 +243,42 @@ pub fn parse_config_str(raw: &str) -> Result<AppConfig, ConfigError> {
             max_supported: CURRENT_CONFIG_VERSION,
         });
     }
-    let config: AppConfig = toml::from_str(raw)?;
+    let mut config: AppConfig = toml::from_str(raw)?;
+    migrate(&mut config);
     config.validate()?;
     Ok(config)
+}
+
+/// Upgrades an older configuration in memory to [`CURRENT_CONFIG_VERSION`] (F13).
+///
+/// The next save writes the migrated file; the file on disk stays untouched until then.
+fn migrate(config: &mut AppConfig) {
+    if config.config_version < 2 {
+        // M1 never ran `forget`: an empty retention meant «keep every snapshot».
+        // Keep that behaviour explicitly instead of silently applying a preset that
+        // would delete snapshots (docs/spec/questions.md, 2026-11-19).
+        for backup in &mut config.backups {
+            if backup.retention == RetentionPolicy::empty() {
+                backup.retention.keep_last = Some(KeepCount::Unlimited);
+            }
+        }
+        config.config_version = 2;
+    }
+    if config.config_version < 3 {
+        // A local directory or drive needs no network: drop network conditions that the GUI
+        // no longer shows for such destinations, so none stays active unseen.
+        let kinds: std::collections::HashMap<_, _> = config
+            .destinations
+            .iter()
+            .map(|d| (d.id.clone(), d.kind.clone()))
+            .collect();
+        for backup in &mut config.backups {
+            if let Some(kind) = kinds.get(&backup.destination_id) {
+                backup.run_conditions = backup.run_conditions.clone().for_destination(kind);
+            }
+        }
+        config.config_version = 3;
+    }
 }
 
 /// Loads and validates `config.toml` from `path`.

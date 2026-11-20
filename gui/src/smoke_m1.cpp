@@ -3,6 +3,7 @@
 
 #include "src/smoke_helper.h"
 #include "src/smoke_common.h"
+#include <QColor>
 
 namespace kestic::smoke {
 
@@ -28,6 +29,7 @@ void install_m1_smoke_check(
     const QString mode = QString::fromUtf8(layout_mode.data(), static_cast<qsizetype>(layout_mode.size()));
     const QString lang = QString::fromUtf8(expected_lang.data(), static_cast<qsizetype>(expected_lang.size()));
     auto warnings = std::make_shared<QStringList>();
+    finish_incubation_on_quit(engine);
 
     QObject::connect(
         &engine,
@@ -212,6 +214,9 @@ void install_m1_smoke_check(
 
             if (scen.startsWith(QLatin1String("m2-"))) {
                 run_m2_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
+                return;
+            } else if (scen.startsWith(QLatin1String("m3-"))) {
+                run_m3_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
                 return;
             } else if (scen == QLatin1String("welcome")) {
                 QQuickItem* wv = window->findChild<QQuickItem*>(QStringLiteral("welcomeView"));
@@ -1108,6 +1113,17 @@ void install_m1_smoke_check(
                 if (!window->findChild<QQuickItem*>(QStringLiteral("runDetailPage"))) {
                     fail_kbd(125, "Return on runListItem did not open RunDetailPage");
                     return;
+                }
+                // M3 manual acceptance (2026-11-19): the selected row must use the selection
+                // text colour, or it is unreadable on a light selection in the dark theme.
+                {
+                    QQuickItem* title = run_row->findChild<QQuickItem*>(QStringLiteral("runRowTitle"));
+                    if (!title || !run_row->property("highlighted").toBool()
+                        || title->property("color").value<QColor>()
+                            != run_row->property("selectedTextColor").value<QColor>()) {
+                        fail_kbd(155, "selected run row title does not use the selection text colour");
+                        return;
+                    }
                 }
 
                 // RunDetailPage TabBar arrow navigation + Tab 1 Log controls + Tab 2 Commands TextArea escape + Show Command Esc

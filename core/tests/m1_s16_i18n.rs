@@ -33,7 +33,14 @@ struct PrivateDbusGuard {
 impl PrivateDbusGuard {
     fn start() -> Self {
         let out = Command::new("dbus-daemon")
-            .args(["--session", "--fork", "--print-address=1", "--print-pid=1"])
+            .arg(format!(
+                "--config-file={}",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../daemon/tests/fixtures/private-session-bus.xml"
+                )
+            ))
+            .args(["--fork", "--print-address=1", "--print-pid=1"])
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .output()
@@ -99,12 +106,20 @@ fn find_kestic_binary(root: &Path) -> PathBuf {
     panic!("kestic binary not found under {}", target_dir.display());
 }
 
+fn collect_files_with_ext_rec(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).expect("read source dir").flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_with_ext_rec(&path, ext, out);
+        } else if path.extension().and_then(|s| s.to_str()) == Some(ext) {
+            out.push(path);
+        }
+    }
+}
+
 fn collect_files_with_ext(dir: &Path, ext: &str) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = fs::read_dir(dir)
-        .expect("read source dir")
-        .filter_map(|e| e.ok().map(|ent| ent.path()))
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some(ext))
-        .collect();
+    let mut files = Vec::new();
+    collect_files_with_ext_rec(dir, ext, &mut files);
     files.sort();
     files
 }

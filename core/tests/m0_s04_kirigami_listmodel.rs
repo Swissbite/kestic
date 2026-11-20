@@ -96,8 +96,8 @@ fn ac_m0_04_1_kirigami_window_displays_three_rust_list_model_entries() {
 
     assert!(
         output.status.success(),
-        "kestic --smoke-test failed (status={:?})\nstdout:\n{}\nstderr:\n{}",
-        output.status.code(),
+        "kestic --smoke-test failed (status={})\nstdout:\n{}\nstderr:\n{}",
+        output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

@@ -363,8 +363,8 @@ impl<'a> SmokeContext<'a> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
-            "M1 smoke `{scenario}` ({layout}/{lang}) failed (status={:?}):\nstdout:\n{}\nstderr:\n{}",
-            output.status.code(),
+            "M1 smoke `{scenario}` ({layout}/{lang}) failed (status={}):\nstdout:\n{}\nstderr:\n{}",
+            output.status,
             String::from_utf8_lossy(&output.stdout),
             stderr
         );
@@ -405,11 +405,13 @@ fn setup_populated_fixture(
     let helper = common::write_secret_get_helper(&iso.root, &iso.secret_file);
     let resolved = check_binary_version(restic).expect("resolve restic");
     let clock = FakeClock::new(datetime!(2026-11-16 12:00:00 UTC));
+    let cache_dir = common::restic_cache_dir(&iso.root);
     let runtime = ResticRuntime {
         resolved: &resolved,
         kestic_binary: &helper,
         secret_store: &store,
         clock: &clock,
+        cache_dir: Some(&cache_dir),
     };
 
     let dest = Destination::new(
@@ -689,11 +691,13 @@ fn m1_gui_smoke_snapshots_previous_and_manual_run_blocked() {
         let helper = common::write_secret_get_helper(&iso.root, &iso.secret_file);
         let resolved = check_binary_version(&restic).expect("resolve restic");
         let clock = FakeClock::new(datetime!(2026-11-16 12:30:00 UTC));
+        let cache_dir = common::restic_cache_dir(&iso.root);
         let runtime = ResticRuntime {
             resolved: &resolved,
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
         setup_destination(
             &dest2,
@@ -746,11 +750,13 @@ fn m1_gui_smoke_snapshots_previous_and_manual_run_blocked() {
         let clock = FakeClock::new(datetime!(2026-11-16 13:00:00 UTC));
         let dest =
             Destination::new("Local", DestinationKind::Local { path: repo_dir }).expect("dest");
+        let cache_dir = common::restic_cache_dir(&iso.root);
         let runtime = ResticRuntime {
             resolved: &resolved,
             kestic_binary: &helper,
             secret_store: &store,
             clock: &clock,
+            cache_dir: Some(&cache_dir),
         };
         setup_destination(
             &dest,
@@ -837,9 +843,11 @@ fn m1_gui_e2e_create_destination_and_backup_with_real_restic() {
     assert_eq!(cfg.destinations[0].name, "E2E Local Repo");
     assert_eq!(cfg.backups.len(), 1, "expected 1 saved backup");
 
+    let cache_dir = common::restic_cache_dir(&iso.root);
     let snap_out = Command::new(&restic)
         .args(["-r", &repo_str, "snapshots", "--json"])
         .env("RESTIC_PASSWORD", "e2e-test-pw")
+        .env("RESTIC_CACHE_DIR", &cache_dir)
         .output()
         .expect("run real restic snapshots --json");
     assert!(
@@ -904,9 +912,11 @@ fn m1_gui_e2e_setup_first_backup_with_real_restic() {
     assert_eq!(cfg.destinations[0].name, "First Local Repo");
     assert_eq!(cfg.backups.len(), 1, "expected 1 saved backup");
 
+    let cache_dir = common::restic_cache_dir(&iso.root);
     let snap_out = Command::new(&restic)
         .args(["-r", &repo_str, "snapshots", "--json"])
         .env("RESTIC_PASSWORD", "e2e-first-pw")
+        .env("RESTIC_CACHE_DIR", &cache_dir)
         .output()
         .expect("run real restic snapshots --json");
     assert!(

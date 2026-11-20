@@ -17,6 +17,9 @@ pub mod ffi {
         fn i18n_subs(msgid: &str, args: &[&str]) -> String;
 
         #[namespace = "kestic::smoke"]
+        fn i18np_subs(singular: &str, plural: &str, n: i64, args: &[&str]) -> String;
+
+        #[namespace = "kestic::smoke"]
         fn local_offset_seconds(unix_secs: i64) -> i32;
 
         #[namespace = "kestic::smoke"]

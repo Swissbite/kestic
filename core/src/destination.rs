@@ -132,6 +132,7 @@ pub fn setup_destination(
             &runtime.resolved.binary,
             runtime.kestic_binary,
             runtime.clock,
+            runtime.cache_dir,
         )?
     } else {
         run_with_temp_repo_password_file(
@@ -139,9 +140,12 @@ pub fn setup_destination(
             mode_subcommand(mode),
             repo_password,
             rest_password,
-            runtime.resolved,
-            runtime.kestic_binary,
-            runtime.clock,
+            ProbeRuntime {
+                resolved: runtime.resolved,
+                kestic_binary: runtime.kestic_binary,
+                clock: runtime.clock,
+                cache_dir: runtime.cache_dir,
+            },
         )?
     };
 
@@ -179,6 +183,27 @@ pub fn verify_and_update_stored_password(
     kestic_binary: &Path,
     clock: &dyn Clock,
 ) -> Result<(), DestinationError> {
+    verify_and_update_stored_password_with_cache(
+        dest,
+        candidate_password,
+        secret_store,
+        resolved,
+        kestic_binary,
+        clock,
+        None,
+    )
+}
+
+/// Variant of [`verify_and_update_stored_password`] with explicit `RESTIC_CACHE_DIR` isolation.
+pub fn verify_and_update_stored_password_with_cache(
+    dest: &Destination,
+    candidate_password: &SecretValue,
+    secret_store: &dyn SecretStore,
+    resolved: &ResolvedRestic,
+    kestic_binary: &Path,
+    clock: &dyn Clock,
+    cache_dir: Option<&Path>,
+) -> Result<(), DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
 
     let rest_pw = if dest.kind.uses_rest_credentials() {
@@ -196,9 +221,12 @@ pub fn verify_and_update_stored_password(
         ],
         candidate_password,
         rest_pw.as_ref(),
-        resolved,
-        kestic_binary,
-        clock,
+        ProbeRuntime {
+            resolved,
+            kestic_binary,
+            clock,
+            cache_dir,
+        },
     )?;
 
     if res.exit_code != 0 {
@@ -248,14 +276,19 @@ fn map_execution_failure(res: &ResticExecutionResult) -> DestinationError {
     }
 }
 
+struct ProbeRuntime<'a> {
+    resolved: &'a ResolvedRestic,
+    kestic_binary: &'a Path,
+    clock: &'a dyn Clock,
+    cache_dir: Option<&'a Path>,
+}
+
 fn run_with_temp_repo_password_file(
     dest: &Destination,
     subcommand_args: Vec<String>,
     repo_password: &SecretValue,
     rest_password: Option<&SecretValue>,
-    resolved: &ResolvedRestic,
-    kestic_binary: &Path,
-    clock: &dyn Clock,
+    probe: ProbeRuntime<'_>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     let tmp_dir = create_private_temp_dir()?;
     let pw_file = tmp_dir.join("repo.pw");
@@ -272,8 +305,13 @@ fn run_with_temp_repo_password_file(
         args.push("--password-file".to_string());
         args.push(pw_file.to_string_lossy().into_owned());
 
-        let mut spec =
-            ResticCommandSpec::for_destination(&resolved.binary, kestic_binary, dest, args);
+        let mut spec = ResticCommandSpec::for_destination(
+            &probe.resolved.binary,
+            probe.kestic_binary,
+            dest,
+            args,
+        )
+        .with_cache_dir(probe.cache_dir);
         spec.low_priority = false;
         // Override password command to empty/unused since `--password-file` is passed for pre-save probe.
         spec.password_command_override = Some(String::new());
@@ -289,7 +327,14 @@ fn run_with_temp_repo_password_file(
         // however restic errors if `RESTIC_PASSWORD_COMMAND=""` is set alongside `--password-file`.
         // Use a dedicated invocation helper directly with `Command` cleanly!
         drop(temp_env);
-        execute_probe_command(&spec, dest, &pw_file, repo_password, rest_password, clock)
+        execute_probe_command(
+            &spec,
+            dest,
+            &pw_file,
+            repo_password,
+            rest_password,
+            probe.clock,
+        )
     })();
 
     let _ = fs::remove_dir_all(&tmp_dir);
@@ -313,6 +358,10 @@ fn execute_probe_command(
         .env_remove("RESTIC_PASSWORD_FILE");
 
     let mut env_keys = Vec::new();
+    if let Some(ref cache_dir) = spec.cache_dir {
+        cmd.env("RESTIC_CACHE_DIR", cache_dir);
+        env_keys.push("RESTIC_CACHE_DIR".to_string());
+    }
     if let DestinationKind::Rest {
         username: Some(user),
         ..
@@ -395,6 +444,7 @@ fn fast_init_local_from_cache(
     restic_binary: &Path,
     kestic_binary: &Path,
     clock: &dyn Clock,
+    cache_dir: Option<&Path>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     if target_path.join("config").exists() {
         let spec = ResticCommandSpec::for_destination(
@@ -451,9 +501,13 @@ fn fast_init_local_from_cache(
             crate::model::RunId::generate().map_err(|e| std::io::Error::other(e.to_string()))?;
         let staging = cache_root.join(format!("staging-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&staging)?;
+        let fallback_cache = cache_root.join("restic-cache");
+        let _ = fs::create_dir_all(&fallback_cache);
+        let isolated_cache = cache_dir.unwrap_or(&fallback_cache);
         let out = Command::new(restic_binary)
             .args(["-r", &staging.to_string_lossy(), "init", "--json"])
             .env("RESTIC_PASSWORD", pw_str)
+            .env("RESTIC_CACHE_DIR", isolated_cache)
             .env_remove("RESTIC_PASSWORD_COMMAND")
             .env_remove("RESTIC_PASSWORD_FILE")
             .output()?;

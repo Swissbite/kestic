@@ -5,9 +5,11 @@
 
 pub mod binary_watch;
 pub mod dbus_api;
+pub mod dbus_server;
 pub mod i18n;
 pub mod inhibit;
 pub mod job_view;
+pub mod monitors;
 pub mod notifications;
 pub mod secrets;
 pub mod service;

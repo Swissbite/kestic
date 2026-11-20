@@ -361,22 +361,13 @@ fn ac_m0_02_3_bootstrap_aborts_on_checksum_mismatch() {
     );
 }
 
-/// AC-M0-02-4: `rclone serve s3` and `sshd` run as normal user on random port
-/// with temporary keys/config, work with restic 0.18.0 and current, and terminate on drop.
-#[test]
-fn ac_m0_02_4_s3_and_sftp_test_servers_run_unprivileged_and_stop() {
-    let tools = tools_dir();
-    let restic_versions = [tools.join("restic-0.18.0"), tools.join("restic-0.19.1")];
-    let rclone = tools.join("rclone");
-    assert!(rclone.exists(), "rclone missing in {}", tools.display());
-
-    // 1. S3 via `rclone serve s3`
+fn verify_s3_server_unprivileged(rclone: &Path, restic_versions: &[PathBuf]) {
     let s3_temp = TempDir::new("kestic-ac-m0-02-4-s3");
     let s3_root = s3_temp.path().join("s3-root");
     fs::create_dir_all(s3_root.join("testbucket")).expect("create s3 bucket dir");
     let s3_port = allocate_random_port();
 
-    let mut rclone_cmd = Command::new(&rclone);
+    let mut rclone_cmd = Command::new(rclone);
     isolated_env(&mut rclone_cmd, s3_temp.path());
     rclone_cmd
         .args(["serve", "s3"])
@@ -427,8 +418,9 @@ fn ac_m0_02_4_s3_and_sftp_test_servers_run_unprivileged_and_stop() {
         !Path::new(&format!("/proc/{rclone_pid}")).exists(),
         "rclone serve s3 process {rclone_pid} must terminate after test"
     );
+}
 
-    // 2. SFTP via unprivileged user `sshd`
+fn verify_sftp_server_unprivileged(restic_versions: &[PathBuf]) {
     let sftp_temp = TempDir::new("kestic-ac-m0-02-4-sftp");
     let host_key = sftp_temp.path().join("ssh_host_ed25519_key");
     let client_key = sftp_temp.path().join("client_ed25519_key");
@@ -544,6 +536,19 @@ fn ac_m0_02_4_s3_and_sftp_test_servers_run_unprivileged_and_stop() {
         !Path::new(&format!("/proc/{sshd_pid}")).exists(),
         "sshd process {sshd_pid} must terminate after test"
     );
+}
+
+/// AC-M0-02-4: `rclone serve s3` and `sshd` run as normal user on random port
+/// with temporary keys/config, work with restic 0.18.0 and current, and terminate on drop.
+#[test]
+fn ac_m0_02_4_s3_and_sftp_test_servers_run_unprivileged_and_stop() {
+    let tools = tools_dir();
+    let restic_versions = [tools.join("restic-0.18.0"), tools.join("restic-0.19.1")];
+    let rclone = tools.join("rclone");
+    assert!(rclone.exists(), "rclone missing in {}", tools.display());
+
+    verify_s3_server_unprivileged(&rclone, &restic_versions);
+    verify_sftp_server_unprivileged(&restic_versions);
 }
 
 /// AC-M0-02-5 (P17): Pre-0.17 snapshot fixture exists without `summary` field,
