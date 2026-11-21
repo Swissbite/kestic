@@ -1,12 +1,9 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 
-# CodeQL advanced setup (replaces GitHub's default setup with the same
-# languages, default query suite and weekly schedule). The only difference: the Rust
-# rule `rust/hard-coded-cryptographic-value` is filtered out for test code
-# (`**/tests/**`), where hard-coded passwords only protect temporary test
-# repositories. All other rules still cover tests; the rule still covers
-# production code.
+# CodeQL advanced setup with the default setup's languages, query suite and
+# weekly schedule, plus the showcase site's TypeScript. Tests generate their
+# passwords at runtime, so every rule also covers test code.
 
 name: CodeQL
 
@@ -60,23 +57,3 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
-          output: sarif-results
-          # Rust results are uploaded after filtering (below).
-          upload: ${{ matrix.language == 'rust' && 'failure-only' || 'always' }}
-
-      - name: Drop hard-coded test passwords from Rust results
-        if: matrix.language == 'rust'
-        # v1.1
-        uses: advanced-security/filter-sarif@2da736ff05ef065cb2894ac6892e47b5eac2c3c0
-        with:
-          patterns: |
-            -**/tests/**:rust/hard-coded-cryptographic-value
-          input: sarif-results/rust.sarif
-          output: sarif-results/rust.sarif
-
-      - name: Upload filtered Rust results
-        if: matrix.language == 'rust'
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: sarif-results/rust.sarif
-          category: /language:rust

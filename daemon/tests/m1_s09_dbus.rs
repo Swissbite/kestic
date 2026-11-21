@@ -4,8 +4,9 @@
 mod common;
 
 use common::load_config;
-use common::m3::{LockableSecretStore, M3DaemonOpts, assert_dbus_error_name, spawn_m3_daemon};
-use common::tools::{free_loopback_port, install_marker_spy};
+use common::m3::{
+    LockableSecretStore, M3DaemonOpts, assert_dbus_error_name, connect_local_repo, spawn_m3_daemon,
+};
 use common::{
     CapturedKesticSignal, KesticSignalCollector, find_kestic_binary, restic_test_binaries,
     run_isolated_test, sandbox_run_config, start_fake_notifications,
@@ -13,13 +14,15 @@ use common::{
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Source,
 };
-use kestic_core::secrets::{FileSecretStore, SecretStore};
+use kestic_core::secrets::{SecretStore, SecretValue};
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, OverallStatusDto,
 };
 use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::password::{assert_no_secret, strong_password};
+use kestic_test_support::tools::{free_loopback_port, install_marker_spy};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -102,8 +105,9 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
                 },
             )
             .expect("valid dest");
+            let repo_password = strong_password();
             let dest_id = client
-                .add_destination(&dest, "init", "repo-pw-123", "")
+                .add_destination(&dest, "init", &repo_password, "")
                 .expect("AddDestination");
             assert_eq!(dest_id, dest.id.as_str());
 
@@ -119,10 +123,7 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
             assert_eq!(persisted.backups[0].id, backup.id);
 
             let raw_toml = fs::read_to_string(&cfg_path).expect("read raw config.toml");
-            assert!(
-                !raw_toml.contains("repo-pw-123"),
-                "secrets must never be written into config.toml"
-            );
+            assert_no_secret(&raw_toml, &repo_password, "config.toml");
 
             // AC-M1-09-2: Invalid AddBackup & UpdateBackup return InvalidInput, config.toml unchanged.
             let before_bytes = fs::read(&cfg_path).expect("read config bytes before invalid call");
@@ -227,9 +228,7 @@ fn ac_m1_09_6_and_09_7_missing_source_blocks_without_restic_and_respects_window_
                 },
             )
             .expect("dest");
-            client
-                .add_destination(&dest, "init", "pw-blocked", "")
-                .expect("add dest");
+            connect_local_repo(client, &real_restic, &dest);
 
             let backup = Backup::new("Photos", Source::folder(&source_dir), dest.id.clone())
                 .expect("backup");
@@ -331,8 +330,7 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
             let client = &daemon.client;
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
-            let secret_file = root.join("secrets.hex");
-            let secret_store = FileSecretStore::new(&secret_file);
+            let secret_store = common::isolated_secret_store();
 
             let repo_dir = root.join("repo-mut");
             let src_dir = root.join("src-mut");
@@ -346,9 +344,8 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
                 },
             )
             .expect("dest");
-            let dest_id = client
-                .add_destination(&dest, "init", "initial-pw", "")
-                .expect("AddDestination");
+            let initial_password = connect_local_repo(client, &restic_bin, &dest);
+            let dest_id = dest.id.as_str().to_string();
 
             let backup = Backup::new("Original Name", Source::folder(&src_dir), dest.id.clone())
                 .expect("backup");
@@ -381,7 +378,7 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
                 username: Some("alice".to_string()),
             };
             let upd_dest_err = client
-                .update_destination(&bad_dest, "connect", "wrong-or-unused", "", true)
+                .update_destination(&bad_dest, "connect", &strong_password(), "", true)
                 .expect_err("UpdateDestination with unreachable target must fail");
             assert_dbus_error_name(
                 &upd_dest_err,
@@ -391,11 +388,9 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
             assert_eq!(
                 secret_store
                     .get_secret(&dest_id, "repo")
-                    .expect("get secret")
-                    .unwrap()
-                    .as_str()
-                    .unwrap(),
-                "initial-pw"
+                    .expect("get secret"),
+                Some(SecretValue::from_str_secret(&initial_password)),
+                "stored repo password"
             );
 
             daemon.stop();
@@ -417,7 +412,7 @@ fn ac_m1_20_1_20_2_20_3_update_password_verifies_without_changing_keys() {
                 M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin),
             );
             let client = &daemon.client;
-            let secret_store = FileSecretStore::new(root.join("secrets.hex"));
+            let secret_store = common::isolated_secret_store();
 
             let repo_dir = root.join("repo-pw");
             fs::create_dir_all(&repo_dir).expect("mkdir repo");
@@ -428,37 +423,35 @@ fn ac_m1_20_1_20_2_20_3_update_password_verifies_without_changing_keys() {
                 },
             )
             .expect("dest");
-            let dest_id = client
-                .add_destination(&dest, "init", "initial-pw", "")
-                .expect("AddDestination");
+            let initial_password = connect_local_repo(client, &restic_bin, &dest);
+            let dest_id = dest.id.as_str().to_string();
+            let rotated_password = strong_password();
 
             // AC-M1-20-2: UpdateDestinationPassword with wrong password fails & leaves stored secret intact.
             let restic_cache = root.join("restic-cache");
             let keys_before = Command::new(&restic_bin)
                 .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
-                .env("RESTIC_PASSWORD", "initial-pw")
+                .env("RESTIC_PASSWORD", &initial_password)
                 .env("RESTIC_CACHE_DIR", &restic_cache)
                 .output()
                 .expect("restic key list before");
             assert!(keys_before.status.success());
 
             let bad_pw_err = client
-                .update_destination_password(&dest_id, "definitely-wrong-pw")
+                .update_destination_password(&dest_id, &strong_password())
                 .expect_err("UpdateDestinationPassword with wrong pw must fail");
             assert_dbus_error_name(&bad_pw_err, "net.daester.Kestic.Error.WrongPassword");
             assert_eq!(
                 secret_store
                     .get_secret(&dest_id, "repo")
-                    .expect("get secret")
-                    .unwrap()
-                    .as_str()
-                    .unwrap(),
-                "initial-pw"
+                    .expect("get secret"),
+                Some(SecretValue::from_str_secret(&initial_password)),
+                "stored repo password"
             );
 
             // Rotate repository password externally using `restic key passwd`.
             let new_pw_file = root.join("new-pw.txt");
-            fs::write(&new_pw_file, "rotated-pw-2026\n").expect("write new pw file");
+            fs::write(&new_pw_file, format!("{rotated_password}\n")).expect("write new pw file");
             let passwd_out = Command::new(&restic_bin)
                 .args([
                     "-r",
@@ -468,7 +461,7 @@ fn ac_m1_20_1_20_2_20_3_update_password_verifies_without_changing_keys() {
                     "--new-password-file",
                 ])
                 .arg(&new_pw_file)
-                .env("RESTIC_PASSWORD", "initial-pw")
+                .env("RESTIC_PASSWORD", &initial_password)
                 .env("RESTIC_CACHE_DIR", &restic_cache)
                 .output()
                 .expect("restic key passwd");
@@ -480,7 +473,7 @@ fn ac_m1_20_1_20_2_20_3_update_password_verifies_without_changing_keys() {
 
             let keys_after_external = Command::new(&restic_bin)
                 .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
-                .env("RESTIC_PASSWORD", "rotated-pw-2026")
+                .env("RESTIC_PASSWORD", &rotated_password)
                 .env("RESTIC_CACHE_DIR", &restic_cache)
                 .output()
                 .expect("restic key list after external change");
@@ -488,21 +481,19 @@ fn ac_m1_20_1_20_2_20_3_update_password_verifies_without_changing_keys() {
 
             // AC-M1-20-1 & AC-M1-20-3: UpdateDestinationPassword verifies new password without running `restic key`.
             client
-                .update_destination_password(&dest_id, "rotated-pw-2026")
+                .update_destination_password(&dest_id, &rotated_password)
                 .expect("UpdateDestinationPassword with valid new pw must succeed");
             assert_eq!(
                 secret_store
                     .get_secret(&dest_id, "repo")
-                    .expect("get secret")
-                    .unwrap()
-                    .as_str()
-                    .unwrap(),
-                "rotated-pw-2026"
+                    .expect("get secret"),
+                Some(SecretValue::from_str_secret(&rotated_password)),
+                "stored repo password"
             );
 
             let keys_after_update = Command::new(&restic_bin)
                 .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
-                .env("RESTIC_PASSWORD", "rotated-pw-2026")
+                .env("RESTIC_PASSWORD", &rotated_password)
                 .env("RESTIC_CACHE_DIR", &restic_cache)
                 .output()
                 .expect("restic key list after UpdateDestinationPassword");
@@ -551,9 +542,8 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
                 },
             )
             .expect("dest1");
-            let dest1_id = client
-                .add_destination(&dest1, "init", "repo-pw-1", "")
-                .expect("AddDestination dest1");
+            let repo_password = connect_local_repo(client, &restic_bin, &dest1);
+            let dest1_id = dest1.id.as_str().to_string();
 
             let backup = Backup::new("Docs", Source::folder(&src_dir), dest1.id.clone())
                 .expect("valid backup");
@@ -572,7 +562,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             .expect("dup_dest");
 
             let test_dup = client
-                .test_destination_connection(&dup_dest, "connect", "repo-pw-1", "")
+                .test_destination_connection(&dup_dest, "connect", &repo_password, "")
                 .expect("TestDestinationConnection dup");
             assert!(!test_dup.ok, "duplicate location test must fail");
             assert_eq!(
@@ -581,7 +571,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             );
 
             let add_dup_err = client
-                .add_destination(&dup_dest, "connect", "repo-pw-1", "")
+                .add_destination(&dup_dest, "connect", &repo_password, "")
                 .expect_err("AddDestination with duplicate location must fail");
             assert_dbus_error_name(&add_dup_err, "net.daester.Kestic.Error.DuplicateLocation");
             assert_eq!(
@@ -597,9 +587,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
                 },
             )
             .expect("dest2");
-            let _dest2_id = client
-                .add_destination(&dest2, "init", "repo-pw-2", "")
-                .expect("AddDestination dest2");
+            connect_local_repo(client, &restic_bin, &dest2);
 
             let mut dest2_collision = dest2.clone();
             dest2_collision.kind = DestinationKind::Local {
@@ -677,7 +665,7 @@ fn unlock_secret_store_over_dbus_clears_blocking_and_emits_status_changed() {
                 .into_iter()
                 .next()
                 .expect("restic binary");
-            let store = Arc::new(LockableSecretStore::new(root.join("secrets.hex"), true));
+            let store = Arc::new(LockableSecretStore::new(true));
             let daemon = spawn_m3_daemon(
                 root,
                 M3DaemonOpts {

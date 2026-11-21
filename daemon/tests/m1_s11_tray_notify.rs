@@ -3,8 +3,7 @@
 
 mod common;
 
-use common::tools::write_executable;
-
+use common::m3::connect_local_repo;
 use common::{
     CapturedKesticSignal, KesticSignalCollector, click_dbusmenu_item, fetch_dbusmenu_items,
     find_kestic_binary, read_sni_string_prop, read_sni_tooltip, restic_test_binaries,
@@ -17,18 +16,17 @@ use kestic_core::history::RunHistory;
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Schedule, Source,
 };
-use kestic_core::secrets::FileSecretStore;
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient,
 };
 use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
 use kestic_daemon::service::{DaemonRunConfig, run_daemon};
 use kestic_daemon::tray::{KesticTrayState, TrayHandle, TrayStatus};
+use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use zbus::{Connection, block_on};
@@ -80,7 +78,6 @@ fn assert_real_daemon_sni_state(
     let sub = ctx.root.join(sub_name);
     let cfg_path = sub.join("config.toml");
     let state_dir = sub.join("state");
-    let secret_file = sub.join("secrets.hex");
     let ready_file = sub.join("daemon.ready");
     fs::create_dir_all(&state_dir).expect("mkdir state");
 
@@ -100,7 +97,6 @@ fn assert_real_daemon_sni_state(
         config_path: Some(cfg_path),
         state_dir: Some(state_dir),
         kestic_binary: Some(ctx.kestic_bin.to_path_buf()),
-        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
         ..sandbox_run_config(ctx.root)
     };
 
@@ -125,7 +121,6 @@ fn assert_running_backup_sni_state(ctx: &mut SniTestCtx<'_>) {
     let sub = ctx.root.join("state_running");
     let cfg_path = sub.join("config.toml");
     let state_dir = sub.join("state");
-    let secret_file = ctx.root.join("secrets.hex");
     let ready_file = sub.join("daemon.ready");
     let run_repo = sub.join("repo");
     let run_src = sub.join("large-src");
@@ -139,7 +134,6 @@ fn assert_running_backup_sni_state(ctx: &mut SniTestCtx<'_>) {
         config_path: Some(cfg_path),
         state_dir: Some(state_dir),
         kestic_binary: Some(ctx.kestic_bin.to_path_buf()),
-        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
         ..sandbox_run_config(ctx.root)
     };
     let handle = thread::spawn(move || run_daemon(run_cfg));
@@ -155,9 +149,7 @@ fn assert_running_backup_sni_state(ctx: &mut SniTestCtx<'_>) {
         .expect("set provider");
     let r_dest =
         Destination::new("Run Repo", DestinationKind::Local { path: run_repo }).expect("dest");
-    client
-        .add_destination(&r_dest, "init", "run-pw-1", "")
-        .expect("add dest");
+    connect_local_repo(&client, ctx.restic_bin, &r_dest);
     let r_backup = Backup::new("Live Run", Source::folder(&run_src), r_dest.id).expect("backup");
     let b_id = client.add_backup(&r_backup).expect("add backup");
 
@@ -406,14 +398,14 @@ fn ac_m1_11_2_11_3_11_5_dbusmenu_items_quit_confirmation_and_active_progress() {
 
             let client = common::connect_default_client().expect("connect client");
             client
-                .set_restic_provider(&ResticProvider::Custom { path: restic_bin })
+                .set_restic_provider(&ResticProvider::Custom {
+                    path: restic_bin.clone(),
+                })
                 .expect("set provider");
 
             let dest = Destination::new("Menu Repo", DestinationKind::Local { path: repo_dir })
                 .expect("dest");
-            client
-                .add_destination(&dest, "init", "menu-pw-1", "")
-                .expect("add dest");
+            connect_local_repo(&client, &restic_bin, &dest);
             let backup =
                 Backup::new("Menu Backup", Source::folder(&src_dir), dest.id).expect("backup");
             let backup_id = client.add_backup(&backup).expect("add backup");
@@ -539,7 +531,9 @@ fn ac_m1_11_4_notifications_only_on_error_and_warning_with_desktop_entry() {
 
             let client = common::connect_default_client().expect("connect client");
             client
-                .set_restic_provider(&ResticProvider::Custom { path: restic_bin })
+                .set_restic_provider(&ResticProvider::Custom {
+                    path: restic_bin.clone(),
+                })
                 .expect("set provider");
 
             let signals = KesticSignalCollector::start(
@@ -583,9 +577,7 @@ fn ac_m1_11_4_notifications_only_on_error_and_warning_with_desktop_entry() {
 
             let ok_dest = Destination::new("OK Repo", DestinationKind::Local { path: ok_repo })
                 .expect("dest");
-            client
-                .add_destination(&ok_dest, "init", "ok-pw", "")
-                .expect("add ok dest");
+            connect_local_repo(&client, &restic_bin, &ok_dest);
             let ok_backup =
                 Backup::new("OK Backup", Source::folder(&ok_src), ok_dest.id).expect("backup");
             let ok_bid = client.add_backup(&ok_backup).expect("add ok backup");
@@ -653,10 +645,8 @@ fn ac_m1_11_4_notifications_only_on_error_and_warning_with_desktop_entry() {
                 },
             )
             .expect("err dest");
-            client
-                .add_destination(&err_dest, "init", "err-pw", "")
-                .expect("add err dest");
-            // Delete repo `config` file after init so directory exists (preflight passes)
+            connect_local_repo(&client, &restic_bin, &err_dest);
+            // Delete repo `config` file after connecting so directory exists (preflight passes)
             // while `restic backup` fails with exit 10 (`RepositoryMissing`).
             fs::remove_file(err_repo.join("config")).expect("remove repo config");
 
@@ -832,7 +822,8 @@ fn ac_m0_11_3_tray_icon_svg_is_recolourable_and_exported_via_icon_theme_path() {
         "ac_m0_11_3_tray_icon_svg_is_recolourable_and_exported_via_icon_theme_path",
         "KESTIC_M1_S11_ICON",
         |_root| {
-            let icons_dir = common::workspace::workspace_root().join("packaging/icons");
+            let icons_dir =
+                kestic_test_support::workspace::workspace_root().join("packaging/icons");
             let svg =
                 fs::read_to_string(icons_dir.join("hicolor/scalable/status/kestic-symbolic.svg"))
                     .expect("read kestic-symbolic.svg");

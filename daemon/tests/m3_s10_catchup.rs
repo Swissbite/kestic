@@ -42,7 +42,7 @@ fn seed_overdue_backup(root: &Path, variant: &ResticVariant, sub: &str, clock: &
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("data.txt"), b"catch-up payload").expect("write src");
 
-    let dest = seed_local_destination(root, &variant.bin, "Seeded", &repo_dir, "pw-seed");
+    let (dest, _password) = seed_local_destination(root, &variant.bin, "Seeded", &repo_dir);
     let mut backup = Backup::new("Overdue", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     backup.schedule = Schedule::Daily {
         hour: 12,

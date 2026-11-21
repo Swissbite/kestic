@@ -15,6 +15,11 @@ description = "Native KDE Plasma backup manager powered by restic"
 name = "kestic"
 path = "src/main.rs"
 
+[features]
+# Offscreen QML smoke scenes, synthetic input and `--simulate-status` for tests;
+# never enabled for the .deb.
+test-harness = []
+
 [dependencies]
 kestic-core = { path = "../core" }
 kestic-i18n = { path = "../i18n" }

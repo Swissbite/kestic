@@ -7,7 +7,7 @@ mod common;
 
 use common::execute_backup;
 
-use common::tools::find_lock_file;
+use kestic_test_support::tools::find_lock_file;
 
 use kestic_core::backup::{build_backup_command_spec, build_forget_command_spec};
 use kestic_core::maintenance::{
@@ -96,7 +96,7 @@ fn ac_m3_05_6_check_runs_without_read_data_and_succeeds() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-06 12:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Local", &repo_dir, "check-test-pw");
+        let (dest, _repo_pw) = rig.local_repo("Local", &repo_dir);
         let backup = Backup::new("Check", Source::folder(&src_dir), dest.id.clone()).expect("bk");
         let bk_res = execute_backup(&backup, &dest, &state_dir, &runtime, None, &[], |_| {})
             .expect("backup");
@@ -129,7 +129,7 @@ fn ac_m3_05_7_and_05_8_prune_dry_run_uses_no_lock_during_active_backup() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-06 12:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Local", &repo_dir, "prune-test-pw");
+        let (dest, repo_pw) = rig.local_repo("Local", &repo_dir);
         let backup = Backup::new("Prune", Source::folder(&src_dir), dest.id.clone()).expect("bk");
         assert_eq!(
             execute_backup(&backup, &dest, &state_dir, &runtime, None, &[], |_| {})
@@ -148,7 +148,7 @@ fn ac_m3_05_7_and_05_8_prune_dry_run_uses_no_lock_during_active_backup() {
                 "--stdin-filename",
                 "lock-hold.txt",
             ])
-            .env("RESTIC_PASSWORD", "prune-test-pw")
+            .env("RESTIC_PASSWORD", &repo_pw)
             .env("RESTIC_CACHE_DIR", &cache_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -204,6 +204,7 @@ fn verify_active_local_lock_refusal(
     label: &str,
     dest: &Destination,
     repo_dir: &Path,
+    repo_pw: &str,
     cache_dir: &Path,
     runtime: &ResticRuntime<'_>,
 ) {
@@ -217,7 +218,7 @@ fn verify_active_local_lock_refusal(
             "--stdin-filename",
             "active.txt",
         ])
-        .env("RESTIC_PASSWORD", "lock-inspect-pw")
+        .env("RESTIC_PASSWORD", repo_pw)
         .env("RESTIC_CACHE_DIR", cache_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -271,7 +272,7 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-06 12:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Local", &repo_dir, "lock-inspect-pw");
+        let (dest, repo_pw) = rig.local_repo("Local", &repo_dir);
         let backup = Backup::new("Lock", Source::folder(&src_dir), dest.id.clone()).expect("bk");
         assert_eq!(
             execute_backup(&backup, &dest, &state_dir, &runtime, None, &[], |_| {})
@@ -285,7 +286,7 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
         // 1. SIGTERM on exclusive `restic check --read-data` cleans up its lock -> no unlock offer (`AC-M3-06-1`).
         let mut sigterm_child = Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
-            .env("RESTIC_PASSWORD", "lock-inspect-pw")
+            .env("RESTIC_PASSWORD", &repo_pw)
             .env("RESTIC_CACHE_DIR", &cache_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -306,7 +307,7 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
         // 2. SIGKILL on exclusive `restic check --read-data` leaves stale local lock (`AC-M3-06-1`).
         let mut sigkill_child = Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
-            .env("RESTIC_PASSWORD", "lock-inspect-pw")
+            .env("RESTIC_PASSWORD", &repo_pw)
             .env("RESTIC_CACHE_DIR", &cache_dir)
             .env("RESTIC_HOST", "ignored-by-restic-lock")
             .stdin(Stdio::null())
@@ -356,6 +357,6 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
         assert_eq!(ok_bk.exit_code, 0, "{label}");
 
         // 3. Active local `restic backup --stdin` lock -> NOT stale AND unlock refused (`AC-M3-06-2`).
-        verify_active_local_lock_refusal(label, &dest, &repo_dir, &cache_dir, &runtime);
+        verify_active_local_lock_refusal(label, &dest, &repo_dir, &repo_pw, &cache_dir, &runtime);
     }
 }

@@ -4,19 +4,14 @@
 #![allow(dead_code)]
 
 pub mod fakes;
-#[path = "../../../core/tests/common/gui.rs"]
-pub mod gui;
 pub mod m3;
-#[path = "../../../core/tests/common/tools.rs"]
-pub mod tools;
-#[path = "../../../core/tests/common/workspace.rs"]
-pub mod workspace;
 
-pub use tools::PrivateDbusGuard;
+pub use kestic_test_support::bus::PrivateDbusGuard;
+pub use kestic_test_support::workspace::find_kestic_binary;
+use kestic_test_support::{gui, tools};
 use tools::{dev_tools_bin_dir, rest_server_binary};
-pub use workspace::find_kestic_binary;
 
-use kestic_core::secrets::FileSecretStore;
+use kestic_daemon::secrets::SecretServiceStore;
 use kestic_daemon::service::DaemonRunConfig;
 use std::collections::HashMap;
 use std::env;
@@ -53,7 +48,8 @@ pub fn restic_test_binaries() -> Vec<(&'static str, PathBuf)> {
 }
 
 /// Re-execs the current test (`test_name --exact`) inside an isolated subprocess with its own
-/// private `dbus-daemon`, isolated XDG directories, `KESTIC_SECRET_FILE`, and resolved restic tools.
+/// private `dbus-daemon`, an unlocked headless keyring on it, isolated XDG directories and
+/// resolved restic tools.
 ///
 /// This guarantees zero process-global environment races across parallel Cargo test threads (`AC-M1-Q-1`).
 pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Path)) {
@@ -65,6 +61,7 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
 
     let dirs = gui::IsolatedEnv::create(inner_env, None);
     let dbus = PrivateDbusGuard::start();
+    let _keyring = dirs.start_keyring(&dbus.address);
     let tools_dir = dev_tools_bin_dir();
     let restic_bins = restic_test_binaries();
     let restic_bin = |label: &str| {
@@ -92,13 +89,12 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         .env("RESTIC_CACHE_DIR", &dirs.cache)
         .env("XDG_STATE_HOME", &dirs.state)
         .env("XDG_RUNTIME_DIR", &dirs.run)
-        .env("KESTIC_SECRET_FILE", &dirs.secret_file)
+        .env(ISOLATED_BUS_ENV, &dbus.address)
         .env("KESTIC_TEST_ROOT", &dirs.root)
         .env("KESTIC_TOOLS_DIR", &tools_dir)
         .env("KESTIC_RESTIC_0_18", restic_bin("restic-0.18.0"))
         .env("KESTIC_RESTIC_LATEST", restic_bin("restic-latest"))
         .env("KESTIC_REST_SERVER", &rest_server)
-        .env("KESTIC_TEST_FAST_INIT", "1")
         .env("LC_ALL", "C.UTF-8")
         .env("LANG", "C.UTF-8")
         .env("LANGUAGE", "en");
@@ -114,6 +110,23 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         stdout.contains("1 passed"),
         "isolated test `{test_name}` did not match/execute exactly 1 test:\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
+}
+
+/// Private session bus address of the isolated test, as handed to the re-exec'd child.
+const ISOLATED_BUS_ENV: &str = "KESTIC_TEST_ISOLATED_BUS";
+
+/// The Secret Service store of the isolated test: the headless keyring [`run_isolated_test`]
+/// started on the private session bus. Panics anywhere else, so no test reaches the user's
+/// real wallet.
+pub fn isolated_secret_store() -> SecretServiceStore {
+    let isolated_bus = env::var(ISOLATED_BUS_ENV)
+        .expect("isolated_secret_store() is only available inside run_isolated_test");
+    assert_eq!(
+        env::var("DBUS_SESSION_BUS_ADDRESS").ok().as_deref(),
+        Some(isolated_bus.as_str()),
+        "the session bus must be the private bus of the isolated test"
+    );
+    SecretServiceStore::default()
 }
 
 /// Asks the in-process daemon behind `client` to quit, asserts a clean shutdown and waits until
@@ -134,8 +147,8 @@ pub fn stop_daemon(
     );
 }
 
-/// Daemon configuration inside the isolated test tree `root`: config, state and file secret
-/// store below `root`, the real `kestic` binary, a ready file `<root>/daemon.ready`, and no
+/// Daemon configuration inside the isolated test tree `root`: config and state below `root`, the
+/// isolated test keyring, the real `kestic` binary, a ready file `<root>/daemon.ready`, and no
 /// JobView, portal inhibit or UI spawn.
 pub fn sandbox_run_config(root: &Path) -> DaemonRunConfig {
     DaemonRunConfig {
@@ -143,7 +156,7 @@ pub fn sandbox_run_config(root: &Path) -> DaemonRunConfig {
         config_path: Some(root.join("cfg").join("kestic").join("config.toml")),
         state_dir: Some(root.join("state").join("kestic")),
         kestic_binary: Some(find_kestic_binary()),
-        secret_store: Some(Arc::new(FileSecretStore::new(root.join("secrets.hex")))),
+        secret_store: Some(Arc::new(isolated_secret_store())),
         suppress_ui_spawn: true,
         enable_job_view: false,
         enable_portal_inhibit: false,

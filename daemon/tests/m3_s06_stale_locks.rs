@@ -13,8 +13,8 @@ use common::m3::{
     write_incompressible_dataset,
 };
 use common::run_isolated_test;
-use common::tools::find_lock_file;
 use kestic_core::model::RunStatus;
+use kestic_test_support::tools::find_lock_file;
 use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
@@ -62,7 +62,7 @@ fn check_cmd(rig: &M3Rig, fixture: &LocalBackupFixture, extra: &[&str]) -> std::
     let mut cmd = restic_repo_cmd(
         &rig.variant.bin,
         &fixture.repo_dir,
-        "pw-Docs",
+        &fixture.password,
         &Path::new(&std::env::var("KESTIC_TEST_ROOT").expect("root")).join("restic-cache"),
     );
     cmd.args(extra);

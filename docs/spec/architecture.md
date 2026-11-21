@@ -126,7 +126,7 @@ Ablauf FR-38 (5 Schritte):
 
 Stand recherchiert am 2026-11-15. Entscheid: [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md).
 
-- **Workspace:** `core` (reines Rust, ohne Qt testbar mit `cargo test`) / `daemon` (inkl. Tray, Notifications, CLI `kestic secret get`) / `gui` (CXX-Qt + Kirigami QML). GUI-Schicht dünn, Logik in `core`.
+- **Workspace:** `core` (reines Rust, ohne Qt testbar mit `cargo test`) / `daemon` (inkl. Tray, Notifications, CLI `kestic secret get`) / `gui` (CXX-Qt + Kirigami QML) / `i18n` (gemeinsame Texte und Codes) / `test-support` (nur Dev-Abhängigkeit für Tests, nie im Paket). GUI-Schicht dünn, Logik in `core`.
 - **Crates (gepinnt gemäss [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md)):** `notify-rust`, `ksni`, `zbus` (inkl. direktem `org.freedesktop.secrets`-Client), `cargo-deb`, `cxx-qt` (`=0.10.0`), `cxx-kde-frameworks` (Commit `5c51af42`).
 - **Grund der Wahl:** Der Maintainer reviewt Rust eher als C++; Compiler fängt bei agentisch geschriebenem Code viel ab.
 - **Risiko:** CXX-Qt im Spike erfolgreich validiert ([milestones/m0-spike.md](milestones/m0-spike.md)).
@@ -159,6 +159,7 @@ Verbindliche Ablage neuer und aufgeteilter Module über alle Meilensteine:
 | Gemeinsame Texte und Codes | `i18n/src/` (Crate `kestic-i18n`) | nur was Daemon und GUI beide brauchen; Regel in [dbus-api.md](dbus-api.md) §Texte und Übersetzungen |
 | GUI-Modell | `gui/src/models/<modell>.rs` | pro Modell eine Datei statt monolithischem `models.rs` |
 | Dialog / Seite | eigene QML-Datei unter `gui/src/qml/` | nicht inline in `Main.qml` |
+| Gemeinsame Test-Fixture | `test-support/src/<bereich>.rs` (Crate `kestic-test-support`, `publish = false`) | nur als `dev-dependency`; privater Session-Bus, Headless-Keyring, GUI-Smoke-Harness, Testwerkzeuge, erzeugte Testpasswörter (`password.rs`), Vorlage-Repos (`repo_template.rs`). Keine Test-Hooks im Produktivcode: Tests ersetzen Abhängigkeiten über Konstruktoren und Konfiguration (z. B. `DaemonRunConfig.secret_store`) oder über echte Dienste auf dem isolierten Bus. Test-Harness im GUI-Binary (Smoke-Szenen, synthetische Eingaben, `--simulate-status`) nur mit dem Cargo-Feature `test-harness`, nie im `.deb` |
 
 **Grössengrenzen ohne Ausnahmen (NFR-12, durch `just verify` erzwungen):**
 

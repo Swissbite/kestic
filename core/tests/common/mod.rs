@@ -6,9 +6,7 @@
 use std::env;
 use std::path::PathBuf;
 
-pub mod gui;
-pub mod tools;
-pub mod workspace;
+use kestic_test_support::tools;
 
 /// Returns `(label, binary_path)` pairs for both restic 0.18.0 and latest (`AC-M1-Q-2`).
 ///
@@ -214,14 +212,17 @@ impl ResticRig {
         }
     }
 
-    /// Creates `repo_dir` and initialises a new local repository there.
-    pub fn init_local(
+    /// Copies a prepared repository to `repo_dir` (own generated password, own repository ID)
+    /// and connects it as local destination `name` through the production setup path
+    /// (`ConnectExisting`, which stores the password in this rig's secret store). Returns the
+    /// destination and its password.
+    pub fn local_repo(
         &self,
         name: &str,
         repo_dir: &std::path::Path,
-        password: &str,
-    ) -> kestic_core::model::Destination {
-        std::fs::create_dir_all(repo_dir).expect("mkdir repo");
+    ) -> (kestic_core::model::Destination, String) {
+        let repo =
+            kestic_test_support::repo_template::copy_template_repo(&self.resolved.binary, repo_dir);
         let dest = kestic_core::model::Destination::new(
             name,
             kestic_core::model::DestinationKind::Local {
@@ -231,18 +232,18 @@ impl ResticRig {
         .expect("local destination");
         kestic_core::destination::setup_destination(
             &dest,
-            kestic_core::destination::DestinationSetupMode::InitNew,
-            &kestic_core::secrets::SecretValue::from_str_secret(password),
+            kestic_core::destination::DestinationSetupMode::ConnectExisting,
+            &kestic_core::secrets::SecretValue::from_str_secret(&repo.password),
             None,
             &self.runtime(),
         )
         .unwrap_or_else(|e| {
             panic!(
-                "init of local repository {} with {} failed: {e}",
+                "connecting the local repository {} with {} failed: {e}",
                 repo_dir.display(),
                 self.resolved.binary.display()
             )
         });
-        dest
+        (dest, repo.password)
     }
 }

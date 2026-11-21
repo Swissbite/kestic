@@ -126,5 +126,6 @@ jobs:
           rm -rf target/debug/build/kestic-* target/release/build/kestic-* \
             target/debug/incremental target/release/incremental \
             target/debug/kestic target/release/kestic \
-            target/debian target/smoke-artifacts target/kestic-gui
+            target/debian target/smoke-artifacts target/kestic-gui \
+            target/kestic-test-fixtures
           du -sh target || true

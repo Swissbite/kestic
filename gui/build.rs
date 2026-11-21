@@ -108,6 +108,8 @@ fn main() {
         println!("cargo:rerun-if-changed={qml}");
     }
     for cpp in [
+        "src/qt_bridge.h",
+        "src/qt_bridge.cpp",
         "src/smoke_common.h",
         "src/smoke_helper.h",
         "src/smoke_helper.cpp",
@@ -123,19 +125,24 @@ fn main() {
 
     remove_stale_qmltypes("net/daester/kestic");
 
-    let builder =
+    let mut builder =
         CxxQtBuilder::new_qml_module(QmlModule::new("net.daester.kestic").qml_files(qml_files))
             .file("src/backend.rs")
             .file("src/models.rs")
+            .file("src/qt_bridge.rs")
+            .cpp_file("src/qt_bridge.cpp")
+            .qt_module("Widgets")
+            .qt_module("Quick");
+    if env::var_os("CARGO_FEATURE_TEST_HARNESS").is_some() {
+        builder = builder
             .file("src/smoke.rs")
             .cpp_file("src/smoke_helper.cpp")
             .cpp_file("src/smoke_m1.cpp")
             .cpp_file("src/smoke_m2.cpp")
             .cpp_file("src/smoke_m3.cpp")
             .cpp_file("src/smoke_m3_editors.cpp")
-            .cpp_file("src/smoke_m3_pages.cpp")
-            .qt_module("Widgets")
-            .qt_module("Quick");
+            .cpp_file("src/smoke_m3_pages.cpp");
+    }
 
     // SAFETY: Configures an additional C++ include path during build-script compilation.
     let builder = unsafe {

@@ -5,7 +5,7 @@ mod common;
 
 use common::{execute_backup, load_config};
 
-use common::tools::assert_has_flag_pair;
+use kestic_test_support::tools::assert_has_flag_pair;
 
 use kestic_core::backup::{
     BackupExecutionContext, build_backup_command_spec_with_home, exclude_file_path,
@@ -27,14 +27,13 @@ use std::process::Command;
 use tempfile::TempDir;
 use time::macros::datetime;
 
-const TEST_REPO_PW: &str = "m2-excludes-test-pw";
-
 struct ResticTestEnv {
     _dir: TempDir,
     rig: common::ResticRig,
     repo_dir: PathBuf,
     state_dir: PathBuf,
     dest: Destination,
+    repo_pw: String,
 }
 
 impl ResticTestEnv {
@@ -46,13 +45,14 @@ impl ResticTestEnv {
 
         let rig =
             common::ResticRig::new(dir.path(), restic_bin, datetime!(2026-12-01 12:00:00 UTC));
-        let dest = rig.init_local("Local", &repo_dir, TEST_REPO_PW);
+        let (dest, repo_pw) = rig.local_repo("Local", &repo_dir);
         Self {
             _dir: dir,
             rig,
             repo_dir,
             state_dir,
             dest,
+            repo_pw,
         }
     }
 
@@ -92,7 +92,7 @@ impl ResticTestEnv {
                 "--no-lock",
                 snap_id,
             ])
-            .env("RESTIC_PASSWORD", TEST_REPO_PW)
+            .env("RESTIC_PASSWORD", &self.repo_pw)
             .env("RESTIC_CACHE_DIR", &self.rig.cache_dir)
             .output()
             .expect("restic ls");

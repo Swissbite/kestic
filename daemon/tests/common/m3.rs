@@ -5,10 +5,7 @@
 //! injectable clock, restic wrapper with call log, state polling, and notification assertions.
 
 use super::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
-use super::{
-    CapturedNotification, NotificationCapture, find_kestic_binary, tools::find_lock_file,
-    wait_for_file,
-};
+use super::{CapturedNotification, NotificationCapture, find_kestic_binary, wait_for_file};
 use kestic_core::clock::{Clock, FakeClock, SystemClock};
 use kestic_core::destination::{DestinationSetupMode, setup_destination};
 use kestic_core::history::{BackupRuntimeState, RunHistory};
@@ -20,12 +17,15 @@ use kestic_core::mount::MountInspector;
 use kestic_core::provider::check_binary_version;
 use kestic_core::restic::ResticRuntime;
 use kestic_core::scheduler::TimezoneSpec;
-use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore, SecretValue};
+use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
 use kestic_daemon::dbus_api::{
     BackupSummaryDto, DaemonStateDto, DestinationSummaryDto, KESTIC_OBJECT_PATH, KesticClient,
 };
 use kestic_daemon::monitors::MonitorBusConfig;
+use kestic_daemon::secrets::SecretServiceStore;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
+use kestic_test_support::repo_template::copy_template_repo;
+use kestic_test_support::tools::{RestServerGuard, find_lock_file};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -86,7 +86,7 @@ pub struct M3DaemonOpts<'a> {
     pub bus_name: &'a str,
     pub restic_bin: &'a Path,
     pub clock: Arc<dyn Clock>,
-    /// Secret store of the daemon; defaults to a `FileSecretStore` at `<root>/secrets.hex`.
+    /// Secret store of the daemon; defaults to the isolated test keyring.
     pub secret_store: Option<Arc<dyn SecretStore + Send + Sync>>,
     pub mount_inspector: Option<Arc<dyn MountInspector>>,
     pub timezone: TimezoneSpec,
@@ -176,7 +176,7 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
         clock: opts.clock,
         secret_store: Some(
             opts.secret_store
-                .unwrap_or_else(|| Arc::new(FileSecretStore::new(root.join("secrets.hex")))),
+                .unwrap_or_else(|| Arc::new(super::isolated_secret_store())),
         ),
         mount_inspector: opts.mount_inspector,
         suppress_ui_spawn: true,
@@ -278,11 +278,12 @@ impl M3Rig {
         let repo_dir = self.root.join(&self.sub).join(format!("repo-{name}"));
         add_local_destination(
             &self.daemon.client,
+            &self.variant.bin,
             &repo_dir,
             name,
-            &format!("pw-{name}"),
             configure,
         )
+        .0
     }
 
     /// Adds a daily 12:00 backup `name` with a one-file source to `dest` ([`add_folder_backup`]).
@@ -302,7 +303,14 @@ impl M3Rig {
         name: &str,
         configure: impl FnOnce(&mut Backup),
     ) -> LocalBackupFixture {
-        add_local_backup(&self.daemon.client, &self.root, &self.sub, name, configure)
+        add_local_backup(
+            &self.daemon.client,
+            &self.variant.bin,
+            &self.root,
+            &self.sub,
+            name,
+            configure,
+        )
     }
 }
 
@@ -375,19 +383,19 @@ pub fn assert_dbus_error_name(err: &zbus::Error, expected_name: &str) {
     }
 }
 
-/// File-backed secret store that can be locked: while locked, reads, writes and availability
+/// The isolated test keyring behind a switch: while locked, reads, writes and availability
 /// probes fail with `LockedOrPromptRequired`; `unlock_interactive` unlocks it. Counts the
 /// availability probes.
 pub struct LockableSecretStore {
-    inner: FileSecretStore,
+    inner: SecretServiceStore,
     pub locked: Arc<AtomicBool>,
     pub availability_checks: Arc<AtomicUsize>,
 }
 
 impl LockableSecretStore {
-    pub fn new(secrets_file: PathBuf, locked: bool) -> Self {
+    pub fn new(locked: bool) -> Self {
         Self {
-            inner: FileSecretStore::new(secrets_file),
+            inner: super::isolated_secret_store(),
             locked: Arc::new(AtomicBool::new(locked)),
             availability_checks: Arc::new(AtomicUsize::new(0)),
         }
@@ -532,16 +540,16 @@ pub fn wait_until(what: &str, pred: impl FnMut() -> bool) {
     wait_until_within(Duration::from_secs(10), what, pred);
 }
 
-/// Creates `repo_dir` and initialises a local repository there with the real `restic_bin`,
-/// storing the password in `<root>/secrets.hex` (the default secret store of [`spawn_m3_daemon`]).
+/// Copies a prepared repository to `repo_dir` and connects it with the real `restic_bin`
+/// (`ConnectExisting`), storing its generated password in the isolated test keyring (the
+/// default secret store of [`spawn_m3_daemon`]). Returns the destination and its password.
 pub fn seed_local_destination(
     root: &Path,
     restic_bin: &Path,
     name: &str,
     repo_dir: &Path,
-    password: &str,
-) -> Destination {
-    fs::create_dir_all(repo_dir).expect("mkdir repo");
+) -> (Destination, String) {
+    let repo = copy_template_repo(restic_bin, repo_dir);
     let dest = Destination::new(
         name,
         DestinationKind::Local {
@@ -550,7 +558,7 @@ pub fn seed_local_destination(
     )
     .expect("destination");
     let resolved = check_binary_version(restic_bin).expect("resolve restic");
-    let store = FileSecretStore::new(root.join("secrets.hex"));
+    let store = super::isolated_secret_store();
     let kestic = find_kestic_binary();
     let cache = root.join("seed-restic-cache");
     let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
@@ -563,13 +571,13 @@ pub fn seed_local_destination(
     };
     setup_destination(
         &dest,
-        DestinationSetupMode::InitNew,
-        &SecretValue::from_str_secret(password),
+        DestinationSetupMode::ConnectExisting,
+        &SecretValue::from_str_secret(&repo.password),
         None,
         &runtime,
     )
-    .expect("init repo");
-    dest
+    .expect("connect repo");
+    (dest, repo.password)
 }
 
 /// Number of runs of the backup that actually executed (neither pending nor still running).
@@ -641,11 +649,11 @@ pub fn write_incompressible_dataset(dir: &Path, num_files: usize, bytes_per_file
     let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut buf = vec![0u8; bytes_per_file];
     for idx in 0..num_files {
-        for chunk in buf.chunks_exact_mut(8) {
+        for chunk in buf.as_chunks_mut::<8>().0 {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;
-            chunk.copy_from_slice(&state.to_le_bytes());
+            *chunk = state.to_le_bytes();
         }
         let path = dir.join(format!("blob_{idx:03}.bin"));
         let mut f = fs::File::create(&path).expect("create dataset file");
@@ -660,18 +668,21 @@ pub struct LocalBackupFixture {
     pub backup_id_str: String,
     pub repo_dir: PathBuf,
     pub src_dir: PathBuf,
+    /// Generated password of the repository.
+    pub password: String,
 }
 
-/// Creates `repo_dir` and a local destination `name` through the daemon API (`restic init` with
-/// `password`); `configure` adjusts the destination before it is added.
+/// Copies a prepared repository (for `restic`'s version) to `repo_dir` and adds it as local
+/// destination `name` through the daemon API (`"connect"`); `configure` adjusts the destination
+/// before it is added. Returns the destination and its generated password.
 pub fn add_local_destination(
     client: &KesticClient,
+    restic: &Path,
     repo_dir: &Path,
     name: &str,
-    password: &str,
     configure: impl FnOnce(&mut Destination),
-) -> Destination {
-    fs::create_dir_all(repo_dir).expect("mkdir repo");
+) -> (Destination, String) {
+    let repo = copy_template_repo(restic, repo_dir);
     let mut dest = Destination::new(
         name,
         DestinationKind::Local {
@@ -681,9 +692,39 @@ pub fn add_local_destination(
     .expect("dest");
     configure(&mut dest);
     client
-        .add_destination(&dest, "init", password, "")
+        .add_destination(&dest, "connect", &repo.password, "")
         .expect("add destination");
-    dest
+    (dest, repo.password)
+}
+
+/// Copies a prepared repository into the directory of the local destination `dest` and connects
+/// it through the daemon API (`"connect"`). Returns the generated repository password.
+pub fn connect_local_repo(client: &KesticClient, restic: &Path, dest: &Destination) -> String {
+    let DestinationKind::Local { path } = &dest.kind else {
+        panic!("connect_local_repo needs a local destination");
+    };
+    let repo = copy_template_repo(restic, path);
+    client
+        .add_destination(dest, "connect", &repo.password, "")
+        .expect("add local destination");
+    repo.password
+}
+
+/// Copies a prepared repository into the directory behind `server` and connects it as REST
+/// destination `dest` through the daemon API (`"connect"`, with the server password when the
+/// server has authentication). Returns the generated repository password.
+pub fn connect_rest_repo(
+    client: &KesticClient,
+    restic: &Path,
+    server: &RestServerGuard,
+    dest: &Destination,
+) -> String {
+    let repo = copy_template_repo(restic, &server.repo_dir());
+    let backend_password = server.auth().map_or("", |(_, password)| password);
+    client
+        .add_destination(dest, "connect", &repo.password, backend_password)
+        .expect("add REST destination");
+    repo.password
 }
 
 /// Creates a folder backup `name` (daily 12:00) on destination `dest_id` through the daemon API;
@@ -709,9 +750,10 @@ pub fn add_folder_backup(
 }
 
 /// Creates a folder backup `name` (daily 12:00) with a one-file source and a local destination
-/// (`restic init`) through the daemon API.
+/// (a copy of the prepared repository, [`add_local_destination`]) through the daemon API.
 pub fn add_local_backup(
     client: &KesticClient,
+    restic: &Path,
     root: &Path,
     sub: &str,
     name: &str,
@@ -719,13 +761,8 @@ pub fn add_local_backup(
 ) -> LocalBackupFixture {
     let repo_dir = root.join(sub).join(format!("repo-{name}"));
     let src_dir = root.join(sub).join(format!("src-{name}"));
-    let dest = add_local_destination(
-        client,
-        &repo_dir,
-        &format!("Dest {name}"),
-        &format!("pw-{name}"),
-        |_| {},
-    );
+    let (dest, password) =
+        add_local_destination(client, restic, &repo_dir, &format!("Dest {name}"), |_| {});
     let backup = add_folder_backup(client, &src_dir, &dest.id, name, configure);
     LocalBackupFixture {
         dest,
@@ -733,6 +770,7 @@ pub fn add_local_backup(
         backup,
         repo_dir,
         src_dir,
+        password,
     }
 }
 

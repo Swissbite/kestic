@@ -6,8 +6,8 @@
 mod common;
 
 use common::m3::{
-    M3Rig, StdFakes, backup_summary, dest_summary, hold_repo_lock, restic_repo_cmd,
-    restic_variants, settle, wait_for_state,
+    M3Rig, StdFakes, backup_summary, connect_local_repo, dest_summary, hold_repo_lock,
+    restic_repo_cmd, restic_variants, settle, wait_for_state,
 };
 use common::run_isolated_test;
 use kestic_core::model::{
@@ -53,10 +53,7 @@ fn add_local_dest(rig: &M3Rig, root: &Path, name: &str) -> Destination {
     let repo = root.join(rig.variant.sub("repo")).join(name);
     fs::create_dir_all(&repo).expect("mkdir repo");
     let dest = Destination::new(name, DestinationKind::Local { path: repo }).expect("dest");
-    rig.daemon
-        .client
-        .add_destination(&dest, "init", &format!("pw-{name}"), "")
-        .expect("init destination");
+    connect_local_repo(&rig.daemon.client, &rig.variant.bin, &dest);
     std::thread::sleep(Duration::from_millis(1300));
     dest
 }
@@ -321,7 +318,7 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
                 let mut cmd = restic_repo_cmd(
                     &variant.bin,
                     &alpha.repo_dir,
-                    "pw-Alpha",
+                    &alpha.password,
                     &root.join("restic-cache"),
                 );
                 cmd.args(["backup", "--stdin", "--stdin-filename", "hold.txt"]);
@@ -598,7 +595,7 @@ fn ac_m3_05_8_prune_preview_under_non_exclusive_lock_uses_no_lock() {
                 let mut cmd = restic_repo_cmd(
                     &variant.bin,
                     &fx.repo_dir,
-                    "pw-Docs",
+                    &fx.password,
                     &root.join("restic-cache"),
                 );
                 cmd.args(["backup", "--stdin", "--stdin-filename", "concurrent.txt"]);

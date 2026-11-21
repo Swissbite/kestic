@@ -260,14 +260,14 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(hex: &str) -> Result<Vec<u8>, SecretError> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(SecretError::Io("odd hex length".to_string()));
     }
     let bytes = hex.as_bytes();
     let mut out = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
-        let hi = from_hex_nibble(chunk[0])?;
-        let lo = from_hex_nibble(chunk[1])?;
+    for [hi, lo] in bytes.as_chunks::<2>().0 {
+        let hi = from_hex_nibble(*hi)?;
+        let lo = from_hex_nibble(*lo)?;
         out.push((hi << 4) | lo);
     }
     Ok(out)
@@ -285,20 +285,21 @@ fn from_hex_nibble(b: u8) -> Result<u8, SecretError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kestic_test_support::password::{assert_no_secret, strong_password};
     use tempfile::TempDir;
 
     #[test]
     fn secret_value_debug_is_redacted() {
-        let secret = SecretValue::from_str_secret("super-sensitive-repo-passphrase");
-        let dbg = format!("{secret:?}");
-        assert!(!dbg.contains("super-sensitive"));
+        let pw = strong_password();
+        let dbg = format!("{:?}", SecretValue::from_str_secret(&pw));
+        assert_no_secret(&dbg, &pw, "SecretValue Debug");
         assert!(dbg.contains("REDACTED"));
     }
 
     #[test]
     fn in_memory_and_file_secret_store_roundtrip() {
         let mem = InMemorySecretStore::new();
-        let val = SecretValue::from_str_secret("p@ssw0rd-äöü");
+        let val = SecretValue::from_str_secret(strong_password());
         mem.set_secret("nas", "repo-password", &val).expect("set");
         assert_eq!(
             mem.get_secret("nas", "repo-password").expect("get"),

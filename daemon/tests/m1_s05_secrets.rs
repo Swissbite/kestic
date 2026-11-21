@@ -6,54 +6,19 @@ mod common;
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore, SecretValue};
 use kestic_daemon::secrets::SecretServiceStore;
+use kestic_test_support::password::strong_password;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
-use zbus::{Connection, OwnedObjectPath, OwnedVariant, block_on, interface};
+use zbus::{OwnedObjectPath, OwnedVariant, block_on, interface};
 
-struct ChildGuard(Child);
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn wait_for_dbus_owner(child: &mut Child, name: &str, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait().expect("try_wait gnome-keyring-daemon") {
-            panic!("gnome-keyring-daemon exited early with {status:?}");
-        }
-        let has_owner = block_on(async {
-            let conn = Connection::session().await?;
-            let proxy = zbus::fdo::DBusProxy::new(&conn).await?;
-            proxy
-                .name_has_owner(name.try_into().expect("valid bus name"))
-                .await
-        });
-        if matches!(has_owner, Ok(true)) {
-            return;
-        }
-        if Instant::now() >= deadline {
-            panic!("timed out waiting for D-Bus owner `{name}`");
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// `kestic` command that reads from the keyring over D-Bus instead of the test's secret file.
-fn kestic_keyring_cmd(args: &[&str]) -> Command {
+/// `kestic` command reading from the isolated test keyring over D-Bus.
+fn kestic_cmd(args: &[&str]) -> Command {
     let mut cmd = Command::new(find_kestic_binary());
-    cmd.args(args).env_remove("KESTIC_SECRET_FILE");
+    cmd.args(args);
     cmd
 }
 
@@ -66,7 +31,6 @@ fn ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_re
         "ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_restic",
         "KESTIC_M1_S05_SECRET_GET_INNER",
         |root| {
-            let _keyring = start_headless_keyring(root);
             let restic_exe = common::restic_test_binaries()
                 .pop()
                 .expect("latest restic")
@@ -74,25 +38,25 @@ fn ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_re
             let repo_dir = root.join("repo");
             let bin = find_kestic_binary();
 
-            let store = SecretServiceStore::default();
+            let store = common::isolated_secret_store();
             let dest_id = "k7m2q9xa";
-            let pw = SecretValue::from_str_secret("secret-from-isolated-dbus-kestic!");
+            let pw = SecretValue::from_str_secret(strong_password());
             store
                 .set_secret(dest_id, "repo", &pw)
                 .expect("set secret in isolated keyring");
 
             // AC-M1-05-2: `kestic secret get <ziel-id>` outputs exact password + Exit 0.
-            let ok_out = kestic_keyring_cmd(&["secret", "get", dest_id])
+            let ok_out = kestic_cmd(&["secret", "get", dest_id])
                 .output()
                 .expect("run kestic secret get");
             assert_eq!(ok_out.status.code(), Some(0));
-            assert_eq!(
-                String::from_utf8_lossy(&ok_out.stdout),
-                pw.as_str().unwrap()
+            assert!(
+                ok_out.stdout == pw.as_str().unwrap().as_bytes(),
+                "kestic secret get printed a different value"
             );
 
             // AC-M1-05-2: Unknown `<ziel-id>` -> Exit 1, empty stdout.
-            let miss_out = kestic_keyring_cmd(&["secret", "get", "zzzzzzzz"])
+            let miss_out = kestic_cmd(&["secret", "get", "zzzzzzzz"])
                 .output()
                 .expect("run kestic secret get missing");
             assert_eq!(miss_out.status.code(), Some(1));
@@ -103,7 +67,6 @@ fn ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_re
             let init_out = Command::new(&restic_exe)
                 .args(["-r", &repo_dir.to_string_lossy(), "init"])
                 .env_remove("RESTIC_PASSWORD")
-                .env_remove("KESTIC_SECRET_FILE")
                 .env("RESTIC_PASSWORD_COMMAND", &pw_cmd)
                 .output()
                 .expect("restic init");
@@ -116,46 +79,12 @@ fn ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_re
             let snap_out = Command::new(&restic_exe)
                 .args(["-r", &repo_dir.to_string_lossy(), "snapshots", "--json"])
                 .env_remove("RESTIC_PASSWORD")
-                .env_remove("KESTIC_SECRET_FILE")
                 .env("RESTIC_PASSWORD_COMMAND", &pw_cmd)
                 .output()
                 .expect("restic snapshots");
             assert!(snap_out.status.success());
         },
     );
-}
-
-/// Starts a headless `gnome-keyring-daemon` (unlocked with an empty passphrase) on the session bus
-/// of the isolated test and waits until it owns `org.freedesktop.secrets`.
-fn start_headless_keyring(root: &Path) -> ChildGuard {
-    // Short path: the control socket must stay under the 107-byte `sun_path` limit.
-    let keyring_dir = root.join("keyring");
-    fs::create_dir_all(&keyring_dir).expect("mkdir keyring dir");
-    fs::set_permissions(&keyring_dir, fs::Permissions::from_mode(0o700)).expect("chmod keyring");
-    let mut child = Command::new("gnome-keyring-daemon")
-        .args([
-            "--foreground",
-            "--replace",
-            "--unlock",
-            "--components=secrets",
-            "--control-directory",
-        ])
-        .arg(&keyring_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn headless gnome-keyring-daemon");
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(b"\n").expect("write empty passphrase");
-    }
-    let mut guard = ChildGuard(child);
-    wait_for_dbus_owner(
-        &mut guard.0,
-        "org.freedesktop.secrets",
-        Duration::from_secs(5),
-    );
-    guard
 }
 
 /// AC-M1-05-1 (FR-08): against the headless keyring a secret can be (a) written and read back,
@@ -165,11 +94,10 @@ fn ac_m1_05_1_secret_service_set_replace_and_delete_on_headless_keyring() {
     run_isolated_test(
         "ac_m1_05_1_secret_service_set_replace_and_delete_on_headless_keyring",
         "KESTIC_M1_S05_KEYRING_INNER",
-        |root| {
-            let _keyring = start_headless_keyring(root);
-            let store: &dyn SecretStore = &SecretServiceStore::default();
-            let initial = SecretValue::from_str_secret("kestic-repo-pass-01-äöü");
-            let updated = SecretValue::from_str_secret("kestic-repo-pass-02-replaced");
+        |_root| {
+            let store: &dyn SecretStore = &common::isolated_secret_store();
+            let initial = SecretValue::from_str_secret(strong_password());
+            let updated = SecretValue::from_str_secret(strong_password());
 
             store
                 .set_secret("nas-prod", "repo-password", &initial)
@@ -214,7 +142,7 @@ fn ac_m1_05_1_file_backend_roundtrips_with_mode_0600() {
     let temp = tempfile::tempdir().expect("tempdir");
     let store_path = temp.path().join("secrets.hex");
     let store = FileSecretStore::new(&store_path);
-    let secret = SecretValue::from_str_secret("fallback-secret-token");
+    let secret = SecretValue::from_str_secret(strong_password());
 
     store
         .set_secret("s3-archive", "backend-secret-key", &secret)
@@ -381,7 +309,11 @@ fn ac_m1_05_1_locked_collection_reports_prompt_required_until_the_prompt_is_acce
             );
 
             let set_err = store
-                .set_secret("nas", "repo-password", &SecretValue::from_str_secret("pw"))
+                .set_secret(
+                    "nas",
+                    "repo-password",
+                    &SecretValue::from_str_secret(strong_password()),
+                )
                 .expect_err("locked collection must reject the write");
             assert!(
                 matches!(set_err, SecretError::LockedOrPromptRequired(_)),

@@ -3,7 +3,8 @@
 
 mod common;
 
-use common::tools::write_executable;
+use kestic_test_support::password::{assert_no_secret, strong_password};
+use kestic_test_support::tools::write_executable;
 
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{Destination, DestinationKind, RunStatus};
@@ -130,7 +131,12 @@ fn ac_m1_15_3_exit_error_json_from_real_restic_stderr_is_captured() {
         )
         .with_cache_dir(Some(&cache_dir));
         spec.low_priority = false;
-        spec.password_command_override = Some("printf 'test-pw\\n'".to_string());
+        let password_file = dir.path().join("repo-password");
+        fs::write(&password_file, format!("{}\n", strong_password())).expect("write password");
+        spec.password_command_override = Some(format!(
+            "cat {}",
+            shlex::try_quote(&password_file.to_string_lossy()).expect("quote path")
+        ));
 
         let res = run_restic(&spec, &dest, None, &clock, None, &[], |_| {})
             .unwrap_or_else(|e| panic!("{label}: runner failed: {e}"));
@@ -168,8 +174,10 @@ fn ac_m1_03_3_and_03_4_nice_ionice_and_no_secrets_in_proc_cmdline() {
     .expect("dest");
 
     let store = InMemorySecretStore::new();
-    let repo_secret = "SecretRepoPass_NeverInCmdline!";
-    let rest_secret = "SecretRestPass_NeverInCmdline!";
+    let repo_secret = strong_password();
+    let rest_secret = strong_password();
+    let repo_secret = repo_secret.as_str();
+    let rest_secret = rest_secret.as_str();
     store
         .set_secret(
             dest.id.as_str(),
@@ -217,31 +225,29 @@ printf '{{"message_type":"summary","files_new":1,"snapshot_id":"deadbeef"}}\n'
     assert_eq!(res.exit_code, 0);
 
     let captured = fs::read_to_string(&out_file).expect("read probe output");
-    assert!(captured.contains("nice=10\n"), "captured:\n{captured}");
-    assert!(captured.contains("io=idle\n"), "captured:\n{captured}");
+    // Failure messages show the probe output with both secrets replaced.
+    let shown = captured
+        .replace(repo_secret, "<repo secret>")
+        .replace(rest_secret, "<rest secret>");
+    assert!(captured.contains("nice=10\n"), "captured:\n{shown}");
+    assert!(captured.contains("io=idle\n"), "captured:\n{shown}");
     assert!(
         captured.contains("has_pw_env=\n"),
-        "RESTIC_PASSWORD must not be set:\n{captured}"
+        "RESTIC_PASSWORD must not be set:\n{shown}"
     );
     assert!(
         captured.contains(&format!(
             "has_pw_cmd=/usr/bin/kestic secret get {}",
             dest.id
         )),
-        "captured:\n{captured}"
+        "captured:\n{shown}"
     );
-    assert!(
-        !captured.contains(repo_secret),
-        "repo secret leaked to cmdline"
-    );
-    assert!(
-        !captured
-            .lines()
-            .find(|l| l.starts_with("cmdline="))
-            .unwrap()
-            .contains(rest_secret),
-        "rest secret leaked to cmdline"
-    );
+    assert_no_secret(&captured, repo_secret, "probe output (repo secret)");
+    let cmdline = captured
+        .lines()
+        .find(|l| l.starts_with("cmdline="))
+        .expect("cmdline line");
+    assert_no_secret(cmdline, rest_secret, "probe cmdline (rest secret)");
 
     // Also verify real `ionice`/`nice` values via command transparency string (AC-M1-14-1, AC-M1-14-2).
     let shell_cmd = spec.to_transparent_shell_command();
@@ -254,16 +260,16 @@ printf '{{"message_type":"summary","files_new":1,"snapshot_id":"deadbeef"}}\n'
         "RESTIC_REST_PASSWORD=\"$(kestic secret get {} rest)\"",
         dest.id
     )));
-    assert!(!shell_cmd.contains(repo_secret));
-    assert!(!shell_cmd.contains(rest_secret));
+    assert_no_secret(&shell_cmd, repo_secret, "transparency string (repo secret)");
+    assert_no_secret(&shell_cmd, rest_secret, "transparency string (rest secret)");
 
     // Verify redaction helper never leaves secrets in logs.
     let redacted = redact_secrets(
         &format!("error with {repo_secret} and {rest_secret}"),
         &[repo_secret, rest_secret],
     );
-    assert!(!redacted.contains(repo_secret));
-    assert!(!redacted.contains(rest_secret));
+    assert_no_secret(&redacted, repo_secret, "redacted log (repo secret)");
+    assert_no_secret(&redacted, rest_secret, "redacted log (rest secret)");
 
     // Sanity-check `Command::new("ionice")` exists on host.
     assert!(Command::new("ionice").arg("-V").status().is_ok());

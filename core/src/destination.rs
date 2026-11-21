@@ -13,7 +13,7 @@ use crate::restic::{
 use crate::secrets::{SecretError, SecretStore, SecretValue};
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -120,33 +120,18 @@ pub fn setup_destination(
 ) -> Result<ResticExecutionResult, DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
 
-    let res = if matches!(mode, DestinationSetupMode::InitNew)
-        && let DestinationKind::Local { path } = &dest.kind
-        && std::env::var_os("KESTIC_TEST_FAST_INIT").as_deref() == Some("1".as_ref())
-    {
-        fast_init_local_from_cache(
-            dest,
-            path,
-            repo_password,
-            &runtime.resolved.binary,
-            runtime.kestic_binary,
-            runtime.clock,
-            runtime.cache_dir,
-        )?
-    } else {
-        run_with_temp_repo_password_file(
-            dest,
-            mode_subcommand(mode),
-            repo_password,
-            rest_password,
-            ProbeRuntime {
-                resolved: runtime.resolved,
-                kestic_binary: runtime.kestic_binary,
-                clock: runtime.clock,
-                cache_dir: runtime.cache_dir,
-            },
-        )?
-    };
+    let res = run_with_temp_repo_password_file(
+        dest,
+        mode_subcommand(mode),
+        repo_password,
+        rest_password,
+        ProbeRuntime {
+            resolved: runtime.resolved,
+            kestic_binary: runtime.kestic_binary,
+            clock: runtime.clock,
+            cache_dir: runtime.cache_dir,
+        },
+    )?;
 
     if res.exit_code != 0 {
         return Err(map_execution_failure(&res));
@@ -156,17 +141,16 @@ pub fn setup_destination(
     runtime
         .secret_store
         .set_secret(dest.id.as_str(), SECRET_KIND_REPO, repo_password)?;
-    if let Some(rest_pw) = rest_password {
-        if let Err(err) =
+    if let Some(rest_pw) = rest_password
+        && let Err(err) =
             runtime
                 .secret_store
                 .set_secret(dest.id.as_str(), SECRET_KIND_REST, rest_pw)
-        {
-            let _ = runtime
-                .secret_store
-                .delete_secret(dest.id.as_str(), SECRET_KIND_REPO);
-            return Err(err.into());
-        }
+    {
+        let _ = runtime
+            .secret_store
+            .delete_secret(dest.id.as_str(), SECRET_KIND_REPO);
+        return Err(err.into());
     }
 
     Ok(res)
@@ -290,15 +274,8 @@ fn run_with_temp_repo_password_file(
     probe: ProbeRuntime<'_>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     let tmp_dir = create_private_temp_dir()?;
-    let pw_file = tmp_dir.join("repo.pw");
     let res = (|| -> Result<ResticExecutionResult, DestinationError> {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&pw_file)?;
-        fs::set_permissions(&pw_file, fs::Permissions::from_mode(0o600))?;
-        f.write_all(repo_password.as_str()?.as_bytes())?;
-        drop(f);
+        let pw_file = write_private_password_file(&tmp_dir, repo_password)?;
 
         let mut args = subcommand_args;
         args.push("--password-file".to_string());
@@ -392,150 +369,63 @@ fn execute_probe_command(
     })
 }
 
+/// A new directory only the owner can enter (`0700` from the moment it exists).
 fn create_private_temp_dir() -> Result<std::path::PathBuf, DestinationError> {
     let nonce =
         crate::model::RunId::generate().map_err(|e| std::io::Error::other(e.to_string()))?;
     let dir = std::env::temp_dir().join(format!("kestic-probe-{}-{nonce}", std::process::id()));
-    fs::create_dir_all(&dir)?;
-    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+    fs::DirBuilder::new().mode(0o700).create(&dir)?;
     Ok(dir)
 }
 
-fn fast_init_local_from_cache(
-    dest: &Destination,
-    target_path: &Path,
-    repo_password: &SecretValue,
-    restic_binary: &Path,
-    kestic_binary: &Path,
-    clock: &dyn Clock,
-    cache_dir: Option<&Path>,
-) -> Result<ResticExecutionResult, DestinationError> {
-    if target_path.join("config").exists() {
-        let msg = "create key in repository failed: config file already exists".to_string();
-        return Ok(synthetic_init_result(
-            dest,
-            restic_binary,
-            kestic_binary,
-            clock,
-            1,
-            msg,
-        ));
-    }
-
-    let pw_str = repo_password.as_str()?;
-    let canonical_bin = restic_binary
-        .canonicalize()
-        .unwrap_or_else(|_| restic_binary.to_path_buf());
-    let mut key_bytes = Vec::new();
-    key_bytes.extend_from_slice(canonical_bin.to_string_lossy().as_bytes());
-    key_bytes.push(0);
-    key_bytes.extend_from_slice(pw_str.as_bytes());
-    // FNV-1a 64-bit + length + reverse FNV-1a 64-bit for collision-free cache key
-    let mut h1: u64 = 0xcbf29ce484222325;
-    for &b in &key_bytes {
-        h1 ^= u64::from(b);
-        h1 = h1.wrapping_mul(0x100000001b3);
-    }
-    let mut h2: u64 = 0xcbf29ce484222325;
-    for &b in key_bytes.iter().rev() {
-        h2 ^= u64::from(b);
-        h2 = h2.wrapping_mul(0x100000001b3);
-    }
-    let cache_root = std::env::temp_dir().join("kestic-test-repo-cache-v1");
-    let _ = fs::create_dir_all(&cache_root);
-    let template_dir = cache_root.join(format!("{h1:016x}-{h2:016x}-{}", key_bytes.len()));
-
-    if !template_dir.join("config").is_file() {
-        let nonce =
-            crate::model::RunId::generate().map_err(|e| std::io::Error::other(e.to_string()))?;
-        let staging = cache_root.join(format!("staging-{}-{nonce}", std::process::id()));
-        fs::create_dir_all(&staging)?;
-        let fallback_cache = cache_root.join("restic-cache");
-        let _ = fs::create_dir_all(&fallback_cache);
-        let isolated_cache = cache_dir.unwrap_or(&fallback_cache);
-        let out = Command::new(restic_binary)
-            .args(["-r", &staging.to_string_lossy(), "init", "--json"])
-            .env("RESTIC_PASSWORD", pw_str)
-            .env("RESTIC_CACHE_DIR", isolated_cache)
-            .env_remove("RESTIC_PASSWORD_COMMAND")
-            .env_remove("RESTIC_PASSWORD_FILE")
-            .output()?;
-        if !out.status.success() {
-            let _ = fs::remove_dir_all(&staging);
-            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-            return Err(DestinationError::CommandFailed {
-                exit_code: out.status.code().unwrap_or(1),
-                message: stderr,
-            });
-        }
-        if fs::rename(&staging, &template_dir).is_err() {
-            let _ = fs::remove_dir_all(&staging);
-        }
-    }
-
-    copy_dir_recursive(&template_dir, target_path)?;
-
-    Ok(synthetic_init_result(
-        dest,
-        restic_binary,
-        kestic_binary,
-        clock,
-        0,
-        String::new(),
-    ))
+/// Writes `password` to a new `repo.pw` in `dir`, readable only by the owner (`0600` from the
+/// moment it exists).
+fn write_private_password_file(
+    dir: &Path,
+    password: &SecretValue,
+) -> Result<std::path::PathBuf, DestinationError> {
+    let path = dir.join("repo.pw");
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)?;
+    file.write_all(password.as_str()?.as_bytes())?;
+    Ok(path)
 }
 
-/// Result of an `init` that was answered from the test cache instead of running restic.
-fn synthetic_init_result(
-    dest: &Destination,
-    restic_binary: &Path,
-    kestic_binary: &Path,
-    clock: &dyn Clock,
-    exit_code: i32,
-    message: String,
-) -> ResticExecutionResult {
-    let spec = ResticCommandSpec::for_destination(
-        restic_binary,
-        kestic_binary,
-        dest,
-        vec!["init".to_string()],
-    );
-    let failed = exit_code != 0;
-    let presentation = crate::restic::classify_exit(
-        exit_code,
-        failed.then_some(message.as_str()),
-        Vec::new(),
-        &message,
-    );
-    ResticExecutionResult {
-        exit_code,
-        cancelled: false,
-        presentation,
-        stats: None,
-        command_record: crate::model::CommandRecord {
-            executable: restic_binary.to_string_lossy().into_owned(),
-            args: spec.restic_argv(),
-            env_keys: Vec::new(),
-            started_at: clock.now_utc(),
-            duration_ms: 1,
-            exit_code,
-        },
-        log_lines: if failed { vec![message] } else { Vec::new() },
-        errors: Vec::new(),
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kestic_test_support::password::strong_password;
+    use std::os::unix::fs::PermissionsExt;
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        let dst_path = dst.join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_recursive(&entry.path(), &dst_path)?;
-        } else {
-            fs::copy(entry.path(), &dst_path)?;
-        }
+    #[test]
+    fn probe_password_file_is_private() {
+        let dir = create_private_temp_dir().expect("create probe dir");
+        let password = strong_password();
+        let file = write_private_password_file(&dir, &SecretValue::from_str_secret(&password))
+            .expect("write password file");
+
+        let dir_mode = fs::metadata(&dir)
+            .expect("dir metadata")
+            .permissions()
+            .mode();
+        let file_mode = fs::metadata(&file)
+            .expect("file metadata")
+            .permissions()
+            .mode();
+        let content = fs::read(&file).expect("read password file");
+        fs::remove_dir_all(&dir).expect("remove probe dir");
+
+        // (a) the directory is owner-only
+        assert_eq!(dir_mode & 0o777, 0o700);
+        // (b) the password file is owner read/write only
+        assert_eq!(file_mode & 0o777, 0o600);
+        // (c) the file holds exactly the password
+        assert!(
+            content == password.as_bytes(),
+            "password file content differs"
+        );
     }
-    Ok(())
 }

@@ -32,7 +32,7 @@ use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_core::scheduler::{
     SystemEnvironment, TimezoneSpec, UnmetPrecondition, format_local_hhmm, format_local_slot_hint,
 };
-use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore};
+use kestic_core::secrets::{SecretError, SecretStore};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{BlockingKind, PendingReasonCode, ResticStatusCode};
 use kestic_i18n::messages::{pause_message, unmet_conditions_message};
@@ -247,15 +247,9 @@ impl DaemonCore {
             None => env::current_exe().unwrap_or_else(|_| PathBuf::from("kestic")),
         };
 
-        let secret_store: Arc<dyn SecretStore + Send + Sync> = if let Some(store) =
-            &run_config.secret_store
-        {
-            Arc::clone(store)
-        } else if let Some(file_path) = env::var_os("KESTIC_SECRET_FILE").filter(|v| !v.is_empty())
-        {
-            Arc::new(FileSecretStore::new(PathBuf::from(file_path)))
-        } else {
-            Arc::new(SecretServiceStore::default())
+        let secret_store: Arc<dyn SecretStore + Send + Sync> = match &run_config.secret_store {
+            Some(store) => Arc::clone(store),
+            None => Arc::new(SecretServiceStore::default()),
         };
 
         let mount_inspector: Arc<dyn MountInspector> = run_config

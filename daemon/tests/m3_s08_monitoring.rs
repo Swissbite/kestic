@@ -17,8 +17,9 @@ use common::{
 use kestic_core::history::RunHistory;
 use kestic_core::model::{NotificationSettings, RunStatus, Schedule};
 use kestic_core::restic::SECRET_KIND_REPO;
-use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
+use kestic_core::secrets::{SecretStore, SecretValue};
 use kestic_i18n::messages::UiText;
+use kestic_test_support::password::strong_password;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -146,11 +147,11 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
 
                 // (a) Error (Exit 12, wrong password) -> exactly one notification.
                 let err_fx = rig.add_manual("ErrBk");
-                FileSecretStore::new(root.join("secrets.hex"))
+                common::isolated_secret_store()
                     .set_secret(
                         err_fx.dest.id.as_str(),
                         SECRET_KIND_REPO,
-                        &SecretValue::from_str_secret("wrong-password"),
+                        &SecretValue::from_str_secret(strong_password()),
                     )
                     .expect("wrong password");
                 rig.run_to(&err_fx, RunStatus::Error);
@@ -375,11 +376,11 @@ fn ac_m3_08_6_back_up_all_starts_only_valid_backup_and_reports_skipped_with_reas
             let missing_fx = rig.add_manual("MissingSrc");
             let err_fx = rig.add_manual("ErrBk");
             fs::remove_dir_all(&missing_fx.src_dir).expect("remove source");
-            FileSecretStore::new(root.join("secrets.hex"))
+            common::isolated_secret_store()
                 .set_secret(
                     err_fx.dest.id.as_str(),
                     SECRET_KIND_REPO,
-                    &SecretValue::from_str_secret("wrong-password"),
+                    &SecretValue::from_str_secret(strong_password()),
                 )
                 .expect("wrong password");
             rig.run_to(&err_fx, RunStatus::Error);

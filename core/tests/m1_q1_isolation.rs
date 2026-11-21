@@ -103,7 +103,7 @@ fn ac_m1_q1_non_root_and_real_home_directories_stay_untouched() {
     ];
     let before: Vec<PathSnapshot> = guarded_paths.iter().map(|p| snapshot_path(p)).collect();
 
-    // Perform isolated config, secret store, repo init, backup, and SQLite history operations in TempDir.
+    // Perform isolated config, secret store, repository, backup, and SQLite history operations in TempDir.
     let dir = TempDir::new().expect("tempdir");
     let _cache_dir = common::restic_cache_dir(dir.path());
     let cfg_path = dir.path().join("config.toml");
@@ -121,7 +121,7 @@ fn ac_m1_q1_non_root_and_real_home_directories_stay_untouched() {
     let runtime = rig.runtime();
     let clock = &rig.clock;
 
-    let dest = rig.init_local("Isolated", &repo_dir, "isolated-pw");
+    let (dest, _repo_pw) = rig.local_repo("Isolated", &repo_dir);
 
     let backup = Backup::new("Isolated", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     let cfg = AppConfig {
