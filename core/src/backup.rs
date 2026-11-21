@@ -586,6 +586,21 @@ fn forget_preview_snapshot(
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawForgetRemoved {
+    #[serde(deserialize_with = "deserialize_null_default")]
+    remove: Vec<serde::de::IgnoredAny>,
+}
+
+/// Number of snapshots a real `restic forget --json` removed: the `remove` lists of all groups
+/// in its result line; `None` without a readable result line.
+pub fn parse_forget_removed_count(lines: &[String]) -> Option<u64> {
+    let result = lines.iter().find(|l| l.trim_start().starts_with('['))?;
+    let groups: Vec<RawForgetRemoved> = serde_json::from_str(result.trim()).ok()?;
+    u64::try_from(groups.iter().map(|g| g.remove.len()).sum::<usize>()).ok()
+}
+
 /// Parses JSON array lines emitted by `restic forget --json` (tolerant parsing).
 pub fn parse_forget_json_output(
     backup_id: &BackupId,

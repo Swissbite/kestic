@@ -23,12 +23,15 @@ use crate::i18n::{i18n, tr, tr_text};
 use crate::monitors::LogindSleepInhibitor;
 use crate::notifications::{KesticEvent, send_configured_notification};
 use crate::tray::TrayHandle;
-use kestic_core::backup::{execute_forget, is_forget_lock_failure};
+use kestic_core::backup::{execute_forget, is_forget_lock_failure, parse_forget_removed_count};
 use kestic_core::clock::Clock;
 use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
-use kestic_core::maintenance::{detect_stale_locks, execute_check, execute_prune};
+use kestic_core::maintenance::{
+    detect_stale_locks, execute_check, execute_prune, parse_check_summary,
+};
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, PendingReason, Run, RunStatus,
+    Backup, BackupId, Destination, DestinationId, MaintenanceForget, MaintenanceStats,
+    PendingReason, Run, RunStatus,
 };
 use kestic_core::mount::{MountInspector, SourceCheckResult, current_home_dir};
 use kestic_core::provider::ResolvedRestic;
@@ -251,6 +254,7 @@ struct MaintenanceOpOutcome {
     last_exit: i32,
     combined_logs: Vec<String>,
     failure_detail: Option<String>,
+    stats: MaintenanceStats,
 }
 
 fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
@@ -327,6 +331,7 @@ fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
     if run.summary_message.is_none() {
         run.summary_message = ops.failure_detail.take();
     }
+    run.maintenance = Some(std::mem::take(&mut ops.stats));
     run.finish(ctx.deps.clock.as_ref(), status, Some(ops.last_exit));
 
     if let Some(jv) = supervision.job_view.take() {
@@ -383,6 +388,7 @@ fn run_maintenance_operations(
         last_exit: 0,
         combined_logs: Vec::new(),
         failure_detail: None,
+        stats: MaintenanceStats::default(),
     };
 
     for b in pending_backups {
@@ -396,6 +402,10 @@ fn run_maintenance_operations(
                 out.last_exit = res.exit_code;
                 if res.exit_code == 0 {
                     out.cleared_ids.push(b.id.clone());
+                    out.stats.forgets.push(MaintenanceForget {
+                        backup_id: b.id.clone(),
+                        removed_snapshots: parse_forget_removed_count(&res.log_lines),
+                    });
                 } else {
                     out.forget_failed = true;
                     if is_forget_lock_failure(&res)
@@ -450,12 +460,17 @@ fn run_single_maintenance_step(
             run.commands.push(step_res.command_record.clone());
             out.combined_logs.extend(step_res.log_lines.iter().cloned());
             out.last_exit = step_res.exit_code;
+            if !is_prune {
+                out.stats.check = parse_check_summary(&step_res.log_lines);
+            }
             if step_res.exit_code == 0 {
                 let ts = Some(input.clock.now_utc());
                 if is_prune {
                     out.prune_succeeded_at = ts;
+                    out.stats.pruned = true;
                 } else {
                     out.check_succeeded_at = ts;
+                    out.stats.checked = true;
                 }
             } else if !input.cancel.is_cancelled() {
                 out.prune_or_check_failed = true;

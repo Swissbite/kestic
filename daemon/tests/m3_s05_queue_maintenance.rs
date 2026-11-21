@@ -1,19 +1,21 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! M3-S05 per-destination queue and maintenance runs (`AC-M3-05-1`, `-3`, `-4`, `-5`, `-6`).
+//! M3-S05 per-destination queue and maintenance runs (`AC-M3-05-1`, `-3`, `-4`, `-5`, `-6`) and
+//! the recorded result of a maintenance run.
 
 mod common;
 
 use common::m3::{
-    M3Rig, StdFakes, backup_summary, connect_local_repo, dest_summary, hold_repo_lock,
-    restic_repo_cmd, restic_variants, settle, wait_for_state,
+    LocalBackupFixture, M3Rig, StdFakes, backup_summary, connect_local_repo, dest_summary,
+    hold_repo_lock, restic_repo_cmd, restic_variants, settle, wait_for_state,
 };
 use common::run_isolated_test;
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, DestinationKind, RunKind, RunStatus, Schedule,
-    Source,
+    Backup, BackupId, Destination, DestinationId, DestinationKind, MaintenanceForget, RunKind,
+    RunStatus, Schedule, Source,
 };
+use kestic_core::retention::{KeepCount, RetentionPolicy};
 use kestic_daemon::dbus_api::DaemonStateDto;
 use std::fs;
 use std::io::Write;
@@ -290,6 +292,59 @@ fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
     );
 }
 
+/// Backup «Alpha» (manual only, `configure` applied) whose last run ended `Warnung` with an open
+/// `forget`: a first backup succeeds, a second one runs under a foreign non-exclusive lock, so
+/// its backup exits 0 and its `forget` exits 11. The foreign backup then ends cleanly and removes
+/// its lock (no stale lock).
+fn backup_with_open_forget(
+    rig: &M3Rig,
+    root: &Path,
+    configure: impl FnOnce(&mut Backup),
+) -> LocalBackupFixture {
+    let client = &rig.daemon.client;
+    let alpha = rig.add_backup("Alpha", |b| {
+        b.schedule = Schedule::ManualOnly;
+        configure(b);
+    });
+    let alpha_id = alpha.backup.id.clone();
+    client.start_backup(&alpha.backup_id_str).expect("seed run");
+    wait_for_state(client, Duration::from_secs(30), "seed Ok", |s| {
+        backup_summary(s, &alpha_id)
+            .last_run
+            .as_ref()
+            .is_some_and(|r| r.status == RunStatus::Ok)
+    });
+
+    let mut cmd = restic_repo_cmd(
+        &rig.variant.bin,
+        &alpha.repo_dir,
+        &alpha.password,
+        &root.join("restic-cache"),
+    );
+    cmd.args(["backup", "--stdin", "--stdin-filename", "hold.txt"]);
+    let mut holder = hold_repo_lock(cmd, &alpha.repo_dir);
+    std::thread::sleep(Duration::from_millis(30));
+    client
+        .start_backup(&alpha.backup_id_str)
+        .expect("run under lock");
+    let warned = wait_for_state(client, Duration::from_secs(30), "Warning", |s| {
+        backup_summary(s, &alpha_id)
+            .last_run
+            .as_ref()
+            .is_some_and(|r| r.status == RunStatus::Warning)
+    });
+    assert!(
+        backup_summary(&warned, &alpha_id).pending_forget,
+        "{}: precondition: forget is open",
+        rig.variant.label
+    );
+    if let Some(mut stdin) = holder.0.stdin.take() {
+        let _ = stdin.write_all(b"done");
+    }
+    holder.0.wait().expect("foreign backup finishes");
+    alpha
+}
+
 /// AC-M3-05-4: backup A with an open `forget` (last run `Warnung`, Exit 11) -> when the
 /// maintenance run starts, (a) first `forget --tag kestic:<A> --group-by tags`, (b) then `prune`.
 #[test]
@@ -302,47 +357,8 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
             for variant in restic_variants() {
                 let rig = M3Rig::start(root, &variant, "M3Q4", FRIDAY, |_| {});
                 let client = &rig.daemon.client;
-                let alpha = rig.add_backup("Alpha", |b| {
-                    b.schedule = Schedule::ManualOnly;
-                });
+                let alpha = backup_with_open_forget(&rig, root, |_| {});
                 let alpha_id = alpha.backup.id.clone();
-                client.start_backup(&alpha.backup_id_str).expect("seed run");
-                wait_for_state(client, Duration::from_secs(30), "seed Ok", |s| {
-                    backup_summary(s, &alpha_id)
-                        .last_run
-                        .as_ref()
-                        .is_some_and(|r| r.status == RunStatus::Ok)
-                });
-
-                // Non-exclusive foreign lock -> backup Exit 0, forget Exit 11 -> Warning + open forget.
-                let mut cmd = restic_repo_cmd(
-                    &variant.bin,
-                    &alpha.repo_dir,
-                    &alpha.password,
-                    &root.join("restic-cache"),
-                );
-                cmd.args(["backup", "--stdin", "--stdin-filename", "hold.txt"]);
-                let mut holder = hold_repo_lock(cmd, &alpha.repo_dir);
-                std::thread::sleep(Duration::from_millis(30));
-                client
-                    .start_backup(&alpha.backup_id_str)
-                    .expect("run under lock");
-                let warned = wait_for_state(client, Duration::from_secs(30), "Warning", |s| {
-                    backup_summary(s, &alpha_id)
-                        .last_run
-                        .as_ref()
-                        .is_some_and(|r| r.status == RunStatus::Warning)
-                });
-                assert!(
-                    backup_summary(&warned, &alpha_id).pending_forget,
-                    "{}: precondition: forget is open",
-                    variant.label
-                );
-                if let Some(mut stdin) = holder.0.stdin.take() {
-                    let _ = stdin.write_all(b"done");
-                }
-                // Let the foreign backup finish cleanly so it removes its lock (no stale lock).
-                holder.0.wait().expect("foreign backup finishes");
                 let seen = rig.wrapper.entries().len();
 
                 // Sunday 12:00: maintenance starts.
@@ -416,6 +432,75 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
                     "{}: (b) prune starts only after forget ended; calls:\n{}",
                     variant.label,
                     call_log.join("\n")
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// A maintenance run records its result for the run detail page: (a) the
+/// snapshots its pending `forget` removed per backup, (b) a successful `prune`, (c) a successful
+/// `check` and (d) the parsed `check` summary without errors, and (e) `GetRunDetail` delivers
+/// it to the GUI.
+#[test]
+fn finding1_maintenance_run_records_removed_snapshots_prune_and_check() {
+    run_isolated_test(
+        "finding1_maintenance_run_records_removed_snapshots_prune_and_check",
+        "KESTIC_FINDING1_MAINT_STATS_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            for variant in restic_variants() {
+                let rig = M3Rig::start(root, &variant, "F1", FRIDAY, |_| {});
+                let client = &rig.daemon.client;
+                let alpha = backup_with_open_forget(&rig, root, |b| {
+                    b.retention = RetentionPolicy {
+                        keep_last: Some(KeepCount::Count(1)),
+                        ..RetentionPolicy::empty()
+                    };
+                });
+                let alpha_id = alpha.backup.id.clone();
+
+                rig.clock.set(SUNDAY_1200);
+                let done =
+                    wait_for_state(client, Duration::from_secs(40), "maintenance done", |s| {
+                        maintenance_done(s, &alpha.dest.id)
+                    });
+                let run = dest_summary(&done, &alpha.dest.id)
+                    .last_maintenance_run
+                    .clone()
+                    .expect("last maintenance run");
+                assert_eq!(run.status, RunStatus::Ok, "{}: run ok", variant.label);
+                let stats = run
+                    .maintenance
+                    .clone()
+                    .expect("maintenance result recorded");
+                assert_eq!(
+                    stats.forgets,
+                    vec![MaintenanceForget {
+                        backup_id: alpha_id.clone(),
+                        removed_snapshots: Some(1),
+                    }],
+                    "{}: (a) removed snapshots per backup",
+                    variant.label
+                );
+                assert!(stats.pruned, "{}: (b) prune recorded", variant.label);
+                assert!(stats.checked, "{}: (c) check recorded", variant.label);
+                assert_eq!(
+                    stats.check.as_ref().map(|c| c.num_errors),
+                    Some(0),
+                    "{}: (d) check summary without errors",
+                    variant.label
+                );
+                let stored = client
+                    .get_run_detail(run.id.as_str())
+                    .expect("GetRunDetail")
+                    .run;
+                assert_eq!(
+                    stored.maintenance,
+                    Some(stats),
+                    "{}: (e) GetRunDetail delivers the result",
+                    variant.label
                 );
                 rig.daemon.stop();
             }
