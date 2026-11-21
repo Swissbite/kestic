@@ -29,7 +29,7 @@ fn rig(root: &std::path::Path, clock: &Arc<FakeClock>) -> Rig {
         root,
         M3DaemonOpts::new(&sub, &bus, &variant.bin, Arc::clone(clock) as _),
     );
-    let fx = add_local_backup(&daemon.client, root, &sub, "Docs", |_| {});
+    let fx = add_local_backup(&daemon.client, &variant.bin, root, &sub, "Docs", |_| {});
     (daemon, fx.backup, fakes)
 }
 

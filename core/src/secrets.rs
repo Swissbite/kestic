@@ -285,20 +285,21 @@ fn from_hex_nibble(b: u8) -> Result<u8, SecretError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kestic_test_support::password::{assert_no_secret, strong_password};
     use tempfile::TempDir;
 
     #[test]
     fn secret_value_debug_is_redacted() {
-        let secret = SecretValue::from_str_secret("super-sensitive-repo-passphrase");
-        let dbg = format!("{secret:?}");
-        assert!(!dbg.contains("super-sensitive"));
+        let pw = strong_password();
+        let dbg = format!("{:?}", SecretValue::from_str_secret(&pw));
+        assert_no_secret(&dbg, &pw, "SecretValue Debug");
         assert!(dbg.contains("REDACTED"));
     }
 
     #[test]
     fn in_memory_and_file_secret_store_roundtrip() {
         let mem = InMemorySecretStore::new();
-        let val = SecretValue::from_str_secret("p@ssw0rd-äöü");
+        let val = SecretValue::from_str_secret(strong_password());
         mem.set_secret("nas", "repo-password", &val).expect("set");
         assert_eq!(
             mem.get_secret("nas", "repo-password").expect("get"),

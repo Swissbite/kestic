@@ -509,8 +509,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 09:00:00 UTC));
         let runtime = rig.runtime();
 
-        let pw = "scope-test-pw";
-        let dest = rig.init_local("Local Scope", &repo_dir, pw);
+        let (dest, pw) = rig.local_repo("Local Scope", &repo_dir);
 
         let mut backup_a =
             Backup::new("Backup A", Source::folder(&src_a), dest.id.clone()).expect("backup a");
@@ -526,7 +525,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
             create_snapshot_at_time(
                 &rig.resolved.binary,
                 &repo_dir,
-                pw,
+                &pw,
                 &src_a,
                 &backup_a.tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
@@ -535,7 +534,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
             create_snapshot_at_time(
                 &rig.resolved.binary,
                 &repo_dir,
-                pw,
+                &pw,
                 &src_b,
                 &backup_b.tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
@@ -546,7 +545,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
             create_snapshot_at_time(
                 &rig.resolved.binary,
                 &repo_dir,
-                pw,
+                &pw,
                 &meta_src,
                 &backup_a.meta_tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
@@ -587,7 +586,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
         let snaps_meta = list_snapshots_by_tag(
             &rig.resolved.binary,
             &repo_dir,
-            pw,
+            &pw,
             &backup_a.meta_tag(),
             &cache_dir,
         );
@@ -620,8 +619,7 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 09:30:00 UTC));
         let runtime = rig.runtime();
 
-        let pw = "gap-test-pw";
-        let dest = rig.init_local("Gap Test", &repo_dir, pw);
+        let (dest, pw) = rig.local_repo("Gap Test", &repo_dir);
 
         let mut backup =
             Backup::new("Gap Backup", Source::folder(&src_dir), dest.id.clone()).expect("backup");
@@ -631,7 +629,7 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
             create_snapshot_at_time(
                 &rig.resolved.binary,
                 &repo_dir,
-                pw,
+                &pw,
                 &src_dir,
                 &backup.tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
@@ -750,8 +748,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 10:00:00 UTC));
         let runtime = rig.runtime();
 
-        let pw = "anchor-test-pw";
-        let dest = rig.init_local("Anchor Test", &repo_dir, pw);
+        let (dest, pw) = rig.local_repo("Anchor Test", &repo_dir);
 
         let mut backup = Backup::new("Anchor Backup", Source::folder(&src_dir), dest.id.clone())
             .expect("backup");
@@ -773,7 +770,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
         create_snapshot_at_time(
             &rig.resolved.binary,
             &repo_dir,
-            pw,
+            &pw,
             &src_dir,
             &backup.tag(),
             &older_ts,
@@ -782,7 +779,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
         create_snapshot_at_time(
             &rig.resolved.binary,
             &repo_dir,
-            pw,
+            &pw,
             &src_dir,
             &backup.tag(),
             &newest_ts,
@@ -903,8 +900,7 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 10:30:00 UTC));
         let runtime = rig.runtime();
 
-        let pw = "preview-lock-pw";
-        let dest = rig.init_local("Preview Lock Test", &repo_dir, pw);
+        let (dest, pw) = rig.local_repo("Preview Lock Test", &repo_dir);
 
         let mut backup = Backup::new("Preview Backup", Source::folder(&src_dir), dest.id.clone())
             .expect("backup");
@@ -917,7 +913,7 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
             create_snapshot_at_time(
                 &rig.resolved.binary,
                 &repo_dir,
-                pw,
+                &pw,
                 &src_dir,
                 &backup.tag(),
                 &format!("2026-11-{day:02} 12:00:00"),
@@ -957,8 +953,13 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
                 .any(|a| a == "--no-lock")
         );
 
-        let guard =
-            spawn_non_exclusive_lock_holder(label, &rig.resolved.binary, &repo_dir, pw, &cache_dir);
+        let guard = spawn_non_exclusive_lock_holder(
+            label,
+            &rig.resolved.binary,
+            &repo_dir,
+            &pw,
+            &cache_dir,
+        );
 
         // Preview must succeed (`--no-lock`), never fail with Exit 11, and report Keep/Remove + Reasons.
         let preview = execute_forget_dry_run_with(&backup, &dest, &runtime, None, &[("TZ", "UTC")])

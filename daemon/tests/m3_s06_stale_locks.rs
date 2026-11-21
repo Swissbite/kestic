@@ -62,7 +62,7 @@ fn check_cmd(rig: &M3Rig, fixture: &LocalBackupFixture, extra: &[&str]) -> std::
     let mut cmd = restic_repo_cmd(
         &rig.variant.bin,
         &fixture.repo_dir,
-        "pw-Docs",
+        &fixture.password,
         &Path::new(&std::env::var("KESTIC_TEST_ROOT").expect("root")).join("restic-cache"),
     );
     cmd.args(extra);

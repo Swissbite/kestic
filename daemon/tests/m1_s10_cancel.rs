@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::m3::{M3DaemonOpts, spawn_m3_daemon, write_incompressible_dataset};
+use common::m3::{M3DaemonOpts, connect_local_repo, spawn_m3_daemon, write_incompressible_dataset};
 use common::{
     CapturedKesticSignal, KesticSignalCollector, restic_test_binaries, run_isolated_test,
     sandbox_run_config, wait_for_file,
@@ -41,9 +41,7 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
         },
     )
     .expect("valid dest");
-    client
-        .add_destination(&dest, "init", "cancel-pw-123", "")
-        .expect("add destination");
+    let repo_password = connect_local_repo(client, restic_bin, &dest);
 
     let backup = Backup::new(
         format!("Large Dataset ({label})"),
@@ -117,7 +115,7 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
             "locks",
             "--no-lock",
         ])
-        .env("RESTIC_PASSWORD", "cancel-pw-123")
+        .env("RESTIC_PASSWORD", &repo_password)
         .env("RESTIC_CACHE_DIR", sub.join("restic-cache"))
         .output()
         .expect("restic list locks");

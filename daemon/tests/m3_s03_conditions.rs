@@ -53,7 +53,7 @@ impl Rig {
             root,
             M3DaemonOpts::new(&sub, &bus, &variant.bin, Arc::clone(&clock) as _),
         );
-        let fixture = add_local_backup(&daemon.client, root, &sub, "Docs", configure);
+        let fixture = add_local_backup(&daemon.client, &variant.bin, root, &sub, "Docs", configure);
         Self {
             daemon,
             clock,

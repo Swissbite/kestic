@@ -445,10 +445,12 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
     SMOKE_CHECK2("M2", 287, excl_val.contains(QStringLiteral("*.tmp")), !ret_val.isEmpty(),
         "Full Config page missing KWallet hint, expert rules, or retention summary");
     // Verify no plaintext password appears in any visible child label on Full Config page
+    const QString repo_password = qEnvironmentVariable("KESTIC_SMOKE_REPO_PASSWORD");
+    SMOKE_CHECK("M2", 288, !repo_password.isEmpty(), "KESTIC_SMOKE_REPO_PASSWORD not set");
     QList<QQuickItem*> full_items;
     collect_visual_descendants(full_page, full_items);
     for (QQuickItem* it : full_items) {
-        SMOKE_CHECK("M2", 288, !it->property("text").toString().contains(QStringLiteral("m2-smoke-pw")),
+        SMOKE_CHECK("M2", 288, !it->property("text").toString().contains(repo_password),
             "plaintext password leaked on BackupFullConfigPage");
     }
     smoke_finish("M2", warnings.get(), window, out_path);

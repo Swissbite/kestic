@@ -84,6 +84,8 @@ void scene_e2e_wizard_backup(const Scene& s) {
     const QString src_dir = qEnvironmentVariable("KESTIC_SMOKE_SRC_DIR");
     SMOKE_CHECK("E2E", 50, !repo_dir.isEmpty(), "KESTIC_SMOKE_REPO_DIR not set");
     SMOKE_CHECK("E2E", 50, !src_dir.isEmpty(), "KESTIC_SMOKE_SRC_DIR not set");
+    const QString repo_password = qEnvironmentVariable("KESTIC_SMOKE_REPO_PASSWORD");
+    SMOKE_CHECK("E2E", 50, !repo_password.isEmpty(), "KESTIC_SMOKE_REPO_PASSWORD not set");
     SMOKE_CLICK("E2E", 51, s.window, visible_button(s.top_nav, "Destinations"), "E2E Destinations tab");
     run_steps(s.window, {
         {250, [s] { SMOKE_CLICK("E2E", 52, s.window, visible_button(s.window->contentItem(), "Add Destination"), "E2E Add Destination"); }},
@@ -98,10 +100,10 @@ void scene_e2e_wizard_backup(const Scene& s) {
             SMOKE_CHECK("E2E", 57, next_btn->isEnabled(), "Test Connection did not enable Next");
             SMOKE_CLICK("E2E", 57, w, next_btn, "E2E Dest Step 2 Next");
         }},
-        {80, [s] {
+        {80, [s, repo_password] {
             QQuickWindow* w = s.window;
-            SMOKE_ENTER_TEXT("E2E", 58, w, child_item(w, "wizDestPasswordField"), QStringLiteral("e2e-test-pw"), "Repo Password");
-            SMOKE_ENTER_TEXT("E2E", 58, w, child_item(w, "wizDestPasswordConfirmField"), QStringLiteral("e2e-test-pw"), "Repeat Password");
+            SMOKE_ENTER_TEXT("E2E", 58, w, child_item(w, "wizDestPasswordField"), repo_password, "Repo Password");
+            SMOKE_ENTER_TEXT("E2E", 58, w, child_item(w, "wizDestPasswordConfirmField"), repo_password, "Repeat Password");
             SMOKE_CLICK("E2E", 59, w, child_item(w, "wizDestNextButton"), "E2E Save Destination");
         }},
         {400, [s] {
@@ -150,6 +152,8 @@ void scene_e2e_first_backup(const Scene& s) {
     const QString src_dir = qEnvironmentVariable("KESTIC_SMOKE_SRC_DIR");
     SMOKE_CHECK("E2E first-backup", 80, !repo_dir.isEmpty(), "KESTIC_SMOKE_REPO_DIR not set");
     SMOKE_CHECK("E2E first-backup", 80, !src_dir.isEmpty(), "KESTIC_SMOKE_SRC_DIR not set");
+    const QString repo_password = qEnvironmentVariable("KESTIC_SMOKE_REPO_PASSWORD");
+    SMOKE_CHECK("E2E first-backup", 80, !repo_password.isEmpty(), "KESTIC_SMOKE_REPO_PASSWORD not set");
     SMOKE_CLICK("E2E first-backup", 81, s.window, child_item(s.window, "setupFirstBackupButton"), "E2E First Backup Welcome Button");
     run_steps(s.window, {
         {350, [s, src_dir] {
@@ -169,10 +173,10 @@ void scene_e2e_first_backup(const Scene& s) {
             SMOKE_CHECK("E2E first-backup", 84, next_btn->isEnabled(), "Test Connection did not enable Next");
             SMOKE_CLICK("E2E first-backup", 84, w, next_btn, "First Backup Step 3 Next");
         }},
-        {80, [s] {
+        {80, [s, repo_password] {
             QQuickWindow* w = s.window;
-            SMOKE_ENTER_TEXT("E2E first-backup", 85, w, child_item(w, "wizBackupDestPasswordField"), QStringLiteral("e2e-first-pw"), "First Repo Password");
-            SMOKE_ENTER_TEXT("E2E first-backup", 85, w, child_item(w, "wizBackupDestPasswordConfirmField"), QStringLiteral("e2e-first-pw"), "First Repeat Password");
+            SMOKE_ENTER_TEXT("E2E first-backup", 85, w, child_item(w, "wizBackupDestPasswordField"), repo_password, "First Repo Password");
+            SMOKE_ENTER_TEXT("E2E first-backup", 85, w, child_item(w, "wizBackupDestPasswordConfirmField"), repo_password, "First Repeat Password");
             SMOKE_CLICK("E2E first-backup", 85, w, child_item(w, "wizBackupNextButton"), "First Backup Step 4 Next");
         }},
         {80, [s] {

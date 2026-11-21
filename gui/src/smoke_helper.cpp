@@ -375,8 +375,8 @@ bool enter_text_field(QQuickWindow* window, QQuickItem* field, const QString& te
     QCoreApplication::sendEvent(window, &del_press);
     QCoreApplication::sendEvent(window, &del_rel);
 
-    for (const QChar ch : text) {
-        const QString s(ch);
+    for (const char32_t code_point : text.toUcs4()) {
+        const QString s = QString::fromUcs4(&code_point, 1);
         QKeyEvent kp(QEvent::KeyPress, 0, Qt::NoModifier, s);
         QKeyEvent kr(QEvent::KeyRelease, 0, Qt::NoModifier, s);
         QCoreApplication::sendEvent(window, &kp);
@@ -385,13 +385,26 @@ bool enter_text_field(QQuickWindow* window, QQuickItem* field, const QString& te
     QCoreApplication::processEvents();
     const QString actual = field->property("text").toString();
     if (actual != text) {
-        std::fprintf(
-            stderr,
-            "UI text entry failed (%s): expected '%s', got '%s'\n",
-            label,
-            qPrintable(text),
-            qPrintable(actual)
-        );
+        const QVariant echo_mode = field->property("echoMode");
+        const bool is_password = echo_mode.isValid() && echo_mode.toInt() != 0;
+        if (is_password) {
+            // Never print the text of a password field, only its length.
+            std::fprintf(
+                stderr,
+                "UI text entry failed (%s): password field holds %lld characters, expected %lld\n",
+                label,
+                static_cast<long long>(actual.size()),
+                static_cast<long long>(text.size())
+            );
+        } else {
+            std::fprintf(
+                stderr,
+                "UI text entry failed (%s): expected '%s', got '%s'\n",
+                label,
+                qPrintable(text),
+                qPrintable(actual)
+            );
+        }
         return false;
     }
     return true;

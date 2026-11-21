@@ -10,21 +10,28 @@ use kestic_core::backup::{
 };
 use kestic_core::model::{Backup, Destination, ExcludeRules, RunStatus, Source};
 use kestic_core::restic::{CancelHandle, ResticRuntime};
+use kestic_test_support::tools::find_lock_file;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use time::macros::datetime;
+
+/// A local repository directory together with its password.
+struct RepoAccess<'a> {
+    dir: &'a Path,
+    password: &'a str,
+}
 
 fn verify_snapshots_ls_and_transparent_shell(
     label: &str,
     backup_a: &Backup,
     backup_b: &Backup,
     dest: &Destination,
-    repo_dir: &Path,
+    repo: &RepoAccess<'_>,
     state_dir: &Path,
     runtime: &ResticRuntime<'_>,
 ) {
@@ -69,12 +76,12 @@ fn verify_snapshots_ls_and_transparent_shell(
     let ls_out = Command::new(&runtime.resolved.binary)
         .args([
             "-r",
-            &repo_dir.to_string_lossy(),
+            &repo.dir.to_string_lossy(),
             "ls",
             "--no-lock",
             snap_id,
         ])
-        .env("RESTIC_PASSWORD", "backup-test-pw")
+        .env("RESTIC_PASSWORD", repo.password)
         .env("RESTIC_CACHE_DIR", cache_dir)
         .output()
         .expect("restic ls");
@@ -133,7 +140,7 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 11:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Local", &repo_dir, "backup-test-pw");
+        let (dest, repo_pw) = rig.local_repo("Local", &repo_dir);
 
         let mut backup_a =
             Backup::new("Docs A", Source::folder(&src_a), dest.id.clone()).expect("backup a");
@@ -197,7 +204,16 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
         assert_eq!(res_b.exit_code, 0, "{label}");
 
         verify_snapshots_ls_and_transparent_shell(
-            label, &backup_a, &backup_b, &dest, &repo_dir, &state_dir, &runtime,
+            label,
+            &backup_a,
+            &backup_b,
+            &dest,
+            &RepoAccess {
+                dir: &repo_dir,
+                password: &repo_pw,
+            },
+            &state_dir,
+            &runtime,
         );
     }
 }
@@ -216,28 +232,40 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
     let src_dir = dir.path().join("large-src");
     fs::create_dir_all(&src_dir).expect("mkdir src");
 
-    // Create enough incompressible random-ish data (40 MB) or many files so backup runs > 0.3s cleanly.
+    // 64 MiB of incompressible data, so the backup is still running when the cancel arrives.
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut chunk = vec![0u8; 1024 * 1024];
-    for (idx, b) in chunk.iter_mut().enumerate() {
-        *b = ((idx.wrapping_mul(31) ^ (idx >> 5)) & 0xff) as u8;
-    }
-    for i in 0..48 {
-        chunk[0] = i as u8;
+    for i in 0..64 {
+        for word in chunk.as_chunks_mut::<8>().0 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *word = state.to_le_bytes();
+        }
         fs::write(src_dir.join(format!("blob_{i:02}.bin")), &chunk).expect("write blob");
     }
 
     let rig = common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 11:30:00 UTC));
     let runtime = rig.runtime();
 
-    let dest = rig.init_local("Local", &repo_dir, "cancel-test-pw");
+    let (dest, repo_pw) = rig.local_repo("Local", &repo_dir);
 
     let backup = Backup::new("Cancel Me", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     let cancel = Arc::new(CancelHandle::new());
     let cancel_trigger = Arc::clone(&cancel);
 
+    // Cancel as soon as restic holds its lock, so AC-M1-10-3 checks a lock that really existed.
+    let locks_dir = repo_dir.join("locks");
     let trigger_handle = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(120));
-        cancel_trigger.cancel();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            if find_lock_file(&locks_dir).is_some() {
+                cancel_trigger.cancel();
+                return true;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        false
     });
 
     let res = execute_backup(
@@ -250,8 +278,12 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
         |_| {},
     )
     .expect("execute backup");
-    trigger_handle.join().expect("join cancel thread");
+    let saw_lock = trigger_handle.join().expect("join cancel thread");
 
+    assert!(
+        saw_lock,
+        "restic never created its lock before the backup ended"
+    );
     assert!(res.cancelled, "expected cancelled=true");
     assert_eq!(res.presentation.status, RunStatus::Cancelled);
 
@@ -264,7 +296,7 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
             "locks",
             "--no-lock",
         ])
-        .env("RESTIC_PASSWORD", "cancel-test-pw")
+        .env("RESTIC_PASSWORD", &repo_pw)
         .env("RESTIC_CACHE_DIR", &cache_dir)
         .output()
         .expect("list locks");

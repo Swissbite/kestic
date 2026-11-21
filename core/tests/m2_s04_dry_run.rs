@@ -7,6 +7,7 @@ mod common;
 
 use common::execute_backup_dry_run;
 
+use kestic_test_support::repo_template::copy_template_repo;
 use kestic_test_support::tools::write_executable;
 
 use kestic_core::backup::{BackupRunError, build_backup_command_spec, list_snapshots_for_backup};
@@ -54,12 +55,12 @@ fn run_direct_restic_dry_run(
     backup: &Backup,
     dest: &Destination,
     state_dir: &Path,
-    resolved: &ResolvedRestic,
-    helper: &Path,
-    cache_dir: &Path,
+    rig: &common::ResticRig,
+    repo_pw: &str,
 ) -> (Vec<String>, Option<u64>, Option<u64>) {
     let mut direct_spec =
-        build_backup_command_spec(backup, dest, state_dir, resolved, helper).expect("build spec");
+        build_backup_command_spec(backup, dest, state_dir, &rig.resolved, &rig.helper)
+            .expect("build spec");
     let sep_idx = direct_spec
         .subcommand_args
         .iter()
@@ -69,10 +70,10 @@ fn run_direct_restic_dry_run(
         sep_idx..sep_idx,
         ["--dry-run".to_string(), "-vv".to_string()],
     );
-    let direct_out = Command::new(&resolved.binary)
+    let direct_out = Command::new(&rig.resolved.binary)
         .args(direct_spec.restic_argv())
-        .env("RESTIC_PASSWORD", "dry-run-test-pw")
-        .env("RESTIC_CACHE_DIR", cache_dir)
+        .env("RESTIC_PASSWORD", repo_pw)
+        .env("RESTIC_CACHE_DIR", &rig.cache_dir)
         .output()
         .expect("run direct restic dry-run");
     assert!(
@@ -128,7 +129,7 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 08:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Local DryRun", &repo_dir, "dry-run-test-pw");
+        let (dest, repo_pw) = rig.local_repo("Local DryRun", &repo_dir);
 
         let mut excludes = ExcludeRules::from_text("*.tmp");
         excludes
@@ -155,15 +156,8 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
             dry_res.transparent_command
         );
 
-        let (mut direct_files, direct_total_bytes, direct_total_files) = run_direct_restic_dry_run(
-            label,
-            &backup,
-            &dest,
-            &state_dir,
-            &rig.resolved,
-            &rig.helper,
-            &cache_dir,
-        );
+        let (mut direct_files, direct_total_bytes, direct_total_files) =
+            run_direct_restic_dry_run(label, &backup, &dest, &state_dir, &rig, &repo_pw);
 
         let mut kestic_files = dry_res.files.clone();
         kestic_files.sort();
@@ -220,7 +214,7 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
             count_all_repo_snapshots(
                 &rig.resolved.binary,
                 &dest.kind.repository_uri(),
-                "dry-run-test-pw",
+                &repo_pw,
                 &cache_dir
             ),
             0,
@@ -257,13 +251,13 @@ fn ac_m2_04_2_dry_run_with_zero_prior_snapshots_reports_first_backup_estimate() 
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 08:15:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Empty Repo", &repo_dir, "first-backup-pw");
+        let (dest, repo_pw) = rig.local_repo("Empty Repo", &repo_dir);
 
         assert_eq!(
             count_all_repo_snapshots(
                 &rig.resolved.binary,
                 &dest.kind.repository_uri(),
-                "first-backup-pw",
+                &repo_pw,
                 &cache_dir
             ),
             0,
@@ -287,7 +281,7 @@ fn ac_m2_04_2_dry_run_with_zero_prior_snapshots_reports_first_backup_estimate() 
             count_all_repo_snapshots(
                 &rig.resolved.binary,
                 &dest.kind.repository_uri(),
-                "first-backup-pw",
+                &repo_pw,
                 &cache_dir
             ),
             0,
@@ -330,16 +324,19 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
         },
     )
     .expect("dest");
-    let repo_pw = SecretValue::from_str_secret("rest-dryrun-pw");
-    let rest_pw = SecretValue::from_str_secret("secret");
+    // The repository is only setup for the preflight check: a prepared copy served by
+    // `rest-server`, connected through the production setup path.
+    let repo = copy_template_repo(&rig.resolved.binary, &server.repo_dir());
+    let repo_pw = SecretValue::from_str_secret(&repo.password);
+    let rest_pw = SecretValue::from_str_secret(server.password());
     setup_destination(
         &dest,
-        DestinationSetupMode::InitNew,
+        DestinationSetupMode::ConnectExisting,
         &repo_pw,
         Some(&rest_pw),
         &real_runtime,
     )
-    .expect("init REST repo");
+    .expect("connect REST repo");
 
     // Stop `rest-server` so the destination becomes unreachable.
     drop(server);

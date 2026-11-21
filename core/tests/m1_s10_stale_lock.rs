@@ -43,7 +43,7 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 12:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Local", &repo_dir, "stale-lock-test-pw");
+        let (dest, repo_pw) = rig.local_repo("Local", &repo_dir);
 
         let backup =
             Backup::new("Stale Lock Test", Source::folder(&src_dir), dest.id.clone()).expect("bk");
@@ -57,7 +57,7 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
         // the lock file is written, leaving a genuine encrypted stale exclusive lock.
         let mut check_child = Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
-            .env("RESTIC_PASSWORD", "stale-lock-test-pw")
+            .env("RESTIC_PASSWORD", &repo_pw)
             .env("RESTIC_CACHE_DIR", &cache_dir)
             .env("RESTIC_HOST", "stale-other-host")
             .stdin(Stdio::null())

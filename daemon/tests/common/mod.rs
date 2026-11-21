@@ -95,7 +95,6 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         .env("KESTIC_RESTIC_0_18", restic_bin("restic-0.18.0"))
         .env("KESTIC_RESTIC_LATEST", restic_bin("restic-latest"))
         .env("KESTIC_REST_SERVER", &rest_server)
-        .env("KESTIC_TEST_FAST_INIT", "1")
         .env("LC_ALL", "C.UTF-8")
         .env("LANG", "C.UTF-8")
         .env("LANGUAGE", "en");

@@ -14,7 +14,10 @@
 mod common;
 
 use common::load_config;
-use common::m3::{FakeSetup, M3Rig, StdFakes, backup_summary, latest_variant, wait_for_state};
+use common::m3::{
+    FakeSetup, M3Rig, StdFakes, backup_summary, connect_local_repo, connect_rest_repo,
+    latest_variant, wait_for_state,
+};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
@@ -284,11 +287,7 @@ fn pause_all_fixture(root: &Path) -> PauseAllFixture {
 
     let fakes = gui_fakes(false, &["HomeWifi"]);
     let rig = start_rig(root, start, false);
-    fs::create_dir_all(root.join("repo-local-vault")).expect("mkdir repo");
-    rig.daemon
-        .client
-        .add_destination(&dest, "init", "m3-smoke-pw", "")
-        .expect("init dest");
+    connect_local_repo(&rig.daemon.client, &rig.variant.bin, &dest);
     let docs_id = rig
         .add_backup_to(&dest, "Documents", |b| b.run_conditions = no_conditions())
         .id;
@@ -414,11 +413,7 @@ fn m3_08_5_exit12_replaces_back_up_now_in_overview_and_detail() {
             // On battery at 100%: Backup 1 (default conditions) is waiting for AC power.
             let _fakes = gui_fakes(true, &["HomeWifi"]);
             let rig = start_rig(root, clock_start, true);
-            fs::create_dir_all(root.join("repo-locked")).expect("mkdir repo");
-            rig.daemon
-                .client
-                .add_destination(&dest, "init", "m3-smoke-pw", "")
-                .expect("init dest");
+            connect_local_repo(&rig.daemon.client, &rig.variant.bin, &dest);
             rig.daemon.client.add_backup(&b0).expect("add b0");
             let b1_id = rig.add_backup_to(&dest, "Battery Backup", |_| {}).id;
             // Past 12:00 CET (11:00 UTC) so b1 evaluates as waiting (`on_battery`).
@@ -478,10 +473,7 @@ fn network_editor_env(root: &Path) -> (M3Rig, StdFakes, RestServerGuard, BackupI
         },
     )
     .expect("rest dest");
-    rig.daemon
-        .client
-        .add_destination(&dest, "init", "m3-smoke-pw", "")
-        .expect("init rest dest");
+    connect_rest_repo(&rig.daemon.client, &rig.variant.bin, &server, &dest);
     let id = rig.add_backup_to(&dest, "Documents", |_| {}).id;
     (rig, fakes, server, id)
 }

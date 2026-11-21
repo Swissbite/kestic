@@ -10,6 +10,7 @@ mod common;
 use kestic_core::backup_progress::{BackupProgress, BackupProgressTracker};
 use kestic_core::restic::{ResticStatusMessage, ResticStreamEvent, parse_json_line};
 use kestic_i18n::codes::RunProgressPhase;
+use kestic_test_support::repo_template::copy_template_repo;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -184,18 +185,18 @@ fn real_restic_backup_progress_follows_seconds_remaining_and_never_falls() {
                 .collect();
             fs::write(src.join(format!("file-{i}.bin")), data).expect("write source file");
         }
+        // The repository is only the object of the backup: a prepared copy, not a fresh init.
+        let test_repo = copy_template_repo(&restic_bin, &repo);
         let restic = |args: &[&str]| {
             Command::new(&restic_bin)
                 .arg("-r")
                 .arg(&repo)
                 .args(args)
-                .env("RESTIC_PASSWORD", "progress-test-pw")
+                .env("RESTIC_PASSWORD", &test_repo.password)
                 .env("RESTIC_CACHE_DIR", &cache)
                 .output()
                 .expect("run restic")
         };
-        let init = restic(&["init"]);
-        assert!(init.status.success(), "{label}: init failed");
         let out = restic(&["backup", "--json", src.to_str().expect("utf-8 path")]);
         assert!(
             out.status.success(),

@@ -15,6 +15,7 @@ use kestic_core::model::{Backup, BackupId, Destination, DestinationId, Destinati
 use kestic_core::restic::{ResticCommandSpec, run_restic};
 use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
 use kestic_core::snapshot::ResticSnapshot;
+use kestic_test_support::password::strong_password;
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
@@ -75,7 +76,7 @@ fn ac_m1_19_2_remove_backup_keeps_snapshots() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 13:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Local", &repo_dir, "remove-backup-pw");
+        let (dest, _repo_pw) = rig.local_repo("Local", &repo_dir);
 
         let backup =
             Backup::new("Documents", Source::folder(&src_dir), dest.id.clone()).expect("bk");
@@ -144,8 +145,8 @@ fn ac_m1_19_3_remove_unused_destination_deletes_secrets_keeps_repo() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 13:30:00 UTC));
         let _runtime = rig.runtime();
 
-        let dest = rig.init_local("Unused Local", &repo_dir, "remove-dest-pw");
-        let pw = SecretValue::from_str_secret("remove-dest-pw");
+        let (dest, repo_pw) = rig.local_repo("Unused Local", &repo_dir);
+        let pw = SecretValue::from_str_secret(&repo_pw);
 
         let mut cfg = AppConfig {
             destinations: vec![dest.clone()],
@@ -182,7 +183,7 @@ fn ac_m1_19_3_remove_unused_destination_deletes_secrets_keeps_repo() {
         // Repository on disk must stay intact (`restic snapshots` exits 0).
         let snap_out = Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "snapshots", "--no-lock"])
-            .env("RESTIC_PASSWORD", "remove-dest-pw")
+            .env("RESTIC_PASSWORD", &repo_pw)
             .env("RESTIC_CACHE_DIR", &cache_dir)
             .output()
             .expect("restic snapshots");
@@ -274,7 +275,7 @@ fn ac_m1_19_5_aborting_removal_leaves_config_and_secrets_untouched() {
         dest.id.clone(),
     )
     .expect("backup");
-    let pw = SecretValue::from_str_secret("keep-me-intact");
+    let pw = SecretValue::from_str_secret(strong_password());
     store
         .set_secret(dest.id.as_str(), "repo", &pw)
         .expect("set secret");
@@ -339,8 +340,8 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 14:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest_a = rig.init_local("Dest A", &repo_a, "pw-a");
-        let dest_b = rig.init_local("Dest B", &repo_b, "pw-b");
+        let (dest_a, _pw_a) = rig.local_repo("Dest A", &repo_a);
+        let (dest_b, pw_b) = rig.local_repo("Dest B", &repo_b);
 
         let backup =
             Backup::new("Work", Source::folder(&src_dir), dest_a.id.clone()).expect("backup");
@@ -420,7 +421,7 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
                 "snapshot",
                 &snaps_b[0].id,
             ])
-            .env("RESTIC_PASSWORD", "pw-b")
+            .env("RESTIC_PASSWORD", &pw_b)
             .env("RESTIC_CACHE_DIR", &cache_dir)
             .output()
             .expect("cat snapshot on B");
@@ -483,14 +484,14 @@ fn ac_m1_22_2_old_destination_a_can_be_removed_after_reassign() {
         .set_secret(
             dest_a.id.as_str(),
             "repo",
-            &SecretValue::from_str_secret("pw-a"),
+            &SecretValue::from_str_secret(strong_password()),
         )
         .expect("set a");
     store
         .set_secret(
             dest_b.id.as_str(),
             "repo",
-            &SecretValue::from_str_secret("pw-b"),
+            &SecretValue::from_str_secret(strong_password()),
         )
         .expect("set b");
 
@@ -551,8 +552,8 @@ fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
         let rig =
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 15:00:00 UTC));
         let runtime = rig.runtime();
-        let dest_a = rig.init_local("A", &repo_a, "pw-a");
-        let dest_b = rig.init_local("B", &repo_b, "pw-b");
+        let (dest_a, _pw_a) = rig.local_repo("A", &repo_a);
+        let (dest_b, _pw_b) = rig.local_repo("B", &repo_b);
 
         let backup =
             Backup::new("Work", Source::folder(&src_dir), dest_a.id.clone()).expect("backup");

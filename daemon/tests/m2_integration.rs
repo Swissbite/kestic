@@ -4,7 +4,10 @@
 mod common;
 
 use common::load_config;
-use common::m3::{M3Daemon, M3DaemonOpts, ResticWrapper, assert_dbus_error_name, spawn_m3_daemon};
+use common::m3::{
+    M3Daemon, M3DaemonOpts, ResticWrapper, assert_dbus_error_name, connect_local_repo,
+    connect_rest_repo, spawn_m3_daemon,
+};
 use common::{
     CapturedKesticSignal, KesticSignalCollector, fetch_dbusmenu_items, restic_test_binaries,
     run_isolated_test, start_fake_notifications, start_fake_sni_watcher, wait_for_sni_service,
@@ -243,7 +246,8 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
         "KESTIC_M2_S02_EXCLUDES",
         |root| {
             let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
-            let daemon = spawn_daemon_on_bus(root, root, KESTIC_BUS_NAME, restic_bin, None, true);
+            let daemon =
+                spawn_daemon_on_bus(root, root, KESTIC_BUS_NAME, restic_bin.clone(), None, true);
             let client = &daemon.client;
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
@@ -264,9 +268,7 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
                 },
             )
             .expect("dest");
-            client
-                .add_destination(&dest, "init", "excl-pw-123", "")
-                .expect("AddDestination");
+            connect_local_repo(client, &restic_bin, &dest);
 
             let mut backup = Backup::new("Docs", Source::folder(&src_dir), dest.id.clone())
                 .expect("valid backup");
@@ -534,9 +536,7 @@ fn run_dry_run_and_stopped_server_case(root: &Path, label: &str, restic_bin: &Pa
         },
     )
     .expect("dest");
-    client
-        .add_destination(&dest, "init", "dry-repo-pw", "secret")
-        .expect("AddDestination REST");
+    connect_rest_repo(client, restic_bin, &server, &dest);
 
     let mut backup = Backup::new(
         format!("DryRun Docs ({label})"),
@@ -569,6 +569,7 @@ fn ac_m2_04_1_and_04_3_dry_run_over_dbus_and_stopped_rest_server_preflight_dual_
 fn verify_retention_preview_under_lock(
     sub: &Path,
     restic_bin: &Path,
+    repo_password: &str,
     client: &KesticClient,
     backup_id: &str,
     label: &str,
@@ -581,7 +582,7 @@ fn verify_retention_preview_under_lock(
         .expect("install spy");
 
     // AC-M2-06-6: Hold a non-exclusive lock via `restic backup --stdin`.
-    let lock_holder = NonExclusiveLockHolder::start(restic_bin, &repo_dir, "ret-pw-123");
+    let lock_holder = NonExclusiveLockHolder::start(restic_bin, &repo_dir, repo_password);
 
     let candidate_policy = RetentionPolicy {
         keep_last: Some(KeepCount::Count(1)),
@@ -696,9 +697,7 @@ fn run_retention_preview_and_update_case(root: &Path, label: &str, restic_bin: &
         DestinationKind::Local { path: repo_dir },
     )
     .expect("dest");
-    client
-        .add_destination(&dest, "init", "ret-pw-123", "")
-        .expect("AddDestination");
+    let repo_password = connect_local_repo(client, restic_bin, &dest);
 
     let mut backup = Backup::new(
         format!("Retention Docs ({label})"),
@@ -723,7 +722,14 @@ fn run_retention_preview_and_update_case(root: &Path, label: &str, restic_bin: &
         RunStatus::Ok
     );
 
-    verify_retention_preview_under_lock(&sub, restic_bin, client, &backup_id, label);
+    verify_retention_preview_under_lock(
+        &sub,
+        restic_bin,
+        &repo_password,
+        client,
+        &backup_id,
+        label,
+    );
     verify_retention_update_validation(&cfg_path, client, &bus_name, &backup);
 
     daemon.stop();
@@ -761,7 +767,8 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                     "net.daester.Kestic.M2ForgetOk_{}",
                     label.replace(['.', '-'], "_")
                 );
-                let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin, None, true);
+                let daemon =
+                    spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.clone(), None, true);
                 let client = &daemon.client;
                 let signals = KesticSignalCollector::start(
                     &bus_name,
@@ -776,9 +783,7 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                     },
                 )
                 .expect("dest");
-                client
-                    .add_destination(&dest, "init", "ok-pw-123", "")
-                    .expect("AddDestination");
+                connect_local_repo(client, &restic_bin, &dest);
 
                 let mut backup = Backup::new(
                     format!("Pruned Docs ({label})"),
@@ -1033,9 +1038,7 @@ fn run_exit_3_case(
         DestinationKind::Local { path: repo_dir },
     )
     .expect("dest");
-    client
-        .add_destination(&dest, "init", "exit3-pw-123", "")
-        .expect("AddDestination");
+    connect_local_repo(client, restic_bin, &dest);
 
     let mut backup = Backup::new(
         format!("Exit3 Docs ({label})"),
@@ -1113,6 +1116,7 @@ fn ac_m2_08_1_08_2_exit_3_lists_unreadable_files_and_add_to_excludes_dual_restic
 struct Lock11Ctx<'a> {
     sub: &'a Path,
     restic_bin: &'a Path,
+    repo_password: &'a str,
     client: &'a KesticClient,
     signals: &'a KesticSignalCollector,
     dest_id: &'a str,
@@ -1129,7 +1133,7 @@ fn verify_exit_11_under_non_exclusive_lock(ctx: &Lock11Ctx<'_>) {
 
     // AC-M2-07-3: Start non-exclusive `restic backup --stdin` lock holder, then run Kestic backup.
     fs::write(src_dir.join("two.txt"), b"second\n").expect("write two");
-    let lock_holder = NonExclusiveLockHolder::start(ctx.restic_bin, &repo_dir, "lock11-pw-123");
+    let lock_holder = NonExclusiveLockHolder::start(ctx.restic_bin, &repo_dir, ctx.repo_password);
 
     let r2 = ctx
         .client
@@ -1216,7 +1220,7 @@ fn verify_exit_11_catchup_paths(ctx: &Lock11Ctx<'_>) {
 
     // AC-M2-07-4, catch-up path 2: trigger pending_forget again, release lock, then next backup clears it.
     fs::write(src_dir.join("three.txt"), b"third\n").expect("write three");
-    let lock_holder2 = NonExclusiveLockHolder::start(ctx.restic_bin, &repo_dir, "lock11-pw-123");
+    let lock_holder2 = NonExclusiveLockHolder::start(ctx.restic_bin, &repo_dir, ctx.repo_password);
     let r3 = ctx
         .client
         .start_backup(ctx.backup_id_str)
@@ -1276,9 +1280,8 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
         DestinationKind::Local { path: repo_dir },
     )
     .expect("dest");
-    let dest_id = client
-        .add_destination(&dest, "init", "lock11-pw-123", "")
-        .expect("AddDestination");
+    let repo_password = connect_local_repo(client, restic_bin, &dest);
+    let dest_id = dest.id.as_str().to_string();
 
     let mut backup = Backup::new(
         format!("Lock11 Docs ({label})"),
@@ -1302,6 +1305,7 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
     let ctx = Lock11Ctx {
         sub: &sub,
         restic_bin,
+        repo_password: &repo_password,
         client,
         signals: &signals,
         dest_id: &dest_id,
@@ -1364,9 +1368,7 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                     },
                 )
                 .expect("dest");
-                client
-                    .add_destination(&dest, "init", "exit1-pw-123", "")
-                    .expect("AddDestination");
+                connect_local_repo(client, &restic_bin, &dest);
 
                 let mut backup = Backup::new(
                     format!("Exit1 Docs ({label})"),
@@ -1379,6 +1381,7 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                     ..RetentionPolicy::empty()
                 };
                 let backup_id = client.add_backup(&backup).expect("AddBackup");
+                let setup_entries = wrapper.entries().len();
 
                 wrapper.fail(
                     "backup",
@@ -1404,11 +1407,12 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                     "[{label}]"
                 );
 
-                // `init` belongs to the setup of the destination, not to the run.
+                // Whatever restic calls the setup of the destination made, they are not the run's.
                 let subcmds: Vec<String> = wrapper
                     .entries()
                     .into_iter()
-                    .filter(|e| e.kind == 'S' && e.sub != "version" && e.sub != "init")
+                    .skip(setup_entries)
+                    .filter(|e| e.kind == 'S' && e.sub != "version")
                     .map(|e| e.sub)
                     .collect();
                 assert_eq!(
@@ -1678,9 +1682,7 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
                 DestinationKind::Local { path: repo_dir },
             )
             .expect("dest");
-            client
-                .add_destination(&dest, "init", "drive-pw-123", "")
-                .expect("AddDestination");
+            connect_local_repo(client, &real_restic, &dest);
 
             // DetectSource recognizes mounted external filesystem as Drive with FS-UUID.
             let detected = client
@@ -1699,7 +1701,7 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
                 Backup::new("USB Photos", detected, dest.id.clone()).expect("drive backup");
             let backup_id = client.add_backup(&backup).expect("AddBackup");
 
-            // Install restic spy AFTER init so any blocked StartBackup guarantees 0 restic invocations.
+            // Install restic spy AFTER the destination setup so any blocked StartBackup guarantees 0 restic invocations.
             let spy_marker = install_drive_restic_spy(root, &real_restic, client);
             let ctx = DriveTestCtx {
                 client,

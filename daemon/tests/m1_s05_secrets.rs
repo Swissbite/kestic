@@ -6,6 +6,7 @@ mod common;
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore, SecretValue};
 use kestic_daemon::secrets::SecretServiceStore;
+use kestic_test_support::password::strong_password;
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -39,7 +40,7 @@ fn ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_re
 
             let store = common::isolated_secret_store();
             let dest_id = "k7m2q9xa";
-            let pw = SecretValue::from_str_secret("secret-from-isolated-dbus-kestic!");
+            let pw = SecretValue::from_str_secret(strong_password());
             store
                 .set_secret(dest_id, "repo", &pw)
                 .expect("set secret in isolated keyring");
@@ -49,9 +50,9 @@ fn ac_m1_05_1_05_2_05_3_05_4_kestic_secret_get_over_isolated_dbus_keyring_and_re
                 .output()
                 .expect("run kestic secret get");
             assert_eq!(ok_out.status.code(), Some(0));
-            assert_eq!(
-                String::from_utf8_lossy(&ok_out.stdout),
-                pw.as_str().unwrap()
+            assert!(
+                ok_out.stdout == pw.as_str().unwrap().as_bytes(),
+                "kestic secret get printed a different value"
             );
 
             // AC-M1-05-2: Unknown `<ziel-id>` -> Exit 1, empty stdout.
@@ -95,8 +96,8 @@ fn ac_m1_05_1_secret_service_set_replace_and_delete_on_headless_keyring() {
         "KESTIC_M1_S05_KEYRING_INNER",
         |_root| {
             let store: &dyn SecretStore = &common::isolated_secret_store();
-            let initial = SecretValue::from_str_secret("kestic-repo-pass-01-äöü");
-            let updated = SecretValue::from_str_secret("kestic-repo-pass-02-replaced");
+            let initial = SecretValue::from_str_secret(strong_password());
+            let updated = SecretValue::from_str_secret(strong_password());
 
             store
                 .set_secret("nas-prod", "repo-password", &initial)
@@ -141,7 +142,7 @@ fn ac_m1_05_1_file_backend_roundtrips_with_mode_0600() {
     let temp = tempfile::tempdir().expect("tempdir");
     let store_path = temp.path().join("secrets.hex");
     let store = FileSecretStore::new(&store_path);
-    let secret = SecretValue::from_str_secret("fallback-secret-token");
+    let secret = SecretValue::from_str_secret(strong_password());
 
     store
         .set_secret("s3-archive", "backend-secret-key", &secret)
@@ -308,7 +309,11 @@ fn ac_m1_05_1_locked_collection_reports_prompt_required_until_the_prompt_is_acce
             );
 
             let set_err = store
-                .set_secret("nas", "repo-password", &SecretValue::from_str_secret("pw"))
+                .set_secret(
+                    "nas",
+                    "repo-password",
+                    &SecretValue::from_str_secret(strong_password()),
+                )
                 .expect_err("locked collection must reject the write");
             assert!(
                 matches!(set_err, SecretError::LockedOrPromptRequired(_)),

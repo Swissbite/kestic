@@ -22,6 +22,7 @@ use kestic_test_support::gui::{
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::history::RunHistory;
 use kestic_core::model::{Backup, Destination, ResticProvider, Run, RunStatus, Source};
+use kestic_test_support::password::strong_password;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -37,9 +38,8 @@ fn setup_populated_fixture(fx: &SmokeFixture) -> (Destination, Backup, Run, Path
     let rig = common::ResticRig::new(&iso.root, restic, datetime!(2026-11-16 12:00:00 UTC));
     let runtime = rig.runtime();
 
-    let dest = rig.init_local("Local Vault", &repo_dir, "m1-smoke-pw");
-    fx.keyring
-        .store_secret(dest.id.as_str(), "repo", "m1-smoke-pw");
+    let (dest, repo_pw) = rig.local_repo("Local Vault", &repo_dir);
+    fx.keyring.store_secret(dest.id.as_str(), "repo", &repo_pw);
 
     let backup = Backup::new("Documents", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     let res = execute_backup(
@@ -249,13 +249,8 @@ fn m1_gui_smoke_snapshots_previous_after_reassign() {
     let (dest1, mut backup, _run, _) = setup_populated_fixture(&fx);
 
     let rig = common::ResticRig::new(&iso.root, restic, datetime!(2026-11-16 12:30:00 UTC));
-    let dest2 = rig.init_local(
-        "Archive Drive",
-        &iso.root.join("repo-secondary"),
-        "m1-smoke-pw2",
-    );
-    fx.keyring
-        .store_secret(dest2.id.as_str(), "repo", "m1-smoke-pw2");
+    let (dest2, pw2) = rig.local_repo("Archive Drive", &iso.root.join("repo-secondary"));
+    fx.keyring.store_secret(dest2.id.as_str(), "repo", &pw2);
 
     backup.destination_id = dest2.id.clone();
     let cfg = AppConfig {
@@ -288,9 +283,8 @@ fn m1_gui_smoke_manual_run_blocked_when_source_missing() {
     fs::create_dir_all(&missing_src).expect("mkdir tmp src");
 
     let rig = common::ResticRig::new(&iso.root, restic, datetime!(2026-11-16 13:00:00 UTC));
-    let dest = rig.init_local("Local", &repo_dir, "m1-smoke-pw");
-    fx.keyring
-        .store_secret(dest.id.as_str(), "repo", "m1-smoke-pw");
+    let (dest, repo_pw) = rig.local_repo("Local", &repo_dir);
+    fx.keyring.store_secret(dest.id.as_str(), "repo", &repo_pw);
     let backup =
         Backup::new("MissingSrc", Source::folder(&missing_src), dest.id.clone()).expect("bk");
     fs::remove_dir_all(&missing_src).expect("remove source dir so manual start is blocked");
@@ -328,6 +322,7 @@ fn m1_gui_e2e_create_destination_and_backup_with_real_restic() {
 
     let _daemon = fx.daemon("en");
 
+    let repo_pw = strong_password();
     let repo_str = repo_dir.to_string_lossy().into_owned();
     let src_str = src_dir.to_string_lossy().into_owned();
     fx.ctx().run_with_env(
@@ -339,6 +334,7 @@ fn m1_gui_e2e_create_destination_and_backup_with_real_restic() {
         &[
             ("KESTIC_SMOKE_REPO_DIR", &repo_str),
             ("KESTIC_SMOKE_SRC_DIR", &src_str),
+            ("KESTIC_SMOKE_REPO_PASSWORD", &repo_pw),
         ],
     );
 
@@ -350,7 +346,7 @@ fn m1_gui_e2e_create_destination_and_backup_with_real_restic() {
     let cache_dir = common::restic_cache_dir(&iso.root);
     let snap_out = Command::new(restic)
         .args(["-r", &repo_str, "snapshots", "--json"])
-        .env("RESTIC_PASSWORD", "e2e-test-pw")
+        .env("RESTIC_PASSWORD", &repo_pw)
         .env("RESTIC_CACHE_DIR", &cache_dir)
         .output()
         .expect("run real restic snapshots --json");
@@ -382,6 +378,7 @@ fn m1_gui_e2e_setup_first_backup_with_real_restic() {
 
     let _daemon = fx.daemon("en");
 
+    let repo_pw = strong_password();
     let repo_str = repo_dir.to_string_lossy().into_owned();
     let src_str = src_dir.to_string_lossy().into_owned();
     fx.ctx().run_with_env(
@@ -393,6 +390,7 @@ fn m1_gui_e2e_setup_first_backup_with_real_restic() {
         &[
             ("KESTIC_SMOKE_REPO_DIR", &repo_str),
             ("KESTIC_SMOKE_SRC_DIR", &src_str),
+            ("KESTIC_SMOKE_REPO_PASSWORD", &repo_pw),
         ],
     );
 
@@ -404,7 +402,7 @@ fn m1_gui_e2e_setup_first_backup_with_real_restic() {
     let cache_dir = common::restic_cache_dir(&iso.root);
     let snap_out = Command::new(restic)
         .args(["-r", &repo_str, "snapshots", "--json"])
-        .env("RESTIC_PASSWORD", "e2e-first-pw")
+        .env("RESTIC_PASSWORD", &repo_pw)
         .env("RESTIC_CACHE_DIR", &cache_dir)
         .output()
         .expect("run real restic snapshots --json");

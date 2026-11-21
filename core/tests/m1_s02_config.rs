@@ -8,26 +8,65 @@ use common::load_config;
 use kestic_core::config::{
     AppConfig, CURRENT_CONFIG_VERSION, ConfigError, default_config_path, save_config,
 };
+use kestic_core::destination::{DestinationSetupMode, setup_destination};
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ExcludeRules, KeepCount, ResticProvider, RetentionPolicy,
     Schedule, Source,
 };
+use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_test_support::password::assert_no_secret;
+use kestic_test_support::repo_template::copy_template_repo;
 use std::fs;
 use tempfile::TempDir;
+use time::macros::datetime;
 
 #[test]
 fn ac_m1_02_1_and_02_2_config_toml_roundtrip_contains_no_secrets() {
     let dir = TempDir::new().expect("tempdir");
     let config_file = dir.path().join("kestic").join("config.toml");
 
+    // The destination is set up through the production path with a real `rest-server`: both
+    // generated secrets (repository password, REST password) pass through `setup_destination`
+    // and land in the secret store, which is where they could leak into the saved config.
+    let server =
+        kestic_test_support::tools::RestServerGuard::start_with_auth(&dir.path().join("rest-data"));
+    let (_label, restic_bin) = common::restic_test_binaries()
+        .into_iter()
+        .next()
+        .expect("restic binary");
+    let rig = common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 10:00:00 UTC));
+    let repo = copy_template_repo(&rig.resolved.binary, &server.repo_dir());
+    let (username, _) = server.auth().expect("rest auth");
     let dest = Destination::new(
         "Home Server",
         DestinationKind::Rest {
-            url: "https://backup.example.invalid/alice".to_string(),
-            username: Some("alice-rest-user".to_string()),
+            url: server.url.clone(),
+            username: Some(username.to_string()),
         },
     )
     .expect("rest destination");
+    setup_destination(
+        &dest,
+        DestinationSetupMode::ConnectExisting,
+        &SecretValue::from_str_secret(&repo.password),
+        Some(&SecretValue::from_str_secret(server.password())),
+        &rig.runtime(),
+    )
+    .expect("set up REST destination");
+    assert_eq!(
+        rig.store
+            .get_secret(dest.id.as_str(), "repo")
+            .expect("get repo secret"),
+        Some(SecretValue::from_str_secret(&repo.password)),
+        "precondition: the repository password went through the secret store"
+    );
+    assert_eq!(
+        rig.store
+            .get_secret(dest.id.as_str(), "rest")
+            .expect("get rest secret"),
+        Some(SecretValue::from_str_secret(server.password())),
+        "precondition: the REST password went through the secret store"
+    );
 
     let mut backup =
         Backup::new("Home", Source::folder("/home/alice"), dest.id.clone()).expect("backup");
@@ -73,8 +112,8 @@ fn ac_m1_02_1_and_02_2_config_toml_roundtrip_contains_no_secrets() {
                 .expect("rest ref present")
         )
     );
-    assert!(!raw.contains("super-secret-repo-pw"));
-    assert!(!raw.contains("super-secret-rest-pw"));
+    assert_no_secret(&raw, &repo.password, "config.toml (repository password)");
+    assert_no_secret(&raw, server.password(), "config.toml (REST password)");
 }
 
 #[test]

@@ -7,7 +7,8 @@
 mod common;
 
 use common::m3::{
-    DropKillChild, backup_summary, latest_variant, wait_for_state, write_incompressible_dataset,
+    DropKillChild, backup_summary, connect_local_repo, latest_variant, wait_for_state,
+    write_incompressible_dataset,
 };
 use common::{find_kestic_binary, run_isolated_test, start_fake_sni_watcher, wait_for_file};
 use kestic_core::model::{
@@ -91,7 +92,9 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
             // AC-M3-11-2: Busy backup delays restart until completion, then restarts!
             let client = KesticClient::connect(bus_name, KESTIC_OBJECT_PATH).expect("connect");
             client
-                .set_restic_provider(&ResticProvider::Custom { path: restic_bin })
+                .set_restic_provider(&ResticProvider::Custom {
+                    path: restic_bin.clone(),
+                })
                 .expect("set restic");
             let repo_dir = root.join("repo");
             let src_dir = root.join("src");
@@ -100,9 +103,7 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
 
             let dest =
                 Destination::new("LocalS11", DestinationKind::Local { path: repo_dir }).expect("d");
-            client
-                .add_destination(&dest, "init", "pw-s11", "")
-                .expect("init");
+            connect_local_repo(&client, &restic_bin, &dest);
             let mut bk =
                 Backup::new("BusyBk", Source::folder(&src_dir), dest.id.clone()).expect("bk");
             bk.schedule = Schedule::ManualOnly;

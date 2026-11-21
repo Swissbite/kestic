@@ -5,6 +5,7 @@
 
 mod common;
 
+use kestic_test_support::password::{s3_key, strong_password};
 use kestic_test_support::tools::{dev_tools_bin_dir, short_tempdir};
 use kestic_test_support::workspace::workspace_root;
 
@@ -327,17 +328,21 @@ fn verify_s3_server_unprivileged(rclone: &Path, restic_versions: &[PathBuf]) {
     let s3_root = s3_temp.path().join("s3-root");
     fs::create_dir_all(s3_root.join("testbucket")).expect("create s3 bucket dir");
     let s3_port = allocate_random_port();
+    let access_key = s3_key(20);
+    let secret_key = s3_key(20);
+    let repo_password = strong_password();
 
     let mut rclone_cmd = Command::new(rclone);
     isolated_env(&mut rclone_cmd, s3_temp.path());
+    // The credentials go through the environment (not argv); the value is one CSV record, so it
+    // is quoted.
     rclone_cmd
+        .env("RCLONE_AUTH_KEY", format!("\"{access_key},{secret_key}\""))
         .args(["serve", "s3"])
         .arg(&s3_root)
         .args([
             "--addr",
             &format!("127.0.0.1:{s3_port}"),
-            "--auth-key",
-            "kesticaccess,kesticsecret",
             "--config",
             "/dev/null",
             "--no-console",
@@ -356,9 +361,9 @@ fn verify_s3_server_unprivileged(rclone: &Path, restic_versions: &[PathBuf]) {
         let mut restic_cmd = Command::new(restic_bin);
         isolated_env(&mut restic_cmd, s3_temp.path());
         let out = restic_cmd
-            .env("AWS_ACCESS_KEY_ID", "kesticaccess")
-            .env("AWS_SECRET_ACCESS_KEY", "kesticsecret")
-            .env("RESTIC_PASSWORD", "test-pass")
+            .env("AWS_ACCESS_KEY_ID", &access_key)
+            .env("AWS_SECRET_ACCESS_KEY", &secret_key)
+            .env("RESTIC_PASSWORD", &repo_password)
             .args([
                 "-r",
                 &format!("s3:http://127.0.0.1:{s3_port}/testbucket/{bucket_subdir}"),
@@ -468,13 +473,14 @@ fn verify_sftp_server_unprivileged(restic_versions: &[PathBuf]) {
         known_hosts.display()
     );
 
+    let repo_password = strong_password();
     for (idx, restic_bin) in restic_versions.iter().enumerate() {
         let repo_dir = sftp_temp.path().join(format!("sftp-repo-{idx}"));
         fs::create_dir_all(&repo_dir).expect("create sftp repo dir");
         let mut restic_cmd = Command::new(restic_bin);
         isolated_env(&mut restic_cmd, sftp_temp.path());
         let out = restic_cmd
-            .env("RESTIC_PASSWORD", "test-pass")
+            .env("RESTIC_PASSWORD", &repo_password)
             .args([
                 "-r",
                 &format!("sftp:{current_user}@127.0.0.1:{}", repo_dir.display()),
