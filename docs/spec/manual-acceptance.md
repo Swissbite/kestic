@@ -51,7 +51,7 @@ Quelle: [milestones/m3-automatisierung.md](milestones/m3-automatisierung.md)
 - [x] **AC-M3-09-4** – (F9, manuell) – Deckel schliessen während eines echten Laufs; nach dem Aufwachen läuft das Backup weiter bzw. neu an; PowerDevil verhindert den automatischen Ruhezustand bei Inaktivität während eines Laufs
 - [x] **AC-M3-12-2** – wenn dort abgebrochen, dann endet der Lauf mit `abgebrochen`
 - [x] **AC-M3-14-6** – wenn nur Tastatur, dann alle Felder erreichbar, jedes Bedienelement mit zugänglichem Namen
-- [ ] **Fortschritt beim Sichern** – wenn ein Backup läuft und restic noch Dateien sucht, dann zeigen Karte, Backup-Detail und Fortschrittsanzeige im Benachrichtigungsbereich einen Balken ohne festen Endpunkt und keine Prozentzahl; danach Prozent ohne Rücksprung ([restic-integration.md](restic-integration.md) «Fortschritt beim Sichern»)
+- [x] **Fortschritt beim Sichern** – wenn ein Backup läuft und restic noch Dateien sucht, dann zeigen Karte, Backup-Detail und Fortschrittsanzeige im Benachrichtigungsbereich einen Balken ohne festen Endpunkt und keine Prozentzahl; danach Prozent ohne Rücksprung ([restic-integration.md](restic-integration.md) «Fortschritt beim Sichern»)
 - [ ] **Exit-Kriterium** – Ein Backup läuft eine Woche lang nach Zeitplan auf dem Laptop (parallel zu M4/M5 möglich), inkl. Akku/Netzwechsel und Suspend (manuelle Abnahme).
 - [x] **Exit-Kriterium** – Manuelle Abnahme: Deckel zu während Lauf, PowerDevil/Portal-Inhibit, Hotspot.
 
