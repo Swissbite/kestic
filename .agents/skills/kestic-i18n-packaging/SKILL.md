@@ -24,7 +24,7 @@ Use this skill whenever adding or changing user-visible text in Rust or QML, edi
 
 ## `.deb` Packaging (`cargo-deb`, `NFR-01`, `P34`)
 
-- Built via `cargo deb -p kestic-gui --fast` (part of `just verify`).
+- Built via `just deb` (part of `just verify`), which remaps build-machine paths (`--remap-path-prefix`, `-ffile-prefix-map`); a plain `cargo deb` leaves `/home/...` paths in `/usr/bin/kestic`. `core/tests/m0_s05_deb_packaging.rs` checks that the shipped binary carries no build paths.
 - Verify package contents and metadata (`dpkg-deb -I` / `dpkg-deb -c`) whenever `gui/Cargo.toml` or `packaging/` changes:
   - `Depends`: `qml6-module-org-kde-kirigami (>= 6.24)`, `qml6-module-org-kde-kirigamiaddons-datetime (>= 1.11)`, `qml6-module-org-kde-kirigamiaddons-tableview (>= 1.11)`.
   - `Recommends`: `restic (>= 0.18.0)`.

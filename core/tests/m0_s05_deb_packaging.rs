@@ -19,7 +19,7 @@ fn find_deb_package() -> PathBuf {
     let deb_dir = find_target_dir().join("debian");
     let entries = fs::read_dir(&deb_dir).unwrap_or_else(|e| {
         panic!(
-            "target/debian not readable at {} ({}); run `cargo deb -p kestic-gui --fast` or `just verify` first",
+            "target/debian not readable at {} ({}); run `just deb` or `just verify` first",
             deb_dir.display(),
             e
         )
@@ -37,7 +37,7 @@ fn find_deb_package() -> PathBuf {
     debs.sort();
     debs.pop().unwrap_or_else(|| {
         panic!(
-            "no kestic_*.deb found in {}; run `cargo deb -p kestic-gui --fast` or `just verify` first",
+            "no kestic_*.deb found in {}; run `just deb` or `just verify` first",
             deb_dir.display()
         )
     })
@@ -172,6 +172,21 @@ fn ac_m0_05_1_deb_contains_qml_depends_recommends_notifyrc_and_autostart() {
 const HARNESS_STRINGS: [&str; 3] = ["--smoke-m1", "--simulate-status", "KESTIC_SMOKE_"];
 const HARNESS_SYMBOLS: [&str; 2] = ["qt_handleKeyEvent", "qt_handleMouseEvent"];
 
+/// Extracts `/usr/bin/kestic` from the `.deb` into a fresh temp directory.
+fn extract_shipped_binary(tag: &str) -> (tempfile::TempDir, PathBuf) {
+    let deb_path = find_deb_package();
+    let extracted = short_tempdir(tag);
+    let status = Command::new("dpkg-deb")
+        .arg("-x")
+        .arg(&deb_path)
+        .arg(extracted.path().join("root"))
+        .status()
+        .expect("run dpkg-deb -x");
+    assert!(status.success(), "dpkg-deb -x failed");
+    let shipped = extracted.path().join("root/usr/bin/kestic");
+    (extracted, shipped)
+}
+
 fn undefined_dynamic_symbols(path: &std::path::Path) -> String {
     let out = Command::new("nm")
         .args(["-D", "--undefined-only"])
@@ -187,16 +202,7 @@ fn undefined_dynamic_symbols(path: &std::path::Path) -> String {
 /// runs. The same probes find the harness in the test build, so they are proven to work.
 #[test]
 fn shipped_binary_runs_and_carries_no_test_harness() {
-    let deb_path = find_deb_package();
-    let extracted = short_tempdir("kestic-m0-s05-shipped");
-    let status = Command::new("dpkg-deb")
-        .arg("-x")
-        .arg(&deb_path)
-        .arg(extracted.path().join("root"))
-        .status()
-        .expect("run dpkg-deb -x");
-    assert!(status.success(), "dpkg-deb -x failed");
-    let shipped = extracted.path().join("root/usr/bin/kestic");
+    let (extracted, shipped) = extract_shipped_binary("kestic-m0-s05-shipped");
     let harness = find_kestic_binary();
 
     // (a) the shipped binary runs: `kestic daemon --autostart` without config exits 0 (NFR-11)
@@ -233,4 +239,72 @@ fn shipped_binary_runs_and_carries_no_test_harness() {
         assert!(!shipped_syms.contains(sym), "shipped kestic imports {sym}");
         assert!(harness_syms.contains(sym), "harness build lacks {sym}");
     }
+}
+
+/// Directory of a tool installation: the variable if set, else the default below `$HOME`. The
+/// `deb` recipe in the justfile resolves the same directories for its path remapping.
+fn tool_home(var: &str, default_below_home: &str) -> PathBuf {
+    std::env::var_os(var).filter(|v| !v.is_empty()).map_or_else(
+        || PathBuf::from(std::env::var_os("HOME").expect("HOME set")).join(default_below_home),
+        PathBuf::from,
+    )
+}
+
+/// The `kestic` in the `.deb` carries no path of the build machine: neither (a) the workspace
+/// path, (b) the `CARGO_MANIFEST_DIR` of the GUI crate, (c) the Cargo home with the registry
+/// sources nor (d) the Rust toolchain directory. Such paths would publish the build machine's
+/// layout, and a target system that has them would load icons or translations from there. The
+/// debug harness build keeps its source-tree fallbacks and unmapped panic locations, so the same
+/// probes find (a), (b) and (c) there. (d) has no such counter-check: the standard library names
+/// its sources below the toolchain directory only where the `rust-src` component is installed,
+/// elsewhere (as in CI) it uses `/rustc/<commit>/`.
+#[test]
+fn shipped_binary_carries_no_build_paths() {
+    let (_extracted, shipped) = extract_shipped_binary("kestic-m0-s05-paths");
+    let harness = find_kestic_binary();
+    let workspace = workspace_root();
+    let gui_manifest_dir = workspace.join("gui");
+    let cargo_home = tool_home("CARGO_HOME", ".cargo");
+    let rustup_home = tool_home("RUSTUP_HOME", ".rustup");
+    let text = |p: &std::path::Path| p.to_string_lossy().into_owned();
+
+    // (a) workspace path
+    assert!(
+        !file_contains(&shipped, text(&workspace).as_bytes()),
+        "shipped kestic contains the workspace path {}",
+        workspace.display()
+    );
+    assert!(
+        file_contains(&harness, text(&workspace).as_bytes()),
+        "harness build lacks the workspace path, so the probe proves nothing"
+    );
+
+    // (b) CARGO_MANIFEST_DIR of the GUI crate
+    assert!(
+        !file_contains(&shipped, text(&gui_manifest_dir).as_bytes()),
+        "shipped kestic contains CARGO_MANIFEST_DIR {}",
+        gui_manifest_dir.display()
+    );
+    assert!(
+        file_contains(&harness, text(&gui_manifest_dir).as_bytes()),
+        "harness build lacks CARGO_MANIFEST_DIR, so the probe proves nothing"
+    );
+
+    // (c) Cargo home (panic locations of registry crates)
+    assert!(
+        !file_contains(&shipped, text(&cargo_home).as_bytes()),
+        "shipped kestic contains the Cargo home {}",
+        cargo_home.display()
+    );
+    assert!(
+        file_contains(&harness, text(&cargo_home).as_bytes()),
+        "harness build lacks the Cargo home, so the probe proves nothing"
+    );
+
+    // (d) Rust toolchain directory (panic locations of the standard library)
+    assert!(
+        !file_contains(&shipped, text(&rustup_home).as_bytes()),
+        "shipped kestic contains the toolchain directory {}",
+        rustup_home.display()
+    );
 }

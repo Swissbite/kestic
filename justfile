@@ -18,7 +18,7 @@ verify:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo clippy -p kestic-gui --all-targets --features test-harness -- -D warnings
     just _check-file-sizes
-    cargo deb -p kestic-gui --fast
+    just deb
     just smoke
     just _nextest
     cargo deny check
@@ -43,9 +43,33 @@ _check-file-sizes:
 fmt:
     cargo fmt --all
 
-# Build the Debian package (fast profile)
+# Build the Debian package (fast profile). Paths of the build machine stay out of the shipped
+# binary: Rust panic locations (workspace, Cargo registry, toolchain sources) and `__FILE__` in
+# C/C++ code are remapped to fixed prefixes, so the package neither leaks them nor depends on them.
+# A plain `cargo deb` skips this remapping. Flags from RUSTFLAGS are kept.
 deb:
-    cargo deb -p kestic-gui --fast
+    #!/usr/bin/env bash
+    set -euo pipefail
+    workspace="$(pwd -P)"
+    target="$(realpath -m "${CARGO_TARGET_DIR:-target}")"
+    cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
+    for dir in "$workspace" "$target" "$cargo_home" "$rustup_home"; do
+        if [[ "$dir" =~ [[:space:]] ]]; then
+            echo "ERROR: '$dir' contains whitespace; CFLAGS cannot remap it" >&2
+            exit 1
+        fi
+    done
+    read -ra rust_flags <<< "${RUSTFLAGS:-}"
+    c_flags=()
+    for map in "$cargo_home=/cargo" "$rustup_home=/rustup" "$workspace=/kestic" "$target=/kestic/target"; do
+        rust_flags+=("--remap-path-prefix=$map")
+        c_flags+=("-ffile-prefix-map=$map")
+    done
+    CARGO_ENCODED_RUSTFLAGS="$(IFS=$'\x1f'; echo "${rust_flags[*]}")" \
+    CFLAGS="${CFLAGS:-} ${c_flags[*]}" \
+    CXXFLAGS="${CXXFLAGS:-} ${c_flags[*]}" \
+        cargo deb -p kestic-gui --fast
 
 # Start the main window offscreen (QML smoke) and write a screenshot
 smoke:
@@ -82,7 +106,7 @@ smoke:
 # Build binary and .deb package, then run workspace tests
 test:
     cargo build --bin kestic --features kestic-gui/test-harness
-    cargo deb -p kestic-gui --fast
+    just deb
     just _nextest
 
 # Workspace tests: fixtures first (a broken restic template fails once, clearly), then all tests;
