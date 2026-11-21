@@ -16,10 +16,11 @@ default:
 verify:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo clippy -p kestic-gui --all-targets --features test-harness -- -D warnings
+    cargo clippy --workspace --all-targets --features kestic-gui/test-harness -- -D warnings
     just _check-file-sizes
     just deb
-    just smoke
+    just _build-test-harness
+    just _smoke-run
     just _nextest
     cargo deny check
     reuse lint
@@ -71,11 +72,21 @@ deb:
     CXXFLAGS="${CXXFLAGS:-} ${c_flags[*]}" \
         cargo deb -p kestic-gui --fast
 
-# Start the main window offscreen (QML smoke) and write a screenshot
+# Start the main window offscreen (QML smoke) and write a screenshot; builds only the binary
 smoke:
+    cargo build --bin kestic --features kestic-gui/test-harness
+    just _smoke-run
+
+# The test-harness `kestic` and every test binary in one build. Building them together gives
+# them the same dependency features (dev-dependencies change them), so the tests reuse the
+# binary's crates instead of compiling them, including the C++ code, a second time.
+_build-test-harness:
+    cargo build --workspace --bins --tests --features kestic-gui/test-harness
+
+# Runs the test-harness `kestic` offscreen; `smoke` or `_build-test-harness` builds it first
+_smoke-run:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --bin kestic --features kestic-gui/test-harness
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
     mkdir -p "$tmpdir"/{home,cfg,data,cache,state,run}
@@ -105,12 +116,13 @@ smoke:
 
 # Build binary and .deb package, then run workspace tests
 test:
-    cargo build --bin kestic --features kestic-gui/test-harness
+    just _build-test-harness
     just deb
     just _nextest
 
-# Workspace tests: fixtures first (a broken restic template fails once, clearly), then all tests;
-# fixture dirs of this run and of runs older than a day are removed afterwards.
+# Workspace tests: fixtures first (a broken restic template fails once, clearly), then all other
+# tests; fixture dirs of this run and of runs older than a day are removed afterwards. Both runs
+# use the same package selection and features, so the second one builds nothing new.
 _nextest:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -119,8 +131,8 @@ _nextest:
     if [ -d "{{fixtures_dir}}" ]; then
         find "{{fixtures_dir}}" -mindepth 1 -maxdepth 1 -mtime +0 -exec rm -rf {} +
     fi
-    cargo nextest run -p kestic-test-support
-    cargo nextest run --workspace --features kestic-gui/test-harness
+    cargo nextest run --workspace --features kestic-gui/test-harness -E 'package(kestic-test-support)'
+    cargo nextest run --workspace --features kestic-gui/test-harness -E 'not package(kestic-test-support)'
 
 # Showcase site (site/). Needs pnpm; pnpm provides Node
 # itself (devEngines.runtime). Screenshots come from target/smoke-artifacts/,
