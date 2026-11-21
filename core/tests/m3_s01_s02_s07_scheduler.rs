@@ -29,7 +29,7 @@ fn zurich() -> TimezoneSpec {
 fn zdt(year: i16, month: i8, day: i8, hour: u8, minute: u8) -> OffsetDateTime {
     let tz = zurich().resolve();
     let date = jiff::civil::Date::new(year, month, day).expect("valid date");
-    resolve_local_slot(date, hour, minute, &tz)
+    resolve_local_slot(date, hour, minute, &tz).expect("valid local time")
 }
 
 fn make_backup(name: &str, schedule: Schedule) -> (Destination, Backup) {
