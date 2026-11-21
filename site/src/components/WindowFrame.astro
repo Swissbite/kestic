@@ -2,17 +2,28 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// A screenshot in a plain Breeze-like window frame with a mono caption.
+// A cropped screenshot in a plain Breeze-like window frame with a numbered
+// mono caption. The picture links to the full PNG; inside <Lightbox> the link
+// opens the lightbox instead.
 
 import type { Screenshot } from "../screenshots.ts";
 
 interface Props {
   shot: Screenshot;
+  number: number;
   eager?: boolean;
 }
 
-const { shot, eager = false } = Astro.props;
+const { shot, number, eager = false } = Astro.props;
 const src = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/screenshots/${shot.file}`;
+const { crop } = shot;
+const percent = (ratio: number): string => `${(ratio * 100).toFixed(4)}%`;
+const cropStyle = [
+  `aspect-ratio: ${crop.width} / ${crop.height}`,
+  `--img-width: ${percent(shot.width / crop.width)}`,
+  `--img-left: ${percent(-crop.x / crop.width)}`,
+  `--img-top: ${percent(-crop.y / crop.height)}`,
+].join("; ");
 ---
 
 <figure class="frame">
@@ -21,16 +32,30 @@ const src = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/screenshots/${shot.f
       <span class="title">Kestic</span>
       <span class="buttons"><span class="btn min"></span><span class="btn max"></span><span class="btn close"></span></span>
     </div>
-    <img
-      src={src}
-      alt={shot.alt}
-      width={shot.width}
-      height={shot.height}
-      loading={eager ? "eager" : "lazy"}
-      decoding="async"
-    />
+    <a
+      class="open"
+      href={src}
+      data-lightbox
+      data-caption={shot.caption}
+      data-focus-x={crop.x / shot.width}
+      data-focus-y={crop.y / shot.height}
+      style={cropStyle}
+    >
+      <img
+        src={src}
+        alt={shot.alt}
+        width={shot.width}
+        height={shot.height}
+        loading={eager ? "eager" : "lazy"}
+        decoding="async"
+      />
+      <span class="enlarge mono" aria-hidden="true">Enlarge&nbsp;⤢</span>
+    </a>
   </div>
-  <figcaption class="mono mute">{shot.caption}</figcaption>
+  <figcaption class="mono">
+    <span class="accent">{String(number).padStart(2, "0")}</span>
+    <span class="mute">{shot.caption}</span>
+  </figcaption>
 </figure>
 
 <style>
@@ -38,15 +63,10 @@ const src = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/screenshots/${shot.f
     margin: 0;
   }
   .window {
-    border: 1px solid #17191b;
+    border: 1px solid var(--frame-border);
     border-radius: 7px 7px 2px 2px;
     overflow: hidden;
     background: #eff0f1;
-  }
-  @media (prefers-color-scheme: dark) {
-    .window {
-      border-color: #4a4d52;
-    }
   }
   .titlebar {
     display: flex;
@@ -106,11 +126,56 @@ const src = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/screenshots/${shot.f
   .btn.close::after {
     transform: rotate(-45deg);
   }
-  img {
-    width: 100%;
+  .open {
+    display: block;
+    position: relative;
+    overflow: hidden;
+    cursor: zoom-in;
+  }
+  .open img {
+    position: absolute;
+    left: var(--img-left);
+    top: var(--img-top);
+    width: var(--img-width);
+    max-width: none;
+  }
+  .open:focus-visible {
+    outline-offset: -2px;
+  }
+  .enlarge {
+    position: absolute;
+    z-index: 1;
+    right: 8px;
+    bottom: 8px;
+    padding: 3px 8px;
+    background: #17191b;
+    color: #ece9e2;
+    font-size: 12px;
+    border-radius: 2px;
+  }
+  .open:hover .enlarge,
+  .open:focus-visible .enlarge {
+    background: var(--accent);
+    color: #fff;
+  }
+  .window:has(.open:hover) {
+    border-color: var(--accent);
+  }
+  /* Takes the edge off the bright Breeze window on a dark page. */
+  .open::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--shot-dim);
+  }
+  .open:hover::after,
+  .open:focus-visible::after {
+    background: transparent;
   }
   figcaption {
+    display: flex;
+    gap: 10px;
     margin-top: 10px;
-    font-size: 12px;
+    font-size: 13px;
   }
 </style>

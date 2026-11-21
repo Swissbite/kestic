@@ -30,6 +30,10 @@ function problemsWith(shot: Screenshot, sourceDir: string): string | null {
   if (size.width !== shot.width || size.height !== shot.height) {
     return `${shot.file}: ${size.width}x${size.height}, manifest says ${shot.width}x${shot.height}`;
   }
+  const { x, y, width, height } = shot.crop;
+  if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > shot.width || y + height > shot.height) {
+    return `${shot.file}: crop ${x},${y} ${width}x${height} lies outside the image`;
+  }
   return null;
 }
 

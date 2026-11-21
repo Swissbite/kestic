@@ -4,37 +4,34 @@ SPDX-License-Identifier: GPL-3.0-or-later
 */
 
 :root {
+  /* Follows the system unless the theme toggle set data-theme on <html>. */
   color-scheme: light dark;
-  --paper: #f3f1ec;
-  --ink: #17191b;
-  --body: #34363a;
-  --mute: #6b6a66;
-  --second: #858279;
-  --rule: #d9d6ce;
-  --accent: #b24e28;
-  --block-bg: #17191b;
+  --paper: light-dark(#f3f1ec, #141517);
+  --ink: light-dark(#17191b, #ece9e2);
+  --body: light-dark(#34363a, #c9c6bf);
+  --mute: light-dark(#6b6a66, #a3a098);
+  --second: light-dark(#858279, #7a776f);
+  --rule: light-dark(#d9d6ce, #2e3033);
+  --accent: light-dark(#b24e28, #ee9164);
+  --block-bg: light-dark(#17191b, #0b0c0d);
   --block-text: #e9e6df;
   --block-mute: #8a8780;
+  --frame-border: light-dark(#17191b, #4a4d52);
+  --shot-dim: light-dark(transparent, rgb(0 0 0 / 0.12));
   --sans: "Schibsted Grotesk", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
   --gutter: clamp(16px, 4vw, 48px);
   --measure: 1120px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #141517;
-    --ink: #ece9e2;
-    --body: #c9c6bf;
-    --mute: #a3a098;
-    --second: #7a776f;
-    --rule: #2e3033;
-    --accent: #ee9164;
-    --block-bg: #0b0c0d;
-    --block-text: #e9e6df;
-    --block-mute: #8a8780;
-  }
+:root[data-theme="light"] {
+  color-scheme: light;
 }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
 
 *,
 *::before,

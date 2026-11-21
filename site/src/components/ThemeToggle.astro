@@ -1,0 +1,95 @@
+---
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// Cycles the colour theme: auto (system) → light → dark. The choice is kept in
+// localStorage and applied before first paint by the inline script in
+// Base.astro. Without JavaScript the button stays hidden and the page follows
+// the system.
+---
+
+<button type="button" class="theme-toggle mono" hidden data-theme-toggle>
+  <span class="dot" aria-hidden="true"></span>
+  <span>Theme: <span data-theme-label>auto</span></span>
+</button>
+
+<script>
+  type Theme = "auto" | "light" | "dark";
+
+  const STORAGE_KEY = "kestic-theme";
+  const order: readonly Theme[] = ["auto", "light", "dark"];
+
+  function stored(): Theme {
+    try {
+      const value = localStorage.getItem(STORAGE_KEY);
+      return value === "light" || value === "dark" ? value : "auto";
+    } catch {
+      return "auto";
+    }
+  }
+
+  function apply(theme: Theme): void {
+    const root = document.documentElement;
+    if (theme === "auto") {
+      delete root.dataset["theme"];
+    } else {
+      root.dataset["theme"] = theme;
+    }
+    try {
+      if (theme === "auto") {
+        localStorage.removeItem(STORAGE_KEY);
+      } else {
+        localStorage.setItem(STORAGE_KEY, theme);
+      }
+    } catch {
+      // Storage blocked: the choice lasts for this page view only.
+    }
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-theme-toggle]")) {
+    const label = button.querySelector<HTMLElement>("[data-theme-label]");
+    let current = stored();
+    const render = (): void => {
+      if (label !== null) {
+        label.textContent = current;
+      }
+    };
+    render();
+    button.hidden = false;
+    button.addEventListener("click", () => {
+      current = order[(order.indexOf(current) + 1) % order.length] ?? "auto";
+      apply(current);
+      render();
+    });
+  }
+</script>
+
+<style>
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: transparent;
+    color: var(--mute);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .theme-toggle[hidden] {
+    display: none;
+  }
+  .theme-toggle:hover {
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid currentColor;
+    border-radius: 50%;
+    background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+  }
+</style>
