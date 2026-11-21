@@ -22,13 +22,15 @@ use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationKind, MaintenanceEntrySchedule, MaintenanceSchedule,
-    Run, RunConditions, RunId, RunStatus, Schedule, Source,
+    Backup, BackupId, CheckSummary, Destination, DestinationKind, MaintenanceEntrySchedule,
+    MaintenanceForget, MaintenanceSchedule, MaintenanceStats, Run, RunConditions, RunId, RunStatus,
+    Schedule, Source,
 };
 use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, RunProgressPhase};
 use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use time::macros::datetime;
 
@@ -958,4 +960,153 @@ fn m3_editor_guard_covers_pages_above_the_editor_and_window_close() {
             rig.daemon.stop();
         },
     );
+}
+
+/// The run detail page of a maintenance run follows the UI spec (§7.8
+/// «Lauf-Arten»): history row and status line name the completed steps, the title says
+/// «Maintenance on …», the line below the status names the destination and the «Result» tab
+/// lists the removed snapshots per backup and the check result. Screenshots in English and
+/// German, German also narrow.
+#[test]
+fn finding1_maintenance_run_detail_shows_removed_snapshots_and_check_result() {
+    run_isolated_test(
+        "finding1_maintenance_run_detail_shows_removed_snapshots_and_check_result",
+        "KESTIC_FINDING1_RUN_DETAIL_INNER",
+        |root| {
+            let start = datetime!(2026-11-21 15:25:00 UTC);
+            let seed_clock = FakeClock::new(start);
+            let dest = Destination::new(
+                "Restic Synology",
+                DestinationKind::Local {
+                    path: root.join("repo-synology"),
+                },
+            )
+            .expect("dest");
+            let docs = Backup::new(
+                "Documents",
+                Source::folder(make_source(root, "docs")),
+                dest.id.clone(),
+            )
+            .expect("backup");
+            let mut run = Run::new_maintenance(&seed_clock, dest.id.clone()).expect("run");
+            run.maintenance = Some(MaintenanceStats {
+                forgets: vec![MaintenanceForget {
+                    backup_id: docs.id.clone(),
+                    removed_snapshots: Some(2),
+                }],
+                pruned: true,
+                checked: true,
+                check: Some(CheckSummary::default()),
+            });
+            seed_clock.advance(Duration::from_secs(6));
+            run.finish(&seed_clock, RunStatus::Ok, Some(0));
+            RunHistory::open(&root.join("state").join("kestic"))
+                .expect("open history")
+                .upsert_run(&run, &[])
+                .expect("seed maintenance run");
+
+            let _fakes = gui_fakes(false, &["HomeWifi"]);
+            let rig = start_rig(root, start + Duration::from_secs(60), false);
+            connect_local_repo(&rig.daemon.client, &rig.variant.bin, &dest);
+            rig.daemon.client.add_backup(&docs).expect("add backup");
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "de")] {
+                run_m3_gui_smoke(
+                    root,
+                    "m3-maintenance-run-detail",
+                    layout,
+                    lang,
+                    &smoke_artifact("maintenance-run-detail", layout, lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// With one backup on one destination the list headers use the
+/// singular («1 Backup», «1 Destination» / «1 Ziel»), and the hint why the destination cannot
+/// be removed is the tooltip of the disabled «Remove Destination…» action, not a line in the page
+/// body. The C++ scenario checks each text in English and German.
+#[test]
+fn finding2_3_singular_list_headers_and_remove_hint_only_on_the_action() {
+    run_isolated_test(
+        "finding2_3_singular_list_headers_and_remove_hint_only_on_the_action",
+        "KESTIC_FINDING2_3_INNER",
+        |root| {
+            let (rig, _fakes, _dest, _id) = editor_env(root);
+            for lang in ["en", "de"] {
+                run_m3_gui_smoke(
+                    root,
+                    "m3-singular-counts-and-remove-hint",
+                    "wide",
+                    lang,
+                    &smoke_artifact("singular-counts-remove-hint", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// The destination detail page shows «Maintenance running» while a scheduled maintenance run is
+/// active (its `prune` is held) and resets it after the run has ended, without any action in the
+/// GUI.
+#[test]
+fn finding4_destination_page_resets_maintenance_running_after_the_run() {
+    run_isolated_test(
+        "finding4_destination_page_resets_maintenance_running_after_the_run",
+        "KESTIC_FINDING4_INNER",
+        |root| {
+            // Friday 2026-12-04 11:59:30 and Sunday 2026-12-06 12:00:05 Europe/Zurich: prune
+            // (every Sunday) and check (first Sunday) are due on Sunday.
+            let friday = datetime!(2026-12-04 10:59:30 UTC);
+            let sunday_1200 = datetime!(2026-12-06 11:00:05 UTC);
+            let _fakes = gui_fakes(false, &["HomeWifi"]);
+            let rig = start_rig(root, friday, true);
+            let dest = rig.add_destination("Status Vault", |_| {});
+            std::thread::sleep(Duration::from_millis(1300));
+            rig.wrapper.hold("prune");
+            rig.clock.set(sunday_1200);
+            wait_for_state(
+                &rig.daemon.client,
+                Duration::from_secs(30),
+                "maintenance running",
+                |s| {
+                    s.destinations
+                        .iter()
+                        .any(|d| d.destination.id == dest.id && d.maintenance_running)
+                },
+            );
+            let marker = root.join("maintenance-running-seen");
+            let scene_ended = AtomicBool::new(false);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    while !marker.exists() && !scene_ended.load(Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    rig.wrapper.release("prune");
+                });
+                // Ends the helper thread also when the scene fails before writing the marker.
+                let _end_helper = SetOnDrop(&scene_ended);
+                run_m3_gui_smoke_with_env(
+                    root,
+                    "m3-maintenance-status-reset",
+                    "wide",
+                    "en",
+                    &smoke_artifact("maintenance-status-reset", "wide", "en"),
+                    &[("KESTIC_SMOKE_MARKER", marker.to_str().expect("utf-8 path"))],
+                );
+            });
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// Sets the flag when dropped, also while unwinding from a failed assertion.
+struct SetOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for SetOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
 }

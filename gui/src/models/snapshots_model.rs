@@ -3,7 +3,7 @@
 
 //! CXX-Qt `SnapshotsModel` implementation (`QAbstractListModel` for backup snapshots).
 
-use crate::state_cache::{format_bytes, format_datetime_display, i18n, shared_state};
+use crate::state_cache::{format_bytes, format_datetime_display, i18n, i18np, shared_state};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QVariant};
 use kestic_core::sync::LockUnpoisoned;
@@ -34,9 +34,12 @@ impl SnapshotsModelRust {
             OffsetDateTime::parse(&s.time, &time::format_description::well_known::Rfc3339)
                 .map_or_else(|_| s.time.clone(), format_datetime_display);
         let stats_text = match (s.total_files_processed, s.total_bytes_processed) {
-            (Some(files), Some(bytes)) => {
-                i18n("%1 files · %2").subs(&[&files.to_string(), &format_bytes(bytes)])
-            }
+            (Some(files), Some(bytes)) => i18np(
+                "%1 file · %2",
+                "%1 files · %2",
+                files,
+                &[&format_bytes(bytes)],
+            ),
             (None, Some(bytes)) => format_bytes(bytes),
             _ => s.hostname.clone(),
         };

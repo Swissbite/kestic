@@ -22,8 +22,9 @@ Kirigami.ScrollablePage {
     readonly property var primaryList: destinationsListView
 
     header: Kirigami.InlineViewHeader {
+        objectName: "destinationsListHeader"
         width: parent.width
-        text: i18n("%1 Destinations", destinationsListView.count)
+        text: i18np("%1 Destination", "%1 Destinations", destinationsListView.count)
         actions: [
             Kirigami.Action {
                 id: addDestinationHeaderAction

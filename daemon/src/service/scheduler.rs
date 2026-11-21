@@ -11,7 +11,7 @@ use super::maintenance::run_scheduled_maintenance_async;
 use super::run_errors::run_blocks_schedule;
 use super::state::DaemonCore;
 use crate::dbus_server::emit_status_changed;
-use crate::i18n::i18n;
+use crate::i18n::{i18n, i18np};
 use crate::notifications::{KesticEvent, send_configured_notification};
 use kestic_core::history::PauseState;
 use kestic_core::model::{
@@ -173,7 +173,12 @@ pub fn tick_scheduler_async(shared: &Arc<Mutex<DaemonCore>>) {
         thread::spawn(move || {
             for (name, missed) in notices {
                 let summary = i18n("%1: Backup overdue").subs(&[&name]);
-                let body = i18n("%1 scheduled backups missed").subs(&[&missed.to_string()]);
+                let body = i18np(
+                    "%1 scheduled backup missed",
+                    "%1 scheduled backups missed",
+                    missed,
+                    &[],
+                );
                 let _ = send_configured_notification(
                     &notif_settings,
                     KesticEvent::BackupOverdue,

@@ -933,6 +933,58 @@ pub struct RunStats {
     pub snapshot_id: Option<String>,
 }
 
+/// Snapshots one `forget` of a maintenance run removed for one backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaintenanceForget {
+    pub backup_id: BackupId,
+    /// `None` when `forget` succeeded but its output held no readable result.
+    #[serde(default)]
+    pub removed_snapshots: Option<u64>,
+}
+
+/// Outcome of `restic check --json` (its `summary` message).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CheckSummary {
+    pub num_errors: u64,
+}
+
+/// Result of a maintenance run: pending `forget`s, then `prune`, then `check`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MaintenanceStats {
+    /// One entry per backup whose pending `forget` succeeded, in run order.
+    pub forgets: Vec<MaintenanceForget>,
+    /// `prune` ran and exited 0.
+    pub pruned: bool,
+    /// `check` ran and exited 0.
+    pub checked: bool,
+    /// Parsed `check` summary, also present when `check` found errors.
+    pub check: Option<CheckSummary>,
+}
+
+/// What a successful maintenance run did, for its status line («Aufgeräumt und geprüft»).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaintenanceOutcome {
+    CleanedUpAndVerified,
+    CleanedUp,
+    Verified,
+    /// Only pending `forget`s ran.
+    RetentionOnly,
+}
+
+impl MaintenanceStats {
+    /// Which maintenance steps completed successfully.
+    pub fn outcome(&self) -> MaintenanceOutcome {
+        match (self.pruned, self.checked) {
+            (true, true) => MaintenanceOutcome::CleanedUpAndVerified,
+            (true, false) => MaintenanceOutcome::CleanedUp,
+            (false, true) => MaintenanceOutcome::Verified,
+            (false, false) => MaintenanceOutcome::RetentionOnly,
+        }
+    }
+}
+
 /// Single execution record (glossary: `Run`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Run {
@@ -956,6 +1008,10 @@ pub struct Run {
     pub commands: Vec<CommandRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stats: Option<RunStats>,
+    /// Result of a maintenance run; `None` for other run kinds and for maintenance runs
+    /// recorded before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance: Option<MaintenanceStats>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_path: Option<PathBuf>,
 }
@@ -981,6 +1037,7 @@ impl Run {
             summary_message: None,
             commands: Vec::new(),
             stats: None,
+            maintenance: None,
             log_path: None,
         })
     }

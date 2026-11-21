@@ -7,6 +7,7 @@ mod backend;
 mod models;
 mod overall_text;
 mod qt_bridge;
+mod run_texts;
 #[cfg(feature = "test-harness")]
 mod smoke;
 mod state_cache;
@@ -188,6 +189,7 @@ fn install_daemon_ki18n() {
 
     let qt_lock = Arc::new(Mutex::new(()));
     let qt_lock_subs = Arc::clone(&qt_lock);
+    let qt_lock_plural = Arc::clone(&qt_lock);
     let translator = Arc::new(kestic_daemon::i18n::CallbackSubsTranslator {
         translate_fn: move |msgid: &str| {
             let _g = qt_lock.lock_unpoisoned();
@@ -196,6 +198,11 @@ fn install_daemon_ki18n() {
         translate_subs_fn: move |msgid: &str, args: &[&str]| {
             let _g = qt_lock_subs.lock_unpoisoned();
             crate::qt_bridge::ffi::i18n_subs(msgid, args)
+        },
+        translate_plural_fn: move |singular: &str, plural: &str, n: u64, args: &[&str]| {
+            let _g = qt_lock_plural.lock_unpoisoned();
+            let n = i64::try_from(n).unwrap_or(i64::MAX);
+            crate::qt_bridge::ffi::i18np_subs(singular, plural, n, args)
         },
     });
     kestic_daemon::i18n::set_daemon_translator(translator);

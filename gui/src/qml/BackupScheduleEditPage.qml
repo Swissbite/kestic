@@ -426,7 +426,7 @@ EditorPage {
                 }
 
                 Controls.Label {
-                    text: i18n("days")
+                    text: i18np("day", "days", page.intervalDays)
                 }
             }
 
@@ -550,7 +550,7 @@ EditorPage {
                 }
 
                 Controls.Label {
-                    text: i18n("missed runs")
+                    text: i18np("missed run", "missed runs", page.customOverdueThreshold)
                 }
             }
         }

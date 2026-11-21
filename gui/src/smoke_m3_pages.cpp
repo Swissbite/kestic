@@ -248,12 +248,139 @@ int scenario_backup_now_shortcut(const Ctx& c) {
     return 0;
 }
 
+/// A seeded maintenance run of «Restic Synology» (pending forget removed
+/// two snapshots of «Documents», prune and check ok). (a) The history row names the completed
+/// steps; the detail page shows (b) the title «Maintenance on …», (c) the status line «Cleaned
+/// up and verified · …», (d) the destination instead of «… added», (e) removed snapshots per
+/// backup and the check result in the «Result» tab.
+int scenario_maintenance_run_detail(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    QAbstractItemModel* runs = model_named(w, "runsModel");
+    M3_CHECK(4701, runs != nullptr, "runsModel missing");
+    const QString title = loc(c.lang, "Maintenance Restic Synology", "Wartung Restic Synology");
+    int row = -1;
+    const bool listed = wait_until([&] {
+        for (int r = 0; r < runs->rowCount(); ++r) {
+            if (role_value(runs, r, "title").toString() == title) {
+                row = r;
+                return true;
+            }
+        }
+        return false;
+    }, 10000);
+    M3_CHECK(4702, listed, "maintenance run not in the history");
+    M3_CHECK_EQ(4703, role_value(runs, row, "statusText").toString(),
+                loc(c.lang, "Cleaned up and verified", "Aufgeräumt und geprüft"), "(a) history row status");
+    const QString run_id = role_value(runs, row, "runId").toString();
+    QMetaObject::invokeMethod(w, "openRunDetailById", Q_ARG(QVariant, run_id));
+    M3_CHECK(4704, page_visible(w, "runDetailPage"), "runDetailPage did not open");
+    wait_ms(300);
+    finish_incubation(w);
+    QObject* page = object_named(w, "runDetailPage");
+    M3_CHECK_STARTS(4705, page->property("title").toString(),
+                    loc(c.lang, "Maintenance on ", "Wartung vom "), "(b) page title");
+    QObject* status = object_named(w, "runStatusLineLabel");
+    QObject* subtitle = object_named(w, "runSubtitleLabel");
+    QObject* result = object_named(w, "runResultSummaryLabel");
+    M3_CHECK3(4706, status, subtitle, result, "run detail labels missing");
+    M3_CHECK_STARTS(4707, status->property("text").toString(),
+                    loc(c.lang, "Cleaned up and verified · ", "Aufgeräumt und geprüft · "), "(c) status line");
+    M3_CHECK_EQ(4708, subtitle->property("text").toString(), QStringLiteral("Restic Synology"),
+                "(d) destination below the status");
+    M3_CHECK_EQ(4709, result->property("text").toString(),
+                loc(c.lang, "Documents: 2 snapshots removed\nVerify: no errors found",
+                    "Documents: 2 Snapshots entfernt\nPrüfen: keine Fehler gefunden"),
+                "(e) result tab");
+    M3_CHECK(4710, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
+/// With one backup on one destination: (a) the backups list header
+/// says «1 Backup» and (b) the destinations list header «1 Destination» («1 Ziel»); on the
+/// destination detail page (c) «Remove Destination…» is disabled with the hint as tooltip and
+/// (d) the hint is not shown in the page body.
+int scenario_singular_counts_and_remove_hint(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString did = destination_id_at(w, 0);
+    M3_CHECK(4721, !did.isEmpty(), "needs one destination");
+    QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 1));
+    M3_CHECK(4722, page_visible(w, "backupsListPage"), "backupsListPage");
+    QObject* backups_header = object_named(w, "backupsListHeader");
+    M3_CHECK(4723, backups_header != nullptr, "backupsListHeader missing");
+    M3_CHECK_EQ(4724, backups_header->property("text").toString(), QStringLiteral("1 Backup"),
+                "(a) backups header");
+    QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 2));
+    M3_CHECK(4725, page_visible(w, "destinationsListPage"), "destinationsListPage");
+    QObject* dest_header = object_named(w, "destinationsListHeader");
+    M3_CHECK(4726, dest_header != nullptr, "destinationsListHeader missing");
+    M3_CHECK_EQ(4727, dest_header->property("text").toString(), loc(c.lang, "1 Destination", "1 Ziel"),
+                "(b) destinations header");
+    QMetaObject::invokeMethod(w, "openDestinationDetailById", Q_ARG(QVariant, did));
+    M3_CHECK(4728, page_visible(w, "destinationDetailPage"), "destinationDetailPage");
+    wait_ms(300);
+    finish_incubation(w);
+    const QString hint = loc(c.lang, "Remove or reassign all backups on this destination first.",
+                             "Zuerst alle Backups auf diesem Ziel entfernen oder einem anderen Ziel zuweisen.");
+    QObject* remove = object_named(w, "destRemoveAction");
+    M3_CHECK(4729, remove != nullptr, "destRemoveAction missing");
+    M3_CHECK(4730, !remove->property("enabled").toBool(), "(c) remove action disabled");
+    M3_CHECK_EQ(4731, remove->property("tooltip").toString(), hint, "(c) remove action tooltip");
+    auto* page = qobject_cast<QQuickItem*>(object_named(w, "destinationDetailPage"));
+    M3_CHECK(4732, page != nullptr, "destinationDetailPage item missing");
+    M3_CHECK(4733, !has_visible_text(page, hint), "(d) hint shown in the page body");
+    M3_CHECK(4734, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
+/// The destination detail page (a) shows «Maintenance running» while a
+/// maintenance run is active and (b) no longer shows it once the run has ended. The scene
+/// writes the file `KESTIC_SMOKE_MARKER` after (a); the test then lets the run finish.
+int scenario_maintenance_status_reset(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString marker = qEnvironmentVariable("KESTIC_SMOKE_MARKER");
+    M3_CHECK(4741, !marker.isEmpty(), "KESTIC_SMOKE_MARKER must name the marker file");
+    const QString did = destination_id_at(w, 0);
+    M3_CHECK(4742, !did.isEmpty(), "needs one destination");
+    QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 2));
+    wait_ms(150);
+    QMetaObject::invokeMethod(w, "openDestinationDetailById", Q_ARG(QVariant, did));
+    M3_CHECK(4743, page_visible(w, "destinationDetailPage"), "destinationDetailPage");
+    const QString running = loc(c.lang, "Maintenance running", "Wartung läuft");
+    auto status_text = [&]() -> QString {
+        QObject* label = object_named(w, "maintenanceStatusLabel");
+        if (!label || !label->property("visible").toBool()) {
+            return QString();
+        }
+        return label->property("text").toString();
+    };
+    M3_CHECK(4744, wait_until([&] { return status_text() == running; }, 15000), "(a) running status shown");
+    QFile flag(marker);
+    M3_CHECK(4745, flag.open(QIODevice::WriteOnly), "cannot write marker file");
+    flag.close();
+    M3_CHECK(4746, wait_until([&] { return status_text() != running; }, 60000),
+             "(b) running status still shown after the run ended");
+    M3_CHECK(4747, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 int run_m3_pages_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled) {
     if (scen == QLatin1String("m3-backup-now-shortcut")) {
         *handled = true;
         return scenario_backup_now_shortcut(ctx);
+    }
+    if (scen == QLatin1String("m3-maintenance-run-detail")) {
+        *handled = true;
+        return scenario_maintenance_run_detail(ctx);
+    }
+    if (scen == QLatin1String("m3-singular-counts-and-remove-hint")) {
+        *handled = true;
+        return scenario_singular_counts_and_remove_hint(ctx);
+    }
+    if (scen == QLatin1String("m3-maintenance-status-reset")) {
+        *handled = true;
+        return scenario_maintenance_status_reset(ctx);
     }
     *handled = scen == QLatin1String("m3-all-pages-texts");
     return *handled ? scenario_all_pages(ctx) : 0;

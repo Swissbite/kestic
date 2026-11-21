@@ -6,7 +6,8 @@
 use crate::clock::Clock;
 use crate::migrations::{MigrationError, history_migrations, run_migrations};
 use crate::model::{
-    BackupId, CommandRecord, DestinationId, PendingReason, Run, RunId, RunKind, RunStats, RunStatus,
+    BackupId, CommandRecord, DestinationId, MaintenanceStats, PendingReason, Run, RunId, RunKind,
+    RunStats, RunStatus,
 };
 use crate::restic::redact_secrets;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -130,7 +131,7 @@ impl RunHistory {
             .summary_message
             .as_deref()
             .map(|s| redact_secrets(s, secrets));
-        let stats_json = run.stats.as_ref().map(serde_json::to_string).transpose()?;
+        let stats_json = encode_stats_json(run)?;
         let log_path_str = run
             .log_path
             .as_ref()
@@ -774,6 +775,29 @@ fn from_sql_int<T: TryFrom<i64>>(column: usize, value: i64) -> rusqlite::Result<
     T::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, value))
 }
 
+/// The `stats_json` column holds [`MaintenanceStats`] for maintenance runs and [`RunStats`]
+/// for every other run kind.
+fn encode_stats_json(run: &Run) -> Result<Option<String>, serde_json::Error> {
+    match run.kind {
+        RunKind::Maintenance => run.maintenance.as_ref().map(serde_json::to_string),
+        _ => run.stats.as_ref().map(serde_json::to_string),
+    }
+    .transpose()
+}
+
+fn decode_stats_json(
+    kind: &RunKind,
+    raw: Option<&str>,
+) -> Result<(Option<RunStats>, Option<MaintenanceStats>), serde_json::Error> {
+    let Some(raw) = raw else {
+        return Ok((None, None));
+    };
+    match kind {
+        RunKind::Maintenance => Ok((None, Some(serde_json::from_str(raw)?))),
+        _ => Ok((Some(serde_json::from_str(raw)?), None)),
+    }
+}
+
 fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
     let id_raw: String = row.get(0)?;
     let kind_raw: String = row.get(1)?;
@@ -833,11 +857,8 @@ fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         .map(|s| OffsetDateTime::parse(s, &Rfc3339))
         .transpose()
         .map_err(|e| to_sql_err(e.to_string()))?;
-    let stats: Option<RunStats> = stats_json
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-        .map_err(|e| to_sql_err(e.to_string()))?;
+    let (stats, maintenance) =
+        decode_stats_json(&kind, stats_json.as_deref()).map_err(|e| to_sql_err(e.to_string()))?;
 
     Ok(Run {
         id,
@@ -852,6 +873,7 @@ fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         summary_message,
         commands: Vec::new(),
         stats,
+        maintenance,
         log_path: log_path.map(PathBuf::from),
     })
 }

@@ -6,8 +6,8 @@
 
 use super::{Finish, dbus_error_text, qobject};
 use crate::state_cache::{
-    build_destination, daemon_unavailable_text, i18n, make_client, refresh_state_now, shared_state,
-    test_destination_connection, tr_text,
+    build_destination, daemon_unavailable_text, i18n, i18np, make_client, refresh_state_now,
+    shared_state, test_destination_connection, tr_text,
 };
 use cxx_qt_lib::QString;
 use kestic_core::sync::LockUnpoisoned;
@@ -144,10 +144,13 @@ impl qobject::KesticApp {
         };
         let msg = if count == 0 {
             i18n("No stale locks found.").to_string()
-        } else if count == 1 {
-            i18n("1 stale lock removed.").to_string()
         } else {
-            i18n("%1 stale locks removed.").subs(&[&count.to_string()])
+            i18np(
+                "%1 stale lock removed.",
+                "%1 stale locks removed.",
+                count,
+                &[],
+            )
         };
         self.as_mut().passive_notification(QString::from(&msg));
         i32::try_from(count).unwrap_or(0)

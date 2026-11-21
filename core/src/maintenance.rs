@@ -6,7 +6,7 @@
 
 use crate::backup::{BackupRunError, check_command_succeeded};
 use crate::destination::{DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination};
-use crate::model::{Destination, RunStatus};
+use crate::model::{CheckSummary, Destination, RunStatus};
 use crate::provider::ResolvedRestic;
 use crate::restic::{CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticRuntime};
 use serde::{Deserialize, Serialize};
@@ -103,6 +103,28 @@ fn extract_pack_count(lower: &str) -> Option<u64> {
         }
     }
     None
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawCheckSummary {
+    message_type: String,
+    num_errors: Option<u64>,
+}
+
+/// Finds the `summary` message of `restic check --json` in its output lines.
+///
+/// Backup summaries share `message_type: "summary"`; only a line with `num_errors` counts.
+pub fn parse_check_summary(lines: &[String]) -> Option<CheckSummary> {
+    lines.iter().rev().find_map(|line| {
+        let raw: RawCheckSummary = serde_json::from_str(line.trim()).ok()?;
+        if raw.message_type != "summary" {
+            return None;
+        }
+        Some(CheckSummary {
+            num_errors: raw.num_errors?,
+        })
+    })
 }
 
 /// Executes `restic prune --dry-run --no-lock` on `destination`.

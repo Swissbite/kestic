@@ -20,6 +20,15 @@ pub trait DaemonTranslator: Send + Sync {
         let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
         substitute_placeholders(&self.translate(msgid), &args)
     }
+
+    /// Plural-aware translation: `%1` is `n`, further `%N` come from `args`. Without a catalog
+    /// the English rule applies (singular only for 1).
+    fn translate_plural(&self, singular: &str, plural: &str, n: u64, args: &[&str]) -> String {
+        let n_text = n.to_string();
+        let mut all: Vec<&str> = vec![&n_text];
+        all.extend_from_slice(args);
+        self.translate_subs(if n == 1 { singular } else { plural }, &all)
+    }
 }
 
 /// Identity fallback translator returning the English source string verbatim.
@@ -32,17 +41,19 @@ impl DaemonTranslator for PassthroughTranslator {
     }
 }
 
-/// Callback-backed translator used by `kestic daemon` to delegate both plain
-/// lookups and `.subs(...)` formatting directly to KI18n.
-pub struct CallbackSubsTranslator<F0, F1> {
+/// Callback-backed translator used by `kestic daemon` to delegate plain lookups,
+/// `.subs(...)` formatting and plural forms directly to KI18n.
+pub struct CallbackSubsTranslator<F0, F1, F2> {
     pub translate_fn: F0,
     pub translate_subs_fn: F1,
+    pub translate_plural_fn: F2,
 }
 
-impl<F0, F1> DaemonTranslator for CallbackSubsTranslator<F0, F1>
+impl<F0, F1, F2> DaemonTranslator for CallbackSubsTranslator<F0, F1, F2>
 where
     F0: Fn(&str) -> String + Send + Sync,
     F1: Fn(&str, &[&str]) -> String + Send + Sync,
+    F2: Fn(&str, &str, u64, &[&str]) -> String + Send + Sync,
 {
     fn translate(&self, msgid: &str) -> String {
         (self.translate_fn)(msgid)
@@ -50,6 +61,10 @@ where
 
     fn translate_subs(&self, msgid: &str, args: &[&str]) -> String {
         (self.translate_subs_fn)(msgid, args)
+    }
+
+    fn translate_plural(&self, singular: &str, plural: &str, n: u64, args: &[&str]) -> String {
+        (self.translate_plural_fn)(singular, plural, n, args)
     }
 }
 
@@ -103,6 +118,22 @@ impl From<PendingI18n> for String {
 /// Named `i18n` so `xgettext --keyword=i18n:1` extracts all daemon strings alongside GUI code.
 pub fn i18n(msgid: &'static str) -> PendingI18n {
     PendingI18n(msgid)
+}
+
+/// Plural-aware translation (`i18np`) in the daemon language: `%1` is `n`, further `%N` come
+/// from `args`.
+///
+/// Named `i18np` so `xgettext --keyword=i18np:1,2` extracts both forms.
+pub fn i18np(
+    singular: &'static str,
+    plural: &'static str,
+    n: impl TryInto<u64>,
+    args: &[&str],
+) -> String {
+    let guard = translator_lock()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.translate_plural(singular, plural, n.try_into().unwrap_or(u64::MAX), args)
 }
 
 /// Translates a [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the

@@ -5,9 +5,10 @@
 
 use super::qobject;
 use super::rows::{id_at, row_of};
+use crate::run_texts::run_status;
 use crate::state_cache::{
-    daemon_now, format_day_group, format_duration_ms, format_run_kind_name, format_run_status,
-    format_time_short, shared_state,
+    daemon_now, format_day_group, format_duration_ms, format_run_kind_name, format_time_short,
+    shared_state,
 };
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
@@ -89,8 +90,7 @@ impl RunsModelRust {
                 continue;
             }
 
-            let (status_text, status_icon, status_color_kind) =
-                format_run_status(&run.kind, run.status);
+            let (status_text, status_icon, status_color_kind) = run_status(run);
             let duration_text = run
                 .duration_ms
                 .map_or_else(|| status_text.clone(), format_duration_ms);

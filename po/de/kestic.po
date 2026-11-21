@@ -223,10 +223,6 @@ msgstr "Einige Backups wurden übersprungen"
 msgid "%1: Backup overdue"
 msgstr "%1: Backup überfällig"
 
-#: daemon/src/service/scheduler.rs:227
-msgid "%1 scheduled backups missed"
-msgstr "%1 geplante Backups verpasst"
-
 #: daemon/src/service/state.rs:423 gui/src/state_cache.rs:988
 msgid "Paused since %1 (until %2)"
 msgstr "Pausiert seit %1 (bis %2)"
@@ -495,14 +491,6 @@ msgstr "Gespeichertes Passwort aktualisiert"
 msgid "No stale locks found."
 msgstr "Keine veralteten Sperren gefunden."
 
-#: gui/src/backend/destinations.rs:180
-msgid "1 stale lock removed."
-msgstr "1 veraltete Sperre entfernt."
-
-#: gui/src/backend/destinations.rs:182
-msgid "%1 stale locks removed."
-msgstr "%1 veraltete Sperren entfernt."
-
 #: gui/src/backend.rs:619
 msgid "Wrong password: the repository rejected this password."
 msgstr "Falsches Passwort: Das Repository hat dieses Passwort abgelehnt."
@@ -611,10 +599,6 @@ msgstr "Lokaler Ordner"
 msgid "REST Server"
 msgstr "REST-Server"
 
-#: gui/src/models/snapshots_model.rs:45
-msgid "%1 files · %2"
-msgstr "%1 Dateien · %2"
-
 #: gui/src/models/snapshots_model.rs:71
 msgid "Current destination (%1)"
 msgstr "Aktuelles Ziel (%1)"
@@ -714,14 +698,6 @@ msgstr "Keine Regeln eingerichtet"
 msgid "Custom (%1)"
 msgstr "Benutzerdefiniert (%1)"
 
-#: gui/src/state_cache.rs:660
-msgid "1 folder"
-msgstr "1 Ordner"
-
-#: gui/src/state_cache.rs:662
-msgid "%1 folders"
-msgstr "%1 Ordner"
-
 #: gui/src/state_cache.rs:665
 msgid "caches"
 msgstr "Caches"
@@ -733,14 +709,6 @@ msgstr "Papierkorb"
 #: gui/src/state_cache.rs:673
 msgid "files over %1"
 msgstr "Dateien über %1"
-
-#: gui/src/state_cache.rs:677
-msgid "1 expert rule"
-msgstr "1 Expertenregel"
-
-#: gui/src/state_cache.rs:679
-msgid "%1 expert rules"
-msgstr "%1 Expertenregeln"
 
 #: gui/src/state_cache.rs:682
 msgid "marker: %1"
@@ -771,30 +739,6 @@ msgstr "Der eigene restic-Pfad darf nicht leer sein."
 #: gui/src/state_cache.rs:733
 msgid "just now"
 msgstr "gerade eben"
-
-#: gui/src/state_cache.rs:737
-msgid "1 minute ago"
-msgstr "vor 1 Minute"
-
-#: gui/src/state_cache.rs:740
-msgid "%1 minutes ago"
-msgstr "vor %1 Minuten"
-
-#: gui/src/state_cache.rs:744
-msgid "1 hour ago"
-msgstr "vor 1 Stunde"
-
-#: gui/src/state_cache.rs:747
-msgid "%1 hours ago"
-msgstr "vor %1 Stunden"
-
-#: gui/src/state_cache.rs:751
-msgid "1 day ago"
-msgstr "vor 1 Tag"
-
-#: gui/src/state_cache.rs:753
-msgid "%1 days ago"
-msgstr "vor %1 Tagen"
 
 #: gui/src/state_cache.rs:759
 msgid "%1 s"
@@ -945,10 +889,6 @@ msgstr "Am %1 um %2"
 msgid "Weekly on %1 at %2"
 msgstr "Wöchentlich am %1 um %2"
 
-#: gui/src/state_cache.rs:877
-msgid "Every %1 days from %2 at %3"
-msgstr "Alle %1 Tage ab %2 um %3"
-
 #: gui/src/state_cache.rs:889
 msgid "AC power only"
 msgstr "Nur am Netzstrom"
@@ -1016,10 +956,6 @@ msgstr "Überfällig"
 #: gui/src/state_cache.rs:1072
 msgid "Waiting: unavailable"
 msgstr "Wartet: nicht verfügbar"
-
-#: gui/src/state_cache.rs:1090
-msgid "Backed up, %1 files unreadable"
-msgstr "Gesichert, %1 Dateien nicht lesbar"
 
 #: gui/src/state_cache.rs:1094
 msgid "Backed up with warning"
@@ -1722,12 +1658,6 @@ msgstr "Wert für maximale Dateigrösse"
 msgid "File size limit unit"
 msgstr "Einheit für maximale Dateigrösse"
 
-#: gui/src/qml/BackupExcludesEditPage.qml:476
-msgid "%1 more rules in restic syntax. Enable Expert Mode to edit them."
-msgstr ""
-"%1 weitere Regeln in restic-Syntax. Aktivieren Sie den Expertenmodus, um sie "
-"zu bearbeiten."
-
 #: gui/src/qml/BackupExcludesEditPage.qml:477
 msgid ""
 "Additional rules in restic syntax can be edited when Expert Mode is enabled."
@@ -1984,10 +1914,6 @@ msgstr "Aufbewahrungsvorschau abbrechen"
 msgid "No snapshots would be removed (%1 kept)."
 msgstr "Es würden keine Snapshots entfernt (%1 behalten)."
 
-#: gui/src/qml/BackupPreviewPage.qml:383
-msgid "%1 snapshots kept · %2 snapshots would be removed."
-msgstr "%1 Snapshots behalten · %2 Snapshots würden entfernt."
-
 #: gui/src/qml/BackupPreviewPage.qml:395
 msgid "No snapshots in this backup yet"
 msgstr "Noch keine Snapshots in diesem Backup"
@@ -2065,10 +1991,6 @@ msgstr "2. Nach Zeitraum («täglich für die letzten 7 Tage»):\nZählt Kalende
 msgid "You have unsaved changes to retention rules."
 msgstr "Es gibt ungespeicherte Änderungen an den Aufbewahrungsregeln."
 
-#: gui/src/qml/BackupRetentionPage.qml:429
-msgid "%1 snapshots will be permanently removed on the next run"
-msgstr "%1 Snapshots werden beim nächsten Lauf endgültig entfernt"
-
 #: gui/src/qml/BackupRetentionPage.qml:431
 msgid ""
 "Snapshots that will be removed:\n"
@@ -2076,10 +1998,6 @@ msgid ""
 msgstr ""
 "Snapshots, die entfernt werden:\n"
 "%1"
-
-#: gui/src/qml/BackupRetentionPage.qml:432
-msgid "If you save these rules, the next run removes %1 existing snapshots."
-msgstr "Wenn Sie diese Regeln speichern, entfernt der nächste Lauf %1 bestehende Snapshots."
 
 #: gui/src/qml/BackupRetentionPage.qml:439
 msgid "Save Rules"
@@ -2257,10 +2175,6 @@ msgstr "Alle"
 msgid "Interval in days"
 msgstr "Intervall in Tagen"
 
-#: gui/src/qml/BackupScheduleEditPage.qml:479
-msgid "days"
-msgstr "Tage"
-
 #: gui/src/qml/BackupScheduleEditPage.qml:484
 msgid "Start date:"
 msgstr "Startdatum:"
@@ -2309,10 +2223,6 @@ msgstr "Globalen Standard für «überfällig» verwenden"
 #: gui/src/qml/BackupScheduleEditPage.qml:598
 msgid "Missed runs before reporting overdue"
 msgstr "Verpasste Termine, bevor «überfällig» gemeldet wird"
-
-#: gui/src/qml/BackupScheduleEditPage.qml:604
-msgid "missed runs"
-msgstr "verpassten Terminen"
 
 #: gui/src/qml/BackupScheduleEditPage.qml:615
 msgid ""
@@ -2393,10 +2303,6 @@ msgstr "Art:"
 #: gui/src/qml/PageFocusManager.qml:132
 msgid "Backups"
 msgstr "Backups"
-
-#: gui/src/qml/BackupsPage.qml:44
-msgid "%1 Backups"
-msgstr "%1 Backups"
 
 #: gui/src/qml/BackupsPage.qml:50 gui/src/qml/BackupsPage.qml:90
 msgid "New Backup…"
@@ -2696,10 +2602,6 @@ msgstr "Minute fürs Prüfen"
 #: gui/src/qml/PageFocusManager.qml:133
 msgid "Destinations"
 msgstr "Ziele"
-
-#: gui/src/qml/DestinationsPage.qml:34
-msgid "%1 Destinations"
-msgstr "%1 Ziele"
 
 #: gui/src/qml/DestinationsPage.qml:40 gui/src/qml/DestinationsPage.qml:78
 msgid "Add Destination…"
@@ -3307,3 +3209,132 @@ msgstr "Interner Fehler im Hintergrunddienst."
 
 msgid "Stops the running backup cleanly before sleep"
 msgstr "Beendet das laufende Backup sauber vor dem Ruhezustand"
+
+msgid "Maintenance on %1"
+msgstr "Wartung vom %1"
+
+msgid "Cleaned up and verified"
+msgstr "Aufgeräumt und geprüft"
+
+msgid "Cleaned up"
+msgstr "Aufgeräumt"
+
+msgid "Verified"
+msgstr "Geprüft"
+
+msgid "No result recorded for this maintenance run."
+msgstr "Für diesen Wartungslauf ist kein Ergebnis gespeichert."
+
+msgid "No snapshots removed."
+msgstr "Keine Snapshots entfernt."
+
+msgid "Verify: no errors found"
+msgstr "Prüfen: keine Fehler gefunden"
+
+msgid "%2: %1 snapshot removed"
+msgid_plural "%2: %1 snapshots removed"
+msgstr[0] "%2: %1 Snapshot entfernt"
+msgstr[1] "%2: %1 Snapshots entfernt"
+
+msgid "Verify: %1 error found"
+msgid_plural "Verify: %1 errors found"
+msgstr[0] "Prüfen: %1 Fehler gefunden"
+msgstr[1] "Prüfen: %1 Fehler gefunden"
+
+msgid "%1: snapshots removed"
+msgstr "%1: Snapshots entfernt"
+
+msgid "%1 Destination"
+msgid_plural "%1 Destinations"
+msgstr[0] "%1 Ziel"
+msgstr[1] "%1 Ziele"
+
+msgid "%1 Backup"
+msgid_plural "%1 Backups"
+msgstr[0] "%1 Backup"
+msgstr[1] "%1 Backups"
+
+msgid "%1 snapshot will be permanently removed on the next run"
+msgid_plural "%1 snapshots will be permanently removed on the next run"
+msgstr[0] "%1 Snapshot wird beim nächsten Lauf endgültig entfernt"
+msgstr[1] "%1 Snapshots werden beim nächsten Lauf endgültig entfernt"
+
+msgid "If you save these rules, the next run removes %1 existing snapshot."
+msgid_plural "If you save these rules, the next run removes %1 existing snapshots."
+msgstr[0] "Wenn Sie diese Regeln speichern, entfernt der nächste Lauf %1 bestehenden Snapshot."
+msgstr[1] "Wenn Sie diese Regeln speichern, entfernt der nächste Lauf %1 bestehende Snapshots."
+
+msgid "%1 more rule in restic syntax. Enable Expert Mode to edit it."
+msgid_plural "%1 more rules in restic syntax. Enable Expert Mode to edit them."
+msgstr[0] "%1 weitere Regel in restic-Syntax. Aktivieren Sie den Expertenmodus, um sie zu bearbeiten."
+msgstr[1] "%1 weitere Regeln in restic-Syntax. Aktivieren Sie den Expertenmodus, um sie zu bearbeiten."
+
+msgid "%1 snapshot kept · %2"
+msgid_plural "%1 snapshots kept · %2"
+msgstr[0] "%1 Snapshot behalten · %2"
+msgstr[1] "%1 Snapshots behalten · %2"
+
+msgid "%1 snapshot would be removed."
+msgid_plural "%1 snapshots would be removed."
+msgstr[0] "%1 Snapshot würde entfernt."
+msgstr[1] "%1 Snapshots würden entfernt."
+
+msgid "day"
+msgid_plural "days"
+msgstr[0] "Tag"
+msgstr[1] "Tage"
+
+msgid "missed run"
+msgid_plural "missed runs"
+msgstr[0] "verpasstem Termin"
+msgstr[1] "verpassten Terminen"
+
+msgid "%1 folder"
+msgid_plural "%1 folders"
+msgstr[0] "%1 Ordner"
+msgstr[1] "%1 Ordner"
+
+msgid "%1 expert rule"
+msgid_plural "%1 expert rules"
+msgstr[0] "%1 Expertenregel"
+msgstr[1] "%1 Expertenregeln"
+
+msgid "%1 minute ago"
+msgid_plural "%1 minutes ago"
+msgstr[0] "vor %1 Minute"
+msgstr[1] "vor %1 Minuten"
+
+msgid "%1 hour ago"
+msgid_plural "%1 hours ago"
+msgstr[0] "vor %1 Stunde"
+msgstr[1] "vor %1 Stunden"
+
+msgid "%1 day ago"
+msgid_plural "%1 days ago"
+msgstr[0] "vor %1 Tag"
+msgstr[1] "vor %1 Tagen"
+
+msgid "Every %1 day from %2 at %3"
+msgid_plural "Every %1 days from %2 at %3"
+msgstr[0] "Jeden Tag ab %2 um %3"
+msgstr[1] "Alle %1 Tage ab %2 um %3"
+
+msgid "Backed up, %1 file unreadable"
+msgid_plural "Backed up, %1 files unreadable"
+msgstr[0] "Gesichert, %1 Datei nicht lesbar"
+msgstr[1] "Gesichert, %1 Dateien nicht lesbar"
+
+msgid "%1 file · %2"
+msgid_plural "%1 files · %2"
+msgstr[0] "%1 Datei · %2"
+msgstr[1] "%1 Dateien · %2"
+
+msgid "%1 stale lock removed."
+msgid_plural "%1 stale locks removed."
+msgstr[0] "%1 veraltete Sperre entfernt."
+msgstr[1] "%1 veraltete Sperren entfernt."
+
+msgid "%1 scheduled backup missed"
+msgid_plural "%1 scheduled backups missed"
+msgstr[0] "%1 geplantes Backup verpasst"
+msgstr[1] "%1 geplante Backups verpasst"

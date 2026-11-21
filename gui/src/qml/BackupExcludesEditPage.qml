@@ -421,7 +421,7 @@ EditorPage {
                 visible: !appBackend.expert_mode
                 type: Kirigami.MessageType.Information
                 text: page.expertRuleCount > 0
-                    ? i18n("%1 more rules in restic syntax. Enable Expert Mode to edit them.", page.expertRuleCount)
+                    ? i18np("%1 more rule in restic syntax. Enable Expert Mode to edit it.", "%1 more rules in restic syntax. Enable Expert Mode to edit them.", page.expertRuleCount)
                     : i18n("Additional rules in restic syntax can be edited when Expert Mode is enabled.")
             }
 
