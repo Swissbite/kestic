@@ -5,7 +5,7 @@ import QtQuick
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-// «Save changes?» prompt (U18, AC-M3-14-9) with explicitly localized
+// «Save changes?» prompt with explicitly localized
 // [Save] / [Discard] / [Cancel] buttons, independent of Qt's own catalogs.
 Kirigami.PromptDialog {
     id: dialog

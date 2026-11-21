@@ -20,11 +20,7 @@ Kirigami.ScrollablePage {
 
     readonly property var excludesObj: {
         if (!backupData || !backupData.excludesJson) return {};
-        try {
-            return JSON.parse(backupData.excludesJson);
-        } catch (e) {
-            return {};
-        }
+        return rootWindow.parseJsonOr(backupData.excludesJson, {});
     }
 
     Connections {
@@ -77,14 +73,8 @@ Kirigami.ScrollablePage {
             navigate();
         }
 
-        Rectangle {
-            anchors.fill: parent
-            z: 10
-            color: "transparent"
-            radius: Kirigami.Units.cornerRadius
-            border.width: (navRow.activeFocus || navRow.visualFocus) ? 2 : 0
-            border.color: Kirigami.Theme.highlightColor
-            visible: border.width > 0
+        FocusRing {
+            target: navRow
         }
 
         contentItem: RowLayout {

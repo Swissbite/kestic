@@ -4,19 +4,20 @@
 //! Backup CRUD, manual backup execution/cancellation, and exclude-rule helpers
 //! for [`super::qobject::KesticApp`].
 
-use super::{dbus_error_text, qobject};
+use super::{Finish, dbus_error_text, qobject};
 use crate::state_cache::{
     build_new_backup, cached_destination_kind, clone_updated_backup, clone_updated_backup_excludes,
-    clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text,
+    clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text, i18n,
     localized_condition_override_message, localized_manual_block_message,
     localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, make_client,
-    not_found_text, refresh_state_now, shared_state,
+    refresh_state_now, shared_state,
 };
-use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
-use kestic_core::model::{BackupId, ExcludeRules, RetentionPolicy};
+use kestic_core::config::AppConfig;
+use kestic_core::model::{Backup, BackupId, ExcludeRules, RetentionPolicy};
 use kestic_core::provider::resolve_and_check;
+use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::KesticDbusError;
 use kestic_i18n::codes::{BlockedReason, ServiceErrorCode};
 use std::env;
@@ -27,17 +28,14 @@ impl qobject::KesticApp {
     pub fn start_backup(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
         let b_id = backup_id.to_string();
         let Ok(client) = make_client() else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&daemon_unavailable_text()));
+            self.as_mut().show_action_error(&daemon_unavailable_text());
             return false;
         };
         match client.start_backup(&b_id) {
             Ok(_) => {
                 self.as_mut()
                     .set_manual_run_blocked_message(QString::from(""));
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
+                self.finish_action(Ok::<_, zbus::Error>(()), Finish::Plain);
                 true
             }
             Err(err) => {
@@ -55,12 +53,12 @@ impl qobject::KesticApp {
         self.as_mut().apply_cached_state();
         if !is_blocked {
             let msg = dbus_error_text(err);
-            self.as_mut().set_last_action_error(QString::from(&msg));
+            self.as_mut().show_action_error(&msg);
             self.as_mut().passive_notification(QString::from(&msg));
             return;
         }
         {
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             if let Some((pending_id, _)) = &guard.pending_blocked
                 && pending_id == b_id
             {
@@ -68,7 +66,7 @@ impl qobject::KesticApp {
             }
         }
         let (backup_name, reason_code, unmet_text) = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let guard = shared_state().lock_unpoisoned();
             let summary = guard
                 .state
                 .as_ref()
@@ -115,26 +113,16 @@ impl qobject::KesticApp {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.start_backup_override(&backup_id.to_string()) {
-            Ok(_) => {
-                self.as_mut()
-                    .set_condition_override_backup_id(QString::from(""));
-                self.as_mut()
-                    .set_condition_override_backup_name(QString::from(""));
-                self.as_mut()
-                    .set_condition_override_message(QString::from(""));
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                self.as_mut().passive_notification(QString::from(&msg));
-                false
-            }
+        let result = client.start_backup_override(&backup_id.to_string());
+        if result.is_ok() {
+            self.as_mut()
+                .set_condition_override_backup_id(QString::from(""));
+            self.as_mut()
+                .set_condition_override_backup_name(QString::from(""));
+            self.as_mut()
+                .set_condition_override_message(QString::from(""));
         }
+        self.finish_action(result, Finish::NotifyOnError).is_some()
     }
 
     pub fn start_all_backups(mut self: Pin<&mut Self>) {
@@ -193,33 +181,18 @@ impl qobject::KesticApp {
         };
         let src_str = source_path.to_string();
         let detected = client.detect_source(src_str.trim()).ok();
-        let backup = match build_new_backup(
+        let Some(backup) = self.as_mut().ok_or_show(build_new_backup(
             &name.to_string(),
             &src_str,
             &dest_id.to_string(),
             &excludes_text.to_string(),
             detected,
             cached_destination_kind(&dest_id.to_string()).as_ref(),
-        ) {
-            Ok(b) => b,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return QString::from("");
-            }
+        )) else {
+            return QString::from("");
         };
-        match client.add_backup(&backup) {
-            Ok(id) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                QString::from(&id)
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                QString::from("")
-            }
-        }
+        self.finish_action(client.add_backup(&backup), Finish::Plain)
+            .map_or_else(QString::default, |id| QString::from(&id))
     }
 
     pub fn update_backup(
@@ -231,18 +204,7 @@ impl qobject::KesticApp {
         excludes_text: &QString,
         exclude_caches: bool,
     ) -> bool {
-        let id_str = id.to_string();
-        let existing = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-            guard
-                .state
-                .as_ref()
-                .and_then(|s| lookup_backup_summary(s, &id_str))
-                .map(|b| b.backup.clone())
-        };
-        let Some(existing) = existing else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&not_found_text()));
+        let Some(existing) = self.as_mut().existing_backup_or_err(&id.to_string()) else {
             return false;
         };
         let Ok(client) = make_client() else {
@@ -254,7 +216,7 @@ impl qobject::KesticApp {
         } else {
             None
         };
-        let updated = match clone_updated_backup(
+        let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup(
             &existing,
             &name.to_string(),
             &src_str,
@@ -262,27 +224,11 @@ impl qobject::KesticApp {
             &excludes_text.to_string(),
             exclude_caches,
             detected,
-        ) {
-            Ok(b) => b,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return false;
-            }
+        )) else {
+            return false;
         };
-        match client.update_backup(&updated) {
-            Ok(()) => {
-                self.as_mut().set_has_unsaved_changes(false);
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.update_backup(&updated), Finish::Saved)
+            .is_some()
     }
 
     pub fn update_backup_excludes(
@@ -290,52 +236,26 @@ impl qobject::KesticApp {
         backup_id: &QString,
         excludes_json: &QString,
     ) -> bool {
-        let id_str = backup_id.to_string();
-        let existing = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-            guard
-                .state
-                .as_ref()
-                .and_then(|s| lookup_backup_summary(s, &id_str))
-                .map(|b| b.backup.clone())
-        };
-        let Some(existing) = existing else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&not_found_text()));
+        let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return false;
         };
-        let excludes: ExcludeRules = match serde_json::from_str(&excludes_json.to_string()) {
-            Ok(e) => e,
-            Err(err) => {
-                self.as_mut()
-                    .set_last_action_error(QString::from(&err.to_string()));
-                return false;
-            }
+        let Some(excludes) = self
+            .as_mut()
+            .parse_json_or_err::<ExcludeRules>(excludes_json)
+        else {
+            return false;
         };
-        let updated = match clone_updated_backup_excludes(&existing, excludes) {
-            Ok(b) => b,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return false;
-            }
+        let Some(updated) = self
+            .as_mut()
+            .ok_or_show(clone_updated_backup_excludes(&existing, excludes))
+        else {
+            return false;
         };
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.update_backup(&updated) {
-            Ok(()) => {
-                self.as_mut().set_has_unsaved_changes(false);
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.update_backup(&updated), Finish::Saved)
+            .is_some()
     }
 
     pub fn update_backup_retention(
@@ -343,52 +263,26 @@ impl qobject::KesticApp {
         backup_id: &QString,
         retention_json: &QString,
     ) -> bool {
-        let id_str = backup_id.to_string();
-        let existing = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-            guard
-                .state
-                .as_ref()
-                .and_then(|s| lookup_backup_summary(s, &id_str))
-                .map(|b| b.backup.clone())
-        };
-        let Some(existing) = existing else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&not_found_text()));
+        let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return false;
         };
-        let retention: RetentionPolicy = match serde_json::from_str(&retention_json.to_string()) {
-            Ok(r) => r,
-            Err(err) => {
-                self.as_mut()
-                    .set_last_action_error(QString::from(&err.to_string()));
-                return false;
-            }
+        let Some(retention) = self
+            .as_mut()
+            .parse_json_or_err::<RetentionPolicy>(retention_json)
+        else {
+            return false;
         };
-        let updated = match clone_updated_backup_retention(&existing, retention) {
-            Ok(b) => b,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return false;
-            }
+        let Some(updated) = self
+            .as_mut()
+            .ok_or_show(clone_updated_backup_retention(&existing, retention))
+        else {
+            return false;
         };
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.update_backup(&updated) {
-            Ok(()) => {
-                self.as_mut().set_has_unsaved_changes(false);
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.update_backup(&updated), Finish::Saved)
+            .is_some()
     }
 
     pub fn update_backup_source(
@@ -396,18 +290,7 @@ impl qobject::KesticApp {
         backup_id: &QString,
         source_path: &QString,
     ) -> bool {
-        let id_str = backup_id.to_string();
-        let existing = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-            guard
-                .state
-                .as_ref()
-                .and_then(|s| lookup_backup_summary(s, &id_str))
-                .map(|b| b.backup.clone())
-        };
-        let Some(existing) = existing else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&not_found_text()));
+        let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return false;
         };
         let Ok(client) = make_client() else {
@@ -417,92 +300,48 @@ impl qobject::KesticApp {
         let source = client
             .detect_source(&trimmed)
             .unwrap_or_else(|_| kestic_core::model::Source::folder(PathBuf::from(&trimmed)));
-        let updated = match clone_updated_backup_source(&existing, source) {
-            Ok(b) => b,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return false;
-            }
+        let Some(updated) = self
+            .as_mut()
+            .ok_or_show(clone_updated_backup_source(&existing, source))
+        else {
+            return false;
         };
-        match client.update_backup(&updated) {
-            Ok(()) => {
-                self.as_mut().set_has_unsaved_changes(false);
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.update_backup(&updated), Finish::Saved)
+            .is_some()
     }
 
-    pub fn rename_backup(
-        mut self: Pin<&mut Self>,
-        backup_id: &QString,
-        new_name: &QString,
-    ) -> bool {
+    pub fn rename_backup(self: Pin<&mut Self>, backup_id: &QString, new_name: &QString) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.rename_backup(&backup_id.to_string(), &new_name.to_string()) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(
+            client.rename_backup(&backup_id.to_string(), &new_name.to_string()),
+            Finish::Plain,
+        )
+        .is_some()
     }
 
     pub fn reassign_backup(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         backup_id: &QString,
         new_dest_id: &QString,
     ) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.reassign_backup(&backup_id.to_string(), &new_dest_id.to_string()) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(
+            client.reassign_backup(&backup_id.to_string(), &new_dest_id.to_string()),
+            Finish::Plain,
+        )
+        .is_some()
     }
 
-    pub fn remove_backup(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
+    pub fn remove_backup(self: Pin<&mut Self>, backup_id: &QString) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.remove_backup(&backup_id.to_string()) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.remove_backup(&backup_id.to_string()), Finish::Plain)
+            .is_some()
     }
 
     pub fn add_exclude_path_to_backup(
@@ -518,66 +357,55 @@ impl qobject::KesticApp {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.add_exclude_rule_for_item(&id_str, &trimmed) {
-            Ok(_) => {
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                self.as_mut()
-                    .passive_notification(i18n("Exclude rule added"));
-                true
-            }
-            Err(err) => {
-                self.as_mut()
-                    .set_last_action_error(QString::from(&dbus_error_text(&err)));
-                false
-            }
+        let result = client.add_exclude_rule_for_item(&id_str, &trimmed);
+        if self.as_mut().finish_action(result, Finish::Plain).is_none() {
+            return false;
         }
+        self.as_mut()
+            .passive_notification(QString::from(&i18n("Exclude rule added").to_string()));
+        true
     }
 
     pub fn get_backup_transparent_command(&self, backup_id: &QString) -> QString {
-        let id_str = backup_id.to_string();
-        let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-        let Some(state) = &guard.state else {
-            return QString::from("");
-        };
-        let Ok(bid) = BackupId::parse(&id_str) else {
-            return QString::from("");
-        };
-        let Some(backup) = state.config.backup(&bid) else {
-            return QString::from("");
-        };
-        let Some(dest) = state.config.destination(&backup.destination_id) else {
-            return QString::from("");
-        };
-        let state_dir = kestic_core::backup::default_state_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("~/.local/state/kestic"));
-        let exe = env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("kestic"));
-        if let Ok(resolved) = resolve_and_check(&state.config.restic_provider)
-            && let Ok(spec) = build_backup_command_spec(backup, dest, &state_dir, &resolved, &exe)
-        {
-            return QString::from(&spec.to_transparent_shell_command());
-        }
-        QString::from(&format!(
-            "RESTIC_PASSWORD_COMMAND='kestic secret get {}' restic -r {} backup {}",
-            dest.id,
-            dest.kind.repository_uri(),
-            backup.source.path.display()
-        ))
+        with_cached_backup(backup_id, |config, backup| {
+            let dest = config.destination(&backup.destination_id)?;
+            let state_dir = kestic_core::backup::default_state_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("~/.local/state/kestic"));
+            let exe = env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("kestic"));
+            if let Ok(resolved) = resolve_and_check(&config.restic_provider)
+                && let Ok(spec) =
+                    build_backup_command_spec(backup, dest, &state_dir, &resolved, &exe)
+            {
+                return Some(spec.to_transparent_shell_command());
+            }
+            Some(format!(
+                "RESTIC_PASSWORD_COMMAND='kestic secret get {}' restic -r {} backup {}",
+                dest.id,
+                dest.kind.repository_uri(),
+                backup.source.path.display()
+            ))
+        })
     }
 
     pub fn build_backup_config_toml_snippet(&self, backup_id: &QString) -> QString {
-        let id_str = backup_id.to_string();
-        let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-        let Some(state) = &guard.state else {
-            return QString::from("");
-        };
-        let Ok(bid) = BackupId::parse(&id_str) else {
-            return QString::from("");
-        };
-        let Some(backup) = state.config.backup(&bid) else {
-            return QString::from("");
-        };
-        let snippet = kestic_core::config::backup_toml_snippet(backup);
-        QString::from(&snippet)
+        with_cached_backup(backup_id, |_, backup| {
+            Some(kestic_core::config::backup_toml_snippet(backup))
+        })
     }
+}
+
+/// Text computed by `text` from the cached backup `backup_id`; empty when the state, the
+/// backup or the text is missing.
+fn with_cached_backup(
+    backup_id: &QString,
+    text: impl FnOnce(&AppConfig, &Backup) -> Option<String>,
+) -> QString {
+    let guard = shared_state().lock_unpoisoned();
+    let found = guard.state.as_ref().and_then(|state| {
+        let backup = BackupId::parse(backup_id.to_string())
+            .ok()
+            .and_then(|id| state.config.backup(&id))?;
+        text(&state.config, backup)
+    });
+    QString::from(&found.unwrap_or_default())
 }

@@ -16,6 +16,7 @@ use crate::state_cache::{
 };
 use cxx_qt_lib::QString;
 use kestic_core::model::ResticProvider;
+use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::pin::Pin;
 
@@ -25,12 +26,12 @@ impl qobject::KesticApp {
         self.as_mut().set_initialized(true);
         self.as_mut().apply_cached_state();
         let show_quit = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let guard = shared_state().lock_unpoisoned();
             guard.launch.show_quit_dialog_on_start
         };
         if show_quit {
             let (has_running, running_name) = {
-                let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                let guard = shared_state().lock_unpoisoned();
                 let active = guard
                     .state
                     .as_ref()
@@ -51,7 +52,7 @@ impl qobject::KesticApp {
 
     pub fn poll_events(mut self: Pin<&mut Self>) {
         let (state_dirty, progress_dirty, blocked, show_win, quit_req, maint_preview) = {
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             let sd = guard.state_dirty;
             let pd = guard.progress_dirty;
             guard.state_dirty = false;
@@ -107,7 +108,7 @@ impl qobject::KesticApp {
 
     fn handle_pending_blocked(mut self: Pin<&mut Self>, backup_id: String, reason: BlockedReason) {
         let (backup_name, unmet_text) = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let guard = shared_state().lock_unpoisoned();
             guard
                 .state
                 .as_ref()
@@ -173,7 +174,7 @@ impl qobject::KesticApp {
     /// and percentage, which change without a new state.
     fn apply_overall_texts(mut self: Pin<&mut Self>) {
         let texts = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let guard = shared_state().lock_unpoisoned();
             guard
                 .state
                 .as_ref()
@@ -188,7 +189,7 @@ impl qobject::KesticApp {
 
     pub(super) fn apply_cached_state(mut self: Pin<&mut Self>) {
         let (reachable, state_opt) = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let guard = shared_state().lock_unpoisoned();
             (guard.daemon_reachable, guard.state.clone())
         };
 
@@ -225,7 +226,7 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_restic_message(QString::from(&tr_text(&state.restic_status.status_text())));
 
-        // Blocking order (§6.1): Daemon -> SecretStore -> restic (Daemon checked above)
+        // Blocking order: Daemon -> SecretStore -> restic (Daemon checked above)
         if let Some(b) = &state.blocking {
             self.as_mut()
                 .set_blocking_kind(QString::from(b.kind.as_str()));
@@ -298,7 +299,7 @@ impl qobject::KesticApp {
             if let Ok(client) = make_client() {
                 let _ = client.unlock_secret_store();
             }
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             guard.state_dirty = true;
         });
     }

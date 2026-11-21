@@ -29,137 +29,6 @@ pub mod qobject {
         type QStringList = cxx_qt_lib::QStringList;
     }
 
-    #[qenum(BackupsModel)]
-    enum BackupRoles {
-        BackupId,
-        Name,
-        SourcePath,
-        SourceKind,
-        DestinationId,
-        DestinationName,
-        ExcludesText,
-        ExcludeCaches,
-        StatusText,
-        StatusIcon,
-        StatusColorKind,
-        LastRunSummary,
-        AvailabilityReason,
-        Available,
-        HasError,
-        IsOverdue,
-        IsRunning,
-        ActiveRunId,
-        ActivePercent,
-        ActiveProgressText,
-        ErrorSummary,
-        ErrorAction,
-        UnreadableFilesJson,
-        ScheduleSummary,
-        RetentionSummary,
-        ConditionsSummary,
-        LastRunId,
-        LastRunTimestampIso,
-        LastRunTimeMs,
-        ExcludesJson,
-        ExcludeFoldersCount,
-        ExpertRuleCount,
-        ExcludeSummary,
-        ExcludeFilePath,
-        ExcludeLintJson,
-        RetentionJson,
-        RetentionPresetName,
-        SourceKindLabel,
-        DriveLabel,
-        PendingForget,
-        NestedWarningsJson,
-        HasAttentionWarning,
-        ScheduleJson,
-        ConditionsJson,
-        NextScheduledAtText,
-        IsPaused,
-        PausedLine,
-        PendingPrimaryCode,
-        PendingPrimaryReason,
-        PendingReasonsTooltip,
-        MissedSlotsCount,
-        OverdueThreshold,
-        HasUnmetRunCondition,
-        UnmetConditionsText,
-        ActiveScanning,
-    }
-
-    #[qenum(DestinationsModel)]
-    enum DestinationRoles {
-        DestinationId,
-        Name,
-        KindName,
-        KindLabel,
-        Location,
-        Username,
-        BackupCount,
-        StatusText,
-        StatusIcon,
-        Reachable,
-        PasswordRejected,
-        HasStaleLock,
-        HasProblem,
-        DetailText,
-        PendingForgetCount,
-        MaintenanceJson,
-        PruneSummary,
-        CheckSummary,
-        NextPruneAtText,
-        NextCheckAtText,
-        LastPruneAtText,
-        LastCheckAtText,
-        MaintenanceRunning,
-        StaleLockCount,
-        MaintenanceStatusText,
-    }
-
-    #[qenum(RunsModel)]
-    enum RunRoles {
-        RunId,
-        Kind,
-        BackupId,
-        Title,
-        DestinationId,
-        DestinationName,
-        Status,
-        StatusText,
-        StatusIcon,
-        StatusColorKind,
-        StartedAtIso,
-        StartedAtMs,
-        DayGroup,
-        TimeShort,
-        DurationText,
-        ExitCode,
-        HasExitCode,
-        SummaryText,
-        DataAddedText,
-    }
-
-    #[qenum(SnapshotsModel)]
-    enum SnapshotRoles {
-        SnapshotId,
-        ShortId,
-        TimeIso,
-        TimeDisplay,
-        Hostname,
-        PathsText,
-        TagsText,
-        StatsText,
-        SectionName,
-        IsPrevious,
-    }
-
-    #[qenum(RunLogsModel)]
-    enum RunLogRoles {
-        LineText,
-        Level,
-    }
-
     extern "RustQt" {
         #[qobject]
         #[base = QAbstractListModel]
@@ -326,6 +195,15 @@ pub mod qobject {
         fn row_count(self: &BackupsModel, _parent: &QModelIndex) -> i32;
         #[qinvokable]
         fn sync(self: Pin<&mut BackupsModel>);
+        #[qinvokable]
+        #[cxx_name = "rowMap"]
+        fn row_map(self: &BackupsModel, backup_id: &QString) -> QVariant;
+        #[qinvokable]
+        #[cxx_name = "rowOf"]
+        fn row_of(self: &BackupsModel, backup_id: &QString) -> i32;
+        #[qinvokable]
+        #[cxx_name = "idAt"]
+        fn id_at(self: &BackupsModel, row: i32) -> QString;
 
         // DestinationsModel
         #[qinvokable]
@@ -341,6 +219,15 @@ pub mod qobject {
         fn row_count(self: &DestinationsModel, _parent: &QModelIndex) -> i32;
         #[qinvokable]
         fn sync(self: Pin<&mut DestinationsModel>);
+        #[qinvokable]
+        #[cxx_name = "rowMap"]
+        fn row_map(self: &DestinationsModel, destination_id: &QString) -> QVariant;
+        #[qinvokable]
+        #[cxx_name = "rowOf"]
+        fn row_of(self: &DestinationsModel, destination_id: &QString) -> i32;
+        #[qinvokable]
+        #[cxx_name = "idAt"]
+        fn id_at(self: &DestinationsModel, row: i32) -> QString;
 
         // RunsModel
         #[qinvokable]
@@ -354,6 +241,12 @@ pub mod qobject {
         #[cxx_override]
         #[cxx_name = "rowCount"]
         fn row_count(self: &RunsModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_name = "rowOf"]
+        fn row_of(self: &RunsModel, run_id: &QString) -> i32;
+        #[qinvokable]
+        #[cxx_name = "idAt"]
+        fn id_at(self: &RunsModel, row: i32) -> QString;
         #[qinvokable]
         fn sync(self: Pin<&mut RunsModel>);
         #[qinvokable]
@@ -399,6 +292,9 @@ pub mod qobject {
         fn set_filter(self: Pin<&mut RunLogsModel>, level_filter: &QString, query: &QString);
     }
 }
+
+#[macro_use]
+mod rows;
 
 mod backups_model;
 mod destinations_model;

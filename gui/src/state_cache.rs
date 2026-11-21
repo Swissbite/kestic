@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Shared D-Bus client state cache, signal listener, daemon auto-start (`M1-S21`),
-//! and localized formatting helpers for the Qt/CXX-Qt GUI (`NFR-06`).
+//! Shared D-Bus client state cache, signal listener, daemon auto-start,
+//! and localized formatting helpers for the Qt/CXX-Qt GUI.
 
 pub struct PendingI18n<'a>(pub &'a str);
 
@@ -22,13 +22,18 @@ pub fn i18n(text: &str) -> PendingI18n<'_> {
     PendingI18n(text)
 }
 
+/// `value` as JSON text for QML; `fallback` when it cannot be serialised.
+pub fn json_or<T: serde::Serialize + ?Sized>(value: &T, fallback: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| fallback.to_string())
+}
+
 /// Plural-aware translation (`i18np`): `%1` is `n`, further `%N` come from `args`.
 pub fn i18np(singular: &str, plural: &str, n: usize, args: &[&str]) -> String {
     crate::smoke::ffi::i18np_subs(singular, plural, i64::try_from(n).unwrap_or(i64::MAX), args)
 }
 
-/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
-/// GUI language with KI18n.
+/// Translates a `kestic-i18n` [`Message`] (code → msgid mapping in `kestic_i18n::messages`)
+/// in the GUI language with KI18n.
 pub fn tr(message: &Message) -> String {
     if message.args.is_empty() {
         i18n(message.msgid).to_string()
@@ -66,6 +71,7 @@ use kestic_core::model::{
     RetentionPreset, Run, RunConditions, RunKind, RunStatus, Schedule, Source, SourceKind, Weekday,
 };
 use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_slots};
+use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSnapshotsDto, BackupSummaryDto,
     ConnectionTestResultDto, DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME,
@@ -132,7 +138,6 @@ pub struct SharedGuiState {
     pub state: Option<DaemonStateDto>,
     pub active_progress: HashMap<String, ActiveRunProgressDto>,
     pub snapshots: Option<BackupSnapshotsDto>,
-    pub snapshots_error: Option<String>,
     pub run_detail: Option<RunDetailDto>,
     pub state_dirty: bool,
     pub progress_dirty: bool,
@@ -153,7 +158,6 @@ impl SharedGuiState {
             state: None,
             active_progress: HashMap::new(),
             snapshots: None,
-            snapshots_error: None,
             run_detail: None,
             state_dirty: false,
             progress_dirty: false,
@@ -198,15 +202,15 @@ fn connect_client(shared: &SharedGuiState) -> Result<KesticClient, String> {
 }
 
 pub fn make_client() -> Result<KesticClient, String> {
-    let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+    let guard = shared_state().lock_unpoisoned();
     connect_client(&guard)
 }
 
-/// Ensures the daemon is running (spawning `kestic daemon` without `--autostart` when needed, `M1-S21`)
+/// Ensures the daemon is running (spawning `kestic daemon` without `--autostart` when needed)
 /// and starts the background D-Bus signal listener.
 pub fn initialize_and_sync() {
     let launch = {
-        let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = shared_state().lock_unpoisoned();
         let start_listener = !guard.listener_started;
         guard.listener_started = true;
         (guard.launch.clone(), start_listener)
@@ -221,14 +225,14 @@ pub fn initialize_and_sync() {
 
 pub fn ensure_daemon_and_refresh() {
     let launch = {
-        let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+        let guard = shared_state().lock_unpoisoned();
         guard.launch.clone()
     };
 
     let client = match KesticClient::connect(&launch.bus_name, &launch.object_path) {
         Ok(c) => c,
         Err(err) => {
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             guard.daemon_reachable = false;
             guard.daemon_error = Some(err.to_string());
             guard.state_dirty = true;
@@ -264,7 +268,7 @@ pub fn ensure_daemon_and_refresh() {
                 }
             }
             Err(err) => {
-                let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                let mut guard = shared_state().lock_unpoisoned();
                 guard.daemon_reachable = false;
                 guard.daemon_error = Some(err.to_string());
                 guard.state_dirty = true;
@@ -274,7 +278,7 @@ pub fn ensure_daemon_and_refresh() {
     }
 
     if !owned {
-        let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = shared_state().lock_unpoisoned();
         guard.daemon_reachable = false;
         guard.daemon_error = Some(i18n("The background service did not start.").to_string());
         guard.state_dirty = true;
@@ -288,7 +292,7 @@ pub fn refresh_state_now() {
     let client = match make_client() {
         Ok(c) => c,
         Err(err) => {
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             guard.daemon_reachable = false;
             guard.daemon_error = Some(err);
             guard.state_dirty = true;
@@ -299,7 +303,7 @@ pub fn refresh_state_now() {
     match client.get_state() {
         Ok(state) => {
             let (sig_conn_opt, bus_name, object_path, should_register) = {
-                let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                let mut guard = shared_state().lock_unpoisoned();
                 let was_reachable = guard.daemon_reachable;
                 guard.daemon_reachable = true;
                 guard.daemon_error = None;
@@ -330,7 +334,7 @@ pub fn refresh_state_now() {
             }
         }
         Err(err) => {
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             guard.daemon_reachable = false;
             guard.daemon_error = Some(err.to_string());
             guard.state_dirty = true;
@@ -363,7 +367,7 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                 return;
             };
             {
-                let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                let mut guard = shared_state().lock_unpoisoned();
                 guard.signal_conn = Some(conn.clone());
             }
             register_gui_async(&conn, &bus_name, &object_path).await;
@@ -376,7 +380,7 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                 let member = header.member().map(|m| m.as_str().to_string());
                 match member.as_deref() {
                     Some("StatusChanged") | Some("RunUpdated") => {
-                        let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                        let mut guard = shared_state().lock_unpoisoned();
                         guard.state_dirty = true;
                     }
                     Some("RunProgress") => {
@@ -384,8 +388,7 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                             && let Ok(progress) =
                                 serde_json::from_str::<ActiveRunProgressDto>(&json)
                         {
-                            let mut guard =
-                                shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                            let mut guard = shared_state().lock_unpoisoned();
                             if let Some(active) = guard
                                 .state
                                 .as_mut()
@@ -405,21 +408,19 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                         if let Ok((backup_id, code)) = msg.body().deserialize::<(String, String)>()
                             && let Some(reason) = BlockedReason::parse(&code)
                         {
-                            let mut guard =
-                                shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                            let mut guard = shared_state().lock_unpoisoned();
                             guard.pending_blocked = Some((backup_id, reason));
                             guard.state_dirty = true;
                         }
                     }
                     Some("ShowWindowRequested") => {
-                        let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                        let mut guard = shared_state().lock_unpoisoned();
                         guard.pending_show_window = true;
                     }
                     Some("QuitConfirmationRequested") => {
                         if let Ok((has_running, name)) = msg.body().deserialize::<(bool, String)>()
                         {
-                            let mut guard =
-                                shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                            let mut guard = shared_state().lock_unpoisoned();
                             guard.pending_quit = Some((has_running, name));
                         }
                     }
@@ -514,7 +515,7 @@ pub fn build_destination(
 
 /// Kind of the cached destination `dest_id`, if the daemon state knows it.
 pub fn cached_destination_kind(dest_id: &str) -> Option<DestinationKind> {
-    let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+    let guard = shared_state().lock_unpoisoned();
     guard.state.as_ref().and_then(|s| {
         s.destinations
             .iter()
@@ -524,7 +525,7 @@ pub fn cached_destination_kind(dest_id: &str) -> Option<DestinationKind> {
 }
 
 /// New backup as the wizard creates it; on a local destination it has no network run
-/// conditions (decision 2026-11-20).
+/// conditions.
 pub fn build_new_backup(
     name: &str,
     source_path: &str,
@@ -616,7 +617,7 @@ pub fn clone_updated_backup_schedule(
 }
 
 /// Backup with the edited run conditions; network conditions are dropped for a local
-/// destination (decision 2026-11-20).
+/// destination.
 pub fn clone_updated_backup_conditions(
     existing: &Backup,
     run_conditions: RunConditions,
@@ -1078,7 +1079,7 @@ pub fn localized_unmet_conditions(summary: &BackupSummaryDto) -> Option<String> 
 /// Status line of a backup whose source or destination is unavailable.
 ///
 /// A manual-only backup is never due, so it never waits (glossary «wartet»): it shows the
-/// availability only, e.g. «Manual only · Destination unreachable» (decision 2026-11-19).
+/// availability only, e.g. «Manual only · Destination unreachable».
 fn unavailable_status(
     schedule: &Schedule,
     availability: &BackupAvailabilityDto,
@@ -1329,7 +1330,7 @@ pub fn daemon_now(state: &DaemonStateDto) -> OffsetDateTime {
 }
 
 pub fn cached_daemon_now() -> OffsetDateTime {
-    let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+    let guard = shared_state().lock_unpoisoned();
     guard
         .state
         .as_ref()
@@ -1374,7 +1375,7 @@ pub fn localized_condition_override_message(backup_name: &str, unmet_text: Optio
     }
 }
 
-/// Localized reason for a skipped backup of «Back Up All Now» (FR-13b).
+/// Localized reason for a skipped backup of «Back Up All Now».
 fn localized_skip_reason(skipped: &kestic_daemon::dbus_api::SkippedBackupDto) -> String {
     tr_text(
         &skipped
@@ -1403,20 +1404,15 @@ pub fn localized_start_all_summary(res: &StartAllResultDto) -> Option<String> {
             &[],
         ));
     }
-    if queued == 0 {
-        return Some(i18np(
-            "%1 backup skipped: %2",
-            "%1 backups skipped: %2",
-            skipped,
-            &[&details],
-        ));
-    }
     let skipped_text = i18np(
         "%1 backup skipped: %2",
         "%1 backups skipped: %2",
         skipped,
         &[&details],
     );
+    if queued == 0 {
+        return Some(skipped_text);
+    }
     Some(i18np(
         "%1 backup queued, %2",
         "%1 backups queued, %2",

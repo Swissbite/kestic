@@ -8,13 +8,11 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-Kirigami.ScrollablePage {
+EditorPage {
     id: page
     objectName: "backupSourceEditPage"
     title: Texts.label("source")
 
-    required property var rootWindow
-    required property var appBackend
     required property string backupId
 
     property var initialData: null
@@ -23,10 +21,8 @@ Kirigami.ScrollablePage {
     property var nestedWarnings: []
     property bool hydrating: false
 
-    readonly property bool dirty: initialData !== null && sourcePath.trim() !== initialData.sourcePath
+    dirty: initialData !== null && sourcePath.trim() !== initialData.sourcePath
     readonly property bool valid: sourcePath.trim().length > 0
-
-    onDirtyChanged: appBackend.has_unsaved_changes = dirty
 
     function refreshSourceMetadata() {
         var trimmed = sourcePath.trim();
@@ -35,27 +31,18 @@ Kirigami.ScrollablePage {
             nestedWarnings = [];
             return;
         }
-        var detRaw = appBackend.detectSource(trimmed);
-        if (detRaw !== "") {
-            try {
-                var det = JSON.parse(detRaw);
-                if (det.kind === "drive") {
-                    detectedKindLabel = det.drive_label && det.drive_label !== ""
-                        ? Texts.labelArgs("drive_with_label", [det.drive_label])
-                        : Texts.label("drive");
-                } else {
-                    detectedKindLabel = Texts.label("folder");
-                }
-            } catch (e) {
+        var det = rootWindow.detectSource(trimmed);
+        if (det) {
+            if (det.kind === "drive") {
+                detectedKindLabel = det.drive_label && det.drive_label !== ""
+                    ? Texts.labelArgs("drive_with_label", [det.drive_label])
+                    : Texts.label("drive");
+            } else {
+                detectedKindLabel = Texts.label("folder");
             }
         }
         if (initialData) {
-            var nestRaw = appBackend.checkNestedSources(backupId, trimmed, initialData.destinationId);
-            try {
-                nestedWarnings = JSON.parse(nestRaw || "[]");
-            } catch (e) {
-                nestedWarnings = [];
-            }
+            nestedWarnings = rootWindow.nestedSourceWarnings(backupId, trimmed, initialData.destinationId);
         }
     }
 
@@ -70,29 +57,6 @@ Kirigami.ScrollablePage {
         refreshSourceMetadata();
     }
 
-    onBackRequested: function(event) {
-        if (dirty) {
-            event.accepted = true;
-            unsavedDialog.open();
-        }
-    }
-
-    function handleEscape() {
-        if (confirmChangeDialog.opened || confirmChangeDialog.visible) {
-            confirmChangeDialog.close();
-            return true;
-        }
-        if (unsavedDialog.opened || unsavedDialog.visible) {
-            unsavedDialog.close();
-            return true;
-        }
-        if (dirty) {
-            unsavedDialog.open();
-            return true;
-        }
-        return false;
-    }
-
     function commitSave() {
         if (!initialData || !valid) return false;
         if (appBackend.updateBackupSource(backupId, sourcePath.trim())) {
@@ -102,6 +66,10 @@ Kirigami.ScrollablePage {
             return true;
         }
         return false;
+    }
+
+    function saveForGuard() {
+        return commitSave();
     }
 
     actions: [
@@ -118,13 +86,7 @@ Kirigami.ScrollablePage {
             objectName: "closeSourceAction"
             icon.name: "window-close"
             text: Texts.label("close")
-            onTriggered: {
-                if (page.dirty) {
-                    unsavedDialog.open();
-                } else {
-                    rootWindow.popSubPage();
-                }
-            }
+            onTriggered: page.requestClose()
         }
     ]
 
@@ -160,21 +122,17 @@ Kirigami.ScrollablePage {
         ]
     }
 
-    Kirigami.PromptDialog {
-        id: unsavedDialog
-        objectName: "unsavedSourceDialog"
-        title: Texts.label("save_changes_question")
-        subtitle: i18n("You have unsaved changes to the source folder.")
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onAccepted: confirmChangeDialog.open()
-        onDiscarded: {
-            appBackend.has_unsaved_changes = false;
-            if (page.initialData) {
-                page.sourcePath = page.initialData.sourcePath;
-                page.refreshSourceMetadata();
-            }
-            rootWindow.popSubPage();
+    unsavedObjectName: "unsavedSourceDialog"
+    unsavedSubtitle: i18n("You have unsaved changes to the source folder.")
+    extraDialogs: [confirmChangeDialog]
+
+    onUnsavedSaveRequested: confirmChangeDialog.open()
+    onUnsavedDiscardRequested: {
+        if (page.initialData) {
+            page.sourcePath = page.initialData.sourcePath;
+            page.refreshSourceMetadata();
         }
+        rootWindow.popSubPage();
     }
 
     ColumnLayout {

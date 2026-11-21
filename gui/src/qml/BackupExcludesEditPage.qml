@@ -8,14 +8,12 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-Kirigami.ScrollablePage {
+EditorPage {
     id: page
     objectName: "backupExcludesEditPage"
     title: Texts.label("exclude_rules")
     horizontalScrollBarPolicy: Qt.ScrollBarAlwaysOff
 
-    required property var rootWindow
-    required property var appBackend
     required property string backupId
 
     property var initialData: rootWindow.findBackupData(backupId)
@@ -54,12 +52,7 @@ Kirigami.ScrollablePage {
 
     function loadFromExcludesJson(jsonStr) {
         hydrating = true;
-        var obj = {};
-        try {
-            obj = JSON.parse(jsonStr || "{}");
-        } catch (e) {
-            obj = {};
-        }
+        var obj = rootWindow.parseJsonOr(jsonStr, {});
         folders = Array.isArray(obj.folders) ? obj.folders.slice() : [];
         excludesText = Array.isArray(obj.lines) ? obj.lines.join("\n") : "";
         excludeCaches = Boolean(obj.exclude_caches);
@@ -104,28 +97,22 @@ Kirigami.ScrollablePage {
     }
 
     function canonicalExcludes(jsonStr) {
-        try {
-            var obj = JSON.parse(jsonStr || "{}");
-            return JSON.stringify({
-                folders: Array.isArray(obj.folders) ? obj.folders : [],
-                lines: Array.isArray(obj.lines) ? obj.lines : [],
-                exclude_caches: Boolean(obj.exclude_caches),
-                exclude_trash: Boolean(obj.exclude_trash),
-                exclude_larger_than: obj.exclude_larger_than || null,
-                ignore_case: Boolean(obj.ignore_case),
-                exclude_if_present: Array.isArray(obj.exclude_if_present) ? obj.exclude_if_present : []
-            });
-        } catch (e) {
-            return "{}";
-        }
+        var obj = rootWindow.parseJsonOr(jsonStr, {});
+        return JSON.stringify({
+            folders: Array.isArray(obj.folders) ? obj.folders : [],
+            lines: Array.isArray(obj.lines) ? obj.lines : [],
+            exclude_caches: Boolean(obj.exclude_caches),
+            exclude_trash: Boolean(obj.exclude_trash),
+            exclude_larger_than: obj.exclude_larger_than || null,
+            ignore_case: Boolean(obj.ignore_case),
+            exclude_if_present: Array.isArray(obj.exclude_if_present) ? obj.exclude_if_present : []
+        });
     }
 
     readonly property int expertRuleCount: splitNonEmptyLines(excludesText)
         .filter(l => { var t = l.trim(); return t !== "" && !t.startsWith("#"); }).length
 
-    readonly property bool dirty: initialData !== null && canonicalExcludes(currentExcludesJson()) !== canonicalExcludes(savedExcludesJson)
-
-    onDirtyChanged: appBackend.has_unsaved_changes = dirty
+    dirty: initialData !== null && canonicalExcludes(currentExcludesJson()) !== canonicalExcludes(savedExcludesJson)
 
     Component.onCompleted: {
         if (initialData) {
@@ -137,11 +124,7 @@ Kirigami.ScrollablePage {
     function refreshLint() {
         if (hydrating) return;
         var raw = appBackend.lintExcludes(currentExcludesJson());
-        try {
-            lintWarnings = JSON.parse(raw || "[]");
-        } catch (e) {
-            lintWarnings = [];
-        }
+        lintWarnings = rootWindow.parseJsonOr(raw, []);
     }
 
     function addExcludeFolder(rawPath) {
@@ -176,49 +159,23 @@ Kirigami.ScrollablePage {
         var tp = testExcludePathField.text.trim();
         if (tp === "") return;
         var raw = appBackend.testExcludePath(backupId, currentExcludesJson(), tp);
-        if (raw === "") return;
-        try {
-            var res = JSON.parse(raw);
-            testPathIncluded = Boolean(res.included);
-            hasTestPathResult = true;
-            if (res.included) {
-                testPathResultText = i18n("Will be backed up.");
+        var res = rootWindow.parseJsonOr(raw, null);
+        if (!res) return;
+        testPathIncluded = Boolean(res.included);
+        hasTestPathResult = true;
+        if (res.included) {
+            testPathResultText = i18n("Will be backed up.");
+        } else {
+            var ruleLabel = res.matched_rule || "";
+            if (res.matched_line) {
+                testPathResultText = i18n("Excluded by line %1 (%2).", res.matched_line, ruleLabel);
             } else {
-                var ruleLabel = res.matched_rule || "";
-                if (res.matched_line) {
-                    testPathResultText = i18n("Excluded by line %1 (%2).", res.matched_line, ruleLabel);
-                } else {
-                    testPathResultText = i18n("Excluded by rule: %1", ruleLabel);
-                }
+                testPathResultText = i18n("Excluded by rule: %1", ruleLabel);
             }
-        } catch (e) {
         }
     }
 
-    onBackRequested: function(event) {
-        if (dirty) {
-            event.accepted = true;
-            unsavedDialog.open();
-        }
-    }
-
-    function handleEscape() {
-        if (enableExpertModeDialog.opened || enableExpertModeDialog.visible) {
-            enableExpertModeDialog.close();
-            return true;
-        }
-        if (unsavedDialog.opened || unsavedDialog.visible) {
-            unsavedDialog.close();
-            return true;
-        }
-        if (dirty) {
-            unsavedDialog.open();
-            return true;
-        }
-        return false;
-    }
-
-    function saveChanges() {
+    function saveForGuard() {
         if (!initialData) return false;
         saveErrorText = "";
         if (appBackend.updateBackupExcludes(backupId, currentExcludesJson())) {
@@ -249,20 +206,14 @@ Kirigami.ScrollablePage {
             icon.name: "document-save"
             text: Texts.label("save")
             enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
-            onTriggered: page.saveChanges()
+            onTriggered: page.saveForGuard()
         },
         Kirigami.Action {
             id: closeExcludesAction
             objectName: "closeExcludesAction"
             icon.name: "window-close"
             text: Texts.label("close")
-            onTriggered: {
-                if (page.dirty) {
-                    unsavedDialog.open();
-                } else {
-                    rootWindow.popSubPage();
-                }
-            }
+            onTriggered: page.requestClose()
         }
     ]
 
@@ -277,22 +228,18 @@ Kirigami.ScrollablePage {
         }
     }
 
-    Kirigami.PromptDialog {
-        id: unsavedDialog
-        objectName: "unsavedExcludesDialog"
-        title: Texts.label("save_changes_question")
-        subtitle: i18n("You have unsaved changes to exclude rules.")
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onAccepted: {
-            if (page.saveChanges()) {
-                rootWindow.popSubPage();
-            }
-        }
-        onDiscarded: {
-            appBackend.has_unsaved_changes = false;
-            page.loadFromExcludesJson(page.savedExcludesJson);
+    unsavedObjectName: "unsavedExcludesDialog"
+    unsavedSubtitle: i18n("You have unsaved changes to exclude rules.")
+    extraDialogs: [enableExpertModeDialog]
+
+    onUnsavedSaveRequested: {
+        if (page.saveForGuard()) {
             rootWindow.popSubPage();
         }
+    }
+    onUnsavedDiscardRequested: {
+        page.loadFromExcludesJson(page.savedExcludesJson);
+        rootWindow.popSubPage();
     }
 
     Kirigami.PromptDialog {
@@ -461,7 +408,7 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // Simple mode read-only notice for restic rules (AC-M2-02-2)
+        // Simple mode read-only notice for restic rules
         ColumnLayout {
             Layout.fillWidth: true
             visible: !appBackend.expert_mode
@@ -490,9 +437,8 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // Expert mode section (AC-M2-02-3, M2-S03)
+        // Expert mode section
         ColumnLayout {
-            id: expertSection
             objectName: "excludeExpertSection"
             visible: appBackend.expert_mode
             Layout.fillWidth: true
@@ -513,7 +459,7 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Kirigami.Units.gridUnit * 12
 
-                Controls.TextArea {
+                TabNavTextArea {
                     id: excludesTextArea
                     objectName: "excludesTextArea"
                     Kirigami.Theme.colorSet: Kirigami.Theme.View
@@ -535,17 +481,6 @@ Kirigami.ScrollablePage {
                         border.color: excludesTextArea.activeFocus
                             ? Kirigami.Theme.highlightColor
                             : Kirigami.ColorUtils.linearInterpolation(Kirigami.Theme.backgroundColor, Kirigami.Theme.textColor, 0.25)
-                    }
-
-                    Keys.onTabPressed: function(event) {
-                        var next = nextItemInFocusChain(true);
-                        if (next) next.forceActiveFocus(Qt.TabFocusReason);
-                        event.accepted = true;
-                    }
-                    Keys.onBacktabPressed: function(event) {
-                        var prev = nextItemInFocusChain(false);
-                        if (prev) prev.forceActiveFocus(Qt.BacktabFocusReason);
-                        event.accepted = true;
                     }
                 }
             }

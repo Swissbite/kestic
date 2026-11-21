@@ -4,13 +4,13 @@
 //! Destination CRUD, connection testing, password updates, unlocking, and snapshot loading
 //! for [`super::qobject::KesticApp`].
 
-use super::{dbus_error_text, qobject};
+use super::{Finish, dbus_error_text, qobject};
 use crate::state_cache::{
-    build_destination, daemon_unavailable_text, make_client, refresh_state_now, shared_state,
+    build_destination, daemon_unavailable_text, i18n, make_client, refresh_state_now, shared_state,
     test_destination_connection, tr_text,
 };
-use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
+use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::KesticDbusError;
 use kestic_i18n::codes::ServiceErrorCode;
 use kestic_i18n::messages::connection_test_text;
@@ -47,40 +47,31 @@ impl qobject::KesticApp {
         repo_pw: &QString,
         rest_pw: &QString,
     ) -> QString {
-        let dest = match build_destination(None, &fields_json.to_string()) {
-            Ok(d) => d,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return QString::from("");
-            }
-        };
-        let Ok(client) = make_client() else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&daemon_unavailable_text()));
+        let Some(dest) = self
+            .as_mut()
+            .ok_or_show(build_destination(None, &fields_json.to_string()))
+        else {
             return QString::from("");
         };
-        match client.add_destination(
+        let Ok(client) = make_client() else {
+            self.as_mut().show_action_error(&daemon_unavailable_text());
+            return QString::from("");
+        };
+        let result = client.add_destination(
             &dest,
             &mode.to_string(),
             &repo_pw.to_string(),
             &rest_pw.to_string(),
-        ) {
-            Ok(id) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                QString::from(&id)
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                if KesticDbusError::from(err).code() == ServiceErrorCode::SecretStoreLocked {
-                    refresh_state_now();
-                    self.as_mut().apply_cached_state();
-                }
-                QString::from("")
-            }
+        );
+        let secret_store_locked = result.as_ref().err().is_some_and(|err| {
+            KesticDbusError::from(err.clone()).code() == ServiceErrorCode::SecretStoreLocked
+        });
+        let id = self.as_mut().finish_action(result, Finish::Plain);
+        if secret_store_locked {
+            refresh_state_now();
+            self.as_mut().apply_cached_state();
         }
+        QString::from(&id.unwrap_or_default())
     }
 
     pub fn update_destination(
@@ -92,36 +83,26 @@ impl qobject::KesticApp {
         rest_pw: &QString,
         verify_connection: bool,
     ) -> bool {
-        let dest = match build_destination(Some(&id.to_string()), &fields_json.to_string()) {
-            Ok(d) => d,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return false;
-            }
+        let Some(dest) = self.as_mut().ok_or_show(build_destination(
+            Some(&id.to_string()),
+            &fields_json.to_string(),
+        )) else {
+            return false;
         };
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.update_destination(
-            &dest,
-            &mode.to_string(),
-            &repo_pw.to_string(),
-            &rest_pw.to_string(),
-            verify_connection,
-        ) {
-            Ok(()) => {
-                self.as_mut().set_has_unsaved_changes(false);
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(
+            client.update_destination(
+                &dest,
+                &mode.to_string(),
+                &repo_pw.to_string(),
+                &rest_pw.to_string(),
+                verify_connection,
+            ),
+            Finish::Saved,
+        )
+        .is_some()
     }
 
     pub fn update_destination_password(
@@ -132,71 +113,44 @@ impl qobject::KesticApp {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.update_destination_password(&dest_id.to_string(), &new_pw.to_string()) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                self.as_mut()
-                    .passive_notification(i18n("Saved password updated"));
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
+        let result = client.update_destination_password(&dest_id.to_string(), &new_pw.to_string());
+        let updated = self.as_mut().finish_action(result, Finish::Plain).is_some();
+        if updated {
+            self.as_mut()
+                .passive_notification(QString::from(&i18n("Saved password updated").to_string()));
         }
+        updated
     }
 
-    pub fn remove_destination(mut self: Pin<&mut Self>, dest_id: &QString) -> bool {
+    pub fn remove_destination(self: Pin<&mut Self>, dest_id: &QString) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.remove_destination(&dest_id.to_string()) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                self.as_mut().passive_notification(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(
+            client.remove_destination(&dest_id.to_string()),
+            Finish::NotifyOnError,
+        )
+        .is_some()
     }
 
     pub fn unlock_destination(mut self: Pin<&mut Self>, dest_id: &QString) -> i32 {
         let Ok(client) = make_client() else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&daemon_unavailable_text()));
+            self.as_mut().show_action_error(&daemon_unavailable_text());
             return -1;
         };
-        match client.unlock_destination(&dest_id.to_string()) {
-            Ok(count) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                let msg = if count == 0 {
-                    i18n("No stale locks found.").to_string()
-                } else if count == 1 {
-                    i18n("1 stale lock removed.").to_string()
-                } else {
-                    crate::state_cache::i18n("%1 stale locks removed.").subs(&[&count.to_string()])
-                };
-                self.as_mut().passive_notification(QString::from(&msg));
-                i32::try_from(count).unwrap_or(0)
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                self.as_mut().passive_notification(QString::from(&msg));
-                -1
-            }
-        }
+        let result = client.unlock_destination(&dest_id.to_string());
+        let Some(count) = self.as_mut().finish_action(result, Finish::NotifyOnError) else {
+            return -1;
+        };
+        let msg = if count == 0 {
+            i18n("No stale locks found.").to_string()
+        } else if count == 1 {
+            i18n("1 stale lock removed.").to_string()
+        } else {
+            i18n("%1 stale locks removed.").subs(&[&count.to_string()])
+        };
+        self.as_mut().passive_notification(QString::from(&msg));
+        i32::try_from(count).unwrap_or(0)
     }
 
     pub fn load_backup_snapshots(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
@@ -213,9 +167,8 @@ impl qobject::KesticApp {
                 let err_msg = dto.current_error.clone().unwrap_or_default();
                 let has_prev = !dto.previous_destinations.is_empty();
                 {
-                    let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+                    let mut guard = shared_state().lock_unpoisoned();
                     guard.snapshots = Some(dto);
-                    guard.snapshots_error = (!err_msg.is_empty()).then_some(err_msg.clone());
                 }
                 self.as_mut().set_snapshots_loading(false);
                 self.as_mut().set_snapshots_error(QString::from(&err_msg));
@@ -224,11 +177,7 @@ impl qobject::KesticApp {
                 true
             }
             Err(err) => {
-                {
-                    let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-                    guard.snapshots = None;
-                    guard.snapshots_error = Some(dbus_error_text(&err));
-                }
+                shared_state().lock_unpoisoned().snapshots = None;
                 self.as_mut().set_snapshots_loading(false);
                 self.as_mut()
                     .set_snapshots_error(QString::from(&dbus_error_text(&err)));

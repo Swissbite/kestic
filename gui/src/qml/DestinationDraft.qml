@@ -6,7 +6,6 @@ import net.daester.kestic 1.0
 
 // Fields, checks and connection test of a destination that is being added or edited.
 QtObject {
-    id: draft
 
     required property var appBackend
     property string destinationId: ""

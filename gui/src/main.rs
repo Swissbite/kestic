@@ -14,6 +14,7 @@ use cxx_kde_frameworks::ki18n::{self, KLocalizedString};
 use cxx_qt::casting::Upcast;
 use cxx_qt_lib::{QByteArray, QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, QUrl};
 use cxx_qt_lib_extras::QApplication;
+use kestic_core::sync::LockUnpoisoned;
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -168,11 +169,11 @@ fn install_daemon_ki18n() {
     let qt_lock_subs = Arc::clone(&qt_lock);
     let translator = Arc::new(kestic_daemon::i18n::CallbackSubsTranslator {
         translate_fn: move |msgid: &str| {
-            let _g = qt_lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _g = qt_lock.lock_unpoisoned();
             ki18n::i18n(msgid).to_string()
         },
         translate_subs_fn: move |msgid: &str, args: &[&str]| {
-            let _g = qt_lock_subs.lock().unwrap_or_else(|p| p.into_inner());
+            let _g = qt_lock_subs.lock_unpoisoned();
             crate::smoke::ffi::i18n_subs(msgid, args)
         },
     });

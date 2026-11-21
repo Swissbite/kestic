@@ -8,13 +8,11 @@ import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 import org.kde.kirigamiaddons.dateandtime as DateAndTime
 
-Kirigami.ScrollablePage {
+EditorPage {
     id: page
     objectName: "backupScheduleEditPage"
     title: Texts.label("schedule")
 
-    required property var rootWindow
-    required property var appBackend
     required property string backupId
 
     property var initialData: null
@@ -77,13 +75,8 @@ Kirigami.ScrollablePage {
         return new Date();
     }
 
-    readonly property var validationResult: {
-        try {
-            return JSON.parse(appBackend.validateScheduleJson(currentScheduleJson()));
-        } catch (e) {
-            return { field: "", message: "" };
-        }
-    }
+    readonly property var validationResult: rootWindow.parseJsonOr(
+        appBackend.validateScheduleJson(currentScheduleJson()), { field: "", message: "" })
     readonly property string validationField: validationResult.field || ""
     readonly property string validationError: validationResult.message || ""
     readonly property bool intervalInvalid: validationField === "interval"
@@ -124,77 +117,62 @@ Kirigami.ScrollablePage {
     }
 
     function normalizedScheduleJson(rawJson) {
-        try {
-            var obj = JSON.parse(rawJson || "{}");
-            if (obj.kind === "weekly") {
-                return JSON.stringify({
-                    kind: "specific_weekdays",
-                    weekdays: [isoWeekdayToKey(obj.weekday || 1)],
-                    hour: obj.hour !== undefined ? obj.hour : 12,
-                    minute: obj.minute !== undefined ? obj.minute : 0
-                });
-            }
-            if (obj.kind === "specific_weekdays") {
-                var days = (obj.weekdays || []).slice();
-                days.sort();
-                return JSON.stringify({
-                    kind: "specific_weekdays",
-                    weekdays: days,
-                    hour: obj.hour !== undefined ? obj.hour : 12,
-                    minute: obj.minute !== undefined ? obj.minute : 0
-                });
-            }
-            if (obj.kind === "every_n_days") {
-                return JSON.stringify({
-                    kind: "every_n_days",
-                    interval_days: obj.interval_days !== undefined ? obj.interval_days : 3,
-                    start_date: (obj.start_date || todayIsoDate()).trim(),
-                    hour: obj.hour !== undefined ? obj.hour : 12,
-                    minute: obj.minute !== undefined ? obj.minute : 0
-                });
-            }
-            if (obj.kind === "manual_only") {
-                return JSON.stringify({ kind: "manual_only" });
-            }
+        var obj = rootWindow.parseJsonOr(rawJson, {});
+        if (obj.kind === "weekly") {
             return JSON.stringify({
-                kind: "daily",
+                kind: "specific_weekdays",
+                weekdays: [isoWeekdayToKey(obj.weekday || 1)],
                 hour: obj.hour !== undefined ? obj.hour : 12,
                 minute: obj.minute !== undefined ? obj.minute : 0
             });
-        } catch (e) {
-            return "{}";
         }
+        if (obj.kind === "specific_weekdays") {
+            var days = (obj.weekdays || []).slice();
+            days.sort();
+            return JSON.stringify({
+                kind: "specific_weekdays",
+                weekdays: days,
+                hour: obj.hour !== undefined ? obj.hour : 12,
+                minute: obj.minute !== undefined ? obj.minute : 0
+            });
+        }
+        if (obj.kind === "every_n_days") {
+            return JSON.stringify({
+                kind: "every_n_days",
+                interval_days: obj.interval_days !== undefined ? obj.interval_days : 3,
+                start_date: (obj.start_date || todayIsoDate()).trim(),
+                hour: obj.hour !== undefined ? obj.hour : 12,
+                minute: obj.minute !== undefined ? obj.minute : 0
+            });
+        }
+        if (obj.kind === "manual_only") {
+            return JSON.stringify({ kind: "manual_only" });
+        }
+        return JSON.stringify({
+            kind: "daily",
+            hour: obj.hour !== undefined ? obj.hour : 12,
+            minute: obj.minute !== undefined ? obj.minute : 0
+        });
     }
 
     readonly property int effectiveOverdueThreshold: useGlobalOverdue ? 0 : customOverdueThreshold
-    readonly property bool dirty: initialData !== null && (
+    dirty: initialData !== null && (
         normalizedScheduleJson(currentScheduleJson()) !== normalizedScheduleJson(savedScheduleJson)
         || effectiveOverdueThreshold !== savedOverdueThreshold
     )
-
-    onDirtyChanged: appBackend.has_unsaved_changes = dirty
 
     function refreshPreview() {
         if (!valid || scheduleKind === "manual_only") {
             previewSlots = [];
             return;
         }
-        try {
-            var raw = appBackend.previewScheduleSlotsJson(currentScheduleJson());
-            previewSlots = JSON.parse(raw || "[]");
-        } catch (e) {
-            previewSlots = [];
-        }
+        previewSlots = rootWindow.parseJsonOr(
+            appBackend.previewScheduleSlotsJson(currentScheduleJson()), []);
     }
 
     function loadFromSaved(schedJson, thresholdVal) {
         hydrating = true;
-        var obj = {};
-        try {
-            obj = JSON.parse(schedJson || "{}");
-        } catch (e) {
-            obj = {};
-        }
+        var obj = rootWindow.parseJsonOr(schedJson, {});
         if (obj.kind === "weekly") {
             scheduleKind = "specific_weekdays";
             selectedWeekdays = [isoWeekdayToKey(obj.weekday || 1)];
@@ -259,6 +237,10 @@ Kirigami.ScrollablePage {
         return false;
     }
 
+    function saveForGuard() {
+        return commitSave(false);
+    }
+
     Component.onCompleted: {
         initialData = rootWindow.findBackupData(backupId);
         if (initialData) {
@@ -268,29 +250,6 @@ Kirigami.ScrollablePage {
         } else {
             loadFromSaved("{\"kind\":\"daily\",\"hour\":12,\"minute\":0}", 0);
         }
-    }
-
-    onBackRequested: function(event) {
-        if (dirty) {
-            event.accepted = true;
-            unsavedDialog.open();
-        }
-    }
-
-    function handleEscape() {
-        if (startDatePickerPopup.opened || startDatePickerPopup.visible) {
-            startDatePickerPopup.close();
-            return true;
-        }
-        if (unsavedDialog.opened || unsavedDialog.visible) {
-            unsavedDialog.close();
-            return true;
-        }
-        if (dirty) {
-            unsavedDialog.open();
-            return true;
-        }
-        return false;
     }
 
     actions: [
@@ -307,13 +266,7 @@ Kirigami.ScrollablePage {
             objectName: "closeScheduleAction"
             icon.name: "window-close"
             text: Texts.label("close")
-            onTriggered: {
-                if (page.dirty) {
-                    unsavedDialog.open();
-                } else {
-                    rootWindow.popSubPage();
-                }
-            }
+            onTriggered: page.requestClose()
         }
     ]
 
@@ -331,16 +284,14 @@ Kirigami.ScrollablePage {
         }
     }
 
-    UnsavedChangesDialog {
-        id: unsavedDialog
-        objectName: "unsavedScheduleDialog"
-        subtitle: i18n("You have unsaved changes to the backup schedule.")
-        onSaveRequested: page.commitSave(true)
-        onDiscardRequested: {
-            appBackend.has_unsaved_changes = false;
-            page.loadFromSaved(page.savedScheduleJson, page.savedOverdueThreshold);
-            rootWindow.popSubPage();
-        }
+    unsavedObjectName: "unsavedScheduleDialog"
+    unsavedSubtitle: i18n("You have unsaved changes to the backup schedule.")
+    extraDialogs: [startDatePickerPopup]
+
+    onUnsavedSaveRequested: page.commitSave(true)
+    onUnsavedDiscardRequested: {
+        page.loadFromSaved(page.savedScheduleJson, page.savedOverdueThreshold);
+        rootWindow.popSubPage();
     }
 
     ColumnLayout {
@@ -367,7 +318,6 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
 
             Controls.ComboBox {
-                id: frequencyCombo
                 objectName: "scheduleFrequencyCombo"
                 Kirigami.FormData.label: Texts.label("frequency_label")
                 model: page.frequencyOptions
@@ -397,7 +347,6 @@ Kirigami.ScrollablePage {
                 spacing: Kirigami.Units.smallSpacing
 
                 Rectangle {
-                    id: weekdaysFrame
                     objectName: "scheduleWeekdaysFrame"
                     color: "transparent"
                     radius: Kirigami.Units.cornerRadius
@@ -487,7 +436,6 @@ Kirigami.ScrollablePage {
                 spacing: Kirigami.Units.smallSpacing
 
                 Controls.Button {
-                    id: startDatePickerButton
                     objectName: "scheduleStartDatePickerButton"
                     icon.name: "view-calendar"
                     text: page.startDate !== "" ? page.startDate : i18n("Choose date…")
@@ -608,7 +556,6 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.InlineMessage {
-            id: manualOnlyInfoBanner
             objectName: "scheduleManualOnlyHint"
             Layout.fillWidth: true
             type: Kirigami.MessageType.Information

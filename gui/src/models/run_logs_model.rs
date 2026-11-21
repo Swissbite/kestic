@@ -3,17 +3,17 @@
 
 //! CXX-Qt `RunLogsModel` implementation (`QAbstractListModel` for redacted run logs).
 
-use super::{SyncPlan, plan_model_sync, qobject};
+use super::qobject;
 use crate::state_cache::shared_state;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use kestic_core::sync::LockUnpoisoned;
 use std::pin::Pin;
 
-#[derive(Clone, Default, PartialEq)]
-struct LogRow {
-    line_text: String,
-    level: String,
-}
+model_row!(LogRow {
+    line_text: String => "lineText",
+    level: String => "level",
+});
 
 #[derive(Default)]
 pub struct RunLogsModelRust {
@@ -24,7 +24,7 @@ pub struct RunLogsModelRust {
 
 impl RunLogsModelRust {
     fn compute_rows(&self) -> Vec<LogRow> {
-        let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+        let guard = shared_state().lock_unpoisoned();
         let Some(detail) = &guard.run_detail else {
             return Vec::new();
         };
@@ -56,30 +56,17 @@ impl RunLogsModelRust {
     }
 }
 
-impl qobject::RunLogsModel {
-    pub fn sync(mut self: Pin<&mut Self>) {
-        let new_rows = self.as_ref().compute_rows();
-        match plan_model_sync(&self.rows, new_rows, |a, b| a == b) {
-            SyncPlan::NoChange => {}
-            SyncPlan::InPlace {
-                first,
-                last,
-                new_rows,
-            } => {
-                self.as_mut().rust_mut().rows = new_rows;
-                let parent = QModelIndex::default();
-                let top = self.as_ref().index_logs(first, 0, &parent);
-                let bottom = self.as_ref().index_logs(last, 0, &parent);
-                self.as_mut().data_changed_logs(&top, &bottom);
-            }
-            SyncPlan::Reset(new_rows) => {
-                self.as_mut().begin_reset_logs();
-                self.as_mut().rust_mut().rows = new_rows;
-                self.as_mut().end_reset_logs();
-            }
-        }
-    }
+list_model!(
+    RunLogsModel,
+    LogRow,
+    same: |a, b| a == b,
+    begin_reset: begin_reset_logs,
+    end_reset: end_reset_logs,
+    index: index_logs,
+    changed: data_changed_logs,
+);
 
+impl qobject::RunLogsModel {
     pub fn set_filter(mut self: Pin<&mut Self>, level_filter: &QString, query: &QString) {
         {
             let mut rust = self.as_mut().rust_mut();
@@ -87,33 +74,5 @@ impl qobject::RunLogsModel {
             rust.query = query.to_string();
         }
         self.sync();
-    }
-
-    pub fn row_count(&self, _parent: &QModelIndex) -> i32 {
-        self.rows.len() as i32
-    }
-
-    pub fn role_names(&self) -> QHash<QHashPair_i32_QByteArray> {
-        let mut roles = QHash::<QHashPair_i32_QByteArray>::default();
-        roles.insert(
-            qobject::RunLogRoles::LineText.repr,
-            QByteArray::from("lineText"),
-        );
-        roles.insert(qobject::RunLogRoles::Level.repr, QByteArray::from("level"));
-        roles
-    }
-
-    pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
-        let Some(row) = usize::try_from(index.row())
-            .ok()
-            .and_then(|i| self.rows.get(i))
-        else {
-            return QVariant::default();
-        };
-        match (qobject::RunLogRoles { repr: role }) {
-            qobject::RunLogRoles::LineText => QVariant::from(&QString::from(&row.line_text)),
-            qobject::RunLogRoles::Level => QVariant::from(&QString::from(&row.level)),
-            _ => QVariant::default(),
-        }
     }
 }

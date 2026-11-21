@@ -76,11 +76,6 @@ QtObject {
         else savedFocusDepth3 = item;
     }
 
-    function saveFocusForCurrentDepth(item) {
-        if (!pageStack) return;
-        saveFocusForDepth(pageStack.depth, item);
-    }
-
     function takeSavedFocusForDepth(depth) {
         var it = null;
         if (depth === 1) { it = savedFocusDepth1; savedFocusDepth1 = null; }
@@ -143,8 +138,16 @@ QtObject {
         if (pageStack.depth <= 0) return;
         var listPage = pageStack.get(0);
         if (!listPage) return;
-        if (typeof listPage.focusSelectedRow === "function") {
-            if (listPage.focusSelectedRow()) return;
+        var list = listPage.primaryList;
+        if (list) {
+            for (var i = 0; i < list.count; ++i) {
+                var item = list.itemAtIndex(i);
+                if (item && item.highlighted) {
+                    list.currentIndex = i;
+                    focusItemInPageStack(item);
+                    return;
+                }
+            }
         }
         focusPageContent(listPage);
     }
@@ -379,10 +382,6 @@ QtObject {
         pageStack.currentIndex = pageStack.depth - 1;
         updatePageStackViewportAndFocusability();
         focusPageContent(pageObj);
-    }
-
-    function pushSubPage(pageObj) {
-        pushSubPageAtDepth(pageObj, pageStack.depth);
     }
 
     function popSubPage() {

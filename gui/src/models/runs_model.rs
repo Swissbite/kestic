@@ -3,38 +3,29 @@
 
 //! CXX-Qt `RunsModel` implementation (`QAbstractListModel` for recent backup/maintenance runs).
 
-use super::{SyncPlan, plan_model_sync, qobject};
+use super::qobject;
+use super::rows::{id_at, row_of};
 use crate::state_cache::{
-    daemon_now, format_bytes, format_day_group, format_duration_ms, format_run_kind_name,
-    format_run_status, format_time_short, shared_state,
+    daemon_now, format_day_group, format_duration_ms, format_run_kind_name, format_run_status,
+    format_time_short, shared_state,
 };
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
-use kestic_core::model::{RunKind, RunStatus};
+use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use kestic_core::model::RunStatus;
+use kestic_core::sync::LockUnpoisoned;
 use std::pin::Pin;
 
-#[derive(Clone, Default, PartialEq)]
-struct RunRow {
-    run_id: String,
-    kind: String,
-    backup_id: String,
-    title: String,
-    destination_id: String,
-    destination_name: String,
-    status: String,
-    status_text: String,
-    status_icon: String,
-    status_color_kind: String,
-    started_at_iso: String,
-    started_at_ms: f64,
-    day_group: String,
-    time_short: String,
-    duration_text: String,
-    exit_code: i32,
-    has_exit_code: bool,
-    summary_text: String,
-    data_added_text: String,
-}
+model_row!(RunRow {
+    run_id: String => "runId",
+    title: String => "title",
+    status_text: String => "statusText",
+    status_icon: String => "statusIcon",
+    status_color_kind: String => "statusColorKind",
+    day_group: String => "dayGroup",
+    time_short: String => "timeShort",
+    duration_text: String => "durationText",
+    summary_text: String => "summaryText",
+});
 
 #[derive(Default)]
 pub struct RunsModelRust {
@@ -46,7 +37,7 @@ pub struct RunsModelRust {
 
 impl RunsModelRust {
     fn compute_rows(&self) -> Vec<RunRow> {
-        let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+        let guard = shared_state().lock_unpoisoned();
         let Some(state) = &guard.state else {
             return Vec::new();
         };
@@ -100,89 +91,48 @@ impl RunsModelRust {
                 continue;
             }
 
-            let kind = match run.kind {
-                RunKind::Backup { .. } => "backup",
-                RunKind::Maintenance => "maintenance",
-                RunKind::Restore { .. } => "restore",
-                RunKind::Meta => "meta",
-            }
-            .to_string();
-            let status = match run.status {
-                RunStatus::Pending => "pending",
-                RunStatus::Running => "running",
-                RunStatus::Ok => "ok",
-                RunStatus::Warning => "warning",
-                RunStatus::Error => "error",
-                RunStatus::Cancelled => "cancelled",
-                RunStatus::Interrupted => "interrupted",
-            }
-            .to_string();
-
             let (status_text, status_icon, status_color_kind) =
                 format_run_status(&run.kind, run.status);
             let duration_text = run
                 .duration_ms
                 .map(format_duration_ms)
                 .unwrap_or_else(|| status_text.clone());
-            let data_added_text = run
-                .stats
-                .as_ref()
-                .map(|s| format_bytes(s.data_added))
-                .unwrap_or_else(|| String::from("0 B"));
-
             out.push(RunRow {
                 run_id: run.id.as_str().to_string(),
-                kind,
-                backup_id: backup_id_str,
                 title,
-                destination_id: run.destination_id.as_str().to_string(),
-                destination_name: dest_name.to_string(),
-                status,
                 status_text,
                 status_icon: status_icon.to_string(),
                 status_color_kind: status_color_kind.to_string(),
-                started_at_iso: run
-                    .started_at
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default(),
-                started_at_ms: (run.started_at.unix_timestamp() as f64) * 1000.0,
                 day_group: format_day_group(run.started_at, now),
                 time_short: format_time_short(run.started_at),
                 duration_text,
-                exit_code: run.exit_code.unwrap_or(0),
-                has_exit_code: run.exit_code.is_some(),
                 summary_text,
-                data_added_text,
             });
         }
         out
     }
 }
 
+list_model!(
+    RunsModel,
+    RunRow,
+    same: |a, b| a.run_id == b.run_id && a.day_group == b.day_group,
+    begin_reset: begin_reset_runs,
+    end_reset: end_reset_runs,
+    index: index_runs,
+    changed: data_changed_runs,
+);
+
 impl qobject::RunsModel {
-    pub fn sync(mut self: Pin<&mut Self>) {
-        let new_rows = self.as_ref().compute_rows();
-        match plan_model_sync(&self.rows, new_rows, |a, b| {
-            a.run_id == b.run_id && a.day_group == b.day_group
-        }) {
-            SyncPlan::NoChange => {}
-            SyncPlan::InPlace {
-                first,
-                last,
-                new_rows,
-            } => {
-                self.as_mut().rust_mut().rows = new_rows;
-                let parent = QModelIndex::default();
-                let top = self.as_ref().index_runs(first, 0, &parent);
-                let bottom = self.as_ref().index_runs(last, 0, &parent);
-                self.as_mut().data_changed_runs(&top, &bottom);
-            }
-            SyncPlan::Reset(new_rows) => {
-                self.as_mut().begin_reset_runs();
-                self.as_mut().rust_mut().rows = new_rows;
-                self.as_mut().end_reset_runs();
-            }
-        }
+    /// Row of the run `run_id`, or -1 if unknown.
+    pub fn row_of(&self, run_id: &QString) -> i32 {
+        let run_id = run_id.to_string();
+        row_of(&self.rows, |row| row.run_id == run_id)
+    }
+
+    /// Id of the run in `row`, empty if there is no such row.
+    pub fn id_at(&self, row: i32) -> QString {
+        id_at(&self.rows, row, |row| &row.run_id)
     }
 
     pub fn set_filter(
@@ -198,74 +148,5 @@ impl qobject::RunsModel {
             rust.query = query.to_string();
         }
         self.sync();
-    }
-
-    pub fn row_count(&self, _parent: &QModelIndex) -> i32 {
-        self.rows.len() as i32
-    }
-
-    pub fn role_names(&self) -> QHash<QHashPair_i32_QByteArray> {
-        let mut roles = QHash::<QHashPair_i32_QByteArray>::default();
-        for (role, name) in [
-            (qobject::RunRoles::RunId, "runId"),
-            (qobject::RunRoles::Kind, "kind"),
-            (qobject::RunRoles::BackupId, "backupId"),
-            (qobject::RunRoles::Title, "title"),
-            (qobject::RunRoles::DestinationId, "destinationId"),
-            (qobject::RunRoles::DestinationName, "destinationName"),
-            (qobject::RunRoles::Status, "status"),
-            (qobject::RunRoles::StatusText, "statusText"),
-            (qobject::RunRoles::StatusIcon, "statusIcon"),
-            (qobject::RunRoles::StatusColorKind, "statusColorKind"),
-            (qobject::RunRoles::StartedAtIso, "startedAtIso"),
-            (qobject::RunRoles::StartedAtMs, "startedAtMs"),
-            (qobject::RunRoles::DayGroup, "dayGroup"),
-            (qobject::RunRoles::TimeShort, "timeShort"),
-            (qobject::RunRoles::DurationText, "durationText"),
-            (qobject::RunRoles::ExitCode, "exitCode"),
-            (qobject::RunRoles::HasExitCode, "hasExitCode"),
-            (qobject::RunRoles::SummaryText, "summaryText"),
-            (qobject::RunRoles::DataAddedText, "dataAddedText"),
-        ] {
-            roles.insert(role.repr, QByteArray::from(name));
-        }
-        roles
-    }
-
-    pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
-        let Some(row) = usize::try_from(index.row())
-            .ok()
-            .and_then(|i| self.rows.get(i))
-        else {
-            return QVariant::default();
-        };
-        match (qobject::RunRoles { repr: role }) {
-            qobject::RunRoles::RunId => QVariant::from(&QString::from(&row.run_id)),
-            qobject::RunRoles::Kind => QVariant::from(&QString::from(&row.kind)),
-            qobject::RunRoles::BackupId => QVariant::from(&QString::from(&row.backup_id)),
-            qobject::RunRoles::Title => QVariant::from(&QString::from(&row.title)),
-            qobject::RunRoles::DestinationId => QVariant::from(&QString::from(&row.destination_id)),
-            qobject::RunRoles::DestinationName => {
-                QVariant::from(&QString::from(&row.destination_name))
-            }
-            qobject::RunRoles::Status => QVariant::from(&QString::from(&row.status)),
-            qobject::RunRoles::StatusText => QVariant::from(&QString::from(&row.status_text)),
-            qobject::RunRoles::StatusIcon => QVariant::from(&QString::from(&row.status_icon)),
-            qobject::RunRoles::StatusColorKind => {
-                QVariant::from(&QString::from(&row.status_color_kind))
-            }
-            qobject::RunRoles::StartedAtIso => QVariant::from(&QString::from(&row.started_at_iso)),
-            qobject::RunRoles::StartedAtMs => QVariant::from(&row.started_at_ms),
-            qobject::RunRoles::DayGroup => QVariant::from(&QString::from(&row.day_group)),
-            qobject::RunRoles::TimeShort => QVariant::from(&QString::from(&row.time_short)),
-            qobject::RunRoles::DurationText => QVariant::from(&QString::from(&row.duration_text)),
-            qobject::RunRoles::ExitCode => QVariant::from(&row.exit_code),
-            qobject::RunRoles::HasExitCode => QVariant::from(&row.has_exit_code),
-            qobject::RunRoles::SummaryText => QVariant::from(&QString::from(&row.summary_text)),
-            qobject::RunRoles::DataAddedText => {
-                QVariant::from(&QString::from(&row.data_added_text))
-            }
-            _ => QVariant::default(),
-        }
     }
 }

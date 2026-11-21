@@ -17,7 +17,7 @@ Kirigami.ApplicationWindow {
     minimumHeight: Math.round(Kirigami.Units.gridUnit * 24)
     visible: true
 
-    // Exactly 4 primary tabs in M1 (Overview, Backups, Destinations, History; Restore enters in M4)
+    // Primary tabs: Overview, Backups, Destinations, History
     property int activeTab: 0
     onActiveTabChanged: syncNavChecked()
     readonly property bool narrowMode: width < Kirigami.Units.gridUnit * 35
@@ -65,12 +65,15 @@ Kirigami.ApplicationWindow {
         runLogsModel.sync();
     }
 
+    // All roles of the backup row by role name, or null if there is no such row.
     function findBackupData(backupId) {
-        return modelLookup.findBackupData(backupId);
+        var row = backupsModelRef.rowMap(backupId);
+        return row ? row : null;
     }
 
     function findDestinationData(destId) {
-        return modelLookup.findDestinationData(destId);
+        var row = destinationsModelRef.rowMap(destId);
+        return row ? row : null;
     }
 
     property alias pendingRestoreFocusItem: focusManager.pendingRestoreFocusItem
@@ -81,7 +84,6 @@ Kirigami.ApplicationWindow {
 
     function clearSavedFocus() { focusManager.clearSavedFocus(); }
     function saveFocusForDepth(depth, item) { focusManager.saveFocusForDepth(depth, item); }
-    function saveFocusForCurrentDepth(item) { focusManager.saveFocusForCurrentDepth(item); }
     function isItemInsidePage(item, pageObjectName) { return focusManager.isItemInsidePage(item, pageObjectName); }
     function updatePageStackViewportAndFocusability() { focusManager.updatePageStackViewportAndFocusability(); }
     function canNavigateBackInBreadcrumb(rev) { return focusManager.canNavigateBackInBreadcrumb(rev); }
@@ -93,9 +95,39 @@ Kirigami.ApplicationWindow {
     function focusItemInPageStack(targetItem) { return focusManager.focusItemInPageStack(targetItem); }
     function focusPageContent(pageItem) { focusManager.focusPageContent(pageItem); }
     function pushSubPageAtDepth(pageObj, targetDepth) { focusManager.pushSubPageAtDepth(pageObj, targetDepth); }
-    function pushSubPage(pageObj) { focusManager.pushSubPage(pageObj); }
     function popSubPage() { focusManager.popSubPage(); }
     function replaceRootPage(pageObj) { focusManager.replaceRootPage(pageObj); }
+
+    // `JSON.parse(raw)`, or `fallback` for an empty or malformed text.
+    function parseJsonOr(raw, fallback) {
+        if (!raw) return fallback;
+        try {
+            return JSON.parse(raw);
+        } catch (e) {
+            return fallback;
+        }
+    }
+
+    // The detected source of `path` (`kind`, `drive_label`), or null if it is unknown.
+    function detectSource(path) {
+        return parseJsonOr(appBackend.detectSource(path), null);
+    }
+
+    // Warnings about backups whose sources nest with `path` for `destinationId`.
+    function nestedSourceWarnings(candidateId, path, destinationId) {
+        return parseJsonOr(appBackend.checkNestedSources(candidateId, path, destinationId), []);
+    }
+
+    // Colour of a status icon for a colour kind; `theme` is the `Kirigami.Theme` of the page.
+    function iconColorFor(kind, theme) {
+        switch (kind) {
+        case "positive": return theme.positiveTextColor;
+        case "highlight": return theme.highlightColor;
+        case "neutral": return theme.neutralTextColor;
+        case "negative": return theme.negativeTextColor;
+        default: return theme.textColor;
+        }
+    }
 
     function syncNavChecked() {
         for (var i = 0; i < navActions.length; ++i) {
@@ -112,30 +144,10 @@ Kirigami.ApplicationWindow {
     function saveActiveDirtyPage() {
         var cur = pageStack.depth > 0 ? pageStack.get(pageStack.depth - 1) : null;
         if (!cur) return true;
-        if (typeof cur.requestSave === "function") {
-            if (cur.pruneDirty === true) {
-                cur.requestSave(false);
-                return false;
-            }
-            return typeof cur.commitSave === "function" ? cur.commitSave(false) : false;
-        }
-        if (typeof cur.triggerSave === "function") {
-            cur.triggerSave(false);
-            return !appBackend.has_unsaved_changes && cur.dirty !== true;
-        }
-        if (typeof cur.saveChanges === "function") {
-            return cur.saveChanges();
-        }
-        if (typeof cur.commitSave === "function") {
-            if (cur.objectName === "backupSourceEditPage") {
-                return cur.commitSave();
-            }
-            return cur.commitSave(false);
-        }
-        return false;
+        return typeof cur.saveForGuard === "function" && cur.saveForGuard();
     }
 
-    // AC-M3-14-9: every navigation that would leave a dirty editor goes through this guard.
+    // every navigation that would leave a dirty editor goes through this guard.
     function guardDirtyNavigation(action, cancel) {
         if (navGuardBypass || !isActivePageDirty()) return false;
         pendingNavAction = action;
@@ -185,9 +197,7 @@ Kirigami.ApplicationWindow {
             primaryPage = overviewPageComponent.createObject(pageStack, {});
             replaceRootPage(primaryPage);
         } else if (idx === 1) {
-            var firstId = backupsModel.rowCount(backupsModel.index(-1, -1)) > 0
-                ? (backupsModel.data(backupsModel.index(0, 0), 0) || "")
-                : "";
+            var firstId = backupsModel.idAt(0);
             primaryPage = backupsPageComponent.createObject(pageStack, { selectedBackupId: firstId });
             replaceRootPage(primaryPage);
             if (!narrowMode && firstId !== "") {
@@ -195,9 +205,7 @@ Kirigami.ApplicationWindow {
                 pageStack.currentIndex = 0;
             }
         } else if (idx === 2) {
-            var firstDest = destinationsModel.rowCount(destinationsModel.index(-1, -1)) > 0
-                ? (destinationsModel.data(destinationsModel.index(0, 0), 0) || "")
-                : "";
+            var firstDest = destinationsModel.idAt(0);
             primaryPage = destinationsPageComponent.createObject(pageStack, { selectedDestinationId: firstDest });
             replaceRootPage(primaryPage);
             if (!narrowMode && firstDest !== "") {
@@ -206,9 +214,7 @@ Kirigami.ApplicationWindow {
             }
         } else if (idx === 3) {
             runsModel.setFilter("", false, "");
-            var firstRun = runsModel.rowCount(runsModel.index(-1, -1)) > 0
-                ? (runsModel.data(runsModel.index(0, 0), 0) || "")
-                : "";
+            var firstRun = runsModel.idAt(0);
             primaryPage = historyPageComponent.createObject(pageStack, { selectedRunId: firstRun });
             replaceRootPage(primaryPage);
             if (!narrowMode && firstRun !== "") {
@@ -254,10 +260,16 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // Closes `dlg` if it is open; true if it was.
+    function closeIfOpen(dlg) {
+        if (!dlg.opened && !dlg.visible) return false;
+        dlg.close();
+        return true;
+    }
+
     function handleGlobalEscape() {
         var it = root.activeFocusItem;
-        if (it && it.hasOwnProperty("popup") && it.popup && (it.popup.opened || it.popup.visible)) {
-            it.popup.close();
+        if (it && it.hasOwnProperty("popup") && it.popup && closeIfOpen(it.popup)) {
             return true;
         }
         if (unsavedTabSwitchDialog.opened || unsavedTabSwitchDialog.visible) {
@@ -269,33 +281,10 @@ Kirigami.ApplicationWindow {
             hamburgerMenu.close();
             return true;
         }
-        if (quitConfirmDialog.opened || quitConfirmDialog.visible) {
-            quitConfirmDialog.close();
-            return true;
-        }
-        if (removeDestinationDialog.opened || removeDestinationDialog.visible) {
-            removeDestinationDialog.close();
-            return true;
-        }
-        if (removeBackupDialog.opened || removeBackupDialog.visible) {
-            removeBackupDialog.close();
-            return true;
-        }
-        if (renameBackupDialog.opened || renameBackupDialog.visible) {
-            renameBackupDialog.close();
-            return true;
-        }
-        if (updatePasswordDialog.opened || updatePasswordDialog.visible) {
-            updatePasswordDialog.close();
-            return true;
-        }
-        if (showCommandDialog.opened || showCommandDialog.visible) {
-            showCommandDialog.close();
-            return true;
-        }
-        if (conditionOverrideDialog.opened || conditionOverrideDialog.visible) {
-            conditionOverrideDialog.close();
-            return true;
+        for (const dlg of [quitConfirmDialog, removeDestinationDialog, removeBackupDialog,
+                           renameBackupDialog, updatePasswordDialog, showCommandDialog,
+                           conditionOverrideDialog]) {
+            if (closeIfOpen(dlg)) return true;
         }
         if (root.inWizardLayer) {
             var wiz = wizardPageStack.currentItem;
@@ -589,10 +578,6 @@ Kirigami.ApplicationWindow {
         height = Math.round(Kirigami.Units.gridUnit * 24);
     }
 
-    function triggerBlockingSmokeSetup() {
-        switchTab(0);
-    }
-
     KesticApp {
         id: appBackend
         objectName: "appBackend"
@@ -625,12 +610,6 @@ Kirigami.ApplicationWindow {
     RunsModel { id: runsModel; objectName: "runsModel" }
     SnapshotsModel { id: snapshotsModel; objectName: "snapshotsModel" }
     RunLogsModel { id: runLogsModel; objectName: "runLogsModel" }
-
-    ModelLookupHelper {
-        id: modelLookup
-        backupsModel: root.backupsModelRef
-        destinationsModel: root.destinationsModelRef
-    }
 
     PageFocusManager {
         id: focusManager
@@ -681,7 +660,7 @@ Kirigami.ApplicationWindow {
         return false;
     }
 
-    // Static Hamburger Menu (§4.1): no New Backup…, no Add Destination…, no Quit Kestic…
+    // Static Hamburger Menu: no New Backup…, no Add Destination…, no Quit Kestic…
     globalDrawer: Kirigami.GlobalDrawer {
         id: hamburgerMenu
         objectName: "hamburgerMenu"
@@ -827,7 +806,7 @@ Kirigami.ApplicationWindow {
         appBackend.windowActive(true, "overview");
     }
 
-    // Dialogs (§8.4, §9.4, §9.5, FR-34)
+    // Dialogs
     ShowCommandDialog {
         id: showCommandDialog
         rootWindow: root

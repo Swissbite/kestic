@@ -20,30 +20,11 @@ Kirigami.ScrollablePage {
     property string selectedBackupId: ""
     property string selectedRunId: ""
 
-    function focusSelectedRow() {
-        for (var i = 0; i < runsListView.count; ++i) {
-            var item = runsListView.itemAtIndex(i);
-            if (item && item.highlighted) {
-                runsListView.currentIndex = i;
-                rootWindow.focusItemInPageStack(item);
-                return true;
-            }
-        }
-        return false;
-    }
+    // The list whose selected row gets the focus when the page is shown again.
+    readonly property var primaryList: runsListView
 
     function applyFilter() {
         runsModel.setFilter(selectedBackupId, issuesChip.checked, historySearchField.text);
-    }
-
-    function iconColorFor(kind) {
-        switch (kind) {
-        case "positive": return Kirigami.Theme.positiveTextColor;
-        case "highlight": return Kirigami.Theme.highlightColor;
-        case "neutral": return Kirigami.Theme.neutralTextColor;
-        case "negative": return Kirigami.Theme.negativeTextColor;
-        default: return Kirigami.Theme.textColor;
-        }
     }
 
     function buildBackupFilterOptions() {
@@ -108,14 +89,10 @@ Kirigami.ScrollablePage {
                     issuesChip.forceActiveFocus(Qt.TabFocusReason);
                 }
 
-                Rectangle {
-                    anchors.fill: parent
-                    z: 10
-                    color: "transparent"
+                FocusRing {
+                    target: issuesChip
                     radius: Math.round(issuesChip.height / 2)
-                    border.width: (issuesChip.activeFocus || issuesChip.visualFocus) ? 2 : 0
-                    border.color: issuesChip.checked ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                    visible: border.width > 0
+                    ringColor: issuesChip.checked ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                 }
             }
 
@@ -139,14 +116,7 @@ Kirigami.ScrollablePage {
 
         onActiveFocusChanged: {
             if (activeFocus && count > 0 && currentIndex < 0) {
-                var targetIdx = 0;
-                for (var i = 0; i < count; ++i) {
-                    if (runsModel.data(runsModel.index(i, 0), 0) === page.selectedRunId) {
-                        targetIdx = i;
-                        break;
-                    }
-                }
-                currentIndex = targetIdx;
+                currentIndex = Math.max(0, runsModel.rowOf(page.selectedRunId));
             }
         }
 
@@ -172,7 +142,6 @@ Kirigami.ScrollablePage {
             required property int index
             required property string runId
             required property string title
-            required property string destinationName
             required property string statusText
             required property string statusIcon
             required property string statusColorKind
@@ -194,16 +163,11 @@ Kirigami.ScrollablePage {
                 rootWindow.openRunDetailById(runId);
             }
 
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: runRow.highlighted ? 2 : 0
-                z: 10
+            FocusRing {
                 // Focus ring only: a white wash over the row made the selected text unreadable.
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (runRow.activeFocus || runRow.visualFocus) ? 2 : 0
-                border.color: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                visible: border.width > 0
+                target: runRow
+                anchors.margins: runRow.highlighted ? 2 : 0
+                ringColor: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {
@@ -211,7 +175,7 @@ Kirigami.ScrollablePage {
 
                 Kirigami.Icon {
                     source: runRow.statusIcon
-                    color: page.iconColorFor(runRow.statusColorKind)
+                    color: rootWindow.iconColorFor(runRow.statusColorKind, page.Kirigami.Theme)
                     Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
                     Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                 }

@@ -102,7 +102,6 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.InlineMessage {
-            id: pendingForgetBanner
             objectName: "destPendingForgetBanner"
             Layout.fillWidth: true
             type: Kirigami.MessageType.Warning
@@ -211,44 +210,15 @@ Kirigami.ScrollablePage {
             }
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: editMaintenanceRow
             objectName: "editMaintenanceRow"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("Edit maintenance schedule")
+            accessibleName: i18n("Edit maintenance schedule")
+            iconSource: "tools-wizard"
+            labelText: i18n("Edit maintenance schedule…")
             onClicked: {
                 rootWindow.nextTriggerItem = editMaintenanceRow;
                 rootWindow.openDestinationMaintenancePage(destinationId);
-            }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (editMaintenanceRow.activeFocus || editMaintenanceRow.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: "tools-wizard"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: i18n("Edit maintenance schedule…")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
             }
         }
 

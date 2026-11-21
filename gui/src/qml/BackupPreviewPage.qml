@@ -83,6 +83,39 @@ Kirigami.ScrollablePage {
         }
     }
 
+    // Handles one answer `raw` of a poll: stops `timer` once the preview is no longer running
+    // and passes the new state, result and error text (null: unchanged) to `apply`.
+    function handlePollAnswer(timer, raw, backendError, apply) {
+        if (raw === "") {
+            timer.stop();
+            apply("error", null, backendError || i18n("Preview failed."));
+            return;
+        }
+        var dto = rootWindow.parseJsonOr(raw, null);
+        if (!dto) {
+            timer.stop();
+            apply("error", null, i18n("The preview result could not be read."));
+            return;
+        }
+        if (dto.state !== "running") {
+            timer.stop();
+        }
+        apply(dto.state || "error", dto.result || null,
+              dto.state === "error" ? (backendError || i18n("Preview failed.")) : null);
+    }
+
+    function applyDryRunAnswer(state, result, error) {
+        dryRunState = state;
+        if (result) dryRunResult = result;
+        if (error !== null) dryRunError = error;
+    }
+
+    function applyRetentionAnswer(state, result, error) {
+        retentionPreviewState = state;
+        if (result) retentionPreviewData = result;
+        if (error !== null) retentionPreviewError = error;
+    }
+
     Timer {
         id: pollTimer
         interval: 150
@@ -92,30 +125,8 @@ Kirigami.ScrollablePage {
                 stop();
                 return;
             }
-            var raw = appBackend.pollBackupDryRun(page.previewId);
-            if (raw === "") {
-                stop();
-                page.dryRunState = "error";
-                page.dryRunError = appBackend.dry_run_error || i18n("Preview failed.");
-                return;
-            }
-            try {
-                var dto = JSON.parse(raw);
-                page.dryRunState = dto.state || "error";
-                if (dto.state !== "running") {
-                    stop();
-                }
-                if (dto.result) {
-                    page.dryRunResult = dto.result;
-                }
-                if (dto.state === "error") {
-                    page.dryRunError = appBackend.dry_run_error || i18n("Preview failed.");
-                }
-            } catch (e) {
-                stop();
-                page.dryRunState = "error";
-                page.dryRunError = i18n("The preview result could not be read.");
-            }
+            page.handlePollAnswer(pollTimer, appBackend.pollBackupDryRun(page.previewId),
+                                  appBackend.dry_run_error, page.applyDryRunAnswer);
         }
     }
 
@@ -128,30 +139,8 @@ Kirigami.ScrollablePage {
                 stop();
                 return;
             }
-            var raw = appBackend.pollRetentionPreview(page.retentionPreviewId);
-            if (raw === "") {
-                stop();
-                page.retentionPreviewState = "error";
-                page.retentionPreviewError = appBackend.retention_preview_error || i18n("Preview failed.");
-                return;
-            }
-            try {
-                var dto = JSON.parse(raw);
-                page.retentionPreviewState = dto.state || "error";
-                if (dto.state !== "running") {
-                    stop();
-                }
-                if (dto.result) {
-                    page.retentionPreviewData = dto.result;
-                }
-                if (dto.state === "error") {
-                    page.retentionPreviewError = appBackend.retention_preview_error || i18n("Preview failed.");
-                }
-            } catch (e) {
-                stop();
-                page.retentionPreviewState = "error";
-                page.retentionPreviewError = i18n("The preview result could not be read.");
-            }
+            page.handlePollAnswer(retentionPollTimer, appBackend.pollRetentionPreview(page.retentionPreviewId),
+                                  appBackend.retention_preview_error, page.applyRetentionAnswer);
         }
     }
 
@@ -180,7 +169,7 @@ Kirigami.ScrollablePage {
         width: parent.width
         spacing: Kirigami.Units.mediumSpacing
 
-        // --- DRY-RUN MODE (M2-S04) ---
+        // --- DRY-RUN MODE ---
         ColumnLayout {
             visible: page.mode === "dry_run"
             Layout.fillWidth: true
@@ -320,7 +309,7 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // --- RETENTION MODE (M2-S06) ---
+        // --- RETENTION MODE ---
         ColumnLayout {
             visible: page.mode === "retention"
             Layout.fillWidth: true
@@ -410,14 +399,8 @@ Kirigami.ScrollablePage {
                     activeFocusOnTab: true
                     Accessible.name: i18n("Snapshot %1: %2", modelData.short_id, modelData.action === "remove" ? Texts.label("remove") : i18n("Keep"))
 
-                    Rectangle {
-                        anchors.fill: parent
-                        z: 10
-                        color: "transparent"
-                        radius: Kirigami.Units.cornerRadius
-                        border.width: (snapRow.activeFocus || snapRow.visualFocus) ? 2 : 0
-                        border.color: Kirigami.Theme.highlightColor
-                        visible: border.width > 0
+                    FocusRing {
+                        target: snapRow
                     }
 
                     contentItem: RowLayout {

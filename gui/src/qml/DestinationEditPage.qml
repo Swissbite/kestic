@@ -7,18 +7,15 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-Kirigami.ScrollablePage {
+EditorPage {
     id: page
     objectName: "destinationEditPage"
     title: i18n("Edit Connection")
 
-    required property var rootWindow
-    required property var appBackend
     required property string destinationId
 
     property var initialData: null
-    // Kept as page properties for callers and tests that read them directly.
-    property alias destName: destDraft.name
+    // Read by the offscreen smoke.
     property alias setupMode: destDraft.setupMode
 
     DestinationDraft {
@@ -48,33 +45,12 @@ Kirigami.ScrollablePage {
         || destDraft.restPassword.length > 0
     )
     readonly property bool needsVerification: locationChanged || destDraft.setupMode === "init"
-    readonly property bool dirty: initialData !== null && (
+    dirty: initialData !== null && (
         destDraft.name.trim() !== initialData.name || needsVerification
     )
     readonly property bool canSave: dirty && destDraft.detailsValid && (!needsVerification || destDraft.connectionVerified) && appBackend.blocking_kind === ""
 
-    onDirtyChanged: appBackend.has_unsaved_changes = dirty
-
-    onBackRequested: function(event) {
-        if (dirty) {
-            event.accepted = true;
-            unsavedDialog.open();
-        }
-    }
-
-    function handleEscape() {
-        if (unsavedDialog.opened || unsavedDialog.visible) {
-            unsavedDialog.close();
-            return true;
-        }
-        if (dirty) {
-            unsavedDialog.open();
-            return true;
-        }
-        return false;
-    }
-
-    function saveChanges() {
+    function saveForGuard() {
         if (!canSave || !initialData) return false;
         if (appBackend.updateDestination(
                 destinationId,
@@ -105,38 +81,27 @@ Kirigami.ScrollablePage {
             icon.name: "document-save"
             text: Texts.label("save")
             enabled: page.canSave
-            onTriggered: page.saveChanges()
+            onTriggered: page.saveForGuard()
         },
         Kirigami.Action {
             id: closeDestinationEditAction
             objectName: "closeDestinationEditAction"
             icon.name: "window-close"
             text: Texts.label("close")
-            onTriggered: {
-                if (page.dirty) {
-                    unsavedDialog.open();
-                } else {
-                    rootWindow.popSubPage();
-                }
-            }
+            onTriggered: page.requestClose()
         }
     ]
 
-    Kirigami.PromptDialog {
-        id: unsavedDialog
-        objectName: "unsavedDestinationDialog"
-        title: Texts.label("save_changes_question")
-        subtitle: i18n("You have unsaved changes to this destination.")
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onAccepted: {
-            if (page.canSave && page.saveChanges()) {
-                rootWindow.popSubPage();
-            }
-        }
-        onDiscarded: {
-            appBackend.has_unsaved_changes = false;
+    unsavedObjectName: "unsavedDestinationDialog"
+    unsavedSubtitle: i18n("You have unsaved changes to this destination.")
+
+    onUnsavedSaveRequested: {
+        if (page.canSave && page.saveForGuard()) {
             rootWindow.popSubPage();
         }
+    }
+    onUnsavedDiscardRequested: {
+        rootWindow.popSubPage();
     }
 
     DestinationDetailsForm {
