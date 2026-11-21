@@ -823,13 +823,17 @@ if [ -n "$sub" ] && [ -f "$FAIL.$sub" ]; then
   echo "E $(now) $sub $code" >> "$LOG"
   exit "$code"
 fi
+# A held call prints the repeated output, else the one-off output, else (backup) one progress line;
+# a SIGTERM while it prints or waits is logged like one during the real call.
 if [ -n "$sub" ] && [ -f "$HOLD.$sub" ]; then
-  if [ -f "$HOLD.$sub.status" ]; then
+  trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"; echo "E $(now) $sub 143" >> "$LOG"; exit 143' TERM INT
+  if [ -f "$HOLD.$sub.repeat" ]; then
+    while [ -f "$HOLD.$sub" ] && cat "$HOLD.$sub.repeat" 2>/dev/null; do :; done
+  elif [ -f "$HOLD.$sub.status" ]; then
     cat "$HOLD.$sub.status"
   elif [ "$sub" = "backup" ]; then
     printf '{{"message_type":"status","percent_done":0.25,"files_done":3,"bytes_done":1048576,"total_bytes":4194304,"seconds_elapsed":1,"seconds_remaining":30}}\n'
   fi
-  trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"; echo "E $(now) $sub 143" >> "$LOG"; exit 143' TERM INT
   while [ -f "$HOLD.$sub" ]; do sleep 0.1; done
   trap - TERM INT
 fi
@@ -899,14 +903,28 @@ exit $code
         self.hold(sub);
     }
 
+    /// Like [`Self::hold`], but a held call prints `ndjson` over and over until
+    /// [`Self::release`]. The pipe paces the output to the reader, so progress keeps coming for
+    /// as long as the call is held and none is left to read once it is released.
+    pub fn hold_with_repeated_output(&self, sub: &str, ndjson: &str) {
+        fs::write(
+            PathBuf::from(format!("{}.{sub}.repeat", self.hold.display())),
+            ndjson,
+        )
+        .expect("write repeated output");
+        self.hold(sub);
+    }
+
     /// Lets held (and future) calls of restic subcommand `sub` run on and drops the output
-    /// set by [`Self::hold_with_output`].
+    /// set by [`Self::hold_with_output`] or [`Self::hold_with_repeated_output`].
     pub fn release(&self, sub: &str) {
         let _ = fs::remove_file(self.hold_marker(sub));
-        let _ = fs::remove_file(PathBuf::from(format!(
-            "{}.{sub}.status",
-            self.hold.display()
-        )));
+        for kind in ["status", "repeat"] {
+            let _ = fs::remove_file(PathBuf::from(format!(
+                "{}.{sub}.{kind}",
+                self.hold.display()
+            )));
+        }
     }
 
     pub fn entries(&self) -> Vec<WrapperEntry> {

@@ -27,11 +27,10 @@ test-group = "heavy-integration"
 
 # Binaries with the longest tests start first, so that no single long test
 # runs alone at the end: GUI smoke tests walk every page in two languages,
-# m3_s04_unreachable waits for a whole clock minute, m3_tray_lock_order works
-# through 200 000 progress lines in an unoptimized build. Names follow the
-# files in */tests/; a renamed file only loses the priority.
+# m3_s04_unreachable waits for a whole clock minute. Names follow the files in
+# */tests/; a renamed file only loses the priority.
 [[profile.default.overrides]]
-filter = "binary(~_gui_smoke) | binary(m3_s04_unreachable) | binary(m3_tray_lock_order)"
+filter = "binary(~_gui_smoke) | binary(m3_s04_unreachable)"
 priority = 50
 
 # The CI runs the tests from an archive in separate jobs (verify.yml). Besides
