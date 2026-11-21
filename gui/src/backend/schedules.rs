@@ -6,20 +6,34 @@
 
 use super::{Finish, qobject};
 use crate::qt_bridge;
+use crate::run_texts::{run_detail_subtitle, run_detail_title, run_result_summary, run_status};
 use crate::state_cache::{
     build_provider, cached_daemon_now, cached_destination_kind, cached_today_iso_date,
-    clone_updated_backup_conditions, clone_updated_backup_schedule, format_bytes,
-    format_conditions_summary, format_datetime_display, format_duration_ms,
-    format_maintenance_summary, format_run_kind_name, format_run_status, format_schedule_summary,
-    i18n, json_or, make_client, preview_next_schedule_slots, shared_state,
+    clone_updated_backup_conditions, clone_updated_backup_schedule, format_conditions_summary,
+    format_duration_ms, format_maintenance_summary, format_schedule_summary, i18n, json_or,
+    make_client, preview_next_schedule_slots, shared_state,
 };
 use crate::ui_texts::GuiText;
 use cxx_qt_lib::QString;
-use kestic_core::model::{MaintenanceSchedule, NotificationSettings, RunConditions, Schedule};
+use kestic_core::model::{
+    BackupId, MaintenanceSchedule, NotificationSettings, RunConditions, Schedule,
+};
 use kestic_core::scheduler::PauseDuration;
 use kestic_core::sync::LockUnpoisoned;
 use std::env;
 use std::pin::Pin;
+
+/// Name of a configured backup from the cached daemon state.
+fn cached_backup_name(id: &BackupId) -> Option<String> {
+    let guard = shared_state().lock_unpoisoned();
+    guard
+        .state
+        .as_ref()?
+        .backups
+        .iter()
+        .find(|b| &b.backup.id == id)
+        .map(|b| b.backup.name.clone())
+}
 
 fn parse_pause_duration(kind: &str) -> PauseDuration {
     match kind {
@@ -240,35 +254,19 @@ impl qobject::KesticApp {
             meta: String,
         }
 
-        let title = i18n("Run on %1").subs(&[&format_datetime_display(detail.run.started_at)]);
-        let (status_text, status_icon, status_color) =
-            format_run_status(&detail.run.kind, detail.run.status);
+        let title = run_detail_title(&detail.run);
+        let (status_text, status_icon, status_color) = run_status(&detail.run);
         let dur = detail
             .run
             .duration_ms
             .map_or_else(|| String::from("–"), format_duration_ms);
         let status_line = format!("{status_text} · {dur}");
-        let kind_title = format_run_kind_name(
+        let subtitle = run_detail_subtitle(
             &detail.run,
             detail.backup_name.as_deref(),
             &detail.destination_name,
         );
-        let added = detail
-            .run
-            .stats
-            .as_ref()
-            .map_or_else(|| String::from("0 B"), |s| format_bytes(s.data_added));
-        let subtitle = i18n("%1 · %2 added").subs(&[&kind_title, &added]);
-        let stats_summary = if let Some(s) = &detail.run.stats {
-            i18n("%1 new · %2 changed · %3 unchanged · %4 processed").subs(&[
-                &s.files_new.to_string(),
-                &s.files_changed.to_string(),
-                &s.files_unmodified.to_string(),
-                &format_bytes(s.total_bytes_processed),
-            ])
-        } else {
-            i18n("No file statistics available for this run.").to_string()
-        };
+        let result_summary = run_result_summary(&detail.run, &cached_backup_name);
         let cmds: Vec<CmdDisplay> = detail
             .transparent_commands
             .iter()
@@ -309,7 +307,7 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_selected_run_status_color(QString::from(status_color));
         self.as_mut()
-            .set_selected_run_stats_summary(QString::from(&stats_summary));
+            .set_selected_run_result_summary(QString::from(&result_summary));
         let error_summary = detail.error_kind.map_or_default(|kind| {
             crate::state_cache::tr(&kind.message(
                 detail.error_exit_code,

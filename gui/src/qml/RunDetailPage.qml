@@ -134,6 +134,7 @@ Kirigami.ScrollablePage {
                 }
 
                 Controls.Label {
+                    objectName: "runSubtitleLabel"
                     text: appBackend.selected_run_subtitle
                     opacity: 0.8
                     wrapMode: Text.WordWrap
@@ -202,7 +203,8 @@ Kirigami.ScrollablePage {
                 spacing: Kirigami.Units.mediumSpacing
 
                 Controls.Label {
-                    text: appBackend.selected_run_stats_summary
+                    objectName: "runResultSummaryLabel"
+                    text: appBackend.selected_run_result_summary
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }

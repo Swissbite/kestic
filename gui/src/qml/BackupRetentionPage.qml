@@ -367,10 +367,10 @@ EditorPage {
     Kirigami.PromptDialog {
         id: confirmRemoveDialog
         objectName: "confirmRetentionRemoveDialog"
-        title: i18n("%1 snapshots will be permanently removed on the next run", page.pendingRemoveCount)
+        title: i18np("%1 snapshot will be permanently removed on the next run", "%1 snapshots will be permanently removed on the next run", page.pendingRemoveCount)
         subtitle: page.pendingRemoveSnapshots.length > 0
             ? i18n("Snapshots that will be removed:\n%1", page.pendingRemoveSnapshots.slice(0, 8).join("\n"))
-            : i18n("If you save these rules, the next run removes %1 existing snapshots.", page.pendingRemoveCount)
+            : i18np("If you save these rules, the next run removes %1 existing snapshot.", "If you save these rules, the next run removes %1 existing snapshots.", page.pendingRemoveCount)
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {

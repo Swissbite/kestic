@@ -221,13 +221,5 @@ Kirigami.ScrollablePage {
                 rootWindow.openDestinationMaintenancePage(destinationId);
             }
         }
-
-        Controls.Label {
-            visible: currentData !== null && currentData.backupCount > 0
-            text: Texts.label("remove_backups_first")
-            opacity: 0.75
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-        }
     }
 }

@@ -52,7 +52,7 @@ pub mod qobject {
         #[qproperty(QString, selected_run_subtitle)]
         #[qproperty(QString, selected_run_status_icon)]
         #[qproperty(QString, selected_run_status_color)]
-        #[qproperty(QString, selected_run_stats_summary)]
+        #[qproperty(QString, selected_run_result_summary)]
         #[qproperty(QString, selected_run_error_summary)]
         #[qproperty(QString, selected_run_error_action)]
         #[qproperty(QString, selected_run_error_raw)]
@@ -575,7 +575,7 @@ pub struct KesticAppRust {
     selected_run_subtitle: QString,
     selected_run_status_icon: QString,
     selected_run_status_color: QString,
-    selected_run_stats_summary: QString,
+    selected_run_result_summary: QString,
     selected_run_error_summary: QString,
     selected_run_error_action: QString,
     selected_run_error_raw: QString,

@@ -94,6 +94,7 @@ gui_texts! {
     DriveWithLabel = "drive_with_label" => i18n_noop("Drive (%1)"),
     RestServer = "rest_server" => i18n_noop("REST Server"),
     ManualOnly = "manual_only" => i18n_noop("Manual only"),
+    DeletedBackup = "deleted_backup" => i18n_noop("Deleted backup"),
     Daily = "daily" => i18n_noop("Daily"),
     PresetStandard = "preset_standard" => i18n_noop("Standard (7 daily, 4 weekly, 12 monthly)"),
     PresetEconomical = "preset_economical" => i18n_noop("Economical (7 daily, 4 weekly)"),

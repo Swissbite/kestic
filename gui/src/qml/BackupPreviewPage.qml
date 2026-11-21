@@ -370,9 +370,10 @@ Kirigami.ScrollablePage {
                     if (page.retentionPreviewData.remove_count === 0) {
                         return i18n("No snapshots would be removed (%1 kept).", page.retentionPreviewData.keep_count);
                     }
-                    return i18n("%1 snapshots kept · %2 snapshots would be removed.",
-                                page.retentionPreviewData.keep_count,
-                                page.retentionPreviewData.remove_count);
+                    return i18np("%1 snapshot kept · %2", "%1 snapshots kept · %2",
+                                 page.retentionPreviewData.keep_count,
+                                 i18np("%1 snapshot would be removed.", "%1 snapshots would be removed.",
+                                       page.retentionPreviewData.remove_count));
                 }
             }
 

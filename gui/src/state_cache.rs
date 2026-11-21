@@ -27,9 +27,10 @@ pub fn json_or<T: serde::Serialize + ?Sized>(value: &T, fallback: &str) -> Strin
     serde_json::to_string(value).unwrap_or_else(|_| fallback.to_string())
 }
 
-/// Plural-aware translation (`i18np`): `%1` is `n`, further `%N` come from `args`.
-pub fn i18np(singular: &str, plural: &str, n: usize, args: &[&str]) -> String {
-    crate::qt_bridge::ffi::i18np_subs(singular, plural, i64::try_from(n).unwrap_or(i64::MAX), args)
+/// Plural-aware translation (`i18np`): `%1` is `n`, further `%N` come from `args`. A count
+/// beyond `i64` is shown as `i64::MAX`.
+pub fn i18np(singular: &str, plural: &str, n: impl TryInto<i64>, args: &[&str]) -> String {
+    crate::qt_bridge::ffi::i18np_subs(singular, plural, n.try_into().unwrap_or(i64::MAX), args)
 }
 
 /// Translates a `kestic-i18n` [`Message`] (code → msgid mapping in `kestic_i18n::messages`)
@@ -705,10 +706,8 @@ pub fn format_exclude_summary(excludes: &ExcludeRules) -> String {
         .iter()
         .filter(|f| !f.trim().is_empty())
         .count();
-    if folder_count == 1 {
-        parts.push(i18n("1 folder").to_string());
-    } else if folder_count > 1 {
-        parts.push(i18n("%1 folders").subs(&[&folder_count.to_string()]));
+    if folder_count > 0 {
+        parts.push(i18np("%1 folder", "%1 folders", folder_count, &[]));
     }
     if excludes.exclude_caches {
         parts.push(i18n("caches").to_string());
@@ -722,10 +721,13 @@ pub fn format_exclude_summary(excludes: &ExcludeRules) -> String {
         parts.push(i18n("files over %1").subs(&[limit.trim()]));
     }
     let expert_count = excludes.expert_rule_count();
-    if expert_count == 1 {
-        parts.push(i18n("1 expert rule").to_string());
-    } else if expert_count > 1 {
-        parts.push(i18n("%1 expert rules").subs(&[&expert_count.to_string()]));
+    if expert_count > 0 {
+        parts.push(i18np(
+            "%1 expert rule",
+            "%1 expert rules",
+            expert_count,
+            &[],
+        ));
     }
     if !excludes.exclude_if_present.is_empty() {
         parts.push(i18n("marker: %1").subs(&[&excludes.exclude_if_present.join(", ")]));
@@ -782,24 +784,14 @@ pub fn format_relative_time(ts: OffsetDateTime, now: OffsetDateTime) -> String {
         return i18n("just now").to_string();
     }
     let mins = diff / 60;
-    if mins == 1 {
-        return i18n("1 minute ago").to_string();
-    }
     if mins < 60 {
-        return i18n("%1 minutes ago").subs(&[&mins.to_string()]);
+        return i18np("%1 minute ago", "%1 minutes ago", mins, &[]);
     }
     let hours = mins / 60;
-    if hours == 1 {
-        return i18n("1 hour ago").to_string();
-    }
     if hours < 24 {
-        return i18n("%1 hours ago").subs(&[&hours.to_string()]);
+        return i18np("%1 hour ago", "%1 hours ago", hours, &[]);
     }
-    let days = hours / 24;
-    if days == 1 {
-        return i18n("1 day ago").to_string();
-    }
-    i18n("%1 days ago").subs(&[&days.to_string()])
+    i18np("%1 day ago", "%1 days ago", hours / 24, &[])
 }
 
 pub fn format_duration_ms(ms: u64) -> String {
@@ -922,11 +914,12 @@ pub fn format_schedule_summary(schedule: &Schedule) -> String {
             minute,
         } => {
             let hhmm = format!("{hour:02}:{minute:02}");
-            i18n("Every %1 days from %2 at %3").subs(&[
-                &interval_days.to_string(),
-                start_date,
-                &hhmm,
-            ])
+            i18np(
+                "Every %1 day from %2 at %3",
+                "Every %1 days from %2 at %3",
+                *interval_days,
+                &[start_date, &hhmm],
+            )
         }
     }
 }
@@ -1158,7 +1151,12 @@ pub fn format_backup_status(
             RunStatus::Warning => {
                 let count = summary.unreadable_files.len();
                 let text = if count > 0 {
-                    i18n("Backed up, %1 files unreadable").subs(&[&count.to_string()])
+                    i18np(
+                        "Backed up, %1 file unreadable",
+                        "Backed up, %1 files unreadable",
+                        count,
+                        &[],
+                    )
                 } else if summary.pending_forget {
                     tr(&ErrorKind::RetentionPending.message(None, false))
                 } else {
@@ -1345,7 +1343,7 @@ pub fn cached_today_iso_date() -> String {
 pub fn format_run_kind_name(run: &Run, backup_name: Option<&str>, dest_name: &str) -> String {
     match &run.kind {
         RunKind::Backup { .. } => {
-            backup_name.map_or_else(|| i18n("Deleted backup").to_string(), ToOwned::to_owned)
+            backup_name.map_or_else(|| GuiText::DeletedBackup.text(), ToOwned::to_owned)
         }
         RunKind::Maintenance => i18n("Maintenance %1").subs(&[dest_name]),
         RunKind::Restore { .. } => i18n("Restore %1").subs(&[backup_name.unwrap_or(dest_name)]),

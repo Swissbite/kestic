@@ -20,7 +20,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// NFR-06 (M1-S16): Extracts every `i18n(...)` string from all `daemon/src/*.rs`,
+/// NFR-06 (M1-S16): Extracts every `i18n(...)` and `i18np(...)` string from all `daemon/src/*.rs`,
 /// `gui/src/*.rs`, and `gui/src/qml/*.qml` files, plus every `i18n_noop(...)` msgid of the
 /// shared texts in `i18n/src/*.rs`, and enforces 100% Swiss-German coverage
 /// (0 untranslated, 0 fuzzy, 0 missing, 0 `ß`) in `po/de/kestic.po`.
@@ -46,6 +46,7 @@ fn nfr_06_m1_all_rust_and_qml_i18n_strings_extracted_and_translated() {
             "--language=C",
             "--keyword=i18n:1",
             "--keyword=i18n_noop:1",
+            "--keyword=i18np:1,2",
             "-o",
         ])
         .arg(&pot_file)
@@ -63,6 +64,7 @@ fn nfr_06_m1_all_rust_and_qml_i18n_strings_extracted_and_translated() {
             "--from-code=UTF-8",
             "--language=JavaScript",
             "--keyword=i18n:1",
+            "--keyword=i18np:1,2",
             "-j",
             "-o",
         ])
