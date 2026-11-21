@@ -32,6 +32,15 @@ test-group = "heavy-integration"
 filter = "binary(~_gui_smoke) | binary(m3_s04_unreachable) | binary(m3_tray_lock_order)"
 priority = 50
 
+# The CI runs the tests from an archive in separate jobs (verify.yml). Besides
+# the test binaries they need the test-harness `kestic` and the compiled German
+# catalog, both found below the workspace's target directory.
+[profile.default.archive]
+include = [
+    { path = "debug/kestic", relative-to = "target" },
+    { path = "locale", relative-to = "target" },
+]
+
 [profile.ci]
 test-threads = "num-cpus"
 # Run every test even after a failure, so one CI run shows all failing tests.
