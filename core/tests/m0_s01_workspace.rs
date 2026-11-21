@@ -89,3 +89,9 @@ fn ac_m0_01_2_reuse_lint_fails_without_spdx_header() {
         String::from_utf8_lossy(&ok_output.stderr)
     );
 }
+
+/// Deliberately red: shows that the required `verify` check fails when one test job fails.
+#[test]
+fn deliberately_red_for_the_verify_gate() {
+    assert_eq!(1, 2, "deliberately red");
+}
