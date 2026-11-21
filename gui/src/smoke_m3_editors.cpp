@@ -648,6 +648,67 @@ int scenario_settings(const Ctx& c) {
     return 0;
 }
 
+// Every way of leaving a dirty editor asks first, also when a page sits on top of the editor
+// (the dry-run preview of the exclude rules) and when the window is closed.
+int scenario_editor_guard_paths(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString bid = backup_id_at(w, 0);
+    M3_CHECK(4201, !bid.isEmpty(), "no backup found");
+    M3_CHECK(4202, open_backup_detail(w, bid), "backupDetailPage did not open");
+    QQuickItem* editor = open_editor(w, "editExcludesRow", "backupExcludesEditPage");
+    M3_CHECK(4203, editor != nullptr, "backupExcludesEditPage did not open");
+    const QByteArray before = read_config_bytes();
+    M3_CHECK(4204, !before.isEmpty(), "config.toml must exist");
+    editor->setProperty("excludeCaches", true);
+    wait_ms(150);
+    M3_CHECK(4205, editor->property("dirty").toBool(), "editor must be dirty after editing");
+
+    QVariant excludes_json;
+    QMetaObject::invokeMethod(editor, "currentExcludesJson", Q_RETURN_ARG(QVariant, excludes_json));
+    QMetaObject::invokeMethod(w, "openBackupDryRunPreviewPage", Q_ARG(QVariant, bid), Q_ARG(QVariant, excludes_json));
+    M3_CHECK(4206, wait_until([&] { return item_named(w, "backupPreviewPage") != nullptr; }, 3000), "preview page did not open");
+    wait_ms(200);
+    QObject* dialog = object_named(w, "unsavedTabSwitchDialog");
+    M3_CHECK(4207, dialog != nullptr, "unsavedTabSwitchDialog missing");
+
+    // (a) the breadcrumb back to the backup detail asks, and Cancel keeps editor and preview.
+    QMetaObject::invokeMethod(w, "navigateToBreadcrumbIndex", Q_ARG(QVariant, 1));
+    M3_CHECK(4210, wait_until([&] { return is_open(dialog); }, 3000), "(a) breadcrumb under the preview must ask first");
+    int rc = cancel_unsaved_dialog(dialog, 4211);
+    if (rc != 0) {
+        return rc;
+    }
+    M3_CHECK(4213, item_named(w, "backupExcludesEditPage") != nullptr, "(a) Cancel must keep the dirty editor");
+    M3_CHECK(4214, editor->property("dirty").toBool(), "(a) Cancel must keep the edits");
+    M3_CHECK(4215, item_named(w, "backupPreviewPage") != nullptr, "(a) Cancel must keep the preview");
+
+    // (b) [Save] in the prompt saves the editor below the preview and continues.
+    QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
+    M3_CHECK(4220, wait_until([&] { return is_open(dialog); }, 3000), "(b) tab switch must ask first");
+    QMetaObject::invokeMethod(dialog_action(dialog, "unsavedSaveAction"), "trigger");
+    M3_CHECK(4221, wait_until([&] { return w->property("activeTab").toInt() == 0; }, 3000), "(b) Save must continue to the Overview");
+    M3_CHECK(4222, read_config_bytes() != before, "(b) Save must persist the edited exclude rules");
+
+    // (c) closing the window with a dirty editor asks first; Cancel keeps the window.
+    M3_CHECK(4230, open_backup_detail(w, bid), "backupDetailPage did not reopen");
+    editor = open_editor(w, "editExcludesRow", "backupExcludesEditPage");
+    M3_CHECK(4231, editor != nullptr, "backupExcludesEditPage did not reopen");
+    editor->setProperty("excludeCaches", false);
+    wait_ms(150);
+    M3_CHECK(4232, editor->property("dirty").toBool(), "(c) editor must be dirty after editing");
+    w->close();
+    M3_CHECK(4233, wait_until([&] { return is_open(dialog); }, 3000), "(c) closing the window must ask first");
+    M3_CHECK(4234, w->isVisible(), "(c) the window must stay open while asking");
+    rc = cancel_unsaved_dialog(dialog, 4235);
+    if (rc != 0) {
+        return rc;
+    }
+    M3_CHECK(4237, w->isVisible(), "(c) Cancel must keep the window open");
+    M3_CHECK(4238, editor->property("dirty").toBool(), "(c) Cancel must keep the edits");
+    M3_CHECK(4239, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled) {
@@ -662,6 +723,7 @@ int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handle
     if (scen == QLatin1String("m3-maintenance-editor-prune-confirm")) return scenario_maintenance_prune_confirm(ctx);
     if (scen == QLatin1String("m3-maintenance-editor-discard")) return scenario_maintenance_discard(ctx);
     if (scen == QLatin1String("m3-settings-monitoring")) return scenario_settings(ctx);
+    if (scen == QLatin1String("m3-editor-guard-paths")) return scenario_editor_guard_paths(ctx);
     *handled = false;
     return 0;
 }

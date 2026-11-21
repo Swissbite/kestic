@@ -933,3 +933,29 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
         },
     );
 }
+
+/// Leaving a dirty editor asks first on every path: (a) the breadcrumb while the exclude-rule
+/// preview sits on top of the editor, (b) [Save] in that prompt saves the editor below the
+/// preview, (c) closing the window.
+#[test]
+fn m3_editor_guard_covers_pages_above_the_editor_and_window_close() {
+    run_isolated_test(
+        "m3_editor_guard_covers_pages_above_the_editor_and_window_close",
+        "KESTIC_M3_GUI_EDITOR_GUARD_INNER",
+        |root| {
+            let (rig, _fakes, _dest, id) = editor_env(root);
+            run_m3_gui_smoke(
+                root,
+                "m3-editor-guard-paths",
+                "wide",
+                "en",
+                &smoke_artifact("editor-guard-paths", "wide", "en"),
+            );
+            assert!(
+                saved_backup(&rig, &id).excludes.exclude_caches,
+                "(b) [Save] in the prompt persisted the edited exclude rules"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
