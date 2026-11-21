@@ -38,7 +38,13 @@ Kirigami.ApplicationWindow {
     property bool navGuardBypass: false
 
     onActiveChanged: appBackend.windowActive(active, tabNameForIndex(activeTab))
-    onClosing: appBackend.windowActive(false, "")
+    onClosing: function(close) {
+        if (guardDirtyNavigation(function() { root.close(); })) {
+            close.accepted = false;
+            return;
+        }
+        appBackend.windowActive(false, "");
+    }
 
     readonly property var backendRef: appBackend
     readonly property var backupsModelRef: backupsModel
@@ -135,16 +141,24 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // The topmost page with unsaved changes at or above stack index `fromIdx`, or null. A page
+    // above the editor (such as a preview) must not hide the editor's changes.
+    function dirtyPageFrom(fromIdx) {
+        for (var i = pageStack.depth - 1; i >= fromIdx; --i) {
+            var page = pageStack.get(i);
+            if (page && page.dirty === true) return page;
+        }
+        return null;
+    }
+
     function isActivePageDirty() {
-        if (appBackend.has_unsaved_changes) return true;
-        var cur = pageStack.depth > 0 ? pageStack.get(pageStack.depth - 1) : null;
-        return cur !== null && cur.dirty === true;
+        return dirtyPageFrom(0) !== null;
     }
 
     function saveActiveDirtyPage() {
-        var cur = pageStack.depth > 0 ? pageStack.get(pageStack.depth - 1) : null;
-        if (!cur) return true;
-        return typeof cur.saveForGuard === "function" && cur.saveForGuard();
+        var page = dirtyPageFrom(0);
+        if (!page) return true;
+        return typeof page.saveForGuard === "function" && page.saveForGuard();
     }
 
     // every navigation that would leave a dirty editor goes through this guard.

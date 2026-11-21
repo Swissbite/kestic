@@ -209,7 +209,13 @@ QtObject {
             focusPageContent(pageStack.get(targetIdx));
             return;
         }
+        // A dirty editor below the top page would be closed silently by the removal below.
+        var dirtyBelowTop = rootWindow.dirtyPageFrom(targetIdx + 1);
         var cur = pageStack.depth > 0 ? pageStack.get(pageStack.depth - 1) : null;
+        if (dirtyBelowTop && dirtyBelowTop !== cur
+                && rootWindow.guardDirtyNavigation(function() { navigateToBreadcrumbIndex(targetIdx); })) {
+            return;
+        }
         if (cur && typeof cur.backRequested === "function") {
             var backEvent = { accepted: false };
             cur.backRequested(backEvent);

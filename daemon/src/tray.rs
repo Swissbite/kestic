@@ -10,7 +10,8 @@ use kestic_core::scheduler::PauseDuration;
 use kestic_i18n::messages::{Label, active_run_message, all_backed_up_message};
 use ksni::blocking::TrayMethods;
 use ksni::menu::{MenuItem, StandardItem, SubMenu};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::thread;
 
 /// Status line of the active run: «‹Backup›: backing up · n%» for backups, maintenance
 /// wording («Maintaining ‹Destination›») for destination maintenance (no backup id).
@@ -419,9 +420,22 @@ impl ksni::Tray for KesticTray {
     }
 }
 
+/// Latest tray state waiting for the updater thread, plus its stop flag.
+#[derive(Default)]
+struct PendingTrayState {
+    next: Option<KesticTrayState>,
+    stop: bool,
+}
+
 /// Handle controlling a running Kestic `StatusNotifierItem` service.
+///
+/// `ksni` holds its tray lock while the menu hook runs, and the hook reads the daemon state.
+/// Callers that hold the daemon state lock must therefore never wait for the tray lock:
+/// [`TrayHandle::set_full_state`] only hands the snapshot to an updater thread.
 pub struct TrayHandle {
     inner: ksni::blocking::Handle<KesticTray>,
+    pending: Arc<(Mutex<PendingTrayState>, Condvar)>,
+    updater: Option<thread::JoinHandle<()>>,
 }
 
 impl TrayHandle {
@@ -453,19 +467,72 @@ impl TrayHandle {
         } else {
             tray.spawn()?
         };
-        Ok(Self { inner })
+        let pending = Arc::new((Mutex::new(PendingTrayState::default()), Condvar::new()));
+        let updater = {
+            let inner = inner.clone();
+            let pending = Arc::clone(&pending);
+            thread::spawn(move || run_tray_updater(&inner, &pending))
+        };
+        Ok(Self {
+            inner,
+            pending,
+            updater: Some(updater),
+        })
     }
 
     /// Replaces the complete tray state snapshot (`Status`, overlay, tooltip, and menu entries).
+    ///
+    /// Returns at once; the updater thread applies the latest snapshot (older ones are dropped).
     pub fn set_full_state(&self, next: KesticTrayState) {
-        let _ = self.inner.update(|tray| {
-            tray.state = next;
-        });
+        let (slot, wake) = &*self.pending;
+        slot.lock().unwrap_or_else(|p| p.into_inner()).next = Some(next);
+        wake.notify_one();
     }
 
-    /// Gracefully shuts down the `ksni` D-Bus service.
-    pub fn shutdown(self) {
+    /// Applies the last pending snapshot, then gracefully shuts down the `ksni` D-Bus service.
+    pub fn shutdown(mut self) {
+        self.stop_updater();
         self.inner.shutdown().wait();
+    }
+
+    fn stop_updater(&mut self) {
+        let (slot, wake) = &*self.pending;
+        slot.lock().unwrap_or_else(|p| p.into_inner()).stop = true;
+        wake.notify_one();
+        if let Some(handle) = self.updater.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for TrayHandle {
+    fn drop(&mut self) {
+        self.stop_updater();
+    }
+}
+
+/// Applies pending snapshots until stopped; runs without any daemon lock held.
+fn run_tray_updater(
+    inner: &ksni::blocking::Handle<KesticTray>,
+    pending: &(Mutex<PendingTrayState>, Condvar),
+) {
+    let (slot, wake) = pending;
+    loop {
+        let (next, stop) = {
+            let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+            while guard.next.is_none() && !guard.stop {
+                guard = wake.wait(guard).unwrap_or_else(|p| p.into_inner());
+            }
+            (guard.next.take(), guard.stop)
+        };
+        if let Some(next) = next {
+            inner.update(|tray| {
+                tray.state = next;
+            });
+        }
+        if stop {
+            return;
+        }
     }
 }
 
