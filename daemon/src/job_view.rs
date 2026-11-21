@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Plasma progress notification client via `org.kde.JobViewServerV2` / `org.kde.JobViewV3`
-//! (FR-53, U5, AC-M0-11-2).
+//! Plasma progress notification client via `org.kde.JobViewServerV2` / `org.kde.JobViewV3`.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -38,16 +37,6 @@ pub struct JobProgress {
 }
 
 impl JobViewHandle {
-    /// Requests a new job view on Plasma's default `org.kde.JobViewServer`.
-    pub fn request_default(desktop_entry: &str, title: &str) -> zbus::Result<Self> {
-        Self::request(
-            DEFAULT_JOB_VIEW_DEST,
-            desktop_entry,
-            title,
-            CAPABILITY_KILLABLE,
-        )
-    }
-
     /// Requests a new job view on the specified D-Bus destination (allows pointing at a test fake).
     pub fn request(
         dest: &str,
@@ -87,11 +76,6 @@ impl JobViewHandle {
         })
     }
 
-    /// Object path returned by `requestView`.
-    pub fn view_path(&self) -> &str {
-        self.view_path.as_str()
-    }
-
     /// Pushes a progress update via `org.kde.JobViewV3.update`.
     pub fn update(&self, progress: &JobProgress) -> zbus::Result<()> {
         let conn = self.conn.clone();
@@ -117,7 +101,7 @@ impl JobViewHandle {
     }
 
     /// Waits up to `timeout` for a `cancelRequested` signal from Plasma / the job view server.
-    pub fn wait_cancel_requested(&self, timeout: Duration) -> zbus::Result<bool> {
+    fn wait_cancel_requested(&self, timeout: Duration) -> zbus::Result<bool> {
         let conn = self.conn.clone();
         let dest = self.dest.clone();
         let path = self.view_path.clone();
@@ -131,7 +115,7 @@ impl JobViewHandle {
                 return Ok(false);
             }
             let next_fut = stream.next();
-            futures_lite_poll_or_wait(next_fut, timeout).await
+            poll_for_message_until_timeout(next_fut, timeout).await
         })
     }
 
@@ -223,7 +207,8 @@ impl Drop for JobViewCancelGuard {
     }
 }
 
-async fn futures_lite_poll_or_wait<F>(fut: F, timeout: Duration) -> zbus::Result<bool>
+/// Polls `fut` (sleeping briefly between polls) until a message arrives or `timeout` passes; `true` if one arrived.
+async fn poll_for_message_until_timeout<F>(fut: F, timeout: Duration) -> zbus::Result<bool>
 where
     F: std::future::Future<Output = Option<zbus::Message>>,
 {

@@ -6,14 +6,13 @@
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
 use common::m3::{
-    LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, add_local_backup,
-    backup_summary, dest_summary, hold_repo_lock, notifications_for, restic_repo_cmd,
-    restic_variants, runtime_state, send_signal, settle, spawn_m3_daemon, wait_for_backoff_attempt,
-    wait_for_notifications, wait_for_state, write_incompressible_dataset,
+    LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, StdFakes,
+    add_local_backup, backup_summary, dest_summary, hold_repo_lock, notifications_for,
+    restic_repo_cmd, restic_variants, runtime_state, send_signal, settle, spawn_m3_daemon,
+    wait_for_backoff_attempt, wait_for_notifications, wait_for_state, write_incompressible_dataset,
 };
-use common::{run_isolated_test, start_fake_notifications, start_fake_sni_watcher};
+use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
 use kestic_core::model::RunStatus;
 use kestic_core::restic::SECRET_KIND_REPO;
@@ -95,7 +94,7 @@ impl LockRig {
     }
 }
 
-/// AC-M3-04-4 (E13, F2): another process holds the exclusive lock (running `restic check`); the
+/// AC-M3-04-4: another process holds the exclusive lock (running `restic check`); the
 /// scheduled `backup` ends with Exit 11 -> (a) `ausstehend` (backoff after failure), (b) retries
 /// after 5/15/60 min counted from the end of the last attempt, (c) no immediate notification.
 #[test]
@@ -104,16 +103,13 @@ fn ac_m3_04_4_exclusive_lock_exit_11_backoff_5_15_60_without_notification() {
         "ac_m3_04_4_exclusive_lock_exit_11_backoff_5_15_60_without_notification",
         "KESTIC_M3_04_4_INNER",
         |root| {
-            let (_nc, notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let _upower = FakeUPowerHandle::start(false, 100.0);
-            let _nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]);
+            let fakes = StdFakes::start();
             for variant in restic_variants() {
                 let rig = start_lock_rig(root, &variant, "M3E4", 16);
                 let client = &rig.daemon.client;
                 let bid = &rig.fixture.backup.id;
                 rig.seed_snapshot();
-                notif.clear();
+                fakes.notif.clear();
 
                 // Exclusive lock: `restic check --read-data` frozen with SIGSTOP while it holds it.
                 let mut cmd = rig.restic_cmd();
@@ -223,11 +219,11 @@ fn ac_m3_04_4_exclusive_lock_exit_11_backoff_5_15_60_without_notification() {
                 // (c) no immediate failure notification during the whole series.
                 settle();
                 assert_eq!(
-                    notifications_for(&notif, "BackupFailed").len(),
+                    notifications_for(&fakes.notif, "BackupFailed").len(),
                     0,
                     "{}: (c) no BackupFailed notification: {:?}",
                     variant.label,
-                    notif.snapshot()
+                    fakes.notif.snapshot()
                 );
                 drop(check);
                 rig.daemon.stop();
@@ -236,7 +232,7 @@ fn ac_m3_04_4_exclusive_lock_exit_11_backoff_5_15_60_without_notification() {
     );
 }
 
-/// AC-M3-04-5 (F2, negative): wrong repository password -> Exit 12 -> (a) `Fehler`, (b) immediate
+/// AC-M3-04-5 (negative): wrong repository password -> Exit 12 -> (a) `Fehler`, (b) immediate
 /// notification, (c) no retry.
 #[test]
 fn ac_m3_04_5_wrong_password_exit_12_is_permanent_error_without_retry() {
@@ -244,10 +240,7 @@ fn ac_m3_04_5_wrong_password_exit_12_is_permanent_error_without_retry() {
         "ac_m3_04_5_wrong_password_exit_12_is_permanent_error_without_retry",
         "KESTIC_M3_04_5_INNER",
         |root| {
-            let (_nc, notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let _upower = FakeUPowerHandle::start(false, 100.0);
-            let _nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]);
+            let fakes = StdFakes::start();
             for variant in restic_variants() {
                 let rig = start_lock_rig(root, &variant, "M3E5", 1);
                 let client = &rig.daemon.client;
@@ -259,7 +252,7 @@ fn ac_m3_04_5_wrong_password_exit_12_is_permanent_error_without_retry() {
                         &SecretValue::from_str_secret("completely-wrong-password"),
                     )
                     .expect("overwrite stored password");
-                notif.clear();
+                fakes.notif.clear();
 
                 rig.clock.set(SLOT_1);
                 let state = wait_for_state(client, Duration::from_secs(20), "Exit 12", |s| {
@@ -279,7 +272,7 @@ fn ac_m3_04_5_wrong_password_exit_12_is_permanent_error_without_retry() {
                 );
                 // (b) immediate notification.
                 let failed =
-                    wait_for_notifications(&notif, "BackupFailed", 1, Duration::from_secs(5));
+                    wait_for_notifications(&fakes.notif, "BackupFailed", 1, Duration::from_secs(5));
                 assert_eq!(
                     failed.len(),
                     1,
@@ -309,7 +302,7 @@ fn ac_m3_04_5_wrong_password_exit_12_is_permanent_error_without_retry() {
     );
 }
 
-/// AC-M3-04-8 (E13, F2, F4): a running `restic backup --stdin` holds a non-exclusive lock ->
+/// AC-M3-04-8: a running `restic backup --stdin` holds a non-exclusive lock ->
 /// (a) `backup` Exit 0, (b) `forget` Exit 11, (c) run `Warnung` with "forget offen", (d) no backoff.
 #[test]
 fn ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff() {
@@ -317,10 +310,7 @@ fn ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff
         "ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff",
         "KESTIC_M3_04_8_INNER",
         |root| {
-            let (_nc, _notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let _upower = FakeUPowerHandle::start(false, 100.0);
-            let _nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]);
+            let _fakes = StdFakes::start();
             for variant in restic_variants() {
                 let rig = start_lock_rig(root, &variant, "M3E8", 1);
                 let client = &rig.daemon.client;

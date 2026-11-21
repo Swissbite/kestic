@@ -3,6 +3,8 @@
 
 mod common;
 
+use common::tools::write_executable;
+
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{Destination, DestinationKind, RunStatus};
 use kestic_core::restic::{
@@ -11,7 +13,6 @@ use kestic_core::restic::{
 };
 use kestic_core::secrets::{InMemorySecretStore, SecretStore, SecretValue};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use tempfile::TempDir;
 use time::macros::datetime;
@@ -52,8 +53,10 @@ fn ac_m1_03_1_tolerant_json_parser_ignores_unknown_fields_and_message_types() {
     }
 }
 
+/// AC-M1-03-2 (NFR-10): exit codes 0, 3, 10, 11, 12 and an undocumented one map to the run status
+/// and failure kind; an undocumented code keeps restic's raw message.
 #[test]
-fn ac_m1_03_2_and_s15_exit_code_classification_and_exit_error() {
+fn ac_m1_03_2_exit_codes_map_to_status_and_failure_kind() {
     assert_eq!(classify_exit(0, None, vec![], "").status, RunStatus::Ok);
 
     let w = classify_exit(
@@ -63,7 +66,6 @@ fn ac_m1_03_2_and_s15_exit_code_classification_and_exit_error() {
         "incomplete",
     );
     assert_eq!(w.status, RunStatus::Warning);
-    assert_eq!(w.action, Some(RecoveryAction::AddToExcludes));
 
     let e10 = classify_exit(10, Some("repository does not exist"), vec![], "");
     assert_eq!(e10.status, RunStatus::Error);
@@ -76,15 +78,32 @@ fn ac_m1_03_2_and_s15_exit_code_classification_and_exit_error() {
     let e12 = classify_exit(12, Some("wrong password or no key found"), vec![], "");
     assert_eq!(e12.status, RunStatus::Error);
     assert_eq!(e12.kind, ResticFailureKind::WrongPassword);
+
+    let e99 = classify_exit(99, None, vec![], "weird backend boom");
+    assert_eq!(e99.status, RunStatus::Error);
+    assert_eq!(e99.kind, ResticFailureKind::Unknown { exit_code: 99 });
+    assert_eq!(e99.raw_detail.as_deref(), Some("weird backend boom"));
+}
+
+/// AC-M1-15-1, AC-M1-15-2 (FR-37): failures offer their recovery action, a network failure of exit
+/// 1 is a destination problem, and an unknown exit code names the code in its summary.
+#[test]
+fn ac_m1_15_1_failures_offer_recovery_action_and_unknown_code_is_named() {
+    let w = classify_exit(
+        3,
+        None,
+        vec!["/home/alice/secret.key".to_string()],
+        "incomplete",
+    );
+    assert_eq!(w.action, Some(RecoveryAction::AddToExcludes));
+
+    let e12 = classify_exit(12, Some("wrong password or no key found"), vec![], "");
     assert_eq!(e12.action, Some(RecoveryAction::UpdateStoredPassword));
 
     let e1_net = classify_exit(1, Some("dial tcp: connection refused"), vec![], "");
     assert_eq!(e1_net.kind, ResticFailureKind::DestinationUnreachable);
 
     let e99 = classify_exit(99, None, vec![], "weird backend boom");
-    assert_eq!(e99.status, RunStatus::Error);
-    assert_eq!(e99.kind, ResticFailureKind::Unknown { exit_code: 99 });
-    assert_eq!(e99.raw_detail.as_deref(), Some("weird backend boom"));
     assert!(e99.kind.default_summary().contains("99"));
 }
 
@@ -127,7 +146,7 @@ fn ac_m1_15_3_exit_error_json_from_real_restic_stderr_is_captured() {
             .as_deref()
             .expect("exit_error message captured");
         assert!(
-            detail.contains("does not exist") || detail.contains("config"),
+            detail.contains("does not exist"),
             "{label} unexpected exit_error detail: {detail}"
         );
     }
@@ -183,10 +202,7 @@ printf '{{"message_type":"summary","files_new":1,"snapshot_id":"deadbeef"}}\n'
 "#,
         shlex::try_quote(&out_file.to_string_lossy()).unwrap()
     );
-    fs::write(&probe, script).expect("write probe");
-    let mut perms = fs::metadata(&probe).expect("meta").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&probe, perms).expect("chmod");
+    write_executable(&probe, &script);
 
     let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
     let mut spec = ResticCommandSpec::for_destination(

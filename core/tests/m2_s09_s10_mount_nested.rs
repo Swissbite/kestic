@@ -3,13 +3,15 @@
 
 mod common;
 
+use common::load_config;
+
+use common::tools::write_executable;
+
 use kestic_core::backup::{
     BackupExecutionContext, BackupRunError, check_source_available_with,
     execute_backup_with_inspector, list_snapshots_for_backup,
 };
-use kestic_core::clock::FakeClock;
-use kestic_core::config::{AppConfig, load_config, save_config};
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
+use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{
     Backup, Destination, DestinationKind, NestedRelationship, RunStatus, Source, SourceIdentity,
     SourceKind, check_nested_sources_for_candidate, find_nested_source_warnings,
@@ -18,13 +20,11 @@ use kestic_core::mount::{
     FakeMountInspector, FakeMountState, SourceCheckResult, check_source_status_with,
     detect_source_with,
 };
-use kestic_core::provider::{ResolvedRestic, check_binary_version};
+use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::ResticRuntime;
-use kestic_core::secrets::{FileSecretStore, SecretValue};
 use semver::Version;
 use std::collections::HashMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use time::macros::datetime;
@@ -42,10 +42,7 @@ fn write_spy_restic(dir: &Path, log_path: &Path, target_binary: Option<&Path>) -
             log = log_path.to_string_lossy(),
         ),
     };
-    fs::write(&script_path, body).expect("write spy restic");
-    let mut perms = fs::metadata(&script_path).expect("meta").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script_path, perms).expect("chmod spy restic");
+    write_executable(&script_path, &body);
     script_path
 }
 
@@ -330,24 +327,18 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     fs::write(mount_uuid.join("data.txt"), b"payload").expect("write data");
     fs::write(mount_nfs.join("photo.jpg"), b"jpg").expect("write photo");
 
-    let secrets_hex = dir.path().join("secrets.hex");
-    let store = FileSecretStore::new(&secrets_hex);
-    let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
+    let rig = common::ResticRig::new(
+        dir.path(),
+        &common::latest_restic(),
+        datetime!(2026-12-01 12:00:00 UTC),
+    );
     let spy_log = dir.path().join("restic-invocations.log");
     let spy_bin = write_spy_restic(dir.path(), &spy_log, None);
     let resolved = ResolvedRestic {
         binary: spy_bin,
         version: Version::new(0, 18, 0),
     };
-    let cache_dir = common::restic_cache_dir(dir.path());
-    let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
-    let runtime = ResticRuntime {
-        resolved: &resolved,
-        kestic_binary: &helper,
-        secret_store: &store,
-        clock: &clock,
-        cache_dir: Some(&cache_dir),
-    };
+    let runtime = rig.runtime_with(&resolved);
 
     let dest = Destination::new(
         "Local",
@@ -455,53 +446,20 @@ fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_n
         let state_dir = dir.path().join("state");
         let home_dir = dir.path().join("home");
         let empty_mnt = dir.path().join("mnt").join("external");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&home_dir).expect("mkdir home");
         fs::create_dir_all(&empty_mnt).expect("mkdir empty_mnt");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 12:30:00 UTC));
-        let init_runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
-
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("drive-neg-test-pw");
-        setup_destination(
-            &dest,
-            DestinationSetupMode::InitNew,
-            &pw,
-            None,
-            &init_runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init repo failed: {e}"));
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 12:30:00 UTC));
+        let dest = rig.init_local("Local", &repo_dir, "drive-neg-test-pw");
 
         let spy_log = dir.path().join("spy-backup.log");
-        let spy_bin = write_spy_restic(dir.path(), &spy_log, Some(&resolved.binary));
+        let spy_bin = write_spy_restic(dir.path(), &spy_log, Some(&rig.resolved.binary));
         let spy_resolved = ResolvedRestic {
             binary: spy_bin,
-            version: resolved.version.clone(),
+            version: rig.resolved.version.clone(),
         };
-        let spy_runtime = ResticRuntime {
-            resolved: &spy_resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let spy_runtime = rig.runtime_with(&spy_resolved);
 
         let backup = Backup::new(
             "External Drive",
@@ -553,10 +511,10 @@ fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_n
         let snaps = list_snapshots_for_backup(
             &backup.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .unwrap_or_else(|e| panic!("{label}: list snapshots failed: {e}"));
@@ -578,7 +536,6 @@ fn ac_m2_09_6_empty_folder_on_home_filesystem_runs_backup_normally() {
         let state_dir = dir.path().join("state");
         let home_dir = dir.path().join("home");
         let empty_folder = home_dir.join("EmptyFolder");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&empty_folder).expect("mkdir empty_folder");
 
         let inspector = FakeMountInspector::new(FakeMountState {
@@ -595,29 +552,11 @@ fn ac_m2_09_6_empty_folder_on_home_filesystem_runs_backup_normally() {
         assert_eq!(detected.kind, SourceKind::Folder, "{label}");
         assert_eq!(detected.identity, None, "{label}");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 13:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 13:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("empty-folder-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .unwrap_or_else(|e| panic!("{label}: init repo failed: {e}"));
+        let dest = rig.init_local("Local", &repo_dir, "empty-folder-pw");
 
         let backup = Backup::new("Empty Home Folder", detected, dest.id.clone()).expect("backup");
         let res = execute_backup_with_inspector(
@@ -641,10 +580,10 @@ fn ac_m2_09_6_empty_folder_on_home_filesystem_runs_backup_normally() {
         let snaps = list_snapshots_for_backup(
             &backup.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .unwrap_or_else(|e| panic!("{label}: list snapshots failed: {e}"));

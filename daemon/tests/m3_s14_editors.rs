@@ -6,32 +6,22 @@
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
+use common::load_config;
 use common::m3::{
-    M3Daemon, M3DaemonOpts, add_local_backup, assert_dbus_error_name, backup_summary,
+    M3Daemon, M3DaemonOpts, StdFakes, add_local_backup, assert_dbus_error_name, backup_summary,
     latest_variant, settle, spawn_m3_daemon,
 };
-use common::{run_isolated_test, start_fake_notifications, start_fake_sni_watcher};
+use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
-use kestic_core::config::load_config;
 use kestic_core::model::{Backup, BackupId, Schedule, Weekday};
 use std::fs;
 use std::sync::Arc;
 use time::macros::datetime;
 
-type Rig = (
-    M3Daemon,
-    Backup,
-    [zbus::Connection; 2],
-    FakeUPowerHandle,
-    FakeNetworkManagerHandle,
-);
+type Rig = (M3Daemon, Backup, StdFakes);
 
 fn rig(root: &std::path::Path, clock: &Arc<FakeClock>) -> Rig {
-    let (nc, _capture) = start_fake_notifications();
-    let sni = start_fake_sni_watcher();
-    let upower = FakeUPowerHandle::start(false, 100.0);
-    let nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]);
+    let fakes = StdFakes::start();
     let variant = latest_variant();
     let sub = variant.sub("M3E");
     let bus = variant.bus_name("M3E");
@@ -40,7 +30,7 @@ fn rig(root: &std::path::Path, clock: &Arc<FakeClock>) -> Rig {
         M3DaemonOpts::new(&sub, &bus, &variant.bin, Arc::clone(clock) as _),
     );
     let fx = add_local_backup(&daemon.client, root, &sub, "Docs", |_| {});
-    (daemon, fx.backup, [nc, sni], upower, nm)
+    (daemon, fx.backup, fakes)
 }
 
 fn next_slot_unix(daemon: &M3Daemon, bid: &BackupId) -> Option<i64> {
@@ -53,7 +43,7 @@ fn next_slot_unix(daemon: &M3Daemon, bid: &BackupId) -> Option<i64> {
     summary.next_scheduled_at_unix
 }
 
-/// AC-M3-14-7 (F14): a changed schedule saved over D-Bus (a) arrives at the daemon, (b) updates
+/// AC-M3-14-7: a changed schedule saved over D-Bus (a) arrives at the daemon, (b) updates
 /// `config.toml` and the daemon's schedule, (c) the next slot in the overview matches.
 #[test]
 fn ac_m3_14_7_saved_schedule_updates_config_schedule_and_next_slot() {
@@ -63,7 +53,7 @@ fn ac_m3_14_7_saved_schedule_updates_config_schedule_and_next_slot() {
         |root| {
             // Tuesday 2026-12-01 10:00 Europe/Zurich.
             let clock = Arc::new(FakeClock::new(datetime!(2026-12-01 09:00:00 UTC)));
-            let (daemon, mut backup, _conns, _upower, _nm) = rig(root, &clock);
+            let (daemon, mut backup, _fakes) = rig(root, &clock);
             let client = &daemon.client;
             let bid = backup.id.clone();
             assert_eq!(
@@ -102,8 +92,12 @@ fn ac_m3_14_7_saved_schedule_updates_config_schedule_and_next_slot() {
             let after_old_slot = client.get_state().expect("GetState");
             let summary = backup_summary(&after_old_slot, &bid);
             assert!(
-                summary.last_run.is_none() && summary.active_run.is_none(),
-                "(b) the replaced daily slot does not start a run"
+                summary.last_run.is_none(),
+                "(b) the replaced daily slot leaves no finished run"
+            );
+            assert!(
+                summary.active_run.is_none(),
+                "(b) the replaced daily slot starts no run"
             );
             assert_eq!(summary.pending_primary_code, None, "(b) nothing is pending");
 
@@ -118,7 +112,7 @@ fn ac_m3_14_7_saved_schedule_updates_config_schedule_and_next_slot() {
     );
 }
 
-/// AC-M3-14-8 (U18): `[Speichern]` = `UpdateBackup` (a); `core` validates (b) before anything is
+/// AC-M3-14-8: `[Speichern]` = `UpdateBackup` (a); `core` validates (b) before anything is
 /// written to `config.toml` (c); an invalid draft leaves the stored configuration unchanged (d).
 #[test]
 fn ac_m3_14_8_update_backup_validates_before_writing_config() {
@@ -127,7 +121,7 @@ fn ac_m3_14_8_update_backup_validates_before_writing_config() {
         "KESTIC_M3_14_8_INNER",
         |root| {
             let clock = Arc::new(FakeClock::new(datetime!(2026-12-01 09:00:00 UTC)));
-            let (daemon, backup, _conns, _upower, _nm) = rig(root, &clock);
+            let (daemon, backup, _fakes) = rig(root, &clock);
             let client = &daemon.client;
             let bid = backup.id.clone();
             let before = fs::read(&daemon.config_path).expect("read config.toml");

@@ -7,263 +7,139 @@
 //! Every code serialises as a `snake_case` string. The texts for these codes live in
 //! [`crate::messages`]. `kestic-core` converts its domain types into these codes.
 
-use serde::{Deserialize, Serialize};
-
-/// Action offered to the user for recoverable errors (`FR-37`, `error_action`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RecoveryAction {
-    UpdateStoredPassword,
-    AddToExcludes,
-    CheckResticSource,
-    UnlockRepository,
-}
-
-impl RecoveryAction {
-    pub const ALL: [Self; 4] = [
-        Self::UpdateStoredPassword,
-        Self::AddToExcludes,
-        Self::CheckResticSource,
-        Self::UnlockRepository,
-    ];
-
-    /// Code string as exposed to QML (`errorAction`), equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::UpdateStoredPassword => "update_stored_password",
-            Self::AddToExcludes => "add_to_excludes",
-            Self::CheckResticSource => "check_restic_source",
-            Self::UnlockRepository => "unlock_repository",
+/// Declares a code enum: variants with their wire code, plus `ALL`, `as_str` and `parse`.
+/// Serde uses the same string, so `as_str` and the JSON name cannot drift apart.
+macro_rules! code_enum {
+    (
+        $(#[$meta:meta])*
+        $name:ident {
+            $( $(#[$vmeta:meta])* $variant:ident => $code:literal ),+ $(,)?
         }
-    }
-
-    /// Parses an `error_action` code; `None` for unknown codes.
-    pub fn parse(code: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|a| a.as_str() == code)
-    }
-}
-
-/// Cause of a failed run, a run with warning, or a skipped backup (`error_kind`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ErrorKind {
-    WrongPassword,
-    RepoMissing,
-    Locked,
-    /// Destination unreachable, including DNS failures.
-    DestinationUnreachable,
-    SourceUnavailable,
-    AuthFailed,
-    IncompleteSnapshot,
-    /// Backed up, but the retention (`forget`) did not run.
-    RetentionPending,
-    Cancelled,
-    /// Only for skipped backups (`SkippedBackupDto`): the password store is locked.
-    SecretStoreLocked,
-    /// Only for skipped backups (`SkippedBackupDto`): restic is missing or too old.
-    ResticUnavailable,
-    /// Anything not recognised (never a transient code).
-    Unknown,
-}
-
-impl ErrorKind {
-    pub const ALL: [Self; 12] = [
-        Self::WrongPassword,
-        Self::RepoMissing,
-        Self::Locked,
-        Self::DestinationUnreachable,
-        Self::SourceUnavailable,
-        Self::AuthFailed,
-        Self::IncompleteSnapshot,
-        Self::RetentionPending,
-        Self::Cancelled,
-        Self::SecretStoreLocked,
-        Self::ResticUnavailable,
-        Self::Unknown,
-    ];
-
-    /// Code string, equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::WrongPassword => "wrong_password",
-            Self::RepoMissing => "repo_missing",
-            Self::Locked => "locked",
-            Self::DestinationUnreachable => "destination_unreachable",
-            Self::SourceUnavailable => "source_unavailable",
-            Self::AuthFailed => "auth_failed",
-            Self::IncompleteSnapshot => "incomplete_snapshot",
-            Self::RetentionPending => "retention_pending",
-            Self::Cancelled => "cancelled",
-            Self::SecretStoreLocked => "secret_store_locked",
-            Self::ResticUnavailable => "restic_unavailable",
-            Self::Unknown => "unknown",
+    ) => {
+        $(#[$meta])*
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, ::serde::Serialize, ::serde::Deserialize,
+        )]
+        pub enum $name {
+            $( $(#[$vmeta])* #[serde(rename = $code)] $variant ),+
         }
-    }
-}
 
-/// Why a due backup or due maintenance waits (`pending_reason_codes`,
-/// `maintenance_pending_reason`) and which run condition is not met (`unmet_run_conditions`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingReasonCode {
-    SourceUnavailable,
-    DestinationUnreachable,
-    OnBattery,
-    NoNetwork,
-    Metered,
-    WrongNetwork,
-    /// Another run on the same destination is active.
-    Queue,
-    /// Retry cooldown after a transient error; see `pending_retry_at_unix`.
-    Backoff,
-}
+        impl $name {
+            pub const ALL: [Self; [$($code),+].len()] = [$(Self::$variant),+];
 
-impl PendingReasonCode {
-    pub const ALL: [Self; 8] = [
-        Self::SourceUnavailable,
-        Self::DestinationUnreachable,
-        Self::OnBattery,
-        Self::NoNetwork,
-        Self::Metered,
-        Self::WrongNetwork,
-        Self::Queue,
-        Self::Backoff,
-    ];
+            /// Code string, equal to the serde name.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $( Self::$variant => $code ),+
+                }
+            }
 
-    /// Code string as exposed to QML (`pendingPrimaryCode`), equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SourceUnavailable => "source_unavailable",
-            Self::DestinationUnreachable => "destination_unreachable",
-            Self::OnBattery => "on_battery",
-            Self::NoNetwork => "no_network",
-            Self::Metered => "metered",
-            Self::WrongNetwork => "wrong_network",
-            Self::Queue => "queue",
-            Self::Backoff => "backoff",
+            /// Parses a code string; `None` for unknown codes.
+            pub fn parse(code: &str) -> Option<Self> {
+                Self::ALL.into_iter().find(|v| v.as_str() == code)
+            }
         }
+    };
+}
+pub(crate) use code_enum;
+
+code_enum! {
+    /// Action offered to the user for recoverable errors (`error_action`).
+    RecoveryAction {
+        UpdateStoredPassword => "update_stored_password",
+        AddToExcludes => "add_to_excludes",
+        CheckResticSource => "check_restic_source",
+        UnlockRepository => "unlock_repository",
     }
 }
 
-/// Result of the source check when the source is unavailable (`source_status`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceStatus {
-    PathMissing,
-    DriveNotMounted,
-    DriveMismatch,
-    DriveEmpty,
-}
-
-impl SourceStatus {
-    pub const ALL: [Self; 4] = [
-        Self::PathMissing,
-        Self::DriveNotMounted,
-        Self::DriveMismatch,
-        Self::DriveEmpty,
-    ];
-
-    /// Code string, equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::PathMissing => "path_missing",
-            Self::DriveNotMounted => "drive_not_mounted",
-            Self::DriveMismatch => "drive_mismatch",
-            Self::DriveEmpty => "drive_empty",
-        }
+code_enum! {
+    /// Cause of a failed run, a run with warning, or a skipped backup (`error_kind`).
+    ErrorKind {
+        WrongPassword => "wrong_password",
+        RepoMissing => "repo_missing",
+        Locked => "locked",
+        /// Destination unreachable, including DNS failures.
+        DestinationUnreachable => "destination_unreachable",
+        SourceUnavailable => "source_unavailable",
+        AuthFailed => "auth_failed",
+        IncompleteSnapshot => "incomplete_snapshot",
+        /// Backed up, but the retention (`forget`) did not run.
+        RetentionPending => "retention_pending",
+        Cancelled => "cancelled",
+        /// Only for skipped backups (`SkippedBackupDto`): the password store is locked.
+        SecretStoreLocked => "secret_store_locked",
+        /// Only for skipped backups (`SkippedBackupDto`): restic is missing or too old.
+        ResticUnavailable => "restic_unavailable",
+        /// Anything not recognised (never a transient code).
+        Unknown => "unknown",
     }
 }
 
-/// Why a backup cannot start right now (`blocked_reason`, signal `ManualRunBlocked`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BlockedReason {
-    SourceUnavailable,
-    DestinationUnreachable,
-    ConditionNotMet,
-}
-
-impl BlockedReason {
-    pub const ALL: [Self; 3] = [
-        Self::SourceUnavailable,
-        Self::DestinationUnreachable,
-        Self::ConditionNotMet,
-    ];
-
-    /// Code string as sent in the `ManualRunBlocked` signal and in service errors.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SourceUnavailable => "source_unavailable",
-            Self::DestinationUnreachable => "destination_unreachable",
-            Self::ConditionNotMet => "condition_not_met",
-        }
-    }
-
-    /// Parses a code string; `None` for unknown codes.
-    pub fn parse(code: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|r| r.as_str() == code)
+code_enum! {
+    /// Why a due backup or due maintenance waits (`pending_reason_codes`,
+    /// `maintenance_pending_reason`) and which run condition is not met (`unmet_run_conditions`).
+    PendingReasonCode {
+        SourceUnavailable => "source_unavailable",
+        DestinationUnreachable => "destination_unreachable",
+        OnBattery => "on_battery",
+        NoNetwork => "no_network",
+        Metered => "metered",
+        WrongNetwork => "wrong_network",
+        /// Another run on the same destination is active.
+        Queue => "queue",
+        /// Retry cooldown after a transient error; see `pending_retry_at_unix`.
+        Backoff => "backoff",
     }
 }
 
-/// Phase of a running backup (`ActiveRunProgressDto.phase`, signal `RunProgress`). restic finds
-/// files and backs them up at the same time; only after its search the percentage is valid.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunProgressPhase {
-    /// restic is still finding files; the total grows, so there is no percentage.
-    #[default]
-    Scanning,
-    /// restic knows the total; the percentage is valid and never falls.
-    ScanFinished,
-}
-
-impl RunProgressPhase {
-    pub const ALL: [Self; 2] = [Self::Scanning, Self::ScanFinished];
-
-    /// Code string as sent in the `RunProgress` signal, equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Scanning => "scanning",
-            Self::ScanFinished => "scan_finished",
-        }
-    }
-
-    /// Parses a code string; `None` for unknown codes.
-    pub fn parse(code: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|p| p.as_str() == code)
+code_enum! {
+    /// Phase of a running backup (`ActiveRunProgressDto.phase`, signal `RunProgress`). restic
+    /// finds files and backs them up at the same time; only after its search the percentage
+    /// is valid.
+    RunProgressPhase {
+        /// restic is still finding files; the total grows, so there is no percentage.
+        Scanning => "scanning",
+        /// restic knows the total; the percentage is valid and never falls.
+        ScanFinished => "scan_finished",
     }
 }
 
-/// Why «Back Up All Now» skipped a backup (`SkippedBackupDto.reason`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SkipReason {
-    PermanentError,
-    SourceUnavailable,
-    DestinationUnreachable,
-    ConditionNotMet,
-    /// Start failed; the cause is in `SkippedBackupDto.error_kind`.
-    Error,
+impl Default for RunProgressPhase {
+    /// A run starts out scanning.
+    fn default() -> Self {
+        Self::Scanning
+    }
 }
 
-impl SkipReason {
-    pub const ALL: [Self; 5] = [
-        Self::PermanentError,
-        Self::SourceUnavailable,
-        Self::DestinationUnreachable,
-        Self::ConditionNotMet,
-        Self::Error,
-    ];
+code_enum! {
+    /// Result of the source check when the source is unavailable (`source_status`).
+    SourceStatus {
+        PathMissing => "path_missing",
+        DriveNotMounted => "drive_not_mounted",
+        DriveMismatch => "drive_mismatch",
+        DriveEmpty => "drive_empty",
+    }
+}
 
-    /// Code string as stored in the run history of the skipped backup.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::PermanentError => "permanent_error",
-            Self::SourceUnavailable => "source_unavailable",
-            Self::DestinationUnreachable => "destination_unreachable",
-            Self::ConditionNotMet => "condition_not_met",
-            Self::Error => "error",
-        }
+code_enum! {
+    /// Why a backup cannot start right now (`blocked_reason`, signal `ManualRunBlocked`).
+    BlockedReason {
+        SourceUnavailable => "source_unavailable",
+        DestinationUnreachable => "destination_unreachable",
+        ConditionNotMet => "condition_not_met",
+    }
+}
+
+code_enum! {
+    /// Why «Back Up All Now» skipped a backup (`SkippedBackupDto.reason`).
+    SkipReason {
+        PermanentError => "permanent_error",
+        SourceUnavailable => "source_unavailable",
+        DestinationUnreachable => "destination_unreachable",
+        ConditionNotMet => "condition_not_met",
+        /// Start failed; the cause is in `SkippedBackupDto.error_kind`.
+        Error => "error",
     }
 }
 
@@ -277,215 +153,92 @@ impl From<BlockedReason> for SkipReason {
     }
 }
 
-/// Why the configured restic is unusable (`ResticStatusDto.error_kind`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResticStatusCode {
-    NotFound,
-    TooOld,
-    InvalidCustomPath,
-    UnreadableVersion,
-}
-
-impl ResticStatusCode {
-    pub const ALL: [Self; 4] = [
-        Self::NotFound,
-        Self::TooOld,
-        Self::InvalidCustomPath,
-        Self::UnreadableVersion,
-    ];
-
-    /// Code string, equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::NotFound => "not_found",
-            Self::TooOld => "too_old",
-            Self::InvalidCustomPath => "invalid_custom_path",
-            Self::UnreadableVersion => "unreadable_version",
-        }
+code_enum! {
+    /// Why the configured restic is unusable (`ResticStatusDto.error_kind`).
+    ResticStatusCode {
+        NotFound => "not_found",
+        TooOld => "too_old",
+        InvalidCustomPath => "invalid_custom_path",
+        UnreadableVersion => "unreadable_version",
     }
 }
 
-/// Blocking state of the whole app (`BlockingStateDto.kind`, `zustaende.md` §6.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BlockingKind {
-    SecretStoreLocked,
-    ResticUnavailable,
-}
-
-impl BlockingKind {
-    pub const ALL: [Self; 2] = [Self::SecretStoreLocked, Self::ResticUnavailable];
-
-    /// Code string as exposed to QML (`blockingKind`), equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SecretStoreLocked => "secret_store_locked",
-            Self::ResticUnavailable => "restic_unavailable",
-        }
+code_enum! {
+    /// Blocking state of the whole app (`BlockingStateDto.kind`).
+    BlockingKind {
+        SecretStoreLocked => "secret_store_locked",
+        ResticUnavailable => "restic_unavailable",
     }
 }
 
-/// Result code of `TestDestinationConnection` (`ConnectionTestResultDto.error_kind`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectionTestCode {
-    InvalidInput,
-    /// `detail` = name of the destination that already uses the location.
-    DuplicateLocation,
-    DestinationUnreachable,
-    RepositoryExists,
-    NotWritable,
-    MissingPassword,
-    SecretStoreLocked,
-    Internal,
-    ResticUnavailable,
-    WrongPassword,
-    AuthFailed,
-    RepositoryMissing,
-    CommandFailed,
-    /// Set by the GUI when the daemon cannot be reached.
-    DaemonUnreachable,
-}
-
-impl ConnectionTestCode {
-    pub const ALL: [Self; 14] = [
-        Self::InvalidInput,
-        Self::DuplicateLocation,
-        Self::DestinationUnreachable,
-        Self::RepositoryExists,
-        Self::NotWritable,
-        Self::MissingPassword,
-        Self::SecretStoreLocked,
-        Self::Internal,
-        Self::ResticUnavailable,
-        Self::WrongPassword,
-        Self::AuthFailed,
-        Self::RepositoryMissing,
-        Self::CommandFailed,
-        Self::DaemonUnreachable,
-    ];
-
-    /// Code string as exposed to QML (`connectionTestErrorKind`).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::InvalidInput => "invalid_input",
-            Self::DuplicateLocation => "duplicate_location",
-            Self::DestinationUnreachable => "destination_unreachable",
-            Self::RepositoryExists => "repository_exists",
-            Self::NotWritable => "not_writable",
-            Self::MissingPassword => "missing_password",
-            Self::SecretStoreLocked => "secret_store_locked",
-            Self::Internal => "internal",
-            Self::ResticUnavailable => "restic_unavailable",
-            Self::WrongPassword => "wrong_password",
-            Self::AuthFailed => "auth_failed",
-            Self::RepositoryMissing => "repository_missing",
-            Self::CommandFailed => "command_failed",
-            Self::DaemonUnreachable => "daemon_unreachable",
-        }
+code_enum! {
+    /// Result code of `TestDestinationConnection` (`ConnectionTestResultDto.error_kind`).
+    ConnectionTestCode {
+        InvalidInput => "invalid_input",
+        /// `detail` = name of the destination that already uses the location.
+        DuplicateLocation => "duplicate_location",
+        DestinationUnreachable => "destination_unreachable",
+        RepositoryExists => "repository_exists",
+        NotWritable => "not_writable",
+        MissingPassword => "missing_password",
+        SecretStoreLocked => "secret_store_locked",
+        Internal => "internal",
+        ResticUnavailable => "restic_unavailable",
+        WrongPassword => "wrong_password",
+        AuthFailed => "auth_failed",
+        RepositoryMissing => "repository_missing",
+        CommandFailed => "command_failed",
+        /// Set by the GUI when the daemon cannot be reached.
+        DaemonUnreachable => "daemon_unreachable",
     }
 }
 
-/// Code of a D-Bus error: the error name `net.daester.Kestic.Error.<Name>`
-/// (`dbus-api.md` §Fehler-Namen). The error message is raw detail only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ServiceErrorCode {
-    InvalidInput,
-    NotFound,
-    InUse,
-    ManualRunBlocked,
-    DestinationUnreachable,
-    WrongPassword,
-    AuthFailed,
-    SecretStoreLocked,
-    ResticUnavailable,
-    AlreadyRunning,
-    /// Unlock refused: the lock belongs to an active or remote process.
-    LockInUse,
-    /// The repository location is already used by another destination.
-    DuplicateLocation,
-    Internal,
-    /// No D-Bus error name: the daemon could not be reached (transport error, set by the GUI).
-    DaemonUnreachable,
+code_enum! {
+    /// Code of a D-Bus error: the error name `net.daester.Kestic.Error.<Name>`
+    /// (`dbus-api.md` §Fehler-Namen). The error message is raw detail only.
+    ServiceErrorCode {
+        InvalidInput => "InvalidInput",
+        NotFound => "NotFound",
+        InUse => "InUse",
+        ManualRunBlocked => "ManualRunBlocked",
+        DestinationUnreachable => "DestinationUnreachable",
+        WrongPassword => "WrongPassword",
+        AuthFailed => "AuthFailed",
+        SecretStoreLocked => "SecretStoreLocked",
+        ResticUnavailable => "ResticUnavailable",
+        AlreadyRunning => "AlreadyRunning",
+        /// Unlock refused: the lock belongs to an active or remote process.
+        LockInUse => "LockInUse",
+        /// The repository location is already used by another destination.
+        DuplicateLocation => "DuplicateLocation",
+        Internal => "Internal",
+        /// No D-Bus error name: the daemon could not be reached (transport error, set by the GUI).
+        DaemonUnreachable => "DaemonUnreachable",
+    }
 }
 
-impl ServiceErrorCode {
-    pub const ALL: [Self; 14] = [
-        Self::InvalidInput,
-        Self::NotFound,
-        Self::InUse,
-        Self::ManualRunBlocked,
-        Self::DestinationUnreachable,
-        Self::WrongPassword,
-        Self::AuthFailed,
-        Self::SecretStoreLocked,
-        Self::ResticUnavailable,
-        Self::AlreadyRunning,
-        Self::LockInUse,
-        Self::DuplicateLocation,
-        Self::Internal,
-        Self::DaemonUnreachable,
-    ];
-}
-
-/// Aggregated overall status precedence (`tray-und-benachrichtigungen.md` §10.1,
-/// `zustaende.md` §6.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OverallStatusKind {
-    Blocked,
-    Error,
-    Overdue,
-    Warning,
-    Running,
-    Paused,
-    Pending,
-    Interrupted,
-    Cancelled,
-    NeverRun,
-    ManualOnly,
-    Ok,
-}
-
-impl OverallStatusKind {
-    pub const ALL: [Self; 12] = [
-        Self::Blocked,
-        Self::Error,
-        Self::Overdue,
-        Self::Warning,
-        Self::Running,
-        Self::Paused,
-        Self::Pending,
-        Self::Interrupted,
-        Self::Cancelled,
-        Self::NeverRun,
-        Self::ManualOnly,
-        Self::Ok,
-    ];
-
-    /// Code string, equal to the serde name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Blocked => "blocked",
-            Self::Error => "error",
-            Self::Overdue => "overdue",
-            Self::Warning => "warning",
-            Self::Running => "running",
-            Self::Paused => "paused",
-            Self::Pending => "pending",
-            Self::Interrupted => "interrupted",
-            Self::Cancelled => "cancelled",
-            Self::NeverRun => "never_run",
-            Self::ManualOnly => "manual_only",
-            Self::Ok => "ok",
-        }
+code_enum! {
+    /// Aggregated overall status precedence (see `docs/spec/ui/zustaende.md`).
+    OverallStatusKind {
+        Blocked => "blocked",
+        Error => "error",
+        Overdue => "overdue",
+        Warning => "warning",
+        Running => "running",
+        Paused => "paused",
+        Pending => "pending",
+        Interrupted => "interrupted",
+        Cancelled => "cancelled",
+        NeverRun => "never_run",
+        ManualOnly => "manual_only",
+        Ok => "ok",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Serialize;
 
     fn json<T: Serialize>(value: T) -> String {
         serde_json::to_string(&value).expect("serialize code")
@@ -514,45 +267,52 @@ mod tests {
         assert_eq!(json(OverallStatusKind::NeverRun), "\"never_run\"");
     }
 
-    /// `as_str` and the serde name agree for every variant, which pins all JSON names.
+    /// `parse` finds every variant by its code string and rejects unknown codes.
     #[test]
-    fn as_str_matches_serde_name() {
-        for r in BlockedReason::ALL {
-            assert_eq!(json(r), format!("\"{}\"", r.as_str()));
-            assert_eq!(BlockedReason::parse(r.as_str()), Some(r));
+    fn parse_finds_every_code() {
+        for v in BlockedReason::ALL {
+            assert_eq!(BlockedReason::parse(v.as_str()), Some(v));
+            assert_eq!(BlockedReason::parse("nope"), None);
         }
-        for r in SkipReason::ALL {
-            assert_eq!(json(r), format!("\"{}\"", r.as_str()));
+        for v in SkipReason::ALL {
+            assert_eq!(SkipReason::parse(v.as_str()), Some(v));
+            assert_eq!(SkipReason::parse("nope"), None);
         }
-        for k in ResticStatusCode::ALL {
-            assert_eq!(json(k), format!("\"{}\"", k.as_str()));
+        for v in ResticStatusCode::ALL {
+            assert_eq!(ResticStatusCode::parse(v.as_str()), Some(v));
+            assert_eq!(ResticStatusCode::parse("nope"), None);
         }
-        for k in OverallStatusKind::ALL {
-            assert_eq!(json(k), format!("\"{}\"", k.as_str()));
+        for v in OverallStatusKind::ALL {
+            assert_eq!(OverallStatusKind::parse(v.as_str()), Some(v));
+            assert_eq!(OverallStatusKind::parse("nope"), None);
         }
-        for k in ErrorKind::ALL {
-            assert_eq!(json(k), format!("\"{}\"", k.as_str()));
+        for v in ErrorKind::ALL {
+            assert_eq!(ErrorKind::parse(v.as_str()), Some(v));
+            assert_eq!(ErrorKind::parse("nope"), None);
         }
-        for k in SourceStatus::ALL {
-            assert_eq!(json(k), format!("\"{}\"", k.as_str()));
+        for v in SourceStatus::ALL {
+            assert_eq!(SourceStatus::parse(v.as_str()), Some(v));
+            assert_eq!(SourceStatus::parse("nope"), None);
         }
-        for k in BlockingKind::ALL {
-            assert_eq!(json(k), format!("\"{}\"", k.as_str()));
+        for v in BlockingKind::ALL {
+            assert_eq!(BlockingKind::parse(v.as_str()), Some(v));
+            assert_eq!(BlockingKind::parse("nope"), None);
         }
-        for c in PendingReasonCode::ALL {
-            assert_eq!(json(c), format!("\"{}\"", c.as_str()));
+        for v in PendingReasonCode::ALL {
+            assert_eq!(PendingReasonCode::parse(v.as_str()), Some(v));
+            assert_eq!(PendingReasonCode::parse("nope"), None);
         }
-        for a in RecoveryAction::ALL {
-            assert_eq!(json(a), format!("\"{}\"", a.as_str()));
-            assert_eq!(RecoveryAction::parse(a.as_str()), Some(a));
+        for v in RecoveryAction::ALL {
+            assert_eq!(RecoveryAction::parse(v.as_str()), Some(v));
+            assert_eq!(RecoveryAction::parse("nope"), None);
         }
-        for c in ConnectionTestCode::ALL {
-            assert_eq!(json(c), format!("\"{}\"", c.as_str()));
+        for v in ConnectionTestCode::ALL {
+            assert_eq!(ConnectionTestCode::parse(v.as_str()), Some(v));
+            assert_eq!(ConnectionTestCode::parse("nope"), None);
         }
-        for p in RunProgressPhase::ALL {
-            assert_eq!(json(p), format!("\"{}\"", p.as_str()));
-            assert_eq!(RunProgressPhase::parse(p.as_str()), Some(p));
+        for v in RunProgressPhase::ALL {
+            assert_eq!(RunProgressPhase::parse(v.as_str()), Some(v));
+            assert_eq!(RunProgressPhase::parse("nope"), None);
         }
-        assert_eq!(BlockedReason::parse("nope"), None);
     }
 }

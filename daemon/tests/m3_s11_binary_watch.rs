@@ -15,7 +15,6 @@ use kestic_core::model::{
 };
 use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -37,8 +36,6 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
             let installed_bin = bin_dir.join("kestic");
             let sibling_file = bin_dir.join("other_helper");
             fs::copy(&real_bin, &installed_bin).expect("copy kestic binary");
-            fs::set_permissions(&installed_bin, fs::Permissions::from_mode(0o755))
-                .expect("chmod 755");
             fs::write(&sibling_file, b"v1").expect("write sibling");
 
             let cfg_path = root.join("cfg/kestic/config.toml");
@@ -87,7 +84,6 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
             // AC-M3-11-1: Rename kestic binary while idle -> restarts itself via exec() in same PID!
             let bin_new = bin_dir.join("kestic.new");
             fs::copy(&real_bin, &bin_new).expect("copy new bin");
-            fs::set_permissions(&bin_new, fs::Permissions::from_mode(0o755)).expect("chmod 755");
             fs::rename(&bin_new, &installed_bin).expect("rename kestic binary");
             wait_for_file(&ready_file, Duration::from_secs(10));
             assert_eq!(child_guard.0.id(), pid_before);
@@ -121,7 +117,6 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
 
             // Replace binary mid-backup -> must NOT interrupt running backup!
             fs::copy(&real_bin, &bin_new).expect("copy bin v3");
-            fs::set_permissions(&bin_new, fs::Permissions::from_mode(0o755)).expect("chmod 755");
             fs::rename(&bin_new, &installed_bin).expect("rename v3");
             thread::sleep(Duration::from_millis(650));
 

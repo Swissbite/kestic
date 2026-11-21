@@ -5,14 +5,11 @@
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
 use common::m3::{
-    M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, add_local_backup, backup_summary,
-    dest_summary, hold_repo_lock, restic_repo_cmd, restic_variants, settle, spawn_m3_daemon,
-    wait_for_state,
+    M3Rig, StdFakes, backup_summary, dest_summary, hold_repo_lock, restic_repo_cmd,
+    restic_variants, settle, wait_for_state,
 };
-use common::{run_isolated_test, start_fake_notifications, start_fake_sni_watcher};
-use kestic_core::clock::FakeClock;
+use common::run_isolated_test;
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, RunKind, RunStatus, Schedule,
     Source,
@@ -21,7 +18,6 @@ use kestic_daemon::dbus_api::DaemonStateDto;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 use time::OffsetDateTime;
 use time::macros::datetime;
@@ -35,50 +31,9 @@ const SUNDAY_1240: OffsetDateTime = datetime!(2026-12-06 11:40:00 UTC);
 /// 2026-12-01 12:00:05 Europe/Zurich.
 const TUESDAY_1200: OffsetDateTime = datetime!(2026-12-01 11:00:05 UTC);
 
-struct Fakes {
-    upower: FakeUPowerHandle,
-    nm: FakeNetworkManagerHandle,
-    _notif: zbus::Connection,
-    _sni: zbus::Connection,
-}
-
-fn start_fakes() -> Fakes {
-    let (notif, _capture) = start_fake_notifications();
-    Fakes {
-        _sni: start_fake_sni_watcher(),
-        upower: FakeUPowerHandle::start(false, 100.0),
-        nm: FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]),
-        _notif: notif,
-    }
-}
-
-struct Rig {
-    daemon: M3Daemon,
-    clock: Arc<FakeClock>,
-    wrapper: ResticWrapper,
-    variant: ResticVariant,
-}
-
-fn start_rig(root: &Path, variant: &ResticVariant, base: &str, start: OffsetDateTime) -> Rig {
-    let sub = variant.sub(base);
-    let wrapper = ResticWrapper::create(&root.join(&sub).join("wrapper"), &variant.bin);
-    let clock = Arc::new(FakeClock::new(start));
-    let bus = variant.bus_name(base);
-    let daemon = spawn_m3_daemon(
-        root,
-        M3DaemonOpts::new(&sub, &bus, &wrapper.path, Arc::clone(&clock) as _),
-    );
-    Rig {
-        daemon,
-        clock,
-        wrapper,
-        variant: variant.clone(),
-    }
-}
-
 /// Adds a backup (given schedule) to an existing destination through the daemon API.
 fn add_backup_on(
-    rig: &Rig,
+    rig: &M3Rig,
     root: &Path,
     dest_id: &DestinationId,
     name: &str,
@@ -94,7 +49,7 @@ fn add_backup_on(
 }
 
 /// Adds an empty local destination (maintenance only) and waits one tick for its baseline.
-fn add_local_dest(rig: &Rig, root: &Path, name: &str) -> Destination {
+fn add_local_dest(rig: &M3Rig, root: &Path, name: &str) -> Destination {
     let repo = root.join(rig.variant.sub("repo")).join(name);
     fs::create_dir_all(&repo).expect("mkdir repo");
     let dest = Destination::new(name, DestinationKind::Local { path: repo }).expect("dest");
@@ -119,16 +74,17 @@ fn ac_m3_05_1_backups_on_same_destination_run_sequentially_second_is_queued() {
         "ac_m3_05_1_backups_on_same_destination_run_sequentially_second_is_queued",
         "KESTIC_M3_05_1_INNER",
         |root| {
-            let _fakes = start_fakes();
+            let _fakes = StdFakes::start();
             for variant in restic_variants() {
-                let rig = start_rig(
+                let rig = M3Rig::start(
                     root,
                     &variant,
                     "M3Q1",
                     TUESDAY_1200 - time::Duration::seconds(35),
+                    |_| {},
                 );
                 let client = &rig.daemon.client;
-                let fx = add_local_backup(client, root, &variant.sub("M3Q1"), "Alpha", |_| {});
+                let fx = rig.add_backup("Alpha", |_| {});
                 let (beta_id, _) = add_backup_on(
                     &rig,
                     root,
@@ -215,11 +171,17 @@ fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
         "ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination",
         "KESTIC_M3_05_3_INNER",
         |root| {
-            let _fakes = start_fakes();
+            let _fakes = StdFakes::start();
             for variant in restic_variants() {
-                let rig = start_rig(root, &variant, "M3Q3", datetime!(2026-12-06 10:59:30 UTC));
+                let rig = M3Rig::start(
+                    root,
+                    &variant,
+                    "M3Q3",
+                    datetime!(2026-12-06 10:59:30 UTC),
+                    |_| {},
+                );
                 let client = &rig.daemon.client;
-                let alpha = add_local_backup(client, root, &variant.sub("M3Q3"), "Alpha", |_| {});
+                let alpha = rig.add_backup("Alpha", |_| {});
                 let (beta_id, _) = add_backup_on(
                     &rig,
                     root,
@@ -331,7 +293,7 @@ fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
     );
 }
 
-/// AC-M3-05-4 (F4): backup A with an open `forget` (last run `Warnung`, Exit 11) -> when the
+/// AC-M3-05-4: backup A with an open `forget` (last run `Warnung`, Exit 11) -> when the
 /// maintenance run starts, (a) first `forget --tag kestic:<A> --group-by tags`, (b) then `prune`.
 #[test]
 fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
@@ -339,11 +301,11 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
         "ac_m3_05_4_maintenance_runs_open_forget_before_prune",
         "KESTIC_M3_05_4_INNER",
         |root| {
-            let _fakes = start_fakes();
+            let _fakes = StdFakes::start();
             for variant in restic_variants() {
-                let rig = start_rig(root, &variant, "M3Q4", FRIDAY);
+                let rig = M3Rig::start(root, &variant, "M3Q4", FRIDAY, |_| {});
                 let client = &rig.daemon.client;
-                let alpha = add_local_backup(client, root, &variant.sub("M3Q4"), "Alpha", |b| {
+                let alpha = rig.add_backup("Alpha", |b| {
                     b.schedule = Schedule::ManualOnly;
                 });
                 let alpha_id = alpha.backup.id.clone();
@@ -464,7 +426,7 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
     );
 }
 
-/// AC-M3-05-5 (F11, negative): a due maintenance run is held back (a) on battery and (b-neg) on a
+/// AC-M3-05-5 (negative): a due maintenance run is held back (a) on battery and (b-neg) on a
 /// metered connection, and (b) starts as soon as AC power and an unmetered connection are present.
 #[test]
 fn ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection() {
@@ -472,11 +434,11 @@ fn ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection() {
         "ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection",
         "KESTIC_M3_05_5_INNER",
         |root| {
-            let fakes = start_fakes();
+            let fakes = StdFakes::start();
             for variant in restic_variants() {
                 fakes.upower.set_on_battery(true, 80.0);
                 fakes.nm.update(true, false, Some("Heim"));
-                let rig = start_rig(root, &variant, "M3Q5", FRIDAY);
+                let rig = M3Rig::start(root, &variant, "M3Q5", FRIDAY, |_| {});
                 let client = &rig.daemon.client;
                 let dest = add_local_dest(&rig, root, "Z");
                 let repo_calls_before = rig.wrapper.started_repo_count();
@@ -487,8 +449,13 @@ fn ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection() {
                 let on_battery = client.get_state().expect("GetState");
                 let d = dest_summary(&on_battery, &dest.id);
                 assert!(
-                    !d.maintenance_running && d.last_prune_at_unix.is_none(),
-                    "{}: (a) no maintenance on battery",
+                    !d.maintenance_running,
+                    "{}: (a) no maintenance on battery: not running",
+                    variant.label
+                );
+                assert!(
+                    d.last_prune_at_unix.is_none(),
+                    "{}: (a) no maintenance on battery: no prune recorded",
                     variant.label
                 );
                 assert_eq!(
@@ -512,8 +479,13 @@ fn ac_m3_05_5_maintenance_deferred_on_battery_or_metered_connection() {
                 let metered = client.get_state().expect("GetState");
                 let d = dest_summary(&metered, &dest.id);
                 assert!(
-                    !d.maintenance_running && d.last_prune_at_unix.is_none(),
-                    "{}: (a) no maintenance on a metered connection",
+                    !d.maintenance_running,
+                    "{}: (a) no maintenance on a metered connection: not running",
+                    variant.label
+                );
+                assert!(
+                    d.last_prune_at_unix.is_none(),
+                    "{}: (a) no maintenance on a metered connection: no prune recorded",
                     variant.label
                 );
                 assert_eq!(
@@ -564,9 +536,9 @@ fn ac_m3_05_6_check_without_read_data_is_recorded_as_maintenance_run() {
         "ac_m3_05_6_check_without_read_data_is_recorded_as_maintenance_run",
         "KESTIC_M3_05_6_INNER",
         |root| {
-            let _fakes = start_fakes();
+            let _fakes = StdFakes::start();
             for variant in restic_variants() {
-                let rig = start_rig(root, &variant, "M3Q6", FRIDAY);
+                let rig = M3Rig::start(root, &variant, "M3Q6", FRIDAY, |_| {});
                 let client = &rig.daemon.client;
                 let dest = add_local_dest(&rig, root, "Z");
 
@@ -602,7 +574,7 @@ fn ac_m3_05_6_check_without_read_data_is_recorded_as_maintenance_run() {
     );
 }
 
-/// AC-M3-05-8 (NFR-08, P41): with a running backup on the same destination (non-exclusive lock)
+/// AC-M3-05-8 (NFR-08): with a running backup on the same destination (non-exclusive lock)
 /// the `prune` preview (a) returns a result instead of Exit 11 and (b) uses `--no-lock`.
 #[test]
 fn ac_m3_05_8_prune_preview_under_non_exclusive_lock_uses_no_lock() {
@@ -610,11 +582,11 @@ fn ac_m3_05_8_prune_preview_under_non_exclusive_lock_uses_no_lock() {
         "ac_m3_05_8_prune_preview_under_non_exclusive_lock_uses_no_lock",
         "KESTIC_M3_05_8_INNER",
         |root| {
-            let _fakes = start_fakes();
+            let _fakes = StdFakes::start();
             for variant in restic_variants() {
-                let rig = start_rig(root, &variant, "M3Q8", FRIDAY);
+                let rig = M3Rig::start(root, &variant, "M3Q8", FRIDAY, |_| {});
                 let client = &rig.daemon.client;
-                let fx = add_local_backup(client, root, &variant.sub("M3Q8"), "Docs", |_| {});
+                let fx = rig.add_backup("Docs", |_| {});
                 client.start_backup(&fx.backup_id_str).expect("seed run");
                 wait_for_state(client, Duration::from_secs(30), "seed Ok", |s| {
                     backup_summary(s, &fx.backup.id)

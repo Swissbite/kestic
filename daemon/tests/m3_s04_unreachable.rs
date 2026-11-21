@@ -6,15 +6,16 @@
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
 use common::m3::{
-    M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, assert_dbus_error_name, backup_summary,
-    dest_summary, latest_variant, notifications_for, restic_variants, runtime_state, settle,
-    spawn_m3_daemon, wait_for_backoff_attempt, wait_for_notifications, wait_for_state,
+    M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, StdFakes, assert_dbus_error_name,
+    backup_summary, dest_summary, latest_variant, notifications_for, restic_variants,
+    runtime_state, settle, spawn_m3_daemon, wait_for_backoff_attempt, wait_for_notifications,
+    wait_for_state,
 };
+use common::tools::RestServerGuard;
 use common::{
-    CapturedKesticSignal, KesticSignalCollector, RestServerGuard, fetch_dbusmenu_items,
-    run_isolated_test, start_fake_notifications, start_fake_sni_watcher, wait_for_sni_service,
+    CapturedKesticSignal, KesticSignalCollector, fetch_dbusmenu_items, run_isolated_test,
+    wait_for_sni_service,
 };
 use kestic_core::clock::{Clock, FakeClock, SystemClock};
 use kestic_core::model::{
@@ -123,21 +124,7 @@ impl RestRig {
     }
 }
 
-fn start_fakes() -> (
-    FakeUPowerHandle,
-    FakeNetworkManagerHandle,
-    zbus::Connection,
-    Arc<common::NotificationCapture>,
-    zbus::Connection,
-) {
-    let (notif_conn, notif) = start_fake_notifications();
-    let sni = start_fake_sni_watcher();
-    let upower = FakeUPowerHandle::start(false, 100.0);
-    let nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]);
-    (upower, nm, notif_conn, notif, sni)
-}
-
-/// AC-M3-04-1 (FR-30, F2, P32): with the `rest-server` stopped, the due 12:00 slot (a) fails the
+/// AC-M3-04-1 (FR-30): with the `rest-server` stopped, the due 12:00 slot (a) fails the
 /// pre-check, (b) spawns no restic process, (c) is `ausstehend` (destination unreachable) and (d)
 /// retries at 12:05, 12:20 and 13:20 only, then waits for the next regular slot.
 #[test]
@@ -146,7 +133,7 @@ fn ac_m3_04_1_unreachable_destination_retries_at_5_15_60_minutes_then_next_slot(
         "ac_m3_04_1_unreachable_destination_retries_at_5_15_60_minutes_then_next_slot",
         "KESTIC_M3_04_1_INNER",
         |root| {
-            let (_upower, _nm, _nc, _notif, _sni) = start_fakes();
+            let _fakes = StdFakes::start();
             let variant = latest_variant();
             let mut rig = start_rest_rig(root, &variant, "M3U1", BEFORE_SLOT);
             rig.rest.stop();
@@ -278,7 +265,8 @@ fn ac_m3_04_2_network_change_retries_unreachable_destination_immediately() {
         "ac_m3_04_2_network_change_retries_unreachable_destination_immediately",
         "KESTIC_M3_04_2_INNER",
         |root| {
-            let (_upower, nm, _nc, _notif, _sni) = start_fakes();
+            let fakes = StdFakes::start();
+            let nm = &fakes.nm;
             for variant in restic_variants() {
                 nm.update(true, false, Some("Heim"));
                 let mut rig = start_rest_rig(root, &variant, "M3U2", BEFORE_SLOT);
@@ -339,11 +327,12 @@ fn ac_m3_04_3_no_alert_until_overdue_and_manual_run_blocked_only_on_state_change
         "ac_m3_04_3_no_alert_until_overdue_and_manual_run_blocked_only_on_state_change",
         "KESTIC_M3_04_3_INNER",
         |root| {
-            let (_upower, _nm, _nc, notif, sni) = start_fakes();
+            let fakes = StdFakes::start();
+            let (notif, sni) = (&fakes.notif, &fakes.sni_conn);
             let variant = latest_variant();
             let mut rig = start_rest_rig(root, &variant, "M3U3", BEFORE_SLOT);
             let client = rig.daemon.client.clone();
-            let sni_service = wait_for_sni_service(&sni, Duration::from_secs(5));
+            let sni_service = wait_for_sni_service(sni, Duration::from_secs(5));
             let signals = KesticSignalCollector::start(
                 &variant.bus_name("M3U3"),
                 KESTIC_OBJECT_PATH,
@@ -405,7 +394,7 @@ fn ac_m3_04_3_no_alert_until_overdue_and_manual_run_blocked_only_on_state_change
             wait_for_state(&client, Duration::from_secs(10), "overdue", |s| {
                 backup_summary(s, &rig.backup_id).is_overdue
             });
-            wait_for_notifications(&notif, "BackupOverdue", 1, Duration::from_secs(5));
+            wait_for_notifications(notif, "BackupOverdue", 1, Duration::from_secs(5));
             settle();
             assert_eq!(
                 notif.snapshot().len(),
@@ -443,7 +432,7 @@ fn ac_m3_04_3_no_alert_until_overdue_and_manual_run_blocked_only_on_state_change
                 "(c) ManualRunBlocked reason: {sigs:?}"
             );
             assert_eq!(
-                notifications_for(&notif, "ManualRunBlocked").len(),
+                notifications_for(notif, "ManualRunBlocked").len(),
                 1,
                 "(c) notification because no window is active"
             );
@@ -453,7 +442,7 @@ fn ac_m3_04_3_no_alert_until_overdue_and_manual_run_blocked_only_on_state_change
     );
 }
 
-/// AC-M3-04-7 (P32): real clock, stopped `rest-server`; the status is `ausstehend` (destination
+/// AC-M3-04-7: real clock, stopped `rest-server`; the status is `ausstehend` (destination
 /// unreachable) at most 15 s after the due time.
 #[test]
 fn ac_m3_04_7_real_clock_status_pending_within_15_seconds_of_due_time() {
@@ -461,12 +450,12 @@ fn ac_m3_04_7_real_clock_status_pending_within_15_seconds_of_due_time() {
         "ac_m3_04_7_real_clock_status_pending_within_15_seconds_of_due_time",
         "KESTIC_M3_04_7_INNER",
         |root| {
-            let (_upower, _nm, _nc, _notif, _sni) = start_fakes();
+            let _fakes = StdFakes::start();
             let variant = latest_variant();
             let sub = variant.sub("M3U7");
             let bus = variant.bus_name("M3U7");
             let mut opts = M3DaemonOpts::new(&sub, &bus, &variant.bin, Arc::new(SystemClock));
-            opts.timezone = TimezoneSpec::named("UTC");
+            opts.timezone = TimezoneSpec::Named("UTC".to_string());
             let daemon = spawn_m3_daemon(root, opts);
             let rest_data = root.join(&sub).join("rest-data");
             let mut rest = RestServerGuard::start_no_auth(&rest_data);
@@ -553,7 +542,8 @@ fn ac_m3_04_11_network_change_renews_precheck_at_most_once_per_60_seconds() {
         "ac_m3_04_11_network_change_renews_precheck_at_most_once_per_60_seconds",
         "KESTIC_M3_04_11_INNER",
         |root| {
-            let (_upower, nm, _nc, _notif, _sni) = start_fakes();
+            let fakes = StdFakes::start();
+            let nm = &fakes.nm;
             let variant = latest_variant();
             let mut rig =
                 start_rest_rig(root, &variant, "M3U11", datetime!(2026-12-01 07:00:00 UTC));

@@ -5,9 +5,11 @@
 
 mod common;
 
-use kestic_core::backup::{build_backup_command_spec, build_forget_command_spec, execute_backup};
-use kestic_core::clock::FakeClock;
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
+use common::execute_backup;
+
+use common::tools::find_lock_file;
+
+use kestic_core::backup::{build_backup_command_spec, build_forget_command_spec};
 use kestic_core::maintenance::{
     RepoLockInfo, build_check_command_spec, build_prune_command_spec, classify_locks,
     detect_stale_locks, detect_stale_locks_with, execute_check, execute_prune,
@@ -16,7 +18,6 @@ use kestic_core::maintenance::{
 use kestic_core::model::{Backup, Destination, DestinationKind, RunStatus, Source};
 use kestic_core::provider::check_binary_version;
 use kestic_core::restic::{ResticCommandSpec, ResticRuntime};
-use kestic_core::secrets::{FileSecretStore, SecretValue};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -25,23 +26,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use time::macros::datetime;
-
-fn find_lock_file(locks_dir: &Path) -> Option<std::path::PathBuf> {
-    let entries = fs::read_dir(locks_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
-            && fs::metadata(&path).is_ok_and(|m| m.len() > 0)
-        {
-            return Some(path);
-        }
-    }
-    None
-}
 
 fn populate_incompressible_blobs(dir: &Path, count_mb: usize) {
     let mut chunk = vec![0u8; 1024 * 1024];
@@ -102,43 +86,23 @@ fn ac_m3_04_9_no_command_spec_contains_retry_lock() {
 fn ac_m3_05_6_check_runs_without_read_data_and_succeeds() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
-        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         fs::write(src_dir.join("hello.txt"), b"hello check").expect("write");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved");
-        let clock = FakeClock::new(datetime!(2026-12-06 12:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-06 12:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("check-test-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Local", &repo_dir, "check-test-pw");
         let backup = Backup::new("Check", Source::folder(&src_dir), dest.id.clone()).expect("bk");
         let bk_res = execute_backup(&backup, &dest, &state_dir, &runtime, None, &[], |_| {})
             .expect("backup");
         assert_eq!(bk_res.exit_code, 0, "{label}");
 
-        let spec = build_check_command_spec(&dest, &resolved, &helper);
+        let spec = build_check_command_spec(&dest, &rig.resolved, &rig.helper);
         assert!(
             !spec.restic_argv().iter().any(|a| a == "--read-data"),
             "{label}: check must not pass --read-data"
@@ -158,32 +122,14 @@ fn ac_m3_05_7_and_05_8_prune_dry_run_uses_no_lock_during_active_backup() {
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         fs::write(src_dir.join("data.txt"), b"prune preview data").expect("write");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved");
-        let clock = FakeClock::new(datetime!(2026-12-06 12:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-06 12:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("prune-test-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime).expect("init");
+        let dest = rig.init_local("Local", &repo_dir, "prune-test-pw");
         let backup = Backup::new("Prune", Source::folder(&src_dir), dest.id.clone()).expect("bk");
         assert_eq!(
             execute_backup(&backup, &dest, &state_dir, &runtime, None, &[], |_| {})
@@ -193,7 +139,7 @@ fn ac_m3_05_7_and_05_8_prune_dry_run_uses_no_lock_during_active_backup() {
         );
 
         // Hold a non-exclusive lock via `restic backup --stdin`.
-        let mut stdin_child = Command::new(&resolved.binary)
+        let mut stdin_child = Command::new(&rig.resolved.binary)
             .args([
                 "-r",
                 &repo_dir.to_string_lossy(),
@@ -221,9 +167,13 @@ fn ac_m3_05_7_and_05_8_prune_dry_run_uses_no_lock_during_active_backup() {
         let preview = execute_prune_dry_run(&dest, &runtime, None, &[])
             .unwrap_or_else(|e| panic!("{label}: prune dry-run failed under lock: {e}"));
         assert!(
-            preview.transparent_command.contains("--dry-run")
-                && preview.transparent_command.contains("--no-lock"),
-            "{label}: unexpected cmd: {}",
+            preview.transparent_command.contains("--dry-run"),
+            "{label}: missing --dry-run: {}",
+            preview.transparent_command
+        );
+        assert!(
+            preview.transparent_command.contains("--no-lock"),
+            "{label}: missing --no-lock: {}",
             preview.transparent_command
         );
 
@@ -314,32 +264,14 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         populate_incompressible_blobs(&src_dir, 24);
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved");
-        let clock = FakeClock::new(datetime!(2026-12-06 12:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-06 12:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("lock-inspect-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime).expect("init");
+        let dest = rig.init_local("Local", &repo_dir, "lock-inspect-pw");
         let backup = Backup::new("Lock", Source::folder(&src_dir), dest.id.clone()).expect("bk");
         assert_eq!(
             execute_backup(&backup, &dest, &state_dir, &runtime, None, &[], |_| {})
@@ -351,7 +283,7 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
         let locks_dir = repo_dir.join("locks");
 
         // 1. SIGTERM on exclusive `restic check --read-data` cleans up its lock -> no unlock offer (`AC-M3-06-1`).
-        let mut sigterm_child = Command::new(&resolved.binary)
+        let mut sigterm_child = Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
             .env("RESTIC_PASSWORD", "lock-inspect-pw")
             .env("RESTIC_CACHE_DIR", &cache_dir)
@@ -372,7 +304,7 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
         );
 
         // 2. SIGKILL on exclusive `restic check --read-data` leaves stale local lock (`AC-M3-06-1`).
-        let mut sigkill_child = Command::new(&resolved.binary)
+        let mut sigkill_child = Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
             .env("RESTIC_PASSWORD", "lock-inspect-pw")
             .env("RESTIC_CACHE_DIR", &cache_dir)

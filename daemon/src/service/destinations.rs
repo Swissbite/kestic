@@ -3,6 +3,7 @@
 
 //! Destination CRUD, connection testing, password updates, repository unlock, and snapshot listing.
 
+use super::error::parse_backup_id;
 use super::error::{
     KesticServiceErr, map_config_err, map_destination_err, map_provider_err, map_secret_err,
     parse_setup_mode,
@@ -28,6 +29,7 @@ use kestic_core::provider::resolve_and_check;
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO, SECRET_KIND_REST};
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
 use kestic_core::snapshot::ResticSnapshot;
+use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::ConnectionTestCode;
 use std::fs;
 use std::path::Path;
@@ -35,206 +37,6 @@ use std::sync::{Arc, Mutex};
 use zbus::Connection;
 
 impl DaemonCore {
-    pub fn add_destination(
-        &mut self,
-        dest_json: &str,
-        mode: &str,
-        repo_password: &str,
-        rest_password: &str,
-    ) -> Result<String, KesticServiceErr> {
-        let mut dest: Destination = serde_json::from_str(dest_json).map_err(|e| {
-            KesticServiceErr::InvalidInput(format!("invalid destination JSON: {e}"))
-        })?;
-        if self.config.destination(&dest.id).is_some() {
-            dest.id =
-                DestinationId::generate_unique(self.config.destinations.iter().map(|d| &d.id))
-                    .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
-            dest.secrets = kestic_core::model::DestinationSecretRefs::for_destination(
-                &dest.id,
-                dest.kind.uses_rest_credentials(),
-            );
-        }
-        dest.validate()
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
-        if let Some(existing) = self.config.find_duplicate_destination(&dest.kind, None) {
-            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
-        }
-
-        let setup_mode = parse_setup_mode(mode)?;
-        if repo_password.is_empty() {
-            return Err(KesticServiceErr::InvalidInput(
-                "repository password must not be empty".to_string(),
-            ));
-        }
-
-        let resolved = resolve_and_check(&self.config.restic_provider).map_err(map_provider_err)?;
-        let repo_pw = SecretValue::from_str_secret(repo_password);
-        let rest_pw =
-            (!rest_password.is_empty()).then(|| SecretValue::from_str_secret(rest_password));
-
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &self.kestic_binary,
-            secret_store: self.secret_store.as_ref(),
-            clock: self.clock.as_ref(),
-            cache_dir: None,
-        };
-        setup_destination(&dest, setup_mode, &repo_pw, rest_pw.as_ref(), &runtime)
-            .map_err(map_destination_err)?;
-
-        let new_id = dest.id.as_str().to_string();
-        let mut next = self.config.clone();
-        next.destinations.push(dest);
-        self.persist_config(next)?;
-        self.ensure_baselines();
-        Ok(new_id)
-    }
-
-    pub fn test_destination_connection(
-        &self,
-        dest_json: &str,
-        mode: &str,
-        repo_password: &str,
-        rest_password: &str,
-    ) -> ConnectionTestResultDto {
-        let dest = match parse_and_validate_dest(dest_json) {
-            Ok(d) => d,
-            Err(dto) => return dto,
-        };
-        let is_existing = self.config.destination(&dest.id).is_some();
-        let exclude_id = is_existing.then_some(&dest.id);
-        let dup_name = self
-            .config
-            .find_duplicate_destination(&dest.kind, exclude_id)
-            .map(|d| d.name.as_str());
-
-        test_destination_connection_impl(DestinationTestInputs {
-            dest: &dest,
-            mode,
-            repo_password,
-            rest_password,
-            is_existing,
-            dup_name,
-            provider: &self.config.restic_provider,
-            kestic_binary: &self.kestic_binary,
-            secret_store: self.secret_store.as_ref(),
-            clock: self.clock.as_ref(),
-        })
-    }
-
-    pub fn update_destination(
-        &mut self,
-        dest_json: &str,
-        mode: &str,
-        repo_password: &str,
-        rest_password: &str,
-        verify_connection: bool,
-    ) -> Result<(), KesticServiceErr> {
-        let updated: Destination = serde_json::from_str(dest_json).map_err(|e| {
-            KesticServiceErr::InvalidInput(format!("invalid destination JSON: {e}"))
-        })?;
-        updated
-            .validate()
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
-
-        let existing_idx = self
-            .config
-            .destinations
-            .iter()
-            .position(|d| d.id == updated.id)
-            .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
-
-        let setup_mode = parse_setup_mode(mode)?;
-
-        if let Some(existing) = self
-            .config
-            .find_duplicate_destination(&updated.kind, Some(&updated.id))
-        {
-            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
-        }
-
-        if verify_connection || matches!(setup_mode, DestinationSetupMode::InitNew) {
-            let resolved =
-                resolve_and_check(&self.config.restic_provider).map_err(map_provider_err)?;
-            let effective_repo_pw = if !repo_password.is_empty() {
-                SecretValue::from_str_secret(repo_password)
-            } else {
-                self.secret_store
-                    .get_secret(updated.id.as_str(), SECRET_KIND_REPO)
-                    .map_err(map_secret_err)?
-                    .ok_or_else(|| {
-                        KesticServiceErr::InvalidInput(
-                            "missing stored repository password".to_string(),
-                        )
-                    })?
-            };
-
-            let effective_rest_pw = if !rest_password.is_empty() {
-                Some(SecretValue::from_str_secret(rest_password))
-            } else if updated.kind.uses_rest_credentials() {
-                self.secret_store
-                    .get_secret(updated.id.as_str(), SECRET_KIND_REST)
-                    .map_err(map_secret_err)?
-            } else {
-                None
-            };
-
-            // AC-M1-19-6: preflight + setup (`init` or `connect`) must pass before mutating secrets or config.
-            let runtime = ResticRuntime {
-                resolved: &resolved,
-                kestic_binary: &self.kestic_binary,
-                secret_store: self.secret_store.as_ref(),
-                clock: self.clock.as_ref(),
-                cache_dir: None,
-            };
-            setup_destination(
-                &updated,
-                setup_mode,
-                &effective_repo_pw,
-                effective_rest_pw.as_ref(),
-                &runtime,
-            )
-            .map_err(map_destination_err)?;
-        }
-
-        let mut next = self.config.clone();
-        next.destinations[existing_idx] = updated;
-        self.persist_config(next)?;
-        Ok(())
-    }
-
-    pub fn update_destination_password(
-        &mut self,
-        dest_id: &str,
-        new_password: &str,
-    ) -> Result<(), KesticServiceErr> {
-        let id = DestinationId::parse(dest_id)
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
-        let dest = self
-            .config
-            .destination(&id)
-            .cloned()
-            .ok_or_else(|| KesticServiceErr::NotFound(dest_id.to_string()))?;
-        if new_password.is_empty() {
-            return Err(KesticServiceErr::InvalidInput(
-                "password must not be empty".to_string(),
-            ));
-        }
-
-        let resolved = resolve_and_check(&self.config.restic_provider).map_err(map_provider_err)?;
-        let candidate = SecretValue::from_str_secret(new_password);
-        verify_and_update_stored_password(
-            &dest,
-            &candidate,
-            self.secret_store.as_ref(),
-            &resolved,
-            &self.kestic_binary,
-            self.clock.as_ref(),
-        )
-        .map_err(map_destination_err)?;
-        Ok(())
-    }
-
     pub fn remove_destination(&mut self, dest_id: &str) -> Result<(), KesticServiceErr> {
         let id = DestinationId::parse(dest_id)
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
@@ -282,9 +84,7 @@ impl DaemonCore {
         self.persist_config(next)?;
         self.ensure_baselines();
         let mut ds = self.load_destination_maintenance_state(&d_id);
-        ds.maintenance_backoff_attempt = 0;
-        ds.maintenance_backoff_until = None;
-        ds.last_maintenance_failure_at = None;
+        kestic_core::scheduler::clear_maintenance_backoff(&mut ds);
         let _ = self.store_destination_maintenance_state(&d_id, &ds);
         Ok(())
     }
@@ -455,28 +255,44 @@ fn check_connect_existing_destination(
     test_ok()
 }
 
+/// The secret `entered` in the form, else the one stored for `dest` under `kind`.
+fn stored_secret(
+    secret_store: &dyn SecretStore,
+    dest: &Destination,
+    kind: &str,
+    entered: &str,
+) -> Result<Option<SecretValue>, SecretError> {
+    if !entered.is_empty() {
+        return Ok(Some(SecretValue::from_str_secret(entered)));
+    }
+    secret_store.get_secret(dest.id.as_str(), kind)
+}
+
+fn secret_error_result(err: SecretError) -> ConnectionTestResultDto {
+    match err {
+        SecretError::LockedOrPromptRequired(msg) => {
+            test_failure(ConnectionTestCode::SecretStoreLocked, msg)
+        }
+        err => test_failure(ConnectionTestCode::Internal, err.to_string()),
+    }
+}
+
 fn resolve_stored_repo_password(
     dest: &Destination,
     is_existing: bool,
     repo_password: &str,
     secret_store: &dyn SecretStore,
 ) -> Result<Option<SecretValue>, ConnectionTestResultDto> {
-    if !repo_password.is_empty() {
-        return Ok(Some(SecretValue::from_str_secret(repo_password)));
-    }
-    if !is_existing {
+    if repo_password.is_empty() && !is_existing {
         return Ok(None);
     }
-    match secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REPO) {
-        Ok(Some(pw)) => Ok(Some(pw)),
+    match stored_secret(secret_store, dest, SECRET_KIND_REPO, repo_password) {
         Ok(None) => Err(test_failure(
             ConnectionTestCode::MissingPassword,
             String::new(),
         )),
-        Err(SecretError::LockedOrPromptRequired(msg)) => {
-            Err(test_failure(ConnectionTestCode::SecretStoreLocked, msg))
-        }
-        Err(err) => Err(test_failure(ConnectionTestCode::Internal, err.to_string())),
+        Ok(pw) => Ok(pw),
+        Err(err) => Err(secret_error_result(err)),
     }
 }
 
@@ -486,19 +302,10 @@ fn resolve_stored_rest_password(
     rest_password: &str,
     secret_store: &dyn SecretStore,
 ) -> Result<Option<SecretValue>, ConnectionTestResultDto> {
-    if !rest_password.is_empty() {
-        return Ok(Some(SecretValue::from_str_secret(rest_password)));
-    }
-    if !is_existing || !dest.kind.uses_rest_credentials() {
+    if rest_password.is_empty() && !(is_existing && dest.kind.uses_rest_credentials()) {
         return Ok(None);
     }
-    match secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REST) {
-        Ok(pw) => Ok(pw),
-        Err(SecretError::LockedOrPromptRequired(msg)) => {
-            Err(test_failure(ConnectionTestCode::SecretStoreLocked, msg))
-        }
-        Err(err) => Err(test_failure(ConnectionTestCode::Internal, err.to_string())),
-    }
+    stored_secret(secret_store, dest, SECRET_KIND_REST, rest_password).map_err(secret_error_result)
 }
 
 fn collect_backup_snapshots(
@@ -527,7 +334,7 @@ fn collect_backup_snapshots(
         }
     };
 
-    // AC-M1-22-4: also scan any other configured destinations for earlier `kestic:<backup-id>` snapshots.
+    // also scan any other configured destinations for earlier `kestic:<backup-id>` snapshots.
     let mut previous_destinations = Vec::new();
     for other_dest in other_dests {
         if let Ok(snaps) = list_snapshots_for_backup(
@@ -550,7 +357,6 @@ fn collect_backup_snapshots(
 
     BackupSnapshotsDto {
         backup_id: b_id.as_str().to_string(),
-        current_destination_id: current_dest.id.as_str().to_string(),
         current_destination_name: current_dest.name.clone(),
         current_snapshots,
         current_error,
@@ -587,8 +393,8 @@ pub(crate) fn add_destination_unlocked(
         ));
     }
 
-    let (provider, kestic_binary, secret_store, clock) = {
-        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let deps = {
+        let guard = shared.lock_unpoisoned();
         if guard.config.destination(&dest.id).is_some() {
             dest.id =
                 DestinationId::generate_unique(guard.config.destinations.iter().map(|d| &d.id))
@@ -603,28 +409,22 @@ pub(crate) fn add_destination_unlocked(
         if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
             return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
-        (
-            guard.config.restic_provider.clone(),
-            guard.kestic_binary.clone(),
-            Arc::clone(&guard.secret_store),
-            Arc::clone(&guard.clock),
-        )
+        guard.restic_deps()
     };
 
-    let resolved = resolve_and_check(&provider).map_err(map_provider_err)?;
+    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
     let repo_pw = SecretValue::from_str_secret(repo_password);
     let rest_pw = (!rest_password.is_empty()).then(|| SecretValue::from_str_secret(rest_password));
-    let runtime = ResticRuntime {
-        resolved: &resolved,
-        kestic_binary: &kestic_binary,
-        secret_store: secret_store.as_ref(),
-        clock: clock.as_ref(),
-        cache_dir: None,
-    };
-    setup_destination(&dest, setup_mode, &repo_pw, rest_pw.as_ref(), &runtime)
-        .map_err(map_destination_err)?;
+    setup_destination(
+        &dest,
+        setup_mode,
+        &repo_pw,
+        rest_pw.as_ref(),
+        &deps.runtime(&resolved),
+    )
+    .map_err(map_destination_err)?;
 
-    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let mut guard = shared.lock_unpoisoned();
     if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
         return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
     }
@@ -652,8 +452,8 @@ pub(crate) fn update_destination_unlocked(
         .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
     let setup_mode = parse_setup_mode(mode)?;
 
-    let (provider, kestic_binary, secret_store, clock) = {
-        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let deps = {
+        let guard = shared.lock_unpoisoned();
         if guard.config.destination(&updated.id).is_none() {
             return Err(KesticServiceErr::NotFound(updated.id.as_str().to_string()));
         }
@@ -663,53 +463,44 @@ pub(crate) fn update_destination_unlocked(
         {
             return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
-        (
-            guard.config.restic_provider.clone(),
-            guard.kestic_binary.clone(),
-            Arc::clone(&guard.secret_store),
-            Arc::clone(&guard.clock),
-        )
+        guard.restic_deps()
     };
 
     if verify_connection || matches!(setup_mode, DestinationSetupMode::InitNew) {
-        let resolved = resolve_and_check(&provider).map_err(map_provider_err)?;
-        let effective_repo_pw = if !repo_password.is_empty() {
-            SecretValue::from_str_secret(repo_password)
-        } else {
-            secret_store
-                .get_secret(updated.id.as_str(), SECRET_KIND_REPO)
-                .map_err(map_secret_err)?
-                .ok_or_else(|| {
-                    KesticServiceErr::InvalidInput("missing stored repository password".to_string())
-                })?
-        };
-        let effective_rest_pw = if !rest_password.is_empty() {
-            Some(SecretValue::from_str_secret(rest_password))
-        } else if updated.kind.uses_rest_credentials() {
-            secret_store
-                .get_secret(updated.id.as_str(), SECRET_KIND_REST)
-                .map_err(map_secret_err)?
-        } else {
+        let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+        let effective_repo_pw = stored_secret(
+            deps.secret_store.as_ref(),
+            &updated,
+            SECRET_KIND_REPO,
+            repo_password,
+        )
+        .map_err(map_secret_err)?
+        .ok_or_else(|| {
+            KesticServiceErr::InvalidInput("missing stored repository password".to_string())
+        })?;
+        let effective_rest_pw = if rest_password.is_empty() && !updated.kind.uses_rest_credentials()
+        {
             None
-        };
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &kestic_binary,
-            secret_store: secret_store.as_ref(),
-            clock: clock.as_ref(),
-            cache_dir: None,
+        } else {
+            stored_secret(
+                deps.secret_store.as_ref(),
+                &updated,
+                SECRET_KIND_REST,
+                rest_password,
+            )
+            .map_err(map_secret_err)?
         };
         setup_destination(
             &updated,
             setup_mode,
             &effective_repo_pw,
             effective_rest_pw.as_ref(),
-            &runtime,
+            &deps.runtime(&resolved),
         )
         .map_err(map_destination_err)?;
     }
 
-    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let mut guard = shared.lock_unpoisoned();
     let existing_idx = guard
         .config
         .destinations
@@ -741,34 +532,28 @@ pub(crate) fn update_destination_password_unlocked(
             "password must not be empty".to_string(),
         ));
     }
-    let (dest, provider, kestic_binary, secret_store, clock) = {
-        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let (dest, deps) = {
+        let guard = shared.lock_unpoisoned();
         let dest = guard
             .config
             .destination(&id)
             .cloned()
             .ok_or_else(|| KesticServiceErr::NotFound(dest_id.to_string()))?;
-        (
-            dest,
-            guard.config.restic_provider.clone(),
-            guard.kestic_binary.clone(),
-            Arc::clone(&guard.secret_store),
-            Arc::clone(&guard.clock),
-        )
+        (dest, guard.restic_deps())
     };
-    let resolved = resolve_and_check(&provider).map_err(map_provider_err)?;
+    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
     let candidate = SecretValue::from_str_secret(new_password);
     verify_and_update_stored_password(
         &dest,
         &candidate,
-        secret_store.as_ref(),
+        deps.secret_store.as_ref(),
         &resolved,
-        &kestic_binary,
-        clock.as_ref(),
+        &deps.kestic_binary,
+        deps.clock.as_ref(),
     )
     .map_err(map_destination_err)?;
 
-    let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let guard = shared.lock_unpoisoned();
     let (state_dto, tray_state) = guard.build_state_and_tray();
     Ok((guard.conn.clone(), state_dto, tray_state))
 }
@@ -785,22 +570,15 @@ pub(crate) fn test_destination_connection_unlocked(
         Err(dto) => return dto,
     };
 
-    let (is_existing, dup_name, provider, kestic_binary, secret_store, clock) = {
-        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let (is_existing, dup_name, deps) = {
+        let guard = shared.lock_unpoisoned();
         let is_existing = guard.config.destination(&dest.id).is_some();
         let exclude_id = is_existing.then_some(&dest.id);
         let dup_name = guard
             .config
             .find_duplicate_destination(&dest.kind, exclude_id)
             .map(|d| d.name.clone());
-        (
-            is_existing,
-            dup_name,
-            guard.config.restic_provider.clone(),
-            guard.kestic_binary.clone(),
-            Arc::clone(&guard.secret_store),
-            Arc::clone(&guard.clock),
-        )
+        (is_existing, dup_name, guard.restic_deps())
     };
 
     test_destination_connection_impl(DestinationTestInputs {
@@ -810,10 +588,10 @@ pub(crate) fn test_destination_connection_unlocked(
         rest_password,
         is_existing,
         dup_name: dup_name.as_deref(),
-        provider: &provider,
-        kestic_binary: &kestic_binary,
-        secret_store: secret_store.as_ref(),
-        clock: clock.as_ref(),
+        provider: &deps.provider,
+        kestic_binary: &deps.kestic_binary,
+        secret_store: deps.secret_store.as_ref(),
+        clock: deps.clock.as_ref(),
     })
 }
 
@@ -821,21 +599,10 @@ pub(crate) fn list_backup_snapshots_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     backup_id: &str,
 ) -> Result<BackupSnapshotsDto, KesticServiceErr> {
-    let b_id =
-        BackupId::parse(backup_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
-    let (current_dest, other_dests, provider, kestic_binary, secret_store, clock) = {
-        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
-        let backup = guard
-            .config
-            .backup(&b_id)
-            .ok_or_else(|| KesticServiceErr::NotFound(backup_id.to_string()))?;
-        let current_dest = guard
-            .config
-            .destination(&backup.destination_id)
-            .cloned()
-            .ok_or_else(|| {
-                KesticServiceErr::NotFound(backup.destination_id.as_str().to_string())
-            })?;
+    let b_id = parse_backup_id(backup_id)?;
+    let (current_dest, other_dests, deps) = {
+        let guard = shared.lock_unpoisoned();
+        let current_dest = guard.backup_destination(&b_id)?;
         let other_dests: Vec<Destination> = guard
             .config
             .destinations
@@ -843,25 +610,18 @@ pub(crate) fn list_backup_snapshots_unlocked(
             .filter(|d| d.id != current_dest.id)
             .cloned()
             .collect();
-        (
-            current_dest,
-            other_dests,
-            guard.config.restic_provider.clone(),
-            guard.kestic_binary.clone(),
-            Arc::clone(&guard.secret_store),
-            Arc::clone(&guard.clock),
-        )
+        (current_dest, other_dests, guard.restic_deps())
     };
 
-    let resolved = resolve_and_check(&provider).map_err(map_provider_err)?;
+    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
     let other_refs: Vec<&Destination> = other_dests.iter().collect();
     Ok(collect_backup_snapshots(
         &b_id,
         &current_dest,
         &other_refs,
         &resolved,
-        &kestic_binary,
-        secret_store.as_ref(),
-        clock.as_ref(),
+        &deps.kestic_binary,
+        deps.secret_store.as_ref(),
+        deps.clock.as_ref(),
     ))
 }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! TOML configuration persistence with `config_version` checks (`ADR-0005`, `F13`, `NFR-03`, `M1-S02`).
+//! TOML configuration persistence with `config_version` checks.
 
 use crate::model::{
     Backup, BackupId, DEFAULT_OVERDUE_THRESHOLD, Destination, DestinationId, DestinationKind,
@@ -17,10 +17,10 @@ use thiserror::Error;
 
 /// Highest configuration schema version supported by this build of Kestic.
 ///
-/// - `1`: M1 (retention not yet configurable, an empty `retention` table means
+/// - `1`: retention not yet configurable, an empty `retention` table means
 ///   «no rule set»).
-/// - `2`: M2 onwards (every backup needs at least one active keep rule).
-/// - `3`: network run conditions only for network destinations (decision 2026-11-20).
+/// - `2`: every backup needs at least one active keep rule.
+/// - `3`: network run conditions only for network destinations.
 pub const CURRENT_CONFIG_VERSION: u32 = 3;
 
 fn default_overdue_threshold() -> u32 {
@@ -57,7 +57,7 @@ struct ConfigHeader {
 
 /// Top-level persisted configuration (`$XDG_CONFIG_HOME/kestic/config.toml`).
 ///
-/// Must never store secret values — only Secret Service references (`NFR-02`, `NFR-03`).
+/// Must never store secret values — only Secret Service references.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub config_version: u32,
@@ -162,7 +162,7 @@ impl AppConfig {
         self.backups.iter().find(|b| &b.id == id)
     }
 
-    /// Removes and returns the [`Backup`] with `id`, or returns an error if not found (`M1-S19`).
+    /// Removes and returns the [`Backup`] with `id`, or returns an error if not found.
     pub fn remove_backup(&mut self, id: &BackupId) -> Result<Backup, ConfigError> {
         let Some(pos) = self.backups.iter().position(|b| &b.id == id) else {
             return Err(ConfigError::Validation(format!("backup '{id}' not found")));
@@ -170,7 +170,7 @@ impl AppConfig {
         Ok(self.backups.remove(pos))
     }
 
-    /// Removes and returns the [`Destination`] with `id` if no [`Backup`] references it (`AC-M1-19-4`).
+    /// Removes and returns the [`Destination`] with `id` if no [`Backup`] references it.
     ///
     /// If any backup references `id`, returns [`ConfigError::Validation`] listing the referencing
     /// backup names and IDs without modifying `self`.
@@ -195,7 +195,7 @@ impl AppConfig {
         Ok(self.destinations.remove(pos))
     }
 
-    /// Reassigns `backup_id` to `new_dest_id` (`M1-S22`), keeping `backup.id` unchanged.
+    /// Reassigns `backup_id` to `new_dest_id`, keeping `backup.id` unchanged.
     pub fn reassign_backup(
         &mut self,
         backup_id: &BackupId,
@@ -216,7 +216,7 @@ impl AppConfig {
     }
 }
 
-/// Formats a single [`Backup`] configuration as pretty TOML without secrets (`§8.11`).
+/// Formats a single [`Backup`] configuration as pretty TOML without secrets.
 pub fn backup_toml_snippet(backup: &crate::model::Backup) -> String {
     toml::to_string_pretty(backup).unwrap_or_default()
 }
@@ -249,14 +249,14 @@ pub fn parse_config_str(raw: &str) -> Result<AppConfig, ConfigError> {
     Ok(config)
 }
 
-/// Upgrades an older configuration in memory to [`CURRENT_CONFIG_VERSION`] (F13).
+/// Upgrades an older configuration in memory to [`CURRENT_CONFIG_VERSION`].
 ///
 /// The next save writes the migrated file; the file on disk stays untouched until then.
 fn migrate(config: &mut AppConfig) {
     if config.config_version < 2 {
-        // M1 never ran `forget`: an empty retention meant «keep every snapshot».
+        // Version 1 never ran `forget`: an empty retention meant «keep every snapshot».
         // Keep that behaviour explicitly instead of silently applying a preset that
-        // would delete snapshots (docs/spec/questions.md, 2026-11-19).
+        // would delete snapshots.
         for backup in &mut config.backups {
             if backup.retention == RetentionPolicy::empty() {
                 backup.retention.keep_last = Some(KeepCount::Unlimited);
@@ -279,14 +279,6 @@ fn migrate(config: &mut AppConfig) {
         }
         config.config_version = 3;
     }
-}
-
-/// Loads and validates `config.toml` from `path`.
-///
-/// Rejects files with `config_version > CURRENT_CONFIG_VERSION` without modifying them (`AC-M1-02-3`).
-pub fn load_config(path: &Path) -> Result<AppConfig, ConfigError> {
-    let raw = fs::read_to_string(path)?;
-    parse_config_str(&raw)
 }
 
 /// Loads `config.toml` if it exists, returning `Ok(None)` if the file does not exist.

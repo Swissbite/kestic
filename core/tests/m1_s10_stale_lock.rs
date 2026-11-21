@@ -5,39 +5,18 @@
 
 mod common;
 
-use kestic_core::backup::execute_backup;
-use kestic_core::clock::FakeClock;
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
-use kestic_core::model::{Backup, Destination, DestinationKind, RunStatus, Source};
-use kestic_core::provider::check_binary_version;
-use kestic_core::restic::{
-    RecoveryAction, ResticCommandSpec, ResticFailureKind, ResticRuntime, run_restic,
-};
-use kestic_core::secrets::{FileSecretStore, SecretValue};
+use common::execute_backup;
+
+use common::tools::find_lock_file;
+
+use kestic_core::model::{Backup, RunStatus, Source};
+use kestic_core::restic::{RecoveryAction, ResticCommandSpec, ResticFailureKind, run_restic};
 use std::fs;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use time::macros::datetime;
-
-fn find_lock_file(locks_dir: &Path) -> Option<std::path::PathBuf> {
-    let entries = fs::read_dir(locks_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
-            && fs::metadata(&path).is_ok_and(|m| m.len() > 0)
-        {
-            return Some(path);
-        }
-    }
-    None
-}
 
 #[test]
 fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
@@ -47,7 +26,6 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
 
         // Create 24 MB of incompressible data so `restic check --read-data` holds its exclusive
@@ -61,29 +39,11 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
             fs::write(src_dir.join(format!("blob_{i:02}.bin")), &chunk).expect("write blob");
         }
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 12:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("stale-lock-test-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Local", &repo_dir, "stale-lock-test-pw");
 
         let backup =
             Backup::new("Stale Lock Test", Source::folder(&src_dir), dest.id.clone()).expect("bk");
@@ -95,7 +55,7 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
 
         // Spawn `restic check --read-data` (acquires an exclusive lock) and SIGKILL it once
         // the lock file is written, leaving a genuine encrypted stale exclusive lock.
-        let mut check_child = Command::new(&resolved.binary)
+        let mut check_child = Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
             .env("RESTIC_PASSWORD", "stale-lock-test-pw")
             .env("RESTIC_CACHE_DIR", &cache_dir)
@@ -155,10 +115,18 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
         );
 
         // Unlock via `ResticCommandSpec::unlock`.
-        let unlock_spec = ResticCommandSpec::unlock(&resolved.binary, &helper, &dest)
+        let unlock_spec = ResticCommandSpec::unlock(&rig.resolved.binary, &rig.helper, &dest)
             .with_cache_dir(Some(&cache_dir));
-        let unlock_res = run_restic(&unlock_spec, &dest, Some(&store), &clock, None, &[], |_| {})
-            .unwrap_or_else(|e| panic!("{label}: unlock runner failed: {e}"));
+        let unlock_res = run_restic(
+            &unlock_spec,
+            &dest,
+            Some(&rig.store),
+            &rig.clock,
+            None,
+            &[],
+            |_| {},
+        )
+        .unwrap_or_else(|e| panic!("{label}: unlock runner failed: {e}"));
         assert_eq!(
             unlock_res.exit_code, 0,
             "{label}: restic unlock failed: {:?}",

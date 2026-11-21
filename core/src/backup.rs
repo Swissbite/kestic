@@ -2,17 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Backup execution with `kestic:<backup-id>` tags, `--group-by tags`, exclude files,
-//! dry-run previews, and retention (`forget`) execution (`FR-28`, `F13`, `FR-30`, `M1-S07`, `M2`).
+//! dry-run previews, and retention (`forget`) execution.
 
 use crate::clock::Clock;
 use crate::destination::{DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination};
 use crate::model::{
     Backup, BackupId, Destination, ModelError, RunId, RunStatus, evaluate_exclude_path,
 };
-use crate::mount::{
-    MountInspector, SourceCheckResult, SystemMountInspector, check_source_status_with,
-    current_home_dir,
-};
+use crate::mount::{MountInspector, SourceCheckResult, check_source_status_with, current_home_dir};
 use crate::provider::ResolvedRestic;
 use crate::restic::{
     CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticFailureKind, ResticRunError,
@@ -63,7 +60,7 @@ pub fn default_state_dir() -> Result<PathBuf, BackupRunError> {
     Ok(base.join("kestic"))
 }
 
-/// Returns `$XDG_STATE_HOME/kestic/excludes/<backup-id>.txt` (`F13`, `AC-M1-07-3`).
+/// Returns `$XDG_STATE_HOME/kestic/excludes/<backup-id>.txt`.
 pub fn exclude_file_path(state_dir: &Path, backup_id: &BackupId) -> PathBuf {
     state_dir.join("excludes").join(format!("{backup_id}.txt"))
 }
@@ -111,7 +108,7 @@ impl Drop for PreviewExcludeGuard {
 }
 
 /// Atomically writes `backup.excludes` into `$XDG_STATE_HOME/kestic/excludes/<backup-id>.txt`
-/// using explicit `home_dir` (`P8`, `AC-M2-01-7`, `AC-M2-01-9`).
+/// using explicit `home_dir`.
 pub fn write_exclude_file_with_home(
     state_dir: &Path,
     backup: &Backup,
@@ -180,7 +177,7 @@ fn build_backup_command_spec_for_exclude_path(
     ResticCommandSpec::for_destination(&resolved.binary, kestic_binary, destination, args)
 }
 
-/// Builds the [`ResticCommandSpec`] for running a backup (`FR-28`, `F13`, `FR-34`, `M2-S01`).
+/// Builds the [`ResticCommandSpec`] for running a backup.
 pub fn build_backup_command_spec_with_home(
     backup: &Backup,
     destination: &Destination,
@@ -201,7 +198,7 @@ pub fn build_backup_command_spec_with_home(
     ))
 }
 
-/// Builds the [`ResticCommandSpec`] for running a backup (`FR-28`, `F13`, `FR-34`).
+/// Builds the [`ResticCommandSpec`] for running a backup.
 pub fn build_backup_command_spec(
     backup: &Backup,
     destination: &Destination,
@@ -220,7 +217,7 @@ pub fn build_backup_command_spec(
     )
 }
 
-/// Checks whether the backup source is currently available using a custom [`MountInspector`] (`M2-S09`).
+/// Checks whether the backup source is currently available using a custom [`MountInspector`].
 pub fn check_source_available_with(
     backup: &Backup,
     home_dir: Option<&Path>,
@@ -232,12 +229,6 @@ pub fn check_source_available_with(
     }
 }
 
-/// Checks whether the backup source is currently available (`FR-29`, `FR-30`, `M2-S09`).
-pub fn check_source_available(backup: &Backup) -> Result<(), BackupRunError> {
-    let home = current_home_dir();
-    check_source_available_with(backup, home.as_deref(), &SystemMountInspector)
-}
-
 /// Execution context for running or dry-running a backup with an explicit [`MountInspector`].
 pub struct BackupExecutionContext<'a> {
     pub state_dir: &'a Path,
@@ -247,7 +238,20 @@ pub struct BackupExecutionContext<'a> {
     pub extra_env: &'a [(&'a str, &'a str)],
 }
 
-/// Executes a backup run using explicit [`BackupExecutionContext`] (`M1-S07`, `M2-S09`).
+/// Turns a restic run that ended in an error into the matching [`BackupRunError`].
+pub(crate) fn check_command_succeeded(res: &ResticExecutionResult) -> Result<(), BackupRunError> {
+    if res.presentation.status == RunStatus::Error {
+        return Err(BackupRunError::Destination(
+            DestinationError::CommandFailed {
+                exit_code: res.exit_code,
+                message: res.presentation.detail_or_summary(),
+            },
+        ));
+    }
+    Ok(())
+}
+
+/// Executes a backup run using explicit [`BackupExecutionContext`].
 pub fn execute_backup_with_inspector<F>(
     backup: &Backup,
     destination: &Destination,
@@ -270,50 +274,18 @@ where
         ctx.home_dir,
     )?
     .with_cache_dir(runtime.cache_dir);
-    let res = run_restic(
-        &spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        ctx.cancel,
-        ctx.extra_env,
-        on_event,
-    )?;
+    let res = runtime.run(&spec, destination, ctx.cancel, ctx.extra_env, on_event)?;
     Ok(res)
 }
 
-/// Executes a backup run with tag `kestic:<backup-id>`, `--group-by tags`, and exclude file (`M1-S07`).
-pub fn execute_backup<F>(
-    backup: &Backup,
-    destination: &Destination,
-    state_dir: &Path,
-    runtime: &ResticRuntime<'_>,
-    cancel: Option<&CancelHandle>,
-    extra_env: &[(&str, &str)],
-    on_event: F,
-) -> Result<ResticExecutionResult, BackupRunError>
-where
-    F: FnMut(&ResticStreamEvent) + Send,
-{
-    let home = current_home_dir();
-    let ctx = BackupExecutionContext {
-        state_dir,
-        home_dir: home.as_deref(),
-        inspector: &SystemMountInspector,
-        cancel,
-        extra_env,
-    };
-    execute_backup_with_inspector(backup, destination, runtime, &ctx, on_event)
-}
-
-/// Size estimate for one excluded folder reported alongside backup dry-run preview (`M2-S04`).
+/// Size estimate for one excluded folder reported alongside backup dry-run preview.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExcludedFolderEstimate {
     pub path: String,
     pub bytes: u64,
 }
 
-/// Result of `restic backup --dry-run -vv --json` (`FR-17`, `M2-S04`).
+/// Result of `restic backup --dry-run -vv --json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupDryRunResult {
     pub total_files: u64,
@@ -356,7 +328,7 @@ fn dir_size_bytes(dir: &Path, budget: &mut usize) -> u64 {
     sum
 }
 
-/// Estimates largest excluded subdirectories inside `backup.source.path` (`M2-S04`).
+/// Estimates largest excluded subdirectories inside `backup.source.path`.
 pub fn compute_largest_excluded_folders(
     backup: &Backup,
     home_dir: Option<&Path>,
@@ -407,7 +379,7 @@ pub fn compute_largest_excluded_folders(
     list
 }
 
-/// Executes `restic backup --dry-run -vv --json` with identical backup arguments (`M2-S04`, `AC-M2-04-1..3`).
+/// Executes `restic backup --dry-run -vv --json` with identical backup arguments.
 /// Writes any draft excludes to an isolated temporary preview file that is removed on completion.
 pub fn execute_backup_dry_run_with<F>(
     backup: &Backup,
@@ -456,29 +428,21 @@ where
     let mut scan_total_files = 0u64;
     let mut scan_total_bytes = 0u64;
 
-    let res = run_restic(
-        &spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        ctx.cancel,
-        ctx.extra_env,
-        |ev| {
-            if let ResticStreamEvent::VerboseStatus(vs) = ev {
-                if vs.action == "scan_finished" {
-                    if let Some(tf) = vs.total_files {
-                        scan_total_files = tf;
-                    }
-                    if let Some(ds) = vs.data_size {
-                        scan_total_bytes = ds;
-                    }
-                } else if !vs.item.is_empty() && !vs.item.ends_with('/') {
-                    files.push(vs.item.clone());
+    let res = runtime.run(&spec, destination, ctx.cancel, ctx.extra_env, |ev| {
+        if let ResticStreamEvent::VerboseStatus(vs) = ev {
+            if vs.action == "scan_finished" {
+                if let Some(tf) = vs.total_files {
+                    scan_total_files = tf;
                 }
+                if let Some(ds) = vs.data_size {
+                    scan_total_bytes = ds;
+                }
+            } else if !vs.item.is_empty() && !vs.item.ends_with('/') {
+                files.push(vs.item.clone());
             }
-            on_event(ev);
-        },
-    )?;
+        }
+        on_event(ev);
+    })?;
 
     if res.presentation.status == RunStatus::Cancelled {
         return Ok(BackupDryRunResult {
@@ -488,14 +452,7 @@ where
         });
     }
 
-    if res.presentation.status == RunStatus::Error {
-        return Err(BackupRunError::Destination(
-            DestinationError::CommandFailed {
-                exit_code: res.exit_code,
-                message: res.presentation.detail_or_summary(),
-            },
-        ));
-    }
+    check_command_succeeded(&res)?;
 
     let (total_files, total_bytes, files_new, files_changed, files_unmodified, data_added) =
         if let Some(stats) = &res.stats {
@@ -534,33 +491,9 @@ where
     })
 }
 
-/// Convenience wrapper for [`execute_backup_dry_run_with`] using OS mountinfo and `HOME`.
-pub fn execute_backup_dry_run<F>(
-    backup: &Backup,
-    destination: &Destination,
-    state_dir: &Path,
-    runtime: &ResticRuntime<'_>,
-    cancel: Option<&CancelHandle>,
-    extra_env: &[(&str, &str)],
-    on_event: F,
-) -> Result<BackupDryRunResult, BackupRunError>
-where
-    F: FnMut(&ResticStreamEvent) + Send,
-{
-    let home = current_home_dir();
-    let ctx = BackupExecutionContext {
-        state_dir,
-        home_dir: home.as_deref(),
-        inspector: &SystemMountInspector,
-        cancel,
-        extra_env,
-    };
-    execute_backup_dry_run_with(backup, destination, runtime, &ctx, on_event)
-}
-
-/// Builds a [`ResticCommandSpec`] for `restic forget` scoped to `backup.tag()` (`M2-S05..S07`).
-/// Never passes `--unsafe-allow-remove-all` (`AC-M2-05-5`).
-/// Always passes `--no-lock` when `dry_run` / `no_lock` is requested (`P41`).
+/// Builds a [`ResticCommandSpec`] for `restic forget` scoped to `backup.tag()`.
+/// Never passes `--unsafe-allow-remove-all`.
+/// Always passes `--no-lock` when `dry_run` / `no_lock` is requested.
 pub fn build_forget_command_spec(
     backup: &Backup,
     destination: &Destination,
@@ -592,7 +525,7 @@ pub fn build_forget_command_spec(
     Ok(spec)
 }
 
-/// Single snapshot decision in `restic forget --dry-run --json` (`M2-S06`).
+/// Single snapshot verdict (keep or remove) in `restic forget --dry-run --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForgetPreviewSnapshot {
     pub snapshot_id: String,
@@ -606,7 +539,7 @@ pub struct ForgetPreviewSnapshot {
     pub reasons: Vec<String>,
 }
 
-/// Parsed preview of `restic forget --dry-run --no-lock --json` (`M2-S06`).
+/// Parsed preview of `restic forget --dry-run --no-lock --json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForgetPreviewResult {
     pub backup_id: String,
@@ -634,7 +567,26 @@ struct RawForgetGroup {
     reasons: Vec<RawForgetReason>,
 }
 
-/// Parses JSON array lines emitted by `restic forget --json` (`NFR-10`, tolerant parsing).
+fn forget_preview_snapshot(
+    snap: ResticSnapshot,
+    action: &str,
+    reasons: Vec<String>,
+) -> ForgetPreviewSnapshot {
+    let short_id = snap
+        .short_id
+        .unwrap_or_else(|| snap.id.chars().take(8).collect());
+    ForgetPreviewSnapshot {
+        snapshot_id: snap.id,
+        short_id,
+        time: snap.time.to_string(),
+        hostname: snap.hostname.unwrap_or_default(),
+        paths: snap.paths,
+        action: action.to_string(),
+        reasons,
+    }
+}
+
+/// Parses JSON array lines emitted by `restic forget --json` (tolerant parsing).
 pub fn parse_forget_json_output(
     backup_id: &BackupId,
     log_lines: &[String],
@@ -661,38 +613,18 @@ pub fn parse_forget_json_output(
             }
 
             for snap in group.keep {
-                let short_id = snap
-                    .short_id
-                    .clone()
-                    .unwrap_or_else(|| snap.id.chars().take(8).collect());
                 let reasons = reasons_by_id.remove(&snap.id).unwrap_or_default();
                 result.keep_count += 1;
-                result.snapshots.push(ForgetPreviewSnapshot {
-                    snapshot_id: snap.id,
-                    short_id,
-                    time: snap.time.to_string(),
-                    hostname: snap.hostname.unwrap_or_default(),
-                    paths: snap.paths,
-                    action: "keep".to_string(),
-                    reasons,
-                });
+                result
+                    .snapshots
+                    .push(forget_preview_snapshot(snap, "keep", reasons));
             }
 
             for snap in group.remove {
-                let short_id = snap
-                    .short_id
-                    .clone()
-                    .unwrap_or_else(|| snap.id.chars().take(8).collect());
                 result.remove_count += 1;
-                result.snapshots.push(ForgetPreviewSnapshot {
-                    snapshot_id: snap.id,
-                    short_id,
-                    time: snap.time.to_string(),
-                    hostname: snap.hostname.unwrap_or_default(),
-                    paths: snap.paths,
-                    action: "remove".to_string(),
-                    reasons: Vec::new(),
-                });
+                result
+                    .snapshots
+                    .push(forget_preview_snapshot(snap, "remove", Vec::new()));
             }
         }
         break;
@@ -711,7 +643,7 @@ pub fn parse_forget_json_output(
     Ok(result)
 }
 
-/// Runs `restic forget --dry-run --no-lock` with explicit cancellation handle (`AC-M2-06-2`, `AC-M2-06-6`, `P41`).
+/// Runs `restic forget --dry-run --no-lock` with explicit cancellation handle.
 pub fn execute_forget_dry_run_with(
     backup: &Backup,
     destination: &Destination,
@@ -730,43 +662,18 @@ pub fn execute_forget_dry_run_with(
     )?
     .with_cache_dir(runtime.cache_dir);
 
-    let res = run_restic(
-        &spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        cancel,
-        extra_env,
-        |_| {},
-    )?;
+    let res = runtime.run(&spec, destination, cancel, extra_env, |_| {})?;
 
     if res.presentation.status == RunStatus::Cancelled {
         return Err(BackupRunError::Cancelled);
     }
 
-    if res.presentation.status == RunStatus::Error {
-        return Err(BackupRunError::Destination(
-            DestinationError::CommandFailed {
-                exit_code: res.exit_code,
-                message: res.presentation.detail_or_summary(),
-            },
-        ));
-    }
+    check_command_succeeded(&res)?;
 
     Ok(parse_forget_json_output(&backup.id, &res.log_lines)?)
 }
 
-/// Runs `restic forget --dry-run --no-lock` to preview retention (`AC-M2-06-2`, `AC-M2-06-6`, `P41`).
-pub fn execute_forget_dry_run(
-    backup: &Backup,
-    destination: &Destination,
-    runtime: &ResticRuntime<'_>,
-    extra_env: &[(&str, &str)],
-) -> Result<ForgetPreviewResult, BackupRunError> {
-    execute_forget_dry_run_with(backup, destination, runtime, None, extra_env)
-}
-
-/// Runs real `restic forget` for `backup` (`M2-S05`, `M2-S07`).
+/// Runs real `restic forget` for `backup`.
 pub fn execute_forget(
     backup: &Backup,
     destination: &Destination,
@@ -785,24 +692,16 @@ pub fn execute_forget(
     )?
     .with_cache_dir(runtime.cache_dir);
 
-    let res = run_restic(
-        &spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        cancel,
-        extra_env,
-        |_| {},
-    )?;
+    let res = runtime.run(&spec, destination, cancel, extra_env, |_| {})?;
     Ok(res)
 }
 
-/// Helper distinguishing Exit 11 (exclusive lock contention during `forget`, `AC-M2-07-3`).
+/// Helper distinguishing Exit 11 (exclusive lock contention during `forget`).
 pub fn is_forget_lock_failure(res: &ResticExecutionResult) -> bool {
     res.exit_code == 11 || res.presentation.kind == ResticFailureKind::RepositoryLocked
 }
 
-/// Lists all snapshots in `destination` belonging strictly to `backup_id` (`kestic:<backup-id>`, `AC-M1-07-4`).
+/// Lists all snapshots in `destination` belonging strictly to `backup_id` (`kestic:<backup-id>`).
 pub fn list_snapshots_for_backup(
     backup_id: &BackupId,
     destination: &Destination,
@@ -837,14 +736,7 @@ pub fn list_snapshots_for_backup(
         |_| {},
     )?;
 
-    if res.presentation.status == RunStatus::Error {
-        return Err(BackupRunError::Destination(
-            DestinationError::CommandFailed {
-                exit_code: res.exit_code,
-                message: res.presentation.detail_or_summary(),
-            },
-        ));
-    }
+    check_command_succeeded(&res)?;
 
     // `restic snapshots --json` outputs a JSON array line.
     for line in &res.log_lines {

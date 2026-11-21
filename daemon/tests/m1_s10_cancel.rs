@@ -3,53 +3,26 @@
 
 mod common;
 
+use common::m3::{M3DaemonOpts, spawn_m3_daemon, write_incompressible_dataset};
 use common::{
-    CapturedKesticSignal, KesticSignalCollector, find_kestic_binary, restic_test_binaries,
-    run_isolated_test, wait_for_file,
+    CapturedKesticSignal, KesticSignalCollector, restic_test_binaries, run_isolated_test,
+    sandbox_run_config, wait_for_file,
 };
 use kestic_core::clock::SystemClock;
 use kestic_core::history::RunHistory;
-use kestic_core::model::{
-    Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Source,
-};
-use kestic_core::secrets::FileSecretStore;
-use kestic_daemon::dbus_api::{
-    KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient,
-};
-use kestic_daemon::service::{DaemonCore, DaemonOutcome, DaemonRunConfig, run_daemon};
+use kestic_core::model::{Backup, Destination, DestinationKind, Run, RunStatus, Source};
+use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
+use kestic_daemon::service::{DaemonCore, DaemonRunConfig, run_daemon};
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-
-fn write_incompressible_dataset(dir: &Path, num_files: usize, bytes_per_file: usize) {
-    fs::create_dir_all(dir).expect("mkdir dataset");
-    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
-    let mut buf = vec![0u8; bytes_per_file];
-    for idx in 0..num_files {
-        for chunk in buf.chunks_exact_mut(8) {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            chunk.copy_from_slice(&state.to_le_bytes());
-        }
-        let path = dir.join(format!("blob_{idx:03}.bin"));
-        let mut f = fs::File::create(&path).expect("create dataset file");
-        f.write_all(&buf).expect("write dataset file");
-    }
-}
 
 fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
     let sub = root.join(label);
     let repo_dir = sub.join("repo");
     let src_dir = sub.join("large-src");
-    let cfg_path = sub.join("config.toml");
-    let state_dir = sub.join("state");
-    let secret_file = root.join("secrets.hex");
-    let ready_file = sub.join("daemon.ready");
 
     fs::create_dir_all(&repo_dir).expect("mkdir repo");
     write_incompressible_dataset(&src_dir, 96, 4 * 1024 * 1024);
@@ -58,30 +31,8 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
         "net.daester.Kestic.CancelTest_{}",
         label.replace(['.', '-'], "_")
     );
-    let run_cfg = DaemonRunConfig {
-        bus_name: bus_name.clone(),
-        assume_sni_available: true,
-        ready_file: Some(ready_file.clone()),
-        config_path: Some(cfg_path),
-        state_dir: Some(state_dir),
-        kestic_binary: Some(find_kestic_binary()),
-        secret_store: Some(Arc::new(FileSecretStore::new(&secret_file))),
-        suppress_ui_spawn: true,
-        enable_job_view: false,
-        enable_portal_inhibit: false,
-        ..Default::default()
-    };
-
-    let handle = thread::spawn(move || run_daemon(run_cfg));
-    wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
-
-    let client = KesticClient::connect(&bus_name, KESTIC_OBJECT_PATH).expect("connect client");
-    let prov = client
-        .set_restic_provider(&ResticProvider::Custom {
-            path: restic_bin.to_path_buf(),
-        })
-        .expect("set restic provider");
-    assert!(prov.valid, "{label} provider must be valid: {prov:?}");
+    let daemon = spawn_m3_daemon(root, M3DaemonOpts::on_request(label, &bus_name, restic_bin));
+    let client = &daemon.client;
 
     let dest = Destination::new(
         format!("Cancel Repo ({label})"),
@@ -186,11 +137,7 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
         "[{label}] expected 0 locks after SIGTERM cancel, found: {lock_lines:?}"
     );
 
-    client.confirm_quit().expect("confirm quit");
-    assert_eq!(
-        handle.join().expect("join daemon"),
-        Ok(DaemonOutcome::RanAndStopped)
-    );
+    daemon.stop();
 
     // Clean up heavy dataset inside sub dir right away.
     let _ = fs::remove_dir_all(&sub);
@@ -216,8 +163,8 @@ fn ac_m1_10_2_preseeded_running_run_transitions_to_interrupted_on_daemon_startup
         "KESTIC_M1_S10_RECOVER",
         |root| {
             let state_dir = root.join("state").join("kestic");
-            let cfg_path = root.join("cfg").join("kestic").join("config.toml");
-            let secret_file = root.join("secrets.hex");
+            let _cfg_path = root.join("cfg").join("kestic").join("config.toml");
+            let _secret_file = root.join("secrets.hex");
 
             let dest = Destination::new(
                 "Local Repo",
@@ -242,16 +189,8 @@ fn ac_m1_10_2_preseeded_running_run_transitions_to_interrupted_on_daemon_startup
             }
 
             let run_cfg = DaemonRunConfig {
-                bus_name: KESTIC_BUS_NAME.to_string(),
-                assume_sni_available: true,
-                config_path: Some(cfg_path),
-                state_dir: Some(state_dir.clone()),
-                kestic_binary: Some(find_kestic_binary()),
-                secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
-                suppress_ui_spawn: true,
-                enable_job_view: false,
-                enable_portal_inhibit: false,
-                ..Default::default()
+                ready_file: None,
+                ..sandbox_run_config(root)
             };
 
             // Verify via DaemonCore::new directly.
@@ -280,18 +219,14 @@ fn ac_m1_10_2_preseeded_running_run_transitions_to_interrupted_on_daemon_startup
             let handle = thread::spawn(move || run_daemon(daemon_cfg));
             wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
 
-            let client = KesticClient::connect_default().expect("connect client");
+            let client = common::connect_default_client().expect("connect client");
             let detail = client
                 .get_run_detail(stale_run_2.id.as_str())
                 .expect("GetRunDetail");
             assert_eq!(detail.run.status, RunStatus::Interrupted);
             assert!(detail.run.finished_at.is_some());
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            common::stop_daemon(&client, handle);
         },
     );
 }

@@ -3,13 +3,12 @@
 
 mod common;
 
+use common::load_config;
 use common::{
     find_kestic_binary, restic_test_binaries, run_isolated_test, start_fake_sni_watcher,
     wait_for_file, wait_for_sni_service,
 };
-use kestic_core::config::load_config;
 use kestic_core::model::{Backup, Destination, DestinationKind, ResticProvider, Source};
-use kestic_daemon::dbus_api::KesticClient;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -47,7 +46,7 @@ fn ac_m1_12_1_12_2_12_3_daemon_autostart_lifecycle() {
                 "autostart without config must exit immediately"
             );
 
-            let client = KesticClient::connect_default().expect("connect client");
+            let client = common::connect_default_client().expect("connect client");
             assert!(
                 !client.is_bus_owned().expect("is_bus_owned"),
                 "autostart without config must not claim bus name"

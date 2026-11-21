@@ -7,103 +7,69 @@
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
 use common::m3::{
-    LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, add_local_backup,
-    backup_summary, dest_summary, find_lock_file, hold_repo_lock, restic_repo_cmd, restic_variants,
-    send_signal, spawn_m3_daemon, wait_for_state, write_incompressible_dataset,
+    LocalBackupFixture, M3Rig, ResticVariant, StdFakes, backup_summary, dest_summary,
+    hold_repo_lock, restic_repo_cmd, restic_variants, send_signal, wait_for_state,
+    write_incompressible_dataset,
 };
-use common::{run_isolated_test, start_fake_notifications, start_fake_sni_watcher};
-use kestic_core::clock::FakeClock;
+use common::run_isolated_test;
+use common::tools::find_lock_file;
 use kestic_core::model::RunStatus;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 use time::macros::datetime;
 
-struct Rig {
-    daemon: M3Daemon,
-    clock: Arc<FakeClock>,
-    wrapper: ResticWrapper,
-    fixture: LocalBackupFixture,
-    variant: ResticVariant,
-}
-
-fn start_rig(root: &Path, variant: &ResticVariant, base: &str) -> Rig {
-    let sub = variant.sub(base);
-    let wrapper = ResticWrapper::create(&root.join(&sub).join("wrapper"), &variant.bin);
-    let clock = Arc::new(FakeClock::new(datetime!(2026-12-01 10:59:30 UTC)));
-    let bus = variant.bus_name(base);
-    let daemon = spawn_m3_daemon(
+fn start_rig(root: &Path, variant: &ResticVariant, base: &str) -> (M3Rig, LocalBackupFixture) {
+    let rig = M3Rig::start(
         root,
-        M3DaemonOpts::new(&sub, &bus, &wrapper.path, Arc::clone(&clock) as _),
+        variant,
+        base,
+        datetime!(2026-12-01 10:59:30 UTC),
+        |_| {},
     );
-    let fixture = add_local_backup(&daemon.client, root, &sub, "Docs", |_| {});
+    let fixture = rig.add_backup("Docs", |_| {});
     write_incompressible_dataset(&fixture.src_dir, 16, 1024 * 1024);
-    Rig {
-        daemon,
-        clock,
-        wrapper,
-        fixture,
-        variant: variant.clone(),
-    }
+    (rig, fixture)
 }
 
-impl Rig {
-    /// Starts a manual run and waits for a *new* run that ends `Ok`.
-    fn manual_run_ok(&self) {
-        let bid = &self.fixture.backup.id;
-        let previous = backup_summary(&self.daemon.client.get_state().expect("GetState"), bid)
-            .last_run
-            .as_ref()
-            .map(|r| r.id.clone());
-        self.daemon
-            .client
-            .start_backup(&self.fixture.backup_id_str)
-            .expect("manual run");
-        wait_for_state(
-            &self.daemon.client,
-            Duration::from_secs(30),
-            "manual Ok",
-            |s| {
-                let b = backup_summary(s, bid);
-                b.active_run.is_none()
-                    && b.last_run.as_ref().is_some_and(|r| {
-                        r.status == RunStatus::Ok && Some(&r.id) != previous.as_ref()
-                    })
-            },
-        );
-    }
-
-    fn check_cmd(&self, extra: &[&str]) -> std::process::Command {
-        let mut cmd = restic_repo_cmd(
-            &self.variant.bin,
-            &self.fixture.repo_dir,
-            "pw-Docs",
-            &Path::new(&std::env::var("KESTIC_TEST_ROOT").expect("root")).join("restic-cache"),
-        );
-        cmd.args(extra);
-        cmd
-    }
+/// Starts a manual run and waits for a *new* run that ends `Ok`.
+fn manual_run_ok(rig: &M3Rig, fixture: &LocalBackupFixture) {
+    let bid = &fixture.backup.id;
+    let previous = backup_summary(&rig.daemon.client.get_state().expect("GetState"), bid)
+        .last_run
+        .as_ref()
+        .map(|r| r.id.clone());
+    rig.daemon
+        .client
+        .start_backup(&fixture.backup_id_str)
+        .expect("manual run");
+    wait_for_state(
+        &rig.daemon.client,
+        Duration::from_secs(30),
+        "manual Ok",
+        |s| {
+            let b = backup_summary(s, bid);
+            b.active_run.is_none()
+                && b.last_run
+                    .as_ref()
+                    .is_some_and(|r| r.status == RunStatus::Ok && Some(&r.id) != previous.as_ref())
+        },
+    );
 }
 
-fn start_fakes() -> (
-    FakeUPowerHandle,
-    FakeNetworkManagerHandle,
-    zbus::Connection,
-    zbus::Connection,
-) {
-    let (notif, _capture) = start_fake_notifications();
-    (
-        FakeUPowerHandle::start(false, 100.0),
-        FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]),
-        notif,
-        start_fake_sni_watcher(),
-    )
+fn check_cmd(rig: &M3Rig, fixture: &LocalBackupFixture, extra: &[&str]) -> std::process::Command {
+    let mut cmd = restic_repo_cmd(
+        &rig.variant.bin,
+        &fixture.repo_dir,
+        "pw-Docs",
+        &Path::new(&std::env::var("KESTIC_TEST_ROOT").expect("root")).join("restic-cache"),
+    );
+    cmd.args(extra);
+    cmd
 }
 
-/// AC-M3-06-1 (FR-19, P16): a stale lock of the own host (SIGKILL of an exclusive `restic check`)
+/// AC-M3-06-1 (FR-19): a stale lock of the own host (SIGKILL of an exclusive `restic check`)
 /// (a) makes `backup` end with Exit 11, (b) is recognised and `unlock` is offered, (c) the run
 /// proceeds after unlocking; (d) a SIGTERMed check leaves no lock and triggers no offer.
 #[test]
@@ -112,19 +78,19 @@ fn ac_m3_06_1_stale_own_host_lock_is_recognised_and_unlock_offered() {
         "ac_m3_06_1_stale_own_host_lock_is_recognised_and_unlock_offered",
         "KESTIC_M3_06_1_INNER",
         |root| {
-            let _fakes = start_fakes();
+            let _fakes = StdFakes::start();
             for variant in restic_variants() {
-                let rig = start_rig(root, &variant, "M3L1");
+                let (rig, fx) = start_rig(root, &variant, "M3L1");
                 let client = &rig.daemon.client;
-                let bid = &rig.fixture.backup.id;
-                let dest_id = &rig.fixture.dest.id;
-                let locks = rig.fixture.repo_dir.join("locks");
-                rig.manual_run_ok();
+                let bid = &fx.backup.id;
+                let dest_id = &fx.dest.id;
+                let locks = fx.repo_dir.join("locks");
+                manual_run_ok(&rig, &fx);
 
                 // (d) SIGTERM: restic releases its exclusive lock, no stale lock, no offer.
                 let mut term = hold_repo_lock(
-                    rig.check_cmd(&["check", "--read-data"]),
-                    &rig.fixture.repo_dir,
+                    check_cmd(&rig, &fx, &["check", "--read-data"]),
+                    &fx.repo_dir,
                 );
                 send_signal(term.0.id(), "TERM");
                 term.0.wait().expect("check ends after SIGTERM");
@@ -133,7 +99,7 @@ fn ac_m3_06_1_stale_own_host_lock_is_recognised_and_unlock_offered() {
                     "{}: (d) SIGTERM leaves no lock behind",
                     variant.label
                 );
-                rig.manual_run_ok();
+                manual_run_ok(&rig, &fx);
                 let after_term = client.get_state().expect("GetState");
                 assert_eq!(
                     dest_summary(&after_term, dest_id).stale_lock_count,
@@ -144,8 +110,8 @@ fn ac_m3_06_1_stale_own_host_lock_is_recognised_and_unlock_offered() {
 
                 // SIGKILL of an exclusive check leaves a stale lock of this host.
                 let mut killed = hold_repo_lock(
-                    rig.check_cmd(&["check", "--read-data"]),
-                    &rig.fixture.repo_dir,
+                    check_cmd(&rig, &fx, &["check", "--read-data"]),
+                    &fx.repo_dir,
                 );
                 killed.0.kill().expect("SIGKILL check");
                 killed.0.wait().expect("reap check");
@@ -201,7 +167,7 @@ fn ac_m3_06_1_stale_own_host_lock_is_recognised_and_unlock_offered() {
     );
 }
 
-/// AC-M3-06-2 (FR-19, P16, negative): the lock of a running backup (other process alive) is not
+/// AC-M3-06-2 (FR-19, negative): the lock of a running backup (other process alive) is not
 /// stale: (a) no unlock offer and an explicit `UnlockDestination` is refused.
 #[test]
 fn ac_m3_06_2_lock_of_running_backup_is_not_stale_and_not_unlocked() {
@@ -209,21 +175,25 @@ fn ac_m3_06_2_lock_of_running_backup_is_not_stale_and_not_unlocked() {
         "ac_m3_06_2_lock_of_running_backup_is_not_stale_and_not_unlocked",
         "KESTIC_M3_06_2_INNER",
         |root| {
-            let _fakes = start_fakes();
+            let _fakes = StdFakes::start();
             for variant in restic_variants() {
-                let rig = start_rig(root, &variant, "M3L2");
+                let (rig, fx) = start_rig(root, &variant, "M3L2");
                 let client = &rig.daemon.client;
-                let dest_id = &rig.fixture.dest.id;
-                rig.manual_run_ok();
+                let dest_id = &fx.dest.id;
+                manual_run_ok(&rig, &fx);
 
-                let cmd = rig.check_cmd(&["backup", "--stdin", "--stdin-filename", "hold.txt"]);
-                let mut holder = hold_repo_lock(cmd, &rig.fixture.repo_dir);
+                let cmd = check_cmd(
+                    &rig,
+                    &fx,
+                    &["backup", "--stdin", "--stdin-filename", "hold.txt"],
+                );
+                let mut holder = hold_repo_lock(cmd, &fx.repo_dir);
                 std::thread::sleep(Duration::from_millis(30));
                 client
-                    .start_backup(&rig.fixture.backup_id_str)
+                    .start_backup(&fx.backup_id_str)
                     .expect("run under the foreign backup lock");
                 let state = wait_for_state(client, Duration::from_secs(30), "warning", |s| {
-                    backup_summary(s, &rig.fixture.backup.id)
+                    backup_summary(s, &fx.backup.id)
                         .last_run
                         .as_ref()
                         .is_some_and(|r| r.status == RunStatus::Warning)
@@ -245,7 +215,7 @@ fn ac_m3_06_2_lock_of_running_backup_is_not_stale_and_not_unlocked() {
                     variant.label
                 );
                 assert!(
-                    find_lock_file(&rig.fixture.repo_dir.join("locks")).is_some(),
+                    find_lock_file(&fx.repo_dir.join("locks")).is_some(),
                     "{}: (a) live lock untouched",
                     variant.label
                 );

@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Migration of M1 configurations (`config_version = 1`) to the current schema (F13).
-//! Decision: docs/spec/questions.md, 2026-11-19 «Config-Migration M1 → M2».
+//! Migration of M1 configurations (`config_version = 1`) to the current schema.
 
-use kestic_core::config::{CURRENT_CONFIG_VERSION, ConfigError, load_config, save_config};
+mod common;
+
+use common::load_config;
+
+use kestic_core::config::{CURRENT_CONFIG_VERSION, ConfigError, save_config};
 use kestic_core::model::{KeepCount, ModelError, RetentionPolicy};
 use std::fs;
 use tempfile::TempDir;
@@ -129,8 +132,8 @@ fn current_config_with_empty_retention_is_still_rejected() {
     );
 }
 
-/// Version 2 config (M2/M3 before 2026-11-20): one backup on a local folder and one on a REST
-/// server, both with all network run conditions set.
+/// Version 2 config: one backup on a local folder and one on a REST server, both with all
+/// network run conditions set.
 const V2_CONFIG: &str = r#"config_version = 2
 
 [[destinations]]
@@ -192,8 +195,8 @@ allowed_networks = ["Heim"]
 keep_daily = 7
 "#;
 
-/// M3 manual acceptance (2026-11-19, decision 2026-11-20): network run conditions apply only
-/// to network destinations; a version 2 config is migrated accordingly.
+/// Network run conditions apply only to network destinations; a version 2 config is migrated
+/// accordingly.
 #[test]
 fn v2_config_drops_network_conditions_of_local_destinations_only() {
     let dir = TempDir::new().expect("tempdir");

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Desktop notifications over `org.freedesktop.Notifications` via `notify-rust`
-//! with `desktop-entry` and `kestic.notifyrc` event hints (F3, U6, U7, AC-M0-11-4).
+//! with `desktop-entry` and `kestic.notifyrc` event hints.
 
 use notify_rust::{Hint, Notification, Urgency};
 
@@ -62,7 +62,7 @@ fn notification_service_available() -> bool {
     })
 }
 
-/// Checks whether desktop notifications for `event` are enabled in F3 [`NotificationSettings`].
+/// Checks whether desktop notifications for `event` are enabled in [`NotificationSettings`].
 pub fn is_event_enabled(
     settings: &kestic_core::model::NotificationSettings,
     event: KesticEvent,
@@ -77,7 +77,7 @@ pub fn is_event_enabled(
     }
 }
 
-/// Sends a notification only when enabled in [`NotificationSettings`] (`F3`, `AC-M3-08-2`).
+/// Sends a notification only when enabled in [`NotificationSettings`].
 pub fn send_configured_notification(
     settings: &kestic_core::model::NotificationSettings,
     event: KesticEvent,
@@ -91,7 +91,7 @@ pub fn send_configured_notification(
 }
 
 /// Sends a notification via `org.freedesktop.Notifications` using `notify-rust`
-/// with `desktop-entry`, `x-kde-eventId`, and `Urgency::Normal` (U6, U7).
+/// with `desktop-entry`, `x-kde-eventId`, and `Urgency::Normal`.
 pub fn send_event_notification(
     event: KesticEvent,
     summary: &str,

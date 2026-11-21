@@ -3,15 +3,13 @@
 
 mod common;
 
-use kestic_core::clock::FakeClock;
 use kestic_core::destination::{
     DestinationError, DestinationSetupMode, preflight_check_destination,
     remove_destination_secrets, setup_destination, verify_and_update_stored_password_with_cache,
 };
 use kestic_core::model::{Destination, DestinationKind};
-use kestic_core::provider::check_binary_version;
-use kestic_core::restic::{ResticCommandSpec, ResticRuntime, run_restic};
-use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
+use kestic_core::restic::{ResticCommandSpec, run_restic};
+use kestic_core::secrets::{SecretStore, SecretValue};
 use std::fs;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -24,18 +22,9 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
         let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("local-repo");
         fs::create_dir_all(&repo_dir).expect("mkdir");
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 10:00:00 UTC));
+        let runtime = rig.runtime();
 
         let dest = Destination::new(
             "Local Disk",
@@ -51,14 +40,22 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             .unwrap_or_else(|e| panic!("{label}: local init failed: {e}"));
 
         let snap_spec = ResticCommandSpec::for_destination(
-            &resolved.binary,
-            &helper,
+            &rig.resolved.binary,
+            &rig.helper,
             &dest,
             vec!["snapshots".to_string()],
         )
         .with_cache_dir(Some(&cache_dir));
-        let snap_res = run_restic(&snap_spec, &dest, Some(&store), &clock, None, &[], |_| {})
-            .expect("snapshots");
+        let snap_res = run_restic(
+            &snap_spec,
+            &dest,
+            Some(&rig.store),
+            &rig.clock,
+            None,
+            &[],
+            |_| {},
+        )
+        .expect("snapshots");
         assert_eq!(
             snap_res.exit_code, 0,
             "{label}: snapshots after init failed: {:?}\nlogs: {:?}",
@@ -87,7 +84,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             "{label}: expected WrongPassword, got {err:?}"
         );
         assert_eq!(
-            store
+            rig.store
                 .get_secret(dest_wrong.id.as_str(), "repo")
                 .expect("get"),
             None,
@@ -111,7 +108,9 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
         )
         .unwrap_or_else(|e| panic!("{label}: connect failed: {e}"));
         assert_eq!(
-            store.get_secret(dest_ok.id.as_str(), "repo").expect("get"),
+            rig.store
+                .get_secret(dest_ok.id.as_str(), "repo")
+                .expect("get"),
             Some(pw.clone())
         );
 
@@ -134,9 +133,11 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
         assert!(matches!(missing_err, DestinationError::Unreachable(_)));
 
         // AC-M1-19-3 helper: removing destination secrets deletes them cleanly.
-        remove_destination_secrets(&dest_ok, &store).expect("remove secrets");
+        remove_destination_secrets(&dest_ok, &rig.store).expect("remove secrets");
         assert_eq!(
-            store.get_secret(dest_ok.id.as_str(), "repo").expect("get"),
+            rig.store
+                .get_secret(dest_ok.id.as_str(), "repo")
+                .expect("get"),
             None
         );
     }
@@ -146,22 +147,12 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
 fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
-        let cache_dir = common::restic_cache_dir(dir.path());
         let server_dir = dir.path().join("rest-data");
-        let server = common::start_rest_server_with_auth(&server_dir);
+        let server = common::tools::RestServerGuard::start_with_auth(&server_dir);
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 10:00:00 UTC));
+        let runtime = rig.runtime();
 
         // AC-M1-06-2: REST init with separate REST credentials (`RESTIC_REST_USERNAME`/`PASSWORD`).
         let dest = Destination::new(
@@ -210,7 +201,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             "{label}: expected AuthFailed, got {auth_err:?}"
         );
         assert_eq!(
-            store
+            rig.store
                 .get_secret(bad_auth_dest.id.as_str(), "repo")
                 .expect("get"),
             None
@@ -218,7 +209,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
 
         // AC-M1-06-5: Stopped/unreachable REST server -> preflight fails cleanly <= 15 s.
         drop(server);
-        let closed_port = common::unused_loopback_port();
+        let closed_port = common::tools::free_loopback_port();
         let down_dest = Destination::new(
             "REST Down",
             DestinationKind::Rest {
@@ -265,18 +256,9 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
         let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         fs::create_dir_all(&repo_dir).expect("mkdir");
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 10:00:00 UTC));
+        let runtime = rig.runtime();
 
         let dest = Destination::new(
             "Local",
@@ -297,12 +279,12 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
             &runtime,
         )
         .expect("init");
-        store
+        rig.store
             .set_secret(dest.id.as_str(), "repo", &wrong_stored_pw)
             .expect("overwrite stale");
 
         // Capture `restic key list --json` before password update (AC-M1-20-3).
-        let keys_before = std::process::Command::new(&resolved.binary)
+        let keys_before = std::process::Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
             .env("RESTIC_PASSWORD", "real-repo-pw")
             .env("RESTIC_CACHE_DIR", &cache_dir)
@@ -315,16 +297,16 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
         let err = verify_and_update_stored_password_with_cache(
             &dest,
             &wrong_candidate,
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &rig.store,
+            &rig.resolved,
+            &rig.helper,
+            &rig.clock,
             Some(&cache_dir),
         )
         .expect_err("wrong candidate must fail");
         assert!(matches!(err, DestinationError::WrongPassword), "{label}");
         assert_eq!(
-            store.get_secret(dest.id.as_str(), "repo").expect("get"),
+            rig.store.get_secret(dest.id.as_str(), "repo").expect("get"),
             Some(wrong_stored_pw)
         );
 
@@ -332,19 +314,19 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
         verify_and_update_stored_password_with_cache(
             &dest,
             &real_pw,
-            &store,
-            &resolved,
-            &helper,
-            &clock,
+            &rig.store,
+            &rig.resolved,
+            &rig.helper,
+            &rig.clock,
             Some(&cache_dir),
         )
         .unwrap_or_else(|e| panic!("{label}: update stored pw failed: {e}"));
         assert_eq!(
-            store.get_secret(dest.id.as_str(), "repo").expect("get"),
+            rig.store.get_secret(dest.id.as_str(), "repo").expect("get"),
             Some(real_pw)
         );
 
-        let keys_after = std::process::Command::new(&resolved.binary)
+        let keys_after = std::process::Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
             .env("RESTIC_PASSWORD", "real-repo-pw")
             .env("RESTIC_CACHE_DIR", &cache_dir)
@@ -363,7 +345,7 @@ fn rest_preflight_handles_non_ascii_redirect_location_and_https_tls_without_pani
     use std::net::TcpListener;
 
     // 1. A 3xx redirect carrying an unescaped UTF-8 Location header still proves TCP+HTTP
-    //    reachability (`P32`) and must not fail with `http: invalid uri character`.
+    //    reachability and must not fail with `http: invalid uri character`.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock 302 listener");
     let port = listener.local_addr().expect("local_addr").port();
     let handle = std::thread::spawn(move || {
@@ -390,7 +372,7 @@ fn rest_preflight_handles_non_ascii_redirect_location_and_https_tls_without_pani
     let _ = handle.join();
 
     // 2. HTTPS preflight must configure NativeTls + PlatformVerifier without panicking on `https://`.
-    let closed_port = common::unused_loopback_port();
+    let closed_port = common::tools::free_loopback_port();
     let https_dest = Destination::new(
         "REST HTTPS",
         DestinationKind::Rest {

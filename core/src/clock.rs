@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Injectable clock abstraction (`P36`, `M1-S18`).
+//! Injectable clock abstraction.
 //!
 //! All time-dependent logic in `core` and `daemon` must obtain wall-clock
 //! timestamps via [`Clock`] rather than calling `SystemTime::now()` directly.

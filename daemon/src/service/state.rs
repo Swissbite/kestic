@@ -4,14 +4,16 @@
 //! Core daemon state (`DaemonCore`), configuration, availability/run cache, and state/tray DTO builders.
 
 use super::error::{KesticServiceErr, map_provider_err};
+use super::previews::PreviewEntry;
 use super::run_errors::unreadable_items_from_lines;
+use super::supervision::SupervisionConfig;
 use crate::dbus_api::{
     ActiveRunProgressDto, BlockingStateDto, DaemonStateDto, DestinationAvailabilityDto,
     KESTIC_BUS_NAME, ResticStatusDto, SecretStoreStatusDto,
 };
 use crate::i18n::tr;
 use crate::job_view::DEFAULT_JOB_VIEW_DEST;
-use crate::monitors::{MonitorBusConfig, list_known_networks, read_system_environment};
+use crate::monitors::{MonitorBusConfig, read_system_environment};
 use crate::secrets::SecretServiceStore;
 use crate::tray::{KesticTrayState, TrayHandle, TrayStatus};
 use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult, default_state_dir};
@@ -19,16 +21,20 @@ use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::config::{AppConfig, load_optional_config, save_config};
 use kestic_core::history::{
     BackupRuntimeState, DestinationMaintenanceState, HistoryError, PauseState, RunHistory,
+    last_successful_backup_at,
 };
-use kestic_core::model::{BackupId, DestinationId, ResticProvider, Run, RunId, RunKind, RunStatus};
+use kestic_core::model::{
+    Backup, BackupId, Destination, DestinationId, ResticProvider, Run, RunId, RunStatus,
+};
 use kestic_core::mount::{MountInspector, SourceCheckResult, SystemMountInspector};
 use kestic_core::provider::{ResolvedRestic, ResticProviderError, resolve_and_check};
-use kestic_core::restic::CancelHandle;
+use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_core::scheduler::{
     SystemEnvironment, TimezoneSpec, UnmetPrecondition, format_local_hhmm, format_local_slot_hint,
 };
 use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore};
-use kestic_i18n::codes::{BlockingKind, ErrorKind, PendingReasonCode, ResticStatusCode};
+use kestic_core::sync::LockUnpoisoned;
+use kestic_i18n::codes::{BlockingKind, PendingReasonCode, ResticStatusCode};
 use kestic_i18n::messages::{pause_message, unmet_conditions_message};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
@@ -39,21 +45,43 @@ use std::time::Duration;
 use time::OffsetDateTime;
 use zbus::Connection;
 
-/// Cache TTL for destination/source availability checks (`M1-S23`, `AC-M1-23-3`).
+/// Cache TTL for destination/source availability checks.
 pub const AVAILABILITY_CACHE_TTL_SECS: i64 = 60;
 
 /// Cooldown before scheduled runs re-probe a locked password store or unusable restic
 /// (`restic version` + Secret Service), so a blocking state is not re-probed on every tick.
 pub const BLOCKING_PROBE_RETRY_SECS: i64 = 60;
 
-/// Probe result tuple cached for the state DTO (`§6.1`).
+/// Probe result tuple cached for the state DTO.
 pub(super) type ProbeTuple = (
     ResticStatusDto,
     SecretStoreStatusDto,
     Option<BlockingStateDto>,
 );
 
-/// Optional status override for D-Bus tests covering states added in M3/M4 (`AC-M1-11-1`).
+/// What a restic call needs from [`DaemonCore`], cloned out so the lock is released while the
+/// call runs.
+pub(super) struct ResticDeps {
+    pub(super) provider: ResticProvider,
+    pub(super) kestic_binary: PathBuf,
+    pub(super) secret_store: Arc<dyn SecretStore + Send + Sync>,
+    pub(super) clock: Arc<dyn Clock>,
+}
+
+impl ResticDeps {
+    /// Runtime for the resolved restic binary, without a cache directory.
+    pub(super) fn runtime<'a>(&'a self, resolved: &'a ResolvedRestic) -> ResticRuntime<'a> {
+        ResticRuntime {
+            resolved,
+            kestic_binary: &self.kestic_binary,
+            secret_store: self.secret_store.as_ref(),
+            clock: self.clock.as_ref(),
+            cache_dir: None,
+        }
+    }
+}
+
+/// Optional status override for D-Bus tests covering later daemon states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulatedOverallStatus {
     Overdue,
@@ -69,7 +97,6 @@ pub enum SimulatedOverallStatus {
 pub struct DaemonRunConfig {
     pub bus_name: String,
     pub assume_sni_available: bool,
-    pub send_test_notification: bool,
     pub tray_state: KesticTrayState,
     pub ready_file: Option<PathBuf>,
     pub duration: Option<Duration>,
@@ -97,7 +124,6 @@ impl Default for DaemonRunConfig {
         Self {
             bus_name: KESTIC_BUS_NAME.to_string(),
             assume_sni_available: true,
-            send_test_notification: false,
             tray_state: KesticTrayState {
                 status: TrayStatus::Passive,
                 ..Default::default()
@@ -128,7 +154,7 @@ impl Default for DaemonRunConfig {
 /// Outcome of running [`super::run_daemon`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonOutcome {
-    /// Another daemon already owned the D-Bus name; this instance exited cleanly (`AC-M0-07-1`, `AC-M1-09-1`).
+    /// Another daemon already owned the D-Bus name; this instance exited cleanly.
     AlreadyRunning,
     /// This instance acquired the D-Bus lock and ran until requested to stop.
     RanAndStopped,
@@ -141,22 +167,6 @@ pub(super) struct ActiveRunEntry {
     pub(super) progress: ActiveRunProgressDto,
     pub(super) cancel: CancelHandle,
     pub(super) sleep_interrupted: bool,
-}
-
-pub(super) struct DryRunEntry {
-    pub(super) state: String,
-    pub(super) result: Option<BackupDryRunResult>,
-    /// Error kind and raw detail while `state == "error"`.
-    pub(super) error: Option<(ErrorKind, String)>,
-    pub(super) cancel: CancelHandle,
-}
-
-pub(super) struct RetentionPreviewEntry {
-    pub(super) state: String,
-    pub(super) result: Option<ForgetPreviewResult>,
-    /// Error kind and raw detail while `state == "error"`.
-    pub(super) error: Option<(ErrorKind, String)>,
-    pub(super) cancel: CancelHandle,
 }
 
 /// Core stateful daemon engine shared between D-Bus interface methods, tray actions, and unit tests.
@@ -197,8 +207,8 @@ pub struct DaemonCore {
     pub(super) claiming_destinations: HashSet<DestinationId>,
     pub(super) queued_backups: VecDeque<BackupId>,
     pub(super) sleep_in_progress: bool,
-    pub(super) dry_runs: HashMap<String, DryRunEntry>,
-    pub(super) retention_previews: HashMap<String, RetentionPreviewEntry>,
+    pub(super) dry_runs: HashMap<String, PreviewEntry<BackupDryRunResult>>,
+    pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
     pub(super) window_active: bool,
     pub(super) window_page: String,
     pub(crate) registered_gui_sender: Option<String>,
@@ -222,7 +232,7 @@ pub struct DaemonCore {
 
 impl DaemonCore {
     /// Initializes daemon state, opens SQLite `RunHistory`, recovers stuck `Running` runs as
-    /// `Interrupted` (`AC-M1-10-2`, `AC-M3-10-3`), initializes baselines, and loads `config.toml` if present.
+    /// `Interrupted`, initializes baselines, and loads `config.toml` if present.
     pub fn new(run_config: &DaemonRunConfig) -> Result<Self, String> {
         let config_path = match &run_config.config_path {
             Some(p) => p.clone(),
@@ -254,7 +264,7 @@ impl DaemonCore {
             .unwrap_or_else(|| Arc::new(SystemMountInspector));
 
         let history = RunHistory::open(&state_dir).map_err(|e| e.to_string())?;
-        // AC-M1-10-2 / AC-M3-10-3: any runs left in `running` state from a hard crash/kill become `interrupted`.
+        // any runs left in `running` state from a hard crash/kill become `interrupted`.
         if let Err(err) = history.mark_interrupted_on_startup(run_config.clock.as_ref()) {
             eprintln!("kestic-daemon: failed to mark interrupted runs on startup: {err}");
         }
@@ -343,24 +353,60 @@ impl DaemonCore {
         Ok(core)
     }
 
+    /// The destination the backup with `id` writes to.
+    pub(super) fn backup_destination(
+        &self,
+        id: &BackupId,
+    ) -> Result<Destination, KesticServiceErr> {
+        let backup = self
+            .config
+            .backup(id)
+            .ok_or_else(|| KesticServiceErr::NotFound(id.as_str().to_string()))?;
+        self.config
+            .destination(&backup.destination_id)
+            .cloned()
+            .ok_or_else(|| KesticServiceErr::NotFound(backup.destination_id.as_str().to_string()))
+    }
+
+    /// The backup with `id` and the destination it writes to.
+    pub(super) fn backup_with_destination(
+        &self,
+        id: &BackupId,
+    ) -> Result<(Backup, Destination), KesticServiceErr> {
+        let dest = self.backup_destination(id)?;
+        let backup = self
+            .config
+            .backup(id)
+            .cloned()
+            .ok_or_else(|| KesticServiceErr::NotFound(id.as_str().to_string()))?;
+        Ok((backup, dest))
+    }
+
+    pub(super) fn restic_deps(&self) -> ResticDeps {
+        ResticDeps {
+            provider: self.config.restic_provider.clone(),
+            kestic_binary: self.kestic_binary.clone(),
+            secret_store: Arc::clone(&self.secret_store),
+            clock: Arc::clone(&self.clock),
+        }
+    }
+
+    pub(super) fn supervision_config(&self) -> SupervisionConfig {
+        SupervisionConfig {
+            enable_job_view: self.enable_job_view,
+            job_view_dest: self.job_view_dest.clone(),
+            enable_portal_inhibit: self.enable_portal_inhibit,
+            monitor_bus: self.monitor_bus.clone(),
+            enable_system_monitors: self.enable_system_monitors,
+        }
+    }
+
     pub fn availability_probe_count(&self) -> u64 {
         self.availability_probe_count
     }
 
-    pub fn config(&self) -> &AppConfig {
-        &self.config
-    }
-
     pub fn history(&self) -> &RunHistory {
         &self.history
-    }
-
-    pub fn system_environment(&self) -> &SystemEnvironment {
-        &self.system_env
-    }
-
-    pub fn set_system_environment(&mut self, env: SystemEnvironment) {
-        self.system_env = env;
     }
 
     pub(super) fn is_destination_busy(&self, dest_id: &DestinationId) -> bool {
@@ -412,14 +458,7 @@ impl DaemonCore {
         &self,
         backup_id: &BackupId,
     ) -> Option<OffsetDateTime> {
-        self.runs_cache
-            .iter()
-            .find(|r| {
-                r.backup_id() == Some(backup_id)
-                    && matches!(r.kind, RunKind::Backup { .. })
-                    && matches!(r.status, RunStatus::Ok | RunStatus::Warning)
-            })
-            .map(|r| r.finished_at.unwrap_or(r.started_at))
+        last_successful_backup_at(&self.runs_cache, backup_id)
     }
 
     pub(super) fn ensure_baselines(&mut self) {
@@ -563,10 +602,6 @@ impl DaemonCore {
             let _ = tx.send(());
         }
     }
-
-    pub fn list_known_networks(&self) -> Vec<String> {
-        list_known_networks(&self.monitor_bus)
-    }
 }
 
 /// Parses the unreadable items of the last finished run of every configured backup from its
@@ -680,6 +715,40 @@ pub(super) fn probe_restic_and_secrets_resolved(
     ((restic_status, secret_status, blocking), resolved_res)
 }
 
+/// Error for a locked password store; `detail` is the reason the probe reported.
+pub(super) fn secret_store_locked(detail: Option<String>) -> KesticServiceErr {
+    KesticServiceErr::SecretStoreLocked(
+        detail.unwrap_or_else(|| "password store is locked".to_string()),
+    )
+}
+
+/// Probes the password store and restic (one `restic version`) before a call that needs both.
+///
+/// Returns the probe for caching and the resolved restic, or the error to report: a locked
+/// store takes precedence over a restic problem.
+pub(super) fn probe_for_run(
+    provider: &ResticProvider,
+    secret_store: &dyn SecretStore,
+) -> (ProbeTuple, Result<ResolvedRestic, KesticServiceErr>) {
+    let (probe, resolved) = probe_restic_and_secrets_resolved(provider, secret_store);
+    let result = match resolved {
+        Ok(resolved) if probe.1.available => Ok(resolved),
+        Err(err) if probe.1.available => Err(map_provider_err(err)),
+        _ => Err(secret_store_locked(probe.1.detail.clone())),
+    };
+    (probe, result)
+}
+
+/// Resolves the restic binary for a preview run; on failure the probe is cached for the
+/// scheduler's re-probe cooldown.
+pub(super) fn resolve_restic_recording_probe(
+    shared: &Arc<Mutex<DaemonCore>>,
+    deps: &ResticDeps,
+) -> Result<ResolvedRestic, KesticServiceErr> {
+    let (probe, resolved) = probe_for_run(&deps.provider, deps.secret_store.as_ref());
+    resolved.inspect_err(|_| shared.lock_unpoisoned().record_probe(probe))
+}
+
 /// Probes the password store and restic before a backup/maintenance run (one `restic version`).
 ///
 /// On failure the probe is cached (arming the scheduled re-probe cooldown), the destination
@@ -691,42 +760,28 @@ pub(super) fn probe_before_run(
     dest_id: &DestinationId,
     claim_guard: &mut super::availability::DestinationClaimGuard,
 ) -> Result<(ProbeTuple, ResolvedRestic), KesticServiceErr> {
-    let (probe, resolved) = probe_restic_and_secrets_resolved(provider, secret_store);
-    let err = match resolved {
-        Ok(resolved) if probe.1.available => return Ok((probe, resolved)),
-        Ok(_) => KesticServiceErr::SecretStoreLocked(
-            probe
-                .1
-                .detail
-                .clone()
-                .unwrap_or_else(|| "password store is locked".to_string()),
-        ),
-        Err(_) if !probe.1.available => KesticServiceErr::SecretStoreLocked(
-            probe
-                .1
-                .detail
-                .clone()
-                .unwrap_or_else(|| "password store is locked".to_string()),
-        ),
-        Err(err) => map_provider_err(err),
-    };
-    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
-    guard.record_probe(probe);
-    guard.claiming_destinations.remove(dest_id);
-    claim_guard.disarm();
-    Err(err)
+    let (probe, result) = probe_for_run(provider, secret_store);
+    match result {
+        Ok(resolved) => Ok((probe, resolved)),
+        Err(err) => {
+            let mut guard = shared.lock_unpoisoned();
+            guard.record_probe(probe);
+            guard.release_claim(dest_id, claim_guard);
+            Err(err)
+        }
+    }
 }
 
 pub(crate) fn refresh_probe_unlocked(shared: &Arc<Mutex<DaemonCore>>) {
     let (provider, secret_store) = {
-        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = shared.lock_unpoisoned();
         (
             guard.config.restic_provider.clone(),
             Arc::clone(&guard.secret_store),
         )
     };
     let probe = probe_restic_and_secrets_raw(&provider, secret_store.as_ref());
-    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let mut guard = shared.lock_unpoisoned();
     guard.record_probe(probe);
 }
 
@@ -746,13 +801,13 @@ pub(crate) fn set_restic_provider_unlocked(
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid provider JSON: {e}")))?;
     let _ = resolve_and_check(&provider).map_err(map_provider_err)?;
     let secret_store = {
-        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = shared.lock_unpoisoned();
         Arc::clone(&guard.secret_store)
     };
     let probe = probe_restic_and_secrets_raw(&provider, secret_store.as_ref());
     let restic_status = probe.0.clone();
 
-    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+    let mut guard = shared.lock_unpoisoned();
     let mut next = guard.config.clone();
     next.restic_provider = provider;
     guard.persist_config(next)?;

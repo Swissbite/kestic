@@ -4,15 +4,23 @@
 //! Shared helpers for the M3 automation acceptance tests (`M3-S03`–`M3-S14`): daemon spawning with
 //! injectable clock, restic wrapper with call log, state polling, and notification assertions.
 
-use super::{CapturedNotification, NotificationCapture, find_kestic_binary, wait_for_file};
-use kestic_core::clock::Clock;
+use super::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
+use super::{
+    CapturedNotification, NotificationCapture, find_kestic_binary, tools::find_lock_file,
+    wait_for_file,
+};
+use kestic_core::clock::{Clock, FakeClock, SystemClock};
+use kestic_core::destination::{DestinationSetupMode, setup_destination};
 use kestic_core::history::{BackupRuntimeState, RunHistory};
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, DestinationKind, ResticProvider, Schedule, Source,
+    Backup, BackupId, Destination, DestinationId, DestinationKind, ResticProvider, RunStatus,
+    Schedule, Source,
 };
 use kestic_core::mount::MountInspector;
+use kestic_core::provider::check_binary_version;
+use kestic_core::restic::ResticRuntime;
 use kestic_core::scheduler::TimezoneSpec;
-use kestic_core::secrets::FileSecretStore;
+use kestic_core::secrets::{FileSecretStore, SecretError, SecretStore, SecretValue};
 use kestic_daemon::dbus_api::{
     BackupSummaryDto, DaemonStateDto, DestinationSummaryDto, KESTIC_OBJECT_PATH, KesticClient,
 };
@@ -20,11 +28,12 @@ use kestic_daemon::monitors::MonitorBusConfig;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
+use time::macros::datetime;
 
 /// One restic binary under test (`AC-M1-Q-2`: 0.18.0 and latest).
 #[derive(Debug, Clone)]
@@ -77,12 +86,16 @@ pub struct M3DaemonOpts<'a> {
     pub bus_name: &'a str,
     pub restic_bin: &'a Path,
     pub clock: Arc<dyn Clock>,
+    /// Secret store of the daemon; defaults to a `FileSecretStore` at `<root>/secrets.hex`.
+    pub secret_store: Option<Arc<dyn SecretStore + Send + Sync>>,
     pub mount_inspector: Option<Arc<dyn MountInspector>>,
     pub timezone: TimezoneSpec,
     pub enable_monitors: bool,
     pub enable_scheduler: bool,
     pub enable_job_view: bool,
     pub enable_portal_inhibit: bool,
+    /// Skip the StatusNotifierWatcher check at startup.
+    pub assume_sni_available: bool,
 }
 
 impl<'a> M3DaemonOpts<'a> {
@@ -98,12 +111,24 @@ impl<'a> M3DaemonOpts<'a> {
             bus_name,
             restic_bin,
             clock,
+            secret_store: None,
             mount_inspector: None,
-            timezone: TimezoneSpec::named("Europe/Zurich"),
+            timezone: TimezoneSpec::Named("Europe/Zurich".to_string()),
             enable_monitors: true,
             enable_scheduler: true,
             enable_job_view: false,
             enable_portal_inhibit: false,
+            assume_sni_available: true,
+        }
+    }
+
+    /// Real clock, no scheduler and no system monitors: runs start on request only.
+    pub fn on_request(sub_name: &'a str, bus_name: &'a str, restic_bin: &'a Path) -> Self {
+        Self {
+            enable_monitors: false,
+            enable_scheduler: false,
+            timezone: TimezoneSpec::System,
+            ..Self::new(sub_name, bus_name, restic_bin, Arc::new(SystemClock))
         }
     }
 }
@@ -143,13 +168,16 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
 
     let run_cfg = DaemonRunConfig {
         bus_name: opts.bus_name.to_string(),
-        assume_sni_available: true,
+        assume_sni_available: opts.assume_sni_available,
         ready_file: Some(ready_file.clone()),
         config_path: Some(config_path.clone()),
         state_dir: Some(state_dir.clone()),
         kestic_binary: Some(find_kestic_binary()),
         clock: opts.clock,
-        secret_store: Some(Arc::new(FileSecretStore::new(root.join("secrets.hex")))),
+        secret_store: Some(
+            opts.secret_store
+                .unwrap_or_else(|| Arc::new(FileSecretStore::new(root.join("secrets.hex")))),
+        ),
         mount_inspector: opts.mount_inspector,
         suppress_ui_spawn: true,
         enable_job_view: opts.enable_job_view,
@@ -182,6 +210,99 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
         config_path,
         bus_name: opts.bus_name.to_string(),
         handle: Some(handle),
+    }
+}
+
+/// A daemon running behind a [`ResticWrapper`] around the variant's restic, with a fake clock.
+pub struct M3Rig {
+    pub daemon: M3Daemon,
+    pub clock: Arc<FakeClock>,
+    pub wrapper: ResticWrapper,
+    pub variant: ResticVariant,
+    pub root: PathBuf,
+    /// Sandbox sub-directory name of this variant/base below `root`.
+    pub sub: String,
+}
+
+impl M3Rig {
+    /// Starts the daemon (default options with the scheduler on) at fake time `start`;
+    /// `configure` adjusts the options before the spawn.
+    pub fn start(
+        root: &Path,
+        variant: &ResticVariant,
+        base: &str,
+        start: time::OffsetDateTime,
+        configure: impl FnOnce(&mut M3DaemonOpts<'_>),
+    ) -> Self {
+        Self::start_on(
+            root,
+            variant,
+            &variant.sub(base),
+            &variant.bus_name(base),
+            start,
+            configure,
+        )
+    }
+
+    /// Like [`Self::start`], but with an explicit sandbox sub-directory `sub` below `root` and
+    /// session-bus name `bus` (for example the real bus name a GUI process connects to).
+    pub fn start_on(
+        root: &Path,
+        variant: &ResticVariant,
+        sub: &str,
+        bus: &str,
+        start: time::OffsetDateTime,
+        configure: impl FnOnce(&mut M3DaemonOpts<'_>),
+    ) -> Self {
+        let wrapper = ResticWrapper::create(&root.join(sub).join("wrapper"), &variant.bin);
+        let clock = Arc::new(FakeClock::new(start));
+        let mut opts = M3DaemonOpts::new(sub, bus, &wrapper.path, Arc::clone(&clock) as _);
+        configure(&mut opts);
+        let daemon = spawn_m3_daemon(root, opts);
+        Self {
+            daemon,
+            clock,
+            wrapper,
+            variant: variant.clone(),
+            root: root.to_path_buf(),
+            sub: sub.to_string(),
+        }
+    }
+
+    /// Adds a local destination `name` below the sandbox of this rig ([`add_local_destination`]).
+    pub fn add_destination(
+        &self,
+        name: &str,
+        configure: impl FnOnce(&mut Destination),
+    ) -> Destination {
+        let repo_dir = self.root.join(&self.sub).join(format!("repo-{name}"));
+        add_local_destination(
+            &self.daemon.client,
+            &repo_dir,
+            name,
+            &format!("pw-{name}"),
+            configure,
+        )
+    }
+
+    /// Adds a daily 12:00 backup `name` with a one-file source to `dest` ([`add_folder_backup`]).
+    pub fn add_backup_to(
+        &self,
+        dest: &Destination,
+        name: &str,
+        configure: impl FnOnce(&mut Backup),
+    ) -> Backup {
+        let src_dir = self.root.join(&self.sub).join(format!("src-{name}"));
+        add_folder_backup(&self.daemon.client, &src_dir, &dest.id, name, configure)
+    }
+
+    /// Adds a local destination and a daily 12:00 backup `name` ([`add_local_backup`]).
+    pub fn add_backup(
+        &self,
+        name: &str,
+        configure: impl FnOnce(&mut Backup),
+    ) -> LocalBackupFixture {
+        add_local_backup(&self.daemon.client, &self.root, &self.sub, name, configure)
     }
 }
 
@@ -254,8 +375,229 @@ pub fn assert_dbus_error_name(err: &zbus::Error, expected_name: &str) {
     }
 }
 
+/// File-backed secret store that can be locked: while locked, reads, writes and availability
+/// probes fail with `LockedOrPromptRequired`; `unlock_interactive` unlocks it. Counts the
+/// availability probes.
+pub struct LockableSecretStore {
+    inner: FileSecretStore,
+    pub locked: Arc<AtomicBool>,
+    pub availability_checks: Arc<AtomicUsize>,
+}
+
+impl LockableSecretStore {
+    pub fn new(secrets_file: PathBuf, locked: bool) -> Self {
+        Self {
+            inner: FileSecretStore::new(secrets_file),
+            locked: Arc::new(AtomicBool::new(locked)),
+            availability_checks: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn fail_if_locked(&self) -> Result<(), SecretError> {
+        if self.locked.load(Ordering::SeqCst) {
+            return Err(SecretError::LockedOrPromptRequired(
+                "locked for test".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl SecretStore for LockableSecretStore {
+    fn set_secret(
+        &self,
+        target_id: &str,
+        kind: &str,
+        value: &SecretValue,
+    ) -> Result<(), SecretError> {
+        self.fail_if_locked()?;
+        self.inner.set_secret(target_id, kind, value)
+    }
+
+    fn get_secret(&self, target_id: &str, kind: &str) -> Result<Option<SecretValue>, SecretError> {
+        self.fail_if_locked()?;
+        self.inner.get_secret(target_id, kind)
+    }
+
+    fn delete_secret(&self, target_id: &str, kind: &str) -> Result<(), SecretError> {
+        self.inner.delete_secret(target_id, kind)
+    }
+
+    fn check_availability(&self) -> Result<(), SecretError> {
+        self.availability_checks.fetch_add(1, Ordering::SeqCst);
+        self.fail_if_locked()?;
+        self.inner.check_availability()
+    }
+
+    fn unlock_interactive(&self) -> Result<(), SecretError> {
+        self.locked.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// Notifications and StatusNotifierWatcher fakes on the session bus.
+pub struct DesktopFakes {
+    pub notif: Arc<NotificationCapture>,
+    pub sni_conn: zbus::Connection,
+    _notif_conn: zbus::Connection,
+}
+
+impl DesktopFakes {
+    pub fn start() -> Self {
+        let (notif_conn, notif) = super::start_fake_notifications();
+        Self {
+            notif,
+            sni_conn: super::start_fake_sni_watcher(),
+            _notif_conn: notif_conn,
+        }
+    }
+}
+
+/// Power and network state of [`StdFakes::start_with`]; the default is AC power at 100 % and an
+/// unmetered connection to the known network `Heim`.
+pub struct FakeSetup<'a> {
+    pub on_battery: bool,
+    pub percentage: f64,
+    pub connected: bool,
+    pub metered: bool,
+    pub active_network: Option<&'a str>,
+    pub known_networks: &'a [&'a str],
+}
+
+impl Default for FakeSetup<'_> {
+    fn default() -> Self {
+        Self {
+            on_battery: false,
+            percentage: 100.0,
+            connected: true,
+            metered: false,
+            active_network: Some("Heim"),
+            known_networks: &["Heim"],
+        }
+    }
+}
+
+/// The fakes every M3 daemon test needs on the session bus: notifications, a
+/// StatusNotifierWatcher, UPower (AC power) and NetworkManager (connected to `Heim`).
+pub struct StdFakes {
+    pub upower: FakeUPowerHandle,
+    pub nm: FakeNetworkManagerHandle,
+    pub notif: Arc<NotificationCapture>,
+    pub sni_conn: zbus::Connection,
+    _notif_conn: zbus::Connection,
+}
+
+impl StdFakes {
+    /// On AC power at 100 %.
+    pub fn start() -> Self {
+        Self::start_with(FakeSetup::default())
+    }
+
+    pub fn start_with_power(on_battery: bool, percentage: f64) -> Self {
+        Self::start_with(FakeSetup {
+            on_battery,
+            percentage,
+            ..FakeSetup::default()
+        })
+    }
+
+    pub fn start_with(setup: FakeSetup<'_>) -> Self {
+        let desktop = DesktopFakes::start();
+        Self {
+            upower: FakeUPowerHandle::start(setup.on_battery, setup.percentage),
+            nm: FakeNetworkManagerHandle::start(
+                setup.connected,
+                setup.metered,
+                setup.active_network,
+                setup.known_networks,
+            ),
+            notif: desktop.notif,
+            sni_conn: desktop.sni_conn,
+            _notif_conn: desktop._notif_conn,
+        }
+    }
+}
+
+/// Polls `pred` every 25 ms until it holds; fails with `what` after `timeout`.
+pub fn wait_until_within(timeout: Duration, what: &str, mut pred: impl FnMut() -> bool) {
+    let deadline = Instant::now() + timeout;
+    while !pred() {
+        assert!(Instant::now() < deadline, "timed out waiting for: {what}");
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// [`wait_until_within`] with the default timeout of 10 s.
+pub fn wait_until(what: &str, pred: impl FnMut() -> bool) {
+    wait_until_within(Duration::from_secs(10), what, pred);
+}
+
+/// Creates `repo_dir` and initialises a local repository there with the real `restic_bin`,
+/// storing the password in `<root>/secrets.hex` (the default secret store of [`spawn_m3_daemon`]).
+pub fn seed_local_destination(
+    root: &Path,
+    restic_bin: &Path,
+    name: &str,
+    repo_dir: &Path,
+    password: &str,
+) -> Destination {
+    fs::create_dir_all(repo_dir).expect("mkdir repo");
+    let dest = Destination::new(
+        name,
+        DestinationKind::Local {
+            path: repo_dir.to_path_buf(),
+        },
+    )
+    .expect("destination");
+    let resolved = check_binary_version(restic_bin).expect("resolve restic");
+    let store = FileSecretStore::new(root.join("secrets.hex"));
+    let kestic = find_kestic_binary();
+    let cache = root.join("seed-restic-cache");
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &kestic,
+        secret_store: &store,
+        clock: &clock,
+        cache_dir: Some(&cache),
+    };
+    setup_destination(
+        &dest,
+        DestinationSetupMode::InitNew,
+        &SecretValue::from_str_secret(password),
+        None,
+        &runtime,
+    )
+    .expect("init repo");
+    dest
+}
+
+/// Number of runs of the backup that actually executed (neither pending nor still running).
+pub fn executed_runs(state: &DaemonStateDto, bid: &BackupId) -> usize {
+    state
+        .recent_runs
+        .iter()
+        .filter(|r| r.backup_id() == Some(bid))
+        .filter(|r| !matches!(r.status, RunStatus::Pending))
+        .count()
+}
+
+/// Number of runs in the history below `state_dir` that satisfy `pred`.
+pub fn count_runs(
+    state_dir: &Path,
+    mut pred: impl FnMut(&kestic_core::model::Run) -> bool,
+) -> usize {
+    RunHistory::open(state_dir)
+        .expect("open history")
+        .list_runs()
+        .expect("list runs")
+        .iter()
+        .filter(|r| pred(r))
+        .count()
+}
+
 /// Number of scheduler ticks (1 s each) to wait so an expected absence is meaningful.
-pub const SETTLE: Duration = Duration::from_millis(2300);
+const SETTLE: Duration = Duration::from_millis(2300);
 
 /// Sleeps long enough for at least two scheduler ticks plus asynchronous worker completion.
 pub fn settle() {
@@ -311,24 +653,7 @@ pub fn write_incompressible_dataset(dir: &Path, num_files: usize, bytes_per_file
     }
 }
 
-/// Finds a non-empty restic lock file (64 hex chars) below `locks_dir`.
-pub fn find_lock_file(locks_dir: &Path) -> Option<PathBuf> {
-    for entry in fs::read_dir(locks_dir).ok()?.flatten() {
-        let path = entry.path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
-            && fs::metadata(&path).is_ok_and(|m| m.len() > 0)
-        {
-            return Some(path);
-        }
-    }
-    None
-}
-
-/// Creates a folder backup `name` (daily 12:00) with a one-file source and a local destination.
+/// What [`add_local_backup`] created: the destination, the backup and their directories.
 pub struct LocalBackupFixture {
     pub dest: Destination,
     pub backup: Backup,
@@ -337,7 +662,54 @@ pub struct LocalBackupFixture {
     pub src_dir: PathBuf,
 }
 
-/// Adds a local destination (`restic init`) and a daily 12:00 backup through the daemon API.
+/// Creates `repo_dir` and a local destination `name` through the daemon API (`restic init` with
+/// `password`); `configure` adjusts the destination before it is added.
+pub fn add_local_destination(
+    client: &KesticClient,
+    repo_dir: &Path,
+    name: &str,
+    password: &str,
+    configure: impl FnOnce(&mut Destination),
+) -> Destination {
+    fs::create_dir_all(repo_dir).expect("mkdir repo");
+    let mut dest = Destination::new(
+        name,
+        DestinationKind::Local {
+            path: repo_dir.to_path_buf(),
+        },
+    )
+    .expect("dest");
+    configure(&mut dest);
+    client
+        .add_destination(&dest, "init", password, "")
+        .expect("add destination");
+    dest
+}
+
+/// Creates a folder backup `name` (daily 12:00) on destination `dest_id` through the daemon API;
+/// `src_dir` gets a one-file source. The returned backup carries the id assigned by the daemon.
+pub fn add_folder_backup(
+    client: &KesticClient,
+    src_dir: &Path,
+    dest_id: &DestinationId,
+    name: &str,
+    configure: impl FnOnce(&mut Backup),
+) -> Backup {
+    fs::create_dir_all(src_dir).expect("mkdir src");
+    fs::write(src_dir.join("data.txt"), format!("payload {name}")).expect("write src");
+    let mut backup = Backup::new(name, Source::folder(src_dir), dest_id.clone()).expect("backup");
+    backup.schedule = Schedule::Daily {
+        hour: 12,
+        minute: 0,
+    };
+    configure(&mut backup);
+    let backup_id_str = client.add_backup(&backup).expect("add backup");
+    backup.id = BackupId::parse(&backup_id_str).expect("backup id");
+    backup
+}
+
+/// Creates a folder backup `name` (daily 12:00) with a one-file source and a local destination
+/// (`restic init`) through the daemon API.
 pub fn add_local_backup(
     client: &KesticClient,
     root: &Path,
@@ -347,31 +719,18 @@ pub fn add_local_backup(
 ) -> LocalBackupFixture {
     let repo_dir = root.join(sub).join(format!("repo-{name}"));
     let src_dir = root.join(sub).join(format!("src-{name}"));
-    fs::create_dir_all(&repo_dir).expect("mkdir repo");
-    fs::create_dir_all(&src_dir).expect("mkdir src");
-    fs::write(src_dir.join("data.txt"), format!("payload {name}")).expect("write src");
-    let dest = Destination::new(
-        format!("Dest {name}"),
-        DestinationKind::Local {
-            path: repo_dir.clone(),
-        },
-    )
-    .expect("dest");
-    client
-        .add_destination(&dest, "init", &format!("pw-{name}"), "")
-        .expect("add destination");
-    let mut backup = Backup::new(name, Source::folder(&src_dir), dest.id.clone()).expect("backup");
-    backup.schedule = Schedule::Daily {
-        hour: 12,
-        minute: 0,
-    };
-    configure(&mut backup);
-    let backup_id_str = client.add_backup(&backup).expect("add backup");
-    backup.id = BackupId::parse(&backup_id_str).expect("backup id");
+    let dest = add_local_destination(
+        client,
+        &repo_dir,
+        &format!("Dest {name}"),
+        &format!("pw-{name}"),
+        |_| {},
+    );
+    let backup = add_folder_backup(client, &src_dir, &dest.id, name, configure);
     LocalBackupFixture {
         dest,
+        backup_id_str: backup.id.as_str().to_string(),
         backup,
-        backup_id_str,
         repo_dir,
         src_dir,
     }
@@ -387,13 +746,16 @@ pub struct WrapperEntry {
     pub detail: String,
 }
 
-/// Shell wrapper around the real restic binary that records start, end, and SIGTERM per call
-/// and can hold `backup` runs until released (progress `25 %` is emitted while held).
+/// Shell wrapper around the real restic binary that records start, end, and SIGTERM per call,
+/// can hold `backup` runs until released (progress `25 %` is emitted while held) and can make a
+/// subcommand fail with a given exit code and stderr.
 pub struct ResticWrapper {
     pub path: PathBuf,
     pub log: PathBuf,
     /// Prefix of the per-subcommand hold markers (`<hold>.<subcommand>`).
     pub hold: PathBuf,
+    /// Prefix of the per-subcommand failure markers (`<fail>.<subcommand>`).
+    fail: PathBuf,
 }
 
 impl ResticWrapper {
@@ -407,6 +769,7 @@ impl ResticWrapper {
 REAL='{real}'
 LOG='{log}'
 HOLD='{hold}'
+FAIL='{fail}'
 now() {{ date +%s%3N; }}
 sub=""
 for a in "$@"; do
@@ -416,6 +779,12 @@ for a in "$@"; do
   esac
 done
 echo "S $(now) $sub $*" >> "$LOG"
+if [ -n "$sub" ] && [ -f "$FAIL.$sub" ]; then
+  code=$(cat "$FAIL.$sub")
+  cat "$FAIL.$sub.stderr" >&2
+  echo "E $(now) $sub $code" >> "$LOG"
+  exit "$code"
+fi
 if [ -n "$sub" ] && [ -f "$HOLD.$sub" ]; then
   if [ -f "$HOLD.$sub.status" ]; then
     cat "$HOLD.$sub.status"
@@ -438,11 +807,37 @@ exit $code
             real = real_restic.display(),
             log = log.display(),
             hold = hold.display(),
+            fail = dir.join("restic-wrapper.fail").display(),
         );
-        fs::write(&path, script).expect("write restic wrapper");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod wrapper");
+        super::tools::write_executable(&path, &script);
         fs::write(&log, "").expect("create wrapper log");
-        Self { path, log, hold }
+        let fail = dir.join("restic-wrapper.fail");
+        Self {
+            path,
+            log,
+            hold,
+            fail,
+        }
+    }
+
+    fn fail_marker(&self, sub: &str) -> PathBuf {
+        PathBuf::from(format!("{}.{sub}", self.fail.display()))
+    }
+
+    /// Makes every subsequent call of restic subcommand `sub` print `stderr` and exit with
+    /// `code` without touching the repository, until [`Self::clear_fail`].
+    pub fn fail(&self, sub: &str, code: i32, stderr: &str) {
+        fs::write(
+            PathBuf::from(format!("{}.stderr", self.fail_marker(sub).display())),
+            format!("{stderr}\n"),
+        )
+        .expect("write failure stderr");
+        fs::write(self.fail_marker(sub), code.to_string()).expect("write failure marker");
+    }
+
+    /// Lets calls of restic subcommand `sub` run normally again.
+    pub fn clear_fail(&self, sub: &str) {
+        fs::remove_file(self.fail_marker(sub)).expect("remove failure marker");
     }
 
     fn hold_marker(&self, sub: &str) -> PathBuf {
@@ -505,10 +900,6 @@ exit $code
     }
 
     /// Number of restic processes started so far (all subcommands).
-    pub fn started_count(&self) -> usize {
-        self.entries().iter().filter(|e| e.kind == 'S').count()
-    }
-
     /// Number of started restic processes that touch the repository (everything except the
     /// repository-independent `restic version` probe).
     pub fn started_repo_count(&self) -> usize {

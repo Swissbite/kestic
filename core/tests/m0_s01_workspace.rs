@@ -3,43 +3,12 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
+use common::tools::short_tempdir;
+use common::workspace::workspace_root;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("core crate has workspace root parent")
-        .to_path_buf()
-}
-
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new(prefix: &str) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
-        fs::create_dir_all(&path).expect("create temp dir");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
 
 /// AC-M0-01-1 (Q1): Workspace layout with core, daemon, gui, rust-toolchain.toml,
 /// justfile, deny.toml, and LICENSES/ exists.
@@ -71,7 +40,7 @@ fn ac_m0_01_1_workspace_layout_exists() {
 #[test]
 fn ac_m0_01_2_reuse_lint_fails_without_spdx_header() {
     let root = workspace_root();
-    let temp = TempDir::new("kestic-ac-m0-01-2");
+    let temp = short_tempdir("kestic-ac-m0-01-2");
     let licenses_dir = temp.path().join("LICENSES");
     fs::create_dir_all(&licenses_dir).expect("create LICENSES dir");
     fs::copy(

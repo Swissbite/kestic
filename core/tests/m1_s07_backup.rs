@@ -3,15 +3,13 @@
 
 mod common;
 
+use common::execute_backup;
+
 use kestic_core::backup::{
-    build_backup_command_spec, exclude_file_path, execute_backup, list_snapshots_for_backup,
+    build_backup_command_spec, exclude_file_path, list_snapshots_for_backup,
 };
-use kestic_core::clock::FakeClock;
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
-use kestic_core::model::{Backup, Destination, DestinationKind, ExcludeRules, RunStatus, Source};
-use kestic_core::provider::check_binary_version;
+use kestic_core::model::{Backup, Destination, ExcludeRules, RunStatus, Source};
 use kestic_core::restic::{CancelHandle, ResticRuntime};
-use kestic_core::secrets::{FileSecretStore, SecretValue};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -120,12 +118,10 @@ fn verify_snapshots_ls_and_transparent_shell(
 fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
-        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_a = dir.path().join("src-a");
         let src_b = dir.path().join("src-b");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_a).expect("mkdir src_a");
         fs::create_dir_all(&src_b).expect("mkdir src_b");
 
@@ -133,29 +129,11 @@ fn ac_m1_07_1_to_07_4_backup_tags_group_by_excludes_and_isolation() {
         fs::write(src_a.join("skip.tmp"), b"ignored content").expect("write skip");
         fs::write(src_b.join("other.txt"), b"backup b file").expect("write other");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 11:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 11:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("backup-test-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .expect("init repo");
+        let dest = rig.init_local("Local", &repo_dir, "backup-test-pw");
 
         let mut backup_a =
             Backup::new("Docs A", Source::folder(&src_a), dest.id.clone()).expect("backup a");
@@ -236,7 +214,6 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
     let repo_dir = dir.path().join("repo");
     let state_dir = dir.path().join("state");
     let src_dir = dir.path().join("large-src");
-    fs::create_dir_all(&repo_dir).expect("mkdir repo");
     fs::create_dir_all(&src_dir).expect("mkdir src");
 
     // Create enough incompressible random-ish data (40 MB) or many files so backup runs > 0.3s cleanly.
@@ -249,28 +226,10 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
         fs::write(src_dir.join(format!("blob_{i:02}.bin")), &chunk).expect("write blob");
     }
 
-    let secrets_hex = dir.path().join("secrets.hex");
-    let store = FileSecretStore::new(&secrets_hex);
-    let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-    let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-    let clock = FakeClock::new(datetime!(2026-12-01 11:30:00 UTC));
-    let runtime = ResticRuntime {
-        resolved: &resolved,
-        kestic_binary: &helper,
-        secret_store: &store,
-        clock: &clock,
-        cache_dir: Some(&cache_dir),
-    };
+    let rig = common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 11:30:00 UTC));
+    let runtime = rig.runtime();
 
-    let dest = Destination::new(
-        "Local",
-        DestinationKind::Local {
-            path: repo_dir.clone(),
-        },
-    )
-    .expect("dest");
-    let pw = SecretValue::from_str_secret("cancel-test-pw");
-    setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime).expect("init");
+    let dest = rig.init_local("Local", &repo_dir, "cancel-test-pw");
 
     let backup = Backup::new("Cancel Me", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     let cancel = Arc::new(CancelHandle::new());
@@ -297,7 +256,7 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
     assert_eq!(res.presentation.status, RunStatus::Cancelled);
 
     // AC-M1-10-3: No stale restic locks left behind after SIGTERM.
-    let locks_out = Command::new(&resolved.binary)
+    let locks_out = Command::new(&rig.resolved.binary)
         .args([
             "-r",
             &repo_dir.to_string_lossy(),

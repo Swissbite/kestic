@@ -6,24 +6,16 @@
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
 use common::m3::{
-    M3DaemonOpts, ResticVariant, ResticWrapper, backup_summary, daemon_paths, notifications_for,
-    restic_variants, settle, spawn_m3_daemon, wait_for_notifications, wait_for_state,
+    M3DaemonOpts, ResticVariant, ResticWrapper, StdFakes, backup_summary, daemon_paths,
+    notifications_for, restic_variants, seed_local_destination, settle, spawn_m3_daemon,
+    wait_for_notifications, wait_for_state,
 };
-use common::{
-    NotificationCapture, run_isolated_test, start_fake_notifications, start_fake_sni_watcher,
-};
+use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
 use kestic_core::config::{AppConfig, save_config};
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
 use kestic_core::history::RunHistory;
-use kestic_core::model::{
-    Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Schedule, Source,
-};
-use kestic_core::provider::check_binary_version;
-use kestic_core::restic::ResticRuntime;
-use kestic_core::secrets::{FileSecretStore, SecretValue};
+use kestic_core::model::{Backup, ResticProvider, Run, RunStatus, Schedule, Source};
 use kestic_daemon::dbus_api::DaemonStateDto;
 use std::fs;
 use std::path::Path;
@@ -50,33 +42,12 @@ fn seed_overdue_backup(root: &Path, variant: &ResticVariant, sub: &str, clock: &
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("data.txt"), b"catch-up payload").expect("write src");
 
-    let dest =
-        Destination::new("Seeded", DestinationKind::Local { path: repo_dir }).expect("destination");
+    let dest = seed_local_destination(root, &variant.bin, "Seeded", &repo_dir, "pw-seed");
     let mut backup = Backup::new("Overdue", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     backup.schedule = Schedule::Daily {
         hour: 12,
         minute: 0,
     };
-
-    let store = FileSecretStore::new(root.join("secrets.hex"));
-    let resolved = check_binary_version(&variant.bin).expect("resolve restic");
-    let kestic = common::find_kestic_binary();
-    let cache = root.join("restic-cache");
-    let runtime = ResticRuntime {
-        resolved: &resolved,
-        kestic_binary: &kestic,
-        secret_store: &store,
-        clock,
-        cache_dir: Some(&cache),
-    };
-    setup_destination(
-        &dest,
-        DestinationSetupMode::InitNew,
-        &SecretValue::from_str_secret("pw-seed"),
-        None,
-        &runtime,
-    )
-    .expect("init repo");
 
     let wrapper = ResticWrapper::create(&root.join(sub).join("wrapper"), &variant.bin);
     let mut cfg = AppConfig {
@@ -106,25 +77,6 @@ fn seed_overdue_backup(root: &Path, variant: &ResticVariant, sub: &str, clock: &
     }
 }
 
-struct Fakes {
-    upower: FakeUPowerHandle,
-    notif: Arc<NotificationCapture>,
-    _nc: zbus::Connection,
-    _nm: FakeNetworkManagerHandle,
-    _sni: zbus::Connection,
-}
-
-fn start_fakes(on_battery: bool) -> Fakes {
-    let (nc, notif) = start_fake_notifications();
-    Fakes {
-        notif,
-        _nc: nc,
-        _sni: start_fake_sni_watcher(),
-        upower: FakeUPowerHandle::start(on_battery, 80.0),
-        _nm: FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]),
-    }
-}
-
 fn executed(state: &DaemonStateDto, seed: &Seed) -> usize {
     state
         .recent_runs
@@ -142,7 +94,7 @@ fn ac_m3_10_1_daemon_start_catches_up_overdue_backup_once_and_notifies() {
         "ac_m3_10_1_daemon_start_catches_up_overdue_backup_once_and_notifies",
         "KESTIC_M3_10_1_INNER",
         |root| {
-            let fakes = start_fakes(false);
+            let fakes = StdFakes::start_with_power(false, 80.0);
             for variant in restic_variants() {
                 fakes.notif.clear();
                 fakes.upower.set_on_battery(false, 80.0);
@@ -195,7 +147,7 @@ fn ac_m3_10_2_daemon_start_with_unmet_condition_keeps_overdue_backup_pending() {
         "ac_m3_10_2_daemon_start_with_unmet_condition_keeps_overdue_backup_pending",
         "KESTIC_M3_10_2_INNER",
         |root| {
-            let _fakes = start_fakes(true);
+            let _fakes = StdFakes::start_with_power(true, 80.0);
             let variant = common::m3::latest_variant();
             let sub = variant.sub("M3T2");
             let clock = Arc::new(FakeClock::new(NOW));
@@ -241,7 +193,7 @@ fn ac_m3_10_3_daemon_start_marks_running_run_interrupted_before_planning() {
         "KESTIC_M3_10_3_INNER",
         |root| {
             // On battery so the due backup is not planned into a run that would hide the check.
-            let _fakes = start_fakes(true);
+            let _fakes = StdFakes::start_with_power(true, 80.0);
             let variant = common::m3::latest_variant();
             let sub = variant.sub("M3T3");
             let clock = Arc::new(FakeClock::new(NOW));

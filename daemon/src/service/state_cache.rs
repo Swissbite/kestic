@@ -3,7 +3,7 @@
 
 //! In-memory write-through caches for per-backup runtime state, per-destination maintenance
 //! state, and the global pause, so the 1 s scheduler tick never reads SQLite (the daemon is the
-//! sole writer of `history.db`, `F14`).
+//! sole writer of `history.db`).
 
 use super::state::DaemonCore;
 use kestic_core::history::{
@@ -153,7 +153,7 @@ impl DaemonCore {
         self.history.clear_destination_state(dest_id)
     }
 
-    /// Returns the cached global pause (`FR-13a`).
+    /// Returns the cached global pause.
     pub(super) fn global_pause_cached(&self) -> Option<PauseState> {
         self.global_pause_cache.clone()
     }

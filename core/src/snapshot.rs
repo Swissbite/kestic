@@ -3,7 +3,7 @@
 
 #![forbid(unsafe_code)]
 
-//! Tolerant restic snapshot JSON parser (NFR-10, FR-06, P17).
+//! Tolerant restic snapshot JSON parser.
 
 use serde::{Deserialize, Deserializer};
 
@@ -23,7 +23,7 @@ pub struct SnapshotSummary {
 }
 
 /// Tolerant representation of a restic snapshot JSON entry.
-/// Unknown fields are ignored (NFR-10) and `summary` is optional (P17).
+/// Unknown fields are ignored and `summary` is optional.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ResticSnapshot {
     pub id: String,
@@ -39,20 +39,16 @@ pub struct ResticSnapshot {
     pub summary: Option<SnapshotSummary>,
 }
 
-/// Parses a `restic snapshots --json` payload tolerantly.
-pub fn parse_snapshots_json(input: &str) -> Result<Vec<ResticSnapshot>, serde_json::Error> {
-    serde_json::from_str(input)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// AC-M0-02-5 (P17): Pre-0.17 snapshot JSON without `summary` fixture parses cleanly.
+    /// Pre-0.17 snapshot JSON without `summary` fixture parses cleanly.
     #[test]
     fn ac_m0_02_5_parses_snapshot_fixture_without_summary() {
         let raw = include_str!("../tests/fixtures/snapshot_pre_0_17_no_summary.json");
-        let snapshots = parse_snapshots_json(raw).expect("fixture JSON should parse");
+        let snapshots: Vec<ResticSnapshot> =
+            serde_json::from_str(raw).expect("fixture JSON should parse");
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].short_id.as_deref(), Some("c3d4e5f6"));
         assert_eq!(

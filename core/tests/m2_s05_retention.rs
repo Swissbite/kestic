@@ -5,21 +5,21 @@
 
 mod common;
 
+use common::load_config;
+
+use common::tools::{assert_has_flag_pair, find_lock_file};
+
 use kestic_core::backup::{
-    build_forget_command_spec, execute_forget, execute_forget_dry_run, list_snapshots_for_backup,
-    parse_forget_json_output,
+    build_forget_command_spec, execute_forget, execute_forget_dry_run_with,
+    list_snapshots_for_backup, parse_forget_json_output,
 };
-use kestic_core::clock::FakeClock;
-use kestic_core::config::{AppConfig, load_config, save_config};
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
+use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{
     Backup, Destination, DestinationKind, KeepCount, ModelError, RetentionPolicy, RetentionPreset,
     Source, validate_restic_duration,
 };
-use kestic_core::provider::{ResolvedRestic, check_binary_version};
-use kestic_core::restic::ResticRuntime;
-use kestic_core::secrets::{FileSecretStore, SecretValue};
-use kestic_core::snapshot::{ResticSnapshot, parse_snapshots_json};
+use kestic_core::provider::ResolvedRestic;
+use kestic_core::snapshot::ResticSnapshot;
 use semver::Version;
 use std::fs;
 use std::io::Write;
@@ -119,24 +119,7 @@ fn list_snapshots_by_tag(
         "restic snapshots failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    parse_snapshots_json(String::from_utf8_lossy(&out.stdout).trim()).expect("parse snapshots")
-}
-
-fn find_lock_file(locks_dir: &Path) -> Option<PathBuf> {
-    let entries = fs::read_dir(locks_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
-            && fs::metadata(&path).is_ok_and(|m| m.len() > 0)
-        {
-            return Some(path);
-        }
-    }
-    None
+    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).expect("parse snapshots")
 }
 
 struct LockHolderGuard {
@@ -514,7 +497,6 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
         let src_a = dir.path().join("src-a");
         let src_b = dir.path().join("src-b");
         let meta_src = dir.path().join("meta");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_a).expect("mkdir src-a");
         fs::create_dir_all(&src_b).expect("mkdir src-b");
         fs::create_dir_all(&meta_src).expect("mkdir meta");
@@ -523,35 +505,12 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
         fs::write(src_b.join("b.txt"), b"backup b data").expect("write b");
         fs::write(meta_src.join("meta.toml"), b"config_version = 1\n").expect("write meta");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-11-17 09:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 09:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local Scope",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
         let pw = "scope-test-pw";
-        setup_destination(
-            &dest,
-            DestinationSetupMode::InitNew,
-            &SecretValue::from_str_secret(pw),
-            None,
-            &runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Local Scope", &repo_dir, pw);
 
         let mut backup_a =
             Backup::new("Backup A", Source::folder(&src_a), dest.id.clone()).expect("backup a");
@@ -565,7 +524,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
         // Create 3 snapshots for backup A, 3 for backup B, and 2 `kestic-meta:<id_a>` snapshots.
         for day in [10, 11, 12] {
             create_snapshot_at_time(
-                &resolved.binary,
+                &rig.resolved.binary,
                 &repo_dir,
                 pw,
                 &src_a,
@@ -574,7 +533,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
                 &cache_dir,
             );
             create_snapshot_at_time(
-                &resolved.binary,
+                &rig.resolved.binary,
                 &repo_dir,
                 pw,
                 &src_b,
@@ -585,7 +544,7 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
         }
         for day in [10, 11] {
             create_snapshot_at_time(
-                &resolved.binary,
+                &rig.resolved.binary,
                 &repo_dir,
                 pw,
                 &meta_src,
@@ -595,22 +554,11 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
             );
         }
 
-        let spec = build_forget_command_spec(&backup_a, &dest, false, false, &resolved, &helper)
-            .expect("build forget spec");
-        assert!(
-            spec.subcommand_args
-                .windows(2)
-                .any(|w| w == ["--tag", backup_a.tag().as_str()]),
-            "{label}: missing `--tag kestic:<id>` in {:?}",
-            spec.subcommand_args
-        );
-        assert!(
-            spec.subcommand_args
-                .windows(2)
-                .any(|w| w == ["--group-by", "tags"]),
-            "{label}: missing `--group-by tags` in {:?}",
-            spec.subcommand_args
-        );
+        let spec =
+            build_forget_command_spec(&backup_a, &dest, false, false, &rig.resolved, &rig.helper)
+                .expect("build forget spec");
+        assert_has_flag_pair(&spec.subcommand_args, "--tag", backup_a.tag().as_str());
+        assert_has_flag_pair(&spec.subcommand_args, "--group-by", "tags");
 
         let res = execute_forget(&backup_a, &dest, &runtime, None, &[])
             .unwrap_or_else(|e| panic!("{label}: execute_forget failed: {e}"));
@@ -619,25 +567,25 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
         let snaps_a = list_snapshots_for_backup(
             &backup_a.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list snaps a");
         let snaps_b = list_snapshots_for_backup(
             &backup_b.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list snaps b");
         let snaps_meta = list_snapshots_by_tag(
-            &resolved.binary,
+            &rig.resolved.binary,
             &repo_dir,
             pw,
             &backup_a.meta_tag(),
@@ -665,39 +613,15 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
         let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         fs::write(src_dir.join("data.txt"), b"daily gap test").expect("write data");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-11-17 09:30:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 09:30:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Gap Test",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
         let pw = "gap-test-pw";
-        setup_destination(
-            &dest,
-            DestinationSetupMode::InitNew,
-            &SecretValue::from_str_secret(pw),
-            None,
-            &runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Gap Test", &repo_dir, pw);
 
         let mut backup =
             Backup::new("Gap Backup", Source::folder(&src_dir), dest.id.clone()).expect("backup");
@@ -705,7 +629,7 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
         // 2026-11-01..04 and 2026-11-12..15 at 12:00 UTC (gap Nov 5–11).
         for day in [1u8, 2, 3, 4, 12, 13, 14, 15] {
             create_snapshot_at_time(
-                &resolved.binary,
+                &rig.resolved.binary,
                 &repo_dir,
                 pw,
                 &src_dir,
@@ -720,8 +644,9 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
             keep_daily: Some(KeepCount::Count(7)),
             ..RetentionPolicy::empty()
         };
-        let preview_daily = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
-            .unwrap_or_else(|e| panic!("{label}: dry-run keep-daily 7 failed: {e}"));
+        let preview_daily =
+            execute_forget_dry_run_with(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
+                .unwrap_or_else(|e| panic!("{label}: dry-run keep-daily 7 failed: {e}"));
 
         assert_eq!(
             preview_daily.keep_count, 7,
@@ -769,8 +694,9 @@ fn ac_m2_05_7_keep_daily_vs_keep_within_daily_across_gap() {
             keep_within_daily: Some("7d".to_string()),
             ..RetentionPolicy::empty()
         };
-        let preview_within = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
-            .unwrap_or_else(|e| panic!("{label}: dry-run keep-within-daily 7d failed: {e}"));
+        let preview_within =
+            execute_forget_dry_run_with(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
+                .unwrap_or_else(|e| panic!("{label}: dry-run keep-within-daily 7d failed: {e}"));
 
         assert_eq!(
             preview_within.keep_count, 4,
@@ -817,39 +743,15 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
         let cache_str = cache_dir.to_string_lossy().into_owned();
         let repo_dir = dir.path().join("repo");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         fs::write(src_dir.join("data.txt"), b"old snapshot anchor").expect("write data");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-11-17 10:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 10:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Anchor Test",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
         let pw = "anchor-test-pw";
-        setup_destination(
-            &dest,
-            DestinationSetupMode::InitNew,
-            &SecretValue::from_str_secret(pw),
-            None,
-            &runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Anchor Test", &repo_dir, pw);
 
         let mut backup = Backup::new("Anchor Backup", Source::folder(&src_dir), dest.id.clone())
             .expect("backup");
@@ -869,7 +771,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
             .expect("format newest");
 
         create_snapshot_at_time(
-            &resolved.binary,
+            &rig.resolved.binary,
             &repo_dir,
             pw,
             &src_dir,
@@ -878,7 +780,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
             &cache_dir,
         );
         create_snapshot_at_time(
-            &resolved.binary,
+            &rig.resolved.binary,
             &repo_dir,
             pw,
             &src_dir,
@@ -887,7 +789,7 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
             &cache_dir,
         );
 
-        let preview = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
+        let preview = execute_forget_dry_run_with(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
             .unwrap_or_else(|e| panic!("{label}: dry-run failed: {e}"));
         assert_eq!(
             preview.keep_count, 1,
@@ -917,10 +819,10 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
         let remaining = list_snapshots_for_backup(
             &backup.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list remaining");
@@ -994,39 +896,15 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
         let cache_str = cache_dir.to_string_lossy().into_owned();
         let repo_dir = dir.path().join("repo");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         fs::write(src_dir.join("data.txt"), b"preview no-lock test").expect("write data");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-11-17 10:30:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 10:30:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Preview Lock Test",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
         let pw = "preview-lock-pw";
-        setup_destination(
-            &dest,
-            DestinationSetupMode::InitNew,
-            &SecretValue::from_str_secret(pw),
-            None,
-            &runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Preview Lock Test", &repo_dir, pw);
 
         let mut backup = Backup::new("Preview Backup", Source::folder(&src_dir), dest.id.clone())
             .expect("backup");
@@ -1037,7 +915,7 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
 
         for day in [10u8, 11, 12] {
             create_snapshot_at_time(
-                &resolved.binary,
+                &rig.resolved.binary,
                 &repo_dir,
                 pw,
                 &src_dir,
@@ -1050,10 +928,10 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
         let before_ids: Vec<String> = list_snapshots_for_backup(
             &backup.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list before")
@@ -1062,9 +940,9 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
         .collect();
         assert_eq!(before_ids.len(), 3, "{label}");
 
-        // Verify spec passes `--dry-run` and `--no-lock` (P41 / AC-M2-06-6).
+        // Verify spec passes `--dry-run` and `--no-lock` (AC-M2-06-6).
         let preview_spec =
-            build_forget_command_spec(&backup, &dest, true, true, &resolved, &helper)
+            build_forget_command_spec(&backup, &dest, true, true, &rig.resolved, &rig.helper)
                 .expect("build preview spec");
         assert!(
             preview_spec
@@ -1080,10 +958,10 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
         );
 
         let guard =
-            spawn_non_exclusive_lock_holder(label, &resolved.binary, &repo_dir, pw, &cache_dir);
+            spawn_non_exclusive_lock_holder(label, &rig.resolved.binary, &repo_dir, pw, &cache_dir);
 
         // Preview must succeed (`--no-lock`), never fail with Exit 11, and report Keep/Remove + Reasons.
-        let preview = execute_forget_dry_run(&backup, &dest, &runtime, &[("TZ", "UTC")])
+        let preview = execute_forget_dry_run_with(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
             .unwrap_or_else(|e| {
                 panic!("{label}: preview failed under active non-exclusive lock: {e}")
             });
@@ -1120,10 +998,10 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
         let after_ids: Vec<String> = list_snapshots_for_backup(
             &backup.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list after")

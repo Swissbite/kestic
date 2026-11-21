@@ -5,23 +5,16 @@
 
 //! Unit and integration tests for M0-S05: `.deb` packaging, QML Depends, notifyrc, and autostart.
 
+mod common;
+
+use common::tools::short_tempdir;
+use common::workspace::{find_kestic_binary, find_target_dir, workspace_root};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
-struct TempDirGuard(PathBuf);
-
-impl Drop for TempDirGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-fn find_deb_package(workspace_root: &Path) -> PathBuf {
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root.join("target"));
-    let deb_dir = target_dir.join("debian");
+fn find_deb_package() -> PathBuf {
+    let deb_dir = find_target_dir().join("debian");
     let entries = fs::read_dir(&deb_dir).unwrap_or_else(|e| {
         panic!(
             "target/debian not readable at {} ({}); run `cargo deb -p kestic-gui --fast` or `just verify` first",
@@ -48,26 +41,11 @@ fn find_deb_package(workspace_root: &Path) -> PathBuf {
     })
 }
 
-fn find_kestic_binary(workspace_root: &Path) -> PathBuf {
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root.join("target"));
-    for profile in ["debug", "release"] {
-        let candidate = target_dir.join(profile).join("kestic");
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    panic!("kestic binary not found under {}", target_dir.display());
-}
-
 /// AC-M0-05-2: Unit check for autostart desktop entry contents (`TryExec=/usr/bin/kestic`,
 /// `Exec=kestic daemon --autostart`), desktop-file validation, and immediate exit without config.
 #[test]
 fn ac_m0_05_2_autostart_entry_contains_tryexec_and_exec() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("core crate has workspace root parent");
+    let root = workspace_root();
 
     let autostart_path = root.join("packaging/net.daester.Kestic.daemon.desktop");
     let gui_desktop_path = root.join("packaging/net.daester.Kestic.desktop");
@@ -97,17 +75,14 @@ fn ac_m0_05_2_autostart_entry_contains_tryexec_and_exec() {
     );
 
     // Also verify `kestic daemon --autostart` exits 0 immediately when no config exists (NFR-11).
-    let temp = root.join(format!("target/test-tmp-m0-s05-bin-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&temp);
-    fs::create_dir_all(temp.join("cfg")).expect("create cfg dir");
-    fs::create_dir_all(temp.join("home")).expect("create home dir");
-    let _guard = TempDirGuard(temp.clone());
+    let temp = short_tempdir("kestic-m0-s05-bin");
+    fs::create_dir_all(temp.path().join("cfg")).expect("create cfg dir");
+    fs::create_dir_all(temp.path().join("home")).expect("create home dir");
 
-    let kestic = find_kestic_binary(root);
-    let out = Command::new(kestic)
+    let out = Command::new(find_kestic_binary())
         .args(["daemon", "--autostart"])
-        .env("HOME", temp.join("home"))
-        .env("XDG_CONFIG_HOME", temp.join("cfg"))
+        .env("HOME", temp.path().join("home"))
+        .env("XDG_CONFIG_HOME", temp.path().join("cfg"))
         .env("QT_QPA_PLATFORM", "offscreen")
         .output()
         .expect("run kestic daemon --autostart");
@@ -122,10 +97,7 @@ fn ac_m0_05_2_autostart_entry_contains_tryexec_and_exec() {
 /// for QML Depends, restic Recommends, notifyrc, GUI desktop, and `/etc/xdg/autostart` Conffile.
 #[test]
 fn ac_m0_05_1_deb_contains_qml_depends_recommends_notifyrc_and_autostart() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("core crate has workspace root parent");
-    let deb_path = find_deb_package(root);
+    let deb_path = find_deb_package();
 
     let info_out = Command::new("dpkg-deb")
         .arg("-I")
@@ -174,16 +146,12 @@ fn ac_m0_05_1_deb_contains_qml_depends_recommends_notifyrc_and_autostart() {
     }
 
     // Verify /etc/xdg/autostart/net.daester.Kestic.daemon.desktop is marked as a dpkg conffile.
-    let ctrl_dir = root.join(format!(
-        "target/test-tmp-m0-s05-ctrl-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&ctrl_dir);
-    let _guard = TempDirGuard(ctrl_dir.clone());
+    let ctrl = short_tempdir("kestic-m0-s05-ctrl");
+    let ctrl_dir = ctrl.path();
     let extract_out = Command::new("dpkg-deb")
         .arg("-e")
         .arg(&deb_path)
-        .arg(&ctrl_dir)
+        .arg(ctrl_dir)
         .output()
         .expect("run dpkg-deb -e");
     assert!(extract_out.status.success(), "dpkg-deb -e failed");

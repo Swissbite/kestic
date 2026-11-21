@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Mountpoint parsing (`/proc/self/mountinfo`), filesystem UUID lookup, and source drive
-//! detection (`M2-S09`, `FR-29`, `FR-30`).
+//! detection.
 
 use crate::model::{Backup, Source, SourceIdentity, SourceKind};
+use crate::sync::LockUnpoisoned;
 use kestic_i18n::codes::SourceStatus;
 use std::collections::HashMap;
 use std::env;
@@ -24,7 +25,7 @@ pub struct MountEntry {
     pub mount_source: String,
 }
 
-/// Abstracts OS mountinfo + block-device UUID inspection for deterministic tests (`M2-S09`).
+/// Abstracts OS mountinfo + block-device UUID inspection for deterministic tests.
 pub trait MountInspector: Send + Sync {
     /// Returns raw `/proc/self/mountinfo` contents.
     fn read_mountinfo(&self) -> std::io::Result<String>;
@@ -39,14 +40,13 @@ pub trait MountInspector: Send + Sync {
 
     /// Returns whether directory `path` is empty (returns `false` if non-empty or not a readable dir).
     fn is_empty_dir(&self, path: &Path) -> bool {
-        if !path.is_dir() {
-            return false;
-        }
-        match fs::read_dir(path) {
-            Ok(mut entries) => entries.next().is_none(),
-            Err(_) => false,
-        }
+        dir_is_empty(path)
     }
+}
+
+/// Whether `path` is a readable directory without entries.
+fn dir_is_empty(path: &Path) -> bool {
+    path.is_dir() && fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
 }
 
 /// Real Linux inspector using `/proc/self/mountinfo`, udev metadata, and `/dev/disk/by-uuid`
@@ -163,14 +163,14 @@ impl FakeMountInspector {
     where
         F: FnOnce(&mut FakeMountState),
     {
-        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.state.lock_unpoisoned();
         f(&mut guard);
     }
 }
 
 impl MountInspector for FakeMountInspector {
     fn read_mountinfo(&self) -> std::io::Result<String> {
-        let guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.state.lock_unpoisoned();
         Ok(guard.mountinfo.clone())
     }
 
@@ -179,23 +179,17 @@ impl MountInspector for FakeMountInspector {
         mount_source: &str,
         _major_minor: &str,
     ) -> Option<(String, Option<String>)> {
-        let guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.state.lock_unpoisoned();
         guard.device_uuids.get(mount_source).cloned()
     }
 
     fn is_empty_dir(&self, path: &Path) -> bool {
-        let guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.state.lock_unpoisoned();
         if let Some(&forced) = guard.empty_dirs.get(path) {
             return forced;
         }
         drop(guard);
-        if !path.is_dir() {
-            return false;
-        }
-        match fs::read_dir(path) {
-            Ok(mut entries) => entries.next().is_none(),
-            Err(_) => false,
-        }
+        dir_is_empty(path)
     }
 }
 
@@ -320,8 +314,7 @@ fn same_mount(a: &MountEntry, b: &MountEntry) -> bool {
         && a.fs_type == b.fs_type
 }
 
-/// Detects [`SourceKind`] (`Folder` vs `Drive`) and drive identity for `path` from mountinfo
-/// (`AC-M2-09-3`, `AC-M2-09-7`).
+/// Detects [`SourceKind`] (`Folder` vs `Drive`) and drive identity for `path` from mountinfo.
 pub fn detect_source_with(
     path: &Path,
     home_dir: Option<&Path>,
@@ -364,7 +357,7 @@ pub fn detect_source_with(
     )
 }
 
-/// Result of checking whether a backup source is ready for execution (`M2-S09`).
+/// Result of checking whether a backup source is ready for execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceCheckResult {
     Available,
@@ -389,15 +382,13 @@ impl SourceCheckResult {
             Self::DriveEmpty => Some(SourceStatus::DriveEmpty),
         }
     }
-}
 
-impl SourceCheckResult {
     pub fn is_ok(&self) -> bool {
         matches!(self, Self::Available)
     }
 }
 
-/// Evaluates source availability using `inspector` and `home_dir` (`M2-S09`, `FR-29`, `FR-30`).
+/// Evaluates source availability using `inspector` and `home_dir`.
 pub fn check_source_status_with(
     backup: &Backup,
     home_dir: Option<&Path>,
@@ -408,7 +399,7 @@ pub fn check_source_status_with(
             if !backup.source.path.exists() {
                 SourceCheckResult::PathMissing(backup.source.path.display().to_string())
             } else {
-                // AC-M2-09-6: Empty folder is explicitly allowed for `SourceKind::Folder`.
+                // Empty folder is explicitly allowed for `SourceKind::Folder`.
                 SourceCheckResult::Available
             }
         }
@@ -463,7 +454,7 @@ pub fn check_source_status_with(
                 return SourceCheckResult::DriveNotMounted;
             }
 
-            // AC-M2-09-5: Reject empty mountpoint / directory for drives.
+            // Reject empty mountpoint / directory for drives.
             if inspector.is_empty_dir(&backup.source.path) {
                 return SourceCheckResult::DriveEmpty;
             }

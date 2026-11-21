@@ -3,24 +3,26 @@
 
 //! D-Bus server (`net.daester.Kestic1`) and asynchronous signal emitters for the Kestic daemon.
 
-use crate::dbus_api::{ActiveRunProgressDto, DaemonStateDto, KESTIC_OBJECT_PATH, KesticDbusError};
+use crate::dbus_api::{
+    ActiveRunProgressDto, DaemonStateDto, KESTIC_OBJECT_PATH, KesticDbusError, to_json_arg,
+};
 use crate::monitors::list_known_networks;
 use crate::service::{
     DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
     list_backup_snapshots_unlocked, preview_destination_maintenance_unlocked,
-    preview_retention_unlocked, refresh_availability_unlocked, refresh_probe_unlocked,
-    run_destination_maintenance_async, set_restic_provider_unlocked, start_all_backups_async,
-    start_backup_async, start_backup_dry_run_async, start_backup_override_async,
-    start_retention_preview_async, test_destination_connection_unlocked,
-    trigger_background_availability_probe, unlock_destination_async,
-    update_destination_password_unlocked, update_destination_unlocked,
+    refresh_availability_unlocked, refresh_probe_unlocked, run_destination_maintenance_async,
+    set_restic_provider_unlocked, start_all_backups_async, start_backup_async,
+    start_backup_dry_run_async, start_backup_override_async, start_retention_preview_async,
+    test_destination_connection_unlocked, trigger_background_availability_probe,
+    unlock_destination_async, update_destination_password_unlocked, update_destination_unlocked,
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
 use kestic_core::model::{BackupId, Run};
 use kestic_core::secrets::SecretError;
+use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use zbus::object_server::SignalEmitter;
 use zbus::{Connection, interface};
@@ -34,20 +36,77 @@ impl KesticDbusV1Service {
         Self { core }
     }
 
+    /// Pushes the new state to the tray and emits `StatusChanged`; without a bus connection
+    /// there is nobody to tell.
     async fn sync_tray_and_emit(
         &self,
-        conn: &Connection,
+        conn: Option<&Connection>,
         state_dto: &DaemonStateDto,
         tray_state: KesticTrayState,
     ) {
+        let Some(conn) = conn else {
+            return;
+        };
         let tray_opt = {
-            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            let guard = self.core.lock_unpoisoned();
             guard.tray.clone()
         };
         if let Some(tray) = tray_opt {
             tray.set_full_state(tray_state);
         }
         emit_status_changed_async(conn, state_dto).await;
+    }
+
+    /// Runs `f` on a worker thread with the shared core, so a slow restic call never blocks the
+    /// bus connection; the core's lock is only taken inside `f`.
+    async fn blocking<T>(&self, f: impl FnOnce(&Arc<Mutex<DaemonCore>>) -> T + Send + 'static) -> T
+    where
+        T: Send + 'static,
+    {
+        let core = Arc::clone(&self.core);
+        run_blocking_task(move || f(&core)).await
+    }
+
+    /// Runs `f` on the locked core, then publishes the resulting state. The lock is released
+    /// before the first `await`.
+    async fn mutate<T, E>(
+        &self,
+        f: impl FnOnce(&mut DaemonCore) -> Result<T, E> + Send,
+    ) -> Result<T, KesticDbusError>
+    where
+        KesticDbusError: From<E>,
+    {
+        let (out, conn_opt, state_dto, tray_state) = {
+            let mut guard = self.core.lock_unpoisoned();
+            let out = f(&mut guard)?;
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (out, guard.conn.clone(), state_dto, tray_state)
+        };
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
+        Ok(out)
+    }
+
+    /// [`Self::mutate`] for methods that return nothing.
+    async fn mutate_unit<T, E>(
+        &self,
+        f: impl FnOnce(&mut DaemonCore) -> Result<T, E> + Send,
+    ) -> Result<(), KesticDbusError>
+    where
+        KesticDbusError: From<E>,
+    {
+        self.mutate(f).await.map(drop)
+    }
+
+    /// Publishes the current state after a change made elsewhere.
+    async fn publish_current(&self) {
+        let (conn_opt, state_dto, tray_state) = {
+            let guard = self.core.lock_unpoisoned();
+            let (state_dto, tray_state) = guard.build_state_and_tray();
+            (guard.conn.clone(), state_dto, tray_state)
+        };
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
     }
 }
 
@@ -60,29 +119,27 @@ impl KesticDbusV1Service {
 
     #[zbus(name = "GetState")]
     fn get_state(&self) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         let (state_dto, _) = guard.build_state_and_tray();
-        serde_json::to_string(&state_dto).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&state_dto)
     }
 
     #[zbus(name = "GetRunDetail")]
     async fn get_run_detail(&self, run_id: &str) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = run_id.to_string();
-        let detail = run_blocking_task(move || get_run_detail_unlocked(&core, &id))
-            .await
-            .map_err(KesticDbusError::from)?;
-        serde_json::to_string(&detail).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let detail = self
+            .blocking(move |core| get_run_detail_unlocked(core, &id))
+            .await?;
+        to_json_arg(&detail)
     }
 
     #[zbus(name = "ListBackupSnapshots")]
     async fn list_backup_snapshots(&self, backup_id: &str) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = backup_id.to_string();
-        let snaps = run_blocking_task(move || list_backup_snapshots_unlocked(&core, &id))
-            .await
-            .map_err(KesticDbusError::from)?;
-        serde_json::to_string(&snaps).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let snaps = self
+            .blocking(move |core| list_backup_snapshots_unlocked(core, &id))
+            .await?;
+        to_json_arg(&snaps)
     }
 
     #[zbus(name = "TestDestinationConnection")]
@@ -93,16 +150,19 @@ impl KesticDbusV1Service {
         repo_password: &str,
         rest_password: &str,
     ) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
-        let dj = dest_json.to_string();
-        let m = mode.to_string();
-        let rp = repo_password.to_string();
-        let rsp = rest_password.to_string();
-        let res = run_blocking_task(move || {
-            test_destination_connection_unlocked(&core, &dj, &m, &rp, &rsp)
-        })
-        .await;
-        serde_json::to_string(&res).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let form = DestinationForm::new(dest_json, mode, repo_password, rest_password);
+        let res = self
+            .blocking(move |core| {
+                test_destination_connection_unlocked(
+                    core,
+                    &form.dest_json,
+                    &form.mode,
+                    &form.repo_password,
+                    &form.rest_password,
+                )
+            })
+            .await;
+        to_json_arg(&res)
     }
 
     #[zbus(name = "AddDestination")]
@@ -113,18 +173,20 @@ impl KesticDbusV1Service {
         repo_password: &str,
         rest_password: &str,
     ) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
-        let dj = dest_json.to_string();
-        let m = mode.to_string();
-        let rp = repo_password.to_string();
-        let rsp = rest_password.to_string();
-        let (new_id, conn_opt, state_dto, tray_state) =
-            run_blocking_task(move || add_destination_unlocked(&core, &dj, &m, &rp, &rsp))
-                .await
-                .map_err(KesticDbusError::from)?;
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
+        let form = DestinationForm::new(dest_json, mode, repo_password, rest_password);
+        let (new_id, conn_opt, state_dto, tray_state) = self
+            .blocking(move |core| {
+                add_destination_unlocked(
+                    core,
+                    &form.dest_json,
+                    &form.mode,
+                    &form.repo_password,
+                    &form.rest_password,
+                )
+            })
+            .await?;
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
         Ok(new_id)
     }
 
@@ -137,19 +199,21 @@ impl KesticDbusV1Service {
         rest_password: &str,
         verify_connection: bool,
     ) -> Result<(), KesticDbusError> {
-        let core = Arc::clone(&self.core);
-        let dj = dest_json.to_string();
-        let m = mode.to_string();
-        let rp = repo_password.to_string();
-        let rsp = rest_password.to_string();
-        let (conn_opt, state_dto, tray_state) = run_blocking_task(move || {
-            update_destination_unlocked(&core, &dj, &m, &rp, &rsp, verify_connection)
-        })
-        .await
-        .map_err(KesticDbusError::from)?;
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
+        let form = DestinationForm::new(dest_json, mode, repo_password, rest_password);
+        let (conn_opt, state_dto, tray_state) = self
+            .blocking(move |core| {
+                update_destination_unlocked(
+                    core,
+                    &form.dest_json,
+                    &form.mode,
+                    &form.repo_password,
+                    &form.rest_password,
+                    verify_connection,
+                )
+            })
+            .await?;
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
         Ok(())
     }
 
@@ -159,73 +223,37 @@ impl KesticDbusV1Service {
         dest_id: &str,
         new_password: &str,
     ) -> Result<(), KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = dest_id.to_string();
         let pw = new_password.to_string();
-        let (conn_opt, state_dto, tray_state) =
-            run_blocking_task(move || update_destination_password_unlocked(&core, &id, &pw))
-                .await
-                .map_err(KesticDbusError::from)?;
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
+        let (conn_opt, state_dto, tray_state) = self
+            .blocking(move |core| update_destination_password_unlocked(core, &id, &pw))
+            .await?;
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
         Ok(())
     }
 
     #[zbus(name = "RemoveDestination")]
     async fn remove_destination(&self, dest_id: &str) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.remove_destination(dest_id)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.remove_destination(dest_id))
+            .await
     }
 
     #[zbus(name = "AddBackup")]
     async fn add_backup(&self, backup_json: &str) -> Result<String, KesticDbusError> {
-        let (new_id, conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            let new_id = guard.add_backup(backup_json)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (new_id, guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(new_id)
+        self.mutate(|core| core.add_backup(backup_json)).await
     }
 
     #[zbus(name = "UpdateBackup")]
     async fn update_backup(&self, backup_json: &str) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.update_backup(backup_json)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.update_backup(backup_json))
+            .await
     }
 
     #[zbus(name = "RenameBackup")]
     async fn rename_backup(&self, backup_id: &str, new_name: &str) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.rename_backup(backup_id, new_name)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.rename_backup(backup_id, new_name))
+            .await
     }
 
     #[zbus(name = "ReassignBackup")]
@@ -234,108 +262,66 @@ impl KesticDbusV1Service {
         backup_id: &str,
         new_dest_id: &str,
     ) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.reassign_backup(backup_id, new_dest_id)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.reassign_backup(backup_id, new_dest_id))
+            .await
     }
 
     #[zbus(name = "RemoveBackup")]
     async fn remove_backup(&self, backup_id: &str) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.remove_backup(backup_id)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.remove_backup(backup_id)).await
     }
 
     #[zbus(name = "SetResticProvider")]
     async fn set_restic_provider(&self, provider_json: &str) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let pj = provider_json.to_string();
-        let (res, conn_opt, state_dto, tray_state) =
-            run_blocking_task(move || set_restic_provider_unlocked(&core, &pj))
-                .await
-                .map_err(KesticDbusError::from)?;
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        serde_json::to_string(&res).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let (res, conn_opt, state_dto, tray_state) = self
+            .blocking(move |core| set_restic_provider_unlocked(core, &pj))
+            .await?;
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
+        to_json_arg(&res)
     }
 
     #[zbus(name = "SetExpertMode")]
     async fn set_expert_mode(&self, enabled: bool) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.set_expert_mode(enabled)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.set_expert_mode(enabled)).await
     }
 
     #[zbus(name = "StartBackup")]
     async fn start_backup(&self, backup_id: &str) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = backup_id.to_string();
-        run_blocking_task(move || start_backup_async(&core, &id))
+        self.blocking(move |core| start_backup_async(core, &id))
             .await
             .map_err(KesticDbusError::from)
     }
 
     #[zbus(name = "StartAllBackups")]
     async fn start_all_backups(&self) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
-        let res = run_blocking_task(move || start_all_backups_async(&core)).await;
-        serde_json::to_string(&res).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let res = self.blocking(start_all_backups_async).await;
+        to_json_arg(&res)
     }
 
     #[zbus(name = "CancelRun")]
     fn cancel_run(&self, run_id: &str) -> Result<(), KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         Ok(guard.cancel_run(run_id)?)
     }
 
     #[zbus(name = "CheckAvailability")]
     async fn check_availability(&self, force: bool) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
-        let avail = run_blocking_task(move || refresh_availability_unlocked(&core, force)).await;
-        let (conn_opt, state_dto, tray_state) = {
-            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        serde_json::to_string(&avail).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let avail = self
+            .blocking(move |core| refresh_availability_unlocked(core, force))
+            .await;
+        self.publish_current().await;
+        to_json_arg(&avail)
     }
 
     #[zbus(name = "WindowActive")]
     async fn window_active(&self, active: bool, page: &str) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.set_window_active_state(active, page);
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
+        self.core
+            .lock_unpoisoned()
+            .set_window_active_state(active, page);
+        self.publish_current().await;
         if active {
             trigger_background_availability_probe(Arc::clone(&self.core));
         }
@@ -348,7 +334,7 @@ impl KesticDbusV1Service {
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> Result<(), KesticDbusError> {
         if let Some(sender) = header.sender() {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = self.core.lock_unpoisoned();
             guard.registered_gui_sender = Some(sender.as_str().to_string());
         }
         Ok(())
@@ -361,7 +347,7 @@ impl KesticDbusV1Service {
     ) -> Result<(), KesticDbusError> {
         let sender = header.sender().map_or("unknown", |s| s.as_str());
         eprintln!("kestic-daemon: quit confirmed by {sender}");
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         guard.request_shutdown();
         Ok(())
     }
@@ -369,7 +355,7 @@ impl KesticDbusV1Service {
     #[zbus(name = "UnlockSecretStore")]
     async fn unlock_secret_store(&self) -> Result<bool, KesticDbusError> {
         let secret_store = {
-            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            let guard = self.core.lock_unpoisoned();
             Arc::clone(&guard.secret_store)
         };
         let core_probe = Arc::clone(&self.core);
@@ -380,14 +366,7 @@ impl KesticDbusV1Service {
         })
         .await;
 
-        let (conn_opt, state_dto, tray_state) = {
-            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
+        self.publish_current().await;
 
         match unlock_res {
             Ok(()) => Ok(true),
@@ -398,9 +377,9 @@ impl KesticDbusV1Service {
 
     #[zbus(name = "DetectSource")]
     fn detect_source(&self, path: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         let src = guard.detect_source(path)?;
-        serde_json::to_string(&src).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&src)
     }
 
     #[zbus(name = "CheckNestedSources")]
@@ -410,16 +389,16 @@ impl KesticDbusV1Service {
         candidate_path: &str,
         destination_id: &str,
     ) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         let conflicts = guard.check_nested_sources(candidate_id, candidate_path, destination_id)?;
-        serde_json::to_string(&conflicts).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&conflicts)
     }
 
     #[zbus(name = "LintExcludes")]
     fn lint_excludes(&self, excludes_json: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         let warnings = guard.lint_excludes(excludes_json)?;
-        serde_json::to_string(&warnings).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&warnings)
     }
 
     #[zbus(name = "TestExcludePath")]
@@ -429,24 +408,9 @@ impl KesticDbusV1Service {
         excludes_json: &str,
         test_path: &str,
     ) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         let res = guard.test_exclude_path(backup_id, excludes_json, test_path)?;
-        serde_json::to_string(&res).map_err(|e| KesticDbusError::Internal(e.to_string()))
-    }
-
-    #[zbus(name = "PreviewRetention")]
-    async fn preview_retention(
-        &self,
-        backup_id: &str,
-        retention_json: &str,
-    ) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
-        let id = backup_id.to_string();
-        let ret = retention_json.to_string();
-        let preview = run_blocking_task(move || preview_retention_unlocked(&core, &id, &ret))
-            .await
-            .map_err(KesticDbusError::from)?;
-        serde_json::to_string(&preview).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&res)
     }
 
     #[zbus(name = "StartRetentionPreview")]
@@ -455,25 +419,24 @@ impl KesticDbusV1Service {
         backup_id: &str,
         retention_json: &str,
     ) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = backup_id.to_string();
         let ret = retention_json.to_string();
-        run_blocking_task(move || start_retention_preview_async(&core, &id, &ret))
+        self.blocking(move |core| start_retention_preview_async(core, &id, &ret))
             .await
             .map_err(KesticDbusError::from)
     }
 
     #[zbus(name = "CancelRetentionPreview")]
     fn cancel_retention_preview(&self, preview_id: &str) -> Result<(), KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         Ok(guard.cancel_retention_preview(preview_id)?)
     }
 
     #[zbus(name = "GetRetentionPreviewStatus")]
     fn get_retention_preview_status(&self, preview_id: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         let st = guard.get_retention_preview_status(preview_id)?;
-        serde_json::to_string(&st).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&st)
     }
 
     #[zbus(name = "StartBackupDryRun")]
@@ -482,32 +445,31 @@ impl KesticDbusV1Service {
         backup_id: &str,
         excludes_json: &str,
     ) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = backup_id.to_string();
         let ex = excludes_json.to_string();
-        run_blocking_task(move || start_backup_dry_run_async(&core, &id, &ex))
+        self.blocking(move |core| start_backup_dry_run_async(core, &id, &ex))
             .await
             .map_err(KesticDbusError::from)
     }
 
     #[zbus(name = "CancelBackupDryRun")]
     fn cancel_backup_dry_run(&self, preview_id: &str) -> Result<(), KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         Ok(guard.cancel_backup_dry_run(preview_id)?)
     }
 
     #[zbus(name = "GetBackupDryRunStatus")]
     fn get_backup_dry_run_status(&self, preview_id: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         let st = guard.get_backup_dry_run_status(preview_id)?;
-        serde_json::to_string(&st).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&st)
     }
 
     #[zbus(name = "FormatExcludeRuleForItem")]
     fn format_exclude_rule_for_item(&self, item_path: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.core.lock_unpoisoned();
         let preview = guard.format_exclude_rule_for_item(item_path)?;
-        serde_json::to_string(&preview).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&preview)
     }
 
     #[zbus(name = "AddExcludeRuleForItem")]
@@ -516,16 +478,10 @@ impl KesticDbusV1Service {
         backup_id: &str,
         item_path: &str,
     ) -> Result<String, KesticDbusError> {
-        let (preview, conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            let preview = guard.add_exclude_rule_for_item(backup_id, item_path)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (preview, guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        serde_json::to_string(&preview).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let preview = self
+            .mutate(|core| core.add_exclude_rule_for_item(backup_id, item_path))
+            .await?;
+        to_json_arg(&preview)
     }
 
     #[zbus(name = "RunDestinationMaintenance")]
@@ -533,40 +489,22 @@ impl KesticDbusV1Service {
         &self,
         destination_id: &str,
     ) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = destination_id.to_string();
-        run_blocking_task(move || run_destination_maintenance_async(&core, &id))
+        self.blocking(move |core| run_destination_maintenance_async(core, &id))
             .await
             .map_err(KesticDbusError::from)
     }
 
     #[zbus(name = "PauseGlobal")]
     async fn pause_global(&self, duration_json: &str) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.pause_global(duration_json)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.pause_global(duration_json))
+            .await
     }
 
     #[zbus(name = "ResumeGlobal")]
     async fn resume_global(&self) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.resume_global()?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        let core = Arc::clone(&self.core);
-        run_blocking_task(move || drain_queued_backups_async(&core)).await;
+        self.mutate(|core| core.resume_global()).await?;
+        self.blocking(drain_queued_backups_async).await;
         Ok(())
     }
 
@@ -576,59 +514,33 @@ impl KesticDbusV1Service {
         backup_id: &str,
         duration_json: &str,
     ) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.pause_backup(backup_id, duration_json)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.pause_backup(backup_id, duration_json))
+            .await
     }
 
     #[zbus(name = "ResumeBackup")]
     async fn resume_backup(&self, backup_id: &str) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.resume_backup(backup_id)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        let core = Arc::clone(&self.core);
-        run_blocking_task(move || drain_queued_backups_async(&core)).await;
+        self.mutate(|core| core.resume_backup(backup_id)).await?;
+        self.blocking(drain_queued_backups_async).await;
         Ok(())
     }
 
     #[zbus(name = "StartBackupOverride")]
     async fn start_backup_override(&self, backup_id: &str) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = backup_id.to_string();
-        run_blocking_task(move || start_backup_override_async(&core, &id))
+        self.blocking(move |core| start_backup_override_async(core, &id))
             .await
             .map_err(KesticDbusError::from)
     }
 
     #[zbus(name = "UnlockDestination")]
     async fn unlock_destination(&self, destination_id: &str) -> Result<u32, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = destination_id.to_string();
-        let count = run_blocking_task(move || unlock_destination_async(&core, &id))
-            .await
-            .map_err(KesticDbusError::from)?;
+        let count = self
+            .blocking(move |core| unlock_destination_async(core, &id))
+            .await?;
 
-        let (conn_opt, state_dto, tray_state) = {
-            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
+        self.publish_current().await;
         Ok(count)
     }
 
@@ -637,13 +549,11 @@ impl KesticDbusV1Service {
         &self,
         destination_id: &str,
     ) -> Result<String, KesticDbusError> {
-        let core = Arc::clone(&self.core);
         let id = destination_id.to_string();
-        let preview =
-            run_blocking_task(move || preview_destination_maintenance_unlocked(&core, &id))
-                .await
-                .map_err(KesticDbusError::from)?;
-        serde_json::to_string(&preview).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let preview = self
+            .blocking(move |core| preview_destination_maintenance_unlocked(core, &id))
+            .await?;
+        to_json_arg(&preview)
     }
 
     #[zbus(name = "UpdateDestinationMaintenance")]
@@ -652,16 +562,10 @@ impl KesticDbusV1Service {
         destination_id: &str,
         maintenance_json: &str,
     ) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.update_destination_maintenance(destination_id, maintenance_json)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| {
+            core.update_destination_maintenance(destination_id, maintenance_json)
+        })
+        .await
     }
 
     #[zbus(name = "UpdateSettings")]
@@ -670,26 +574,18 @@ impl KesticDbusV1Service {
         default_overdue_threshold: u32,
         notifications_json: &str,
     ) -> Result<(), KesticDbusError> {
-        let (conn_opt, state_dto, tray_state) = {
-            let mut guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
-            guard.update_settings(default_overdue_threshold, notifications_json)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        if let Some(conn) = &conn_opt {
-            self.sync_tray_and_emit(conn, &state_dto, tray_state).await;
-        }
-        Ok(())
+        self.mutate_unit(|core| core.update_settings(default_overdue_threshold, notifications_json))
+            .await
     }
 
     #[zbus(name = "ListKnownNetworks")]
     async fn list_known_networks(&self) -> Result<String, KesticDbusError> {
         let monitor_bus = {
-            let guard = self.core.lock().unwrap_or_else(|p| p.into_inner());
+            let guard = self.core.lock_unpoisoned();
             guard.monitor_bus.clone()
         };
         let networks = run_blocking_task(move || list_known_networks(&monitor_bus)).await;
-        serde_json::to_string(&networks).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        to_json_arg(&networks)
     }
 
     #[zbus(signal, name = "StatusChanged")]
@@ -742,7 +638,7 @@ where
     thread::spawn(move || {
         let value = f();
         let waker = {
-            let mut guard = state_bg.lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = state_bg.lock_unpoisoned();
             guard.0 = Some(value);
             guard.1.take()
         };
@@ -751,7 +647,7 @@ where
         }
     });
     std::future::poll_fn(move |cx| {
-        let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = state.lock_unpoisoned();
         if let Some(val) = guard.0.take() {
             std::task::Poll::Ready(val)
         } else {
@@ -770,38 +666,79 @@ async fn emit_status_changed_async(conn: &Connection, state_dto: &DaemonStateDto
     }
 }
 
+type SignalJob = Box<dyn FnOnce() + Send>;
+
+/// Queue of the single signal thread. One thread sends every signal in the order it was
+/// queued, so the signals of one run (`RunProgress`, `RunUpdated`) arrive in the order they
+/// were emitted and a display never jumps back.
+fn signal_queue() -> &'static mpsc::Sender<SignalJob> {
+    static QUEUE: OnceLock<mpsc::Sender<SignalJob>> = OnceLock::new();
+    QUEUE.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<SignalJob>();
+        thread::spawn(move || {
+            for job in rx {
+                job();
+            }
+        });
+        tx
+    })
+}
+
+/// Appends a signal to the shared queue of the single signal thread; callers never wait for
+/// the bus. A signal nobody receives is not an error worth reporting, so the result is
+/// dropped. A bus write that hangs holds back every signal queued after it.
+fn queue_signal(
+    conn: &Connection,
+    emit: impl AsyncFnOnce(&SignalEmitter<'_>) -> zbus::Result<()> + Send + 'static,
+) {
+    let conn = conn.clone();
+    let _ = signal_queue().send(Box::new(move || {
+        let _ = zbus::block_on(async move {
+            let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
+            emit(&emitter).await
+        });
+    }));
+}
+
+/// The destination form fields of a D-Bus call, owned so they can move into a blocking task.
+struct DestinationForm {
+    dest_json: String,
+    mode: String,
+    repo_password: String,
+    rest_password: String,
+}
+
+impl DestinationForm {
+    fn new(dest_json: &str, mode: &str, repo_password: &str, rest_password: &str) -> Self {
+        Self {
+            dest_json: dest_json.to_string(),
+            mode: mode.to_string(),
+            repo_password: repo_password.to_string(),
+            rest_password: rest_password.to_string(),
+        }
+    }
+}
+
 pub(crate) fn emit_status_changed(conn: &Connection, state_dto: &DaemonStateDto) {
     if let Ok(json) = serde_json::to_string(&state_dto.overall) {
-        let conn = conn.clone();
-        thread::spawn(move || {
-            let _ = zbus::block_on(async move {
-                let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
-                KesticDbusV1Service::status_changed(&emitter, &json).await
-            });
+        queue_signal(conn, async move |emitter| {
+            KesticDbusV1Service::status_changed(emitter, &json).await
         });
     }
 }
 
 pub(crate) fn emit_run_updated(conn: &Connection, run: &Run) {
     if let Ok(json) = serde_json::to_string(run) {
-        let conn = conn.clone();
-        thread::spawn(move || {
-            let _ = zbus::block_on(async move {
-                let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
-                KesticDbusV1Service::run_updated(&emitter, &json).await
-            });
+        queue_signal(conn, async move |emitter| {
+            KesticDbusV1Service::run_updated(emitter, &json).await
         });
     }
 }
 
-/// Sends `RunProgress` on the calling thread, so the signals of one run arrive in the order
-/// of restic's status lines (a thread per signal could reorder them and make the display jump
-/// back). Only called from the backup worker thread, never from the D-Bus executor.
 pub(crate) fn emit_run_progress(conn: &Connection, progress: &ActiveRunProgressDto) {
     if let Ok(json) = serde_json::to_string(progress) {
-        let _ = zbus::block_on(async {
-            let emitter = SignalEmitter::new(conn, KESTIC_OBJECT_PATH)?;
-            KesticDbusV1Service::run_progress(&emitter, &json).await
+        queue_signal(conn, async move |emitter| {
+            KesticDbusV1Service::run_progress(emitter, &json).await
         });
     }
 }
@@ -811,24 +748,16 @@ pub(crate) fn emit_manual_run_blocked(
     backup_id: &BackupId,
     reason: BlockedReason,
 ) {
-    let conn = conn.clone();
     let bid = backup_id.as_str().to_string();
     let reason = reason.as_str();
-    thread::spawn(move || {
-        let _ = zbus::block_on(async move {
-            let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
-            KesticDbusV1Service::manual_run_blocked(&emitter, &bid, reason).await
-        });
+    queue_signal(conn, async move |emitter| {
+        KesticDbusV1Service::manual_run_blocked(emitter, &bid, reason).await
     });
 }
 
 pub(crate) fn emit_show_window_requested(conn: &Connection) {
-    let conn = conn.clone();
-    thread::spawn(move || {
-        let _ = zbus::block_on(async move {
-            let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
-            KesticDbusV1Service::show_window_requested(&emitter).await
-        });
+    queue_signal(conn, async move |emitter| {
+        KesticDbusV1Service::show_window_requested(emitter).await
     });
 }
 
@@ -837,12 +766,8 @@ pub(crate) fn emit_quit_confirmation_requested(
     has_running_run: bool,
     running_backup_name: &str,
 ) {
-    let conn = conn.clone();
     let name = running_backup_name.to_string();
-    thread::spawn(move || {
-        let _ = zbus::block_on(async move {
-            let emitter = SignalEmitter::new(&conn, KESTIC_OBJECT_PATH)?;
-            KesticDbusV1Service::quit_confirmation_requested(&emitter, has_running_run, &name).await
-        });
+    queue_signal(conn, async move |emitter| {
+        KesticDbusV1Service::quit_confirmation_requested(emitter, has_running_run, &name).await
     });
 }

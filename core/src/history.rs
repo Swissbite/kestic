@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! SQLite run history, redacted per-run logs, startup recovery, and log retention
-//! (`FR-18`, `F13`, `NFR-02`, `FR-21`, `M1-S08`, `M1-S10`).
+//! SQLite run history, redacted per-run logs, startup recovery, and log retention.
 
 use crate::clock::Clock;
 use crate::migrations::{MigrationError, history_migrations, run_migrations};
@@ -20,9 +19,9 @@ use thiserror::Error;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-/// Retention duration after which old logs beyond the newest 100 runs are pruned (`F13`, `AC-M1-08-4`).
+/// Retention duration after which old logs beyond the newest 100 runs are pruned.
 pub const LOG_RETENTION_DAYS: i64 = 90;
-/// Minimum number of latest runs per backup whose logs are always kept (`F13`, `AC-M1-08-4`).
+/// Minimum number of latest runs per backup whose logs are always kept.
 pub const LOG_KEEP_MIN_RUNS: usize = 100;
 
 /// Errors returned by [`RunHistory`].
@@ -49,6 +48,19 @@ pub struct RunHistory {
     conn: Connection,
 }
 
+/// Returns the timestamp of the latest `Ok` or `Warning` backup run for `backup_id`.
+///
+/// `runs` must be ordered newest first, as returned by [`RunHistory::list_runs`].
+pub fn last_successful_backup_at(runs: &[Run], backup_id: &BackupId) -> Option<OffsetDateTime> {
+    runs.iter()
+        .find(|r| {
+            r.backup_id() == Some(backup_id)
+                && matches!(r.kind, RunKind::Backup { .. })
+                && matches!(r.status, RunStatus::Ok | RunStatus::Warning)
+        })
+        .map(|r| r.finished_at.unwrap_or(r.started_at))
+}
+
 impl RunHistory {
     /// Opens (or initializes) `<state_dir>/history.db` and ensures `<state_dir>/logs` exists.
     pub fn open(state_dir: &Path) -> Result<Self, HistoryError> {
@@ -70,7 +82,7 @@ impl RunHistory {
         &self.state_dir
     }
 
-    /// Writes redacted log lines for `run_id` into `<state_dir>/logs/<run_id>.log` (`NFR-02`, `AC-M1-08-2`).
+    /// Writes redacted log lines for `run_id` into `<state_dir>/logs/<run_id>.log`.
     pub fn write_redacted_log(
         &self,
         run_id: &RunId,
@@ -150,8 +162,8 @@ impl RunHistory {
                 kind_str,
                 backup_id_str,
                 run.destination_id.as_str(),
-                status_to_str(run.status),
-                run.pending_reason.map(pending_reason_to_str),
+                run.status.wire_name(),
+                run.pending_reason.map(PendingReason::wire_name),
                 run.started_at.unix_timestamp(),
                 started_rfc,
                 finished_rfc,
@@ -256,35 +268,7 @@ impl RunHistory {
         Ok(runs)
     }
 
-    /// Lists runs for a specific [`BackupId`], newest first (single batch query for commands).
-    pub fn list_runs_for_backup(&self, backup_id: &BackupId) -> Result<Vec<Run>, HistoryError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, kind, backup_id, destination_id, status, pending_reason,
-                    started_at, finished_at, duration_ms, exit_code,
-                    summary_message, stats_json, log_path
-             FROM runs
-             WHERE backup_id = ?1
-             ORDER BY started_at_unix DESC, rowid DESC",
-        )?;
-        let rows = stmt.query_map(params![backup_id.as_str()], read_run_row)?;
-        let mut runs = Vec::new();
-        for row in rows {
-            runs.push(row?);
-        }
-        if runs.is_empty() {
-            return Ok(runs);
-        }
-        let mut cmds_by_run = self.load_commands_for_backup_grouped(backup_id)?;
-        for run in &mut runs {
-            if let Some(cmds) = cmds_by_run.remove(run.id.as_str()) {
-                run.commands = cmds;
-            }
-        }
-        Ok(runs)
-    }
-
     /// Marks any runs stuck in [`RunStatus::Running`] as [`RunStatus::Interrupted`] on daemon startup
-    /// (`domain-model.md`, `AC-M1-10-2`).
     pub fn mark_interrupted_on_startup(&self, clock: &dyn Clock) -> Result<usize, HistoryError> {
         let now_rfc = clock
             .now_utc()
@@ -301,7 +285,7 @@ impl RunHistory {
     }
 
     /// Deletes log files for `backup_id` that are BOTH older than 90 days AND not among the
-    /// newest 100 runs of that backup (`F13`, `AC-M1-08-4`). Returns number of deleted log files.
+    /// newest 100 runs of that backup. Returns number of deleted log files.
     pub fn prune_logs_for_backup(
         &mut self,
         backup_id: &BackupId,
@@ -353,7 +337,7 @@ impl RunHistory {
         Ok(deleted_count)
     }
 
-    /// Sets or clears the persistent `pending_forget` flag for `backup_id` (`M2-S07`, `P11`).
+    /// Sets or clears the persistent `pending_forget` flag for `backup_id`.
     pub fn set_pending_forget(
         &self,
         backup_id: &BackupId,
@@ -369,7 +353,7 @@ impl RunHistory {
         Ok(())
     }
 
-    /// Returns whether `backup_id` currently has a pending `forget` (`"forget offen"`, `M2-S07`).
+    /// Returns whether `backup_id` currently has a pending `forget` («forget pending»).
     pub fn is_pending_forget(&self, backup_id: &BackupId) -> Result<bool, HistoryError> {
         let mut stmt = self
             .conn
@@ -383,24 +367,6 @@ impl RunHistory {
         }
     }
 
-    /// Lists all [`BackupId`]s currently flagged with `pending_forget = 1` (`M2-S07`).
-    pub fn list_pending_forget_backup_ids(&self) -> Result<Vec<BackupId>, HistoryError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT backup_id FROM backup_state WHERE pending_forget != 0 ORDER BY backup_id ASC",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            let raw: String = row.get(0)?;
-            Ok(raw)
-        })?;
-        let mut ids = Vec::new();
-        for row in rows {
-            let raw = row?;
-            let id = BackupId::parse(&raw)?;
-            ids.push(id);
-        }
-        Ok(ids)
-    }
-
     /// Removes per-backup state row when a backup is deleted.
     pub fn clear_backup_state(&self, backup_id: &BackupId) -> Result<(), HistoryError> {
         self.conn.execute(
@@ -410,7 +376,7 @@ impl RunHistory {
         Ok(())
     }
 
-    /// Loads M3 scheduling, pause, backoff, and overdue-notification state for `backup_id`.
+    /// Loads scheduling, pause, backoff, and overdue-notification state for `backup_id`.
     pub fn get_backup_runtime_state(
         &self,
         backup_id: &BackupId,
@@ -458,7 +424,7 @@ impl RunHistory {
         Ok(row.unwrap_or_default())
     }
 
-    /// Persists M3 scheduling, pause, backoff, and overdue-notification state for `backup_id`.
+    /// Persists scheduling, pause, backoff, and overdue-notification state for `backup_id`.
     pub fn upsert_backup_runtime_state(
         &self,
         backup_id: &BackupId,
@@ -505,7 +471,7 @@ impl RunHistory {
         Ok(())
     }
 
-    /// Loads M3 maintenance timestamps and backoff state for `destination_id`.
+    /// Loads maintenance timestamps and backoff state for `destination_id`.
     pub fn get_destination_maintenance_state(
         &self,
         destination_id: &DestinationId,
@@ -539,7 +505,7 @@ impl RunHistory {
         Ok(row.unwrap_or_default())
     }
 
-    /// Persists M3 maintenance timestamps and backoff state for `destination_id`.
+    /// Persists maintenance timestamps and backoff state for `destination_id`.
     pub fn upsert_destination_maintenance_state(
         &self,
         destination_id: &DestinationId,
@@ -585,7 +551,7 @@ impl RunHistory {
         Ok(())
     }
 
-    /// Loads global schedule pause state (`FR-13a`, `P14`).
+    /// Loads global schedule pause state.
     pub fn get_global_pause(&self) -> Result<Option<PauseState>, HistoryError> {
         let row = self
             .conn
@@ -607,7 +573,7 @@ impl RunHistory {
         Ok(row.flatten())
     }
 
-    /// Persists or clears global schedule pause state (`FR-13a`, `P14`).
+    /// Persists or clears global schedule pause state.
     pub fn set_global_pause(&self, pause: Option<&PauseState>) -> Result<(), HistoryError> {
         self.conn.execute(
             "INSERT INTO app_state (id, global_paused_since_unix, global_paused_until_unix)
@@ -621,57 +587,6 @@ impl RunHistory {
             ],
         )?;
         Ok(())
-    }
-
-    /// Returns the timestamp of the latest `Ok` or `Warning` run for `backup_id` (`AC-M3-02-4`).
-    pub fn last_successful_backup_at(
-        &self,
-        backup_id: &BackupId,
-    ) -> Result<Option<OffsetDateTime>, HistoryError> {
-        let row = self
-            .conn
-            .query_row(
-                "SELECT COALESCE(finished_at, started_at)
-                 FROM runs
-                 WHERE backup_id = ?1 AND kind = 'backup' AND status IN ('ok', 'warning')
-                 ORDER BY started_at_unix DESC, rowid DESC
-                 LIMIT 1",
-                params![backup_id.as_str()],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()?;
-        row.map(|raw| {
-            OffsetDateTime::parse(&raw, &Rfc3339).map_err(|e| HistoryError::Time(e.to_string()))
-        })
-        .transpose()
-    }
-
-    /// Returns the newest existing `Pending` run for `backup_id`, if any.
-    pub fn get_pending_backup_run(
-        &self,
-        backup_id: &BackupId,
-    ) -> Result<Option<Run>, HistoryError> {
-        let row = self
-            .conn
-            .query_row(
-                "SELECT id, kind, backup_id, destination_id, status, pending_reason,
-                        started_at, finished_at, duration_ms, exit_code,
-                        summary_message, stats_json, log_path
-                 FROM runs
-                 WHERE backup_id = ?1 AND kind = 'backup' AND status = 'pending'
-                 ORDER BY started_at_unix DESC, rowid DESC
-                 LIMIT 1",
-                params![backup_id.as_str()],
-                read_run_row,
-            )
-            .optional()?;
-        match row {
-            Some(mut run) => {
-                run.commands = self.load_commands(&run.id)?;
-                Ok(Some(run))
-            }
-            None => Ok(None),
-        }
     }
 
     /// Deletes any leftover `Pending` rows for `backup_id` (e.g., when transitioning to `Running` or manual-only).
@@ -738,20 +653,6 @@ impl RunHistory {
         let rows = stmt.query_map([], read_grouped_command_row)?;
         collect_grouped_commands(rows)
     }
-
-    fn load_commands_for_backup_grouped(
-        &self,
-        backup_id: &BackupId,
-    ) -> Result<HashMap<String, Vec<CommandRecord>>, HistoryError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT run_id, executable, args_json, env_keys_json, started_at, duration_ms, exit_code
-             FROM run_commands
-             WHERE run_id IN (SELECT id FROM runs WHERE backup_id = ?1)
-             ORDER BY run_id ASC, seq ASC",
-        )?;
-        let rows = stmt.query_map(params![backup_id.as_str()], read_grouped_command_row)?;
-        collect_grouped_commands(rows)
-    }
 }
 
 type RawGroupedCommandRow = (String, String, String, String, String, i64, i32);
@@ -792,7 +693,7 @@ where
     Ok(map)
 }
 
-/// Persistent pause interval (`FR-13a`, `P14`).
+/// Persistent pause interval.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PauseState {
     pub paused_since: OffsetDateTime,
@@ -801,7 +702,7 @@ pub struct PauseState {
 }
 
 /// Cause of active transient backoff so network reconnects only reset network/unreachable backoffs
-/// and never bypass Exit-11 repository lock backoffs (`AC-M3-04-2`, `AC-M3-04-4`).
+/// and never bypass Exit-11 repository lock backoffs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackoffKind {
     Network,
@@ -825,7 +726,7 @@ impl BackoffKind {
     }
 }
 
-/// Persistent per-backup scheduling/pause/backoff state in `history.db` (`M3`).
+/// Persistent per-backup scheduling/pause/backoff state in `history.db`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BackupRuntimeState {
     pub pending_forget: bool,
@@ -839,7 +740,7 @@ pub struct BackupRuntimeState {
     pub last_failure_at: Option<OffsetDateTime>,
 }
 
-/// Persistent per-destination maintenance timestamps & backoff state in `history.db` (`M3-S05`).
+/// Persistent per-destination maintenance timestamps & backoff state in `history.db`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DestinationMaintenanceState {
     pub baseline_at: Option<OffsetDateTime>,
@@ -896,12 +797,15 @@ fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         other => return Err(to_sql_err(format!("unknown run kind '{other}'"))),
     };
 
-    let status = str_to_status(&status_raw).map_err(to_sql_err)?;
+    let status = RunStatus::from_wire_name(&status_raw)
+        .ok_or_else(|| to_sql_err(format!("unknown run status '{status_raw}'")))?;
     let pending_reason = pending_raw
         .as_deref()
-        .map(str_to_pending_reason)
-        .transpose()
-        .map_err(to_sql_err)?;
+        .map(|raw| {
+            PendingReason::from_wire_name(raw)
+                .ok_or_else(|| to_sql_err(format!("unknown pending reason '{raw}'")))
+        })
+        .transpose()?;
 
     let started_at =
         OffsetDateTime::parse(&started_raw, &Rfc3339).map_err(|e| to_sql_err(e.to_string()))?;
@@ -931,50 +835,4 @@ fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         stats,
         log_path: log_path.map(PathBuf::from),
     })
-}
-
-fn status_to_str(status: RunStatus) -> &'static str {
-    match status {
-        RunStatus::Pending => "pending",
-        RunStatus::Running => "running",
-        RunStatus::Ok => "ok",
-        RunStatus::Warning => "warning",
-        RunStatus::Error => "error",
-        RunStatus::Cancelled => "cancelled",
-        RunStatus::Interrupted => "interrupted",
-    }
-}
-
-fn str_to_status(s: &str) -> Result<RunStatus, String> {
-    match s {
-        "pending" => Ok(RunStatus::Pending),
-        "running" => Ok(RunStatus::Running),
-        "ok" => Ok(RunStatus::Ok),
-        "warning" => Ok(RunStatus::Warning),
-        "error" => Ok(RunStatus::Error),
-        "cancelled" => Ok(RunStatus::Cancelled),
-        "interrupted" => Ok(RunStatus::Interrupted),
-        other => Err(format!("unknown run status '{other}'")),
-    }
-}
-
-fn pending_reason_to_str(reason: PendingReason) -> &'static str {
-    match reason {
-        PendingReason::ConditionNotMet => "condition_not_met",
-        PendingReason::SourceUnavailable => "source_unavailable",
-        PendingReason::DestinationUnreachable => "destination_unreachable",
-        PendingReason::Queued => "queued",
-        PendingReason::Backoff => "backoff",
-    }
-}
-
-fn str_to_pending_reason(s: &str) -> Result<PendingReason, String> {
-    match s {
-        "condition_not_met" => Ok(PendingReason::ConditionNotMet),
-        "source_unavailable" => Ok(PendingReason::SourceUnavailable),
-        "destination_unreachable" => Ok(PendingReason::DestinationUnreachable),
-        "queued" => Ok(PendingReason::Queued),
-        "backoff" => Ok(PendingReason::Backoff),
-        other => Err(format!("unknown pending reason '{other}'")),
-    }
 }

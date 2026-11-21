@@ -13,21 +13,10 @@ use kestic_i18n::messages::{
     connection_test_text, overall_headline, overall_subtitle, restic_status_text,
 };
 
-/// The error kinds map to their texts; `unknown` depends on exit code and warning.
+/// `unknown` depends on exit code and warning; all other kinds ignore both
+/// (see `every_error_kind_maps_to_its_msgid`).
 #[test]
-fn m3_review3_error_kind_codes_map_to_gui_texts() {
-    assert_eq!(
-        ErrorKind::WrongPassword.message(Some(12), false).english(),
-        "Saved password does not match"
-    );
-    assert_eq!(
-        ErrorKind::RepoMissing.message(Some(10), false).english(),
-        "Repository is missing"
-    );
-    assert_eq!(
-        ErrorKind::Locked.message(Some(11), false).english(),
-        "Repository is locked"
-    );
+fn unknown_error_kind_message_depends_on_exit_code_and_warning() {
     assert_eq!(
         ErrorKind::Unknown.message(Some(42), false),
         Message::with_args("Unknown error (code %1)", &["42"])
@@ -40,20 +29,10 @@ fn m3_review3_error_kind_codes_map_to_gui_texts() {
         ErrorKind::Unknown.message(None, true).english(),
         "Backed up with warning"
     );
-    assert_eq!(
-        ErrorKind::IncompleteSnapshot
-            .message(Some(3), true)
-            .english(),
-        "Snapshot incomplete: some files could not be read"
-    );
 }
 
 #[test]
 fn pending_reason_codes_map_to_waiting_lines() {
-    assert_eq!(
-        PendingReasonCode::OnBattery.waiting_message("").english(),
-        "Waiting: AC power"
-    );
     assert_eq!(
         PendingReasonCode::Backoff
             .waiting_message("12:00")
@@ -80,14 +59,6 @@ fn pending_reason_codes_map_to_waiting_lines() {
 
 #[test]
 fn source_blocked_and_skip_codes_map_to_texts() {
-    assert_eq!(
-        SourceStatus::message(Some(SourceStatus::DriveNotMounted)).english(),
-        "Source unavailable: drive not mounted"
-    );
-    assert_eq!(
-        SourceStatus::message(Some(SourceStatus::PathMissing)).english(),
-        "Source unavailable"
-    );
     assert_eq!(
         BlockedReason::waiting_message(None, None).english(),
         "Waiting: unavailable"
@@ -127,10 +98,6 @@ fn restic_blocking_and_connection_texts() {
     assert_eq!(
         restic_status_text(None, Some("0.18.0"), &ResticStatusParams::default()),
         UiText::Raw("restic 0.18.0".to_string())
-    );
-    assert_eq!(
-        BlockingKind::ResticUnavailable.message(None).english(),
-        "restic is unavailable or too old."
     );
     assert_eq!(
         connection_test_text(false, Some(ConnectionTestCode::DuplicateLocation), "NAS"),

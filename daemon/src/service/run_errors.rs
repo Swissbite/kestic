@@ -1,24 +1,25 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Error information of finished runs for state DTOs: permanent-vs-transient classification
-//! (`F2`), stable error-kind codes for the GUI (`error_kind`, locale independent), and the
+//! Error information of finished runs for state DTOs: whether an error blocks the schedule,
+//! stable error-kind codes for the GUI (`error_kind`, locale independent), and the
 //! unreadable-file list of incomplete snapshots (cached, never read from disk under the lock).
 //!
 //! The restic exit/text classification itself lives in `kestic_core::restic::classify_exit`
-//! (keyword matching) and `ResticFailureKind::{is_transient, is_permanent, error_kind}`; this
-//! module only maps a stored [`Run`] onto it.
+//! (keyword matching) and `ResticFailureKind::{is_permanent, error_kind}`; this module only
+//! maps a stored [`Run`] onto it.
 
 use kestic_core::model::{PendingReason, Run, RunStatus};
 use kestic_core::restic::{
-    RecoveryAction, ResticFailureKind, ResticStreamEvent, classify_exit, parse_json_line,
+    ErrorPresentation, RecoveryAction, ResticFailureKind, ResticStreamEvent, classify_exit,
+    parse_json_line,
 };
 use kestic_i18n::codes::ErrorKind;
 
 /// Error details of the last finished run of a backup.
 pub(super) struct LastRunErrorInfo {
     pub(super) has_error: bool,
-    /// Last run ended with a permanent error that blocks scheduled runs (`F2`).
+    /// Last run ended with a permanent error that blocks scheduled runs.
     pub(super) blocks_schedule: bool,
     pub(super) error_action: Option<RecoveryAction>,
     pub(super) error_kind: Option<ErrorKind>,
@@ -28,14 +29,20 @@ pub(super) struct LastRunErrorInfo {
     pub(super) unreadable_files: Vec<String>,
 }
 
+/// Classifies the failure of `run`, which ended with `exit_code`, from its stored summary.
+fn classify_run(run: &Run, exit_code: i32) -> ErrorPresentation {
+    let raw_detail = run.summary_message.as_deref().unwrap_or("");
+    classify_exit(exit_code, None, Vec::new(), raw_detail)
+}
+
 /// Whether `run` (the last finished backup run) ended with a **permanent** error that blocks
-/// scheduled runs until fixed (`F2`: Exit 12 wrong password, Exit 10 missing repository,
+/// scheduled runs until fixed (Exit 12 wrong password, Exit 10 missing repository,
 /// rejected backend credentials, see [`ResticFailureKind::is_permanent`]).
 ///
 /// Transient failures (network/destination unreachable, DNS, lock / Exit 11), other errors
 /// (e.g. disk full, unknown exit codes: the next regular slot runs again) and pre-start
 /// availability failures (source unavailable, destination unreachable — recorded without exit
-/// code, `FR-29`, `FR-30`) never block the schedule, also when they ended a manual run.
+/// code) never block the schedule, also when they ended a manual run.
 pub(super) fn run_blocks_schedule(run: &Run) -> bool {
     if run.status != RunStatus::Error {
         return false;
@@ -43,10 +50,7 @@ pub(super) fn run_blocks_schedule(run: &Run) -> bool {
     let Some(exit_code) = run.exit_code else {
         return false;
     };
-    let raw_detail = run.summary_message.as_deref().unwrap_or("");
-    classify_exit(exit_code, None, Vec::new(), raw_detail)
-        .kind
-        .is_permanent()
+    classify_run(run, exit_code).kind.is_permanent()
 }
 
 /// Error kind of an `Error` run (see [`ResticFailureKind::error_kind`]).
@@ -55,12 +59,7 @@ pub(super) fn run_blocks_schedule(run: &Run) -> bool {
 /// `pending_reason` (source unavailable / destination unreachable), anything else is `unknown`.
 pub(crate) fn error_run_kind(run: &Run) -> ErrorKind {
     match run.exit_code {
-        Some(code) => {
-            let raw_detail = run.summary_message.as_deref().unwrap_or("");
-            classify_exit(code, None, Vec::new(), raw_detail)
-                .kind
-                .error_kind()
-        }
+        Some(code) => classify_run(run, code).kind.error_kind(),
         None => match run.pending_reason {
             Some(PendingReason::SourceUnavailable) => ErrorKind::SourceUnavailable,
             Some(PendingReason::DestinationUnreachable) => ErrorKind::DestinationUnreachable,
@@ -107,8 +106,7 @@ pub(super) fn extract_last_run_error_info(
             info.has_error = true;
             info.blocks_schedule = run_blocks_schedule(run);
             let exit_code = run.exit_code.unwrap_or(1);
-            let raw_detail = run.summary_message.as_deref().unwrap_or("");
-            let pres = classify_exit(exit_code, None, Vec::new(), raw_detail);
+            let pres = classify_run(run, exit_code);
             info.error_action = pres.action;
             info.error_kind = Some(error_run_kind(run));
             info.error_detail = run.summary_message.clone();

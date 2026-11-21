@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod common;
+
+use common::load_config;
+
 use kestic_core::config::{
-    AppConfig, CURRENT_CONFIG_VERSION, ConfigError, default_config_path, load_config, save_config,
+    AppConfig, CURRENT_CONFIG_VERSION, ConfigError, default_config_path, save_config,
 };
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ExcludeRules, KeepCount, ResticProvider, RetentionPolicy,

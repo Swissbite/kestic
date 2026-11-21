@@ -3,79 +3,28 @@
 
 mod common;
 
+use common::load_config;
+use common::m3::{LockableSecretStore, M3DaemonOpts, assert_dbus_error_name, spawn_m3_daemon};
+use common::tools::{free_loopback_port, install_marker_spy};
 use common::{
-    CapturedKesticSignal, KesticSignalCollector, find_kestic_binary, free_loopback_port,
-    restic_test_binaries, run_isolated_test, start_fake_notifications, wait_for_file,
+    CapturedKesticSignal, KesticSignalCollector, find_kestic_binary, restic_test_binaries,
+    run_isolated_test, sandbox_run_config, start_fake_notifications,
 };
-use kestic_core::config::load_config;
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Source,
 };
 use kestic_core::secrets::{FileSecretStore, SecretStore};
 use kestic_daemon::dbus_api::{
-    KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusDto,
+    KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, OverallStatusDto,
 };
 use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
-
-fn assert_dbus_error_name(err: &zbus::Error, expected_name: &str) {
-    match err {
-        zbus::Error::MethodError(name, _, _) => {
-            assert_eq!(
-                name.as_str(),
-                expected_name,
-                "unexpected D-Bus error name: {err:?}"
-            );
-        }
-        other => panic!("expected D-Bus MethodError `{expected_name}`, got {other:?}"),
-    }
-}
-
-fn spawn_daemon_thread(
-    root: &Path,
-    ready_file: PathBuf,
-    restic_path: PathBuf,
-) -> (
-    KesticClient,
-    thread::JoinHandle<Result<DaemonOutcome, String>>,
-) {
-    let cfg_path = root.join("cfg").join("kestic").join("config.toml");
-    let state_dir = root.join("state").join("kestic");
-    let secret_file = root.join("secrets.hex");
-    let kestic_bin = find_kestic_binary();
-
-    let run_cfg = DaemonRunConfig {
-        bus_name: KESTIC_BUS_NAME.to_string(),
-        assume_sni_available: true,
-        ready_file: Some(ready_file.clone()),
-        config_path: Some(cfg_path),
-        state_dir: Some(state_dir),
-        kestic_binary: Some(kestic_bin),
-        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
-        suppress_ui_spawn: true,
-        enable_job_view: false,
-        enable_portal_inhibit: false,
-        ..Default::default()
-    };
-
-    let handle = thread::spawn(move || run_daemon(run_cfg));
-    wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
-
-    let client = KesticClient::connect_default().expect("connect KesticClient");
-    let status = client
-        .set_restic_provider(&ResticProvider::Custom { path: restic_path })
-        .expect("configure test restic provider");
-    assert!(status.valid, "restic provider invalid: {status:?}");
-    (client, handle)
-}
 
 #[test]
 fn ac_m1_09_1_single_instance_lock_exits_cleanly_as_already_running() {
@@ -83,23 +32,18 @@ fn ac_m1_09_1_single_instance_lock_exits_cleanly_as_already_running() {
         "ac_m1_09_1_single_instance_lock_exits_cleanly_as_already_running",
         "KESTIC_M1_S09_SINGLE",
         |root| {
-            let ready = root.join("daemon1.ready");
             let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
-            let (client, handle) = spawn_daemon_thread(root, ready, restic_bin);
+            let daemon = spawn_m3_daemon(
+                root,
+                M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin),
+            );
+            let client = &daemon.client;
 
             assert!(client.is_bus_owned().expect("is_bus_owned"));
 
             let second_cfg = DaemonRunConfig {
-                bus_name: KESTIC_BUS_NAME.to_string(),
-                assume_sni_available: true,
-                config_path: Some(root.join("cfg").join("kestic").join("config.toml")),
-                state_dir: Some(root.join("state").join("kestic")),
-                kestic_binary: Some(find_kestic_binary()),
-                secret_store: Some(Arc::new(FileSecretStore::new(root.join("secrets.hex")))),
-                suppress_ui_spawn: true,
-                enable_job_view: false,
-                enable_portal_inhibit: false,
-                ..Default::default()
+                ready_file: None,
+                ..sandbox_run_config(root)
             };
             let second_outcome = run_daemon(second_cfg).expect("second daemon run");
             assert_eq!(second_outcome, DaemonOutcome::AlreadyRunning);
@@ -109,13 +53,18 @@ fn ac_m1_09_1_single_instance_lock_exits_cleanly_as_already_running() {
                 .args(["daemon", "--duration-ms", "2000"])
                 .output()
                 .expect("run second kestic daemon CLI");
-            assert!(cli_out.status.success());
-
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
+            assert!(
+                cli_out.status.success(),
+                "second CLI daemon must exit 0, got {:?}",
+                cli_out.status.code()
             );
+            let cli_stdout = String::from_utf8_lossy(&cli_out.stdout);
+            assert!(
+                cli_stdout.contains("already running"),
+                "second CLI daemon must report the running instance on stdout, got: {cli_stdout:?}"
+            );
+
+            daemon.stop();
         },
     );
 }
@@ -126,9 +75,12 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
         "ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals",
         "KESTIC_M1_S09_CRUD",
         |root| {
-            let ready = root.join("daemon.ready");
             let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
-            let (client, handle) = spawn_daemon_thread(root, ready, restic_bin);
+            let daemon = spawn_m3_daemon(
+                root,
+                M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin),
+            );
+            let client = &daemon.client;
             let signals = KesticSignalCollector::start(
                 KESTIC_BUS_NAME,
                 KESTIC_OBJECT_PATH,
@@ -235,11 +187,7 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
             assert!(reloaded.backups.is_empty());
             assert!(reloaded.destinations.is_empty());
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            daemon.stop();
         },
     );
 }
@@ -251,22 +199,16 @@ fn ac_m1_09_6_and_09_7_missing_source_blocks_without_restic_and_respects_window_
         "KESTIC_M1_S09_BLOCKED",
         |root| {
             let (_notif_conn, notif_capture) = start_fake_notifications();
-            let ready = root.join("daemon.ready");
             let (_, real_restic) = restic_test_binaries().pop().expect("restic binary");
 
             // Spy wrapper that records if any non-`version` restic invocation happens.
-            let spy_marker = root.join("restic-invoked.marker");
-            let spy_script = root.join("restic-spy");
-            let script_body = format!(
-                "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  touch \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
-                spy_marker.display(),
-                real_restic.display()
-            );
-            fs::write(&spy_script, script_body).expect("write restic spy");
-            fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755))
-                .expect("chmod restic spy");
+            let (spy_script, spy_marker) = install_marker_spy(root, "restic-spy", &real_restic);
 
-            let (client, handle) = spawn_daemon_thread(root, ready, real_restic);
+            let daemon = spawn_m3_daemon(
+                root,
+                M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &real_restic),
+            );
+            let client = &daemon.client;
             let signals = KesticSignalCollector::start(
                 KESTIC_BUS_NAME,
                 KESTIC_OBJECT_PATH,
@@ -370,24 +312,23 @@ fn ac_m1_09_6_and_09_7_missing_source_blocks_without_restic_and_respects_window_
             );
             assert_eq!(notifs[0].event_id.as_deref(), Some("ManualRunBlocked"));
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            daemon.stop();
         },
     );
 }
 
 #[test]
-fn ac_m1_19_1_19_4_19_6_and_20_1_20_2_20_3_rename_in_use_verify_update_and_password() {
+fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
     run_isolated_test(
-        "ac_m1_19_1_19_4_19_6_and_20_1_20_2_20_3_rename_in_use_verify_update_and_password",
-        "KESTIC_M1_S09_MUTATIONS",
+        "ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection",
+        "KESTIC_M1_S09_RENAME",
         |root| {
-            let ready = root.join("daemon.ready");
             let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
-            let (client, handle) = spawn_daemon_thread(root, ready, restic_bin.clone());
+            let daemon = spawn_m3_daemon(
+                root,
+                M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin),
+            );
+            let client = &daemon.client;
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
             let secret_file = root.join("secrets.hex");
@@ -456,6 +397,40 @@ fn ac_m1_19_1_19_4_19_6_and_20_1_20_2_20_3_rename_in_use_verify_update_and_passw
                     .unwrap(),
                 "initial-pw"
             );
+
+            daemon.stop();
+        },
+    );
+}
+
+/// AC-M1-20-1, AC-M1-20-2, AC-M1-20-3 (FR-15): a wrong password is rejected and leaves the stored
+/// secret alone; a password rotated outside Kestic is accepted without touching the repository keys.
+#[test]
+fn ac_m1_20_1_20_2_20_3_update_password_verifies_without_changing_keys() {
+    run_isolated_test(
+        "ac_m1_20_1_20_2_20_3_update_password_verifies_without_changing_keys",
+        "KESTIC_M1_S09_PASSWORD",
+        |root| {
+            let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
+            let daemon = spawn_m3_daemon(
+                root,
+                M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin),
+            );
+            let client = &daemon.client;
+            let secret_store = FileSecretStore::new(root.join("secrets.hex"));
+
+            let repo_dir = root.join("repo-pw");
+            fs::create_dir_all(&repo_dir).expect("mkdir repo");
+            let dest = Destination::new(
+                "Primary Repo",
+                DestinationKind::Local {
+                    path: repo_dir.clone(),
+                },
+            )
+            .expect("dest");
+            let dest_id = client
+                .add_destination(&dest, "init", "initial-pw", "")
+                .expect("AddDestination");
 
             // AC-M1-20-2: UpdateDestinationPassword with wrong password fails & leaves stored secret intact.
             let restic_cache = root.join("restic-cache");
@@ -537,11 +512,7 @@ fn ac_m1_19_1_19_4_19_6_and_20_1_20_2_20_3_rename_in_use_verify_update_and_passw
                 "UpdateDestinationPassword must not modify repository keys"
             );
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            daemon.stop();
         },
     );
 }
@@ -552,9 +523,12 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
         "duplicate_destination_location_rejected_and_edit_reinit_empty_folder",
         "KESTIC_M1_S09_DUP_REINIT",
         |root| {
-            let ready = root.join("daemon.ready");
             let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
-            let (client, handle) = spawn_daemon_thread(root, ready, restic_bin);
+            let daemon = spawn_m3_daemon(
+                root,
+                M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin),
+            );
+            let client = &daemon.client;
             let signals = KesticSignalCollector::start(
                 KESTIC_BUS_NAME,
                 KESTIC_OBJECT_PATH,
@@ -688,75 +662,13 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
                 })
             });
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            daemon.stop();
         },
     );
 }
 
 #[test]
 fn unlock_secret_store_over_dbus_clears_blocking_and_emits_status_changed() {
-    struct ToggleLockedSecretStore {
-        locked: std::sync::atomic::AtomicBool,
-        inner: kestic_core::secrets::InMemorySecretStore,
-    }
-
-    impl SecretStore for ToggleLockedSecretStore {
-        fn set_secret(
-            &self,
-            target_id: &str,
-            kind: &str,
-            value: &kestic_core::secrets::SecretValue,
-        ) -> Result<(), kestic_core::secrets::SecretError> {
-            if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
-                return Err(kestic_core::secrets::SecretError::LockedOrPromptRequired(
-                    "locked".to_string(),
-                ));
-            }
-            self.inner.set_secret(target_id, kind, value)
-        }
-
-        fn get_secret(
-            &self,
-            target_id: &str,
-            kind: &str,
-        ) -> Result<Option<kestic_core::secrets::SecretValue>, kestic_core::secrets::SecretError>
-        {
-            if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
-                return Err(kestic_core::secrets::SecretError::LockedOrPromptRequired(
-                    "locked".to_string(),
-                ));
-            }
-            self.inner.get_secret(target_id, kind)
-        }
-
-        fn delete_secret(
-            &self,
-            target_id: &str,
-            kind: &str,
-        ) -> Result<(), kestic_core::secrets::SecretError> {
-            self.inner.delete_secret(target_id, kind)
-        }
-
-        fn check_availability(&self) -> Result<(), kestic_core::secrets::SecretError> {
-            if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
-                return Err(kestic_core::secrets::SecretError::LockedOrPromptRequired(
-                    "collection locked".to_string(),
-                ));
-            }
-            Ok(())
-        }
-
-        fn unlock_interactive(&self) -> Result<(), kestic_core::secrets::SecretError> {
-            self.locked
-                .store(false, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
     run_isolated_test(
         "unlock_secret_store_over_dbus_clears_blocking_and_emits_status_changed",
         "KESTIC_M1_S09_UNLOCK_INNER",
@@ -765,38 +677,20 @@ fn unlock_secret_store_over_dbus_clears_blocking_and_emits_status_changed() {
                 .into_iter()
                 .next()
                 .expect("restic binary");
-            let store: Arc<dyn SecretStore + Send + Sync> = Arc::new(ToggleLockedSecretStore {
-                locked: std::sync::atomic::AtomicBool::new(true),
-                inner: kestic_core::secrets::InMemorySecretStore::new(),
-            });
-            let ready = root.join("daemon.ready");
-            let cfg = DaemonRunConfig {
-                bus_name: KESTIC_BUS_NAME.to_string(),
-                assume_sni_available: true,
-                config_path: Some(root.join("config.toml")),
-                state_dir: Some(root.join("state")),
-                kestic_binary: Some(find_kestic_binary()),
-                secret_store: Some(store),
-                ready_file: Some(ready.clone()),
-                enable_job_view: false,
-                enable_portal_inhibit: false,
-                suppress_ui_spawn: true,
-                ..Default::default()
-            };
-            let handle = thread::spawn(move || run_daemon(cfg));
-            wait_for_file(&ready, common::DAEMON_READY_TIMEOUT);
-
+            let store = Arc::new(LockableSecretStore::new(root.join("secrets.hex"), true));
+            let daemon = spawn_m3_daemon(
+                root,
+                M3DaemonOpts {
+                    secret_store: Some(store),
+                    ..M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin)
+                },
+            );
+            let client = &daemon.client;
             let signals = KesticSignalCollector::start(
                 KESTIC_BUS_NAME,
                 KESTIC_OBJECT_PATH,
                 KESTIC_INTERFACE_V1,
             );
-            let client =
-                KesticClient::connect(KESTIC_BUS_NAME, KESTIC_OBJECT_PATH).expect("client");
-            let status = client
-                .set_restic_provider(&ResticProvider::Custom { path: restic_bin })
-                .expect("configure restic provider");
-            assert!(status.valid, "restic provider invalid: {status:?}");
 
             let initial = client.get_state().expect("GetState locked");
             assert_eq!(
@@ -827,11 +721,7 @@ fn unlock_secret_store_over_dbus_clears_blocking_and_emits_status_changed() {
                 "StatusChanged must be emitted after UnlockSecretStore: {captured:?}"
             );
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            daemon.stop();
         },
     );
 }

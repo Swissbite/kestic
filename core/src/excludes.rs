@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Backup source types, exclude rules, linting, and path evaluation (`M2-S01`..`M2-S03`, `M2-S09`).
+//! Backup source types, exclude rules, linting, and path evaluation.
 
 use crate::model::ModelError;
+use crate::mount::normalize_lexical_path;
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Kind of backup source (glossary: `Source`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,7 +18,7 @@ pub enum SourceKind {
     Drive,
 }
 
-/// Persistent hardware/mount identity for a removable or mounted drive (`M2-S09`).
+/// Persistent hardware/mount identity for a removable or mounted drive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SourceIdentity {
@@ -63,7 +64,7 @@ impl Source {
         }
     }
 
-    /// Creates a [`Source`] of kind [`SourceKind::Drive`] with detected identity & label (`M2-S09`).
+    /// Creates a [`Source`] of kind [`SourceKind::Drive`] with detected identity & label.
     pub fn drive_with_identity(
         path: impl Into<PathBuf>,
         identity: Option<SourceIdentity>,
@@ -99,31 +100,23 @@ impl ExcludeRule {
             Some(Self::Pattern(trimmed.to_string()))
         }
     }
-
-    /// Formats the rule as a line for `--exclude-file`.
-    pub fn to_file_line(&self) -> String {
-        match self {
-            Self::Pattern(pat) => pat.clone(),
-            Self::Negated(pat) => format!("!{pat}"),
-        }
-    }
 }
 
-/// Standard desktop trash exclusion patterns emitted when `exclude_trash` is active (`M2-S02`).
+/// Standard desktop trash exclusion patterns emitted when `exclude_trash` is active.
 pub const TRASH_EXCLUDE_PATTERNS: [&str; 2] = ["$HOME/.local/share/Trash", "**/.Trash-*"];
 
-/// Exclude configuration for a [`Backup`](crate::model::Backup) (glossary: `ExcludeRules`, `M2-S01`, `M2-S02`).
+/// Exclude configuration for a [`Backup`](crate::model::Backup) (glossary: `ExcludeRules`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExcludeRules {
-    /// Simple-mode excluded folders (`$HOME/...` inside `$HOME`, `/...` outside `$HOME`, `P8`).
+    /// Simple-mode excluded folders (`$HOME/...` inside `$HOME`, `/...` outside `$HOME`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub folders: Vec<String>,
     /// Expert-mode raw exclude lines (`**`, `!negation`, `$VAR`, `--exclude-file` rules).
     pub lines: Vec<String>,
     /// Passed to `--exclude-caches`.
     pub exclude_caches: bool,
-    /// Template: exclude user/per-volume Trash directories (`M2-S02`).
+    /// Template: exclude user/per-volume Trash directories.
     pub exclude_trash: bool,
     /// Passed to `--exclude-larger-than <size>` (e.g. `"2G"`, `"500M"`).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,9 +169,9 @@ pub fn normalize_folder_rule(raw: &str, home_dir: Option<&Path>) -> String {
     }
 
     let path = Path::new(trimmed);
-    let norm = lexical_normalize(path);
+    let norm = normalize_lexical_path(path);
     if let Some(home) = home_dir {
-        let norm_home = lexical_normalize(home);
+        let norm_home = normalize_lexical_path(home);
         if norm == norm_home {
             return "$HOME".to_string();
         }
@@ -212,7 +205,7 @@ impl ExcludeRules {
             .collect()
     }
 
-    /// Returns the number of active expert-syntax rules (`M2-S02` `"N further rules in restic syntax"`).
+    /// Returns the number of active expert-syntax rules (shown as «N further rules in restic syntax»).
     pub fn expert_rule_count(&self) -> usize {
         self.parsed_rules().len()
     }
@@ -224,7 +217,7 @@ impl ExcludeRules {
             || self.lines.iter().any(|l| !l.trim().is_empty())
     }
 
-    /// Normalizes all folder rules relative to `home_dir` (`P8`, `AC-M2-01-7`, `AC-M2-01-9`).
+    /// Normalizes all folder rules relative to `home_dir`.
     pub fn normalize_folders(&mut self, home_dir: Option<&Path>) {
         let mut out = Vec::with_capacity(self.folders.len());
         for raw in &self.folders {
@@ -245,7 +238,7 @@ impl ExcludeRules {
     }
 
     /// Serializes all exclude file entries for `$XDG_STATE_HOME/kestic/excludes/<backup-id>.txt`
-    /// (`M2-S01`, `P8`, verbatim expert syntax without regex conversion).
+    /// (verbatim expert syntax without regex conversion).
     pub fn to_exclude_file_contents_with_home(&self, home_dir: Option<&Path>) -> String {
         let mut out = String::new();
         for folder in &self.folders {
@@ -296,7 +289,7 @@ impl ExcludeRules {
     }
 }
 
-/// Advisory warning emitted when a `!negation` rule is shadowed by a whole-directory exclusion (`M2-S03`).
+/// Advisory warning emitted when a `!negation` rule is shadowed by a whole-directory exclusion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExcludeLintWarning {
     /// 1-based line number inside `ExcludeRules::lines`.
@@ -359,8 +352,8 @@ fn is_ancestor_exclusion(parent_pat: &str, negated_pat: &str) -> bool {
     false
 }
 
-/// Checks `rules` for ineffective `!` negation rules shadowed by whole-directory exclusions (`FR-27`, `M2-S03`).
-/// Non-blocking: produces warnings only, never prevents saving (`AC-M2-03-3`).
+/// Checks `rules` for ineffective `!` negation rules shadowed by whole-directory exclusions.
+/// Non-blocking: produces warnings only, never prevents saving.
 pub fn lint_exclude_rules(rules: &ExcludeRules) -> Vec<ExcludeLintWarning> {
     let mut active_exclusions: Vec<(String, Option<String>)> = Vec::new();
     for folder in &rules.folders {
@@ -412,7 +405,7 @@ pub fn lint_exclude_rules(rules: &ExcludeRules) -> Vec<ExcludeLintWarning> {
     warnings
 }
 
-/// Result of testing a path against [`ExcludeRules`] (`[Pfad testen…]`, `M2-S02`).
+/// Result of testing a path against [`ExcludeRules`] («Test path…»).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExcludePathTestResult {
     pub included: bool,
@@ -567,26 +560,6 @@ fn restic_pattern_matches(
     false
 }
 
-pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            Component::Prefix(p) => out.push(p.as_os_str()),
-            Component::RootDir => out.push(Component::RootDir.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::Normal(seg) => out.push(seg),
-        }
-    }
-    if out.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        out
-    }
-}
-
 struct ExcludeEvalState<'a> {
     abs_comps: Vec<&'a str>,
     rel_comps: Vec<&'a str>,
@@ -693,7 +666,7 @@ impl<'a> ExcludeEvalState<'a> {
     }
 }
 
-/// Evaluates whether `test_path` would be backed up or excluded under `rules` (`M2-S02`).
+/// Evaluates whether `test_path` would be backed up or excluded under `rules`.
 pub fn evaluate_exclude_path(
     rules: &ExcludeRules,
     source_root: &Path,
@@ -711,9 +684,9 @@ pub fn evaluate_exclude_path(
     }
 
     let candidate_path = if Path::new(raw_test).is_absolute() {
-        lexical_normalize(Path::new(raw_test))
+        normalize_lexical_path(Path::new(raw_test))
     } else {
-        lexical_normalize(&source_root.join(raw_test))
+        normalize_lexical_path(&source_root.join(raw_test))
     };
     let candidate_str = candidate_path.to_string_lossy().into_owned();
     let abs_comps: Vec<&str> = candidate_str
@@ -722,7 +695,7 @@ pub fn evaluate_exclude_path(
         .filter(|c| !c.is_empty())
         .collect();
 
-    let norm_src = lexical_normalize(source_root);
+    let norm_src = normalize_lexical_path(source_root);
     let rel_str_owned = candidate_path
         .strip_prefix(&norm_src)
         .ok()

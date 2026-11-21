@@ -13,115 +13,21 @@
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
-use common::m3::ResticWrapper;
-use common::{
-    RestServerGuard, find_kestic_binary, restic_test_binaries, run_isolated_test,
-    start_fake_notifications, start_fake_sni_watcher, wait_for_file,
-};
+use common::load_config;
+use common::m3::{FakeSetup, M3Rig, StdFakes, backup_summary, latest_variant, wait_for_state};
+use common::tools::RestServerGuard;
+use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::clock::FakeClock;
-use kestic_core::config::load_config;
 use kestic_core::history::RunHistory;
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationKind, MaintenanceEntrySchedule, ResticProvider, Run,
-    RunConditions, RunStatus, Schedule, Source,
+    Backup, BackupId, Destination, DestinationKind, MaintenanceEntrySchedule, MaintenanceSchedule,
+    Run, RunConditions, RunId, RunStatus, Schedule, Source,
 };
-use kestic_core::scheduler::TimezoneSpec;
-use kestic_core::secrets::FileSecretStore;
-use kestic_daemon::dbus_api::{
-    BackupSummaryDto, DaemonStateDto, KESTIC_BUS_NAME, KESTIC_OBJECT_PATH, KesticClient,
-    RunProgressPhase,
-};
-use kestic_daemon::monitors::MonitorBusConfig;
-use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
-use std::env;
+use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, RunProgressPhase};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::macros::datetime;
-
-fn default_restic_latest() -> PathBuf {
-    restic_test_binaries()
-        .into_iter()
-        .last()
-        .expect("latest restic binary")
-        .1
-}
-
-fn find_target_dir() -> PathBuf {
-    env::var_os("CARGO_TARGET_DIR")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| common::workspace_root().join("target"))
-}
-
-fn install_compiled_german_catalog(root: &Path) {
-    let built_mo = find_target_dir().join("locale/de/LC_MESSAGES/kestic.mo");
-    if built_mo.is_file() {
-        let dest_dir = root.join("data/locale/de/LC_MESSAGES");
-        fs::create_dir_all(&dest_dir).expect("mkdir data/locale/de/LC_MESSAGES");
-        fs::copy(&built_mo, dest_dir.join("kestic.mo")).expect("copy compiled kestic.mo");
-    }
-}
-
-fn spawn_m3_gui_daemon(
-    root: &Path,
-    restic_bin: &Path,
-    clock: Arc<FakeClock>,
-    enable_monitors: bool,
-    enable_scheduler: bool,
-) -> (
-    PathBuf,
-    PathBuf,
-    KesticClient,
-    thread::JoinHandle<Result<DaemonOutcome, String>>,
-) {
-    let cfg_path = root.join("cfg").join("kestic").join("config.toml");
-    let state_dir = root.join("state").join("kestic");
-    let ready_file = root.join("daemon.ready");
-    let _ = fs::remove_file(&ready_file);
-    let secret_file = root.join("secrets.hex");
-
-    let run_cfg = DaemonRunConfig {
-        bus_name: KESTIC_BUS_NAME.to_string(),
-        assume_sni_available: true,
-        ready_file: Some(ready_file.clone()),
-        config_path: Some(cfg_path.clone()),
-        state_dir: Some(state_dir.clone()),
-        kestic_binary: Some(find_kestic_binary()),
-        clock,
-        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
-        mount_inspector: None,
-        suppress_ui_spawn: true,
-        enable_job_view: false,
-        enable_portal_inhibit: false,
-        timezone: TimezoneSpec::named("Europe/Zurich"),
-        monitor_bus: MonitorBusConfig {
-            use_session_bus: true,
-            enable_watcher: enable_monitors,
-            ..Default::default()
-        },
-        enable_system_monitors: enable_monitors,
-        enable_scheduler,
-        ..Default::default()
-    };
-
-    let handle = thread::spawn(move || run_daemon(run_cfg));
-    wait_for_file(&ready_file, Duration::from_secs(8));
-
-    let client =
-        KesticClient::connect(KESTIC_BUS_NAME, KESTIC_OBJECT_PATH).expect("connect KesticClient");
-    let prov = client
-        .set_restic_provider(&ResticProvider::Custom {
-            path: restic_bin.to_path_buf(),
-        })
-        .expect("set restic provider");
-    assert!(prov.valid, "restic provider must be valid: {prov:?}");
-    (cfg_path, state_dir, client, handle)
-}
 
 fn run_m3_gui_smoke(root: &Path, scenario: &str, layout: &str, lang: &str, screenshot_rel: &str) {
     run_m3_gui_smoke_with_env(root, scenario, layout, lang, screenshot_rel, &[]);
@@ -133,183 +39,35 @@ fn run_m3_gui_smoke_with_env(
     layout: &str,
     lang: &str,
     screenshot_rel: &str,
-    extra_env: &[(&str, &Path)],
+    extra_env: &[(&str, &str)],
 ) {
-    install_compiled_german_catalog(root);
-    let kestic_bin = find_kestic_binary();
-    let screenshot = common::workspace_root().join(screenshot_rel);
-    if let Some(parent) = screenshot.parent() {
-        fs::create_dir_all(parent).expect("mkdir screenshot parent");
+    let iso = common::gui::IsolatedEnv::adopt(root);
+    let dbus_addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
+    common::gui::SmokeContext {
+        kestic_bin: &find_kestic_binary(),
+        iso: &iso,
+        dbus_addr: &dbus_addr,
+        use_secret_file: true,
     }
-    if screenshot.exists() {
-        fs::remove_file(&screenshot).expect("remove stale screenshot");
-    }
-
-    let mut cmd = Command::new(&kestic_bin);
-    cmd.args([
-        "--smoke-m1",
-        scenario,
-        "--smoke-layout",
-        layout,
-        "--smoke-lang",
-        lang,
-        "--screenshot",
-    ])
-    .arg(&screenshot)
-    .env("HOME", root.join("home"))
-    .env("XDG_CONFIG_HOME", root.join("cfg"))
-    .env("XDG_DATA_HOME", root.join("data"))
-    .env("XDG_CACHE_HOME", root.join("cache"))
-    .env("XDG_STATE_HOME", root.join("state"))
-    .env("XDG_RUNTIME_DIR", root.join("run"))
-    .env("KESTIC_SECRET_FILE", root.join("secrets.hex"))
-    .env("QT_QPA_PLATFORM", "offscreen")
-    .env_remove("LC_ALL")
-    .env_remove("LC_MESSAGES")
-    .env("LANG", "en_US.UTF-8")
-    .env("LANGUAGE", lang);
-    for (key, value) in extra_env {
-        cmd.env(key, value);
-    }
-
-    let output = cmd.output().expect("run kestic --smoke-m1");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "M3 GUI smoke `{scenario}` ({layout}/{lang}) failed (status={}):\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        stderr
-    );
-    assert!(
-        stderr.trim().is_empty(),
-        "M3 GUI smoke `{scenario}` ({layout}/{lang}) emitted QML/Qt warnings:\n{stderr}"
-    );
-
-    let png = fs::read(&screenshot).expect("read captured M3 PNG screenshot");
-    assert!(
-        png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() > 2048,
-        "M3 screenshot {} must be a valid non-trivial PNG (got {} bytes)",
-        screenshot.display(),
-        png.len()
-    );
+    .run_with_env(scenario, layout, lang, screenshot_rel, &[], extra_env);
 }
 
-fn wait_for_state<F>(
-    client: &KesticClient,
-    timeout: Duration,
-    label: &str,
-    mut pred: F,
-) -> DaemonStateDto
-where
-    F: FnMut(&DaemonStateDto) -> bool,
-{
-    let deadline = Instant::now() + timeout;
-    loop {
-        let state = client.get_state().expect("GetState");
-        if pred(&state) {
-            return state;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for condition ({label}); backups={:?}",
-            state
-                .backups
-                .iter()
-                .map(|b| (
-                    &b.backup.name,
-                    &b.pending_primary_code,
-                    b.is_overdue,
-                    b.has_error,
-                    b.error_action.map(|c| c.as_str()),
-                    b.active_run.as_ref().map(|r| &r.status),
-                    b.last_run.as_ref().map(|r| &r.status),
-                ))
-                .collect::<Vec<_>>()
-        );
-        thread::sleep(Duration::from_millis(50));
-    }
-}
-
-fn backup_summary<'a>(state: &'a DaemonStateDto, id: &BackupId) -> &'a BackupSummaryDto {
-    state
-        .backups
-        .iter()
-        .find(|b| &b.backup.id == id)
-        .expect("backup summary present")
-}
-
-/// Everything a GUI smoke test needs: private fakes on the session bus plus a running daemon.
-struct Env {
-    cfg_path: PathBuf,
-    client: KesticClient,
-    handle: thread::JoinHandle<Result<DaemonOutcome, String>>,
-    clock: Arc<FakeClock>,
-    _fakes: (
-        zbus::Connection,
-        zbus::Connection,
-        FakeUPowerHandle,
-        FakeNetworkManagerHandle,
-    ),
-}
-
-fn start_env(
-    root: &Path,
-    on_battery: bool,
-    known_networks: &[&str],
-    start: time::OffsetDateTime,
-    enable_scheduler: bool,
-) -> Env {
-    start_env_with_restic(
-        root,
+/// Notification, StatusNotifierWatcher, UPower and NetworkManager fakes (active network
+/// `HomeWifi`) every GUI smoke daemon needs on the session bus.
+fn gui_fakes(on_battery: bool, known_networks: &[&str]) -> StdFakes {
+    StdFakes::start_with(FakeSetup {
         on_battery,
+        active_network: Some("HomeWifi"),
         known_networks,
-        start,
-        enable_scheduler,
-        &default_restic_latest(),
-    )
+        ..FakeSetup::default()
+    })
 }
 
-fn start_env_with_restic(
-    root: &Path,
-    on_battery: bool,
-    known_networks: &[&str],
-    start: time::OffsetDateTime,
-    enable_scheduler: bool,
-    restic: &Path,
-) -> Env {
-    let (notif_conn, _notif_capture) = start_fake_notifications();
-    let sni_conn = start_fake_sni_watcher();
-    let upower = FakeUPowerHandle::start(on_battery, 100.0);
-    let nm = FakeNetworkManagerHandle::start(true, false, Some("HomeWifi"), known_networks);
-    let clock = Arc::new(FakeClock::new(start));
-    let (cfg_path, _state_dir, client, handle) =
-        spawn_m3_gui_daemon(root, restic, Arc::clone(&clock), true, enable_scheduler);
-    Env {
-        cfg_path,
-        client,
-        handle,
-        clock,
-        _fakes: (notif_conn, sni_conn, upower, nm),
-    }
-}
-
-fn stop_env(env: Env) {
-    env.client.confirm_quit().expect("quit daemon");
-    assert_eq!(
-        env.handle.join().expect("join daemon"),
-        Ok(DaemonOutcome::RanAndStopped)
-    );
-}
-
-fn add_local_destination(env: &Env, root: &Path, name: &str) -> Destination {
-    let repo = root.join(format!("repo-{}", name.replace(' ', "-")));
-    fs::create_dir_all(&repo).expect("mkdir repo");
-    let dest = Destination::new(name, DestinationKind::Local { path: repo }).expect("dest");
-    env.client
-        .add_destination(&dest, "init", "m3-smoke-pw", "")
-        .expect("init dest");
-    dest
+/// Daemon on the real bus name the GUI process connects to, in the sandbox `root` itself.
+fn start_rig(root: &Path, start: time::OffsetDateTime, enable_scheduler: bool) -> M3Rig {
+    M3Rig::start_on(root, &latest_variant(), "", KESTIC_BUS_NAME, start, |o| {
+        o.enable_scheduler = enable_scheduler
+    })
 }
 
 fn make_source(root: &Path, name: &str) -> PathBuf {
@@ -317,18 +75,6 @@ fn make_source(root: &Path, name: &str) -> PathBuf {
     fs::create_dir_all(&dir).expect("mkdir source");
     fs::write(dir.join("note.txt"), name.as_bytes()).expect("write source file");
     dir
-}
-
-/// Backup as the «New backup» flow creates it (P35: daily 12:00, AC power + network).
-fn add_default_backup(env: &Env, root: &Path, dest: &Destination, name: &str) -> BackupId {
-    let mut b = Backup::new(
-        name,
-        Source::folder(make_source(root, name)),
-        dest.id.clone(),
-    )
-    .expect("backup");
-    b.schedule = Schedule::default_scheduled();
-    BackupId::parse(env.client.add_backup(&b).expect("add backup")).expect("parse id")
 }
 
 fn no_conditions() -> RunConditions {
@@ -343,8 +89,8 @@ fn smoke_artifact(name: &str, layout: &str, lang: &str) -> String {
     format!("target/smoke-artifacts/m3-{name}-{layout}-{lang}.png")
 }
 
-fn saved_backup(env: &Env, id: &BackupId) -> Backup {
-    load_config(&env.cfg_path)
+fn saved_backup(rig: &M3Rig, id: &BackupId) -> Backup {
+    load_config(&rig.daemon.config_path)
         .expect("load config")
         .backups
         .into_iter()
@@ -360,56 +106,50 @@ fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slo
         "KESTIC_M3_GUI_STATUS_ROWS_INNER",
         |root| {
             // On battery: the backup with default conditions is waiting for AC power.
-            let env = start_env(
-                root,
-                true,
-                &["HomeWifi"],
-                datetime!(2026-12-01 10:00:00 UTC),
-                false,
-            );
-            let dest = add_local_destination(&env, root, "Status Vault");
-            let mut overdue = Backup::new(
-                "Docs Overdue",
-                Source::folder(make_source(root, "overdue")),
-                dest.id.clone(),
-            )
-            .expect("overdue backup");
-            overdue.schedule = Schedule::default_scheduled();
-            overdue.run_conditions = no_conditions();
-            let overdue_id = BackupId::parse(env.client.add_backup(&overdue).expect("add"))
-                .expect("parse overdue id");
+            let _fakes = gui_fakes(true, &["HomeWifi"]);
+            let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
+            let dest = rig.add_destination("Status Vault", |_| {});
+            let overdue_id = rig
+                .add_backup_to(&dest, "Docs Overdue", |b| {
+                    b.run_conditions = no_conditions()
+                })
+                .id;
 
-            env.clock.set(datetime!(2026-12-04 10:00:00 UTC));
-            let mut ok = Backup::new(
-                "Docs OK",
-                Source::folder(make_source(root, "ok")),
-                dest.id.clone(),
-            )
-            .expect("ok backup");
-            ok.schedule = Schedule::default_scheduled();
-            ok.run_conditions = no_conditions();
-            let ok_id =
-                BackupId::parse(env.client.add_backup(&ok).expect("add")).expect("parse ok id");
-            let pending_id = add_default_backup(&env, root, &dest, "Docs Pending");
+            rig.clock.set(datetime!(2026-12-04 10:00:00 UTC));
+            let ok_id = rig
+                .add_backup_to(&dest, "Docs OK", |b| b.run_conditions = no_conditions())
+                .id;
+            let pending_id = rig.add_backup_to(&dest, "Docs Pending", |_| {}).id;
 
-            env.clock.set(datetime!(2026-12-04 12:05:00 UTC));
-            env.client
+            rig.clock.set(datetime!(2026-12-04 12:05:00 UTC));
+            rig.daemon
+                .client
                 .start_backup(ok_id.as_str())
                 .expect("start Docs OK");
-            wait_for_state(&env.client, Duration::from_secs(20), "Docs OK done", |s| {
-                backup_summary(s, &ok_id)
-                    .last_run
-                    .as_ref()
-                    .is_some_and(|r| r.status == RunStatus::Ok)
-                    && backup_summary(s, &ok_id).active_run.is_none()
-            });
-            let state = wait_for_state(&env.client, Duration::from_secs(5), "3 states", |s| {
-                backup_summary(s, &overdue_id).is_overdue
-                    && backup_summary(s, &pending_id)
-                        .pending_primary_code
-                        .map(|c| c.as_str())
-                        == Some("on_battery")
-            });
+            wait_for_state(
+                &rig.daemon.client,
+                Duration::from_secs(20),
+                "Docs OK done",
+                |s| {
+                    backup_summary(s, &ok_id)
+                        .last_run
+                        .as_ref()
+                        .is_some_and(|r| r.status == RunStatus::Ok)
+                        && backup_summary(s, &ok_id).active_run.is_none()
+                },
+            );
+            let state = wait_for_state(
+                &rig.daemon.client,
+                Duration::from_secs(5),
+                "3 states",
+                |s| {
+                    backup_summary(s, &overdue_id).is_overdue
+                        && backup_summary(s, &pending_id)
+                            .pending_primary_code
+                            .map(|c| c.as_str())
+                            == Some("on_battery")
+                },
+            );
             assert!(
                 !backup_summary(&state, &pending_id).is_overdue,
                 "waiting backup must not be overdue"
@@ -428,7 +168,7 @@ fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slo
                     &smoke_artifact("overview-status", layout, lang),
                 );
             }
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
@@ -444,25 +184,13 @@ fn overview_shows_no_percentage_while_scanning_and_percentage_afterwards() {
         "overview_shows_no_percentage_while_scanning_and_percentage_afterwards",
         "KESTIC_M3_GUI_PROGRESS_INNER",
         |root| {
-            let wrapper = ResticWrapper::create(&root.join("wrapper"), &default_restic_latest());
-            let env = start_env_with_restic(
-                root,
-                false,
-                &["HomeWifi"],
-                datetime!(2026-12-01 10:00:00 UTC),
-                false,
-                &wrapper.path,
-            );
-            let dest = add_local_destination(&env, root, "Progress Vault");
-            let mut docs = Backup::new(
-                "Docs",
-                Source::folder(make_source(root, "docs")),
-                dest.id.clone(),
-            )
-            .expect("docs backup");
-            docs.run_conditions = no_conditions();
-            let docs_id =
-                BackupId::parse(env.client.add_backup(&docs).expect("add")).expect("parse id");
+            let _fakes = gui_fakes(false, &["HomeWifi"]);
+            let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
+            let wrapper = &rig.wrapper;
+            let dest = rig.add_destination("Progress Vault", |_| {});
+            let docs_id = rig
+                .add_backup_to(&dest, "Docs", |b| b.run_conditions = no_conditions())
+                .id;
 
             let scanning_line = concat!(
                 r#"{"message_type":"status","percent_done":0.99,"total_files":4000,"#,
@@ -486,10 +214,11 @@ fn overview_shows_no_percentage_while_scanning_and_percentage_afterwards() {
                 } else {
                     wrapper.hold("backup");
                 }
-                env.client
+                rig.daemon
+                    .client
                     .start_backup(docs_id.as_str())
                     .expect("start Docs");
-                wait_for_state(&env.client, Duration::from_secs(20), name, |s| {
+                wait_for_state(&rig.daemon.client, Duration::from_secs(20), name, |s| {
                     s.overall
                         .active_run_progress
                         .as_ref()
@@ -505,101 +234,146 @@ fn overview_shows_no_percentage_while_scanning_and_percentage_afterwards() {
                     );
                 }
                 wrapper.release("backup");
-                wait_for_state(&env.client, Duration::from_secs(30), "run done", |s| {
-                    backup_summary(s, &docs_id).active_run.is_none()
-                });
+                wait_for_state(
+                    &rig.daemon.client,
+                    Duration::from_secs(30),
+                    "run done",
+                    |s| backup_summary(s, &docs_id).active_run.is_none(),
+                );
             }
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
 
-/// AC-M3-14-4 (global), AC-M3-08-6 (b): pause menu, localized pause line, resume button,
-/// «Back Up All Now» message with the skipped backups.
+/// Overview with a seeded permanent-error backup (Exit 12), an unavailable-source backup and a
+/// startable backup; «Back Up All Now» must skip the first two.
+struct PauseAllFixture {
+    rig: M3Rig,
+    _fakes: StdFakes,
+    docs_id: BackupId,
+    locked_id: BackupId,
+    locked_run_id: RunId,
+}
+
+fn pause_all_fixture(root: &Path) -> PauseAllFixture {
+    let start = datetime!(2026-12-01 10:00:00 UTC);
+    let seed_clock = FakeClock::new(start);
+    let dest = Destination::new(
+        "Local Vault",
+        DestinationKind::Local {
+            path: root.join("repo-local-vault"),
+        },
+    )
+    .expect("dest");
+    // Backup with a permanent error (Exit 12): seeded in the run history BEFORE the
+    // daemon starts so it loads `has_error` cleanly; «Back Up All Now» must skip it.
+    let locked = Backup::new(
+        "Locked Docs",
+        Source::folder(make_source(root, "locked")),
+        dest.id.clone(),
+    )
+    .expect("locked");
+    let mut err_run = Run::new_backup(&seed_clock, &locked).expect("err run");
+    err_run.summary_message = Some("wrong password or no key found".to_string());
+    err_run.finish(&seed_clock, RunStatus::Error, Some(12));
+    {
+        let mut history =
+            RunHistory::open(&root.join("state").join("kestic")).expect("open history");
+        history.upsert_run(&err_run, &[]).expect("seed exit 12");
+    }
+
+    let fakes = gui_fakes(false, &["HomeWifi"]);
+    let rig = start_rig(root, start, false);
+    fs::create_dir_all(root.join("repo-local-vault")).expect("mkdir repo");
+    rig.daemon
+        .client
+        .add_destination(&dest, "init", "m3-smoke-pw", "")
+        .expect("init dest");
+    let docs_id = rig
+        .add_backup_to(&dest, "Documents", |b| b.run_conditions = no_conditions())
+        .id;
+    let offline = Backup::new(
+        "Offline Media",
+        Source::folder(root.join("src-missing")),
+        dest.id.clone(),
+    )
+    .expect("offline");
+    rig.daemon.client.add_backup(&offline).expect("add offline");
+    rig.daemon.client.add_backup(&locked).expect("add locked");
+    let locked_id = locked.id.clone();
+    wait_for_state(
+        &rig.daemon.client,
+        Duration::from_secs(5),
+        "locked error",
+        |s| backup_summary(s, &locked_id).has_error,
+    );
+
+    PauseAllFixture {
+        rig,
+        _fakes: fakes,
+        docs_id,
+        locked_id,
+        locked_run_id: err_run.id.clone(),
+    }
+}
+
+/// AC-M3-14-4 (global): pause menu with four choices, localized pause line and resume button
+/// (checked by the `m3-overview-pause` scenario).
 #[test]
-fn m3_14_4_08_6_global_pause_resume_button_and_back_up_all_skip_message() {
+fn m3_14_4_global_pause_menu_pause_line_and_resume_button() {
     run_isolated_test(
-        "m3_14_4_08_6_global_pause_resume_button_and_back_up_all_skip_message",
+        "m3_14_4_global_pause_menu_pause_line_and_resume_button",
         "KESTIC_M3_GUI_PAUSE_ALL_INNER",
         |root| {
-            let start = datetime!(2026-12-01 10:00:00 UTC);
-            let seed_clock = FakeClock::new(start);
-            let dest = Destination::new(
-                "Local Vault",
-                DestinationKind::Local {
-                    path: root.join("repo-local-vault"),
-                },
-            )
-            .expect("dest");
-            // Backup with a permanent error (Exit 12): seeded in the run history BEFORE the
-            // daemon starts so it loads `has_error` cleanly; «Back Up All Now» must skip it.
-            let locked = Backup::new(
-                "Locked Docs",
-                Source::folder(make_source(root, "locked")),
-                dest.id.clone(),
-            )
-            .expect("locked");
-            let mut err_run = Run::new_backup(&seed_clock, &locked).expect("err run");
-            err_run.summary_message = Some("wrong password or no key found".to_string());
-            err_run.finish(&seed_clock, RunStatus::Error, Some(12));
-            {
-                let mut history =
-                    RunHistory::open(&root.join("state").join("kestic")).expect("open history");
-                history.upsert_run(&err_run, &[]).expect("seed exit 12");
-            }
-
-            let env = start_env(root, false, &["HomeWifi"], start, false);
-            fs::create_dir_all(root.join("repo-local-vault")).expect("mkdir repo");
-            env.client
-                .add_destination(&dest, "init", "m3-smoke-pw", "")
-                .expect("init dest");
-            let mut docs = Backup::new(
-                "Documents",
-                Source::folder(make_source(root, "documents")),
-                dest.id.clone(),
-            )
-            .expect("docs");
-            docs.schedule = Schedule::default_scheduled();
-            docs.run_conditions = no_conditions();
-            let docs_id = BackupId::parse(env.client.add_backup(&docs).expect("add docs"))
-                .expect("parse docs id");
-            let offline = Backup::new(
-                "Offline Media",
-                Source::folder(root.join("src-missing")),
-                dest.id.clone(),
-            )
-            .expect("offline");
-            env.client.add_backup(&offline).expect("add offline");
-            env.client.add_backup(&locked).expect("add locked");
-            let locked_id = locked.id.clone();
-            wait_for_state(&env.client, Duration::from_secs(5), "locked error", |s| {
-                backup_summary(s, &locked_id).has_error
-            });
-
-            for (layout, lang) in [("wide", "en"), ("wide", "de")] {
+            let fixture = pause_all_fixture(root);
+            for lang in ["en", "de"] {
                 run_m3_gui_smoke(
                     root,
-                    "m3-overview-pause-and-start-all",
-                    layout,
+                    "m3-overview-pause",
+                    "wide",
                     lang,
-                    &smoke_artifact("overview-pause", layout, lang),
+                    &smoke_artifact("overview-pause", "wide", lang),
+                );
+            }
+            fixture.rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M3-08-6 (b): «Back Up All Now» starts only the startable backup and names the skipped ones.
+#[test]
+fn m3_08_6_back_up_all_skips_error_and_unavailable_backups() {
+    run_isolated_test(
+        "m3_08_6_back_up_all_skips_error_and_unavailable_backups",
+        "KESTIC_M3_GUI_START_ALL_INNER",
+        |root| {
+            let fixture = pause_all_fixture(root);
+            let client = &fixture.rig.daemon.client;
+            for lang in ["en", "de"] {
+                run_m3_gui_smoke(
+                    root,
+                    "m3-overview-start-all",
+                    "wide",
+                    lang,
+                    &smoke_artifact("overview-start-all", "wide", lang),
                 );
                 // (a) only the third backup (`Documents`) was started, the skipped ones were not.
-                let state = wait_for_state(&env.client, Duration::from_secs(20), "idle", |s| {
-                    backup_summary(s, &docs_id).active_run.is_none()
-                        && backup_summary(s, &docs_id)
+                let state = wait_for_state(client, Duration::from_secs(20), "idle", |s| {
+                    backup_summary(s, &fixture.docs_id).active_run.is_none()
+                        && backup_summary(s, &fixture.docs_id)
                             .last_run
                             .as_ref()
                             .is_some_and(|r| r.status == RunStatus::Ok)
                 });
-                let locked_run = backup_summary(&state, &locked_id).last_run.as_ref();
+                let locked_run = backup_summary(&state, &fixture.locked_id).last_run.as_ref();
                 assert_eq!(
                     locked_run.map(|r| r.id.clone()),
-                    Some(err_run.id.clone()),
+                    Some(fixture.locked_run_id.clone()),
                     "(a) the permanent-error backup must not start a new run"
                 );
             }
-            stop_env(env);
+            fixture.rig.daemon.stop();
         },
     );
 }
@@ -639,28 +413,19 @@ fn m3_08_5_exit12_replaces_back_up_now_in_overview_and_detail() {
             }
 
             // On battery at 100%: Backup 1 (default conditions) is waiting for AC power.
-            let env = start_env(root, true, &["HomeWifi"], clock_start, true);
+            let _fakes = gui_fakes(true, &["HomeWifi"]);
+            let rig = start_rig(root, clock_start, true);
             fs::create_dir_all(root.join("repo-locked")).expect("mkdir repo");
-            env.client
+            rig.daemon
+                .client
                 .add_destination(&dest, "init", "m3-smoke-pw", "")
                 .expect("init dest");
-            env.client.add_backup(&b0).expect("add b0");
-            let mut b1 = Backup::new(
-                "Battery Backup",
-                Source::folder(make_source(root, "battery")),
-                dest.id.clone(),
-            )
-            .expect("b1");
-            b1.schedule = Schedule::Daily {
-                hour: 12,
-                minute: 0,
-            };
-            let b1_id =
-                BackupId::parse(env.client.add_backup(&b1).expect("add b1")).expect("parse b1");
+            rig.daemon.client.add_backup(&b0).expect("add b0");
+            let b1_id = rig.add_backup_to(&dest, "Battery Backup", |_| {}).id;
             // Past 12:00 CET (11:00 UTC) so b1 evaluates as waiting (`on_battery`).
-            env.clock.set(datetime!(2026-12-01 11:05:00 UTC));
+            rig.clock.set(datetime!(2026-12-01 11:05:00 UTC));
             wait_for_state(
-                &env.client,
+                &rig.daemon.client,
                 Duration::from_secs(5),
                 "exit12 + on_battery",
                 |s| {
@@ -681,14 +446,19 @@ fn m3_08_5_exit12_replaces_back_up_now_in_overview_and_detail() {
                 &smoke_artifact("condition-override", "wide", "en"),
             );
             // The manual override really ran Backup 1.
-            wait_for_state(&env.client, Duration::from_secs(20), "override ran", |s| {
-                backup_summary(s, &b1_id).active_run.is_none()
-                    && backup_summary(s, &b1_id)
-                        .last_run
-                        .as_ref()
-                        .is_some_and(|r| r.status == RunStatus::Ok)
-            });
-            stop_env(env);
+            wait_for_state(
+                &rig.daemon.client,
+                Duration::from_secs(20),
+                "override ran",
+                |s| {
+                    backup_summary(s, &b1_id).active_run.is_none()
+                        && backup_summary(s, &b1_id)
+                            .last_run
+                            .as_ref()
+                            .is_some_and(|r| r.status == RunStatus::Ok)
+                },
+            );
+            rig.daemon.stop();
         },
     );
 }
@@ -696,15 +466,10 @@ fn m3_08_5_exit12_replaces_back_up_now_in_overview_and_detail() {
 /// One editor fixture: a single default backup (daily 12:00, AC power + network) on a vault
 /// with the known networks `HomeWifi` and `OfficeWifi`.
 /// Editor fixture on a REST destination (local `rest-server`): network run conditions only
-/// apply to network destinations (decision 2026-11-20), so the run-condition editor tests use one.
-fn network_editor_env(root: &Path) -> (Env, RestServerGuard, BackupId) {
-    let env = start_env(
-        root,
-        false,
-        &["HomeWifi", "OfficeWifi"],
-        datetime!(2026-12-01 10:00:00 UTC),
-        false,
-    );
+/// apply to network destinations, so the run-condition editor tests use one.
+fn network_editor_env(root: &Path) -> (M3Rig, StdFakes, RestServerGuard, BackupId) {
+    let fakes = gui_fakes(false, &["HomeWifi", "OfficeWifi"]);
+    let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
     let server = RestServerGuard::start_no_auth(&root.join("rest-data"));
     let dest = Destination::new(
         "Network Vault",
@@ -714,24 +479,20 @@ fn network_editor_env(root: &Path) -> (Env, RestServerGuard, BackupId) {
         },
     )
     .expect("rest dest");
-    env.client
+    rig.daemon
+        .client
         .add_destination(&dest, "init", "m3-smoke-pw", "")
         .expect("init rest dest");
-    let id = add_default_backup(&env, root, &dest, "Documents");
-    (env, server, id)
+    let id = rig.add_backup_to(&dest, "Documents", |_| {}).id;
+    (rig, fakes, server, id)
 }
 
-fn editor_env(root: &Path) -> (Env, Destination, BackupId) {
-    let env = start_env(
-        root,
-        false,
-        &["HomeWifi", "OfficeWifi"],
-        datetime!(2026-12-01 10:00:00 UTC),
-        false,
-    );
-    let dest = add_local_destination(&env, root, "Editor Vault");
-    let id = add_default_backup(&env, root, &dest, "Documents");
-    (env, dest, id)
+fn editor_env(root: &Path) -> (M3Rig, StdFakes, Destination, BackupId) {
+    let fakes = gui_fakes(false, &["HomeWifi", "OfficeWifi"]);
+    let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
+    let dest = rig.add_destination("Editor Vault", |_| {});
+    let id = rig.add_backup_to(&dest, "Documents", |_| {}).id;
+    (rig, fakes, dest, id)
 }
 
 /// AC-M3-14-1: the schedule editor of a new backup.
@@ -741,9 +502,9 @@ fn m3_14_1_schedule_editor_preselects_daily_1200_and_offers_the_frequencies() {
         "m3_14_1_schedule_editor_preselects_daily_1200_and_offers_the_frequencies",
         "KESTIC_M3_GUI_SCHED_DEFAULTS_INNER",
         |root| {
-            let (env, _dest, id) = editor_env(root);
+            let (rig, _fakes, _dest, id) = editor_env(root);
             assert_eq!(
-                saved_backup(&env, &id).schedule,
+                saved_backup(&rig, &id).schedule,
                 Schedule::Daily {
                     hour: 12,
                     minute: 0
@@ -759,7 +520,7 @@ fn m3_14_1_schedule_editor_preselects_daily_1200_and_offers_the_frequencies() {
                     &smoke_artifact("schedule-defaults", "wide", lang),
                 );
             }
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
@@ -771,8 +532,8 @@ fn m3_14_2_14_6_schedule_editor_blocks_invalid_input_and_is_keyboard_operable() 
         "m3_14_2_14_6_schedule_editor_blocks_invalid_input_and_is_keyboard_operable",
         "KESTIC_M3_GUI_SCHED_VALIDATION_INNER",
         |root| {
-            let (env, _dest, id) = editor_env(root);
-            let before = fs::read(&env.cfg_path).expect("read config");
+            let (rig, _fakes, _dest, id) = editor_env(root);
+            let before = fs::read(&rig.daemon.config_path).expect("read config");
             for lang in ["en", "de"] {
                 run_m3_gui_smoke(
                     root,
@@ -783,15 +544,15 @@ fn m3_14_2_14_6_schedule_editor_blocks_invalid_input_and_is_keyboard_operable() 
                 );
             }
             assert_eq!(
-                fs::read(&env.cfg_path).expect("read config"),
+                fs::read(&rig.daemon.config_path).expect("read config"),
                 before,
                 "invalid or unsaved input must never reach config.toml"
             );
             assert!(matches!(
-                saved_backup(&env, &id).schedule,
+                saved_backup(&rig, &id).schedule,
                 Schedule::Daily { .. }
             ));
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
@@ -803,7 +564,7 @@ fn m3_14_8_14_9_schedule_editor_asks_before_leaving_and_discard_keeps_config() {
         "m3_14_8_14_9_schedule_editor_asks_before_leaving_and_discard_keeps_config",
         "KESTIC_M3_GUI_SCHED_UNSAVED_INNER",
         |root| {
-            let (env, _dest, id) = editor_env(root);
+            let (rig, _fakes, _dest, id) = editor_env(root);
             run_m3_gui_smoke(
                 root,
                 "m3-schedule-editor-unsaved",
@@ -812,7 +573,7 @@ fn m3_14_8_14_9_schedule_editor_asks_before_leaving_and_discard_keeps_config() {
                 &smoke_artifact("schedule-unsaved", "wide", "en"),
             );
             // [Save] (the last step of the scenario) persisted «every 4 days».
-            let saved = saved_backup(&env, &id);
+            let saved = saved_backup(&rig, &id);
             assert!(
                 matches!(
                     saved.schedule,
@@ -832,7 +593,10 @@ fn m3_14_8_14_9_schedule_editor_asks_before_leaving_and_discard_keeps_config() {
                 hour: 12,
                 minute: 0,
             };
-            env.client.update_backup(&reset).expect("reset backup");
+            rig.daemon
+                .client
+                .update_backup(&reset)
+                .expect("reset backup");
             run_m3_gui_smoke(
                 root,
                 "m3-schedule-editor-unsaved",
@@ -841,13 +605,13 @@ fn m3_14_8_14_9_schedule_editor_asks_before_leaving_and_discard_keeps_config() {
                 &smoke_artifact("schedule-unsaved", "wide", "de"),
             );
             assert!(matches!(
-                saved_backup(&env, &id).schedule,
+                saved_backup(&rig, &id).schedule,
                 Schedule::EveryNDays {
                     interval_days: 4,
                     ..
                 }
             ));
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
@@ -859,9 +623,9 @@ fn m3_14_3_conditions_editor_of_new_backup_defaults_to_ac_power_and_network() {
         "m3_14_3_conditions_editor_of_new_backup_defaults_to_ac_power_and_network",
         "KESTIC_M3_GUI_COND_DEFAULTS_INNER",
         |root| {
-            let (env, _server, id) = network_editor_env(root);
+            let (rig, _fakes, _server, id) = network_editor_env(root);
             assert_eq!(
-                saved_backup(&env, &id).run_conditions,
+                saved_backup(&rig, &id).run_conditions,
                 RunConditions::default(),
                 "a new backup starts with the default run conditions"
             );
@@ -874,20 +638,20 @@ fn m3_14_3_conditions_editor_of_new_backup_defaults_to_ac_power_and_network() {
                     &smoke_artifact("conditions-defaults", "wide", lang),
                 );
             }
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
 
-/// M3 manual acceptance (2026-11-19, decision 2026-11-20): on a local destination the
-/// run-condition editor shows no network conditions, only a hint, and is not dirty.
+/// On a local destination the run-condition editor shows no network conditions, only a hint,
+/// and is not dirty.
 #[test]
 fn m3_acceptance_conditions_editor_hides_network_for_local_destination() {
     run_isolated_test(
         "m3_acceptance_conditions_editor_hides_network_for_local_destination",
         "KESTIC_M3_GUI_COND_LOCAL_INNER",
         |root| {
-            let (env, _dest, _id) = editor_env(root);
+            let (rig, _fakes, _dest, _id) = editor_env(root);
             for lang in ["en", "de"] {
                 run_m3_gui_smoke(
                     root,
@@ -897,7 +661,7 @@ fn m3_acceptance_conditions_editor_hides_network_for_local_destination() {
                     &smoke_artifact("conditions-local", "wide", lang),
                 );
             }
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
@@ -909,7 +673,7 @@ fn m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config() {
         "m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config",
         "KESTIC_M3_GUI_COND_UNSAVED_INNER",
         |root| {
-            let (env, _server, id) = network_editor_env(root);
+            let (rig, _fakes, _server, id) = network_editor_env(root);
             run_m3_gui_smoke(
                 root,
                 "m3-conditions-editor-unsaved",
@@ -917,7 +681,7 @@ fn m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config() {
                 "en",
                 &smoke_artifact("conditions-unsaved", "wide", "en"),
             );
-            let saved = saved_backup(&env, &id);
+            let saved = saved_backup(&rig, &id);
             assert!(
                 saved.run_conditions.skip_on_metered_network,
                 "expected skip_on_metered_network=true persisted"
@@ -929,7 +693,10 @@ fn m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config() {
             );
             let mut reset = saved;
             reset.run_conditions = RunConditions::default();
-            env.client.update_backup(&reset).expect("reset backup");
+            rig.daemon
+                .client
+                .update_backup(&reset)
+                .expect("reset backup");
             run_m3_gui_smoke(
                 root,
                 "m3-conditions-editor-unsaved",
@@ -938,11 +705,11 @@ fn m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config() {
                 &smoke_artifact("conditions-unsaved", "wide", "de"),
             );
             assert!(
-                saved_backup(&env, &id)
+                saved_backup(&rig, &id)
                     .run_conditions
                     .skip_on_metered_network
             );
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
@@ -954,7 +721,7 @@ fn m3_14_4_14_6_backup_pause_menu_offers_four_choices_and_works_by_keyboard() {
         "m3_14_4_14_6_backup_pause_menu_offers_four_choices_and_works_by_keyboard",
         "KESTIC_M3_GUI_PAUSE_MENU_INNER",
         |root| {
-            let (env, _dest, _id) = editor_env(root);
+            let (rig, _fakes, _dest, _id) = editor_env(root);
             for lang in ["en", "de"] {
                 run_m3_gui_smoke(
                     root,
@@ -964,62 +731,88 @@ fn m3_14_4_14_6_backup_pause_menu_offers_four_choices_and_works_by_keyboard() {
                     &smoke_artifact("pause-menu", "wide", lang),
                 );
             }
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
 
-/// AC-M3-14-5, AC-M3-05-7 (a) and AC-M3-14-6 (maintenance editor).
+fn saved_maintenance_of(rig: &M3Rig, dest: &Destination) -> MaintenanceSchedule {
+    load_config(&rig.daemon.config_path)
+        .expect("load config")
+        .destinations
+        .into_iter()
+        .find(|d| d.id == dest.id)
+        .expect("saved dest")
+        .maintenance
+}
+
+/// AC-M3-14-5, AC-M3-05-7 (a): the maintenance editor shows the prune preview before confirming;
+/// the confirmed prune schedule is persisted.
 #[test]
 fn m3_14_5_05_7_maintenance_editor_shows_prune_preview_before_confirming() {
     run_isolated_test(
         "m3_14_5_05_7_maintenance_editor_shows_prune_preview_before_confirming",
         "KESTIC_M3_GUI_MAINT_INNER",
         |root| {
-            let (env, dest, _id) = editor_env(root);
-            let before_check = load_config(&env.cfg_path)
-                .expect("load config")
-                .destinations[0]
-                .maintenance
-                .check
-                .clone();
+            let (rig, _fakes, dest, _id) = editor_env(root);
             run_m3_gui_smoke(
                 root,
-                "m3-maintenance-editor",
+                "m3-maintenance-editor-prune-confirm",
                 "wide",
                 "en",
                 &smoke_artifact("prune-confirm", "wide", "en"),
             );
-            let saved = load_config(&env.cfg_path).expect("load config");
-            let saved_dest = saved
-                .destinations
-                .iter()
-                .find(|d| d.id == dest.id)
-                .expect("saved dest");
+            let saved = saved_maintenance_of(&rig, &dest);
             assert!(
-                matches!(
-                    saved_dest.maintenance.prune,
-                    MaintenanceEntrySchedule::Daily { .. }
-                ),
+                matches!(saved.prune, MaintenanceEntrySchedule::Daily { .. }),
                 "expected confirmed prune schedule Daily persisted: {:?}",
-                saved_dest.maintenance.prune
-            );
-            assert_eq!(
-                saved_dest.maintenance.check, before_check,
-                "discarded check frequency change must NOT be persisted"
+                saved.prune
             );
             // German pass on the default schedule.
-            env.client
+            rig.daemon
+                .client
                 .update_destination_maintenance(&dest.id.to_string(), &Default::default())
                 .expect("reset maintenance");
             run_m3_gui_smoke(
                 root,
-                "m3-maintenance-editor",
+                "m3-maintenance-editor-prune-confirm",
                 "wide",
                 "de",
                 &smoke_artifact("prune-confirm", "wide", "de"),
             );
-            stop_env(env);
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M3-14-6 (maintenance editor): (a) every control is reachable by keyboard and (b) has an
+/// accessible name (checked by the `m3-maintenance-editor-discard` scenario); (c) a discarded
+/// check-frequency and clean-up change is not persisted.
+#[test]
+fn m3_14_6_maintenance_editor_keyboard_names_and_discarded_changes_not_persisted() {
+    run_isolated_test(
+        "m3_14_6_maintenance_editor_keyboard_names_and_discarded_changes_not_persisted",
+        "KESTIC_M3_GUI_MAINT_DISCARD_INNER",
+        |root| {
+            let (rig, _fakes, dest, _id) = editor_env(root);
+            let before = saved_maintenance_of(&rig, &dest);
+            run_m3_gui_smoke(
+                root,
+                "m3-maintenance-editor-discard",
+                "wide",
+                "en",
+                &smoke_artifact("prune-discard", "wide", "en"),
+            );
+            let after = saved_maintenance_of(&rig, &dest);
+            assert_eq!(
+                after.check, before.check,
+                "(c) discarded check frequency change must NOT be persisted"
+            );
+            assert_eq!(
+                after.prune, before.prune,
+                "(c) discarded clean-up change must NOT be persisted"
+            );
+            rig.daemon.stop();
         },
     );
 }
@@ -1031,7 +824,7 @@ fn m3_settings_monitoring_and_notification_controls_persist() {
         "m3_settings_monitoring_and_notification_controls_persist",
         "KESTIC_M3_GUI_SETTINGS_INNER",
         |root| {
-            let (env, _dest, _id) = editor_env(root);
+            let (rig, _fakes, _dest, _id) = editor_env(root);
             run_m3_gui_smoke(
                 root,
                 "m3-settings-monitoring",
@@ -1039,15 +832,15 @@ fn m3_settings_monitoring_and_notification_controls_persist() {
                 "en",
                 &smoke_artifact("settings", "wide", "en"),
             );
-            let saved = load_config(&env.cfg_path).expect("load config");
+            let saved = load_config(&rig.daemon.config_path).expect("load config");
             assert_eq!(saved.default_overdue_threshold, 4);
             assert!(!saved.notifications.on_overdue);
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
 
-/// AC-M0-11-8 (U12): Ctrl+Shift+B in the backup detail page starts "Back Up Now" for the shown
+/// AC-M0-11-8: Ctrl+Shift+B in the backup detail page starts "Back Up Now" for the shown
 /// backup, and the action shows the shortcut (a real key press in the product window). On the
 /// overview, where no backup is open, it starts nothing.
 #[test]
@@ -1056,7 +849,7 @@ fn ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page() {
         "ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page",
         "KESTIC_M3_GUI_BACKUP_NOW_SHORTCUT_INNER",
         |root| {
-            let (env, _dest, _id) = editor_env(root);
+            let (rig, _fakes, _dest, _id) = editor_env(root);
             run_m3_gui_smoke(
                 root,
                 "m3-backup-now-shortcut",
@@ -1064,7 +857,7 @@ fn ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page() {
                 "en",
                 &smoke_artifact("backup-now-shortcut", "wide", "en"),
             );
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }
@@ -1083,8 +876,8 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
         "every_page_shows_simple_texts_in_the_gui_language",
         "KESTIC_M3_GUI_ALL_PAGES_INNER",
         |root| {
-            let (env, _dest, _id) = editor_env(root);
-            let catalog = language::catalog(&common::workspace_root());
+            let (rig, _fakes, _dest, _id) = editor_env(root);
+            let catalog = language::catalog(&common::workspace::workspace_root());
             let english_with_translation: std::collections::HashSet<&str> = catalog
                 .iter()
                 .filter(|e| !e.msgid().is_empty())
@@ -1099,12 +892,12 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
                     "wide",
                     lang,
                     &smoke_artifact("all-pages", "wide", lang),
-                    &[("KESTIC_SMOKE_TEXT_DUMP", dump.as_path())],
+                    &[("KESTIC_SMOKE_TEXT_DUMP", dump.to_str().expect("utf-8 path"))],
                 );
                 let raw = fs::read_to_string(&dump).expect("read text dump");
                 fs::copy(
                     &dump,
-                    common::workspace_root().join(format!(
+                    common::workspace::workspace_root().join(format!(
                         "target/smoke-artifacts/m3-all-pages-texts-{lang}.tsv"
                     )),
                 )
@@ -1145,7 +938,7 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
                     "(c) {lang}: technical words: {jargon:#?}"
                 );
             }
-            stop_env(env);
+            rig.daemon.stop();
         },
     );
 }

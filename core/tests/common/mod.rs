@@ -6,50 +6,28 @@
 use std::env;
 use std::path::PathBuf;
 
-/// Resolves the `kestic-dev/bin` directory populated by `scripts/bootstrap.sh`.
-pub fn dev_tools_bin_dir() -> PathBuf {
-    if let Some(dir) = env::var_os("KESTIC_TOOLS_DIR").filter(|v| !v.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    if let Some(data) = env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-        return PathBuf::from(data).join("kestic-dev").join("bin");
-    }
-    let home = env::var_os("HOME").expect("HOME must be set for integration tests");
-    PathBuf::from(home)
-        .join(".local")
-        .join("share")
-        .join("kestic-dev")
-        .join("bin")
-}
+pub mod gui;
+pub mod tools;
+pub mod workspace;
 
 /// Returns `(label, binary_path)` pairs for both restic 0.18.0 and latest (`AC-M1-Q-2`).
 ///
 /// Each path is an isolation wrapper (see [`isolated_restic`]): restic child processes always run
 /// with `HOME` and all `XDG_*` directories inside `target/tmp`, never in the real user profile.
 pub fn restic_test_binaries() -> Vec<(&'static str, PathBuf)> {
-    let dir = dev_tools_bin_dir();
-    let v018 = env::var_os("KESTIC_RESTIC_0_18")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dir.join("restic-0.18.0"));
-    let vlatest = env::var_os("KESTIC_RESTIC_LATEST")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dir.join("restic-latest"));
+    tools::resolve_restic_binaries()
+        .into_iter()
+        .map(|(label, real)| (label, isolated_restic(&real, label)))
+        .collect()
+}
 
-    assert!(
-        v018.exists(),
-        "restic-0.18.0 missing at {} (run scripts/bootstrap.sh)",
-        v018.display()
-    );
-    assert!(
-        vlatest.exists(),
-        "restic-latest missing at {} (run scripts/bootstrap.sh)",
-        vlatest.display()
-    );
-
-    vec![
-        ("restic-0.18.0", isolated_restic(&v018, "restic-0.18.0")),
-        ("restic-latest", isolated_restic(&vlatest, "restic-latest")),
-    ]
+/// The wrapped latest restic, for scenarios that need only one binary.
+pub fn latest_restic() -> PathBuf {
+    restic_test_binaries()
+        .into_iter()
+        .last()
+        .expect("restic binary")
+        .1
 }
 
 /// Writes (once, atomically) a shell wrapper that points `HOME`, `XDG_CONFIG_HOME`,
@@ -91,109 +69,72 @@ fn isolated_restic(real: &std::path::Path, tag: &str) -> PathBuf {
         return wrapper;
     }
     let tmp = root.join(format!("{tag}-isolated.sh.{}", std::process::id()));
-    std::fs::write(&tmp, &script).expect("write restic isolation wrapper");
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod restic isolation wrapper");
+    tools::write_executable(&tmp, &script);
     std::fs::rename(&tmp, &wrapper).expect("install restic isolation wrapper");
     wrapper
 }
 
-/// Returns the `rest-server` test binary installed by `scripts/bootstrap.sh`.
-pub fn rest_server_binary() -> PathBuf {
-    let bin = env::var_os("KESTIC_REST_SERVER")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dev_tools_bin_dir().join("rest-server"));
-    assert!(
-        bin.exists(),
-        "rest-server missing at {} (run scripts/bootstrap.sh)",
-        bin.display()
-    );
-    bin
-}
-
-/// Running local `rest-server` instance on a random loopback port with `.htpasswd` auth.
-pub struct RestServerGuard {
-    pub url: String,
-    child: std::process::Child,
-}
-
-impl Drop for RestServerGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Starts a local `rest-server` in `data_dir` on a free ephemeral port (`alice` / `secret`).
-pub fn start_rest_server_with_auth(data_dir: &std::path::Path) -> RestServerGuard {
-    use std::io::Read;
-    use std::net::{TcpListener, TcpStream};
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
-
-    std::fs::create_dir_all(data_dir).expect("mkdir rest-server data");
-    // SHA-1 htpasswd entry for user `alice`, password `secret`.
-    let htpasswd = data_dir.join(".htpasswd");
-    std::fs::write(&htpasswd, "alice:{SHA}5en6G6MezRroT3XKqkdPOmY/BfQ=\n")
-        .expect("write .htpasswd");
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    let port = listener.local_addr().expect("local addr").port();
-    drop(listener);
-
-    let addr = format!("127.0.0.1:{port}");
-    let child = Command::new(rest_server_binary())
-        .args([
-            "--path",
-            &data_dir.to_string_lossy(),
-            "--htpasswd-file",
-            &htpasswd.to_string_lossy(),
-            "--listen",
-            &addr,
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn rest-server");
-
-    let mut guard = RestServerGuard {
-        url: format!("http://{addr}/alice"),
-        child,
+/// Runs a real backup through the production path with the OS mountinfo and `HOME`
+/// (the `BackupExecutionContext` the daemon builds, minus its injected inspector).
+pub fn execute_backup<F>(
+    backup: &kestic_core::model::Backup,
+    destination: &kestic_core::model::Destination,
+    state_dir: &std::path::Path,
+    runtime: &kestic_core::restic::ResticRuntime<'_>,
+    cancel: Option<&kestic_core::restic::CancelHandle>,
+    extra_env: &[(&str, &str)],
+    on_event: F,
+) -> Result<kestic_core::restic::ResticExecutionResult, kestic_core::backup::BackupRunError>
+where
+    F: FnMut(&kestic_core::restic::ResticStreamEvent) + Send,
+{
+    let home = kestic_core::mount::current_home_dir();
+    let ctx = kestic_core::backup::BackupExecutionContext {
+        state_dir,
+        home_dir: home.as_deref(),
+        inspector: &kestic_core::mount::SystemMountInspector,
+        cancel,
+        extra_env,
     };
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if let Some(status) = guard.child.try_wait().expect("try_wait rest-server") {
-            panic!("rest-server exited prematurely: {status}");
-        }
-        if let Ok(mut stream) = TcpStream::connect_timeout(
-            &addr.parse().expect("socket addr"),
-            Duration::from_millis(100),
-        ) {
-            let mut buf = [0u8; 1];
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(20)));
-            let _ = stream.read(&mut buf);
-            return guard;
-        }
-        std::thread::sleep(Duration::from_millis(30));
-    }
-    panic!("rest-server did not start listening on {addr} in time");
+    kestic_core::backup::execute_backup_with_inspector(backup, destination, runtime, &ctx, on_event)
 }
 
-/// Allocates a guaranteed-closed loopback TCP port for connection-refused preflight tests.
-pub fn unused_loopback_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("local addr").port()
+/// Dry-run counterpart of [`execute_backup`] (production `execute_backup_dry_run_with`).
+pub fn execute_backup_dry_run<F>(
+    backup: &kestic_core::model::Backup,
+    destination: &kestic_core::model::Destination,
+    state_dir: &std::path::Path,
+    runtime: &kestic_core::restic::ResticRuntime<'_>,
+    cancel: Option<&kestic_core::restic::CancelHandle>,
+    extra_env: &[(&str, &str)],
+    on_event: F,
+) -> Result<kestic_core::backup::BackupDryRunResult, kestic_core::backup::BackupRunError>
+where
+    F: FnMut(&kestic_core::restic::ResticStreamEvent) + Send,
+{
+    let home = kestic_core::mount::current_home_dir();
+    let ctx = kestic_core::backup::BackupExecutionContext {
+        state_dir,
+        home_dir: home.as_deref(),
+        inspector: &kestic_core::mount::SystemMountInspector,
+        cancel,
+        extra_env,
+    };
+    kestic_core::backup::execute_backup_dry_run_with(backup, destination, runtime, &ctx, on_event)
+}
+
+/// Loads an existing `config.toml` through the production loader (`load_optional_config`).
+pub fn load_config(
+    path: &std::path::Path,
+) -> Result<kestic_core::config::AppConfig, kestic_core::config::ConfigError> {
+    kestic_core::config::load_optional_config(path)?.ok_or_else(|| {
+        kestic_core::config::ConfigError::Io(std::io::Error::from(std::io::ErrorKind::NotFound))
+    })
 }
 
 /// Writes an executable shell script emulating `kestic secret get <dest-id> [kind]` backed by
 /// a `FileSecretStore` hex file, allowing standalone `cargo test -p kestic-core` runs.
-pub fn write_secret_get_helper(
-    dir: &std::path::Path,
-    secrets_hex_path: &std::path::Path,
-) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
+fn write_secret_get_helper(dir: &std::path::Path, secrets_hex_path: &std::path::Path) -> PathBuf {
     let script_path = dir.join("kestic-helper");
     let script = format!(
         r#"#!/usr/bin/env python3
@@ -216,10 +157,7 @@ sys.exit(1)
 "#,
         path = secrets_hex_path.to_string_lossy()
     );
-    std::fs::write(&script_path, script).expect("write helper");
-    let mut perms = std::fs::metadata(&script_path).expect("meta").permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&script_path, perms).expect("chmod");
+    tools::write_executable(&script_path, &script);
     script_path
 }
 
@@ -228,4 +166,83 @@ pub fn restic_cache_dir(root: &std::path::Path) -> PathBuf {
     let dir = root.join("restic-cache");
     std::fs::create_dir_all(&dir).expect("mkdir restic-cache");
     dir
+}
+
+/// Owns everything a [`kestic_core::restic::ResticRuntime`] borrows: the resolved binary, the
+/// `kestic secret get` helper, a file secret store, a fake clock and a private restic cache.
+pub struct ResticRig {
+    pub resolved: kestic_core::provider::ResolvedRestic,
+    pub helper: PathBuf,
+    pub store: kestic_core::secrets::FileSecretStore,
+    pub clock: kestic_core::clock::FakeClock,
+    pub cache_dir: PathBuf,
+}
+
+impl ResticRig {
+    /// Builds the rig below `dir` for `restic_bin` with the fake clock set to `now`.
+    pub fn new(
+        dir: &std::path::Path,
+        restic_bin: &std::path::Path,
+        now: time::OffsetDateTime,
+    ) -> Self {
+        let secrets_hex = dir.join("secrets.hex");
+        Self {
+            resolved: kestic_core::provider::check_binary_version(restic_bin)
+                .expect("resolve restic"),
+            helper: write_secret_get_helper(dir, &secrets_hex),
+            store: kestic_core::secrets::FileSecretStore::new(&secrets_hex),
+            clock: kestic_core::clock::FakeClock::new(now),
+            cache_dir: restic_cache_dir(dir),
+        }
+    }
+
+    pub fn runtime(&self) -> kestic_core::restic::ResticRuntime<'_> {
+        self.runtime_with(&self.resolved)
+    }
+
+    /// Runtime of this rig that runs `resolved` (e.g. a spy wrapper) instead of its own binary.
+    pub fn runtime_with<'a>(
+        &'a self,
+        resolved: &'a kestic_core::provider::ResolvedRestic,
+    ) -> kestic_core::restic::ResticRuntime<'a> {
+        kestic_core::restic::ResticRuntime {
+            resolved,
+            kestic_binary: &self.helper,
+            secret_store: &self.store,
+            clock: &self.clock,
+            cache_dir: Some(&self.cache_dir),
+        }
+    }
+
+    /// Creates `repo_dir` and initialises a new local repository there.
+    pub fn init_local(
+        &self,
+        name: &str,
+        repo_dir: &std::path::Path,
+        password: &str,
+    ) -> kestic_core::model::Destination {
+        std::fs::create_dir_all(repo_dir).expect("mkdir repo");
+        let dest = kestic_core::model::Destination::new(
+            name,
+            kestic_core::model::DestinationKind::Local {
+                path: repo_dir.to_path_buf(),
+            },
+        )
+        .expect("local destination");
+        kestic_core::destination::setup_destination(
+            &dest,
+            kestic_core::destination::DestinationSetupMode::InitNew,
+            &kestic_core::secrets::SecretValue::from_str_secret(password),
+            None,
+            &self.runtime(),
+        )
+        .unwrap_or_else(|e| {
+            panic!(
+                "init of local repository {} with {} failed: {e}",
+                repo_dir.display(),
+                self.resolved.binary.display()
+            )
+        });
+        dest
+    }
 }

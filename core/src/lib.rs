@@ -22,6 +22,7 @@ pub mod retention;
 pub mod scheduler;
 pub mod secrets;
 pub mod snapshot;
+pub mod sync;
 
 /// Returns the crate version string.
 pub fn version() -> &'static str {
