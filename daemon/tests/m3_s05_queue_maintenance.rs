@@ -448,8 +448,8 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
 
 /// A maintenance run records its result for the run detail page: (a) the
 /// snapshots its pending `forget` removed per backup, (b) a successful `prune`, (c) a successful
-/// `check` and (d) the parsed `check` summary without errors, and (e) `GetRunDetail` delivers
-/// it to the GUI.
+/// `check` and (d) the parsed `check` summary without errors, (e) `GetRunDetail` delivers it to
+/// the GUI, and (f) the space prune freed is read from its text output.
 #[test]
 fn finding1_maintenance_run_records_removed_snapshots_prune_and_check() {
     run_isolated_test(
@@ -492,6 +492,11 @@ fn finding1_maintenance_run_records_removed_snapshots_prune_and_check() {
                     variant.label
                 );
                 assert!(stats.pruned, "{}: (b) prune recorded", variant.label);
+                assert!(
+                    stats.freed_bytes.is_some(),
+                    "{}: (f) freed space read from the prune output",
+                    variant.label
+                );
                 assert!(stats.checked, "{}: (c) check recorded", variant.label);
                 assert_eq!(
                     stats.check.as_ref().map(|c| c.num_errors),

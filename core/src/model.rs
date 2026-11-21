@@ -957,6 +957,8 @@ pub struct MaintenanceStats {
     pub forgets: Vec<MaintenanceForget>,
     /// `prune` ran and exited 0.
     pub pruned: bool,
+    /// Bytes `prune` freed; `None` when its output held no readable size.
+    pub freed_bytes: Option<u64>,
     /// `check` ran and exited 0.
     pub checked: bool,
     /// Parsed `check` summary, also present when `check` found errors.

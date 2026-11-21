@@ -127,6 +127,38 @@ pub fn parse_check_summary(lines: &[String]) -> Option<CheckSummary> {
     })
 }
 
+/// Bytes a real `restic prune` freed: the size in its text line
+/// `total prune: <n> blobs / <size>` (prune has no JSON output). `None` when the line is missing
+/// or unreadable.
+pub fn parse_prune_freed_bytes(lines: &[String]) -> Option<u64> {
+    let rest = lines
+        .iter()
+        .find_map(|l| l.trim().strip_prefix("total prune:"))?;
+    parse_restic_size(rest.split_once('/')?.1.trim())
+}
+
+/// A size as restic prints it (`"512 B"`, `"1.204 MiB"`) in bytes; decimals are cut off.
+fn parse_restic_size(text: &str) -> Option<u64> {
+    let (number, unit) = text.split_once(' ')?;
+    let shift: u32 = match unit.trim() {
+        "B" => 0,
+        "KiB" => 10,
+        "MiB" => 20,
+        "GiB" => 30,
+        "TiB" => 40,
+        _ => return None,
+    };
+    let (int, frac) = number.split_once('.').unwrap_or((number, ""));
+    let digits_only = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+    if int.is_empty() || frac.len() > 9 || !digits_only(int) || !digits_only(frac) {
+        return None;
+    }
+    let mantissa: u128 = format!("{int}{frac}").parse().ok()?;
+    let scale = 10u128.pow(u32::try_from(frac.len()).ok()?);
+    let bytes = mantissa.checked_mul(1u128 << shift)? / scale;
+    u64::try_from(bytes).ok()
+}
+
 /// Executes `restic prune --dry-run --no-lock` on `destination`.
 pub fn execute_prune_dry_run(
     destination: &Destination,

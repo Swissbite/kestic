@@ -962,16 +962,16 @@ fn m3_editor_guard_covers_pages_above_the_editor_and_window_close() {
     );
 }
 
-/// The run detail page of a maintenance run follows the UI spec (§7.8
-/// «Lauf-Arten»): history row and status line name the completed steps, the title says
-/// «Maintenance on …», the line below the status names the destination and the «Result» tab
-/// lists the removed snapshots per backup and the check result. Screenshots in English and
-/// German, German also narrow.
+/// AC-M3-05-9: the run detail page of a maintenance run shows (a) the title «Maintenance on …»,
+/// (b) the status line «Cleaned up and verified · …», (c) the destination below it, and in the
+/// «Result» tab (d) the removed snapshots per backup, (e) the freed space and (f) the check
+/// result; the C++ scenario checks each statement. Screenshots in English and German, German
+/// also narrow.
 #[test]
-fn finding1_maintenance_run_detail_shows_removed_snapshots_and_check_result() {
+fn ac_m3_05_9_maintenance_run_detail_shows_steps_freed_space_and_check_result() {
     run_isolated_test(
-        "finding1_maintenance_run_detail_shows_removed_snapshots_and_check_result",
-        "KESTIC_FINDING1_RUN_DETAIL_INNER",
+        "ac_m3_05_9_maintenance_run_detail_shows_steps_freed_space_and_check_result",
+        "KESTIC_AC_M3_05_9_INNER",
         |root| {
             let start = datetime!(2026-11-21 15:25:00 UTC);
             let seed_clock = FakeClock::new(start);
@@ -995,6 +995,7 @@ fn finding1_maintenance_run_detail_shows_removed_snapshots_and_check_result() {
                     removed_snapshots: Some(2),
                 }],
                 pruned: true,
+                freed_bytes: Some(1_262_485),
                 checked: true,
                 check: Some(CheckSummary::default()),
             });

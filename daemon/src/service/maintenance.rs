@@ -27,7 +27,7 @@ use kestic_core::backup::{execute_forget, is_forget_lock_failure, parse_forget_r
 use kestic_core::clock::Clock;
 use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use kestic_core::maintenance::{
-    detect_stale_locks, execute_check, execute_prune, parse_check_summary,
+    detect_stale_locks, execute_check, execute_prune, parse_check_summary, parse_prune_freed_bytes,
 };
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, MaintenanceForget, MaintenanceStats,
@@ -468,6 +468,7 @@ fn run_single_maintenance_step(
                 if is_prune {
                     out.prune_succeeded_at = ts;
                     out.stats.pruned = true;
+                    out.stats.freed_bytes = parse_prune_freed_bytes(&step_res.log_lines);
                 } else {
                     out.check_succeeded_at = ts;
                     out.stats.checked = true;
