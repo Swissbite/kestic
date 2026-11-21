@@ -9,6 +9,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # After the weekly CI image rebuild on main (ci-image.yml): builds the cache
+  # of the new week, so the first pull request of the week starts warm.
+  workflow_run:
+    workflows: [CI image]
+    types: [completed]
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -21,8 +27,10 @@ jobs:
   # Prebuilt image with base tools, en_US.UTF-8 locale, user `kesticci` and all
   # apt packages from bootstrap.sh; tagged by content hash of
   # .github/ci-image/Dockerfile + scripts/bootstrap.sh (built only if missing).
+  # After a workflow_run it only finds the image the CI image workflow built.
   ci-image:
     name: CI image
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     uses: ./.github/workflows/ci-image.yml
     permissions:
       contents: read
@@ -39,6 +47,17 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    # Each cache is restored and saved in separate steps; both use these lists.
+    env:
+      TOOLS_CACHE_PATHS: |
+        /home/kesticci/.cargo/bin
+        /home/kesticci/.rustup
+        /home/kesticci/.local/share/kestic-dev
+      BUILD_CACHE_PATHS: |
+        /home/kesticci/.cargo/registry/index
+        /home/kesticci/.cargo/registry/cache
+        /home/kesticci/.cargo/git/db
+        target
 
     steps:
       - name: Checkout repository
@@ -49,23 +68,31 @@ jobs:
           mkdir -p /home/kesticci/.cargo /home/kesticci/.rustup /home/kesticci/.local/share/kestic-dev
           chown -R kesticci:kesticci /home/kesticci "$GITHUB_WORKSPACE"
 
-      - name: Cache Cargo, Rust toolchain, dev tools, and target
-        uses: actions/cache@v6
+      # The toolchain and dev tools depend only on rust-toolchain.toml and
+      # bootstrap.sh, so a Cargo.lock change does not reinstall them.
+      - name: Restore Rust toolchain and dev tools
+        id: tools-cache
+        uses: actions/cache/restore@v6
         with:
-          path: |
-            /home/kesticci/.cargo/bin
-            /home/kesticci/.cargo/registry/index
-            /home/kesticci/.cargo/registry/cache
-            /home/kesticci/.cargo/git/db
-            /home/kesticci/.rustup
-            /home/kesticci/.local/share/kestic-dev
-            target
-          # v2: fresh start without the old multi-GB caches. No fallback across
-          # Cargo.lock changes: restoring an older cache would carry stale
-          # dependency builds forward, and cargo never deletes them.
-          key: ${{ runner.os }}-kestic-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('scripts/bootstrap.sh') }}
-          restore-keys: |
-            ${{ runner.os }}-kestic-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+          path: ${{ env.TOOLS_CACHE_PATHS }}
+          key: ${{ runner.os }}-kestic-tools-v1-${{ hashFiles('rust-toolchain.toml', 'scripts/bootstrap.sh') }}
+
+      # Build artifacts: a Cargo.lock change falls back to the newest cache of the
+      # same ISO week and toolchain and rebuilds only the changed crates. Cargo
+      # never deletes the replaced builds, so the key starts afresh every week
+      # (by the calendar, independent of the CI image) and the cache cannot grow
+      # without bound.
+      - name: Compute build cache key prefix
+        id: build-key
+        run: echo "prefix=${{ runner.os }}-kestic-build-v1-$(date -u +%G-W%V)-${{ hashFiles('rust-toolchain.toml') }}-" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Cargo registry and build artifacts
+        id: build-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.BUILD_CACHE_PATHS }}
+          key: ${{ steps.build-key.outputs.prefix }}${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ steps.build-key.outputs.prefix }}
 
       - name: Fix cache ownership and clear stale build artifacts
         run: |
@@ -85,6 +112,14 @@ jobs:
             ./scripts/bootstrap.sh
           "
 
+      - name: Save Rust toolchain and dev tools
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.TOOLS_CACHE_PATHS }}
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
+
+      # The log shows the cache steps below how far `just verify` got.
       - name: Run just verify as non-root user
         run: |
           su - kesticci -c "
@@ -93,12 +128,11 @@ jobs:
             export PATH=\"\$HOME/.cargo/bin:\$PATH\"
             export LANG=en_US.UTF-8
             export NEXTEST_PROFILE=ci
-            # Keep the cached target small: no incremental state (useless in a
-            # fresh CI checkout) and only line tables instead of full debuginfo
-            # (backtraces keep file:line).
+            # No incremental state: useless in a fresh CI checkout, and it would
+            # only bloat the cached target.
             export CARGO_INCREMENTAL=0
-            export CARGO_PROFILE_DEV_DEBUG=line-tables-only
-            just verify
+            mkdir -p target
+            just verify 2>&1 | tee target/verify.log
           "
 
       - name: Upload Debian package artifact
@@ -117,15 +151,37 @@ jobs:
           path: target/smoke-artifacts/*.png
           if-no-files-found: error
 
-      # Runs before the cache post-step saves `target`: drop the workspace's own
-      # build units (rebuilt on every commit anyway), so only dependencies are
-      # cached.
+      # The build cache is saved even when a test failed, as long as every build
+      # finished: otherwise one failing test on main leaves the following pull
+      # requests without a cache. `just` prints each line of `verify` before
+      # running it and stops at the first failing one; `just _smoke-run` comes
+      # right after the last build (`just _build-test-harness`).
+      - name: Check that all builds of just verify finished
+        id: builds
+        if: always() && steps.build-cache.outputs.cache-hit != 'true'
+        run: |
+          if grep -qx 'just _smoke-run' target/verify.log 2>/dev/null; then
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::just verify stopped before its last build; the build cache is not saved."
+          fi
+
+      # Only dependencies are cached; the workspace's own build units are rebuilt
+      # on every commit anyway.
       - name: Drop workspace build artifacts before caching
-        if: always()
+        if: always() && steps.builds.outputs.complete == 'true'
         run: |
           rm -rf target/debug/build/kestic-* target/release/build/kestic-* \
             target/debug/incremental target/release/incremental \
             target/debug/kestic target/release/kestic \
             target/debian target/smoke-artifacts target/kestic-gui \
-            target/kestic-test-fixtures
-          du -sh target || true
+            target/kestic-test-fixtures target/verify.log
+          du -sh target
+
+      - name: Save Cargo registry and build artifacts
+        if: always() && steps.builds.outputs.complete == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.BUILD_CACHE_PATHS }}
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
