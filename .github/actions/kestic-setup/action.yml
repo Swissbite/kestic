@@ -1,0 +1,98 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Shared start of every job in verify.yml that runs in the CI image: Rust
+# toolchain, dev tools and restic test binaries for user `kesticci`, optionally
+# the build cache of one kind of build.
+#
+# Toolchain and dev tools depend only on rust-toolchain.toml and bootstrap.sh,
+# so a Cargo.lock change does not reinstall them. A build cache falls back to the
+# newest cache of the same kind, ISO week and toolchain, so a Cargo.lock change
+# rebuilds only the changed crates. Cargo never deletes the replaced builds, so
+# the key starts afresh every week (by the calendar) and a cache cannot grow
+# without bound. The calling job saves the build cache itself, once its build
+# finished.
+
+name: Kestic CI setup
+description: Restores toolchain, dev tools and optionally a build cache; runs bootstrap.sh for user kesticci.
+
+inputs:
+  build-cache:
+    description: Kind of build cache to restore (clippy, dev, release); empty for none.
+    default: ""
+  save-tools-cache:
+    description: Save the toolchain and dev tools after a cache miss (one job per run does this).
+    default: "false"
+
+outputs:
+  build-cache-key:
+    description: Exact key of the build cache, for actions/cache/save.
+    value: ${{ steps.build-cache.outputs.cache-primary-key }}
+  build-cache-hit:
+    description: "'true' when the build cache was restored under its exact key."
+    value: ${{ steps.build-cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare non-root CI user directories
+      shell: bash
+      run: |
+        mkdir -p /home/kesticci/.cargo /home/kesticci/.rustup /home/kesticci/.local/share/kestic-dev
+        chown -R kesticci:kesticci /home/kesticci "$GITHUB_WORKSPACE"
+
+    - name: Restore Rust toolchain and dev tools
+      id: tools-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          /home/kesticci/.cargo/bin
+          /home/kesticci/.rustup
+          /home/kesticci/.local/share/kestic-dev
+        key: ${{ runner.os }}-kestic-tools-v1-${{ hashFiles('rust-toolchain.toml', 'scripts/bootstrap.sh') }}
+
+    - name: Compute build cache key prefix
+      id: build-key
+      if: inputs.build-cache != ''
+      shell: bash
+      run: echo "prefix=${{ runner.os }}-kestic-${{ inputs.build-cache }}-v1-$(date -u +%G-W%V)-${{ hashFiles('rust-toolchain.toml') }}-" >> "$GITHUB_OUTPUT"
+
+    # Same paths as `build-cache-paths` in verify.yml, which saves this cache.
+    - name: Restore Cargo registry and ${{ inputs.build-cache }} build artifacts
+      id: build-cache
+      if: inputs.build-cache != ''
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          /home/kesticci/.cargo/registry/index
+          /home/kesticci/.cargo/registry/cache
+          /home/kesticci/.cargo/git/db
+          target
+        key: ${{ steps.build-key.outputs.prefix }}${{ hashFiles('Cargo.lock') }}
+        restore-keys: ${{ steps.build-key.outputs.prefix }}
+
+    # The caches were restored by root; kesticci builds into them.
+    - name: Fix cache ownership
+      shell: bash
+      run: chown -R kesticci:kesticci /home/kesticci "$GITHUB_WORKSPACE"
+
+    - name: Bootstrap Rust toolchain and restic test binaries
+      shell: bash
+      run: |
+        su - kesticci -c "
+          set -euo pipefail
+          cd '$GITHUB_WORKSPACE'
+          KESTIC_BOOTSTRAP_SKIP_APT=1 \
+          KESTIC_BOOTSTRAP_COMPONENTS=rust,restic-0.18.0,restic-latest,rest-server,rclone \
+          ./scripts/bootstrap.sh
+        "
+
+    - name: Save Rust toolchain and dev tools
+      if: inputs.save-tools-cache == 'true' && steps.tools-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          /home/kesticci/.cargo/bin
+          /home/kesticci/.rustup
+          /home/kesticci/.local/share/kestic-dev
+        key: ${{ steps.tools-cache.outputs.cache-primary-key }}

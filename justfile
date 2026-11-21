@@ -12,18 +12,27 @@ fixtures_dir := absolute_path(env_var_or_default("CARGO_TARGET_DIR", "target")) 
 default:
     @just --list
 
-# Full suite pass (fmt, clippy, file sizes, deb build, smoke, nextest, deny, reuse)
+# The CI runs the same recipes in parallel jobs (.github/workflows/verify.yml).
+# Full suite pass (fmt, file sizes, deny, reuse, clippy, deb build, smoke, nextest)
 verify:
-    cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets -- -D warnings
-    cargo clippy --workspace --all-targets --features kestic-gui/test-harness -- -D warnings
-    just _check-file-sizes
+    just _static-checks
+    just _clippy
     just deb
     just _build-test-harness
     just _smoke-run
     just _nextest
+
+# Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE
+_static-checks:
+    cargo fmt --all -- --check
+    just _check-file-sizes
     cargo deny check
     reuse lint
+
+# clippy without and with the test harness
+_clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --features kestic-gui/test-harness -- -D warnings
 
 _check-file-sizes:
     #!/usr/bin/env bash
@@ -133,6 +142,18 @@ _nextest:
     fi
     cargo nextest run --workspace --features kestic-gui/test-harness -E 'package(kestic-test-support)'
     cargo nextest run --workspace --features kestic-gui/test-harness -E 'not package(kestic-test-support)'
+
+# Packs the test binaries of `_build-test-harness` into a nextest archive (CI)
+_nextest-archive archive:
+    cargo nextest archive --workspace --features kestic-gui/test-harness --archive-file {{quote(archive)}}
+
+# Runs the tests of a nextest archive that match `filter` (a nextest filterset), optionally only
+# one `partition` of them. The archive unpacks into ./target, so it must come from a checkout at
+# the same path (CI)
+_nextest-from-archive archive filter partition="":
+    cargo nextest run --archive-file {{quote(archive)}} --workspace-remap . --extract-to . \
+        --extract-overwrite -E {{quote(filter)}} \
+        {{ if partition == "" { "" } else { "--partition " + quote(partition) } }}
 
 # Showcase site (site/). Needs pnpm; pnpm provides Node
 # itself (devEngines.runtime). Screenshots come from target/smoke-artifacts/,
