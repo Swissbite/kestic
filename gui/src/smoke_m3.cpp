@@ -14,17 +14,17 @@ using namespace m3;
 int scenario_status_rows(const Ctx& c) {
     QQuickWindow* w = c.window;
     QQuickItem* ov = item_named(w, "overviewContent");
-    M3_CHECK(3001, ov && ov->isVisible(), "overviewContent must be visible");
+    M3_CHECK2(3001, ov, ov->isVisible(), "overviewContent must be visible");
     QAbstractItemModel* bm = model_named(w, "backupsModel");
-    M3_CHECK(3002, bm && bm->rowCount() == 3, "backupsModel must hold exactly 3 backups");
+    M3_CHECK2(3002, bm, bm->rowCount() == 3, "backupsModel must hold exactly 3 backups");
     M3_CHECK(3003, !c.backend->property("global_paused").toBool(), "schedules must not be paused");
     QQuickItem* banner = item_named(w, "globalPauseBanner");
-    M3_CHECK(3004, banner && !banner->isVisible(), "globalPauseBanner must be hidden while not paused");
+    M3_CHECK2(3004, banner, !banner->isVisible(), "globalPauseBanner must be hidden while not paused");
 
     const int ok = row_by_name(bm, QStringLiteral("Docs OK"));
     const int pending = row_by_name(bm, QStringLiteral("Docs Pending"));
     const int overdue = row_by_name(bm, QStringLiteral("Docs Overdue"));
-    M3_CHECK(3005, ok >= 0 && pending >= 0 && overdue >= 0, "rows Docs OK / Docs Pending / Docs Overdue missing");
+    M3_CHECK3(3005, ok >= 0, pending >= 0, overdue >= 0, "rows Docs OK / Docs Pending / Docs Overdue missing");
 
     const QString next_prefix = loc(c.lang, "Next: ", "Nächster Lauf: ");
 
@@ -60,7 +60,7 @@ int scenario_status_rows(const Ctx& c) {
 
     // «Back Up All Now»: hint BEFORE the click that not all backups can be backed up now.
     QQuickItem* hint = item_named(w, "backUpAllHintLabel");
-    M3_CHECK(3030, hint && hint->isVisible(), "backUpAllHintLabel must be visible");
+    M3_CHECK2(3030, hint, hint->isVisible(), "backUpAllHintLabel must be visible");
     M3_CHECK_EQ(
         3031,
         hint->property("text").toString(),
@@ -82,10 +82,10 @@ int scenario_status_rows(const Ctx& c) {
 }
 
 // AC-M3-14-4 (global), AC-M3-08-6, pause line format and pause/resume button.
-int scenario_pause_and_start_all(const Ctx& c) {
+int scenario_pause(const Ctx& c) {
     QQuickWindow* w = c.window;
     QQuickItem* ov = item_named(w, "overviewContent");
-    M3_CHECK(3101, ov && ov->isVisible(), "overviewContent must be visible");
+    M3_CHECK2(3101, ov, ov->isVisible(), "overviewContent must be visible");
 
     // AC-M3-14-4 (a)+(b global): four pause choices with their labels.
     struct Entry { const char* object; const char* en; const char* de; };
@@ -109,7 +109,7 @@ int scenario_pause_and_start_all(const Ctx& c) {
     wait_ms(200);
 
     QQuickItem* banner = item_named(w, "globalPauseBanner");
-    M3_CHECK(3121, banner && banner->isVisible(), "globalPauseBanner must be visible while paused");
+    M3_CHECK2(3121, banner, banner->isVisible(), "globalPauseBanner must be visible while paused");
     const QString line = c.backend->property("global_paused_line").toString();
     M3_CHECK_STARTS(3122, line, loc(c.lang, "Paused since ", "Pausiert seit "), "pause line language");
     M3_CHECK_EQ(3123, banner->property("text").toString(), line, "banner text equals pause line");
@@ -147,22 +147,26 @@ int scenario_pause_and_start_all(const Ctx& c) {
         "pause button text after resume"
     );
 
-    // AC-M3-08-6 (b): message names both skipped backups with their reason.
+    return 0;
+}
+
+// AC-M3-08-6 (b): «Back Up All Now» names both skipped backups with their reason.
+int scenario_start_all(const Ctx& c) {
+    QQuickWindow* w = c.window;
     QObject* back_up_all = object_named(w, "backUpAllAction");
     M3_CHECK(3140, back_up_all != nullptr, "backUpAllAction missing");
     QMetaObject::invokeMethod(back_up_all, "trigger");
-    M3_CHECK(
-        3141,
-        wait_until([&] { return !c.backend->property("start_all_skipped_message").toString().isEmpty(); }, 5000),
-        "no start-all message"
-    );
+    M3_CHECK(3141, wait_until([&] { return !c.backend->property("start_all_skipped_message").toString().isEmpty(); }, 5000), "no start-all message");
     wait_ms(200);
     QQuickItem* skipped = item_named(w, "startAllSkippedBanner");
-    M3_CHECK(3142, skipped && skipped->isVisible(), "startAllSkippedBanner must be visible");
+    M3_CHECK2(3142, skipped, skipped->isVisible(), "startAllSkippedBanner must be visible");
     const QString msg = skipped->property("text").toString();
     M3_CHECK_STARTS(3143, msg, loc(c.lang, "2 backups skipped: ", "2 Backups übersprungen: "), "message must count 2 skipped backups");
-    M3_CHECK(3144, msg.contains(QStringLiteral("Offline Media (") + loc(c.lang, "Source unavailable", "Quelle nicht verfügbar") + QLatin1Char(')')), "message must name Offline Media with reason");
-    M3_CHECK(3145, msg.contains(QStringLiteral("Locked Docs (") + loc(c.lang, "Permanent error, needs fixing", "Dauerhafter Fehler, muss behoben werden") + QLatin1Char(')')), "message must name Locked Docs with reason");
+    M3_CHECK(3144, msg.contains(QStringLiteral("Offline Media (") + loc(c.lang, "Source unavailable", "Quelle nicht verfügbar") + QLatin1Char(')')),
+        "message must name Offline Media with reason");
+    M3_CHECK(3145, msg.contains(QStringLiteral("Locked Docs (") + loc(c.lang, "Permanent error, needs fixing", "Dauerhafter Fehler, muss behoben werden") + QLatin1Char(')')),
+        "message must name Locked Docs with reason");
+    M3_CHECK(3146, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
 
@@ -171,7 +175,7 @@ int scenario_exit12_and_override(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString bid_err = backup_id_at(w, 0);
     const QString bid_cond = backup_id_at(w, 1);
-    M3_CHECK(3201, !bid_err.isEmpty() && !bid_cond.isEmpty(), "expected 2 backups");
+    M3_CHECK2(3201, !bid_err.isEmpty(), !bid_cond.isEmpty(), "expected 2 backups");
 
     // Overview: (a) «Update Saved Password…» replaces «Back Up Now» on the Exit-12 card.
     M3_CHECK(3202, count_visible(w, "overviewUpdatePasswordButton") == 1, "exactly one card must show «Update Saved Password…»");
@@ -201,34 +205,32 @@ int scenario_exit12_and_override(const Ctx& c) {
     M3_CHECK(3206, plain == 1, "the other ⋮ menu must offer plain «Back Up Now»");
 
     // Detail: (a)+(b)
-    QMetaObject::invokeMethod(w, "openBackupDetailById", Q_ARG(QVariant, bid_err));
-    wait_ms(250);
+    M3_CHECK(3209, open_backup_detail(w, bid_err), "backupDetailPage of the failed backup did not open");
     QQuickItem* inline_run = item_named(w, "backupDetailBackUpNowButton");
     QQuickItem* inline_pwd = item_named(w, "backupDetailUpdatePasswordButton");
     QObject* anyway_act = object_named(w, "backupDetailBackUpAnywayAction");
-    M3_CHECK(3210, inline_run && inline_pwd && anyway_act, "BackupDetailPage Exit 12 controls missing");
+    M3_CHECK3(3210, inline_run, inline_pwd, anyway_act, "BackupDetailPage Exit 12 controls missing");
     M3_CHECK(3211, !inline_run->isVisible(), "detail: «Back Up Now» must be replaced");
     M3_CHECK(3212, inline_pwd->isVisible(), "detail: «Update Saved Password…» must be shown");
     M3_CHECK(3213, anyway_act->property("visible").toBool(), "detail: «Back Up Now Anyway» must be in the ⋮ menu");
     M3_CHECK_EQ(3214, anyway_act->property("text").toString(), anyway_text, "detail anyway action text");
 
     // Unmet run conditions -> confirmation dialog (AC-M3-02-5, AC-M3-03-7).
-    QMetaObject::invokeMethod(w, "openBackupDetailById", Q_ARG(QVariant, bid_cond));
-    wait_ms(250);
+    M3_CHECK(3219, open_backup_detail(w, bid_cond), "backupDetailPage of the conditional backup did not open");
     QAbstractItemModel* bm = model_named(w, "backupsModel");
     const QString code_text = role_value(bm, 1, "pendingPrimaryCode").toString();
     M3_CHECK_EQ(3220, code_text, QStringLiteral("on_battery"), "pending code of battery backup");
     M3_CHECK(3221, !role_value(bm, 1, "pendingReasonsTooltip").toString().isEmpty(), "pending reasons tooltip must not be empty");
     QQuickItem* run_btn = find_visual_item(w, QStringLiteral("backupDetailBackUpNowButton"));
-    M3_CHECK(3222, run_btn && run_btn->isVisible() && run_btn->isEnabled(), "Back Up Now must be enabled to allow override");
+    M3_CHECK3(3222, run_btn, run_btn->isVisible(), run_btn->isEnabled(), "Back Up Now must be enabled to allow override");
     M3_CHECK(3223, click_ui_item(w, run_btn, "Back Up Now (on battery)"), "failed to click Back Up Now");
     QObject* override_dlg = object_named(w, "conditionOverrideDialog");
-    M3_CHECK(3224, wait_until([&] { return override_dlg && override_dlg->property("visible").toBool(); }, 3000), "conditionOverrideDialog did not open");
+    M3_CHECK(3224, wait_until([&] { return is_open(override_dlg); }, 3000), "conditionOverrideDialog did not open");
     QObject* override_act = object_named(w, "confirmConditionOverrideAction");
     M3_CHECK(3225, override_act != nullptr, "confirmConditionOverrideAction missing");
     M3_CHECK(3226, save_screenshot(w, c.out_path), "screenshot failed");
     QMetaObject::invokeMethod(override_act, "trigger");
-    M3_CHECK(3227, wait_until([&] { return !override_dlg->property("visible").toBool(); }, 3000), "dialog did not close after Run Anyway");
+    M3_CHECK(3227, wait_until([&] { return is_closed(override_dlg); }, 3000), "dialog did not close after Run Anyway");
     return 0;
 }
 
@@ -291,8 +293,10 @@ void run_m3_smoke_scenario(
     bool handled = true;
     if (scen == QLatin1String("m3-overview-status-rows")) {
         rc = scenario_status_rows(ctx);
-    } else if (scen == QLatin1String("m3-overview-pause-and-start-all")) {
-        rc = scenario_pause_and_start_all(ctx);
+    } else if (scen == QLatin1String("m3-overview-pause")) {
+        rc = scenario_pause(ctx);
+    } else if (scen == QLatin1String("m3-overview-start-all")) {
+        rc = scenario_start_all(ctx);
     } else if (scen == QLatin1String("m3-overview-progress-scanning")) {
         rc = scenario_backup_progress(ctx, true);
     } else if (scen == QLatin1String("m3-overview-progress-percent")) {

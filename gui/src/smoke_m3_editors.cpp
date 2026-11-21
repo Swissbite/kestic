@@ -13,12 +13,7 @@ QObject* dialog_action(QObject* dialog, const char* name) {
     return dialog ? dialog->findChild<QObject*>(QString::fromLatin1(name)) : nullptr;
 }
 
-void open_backup_detail(QQuickWindow* w, const QString& bid) {
-    QMetaObject::invokeMethod(w, "openBackupDetailById", Q_ARG(QVariant, bid));
-    wait_ms(250);
-}
-
-/// The editors save and close through their page footer actions only (decision 2026-11-19).
+/// The editors save and close through their page footer actions only.
 /// Names each visible button Kirigami generates for an action `<x>Action` as `<x>ActionButton`,
 /// so the checks below can click it and test its keyboard reachability and accessible name.
 void name_action_buttons(QQuickWindow* w) {
@@ -52,7 +47,7 @@ int check_unsaved_dialog_open(const Ctx& c, QObject* dialog, int base) {
     M3_CHECK(base, wait_until([&] { return is_open(dialog); }, 3000), "unsaved-changes dialog did not open");
     QObject* save = dialog_action(dialog, "unsavedSaveAction");
     QObject* discard = dialog_action(dialog, "unsavedDiscardAction");
-    M3_CHECK(base + 1, save && discard, "dialog must offer [Save] and [Discard]");
+    M3_CHECK2(base + 1, save, discard, "dialog must offer [Save] and [Discard]");
     M3_CHECK_EQ(base + 2, save->property("text").toString(), loc(c.lang, "Save", "Speichern"), "Save button label");
     M3_CHECK_EQ(base + 3, discard->property("text").toString(), loc(c.lang, "Discard", "Verwerfen"), "Discard button label");
     return 0;
@@ -70,7 +65,7 @@ int cancel_unsaved_dialog(QObject* dialog, int base) {
 // AC-M3-14-1: Schedule editor of a new backup.
 int scenario_schedule_defaults(const Ctx& c) {
     QQuickWindow* w = c.window;
-    // (a) The new-backup wizard summary shows «Daily at 12:00» as default (P35).
+    // (a) The new-backup wizard summary shows «Daily at 12:00» as default.
     QMetaObject::invokeMethod(w, "openNewBackupWizard", Q_ARG(QVariant, false));
     wait_ms(250);
     QObject* wiz = object_named(w, "newBackupWizard");
@@ -83,7 +78,7 @@ int scenario_schedule_defaults(const Ctx& c) {
 
     const QString bid = backup_id_at(w, 0);
     M3_CHECK(3303, !bid.isEmpty(), "no backup found");
-    open_backup_detail(w, bid);
+    M3_CHECK(4101, open_backup_detail(w, bid), "backupDetailPage did not open");
     QQuickItem* page = open_editor(w, "editScheduleRow", "backupScheduleEditPage");
     M3_CHECK(3304, page != nullptr, "backupScheduleEditPage did not open");
 
@@ -112,14 +107,14 @@ int scenario_schedule_validation(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString bid = backup_id_at(w, 0);
     M3_CHECK(3401, !bid.isEmpty(), "no backup found");
-    open_backup_detail(w, bid);
+    M3_CHECK(4102, open_backup_detail(w, bid), "backupDetailPage did not open");
     QQuickItem* page = open_editor(w, "editScheduleRow", "backupScheduleEditPage");
     M3_CHECK(3402, page != nullptr, "backupScheduleEditPage did not open");
     QQuickItem* combo = item_named(w, "scheduleFrequencyCombo");
     QQuickItem* save_btn = item_named(w, "saveScheduleActionButton");
     QObject* save_action = object_named(w, "saveScheduleAction");
     QQuickItem* banner = item_named(w, "scheduleValidationBanner");
-    M3_CHECK(3403, combo && save_btn && save_action && banner, "schedule editor controls missing");
+    M3_CHECK4(3403, combo, save_btn, save_action, banner, "schedule editor controls missing");
 
     // Case 1: weekdays without any weekday.
     combo->setProperty("currentIndex", 1);
@@ -128,7 +123,7 @@ int scenario_schedule_validation(const Ctx& c) {
     QQuickItem* monday = item_named(w, "weekdayButton_monday");
     QQuickItem* tuesday = item_named(w, "weekdayButton_tuesday");
     QQuickItem* frame = item_named(w, "scheduleWeekdaysFrame");
-    M3_CHECK(3404, monday && tuesday && frame, "weekday controls missing");
+    M3_CHECK3(3404, monday, tuesday, frame, "weekday controls missing");
     M3_CHECK(3405, click_ui_item(w, tuesday, "weekdayButton_tuesday"), "failed to select Tuesday");
     wait_ms(150);
     M3_CHECK(3406, save_btn->isEnabled(), "Save must be enabled for a valid weekday selection");
@@ -148,7 +143,7 @@ int scenario_schedule_validation(const Ctx& c) {
     wait_ms(150);
     QQuickItem* interval = item_named(w, "scheduleIntervalSpinBox");
     QQuickItem* interval_border = item_named(w, "scheduleIntervalInvalidBorder");
-    M3_CHECK(3420, interval && interval_border, "interval controls missing");
+    M3_CHECK2(3420, interval, interval_border, "interval controls missing");
     interval->setProperty("value", 0);
     wait_ms(200);
     M3_CHECK(3421, !save_btn->isEnabled(), "(a) Save button must be disabled for «every 0 days»");
@@ -159,7 +154,7 @@ int scenario_schedule_validation(const Ctx& c) {
 
     // The start date is chosen with the date picker (primary control), Escape closes it.
     QQuickItem* picker = item_named(w, "scheduleStartDatePickerButton");
-    M3_CHECK(3430, picker && click_ui_item(w, picker, "scheduleStartDatePickerButton"), "date picker button failed to click");
+    M3_CHECK2(3430, picker, click_ui_item(w, picker, "scheduleStartDatePickerButton"), "date picker button failed to click");
     QObject* popup = object_named(w, "scheduleStartDatePopup");
     M3_CHECK(3431, wait_until([&] { return is_open(popup); }, 2000), "date picker popup did not open");
     send_key(w, Qt::Key_Escape);
@@ -219,8 +214,8 @@ int scenario_schedule_unsaved(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString bid = backup_id_at(w, 0);
     const QString did = destination_id_at(w, 0);
-    M3_CHECK(3501, !bid.isEmpty() && !did.isEmpty(), "backup/destination missing");
-    open_backup_detail(w, bid);
+    M3_CHECK2(3501, !bid.isEmpty(), !did.isEmpty(), "backup/destination missing");
+    M3_CHECK(4103, open_backup_detail(w, bid), "backupDetailPage did not open");
     QQuickItem* page = open_editor(w, "editScheduleRow", "backupScheduleEditPage");
     M3_CHECK(3502, page != nullptr, "backupScheduleEditPage did not open");
     QQuickItem* combo = item_named(w, "scheduleFrequencyCombo");
@@ -285,7 +280,7 @@ int scenario_schedule_unsaved(const Ctx& c) {
     M3_CHECK(3563, w->property("pendingNavAction").isNull(), "failed Save must clear the pending navigation");
     QObject* overview_tab = object_named(w, "overviewTabAction");
     QObject* backups_tab = object_named(w, "backupsTabAction");
-    M3_CHECK(3564, overview_tab && backups_tab, "tab actions missing");
+    M3_CHECK2(3564, overview_tab, backups_tab, "tab actions missing");
     M3_CHECK(3565, backups_tab->property("checked").toBool(), "tab bar must show the Backups tab as checked");
     M3_CHECK(3566, !overview_tab->property("checked").toBool(), "tab bar must not show the Overview tab as checked");
 
@@ -299,7 +294,7 @@ int scenario_schedule_unsaved(const Ctx& c) {
     M3_CHECK(3572, read_config_bytes() == before, "(b) Discard must leave config.toml byte-identical");
 
     // [Save] persists (checked on the test side): every 4 days.
-    open_backup_detail(w, bid);
+    M3_CHECK(4104, open_backup_detail(w, bid), "backupDetailPage did not open");
     page = open_editor(w, "editScheduleRow", "backupScheduleEditPage");
     M3_CHECK(3580, page != nullptr, "schedule editor did not reopen");
     combo = item_named(w, "scheduleFrequencyCombo");
@@ -309,7 +304,7 @@ int scenario_schedule_unsaved(const Ctx& c) {
     item_named(w, "scheduleIntervalSpinBox")->setProperty("value", 4);
     wait_ms(200);
     QQuickItem* save_btn = item_named(w, "saveScheduleActionButton");
-    M3_CHECK(3581, save_btn && click_ui_item(w, save_btn, "saveScheduleActionButton"), "failed to click Save");
+    M3_CHECK2(3581, save_btn, click_ui_item(w, save_btn, "saveScheduleActionButton"), "failed to click Save");
     M3_CHECK(3582, wait_until([&] { return read_config_bytes() != before; }, 5000), "Save must write config.toml");
     M3_CHECK(3583, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
@@ -332,14 +327,14 @@ int scenario_conditions_defaults(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString bid = backup_id_at(w, 0);
     M3_CHECK(3601, !bid.isEmpty(), "no backup found");
-    open_backup_detail(w, bid);
+    M3_CHECK(4105, open_backup_detail(w, bid), "backupDetailPage did not open");
     QQuickItem* page = open_editor(w, "editConditionsRow", "backupConditionsEditPage");
     M3_CHECK(3602, page != nullptr, "backupConditionsEditPage did not open");
     QQuickItem* ac = item_named(w, "requireAcCheck");
     QQuickItem* net = item_named(w, "requireNetworkCheck");
     QQuickItem* metered = item_named(w, "skipMeteredCheck");
     QQuickItem* home = item_named(w, "knownNetworkCheck_HomeWifi");
-    M3_CHECK(3603, ac && net && metered && home, "conditions controls missing");
+    M3_CHECK4(3603, ac, net, metered, home, "conditions controls missing");
 
     // (a) defaults: only on AC power + only with network
     M3_CHECK(3604, ac->property("checked").toBool(), "(a) «only on AC power» must be active");
@@ -372,20 +367,19 @@ int scenario_conditions_defaults(const Ctx& c) {
 }
 
 // AC-M3-14-9 for the run-conditions editor.
-// M3 manual acceptance (2026-11-19, decision 2026-11-20): local destination, no network
-// conditions in the run-condition editor.
+// A local destination offers no network conditions in the run-condition editor.
 int scenario_conditions_local(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString bid = backup_id_at(w, 0);
     M3_CHECK(3780, !bid.isEmpty(), "no backup found");
-    open_backup_detail(w, bid);
+    M3_CHECK(4106, open_backup_detail(w, bid), "backupDetailPage did not open");
     QQuickItem* page = open_editor(w, "editConditionsRow", "backupConditionsEditPage");
     M3_CHECK(3781, page != nullptr, "backupConditionsEditPage did not open");
     QQuickItem* hint = item_named(w, "localDestinationNetworkHint");
     QQuickItem* net = item_named(w, "requireNetworkCheck");
     QQuickItem* metered = item_named(w, "skipMeteredCheck");
-    M3_CHECK(3782, hint && hint->isVisible(), "(a) local destination hint must be visible");
-    M3_CHECK(3783, net && !net->isVisible() && metered && !metered->isVisible(), "(b) network conditions must be hidden");
+    M3_CHECK2(3782, hint, hint->isVisible(), "(a) local destination hint must be visible");
+    M3_CHECK4(3783, net, !net->isVisible(), metered, !metered->isVisible(), "(b) network conditions must be hidden");
     M3_CHECK(3784, !page->property("dirty").toBool(), "(c) untouched editor must not be dirty");
     M3_CHECK(3785, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
@@ -396,7 +390,7 @@ int scenario_conditions_unsaved(const Ctx& c) {
     const QString bid = backup_id_at(w, 0);
     M3_CHECK(3701, !bid.isEmpty(), "no backup found");
     const QByteArray before = read_config_bytes();
-    open_backup_detail(w, bid);
+    M3_CHECK(4107, open_backup_detail(w, bid), "backupDetailPage did not open");
     QQuickItem* page = open_editor(w, "editConditionsRow", "backupConditionsEditPage");
     M3_CHECK(3702, page != nullptr, "backupConditionsEditPage did not open");
     QQuickItem* metered = item_named(w, "skipMeteredCheck");
@@ -425,7 +419,7 @@ int scenario_conditions_unsaved(const Ctx& c) {
     M3_CHECK(3732, read_config_bytes() == before, "(b) Discard must leave config.toml byte-identical");
 
     // The editor's own prompt (back/close) offers the same localized buttons.
-    open_backup_detail(w, bid);
+    M3_CHECK(4108, open_backup_detail(w, bid), "backupDetailPage did not open");
     page = open_editor(w, "editConditionsRow", "backupConditionsEditPage");
     M3_CHECK(3740, page != nullptr, "conditions editor did not reopen");
     metered = item_named(w, "skipMeteredCheck");
@@ -434,7 +428,7 @@ int scenario_conditions_unsaved(const Ctx& c) {
     M3_CHECK(3742, click_ui_item(w, home, "knownNetworkCheck_HomeWifi"), "failed to click HomeWifi");
     wait_ms(150);
     QQuickItem* close_btn = item_named(w, "closeConditionsActionButton");
-    M3_CHECK(3743, close_btn && click_ui_item(w, close_btn, "closeConditionsActionButton"), "failed to click Cancel button");
+    M3_CHECK2(3743, close_btn, click_ui_item(w, close_btn, "closeConditionsActionButton"), "failed to click Cancel button");
     QObject* own = object_named(w, "unsavedConditionsDialog");
     rc = check_unsaved_dialog_open(c, own, 3750);
     if (rc != 0) {
@@ -447,7 +441,7 @@ int scenario_conditions_unsaved(const Ctx& c) {
     M3_CHECK(3762, page->property("dirty").toBool(), "edits must survive Cancel of the editor prompt");
     // [Save] persists (checked on the test side).
     QQuickItem* save_btn = item_named(w, "saveConditionsActionButton");
-    M3_CHECK(3763, save_btn && click_ui_item(w, save_btn, "saveConditionsActionButton"), "failed to click Save");
+    M3_CHECK2(3763, save_btn, click_ui_item(w, save_btn, "saveConditionsActionButton"), "failed to click Save");
     M3_CHECK(3764, wait_until([&] { return read_config_bytes() != before; }, 5000), "Save must write config.toml");
     M3_CHECK(3765, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
@@ -458,7 +452,7 @@ int scenario_pause_menu(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString bid = backup_id_at(w, 0);
     M3_CHECK(3801, !bid.isEmpty(), "no backup found");
-    open_backup_detail(w, bid);
+    M3_CHECK(4109, open_backup_detail(w, bid), "backupDetailPage did not open");
 
     struct Entry { const char* object; const char* en; const char* de; };
     const Entry entries[] = {
@@ -509,8 +503,27 @@ int scenario_pause_menu(const Ctx& c) {
     return 0;
 }
 
-// AC-M3-14-5, AC-M3-05-7 (a), AC-M3-14-6 (maintenance editor).
-int scenario_maintenance(const Ctx& c) {
+const QStringList kMaintenanceControls {
+    QStringLiteral("pruneFrequencyCombo"),
+    QStringLiteral("pruneHourSpin"),
+    QStringLiteral("pruneMinuteSpin"),
+    QStringLiteral("checkFrequencyCombo"),
+    QStringLiteral("checkHourSpin"),
+    QStringLiteral("checkMinuteSpin"),
+    QStringLiteral("closeMaintenanceActionButton"),
+    QStringLiteral("saveMaintenanceActionButton"),
+};
+
+// Switches `combo` to `index` the way a user pick does.
+void pick_combo_index(QQuickItem* combo, int index) {
+    combo->setProperty("currentIndex", index);
+    QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, index));
+    wait_ms(150);
+}
+
+// AC-M3-14-5 (a) and (b), AC-M3-05-7 (a): defaults of the maintenance editor, then the prune
+// preview that must be shown before a changed clean-up schedule can be confirmed.
+int scenario_maintenance_prune_confirm(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString did = destination_id_at(w, 0);
     M3_CHECK(3901, !did.isEmpty(), "no destination found");
@@ -527,46 +540,30 @@ int scenario_maintenance(const Ctx& c) {
         Q_ARG(QString, QStringLiteral("{\"prune\":{\"kind\":\"weekly\",\"weekday\":\"sunday\",\"hour\":12,\"minute\":0},\"check\":{\"kind\":\"monthly\",\"nth\":\"first\",\"weekday\":\"sunday\",\"hour\":12,\"minute\":0}}"))
     );
     M3_CHECK(3902, summary.contains(loc(c.lang, "Clean up: Sundays at 12:00", "Aufräumen: sonntags 12:00")), "(a) clean-up default summary");
-    M3_CHECK(3903, summary.contains(loc(c.lang, "Verify: first Sunday of the month at 12:00", "Prüfen: erster Sonntag im Monat 12:00")), "(a) verify default summary");
+    M3_CHECK(3903, summary.contains(loc(c.lang, "Verify: first Sunday of the month at 12:00", "Prüfen: erster Sonntag im Monat 12:00")),
+        "(a) verify default summary");
     QQuickItem* content = w->contentItem();
     M3_CHECK(3905, has_visible_text(content, loc(c.lang, "Next verify:", "Nächstes Prüfen:")), "detail must show «Next verify:»");
-    // M3 manual acceptance (2026-11-19): one backup is named in the singular.
-    M3_CHECK(3940, has_visible_text(content, loc(c.lang, "1 configured backup", "1 konfiguriertes Backup")), "detail must show the singular «1 configured backup»");
-    M3_CHECK(3941, !has_visible_text(content, loc(c.lang, "1 configured backups", "1 konfigurierte Backups")), "detail must not use the plural for one backup");
+    // One backup is named in the singular.
+    M3_CHECK(3940, has_visible_text(content, loc(c.lang, "1 configured backup", "1 konfiguriertes Backup")),
+        "detail must show the singular «1 configured backup»");
+    M3_CHECK(3941, !has_visible_text(content, loc(c.lang, "1 configured backups", "1 konfigurierte Backups")),
+        "detail must not use the plural for one backup");
 
     QQuickItem* page = open_editor(w, "editMaintenanceRow", "destinationMaintenancePage");
     M3_CHECK(3906, page != nullptr, "destinationMaintenancePage did not open");
-    const QStringList controls {
-        QStringLiteral("pruneFrequencyCombo"),
-        QStringLiteral("pruneHourSpin"),
-        QStringLiteral("pruneMinuteSpin"),
-        QStringLiteral("checkFrequencyCombo"),
-        QStringLiteral("checkHourSpin"),
-        QStringLiteral("checkMinuteSpin"),
-        QStringLiteral("closeMaintenanceActionButton"),
-        QStringLiteral("saveMaintenanceActionButton"),
-    };
     M3_CHECK_EQ(3907, spin_text(item_named(w, "pruneHourSpin")), QStringLiteral("12"), "prune hour field");
     M3_CHECK_EQ(3908, spin_text(item_named(w, "pruneMinuteSpin")), QStringLiteral("00"), "prune minute field is two-digit");
-    const QString unnamed = first_unnamed(w, controls);
-    M3_CHECK(3909, unnamed.isEmpty(), qPrintable(QStringLiteral("(b) control without Accessible.name: ") + unnamed));
 
-    QQuickItem* prune_combo = item_named(w, "pruneFrequencyCombo");
-    prune_combo->setProperty("currentIndex", 2); // Daily
-    QMetaObject::invokeMethod(prune_combo, "activated", Q_ARG(int, 2));
-    wait_ms(150);
-    prune_combo->forceActiveFocus(Qt::TabFocusReason);
-    QCoreApplication::processEvents();
-    const QStringList missing = tab_missing(w, controls, 80);
-    M3_CHECK(3910, missing.isEmpty(), qPrintable(QStringLiteral("(a) not reachable by keyboard: ") + missing.join(QLatin1Char(','))));
+    pick_combo_index(item_named(w, "pruneFrequencyCombo"), 2); // Daily
 
     // AC-M3-14-5 (b) / AC-M3-05-7 (a): changing the clean-up schedule asks for confirmation
     // and shows the dry-run preview result before it can be confirmed.
     QQuickItem* save_btn = item_named(w, "saveMaintenanceActionButton");
-    M3_CHECK(3911, save_btn && save_btn->isEnabled(), "Save must be enabled after changing the clean-up schedule");
+    M3_CHECK2(3911, save_btn, save_btn->isEnabled(), "Save must be enabled after changing the clean-up schedule");
     M3_CHECK(3912, click_ui_item(w, save_btn, "saveMaintenanceActionButton"), "failed to click Save");
     QObject* dlg = object_named(w, "pruneConfirmDialog");
-    M3_CHECK(3913, wait_until([&] { return dlg && dlg->property("visible").toBool(); }, 3000), "pruneConfirmDialog did not open");
+    M3_CHECK(3913, wait_until([&] { return is_open(dlg); }, 3000), "pruneConfirmDialog did not open");
     QObject* confirm = dialog_action(dlg, "confirmPruneSaveAction");
     M3_CHECK(3914, confirm != nullptr, "confirmPruneSaveAction missing");
     if (!page->property("previewSettled").toBool()) {
@@ -575,7 +572,7 @@ int scenario_maintenance(const Ctx& c) {
     M3_CHECK(3916, wait_until([&] { return page->property("previewSettled").toBool(); }, 20000), "preview did not load or fail");
     wait_ms(200);
     QQuickItem* result = item_named(w, "prunePreviewSummaryLabel");
-    M3_CHECK(3917, result && result->isVisible(), "(a) preview result must be shown before confirming");
+    M3_CHECK2(3917, result, result->isVisible(), "(a) preview result must be shown before confirming");
     M3_CHECK_EQ(
         3918,
         result->property("text").toString(),
@@ -586,15 +583,35 @@ int scenario_maintenance(const Ctx& c) {
     M3_CHECK(3920, save_screenshot(w, c.out_path), "screenshot failed");
     QMetaObject::invokeMethod(confirm, "trigger");
     wait_ms(300);
+    return 0;
+}
 
-    // A second, discarded edit leaves the persisted check schedule untouched.
-    QQuickItem* check_combo = item_named(w, "checkFrequencyCombo");
-    check_combo->setProperty("currentIndex", 3); // manual only
-    QMetaObject::invokeMethod(check_combo, "activated", Q_ARG(int, 3));
-    wait_ms(150);
+// AC-M3-14-6 (maintenance editor): every control has an accessible name and is reachable by
+// keyboard; a discarded check-frequency change leaves the persisted schedule untouched.
+int scenario_maintenance_discard(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString did = destination_id_at(w, 0);
+    M3_CHECK(3942, !did.isEmpty(), "no destination found");
+    QMetaObject::invokeMethod(w, "openDestinationDetailById", Q_ARG(QVariant, did));
+    wait_ms(250);
+    QQuickItem* page = open_editor(w, "editMaintenanceRow", "destinationMaintenancePage");
+    M3_CHECK(3943, page != nullptr, "destinationMaintenancePage did not open");
+
+    const QString unnamed = first_unnamed(w, kMaintenanceControls);
+    M3_CHECK(3909, unnamed.isEmpty(), qPrintable(QStringLiteral("(b) control without Accessible.name: ") + unnamed));
+
+    QQuickItem* prune_combo = item_named(w, "pruneFrequencyCombo");
+    pick_combo_index(prune_combo, 2); // Daily
+    prune_combo->forceActiveFocus(Qt::TabFocusReason);
+    QCoreApplication::processEvents();
+    const QStringList missing = tab_missing(w, kMaintenanceControls, 80);
+    M3_CHECK(3910, missing.isEmpty(), qPrintable(QStringLiteral("(a) not reachable by keyboard: ") + missing.join(QLatin1Char(','))));
+
+    pick_combo_index(item_named(w, "checkFrequencyCombo"), 3); // manual only
     send_key(w, Qt::Key_Escape);
     QObject* unsaved = object_named(w, "unsavedMaintenanceDialog");
     M3_CHECK(3921, wait_until([&] { return is_open(unsaved); }, 3000), "unsavedMaintenanceDialog did not open on Escape");
+    M3_CHECK(3944, save_screenshot(w, c.out_path), "screenshot failed");
     QMetaObject::invokeMethod(dialog_action(unsaved, "unsavedDiscardAction"), "trigger");
     wait_ms(250);
     return 0;
@@ -642,7 +659,8 @@ int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handle
     if (scen == QLatin1String("m3-conditions-editor-unsaved")) return scenario_conditions_unsaved(ctx);
     if (scen == QLatin1String("m3-conditions-editor-local")) return scenario_conditions_local(ctx);
     if (scen == QLatin1String("m3-pause-menu-keyboard")) return scenario_pause_menu(ctx);
-    if (scen == QLatin1String("m3-maintenance-editor")) return scenario_maintenance(ctx);
+    if (scen == QLatin1String("m3-maintenance-editor-prune-confirm")) return scenario_maintenance_prune_confirm(ctx);
+    if (scen == QLatin1String("m3-maintenance-editor-discard")) return scenario_maintenance_discard(ctx);
     if (scen == QLatin1String("m3-settings-monitoring")) return scenario_settings(ctx);
     *handled = false;
     return 0;

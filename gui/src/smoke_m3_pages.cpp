@@ -40,19 +40,10 @@ void collect_texts(QQuickItem* root, QStringList& out) {
     }
 }
 
-/// Finishes asynchronous QML creation (offscreen nothing drives it between events).
-void finish_incubation(QQuickWindow* window) {
-    QQmlEngine* engine = qmlEngine(window);
-    QQmlIncubationController* controller = engine ? engine->incubationController() : nullptr;
-    if (!controller) {
-        return;
-    }
-    QElapsedTimer elapsed;
-    elapsed.start();
-    while (controller->incubatingObjectCount() > 0 && elapsed.elapsed() < 2000) {
-        controller->incubateFor(10);
-    }
-}
+struct PageRecord {
+    bool has_texts;
+    bool saved;
+};
 
 struct PageDump {
     QFile* file;
@@ -61,7 +52,7 @@ struct PageDump {
     int pages = 0;
 
     /// Records the texts of `window` under `name` and saves a screenshot of it.
-    bool record(const QString& name, QQuickWindow* window) {
+    PageRecord record(const QString& name, QQuickWindow* window) {
         wait_ms(300);
         finish_incubation(window);
         QStringList texts;
@@ -77,7 +68,7 @@ struct PageDump {
         const QString shot = screenshot_dir + QStringLiteral("/m3-page-") + name + QLatin1Char('-') + lang + QStringLiteral(".png");
         const bool saved = save_screenshot(window, shot);
         finish_incubation(window);
-        return !texts.isEmpty() && saved;
+        return { !texts.isEmpty(), saved };
     }
 };
 
@@ -87,16 +78,23 @@ bool page_visible(QQuickWindow* window, const char* name) {
     return wait_until([&] { return item_named(window, name) != nullptr; }, 3000);
 }
 
-/// Opens the backup detail page by clicking the backup card in the backups tab.
+/// Opens the backup detail page from the backups tab.
 bool open_detail(QQuickWindow* w, const QString& bid) {
     QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 1));
     wait_ms(150);
-    QMetaObject::invokeMethod(w, "openBackupDetailById", Q_ARG(QVariant, bid));
-    const bool ok = page_visible(w, "backupDetailPage");
-    wait_ms(200);
+    const bool opened = open_backup_detail(w, bid);
     finish_incubation(w);
-    return ok;
+    return opened;
 }
+
+/// Records the texts and a screenshot of `window` as page `name`: both must be there.
+#define M3_RECORD(code, dump, name, window, what)                                      \
+    do {                                                                               \
+        const int record_code_ = (code);                                               \
+        const PageRecord recorded_ = (dump).record((name), (window));                  \
+        M3_CHECK(record_code_, recorded_.has_texts, what " page without texts");     \
+        M3_CHECK(record_code_, recorded_.saved, what " page screenshot not saved");  \
+    } while (0)
 
 int scenario_all_pages(const Ctx& c) {
     QQuickWindow* w = c.window;
@@ -108,7 +106,7 @@ int scenario_all_pages(const Ctx& c) {
 
     const QString bid = backup_id_at(w, 0);
     const QString did = destination_id_at(w, 0);
-    M3_CHECK(4903, !bid.isEmpty() && !did.isEmpty(), "needs one backup and one destination");
+    M3_CHECK2(4903, !bid.isEmpty(), !did.isEmpty(), "needs one backup and one destination");
     const QString bname = role_value(model_named(w, "backupsModel"), 0, "name").toString();
 
     struct Tab {
@@ -124,18 +122,18 @@ int scenario_all_pages(const Ctx& c) {
     for (int i = 0; i < 4; ++i) {
         QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, i));
         M3_CHECK(4910 + i, page_visible(w, tabs[i].page), tabs[i].page);
-        M3_CHECK(4915 + i, dump.record(QString::fromLatin1(tabs[i].name), w), "tab without texts or screenshot");
+        M3_RECORD(4915 + i, dump, QString::fromLatin1(tabs[i].name), w, "tab");
         if (i == 1) {
             // AC-M0-04-1: the QML list shows exactly the rows of the Rust list model.
             QObject* list = object_named(w, "backupsListView");
             QAbstractItemModel* backups = model_named(w, "backupsModel");
-            M3_CHECK(4904, list && backups && backups->rowCount() > 0, "backups list or model missing");
+            M3_CHECK3(4904, list, backups, backups->rowCount() > 0, "backups list or model missing");
             M3_CHECK(4905, list->property("count").toInt() == backups->rowCount(), "list shows other rows than the model");
         }
     }
 
     M3_CHECK(4919, open_detail(w, bid), "backupDetailPage did not open");
-    M3_CHECK(4920, dump.record(QStringLiteral("backup-detail"), w), "detail without texts");
+    M3_RECORD(4920, dump, QStringLiteral("backup-detail"), w, "backup detail");
 
     // Editors open the way a user opens them: a click on their row in the detail page.
     struct Editor {
@@ -156,15 +154,16 @@ int scenario_all_pages(const Ctx& c) {
     for (const Editor& e : editors) {
         M3_CHECK(code++, open_detail(w, bid), "backupDetailPage did not open");
         QQuickItem* row = find_visual_item(w, QString::fromLatin1(e.row));
-        M3_CHECK(code++, row && click_ui_item(w, row, e.row), e.row);
+        M3_CHECK(code, row, e.row);
+        M3_CHECK(code++, click_ui_item(w, row, e.row), e.row);
         M3_CHECK(code++, page_visible(w, e.page), e.page);
-        M3_CHECK(code++, dump.record(QString::fromLatin1(e.name), w), "editor without texts or screenshot");
+        M3_RECORD(code++, dump, QString::fromLatin1(e.name), w, "editor");
     }
 
     M3_CHECK(4960, open_detail(w, bid), "backupDetailPage did not open");
     QMetaObject::invokeMethod(w, "openBackupSnapshotsPage", Q_ARG(QVariant, bid), Q_ARG(QVariant, bname));
     M3_CHECK(4961, page_visible(w, "backupSnapshotsPage"), "backupSnapshotsPage");
-    M3_CHECK(4962, dump.record(QStringLiteral("backup-snapshots"), w), "snapshots page without texts");
+    M3_RECORD(4962, dump, QStringLiteral("backup-snapshots"), w, "snapshots");
 
     struct DestPage {
         const char* name;
@@ -188,27 +187,27 @@ int scenario_all_pages(const Ctx& c) {
             QMetaObject::invokeMethod(w, p.method, Q_ARG(QVariant, did));
         }
         M3_CHECK(code++, page_visible(w, p.page), p.page);
-        M3_CHECK(code++, dump.record(QString::fromLatin1(p.name), w), "destination page without texts");
+        M3_RECORD(code++, dump, QString::fromLatin1(p.name), w, "destination");
     }
 
     QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
     wait_ms(150);
     QMetaObject::invokeMethod(w, "openNewBackupWizard", Q_ARG(QVariant, false));
     M3_CHECK(4980, page_visible(w, "newBackupWizard"), "newBackupWizard");
-    M3_CHECK(4981, dump.record(QStringLiteral("new-backup-wizard"), w), "backup wizard without texts");
+    M3_RECORD(4981, dump, QStringLiteral("new-backup-wizard"), w, "backup wizard");
     QMetaObject::invokeMethod(w, "closeWizardLayer");
     wait_ms(150);
     QMetaObject::invokeMethod(w, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QStringLiteral("init")));
     M3_CHECK(4982, page_visible(w, "addDestinationWizard"), "addDestinationWizard");
-    M3_CHECK(4983, dump.record(QStringLiteral("add-destination-wizard"), w), "destination wizard without texts");
+    M3_RECORD(4983, dump, QStringLiteral("add-destination-wizard"), w, "destination wizard");
     QMetaObject::invokeMethod(w, "closeWizardLayer");
     wait_ms(150);
 
     QMetaObject::invokeMethod(w, "openSettingsWindow");
     wait_ms(250);
     auto* settings = qobject_cast<QQuickWindow*>(object_named(w, "settingsWindow"));
-    M3_CHECK(4990, settings != nullptr && settings->isVisible(), "settingsWindow not open");
-    M3_CHECK(4991, dump.record(QStringLiteral("settings"), settings), "settings without texts");
+    M3_CHECK2(4990, settings != nullptr, settings->isVisible(), "settingsWindow not open");
+    M3_RECORD(4991, dump, QStringLiteral("settings"), settings, "settings");
     settings->close();
 
     file.close();
@@ -219,7 +218,7 @@ int scenario_all_pages(const Ctx& c) {
     return 0;
 }
 
-/// AC-M0-11-8 (U12): in the backup detail page, Ctrl+Shift+B starts "Back Up Now" for the shown
+/// AC-M0-11-8: in the backup detail page, Ctrl+Shift+B starts "Back Up Now" for the shown
 /// backup, and the action shows the shortcut. Without an open backup (overview) it starts nothing.
 int scenario_backup_now_shortcut(const Ctx& c) {
     QQuickWindow* w = c.window;

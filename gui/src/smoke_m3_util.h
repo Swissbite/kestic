@@ -31,10 +31,21 @@ struct Ctx {
 #define M3_CHECK(code, cond, msg)                                                      \
     do {                                                                               \
         if (!(cond)) {                                                                 \
-            std::fprintf(stderr, "M3 check failed (%d): %s\n", (code), (msg));         \
+            std::fprintf(stderr, "M3 check failed (%d): %s [%s]\n", (code), (msg), #cond); \
             return (code);                                                             \
         }                                                                              \
     } while (0)
+
+// N independent checks that share one message; each condition is checked (and named) on its own.
+#define M3_CHECK2(code, c1, c2, msg) \
+    M3_CHECK(code, c1, msg);         \
+    M3_CHECK(code, c2, msg)
+#define M3_CHECK3(code, c1, c2, c3, msg) \
+    M3_CHECK2(code, c1, c2, msg);        \
+    M3_CHECK(code, c3, msg)
+#define M3_CHECK4(code, c1, c2, c3, c4, msg) \
+    M3_CHECK3(code, c1, c2, c3, msg);        \
+    M3_CHECK(code, c4, msg)
 
 #define M3_CHECK_EQ(code, actual, expected, what)                                      \
     do {                                                                               \
@@ -75,20 +86,6 @@ inline QString loc(const QString& lang, const char* en, const char* de) {
     return QString::fromUtf8(lang == QLatin1String("de") ? de : en);
 }
 
-inline QAbstractItemModel* model_named(QQuickWindow* window, const char* name) {
-    return qobject_cast<QAbstractItemModel*>(window->findChild<QObject*>(QString::fromLatin1(name)));
-}
-
-inline QVariant role_value(QAbstractItemModel* model, int row, const char* role) {
-    const auto names = model->roleNames();
-    for (auto it = names.constBegin(); it != names.constEnd(); ++it) {
-        if (it.value() == role) {
-            return model->data(model->index(row, 0), it.key());
-        }
-    }
-    return QVariant();
-}
-
 inline int row_by_name(QAbstractItemModel* model, const QString& name) {
     for (int row = 0; row < model->rowCount(); ++row) {
         if (role_value(model, row, "name").toString() == name) {
@@ -98,17 +95,6 @@ inline int row_by_name(QAbstractItemModel* model, const QString& name) {
     return -1;
 }
 
-inline QString backup_id_at(QQuickWindow* window, int row) {
-    QAbstractItemModel* bm = model_named(window, "backupsModel");
-    return (bm && row < bm->rowCount()) ? role_value(bm, row, "backupId").toString() : QString();
-}
-
-inline QString destination_id_at(QQuickWindow* window, int row) {
-    QAbstractItemModel* dm = model_named(window, "destinationsModel");
-    return (dm && row < dm->rowCount()) ? role_value(dm, row, "destinationId").toString() : QString();
-}
-
-/// Reads `Accessible.name` of an item (Qt keeps it on a QQuickAccessibleAttached child).
 /// The accessible name a screen reader gets for `obj` (Qt's accessibility interface, as exported
 /// over AT-SPI), falling back to an explicitly attached `Accessible.name`.
 inline QString accessible_name(QObject* obj) {
@@ -190,10 +176,6 @@ inline int count_visible(QQuickWindow* window, const char* name) {
     return n;
 }
 
-inline bool is_open(QObject* popup) {
-    return popup && popup->property("opened").toBool();
-}
-
 /// Text shown by a (Qt Quick Controls) SpinBox, e.g. «00».
 inline QString spin_text(QObject* spin) {
     QObject* content = qvariant_cast<QObject*>(spin->property("contentItem"));
@@ -217,6 +199,14 @@ inline QString combo_text(QObject* combo, int index) {
     return text;
 }
 
+/// Opens the detail page of backup `bid` and gives it time to settle.
+[[nodiscard]] inline bool open_backup_detail(QQuickWindow* window, const QString& bid) {
+    QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
+    const bool opened = wait_until([&] { return item_named(window, "backupDetailPage") != nullptr; }, 3000);
+    wait_ms(250);
+    return opened;
+}
+
 inline QString config_path() {
     return qEnvironmentVariable("XDG_CONFIG_HOME") + QStringLiteral("/kestic/config.toml");
 }
@@ -224,16 +214,6 @@ inline QString config_path() {
 inline QByteArray read_config_bytes() {
     QFile f(config_path());
     return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
-}
-
-inline bool wait_until(const std::function<bool()>& pred, int timeout_ms) {
-    for (int waited = 0; waited <= timeout_ms; waited += 40) {
-        if (pred()) {
-            return true;
-        }
-        wait_ms(40);
-    }
-    return pred();
 }
 
 /// Presses Tab until every object name in `wanted` held keyboard focus (focus item or one

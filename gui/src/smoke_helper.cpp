@@ -18,6 +18,7 @@
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QQmlEngine>
 #include <QQmlError>
 #include <QQmlIncubationController>
 #include <QQuickItem>
@@ -648,18 +649,123 @@ std::int32_t local_offset_seconds(std::int64_t unix_secs) {
     return static_cast<std::int32_t>(dt.offsetFromUtc());
 }
 
+void finish_incubation(QQmlEngine* engine) {
+    QQmlIncubationController* controller = engine ? engine->incubationController() : nullptr;
+    if (!controller) {
+        return;
+    }
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (controller->incubatingObjectCount() > 0 && elapsed.elapsed() < 2000) {
+        controller->incubateFor(10);
+    }
+}
+
+void finish_incubation(QQuickWindow* window) {
+    finish_incubation(qmlEngine(window));
+}
+
 void finish_incubation_on_quit(QQmlApplicationEngine& engine) {
     QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &engine, [&engine]() {
-        QQmlIncubationController* controller = engine.incubationController();
-        if (!controller) {
+        finish_incubation(&engine);
+    });
+}
+
+bool wait_until(const std::function<bool()>& pred, int timeout_ms) {
+    for (int waited = 0; waited <= timeout_ms; waited += 40) {
+        if (pred()) {
+            return true;
+        }
+        wait_ms(40);
+    }
+    return pred();
+}
+
+namespace {
+bool g_smoke_failed = false;
+
+void run_steps_from(QObject* context, const std::shared_ptr<std::vector<SmokeStep>>& steps, size_t index) {
+    if (index >= steps->size() || g_smoke_failed) {
+        return;
+    }
+    auto run = [context, steps, index]() {
+        if (g_smoke_failed) {
             return;
         }
-        QElapsedTimer elapsed;
-        elapsed.start();
-        while (controller->incubatingObjectCount() > 0 && elapsed.elapsed() < 2000) {
-            controller->incubateFor(10);
+        (*steps)[index].run();
+        run_steps_from(context, steps, index + 1);
+    };
+    if ((*steps)[index].delay_ms <= 0) {
+        run();
+    } else {
+        QTimer::singleShot((*steps)[index].delay_ms, context, run);
+    }
+}
+} // namespace
+
+void run_steps(QObject* context, std::vector<SmokeStep> steps) {
+    run_steps_from(context, std::make_shared<std::vector<SmokeStep>>(std::move(steps)), 0);
+}
+
+bool backup_run_finished(QQuickWindow* window, bool* has_error) {
+    QAbstractItemModel* backups = model_named(window, "backupsModel");
+    QAbstractItemModel* runs = model_named(window, "runsModel");
+    const bool has_backup = backups && backups->rowCount() == 1;
+    const bool running = has_backup && role_value(backups, 0, "isRunning").toBool();
+    *has_error = has_backup && role_value(backups, 0, "hasError").toBool();
+    return has_backup && !running && runs && runs->rowCount() >= 1;
+}
+
+void poll_backup_run(
+    QQuickWindow* window,
+    const char* tag,
+    int error_code,
+    int timeout_code,
+    const std::function<void()>& on_finished
+) {
+    auto* timer = new QTimer(window);
+    auto ticks = std::make_shared<int>(0);
+    QObject::connect(timer, &QTimer::timeout, window, [=]() {
+        bool has_error = false;
+        if (backup_run_finished(window, &has_error)) {
+            timer->stop();
+            if (has_error) {
+                smoke_fail(tag, error_code, QStringLiteral("backup run finished with error"));
+                return;
+            }
+            on_finished();
+        } else if (++*ticks >= 75) {
+            timer->stop();
+            smoke_fail(tag, timeout_code, QStringLiteral("timed out waiting for the real restic backup run"));
         }
     });
+    timer->start(200);
+}
+
+void smoke_fail(const char* tag, int code, const QString& msg) {
+    g_smoke_failed = true;
+    std::fprintf(stderr, "%s smoke failed (%d): %s\n", tag, code, qPrintable(msg));
+    QCoreApplication::exit(code);
+}
+
+void smoke_finish(
+    const char* tag,
+    const QStringList* warnings,
+    QQuickWindow* shot,
+    const QString& out_path
+) {
+    if (warnings && !warnings->isEmpty()) {
+        for (const auto& w : *warnings) {
+            std::fprintf(stderr, "%s QML warning: %s\n", tag, qPrintable(w));
+        }
+        QCoreApplication::exit(3);
+        return;
+    }
+    if (shot && !save_screenshot(shot, out_path)) {
+        QCoreApplication::exit(10);
+        return;
+    }
+    QCoreApplication::exit(0);
 }
 
 void install_keyboard_handlers(QQmlApplicationEngine& engine) {
