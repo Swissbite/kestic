@@ -13,7 +13,7 @@ use crate::restic::{
 use crate::secrets::{SecretError, SecretStore, SecretValue};
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -274,15 +274,8 @@ fn run_with_temp_repo_password_file(
     probe: ProbeRuntime<'_>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     let tmp_dir = create_private_temp_dir()?;
-    let pw_file = tmp_dir.join("repo.pw");
     let res = (|| -> Result<ResticExecutionResult, DestinationError> {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&pw_file)?;
-        fs::set_permissions(&pw_file, fs::Permissions::from_mode(0o600))?;
-        f.write_all(repo_password.as_str()?.as_bytes())?;
-        drop(f);
+        let pw_file = write_private_password_file(&tmp_dir, repo_password)?;
 
         let mut args = subcommand_args;
         args.push("--password-file".to_string());
@@ -376,11 +369,63 @@ fn execute_probe_command(
     })
 }
 
+/// A new directory only the owner can enter (`0700` from the moment it exists).
 fn create_private_temp_dir() -> Result<std::path::PathBuf, DestinationError> {
     let nonce =
         crate::model::RunId::generate().map_err(|e| std::io::Error::other(e.to_string()))?;
     let dir = std::env::temp_dir().join(format!("kestic-probe-{}-{nonce}", std::process::id()));
-    fs::create_dir_all(&dir)?;
-    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+    fs::DirBuilder::new().mode(0o700).create(&dir)?;
     Ok(dir)
+}
+
+/// Writes `password` to a new `repo.pw` in `dir`, readable only by the owner (`0600` from the
+/// moment it exists).
+fn write_private_password_file(
+    dir: &Path,
+    password: &SecretValue,
+) -> Result<std::path::PathBuf, DestinationError> {
+    let path = dir.join("repo.pw");
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)?;
+    file.write_all(password.as_str()?.as_bytes())?;
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kestic_test_support::password::strong_password;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn probe_password_file_is_private() {
+        let dir = create_private_temp_dir().expect("create probe dir");
+        let password = strong_password();
+        let file = write_private_password_file(&dir, &SecretValue::from_str_secret(&password))
+            .expect("write password file");
+
+        let dir_mode = fs::metadata(&dir)
+            .expect("dir metadata")
+            .permissions()
+            .mode();
+        let file_mode = fs::metadata(&file)
+            .expect("file metadata")
+            .permissions()
+            .mode();
+        let content = fs::read(&file).expect("read password file");
+        fs::remove_dir_all(&dir).expect("remove probe dir");
+
+        // (a) the directory is owner-only
+        assert_eq!(dir_mode & 0o777, 0o700);
+        // (b) the password file is owner read/write only
+        assert_eq!(file_mode & 0o777, 0o600);
+        // (c) the file holds exactly the password
+        assert!(
+            content == password.as_bytes(),
+            "password file content differs"
+        );
+    }
 }
