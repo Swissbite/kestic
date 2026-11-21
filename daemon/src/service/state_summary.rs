@@ -240,6 +240,7 @@ impl DaemonCore {
         let recent_runs = self.runs_cache.iter().take(200).cloned().collect();
         let state = DaemonStateDto {
             daemon_version: crate::daemon_version().to_string(),
+            daemon_build_commit: crate::build_commit().to_string(),
             has_config_file: self.has_config_file,
             config_load_error: self.config_load_error.clone(),
             config: self.config.clone(),

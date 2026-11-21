@@ -8,20 +8,22 @@ Teil von [index.md](index.md) (§4–§5). Verbindlichkeit, Referenz-Datensatz u
 
 - **Tab-Leiste:** fünf nicht-lineare Ziele als `Kirigami.NavigationTabBar` über dem Inhalt (Desktop), unter dem Inhalt bei schmalem Fenster.
 - **Innerhalb eines Ziels:** `pageStack` Liste → Detail (Spalten nebeneinander, wenn Platz; sonst gestapelt mit «Zurück»).
-- **Hamburger-Menü** (`application-menu`) am rechten Ende der Kopfleiste der rechten Seite (schmal: der sichtbaren Seite).
+- **Hamburger-Menü:** Knopf `☰` (`application-menu`, Name «Hauptmenü» für Screenreader) am rechten Ende der obersten Kopfzeile, auf allen Seiten an derselben Stelle: breit rechts neben der Tab-Leiste, schmal (Tabs unten) allein in dieser Zeile; im Assistenten ausgeblendet. Ein Klick, Leertaste oder Enter öffnet das Menü darunter, Pfeiltasten wählen, Esc schliesst. Kirigamis eigener Menü-Knopf (`GlobalDrawer` mit `isMenu`) erscheint nur in der Seitenkopfleiste der ersten Seite, die Kestic zugunsten von Tab-Leiste und Breadcrumb ausblendet; daher ein eigener Knopf mit `Controls.Menu` (AC-M1-13-8).
 - **Zustandsleiste** (§6.1) über den Tabs, nur wenn nötig.
 - **Seitentitel:** Die fünf Hauptseiten haben keinen (Leitlinie 7). Detailseiten neben einer Liste tragen den Objektnamen («Persönlicher Ordner»). Tiefere Unterseiten zeigen statt eines Titels den Breadcrumb in der Kopfleiste («Backups › Persönlicher Ordner › Aufbewahrung»), nie beides. Assistenten tragen ihren Namen als Titel.
 - **Fenstertitel** immer «Kestic» (auch mit Unterseiten und Assistenten); Einstellungsfenster «Kestic einrichten».
 - **Trennzeichen:** «›» nur im Breadcrumb und für Pfade in Snapshots; «·» nur zwischen Angaben in Untertiteln und Statuszeilen; «–» und «—» kommen in UI-Titeln nicht vor.
 - **Tab-Embleme** (`emblem-important`): auf «Backups», wenn ein Backup Fehler hat oder überfällig ist; auf «Ziele», wenn ein Ziel ein Problem hat (Kit fehlt, gespeichertes Passwort passt nicht, Wartung fehlgeschlagen, veraltete Sperre). Auf allen Seiten gleich; keine Zahlen ohne Handlung.
 
-Fensteraufbau von oben nach unten: Titelleiste («Kestic») · Zustandsleiste (optional) · Tab-Leiste · Spalten (Liste │ Detail mit Kopfleiste: Titel oder Breadcrumb, Aktionen, `⋮`, `☰`).
+Fensteraufbau von oben nach unten: Titelleiste («Kestic») · Zustandsleiste (optional) · Tab-Leiste mit `☰` am rechten Ende · Breadcrumb (ab der zweiten Ebene) · Spalten (Liste │ Detail mit Titel und Aktionen, `⋮`).
 
 **Hamburger-Menü** (statisch, ≤ 15 Einträge, nicht passende deaktiviert, kein «Beenden» – den Daemon beendet nur das Tray, §9.5):
 
 1. Zeitpläne pausieren ► (Untermenü; bzw. «Zeitpläne fortsetzen»)
 2. — Konfiguration als Script exportieren… (FR-24)
 3. — Kestic einrichten… (Ctrl+Shift+,) · Tastenkürzel einrichten… · Handbuch (F1) · Über Kestic
+
+«Tastenkürzel einrichten…» und «Handbuch» sind deaktiviert, bis ein Editor für Tastenkürzel und ein Handbuch festgelegt sind ([questions.md](../questions.md), 2026-11-21). Die Kürzel hängen an den Aktionen des Menüs und wirken auch bei geschlossenem Menü. Die Einträge 1 (Zeitpläne pausieren, bisher in Übersicht und Tray) und 2 (FR-24, M6-S07) fehlen im Menü noch.
 
 Keine Doppelbeschriftung (Leitlinie 7): «Alle jetzt sichern» steht nur in der Übersicht, «Neues Backup…» (Ctrl+N) nur im Listenkopf «Backups», «Ziel hinzufügen…» nur im Listenkopf «Ziele»; Ctrl+N wirkt überall.
 

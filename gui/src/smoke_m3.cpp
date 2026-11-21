@@ -277,6 +277,7 @@ int scenario_backup_progress(const Ctx& c, bool scanning) {
 
 int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled);
 int run_m3_pages_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled);
+int run_main_menu_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled);
 
 void run_m3_smoke_scenario(
     QQmlApplicationEngine& engine,
@@ -307,6 +308,9 @@ void run_m3_smoke_scenario(
         rc = run_m3_pages_scenario(ctx, scen, &handled);
         if (!handled) {
             rc = run_m3_editor_scenario(ctx, scen, &handled);
+        }
+        if (!handled) {
+            rc = run_main_menu_scenario(ctx, scen, &handled);
         }
     }
     if (!handled) {

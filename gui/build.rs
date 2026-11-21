@@ -118,6 +118,7 @@ fn main() {
         "src/smoke_m3.cpp",
         "src/smoke_m3_editors.cpp",
         "src/smoke_m3_pages.cpp",
+        "src/smoke_main_menu.cpp",
         "src/smoke_m3_util.h",
     ] {
         println!("cargo:rerun-if-changed={cpp}");
@@ -128,6 +129,7 @@ fn main() {
     let mut builder =
         CxxQtBuilder::new_qml_module(QmlModule::new("net.daester.kestic").qml_files(qml_files))
             .file("src/backend.rs")
+            .file("src/build_info.rs")
             .file("src/models.rs")
             .file("src/qt_bridge.rs")
             .cpp_file("src/qt_bridge.cpp")
@@ -141,7 +143,8 @@ fn main() {
             .cpp_file("src/smoke_m2.cpp")
             .cpp_file("src/smoke_m3.cpp")
             .cpp_file("src/smoke_m3_editors.cpp")
-            .cpp_file("src/smoke_m3_pages.cpp");
+            .cpp_file("src/smoke_m3_pages.cpp")
+            .cpp_file("src/smoke_main_menu.cpp");
     }
 
     // SAFETY: Configures an additional C++ include path during build-script compilation.

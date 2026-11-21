@@ -22,6 +22,15 @@ Kirigami.ApplicationWindow {
     onActiveTabChanged: syncNavChecked()
     readonly property bool narrowMode: width < Kirigami.Units.gridUnit * 35
     readonly property bool inWizardLayer: wizardPageStack.depth > 0
+    readonly property bool mainMenuOpen: hamburgerMenu.visible
+    // «About Kestic» asked for while a wizard covers the pages; it opens once the wizard closes.
+    property bool aboutAfterWizard: false
+    onInWizardLayerChanged: {
+        if (!inWizardLayer && aboutAfterWizard) {
+            aboutAfterWizard = false;
+            openAboutPage();
+        }
+    }
 
     property string cmdDialogText: ""
     property string cmdDialogTitle: ""
@@ -606,6 +615,7 @@ Kirigami.ApplicationWindow {
             }
             root.requestActivate();
         }
+        onAboutRequested: root.openAboutPage()
         onQuitConfirmationRequested: function() {
             root.show();
             if (Qt.platform.pluginName !== "offscreen") {
@@ -650,12 +660,6 @@ Kirigami.ApplicationWindow {
         onActivated: root.openNewBackupWizard(false)
     }
 
-    Shortcut {
-        sequence: "Ctrl+Shift+,"
-        context: Qt.ApplicationShortcut
-        onActivated: root.openSettingsWindow()
-    }
-
     function isMenuPopupFocused() {
         if (hamburgerMenu.visible) {
             return false;
@@ -674,25 +678,66 @@ Kirigami.ApplicationWindow {
         return false;
     }
 
-    // Static Hamburger Menu: no New Backup…, no Add Destination…, no Quit Kestic…
-    globalDrawer: Kirigami.GlobalDrawer {
+    // Opens the main menu below `button`, right-aligned with it.
+    function openMainMenu(button) {
+        hamburgerMenu.popup(button, button.width - hamburgerMenu.width, button.height);
+    }
+
+    // Shows «About Kestic» next to the list (or on top in narrow mode); an open one stays.
+    function openAboutPage() {
+        if (inWizardLayer) {
+            aboutAfterWizard = true;
+            return;
+        }
+        if (guardDirtyNavigation(function() { openAboutPage(); })) return;
+        var topPage = pageStack.depth > 0 ? pageStack.get(pageStack.depth - 1) : null;
+        if (topPage && topPage.objectName === "mainAboutPage") {
+            focusPageContent(topPage);
+            return;
+        }
+        pushSubPageAtDepth(aboutPageComponent.createObject(pageStack, {}), Math.min(pageStack.depth, 2));
+    }
+
+    // Static main menu behind the ☰ button: no New Backup…, no Add Destination…, no Quit Kestic…
+    // Its actions carry the shortcuts, also while the menu is closed.
+    Controls.Menu {
         id: hamburgerMenu
         objectName: "hamburgerMenu"
-        isMenu: true
-        modal: true
-        actions: [
-            Kirigami.Action {
+
+        Controls.MenuItem {
+            objectName: "configureKesticMenuItem"
+            action: Kirigami.Action {
                 icon.name: "configure"
                 text: i18n("Configure Kestic…")
                 shortcut: "Ctrl+Shift+,"
                 onTriggered: root.openSettingsWindow()
-            },
-            Kirigami.Action {
+            }
+        }
+        Controls.MenuItem {
+            objectName: "configureShortcutsMenuItem"
+            action: Kirigami.Action {
+                icon.name: "configure-shortcuts"
+                text: i18n("Configure Keyboard Shortcuts…")
+                enabled: false
+            }
+        }
+        Controls.MenuItem {
+            objectName: "handbookMenuItem"
+            action: Kirigami.Action {
+                icon.name: "help-contents"
+                text: i18n("Handbook")
+                shortcut: "F1"
+                enabled: false
+            }
+        }
+        Controls.MenuItem {
+            objectName: "aboutKesticMenuItem"
+            action: Kirigami.Action {
                 icon.name: "help-about"
                 text: i18n("About Kestic")
-                onTriggered: root.pushSubPageAtDepth(aboutPageComponent.createObject(pageStack, {}), Math.min(pageStack.depth, 2))
+                onTriggered: root.openAboutPage()
             }
-        ]
+        }
     }
 
     property list<Kirigami.Action> navActions: [
@@ -818,6 +863,9 @@ Kirigami.ApplicationWindow {
         appBackend.initialize();
         pageStack.push(overviewPageComponent.createObject(pageStack, {}));
         appBackend.windowActive(true, "overview");
+        if (appBackend.show_about_on_start) {
+            openAboutPage();
+        }
     }
 
     // Dialogs

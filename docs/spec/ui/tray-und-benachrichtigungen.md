@@ -37,6 +37,7 @@ Teil von [index.md](index.md) (§10). Verbindlichkeit, Referenz-Datensatz (§0.2
   5. — Wiederherstellungs-Kit erzeugen… (nur aktiv, wenn einem erreichbaren Ziel mit gültigem Passwort das Kit fehlt, sonst deaktiviert mit Grund, §8.2; öffnet GUI) · restic aktualisieren… (nur aktiv bei verfügbarem Update, F20; öffnet GUI)
   6. — Kestic öffnen · Dateien wiederherstellen…
   7. — Kestic beenden… (§9.5)
+  8. — Versionszeile «Kestic 0.1.0 · a561018»: Version und kurzer Git-Hash des Daemons (ohne bekannten Hash nur die Version), aktiv; ein Klick öffnet «Über Kestic» in der GUI auf demselben Weg wie «Kestic öffnen» (offene GUI: Signal, sonst Start mit `--show-about`). Name und Nummern, in jeder Sprache gleich (AC-M1-11-6).
 
 ### 10.2 Benachrichtigungen (U17, FR-55)
 

@@ -4,6 +4,7 @@
 //! Kestic GUI and CLI entrypoint.
 
 mod backend;
+mod build_info;
 mod models;
 mod overall_text;
 mod qt_bridge;
@@ -102,6 +103,9 @@ fn parse_gui_launch_config(args: &[String]) -> state_cache::GuiLaunchConfig {
     }
     if args.iter().any(|a| a == "--confirm-quit") {
         cfg.show_quit_dialog_on_start = true;
+    }
+    if args.iter().any(|a| a == "--show-about") {
+        cfg.show_about_on_start = true;
     }
     if args.iter().any(|a| a == "--no-autostart") {
         cfg.no_autostart_daemon = true;

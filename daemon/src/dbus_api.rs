@@ -300,6 +300,10 @@ pub struct DestinationSummaryDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DaemonStateDto {
     pub daemon_version: String,
+    /// Build commit of the daemon binary (see [`crate::build_commit`]). Empty from a daemon that
+    /// does not report it yet.
+    #[serde(default)]
+    pub daemon_build_commit: String,
     pub has_config_file: bool,
     pub config_load_error: Option<String>,
     pub config: AppConfig,

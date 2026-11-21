@@ -27,6 +27,14 @@ pub fn build_commit() -> &'static str {
     env!("KESTIC_BUILD_COMMIT")
 }
 
+/// Version and build commit of the running binary.
+pub fn build_id() -> kestic_core::build_info::BuildId<'static> {
+    kestic_core::build_info::BuildId {
+        version: daemon_version(),
+        commit: build_commit(),
+    }
+}
+
 /// Prefix of the daemon's lifecycle lines in the journal, e.g. `kestic-daemon 0.1.0 (a561018)`.
 /// The commit tells two builds of the same version apart, before and after a package update.
 pub(crate) fn daemon_log_label(version: &str, commit: &str) -> String {

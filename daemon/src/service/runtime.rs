@@ -11,8 +11,8 @@ use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, DaemonOutcome, Daemo
 use crate::binary_watch::{BinaryIdentity, BinaryStatus};
 use crate::dbus_api::{DestinationAvailabilityDto, KESTIC_BUS_NAME};
 use crate::dbus_server::{
-    emit_quit_confirmation_requested, emit_show_window_requested, emit_status_changed,
-    start_dbus_server,
+    emit_quit_confirmation_requested, emit_show_about_requested, emit_show_window_requested,
+    emit_status_changed, start_dbus_server,
 };
 use crate::i18n::{i18n, tr_text};
 use crate::monitors::{SystemMonitorEvent, SystemMonitorHandle, read_system_environment};
@@ -539,13 +539,32 @@ fn is_gui_live(core: &Arc<Mutex<DaemonCore>>, conn: &Connection) -> bool {
     }
 }
 
-fn spawn_gui_process(kestic_binary: &std::path::Path, bus_name: &str, confirm_quit: bool) {
+/// What a GUI started from the tray shows first.
+#[derive(Debug, Clone, Copy)]
+enum GuiStart {
+    Window,
+    About,
+    ConfirmQuit,
+}
+
+impl GuiStart {
+    /// The GUI command-line flag for this start, if any.
+    fn flag(self) -> Option<&'static str> {
+        match self {
+            Self::Window => None,
+            Self::About => Some("--show-about"),
+            Self::ConfirmQuit => Some("--confirm-quit"),
+        }
+    }
+}
+
+fn spawn_gui_process(kestic_binary: &std::path::Path, bus_name: &str, start: GuiStart) {
     let mut cmd = Command::new(kestic_binary);
     if bus_name != KESTIC_BUS_NAME {
         cmd.arg("--bus-name").arg(bus_name);
     }
-    if confirm_quit {
-        cmd.arg("--confirm-quit");
+    if let Some(flag) = start.flag() {
+        cmd.arg(flag);
     }
     // stderr stays the daemon's, so GUI warnings land in the same journal as the daemon's own.
     cmd.stdin(Stdio::null())
@@ -555,6 +574,26 @@ fn spawn_gui_process(kestic_binary: &std::path::Path, bus_name: &str, confirm_qu
         thread::spawn(move || {
             let _ = child.wait();
         });
+    }
+}
+
+/// Starts a GUI that shows `start` first, unless one is registered (`gui_live`; it got the
+/// matching signal) or GUI starts are suppressed.
+fn spawn_gui_unless_live(
+    core: &Arc<Mutex<DaemonCore>>,
+    config: &DaemonRunConfig,
+    gui_live: bool,
+    start: GuiStart,
+) {
+    let (kestic_binary, suppress) = {
+        let guard = core.lock_unpoisoned();
+        (
+            guard.kestic_binary.clone(),
+            guard.suppress_ui_spawn || config.suppress_ui_spawn,
+        )
+    };
+    if !gui_live && !suppress {
+        spawn_gui_process(&kestic_binary, &config.bus_name, start);
     }
 }
 
@@ -644,35 +683,29 @@ fn handle_tray_action(
         }
         TrayAction::OpenWindow => {
             let gui_live = is_gui_live(core, conn);
-            let (kestic_binary, suppress) = {
-                let guard = core.lock_unpoisoned();
-                (
-                    guard.kestic_binary.clone(),
-                    guard.suppress_ui_spawn || config.suppress_ui_spawn,
-                )
-            };
             emit_show_window_requested(conn);
-            if !gui_live && !suppress {
-                spawn_gui_process(&kestic_binary, &config.bus_name, false);
-            }
+            spawn_gui_unless_live(core, config, gui_live, GuiStart::Window);
+        }
+        TrayAction::OpenAbout => {
+            let gui_live = is_gui_live(core, conn);
+            // A GUI that does not know `ShowAboutRequested` yet still shows its window.
+            emit_show_window_requested(conn);
+            emit_show_about_requested(conn);
+            spawn_gui_unless_live(core, config, gui_live, GuiStart::About);
         }
         TrayAction::RequestQuit => {
             // Never terminate immediately; ask user via warning confirmation first.
             let gui_live = is_gui_live(core, conn);
-            let (has_running, running_name, kestic_binary, suppress) = {
+            let (has_running, running_name) = {
                 let guard = core.lock_unpoisoned();
                 let first_active = guard.active_runs.values().next();
                 (
                     first_active.is_some(),
                     first_active.map_or_default(|a| a.backup_name.clone()),
-                    guard.kestic_binary.clone(),
-                    guard.suppress_ui_spawn || config.suppress_ui_spawn,
                 )
             };
             emit_quit_confirmation_requested(conn, has_running, &running_name);
-            if !gui_live && !suppress {
-                spawn_gui_process(&kestic_binary, &config.bus_name, true);
-            }
+            spawn_gui_unless_live(core, config, gui_live, GuiStart::ConfirmQuit);
         }
     }
 }

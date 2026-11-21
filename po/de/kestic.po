@@ -2696,6 +2696,42 @@ msgstr "Kestic einrichten…"
 msgid "About Kestic"
 msgstr "Über Kestic"
 
+#: gui/src/qml/Main.qml
+msgid "Configure Keyboard Shortcuts…"
+msgstr "Tastenkürzel einrichten…"
+
+#: gui/src/qml/Main.qml
+msgid "Handbook"
+msgstr "Handbuch"
+
+#: gui/src/qml/MainHeaderArea.qml
+msgid "Main Menu"
+msgstr "Hauptmenü"
+
+#: gui/src/qml/MainAboutPage.qml
+msgid "Source code %1"
+msgstr "Quellcode %1"
+
+#: gui/src/qml/MainAboutPage.qml
+msgid ""
+"The background service runs another version. Close and reopen Kestic to "
+"load the new version."
+msgstr ""
+"Der Hintergrunddienst läuft in einer anderen Version. Kestic schliessen und "
+"neu öffnen, um die neue Version zu laden."
+
+#: gui/src/qml/MainAboutPage.qml
+msgid "Version"
+msgstr "Version"
+
+#: gui/src/qml/MainAboutPage.qml
+msgid "Application:"
+msgstr "Anwendung:"
+
+#: gui/src/qml/MainAboutPage.qml
+msgid "Background service:"
+msgstr "Hintergrunddienst:"
+
 #: gui/src/qml/Main.qml:709 gui/src/qml/OverviewPage.qml:12
 #: gui/src/qml/PageFocusManager.qml:131 gui/src/qml/PageFocusManager.qml:135
 msgid "Overview"

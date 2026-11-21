@@ -610,6 +610,9 @@ impl KesticDbusV1Service {
     #[zbus(signal, name = "ShowWindowRequested")]
     async fn show_window_requested(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 
+    #[zbus(signal, name = "ShowAboutRequested")]
+    async fn show_about_requested(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
+
     #[zbus(signal, name = "QuitConfirmationRequested")]
     async fn quit_confirmation_requested(
         ctxt: &SignalEmitter<'_>,
@@ -758,6 +761,12 @@ pub(crate) fn emit_manual_run_blocked(
 pub(crate) fn emit_show_window_requested(conn: &Connection) {
     queue_signal(conn, async move |emitter| {
         KesticDbusV1Service::show_window_requested(emitter).await
+    });
+}
+
+pub(crate) fn emit_show_about_requested(conn: &Connection) {
+    queue_signal(conn, async move |emitter| {
+        KesticDbusV1Service::show_about_requested(emitter).await
     });
 }
 
