@@ -7,7 +7,9 @@
 
 use crate::bus::wait_for_name_owner;
 use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -17,6 +19,8 @@ use zbus::{Connection, OwnedObjectPath, OwnedVariant, Proxy, Variant};
 pub const SECRET_SERVICE_NAME: &str = "org.freedesktop.secrets";
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// File in the control directory that receives the keyring's stderr.
+const STDERR_LOG: &str = "stderr.log";
 const SERVICE_PATH: &str = "/org/freedesktop/secrets";
 const SERVICE_IFACE: &str = "org.freedesktop.Secret.Service";
 const COLLECTION_IFACE: &str = "org.freedesktop.Secret.Collection";
@@ -29,11 +33,13 @@ pub struct KeyringDirs<'a> {
 }
 
 /// A running headless keyring with an unlocked default collection (empty password), killed on
-/// `Drop`.
+/// `Drop`. If the keyring exited before, its exit status and stderr are printed to stderr: every
+/// later password access of the test fails without it.
 pub struct HeadlessKeyring {
     child: Child,
-    /// Short private directory for the control socket (sun_path limit); removed on drop.
-    _control_dir: tempfile::TempDir,
+    /// Short private directory (sun_path limit) for the control socket and the keyring's stderr;
+    /// removed on drop.
+    control_dir: tempfile::TempDir,
     bus_address: String,
 }
 
@@ -42,6 +48,11 @@ impl HeadlessKeyring {
     /// `org.freedesktop.secrets`.
     pub fn start(bus_address: &str, dirs: &KeyringDirs<'_>) -> Self {
         let control_dir = crate::tools::short_tempdir("kk");
+        // gnome-keyring ignores a control directory that others may access.
+        fs::set_permissions(control_dir.path(), fs::Permissions::from_mode(0o700))
+            .expect("chmod 0700 keyring control dir");
+        let stderr_log = fs::File::create(control_dir.path().join(STDERR_LOG))
+            .expect("create keyring stderr log");
         let mut child = Command::new("gnome-keyring-daemon")
             .args([
                 "--foreground",
@@ -59,7 +70,7 @@ impl HeadlessKeyring {
             .env("XDG_RUNTIME_DIR", dirs.runtime_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(stderr_log)
             .spawn()
             .expect("spawn headless gnome-keyring-daemon");
         if let Some(mut stdin) = child.stdin.take() {
@@ -69,7 +80,7 @@ impl HeadlessKeyring {
         }
         let mut keyring = Self {
             child,
-            _control_dir: control_dir,
+            control_dir,
             bus_address: bus_address.to_string(),
         };
         wait_for_name_owner(
@@ -155,6 +166,16 @@ async fn default_collection<'a>(
 
 impl Drop for HeadlessKeyring {
     fn drop(&mut self) {
+        // Printed on drop, so it follows the failing assertion; the test harness shows captured
+        // output only for failed tests.
+        if let Ok(Some(status)) = self.child.try_wait() {
+            let log =
+                fs::read_to_string(self.control_dir.path().join(STDERR_LOG)).unwrap_or_default();
+            eprintln!(
+                "headless keyring on {} ended before the test did ({status}); its stderr:\n{log}",
+                self.bus_address
+            );
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
