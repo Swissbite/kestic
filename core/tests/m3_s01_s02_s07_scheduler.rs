@@ -873,7 +873,7 @@ fn ac_m3_10_3_startup_marks_running_as_interrupted() {
     let running = Run::new_backup(&clock, &bk).expect("run");
     history.upsert_run(&running, &[]).expect("save");
 
-    clock.advance(std::time::Duration::from_secs(1800));
+    clock.advance(std::time::Duration::from_mins(30));
     let changed = history.mark_interrupted_on_startup(&clock).expect("mark");
     assert_eq!(changed, 1);
     let loaded = history.get_run(&running.id).expect("get").expect("some");

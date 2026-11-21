@@ -246,8 +246,7 @@ impl qobject::KesticApp {
         let dur = detail
             .run
             .duration_ms
-            .map(format_duration_ms)
-            .unwrap_or_else(|| String::from("–"));
+            .map_or_else(|| String::from("–"), format_duration_ms);
         let status_line = format!("{status_text} · {dur}");
         let kind_title = format_run_kind_name(
             &detail.run,
@@ -258,8 +257,7 @@ impl qobject::KesticApp {
             .run
             .stats
             .as_ref()
-            .map(|s| format_bytes(s.data_added))
-            .unwrap_or_else(|| String::from("0 B"));
+            .map_or_else(|| String::from("0 B"), |s| format_bytes(s.data_added));
         let subtitle = i18n("%1 · %2 added").subs(&[&kind_title, &added]);
         let stats_summary = if let Some(s) = &detail.run.stats {
             i18n("%1 new · %2 changed · %3 unchanged · %4 processed").subs(&[
@@ -276,15 +274,10 @@ impl qobject::KesticApp {
             .iter()
             .enumerate()
             .map(|(idx, cmd)| {
-                let meta = detail
-                    .run
-                    .commands
-                    .get(idx)
-                    .map(|c| {
-                        i18n("Exit code %1 · %2")
-                            .subs(&[&c.exit_code.to_string(), &format_duration_ms(c.duration_ms)])
-                    })
-                    .unwrap_or_default();
+                let meta = detail.run.commands.get(idx).map_or_default(|c| {
+                    i18n("Exit code %1 · %2")
+                        .subs(&[&c.exit_code.to_string(), &format_duration_ms(c.duration_ms)])
+                });
                 CmdDisplay {
                     command: cmd.clone(),
                     meta,
@@ -298,13 +291,11 @@ impl qobject::KesticApp {
             .run
             .log_path
             .as_ref()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|p| p.to_string_lossy().into_owned());
         let run_backup_id = detail
             .run
             .backup_id()
-            .map(|b| b.as_str().to_string())
-            .unwrap_or_default();
+            .map_or_default(|b| b.as_str().to_string());
 
         self.as_mut()
             .set_selected_run_id(QString::from(detail.run.id.as_str()));
@@ -319,19 +310,16 @@ impl qobject::KesticApp {
             .set_selected_run_status_color(QString::from(status_color));
         self.as_mut()
             .set_selected_run_stats_summary(QString::from(&stats_summary));
-        let error_summary = detail
-            .error_kind
-            .map(|kind| {
-                crate::state_cache::tr(&kind.message(
-                    detail.error_exit_code,
-                    detail.run.status == kestic_core::model::RunStatus::Warning,
-                ))
-            })
-            .unwrap_or_default();
+        let error_summary = detail.error_kind.map_or_default(|kind| {
+            crate::state_cache::tr(&kind.message(
+                detail.error_exit_code,
+                detail.run.status == kestic_core::model::RunStatus::Warning,
+            ))
+        });
         self.as_mut()
             .set_selected_run_error_summary(QString::from(&error_summary));
         self.as_mut().set_selected_run_error_action(QString::from(
-            detail.error_action.map(|a| a.as_str()).unwrap_or(""),
+            detail.error_action.map_or("", |a| a.as_str()),
         ));
         self.as_mut().set_selected_run_error_raw(QString::from(
             detail.error_raw_detail.as_deref().unwrap_or(""),

@@ -25,7 +25,7 @@ fn ac_m1_18_1_fake_clock_drives_run_timestamps() {
     let run1 = Run::new_backup(&clock, &backup).expect("run 1");
     assert_eq!(run1.started_at, datetime!(2026-12-01 12:00:00 UTC));
 
-    clock.advance(Duration::from_secs(2 * 3600));
+    clock.advance(Duration::from_hours(2));
     let run2 = Run::new_backup(&clock, &backup).expect("run 2");
     assert_eq!(run2.started_at, datetime!(2026-12-01 14:00:00 UTC));
 }

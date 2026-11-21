@@ -32,8 +32,7 @@ impl SnapshotsModelRust {
     ) {
         let time_display =
             OffsetDateTime::parse(&s.time, &time::format_description::well_known::Rfc3339)
-                .map(format_datetime_display)
-                .unwrap_or_else(|_| s.time.clone());
+                .map_or_else(|_| s.time.clone(), format_datetime_display);
         let stats_text = match (s.total_files_processed, s.total_bytes_processed) {
             (Some(files), Some(bytes)) => {
                 i18n("%1 files · %2").subs(&[&files.to_string(), &format_bytes(bytes)])

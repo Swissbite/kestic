@@ -100,8 +100,7 @@ impl DaemonCore {
         let dest_available = self
             .dest_availability
             .get(&backup.destination_id)
-            .map(|d| d.reachable)
-            .unwrap_or(true);
+            .is_none_or(|d| d.reachable);
 
         if !source_available {
             BackupAvailabilityDto {

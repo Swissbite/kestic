@@ -75,13 +75,11 @@ fn build_destination_row(
     let last_prune_at_text = d
         .last_prune_at_unix
         .and_then(|ts| OffsetDateTime::from_unix_timestamp(ts).ok())
-        .map(format_datetime_display)
-        .unwrap_or_default();
+        .map_or_default(format_datetime_display);
     let last_check_at_text = d
         .last_check_at_unix
         .and_then(|ts| OffsetDateTime::from_unix_timestamp(ts).ok())
-        .map(format_datetime_display)
-        .unwrap_or_default();
+        .map_or_default(format_datetime_display);
     DestinationRow {
         destination_id: d.destination.id.as_str().to_string(),
         name: d.destination.name.clone(),

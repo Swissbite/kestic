@@ -35,7 +35,7 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_connection_test_message(QString::from(&tr_text(&text)));
         self.as_mut().set_connection_test_error_kind(QString::from(
-            res.error_kind.map(|k| k.as_str()).unwrap_or(""),
+            res.error_kind.map_or("", |k| k.as_str()),
         ));
         res.ok
     }

@@ -600,9 +600,7 @@ pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedI
 }
 
 fn quote_shell(raw: &str) -> String {
-    shlex::try_quote(raw)
-        .map(|cow| cow.into_owned())
-        .unwrap_or_else(|_| format!("'{raw}'"))
+    shlex::try_quote(raw).map_or_else(|_| format!("'{raw}'"), |cow| cow.into_owned())
 }
 
 /// Handle allowing another thread to request graceful cancellation (`SIGTERM`).

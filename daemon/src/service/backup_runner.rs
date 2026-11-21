@@ -675,8 +675,7 @@ fn process_backup_success_result(
             .presentation
             .raw_detail
             .as_deref()
-            .map(|d| redact_secrets(d, secret_strs))
-            .unwrap_or_default();
+            .map_or_default(|d| redact_secrets(d, secret_strs));
         Some(if raw.is_empty() {
             base
         } else {

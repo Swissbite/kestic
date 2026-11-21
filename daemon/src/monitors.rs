@@ -552,9 +552,9 @@ enum SignalKind {
 
 fn classify_signal(msg: &zbus::Message) -> SignalKind {
     let hdr = msg.header();
-    let iface = hdr.interface().map(|i| i.as_str()).unwrap_or("");
-    let member = hdr.member().map(|m| m.as_str()).unwrap_or("");
-    let path = hdr.path().map(|p| p.as_str()).unwrap_or("");
+    let iface = hdr.interface().map_or("", |i| i.as_str());
+    let member = hdr.member().map_or("", |m| m.as_str());
+    let path = hdr.path().map_or("", |p| p.as_str());
 
     if iface == "org.freedesktop.login1.Manager" && member == "PrepareForSleep" {
         return msg

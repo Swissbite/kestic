@@ -50,15 +50,11 @@ fn notification_service_available() -> bool {
         if proxy.name_has_owner(bus_name).await.unwrap_or(false) {
             return true;
         }
-        proxy
-            .list_activatable_names()
-            .await
-            .map(|names| {
-                names
-                    .iter()
-                    .any(|n| n.as_str() == "org.freedesktop.Notifications")
-            })
-            .unwrap_or(false)
+        proxy.list_activatable_names().await.is_ok_and(|names| {
+            names
+                .iter()
+                .any(|n| n.as_str() == "org.freedesktop.Notifications")
+        })
     })
 }
 

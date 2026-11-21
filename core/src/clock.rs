@@ -85,7 +85,7 @@ mod tests {
         let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
         assert_eq!(clock.now_utc(), datetime!(2026-12-01 12:00:00 UTC));
 
-        clock.advance(Duration::from_secs(2 * 3600));
+        clock.advance(Duration::from_hours(2));
         assert_eq!(clock.now_utc(), datetime!(2026-12-01 14:00:00 UTC));
 
         clock.set(datetime!(2026-12-02 09:30:00 UTC));
