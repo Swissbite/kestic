@@ -163,7 +163,7 @@ fn main() {
 /// file every build behaves like a clean one.
 ///
 /// Upstream: KDAB/cxx-qt#1508, fixed by #1509 (not yet released as of 0.10.0).
-/// Remove this workaround once the pinned cxx-qt version contains that fix.
+/// Remove this workaround once the cxx-qt version in use contains that fix.
 fn remove_stale_qmltypes(module_dirs: &str) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let qmltypes = out_dir

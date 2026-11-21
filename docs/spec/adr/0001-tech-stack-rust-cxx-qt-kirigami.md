@@ -18,11 +18,13 @@ Kestic ist eine native KDE-Plasma-Desktop-App und wird agentisch umgesetzt. Kand
 
 ## Entscheid
 
-Rust + CXX-Qt (`=0.10.0`) + Kirigami (QML). Workspace `core` (reines Rust) / `daemon` / `gui`. Im MVP ein Binary `kestic` mit Unterbefehlen, der Daemon lädt Qt; Trennung in `kestic-daemon` ohne Qt später (E17, FR-52, P3). Details: [architecture.md](../architecture.md), Abschnitt «Tech-Stack».
+Rust + CXX-Qt (0.10) + Kirigami (QML). Workspace `core` (reines Rust) / `daemon` / `gui`. Im MVP ein Binary `kestic` mit Unterbefehlen, der Daemon lädt Qt; Trennung in `kestic-daemon` ohne Qt später (E17, FR-52, P3). Details: [architecture.md](../architecture.md), Abschnitt «Tech-Stack».
 
-### Gepinnte Versionen (M0 Spike)
+### Festgelegte Versionen (M0 Spike)
 
-| Komponente / Werkzeug | Festgelegte Version | Quelle / Pin |
+Die Tabelle zeigt den Stand am Ende von M0. Seit 2026-11-21 sind die Versionen nicht mehr gesperrt; Renovate hebt sie an, und `just verify` prüft jede Kombination ([decisions.md](../decisions.md)). Die CXX-Qt-Crates und `cxx-kde-frameworks` wechseln dabei gemeinsam, weil `cxx-kde-frameworks` eine bestimmte CXX-Qt-Version voraussetzt.
+
+| Komponente / Werkzeug | Version (Stand M0) | Quelle |
 | --- | --- | --- |
 | Rust-Toolchain | `1.100.0` (Edition 2024, MSRV 1.100) | `rust-toolchain.toml` |
 | CXX-Qt (`cxx-qt`, `cxx-qt-lib`, `cxx-qt-lib-extras`, `cxx-qt-build`) | `=0.10.0` | `Cargo.toml` |
@@ -37,7 +39,7 @@ Rust + CXX-Qt (`=0.10.0`) + Kirigami (QML). Workspace `core` (reines Rust) / `da
 
 ### CXX-Qt-Version (0.8.1 vs. 0.10.0, M0-S03, AC-M0-03-1)
 
-Gepinnt auf **`cxx-qt = "=0.10.0"`** (inkl. `cxx-qt-lib = "=0.10.0"`, `cxx-qt-lib-extras = "=0.10.0"`, `cxx-qt-build = "=0.10.0"`):
+Gewählt wurde **`cxx-qt` 0.10.0** (mit `cxx-qt-lib`, `cxx-qt-lib-extras` und `cxx-qt-build` in derselben Version):
 
 - `cxx-kde-frameworks` (`invent.kde.org/libraries/cxx-kde-frameworks`, benötigt u. a. für KI18n) setzt selbst bereits `cxx-qt = "0.10.0"` voraus; `0.8.1` ist damit nicht kompatibel.
 - Das Referenzsystem TUXEDO OS 24.04.5 verwendet Qt 6.10.2 und KDE Frameworks / Kirigami 6.24, die von `0.10.0` aktuell unterstützt werden.
@@ -50,7 +52,7 @@ Gepinnt auf **`cxx-qt = "=0.10.0"`** (inkl. `cxx-qt-lib = "=0.10.0"`, `cxx-qt-li
 
 ### i18n und String-Lint-Werkzeug (M0-S09, NFR-06, E12)
 
-- **Laufzeit-Mechanismus:** **KI18n** über `cxx-kde-frameworks` (auf Commit-Hash gepinnt, `allow-git` + `MPL-2.0`-Clarification in `deny.toml`; `libkf6iconthemes-dev`, `libkf6configwidgets-dev`, `libkf6kcmutils-dev` in `scripts/bootstrap.sh`). Sowohl Rust (`cxx_kde_frameworks::ki18n::i18n` nach `KLocalizedString::set_application_domain("kestic")`) als auch QML (`setup_localized_context` vor `engine.load(...)`) beziehen Übersetzungen aus derselben `.mo`-Datei (`usr/share/locale/de/LC_MESSAGES/kestic.mo`, im Build über `gui/build.rs` via `msgfmt --check` erzeugt). Kein Fallback auf `gettext-rs` + `qsTr` nötig.
+- **Laufzeit-Mechanismus:** **KI18n** über `cxx-kde-frameworks` (Git-Abhängigkeit auf einem Commit, `allow-git` + `MPL-2.0`-Clarification in `deny.toml`; `libkf6iconthemes-dev`, `libkf6configwidgets-dev`, `libkf6kcmutils-dev` in `scripts/bootstrap.sh`). Sowohl Rust (`cxx_kde_frameworks::ki18n::i18n` nach `KLocalizedString::set_application_domain("kestic")`) als auch QML (`setup_localized_context` vor `engine.load(...)`) beziehen Übersetzungen aus derselben `.mo`-Datei (`usr/share/locale/de/LC_MESSAGES/kestic.mo`, im Build über `gui/build.rs` via `msgfmt --check` erzeugt). Kein Fallback auf `gettext-rs` + `qsTr` nötig.
 - **Festgelegtes String-Lint-Werkzeug (NFR-06):** **GNU gettext (`xgettext` + `msgcmp` + `msgattrib` + `msgfmt --check`)**, ausgeführt in `core/tests/m1_s16_i18n.rs` (Bestandteil von `just verify`): `xgettext --from-code=UTF-8 --keyword=i18n:1` extrahiert mit `--language=C` aus Rust und `--language=JavaScript` aus QML in eine temporäre `.pot`-Datei; `msgcmp po/de/kestic.po <.pot>`, `msgattrib --untranslated`, `msgattrib --only-fuzzy` und `msgfmt --check` erzwingen 100 % übersetzte, fehlerfreie Kataloge (in M1-S16 ergänzt durch Prüfung auf nicht gewrappte UI-Strings in QML/Rust).
 
 ## Konsequenzen

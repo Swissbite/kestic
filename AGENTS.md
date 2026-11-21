@@ -86,7 +86,7 @@ Zusätzlich gelten ohne Ausnahmen die Grössengrenzen aus [docs/spec/architectur
 
 - **Workspace-Grenzen:** Datei-Lesetools (`view_file`) nur im Repo aufrufen; bei Bedarf für System-QML (`/usr/lib/...`) oder `~/.cargo/...` über die Shell (`run_command`) nachschauen oder den passenden Skill laden.
 - **Umgebung:** Falls `cargo`/`just` in einer Non-Interactive-Shell fehlen, `~/.cargo/bin` in `PATH` einbinden; `rust-version` in `Cargo.toml` entspricht der Toolchain in `rust-toolchain.toml` (Renovate hebt beide gemeinsam an) und gilt auch für `clippy`.
-- **Abhängigkeits-Updates:** kommen als PRs von Renovate (`.github/renovate.json`, Übersicht im Issue «Dependency Dashboard»); ob eine Kombination passt, entscheidet `verify`. restic 0.18.0 bleibt als Mindestversion in `scripts/bootstrap.sh`.
+- **Abhängigkeits-Updates:** Sie kommen als PRs von Renovate (`.github/renovate.json`, Übersicht im Issue «Dependency Dashboard»); ob eine Kombination passt, entscheidet `just verify`. restic 0.18.0 bleibt als Mindestversion in `scripts/bootstrap.sh`.
 - **D-Bus-Verbindungslebensdauer:** Zustandsbehaftete Handles (`JobViewHandle`, `PortalInhibitGuard`, später `logind`-Inhibitor) müssen ihre `zbus::Connection` dauerhaft halten.
 - **i18n-Tests:** `glibc` ignoriert `LANGUAGE` bei `LANG=C.UTF-8` → Tests mit `LANG=en_US.UTF-8` und `LANGUAGE=de|en` ausführen.
 

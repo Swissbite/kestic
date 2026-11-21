@@ -6,7 +6,8 @@
   "labels": ["dependencies"],
   "lockFileMaintenance": {
     "enabled": true,
-    "description": "Transitive updates in Cargo.lock and site/pnpm-lock.yaml"
+    "description": "Transitive updates in Cargo.lock and site/pnpm-lock.yaml",
+    "schedule": ["before 8am on monday"]
   },
   "customManagers": [
     {
@@ -16,7 +17,8 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[A-Z0-9_]+_VERSION=\"(?<currentValue>[^\"]+)\""
       ],
-      "extractVersionTemplate": "^v?(?<version>.+)$"
+      "extractVersionTemplate": "^v?(?<version>.+)$",
+      "versioningTemplate": "semver-coerced"
     },
     {
       "customType": "regex",
@@ -30,15 +32,20 @@
   ],
   "packageRules": [
     {
+      "description": "A release must be 3 days old before its PR, so yanked or compromised releases are caught first",
+      "matchDatasources": ["crate", "npm", "github-releases", "github-tags", "docker"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
       "description": "Minor and patch updates of the crates in one PR",
       "matchManagers": ["cargo"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "cargo minor and patch"
     },
     {
-      "description": "The CXX-Qt crates only work together at the same version",
+      "description": "The CXX-Qt crates only work at one version, and cxx-kde-frameworks requires a specific one",
       "matchManagers": ["cargo"],
-      "matchPackageNames": ["cxx-qt", "cxx-qt-lib", "cxx-qt-lib-extras", "cxx-qt-build"],
+      "matchDepNames": ["cxx-qt", "cxx-qt-lib", "cxx-qt-lib-extras", "cxx-qt-build", "cxx-kde-frameworks"],
       "groupName": "CXX-Qt"
     },
     {
@@ -47,11 +54,12 @@
       "groupName": "Rust"
     },
     {
-      "description": "Showcase site: minor and patch in one PR; minimum age as minimumReleaseAge in site/pnpm-workspace.yaml",
-      "matchManagers": ["npm"],
-      "minimumReleaseAge": "1 day"
+      "description": "bootstrap.sh checks cargo-nextest against a SHA-256 that Renovate cannot compute",
+      "matchDepNames": ["cargo-nextest"],
+      "prBodyNotes": ["Set `CARGO_NEXTEST_SHA256_X86_64` in `scripts/bootstrap.sh` to the SHA-256 of the new x86_64 release archive."]
     },
     {
+      "description": "Showcase site: minor and patch updates in one PR",
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "site minor and patch"
