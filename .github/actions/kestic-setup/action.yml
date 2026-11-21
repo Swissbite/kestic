@@ -7,11 +7,13 @@
 #
 # Toolchain and dev tools depend only on rust-toolchain.toml and bootstrap.sh,
 # so a Cargo.lock change does not reinstall them. A build cache falls back to the
-# newest cache of the same kind, ISO week and toolchain, so a Cargo.lock change
-# rebuilds only the changed crates. Cargo never deletes the replaced builds, so
-# the key starts afresh every week (by the calendar) and a cache cannot grow
-# without bound. The calling job saves the build cache itself, once its build
-# finished.
+# newest cache of the same kind, week, toolchain and CI image inputs, so a
+# Cargo.lock change rebuilds only the changed crates. The week starts on Monday
+# at 03:00 UTC, with the weekly CI image rebuild (ci-image.yml), whose
+# workflow_run then fills the new week's caches: C++ objects are not reused
+# across a rebuilt image or changed system packages, which cargo does not track. Cargo never deletes the replaced builds, so the
+# weekly fresh key also keeps a cache from growing without bound. The calling
+# job saves the build cache itself, once its build finished.
 
 name: Kestic CI setup
 description: Restores toolchain, dev tools and optionally a build cache; runs bootstrap.sh for user kesticci.
@@ -55,7 +57,9 @@ runs:
       id: build-key
       if: inputs.build-cache != ''
       shell: bash
-      run: echo "prefix=${{ runner.os }}-kestic-${{ inputs.build-cache }}-v1-$(date -u +%G-W%V)-${{ hashFiles('rust-toolchain.toml') }}-" >> "$GITHUB_OUTPUT"
+      run: |
+        week="$(date -u -d '3 hours ago' +%G-W%V)"
+        echo "prefix=${{ runner.os }}-kestic-${{ inputs.build-cache }}-v1-$week-${{ hashFiles('rust-toolchain.toml', 'scripts/bootstrap.sh', '.github/ci-image/Dockerfile') }}-" >> "$GITHUB_OUTPUT"
 
     # Same paths as `build-cache-paths` in verify.yml, which saves this cache.
     - name: Restore Cargo registry and ${{ inputs.build-cache }} build artifacts
