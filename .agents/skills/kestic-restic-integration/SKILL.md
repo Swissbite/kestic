@@ -27,6 +27,7 @@ Use this skill for all stories invoking `restic`, parsing `restic --json` output
   - Repo password via `RESTIC_PASSWORD_COMMAND="kestic secret get <ziel-id>"` (never `RESTIC_PASSWORD`).
   - Backend credentials (`RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, S3/B2/env vars) only via child-process environment, never embedded in repo URLs.
   - Password creation/change (`key add`, `M6-S02`, `M6-S06`): write `--new-password-file` under `$XDG_RUNTIME_DIR/kestic/` with permissions `0600` and remove unconditionally on `Drop` (even on error).
+  - Until M6, the `--password-file` of the init/connect probe (`core/src/destination.rs`) lives in a private, randomly named directory below the temp directory, created `0700` with the file `0600` at creation (no `chmod` afterwards); with M6 both cases move to `$XDG_RUNTIME_DIR/kestic/` together.
 - **SSH / SFTP isolation (`NFR-07`, `AC-M1-Q-1`, `P24`):**
   - Every SSH invocation by Kestic must pass `-o UserKnownHostsFile=<path>` via `sftp.args`.
   - In tests, additionally pass `-F <test_ssh_config>` and `-o IdentitiesOnly=yes` because OpenSSH resolves `~` via `/etc/passwd`, not `$HOME`. Real `~/.ssh/known_hosts` and `~/.ssh/config` must remain untouched.
