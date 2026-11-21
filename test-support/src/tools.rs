@@ -46,8 +46,7 @@ pub fn resolve_restic_binaries() -> Vec<(&'static str, PathBuf)> {
     let dir = dev_tools_bin_dir();
     let v018 = env::var_os("KESTIC_RESTIC_0_18")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dir.join("restic-0.18.0"));
+        .map_or_else(|| dir.join("restic-0.18.0"), PathBuf::from);
 
     let vlatest = env::var_os("KESTIC_RESTIC_LATEST")
         .filter(|v| !v.is_empty())
@@ -148,8 +147,7 @@ fn find_in_path(exe: &str) -> Option<PathBuf> {
 pub fn rest_server_binary() -> PathBuf {
     let bin = env::var_os("KESTIC_REST_SERVER")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dev_tools_bin_dir().join("rest-server"));
+        .map_or_else(|| dev_tools_bin_dir().join("rest-server"), PathBuf::from);
     assert!(
         bin.is_file(),
         "rest-server missing at {} (run scripts/bootstrap.sh)",
@@ -179,8 +177,7 @@ pub fn built_german_catalog() -> PathBuf {
         .expect("crate has workspace root parent");
     env::var_os("CARGO_TARGET_DIR")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("target"))
+        .map_or_else(|| root.join("target"), PathBuf::from)
         .join("locale/de/LC_MESSAGES/kestic.mo")
 }
 

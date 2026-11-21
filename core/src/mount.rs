@@ -406,8 +406,7 @@ pub fn check_source_status_with(
         SourceKind::Drive => {
             let entries = inspector
                 .read_mountinfo()
-                .map(|raw| parse_mountinfo(&raw))
-                .unwrap_or_default();
+                .map_or_default(|raw| parse_mountinfo(&raw));
 
             if entries.is_empty() {
                 if !backup.source.path.exists() {

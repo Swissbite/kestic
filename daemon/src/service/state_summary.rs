@@ -264,11 +264,10 @@ impl DaemonCore {
         dest_password_rejected: &mut HashMap<DestinationId, bool>,
         paused_backup_window: &mut Option<(OffsetDateTime, Option<OffsetDateTime>)>,
     ) -> BackupSummaryDto {
-        let dest_name = self
-            .config
-            .destination(&backup.destination_id)
-            .map(|d| d.name.clone())
-            .unwrap_or_else(|| backup.destination_id.as_str().to_string());
+        let dest_name = self.config.destination(&backup.destination_id).map_or_else(
+            || backup.destination_id.as_str().to_string(),
+            |d| d.name.clone(),
+        );
 
         let active_run = self
             .active_runs

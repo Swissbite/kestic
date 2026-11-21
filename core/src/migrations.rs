@@ -75,7 +75,7 @@ pub fn run_migrations(
 ) -> Result<(), MigrationError> {
     validate_migrations(migrations)?;
     let current = current_schema_version(conn)?;
-    let max_supported = migrations.last().map(|m| m.version).unwrap_or(0);
+    let max_supported = migrations.last().map_or(0, |m| m.version);
     if current > max_supported {
         return Err(MigrationError::UnsupportedFutureVersion {
             current,

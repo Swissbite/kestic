@@ -21,6 +21,13 @@ pub trait Clock: Send + Sync {
     }
 }
 
+/// Whole milliseconds from `start` to `end`: zero if `end` is earlier (clock set back),
+/// `u64::MAX` if the span does not fit.
+pub fn elapsed_ms(start: OffsetDateTime, end: OffsetDateTime) -> u64 {
+    let ms = (end - start).whole_milliseconds().max(0);
+    u64::try_from(ms).unwrap_or(u64::MAX)
+}
+
 /// Production [`Clock`] backed by [`SystemTime::now`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemClock;
@@ -85,11 +92,19 @@ mod tests {
         let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
         assert_eq!(clock.now_utc(), datetime!(2026-12-01 12:00:00 UTC));
 
-        clock.advance(Duration::from_secs(2 * 3600));
+        clock.advance(Duration::from_hours(2));
         assert_eq!(clock.now_utc(), datetime!(2026-12-01 14:00:00 UTC));
 
         clock.set(datetime!(2026-12-02 09:30:00 UTC));
         assert_eq!(clock.now_utc(), datetime!(2026-12-02 09:30:00 UTC));
+    }
+
+    #[test]
+    fn elapsed_ms_is_zero_when_the_clock_went_backwards() {
+        let start = datetime!(2026-12-01 12:00:00 UTC);
+        let end = datetime!(2026-12-01 12:00:01.250 UTC);
+        assert_eq!(elapsed_ms(start, end), 1250);
+        assert_eq!(elapsed_ms(end, start), 0);
     }
 
     #[test]

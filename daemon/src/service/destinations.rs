@@ -169,9 +169,7 @@ fn check_init_new_destination(
         if path.join("config").exists() {
             return test_failure(ConnectionTestCode::RepositoryExists, String::new());
         }
-        let nonce = RunId::generate()
-            .map(|r| r.as_str().to_string())
-            .unwrap_or_else(|_| "0".to_string());
+        let nonce = RunId::generate().map_or_else(|_| "0".to_string(), |r| r.as_str().to_string());
         let probe_path = path.join(format!(".kestic-write-probe-{nonce}"));
         match fs::OpenOptions::new()
             .write(true)

@@ -77,9 +77,20 @@ pub enum UiText {
     Raw(String),
 }
 
+/// Rounds a percentage to a whole number from 0 to 100; `NaN` becomes 0.
+pub fn rounded_percent(value: f64) -> u8 {
+    // A float has no checked conversion to an integer, so the whole number is found by
+    // comparison instead of a cast.
+    let rounded = value.round();
+    (0..=100u8)
+        .rev()
+        .find(|&p| f64::from(p) <= rounded)
+        .unwrap_or(0)
+}
+
 /// Rounded percentage (0–100) for progress lines.
 fn percent(percent_done: f64) -> String {
-    (percent_done.round().clamp(0.0, 100.0) as u32).to_string()
+    rounded_percent(percent_done).to_string()
 }
 
 impl ErrorKind {

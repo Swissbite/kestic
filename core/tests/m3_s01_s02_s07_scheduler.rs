@@ -29,7 +29,7 @@ fn zurich() -> TimezoneSpec {
 fn zdt(year: i16, month: i8, day: i8, hour: u8, minute: u8) -> OffsetDateTime {
     let tz = zurich().resolve();
     let date = jiff::civil::Date::new(year, month, day).expect("valid date");
-    resolve_local_slot(date, hour, minute, &tz)
+    resolve_local_slot(date, hour, minute, &tz).expect("valid local time")
 }
 
 fn make_backup(name: &str, schedule: Schedule) -> (Destination, Backup) {
@@ -873,7 +873,7 @@ fn ac_m3_10_3_startup_marks_running_as_interrupted() {
     let running = Run::new_backup(&clock, &bk).expect("run");
     history.upsert_run(&running, &[]).expect("save");
 
-    clock.advance(std::time::Duration::from_secs(1800));
+    clock.advance(std::time::Duration::from_mins(30));
     let changed = history.mark_interrupted_on_startup(&clock).expect("mark");
     assert_eq!(changed, 1);
     let loaded = history.get_run(&running.id).expect("get").expect("some");

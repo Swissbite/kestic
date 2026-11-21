@@ -367,13 +367,11 @@ fn evaluate_single_backup_tick(
     let source_ok = guard
         .source_availability
         .get(&backup.id)
-        .map(|s| s.is_ok())
-        .unwrap_or(true);
+        .is_none_or(|s| s.is_ok());
     let cached_dest_ok = guard
         .dest_availability
         .get(&backup.destination_id)
-        .map(|d| d.reachable)
-        .unwrap_or(true);
+        .is_none_or(|d| d.reachable);
     let dest_busy = busy_dests.contains(&backup.destination_id);
     let can_probe_unreachable_dest = !cached_dest_ok
         && !dest_busy
@@ -483,8 +481,7 @@ fn evaluate_scheduled_maintenance_tick(
     let dest_ok = guard
         .dest_availability
         .get(&dest.id)
-        .map(|d| d.reachable)
-        .unwrap_or(true);
+        .is_none_or(|d| d.reachable);
     evaluate_destination_maintenance(
         &DestinationMaintenanceEvalInput {
             destination: dest,

@@ -368,8 +368,7 @@ fn handle_environment_changed(
                     let dest_ok = guard
                         .dest_availability
                         .get(&backup.destination_id)
-                        .map(|d| d.reachable)
-                        .unwrap_or(true);
+                        .is_none_or(|d| d.reachable);
                     if !dest_ok {
                         continue;
                     }
@@ -665,9 +664,7 @@ fn handle_tray_action(
                 let first_active = guard.active_runs.values().next();
                 (
                     first_active.is_some(),
-                    first_active
-                        .map(|a| a.backup_name.clone())
-                        .unwrap_or_default(),
+                    first_active.map_or_default(|a| a.backup_name.clone()),
                     guard.kestic_binary.clone(),
                     guard.suppress_ui_spawn || config.suppress_ui_spawn,
                 )

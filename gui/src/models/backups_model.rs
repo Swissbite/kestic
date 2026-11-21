@@ -87,7 +87,7 @@ fn format_active_progress_text(active_progress: Option<&ActiveRunProgressDto>) -
             &[&done_str],
         );
     }
-    let pct = p.percent_done.round().clamp(0.0, 100.0) as u32;
+    let pct = kestic_i18n::messages::rounded_percent(p.percent_done);
     let total_str = format_bytes(p.total_bytes);
     if p.total_bytes == 0 {
         return i18n("%1%").subs(&[&pct.to_string()]);
@@ -110,13 +110,11 @@ fn format_last_run_summary(last_run: Option<&Run>) -> String {
     };
     let dur = run
         .duration_ms
-        .map(format_duration_ms)
-        .unwrap_or_else(|| String::from("–"));
+        .map_or_else(|| String::from("–"), format_duration_ms);
     let added = run
         .stats
         .as_ref()
-        .map(|s| format_bytes(s.data_added))
-        .unwrap_or_else(|| String::from("0 B"));
+        .map_or_else(|| String::from("0 B"), |s| format_bytes(s.data_added));
     i18n("%1 · %2 new").subs(&[&dur, &added])
 }
 
@@ -127,9 +125,7 @@ fn build_backup_row(
 ) -> BackupRow {
     let (status_text, status_icon, status_color_kind) =
         format_backup_status(b, active_progress, now);
-    let active_percent = active_progress
-        .map(|p| p.percent_done.clamp(0.0, 100.0))
-        .unwrap_or(0.0);
+    let active_percent = active_progress.map_or(0.0, |p| p.percent_done.clamp(0.0, 100.0));
     let active_progress_text = format_active_progress_text(active_progress);
     let last_run_summary = format_last_run_summary(b.last_run.as_ref());
 
@@ -170,8 +166,7 @@ fn build_backup_row(
         active_run_id: b
             .active_run
             .as_ref()
-            .map(|r| r.id.as_str().to_string())
-            .unwrap_or_default(),
+            .map_or_default(|r| r.id.as_str().to_string()),
         active_percent,
         active_progress_text,
         active_scanning: active_progress.is_some_and(|p| p.phase == RunProgressPhase::Scanning),
@@ -180,10 +175,7 @@ fn build_backup_row(
         } else {
             String::new()
         },
-        error_action: b
-            .error_action
-            .map(|a| a.as_str().to_string())
-            .unwrap_or_default(),
+        error_action: b.error_action.map_or_default(|a| a.as_str().to_string()),
         schedule_summary: format_schedule_summary(&b.backup.schedule),
         retention_summary: format_retention_summary(&b.backup.retention),
         conditions_summary: format_conditions_summary(&b.backup.run_conditions),
@@ -207,12 +199,10 @@ fn build_backup_row(
         paused_line,
         pending_primary_code: b
             .pending_primary_code
-            .map(|code| code.as_str().to_string())
-            .unwrap_or_default(),
+            .map_or_default(|code| code.as_str().to_string()),
         pending_primary_reason: b
             .pending_primary_code
-            .map(|code| pending_reason_line(code, b.pending_retry_at_unix, now))
-            .unwrap_or_default(),
+            .map_or_default(|code| pending_reason_line(code, b.pending_retry_at_unix, now)),
         pending_reasons_tooltip: b
             .pending_reason_codes
             .iter()
@@ -222,8 +212,7 @@ fn build_backup_row(
         overdue_threshold: b
             .backup
             .overdue_threshold
-            .map(|v| i32::try_from(v).unwrap_or(99))
-            .unwrap_or(0),
+            .map_or(0, |v| i32::try_from(v).unwrap_or(99)),
     }
 }
 

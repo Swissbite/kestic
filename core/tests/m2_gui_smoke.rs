@@ -450,8 +450,7 @@ fn m2_gui_smoke_drive_unmounted_nested_and_full_config_en_de_narrow() {
 
     // Backup 0: Drive pointing to an unmounted path not present in /proc/self/mountinfo
     let nonce = kestic_core::model::RunId::generate()
-        .map(|r| r.as_str().to_string())
-        .unwrap_or_else(|_| "0".into());
+        .map_or_else(|_| "0".into(), |r| r.as_str().to_string());
     let missing_drive_path = PathBuf::from(format!(
         "/tmp/kestic-missing-drive-mount-{}-{nonce}",
         std::process::id()

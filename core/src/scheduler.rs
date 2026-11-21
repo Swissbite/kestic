@@ -10,15 +10,18 @@ use crate::model::{
     PendingReason, RunConditions, Schedule, Weekday,
 };
 use jiff::Timestamp;
-use jiff::civil::Date;
+use jiff::civil::{Date, Time};
 use jiff::tz::{AmbiguousOffset, TimeZone};
 use kestic_i18n::codes::PendingReasonCode;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use time::OffsetDateTime;
 
+/// Number of transient-failure retries before waiting for the next regular slot.
+const BACKOFF_RETRIES: u32 = 3;
+
 /// Backoff delays (in seconds) after consecutive transient failures.
-pub const BACKOFF_DELAYS_SECS: [i64; 3] = [5 * 60, 15 * 60, 60 * 60];
+pub const BACKOFF_DELAYS_SECS: [i64; BACKOFF_RETRIES as usize] = [5 * 60, 15 * 60, 60 * 60];
 
 /// Injectable timezone specification so unit tests can evaluate IANA DST rules
 /// (e.g. `Europe/Zurich`) deterministically without mutating process environment.
@@ -50,8 +53,21 @@ fn to_offset_dt(ts: Timestamp) -> OffsetDateTime {
 /// - Unambiguous: exact instant.
 /// - DST fold (autumn fallback): first occurrence only.
 /// - DST gap (spring forward): next valid minute at the transition (e.g. `02:30` -> `03:00`).
-pub fn resolve_local_slot(date: Date, hour: u8, minute: u8, tz: &TimeZone) -> OffsetDateTime {
-    let civil = date.at(hour as i8, minute as i8, 0, 0);
+///
+/// Returns `None` when `hour` or `minute` is not a valid time of day; schedules from the
+/// configuration are validated on load, so this guards only against unchecked input.
+pub fn resolve_local_slot(
+    date: Date,
+    hour: u8,
+    minute: u8,
+    tz: &TimeZone,
+) -> Option<OffsetDateTime> {
+    let time = Time::new(i8::try_from(hour).ok()?, i8::try_from(minute).ok()?, 0, 0).ok()?;
+    Some(resolve_local_time(date, time, tz))
+}
+
+fn resolve_local_time(date: Date, time: Time, tz: &TimeZone) -> OffsetDateTime {
+    let civil = date.to_datetime(time);
     let amb = tz.to_ambiguous_timestamp(civil);
     let ts = match amb.offset() {
         AmbiguousOffset::Unambiguous { .. } => amb.compatible().unwrap_or(Timestamp::UNIX_EPOCH),
@@ -71,7 +87,7 @@ pub fn resolve_local_slot(date: Date, hour: u8, minute: u8, tz: &TimeZone) -> Of
 
 /// Resolves `00:00` local time on `date` (handling rare midnight DST gaps).
 pub fn resolve_local_midnight(date: Date, tz: &TimeZone) -> OffsetDateTime {
-    resolve_local_slot(date, 0, 0, tz)
+    resolve_local_time(date, Time::midnight(), tz)
 }
 
 /// Formats `dt` as `HH:MM` in the resolved `tz_spec`.
@@ -202,11 +218,12 @@ fn slots_between(
 
     let mut slots = Vec::new();
     while cur_date <= end_date {
-        if let Some((hour, minute)) = matches(cur_date) {
-            let slot = resolve_local_slot(cur_date, hour, minute, &tz);
-            if slot > after_exclusive && slot <= up_to_inclusive {
-                slots.push(slot);
-            }
+        if let Some((hour, minute)) = matches(cur_date)
+            && let Some(slot) = resolve_local_slot(cur_date, hour, minute, &tz)
+            && slot > after_exclusive
+            && slot <= up_to_inclusive
+        {
+            slots.push(slot);
         }
         let Some(next) = cur_date.tomorrow().ok() else {
             break;
@@ -251,13 +268,13 @@ pub fn next_backup_slots(
     let mut slots = Vec::with_capacity(count);
     // Search up to 400 days ahead (covers EveryNDays up to 365 days).
     for _ in 0..800 {
-        if let Some((hour, minute)) = schedule_matches_date(schedule, cur_date) {
-            let slot = resolve_local_slot(cur_date, hour, minute, &tz);
-            if slot > after_exclusive {
-                slots.push(slot);
-                if slots.len() >= count {
-                    break;
-                }
+        if let Some((hour, minute)) = schedule_matches_date(schedule, cur_date)
+            && let Some(slot) = resolve_local_slot(cur_date, hour, minute, &tz)
+            && slot > after_exclusive
+        {
+            slots.push(slot);
+            if slots.len() >= count {
+                break;
             }
         }
         let Some(next) = cur_date.tomorrow().ok() else {
@@ -296,11 +313,11 @@ pub fn next_maintenance_slot(
     let start_date = tz.to_datetime(to_jiff_ts(after_exclusive)).date();
     let mut cur_date = start_date.yesterday().unwrap_or(start_date);
     for _ in 0..400 {
-        if let Some((hour, minute)) = maintenance_matches_date(schedule, cur_date) {
-            let slot = resolve_local_slot(cur_date, hour, minute, &tz);
-            if slot > after_exclusive {
-                return Some(slot);
-            }
+        if let Some((hour, minute)) = maintenance_matches_date(schedule, cur_date)
+            && let Some(slot) = resolve_local_slot(cur_date, hour, minute, &tz)
+            && slot > after_exclusive
+        {
+            return Some(slot);
         }
         cur_date = cur_date.tomorrow().ok()?;
     }
@@ -358,8 +375,9 @@ pub fn compute_pause_until(
             let tomorrow = local_today.tomorrow().unwrap_or(local_today);
             let mut earliest: Option<OffsetDateTime> = None;
             for sched in schedules {
-                if let Some((hour, minute)) = schedule_matches_date(sched, tomorrow) {
-                    let slot = resolve_local_slot(tomorrow, hour, minute, &tz);
+                if let Some((hour, minute)) = schedule_matches_date(sched, tomorrow)
+                    && let Some(slot) = resolve_local_slot(tomorrow, hour, minute, &tz)
+                {
                     earliest = Some(match earliest {
                         Some(cur) if cur <= slot => cur,
                         _ => slot,
@@ -396,7 +414,7 @@ pub fn compute_backoff_until(
 
 /// `backoff_attempt` value meaning "all retries used, wait for the next regular slot strictly
 /// after `last_failure_at`"; see [`evaluate_backup_schedule`].
-pub const BACKOFF_ATTEMPT_WAIT_FOR_NEXT_SLOT: u32 = BACKOFF_DELAYS_SECS.len() as u32 + 1;
+pub const BACKOFF_ATTEMPT_WAIT_FOR_NEXT_SLOT: u32 = BACKOFF_RETRIES + 1;
 
 /// Records a transient failure finished at `now` on a backup's backoff state (5/15/60 min).
 pub fn record_backup_backoff_failure(
@@ -933,4 +951,19 @@ pub fn plan_destination_actions(
     }
 
     actions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_time_of_day_resolves_to_no_slot() {
+        let date = Date::new(2026, 12, 1).expect("valid date");
+        let tz = TimeZone::UTC;
+        assert!(resolve_local_slot(date, 23, 59, &tz).is_some());
+        assert_eq!(resolve_local_slot(date, 24, 0, &tz), None);
+        assert_eq!(resolve_local_slot(date, 12, 60, &tz), None);
+        assert_eq!(resolve_local_slot(date, 200, 0, &tz), None);
+    }
 }

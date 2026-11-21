@@ -114,7 +114,7 @@ fn m3_maintenance_backoff_prevents_spin_and_notification_flood() {
             );
 
             // +5m -> attempt 2 fails, still only 1 notification!
-            clock.advance(Duration::from_secs(5 * 60));
+            clock.advance(Duration::from_mins(5));
             let deadline = Instant::now() + Duration::from_secs(15);
             loop {
                 let finished_count = RunHistory::open(&state_dir)
@@ -469,7 +469,7 @@ fn m3_mid_run_network_drop_is_pending_not_permanent_error() {
 
             // Network returns -> +5m scheduled retry succeeds Ok (not blocked by has_error!).
             rig.wrapper.clear_fail("backup");
-            clock.advance(Duration::from_secs(5 * 60));
+            clock.advance(Duration::from_mins(5));
             wait_for_state(client, Duration::from_secs(15), "retry ok", |s| {
                 backup_summary(s, &bid)
                     .last_run
@@ -1319,7 +1319,7 @@ fn m3_hung_source_probe_is_replaced_when_stale() {
                 "a fresh in-flight probe is not duplicated"
             );
 
-            clock.advance(Duration::from_secs(10 * 60));
+            clock.advance(Duration::from_mins(10));
             wait_until_within(Duration::from_secs(5), "stale probe replaced", || {
                 inspector.calls.load(Ordering::SeqCst) > calls_while_hung
             });
@@ -1715,7 +1715,7 @@ fn m3_hung_availability_probe_is_replaced_when_stale() {
             });
             let calls_hung = inspector.calls.load(Ordering::SeqCst);
 
-            clock.advance(Duration::from_secs(10 * 60));
+            clock.advance(Duration::from_mins(10));
             client
                 .window_active(true, "overview")
                 .expect("WindowActive");

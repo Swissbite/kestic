@@ -211,8 +211,7 @@ impl DaemonCore {
             backup_name: backup.as_ref().map(|b| b.name.clone()),
             destination_name: destination
                 .as_ref()
-                .map(|d| d.name.clone())
-                .unwrap_or_else(|| tr(&deleted_destination_message())),
+                .map_or_else(|| tr(&deleted_destination_message()), |d| d.name.clone()),
             run,
             backup,
             destination,
@@ -302,7 +301,7 @@ impl DaemonCore {
                 "item path must not be empty".to_string(),
             ));
         }
-        let is_dir = fs::metadata(trimmed).map(|m| m.is_dir()).unwrap_or(false);
+        let is_dir = fs::metadata(trimmed).is_ok_and(|m| m.is_dir());
         if is_dir {
             let rule = normalize_folder_rule(trimmed, current_home_dir().as_deref());
             Ok(ExcludeRulePreviewDto {
@@ -378,9 +377,9 @@ pub(crate) fn get_run_detail_unlocked(
         guard.run_detail_snapshot(run_id)?
     };
     let log_lines: Vec<String> = match &snap.run.log_path {
-        Some(path) => fs::read_to_string(path)
-            .map(|s| s.lines().map(ToOwned::to_owned).collect())
-            .unwrap_or_default(),
+        Some(path) => {
+            fs::read_to_string(path).map_or_default(|s| s.lines().map(ToOwned::to_owned).collect())
+        }
         None => Vec::new(),
     };
     let transparent_commands = build_transparent_commands(&snap);
@@ -465,8 +464,7 @@ fn build_transparent_commands(snap: &RunDetailSnapshot) -> Vec<String> {
             &resolved,
             &snap.kestic_binary,
         )
-        .map(|s| vec![s.to_transparent_shell_command()])
-        .unwrap_or_default();
+        .map_or_default(|s| vec![s.to_transparent_shell_command()]);
     }
     Vec::new()
 }

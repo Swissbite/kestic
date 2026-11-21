@@ -41,7 +41,7 @@ impl qobject::KesticApp {
                     .and_then(|s| s.overall.active_run_progress.as_ref());
                 (
                     active.is_some(),
-                    active.map(|a| a.backup_name.clone()).unwrap_or_default(),
+                    active.map_or_default(|a| a.backup_name.clone()),
                 )
             };
             self.as_mut().set_quit_has_running_run(has_running);
@@ -123,8 +123,10 @@ impl qobject::KesticApp {
                 .state
                 .as_ref()
                 .and_then(|s| lookup_backup_summary(s, &backup_id))
-                .map(|b| (b.backup.name.clone(), localized_unmet_conditions(b)))
-                .unwrap_or_else(|| (backup_id.clone(), None))
+                .map_or_else(
+                    || (backup_id.clone(), None),
+                    |b| (b.backup.name.clone(), localized_unmet_conditions(b)),
+                )
         };
         if reason == BlockedReason::ConditionNotMet {
             let msg = localized_condition_override_message(&backup_name, unmet_text.as_deref());

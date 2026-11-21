@@ -696,11 +696,10 @@ pub fn evaluate_exclude_path(
         .collect();
 
     let norm_src = normalize_lexical_path(source_root);
-    let rel_str_owned = candidate_path
-        .strip_prefix(&norm_src)
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| candidate_str.clone());
+    let rel_str_owned = candidate_path.strip_prefix(&norm_src).ok().map_or_else(
+        || candidate_str.clone(),
+        |p| p.to_string_lossy().into_owned(),
+    );
     let rel_comps: Vec<&str> = rel_str_owned.split('/').filter(|c| !c.is_empty()).collect();
 
     let mut state = ExcludeEvalState {

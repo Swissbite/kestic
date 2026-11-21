@@ -159,7 +159,7 @@ pub async fn read_system_environment_async(
         .await
             && let Ok(pct) = f64::try_from(&val)
         {
-            env.battery_percent = Some(pct.round().clamp(0.0, 100.0) as u8);
+            env.battery_percent = Some(kestic_i18n::messages::rounded_percent(pct));
         }
     } else if !cfg.use_session_bus {
         eprintln!(
@@ -552,9 +552,9 @@ enum SignalKind {
 
 fn classify_signal(msg: &zbus::Message) -> SignalKind {
     let hdr = msg.header();
-    let iface = hdr.interface().map(|i| i.as_str()).unwrap_or("");
-    let member = hdr.member().map(|m| m.as_str()).unwrap_or("");
-    let path = hdr.path().map(|p| p.as_str()).unwrap_or("");
+    let iface = hdr.interface().map_or("", |i| i.as_str());
+    let member = hdr.member().map_or("", |m| m.as_str());
+    let path = hdr.path().map_or("", |p| p.as_str());
 
     if iface == "org.freedesktop.login1.Manager" && member == "PrepareForSleep" {
         return msg
