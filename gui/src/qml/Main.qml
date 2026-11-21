@@ -837,8 +837,10 @@ Kirigami.ApplicationWindow {
         appBackend.initialize();
         pageStack.push(overviewPageComponent.createObject(pageStack, {}));
         appBackend.windowActive(true, "overview");
+        // Kirigami loads its own translations once the event loop runs; the About page reads
+        // some of them only once, so it opens after that.
         if (appBackend.show_about_on_start) {
-            openAboutPage();
+            Qt.callLater(openAboutPage);
         }
     }
 

@@ -27,6 +27,9 @@ Kirigami.ApplicationWindow {
     }
 
     function openWindow() {
+        if (pageStack.depth === 0) {
+            pageStack.push(aboutPageComponent.createObject(pageStack));
+        }
         visible = true;
         if (Qt.platform.pluginName !== "offscreen") {
             raise();
@@ -48,8 +51,13 @@ Kirigami.ApplicationWindow {
     }
 
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
-    pageStack.initialPage: MainAboutPage {
-        appBackend: aboutWindow.appBackend
+    // Created on first opening, not with the window at startup: Kirigami fills the page's list
+    // of libraries once, in the language its translations are loaded in at that moment.
+    Component {
+        id: aboutPageComponent
+        MainAboutPage {
+            appBackend: aboutWindow.appBackend
+        }
     }
 
     footer: Controls.DialogButtonBox {

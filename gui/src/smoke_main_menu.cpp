@@ -41,6 +41,16 @@ bool escape_about(QQuickWindow* w) {
     return wait_until([&] { return !about->isVisible(); }, 2000);
 }
 
+/// In German, the texts Kirigami adds to the About page (list of libraries) are German too.
+int check_kirigami_texts_translated(const Ctx& c, QQuickWindow* about, int code) {
+    if (c.lang != QLatin1String("de")) {
+        return 0;
+    }
+    M3_CHECK(code, !has_visible_text(about->contentItem(), QStringLiteral("built against")), "Kirigami text «built against» in English");
+    M3_CHECK(code + 1, has_visible_text(about->contentItem(), QStringLiteral("kompiliert gegen")), "Kirigami text «kompiliert gegen» missing");
+    return 0;
+}
+
 /// The two entries of the open menu: text and accessible name.
 int check_menu_entries(const Ctx& c) {
     struct Entry {
@@ -94,7 +104,7 @@ int check_about_page(const Ctx& c, int depth_before, int code) {
     QObject* hint = object_named(c.window, "buildsDifferMessage");
     M3_CHECK2(code + 11, hint, !hint->property("visible").toBool(), "hint about different builds shown for the same build");
     M3_CHECK(code + 12, !has_visible_text(about->contentItem(), QStringLiteral("david@")), "author e-mail shown");
-    return 0;
+    return check_kirigami_texts_translated(c, about, 5170);
 }
 
 /// (a) The ☰ button is visible at the right end of the header and has an accessible name;
@@ -218,11 +228,17 @@ int scenario_about_builds_differ(const Ctx& c) {
     return 0;
 }
 
-/// Started with `--show-about` (from the tray), Kestic opens the «About Kestic» window.
+/// Started with `--show-about` (from the tray), Kestic opens the «About Kestic» window, in
+/// German with Kirigami's own texts in German.
 int scenario_show_about_on_start(const Ctx& c) {
     QQuickWindow* about = about_window(c.window);
     M3_CHECK(5301, about != nullptr, "About Kestic not open after the start");
     M3_CHECK(5302, about != c.window, "About Kestic opened inside the main window");
+    wait_ms(300);
+    finish_incubation(about);
+    if (const int rc = check_kirigami_texts_translated(c, about, 5304); rc != 0) {
+        return rc;
+    }
     M3_CHECK(5303, save_screenshot(about, c.out_path), "screenshot failed");
     return 0;
 }

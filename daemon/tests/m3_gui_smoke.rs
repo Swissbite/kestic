@@ -1150,8 +1150,9 @@ fn ac_m1_13_8_main_menu_button_works_with_mouse_and_keyboard() {
 
 /// AC-M1-13-9: «About Kestic» with a background service of another build shows (a) the hint
 /// to reopen Kestic, (b) a clean commit as a link to its GitHub page and (c) a `-dirty` commit
-/// as text without a link. Started from the tray (`--show-about`), (d) the window opens on the
-/// About page.
+/// as text without a link. Started from the tray (`--show-about`), (d) the About window opens and
+/// (e) in German shows Kirigami's own texts in German too (the menu path is checked by the
+/// AC-M1-13-8 scene).
 #[test]
 fn ac_m1_13_9_about_page_links_commits_and_flags_another_build() {
     run_isolated_test(
@@ -1172,19 +1173,22 @@ fn ac_m1_13_9_about_page_links_commits_and_flags_another_build() {
             let iso = kestic_test_support::gui::IsolatedEnv::adopt(root);
             let dbus_addr =
                 std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
-            kestic_test_support::gui::SmokeContext {
-                kestic_bin: &find_kestic_binary(),
+            let kestic_bin = find_kestic_binary();
+            let smoke = kestic_test_support::gui::SmokeContext {
+                kestic_bin: &kestic_bin,
                 iso: &iso,
                 dbus_addr: &dbus_addr,
+            };
+            for lang in ["en", "de"] {
+                smoke.run_with_env(
+                    "m3-show-about-on-start",
+                    "wide",
+                    lang,
+                    &smoke_artifact("show-about-on-start", "wide", lang),
+                    &["--show-about"],
+                    &build_env(),
+                );
             }
-            .run_with_env(
-                "m3-show-about-on-start",
-                "wide",
-                "en",
-                &smoke_artifact("show-about-on-start", "wide", "en"),
-                &["--show-about"],
-                &build_env(),
-            );
             rig.daemon.stop();
         },
     );
