@@ -23,6 +23,7 @@ verify:
     just _nextest
     cargo deny check
     reuse lint
+    python3 -B scripts/test_deps_report.py
 
 _check-file-sizes:
     #!/usr/bin/env bash
@@ -121,6 +122,11 @@ _nextest:
     fi
     cargo nextest run -p kestic-test-support
     cargo nextest run --workspace --features kestic-gui/test-harness
+
+# Weekly dependency report as Markdown on stdout; changes nothing. The workflow
+# dependency-report.yml runs it with --create-issue. Needs network and an authenticated `gh`.
+deps-report *args:
+    python3 -B scripts/deps_report.py {{args}}
 
 # Showcase site (site/). Needs pnpm; pnpm provides Node
 # itself (devEngines.runtime). Screenshots come from target/smoke-artifacts/,

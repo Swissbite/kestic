@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Weekly dependency report: compares every dependency, pin and tool version with the
+# newest release and opens the result as an issue «Abhängigkeiten KW <week> <year>»;
+# older open reports are closed. Dependabot PRs are referenced, not duplicated.
+# Changes no file and opens no PR. Locally: `just deps-report` (prints the report).
+
+name: Dependency report
+
+on:
+  schedule:
+    # Mondays 07:00 UTC (08:00 in Zurich in winter), after Dependabot's 06:00 run.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Dependency report
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      # CI status of the open Dependabot PRs; without them the report says «nicht prüfbar».
+      checks: read
+      statuses: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # `cargo update --dry-run` runs with the toolchain from rust-toolchain.toml. If the
+      # install fails, the report marks the lockfile section «nicht prüfbar».
+      - name: Install the pinned Rust toolchain
+        continue-on-error: true
+        run: rustup toolchain install --profile minimal
+
+      - name: Create the report issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/deps_report.py --create-issue

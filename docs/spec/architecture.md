@@ -128,6 +128,7 @@ Stand recherchiert am 2026-11-15. Entscheid: [ADR 0001](adr/0001-tech-stack-rust
 
 - **Workspace:** `core` (reines Rust, ohne Qt testbar mit `cargo test`) / `daemon` (inkl. Tray, Notifications, CLI `kestic secret get`) / `gui` (CXX-Qt + Kirigami QML) / `i18n` (gemeinsame Texte und Codes) / `test-support` (nur Dev-Abhängigkeit für Tests, nie im Paket). GUI-Schicht dünn, Logik in `core`.
 - **Crates (gepinnt gemäss [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md)):** `notify-rust`, `ksni`, `zbus` (inkl. direktem `org.freedesktop.secrets`-Client), `cargo-deb`, `cxx-qt` (`=0.10.0`), `cxx-kde-frameworks` (Commit `5c51af42`).
+- **Abhängigkeits-Report:** `.github/workflows/dependency-report.yml` legt jeden Montag das Issue «Abhängigkeiten KW <Woche> <Jahr>» an und schliesst das vorherige: verfügbare Updates von Crates, gepinnten Komponenten (CXX-Qt, `cxx-kde-frameworks`, Toolchain), restic und Testwerkzeugen, CI-Image, Actions und Showcase-Seite nach Major/Minor/Patch, mit Verweis auf offene Dependabot-PRs. Er ändert keine Datei; lokal `just deps-report`.
 - **Grund der Wahl:** Der Maintainer reviewt Rust eher als C++; Compiler fängt bei agentisch geschriebenem Code viel ab.
 - **Risiko:** CXX-Qt im Spike erfolgreich validiert ([milestones/m0-spike.md](milestones/m0-spike.md)).
 
