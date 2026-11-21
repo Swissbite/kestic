@@ -179,6 +179,31 @@ int scenario_main_menu(const Ctx& c) {
     return 0;
 }
 
+/// Over the overview of a configured Kestic (three backups), (a) the overview shows the backups,
+/// not the welcome screen, and (b) a click on ☰ opens the same static menu with its two entries.
+int scenario_main_menu_configured(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    QAbstractItemModel* backups = model_named(w, "backupsModel");
+    M3_CHECK(5401, backups != nullptr, "backupsModel missing");
+    M3_CHECK(5402, wait_until([&] { return backups->rowCount() == 3; }, 5000), "(a) expected three backups");
+    QQuickItem* overview = item_named(w, "overviewContent");
+    M3_CHECK(5403, overview != nullptr, "(a) overviewContent missing");
+    M3_CHECK(5404, wait_until([&] { return overview->isVisible(); }, 3000), "(a) overview with backups not shown");
+    QQuickItem* welcome = item_named(w, "welcomeView");
+    M3_CHECK2(5405, welcome != nullptr, !welcome->isVisible(), "(a) welcome screen shown");
+    QQuickItem* button = item_named(w, "mainMenuButton");
+    QObject* menu = object_named(w, "hamburgerMenu");
+    M3_CHECK2(5406, button, menu, "main menu button or menu missing");
+    M3_CHECK(5407, click_ui_item(w, button, "main menu button"), "(b) click on the button failed");
+    M3_CHECK(5408, wait_until([&] { return is_open(menu); }, 1000), "(b) menu did not open on click");
+    if (const int rc = check_menu_entries(c); rc != 0) {
+        return rc;
+    }
+    wait_ms(200);
+    M3_CHECK(5409, save_screenshot(w, c.out_path), "screenshot of the open menu failed");
+    return 0;
+}
+
 /// Simulates a background service 9.9.9 at `commit` until `shown` holds (at most 3 s). Opening
 /// the About window makes the main window inactive; the GUI reports that and fetches the real
 /// state again, which may overwrite a value set only once.
@@ -249,6 +274,9 @@ int run_main_menu_scenario(const m3::Ctx& ctx, const QString& scen, bool* handle
     *handled = true;
     if (scen == QLatin1String("m3-main-menu")) {
         return scenario_main_menu(ctx);
+    }
+    if (scen == QLatin1String("m3-main-menu-configured")) {
+        return scenario_main_menu_configured(ctx);
     }
     if (scen == QLatin1String("m3-about-builds-differ")) {
         return scenario_about_builds_differ(ctx);

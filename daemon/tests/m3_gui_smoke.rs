@@ -102,6 +102,64 @@ fn saved_backup(rig: &M3Rig, id: &BackupId) -> Backup {
         .expect("saved backup present")
 }
 
+/// Overview with three backups on one destination: «Docs OK» backed up, «Docs Pending» waiting
+/// for AC power (on battery) and «Docs Overdue» overdue. Keep the fakes alive with the rig.
+fn status_rows_env(root: &Path) -> (M3Rig, StdFakes) {
+    let fakes = gui_fakes(true, &["HomeWifi"]);
+    let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
+    let dest = rig.add_destination("Status Vault", |_| {});
+    let overdue_id = rig
+        .add_backup_to(&dest, "Docs Overdue", |b| {
+            b.run_conditions = no_conditions()
+        })
+        .id;
+
+    rig.clock.set(datetime!(2026-12-04 10:00:00 UTC));
+    let ok_id = rig
+        .add_backup_to(&dest, "Docs OK", |b| b.run_conditions = no_conditions())
+        .id;
+    let pending_id = rig.add_backup_to(&dest, "Docs Pending", |_| {}).id;
+
+    rig.clock.set(datetime!(2026-12-04 12:05:00 UTC));
+    rig.daemon
+        .client
+        .start_backup(ok_id.as_str())
+        .expect("start Docs OK");
+    wait_for_state(
+        &rig.daemon.client,
+        Duration::from_secs(20),
+        "Docs OK done",
+        |s| {
+            backup_summary(s, &ok_id)
+                .last_run
+                .as_ref()
+                .is_some_and(|r| r.status == RunStatus::Ok)
+                && backup_summary(s, &ok_id).active_run.is_none()
+        },
+    );
+    let state = wait_for_state(
+        &rig.daemon.client,
+        Duration::from_secs(5),
+        "3 states",
+        |s| {
+            backup_summary(s, &overdue_id).is_overdue
+                && backup_summary(s, &pending_id)
+                    .pending_primary_code
+                    .map(|c| c.as_str())
+                    == Some("on_battery")
+        },
+    );
+    assert!(
+        !backup_summary(&state, &pending_id).is_overdue,
+        "waiting backup must not be overdue"
+    );
+    assert!(
+        !backup_summary(&state, &ok_id).is_overdue,
+        "ok backup must not be overdue"
+    );
+    (rig, fakes)
+}
+
 /// AC-M3-08-3: ok / waiting / overdue backups with status, reason and next slot.
 #[test]
 fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slot() {
@@ -109,60 +167,7 @@ fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slo
         "m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slot",
         "KESTIC_M3_GUI_STATUS_ROWS_INNER",
         |root| {
-            // On battery: the backup with default conditions is waiting for AC power.
-            let _fakes = gui_fakes(true, &["HomeWifi"]);
-            let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
-            let dest = rig.add_destination("Status Vault", |_| {});
-            let overdue_id = rig
-                .add_backup_to(&dest, "Docs Overdue", |b| {
-                    b.run_conditions = no_conditions()
-                })
-                .id;
-
-            rig.clock.set(datetime!(2026-12-04 10:00:00 UTC));
-            let ok_id = rig
-                .add_backup_to(&dest, "Docs OK", |b| b.run_conditions = no_conditions())
-                .id;
-            let pending_id = rig.add_backup_to(&dest, "Docs Pending", |_| {}).id;
-
-            rig.clock.set(datetime!(2026-12-04 12:05:00 UTC));
-            rig.daemon
-                .client
-                .start_backup(ok_id.as_str())
-                .expect("start Docs OK");
-            wait_for_state(
-                &rig.daemon.client,
-                Duration::from_secs(20),
-                "Docs OK done",
-                |s| {
-                    backup_summary(s, &ok_id)
-                        .last_run
-                        .as_ref()
-                        .is_some_and(|r| r.status == RunStatus::Ok)
-                        && backup_summary(s, &ok_id).active_run.is_none()
-                },
-            );
-            let state = wait_for_state(
-                &rig.daemon.client,
-                Duration::from_secs(5),
-                "3 states",
-                |s| {
-                    backup_summary(s, &overdue_id).is_overdue
-                        && backup_summary(s, &pending_id)
-                            .pending_primary_code
-                            .map(|c| c.as_str())
-                            == Some("on_battery")
-                },
-            );
-            assert!(
-                !backup_summary(&state, &pending_id).is_overdue,
-                "waiting backup must not be overdue"
-            );
-            assert!(
-                !backup_summary(&state, &ok_id).is_overdue,
-                "ok backup must not be overdue"
-            );
-
+            let (rig, _fakes) = status_rows_env(root);
             for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
                 run_m3_gui_smoke(
                     root,
@@ -1141,6 +1146,30 @@ fn ac_m1_13_8_main_menu_button_works_with_mouse_and_keyboard() {
                     lang,
                     &smoke_artifact("main-menu", layout, lang),
                     &build_env(),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M1-13-8 (b): the menu is static. Over an overview with three backups (ok, waiting,
+/// overdue) it holds exactly the same two entries as over the welcome screen. Screenshots of the
+/// open menu in English and German.
+#[test]
+fn ac_m1_13_8_main_menu_is_the_same_over_a_configured_overview() {
+    run_isolated_test(
+        "ac_m1_13_8_main_menu_is_the_same_over_a_configured_overview",
+        "KESTIC_M1_MAIN_MENU_CONFIGURED_INNER",
+        |root| {
+            let (rig, _fakes) = status_rows_env(root);
+            for lang in ["en", "de"] {
+                run_m3_gui_smoke(
+                    root,
+                    "m3-main-menu-configured",
+                    "wide",
+                    lang,
+                    &smoke_artifact("main-menu-configured", "wide", lang),
                 );
             }
             rig.daemon.stop();
