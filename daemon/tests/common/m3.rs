@@ -333,10 +333,11 @@ where
         assert!(
             Instant::now() < deadline,
             "timed out waiting for condition ({label}); last overall={:?}\n  blocking={:?}, \
-             secret store={:?}, restic={:?}\n  backups={:?}",
+             secret store available={} locked={}, restic={:?}\n  backups={:?}",
             state.overall,
             state.blocking,
-            state.secret_store_status,
+            state.secret_store_status.available,
+            state.secret_store_status.locked,
             state.restic_status,
             state
                 .backups
