@@ -1,6 +1,6 @@
 # ADR 0001: Tech-Stack Rust + CXX-Qt + Kirigami
 
-- Status: **akzeptiert (Spike M0 abgeschlossen)**; die exakten Versions-Pins sind seit 2026-11-21 aufgehoben, Updates kommen über Renovate ([decisions.md](../decisions.md))
+- Status: **akzeptiert (Spike M0 abgeschlossen)**; die exakten Versions-Pins sind seit 2026-11-21 aufgehoben (einzige Sperre: typescript `<7`), Updates kommen über Renovate, teils mit Automerge ([decisions.md](../decisions.md))
 - Datum: 2026-11-16
 
 ## Kontext
@@ -22,7 +22,7 @@ Rust + CXX-Qt (0.10) + Kirigami (QML). Workspace `core` (reines Rust) / `daemon`
 
 ### Festgelegte Versionen (M0 Spike)
 
-Die Tabelle zeigt den Stand am Ende von M0. Seit 2026-11-21 sind die Versionen nicht mehr gesperrt; Renovate hebt sie an, und `just verify` prüft jede Kombination ([decisions.md](../decisions.md)). Die CXX-Qt-Crates und `cxx-kde-frameworks` wechseln dabei gemeinsam, weil `cxx-kde-frameworks` eine bestimmte CXX-Qt-Version voraussetzt.
+Die Tabelle zeigt den Stand am Ende von M0. Seit 2026-11-21 sind die Versionen nicht mehr gesperrt (ausser typescript `<7`); Renovate hebt sie an und mergt unkritische Updates nach grünen Pflicht-Checks selbst (Zeile «Renovate: Automerge»), und `just verify` prüft jede Kombination ([decisions.md](../decisions.md)). Die CXX-Qt-Crates und `cxx-kde-frameworks` wechseln dabei gemeinsam, weil `cxx-kde-frameworks` eine bestimmte CXX-Qt-Version voraussetzt.
 
 | Komponente / Werkzeug | Version (Stand M0) | Quelle |
 | --- | --- | --- |
