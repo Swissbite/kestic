@@ -52,9 +52,8 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     };
 
     eprintln!(
-        "kestic-daemon {}: started (pid {})",
-        crate::daemon_version(),
-        std::process::id()
+        "{}",
+        crate::startup_line(&crate::log_label(), std::process::id())
     );
 
     let conn = lock.connection().clone();
@@ -211,7 +210,8 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
                 };
                 if !has_active_runs {
                     eprintln!(
-                        "kestic-daemon: event loop ends: binary replaced ({}), re-executing",
+                        "{}: event loop ends: binary replaced ({}), re-executing",
+                        crate::log_label(),
                         reason.as_str()
                     );
                     return Some(bin_id.exe_path().to_path_buf());

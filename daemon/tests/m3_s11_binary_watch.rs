@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! M3-S11 package update: the daemon notices a replaced binary and restarts itself after a running
-//! backup (`AC-M3-11-1`, `AC-M3-11-2`, `AC-M3-11-3`).
+//! backup (`AC-M3-11-1`, `AC-M3-11-2`, `AC-M3-11-3`). Its journal lines name version and build
+//! commit, so the build that runs before and after such a restart is visible.
 
 mod common;
 
@@ -15,6 +16,7 @@ use kestic_core::model::{
     Backup, BackupId, Destination, DestinationKind, ResticProvider, RunStatus, Schedule, Source,
 };
 use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient};
+use kestic_test_support::workspace::workspace_root;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -42,6 +44,7 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
             let cfg_path = root.join("cfg/kestic/config.toml");
             let state_dir = root.join("state/kestic");
             let ready_file = root.join("daemon.ready");
+            let stderr_log = root.join("daemon.stderr");
             let bus_name = "net.daester.Kestic.M3S11";
             let restic_bin = latest_variant().bin;
 
@@ -63,7 +66,7 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
                     &ready_file.to_string_lossy(),
                 ])
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(fs::File::create(&stderr_log).expect("create daemon stderr log"))
                 .spawn()
                 .expect("spawn installed kestic --daemon");
 
@@ -88,6 +91,13 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
             fs::rename(&bin_new, &installed_bin).expect("rename kestic binary");
             wait_for_file(&ready_file, Duration::from_secs(10));
             assert_eq!(child_guard.0.id(), pid_before);
+            let log = fs::read_to_string(&stderr_log).expect("read daemon stderr log");
+            let label = kestic_daemon::log_label();
+            assert!(
+                log.contains(&format!("{label}: event loop ends: binary replaced")),
+                "re-exec line must name version and build commit (rebuild target/debug/kestic if HEAD \
+                 moved), got:\n{log}"
+            );
 
             // AC-M3-11-2: Busy backup delays restart until completion, then restarts!
             let client = KesticClient::connect(bus_name, KESTIC_OBJECT_PATH).expect("connect");
@@ -135,6 +145,85 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
                 "AC-M3-11-2: busy backup must complete Ok before daemon self-exec restart"
             );
             client_after.confirm_quit().expect("quit");
+        },
+    );
+}
+
+/// The short commit of the checkout this test runs in. Asked from `git` here on purpose, not
+/// taken from `build.rs`, so the test checks what `build.rs` recorded. Tests run from a checkout.
+fn checkout_short_commit() -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(workspace_root())
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .output()
+        .expect("run git rev-parse");
+    assert!(out.status.success(), "git rev-parse failed");
+    String::from_utf8(out.stdout)
+        .expect("git output is UTF-8")
+        .trim()
+        .to_owned()
+}
+
+/// The daemon's startup line in the journal names (a) the package version, (b) the build commit
+/// of the binary, which is (c) the checked-out commit, and (d) the PID. Before and after a package
+/// update only the commit differs, so it is the one way to see which build runs.
+#[test]
+fn s11_startup_line_names_version_and_build_commit() {
+    run_isolated_test(
+        "s11_startup_line_names_version_and_build_commit",
+        "KESTIC_M3_S11_STARTUP_LINE",
+        |root| {
+            let _sni = start_fake_sni_watcher();
+            let child = Command::new(find_kestic_binary())
+                .args([
+                    "daemon",
+                    "--once",
+                    "--no-monitors",
+                    "--no-scheduler",
+                    "--no-job-view",
+                    "--no-portal-inhibit",
+                    "--no-binary-watch",
+                    "--suppress-ui-spawn",
+                    "--bus-name",
+                    "net.daester.Kestic.M3S11Startup",
+                    "--config-path",
+                    &root.join("cfg/kestic/config.toml").to_string_lossy(),
+                    "--state-dir",
+                    &root.join("state/kestic").to_string_lossy(),
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn kestic daemon --once");
+            let pid = child.id();
+            let out = child.wait_with_output().expect("wait for kestic daemon");
+            assert!(out.status.success(), "kestic daemon --once failed");
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let line = stderr
+                .lines()
+                .find(|l| l.contains(": started (pid "))
+                .unwrap_or_else(|| panic!("no startup line in:\n{stderr}"));
+
+            let version = kestic_daemon::daemon_version();
+            let commit = kestic_daemon::build_commit();
+            assert!(
+                line.starts_with(&format!("kestic-daemon {version} (")),
+                "(a) version missing: {line}"
+            );
+            assert!(
+                line.contains(&format!(" ({commit}): ")),
+                "(b) build commit {commit} missing: {line}"
+            );
+            assert_eq!(
+                commit.strip_suffix("-dirty").unwrap_or(commit),
+                checkout_short_commit(),
+                "(c) build commit is not the checked-out commit; rebuild target/debug/kestic if HEAD moved"
+            );
+            assert!(
+                line.ends_with(&format!("(pid {pid})")),
+                "(d) pid {pid} missing: {line}"
+            );
         },
     );
 }
