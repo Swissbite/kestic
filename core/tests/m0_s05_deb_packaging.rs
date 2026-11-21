@@ -250,7 +250,7 @@ fn tool_home(var: &str, default_below_home: &str) -> PathBuf {
     )
 }
 
-/// The `kestic` in the `.deb` carries no path of the build machine: neither (a) the workspace
+/// NFR-01: the `kestic` in the `.deb` carries no path of the build machine: neither (a) the workspace
 /// path, (b) the `CARGO_MANIFEST_DIR` of the GUI crate, (c) the Cargo home with the registry
 /// sources nor (d) the Rust toolchain directory. Such paths would publish the build machine's
 /// layout, and a target system that has them would load icons or translations from there. The

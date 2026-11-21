@@ -165,9 +165,10 @@ fn checkout_short_commit() -> String {
         .to_owned()
 }
 
-/// The daemon's startup line in the journal names (a) the package version, (b) the build commit
-/// of the binary, which is (c) the checked-out commit, and (d) the PID. Before and after a package
-/// update only the commit differs, so it is the one way to see which build runs.
+/// AC-M3-11-4 (a), (b), (e): the daemon's startup line in the journal names (a) the package
+/// version, (b) the Git hash of the build, which is the checked-out commit, and (e) the PID.
+/// Before and after a package update only the commit differs, so it is the one way to see which
+/// build runs. (c) `-dirty` and (d) `unknown`: `m3_s11_build_label.rs`.
 #[test]
 fn s11_startup_line_names_version_and_build_commit() {
     run_isolated_test(
@@ -218,11 +219,11 @@ fn s11_startup_line_names_version_and_build_commit() {
             assert_eq!(
                 commit.strip_suffix("-dirty").unwrap_or(commit),
                 checkout_short_commit(),
-                "(c) build commit is not the checked-out commit; rebuild target/debug/kestic if HEAD moved"
+                "(b) build commit is not the checked-out commit; rebuild target/debug/kestic if HEAD moved"
             );
             assert!(
                 line.ends_with(&format!("(pid {pid})")),
-                "(d) pid {pid} missing: {line}"
+                "(e) pid {pid} missing: {line}"
             );
         },
     );
