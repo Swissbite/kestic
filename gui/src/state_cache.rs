@@ -132,7 +132,12 @@ pub struct SharedGuiState {
     pub active_progress: HashMap<String, ActiveRunProgressDto>,
     pub snapshots: Option<BackupSnapshotsDto>,
     pub run_detail: Option<RunDetailDto>,
+    /// The daemon state changed (signal or action): fetch it with `GetState`.
     pub state_dirty: bool,
+    /// The cached state or the reachability changed: show it in the window.
+    pub state_fetched: bool,
+    /// When the GUI last asked the daemon for its state (`None` before the first attempt).
+    pub last_state_fetch: Option<Instant>,
     pub progress_dirty: bool,
     pub listener_started: bool,
     pub pending_blocked: Option<(String, BlockedReason)>,
@@ -153,6 +158,8 @@ impl SharedGuiState {
             snapshots: None,
             run_detail: None,
             state_dirty: false,
+            state_fetched: false,
+            last_state_fetch: None,
             progress_dirty: false,
             listener_started: false,
             pending_blocked: None,
@@ -228,7 +235,7 @@ pub fn ensure_daemon_and_refresh() {
             let mut guard = shared_state().lock_unpoisoned();
             guard.daemon_reachable = false;
             guard.daemon_error = Some(err.to_string());
-            guard.state_dirty = true;
+            guard.state_fetched = true;
             return;
         }
     };
@@ -261,7 +268,7 @@ pub fn ensure_daemon_and_refresh() {
                 let mut guard = shared_state().lock_unpoisoned();
                 guard.daemon_reachable = false;
                 guard.daemon_error = Some(err.to_string());
-                guard.state_dirty = true;
+                guard.state_fetched = true;
                 return;
             }
         }
@@ -271,7 +278,7 @@ pub fn ensure_daemon_and_refresh() {
         let mut guard = shared_state().lock_unpoisoned();
         guard.daemon_reachable = false;
         guard.daemon_error = Some(i18n("The background service did not start.").to_string());
-        guard.state_dirty = true;
+        guard.state_fetched = true;
         return;
     }
 
@@ -279,13 +286,14 @@ pub fn ensure_daemon_and_refresh() {
 }
 
 pub fn refresh_state_now() {
+    shared_state().lock_unpoisoned().last_state_fetch = Some(Instant::now());
     let client = match make_client() {
         Ok(c) => c,
         Err(err) => {
             let mut guard = shared_state().lock_unpoisoned();
             guard.daemon_reachable = false;
             guard.daemon_error = Some(err);
-            guard.state_dirty = true;
+            guard.state_fetched = true;
             return;
         }
     };
@@ -310,7 +318,7 @@ pub fn refresh_state_now() {
                         .or_insert_with(|| p.clone());
                 }
                 guard.state = Some(state);
-                guard.state_dirty = true;
+                guard.state_fetched = true;
                 (
                     guard.signal_conn.clone(),
                     guard.launch.bus_name.clone(),
@@ -327,7 +335,7 @@ pub fn refresh_state_now() {
             let mut guard = shared_state().lock_unpoisoned();
             guard.daemon_reachable = false;
             guard.daemon_error = Some(err.to_string());
-            guard.state_dirty = true;
+            guard.state_fetched = true;
         }
     }
 }

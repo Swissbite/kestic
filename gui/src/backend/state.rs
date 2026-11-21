@@ -20,6 +20,9 @@ use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::pin::Pin;
 
+/// How often an unreachable daemon is asked again for its state.
+const UNREACHABLE_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl qobject::KesticApp {
     pub fn initialize(mut self: Pin<&mut Self>) {
         initialize_and_sync();
@@ -51,9 +54,13 @@ impl qobject::KesticApp {
     }
 
     pub fn poll_events(mut self: Pin<&mut Self>) {
-        let (state_dirty, progress_dirty, blocked, show_win, quit_req, maint_preview) = {
+        let (fetch, progress_dirty, blocked, show_win, quit_req, maint_preview) = {
             let mut guard = shared_state().lock_unpoisoned();
-            let sd = guard.state_dirty;
+            let retry_unreachable = !guard.daemon_reachable
+                && guard
+                    .last_state_fetch
+                    .is_some_and(|t| t.elapsed() >= UNREACHABLE_RETRY);
+            let sd = guard.state_dirty || retry_unreachable;
             let pd = guard.progress_dirty;
             guard.state_dirty = false;
             guard.progress_dirty = false;
@@ -65,8 +72,11 @@ impl qobject::KesticApp {
             (sd, pd, blocked, sw, qr, mp)
         };
 
-        if state_dirty {
+        if fetch {
             refresh_state_now();
+        }
+        let fetched = std::mem::take(&mut shared_state().lock_unpoisoned().state_fetched);
+        if fetched {
             self.as_mut().apply_cached_state();
         } else if progress_dirty {
             self.as_mut().models_updated();
