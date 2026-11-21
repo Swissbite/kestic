@@ -20,8 +20,9 @@ const HAMMER_FOR: Duration = Duration::from_secs(6);
 /// A `GetState` slower than this means the daemon is stuck.
 const RESPONSIVE_WITHIN: Duration = Duration::from_secs(5);
 
-/// restic `--json` status lines for a long-running backup (one progress report per line).
-fn many_status_lines(count: usize) -> String {
+/// restic `--json` status lines of a running backup (one progress report per line); the held
+/// backup prints them over and over while the tray menu is opened.
+fn status_chunk(count: usize) -> String {
     let mut out = String::with_capacity(count * 170);
     for i in 0..count {
         let percent = (i as f64) / (count as f64);
@@ -65,7 +66,7 @@ fn tray_menu_during_backup_progress_does_not_block_daemon() {
             let bid = fx.backup.id.clone();
 
             rig.wrapper
-                .hold_with_output("backup", &many_status_lines(200_000));
+                .hold_with_repeated_output("backup", &status_chunk(1_000));
             client.start_backup(&fx.backup_id_str).expect("StartBackup");
             wait_for_state(&client, Duration::from_secs(10), "run active", |s| {
                 backup_summary(s, &bid).active_run.is_some()

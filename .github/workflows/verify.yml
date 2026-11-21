@@ -9,6 +9,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # After the weekly CI image rebuild on main (ci-image.yml): builds the cache
+  # of the new week, so the first pull request of the week starts warm.
+  workflow_run:
+    workflows: [CI image]
+    types: [completed]
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,115 +23,251 @@ concurrency:
 permissions:
   contents: read
 
+# `just verify` split into jobs that run in parallel; each calls the same just
+# recipe as `just verify` (via .github/scripts/ci-just.sh, as user `kesticci`):
+#   ci-image   finds or builds the CI image all other jobs run in
+#   checks     `_static-checks`: fmt, file sizes, cargo deny, reuse lint
+#   clippy     `_clippy`: clippy without and with the test harness
+#   build      `_build-test-harness`, then `_nextest-archive` for the test jobs
+#   release    `deb`: release build and .deb
+#   test       `_nextest-from-archive` in parts by nextest test group; the part
+#              with `screenshot` also runs `_smoke-run` (the screenshot of `just smoke`)
+#   deb-check  `_nextest-from-archive` for the tests on the built .deb
+#   verify     the required check: green only when every job above succeeded
 jobs:
   # Prebuilt image with base tools, en_US.UTF-8 locale, user `kesticci` and all
   # apt packages from bootstrap.sh; tagged by content hash of
   # .github/ci-image/Dockerfile + scripts/bootstrap.sh (built only if missing).
+  # After a workflow_run it only finds the image the CI image workflow built.
   ci-image:
     name: CI image
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     uses: ./.github/workflows/ci-image.yml
     permissions:
       contents: read
       packages: write
 
-  verify:
+  # Defines the YAML anchors `image-permissions` and `image` that the other jobs
+  # in the CI image reuse.
+  checks:
     needs: ci-image
     runs-on: ubuntu-latest
-    permissions:
+    permissions: &image-permissions
       contents: read
       packages: read
-    container:
+    container: &image
       image: ${{ needs.ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/kestic-setup
+      - run: .github/scripts/ci-just.sh _static-checks
 
-      - name: Prepare non-root CI user directories
-        run: |
-          mkdir -p /home/kesticci/.cargo /home/kesticci/.rustup /home/kesticci/.local/share/kestic-dev
-          chown -R kesticci:kesticci /home/kesticci "$GITHUB_WORKSPACE"
-
-      - name: Cache Cargo, Rust toolchain, dev tools, and target
-        uses: actions/cache@v6
+  # Defines the YAML anchors `build-cache-paths` (same list as the restore step
+  # in .github/actions/kestic-setup) and `drop-workspace-units`, reused below.
+  clippy:
+    needs: ci-image
+    runs-on: ubuntu-latest
+    permissions: *image-permissions
+    container: *image
+    steps:
+      - uses: actions/checkout@v7
+      - id: setup
+        uses: ./.github/actions/kestic-setup
         with:
-          path: |
-            /home/kesticci/.cargo/bin
+          build-cache: clippy
+      - run: .github/scripts/ci-just.sh _clippy
+      - name: Drop workspace build artifacts before caching
+        if: steps.setup.outputs.build-cache-hit != 'true'
+        # Only dependencies are cached; the workspace's own build units are
+        # rebuilt on every commit anyway.
+        run: &drop-workspace-units |
+          rm -rf target/debug/build/kestic-* target/release/build/kestic-* \
+            target/debug/kestic target/release/kestic \
+            target/debian target/kestic-gui target/nextest-archive.tar.zst
+          du -sh target
+      - name: Save build cache
+        if: steps.setup.outputs.build-cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: &build-cache-paths |
             /home/kesticci/.cargo/registry/index
             /home/kesticci/.cargo/registry/cache
             /home/kesticci/.cargo/git/db
-            /home/kesticci/.rustup
-            /home/kesticci/.local/share/kestic-dev
             target
-          # v2: fresh start without the old multi-GB caches. No fallback across
-          # Cargo.lock changes: restoring an older cache would carry stale
-          # dependency builds forward, and cargo never deletes them.
-          key: ${{ runner.os }}-kestic-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('scripts/bootstrap.sh') }}
-          restore-keys: |
-            ${{ runner.os }}-kestic-v2-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+          key: ${{ steps.setup.outputs.build-cache-key }}
 
-      - name: Fix cache ownership and clear stale build artifacts
-        run: |
-          chown -R kesticci:kesticci /home/kesticci "$GITHUB_WORKSPACE"
-          rm -rf target/debian target/smoke-artifacts
+  build:
+    needs: ci-image
+    runs-on: ubuntu-latest
+    permissions: *image-permissions
+    container: *image
+    steps:
+      - uses: actions/checkout@v7
+      - id: setup
+        uses: ./.github/actions/kestic-setup
+        with:
+          build-cache: dev
+          # Only this job saves the toolchain and dev tools.
+          save-tools-cache: "true"
+      - run: .github/scripts/ci-just.sh _build-test-harness
+      - run: .github/scripts/ci-just.sh _nextest-archive target/nextest-archive.tar.zst
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nextest-archive
+          path: target/nextest-archive.tar.zst
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
+          if-no-files-found: error
+      - name: Drop workspace build artifacts before caching
+        if: steps.setup.outputs.build-cache-hit != 'true'
+        run: *drop-workspace-units
+      - name: Save build cache
+        if: steps.setup.outputs.build-cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: *build-cache-paths
+          key: ${{ steps.setup.outputs.build-cache-key }}
 
-      - name: Bootstrap Rust toolchain and restic test binaries
-        env:
-          KESTIC_BOOTSTRAP_SKIP_APT: "1"
-          KESTIC_BOOTSTRAP_COMPONENTS: rust,restic-0.18.0,restic-latest,rest-server,rclone
-        run: |
-          su - kesticci -c "
-            set -euo pipefail
-            cd '$GITHUB_WORKSPACE'
-            KESTIC_BOOTSTRAP_SKIP_APT=1 \
-            KESTIC_BOOTSTRAP_COMPONENTS=rust,restic-0.18.0,restic-latest,rest-server,rclone \
-            ./scripts/bootstrap.sh
-          "
-
-      - name: Run just verify as non-root user
-        run: |
-          su - kesticci -c "
-            set -euo pipefail
-            cd '$GITHUB_WORKSPACE'
-            export PATH=\"\$HOME/.cargo/bin:\$PATH\"
-            export LANG=en_US.UTF-8
-            export NEXTEST_PROFILE=ci
-            # Keep the cached target small: no incremental state (useless in a
-            # fresh CI checkout) and only line tables instead of full debuginfo
-            # (backtraces keep file:line).
-            export CARGO_INCREMENTAL=0
-            export CARGO_PROFILE_DEV_DEBUG=line-tables-only
-            just verify
-          "
-
-      - name: Upload Debian package artifact
-        if: always()
-        uses: actions/upload-artifact@v7
+  release:
+    needs: ci-image
+    runs-on: ubuntu-latest
+    permissions: *image-permissions
+    container: *image
+    steps:
+      - uses: actions/checkout@v7
+      - id: setup
+        uses: ./.github/actions/kestic-setup
+        with:
+          build-cache: release
+      - run: rm -rf target/debian
+      - run: .github/scripts/ci-just.sh deb
+      - uses: actions/upload-artifact@v7
         with:
           name: kestic-deb
           path: target/debian/*.deb
+          overwrite: true
+          if-no-files-found: error
+      - name: Drop workspace build artifacts before caching
+        if: steps.setup.outputs.build-cache-hit != 'true'
+        run: *drop-workspace-units
+      - name: Save build cache
+        if: steps.setup.outputs.build-cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: *build-cache-paths
+          key: ${{ steps.setup.outputs.build-cache-key }}
+
+  # Parts by nextest test group (.config/nextest.toml); the two large groups are
+  # split in halves (`--partition count`). `unit` takes every test outside both
+  # groups, so a new test always runs somewhere; deb-check takes the .deb tests.
+  test:
+    name: test (${{ matrix.part }})
+    needs: [ci-image, build]
+    runs-on: ubuntu-latest
+    permissions: *image-permissions
+    container: *image
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Fixtures first (kestic-test-support): a broken restic template fails
+          # once, clearly. The integration parts therefore leave them out.
+          - part: unit
+            first: package(kestic-test-support)
+            filter: not (group(gui-smoke) | group(heavy-integration) | binary(m0_s05_deb_packaging))
+          - part: integration-1
+            filter: group(heavy-integration) & not package(kestic-test-support)
+            partition: count:1/2
+          - part: integration-2
+            filter: group(heavy-integration) & not package(kestic-test-support)
+            partition: count:2/2
+          - part: gui-1
+            filter: group(gui-smoke)
+            partition: count:1/2
+            screenshot: true
+          - part: gui-2
+            filter: group(gui-smoke)
+            partition: count:2/2
+    env:
+      ARCHIVE_NAME: nextest/nextest-archive.tar.zst
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/kestic-setup
+      - uses: actions/download-artifact@v8
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}/nextest
+      - run: chmod a+r "$RUNNER_TEMP/$ARCHIVE_NAME"
+      - name: Fixture tests
+        if: matrix.first
+        run: .github/scripts/ci-just.sh _nextest-from-archive "$RUNNER_TEMP/$ARCHIVE_NAME" "${{ matrix.first }}"
+      - name: Tests (${{ matrix.part }})
+        run: .github/scripts/ci-just.sh _nextest-from-archive "$RUNNER_TEMP/$ARCHIVE_NAME" "${{ matrix.filter }}" "${{ matrix.partition }}"
+      - name: Smoke screenshot of the main window
+        if: matrix.screenshot
+        run: .github/scripts/ci-just.sh _smoke-run
+      - name: Upload GUI smoke screenshots
+        if: always() && startsWith(matrix.part, 'gui')
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-artifacts-${{ matrix.part }}
+          path: target/smoke-artifacts/*.png
+          overwrite: true
           if-no-files-found: error
 
-      - name: Upload GUI smoke screenshots
-        if: always()
+  deb-check:
+    needs: [ci-image, build, release]
+    runs-on: ubuntu-latest
+    permissions: *image-permissions
+    container: *image
+    env:
+      ARCHIVE_NAME: nextest/nextest-archive.tar.zst
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/kestic-setup
+      - uses: actions/download-artifact@v8
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}/nextest
+      - uses: actions/download-artifact@v8
+        with:
+          name: kestic-deb
+          path: target/debian
+      - run: chmod a+r "$RUNNER_TEMP/$ARCHIVE_NAME" && chown -R kesticci:kesticci target
+      - run: .github/scripts/ci-just.sh _nextest-from-archive "$RUNNER_TEMP/$ARCHIVE_NAME" 'binary(m0_s05_deb_packaging)'
+
+  # The required check. A failed, skipped or cancelled job counts as failed.
+  verify:
+    if: always()
+    needs: [ci-image, checks, clippy, build, release, test, deb-check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # One artifact with all screenshots, as pages.yml expects. Download and
+      # upload again (instead of merging) so that re-running failed jobs works.
+      - name: Download GUI smoke screenshots
+        if: needs.test.result != 'skipped'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: smoke-artifacts-*
+          merge-multiple: true
+          path: smoke-artifacts
+      - name: Upload all GUI smoke screenshots
+        if: needs.test.result != 'skipped'
         uses: actions/upload-artifact@v7
         with:
           name: smoke-artifacts
-          path: target/smoke-artifacts/*.png
+          path: smoke-artifacts/*.png
+          overwrite: true
           if-no-files-found: error
-
-      # Runs before the cache post-step saves `target`: drop the workspace's own
-      # build units (rebuilt on every commit anyway), so only dependencies are
-      # cached.
-      - name: Drop workspace build artifacts before caching
-        if: always()
+      - name: All jobs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          rm -rf target/debug/build/kestic-* target/release/build/kestic-* \
-            target/debug/incremental target/release/incremental \
-            target/debug/kestic target/release/kestic \
-            target/debian target/smoke-artifacts target/kestic-gui \
-            target/kestic-test-fixtures
-          du -sh target || true
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null
