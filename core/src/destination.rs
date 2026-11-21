@@ -319,7 +319,7 @@ fn execute_probe_command(
 
     let out = cmd.output()?;
     let finished_at = clock.now_utc();
-    let duration_ms = (finished_at - started_at).whole_milliseconds().max(0) as u64;
+    let duration_ms = crate::clock::elapsed_ms(started_at, finished_at);
     let exit_code = out.status.code().unwrap_or(1);
 
     let mut secrets_to_redact = vec![repo_password.as_str()?];

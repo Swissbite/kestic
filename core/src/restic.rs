@@ -600,9 +600,7 @@ pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedI
 }
 
 fn quote_shell(raw: &str) -> String {
-    shlex::try_quote(raw)
-        .map(|cow| cow.into_owned())
-        .unwrap_or_else(|_| format!("'{raw}'"))
+    shlex::try_quote(raw).map_or_else(|_| format!("'{raw}'"), |cow| cow.into_owned())
 }
 
 /// Handle allowing another thread to request graceful cancellation (`SIGTERM`).
@@ -880,7 +878,7 @@ where
     }
 
     let finished_at = clock.now_utc();
-    let duration_ms = (finished_at - started_at).whole_milliseconds().max(0) as u64;
+    let duration_ms = crate::clock::elapsed_ms(started_at, finished_at);
     let exit_code = status.code().unwrap_or(130);
     let cancelled = cancel.is_some_and(CancelHandle::is_cancelled);
 

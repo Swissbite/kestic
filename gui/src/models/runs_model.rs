@@ -47,9 +47,7 @@ impl RunsModelRust {
         let mut out = Vec::new();
         for run in &state.recent_runs {
             let backup_id_opt = run.backup_id();
-            let backup_id_str = backup_id_opt
-                .map(|id| id.as_str().to_string())
-                .unwrap_or_default();
+            let backup_id_str = backup_id_opt.map_or_default(|id| id.as_str().to_string());
 
             if !self.filter_backup_id.is_empty() && backup_id_str != self.filter_backup_id {
                 continue;
@@ -95,8 +93,7 @@ impl RunsModelRust {
                 format_run_status(&run.kind, run.status);
             let duration_text = run
                 .duration_ms
-                .map(format_duration_ms)
-                .unwrap_or_else(|| status_text.clone());
+                .map_or_else(|| status_text.clone(), format_duration_ms);
             out.push(RunRow {
                 run_id: run.id.as_str().to_string(),
                 title,

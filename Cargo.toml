@@ -21,6 +21,11 @@ rust-version = "1.100"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 too_many_lines = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+cast_possible_truncation = "warn"
+map_unwrap_or = "warn"
+duration_suboptimal_units = "warn"
 
 [workspace.dependencies]
 cxx = "1.0"

@@ -668,7 +668,7 @@ impl KesticSignalCollector {
                         break;
                     };
                     let header = msg.header();
-                    let member = header.member().map(|m| m.as_str()).unwrap_or("");
+                    let member = header.member().map_or("", |m| m.as_str());
                     let parsed = match member {
                         "StatusChanged" => msg
                             .body()

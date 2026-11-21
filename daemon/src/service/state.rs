@@ -533,9 +533,7 @@ impl DaemonCore {
         backoff_until: Option<OffsetDateTime>,
         now: OffsetDateTime,
     ) -> String {
-        let hint = backoff_until
-            .map(|u| format_local_slot_hint(u, now, &self.timezone))
-            .unwrap_or_default();
+        let hint = backoff_until.map_or_default(|u| format_local_slot_hint(u, now, &self.timezone));
         tr(&PendingReasonCode::from(item).waiting_message(&hint))
     }
 

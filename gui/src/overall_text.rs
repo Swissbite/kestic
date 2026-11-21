@@ -26,8 +26,7 @@ pub fn overall_subtitle(state: &DaemonStateDto) -> String {
     let o = &state.overall;
     let active = o.active_run_info();
     kestic_i18n::messages::overall_subtitle(&o.counts(state.backups.len()), active.as_ref())
-        .map(|m| tr(&m))
-        .unwrap_or_default()
+        .map_or_default(|m| tr(&m))
 }
 
 /// Number of backups «Back Up All Now» can start right now (source and destination
@@ -64,25 +63,20 @@ pub fn maintenance_status_line(
     if running {
         return tr(&maintenance_running_message());
     }
-    pending
-        .map(|code| crate::state_cache::pending_reason_line(code, retry_at_unix, now))
-        .unwrap_or_default()
+    pending.map_or_default(|code| crate::state_cache::pending_reason_line(code, retry_at_unix, now))
 }
 
 /// Blocking-state text in the GUI locale from `BlockingStateDto.kind` and the
 /// `ResticStatusDto` parameters.
 pub fn localized_blocking_message(state: &DaemonStateDto) -> String {
-    blocking_message(state.blocking.as_ref(), &state.restic_status)
-        .map(|m| tr(&m))
-        .unwrap_or_default()
+    blocking_message(state.blocking.as_ref(), &state.restic_status).map_or_default(|m| tr(&m))
 }
 
 /// Availability reason shown next to «Back Up Now» in the GUI locale.
 pub fn localized_availability_reason(avail: &BackupAvailabilityDto) -> String {
     avail
         .blocked_reason
-        .map(|reason| tr(&reason.message(avail.source_status)))
-        .unwrap_or_default()
+        .map_or_default(|reason| tr(&reason.message(avail.source_status)))
 }
 
 #[cfg(test)]

@@ -911,8 +911,7 @@ pub fn format_schedule_summary(schedule: &Schedule) -> String {
             minute,
         } => {
             let day = Weekday::from_iso_number(*weekday)
-                .map(weekday_full_label)
-                .unwrap_or_else(|_| weekday.to_string());
+                .map_or_else(|_| weekday.to_string(), weekday_full_label);
             let hhmm = format!("{hour:02}:{minute:02}");
             i18n("Weekly on %1 at %2").subs(&[&day, &hhmm])
         }
@@ -1030,8 +1029,7 @@ pub fn format_pause_line(
 ) -> String {
     let since_str = since_unix
         .and_then(|s| OffsetDateTime::from_unix_timestamp(s).ok())
-        .map(format_time_short)
-        .unwrap_or_else(|| "–".to_string());
+        .map_or_else(|| "–".to_string(), format_time_short);
     let until_str = format_slot_timestamp(until_unix, now);
     let until = (!until_str.is_empty()).then_some(until_str.as_str());
     tr(&pause_message(&since_str, until))
@@ -1104,7 +1102,7 @@ pub fn format_backup_status(
     if summary.active_run.is_some() {
         let text = match active_progress {
             Some(p) if p.phase == RunProgressPhase::ScanFinished => {
-                let pct = p.percent_done.round().clamp(0.0, 100.0) as u32;
+                let pct = kestic_i18n::messages::rounded_percent(p.percent_done);
                 i18n("Backing up · %1%").subs(&[&pct.to_string()])
             }
             _ => i18n("Backing up · looking through files").to_string(),
@@ -1329,11 +1327,7 @@ pub fn daemon_now(state: &DaemonStateDto) -> OffsetDateTime {
 
 pub fn cached_daemon_now() -> OffsetDateTime {
     let guard = shared_state().lock_unpoisoned();
-    guard
-        .state
-        .as_ref()
-        .map(daemon_now)
-        .unwrap_or_else(current_now)
+    guard.state.as_ref().map_or_else(current_now, daemon_now)
 }
 
 pub fn cached_today_iso_date() -> String {
@@ -1350,9 +1344,9 @@ pub fn cached_today_iso_date() -> String {
 /// by its internal ID.
 pub fn format_run_kind_name(run: &Run, backup_name: Option<&str>, dest_name: &str) -> String {
     match &run.kind {
-        RunKind::Backup { .. } => backup_name
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| i18n("Deleted backup").to_string()),
+        RunKind::Backup { .. } => {
+            backup_name.map_or_else(|| i18n("Deleted backup").to_string(), ToOwned::to_owned)
+        }
         RunKind::Maintenance => i18n("Maintenance %1").subs(&[dest_name]),
         RunKind::Restore { .. } => i18n("Restore %1").subs(&[backup_name.unwrap_or(dest_name)]),
         RunKind::Meta => i18n("Metadata %1").subs(&[dest_name]),

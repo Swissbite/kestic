@@ -180,9 +180,7 @@ fn build_isolated_ssh_sftp_command(
 }
 
 fn quote_arg(raw: &str) -> String {
-    shlex::try_quote(raw)
-        .map(|cow| cow.into_owned())
-        .unwrap_or_else(|_| format!("'{raw}'"))
+    shlex::try_quote(raw).map_or_else(|_| format!("'{raw}'"), |cow| cow.into_owned())
 }
 
 #[test]

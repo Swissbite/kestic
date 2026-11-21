@@ -22,8 +22,7 @@ pub fn workspace_root() -> PathBuf {
 pub fn find_target_dir() -> PathBuf {
     env::var_os("CARGO_TARGET_DIR")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join("target"))
+        .map_or_else(|| workspace_root().join("target"), PathBuf::from)
 }
 
 /// Locates the compiled `kestic` binary with the test harness (`CARGO_BIN_EXE_kestic` or
@@ -36,8 +35,10 @@ pub fn find_kestic_binary() -> PathBuf {
         .get_or_init(|| {
             let path = env::var_os("CARGO_BIN_EXE_kestic")
                 .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| find_target_dir().join("debug").join("kestic"));
+                .map_or_else(
+                    || find_target_dir().join("debug").join("kestic"),
+                    PathBuf::from,
+                );
             let hint =
                 "build it with `cargo build --bin kestic --features kestic-gui/test-harness`";
             assert!(

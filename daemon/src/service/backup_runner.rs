@@ -431,7 +431,9 @@ struct BackupProgressReporter<'a> {
 
 impl BackupProgressReporter<'_> {
     fn report(&mut self, st: &ResticStatusMessage) {
-        let elapsed_secs = (self.clock.now_unix_secs() - self.start_unix).max(1) as u64;
+        let elapsed_secs = u64::try_from(self.clock.now_unix_secs() - self.start_unix)
+            .unwrap_or(0)
+            .max(1);
         let p = self.tracker.update(st, elapsed_secs);
 
         if let Some(jv) = self.job_view {
@@ -441,7 +443,7 @@ impl BackupProgressReporter<'_> {
                 RunProgressPhase::ScanFinished => p.bytes_done,
             };
             let _ = jv.update(&JobProgress {
-                percent: p.percent_done.round() as u32,
+                percent: u32::from(kestic_i18n::messages::rounded_percent(p.percent_done)),
                 processed_bytes,
                 total_bytes: p.total_bytes,
                 speed_bytes_per_sec: p.speed_bps,
@@ -675,8 +677,7 @@ fn process_backup_success_result(
             .presentation
             .raw_detail
             .as_deref()
-            .map(|d| redact_secrets(d, secret_strs))
-            .unwrap_or_default();
+            .map_or_default(|d| redact_secrets(d, secret_strs));
         Some(if raw.is_empty() {
             base
         } else {
