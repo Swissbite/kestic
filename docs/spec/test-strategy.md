@@ -57,7 +57,7 @@ Alle Build-, Lint- und Smoke-Stufen laufen warnungsfrei (`cargo clippy --workspa
 
 ## Reproduzierbarkeit
 
-`rust-toolchain.toml`, `Cargo.lock`, gepinnte CXX-Qt-Version, `scripts/bootstrap.sh`: installiert Abhängigkeiten (apt, rustup) und lädt restic 0.18.0 und aktuell sowie `rest-server` geprüft (SHA256 + PGP) und rclone ≥ 1.65 (mindestens SHA256; PGP, wenn das Projekt Signaturen veröffentlicht – Ergebnis im Spike-Bericht). Download-Mechanismus wie FR-33 wiederverwenden.
+`rust-toolchain.toml`, `Cargo.lock`, CXX-Qt-Version, `scripts/bootstrap.sh`: installiert Abhängigkeiten (apt, rustup) und lädt restic 0.18.0 und aktuell sowie `rest-server` geprüft (SHA256 + PGP) und rclone ≥ 1.65 (mindestens SHA256; PGP, wenn das Projekt Signaturen veröffentlicht – Ergebnis im Spike-Bericht). Download-Mechanismus wie FR-33 wiederverwenden.
 
 ## Lehren aus der manuellen Abnahme (Entscheid 2026-11-20)
 

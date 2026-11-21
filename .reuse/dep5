@@ -13,3 +13,7 @@ License: CC0-1.0
 Files: site/package.json
 Copyright: 2026 David Däster <david@daester.net>
 License: BSD-2-Clause
+
+Files: .github/renovate.json
+Copyright: 2026 David Däster <david@daester.net>
+License: BSD-2-Clause

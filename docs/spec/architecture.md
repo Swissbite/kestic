@@ -127,15 +127,16 @@ Ablauf FR-38 (5 Schritte):
 Stand recherchiert am 2026-11-15. Entscheid: [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md).
 
 - **Workspace:** `core` (reines Rust, ohne Qt testbar mit `cargo test`) / `daemon` (inkl. Tray, Notifications, CLI `kestic secret get`) / `gui` (CXX-Qt + Kirigami QML) / `i18n` (gemeinsame Texte und Codes) / `test-support` (nur Dev-Abhängigkeit für Tests, nie im Paket). GUI-Schicht dünn, Logik in `core`.
-- **Crates (gepinnt gemäss [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md)):** `notify-rust`, `ksni`, `zbus` (inkl. direktem `org.freedesktop.secrets`-Client), `cargo-deb`, `cxx-qt` (`=0.10.0`), `cxx-kde-frameworks` (Commit `5c51af42`).
+- **Crates (gewählt gemäss [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md)):** `notify-rust`, `ksni`, `zbus` (inkl. direktem `org.freedesktop.secrets`-Client), `cargo-deb`, `cxx-qt`, `cxx-kde-frameworks` (Git-Commit in `Cargo.toml`).
 - **Grund der Wahl:** Der Maintainer reviewt Rust eher als C++; Compiler fängt bei agentisch geschriebenem Code viel ab.
 - **Risiko:** CXX-Qt im Spike erfolgreich validiert ([milestones/m0-spike.md](milestones/m0-spike.md)).
+- **Abhängigkeits-Updates:** Renovate (`.github/renovate.json`) öffnet montags PRs für Crates (Minor/Patch gebündelt; die CXX-Qt-Crates und der Commit von `cxx-kde-frameworks` als eine Gruppe, weil `cxx-kde-frameworks` eine bestimmte CXX-Qt-Version voraussetzt), Toolchain mit `rust-version`, die Werkzeuge in `scripts/bootstrap.sh` (ausser der restic-Mindestversion), das Basis-Image des CI-Images, GitHub Actions und die Showcase-Seite; die Übersicht steht im Issue «Dependency Dashboard». Es gibt keine gesperrten Versionen: Ob eine Kombination passt, entscheidet `just verify`.
 
 **Grundlagen:**
 
-- KDE dokumentiert «Kirigami mit Rust» offiziell über **CXX-Qt** (KDAB). Gewählt und gepinnt ist `cxx-qt =0.10.0` (inkl. `cxx-qt-lib-extras` für `QApplication` + `org.kde.desktop`). Quellen: [Setup Rust](https://develop.kde.org/docs/getting-started/kirigami/setup-rust/), [Rust bei KDE](https://develop.kde.org/docs/getting-started/rust/).
-- KF6-Bindings `cxx-kde-frameworks` (KDE Invent, gepinnt auf Commit `5c51af42`): genutzt für KI18n; Bindings für KNotifications, KStatusNotifierItem, Solid, KIO, KConfig sind nicht genutzt/nicht belegt. Quelle: [Rust bindings](https://develop.kde.org/docs/getting-started/rust/rust-bindings/).
-- System-Integration ohne KF-Bindings über D-Bus in reinem Rust (gepinnte/verwendete Versionen):
+- KDE dokumentiert «Kirigami mit Rust» offiziell über **CXX-Qt** (KDAB). Gewählt ist `cxx-qt` 0.10 (inkl. `cxx-qt-lib-extras` für `QApplication` + `org.kde.desktop`). Quellen: [Setup Rust](https://develop.kde.org/docs/getting-started/kirigami/setup-rust/), [Rust bei KDE](https://develop.kde.org/docs/getting-started/rust/).
+- KF6-Bindings `cxx-kde-frameworks` (KDE Invent, als Git-Abhängigkeit auf einem Commit): genutzt für KI18n; Bindings für KNotifications, KStatusNotifierItem, Solid, KIO, KConfig sind nicht genutzt/nicht belegt. Quelle: [Rust bindings](https://develop.kde.org/docs/getting-started/rust/rust-bindings/).
+- System-Integration ohne KF-Bindings über D-Bus in reinem Rust (Versionen bei der Wahl; aktuelle in `Cargo.toml` und `Cargo.lock`):
 
 | Zweck | Crate | Version |
 | --- | --- | --- |
@@ -144,7 +145,7 @@ Stand recherchiert am 2026-11-15. Entscheid: [ADR 0001](adr/0001-tech-stack-rust
 | Secret Service (`org.freedesktop.secrets`, KWallet, GNOME Keyring) | direkter Client via `zbus` | 6.3.0 |
 | D-Bus allgemein (logind, UPower, NetworkManager, UDisks2, systemd, Portal) | `zbus` | 6.3.0 |
 | `.deb`-Paket | `cargo-deb` | 3.8.0 |
-| Qt-Brücke | `cxx-qt` | `=0.10.0` |
+| Qt-Brücke | `cxx-qt` | 0.10.0 |
 
 **Packaging-Fallstricke (`.deb`):** Gebaut wird gegen die Qt-/KF-Version des Build-Systems → das ist die Mindestanforderung; ein nicht erfüllbares `Recommends: paket (>= x)` überspringt apt ohne Fehler (geprüft mit `apt-get -s install`); App-ID im Reverse-DNS-Format einer eigenen Domain bzw. `io.github.<owner>.<App>`, `org.kde.*` ist offiziellen KDE-Projekten vorbehalten.
 

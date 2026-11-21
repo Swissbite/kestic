@@ -37,10 +37,10 @@ Teil von [backlog.md](../backlog.md).
 - **AC-M0-02-6** – *Gegeben* M0 abgeschlossen, *dann* nennt der Spike-Bericht für rest-server und rclone je «signiert (PGP)» oder «nur SHA256», und `bootstrap.sh` prüft genau so · Test: manuell (Review)
 
 ### M0-S03 CXX-Qt-Version
-- **AC-M0-03-1** – *Gegeben* M0 abgeschlossen, *dann* ist die CXX-Qt-Version in `Cargo.toml` exakt gepinnt und ADR-0001 begründet die Wahl zwischen 0.8.1 und 0.10.0 · Test: manuell (Review)
+- **AC-M0-03-1** – *Gegeben* M0 abgeschlossen, *dann* stehen die CXX-Qt-Crates in `Cargo.toml` auf derselben Version, `Cargo.lock` löst sie gleich auf, und ADR-0001 begründet die Wahl zwischen 0.8.1 und 0.10.0 · Test: manuell (Review)
 
 ### M0-S04 Kirigami mit Rust-ListModel
-- **AC-M0-04-1** – *Gegeben* Rust-ListModel mit drei Einträgen, *wenn* das Kirigami-Fenster startet, *dann* zeigt die QML-Liste genau diese drei; die CXX-Qt-Version ist dabei exakt gepinnt (AC-M0-03-1) · Test: GUI-Smoke (offscreen + Screenshot)
+- **AC-M0-04-1** – *Gegeben* Rust-ListModel mit drei Einträgen, *wenn* das Kirigami-Fenster startet, *dann* zeigt die QML-Liste genau diese drei; die CXX-Qt-Crates haben dabei dieselbe Version (AC-M0-03-1) · Test: GUI-Smoke (offscreen + Screenshot)
 
 ### M0-S05 `.deb` und Autostart
 - **AC-M0-05-1** (NFR-01) – *Gegeben* mit `cargo-deb` gebautes Paket, *wenn* es auf TUXEDO installiert wird, *dann*: `Depends` enthält `qml6-module-org-kde-kirigami (>= 6.24)`, `qml6-module-org-kde-kirigamiaddons-datetime (>= 1.11)`, `qml6-module-org-kde-kirigamiaddons-tableview (>= 1.11)`; `Recommends` `restic (>= 0.18.0)`; `kestic.notifyrc` liegt unter `/usr/share/knotifications6/`; die App startet aus dem Startmenü; `/etc/xdg/autostart/<app-id>.daemon.desktop` mit `Exec=kestic daemon --autostart` ist vorhanden · Test: manuell + Paketinhalt per `dpkg-deb -I`/`-c` (Integration)
@@ -82,7 +82,7 @@ Das Prototyp-Fenster des Spikes (`SpikeMain.qml`, `SpikeListModel`, `kestic --sm
 
 | AC | Test |
 | --- | --- |
-| AC-M0-04-1 | `daemon/tests/m3_gui_smoke.rs` `every_page_shows_simple_texts_in_the_gui_language` (Liste `backupsListView` zeigt genau die Zeilen des Rust-Modells `backupsModel`); Version gepinnt: `core/tests/m0_s03_cxx_qt_pin.rs` |
+| AC-M0-04-1 | `daemon/tests/m3_gui_smoke.rs` `every_page_shows_simple_texts_in_the_gui_language` (Liste `backupsListView` zeigt genau die Zeilen des Rust-Modells `backupsModel`); gleiche CXX-Qt-Version: `core/tests/m0_s03_cxx_qt_pin.rs` |
 | AC-M0-06-1 | `just smoke` (Hauptfenster offscreen, Screenshot `target/smoke-artifacts/m0-s06-main.png`) und jeder GUI-Smoke in `core/tests/m1_gui_smoke.rs` (Abbruch bei QML-Warnung) |
 | AC-M0-09-1 | `core/tests/m1_s16_i18n.rs` `ac_m1_16_1_and_16_2_ki18n_en_and_de_in_gui_and_daemon` und `daemon/tests/m3_gui_smoke.rs` `every_page_shows_simple_texts_in_the_gui_language` (Texte aus Rust und QML auf Englisch und Deutsch); Lint: `core/tests/m1_s16_i18n.rs` `nfr_06_m1_all_rust_and_qml_i18n_strings_extracted_and_translated` |
 | AC-M0-11-1, AC-M0-11-7 | `core/tests/m1_gui_smoke.rs` `m1_gui_smoke_welcome_wide_narrow_en_and_de` (Tab-Leiste breit oben, schmal unten, kein Label abgeschnitten, EN und DE; bis M3 vier Bereiche, «Wiederherstellen» kommt mit M4) |
@@ -100,15 +100,15 @@ Das Prototyp-Fenster des Spikes (`SpikeMain.qml`, `SpikeListModel`, `kestic --sm
 ## Exit-Kriterien
 
 - Spike-Kriterien 1–7 (unten) grün (Kriterium 7 = GUI-Grundlagen, M0-S11).
-- ADR-0001 (Stack und Versionen) geschrieben, Versionen gepinnt.
+- ADR-0001 (Stack und Versionen) geschrieben, Versionen festgelegt.
 - Offene Prüfungen (unten) mit Ergebnis dokumentiert.
 - Testserver festgelegt: S3 über `rclone serve s3` (experimentell; Ersatz bei Problemen: Garage), SFTP über Benutzer-`sshd`. MinIO entfällt (seit Ende 2025 keine Community-Binaries mehr).
 
 ## Spike-Kriterien und offene Prüfungen
 
-**Spike-Kriterien** – alle grün (Versionen gepinnt und ADR-0001 finalisiert):
+**Spike-Kriterien** – alle grün (Versionen festgelegt und ADR-0001 finalisiert):
 
-1. **Grün:** Kirigami-Fenster mit Rust-ListModel (`CXX-Qt =0.10.0`), Version festgelegt und begründet (ADR-0001).
+1. **Grün:** Kirigami-Fenster mit Rust-ListModel (`CXX-Qt 0.10.0`), Version festgelegt und begründet (ADR-0001).
 2. **Grün:** `.deb` via `cargo-deb 3.8.0` mit manuellem QML-`Depends` gebaut, auf TUXEDO OS 24.04.5 installiert, aus Startmenü gestartet, `apt remove` (`TryExec`-Conffile erhalten) und `apt purge` (Conffile entfernt) manuell abgenommen (`AC-M0-05-1`–`05-3`).
 3. **Grün:** QML-Smoke-Test mit `QT_QPA_PLATFORM=offscreen` + Screenshot-Artefakten läuft in `just verify` (`AC-M0-06-1`).
 4. **Grün:** Daemon-Prototyp mit Single-Instance über D-Bus (`net.daester.Kestic`), Tray-Icon (`ksni 0.3.7`) und Notification (`notify-rust 4.19.0`) im `dbus-run-session`-Test belegt (`AC-M0-07-1`, `AC-M0-07-2`).
@@ -123,7 +123,7 @@ Das Prototyp-Fenster des Spikes (`SpikeMain.qml`, `SpikeListModel`, `kestic --sm
 | Punkt | Stand |
 | --- | --- |
 | Headless Keyring in `dbus-run-session` | **geprüft (M0-S08):** gelöst über `gnome-keyring-daemon --foreground --replace --unlock --components=secrets --control-directory <kurzer /tmp-Pfad>` mit leerem Passwort auf `stdin` und bereinigten Host-Env-Vars (`GNOME_KEYRING_CONTROL`, `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS`; kurzer Pfad nötig wegen 107-Byte-`sun_path`-Limit des `control`-Sockets). Direkter `org.freedesktop.secrets`-Client (`SecretServiceStore`) über `zbus 6.3.0` (`plain`-Session, kein `zbus 5` / keine Pre-Release-Abhängigkeit) schliesst Set/Get/Replace/Delete in 0,10 s ohne Hänger ab (`AC-M0-08-1`, `AC-M0-08-2`); `FileSecretStore` und `InMemorySecretStore` liegen zusätzlich hinter dem `SecretStore`-Trait (`core/src/secrets.rs`), gesperrte Collections liefern sauber `LockedOrPromptRequired` |
-| QML-Offscreen-Smoke-Test, KI18n & `cargo-deb` + CXX-Qt-Build | **geprüft (M0-S03–S06, M0-S09):** `cxx-qt =0.10.0` (inkl. `cxx-qt-lib-extras` für `QApplication` + `org.kde.desktop`) und `cxx-kde-frameworks` (`5c51af42`, KI18n) bauen warnungsfrei mit `lld` gegen Qt 6.10.2 / KF 6.24; `QT_QPA_PLATFORM=offscreen` + `QQuickWindow::grabWindow()` rendert EN & DE ohne QML-Warnungen als PNG-Artefakte in `just verify` (`AC-M0-06-1`, `AC-M0-09-1`; Hinweis: glibc/gettext ignoriert `LANGUAGE` bei `LANG=C.UTF-8`, daher Tests mit `LANG=en_US.UTF-8`). `NFR-06`-String-Lint über `xgettext` (`--language=C` für Rust + `--language=JavaScript` für QML) + `msgcmp` + `msgattrib` + `msgfmt --check` läuft in `just verify`. `cargo-deb 3.8.0` erzeugt `.deb` inkl. QML-`Depends`, `Recommends`, `kestic.notifyrc`, `kestic.mo`, `kestic-symbolic.svg` und `/etc/xdg/autostart`-Conffile; Installation, Startmenü-Start, `apt remove` und `apt purge` auf TUXEDO OS 24.04.5 manuell abgenommen (`AC-M0-05-1`–`05-3`) |
+| QML-Offscreen-Smoke-Test, KI18n & `cargo-deb` + CXX-Qt-Build | **geprüft (M0-S03–S06, M0-S09):** `cxx-qt 0.10.0` (inkl. `cxx-qt-lib-extras` für `QApplication` + `org.kde.desktop`) und `cxx-kde-frameworks` (`5c51af42`, KI18n) bauen warnungsfrei mit `lld` gegen Qt 6.10.2 / KF 6.24; `QT_QPA_PLATFORM=offscreen` + `QQuickWindow::grabWindow()` rendert EN & DE ohne QML-Warnungen als PNG-Artefakte in `just verify` (`AC-M0-06-1`, `AC-M0-09-1`; Hinweis: glibc/gettext ignoriert `LANGUAGE` bei `LANG=C.UTF-8`, daher Tests mit `LANG=en_US.UTF-8`). `NFR-06`-String-Lint über `xgettext` (`--language=C` für Rust + `--language=JavaScript` für QML) + `msgcmp` + `msgattrib` + `msgfmt --check` läuft in `just verify`. `cargo-deb 3.8.0` erzeugt `.deb` inkl. QML-`Depends`, `Recommends`, `kestic.notifyrc`, `kestic.mo`, `kestic-symbolic.svg` und `/etc/xdg/autostart`-Conffile; Installation, Startmenü-Start, `apt remove` und `apt purge` auf TUXEDO OS 24.04.5 manuell abgenommen (`AC-M0-05-1`–`05-3`) |
 | KWallet-Abfrage ohne PAM-Entsperrung | **teilgeprüft (M1):** `LockedOrPromptRequired` + interaktives `org.freedesktop.Secret.Prompt` (`unlock_interactive()`) per D-Bus-Fake (`daemon/tests/m1_s05_secrets.rs`) und beim Live-Unlock auf TUXEDO OS bestätigt; isolierter Test ohne PAM-Entsperrung bleibt für M6 |
 | PowerDevil respektiert das Portal-Inhibit bei Inaktivität (F9) | **geprüft (M0-S10, manuell abgenommen):** `org.freedesktop.portal.Inhibit` (`flags = 12`, Idle + Suspend) inkl. `Request.Close()` über `zbus 6.3.0` im D-Bus-Test **und** live unter PowerDevil (1-Minuten-Ruhezustand verhindert, `ListInhibitions` aktiv) belegt (`AC-M0-10-1`). **Wichtiges Finding:** `PortalInhibitGuard` muss die `zbus::Connection` dauerhaft halten, sonst hebt `xdg-desktop-portal` den Inhibit beim Verbindungsabbau sofort auf |
 | Plasma-Autostart-Seite schaltet `/etc/xdg/autostart`-Eintrag per `Hidden=true` ab (E11) | **teilgeprüft (M0-S05, M0-S11, M1-S17):** `apt remove`/`apt purge` auf TUXEDO OS erneut manuell abgenommen (`AC-M1-17-4`, `AC-M1-17-5`) und Öffnen von `kcm_autostart` belegt (`AC-M0-11-6`); manuelles Abschalten in `kcm_autostart` (`Hidden=true` in `~/.config/autostart`) als XDG-Standard noch nicht separat getestet |
