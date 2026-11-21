@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! M3-S10 catch-up at daemon start (`AC-M3-10-1`, `AC-M3-10-2`, `AC-M3-10-3`): an overdue backup is
-//! seeded in `config.toml` and `history.db` before the daemon starts.
+//! seeded in `config.toml` and `history.db` before the daemon starts. `AC-M3-01-8`: slots before
+//! a schedule change are not caught up.
 
 mod common;
 
 use common::m3::{
-    M3DaemonOpts, ResticVariant, ResticWrapper, StdFakes, backup_summary, daemon_paths,
+    M3DaemonOpts, M3Rig, ResticVariant, ResticWrapper, StdFakes, backup_summary, daemon_paths,
     notifications_for, restic_variants, seed_local_destination, settle, spawn_m3_daemon,
     wait_for_notifications, wait_for_state,
 };
@@ -15,7 +16,10 @@ use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::history::RunHistory;
-use kestic_core::model::{Backup, ResticProvider, Run, RunStatus, Schedule, Source};
+use kestic_core::model::{
+    Backup, MaintenanceEntrySchedule, MaintenanceSchedule, ResticProvider, Run, RunStatus,
+    Schedule, Source,
+};
 use kestic_daemon::dbus_api::DaemonStateDto;
 use std::fs;
 use std::path::Path;
@@ -221,6 +225,115 @@ fn ac_m3_10_3_daemon_start_marks_running_run_interrupted_before_planning() {
                 .expect("run persisted");
             assert_eq!(persisted.status, RunStatus::Interrupted, "persisted");
             daemon.stop();
+        },
+    );
+}
+
+/// Saturday 2026-11-21 16:31 Europe/Zurich.
+const SAT_1631: time::OffsetDateTime = datetime!(2026-11-21 15:31:00 UTC);
+/// Saturday 2026-11-21 16:32:05 Europe/Zurich.
+const SAT_1632: time::OffsetDateTime = datetime!(2026-11-21 15:32:05 UTC);
+
+/// AC-M3-01-8 through the daemon: saved schedules count from the change. A destination added
+/// on Friday that never ran `check` gets «Verify: daily 16:32» on Saturday at 16:31: (a) no
+/// `check` starts at 16:31, (b) the first one starts at 16:32. At the same time a backup that ran
+/// on Friday is changed from «Sundays 23:00» to «daily 14:00» and (c) does not start right away,
+/// and a manual-only backup switched to «daily 12:00» (f) does not start right away either,
+/// although both slots lie before 16:31. Neither old schedule is due on Saturday, so no run can
+/// start before the changes are saved.
+#[test]
+fn ac_m3_01_8_saved_schedules_count_from_the_change() {
+    run_isolated_test(
+        "ac_m3_01_8_saved_schedules_count_from_the_change",
+        "KESTIC_AC_M3_01_8_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let variant = restic_variants().pop().expect("latest restic");
+            let rig = M3Rig::start(
+                root,
+                &variant,
+                "M3A8",
+                datetime!(2026-11-20 09:00:00 UTC),
+                |_| {},
+            );
+            let client = &rig.daemon.client;
+            let dest = rig.add_destination("Anchor Vault", |_| {});
+            let no_conditions = |b: &mut Backup| {
+                b.run_conditions.require_ac_power = false;
+                b.run_conditions.require_network = false;
+            };
+            let ran = rig.add_backup_to(&dest, "Ran Friday", |b| {
+                b.schedule = Schedule::Weekly {
+                    weekday: 7,
+                    hour: 23,
+                    minute: 0,
+                };
+                no_conditions(b);
+            });
+            let manual = rig.add_backup_to(&dest, "Manual", |b| {
+                b.schedule = Schedule::ManualOnly;
+                no_conditions(b);
+            });
+            client.start_backup(ran.id.as_str()).expect("Friday run");
+            wait_for_state(client, Duration::from_secs(30), "Friday run ok", |s| {
+                backup_summary(s, &ran.id)
+                    .last_run
+                    .as_ref()
+                    .is_some_and(|r| r.status == RunStatus::Ok)
+            });
+            settle();
+
+            let backups_before = rig.wrapper.of('S', "backup").len();
+            rig.clock.set(SAT_1631);
+            let maintenance = MaintenanceSchedule {
+                check: MaintenanceEntrySchedule::Daily {
+                    hour: 16,
+                    minute: 32,
+                },
+                ..MaintenanceSchedule::default()
+            };
+            client
+                .update_destination_maintenance(dest.id.as_str(), &maintenance)
+                .expect("save verify schedule");
+            let mut changed = ran.clone();
+            changed.schedule = Schedule::Daily {
+                hour: 14,
+                minute: 0,
+            };
+            client.update_backup(&changed).expect("change schedule");
+            let mut switched = manual.clone();
+            switched.schedule = Schedule::Daily {
+                hour: 12,
+                minute: 0,
+            };
+            client
+                .update_backup(&switched)
+                .expect("switch from manual only");
+            settle();
+            assert!(
+                rig.wrapper.of('S', "check").is_empty(),
+                "(a) no check at 16:31: {:?}",
+                rig.wrapper.entries()
+            );
+            assert_eq!(
+                rig.wrapper.of('S', "backup").len(),
+                backups_before,
+                "no backup process starts right after the schedule changes"
+            );
+            let state = client.get_state().expect("GetState");
+            assert!(
+                backup_summary(&state, &ran.id).active_run.is_none(),
+                "(c) changed backup does not run"
+            );
+            assert!(
+                backup_summary(&state, &manual.id).active_run.is_none(),
+                "(f) switched backup does not run"
+            );
+
+            rig.clock.set(SAT_1632);
+            rig.wrapper
+                .wait_for('S', "check", 1, Duration::from_secs(30));
+            rig.daemon.stop();
         },
     );
 }
