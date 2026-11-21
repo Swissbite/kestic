@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, "m[0-9]*"]
   schedule:
     # Run every Monday at 05:30 UTC to catch newly published RustSec advisories on main.
     - cron: "30 5 * * 1"

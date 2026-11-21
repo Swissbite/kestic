@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Tripwire: mechanical checks on pull requests into a milestone branch (m<n>) and on
+# the closing pull request of a milestone (.github/scripts/tripwire.mjs). It is the
+# required check `tripwire` of the ruleset for m[0-9]*, next to `verify`.
+#
+# pull_request_target: the workflow and the script always come from the base
+# branch, so a pull request cannot change the checks that judge it. The job checks
+# out only .github/scripts of the base branch and reads the pull request through
+# the API with a read-only token; code of the pull request is never checked out or run.
+
+name: Tripwire
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+    branches: ["m[0-9]*", main]
+
+permissions: {}
+
+concurrency:
+  group: tripwire-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  tripwire:
+    name: tripwire
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Check the pull request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/scripts/tripwire.mjs
