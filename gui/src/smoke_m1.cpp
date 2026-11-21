@@ -25,7 +25,7 @@ void scene_destinations_empty(const Scene& s) {
     run_steps(s.window, {
         {250, [s] {
             QQuickWindow* w = s.window;
-            SMOKE_CHECK("M1", 36, has_visible_text(w->contentItem(), QString::fromUtf8("Noch keine Ziele eingerichtet")),
+            SMOKE_CHECK("M1", 36, has_visible_text(w->contentItem(), QString::fromUtf8("Noch keine Ziele angelegt")),
                 "DestinationsPage empty PlaceholderMessage not visible");
             QQuickItem* add_btn = visible_button(w->contentItem(), "Ziel hinzufügen|Add Destination");
             SMOKE_CHECK("M1", 36, add_btn, "visible Add Destination button not found");
@@ -66,7 +66,7 @@ void scene_destinations_empty(const Scene& s) {
         }},
         {350, [s] { SMOKE_CLICK("M1", 41, s.window, visible_button(s.top_nav, "Backups"), "Backups tab"); }},
         {250, [s] {
-            SMOKE_CHECK("M1", 41, has_visible_text(s.window->contentItem(), QString::fromUtf8("Noch keine Backups eingerichtet")),
+            SMOKE_CHECK("M1", 41, has_visible_text(s.window->contentItem(), QString::fromUtf8("Noch keine Backups angelegt")),
                 "BackupsPage empty PlaceholderMessage not visible");
             SMOKE_CLICK("M1", 42, s.window, visible_button(s.top_nav, "Verlauf|History"), "History tab");
         }},

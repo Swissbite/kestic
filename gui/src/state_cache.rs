@@ -112,6 +112,7 @@ pub struct GuiLaunchConfig {
     pub object_path: String,
     pub no_autostart_daemon: bool,
     pub show_quit_dialog_on_start: bool,
+    pub show_about_on_start: bool,
 }
 
 impl Default for GuiLaunchConfig {
@@ -121,6 +122,7 @@ impl Default for GuiLaunchConfig {
             object_path: KESTIC_OBJECT_PATH.to_string(),
             no_autostart_daemon: false,
             show_quit_dialog_on_start: false,
+            show_about_on_start: false,
         }
     }
 }
@@ -143,6 +145,7 @@ pub struct SharedGuiState {
     pub listener_started: bool,
     pub pending_blocked: Option<(String, BlockedReason)>,
     pub pending_show_window: bool,
+    pub pending_show_about: bool,
     pub pending_quit: Option<(bool, String)>,
     pub maintenance_preview: Option<(String, Result<String, String>)>,
     pub signal_conn: Option<zbus::Connection>,
@@ -165,6 +168,7 @@ impl SharedGuiState {
             listener_started: false,
             pending_blocked: None,
             pending_show_window: false,
+            pending_show_about: false,
             pending_quit: None,
             maintenance_preview: None,
             signal_conn: None,
@@ -415,6 +419,10 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                     Some("ShowWindowRequested") => {
                         let mut guard = shared_state().lock_unpoisoned();
                         guard.pending_show_window = true;
+                    }
+                    Some("ShowAboutRequested") => {
+                        let mut guard = shared_state().lock_unpoisoned();
+                        guard.pending_show_about = true;
                     }
                     Some("QuitConfirmationRequested") => {
                         if let Ok((has_running, name)) = msg.body().deserialize::<(bool, String)>()

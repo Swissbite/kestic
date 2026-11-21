@@ -11,7 +11,7 @@ Teil von [index.md](index.md) (§7). Verbindlichkeit, Referenz-Datensatz (§0.2)
 ![overview running dark](assets/kestic-overview-running-dark.png)
 
 Aufbau:
-- Kopfleiste: kein Titel; Aktionen `[▶ Alle jetzt sichern]`, `☰`.
+- Kopfleiste: kein Titel; Aktion `[▶ Alle jetzt sichern]` (`☰` steht für alle Seiten gleich neben der Tab-Leiste, [struktur.md](struktur.md) §4.1).
 - `InlineMessage` (Warning): «Für das Ziel ‹S3› gibt es kein Wiederherstellungs-Kit. Ohne Kit sind die Daten bei Verlust des Passworts nicht mehr lesbar.» `[Kit erzeugen…]` (im Datensatz deaktiviert, Zusatz «Zuerst gespeichertes Passwort aktualisieren», §8.2) `[Später]` `×`.
 - Überschrift (Heading 1): Status-Icon + Gesamtstatus «1 Backup fehlgeschlagen»; Untertitel «Persönlicher Ordner gesichert vor 2 Stunden · Fotos wartet».
 - Karten, eine pro Backup: Icon nach Quellentyp, Name, «Quelle → Ziel», Statuszeile (Icon + Text, §6.2), «Nächstes Backup: …», Hauptknopf, `⋮`. Im Datensatz:
@@ -38,7 +38,7 @@ Aufbau Liste (linke Spalte, ohne Kopfleistentitel):
 - `InlineViewHeader`: «3 Backups» `[+ Neues Backup…]`.
 - Zeile je Backup: Icon nach Quellentyp (`user-home`, `folder`, `drive-harddisk`), Name, Statustext als zweite Zeile, Status-Icon; Kontextmenü (Rechtsklick, Menü-Taste) = `⋮`-Einträge.
 
-Aufbau Detail (rechte Spalte), Titel «Persönlicher Ordner», Aktionen `[▶ Jetzt sichern]` `[⏸ Pausieren ▾]` `⋮` `☰`:
+Aufbau Detail (rechte Spalte), Titel «Persönlicher Ordner», Aktionen `[▶ Jetzt sichern]` `[⏸ Pausieren ▾]` `⋮`:
 - Statuszeile «Gesichert · vor 2 Stunden · 312 MB neu»; darunter «Nächstes Backup morgen um 12:00 · nur am Strom und mit Netzwerk».
 - Abschnitt **Snapshots:** «Heute 12:00 · 312 MB neu ›», «Gestern 12:00 · 45 MB neu ›», «Alle 46 Snapshots anzeigen ›» (§8.12).
 - Abschnitt **Einstellungen** (je Zeile Wert + `›`): Quelle «~ (Ordner)» (§8.10) · Ausschluss-Regeln «3 Ordner, 2 Vorlagen» (§7.3) · Zeitplan «täglich 12:00 · am Strom, mit Netzwerk» (§7.4) · Aufbewahrung «7 tägliche, 4 wöchentliche, 12 monatliche» (§7.5) · Ziel «NAS (REST-Server)» (§8.8) · «Gesamte Konfiguration anzeigen» (§8.11).
@@ -157,7 +157,7 @@ Regeln:
 
 Aufbau Liste: `InlineViewHeader` «3 Ziele» `[+ Ziel hinzufügen…]`; je Ziel Icon nach Typ (Laufwerk `drive-removable-media`, Ordner `folder`, SFTP/REST `network-server`, Cloud `folder-cloud`), Name, Zustand als zweite Zeile (§6.4): NAS «Erreichbar · 1 Backup», USB-Disk «Laufwerk nicht eingesteckt», S3 «Gespeichertes Passwort passt nicht · kein Kit».
 
-Aufbau Detail, Titel «NAS», Aktionen `[Verbindung prüfen]` `⋮` `☰`:
+Aufbau Detail, Titel «NAS», Aktionen `[Verbindung prüfen]` `⋮`:
 - Statuszeile «Erreichbar · REST-Server · rest:https://…».
 - **Backups auf diesem Ziel:** «Persönlicher Ordner · Gesichert ›».
 - **Wartung:** «Aufräumen · sonntags 12:00 · zuletzt heute 12:30 ›», «Prüfen · am ersten Sonntag im Monat · zuletzt 01.11. ›» (§8.1), `[Wartung jetzt ausführen…]`.
@@ -175,7 +175,7 @@ Regeln:
 
 Aufbau Liste: Filter `[Alle Backups ▾]` + checkable `Kirigami.Chip`s «Probleme», «Wartung»; Suchfeld; Läufe nach Tag gruppiert, Zeile = Status-Icon · Uhrzeit · Backup bzw. «Wartung ‹Ziel›» · zweite Zeile Dauer oder Kurzstatus (Heute: 12:30 Wartung NAS · 18 Minuten; 12:00 Persönlicher Ordner · 3 Minuten. Gestern: 12:00 Persönlicher Ordner · 2 Dateien nicht lesbar. Freitag, 13.11.: 20:05 Projekte · Passwort abgelehnt).
 
-Aufbau Detail, Titel «Lauf vom 14.11.2026, 12:00», Aktionen `⋮` `☰`:
+Aufbau Detail, Titel «Lauf vom 14.11.2026, 12:00», Aktionen `⋮`:
 - Statuszeile «Gesichert, 2 Dateien nicht lesbar · 4 Minuten 12 Sekunden»; darunter «Persönlicher Ordner · 45 MB hinzugefügt». Keine zweite Zusammenfassung.
 - Feste Tabs (`QQC2.TabBar`, vom Benutzer nicht schliess- oder verschiebbar, «immutable tabs» der HIG):
   - **Ergebnis:** «1 248 neu · 312 geändert · …»; «Nicht lesbare Dateien» mit `[Zu Ausschluss-Regeln hinzufügen…]` je Datei (`~/.local/share/…/lock`, `~/VM/disk.qcow2`).

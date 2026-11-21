@@ -4,7 +4,7 @@ Teil von [index.md](index.md) (§9). Verbindlichkeit, Referenz-Datensatz (§0.2)
 
 ## 9. Abläufe
 
-### 9.1 Einrichtungsassistent (FR-38, [architecture.md](../architecture.md) («Onboarding und Ziel-Typen»))
+### 9.1 Assistent «Erstes Backup anlegen» (FR-38, [architecture.md](../architecture.md) («Onboarding und Ziel-Typen»))
 
 ![welcome light](assets/kestic-welcome-light.png)
 ![wizard 1 light](assets/kestic-wizard-1-light.png)
@@ -14,18 +14,18 @@ Teil von [index.md](index.md) (§9). Verbindlichkeit, Referenz-Datensatz (§0.2)
 ![wizard 4b light](assets/kestic-wizard-4b-light.png)
 ![wizard 5 light](assets/kestic-wizard-5-light.png)
 
-HIG erlaubt einen First-run-Wizard nur für **zwingende** Einrichtung und ohne Fragen zu optionalen Einstellungen. Ziel, Passwort und Kit sind zwingend; alles Optionale steht als Default in der Zusammenfassung (ändern möglich, nicht verlangt).
+HIG erlaubt einen First-run-Wizard nur für **zwingende** Schritte und ohne Fragen zu optionalen Einstellungen. Ziel, Passwort und Kit sind zwingend; alles Optionale steht als Default in der Zusammenfassung (ändern möglich, nicht verlangt).
 
 ```mermaid
 flowchart LR
-  W["Willkommen"] -->|Erstes Backup einrichten| S1["1 Quelle"] --> S2["2 Ziel-Typ"] --> S3["3 Ziel-Details + Prüfung"]
+  W["Willkommen"] -->|Erstes Backup anlegen| S1["1 Quelle"] --> S2["2 Ziel-Typ"] --> S3["3 Ziel-Details + Prüfung"]
   S3 -->|neues Repo| S4a["4a Passwort"] --> S4b["4b Wiederherstellungs-Kit"] --> S5["5 Zusammenfassung"]
   S3 -->|"Repo existiert (4a entfällt)"| S4b
   S5 -->|"Jetzt sichern / Speichern, später sichern"| E["init + key add, speichern"]
   W -->|"Vorhandenes Backup verbinden…"| N2["Ziel-Typ"] --> N3["Details"] --> N4["Alltags-Passwort oder Kit-Passphrase"] --> N5["Backups übernehmen §8.3"] --> N6["bei Kit-Passphrase: neues Alltags-Passwort"] --> N7["Bereich Wiederherstellen"]
 ```
 
-**Willkommen** (Startansicht ohne Konfiguration, zentriert): App-Icon (128 px) · «Willkommen bei Kestic» · «Kestic sichert Ihre Dateien regelmässig und verschlüsselt auf ein Laufwerk, einen Server oder in die Cloud.» · `[Erstes Backup einrichten]` (Hauptaktion) · Link «Vorhandenes Backup verbinden…».
+**Willkommen** (Startansicht ohne Konfiguration, zentriert): App-Icon (128 px) · «Willkommen bei Kestic» · «Kestic sichert Ihre Dateien regelmässig und verschlüsselt auf ein Laufwerk, einen Server oder in die Cloud.» · `[Erstes Backup anlegen]` (Hauptaktion) · Link «Vorhandenes Backup verbinden…».
 
 **Rahmen jedes Schritts** (lineare Seitenfolge im `pageStack`, vollflächig ohne Tab-Leiste, HIG): Kopfleiste mit dem Namen des Assistenten; «Schritt n von m» + Fortschrittsbalken (m je Ablauf, siehe unten); Frage als Überschrift (Heading), z. B. «Wo liegt der REST-Server?»; Formular, z. B. Adresse, Benutzername, Server-Passwort, `[Verbindung prüfen]` mit Ergebnis daneben («Erreichbar»); Fuss `[Abbrechen]` links, `[Zurück]` `[Weiter]` rechts. `[Weiter]` nur aktiv, wenn gültig; Enter = Weiter; Escape/Abbrechen fragt nur, wenn schon Eingaben gemacht wurden.
 
@@ -53,7 +53,7 @@ flowchart LR
 
 | Ablauf | Schritte |
 | --- | --- |
-| Erstes Backup einrichten | 5: Quelle · Ziel-Typ · Ziel-Details · Passwort und Kit (4a, 4b; bei vorhandenem Repo nur 4b) · Zusammenfassung |
+| Erstes Backup anlegen | 5: Quelle · Ziel-Typ · Ziel-Details · Passwort und Kit (4a, 4b; bei vorhandenem Repo nur 4b) · Zusammenfassung |
 | Neues Backup (§9.2) | 3: Quelle · Ziel · Zusammenfassung |
 | Ziel hinzufügen (§9.3) | 4: Ziel-Typ · Ziel-Details · Passwort · Kit (bei vorhandenem Repo 3) |
 | Vorhandenes Backup verbinden | 4: Ziel-Typ · Details · Passwort oder Kit-Passphrase · Backups übernehmen; bei Kit-Passphrase 5 (neues Alltags-Passwort) |
@@ -95,4 +95,8 @@ Eigenes Fenster «Kestic einrichten», **eine** `FormLayout`-Seite mit Abschnitt
 | Benachrichtigungen | Checkboxen je Ereignis-Art (F3): Fehler, Warnungen, überfällig, Wartungsprobleme, restic-Updates; `[Systemeinstellungen für Benachrichtigungen…]` |
 | restic | Anzeige «restic-Quelle: Automatisch (System-restic 0.18.1)», beide Versionen, Erklärsatz «warum 0.18.0»; `[restic-Quelle ändern…]` (Dialog mit Automatisch · System · Von Kestic verwaltet · Eigener Pfad; Umstellen/Download erst mit `[Übernehmen]`), `[Jetzt aktualisieren]`, `[✓] Wöchentlich nach neuen Versionen suchen` (FR-33, FR-51, P23) |
 
-«Über Kestic» im Hamburger-Menü (`Kirigami.AboutPage`, inkl. restic-Version). Sprache, Farben, Schrift folgen dem System.
+«Über Kestic» im Hamburger-Menü und über die Versionszeile im Tray (§10.1; ohne offene GUI startet der Daemon `kestic --show-about`): eigenes Dialogfenster «Über Kestic» wie «Kestic einrichten», nicht als Spalte im Hauptfenster; darin `Kirigami.AboutPage` ohne eigene Kopfleiste, inkl. restic-Version, unten `[Schliessen]`. Esc schliesst es, danach ist das Hauptfenster wieder aktiv und der Fokus steht, wo er war (z. B. auf `☰`). Ist es schon offen, kommt es nach vorn. Autor nur mit Namen, ohne E-Mail-Adresse. Sprache, Farben, Schrift folgen dem System.
+
+- **Version:** Kopf «Kestic 0.1.0» mit der Version der Anwendung (GUI). Abschnitt «Version» mit zwei Zeilen «Anwendung: 0.1.0 · a561018» und «Hintergrunddienst: 0.1.0 · a561018» (Version und kurzer Git-Hash des Builds, wie in der Startzeile des Daemons). Ein sauberer Hash ist ein Link auf `https://github.com/Swissbite/kestic/commit/<hash>` (Name für Screenreader «Quellcode a561018»); `-dirty` steht ohne Link, `unknown` entfällt. Ist der Hintergrunddienst nicht erreichbar: «nicht verfügbar».
+- **Anderer Build:** Weichen Version oder (bei beiden bekanntem Hash) Commit von Anwendung und Hintergrunddienst ab, etwa weil der Daemon nach einem Paket-Update per `exec` neu gestartet ist und das offene Fenster noch die alte Version ausführt, steht oben ein Hinweis (Information): «Der Hintergrunddienst läuft in einer anderen Version. Kestic schliessen und neu öffnen, um die neue Version zu laden.» Ohne erreichbaren Daemon oder ohne Hash (älterer Daemon) zählt nur die Version.
+- **Links:** Homepage `https://swissbite.github.io/kestic/`; «Ein Problem melden» → `https://github.com/Swissbite/kestic/issues`.

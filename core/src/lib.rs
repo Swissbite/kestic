@@ -7,6 +7,7 @@
 
 pub mod backup;
 pub mod backup_progress;
+pub mod build_info;
 pub mod clock;
 pub mod config;
 pub mod destination;

@@ -25,7 +25,7 @@ use kestic_daemon::tray::{KesticTrayState, TrayHandle, TrayStatus};
 use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -679,6 +679,36 @@ fn ac_m1_11_4_notifications_only_on_error_and_warning_with_desktop_entry() {
     );
 }
 
+/// Fake GUI binary that appends `ARG:<its arguments>` to a log on every start; returns the
+/// binary and the log.
+fn fake_gui_logging_starts(root: &Path) -> (PathBuf, PathBuf) {
+    let log = root.join("gui-spawns.log");
+    let bin = root.join("fake-kestic-gui");
+    let script = format!(
+        "#!/bin/sh\nprintf 'ARG:%s\\n' \"$*\" >> \"{}\"\n",
+        log.display()
+    );
+    write_executable(&bin, &script);
+    (bin, log)
+}
+
+/// The lines of the start log of [`fake_gui_logging_starts`] once it has at least `expected`.
+fn wait_for_gui_starts(log: &Path, expected: usize) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let content = fs::read_to_string(log).unwrap_or_default();
+        let lines: Vec<String> = content.lines().map(ToOwned::to_owned).collect();
+        if lines.len() >= expected {
+            return lines;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {expected} fake GUI spawn(s), saw {lines:?}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn tray_open_and_quit_respect_live_gui_registration_and_recover_from_stale_window_active() {
     run_isolated_test(
@@ -688,29 +718,9 @@ fn tray_open_and_quit_respect_live_gui_registration_and_recover_from_stale_windo
             let watcher_conn = start_fake_sni_watcher();
             let client_conn = block_on(Connection::session()).expect("session conn");
 
-            let spawn_log = root.join("gui-spawns.log");
-            let fake_gui_bin = root.join("fake-kestic-gui");
-            let script = format!(
-                "#!/bin/sh\nprintf 'ARG:%s\\n' \"$*\" >> \"{}\"\n",
-                spawn_log.display()
-            );
-            write_executable(&fake_gui_bin, &script);
-
-            let wait_for_log_lines = |expected_lines: usize| -> Vec<String> {
-                let deadline = Instant::now() + Duration::from_secs(3);
-                loop {
-                    let content = fs::read_to_string(&spawn_log).unwrap_or_default();
-                    let lines: Vec<String> = content.lines().map(ToOwned::to_owned).collect();
-                    if lines.len() >= expected_lines {
-                        return lines;
-                    }
-                    assert!(
-                        Instant::now() < deadline,
-                        "timed out waiting for {expected_lines} fake GUI spawn(s), saw {lines:?}"
-                    );
-                    thread::sleep(Duration::from_millis(20));
-                }
-            };
+            let (fake_gui_bin, spawn_log) = fake_gui_logging_starts(root);
+            let wait_for_log_lines =
+                |expected_lines| wait_for_gui_starts(&spawn_log, expected_lines);
 
             let ready_file = root.join("daemon.ready");
             let run_cfg = DaemonRunConfig {
@@ -807,6 +817,85 @@ fn tray_open_and_quit_respect_live_gui_registration_and_recover_from_stale_windo
             click_dbusmenu_item(&client_conn, &sni_svc, open_id);
             let lines3 = wait_for_log_lines(1);
             assert_eq!(lines3[0], "ARG:");
+
+            common::stop_daemon(&client, handle);
+        },
+    );
+}
+
+/// AC-M1-11-6: the last tray menu line, below (a) a separator, (b) names version and build
+/// commit of the daemon («Kestic 0.1.0 · a561018») and is enabled; (c) `GetState` reports the
+/// same commit in `daemon_build_commit`; a click (d) asks an open GUI for its window and
+/// «About Kestic» (`ShowWindowRequested`, `ShowAboutRequested`) and (e) without a GUI starts one
+/// with `--show-about`.
+#[test]
+fn ac_m1_11_6_tray_version_line_opens_about_kestic() {
+    run_isolated_test(
+        "ac_m1_11_6_tray_version_line_opens_about_kestic",
+        "KESTIC_M1_S11_TRAY_VERSION",
+        |root| {
+            let watcher_conn = start_fake_sni_watcher();
+            let client_conn = block_on(Connection::session()).expect("session conn");
+            let (fake_gui_bin, spawn_log) = fake_gui_logging_starts(root);
+
+            let ready_file = root.join("daemon.ready");
+            let run_cfg = DaemonRunConfig {
+                assume_sni_available: false,
+                kestic_binary: Some(fake_gui_bin),
+                suppress_ui_spawn: false,
+                ..sandbox_run_config(root)
+            };
+            let handle = thread::spawn(move || run_daemon(run_cfg));
+            wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
+            let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
+            let client = common::connect_default_client().expect("connect client");
+
+            let items = fetch_dbusmenu_items(&client_conn, &sni_svc);
+            let [.., separator, info] = items.as_slice() else {
+                panic!("tray menu too short: {items:?}");
+            };
+            assert_eq!(
+                separator.kind, "separator",
+                "(a) separator above: {items:?}"
+            );
+            assert_eq!(
+                info.label,
+                format!(
+                    "Kestic {} · {}",
+                    kestic_core::version(),
+                    kestic_daemon::build_commit()
+                ),
+                "(b) version line"
+            );
+            assert!(info.enabled, "(b) version line must be clickable");
+            assert_eq!(
+                client.get_state().expect("GetState").daemon_build_commit,
+                kestic_daemon::build_commit(),
+                "(c) GetState commit"
+            );
+
+            let signals = KesticSignalCollector::start(
+                KESTIC_BUS_NAME,
+                KESTIC_OBJECT_PATH,
+                KESTIC_INTERFACE_V1,
+            );
+            click_dbusmenu_item(&client_conn, &sni_svc, info.id);
+            let sigs = signals.wait_until(Duration::from_secs(3), |sigs| {
+                sigs.iter()
+                    .any(|s| matches!(s, CapturedKesticSignal::ShowAboutRequested))
+            });
+            let position = |wanted: fn(&CapturedKesticSignal) -> bool| sigs.iter().position(wanted);
+            let window = position(|s| matches!(s, CapturedKesticSignal::ShowWindowRequested));
+            let about = position(|s| matches!(s, CapturedKesticSignal::ShowAboutRequested));
+            assert!(about.is_some(), "(d) ShowAboutRequested missing: {sigs:?}");
+            assert!(
+                window.is_some(),
+                "(d) ShowWindowRequested missing: {sigs:?}"
+            );
+            assert!(window < about, "(d) window request first: {sigs:?}");
+
+            let spawned = wait_for_gui_starts(&spawn_log, 1);
+            assert_eq!(spawned, vec!["ARG:--show-about"], "(e) GUI start");
 
             common::stop_daemon(&client, handle);
         },

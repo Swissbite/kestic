@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Opens every page, editor, wizard and the settings window once, saves a screenshot of each
-// and writes all visible texts to the file named by `KESTIC_SMOKE_TEXT_DUMP` (one line per
-// text: `page<TAB>text`, line breaks as `\n`). The Rust test checks these texts in both
+// Opens every page, editor, wizard, the settings window and «About Kestic» once, saves a
+// screenshot of each and writes all visible texts to the file named by `KESTIC_SMOKE_TEXT_DUMP`
+// (one line per text: `page<TAB>text`, line breaks as `\n`). The Rust test checks these texts in both
 // languages (`daemon/tests/m3_gui_smoke.rs`).
 
 #include "src/smoke_m3_util.h"
@@ -210,8 +210,15 @@ int scenario_all_pages(const Ctx& c) {
     M3_RECORD(4991, dump, QStringLiteral("settings"), settings, "settings");
     settings->close();
 
+    QMetaObject::invokeMethod(w, "openAboutPage");
+    auto* about = qobject_cast<QQuickWindow*>(object_named(w, "aboutWindow"));
+    M3_CHECK2(4994, about != nullptr, wait_until([&] { return about->isVisible(); }, 3000), "aboutWindow not open");
+    M3_CHECK(4992, find_visual_item(about, QStringLiteral("mainAboutPage")) != nullptr, "mainAboutPage not in the About window");
+    M3_RECORD(4993, dump, QStringLiteral("about"), about, "about");
+    about->close();
+
     file.close();
-    M3_CHECK(4995, dump.pages == 19, "expected 19 recorded pages");
+    M3_CHECK(4995, dump.pages == 20, "expected 20 recorded pages");
     QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
     wait_ms(150);
     M3_CHECK(4996, save_screenshot(w, c.out_path), "screenshot failed");

@@ -19,6 +19,7 @@ pub mod qobject {
         #[qproperty(QString, config_load_error)]
         #[qproperty(bool, expert_mode)]
         #[qproperty(QString, daemon_version)]
+        #[qproperty(QString, daemon_build_commit)]
         #[qproperty(bool, daemon_reachable)]
         #[qproperty(bool, restic_valid)]
         #[qproperty(QString, restic_version)]
@@ -64,6 +65,7 @@ pub mod qobject {
         #[qproperty(bool, has_unsaved_changes)]
         #[qproperty(QString, last_action_error)]
         #[qproperty(bool, show_quit_dialog_on_start)]
+        #[qproperty(bool, show_about_on_start)]
         #[qproperty(bool, quit_has_running_run)]
         #[qproperty(QString, quit_running_backup_name)]
         #[qproperty(QString, dry_run_preview_id)]
@@ -104,6 +106,10 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "showWindowRequested"]
         fn show_window_requested(self: Pin<&mut KesticApp>);
+
+        #[qsignal]
+        #[cxx_name = "aboutRequested"]
+        fn about_requested(self: Pin<&mut KesticApp>);
 
         #[qsignal]
         #[cxx_name = "quitConfirmationRequested"]
@@ -542,6 +548,7 @@ pub struct KesticAppRust {
     config_load_error: QString,
     expert_mode: bool,
     daemon_version: QString,
+    daemon_build_commit: QString,
     daemon_reachable: bool,
     restic_valid: bool,
     restic_version: QString,
@@ -587,6 +594,7 @@ pub struct KesticAppRust {
     has_unsaved_changes: bool,
     last_action_error: QString,
     show_quit_dialog_on_start: bool,
+    show_about_on_start: bool,
     quit_has_running_run: bool,
     quit_running_backup_name: QString,
     dry_run_preview_id: QString,

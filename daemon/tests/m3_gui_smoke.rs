@@ -102,6 +102,64 @@ fn saved_backup(rig: &M3Rig, id: &BackupId) -> Backup {
         .expect("saved backup present")
 }
 
+/// Overview with three backups on one destination: «Docs OK» backed up, «Docs Pending» waiting
+/// for AC power (on battery) and «Docs Overdue» overdue. Keep the fakes alive with the rig.
+fn status_rows_env(root: &Path) -> (M3Rig, StdFakes) {
+    let fakes = gui_fakes(true, &["HomeWifi"]);
+    let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
+    let dest = rig.add_destination("Status Vault", |_| {});
+    let overdue_id = rig
+        .add_backup_to(&dest, "Docs Overdue", |b| {
+            b.run_conditions = no_conditions()
+        })
+        .id;
+
+    rig.clock.set(datetime!(2026-12-04 10:00:00 UTC));
+    let ok_id = rig
+        .add_backup_to(&dest, "Docs OK", |b| b.run_conditions = no_conditions())
+        .id;
+    let pending_id = rig.add_backup_to(&dest, "Docs Pending", |_| {}).id;
+
+    rig.clock.set(datetime!(2026-12-04 12:05:00 UTC));
+    rig.daemon
+        .client
+        .start_backup(ok_id.as_str())
+        .expect("start Docs OK");
+    wait_for_state(
+        &rig.daemon.client,
+        Duration::from_secs(20),
+        "Docs OK done",
+        |s| {
+            backup_summary(s, &ok_id)
+                .last_run
+                .as_ref()
+                .is_some_and(|r| r.status == RunStatus::Ok)
+                && backup_summary(s, &ok_id).active_run.is_none()
+        },
+    );
+    let state = wait_for_state(
+        &rig.daemon.client,
+        Duration::from_secs(5),
+        "3 states",
+        |s| {
+            backup_summary(s, &overdue_id).is_overdue
+                && backup_summary(s, &pending_id)
+                    .pending_primary_code
+                    .map(|c| c.as_str())
+                    == Some("on_battery")
+        },
+    );
+    assert!(
+        !backup_summary(&state, &pending_id).is_overdue,
+        "waiting backup must not be overdue"
+    );
+    assert!(
+        !backup_summary(&state, &ok_id).is_overdue,
+        "ok backup must not be overdue"
+    );
+    (rig, fakes)
+}
+
 /// AC-M3-08-3: ok / waiting / overdue backups with status, reason and next slot.
 #[test]
 fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slot() {
@@ -109,60 +167,7 @@ fn m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slo
         "m3_08_3_overview_lists_ok_waiting_and_overdue_with_status_reason_and_next_slot",
         "KESTIC_M3_GUI_STATUS_ROWS_INNER",
         |root| {
-            // On battery: the backup with default conditions is waiting for AC power.
-            let _fakes = gui_fakes(true, &["HomeWifi"]);
-            let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
-            let dest = rig.add_destination("Status Vault", |_| {});
-            let overdue_id = rig
-                .add_backup_to(&dest, "Docs Overdue", |b| {
-                    b.run_conditions = no_conditions()
-                })
-                .id;
-
-            rig.clock.set(datetime!(2026-12-04 10:00:00 UTC));
-            let ok_id = rig
-                .add_backup_to(&dest, "Docs OK", |b| b.run_conditions = no_conditions())
-                .id;
-            let pending_id = rig.add_backup_to(&dest, "Docs Pending", |_| {}).id;
-
-            rig.clock.set(datetime!(2026-12-04 12:05:00 UTC));
-            rig.daemon
-                .client
-                .start_backup(ok_id.as_str())
-                .expect("start Docs OK");
-            wait_for_state(
-                &rig.daemon.client,
-                Duration::from_secs(20),
-                "Docs OK done",
-                |s| {
-                    backup_summary(s, &ok_id)
-                        .last_run
-                        .as_ref()
-                        .is_some_and(|r| r.status == RunStatus::Ok)
-                        && backup_summary(s, &ok_id).active_run.is_none()
-                },
-            );
-            let state = wait_for_state(
-                &rig.daemon.client,
-                Duration::from_secs(5),
-                "3 states",
-                |s| {
-                    backup_summary(s, &overdue_id).is_overdue
-                        && backup_summary(s, &pending_id)
-                            .pending_primary_code
-                            .map(|c| c.as_str())
-                            == Some("on_battery")
-                },
-            );
-            assert!(
-                !backup_summary(&state, &pending_id).is_overdue,
-                "waiting backup must not be overdue"
-            );
-            assert!(
-                !backup_summary(&state, &ok_id).is_overdue,
-                "ok backup must not be overdue"
-            );
-
+            let (rig, _fakes) = status_rows_env(root);
             for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
                 run_m3_gui_smoke(
                     root,
@@ -858,9 +863,9 @@ fn ac_m0_11_8_ctrl_shift_b_starts_back_up_now_in_the_detail_page() {
 #[path = "../../i18n/tests/common/language.rs"]
 mod language;
 
-/// Every page, editor, wizard and the settings window, opened in English and in German: (a) the
-/// German window shows no English text that has a German translation, (b) every visible text in
-/// both languages has short sentences and (c) no technical words. The visible texts per page are
+/// Every page, editor, wizard, the settings window and «About Kestic», opened in English and in
+/// German: (a) the German window shows no English text that has a German translation, (b) every
+/// visible text in both languages has short sentences and (c) no technical words. The visible texts per page are
 /// kept as review lists (`target/smoke-artifacts/m3-all-pages-texts-<lang>.tsv`). The smoke also
 /// checks that the backups list shows exactly the rows of the Rust list model (AC-M0-04-1).
 #[test]
@@ -902,7 +907,7 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
                     .collect();
                 let pages: std::collections::HashSet<&str> =
                     texts.iter().map(|(p, _)| *p).collect();
-                assert_eq!(pages.len(), 19, "{lang}: every page recorded: {pages:?}");
+                assert_eq!(pages.len(), 20, "{lang}: every page recorded: {pages:?}");
                 if lang == "de" {
                     let english: Vec<_> = texts
                         .iter()
@@ -1098,6 +1103,121 @@ fn finding4_destination_page_resets_maintenance_running_after_the_run() {
                     &[("KESTIC_SMOKE_MARKER", marker.to_str().expect("utf-8 path"))],
                 );
             });
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// Version and build commit of this build, for the About page checks of the smoke scenes.
+fn build_env() -> [(&'static str, &'static str); 2] {
+    [
+        ("KESTIC_SMOKE_VERSION", kestic_core::version()),
+        ("KESTIC_SMOKE_COMMIT", kestic_daemon::build_commit()),
+    ]
+}
+
+/// GUI with a daemon that has neither a destination nor a backup.
+fn empty_env(root: &Path) -> (M3Rig, StdFakes) {
+    let fakes = gui_fakes(false, &[]);
+    let rig = start_rig(root, datetime!(2026-12-01 10:00:00 UTC), false);
+    (rig, fakes)
+}
+
+/// AC-M1-13-8: the ☰ button of the main menu, in the wide and the narrow window, (a) is
+/// visible at the right end of the header with a name for screen readers; (b) a mouse click
+/// opens the menu with «Configure Kestic…», «Configure Keyboard Shortcuts…» and «Handbook»
+/// (both disabled) and «About Kestic»; (c) «About Kestic» opens the About page; (d) with the
+/// keyboard alone Tab reaches the button, Space opens the menu, the arrow keys reach «About
+/// Kestic» and Return opens it; (e) Escape closes the menu; (f) Ctrl+Shift+, opens the
+/// settings. The C++ scene checks each statement; screenshots of the open menu and the About
+/// page per layout and language.
+#[test]
+fn ac_m1_13_8_main_menu_button_works_with_mouse_and_keyboard() {
+    run_isolated_test(
+        "ac_m1_13_8_main_menu_button_works_with_mouse_and_keyboard",
+        "KESTIC_M1_MAIN_MENU_INNER",
+        |root| {
+            let (rig, _fakes) = empty_env(root);
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                run_m3_gui_smoke_with_env(
+                    root,
+                    "m3-main-menu",
+                    layout,
+                    lang,
+                    &smoke_artifact("main-menu", layout, lang),
+                    &build_env(),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M1-13-8 (b): the menu is static. Over an overview with three backups (ok, waiting,
+/// overdue) it holds exactly the same two entries as over the welcome screen. Screenshots of the
+/// open menu in English and German.
+#[test]
+fn ac_m1_13_8_main_menu_is_the_same_over_a_configured_overview() {
+    run_isolated_test(
+        "ac_m1_13_8_main_menu_is_the_same_over_a_configured_overview",
+        "KESTIC_M1_MAIN_MENU_CONFIGURED_INNER",
+        |root| {
+            let (rig, _fakes) = status_rows_env(root);
+            for lang in ["en", "de"] {
+                run_m3_gui_smoke(
+                    root,
+                    "m3-main-menu-configured",
+                    "wide",
+                    lang,
+                    &smoke_artifact("main-menu-configured", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M1-13-9: «About Kestic» with a background service of another build shows (a) the hint
+/// to reopen Kestic, (b) a clean commit as a link to its GitHub page and (c) a `-dirty` commit
+/// as text without a link. Started from the tray (`--show-about`), (d) the About window opens and
+/// (e) in German shows Kirigami's own texts in German too (the menu path is checked by the
+/// AC-M1-13-8 scene).
+#[test]
+fn ac_m1_13_9_about_page_links_commits_and_flags_another_build() {
+    run_isolated_test(
+        "ac_m1_13_9_about_page_links_commits_and_flags_another_build",
+        "KESTIC_M1_ABOUT_BUILDS_INNER",
+        |root| {
+            let (rig, _fakes) = empty_env(root);
+            for lang in ["en", "de"] {
+                run_m3_gui_smoke_with_env(
+                    root,
+                    "m3-about-builds-differ",
+                    "wide",
+                    lang,
+                    &smoke_artifact("about-builds-differ", "wide", lang),
+                    &build_env(),
+                );
+            }
+            let iso = kestic_test_support::gui::IsolatedEnv::adopt(root);
+            let dbus_addr =
+                std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
+            let kestic_bin = find_kestic_binary();
+            let smoke = kestic_test_support::gui::SmokeContext {
+                kestic_bin: &kestic_bin,
+                iso: &iso,
+                dbus_addr: &dbus_addr,
+            };
+            for lang in ["en", "de"] {
+                smoke.run_with_env(
+                    "m3-show-about-on-start",
+                    "wide",
+                    lang,
+                    &smoke_artifact("show-about-on-start", "wide", lang),
+                    &["--show-about"],
+                    &build_env(),
+                );
+            }
             rig.daemon.stop();
         },
     );

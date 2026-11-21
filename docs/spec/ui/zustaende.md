@@ -79,7 +79,7 @@ Eine Abbildung für Fenster, Tray, Benachrichtigung. Immer Icon **und** Text, Fa
 
 | Screen | leer | lädt | offline / nicht verfügbar | Fehler |
 | --- | --- | --- | --- | --- |
-| Übersicht | Willkommen + «Erstes Backup einrichten» (§9.1) | `LoadingPlaceholder` beim ersten Abruf vom Daemon | Zustandsleiste #1 | Zustandsleiste |
+| Übersicht | Willkommen + «Erstes Backup anlegen» (§9.1) | `LoadingPlaceholder` beim ersten Abruf vom Daemon | Zustandsleiste #1 | Zustandsleiste |
 | Backups | `PlaceholderMessage` «Noch keine Backups» + `[Neues Backup…]` | – (lokale Daten) | – | – |
 | Snapshots | «Noch keine Snapshots – das erste Backup steht aus» + `[Jetzt sichern]` | `LoadingPlaceholder` «Snapshots werden geladen…» | «Ziel nicht erreichbar» bzw. **«Laufwerk ‹USB-Disk› einstecken, um die Snapshots zu sehen»** mit Icon; letzte bekannte Liste grau mit «Stand: …» | `InlineMessage` Error nach §9.4 + `[Erneut versuchen]` |
 | Durchsuchen | «Dieser Ordner ist im Snapshot leer» | `LoadingPlaceholder` pro Ordner (lazy) | wie Snapshots | wie Snapshots |

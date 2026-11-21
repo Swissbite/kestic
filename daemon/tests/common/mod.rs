@@ -400,6 +400,8 @@ pub struct TrayMenuEntry {
     pub id: i32,
     pub label: String,
     pub enabled: bool,
+    /// dbusmenu `type`: `separator`, or empty for a standard item.
+    pub kind: String,
 }
 
 /// Calls `com.canonical.dbusmenu.AboutToShow(0)` followed by `GetLayout(0, -1, [])` on `/MenuBar`.
@@ -482,9 +484,18 @@ fn collect_menu_tuple(
         .get("enabled")
         .and_then(|v| unwrap_variant_bool(v))
         .unwrap_or(true);
+    let kind = props
+        .get("type")
+        .and_then(|v| unwrap_variant_str(v))
+        .unwrap_or_default();
 
     if id != 0 {
-        out.push(TrayMenuEntry { id, label, enabled });
+        out.push(TrayMenuEntry {
+            id,
+            label,
+            enabled,
+            kind,
+        });
     }
 
     for child in children {
@@ -508,6 +519,7 @@ fn collect_menu_variant(node: &Variant<'_>, out: &mut Vec<TrayMenuEntry>) {
     let id = i32::try_from(&fields[0]).unwrap_or(0);
     let mut label = String::new();
     let mut enabled = true;
+    let mut kind = String::new();
 
     if let Variant::Dict(dict) = &fields[1] {
         for (k, v) in dict.iter() {
@@ -523,6 +535,11 @@ fn collect_menu_variant(node: &Variant<'_>, out: &mut Vec<TrayMenuEntry>) {
                             enabled = b_val;
                         }
                     }
+                    "type" => {
+                        if let Some(s_val) = unwrap_variant_str(v) {
+                            kind = s_val;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -530,7 +547,12 @@ fn collect_menu_variant(node: &Variant<'_>, out: &mut Vec<TrayMenuEntry>) {
     }
 
     if id != 0 {
-        out.push(TrayMenuEntry { id, label, enabled });
+        out.push(TrayMenuEntry {
+            id,
+            label,
+            enabled,
+            kind,
+        });
     }
 
     if let Variant::Array(children) = &fields[2] {
@@ -599,6 +621,7 @@ pub enum CapturedKesticSignal {
         reason: String,
     },
     ShowWindowRequested,
+    ShowAboutRequested,
     QuitConfirmationRequested {
         has_running_run: bool,
         running_backup_name: String,
@@ -695,6 +718,7 @@ impl KesticSignalCollector {
                             )
                         }
                         "ShowWindowRequested" => Some(CapturedKesticSignal::ShowWindowRequested),
+                        "ShowAboutRequested" => Some(CapturedKesticSignal::ShowAboutRequested),
                         "QuitConfirmationRequested" => {
                             msg.body().deserialize::<(bool, String)>().ok().map(
                                 |(has_running_run, running_backup_name)| {

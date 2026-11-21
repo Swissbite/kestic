@@ -57,6 +57,7 @@ pub enum TrayAction {
     PauseGlobal(PauseDuration),
     ResumeGlobal,
     OpenWindow,
+    OpenAbout,
     RequestQuit,
 }
 
@@ -319,6 +320,18 @@ impl KesticTray {
         }
     }
 
+    /// Version and build commit of the daemon; opens «About Kestic» in the GUI.
+    fn build_info_item() -> MenuItem<Self> {
+        StandardItem {
+            label: crate::build_id().product_line(),
+            activate: Box::new(|this: &mut Self| {
+                this.emit(TrayAction::OpenAbout);
+            }),
+            ..Default::default()
+        }
+        .into()
+    }
+
     fn build_cancel_item(&self) -> MenuItem<Self> {
         let running_id = self.state.running_run.as_ref().map(|r| r.run_id.clone());
         StandardItem {
@@ -416,6 +429,8 @@ impl ksni::Tray for KesticTray {
             }
             .into(),
         );
+        items.push(MenuItem::Separator);
+        items.push(Self::build_info_item());
         items
     }
 }

@@ -28,10 +28,14 @@ impl qobject::KesticApp {
         initialize_and_sync();
         self.as_mut().set_initialized(true);
         self.as_mut().apply_cached_state();
-        let show_quit = {
+        let (show_quit, show_about) = {
             let guard = shared_state().lock_unpoisoned();
-            guard.launch.show_quit_dialog_on_start
+            (
+                guard.launch.show_quit_dialog_on_start,
+                guard.launch.show_about_on_start,
+            )
         };
+        self.as_mut().set_show_about_on_start(show_about);
         if show_quit {
             let (has_running, running_name) = {
                 let guard = shared_state().lock_unpoisoned();
@@ -54,7 +58,7 @@ impl qobject::KesticApp {
     }
 
     pub fn poll_events(mut self: Pin<&mut Self>) {
-        let (fetch, progress_dirty, blocked, show_win, quit_req, maint_preview) = {
+        let (fetch, progress_dirty, blocked, show_win, show_about, quit_req, maint_preview) = {
             let mut guard = shared_state().lock_unpoisoned();
             let retry_unreachable = !guard.daemon_reachable
                 && guard
@@ -67,9 +71,10 @@ impl qobject::KesticApp {
             let blocked = guard.pending_blocked.take();
             let sw = guard.pending_show_window;
             guard.pending_show_window = false;
+            let sa = std::mem::take(&mut guard.pending_show_about);
             let qr = guard.pending_quit.take();
             let mp = guard.maintenance_preview.take();
-            (sd, pd, blocked, sw, qr, mp)
+            (sd, pd, blocked, sw, sa, qr, mp)
         };
 
         if fetch {
@@ -89,6 +94,10 @@ impl qobject::KesticApp {
 
         if show_win {
             self.as_mut().show_window_requested();
+        }
+
+        if show_about {
+            self.as_mut().about_requested();
         }
 
         if let Some((has_running, name)) = quit_req {
@@ -158,6 +167,8 @@ impl qobject::KesticApp {
                 .to_string(),
         ));
         self.as_mut().set_has_config_file(false);
+        self.as_mut().set_daemon_version(QString::from(""));
+        self.as_mut().set_daemon_build_commit(QString::from(""));
         self.as_mut()
             .set_overall_headline(QString::from(&daemon_unavailable_text()));
         self.as_mut().set_overall_subtitle(QString::from(""));
@@ -220,6 +231,8 @@ impl qobject::KesticApp {
         self.as_mut().set_expert_mode(state.config.expert_mode);
         self.as_mut()
             .set_daemon_version(QString::from(&state.daemon_version));
+        self.as_mut()
+            .set_daemon_build_commit(QString::from(&state.daemon_build_commit));
 
         self.as_mut().set_restic_valid(state.restic_status.valid);
         self.as_mut().set_restic_version(QString::from(

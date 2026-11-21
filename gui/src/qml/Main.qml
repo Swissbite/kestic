@@ -22,6 +22,7 @@ Kirigami.ApplicationWindow {
     onActiveTabChanged: syncNavChecked()
     readonly property bool narrowMode: width < Kirigami.Units.gridUnit * 35
     readonly property bool inWizardLayer: wizardPageStack.depth > 0
+    readonly property bool mainMenuOpen: hamburgerMenu.visible
 
     property string cmdDialogText: ""
     property string cmdDialogTitle: ""
@@ -44,6 +45,7 @@ Kirigami.ApplicationWindow {
             return;
         }
         appBackend.windowActive(false, "");
+        aboutWindow.visible = false;
     }
 
     readonly property var backendRef: appBackend
@@ -606,6 +608,7 @@ Kirigami.ApplicationWindow {
             }
             root.requestActivate();
         }
+        onAboutRequested: root.openAboutPage()
         onQuitConfirmationRequested: function() {
             root.show();
             if (Qt.platform.pluginName !== "offscreen") {
@@ -636,6 +639,14 @@ Kirigami.ApplicationWindow {
         appBackend: root.backendRef
     }
 
+    // Closing it gives the focus back to the main window, where the menu button still has it.
+    AboutWindow {
+        id: aboutWindow
+        transientParent: root
+        appBackend: root.backendRef
+        onVisibleChanged: if (!visible) root.requestActivate()
+    }
+
     Timer {
         interval: 150
         running: true
@@ -648,12 +659,6 @@ Kirigami.ApplicationWindow {
         context: Qt.ApplicationShortcut
         enabled: appBackend.daemon_reachable && appBackend.blocking_kind !== "daemon_unreachable" && !root.inWizardLayer
         onActivated: root.openNewBackupWizard(false)
-    }
-
-    Shortcut {
-        sequence: "Ctrl+Shift+,"
-        context: Qt.ApplicationShortcut
-        onActivated: root.openSettingsWindow()
     }
 
     function isMenuPopupFocused() {
@@ -674,25 +679,39 @@ Kirigami.ApplicationWindow {
         return false;
     }
 
-    // Static Hamburger Menu: no New Backup…, no Add Destination…, no Quit Kestic…
-    globalDrawer: Kirigami.GlobalDrawer {
+    // Opens the main menu below `button`, right-aligned with it.
+    function openMainMenu(button) {
+        hamburgerMenu.popup(button, button.width - hamburgerMenu.width, button.height);
+    }
+
+    // Opens the «About Kestic» window, or brings an open one to the front.
+    function openAboutPage() {
+        aboutWindow.openWindow();
+    }
+
+    // Static main menu behind the ☰ button: no New Backup…, no Add Destination…, no Quit Kestic…
+    // Its action carries Ctrl+Shift+, also while the menu is closed.
+    Controls.Menu {
         id: hamburgerMenu
         objectName: "hamburgerMenu"
-        isMenu: true
-        modal: true
-        actions: [
-            Kirigami.Action {
+
+        Controls.MenuItem {
+            objectName: "configureKesticMenuItem"
+            action: Kirigami.Action {
                 icon.name: "configure"
                 text: i18n("Configure Kestic…")
                 shortcut: "Ctrl+Shift+,"
                 onTriggered: root.openSettingsWindow()
-            },
-            Kirigami.Action {
-                icon.name: "help-about"
-                text: i18n("About Kestic")
-                onTriggered: root.pushSubPageAtDepth(aboutPageComponent.createObject(pageStack, {}), Math.min(pageStack.depth, 2))
             }
-        ]
+        }
+        Controls.MenuItem {
+            objectName: "aboutKesticMenuItem"
+            action: Kirigami.Action {
+                icon.name: "help-about"
+                text: Texts.label("about_kestic")
+                onTriggered: root.openAboutPage()
+            }
+        }
     }
 
     property list<Kirigami.Action> navActions: [
@@ -818,6 +837,11 @@ Kirigami.ApplicationWindow {
         appBackend.initialize();
         pageStack.push(overviewPageComponent.createObject(pageStack, {}));
         appBackend.windowActive(true, "overview");
+        // Kirigami loads its own translations once the event loop runs; the About page reads
+        // some of them only once, so it opens after that.
+        if (appBackend.show_about_on_start) {
+            Qt.callLater(openAboutPage);
+        }
     }
 
     // Dialogs
@@ -1043,13 +1067,6 @@ Kirigami.ApplicationWindow {
             rootWindow: root
             appBackend: root.backendRef
             destinationsModel: root.destinationsModelRef
-        }
-    }
-
-    Component {
-        id: aboutPageComponent
-        MainAboutPage {
-            appBackend: root.backendRef
         }
     }
 }

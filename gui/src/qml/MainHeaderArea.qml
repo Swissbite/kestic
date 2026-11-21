@@ -99,34 +99,77 @@ ColumnLayout {
         ]
     }
 
-    Kirigami.NavigationTabBar {
-        id: topNavBar
-        objectName: "topNavBar"
+    // Tabs (wide layout only) and, at the right end, the ☰ button of the main menu.
+    RowLayout {
+        id: topRow
         Layout.fillWidth: true
-        visible: !headerArea.rootWindow.narrowMode && !headerArea.rootWindow.inWizardLayer
-        height: visible ? implicitHeight : 0
-        maximumContentWidth: visibleActions.length * Kirigami.Units.gridUnit * 9
-        position: Controls.ToolBar.Header
-        actions: headerArea.rootWindow.navActions
-        delegate: Kirigami.NavigationTabButton {
-            required property Controls.Action modelData
-            parent: topNavBar.contentItem
-            action: modelData
-            onActionChanged: action.checkable = true
-            Layout.minimumWidth: topNavBar.buttonWidth
-            Layout.maximumWidth: topNavBar.buttonWidth
-            Layout.fillHeight: true
+        spacing: 0
+        visible: !headerArea.rootWindow.inWizardLayer
 
-            Kirigami.Icon {
-                source: "emblem-important"
-                visible: (modelData.objectName === "backupsTabAction" && headerArea.appBackend.backups_have_attention)
-                      || (modelData.objectName === "destinationsTabAction" && headerArea.appBackend.destinations_have_attention)
-                color: Kirigami.Theme.negativeTextColor
-                width: Kirigami.Units.iconSizes.small
-                height: Kirigami.Units.iconSizes.small
-                anchors.top: parent.top
-                anchors.right: parent.right
-                anchors.margins: Kirigami.Units.smallSpacing
+        Kirigami.NavigationTabBar {
+            id: topNavBar
+            objectName: "topNavBar"
+            Layout.fillWidth: true
+            visible: !headerArea.rootWindow.narrowMode
+            height: visible ? implicitHeight : 0
+            maximumContentWidth: visibleActions.length * Kirigami.Units.gridUnit * 9
+            position: Controls.ToolBar.Header
+            actions: headerArea.rootWindow.navActions
+            delegate: Kirigami.NavigationTabButton {
+                required property Controls.Action modelData
+                parent: topNavBar.contentItem
+                action: modelData
+                onActionChanged: action.checkable = true
+                Layout.minimumWidth: topNavBar.buttonWidth
+                Layout.maximumWidth: topNavBar.buttonWidth
+                Layout.fillHeight: true
+
+                Kirigami.Icon {
+                    source: "emblem-important"
+                    visible: (modelData.objectName === "backupsTabAction" && headerArea.appBackend.backups_have_attention)
+                          || (modelData.objectName === "destinationsTabAction" && headerArea.appBackend.destinations_have_attention)
+                    color: Kirigami.Theme.negativeTextColor
+                    width: Kirigami.Units.iconSizes.small
+                    height: Kirigami.Units.iconSizes.small
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.margins: Kirigami.Units.smallSpacing
+                }
+            }
+        }
+
+        Controls.ToolBar {
+            id: mainMenuBar
+            Layout.fillWidth: !topNavBar.visible
+            Layout.fillHeight: true
+            position: Controls.ToolBar.Header
+
+            RowLayout {
+                anchors.fill: parent
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                Controls.ToolButton {
+                    id: mainMenuButton
+                    objectName: "mainMenuButton"
+                    icon.name: "application-menu"
+                    text: i18n("Main Menu")
+                    display: Controls.AbstractButton.IconOnly
+                    down: pressed || headerArea.rootWindow.mainMenuOpen
+                    Accessible.name: text
+                    Accessible.role: Accessible.ButtonMenu
+                    Controls.ToolTip.text: text
+                    Controls.ToolTip.visible: hovered && !headerArea.rootWindow.mainMenuOpen
+                    Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    onClicked: headerArea.rootWindow.openMainMenu(mainMenuButton)
+
+                    FocusRing {
+                        target: mainMenuButton
+                        z: 0
+                    }
+                }
             }
         }
     }
