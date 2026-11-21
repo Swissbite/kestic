@@ -8,17 +8,17 @@ use std::io::Read;
 
 /// Fresh random bytes from the kernel.
 pub(crate) fn random_bytes(len: usize) -> Vec<u8> {
-    let mut buf = vec![0u8; len];
+    let mut buf = Vec::with_capacity(len);
     File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut buf))
+        .and_then(|f| f.take(len as u64).read_to_end(&mut buf))
         .expect("read /dev/urandom");
+    assert_eq!(buf.len(), len, "short read from /dev/urandom");
     buf
 }
 
 /// Random index below `bound`.
 pub(crate) fn random_index(bound: usize) -> usize {
-    let mut raw = [0u8; 8];
-    raw.copy_from_slice(&random_bytes(8));
+    let raw: [u8; 8] = random_bytes(8).try_into().expect("8 random bytes");
     (u64::from_le_bytes(raw) % bound as u64) as usize
 }
 

@@ -4,8 +4,7 @@
 //! Generated test secrets: strong passwords full of characters that break careless quoting,
 //! alphanumeric backend keys, and a leak assertion that never prints the secret it looks for.
 
-use crate::random::{hex, random_index};
-use sha2::{Digest, Sha256};
+use crate::random::random_index;
 
 /// Characters every [`strong_password`] contains: shell metacharacters, quotes, escapes, a
 /// space, non-ASCII letters, a symbol outside the BMP and a combining sequence.
@@ -73,10 +72,8 @@ fn escaped(secret: &str) -> String {
 }
 
 /// Asserts that `haystack` contains `secret` in no form: raw, JSON/TOML-escaped, or (through its
-/// marker) quoted for a shell. The failure message names the form and a SHA-256 prefix of the
-/// secret, never the secret itself.
+/// marker) quoted for a shell. The failure message names only the form, never the secret.
 pub fn assert_no_secret(haystack: &str, secret: &str, what: &str) {
-    let fingerprint = hex(&Sha256::digest(secret.as_bytes())[..4]);
     let forms = [
         ("raw", secret.to_string()),
         ("escaped", escaped(secret)),
@@ -85,7 +82,7 @@ pub fn assert_no_secret(haystack: &str, secret: &str, what: &str) {
     for (form, needle) in forms {
         assert!(
             !haystack.contains(&needle),
-            "{what} contains the secret sha256:{fingerprint}… ({form} form)"
+            "{what} contains the secret ({form} form)"
         );
     }
 }

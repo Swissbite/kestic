@@ -87,7 +87,10 @@ impl HeadlessKeyring {
     /// that read seeded secrets.
     pub fn store_secret(&self, target_id: &str, kind: &str, secret: &str) {
         zbus::block_on(create_item(&self.bus_address, target_id, kind, secret))
-            .unwrap_or_else(|e| panic!("store secret {target_id}/{kind} in headless keyring: {e}"));
+            // The D-Bus error is not shown: an error reply may echo the call's arguments.
+            .unwrap_or_else(|_| {
+                panic!("storing secret {target_id}/{kind} in headless keyring failed")
+            });
     }
 }
 
