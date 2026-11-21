@@ -402,7 +402,7 @@ msgstr "%1 von %2 Backups warten"
 #: daemon/src/service/state_summary.rs:834 gui/src/overall_text.rs:68
 #: gui/src/qml/BackupsPage.qml:84
 msgid "No backups configured yet"
-msgstr "Noch keine Backups eingerichtet"
+msgstr "Noch keine Backups angelegt"
 
 #: daemon/src/service/state_summary.rs:836 gui/src/overall_text.rs:71
 msgid "Last run interrupted"
@@ -692,7 +692,7 @@ msgstr "jährliche innerhalb von %1"
 
 #: gui/src/state_cache.rs:646
 msgid "No rules configured"
-msgstr "Keine Regeln eingerichtet"
+msgstr "Keine Regeln festgelegt"
 
 #: gui/src/state_cache.rs:648
 msgid "Custom (%1)"
@@ -1200,7 +1200,7 @@ msgstr "Bestehendes Repository verbinden"
 #: gui/src/qml/AddDestinationWizard.qml:294
 #: gui/src/qml/DestinationEditPage.qml:269 gui/src/qml/NewBackupWizard.qml:589
 msgid "Repository setup mode"
-msgstr "Repository-Einrichtungsmodus"
+msgstr "Repository anlegen oder verbinden"
 
 #: gui/src/qml/AddDestinationWizard.qml:303
 #: gui/src/qml/DestinationDetailPage.qml:153
@@ -2609,7 +2609,7 @@ msgstr "Ziel hinzufügen…"
 
 #: gui/src/qml/DestinationsPage.qml:72
 msgid "No destinations configured yet"
-msgstr "Noch keine Ziele eingerichtet"
+msgstr "Noch keine Ziele angelegt"
 
 #: gui/src/qml/DestinationsPage.qml:73
 msgid ""
@@ -2682,7 +2682,7 @@ msgstr "Kestic kann restic später selbst herunterladen."
 #: gui/src/qml/Main.qml:533 gui/src/qml/OverviewPage.qml:124
 #: gui/src/qml/OverviewPage.qml:128
 msgid "Set Up First Backup"
-msgstr "Erstes Backup einrichten"
+msgstr "Erstes Backup anlegen"
 
 #: gui/src/qml/Main.qml:533 gui/src/qml/NewBackupWizard.qml:19
 msgid "New Backup"
@@ -2735,7 +2735,7 @@ msgstr "Backup gespeichert"
 
 #: gui/src/qml/NewBackupWizard.qml:275
 msgid "Discard backup setup?"
-msgstr "Backup-Einrichtung verwerfen?"
+msgstr "Neues Backup verwerfen?"
 
 #: gui/src/qml/NewBackupWizard.qml:317
 msgid "What should be backed up?"

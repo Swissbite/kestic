@@ -16,6 +16,7 @@ Verbindliche Begriffe für UI, Spec und Code. Nicht verwenden: «Profil», «Job
 | Snapshot | Snapshot | `Snapshot` | Snapshot |
 | Wiederherstellungs-Kit | Recovery kit | `RecoveryKit` | zusätzlicher Key (`key add`) |
 | Hintergrunddienst | Background service | `daemon` | – |
+| einrichten | Configure / Set up | – | – (nur für die Einstellungen von Kestic: «Kestic einrichten…», «Tastenkürzel einrichten…»; Backups und Ziele werden **angelegt**: «Erstes Backup anlegen», «Noch keine Ziele angelegt») |
 | Übersicht | Overview | – (Screen) | – |
 | Verlauf | History | `RunHistory` | – (Lauf-Historie, FR-18) |
 | Aufräumen | Clean up | `Maintenance::Prune` | `prune` |

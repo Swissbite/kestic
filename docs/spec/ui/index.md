@@ -54,7 +54,7 @@ Alle Beispiele in Text und Mockups beziehen sich auf diesen Stand: **Sonntag, 15
 | S3 | S3-kompatibel | gespeichertes Passwort passt nicht · 1 Backup | **fehlt** | Standard |
 
 - **Gesamtstatus:** «1 Backup fehlgeschlagen» (Rangfolge §6.2). Der Fehler von «Projekte» steht auf seiner Karte (§7.1); als Hinweis oben in der Übersicht nur: Kit fehlt für «S3». Variante «Lauf» (dunkle Übersicht, Tray): Persönlicher Ordner wird um 14:30 manuell gesichert (42 %, 7 MB/s, noch etwa 4 Minuten), Zeitpläne pausiert seit 13:00 bis 15:00.
-- **Ausnahmen:** Willkommen und Einrichtungsassistent (§9.1) zeigen den Zustand **vor** der ersten Einrichtung (gleicher Rechner, USB-Disk eingesteckt). Dialoge, die im Datensatz nicht vorkommen können, verwenden «Alte-Disk» (Ziel ohne Backups) bzw. «backup.example.org» (SFTP-Server). «Backups übernehmen» zeigt Backups eines anderen Rechners («notebook-alt»: Dokumente, Musik) auf dem NAS. Dieser Rechner heisst «notebook» (Host in nicht zugeordneten Snapshots aus einem früheren Script).
+- **Ausnahmen:** Willkommen und Assistent «Erstes Backup anlegen» (§9.1) zeigen den Zustand **vor** dem ersten Backup (gleicher Rechner, USB-Disk eingesteckt). Dialoge, die im Datensatz nicht vorkommen können, verwenden «Alte-Disk» (Ziel ohne Backups) bzw. «backup.example.org» (SFTP-Server). «Backups übernehmen» zeigt Backups eines anderen Rechners («notebook-alt»: Dokumente, Musik) auf dem NAS. Dieser Rechner heisst «notebook» (Host in nicht zugeordneten Snapshots aus einem früheren Script).
 
 ### 0.3 Notation in Aufbau-Listen
 
@@ -93,7 +93,7 @@ Kestic folgt der KDE HIG. Wo Kestic bewusst abweicht oder eine HIG-Regel auslegt
 | **K2** | Einstellungen als echte Verhaltens-Alternativen, keine «Advanced»-Bereiche, stattdessen Progressive Disclosure ([Powerful when needed](https://develop.kde.org/hig/powerful_when_needed/)) | «Befehl anzeigen» (FR-34) für alle im ⋮-Menü und als Tab «Befehle» im Lauf-Detail. Der Schalter «Expertenmodus» (E16) ist nur eine Darstellungsart für Ausschluss-Syntax und Expertenoptionen, in-place (zusätzlicher Abschnitt), keine eigene Experten-Seite. **Keine Funktion dauerhaft versperrt:** Wo der einfache Modus etwas nur zeigt (F12), bietet ein Link an, den Expertenmodus einzuschalten – mit `PromptDialog` «Expertenmodus einschalten?», nie stillschweigend. |
 | **K3** | ≤ 5 Navigationsziele → `Kirigami.NavigationTabBar`, nicht Seitenleiste ([Layout and navigation](https://develop.kde.org/hig/layout_and_nav/)) | Tab-Leiste mit 5 festen Bereichen (§4.1). Spike: Labels bei Mindestbreite nicht abgeschnitten (§15). |
 
-Weitere übernommene HIG-Folgen: Formulare mit `Kirigami.FormLayout` (U2), app-weite Einstellungen sofort wirksam (U3), Radio nur bis 3 Optionen, Baumansichten vermeiden (U8), Benachrichtigungen nicht doppelt bei sichtbarer Seite (§10.2), Kürzel nie nur Funktionstaste (§13.1), Fehler aus Drittsoftware als solche kennzeichnen (§9.4), Wizard nur für zwingende Einrichtung (§9.1), keine gleichen Beschriftungen in einem Fenster.
+Weitere übernommene HIG-Folgen: Formulare mit `Kirigami.FormLayout` (U2), app-weite Einstellungen sofort wirksam (U3), Radio nur bis 3 Optionen, Baumansichten vermeiden (U8), Benachrichtigungen nicht doppelt bei sichtbarer Seite (§10.2), Kürzel nie nur Funktionstaste (§13.1), Fehler aus Drittsoftware als solche kennzeichnen (§9.4), Wizard nur für zwingende Schritte (§9.1), keine gleichen Beschriftungen in einem Fenster.
 
 ## 3. Oberflächen von Kestic
 

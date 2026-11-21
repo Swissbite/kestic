@@ -32,7 +32,7 @@ Seite «Wiederherstellungs-Kit»: Statuszeile «Kit vorhanden · erzeugt am 01.1
 ![adopt light](assets/kestic-adopt-light.png)
 
 Aufbau, Breadcrumb «Ziele › NAS › Backups übernehmen», Aktion `[Ausgewählte übernehmen]`:
-- Einleitung «Kestic hat auf diesem Ziel Backups gefunden, die auf diesem Rechner nicht eingerichtet sind.»
+- Einleitung «Kestic hat auf diesem Ziel Backups gefunden, die auf diesem Rechner nicht angelegt sind.»
 - Je Backup Checkbox, Name, «Quelle ‹alt› → ‹neu›», «letzter Snapshot vor n Tagen von Rechner ‹Host›». Beispiel: `[✓]` Dokumente · `/home/owner/Dokumente → /home/user/Dokumente` · vor 2 Tagen von «notebook-alt», mit Warnung «Jünger als 7 Tage und von einem anderen Rechner: Übernehmen heisst, dass der andere Rechner dieses Backup nicht mehr ausführen soll.»; `[ ]` Musik · `/home/owner/Musik → /home/user/Musik` · vor 40 Tagen von «notebook-alt».
 - Zeile «Verwaist: 2 Backups ohne Beschreibung – unter ‹Wiederherstellen › Verwaist› durchsuchbar.»
 
@@ -67,7 +67,7 @@ Einstieg: Backup-Detail › Einstellungen › «Ziel». Breadcrumb «Backups ›
 Regeln:
 - `[Ziel wechseln…]` → `PromptDialog` «‹Persönlicher Ordner› auf ‹USB-Disk› sichern?»: «Die Snapshot-Reihe beginnt auf ‹USB-Disk› neu; das nächste Backup sichert alles noch einmal. Die 46 Snapshots bleiben auf ‹NAS› und lassen sich dort weiter wiederherstellen.» `[Abbrechen]` (Default) `[Ziel wechseln]`.
 - Alte Snapshots und Metadaten-Snapshots bleiben im alten Repo; FR-49 bietet sie dort zum Übernehmen an (FR-56).
-- **Wiederherstellen danach (FR-56, AC-M1-22-4):** Solange das alte Ziel in Kestic eingerichtet ist, zeigt die Snapshot-Liste des Backups einen zusätzlichen Abschnitt «Frühere Snapshots auf ‹NAS›»; ist es entfernt, sind sie nur noch über «Ziel hinzufügen» + «Backups von diesem Ziel übernehmen» erreichbar.
+- **Wiederherstellen danach (FR-56, AC-M1-22-4):** Solange das alte Ziel in Kestic angelegt ist, zeigt die Snapshot-Liste des Backups einen zusätzlichen Abschnitt «Frühere Snapshots auf ‹NAS›»; ist es entfernt, sind sie nur noch über «Ziel hinzufügen» + «Backups von diesem Ziel übernehmen» erreichbar.
 - Ziel nicht erreichbar oder nicht eingesteckt: Wechsel erlaubt; Status danach «Wartet: Ziel nicht erreichbar» bzw. «Wartet: Quelle nicht verfügbar» (§6.3). Gespeichert wird per `UpdateBackup` (F14).
 - Ein Ziel lässt sich erst entfernen, wenn kein Backup mehr darauf zeigt (FR-56); der deaktivierte Eintrag «Ziel entfernen…» nennt im Tooltip und in einer Zeile darunter den Weg: «Zuerst Backups aus Kestic entfernen oder einem anderen Ziel zuweisen».
 
@@ -97,7 +97,7 @@ Das gespeicherte Repo-Passwort wird hier nur geändert, wenn Adresse oder Pfad g
 - Neues Kit nach Fall 2 ist Pflicht (alte Schlüssel gelten im neuen Repo nicht): Der Ablauf «Kit erzeugen» startet direkt; bricht der Benutzer ab, bleibt der Ziel-Zustand «Kit fehlt» mit Tab-Emblem und Hinweis in der Übersicht; dieser Hinweis hat kein «Später» und kein «×» ([requirements.md](../requirements.md) FR-56/P42, AC-M5-09-6).
 - SFTP mit neuem Host → Host-Schlüssel-Dialog (§8.7).
 - Ohne Verbindung (z. B. Laufwerk nicht eingesteckt) lässt sich nur der Anzeigename ändern; Hinweis «Zum Ändern der Verbindung das Ziel erreichbar machen».
-- **Eindeutigkeit pro Speicherort:** Jede normalisierte Repository-Adresse (lokaler Pfad inkl. Symlink-/`.`/`..`-Auflösung bzw. REST-URL) darf höchstens von **einem** eingerichteten Ziel verwendet werden; beim Anlegen, Prüfen oder Bearbeiten wird eine Doppelbelegung unter Verweis auf das bestehende Ziel abgewiesen.
+- **Eindeutigkeit pro Speicherort:** Jede normalisierte Repository-Adresse (lokaler Pfad inkl. Symlink-/`.`/`..`-Auflösung bzw. REST-URL) darf höchstens von **einem** angelegten Ziel verwendet werden; beim Anlegen, Prüfen oder Bearbeiten wird eine Doppelbelegung unter Verweis auf das bestehende Ziel abgewiesen.
 - **Neues Repository im leeren Ordner (`init` beim Bearbeiten):** Fehlt das Repository an dem eingestellten Ort (z. B. nach Löschen des Ordners auf der Festplatte), kann in «Verbindung bearbeiten» über `Repository: [Bestehendes Repository verbinden | Neues Repository erstellen]` bzw. die Aktionsschaltfläche `[Neues Repository erstellen]` direkt am bestehenden Ziel (unter Beibehaltung der `DestinationId`, Backups und gespeicherten Passwörter) ein neues Repository initialisiert werden.
 
 ### 8.10 Quelle (FR-28, FR-29, FR-31, F10)
@@ -141,6 +141,6 @@ Unterseiten von «Wiederherstellen», nach Ziel gruppiert. Zeile: Datum, Host, P
 M1 baut die Assistenten bereits in reduzierter Form, damit Struktur und Texte nicht doppelt entstehen. Alle Assistenten laufen vollflächig einspaltig ohne Tab-Leiste (`pageStack.layers`), nie als zusätzliche Nebenspalte:
 
 - **Ziel hinzufügen (M1):** Ziel-Typ (nur Lokal und REST) → Ziel-Details mit Prüfung (Felder §8.9) → Backup-Passwort (bei neuem Repo; bei «Vorhandenes verbinden» entfällt dieser Schritt). Kit (4b) kommt mit M6.
-- **Erstes Backup einrichten / Neues Backup ohne vorhandenes Ziel (M1):** Ein durchgängiger linearer Assistent ohne verschachtelten Unter-Assistenten: Quelle (§8.10) → Ziel-Typ → Ziel-Details mit Prüfung → Backup-Passwort (bei neuem Repo) → Zusammenfassung mit Ausschluss-Textfeld in restic-Syntax; Ziel und Backup werden erst beim Abschluss angelegt.
+- **Erstes Backup anlegen / Neues Backup ohne vorhandenes Ziel (M1):** Ein durchgängiger linearer Assistent ohne verschachtelten Unter-Assistenten: Quelle (§8.10) → Ziel-Typ → Ziel-Details mit Prüfung → Backup-Passwort (bei neuem Repo) → Zusammenfassung mit Ausschluss-Textfeld in restic-Syntax; Ziel und Backup werden erst beim Abschluss angelegt.
 - **Neues Backup mit vorhandenem Ziel (M1):** Quelle (§8.10) → Ziel wählen (oder «Neues Ziel hinzufügen…» auf demselben `layers`-Stapel) → Zusammenfassung mit Ausschluss-Textfeld in restic-Syntax (wie Expertenabschnitt §7.3, ohne Linter); einfacher Editor, Zeitplan und Aufbewahrung kommen mit M2/M3, bis dahin Defaults.
 - Bearbeiten in M1: Name (Umbenennen-Dialog), Quelle (§8.10), Ausschluss-Textfeld, Verbindung (§8.9 für Lokal und REST; Repo-ID-Abgleich mit Fall 1–3 ab M5).
