@@ -5,7 +5,7 @@ mod common;
 
 use common::{execute_backup, load_config};
 
-use common::tools::assert_has_flag_pair;
+use kestic_test_support::tools::assert_has_flag_pair;
 
 use kestic_core::backup::{
     BackupExecutionContext, build_backup_command_spec_with_home, exclude_file_path,

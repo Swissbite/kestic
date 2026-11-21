@@ -5,9 +5,6 @@ mod common;
 
 use common::load_config;
 use common::m3::{M3Daemon, M3DaemonOpts, ResticWrapper, assert_dbus_error_name, spawn_m3_daemon};
-use common::tools::{
-    RestServerGuard, assert_has_flag_pair, find_lock_file, install_args_spy, install_marker_spy,
-};
 use common::{
     CapturedKesticSignal, KesticSignalCollector, fetch_dbusmenu_items, restic_test_binaries,
     run_isolated_test, start_fake_notifications, start_fake_sni_watcher, wait_for_sni_service,
@@ -23,6 +20,9 @@ use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient,
 };
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::tools::{
+    RestServerGuard, assert_has_flag_pair, find_lock_file, install_args_spy, install_marker_spy,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;

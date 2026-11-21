@@ -13,8 +13,8 @@ use common::m3::{
     write_incompressible_dataset,
 };
 use common::run_isolated_test;
-use common::tools::find_lock_file;
 use kestic_core::model::RunStatus;
+use kestic_test_support::tools::find_lock_file;
 use std::io::Write;
 use std::path::Path;
 use std::time::Duration;

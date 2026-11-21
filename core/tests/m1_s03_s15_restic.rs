@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::tools::write_executable;
+use kestic_test_support::tools::write_executable;
 
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{Destination, DestinationKind, RunStatus};

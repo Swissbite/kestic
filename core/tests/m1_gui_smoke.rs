@@ -6,7 +6,7 @@
 //! Comprehensive offscreen GUI smoke suite for Milestone M1 (`M1-S13`–`M1-S23`, `NFR-08`).
 //!
 //! Each scenario runs completely isolated with its own `TempDir` XDG directories,
-//! private `dbus-daemon`, optional `KESTIC_SECRET_FILE`, real `kestic daemon`,
+//! private `dbus-daemon` with a headless keyring, real `kestic daemon`,
 //! and `kestic --smoke-m1 <scenario>`, capturing PNG screenshots into
 //! `target/smoke-artifacts/m1-*.png` for visual inspection.
 
@@ -14,7 +14,7 @@ mod common;
 
 use common::execute_backup;
 
-use common::gui::{
+use kestic_test_support::gui::{
     DaemonProcessGuard, IsolatedEnv, PrivateDbusGuard, SmokeContext, SmokeFixture,
     find_kestic_binary,
 };
@@ -23,14 +23,12 @@ use kestic_core::config::{AppConfig, save_config};
 use kestic_core::history::RunHistory;
 use kestic_core::model::{Backup, Destination, ResticProvider, Run, RunStatus, Source};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use time::macros::datetime;
 
-fn setup_populated_fixture(
-    iso: &IsolatedEnv,
-    restic: &Path,
-) -> (Destination, Backup, Run, PathBuf) {
+fn setup_populated_fixture(fx: &SmokeFixture) -> (Destination, Backup, Run, PathBuf) {
+    let (iso, restic) = (&fx.iso, fx.restic.as_path());
     let repo_dir = iso.root.join("repo-primary");
     let src_dir = iso.root.join("source-docs");
     fs::create_dir_all(&src_dir).expect("mkdir src");
@@ -40,6 +38,8 @@ fn setup_populated_fixture(
     let runtime = rig.runtime();
 
     let dest = rig.init_local("Local Vault", &repo_dir, "m1-smoke-pw");
+    fx.keyring
+        .store_secret(dest.id.as_str(), "repo", "m1-smoke-pw");
 
     let backup = Backup::new("Documents", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     let res = execute_backup(
@@ -83,8 +83,6 @@ fn setup_populated_fixture(
 #[test]
 fn m1_gui_smoke_welcome_wide_narrow_en_and_de() {
     let fx = SmokeFixture::new("welcome", common::latest_restic());
-    let iso = &fx.iso;
-    iso.seed_probe_secret();
     let _daemon = fx.daemon("en");
 
     let ctx = fx.ctx();
@@ -136,16 +134,15 @@ fn m1_gui_smoke_blocking_states_and_settings() {
         );
     }
 
-    // 2. Secret store locked (no KESTIC_SECRET_FILE and no org.freedesktop.secrets on private bus)
+    // 2. Secret store locked (no org.freedesktop.secrets on the private bus)
     {
         let iso = IsolatedEnv::create("blk-secret", Some(&restic));
         let dbus = PrivateDbusGuard::start();
-        let _daemon = DaemonProcessGuard::spawn(&kestic, &iso, &dbus.address, false, "en");
+        let _daemon = DaemonProcessGuard::spawn(&kestic, &iso, &dbus.address, "en");
         SmokeContext {
             kestic_bin: &kestic,
             iso: &iso,
             dbus_addr: &dbus.address,
-            use_secret_file: false,
         }
         .run(
             "blocking-secret_store_locked",
@@ -159,7 +156,6 @@ fn m1_gui_smoke_blocking_states_and_settings() {
     // 3. restic unavailable (invalid custom restic path in config) + Settings dialog
     {
         let iso = IsolatedEnv::create("blk-restic", None);
-        iso.seed_probe_secret();
         let cfg = AppConfig {
             restic_provider: ResticProvider::Custom {
                 path: PathBuf::from("/nonexistent/kestic-missing-restic"),
@@ -168,13 +164,13 @@ fn m1_gui_smoke_blocking_states_and_settings() {
         };
         save_config(&iso.config_path(), &cfg).expect("save invalid restic cfg");
         let dbus = PrivateDbusGuard::start();
-        let _daemon = DaemonProcessGuard::spawn(&kestic, &iso, &dbus.address, true, "en");
+        let _keyring = iso.start_keyring(&dbus.address);
+        let _daemon = DaemonProcessGuard::spawn(&kestic, &iso, &dbus.address, "en");
 
         let ctx = SmokeContext {
             kestic_bin: &kestic,
             iso: &iso,
             dbus_addr: &dbus.address,
-            use_secret_file: true,
         };
         ctx.run(
             "blocking-restic_unavailable",
@@ -196,8 +192,7 @@ fn m1_gui_smoke_blocking_states_and_settings() {
 #[test]
 fn m1_gui_smoke_populated_workflows_show_cmd_history_wizard_quit() {
     let fx = SmokeFixture::new("populated", common::latest_restic());
-    let (restic, iso) = (&fx.restic, &fx.iso);
-    setup_populated_fixture(iso, restic);
+    setup_populated_fixture(&fx);
 
     let _daemon = fx.daemon("en");
 
@@ -251,7 +246,7 @@ fn m1_gui_smoke_snapshots_previous_after_reassign() {
     // Previous destination snapshots after reassigning backup
     let fx = SmokeFixture::new("snap-prev", common::latest_restic());
     let (restic, iso) = (&fx.restic, &fx.iso);
-    let (dest1, mut backup, _run, _) = setup_populated_fixture(iso, restic);
+    let (dest1, mut backup, _run, _) = setup_populated_fixture(&fx);
 
     let rig = common::ResticRig::new(&iso.root, restic, datetime!(2026-11-16 12:30:00 UTC));
     let dest2 = rig.init_local(
@@ -259,6 +254,8 @@ fn m1_gui_smoke_snapshots_previous_after_reassign() {
         &iso.root.join("repo-secondary"),
         "m1-smoke-pw2",
     );
+    fx.keyring
+        .store_secret(dest2.id.as_str(), "repo", "m1-smoke-pw2");
 
     backup.destination_id = dest2.id.clone();
     let cfg = AppConfig {
@@ -292,6 +289,8 @@ fn m1_gui_smoke_manual_run_blocked_when_source_missing() {
 
     let rig = common::ResticRig::new(&iso.root, restic, datetime!(2026-11-16 13:00:00 UTC));
     let dest = rig.init_local("Local", &repo_dir, "m1-smoke-pw");
+    fx.keyring
+        .store_secret(dest.id.as_str(), "repo", "m1-smoke-pw");
     let backup =
         Backup::new("MissingSrc", Source::folder(&missing_src), dest.id.clone()).expect("bk");
     fs::remove_dir_all(&missing_src).expect("remove source dir so manual start is blocked");
@@ -320,7 +319,6 @@ fn m1_gui_smoke_manual_run_blocked_when_source_missing() {
 fn m1_gui_e2e_create_destination_and_backup_with_real_restic() {
     let fx = SmokeFixture::new("e2e-wizard", common::latest_restic());
     let (restic, iso) = (&fx.restic, &fx.iso);
-    iso.seed_probe_secret();
 
     let repo_dir = iso.root.join("e2e-repo");
     let src_dir = iso.root.join("e2e-source");
@@ -375,7 +373,6 @@ fn m1_gui_e2e_create_destination_and_backup_with_real_restic() {
 fn m1_gui_e2e_setup_first_backup_with_real_restic() {
     let fx = SmokeFixture::new("e2e-first-backup", common::latest_restic());
     let (restic, iso) = (&fx.restic, &fx.iso);
-    iso.seed_probe_secret();
 
     let repo_dir = iso.root.join("first-repo");
     let src_dir = iso.root.join("first-source");
@@ -429,10 +426,8 @@ fn m1_gui_e2e_setup_first_backup_with_real_restic() {
 #[test]
 fn m1_gui_e2e_destination_edit_reinit_and_nested_wizard_single_column() {
     let fx = SmokeFixture::new("e2e-edit-reinit", common::latest_restic());
-    let (restic, iso) = (&fx.restic, &fx.iso);
-    iso.seed_probe_secret();
 
-    let (_dest, _backup, _run, repo_dir) = setup_populated_fixture(iso, restic);
+    let (_dest, _backup, _run, repo_dir) = setup_populated_fixture(&fx);
 
     // Delete repository directory contents and recreate it empty (simulating Dolphin / rm + mkdir).
     fs::remove_dir_all(&repo_dir).expect("remove repo_dir");
@@ -461,8 +456,7 @@ fn m1_gui_e2e_destination_edit_reinit_and_nested_wizard_single_column() {
 #[test]
 fn m1_gui_smoke_keyboard_navigation() {
     let fx = SmokeFixture::new("kbd-nav", common::latest_restic());
-    let (restic, iso) = (&fx.restic, &fx.iso);
-    setup_populated_fixture(iso, restic);
+    setup_populated_fixture(&fx);
 
     let _daemon = fx.daemon("en");
 

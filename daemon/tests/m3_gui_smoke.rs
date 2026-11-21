@@ -6,7 +6,7 @@
 //! Comprehensive offscreen GUI smoke suite for Milestone M3 (`M3-S01`–`M3-S14`).
 //!
 //! Each test runs isolated via [`common::run_isolated_test`] with its own private
-//! `dbus-daemon`, `XDG_*` directories, `KESTIC_SECRET_FILE`, injectable D-Bus system
+//! `dbus-daemon` with a headless keyring, `XDG_*` directories, injectable D-Bus system
 //! fakes (`FakeUPowerHandle`, `FakeNetworkManagerHandle`), `FakeClock`, and `kestic --smoke-m1`,
 //! verifying UI state, keyboard navigation, accessibility labels, screenshots in EN/DE and
 //! wide/narrow layouts, and persisted `config.toml` / daemon behavior.
@@ -15,7 +15,6 @@ mod common;
 
 use common::load_config;
 use common::m3::{FakeSetup, M3Rig, StdFakes, backup_summary, latest_variant, wait_for_state};
-use common::tools::RestServerGuard;
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
@@ -24,6 +23,7 @@ use kestic_core::model::{
     Run, RunConditions, RunId, RunStatus, Schedule, Source,
 };
 use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, RunProgressPhase};
+use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -41,13 +41,12 @@ fn run_m3_gui_smoke_with_env(
     screenshot_rel: &str,
     extra_env: &[(&str, &str)],
 ) {
-    let iso = common::gui::IsolatedEnv::adopt(root);
+    let iso = kestic_test_support::gui::IsolatedEnv::adopt(root);
     let dbus_addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
-    common::gui::SmokeContext {
+    kestic_test_support::gui::SmokeContext {
         kestic_bin: &find_kestic_binary(),
         iso: &iso,
         dbus_addr: &dbus_addr,
-        use_secret_file: true,
     }
     .run_with_env(scenario, layout, lang, screenshot_rel, &[], extra_env);
 }
@@ -877,7 +876,7 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
         "KESTIC_M3_GUI_ALL_PAGES_INNER",
         |root| {
             let (rig, _fakes, _dest, _id) = editor_env(root);
-            let catalog = language::catalog(&common::workspace::workspace_root());
+            let catalog = language::catalog(&kestic_test_support::workspace::workspace_root());
             let english_with_translation: std::collections::HashSet<&str> = catalog
                 .iter()
                 .filter(|e| !e.msgid().is_empty())
@@ -897,7 +896,7 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
                 let raw = fs::read_to_string(&dump).expect("read text dump");
                 fs::copy(
                     &dump,
-                    common::workspace::workspace_root().join(format!(
+                    kestic_test_support::workspace::workspace_root().join(format!(
                         "target/smoke-artifacts/m3-all-pages-texts-{lang}.tsv"
                     )),
                 )

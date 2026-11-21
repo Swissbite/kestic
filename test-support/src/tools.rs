@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Test tools shared by the `core` and `daemon` integration tests (the daemon `common` module
-//! includes this file with `#[path]`): the dev-tools directory, a local `rest-server`, free loopback
-//! ports, restic lock-file lookup, restic binary resolution, a private session bus and
-//! argument-list assertions.
+//! Test tools shared by the integration tests: the dev-tools directory, a local `rest-server`, free
+//! loopback ports, restic lock-file lookup, restic binary resolution and argument-list assertions.
 
 use std::env;
 use std::fs;
@@ -77,58 +75,6 @@ pub fn resolve_restic_binaries() -> Vec<(&'static str, PathBuf)> {
     );
 
     vec![("restic-0.18.0", v018), ("restic-latest", vlatest)]
-}
-
-/// Private `dbus-daemon --session --fork` instance (no service activation) killed on `Drop`.
-pub struct PrivateDbusGuard {
-    pub address: String,
-    pub pid: u32,
-}
-
-impl PrivateDbusGuard {
-    pub fn start() -> Self {
-        let out = Command::new("dbus-daemon")
-            .arg(format!(
-                "--config-file={}",
-                super::workspace::workspace_root()
-                    .join("daemon/tests/fixtures/private-session-bus.xml")
-                    .display()
-            ))
-            .args(["--fork", "--print-address=1", "--print-pid=1"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .expect("spawn private dbus-daemon");
-        assert!(
-            out.status.success(),
-            "dbus-daemon failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let stdout = String::from_utf8(out.stdout).expect("utf8 dbus-daemon output");
-        let mut lines = stdout.lines();
-        let address = lines
-            .next()
-            .expect("dbus-daemon address line")
-            .trim()
-            .to_string();
-        let pid: u32 = lines
-            .next()
-            .expect("dbus-daemon pid line")
-            .trim()
-            .parse()
-            .expect("parse dbus-daemon pid");
-        Self { address, pid }
-    }
-}
-
-impl Drop for PrivateDbusGuard {
-    fn drop(&mut self) {
-        let _ = Command::new("kill")
-            .args(["-TERM", &self.pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
 }
 
 /// Temporary directory directly below `/tmp`: short enough for Unix socket paths (108 bytes),

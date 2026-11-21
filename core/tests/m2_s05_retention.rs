@@ -7,7 +7,7 @@ mod common;
 
 use common::load_config;
 
-use common::tools::{assert_has_flag_pair, find_lock_file};
+use kestic_test_support::tools::{assert_has_flag_pair, find_lock_file};
 
 use kestic_core::backup::{
     build_forget_command_spec, execute_forget, execute_forget_dry_run_with,

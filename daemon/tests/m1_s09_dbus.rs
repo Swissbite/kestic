@@ -5,7 +5,6 @@ mod common;
 
 use common::load_config;
 use common::m3::{LockableSecretStore, M3DaemonOpts, assert_dbus_error_name, spawn_m3_daemon};
-use common::tools::{free_loopback_port, install_marker_spy};
 use common::{
     CapturedKesticSignal, KesticSignalCollector, find_kestic_binary, restic_test_binaries,
     run_isolated_test, sandbox_run_config, start_fake_notifications,
@@ -13,13 +12,14 @@ use common::{
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Source,
 };
-use kestic_core::secrets::{FileSecretStore, SecretStore};
+use kestic_core::secrets::SecretStore;
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, OverallStatusDto,
 };
 use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::tools::{free_loopback_port, install_marker_spy};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -331,8 +331,7 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
             let client = &daemon.client;
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
-            let secret_file = root.join("secrets.hex");
-            let secret_store = FileSecretStore::new(&secret_file);
+            let secret_store = common::isolated_secret_store();
 
             let repo_dir = root.join("repo-mut");
             let src_dir = root.join("src-mut");
@@ -417,7 +416,7 @@ fn ac_m1_20_1_20_2_20_3_update_password_verifies_without_changing_keys() {
                 M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin),
             );
             let client = &daemon.client;
-            let secret_store = FileSecretStore::new(root.join("secrets.hex"));
+            let secret_store = common::isolated_secret_store();
 
             let repo_dir = root.join("repo-pw");
             fs::create_dir_all(&repo_dir).expect("mkdir repo");
@@ -677,7 +676,7 @@ fn unlock_secret_store_over_dbus_clears_blocking_and_emits_status_changed() {
                 .into_iter()
                 .next()
                 .expect("restic binary");
-            let store = Arc::new(LockableSecretStore::new(root.join("secrets.hex"), true));
+            let store = Arc::new(LockableSecretStore::new(true));
             let daemon = spawn_m3_daemon(
                 root,
                 M3DaemonOpts {

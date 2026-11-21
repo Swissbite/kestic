@@ -5,8 +5,8 @@
 
 mod common;
 
-use common::tools::{dev_tools_bin_dir, short_tempdir};
-use common::workspace::workspace_root;
+use kestic_test_support::tools::{dev_tools_bin_dir, short_tempdir};
+use kestic_test_support::workspace::workspace_root;
 
 use std::collections::HashMap;
 use std::fs;

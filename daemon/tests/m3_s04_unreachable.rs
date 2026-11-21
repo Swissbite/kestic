@@ -12,7 +12,6 @@ use common::m3::{
     runtime_state, settle, spawn_m3_daemon, wait_for_backoff_attempt, wait_for_notifications,
     wait_for_state,
 };
-use common::tools::RestServerGuard;
 use common::{
     CapturedKesticSignal, KesticSignalCollector, fetch_dbusmenu_items, run_isolated_test,
     wait_for_sni_service,
@@ -24,6 +23,7 @@ use kestic_core::model::{
 use kestic_core::scheduler::TimezoneSpec;
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;

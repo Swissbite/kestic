@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::workspace::{files_with_ext, workspace_root};
+use kestic_test_support::workspace::{files_with_ext, workspace_root};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

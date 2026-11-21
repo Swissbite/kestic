@@ -28,7 +28,7 @@ _check-file-sizes:
             echo "ERROR: $f has $lines lines (limit 1500, NFR-12)" >&2
             oversized=1
         fi
-    done < <(find core/src i18n/src daemon/src gui/src -type f \( -name '*.rs' -o -name '*.qml' \) -print0 | sort -z)
+    done < <(find core/src i18n/src daemon/src gui/src test-support/src -type f \( -name '*.rs' -o -name '*.qml' \) -print0 | sort -z)
     if [ "$oversized" -ne 0 ]; then
         exit 1
     fi
@@ -63,7 +63,7 @@ smoke:
     LANG=C.UTF-8 \
     LANGUAGE=en \
     QT_QPA_PLATFORM=offscreen \
-    dbus-run-session --config-file=daemon/tests/fixtures/private-session-bus.xml -- bash -c '
+    dbus-run-session --config-file=test-support/fixtures/private-session-bus.xml -- bash -c '
         ./target/debug/kestic daemon --no-job-view --no-portal-inhibit --suppress-ui-spawn \
             --ready-file "$HOME/daemon.ready" &
         daemon=$!

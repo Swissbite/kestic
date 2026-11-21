@@ -10,7 +10,7 @@ Use this skill for all stories invoking `restic`, parsing `restic --json` output
 ## Dual-Version Integration Testing (`AC-M1-Q-2`)
 
 - Every `"Integration"` acceptance criterion must run against **both** `restic 0.18.0` and `restic-latest` installed by `scripts/bootstrap.sh`.
-- Always resolve test binaries via `core/tests/common/mod.rs` (`restic_test_binaries()`, `rest_server_binary()`), never hardcode `/usr/bin/restic`.
+- Always resolve test binaries via `restic_test_binaries()` (`core/tests/common/mod.rs`, `daemon/tests/common/mod.rs`) and `kestic_test_support::tools::rest_server_binary()`, never hardcode `/usr/bin/restic`.
 - Use temporary repositories (`restic init` in a tempdir) and local test servers bound to random free ports, always cleaned up on `Drop`:
   - **REST (M1+):** `rest-server` from `bootstrap.sh` with `--htpasswd-file` auth on random port.
   - **S3 (M5):** `rclone serve s3 --auth-key` from `bootstrap.sh` (`>= 1.65`) on random port.

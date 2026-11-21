@@ -7,7 +7,7 @@ mod common;
 
 use common::execute_backup_dry_run;
 
-use common::tools::write_executable;
+use kestic_test_support::tools::write_executable;
 
 use kestic_core::backup::{BackupRunError, build_backup_command_spec, list_snapshots_for_backup};
 use kestic_core::destination::{
@@ -312,7 +312,7 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("file.txt"), b"hello rest").expect("write file");
 
-    let server = common::tools::RestServerGuard::start_with_auth(&server_dir);
+    let server = kestic_test_support::tools::RestServerGuard::start_with_auth(&server_dir);
     let server_url = server.url.clone();
 
     let (_label, restic_bin) = common::restic_test_binaries()

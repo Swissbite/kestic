@@ -7,7 +7,7 @@ mod common;
 
 use common::execute_backup;
 
-use common::tools::find_lock_file;
+use kestic_test_support::tools::find_lock_file;
 
 use kestic_core::backup::{build_backup_command_spec, build_forget_command_spec};
 use kestic_core::maintenance::{

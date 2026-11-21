@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::workspace::workspace_root;
+use kestic_test_support::workspace::workspace_root;
 use std::fs;
 
 /// AC-M0-03-1: CXX-Qt version is pinned with `=0.10.0` in Cargo.toml,

@@ -6,9 +6,7 @@
 use std::env;
 use std::path::PathBuf;
 
-pub mod gui;
-pub mod tools;
-pub mod workspace;
+use kestic_test_support::tools;
 
 /// Returns `(label, binary_path)` pairs for both restic 0.18.0 and latest (`AC-M1-Q-2`).
 ///

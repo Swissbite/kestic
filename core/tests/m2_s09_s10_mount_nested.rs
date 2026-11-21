@@ -5,7 +5,7 @@ mod common;
 
 use common::load_config;
 
-use common::tools::write_executable;
+use kestic_test_support::tools::write_executable;
 
 use kestic_core::backup::{
     BackupExecutionContext, BackupRunError, check_source_available_with,

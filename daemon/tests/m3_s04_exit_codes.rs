@@ -16,7 +16,7 @@ use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
 use kestic_core::model::RunStatus;
 use kestic_core::restic::SECRET_KIND_REPO;
-use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
+use kestic_core::secrets::{SecretStore, SecretValue};
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
@@ -245,7 +245,7 @@ fn ac_m3_04_5_wrong_password_exit_12_is_permanent_error_without_retry() {
                 let rig = start_lock_rig(root, &variant, "M3E5", 1);
                 let client = &rig.daemon.client;
                 let bid = &rig.fixture.backup.id;
-                FileSecretStore::new(root.join("secrets.hex"))
+                common::isolated_secret_store()
                     .set_secret(
                         rig.fixture.dest.id.as_str(),
                         SECRET_KIND_REPO,

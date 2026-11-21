@@ -1,19 +1,18 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Workspace lookups shared by the `core`, `daemon` and `i18n` integration tests (their `common`
-//! modules include this file with `#[path]`): workspace root, source file listing and the
-//! compiled `kestic` binary.
+//! Workspace lookups: workspace root, target directory, source file listing and the compiled
+//! `kestic` binary.
 
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The Cargo workspace root (every test crate sits directly below it).
+/// The Cargo workspace root (every crate sits directly below it).
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("test crate has workspace root parent")
+        .expect("crate has workspace root parent")
         .to_path_buf()
 }
 

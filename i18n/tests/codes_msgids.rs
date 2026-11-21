@@ -20,7 +20,7 @@ use kestic_i18n::messages::{
 mod common;
 
 use common::language;
-use common::workspace::workspace_root;
+use kestic_test_support::workspace::workspace_root;
 use std::collections::{BTreeSet, HashMap};
 
 /// msgid -> German translation of the singular catalog entries.

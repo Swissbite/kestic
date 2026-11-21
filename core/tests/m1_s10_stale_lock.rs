@@ -7,7 +7,7 @@ mod common;
 
 use common::execute_backup;
 
-use common::tools::find_lock_file;
+use kestic_test_support::tools::find_lock_file;
 
 use kestic_core::model::{Backup, RunStatus, Source};
 use kestic_core::restic::{RecoveryAction, ResticCommandSpec, ResticFailureKind, run_restic};

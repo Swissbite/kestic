@@ -243,7 +243,7 @@ fn run_daemon_subcommand(args: &[String]) -> ExitCode {
 }
 
 fn run_secret_subcommand(args: &[String]) -> ExitCode {
-    use kestic_core::secrets::{FileSecretStore, SecretStore};
+    use kestic_core::secrets::SecretStore;
     use std::io::Write;
 
     let Some("get") = args.first().map(String::as_str) else {
@@ -258,14 +258,7 @@ fn run_secret_subcommand(args: &[String]) -> ExitCode {
         .filter(|s| !s.is_empty())
         .unwrap_or("repo");
 
-    let secret_opt =
-        if let Some(file_path) = env::var_os("KESTIC_SECRET_FILE").filter(|v| !v.is_empty()) {
-            FileSecretStore::new(PathBuf::from(file_path)).get_secret(dest_id, kind)
-        } else {
-            kestic_daemon::secrets::SecretServiceStore::default().get_secret(dest_id, kind)
-        };
-
-    match secret_opt {
+    match kestic_daemon::secrets::SecretServiceStore::default().get_secret(dest_id, kind) {
         Ok(Some(secret)) => {
             if let Ok(text) = secret.as_str()
                 && std::io::stdout().write_all(text.as_bytes()).is_ok()

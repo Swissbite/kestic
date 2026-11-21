@@ -164,7 +164,6 @@ fn ac_m1_10_2_preseeded_running_run_transitions_to_interrupted_on_daemon_startup
         |root| {
             let state_dir = root.join("state").join("kestic");
             let _cfg_path = root.join("cfg").join("kestic").join("config.toml");
-            let _secret_file = root.join("secrets.hex");
 
             let dest = Destination::new(
                 "Local Repo",

@@ -12,7 +12,6 @@ use common::m3::{
     assert_dbus_error_name, backup_summary, count_runs, daemon_paths, dest_summary, latest_variant,
     seed_local_destination, spawn_m3_daemon, wait_for_state, wait_until_within,
 };
-use common::tools::{RestServerGuard, write_executable};
 use common::{
     click_dbusmenu_item, fetch_dbusmenu_items, run_isolated_test, start_fake_sni_watcher,
     wait_for_sni_service,
@@ -27,6 +26,7 @@ use kestic_core::mount::MountInspector;
 use kestic_core::restic::{ResticFailureKind, classify_exit};
 use kestic_core::scheduler::PauseDuration;
 use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient};
+use kestic_test_support::tools::{RestServerGuard, write_executable};
 use std::fs;
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
@@ -903,7 +903,7 @@ fn m3_locked_secret_store_does_not_reprobe_every_tick() {
         "KESTIC_M3_REG_LOCKED_INNER",
         |root| {
             let _fakes = DesktopFakes::start();
-            let store = Arc::new(LockableSecretStore::new(root.join("secrets.hex"), false));
+            let store = Arc::new(LockableSecretStore::new(false));
             let locked = Arc::clone(&store.locked);
             let checks = Arc::clone(&store.availability_checks);
 

@@ -1025,6 +1025,7 @@ dependencies = [
  "getrandom",
  "jiff",
  "kestic-i18n",
+ "kestic-test-support",
  "rusqlite",
  "semver",
  "serde",
@@ -1045,6 +1046,7 @@ version = "0.1.0"
 dependencies = [
  "kestic-core",
  "kestic-i18n",
+ "kestic-test-support",
  "ksni",
  "notify-rust",
  "serde",
@@ -1077,8 +1079,17 @@ dependencies = [
 name = "kestic-i18n"
 version = "0.1.0"
 dependencies = [
+ "kestic-test-support",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kestic-test-support"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "zbus 6.3.0",
 ]
 
 [[package]]

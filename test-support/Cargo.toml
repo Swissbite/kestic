@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+[package]
+name = "kestic-test-support"
+description = "Shared fixtures for Kestic integration tests (private session bus, headless Secret Service, test tools)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+tempfile = "3.27"
+zbus = { workspace = true }
+
+[lints]
+workspace = true

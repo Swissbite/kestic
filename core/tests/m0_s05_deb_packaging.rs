@@ -7,8 +7,8 @@
 
 mod common;
 
-use common::tools::short_tempdir;
-use common::workspace::{find_kestic_binary, find_target_dir, workspace_root};
+use kestic_test_support::tools::short_tempdir;
+use kestic_test_support::workspace::{find_kestic_binary, find_target_dir, workspace_root};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

@@ -3,7 +3,6 @@
 
 mod common;
 
-use common::tools::RestServerGuard;
 use common::{
     fetch_dbusmenu_items, restic_test_binaries, run_isolated_test, sandbox_run_config,
     start_fake_notifications, start_fake_sni_watcher, wait_for_file, wait_for_sni_service,
@@ -13,6 +12,7 @@ use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{Backup, Destination, DestinationKind, ResticProvider, Source};
 use kestic_daemon::service::{DaemonCore, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::sync::Arc;
 use std::thread;
@@ -32,7 +32,6 @@ fn ac_m1_23_3_daemon_core_availability_cache_respects_60s_fake_clock_ttl() {
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
             let _state_dir = root.join("state").join("kestic");
-            let _secret_file = root.join("secrets.hex");
             let src_dir = root.join("src");
             fs::create_dir_all(&src_dir).expect("mkdir src");
 

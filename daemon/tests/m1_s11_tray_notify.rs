@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::tools::write_executable;
+use kestic_test_support::tools::write_executable;
 
 use common::{
     CapturedKesticSignal, KesticSignalCollector, click_dbusmenu_item, fetch_dbusmenu_items,
@@ -17,7 +17,6 @@ use kestic_core::history::RunHistory;
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Schedule, Source,
 };
-use kestic_core::secrets::FileSecretStore;
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient,
 };
@@ -28,7 +27,6 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use zbus::{Connection, block_on};
@@ -80,7 +78,6 @@ fn assert_real_daemon_sni_state(
     let sub = ctx.root.join(sub_name);
     let cfg_path = sub.join("config.toml");
     let state_dir = sub.join("state");
-    let secret_file = sub.join("secrets.hex");
     let ready_file = sub.join("daemon.ready");
     fs::create_dir_all(&state_dir).expect("mkdir state");
 
@@ -100,7 +97,6 @@ fn assert_real_daemon_sni_state(
         config_path: Some(cfg_path),
         state_dir: Some(state_dir),
         kestic_binary: Some(ctx.kestic_bin.to_path_buf()),
-        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
         ..sandbox_run_config(ctx.root)
     };
 
@@ -125,7 +121,6 @@ fn assert_running_backup_sni_state(ctx: &mut SniTestCtx<'_>) {
     let sub = ctx.root.join("state_running");
     let cfg_path = sub.join("config.toml");
     let state_dir = sub.join("state");
-    let secret_file = ctx.root.join("secrets.hex");
     let ready_file = sub.join("daemon.ready");
     let run_repo = sub.join("repo");
     let run_src = sub.join("large-src");
@@ -139,7 +134,6 @@ fn assert_running_backup_sni_state(ctx: &mut SniTestCtx<'_>) {
         config_path: Some(cfg_path),
         state_dir: Some(state_dir),
         kestic_binary: Some(ctx.kestic_bin.to_path_buf()),
-        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
         ..sandbox_run_config(ctx.root)
     };
     let handle = thread::spawn(move || run_daemon(run_cfg));
@@ -832,7 +826,8 @@ fn ac_m0_11_3_tray_icon_svg_is_recolourable_and_exported_via_icon_theme_path() {
         "ac_m0_11_3_tray_icon_svg_is_recolourable_and_exported_via_icon_theme_path",
         "KESTIC_M1_S11_ICON",
         |_root| {
-            let icons_dir = common::workspace::workspace_root().join("packaging/icons");
+            let icons_dir =
+                kestic_test_support::workspace::workspace_root().join("packaging/icons");
             let svg =
                 fs::read_to_string(icons_dir.join("hicolor/scalable/status/kestic-symbolic.svg"))
                     .expect("read kestic-symbolic.svg");

@@ -148,7 +148,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
         let server_dir = dir.path().join("rest-data");
-        let server = common::tools::RestServerGuard::start_with_auth(&server_dir);
+        let server = kestic_test_support::tools::RestServerGuard::start_with_auth(&server_dir);
 
         let rig =
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 10:00:00 UTC));
@@ -209,7 +209,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
 
         // AC-M1-06-5: Stopped/unreachable REST server -> preflight fails cleanly <= 15 s.
         drop(server);
-        let closed_port = common::tools::free_loopback_port();
+        let closed_port = kestic_test_support::tools::free_loopback_port();
         let down_dest = Destination::new(
             "REST Down",
             DestinationKind::Rest {
@@ -372,7 +372,7 @@ fn rest_preflight_handles_non_ascii_redirect_location_and_https_tls_without_pani
     let _ = handle.join();
 
     // 2. HTTPS preflight must configure NativeTls + PlatformVerifier without panicking on `https://`.
-    let closed_port = common::tools::free_loopback_port();
+    let closed_port = kestic_test_support::tools::free_loopback_port();
     let https_dest = Destination::new(
         "REST HTTPS",
         DestinationKind::Rest {

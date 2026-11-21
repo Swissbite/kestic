@@ -6,6 +6,3 @@
 #![allow(dead_code)]
 
 pub mod language;
-
-#[path = "../../../core/tests/common/workspace.rs"]
-pub mod workspace;
