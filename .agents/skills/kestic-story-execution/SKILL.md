@@ -14,7 +14,7 @@ Use this skill when starting a story, a batch of stories, or a new milestone.
   - exact AC IDs and test levels (`Unit`, `Integration`, `D-Bus`, `GUI-Smoke`, `manuell`),
   - mandatory glossary terms and prohibited words,
   - UI copy/layout constraints,
-  - Stop & Ask triggers (new crates, pinned versions, spec ambiguities).
+  - Stop & Ask triggers (new crates, spec ambiguities).
 - If a Stop & Ask condition applies, log it in `docs/spec/questions.md`, mark the story blocked, and move to the next independent story.
 
 ## 2. Parallelize Independent Work
