@@ -24,6 +24,7 @@ const STDERR_LOG: &str = "stderr.log";
 const SERVICE_PATH: &str = "/org/freedesktop/secrets";
 const SERVICE_IFACE: &str = "org.freedesktop.Secret.Service";
 const COLLECTION_IFACE: &str = "org.freedesktop.Secret.Collection";
+const PROPERTIES_IFACE: &str = "org.freedesktop.DBus.Properties";
 
 /// Where the keyring keeps its state; every path lies inside the test's isolated tree.
 pub struct KeyringDirs<'a> {
@@ -111,6 +112,12 @@ async fn create_item(
 ) -> zbus::Result<()> {
     let conn = zbus::connection::Builder::address(bus_address)
         .build()
+        .await?;
+    // A first call answered from gnome-keyring's main loop, so that its registration of this
+    // connection has run before `OpenSession` (gnome-keyring issue #206).
+    let properties = Proxy::new(&conn, SECRET_SERVICE_NAME, SERVICE_PATH, PROPERTIES_IFACE).await?;
+    let _: OwnedVariant = properties
+        .call("Get", &(SERVICE_IFACE, "Collections"))
         .await?;
     let service = Proxy::new(&conn, SECRET_SERVICE_NAME, SERVICE_PATH, SERVICE_IFACE).await?;
     let (_output, session): (OwnedVariant, OwnedObjectPath) = service

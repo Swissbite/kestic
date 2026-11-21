@@ -17,6 +17,7 @@ const SERVICE_IFACE: &str = "org.freedesktop.Secret.Service";
 const COLLECTION_IFACE: &str = "org.freedesktop.Secret.Collection";
 const ITEM_IFACE: &str = "org.freedesktop.Secret.Item";
 const SESSION_IFACE: &str = "org.freedesktop.Secret.Session";
+const PROPERTIES_IFACE: &str = "org.freedesktop.DBus.Properties";
 const PROMPT_IFACE: &str = "org.freedesktop.Secret.Prompt";
 const INTERACTIVE_UNLOCK_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -56,6 +57,29 @@ impl SecretServiceStore {
         attrs
     }
 
+    /// Connects to the session bus and reads the service's `Collections` property before any
+    /// other call.
+    ///
+    /// gnome-keyring registers a connection in a separate callback that it queues for each
+    /// incoming message, and a call can overtake it; an `OpenSession` handled before the
+    /// registration aborts gnome-keyring (gnome-keyring issue #206). gnome-keyring answers
+    /// `Properties.Get` from its main loop after the registration for that message is queued, so
+    /// once the reply is here the registration runs before any later call (unlike `Peer.Ping`,
+    /// which is answered on the D-Bus thread). Reading `Collections` needs no registration. The
+    /// reply itself is not needed, so an error is left to the calls that follow.
+    async fn connect(&self) -> Result<Connection, SecretError> {
+        let conn = Connection::session()
+            .await
+            .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
+        let properties = Proxy::new(&conn, self.dest.as_str(), SERVICE_PATH, PROPERTIES_IFACE)
+            .await
+            .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
+        let _: zbus::Result<OwnedVariant> = properties
+            .call("Get", &(SERVICE_IFACE, "Collections"))
+            .await;
+        Ok(conn)
+    }
+
     async fn open_plain_session<'a>(
         conn: &'a Connection,
         dest: &'a str,
@@ -75,9 +99,7 @@ impl SecretServiceStore {
         &self,
         body: impl AsyncFnOnce(&Connection, &Proxy<'_>, &OwnedObjectPath) -> Result<T, SecretError>,
     ) -> Result<T, SecretError> {
-        let conn = Connection::session()
-            .await
-            .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
+        let conn = self.connect().await?;
         let (service, session) = Self::open_plain_session(&conn, &self.dest).await?;
         let res = body(&conn, &service, &session).await;
         Self::close_session(&conn, &self.dest, &session).await;
@@ -390,9 +412,7 @@ impl SecretServiceStore {
     }
 
     async fn delete_secret_async(&self, target_id: &str, kind: &str) -> Result<(), SecretError> {
-        let conn = Connection::session()
-            .await
-            .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
+        let conn = self.connect().await?;
         let service = Proxy::new(&conn, self.dest.as_str(), SERVICE_PATH, SERVICE_IFACE)
             .await
             .map_err(|e| SecretError::BackendUnavailable(e.to_string()))?;
