@@ -6,7 +6,7 @@ set fallback := false
 # One id per `just` invocation: test fixtures (template repositories with generated passwords)
 # live in target/kestic-test-fixtures/<id> and are removed after the run.
 fixture_run := uuid()
-fixtures_dir := env_var_or_default("CARGO_TARGET_DIR", "target") / "kestic-test-fixtures"
+fixtures_dir := absolute_path(env_var_or_default("CARGO_TARGET_DIR", "target")) / "kestic-test-fixtures"
 
 # List available recipes
 default:
@@ -95,7 +95,7 @@ _nextest:
         find "{{fixtures_dir}}" -mindepth 1 -maxdepth 1 -mtime +0 -exec rm -rf {} +
     fi
     cargo nextest run -p kestic-test-support
-    KESTIC_TEST_FAST_INIT=1 cargo nextest run --workspace
+    cargo nextest run --workspace
 
 # Showcase site (site/). Needs pnpm; pnpm provides Node
 # itself (devEngines.runtime). Screenshots come from target/smoke-artifacts/,
