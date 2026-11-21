@@ -496,7 +496,7 @@ dependencies = [
 [[package]]
 name = "cxx-kde-frameworks"
 version = "0.1.0"
-source = "git+https://invent.kde.org/libraries/cxx-kde-frameworks.git?rev=5c51af42ad078feb89e4b7e590da9e3eab9e4d6d#5c51af42ad078feb89e4b7e590da9e3eab9e4d6d"
+source = "git+https://invent.kde.org/libraries/cxx-kde-frameworks.git?rev=1d2c1abc84d5643b3f8baf8aa73db9d6aa47b252#1d2c1abc84d5643b3f8baf8aa73db9d6aa47b252"
 dependencies = [
  "cmake-package",
  "cxx",
