@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use zbus::{OwnedObjectPath, OwnedVariant, block_on, interface};
 
 /// `kestic` command reading from the isolated test keyring over D-Bus.
@@ -130,6 +130,74 @@ fn ac_m1_05_1_secret_service_set_replace_and_delete_on_headless_keyring() {
                     .expect("read deleted secret"),
                 None,
                 "(c) a deleted secret reads as absent"
+            );
+        },
+    );
+}
+
+/// AC-M1-05-1 (FR-08) under parallel load: many short-lived Secret Service connections at once,
+/// as when several restic runs call `kestic secret get` (the same client) while the daemon checks
+/// the password store. gnome-keyring aborts when a connection's `OpenSession` is handled before
+/// the keyring has registered that connection; the race is statistical, so this load makes it
+/// likely rather than certain. (a) Every read returns the stored password and (b) every
+/// availability check succeeds.
+#[test]
+fn ac_m1_05_1_parallel_short_lived_clients_keep_the_keyring_serving() {
+    run_isolated_test(
+        "ac_m1_05_1_parallel_short_lived_clients_keep_the_keyring_serving",
+        "KESTIC_M1_S05_PARALLEL_INNER",
+        |_root| {
+            const CLIENTS: usize = 16;
+            const ROUNDS: usize = 100;
+            let store = common::isolated_secret_store();
+            let password = SecretValue::from_str_secret(strong_password());
+            store
+                .set_secret("k7m2q9xa", "repo", &password)
+                .expect("write secret to headless keyring");
+
+            let first_error: Mutex<Option<String>> = Mutex::new(None);
+            let record = |error: String| {
+                first_error
+                    .lock()
+                    .expect("first error lock")
+                    .get_or_insert(error);
+            };
+            let (reads_ok, checks_ok) = std::thread::scope(|s| {
+                let clients: Vec<_> = (0..CLIENTS)
+                    .map(|_| {
+                        s.spawn(|| {
+                            let (mut reads, mut checks) = (0, 0);
+                            for _ in 0..ROUNDS {
+                                match store.check_availability() {
+                                    Ok(()) => checks += 1,
+                                    Err(e) => record(format!("check_availability: {e}")),
+                                }
+                                match store.get_secret("k7m2q9xa", "repo") {
+                                    Ok(read) if read.as_ref() == Some(&password) => reads += 1,
+                                    Ok(_) => record("get_secret: wrong or missing value".into()),
+                                    Err(e) => record(format!("get_secret: {e}")),
+                                }
+                            }
+                            (reads, checks)
+                        })
+                    })
+                    .collect();
+                clients
+                    .into_iter()
+                    .map(|c| c.join().expect("client thread"))
+                    .fold((0, 0), |(r, c), (reads, checks)| (r + reads, c + checks))
+            });
+
+            let first_error = first_error.into_inner().expect("first error lock");
+            assert_eq!(
+                reads_ok,
+                CLIENTS * ROUNDS,
+                "(a) every parallel read returns the stored password; first error: {first_error:?}"
+            );
+            assert_eq!(
+                checks_ok,
+                CLIENTS * ROUNDS,
+                "(b) every parallel availability check succeeds; first error: {first_error:?}"
             );
         },
     );
