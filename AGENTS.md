@@ -109,6 +109,10 @@ Secrets nie in argv, Logs, Config oder Testausgaben. Repo-Passwort nur über `RE
 
 Nur Begriffe aus [docs/spec/glossary.md](docs/spec/glossary.md). Nicht verwenden: «Profil», «Job», «Ignore», «Advanced-Modus».
 
+### Kommentare
+
+Kommentare erklären, was Code tut, und höchstens warum. Keine Verweise auf Entscheide, Varianten («Option A+»), Daten, Abnahmen oder Review-Runden; die Herkunft gehört in Commit-Message, PR und Spec. Spec-IDs (Story, AC, FR/NFR, P-Nummern) im Produktionscode nur, wo sie die einzige Erklärung wären; dann stattdessen das Warum ausschreiben. In Tests bleiben AC-IDs Pflicht.
+
 ### Lizenz
 
 Jede neue Datei mit SPDX-Header gemäss Lizenzregel in [docs/spec/decisions.md](docs/spec/decisions.md); `reuse lint` muss grün sein.

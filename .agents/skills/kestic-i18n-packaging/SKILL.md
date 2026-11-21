@@ -19,7 +19,7 @@ Use this skill whenever adding or changing user-visible text in Rust or QML, edi
 - Whenever you add, change, or remove `i18n(...)` strings:
   1. Update `po/de/kestic.po` immediately (do not wait until the end of the milestone).
   2. Ensure 0 untranslated entries, 0 fuzzy entries, and valid format strings (`msgfmt --check`).
-  3. Verify `core/tests/m0_s09_i18n.rs` passes (it runs `xgettext --language=C` on Rust + `xgettext --language=JavaScript` on QML + `msgcmp` + `msgattrib` + `msgfmt --check`).
+  3. Verify `core/tests/m1_s16_i18n.rs` passes (it runs `xgettext --language=C` on Rust + `xgettext --language=JavaScript` on QML + `msgcmp` + `msgattrib` + `msgfmt --check`).
 - **Locale env var gotcha (from M0):** `glibc`/`gettext` ignores `LANGUAGE` when `LANG=C.UTF-8` is set. In all tests checking `LANGUAGE=de` vs `LANGUAGE=en`, set `LANG=en_US.UTF-8` and clear `LC_ALL` / `LC_MESSAGES`.
 
 ## `.deb` Packaging (`cargo-deb`, `NFR-01`, `P34`)

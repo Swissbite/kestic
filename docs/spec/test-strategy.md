@@ -59,7 +59,7 @@ Alle Build-, Lint- und Smoke-Stufen laufen warnungsfrei (`cargo clippy --workspa
 
 ## Lehren aus der manuellen Abnahme (Entscheid 2026-11-20)
 
-- Jede Erkenntnis aus einer manuellen Abnahme wird, wo möglich, ein automatisierter Test (Name mit `acceptance` und Datum bzw. Befund im Kommentar).
+- Jede Erkenntnis aus einer manuellen Abnahme wird, wo möglich, ein automatisierter Test (Name mit `acceptance`; der Kommentar beschreibt das geprüfte Verhalten, Datum und Befund stehen in Commit-Message und [manual-acceptance.md](manual-acceptance.md)).
 - Fakes können neben dem Normalfall auch **Schwall** (viele Signale kurz hintereinander), **Verzögerung** (langsame oder ausbleibende Antwort) und **Fehler** (typische restic-Meldungen wie «no space left on device»).
 - Configs **aller Vorversionen** bleiben als Fixtures erhalten und werden in einem Test geladen (Migration).
 - Smoke-Screenshots entstehen in **hell und dunkel**, mit fokussierten Elementen, dazu Text-Snapshots der sichtbaren Texte (de/en). Zugängliche Namen prüft der Smoke über Qts Accessibility-Schnittstelle (`QAccessible`, wie über AT-SPI exportiert); eine automatische Kontrastprüfung folgt, wenn die Laufzeit vertretbar bleibt. Orca bleibt eine Stichprobe in der manuellen Abnahme.
