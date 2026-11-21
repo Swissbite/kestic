@@ -220,17 +220,24 @@ fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
                 rig.wrapper.release("backup");
                 rig.wrapper
                     .wait_for('S', "prune", 1, Duration::from_secs(30));
-                let backup_end = rig
-                    .wrapper
-                    .of('E', "backup")
-                    .last()
-                    .expect("backup end")
-                    .at_ms;
-                let prune_start = rig.wrapper.of('S', "prune")[0].at_ms;
+                // Ordering by log position, not by wall-clock timestamps (CI clocks may step).
+                let log = rig.wrapper.entries();
+                let backup_end_idx = log
+                    .iter()
+                    .rposition(|e| e.kind == 'E' && e.sub == "backup")
+                    .expect("backup end");
+                let prune_start_idx = log
+                    .iter()
+                    .position(|e| e.kind == 'S' && e.sub == "prune")
+                    .expect("prune start");
                 assert!(
-                    prune_start >= backup_end,
-                    "{}: (a) maintenance started ({prune_start}) after the backup ended ({backup_end})",
-                    variant.label
+                    prune_start_idx > backup_end_idx,
+                    "{}: (a) maintenance started after the backup ended; calls:\n{}",
+                    variant.label,
+                    log.iter()
+                        .map(|e| format!("{} {} {} {}", e.kind, e.at_ms, e.sub, e.detail))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 );
 
                 // (b) Beta becomes due (12:30) while maintenance runs: it must queue, not start.
