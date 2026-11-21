@@ -13,7 +13,8 @@ default:
     @just --list
 
 # The CI runs the same recipes in parallel jobs (.github/workflows/verify.yml).
-# Full suite pass (fmt, file sizes, deny, reuse, clippy, deb build, smoke, nextest)
+# Full suite pass (fmt, file sizes, deny, reuse, clippy, deb build, smoke, nextest). When green,
+# writes target/verify-green: "VERIFY GREEN <commit>", plus " dirty" if the worktree had changes.
 verify:
     just _static-checks
     just _clippy
@@ -21,6 +22,7 @@ verify:
     just _build-test-harness
     just _smoke-run
     just _nextest
+    @mkdir -p target && echo "VERIFY GREEN $(git rev-parse HEAD)$([ -z "$(git status --porcelain)" ] || echo ' dirty')" | tee target/verify-green
 
 # Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE
 _static-checks:

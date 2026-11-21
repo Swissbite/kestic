@@ -1,0 +1,341 @@
+{
+  "milestone": "M4",
+  "branch": "m4",
+  "started": "2026-11-22",
+  "start_commit": "63f54059f4686092026db9baf4c9799b9eae5aba",
+  "rulebook": ".agents/skills/kestic-milestone-autonomy/SKILL.md",
+  "status": "kickoff",
+  "order": [
+    "M4-S00",
+    "M4-S01",
+    "M4-S03",
+    "M4-S04",
+    "M4-S02",
+    "M4-S05",
+    "M4-S06",
+    "M4-S07"
+  ],
+  "waits": {
+    "M4-S05": "restic 0.20.0 (PR 29) merged on main and synced into m4"
+  },
+  "stories": [
+    {
+      "id": "M4-S00",
+      "title": "Strukturelle Vorbereitung: `service.rs`, `backend.rs`, `models.rs`, `model.rs` und `Main.qml` gemäss §Code-Struktur aufteilen",
+      "status": "review",
+      "branch": "claude/m4-step0-1e3a47",
+      "prs": [],
+      "merge_commit": null,
+      "acs": {
+        "AC-M4-00-1": {
+          "level": "Unit + Clippy/Grössenprüfung",
+          "tests": [
+            "core/tests/m4_s00_code_structure.rs::ac_m4_00_1_a_modules_models_and_dialogs_in_place",
+            "core/tests/m4_s00_code_structure.rs::ac_m4_00_1_b_no_source_file_over_limit",
+            "core/tests/m4_s00_code_structure.rs::ac_m4_00_1_c_dbus_interface_and_core_api_unchanged"
+          ],
+          "status": "open"
+        },
+        "AC-M4-00-2": {
+          "level": "Integration + GUI-Smoke (`just verify`)",
+          "tests": [
+            "core/tests/m4_s00_code_structure.rs::ac_m4_00_2_c_verify_runs_the_whole_suite",
+            "just verify"
+          ],
+          "status": "open"
+        }
+      },
+      "ci_runs": [],
+      "attempts": [],
+      "reviews": {},
+      "notes": "Split done before M4 (PR 12 and earlier on main); M4 moves no code. Evidence at 63f5405: largest files gui/src/state_cache.rs 1433, core/src/model.rs 1138, gui/src/qml/Main.qml 1072 lines (limit 1500); daemon/src/service.rs 43 lines, only module declarations and re-exports; one file per list model under gui/src/models/; every dialog and page used by Main.qml is its own QML file. AC-M4-00-2 (a)/(b): no code moved, no existing test changed; (c): just verify green on the step-0 branch."
+    },
+    {
+      "id": "M4-S01",
+      "title": "Snapshot-Liste pro Backup (Zeit, Grösse, Host), Metadaten-Snapshots ausgeblendet (FR-06)",
+      "status": "todo",
+      "branch": null,
+      "prs": [],
+      "merge_commit": null,
+      "acs": {
+        "AC-M4-01-1": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-01-2": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-01-3": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-01-4": {
+          "level": "GUI-Smoke (offscreen + Screenshot), manuell",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-01-5": {
+          "level": "Unit (Fixture)",
+          "tests": [],
+          "status": "open"
+        }
+      },
+      "ci_runs": [],
+      "attempts": [],
+      "reviews": {},
+      "notes": ""
+    },
+    {
+      "id": "M4-S03",
+      "title": "Browsing: Ordnerliste mit Breadcrumb eines Snapshots via `ls --json`, lazy geladen (FR-10)",
+      "status": "todo",
+      "branch": null,
+      "prs": [],
+      "merge_commit": null,
+      "acs": {
+        "AC-M4-03-1": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-03-2": {
+          "level": "Integration, GUI-Smoke",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-03-3": {
+          "level": "GUI-Smoke, manuell",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-03-4": {
+          "level": "GUI-Smoke (offscreen + Screenshot)",
+          "tests": [],
+          "status": "open"
+        }
+      },
+      "ci_runs": [],
+      "attempts": [],
+      "reviews": {},
+      "notes": ""
+    },
+    {
+      "id": "M4-S04",
+      "title": "Suche über Snapshots (`find`) (FR-10)",
+      "status": "todo",
+      "branch": null,
+      "prs": [],
+      "merge_commit": null,
+      "acs": {
+        "AC-M4-04-1": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-04-2": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-04-3": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-04-4": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        }
+      },
+      "ci_runs": [],
+      "attempts": [],
+      "reviews": {},
+      "notes": ""
+    },
+    {
+      "id": "M4-S02",
+      "title": "Unterschiede zwischen zwei Snapshots (`diff --json`) (FR-07)",
+      "status": "todo",
+      "branch": null,
+      "prs": [],
+      "merge_commit": null,
+      "acs": {
+        "AC-M4-02-1": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-02-2": {
+          "level": "Unit",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-02-3": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        }
+      },
+      "ci_runs": [],
+      "attempts": [],
+      "reviews": {},
+      "notes": ""
+    },
+    {
+      "id": "M4-S05",
+      "title": "Wiederherstellen: Default neuer Ordner; Originalort nur mit Wahl `never` (Default) / `if-newer` / `if-changed` / `always` und Vorschau `--dry-run` (F5, NFR-08)",
+      "status": "todo",
+      "branch": null,
+      "prs": [],
+      "merge_commit": null,
+      "acs": {
+        "AC-M4-05-1": {
+          "level": "GUI-Smoke",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-2": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-3": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-4": {
+          "level": "Integration, GUI-Smoke",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-5": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-6": {
+          "level": "Unit",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-7": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-8": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-9": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-10": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-11": {
+          "level": "GUI-Smoke",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-05-12": {
+          "level": "Unit",
+          "tests": [],
+          "status": "open"
+        }
+      },
+      "ci_runs": [],
+      "attempts": [],
+      "reviews": {},
+      "notes": ""
+    },
+    {
+      "id": "M4-S06",
+      "title": "Pfad-Abbildung bei anderem Benutzernamen (F6)",
+      "status": "todo",
+      "branch": null,
+      "prs": [],
+      "merge_commit": null,
+      "acs": {
+        "AC-M4-06-1": {
+          "level": "Unit, GUI-Smoke",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-06-2": {
+          "level": "Unit",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-06-3": {
+          "level": "Unit",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-06-4": {
+          "level": "Unit, Integration (Temp-Verzeichnis)",
+          "tests": [],
+          "status": "open"
+        }
+      },
+      "ci_runs": [],
+      "attempts": [],
+      "reviews": {},
+      "notes": ""
+    },
+    {
+      "id": "M4-S07",
+      "title": "Fremde Snapshots (ohne Kestic-Tag) als «nicht zugeordnet» anzeigen, durchsuchen, wiederherstellen (FR-36)",
+      "status": "todo",
+      "branch": null,
+      "prs": [],
+      "merge_commit": null,
+      "acs": {
+        "AC-M4-07-1": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-07-2": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-07-3": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-07-4": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        },
+        "AC-M4-07-5": {
+          "level": "Integration",
+          "tests": [],
+          "status": "open"
+        }
+      },
+      "ci_runs": [],
+      "attempts": [],
+      "reviews": {},
+      "notes": ""
+    }
+  ],
+  "level2": [],
+  "level3": [],
+  "syncs": [],
+  "reports": []
+}
