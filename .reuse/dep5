@@ -10,6 +10,6 @@ Files: CLAUDE.md Cargo.lock core/tests/fixtures/*.json core/tests/fixtures/*.ndj
 Copyright: 2026 David Däster <david@daester.net>
 License: CC0-1.0
 
-Files: site/package.json
+Files: site/package.json .github/renovate.json
 Copyright: 2026 David Däster <david@daester.net>
 License: BSD-2-Clause

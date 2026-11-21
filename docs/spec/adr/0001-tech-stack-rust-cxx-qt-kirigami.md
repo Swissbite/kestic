@@ -1,6 +1,6 @@
 # ADR 0001: Tech-Stack Rust + CXX-Qt + Kirigami
 
-- Status: **akzeptiert (Spike M0 abgeschlossen, Versionen gepinnt)**
+- Status: **akzeptiert (Spike M0 abgeschlossen)**; die exakten Versions-Pins sind seit 2026-11-21 aufgehoben, Updates kommen über Renovate ([decisions.md](../decisions.md))
 - Datum: 2026-11-16
 
 ## Kontext

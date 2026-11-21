@@ -9,7 +9,7 @@ Use this skill whenever implementing or modifying anything in `gui/`, QML files,
 
 ## Verified Stack & Build Rules (ADR-0001)
 
-- **Pinned versions:** `cxx-qt`, `cxx-qt-lib`, `cxx-qt-lib-extras`, `cxx-qt-build` are pinned to `=0.10.0`. `cxx-kde-frameworks` is pinned to a git revision in `Cargo.toml`. Never bump these without Stop & Ask (`docs/spec/questions.md`).
+- **Versions:** `cxx-qt`, `cxx-qt-lib`, `cxx-qt-lib-extras` and `cxx-qt-build` must stay at the same version; Renovate updates them as one group. `cxx-kde-frameworks` is a git dependency on a commit in `Cargo.toml`, which Renovate moves to the newest `master`. `just verify` decides whether a combination works.
 - **Linker:** `lld` is required (`scripts/bootstrap.sh`) to avoid `ld.gold` bugs/warnings with Qt6/CXX-Qt.
 - **Build registration:** Every new `.qml` file and every Rust module containing `#[cxx_qt::bridge]` must be registered in `gui/build.rs` inside `CxxQtBuilder::new_qml_module(...)` (module URI `net.daester.kestic`).
 - **Thin GUI layer:** Keep domain logic, restic calls, config persistence, and scheduling out of `gui/` (`core/` + `daemon/` own logic; `gui/` talks to `daemon` over D-Bus `…Kestic1`).

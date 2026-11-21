@@ -10,12 +10,21 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 TOOLS_DIR="${KESTIC_TOOLS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/kestic-dev/bin}"
 CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
 
+# Versions with a `# renovate:` line are updated by Renovate (.github/renovate.json).
+# RESTIC_MIN_VERSION stays: the tests run against the oldest supported restic and the latest.
 RESTIC_MIN_VERSION="0.18.0"
+# renovate: datasource=github-releases depName=restic/restic
 RESTIC_LATEST_VERSION="0.19.1"
+# renovate: datasource=github-releases depName=restic/rest-server
 REST_SERVER_VERSION="0.14.0"
+# renovate: datasource=github-releases depName=rclone/rclone
 RCLONE_VERSION="1.76.0"
+# renovate: datasource=crate depName=cargo-deny
 CARGO_DENY_VERSION="0.20.2"
+# renovate: datasource=crate depName=cargo-deb
 CARGO_DEB_VERSION="3.8.0"
+# A new nextest version also needs the SHA-256 of its release archive below.
+# renovate: datasource=crate depName=cargo-nextest
 CARGO_NEXTEST_VERSION="0.9.152"
 CARGO_NEXTEST_SHA256_X86_64="d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a"
 

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Europe/Zurich",
+  "schedule": ["before 8am on monday"],
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "description": "Transitive updates in Cargo.lock and site/pnpm-lock.yaml"
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Tool versions in scripts/bootstrap.sh, marked with a `# renovate:` comment",
+      "managerFilePatterns": ["/^scripts/bootstrap\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[A-Z0-9_]+_VERSION=\"(?<currentValue>[^\"]+)\""
+      ],
+      "extractVersionTemplate": "^v?(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "rust-version in Cargo.toml follows the toolchain in rust-toolchain.toml",
+      "managerFilePatterns": ["/^Cargo\\.toml$/"],
+      "matchStrings": ["\\nrust-version = \"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "rust",
+      "datasourceTemplate": "rust-version",
+      "versioningTemplate": "rust-release-channel"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Minor and patch updates of the crates in one PR",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "cargo minor and patch"
+    },
+    {
+      "description": "The CXX-Qt crates only work together at the same version",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["cxx-qt", "cxx-qt-lib", "cxx-qt-lib-extras", "cxx-qt-build"],
+      "groupName": "CXX-Qt"
+    },
+    {
+      "description": "Rust toolchain and rust-version in one PR",
+      "matchDepNames": ["rust"],
+      "groupName": "Rust"
+    },
+    {
+      "description": "Showcase site: minor and patch in one PR; minimum age as minimumReleaseAge in site/pnpm-workspace.yaml",
+      "matchManagers": ["npm"],
+      "minimumReleaseAge": "1 day"
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "site minor and patch"
+    }
+  ]
+}
