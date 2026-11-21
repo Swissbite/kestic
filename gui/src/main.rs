@@ -60,7 +60,18 @@ fn parse_simulated_status(raw: &str) -> Option<kestic_daemon::service::Simulated
     }
 }
 
+/// Whether the binary looks for icons and translations in the source tree it was built from. Only
+/// debug and harness builds do: the package installs both into system directories, and a release
+/// binary must neither carry the build machine's paths nor load files from them. The optimizer
+/// drops the source-tree branches, including their paths, from release builds.
+const SOURCE_TREE_FALLBACKS: bool = cfg!(any(debug_assertions, feature = "test-harness"));
+
+/// Icon theme directory for the tray when running from the source tree; empty otherwise, so the
+/// tray uses the system `hicolor` theme.
 fn default_icon_theme_path() -> String {
+    if !SOURCE_TREE_FALLBACKS {
+        return String::new();
+    }
     let repo_icons = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../packaging/icons")
         .canonicalize()
@@ -133,7 +144,12 @@ fn parse_smoke_args() -> Option<SmokeOptions> {
     })
 }
 
+/// Puts the source tree's icons and the catalog compiled by `build.rs` on `XDG_DATA_DIRS`, so a
+/// binary started from the build directory finds them. Release builds use the installed files only.
 fn configure_dev_locale_search_path() {
+    if !SOURCE_TREE_FALLBACKS {
+        return;
+    }
     let current = env::var_os("XDG_DATA_DIRS")
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "/usr/local/share:/usr/share".into());

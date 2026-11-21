@@ -10,7 +10,7 @@ Use this skill whenever the user asks to perform manual acceptance tests or when
 ## Core Rules
 
 1. **Never self-check manual ACs:** Leave `- [ ]` open in `docs/spec/manual-acceptance.md` until the user explicitly confirms the observed behavior.
-2. **Pre-flight before asking the user:** Run `just verify` and check which binary or `.deb` artifact is needed (`cargo build --bin kestic` or `cargo deb -p kestic-gui --fast`), verifying exact file paths first.
+2. **Pre-flight before asking the user:** Run `just verify` and check which binary or `.deb` artifact is needed (`cargo build --bin kestic` or `just deb`), verifying exact file paths first.
 3. **Never give vague summaries:** The terse bullet lines in `manual-acceptance.md` are not enough for a human tester (lesson from M0).
 
 ## Step-by-Step Test Card Format
