@@ -12,7 +12,7 @@ Native KDE Plasma backup manager powered by [restic](https://restic.net). Pick w
 
 ## Tech Stack
 
-- **Core, daemon & GUI bridge:** Rust (`edition = "2024"`, MSRV `1.85`), CXX-Qt `0.10.0`, `cxx-kde-frameworks` (KI18n), `zbus 6.3.0`, SQLite (`rusqlite`)
+- **Core, daemon & GUI bridge:** Rust (`edition = "2024"`, MSRV `1.100`), CXX-Qt `0.10.0`, `cxx-kde-frameworks` (KI18n), `zbus 6.3.0`, SQLite (`rusqlite`)
 - **UI:** Kirigami (`>= 6.24`), Qt 6 (`6.10` on reference system TUXEDO OS / Plasma `6.6`)
 - **Backup engine:** `restic >= 0.18.0`
 

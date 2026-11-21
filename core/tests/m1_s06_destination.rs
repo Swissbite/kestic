@@ -10,6 +10,7 @@ use kestic_core::destination::{
 use kestic_core::model::{Destination, DestinationKind};
 use kestic_core::restic::{ResticCommandSpec, run_restic};
 use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_test_support::password::{assert_no_secret, strong_password};
 use std::fs;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -33,7 +34,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             },
         )
         .expect("dest");
-        let pw = SecretValue::from_str_secret("correct-repo-password");
+        let pw = SecretValue::from_str_secret(strong_password());
 
         // AC-M1-06-1: init empty folder -> repo exists and `restic snapshots` exits 0.
         setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
@@ -70,7 +71,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             },
         )
         .expect("dest");
-        let wrong_pw = SecretValue::from_str_secret("definitely-wrong");
+        let wrong_pw = SecretValue::from_str_secret(strong_password());
         let err = setup_destination(
             &dest_wrong,
             DestinationSetupMode::ConnectExisting,
@@ -148,7 +149,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
     for (label, restic_bin) in common::restic_test_binaries() {
         let dir = TempDir::new().expect("tempdir");
         let server_dir = dir.path().join("rest-data");
-        let server = common::tools::RestServerGuard::start_with_auth(&server_dir);
+        let server = kestic_test_support::tools::RestServerGuard::start_with_auth(&server_dir);
 
         let rig =
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 10:00:00 UTC));
@@ -163,8 +164,9 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             },
         )
         .expect("dest");
-        let repo_pw = SecretValue::from_str_secret("repo-secret-123");
-        let rest_pw = SecretValue::from_str_secret("secret");
+        let repo_pw_text = strong_password();
+        let repo_pw = SecretValue::from_str_secret(&repo_pw_text);
+        let rest_pw = SecretValue::from_str_secret(server.password());
 
         setup_destination(
             &dest,
@@ -175,8 +177,17 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
         )
         .unwrap_or_else(|e| panic!("{label}: REST init failed: {e}"));
 
-        assert!(!dest.kind.repository_uri().contains("secret"));
-        assert!(!dest.kind.repository_uri().contains("repo-secret-123"));
+        let repository_uri = dest.kind.repository_uri();
+        assert_no_secret(
+            &repository_uri,
+            &repo_pw_text,
+            "repository URI (repo password)",
+        );
+        assert_no_secret(
+            &repository_uri,
+            server.password(),
+            "repository URI (REST password)",
+        );
 
         // AC-M1-06-6: Wrong REST credentials -> AuthFailed, secrets not saved.
         let bad_auth_dest = Destination::new(
@@ -187,7 +198,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             },
         )
         .expect("dest");
-        let wrong_rest_pw = SecretValue::from_str_secret("wrong-http-pass");
+        let wrong_rest_pw = SecretValue::from_str_secret(strong_password());
         let auth_err = setup_destination(
             &bad_auth_dest,
             DestinationSetupMode::ConnectExisting,
@@ -209,7 +220,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
 
         // AC-M1-06-5: Stopped/unreachable REST server -> preflight fails cleanly <= 15 s.
         drop(server);
-        let closed_port = common::tools::free_loopback_port();
+        let closed_port = kestic_test_support::tools::free_loopback_port();
         let down_dest = Destination::new(
             "REST Down",
             DestinationKind::Rest {
@@ -255,30 +266,14 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
         let dir = TempDir::new().expect("tempdir");
         let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
-        fs::create_dir_all(&repo_dir).expect("mkdir");
         let rig =
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 10:00:00 UTC));
-        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let real_pw = SecretValue::from_str_secret("real-repo-pw");
-        let wrong_stored_pw = SecretValue::from_str_secret("stale-wrong-pw");
-
-        // Init repo with real password, then simulate stale password stored in Secret Service.
-        setup_destination(
-            &dest,
-            DestinationSetupMode::InitNew,
-            &real_pw,
-            None,
-            &runtime,
-        )
-        .expect("init");
+        // A prepared repository (setup only), then simulate a stale password stored in Secret
+        // Service.
+        let (dest, real_pw_text) = rig.local_repo("Local", &repo_dir);
+        let real_pw = SecretValue::from_str_secret(&real_pw_text);
+        let wrong_stored_pw = SecretValue::from_str_secret(strong_password());
         rig.store
             .set_secret(dest.id.as_str(), "repo", &wrong_stored_pw)
             .expect("overwrite stale");
@@ -286,14 +281,14 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
         // Capture `restic key list --json` before password update (AC-M1-20-3).
         let keys_before = std::process::Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
-            .env("RESTIC_PASSWORD", "real-repo-pw")
+            .env("RESTIC_PASSWORD", &real_pw_text)
             .env("RESTIC_CACHE_DIR", &cache_dir)
             .output()
             .expect("key list before");
         assert!(keys_before.status.success());
 
         // AC-M1-20-2: Wrong candidate keeps stored password unchanged.
-        let wrong_candidate = SecretValue::from_str_secret("still-wrong");
+        let wrong_candidate = SecretValue::from_str_secret(strong_password());
         let err = verify_and_update_stored_password_with_cache(
             &dest,
             &wrong_candidate,
@@ -328,7 +323,7 @@ fn ac_m1_20_1_20_2_20_3_verify_and_update_password_without_key_mutation() {
 
         let keys_after = std::process::Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "key", "list", "--json"])
-            .env("RESTIC_PASSWORD", "real-repo-pw")
+            .env("RESTIC_PASSWORD", &real_pw_text)
             .env("RESTIC_CACHE_DIR", &cache_dir)
             .output()
             .expect("key list after");
@@ -372,7 +367,7 @@ fn rest_preflight_handles_non_ascii_redirect_location_and_https_tls_without_pani
     let _ = handle.join();
 
     // 2. HTTPS preflight must configure NativeTls + PlatformVerifier without panicking on `https://`.
-    let closed_port = common::tools::free_loopback_port();
+    let closed_port = kestic_test_support::tools::free_loopback_port();
     let https_dest = Destination::new(
         "REST HTTPS",
         DestinationKind::Rest {

@@ -4,6 +4,7 @@
 mod common;
 
 use common::load_config;
+use common::m3::connect_local_repo;
 use common::{
     find_kestic_binary, restic_test_binaries, run_isolated_test, start_fake_sni_watcher,
     wait_for_file, wait_for_sni_service,
@@ -75,7 +76,9 @@ fn ac_m1_12_1_12_2_12_3_daemon_autostart_lifecycle() {
             assert!(!init_state.has_config_file);
 
             client
-                .set_restic_provider(&ResticProvider::Custom { path: restic_bin })
+                .set_restic_provider(&ResticProvider::Custom {
+                    path: restic_bin.clone(),
+                })
                 .expect("SetResticProvider");
 
             let repo_dir = root.join("repo-autostart");
@@ -86,9 +89,7 @@ fn ac_m1_12_1_12_2_12_3_daemon_autostart_lifecycle() {
             let dest =
                 Destination::new("Autostart Repo", DestinationKind::Local { path: repo_dir })
                     .expect("dest");
-            client
-                .add_destination(&dest, "init", "autostart-pw", "")
-                .expect("AddDestination");
+            connect_local_repo(&client, &restic_bin, &dest);
             let backup = Backup::new("Docs", Source::folder(&src_dir), dest.id).expect("backup");
             client.add_backup(&backup).expect("AddBackup");
 

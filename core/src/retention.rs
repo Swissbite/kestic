@@ -405,11 +405,11 @@ impl RetentionPolicy {
             ("keep_within_yearly", &self.keep_within_yearly),
         ];
         for (_name, opt) in durations {
-            if let Some(raw) = opt {
-                if !raw.trim().is_empty() {
-                    validate_restic_duration(raw)?;
-                    active_rules += 1;
-                }
+            if let Some(raw) = opt
+                && !raw.trim().is_empty()
+            {
+                validate_restic_duration(raw)?;
+                active_rules += 1;
             }
         }
 

@@ -12,8 +12,9 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub use super::tools::PrivateDbusGuard;
-pub use super::workspace::{find_kestic_binary, workspace_root};
+pub use crate::bus::PrivateDbusGuard;
+use crate::keyring::{HeadlessKeyring, KeyringDirs};
+pub use crate::workspace::{find_kestic_binary, workspace_root};
 
 /// Isolated `HOME` and `XDG_*` tree plus a `PATH` directory that may hold a `restic` symlink.
 pub struct IsolatedEnv {
@@ -26,12 +27,11 @@ pub struct IsolatedEnv {
     pub state: PathBuf,
     pub run: PathBuf,
     bin_dir: PathBuf,
-    pub secret_file: PathBuf,
 }
 
 impl IsolatedEnv {
     pub fn create(tag: &str, restic_bin: Option<&Path>) -> Self {
-        let tmp = super::tools::short_tempdir(&format!("kestic-gui-{tag}"));
+        let tmp = crate::tools::short_tempdir(&format!("kestic-gui-{tag}"));
         let root = tmp.path().to_path_buf();
         Self::build(Some(tmp), root, restic_bin)
     }
@@ -61,9 +61,8 @@ impl IsolatedEnv {
             std::os::unix::fs::symlink(restic, bin_dir.join("restic")).expect("symlink restic");
         }
 
-        super::tools::install_german_catalog(&data);
+        crate::tools::install_german_catalog(&data);
 
-        let secret_file = root.join("secrets.hex");
         Self {
             _tmp: tmp,
             root,
@@ -74,7 +73,6 @@ impl IsolatedEnv {
             state,
             run,
             bin_dir,
-            secret_file,
         }
     }
 
@@ -91,20 +89,21 @@ impl IsolatedEnv {
         format!("{}:{base}", self.bin_dir.display())
     }
 
-    /// Stores the health-probe secret the daemon reads to decide the secret store is usable.
-    pub fn seed_probe_secret(&self) {
-        use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
-        FileSecretStore::new(&self.secret_file)
-            .set_secret(
-                "kestic_health_probe",
-                "probe",
-                &SecretValue::from_str_secret("ok"),
-            )
-            .expect("seed probe");
+    /// Starts an unlocked headless keyring on the bus at `dbus_addr`, keeping its state inside
+    /// this tree.
+    pub fn start_keyring(&self, dbus_addr: &str) -> HeadlessKeyring {
+        HeadlessKeyring::start(
+            dbus_addr,
+            &KeyringDirs {
+                home: &self.home,
+                data_home: &self.data,
+                runtime_dir: &self.run,
+            },
+        )
     }
 
     /// Applies the isolation environment shared by the daemon and the GUI process.
-    fn apply_env(&self, cmd: &mut Command, dbus_addr: &str, lang: &str, use_secret_file: bool) {
+    fn apply_env(&self, cmd: &mut Command, dbus_addr: &str, lang: &str) {
         cmd.env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", &self.cfg)
             .env("XDG_DATA_HOME", &self.data)
@@ -118,11 +117,6 @@ impl IsolatedEnv {
             .env("LANG", "en_US.UTF-8")
             .env("LANGUAGE", lang)
             .env("QT_QPA_PLATFORM", "offscreen");
-        if use_secret_file {
-            cmd.env("KESTIC_SECRET_FILE", &self.secret_file);
-        } else {
-            cmd.env_remove("KESTIC_SECRET_FILE");
-        }
     }
 }
 
@@ -132,13 +126,7 @@ pub struct DaemonProcessGuard {
 }
 
 impl DaemonProcessGuard {
-    pub fn spawn(
-        kestic_bin: &Path,
-        iso: &IsolatedEnv,
-        dbus_addr: &str,
-        use_secret_file: bool,
-        lang: &str,
-    ) -> Self {
+    pub fn spawn(kestic_bin: &Path, iso: &IsolatedEnv, dbus_addr: &str, lang: &str) -> Self {
         let ready_file = iso.root.join("daemon.ready");
         let _ = fs::remove_file(&ready_file);
         let mut cmd = Command::new(kestic_bin);
@@ -157,7 +145,7 @@ impl DaemonProcessGuard {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-        iso.apply_env(&mut cmd, dbus_addr, lang, use_secret_file);
+        iso.apply_env(&mut cmd, dbus_addr, lang);
 
         let mut child = cmd.spawn().expect("spawn kestic daemon");
         let deadline = Instant::now() + Duration::from_secs(8);
@@ -193,7 +181,6 @@ pub struct SmokeContext<'a> {
     pub kestic_bin: &'a Path,
     pub iso: &'a IsolatedEnv,
     pub dbus_addr: &'a str,
-    pub use_secret_file: bool,
 }
 
 impl SmokeContext<'_> {
@@ -237,8 +224,7 @@ impl SmokeContext<'_> {
         ])
         .arg(&screenshot)
         .args(extra_args);
-        self.iso
-            .apply_env(&mut cmd, self.dbus_addr, lang, self.use_secret_file);
+        self.iso.apply_env(&mut cmd, self.dbus_addr, lang);
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
@@ -273,28 +259,33 @@ impl SmokeContext<'_> {
 }
 
 /// Everything a smoke scenario needs before it seeds its own fixture: the `kestic` and latest
-/// `restic` binaries, an isolated tree with `restic` on its `PATH`, and a private session bus.
+/// `restic` binaries, an isolated tree with `restic` on its `PATH`, and a private session bus
+/// with an unlocked headless keyring.
 pub struct SmokeFixture {
     pub kestic: PathBuf,
     pub restic: PathBuf,
-    pub iso: IsolatedEnv,
+    pub keyring: HeadlessKeyring,
     pub dbus: PrivateDbusGuard,
+    pub iso: IsolatedEnv,
 }
 
 impl SmokeFixture {
     pub fn new(tag: &str, restic: PathBuf) -> Self {
         let iso = IsolatedEnv::create(tag, Some(&restic));
+        let dbus = PrivateDbusGuard::start();
+        let keyring = iso.start_keyring(&dbus.address);
         Self {
             kestic: find_kestic_binary(),
             restic,
             iso,
-            dbus: PrivateDbusGuard::start(),
+            keyring,
+            dbus,
         }
     }
 
-    /// Starts a daemon with the file secret store and the given UI language.
+    /// Starts a daemon with the given UI language.
     pub fn daemon(&self, lang: &str) -> DaemonProcessGuard {
-        DaemonProcessGuard::spawn(&self.kestic, &self.iso, &self.dbus.address, true, lang)
+        DaemonProcessGuard::spawn(&self.kestic, &self.iso, &self.dbus.address, lang)
     }
 
     pub fn ctx(&self) -> SmokeContext<'_> {
@@ -302,7 +293,6 @@ impl SmokeFixture {
             kestic_bin: &self.kestic,
             iso: &self.iso,
             dbus_addr: &self.dbus.address,
-            use_secret_file: true,
         }
     }
 }

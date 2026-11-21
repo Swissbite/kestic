@@ -5,7 +5,7 @@
 //! clipboard, and quit confirmation for [`super::qobject::KesticApp`].
 
 use super::{Finish, qobject};
-use crate::smoke;
+use crate::qt_bridge;
 use crate::state_cache::{
     build_provider, cached_daemon_now, cached_destination_kind, cached_today_iso_date,
     clone_updated_backup_conditions, clone_updated_backup_schedule, format_bytes,
@@ -355,7 +355,7 @@ impl qobject::KesticApp {
     }
 
     pub fn copy_to_clipboard(&self, text: &QString) {
-        smoke::ffi::copy_to_clipboard(&text.to_string());
+        qt_bridge::ffi::copy_to_clipboard(&text.to_string());
     }
 
     pub fn confirm_quit(self: Pin<&mut Self>) -> bool {

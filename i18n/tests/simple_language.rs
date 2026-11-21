@@ -11,7 +11,7 @@
 mod common;
 
 use common::language;
-use common::workspace::workspace_root;
+use kestic_test_support::workspace::workspace_root;
 
 use std::fmt::Write as _;
 use std::fs;

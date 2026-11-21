@@ -5,7 +5,7 @@ mod common;
 
 use common::load_config;
 
-use common::tools::write_executable;
+use kestic_test_support::tools::write_executable;
 
 use kestic_core::backup::{
     BackupExecutionContext, BackupRunError, check_source_available_with,
@@ -451,7 +451,7 @@ fn ac_m2_09_5_empty_unmounted_drive_mountpoint_creates_zero_snapshots_and_runs_n
 
         let rig =
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 12:30:00 UTC));
-        let dest = rig.init_local("Local", &repo_dir, "drive-neg-test-pw");
+        let (dest, _repo_pw) = rig.local_repo("Local", &repo_dir);
 
         let spy_log = dir.path().join("spy-backup.log");
         let spy_bin = write_spy_restic(dir.path(), &spy_log, Some(&rig.resolved.binary));
@@ -556,7 +556,7 @@ fn ac_m2_09_6_empty_folder_on_home_filesystem_runs_backup_normally() {
             common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 13:00:00 UTC));
         let runtime = rig.runtime();
 
-        let dest = rig.init_local("Local", &repo_dir, "empty-folder-pw");
+        let (dest, _repo_pw) = rig.local_repo("Local", &repo_dir);
 
         let backup = Backup::new("Empty Home Folder", detected, dest.id.clone()).expect("backup");
         let res = execute_backup_with_inspector(

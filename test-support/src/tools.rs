@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Test tools shared by the `core` and `daemon` integration tests (the daemon `common` module
-//! includes this file with `#[path]`): the dev-tools directory, a local `rest-server`, free loopback
-//! ports, restic lock-file lookup, restic binary resolution, a private session bus and
-//! argument-list assertions.
+//! Test tools shared by the integration tests: the dev-tools directory, a local `rest-server`, free
+//! loopback ports, restic lock-file lookup, restic binary resolution and argument-list assertions.
 
 use std::env;
 use std::fs;
@@ -77,58 +75,6 @@ pub fn resolve_restic_binaries() -> Vec<(&'static str, PathBuf)> {
     );
 
     vec![("restic-0.18.0", v018), ("restic-latest", vlatest)]
-}
-
-/// Private `dbus-daemon --session --fork` instance (no service activation) killed on `Drop`.
-pub struct PrivateDbusGuard {
-    pub address: String,
-    pub pid: u32,
-}
-
-impl PrivateDbusGuard {
-    pub fn start() -> Self {
-        let out = Command::new("dbus-daemon")
-            .arg(format!(
-                "--config-file={}",
-                super::workspace::workspace_root()
-                    .join("daemon/tests/fixtures/private-session-bus.xml")
-                    .display()
-            ))
-            .args(["--fork", "--print-address=1", "--print-pid=1"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .expect("spawn private dbus-daemon");
-        assert!(
-            out.status.success(),
-            "dbus-daemon failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let stdout = String::from_utf8(out.stdout).expect("utf8 dbus-daemon output");
-        let mut lines = stdout.lines();
-        let address = lines
-            .next()
-            .expect("dbus-daemon address line")
-            .trim()
-            .to_string();
-        let pid: u32 = lines
-            .next()
-            .expect("dbus-daemon pid line")
-            .trim()
-            .parse()
-            .expect("parse dbus-daemon pid");
-        Self { address, pid }
-    }
-}
-
-impl Drop for PrivateDbusGuard {
-    fn drop(&mut self) {
-        let _ = Command::new("kill")
-            .args(["-TERM", &self.pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
 }
 
 /// Temporary directory directly below `/tmp`: short enough for Unix socket paths (108 bytes),
@@ -270,14 +216,18 @@ pub fn find_lock_file(locks_dir: &Path) -> Option<PathBuf> {
 pub struct RestServerGuard {
     pub url: String,
     pub port: u16,
+    data_dir: PathBuf,
+    auth: Option<(String, String)>,
     child: Option<Child>,
 }
 
 impl RestServerGuard {
-    /// Starts `rest-server` on a random free port with `.htpasswd` authentication (`alice` / `secret`).
+    /// Starts `rest-server` on a random free port with `.htpasswd` authentication: user `alice`
+    /// and a generated [`strong_password`](crate::password::strong_password).
     pub fn start_with_auth(data_dir: &Path) -> Self {
         let port = free_loopback_port();
-        Self::start_on_port(data_dir, port, Some(("alice", "secret")))
+        let password = crate::password::strong_password();
+        Self::start_on_port(data_dir, port, Some(("alice", &password)))
     }
 
     /// Starts `rest-server` on a random free port with `--no-auth`.
@@ -313,6 +263,8 @@ impl RestServerGuard {
         let mut guard = Self {
             url,
             port,
+            data_dir: data_dir.to_path_buf(),
+            auth: auth.map(|(u, p)| (u.to_string(), p.to_string())),
             child: Some(child),
         };
         guard.wait_ready();
@@ -342,6 +294,32 @@ impl RestServerGuard {
         panic!("rest-server did not start listening on {addr} in time");
     }
 
+    /// `(username, password)` of the server, `None` for `--no-auth`.
+    pub fn auth(&self) -> Option<(&str, &str)> {
+        self.auth.as_ref().map(|(u, p)| (u.as_str(), p.as_str()))
+    }
+
+    /// Password of the authenticated server.
+    pub fn password(&self) -> &str {
+        self.auth()
+            .expect("rest-server started with authentication")
+            .1
+    }
+
+    /// Directory that holds the repository behind [`Self::url`].
+    pub fn repo_dir(&self) -> PathBuf {
+        match self.auth() {
+            Some((user, _)) => self.data_dir.join(user),
+            None => self.data_dir.clone(),
+        }
+    }
+
+    /// Starts the server again on the same port, data directory and credentials (after
+    /// [`Self::stop`] or for a second guard).
+    pub fn restart(&self) -> Self {
+        Self::start_on_port(&self.data_dir, self.port, self.auth())
+    }
+
     /// Stops `rest-server` immediately (keeps `data_dir` and `.htpasswd` intact for restarts).
     pub fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
@@ -357,40 +335,54 @@ impl Drop for RestServerGuard {
     }
 }
 
+/// Runs `cmd` with `input` on stdin and returns its output; panics with `what` on failure.
+fn pipe_through(cmd: &mut Command, input: &[u8], what: &str) -> Vec<u8> {
+    use std::io::Write;
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("spawn {what}: {e}"));
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input)
+        .unwrap_or_else(|e| panic!("write to {what}: {e}"));
+    let out = child
+        .wait_with_output()
+        .unwrap_or_else(|e| panic!("{what}: {e}"));
+    assert!(
+        out.status.success(),
+        "{what} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
+}
+
+/// `.htpasswd` line for `user`; the password goes through stdin, never argv.
 fn build_htpasswd_entry(user: &str, pass: &str) -> String {
-    if find_in_path("htpasswd").is_some()
-        && let Ok(out) = Command::new("htpasswd").args(["-nbB", user, pass]).output()
-        && out.status.success()
-    {
-        return String::from_utf8_lossy(&out.stdout).into_owned();
+    if find_in_path("htpasswd").is_some() {
+        let entry = pipe_through(
+            Command::new("htpasswd").args(["-niB", user]),
+            pass.as_bytes(),
+            "htpasswd",
+        );
+        return String::from_utf8_lossy(&entry).into_owned();
     }
 
     // Fallback: Apache `{SHA}` entry generated with `openssl` (`rest-server` supports `{SHA}`).
-    let mut child = Command::new("openssl")
-        .args(["dgst", "-sha1", "-binary"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn openssl for htpasswd SHA1");
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(pass.as_bytes()).expect("write password");
-    }
-    let digest = child.wait_with_output().expect("openssl sha1");
-    assert!(digest.status.success(), "openssl sha1 failed");
-
-    let mut b64_child = Command::new("openssl")
-        .args(["base64", "-A"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn openssl base64");
-    if let Some(mut stdin) = b64_child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(&digest.stdout).expect("write sha1 digest");
-    }
-    let b64 = b64_child.wait_with_output().expect("openssl base64");
-    assert!(b64.status.success(), "openssl base64 failed");
-    let hash = String::from_utf8_lossy(&b64.stdout).trim().to_string();
+    let digest = pipe_through(
+        Command::new("openssl").args(["dgst", "-sha1", "-binary"]),
+        pass.as_bytes(),
+        "openssl sha1",
+    );
+    let b64 = pipe_through(
+        Command::new("openssl").args(["base64", "-A"]),
+        &digest,
+        "openssl base64",
+    );
+    let hash = String::from_utf8_lossy(&b64).trim().to_string();
     format!("{user}:{{SHA}}{hash}\n")
 }

@@ -3,9 +3,9 @@
 
 mod common;
 
-use common::workspace::{files_with_ext, workspace_root};
 use kestic_core::clock::{Clock, FakeClock, SystemClock};
 use kestic_core::model::{Backup, Destination, DestinationKind, Run, Source};
+use kestic_test_support::workspace::{files_with_ext, workspace_root};
 use std::fs;
 use std::time::Duration;
 use time::macros::datetime;

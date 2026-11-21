@@ -8,7 +8,7 @@ pub struct PendingI18n<'a>(pub &'a str);
 
 impl PendingI18n<'_> {
     pub fn subs(self, args: &[&str]) -> String {
-        crate::smoke::ffi::i18n_subs(self.0, args)
+        crate::qt_bridge::ffi::i18n_subs(self.0, args)
     }
 }
 
@@ -29,7 +29,7 @@ pub fn json_or<T: serde::Serialize + ?Sized>(value: &T, fallback: &str) -> Strin
 
 /// Plural-aware translation (`i18np`): `%1` is `n`, further `%N` come from `args`.
 pub fn i18np(singular: &str, plural: &str, n: usize, args: &[&str]) -> String {
-    crate::smoke::ffi::i18np_subs(singular, plural, i64::try_from(n).unwrap_or(i64::MAX), args)
+    crate::qt_bridge::ffi::i18np_subs(singular, plural, i64::try_from(n).unwrap_or(i64::MAX), args)
 }
 
 /// Translates a `kestic-i18n` [`Message`] (code → msgid mapping in `kestic_i18n::messages`)
@@ -104,12 +104,11 @@ use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use zbus::export::ordered_stream::OrderedStreamExt;
 
-/// Runtime options passed from `main.rs` CLI parsing / environment variables.
+/// Runtime options passed from `main.rs` CLI parsing.
 #[derive(Debug, Clone)]
 pub struct GuiLaunchConfig {
     pub bus_name: String,
     pub object_path: String,
-    pub daemon_bin: Option<PathBuf>,
     pub no_autostart_daemon: bool,
     pub show_quit_dialog_on_start: bool,
 }
@@ -117,15 +116,9 @@ pub struct GuiLaunchConfig {
 impl Default for GuiLaunchConfig {
     fn default() -> Self {
         Self {
-            bus_name: env::var("KESTIC_BUS_NAME")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| KESTIC_BUS_NAME.to_string()),
+            bus_name: KESTIC_BUS_NAME.to_string(),
             object_path: KESTIC_OBJECT_PATH.to_string(),
-            daemon_bin: env::var_os("KESTIC_DAEMON_BIN")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from),
-            no_autostart_daemon: env::var("KESTIC_NO_AUTOSTART_DAEMON").as_deref() == Ok("1"),
+            no_autostart_daemon: false,
             show_quit_dialog_on_start: false,
         }
     }
@@ -242,10 +235,7 @@ pub fn ensure_daemon_and_refresh() {
 
     let mut owned = client.is_bus_owned().unwrap_or(false);
     if !owned && !launch.no_autostart_daemon {
-        let exe = launch
-            .daemon_bin
-            .clone()
-            .unwrap_or_else(|| env::current_exe().unwrap_or_else(|_| PathBuf::from("kestic")));
+        let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("kestic"));
         let mut cmd = Command::new(&exe);
         cmd.arg("daemon");
         if launch.bus_name != KESTIC_BUS_NAME {
@@ -1279,7 +1269,7 @@ pub fn format_run_status(
 }
 
 fn to_local(ts: OffsetDateTime) -> OffsetDateTime {
-    let offset_secs = crate::smoke::ffi::local_offset_seconds(ts.unix_timestamp());
+    let offset_secs = crate::qt_bridge::ffi::local_offset_seconds(ts.unix_timestamp());
     let offset = time::UtcOffset::from_whole_seconds(offset_secs).unwrap_or(ts.offset());
     ts.to_offset(offset)
 }

@@ -23,7 +23,7 @@ Use this skill whenever implementing or modifying anything in `gui/`, QML files,
 
 ## Kirigami 6.24 / Qt 6.10 Gotchas (from M0)
 
-- **Pushing/replacing pages:** Instantiate `Component` pages via `comp.createObject(pageStack, props || {})` before `pageStack.push(...)` / `pageStack.replace(...)` (see `pushFromComponent` / `replaceFromComponent` in `gui/src/qml/Main.qml`).
+- **Pushing/replacing pages:** Instantiate `Component` pages via `comp.createObject(pageStack, props || {})` before `pageStack.push(...)` / `pageStack.replace(...)` (see `gui/src/qml/Main.qml`).
 - **`NavigationTabBar` width:** In wide layout, `maximumContentWidth` must be wide enough per tab so longer German labels like `"Wiederherstellen"` (added in M4) do not wrap onto two lines.
 - **Window title:** Main window title always stays `"Kestic"` regardless of active subpage (`AC-M1-13-6`); settings window title is `"Kestic einrichten"`.
 - **No silent QML warnings:** Treat any QML/Qt warning on `stderr` as a test failure (same assertion as `core/tests/m1_gui_smoke.rs`).
@@ -40,6 +40,10 @@ Use this skill whenever implementing or modifying anything in `gui/`, QML files,
 - Run GUI smoke tests with `QT_QPA_PLATFORM=offscreen`, isolated XDG tempdirs, `LC_ALL=` cleared, `LANG=en_US.UTF-8`, and `LANGUAGE=en` / `LANGUAGE=de`.
 - Check both wide and narrow (`26 gridUnit` minimum width) layouts for truncation or overlap.
 - Always inspect generated screenshots in `target/smoke-artifacts/` directly with your file-viewing tool to verify layout, readability, and alignment against `docs/spec/ui/`.
+- The smoke scenes (`gui/src/smoke*.cpp`, `gui/src/smoke.rs`), their synthetic input (`qt_handleKeyEvent`/`qt_handleMouseEvent`) and `--simulate-status` exist only with the Cargo feature `test-harness`: build test binaries with `cargo build --bin kestic --features kestic-gui/test-harness` (the justfile does).
+- The `.deb` is built without `test-harness`; the test `shipped_binary_runs_and_carries_no_test_harness` (`core/tests/m0_s05_deb_packaging.rs`) fails if the shipped binary contains any of it.
+- Product Qt helpers (clipboard, KI18n substitution, keyboard handling) live in `gui/src/qt_bridge.{rs,cpp,h}`, never in the smoke files.
+- Smoke scenes never contain secrets: the Rust test generates the repository password (`strong_password()`) and passes it to the scene via `KESTIC_SMOKE_REPO_PASSWORD`.
 
 ## External Reference Lookup
 

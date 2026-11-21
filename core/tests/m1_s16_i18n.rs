@@ -8,14 +8,14 @@
 
 mod common;
 
-use common::gui::{
+use kestic_core::config::{AppConfig, save_config};
+use kestic_core::model::ResticProvider;
+use kestic_test_support::gui::{
     DaemonProcessGuard, IsolatedEnv, PrivateDbusGuard, SmokeContext, find_kestic_binary,
     workspace_root,
 };
-use common::tools::{built_german_catalog, short_tempdir};
-use common::workspace::files_with_ext;
-use kestic_core::config::{AppConfig, save_config};
-use kestic_core::model::ResticProvider;
+use kestic_test_support::tools::{built_german_catalog, short_tempdir};
+use kestic_test_support::workspace::files_with_ext;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -146,7 +146,6 @@ fn run_lang_smoke(lang: &str, screenshot_rel: &str) {
     );
 
     let iso = IsolatedEnv::create(&format!("s16-{lang}"), None);
-    iso.seed_probe_secret();
     let cfg = AppConfig {
         restic_provider: ResticProvider::Custom {
             path: PathBuf::from("/nonexistent/kestic-missing-restic"),
@@ -157,12 +156,12 @@ fn run_lang_smoke(lang: &str, screenshot_rel: &str) {
 
     let kestic = find_kestic_binary();
     let dbus = PrivateDbusGuard::start();
-    let _daemon = DaemonProcessGuard::spawn(&kestic, &iso, &dbus.address, true, lang);
+    let _keyring = iso.start_keyring(&dbus.address);
+    let _daemon = DaemonProcessGuard::spawn(&kestic, &iso, &dbus.address, lang);
     SmokeContext {
         kestic_bin: &kestic,
         iso: &iso,
         dbus_addr: &dbus.address,
-        use_secret_file: true,
     }
     .run(
         "blocking-restic_unavailable",

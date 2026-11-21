@@ -9,10 +9,10 @@ mod common;
 use common::fakes::FakeLogindHandle;
 use common::m3::{
     DesktopFakes, FakeSetup, LockableSecretStore, M3DaemonOpts, M3Rig, StdFakes,
-    assert_dbus_error_name, backup_summary, count_runs, daemon_paths, dest_summary, latest_variant,
-    seed_local_destination, spawn_m3_daemon, wait_for_state, wait_until_within,
+    assert_dbus_error_name, backup_summary, connect_rest_repo, count_runs, daemon_paths,
+    dest_summary, latest_variant, seed_local_destination, spawn_m3_daemon, wait_for_state,
+    wait_until_within,
 };
-use common::tools::{RestServerGuard, write_executable};
 use common::{
     click_dbusmenu_item, fetch_dbusmenu_items, run_isolated_test, start_fake_sni_watcher,
     wait_for_sni_service,
@@ -27,6 +27,7 @@ use kestic_core::mount::MountInspector;
 use kestic_core::restic::{ResticFailureKind, classify_exit};
 use kestic_core::scheduler::PauseDuration;
 use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient};
+use kestic_test_support::tools::{RestServerGuard, write_executable};
 use std::fs;
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
@@ -321,9 +322,7 @@ fn m3_network_switch_clears_network_backoff_but_preserves_lock_backoff() {
                 },
             )
             .expect("rest dest");
-            client
-                .add_destination(&rest_dest, "init", "pw-rest", "")
-                .expect("init rest");
+            connect_rest_repo(client, &restic_bin, &rest, &rest_dest);
             let rest_id = rig.add_backup_to(&rest_dest, "RestNetBk", |_| {}).id;
             let local = rig.add_backup("LocalLockBk", |_| {});
             let local_repo = local.repo_dir.clone();
@@ -333,7 +332,7 @@ fn m3_network_switch_clears_network_backoff_but_preserves_lock_backoff() {
             rest.stop();
             let mut excl_child = Command::new(&restic_bin)
                 .args(["-r", &local_repo.to_string_lossy(), "check", "--read-data"])
-                .env("RESTIC_PASSWORD", "pw-LocalLockBk")
+                .env("RESTIC_PASSWORD", &local.password)
                 .env("RESTIC_CACHE_DIR", &restic_cache)
                 .spawn()
                 .expect("spawn restic check");
@@ -552,7 +551,8 @@ fn m3_unlock_refuses_foreign_host_lock() {
             // Seed repo with real restic first, then point custom wrapper that simulates
             // both a local stale lock AND a foreign-host lock in `list locks` / `cat lock`.
             let clock = Arc::new(FakeClock::new(datetime!(2026-12-01 10:00:00 UTC)));
-            let dest = seed_local_destination(root, &real_restic, "LockDest", &repo_dir, "pw-lk");
+            let (dest, _password) =
+                seed_local_destination(root, &real_restic, "LockDest", &repo_dir);
 
             write_executable(
                 &wrapper,
@@ -821,9 +821,7 @@ fn m3_hung_preflight_does_not_delay_prepare_for_sleep() {
                 },
             )
             .expect("rest dest");
-            client
-                .add_destination(&rest_dest, "init", "pw-rest", "")
-                .expect("init rest");
+            connect_rest_repo(client, &rig.variant.bin, &rest, &rest_dest);
             let rest_id = rig.add_backup_to(&rest_dest, "SleepRestBk", |_| {}).id;
 
             // Replace the REST server with a black hole (accepts, never answers).
@@ -903,7 +901,7 @@ fn m3_locked_secret_store_does_not_reprobe_every_tick() {
         "KESTIC_M3_REG_LOCKED_INNER",
         |root| {
             let _fakes = DesktopFakes::start();
-            let store = Arc::new(LockableSecretStore::new(root.join("secrets.hex"), false));
+            let store = Arc::new(LockableSecretStore::new(false));
             let locked = Arc::clone(&store.locked);
             let checks = Arc::clone(&store.availability_checks);
 
@@ -1598,13 +1596,8 @@ fn seed_drive_and_folder_backups(root: &Path, sub_name: &str) -> (BackupId, Back
     }
     fs::write(drive_src.join("d.txt"), b"drive").expect("write drive src");
     fs::write(folder_src.join("f.txt"), b"folder").expect("write folder src");
-    let dest = seed_local_destination(
-        root,
-        &latest_variant().bin,
-        "HungDest",
-        &repo_dir,
-        "pw-hung",
-    );
+    let (dest, _password) =
+        seed_local_destination(root, &latest_variant().bin, "HungDest", &repo_dir);
 
     let mut drive_bk =
         Backup::new("HungDriveBk", Source::drive(&drive_src), dest.id.clone()).expect("bk");

@@ -6,6 +6,7 @@ use kestic_core::history::RunHistory;
 use kestic_core::model::{
     Backup, CommandRecord, Destination, DestinationKind, Run, RunStats, RunStatus, Source,
 };
+use kestic_test_support::password::{assert_no_secret, strong_password};
 use std::fs;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -28,8 +29,9 @@ fn ac_m1_08_1_08_2_08_3_sqlite_history_redacted_logs_and_commands() {
     let backup = Backup::new("Home", Source::folder("/home/alice"), dest.id.clone()).expect("bk");
 
     let mut run = Run::new_backup(&clock, &backup).expect("run");
-    let repo_pw = "UltraSecretRepoPassword!";
-    let rest_pw = "UltraSecretRestPassword!";
+    let repo_pw_text = strong_password();
+    let rest_pw_text = strong_password();
+    let (repo_pw, rest_pw) = (repo_pw_text.as_str(), rest_pw_text.as_str());
 
     clock.advance(Duration::from_secs(42));
     run.finish(&clock, RunStatus::Ok, Some(0));
@@ -91,11 +93,23 @@ fn ac_m1_08_1_08_2_08_3_sqlite_history_redacted_logs_and_commands() {
     assert_eq!(loaded.commands[0].duration_ms, 42_000);
 
     // AC-M1-08-2: Zero secret leaks in summary or log file.
-    assert!(!loaded.summary_message.as_deref().unwrap().contains(repo_pw));
+    assert_no_secret(
+        loaded.summary_message.as_deref().expect("summary"),
+        repo_pw,
+        "loaded summary (repo password)",
+    );
     let log_text =
         fs::read_to_string(loaded.log_path.as_ref().expect("log path")).expect("read log file");
-    assert!(!log_text.contains(repo_pw));
-    assert!(!log_text.contains(rest_pw));
+    assert_no_secret(&log_text, repo_pw, "log file (repo password)");
+    assert_no_secret(&log_text, rest_pw, "log file (REST password)");
+    // The SQLite file itself (and its write-ahead log) holds neither secret.
+    let mut sqlite_bytes = fs::read(state_dir.join("history.db")).expect("read history.db");
+    if let Ok(wal) = fs::read(state_dir.join("history.db-wal")) {
+        sqlite_bytes.extend(wal);
+    }
+    let sqlite_text = String::from_utf8_lossy(&sqlite_bytes);
+    assert_no_secret(&sqlite_text, repo_pw, "history.db (repo password)");
+    assert_no_secret(&sqlite_text, rest_pw, "history.db (REST password)");
     assert!(log_text.contains("***REDACTED***"));
     assert!(log_text.contains("snapshot a1b2c3d4 saved"));
 }

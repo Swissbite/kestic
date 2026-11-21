@@ -6,7 +6,7 @@
 //! Comprehensive offscreen GUI smoke suite for Milestone M2 (`M2-S01`–`M2-S11`).
 //!
 //! Each scenario runs completely isolated with its own temporary XDG directories,
-//! private `dbus-daemon`, `KESTIC_SECRET_FILE`, real `kestic daemon`, and
+//! private `dbus-daemon` with a headless keyring, real `kestic daemon`, and
 //! `kestic --smoke-m1 m2-...`, capturing PNG screenshots into
 //! `target/smoke-artifacts/m2-*.png` and verifying persisted config, exclude
 //! files, and real restic repository state.
@@ -15,7 +15,7 @@ mod common;
 
 use common::{execute_backup, load_config};
 
-use common::gui::{IsolatedEnv, SmokeFixture};
+use kestic_test_support::gui::SmokeFixture;
 
 use kestic_core::backup::exclude_file_path;
 use kestic_core::clock::FakeClock;
@@ -30,18 +30,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::macros::datetime;
 
-/// Initialises a local repository with the password `m2-smoke-pw`.
-fn init_local_destination(
-    iso: &IsolatedEnv,
-    restic: &Path,
-    name: &str,
-    repo_dir: &Path,
-) -> Destination {
-    common::ResticRig::new(&iso.root, restic, datetime!(2026-11-16 12:00:00 UTC)).init_local(
-        name,
-        repo_dir,
-        "m2-smoke-pw",
-    )
+/// Copies a prepared local repository (own generated password) to `repo_dir`, connects it and
+/// stores its password in the fixture's keyring. Returns the destination and the password.
+fn local_destination(fx: &SmokeFixture, name: &str, repo_dir: &Path) -> (Destination, String) {
+    let (dest, password) =
+        common::ResticRig::new(&fx.iso.root, &fx.restic, datetime!(2026-11-16 12:00:00 UTC))
+            .local_repo(name, repo_dir);
+    fx.keyring.store_secret(dest.id.as_str(), "repo", &password);
+    (dest, password)
 }
 
 fn count_repo_snapshots(restic: &Path, repo_dir: &Path, password: &str, cache_dir: &Path) -> usize {
@@ -70,7 +66,7 @@ fn m2_gui_smoke_excludes_simple_expert_and_lint_wide_narrow_en_de() {
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("keep.txt"), b"keep").expect("write keep");
 
-    let dest = init_local_destination(iso, restic, "Local Vault", &repo_dir);
+    let (dest, _repo_pw) = local_destination(&fx, "Local Vault", &repo_dir);
     let mut backup =
         Backup::new("Documents", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     let initial_excludes = ExcludeRules {
@@ -181,7 +177,7 @@ fn m2_gui_smoke_dry_run_preview_real_restic() {
     fs::write(src_dir.join("notes.txt"), b"Hello dry-run preview!").expect("write notes.txt");
     fs::write(src_dir.join("sub/report.md"), b"# Report\nDry run").expect("write report.md");
 
-    let dest = init_local_destination(iso, restic, "DryRun Vault", &repo_dir);
+    let (dest, repo_pw) = local_destination(&fx, "DryRun Vault", &repo_dir);
     let backup = Backup::new("Docs", Source::folder(&src_dir), dest.id.clone()).expect("bk");
 
     let cfg = AppConfig {
@@ -208,7 +204,7 @@ fn m2_gui_smoke_dry_run_preview_real_restic() {
         count_repo_snapshots(
             restic,
             &repo_dir,
-            "m2-smoke-pw",
+            &repo_pw,
             &common::restic_cache_dir(&iso.root)
         ),
         0,
@@ -225,7 +221,7 @@ fn m2_gui_smoke_retention_editor_preview_confirm_en_de_narrow() {
     let src_dir = iso.root.join("src-retention");
     fs::create_dir_all(&src_dir).expect("mkdir src");
 
-    let dest = init_local_destination(iso, restic, "Retention Vault", &repo_dir);
+    let (dest, repo_pw) = local_destination(&fx, "Retention Vault", &repo_dir);
     let mut backup =
         Backup::new("Projects", Source::folder(&src_dir), dest.id.clone()).expect("bk");
     backup.retention = RetentionPolicy::standard();
@@ -260,7 +256,7 @@ fn m2_gui_smoke_retention_editor_preview_confirm_en_de_narrow() {
         assert_eq!(res.exit_code, 0);
     }
     assert_eq!(
-        count_repo_snapshots(restic, &repo_dir, "m2-smoke-pw", &cache_dir),
+        count_repo_snapshots(restic, &repo_dir, &repo_pw, &cache_dir),
         3,
         "expected 3 initial snapshots in repo"
     );
@@ -285,7 +281,7 @@ fn m2_gui_smoke_retention_editor_preview_confirm_en_de_narrow() {
             "[{label}] expected keep_last = Some(Count(5)) persisted in config.toml"
         );
         assert_eq!(
-            count_repo_snapshots(restic, &repo_dir, "m2-smoke-pw", &cache_dir),
+            count_repo_snapshots(restic, &repo_dir, &repo_pw, &cache_dir),
             3,
             "[{label}] retention preview/save must NOT delete snapshots from the repo"
         );
@@ -342,7 +338,7 @@ fn m2_gui_smoke_keyboard_navigation() {
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("doc.txt"), b"keyboard nav").expect("write doc.txt");
 
-    let dest = init_local_destination(iso, restic, "Kbd Vault", &repo_dir);
+    let (dest, _repo_pw) = local_destination(&fx, "Kbd Vault", &repo_dir);
     let backup = Backup::new("Documents", Source::folder(&src_dir), dest.id.clone()).expect("bk");
 
     let cfg = AppConfig {
@@ -379,7 +375,7 @@ fn m2_gui_smoke_exit3_unreadable_and_add_exclude() {
     fs::write(&secret_file, b"secret").expect("write unreadable_secret.key");
     let secret_file_str = secret_file.to_string_lossy().into_owned();
 
-    let dest = init_local_destination(iso, restic, "Exit3 Vault", &repo_dir);
+    let (dest, _repo_pw) = local_destination(&fx, "Exit3 Vault", &repo_dir);
     let backup = Backup::new("Documents", Source::folder(&src_dir), dest.id.clone()).expect("bk");
 
     // Preseed RunHistory with an Exit-3 Warning run whose log contains the restic JSON error
@@ -450,7 +446,7 @@ fn m2_gui_smoke_drive_unmounted_nested_and_full_config_en_de_narrow() {
     fs::create_dir_all(&bilder_dir).expect("mkdir Bilder");
     fs::write(bilder_dir.join("photo.jpg"), b"img").expect("write photo.jpg");
 
-    let dest = init_local_destination(iso, restic, "NAS Backup", &repo_dir);
+    let (dest, repo_pw) = local_destination(&fx, "NAS Backup", &repo_dir);
 
     // Backup 0: Drive pointing to an unmounted path not present in /proc/self/mountinfo
     let nonce = kestic_core::model::RunId::generate()
@@ -491,40 +487,44 @@ fn m2_gui_smoke_drive_unmounted_nested_and_full_config_en_de_narrow() {
     save_config(&iso.config_path(), &cfg).expect("save full-config fixture");
 
     let ctx = fx.ctx();
+    let smoke_env = [("KESTIC_SMOKE_REPO_PASSWORD", repo_pw.as_str())];
 
     // 1. Wide / EN
     {
         let _daemon = fx.daemon("en");
-        ctx.run(
+        ctx.run_with_env(
             "m2-drive-unmounted-nested-and-full-config",
             "wide",
             "en",
             "target/smoke-artifacts/m2-full-config-wide-en.png",
             &[],
+            &smoke_env,
         );
     }
 
     // 2. Wide / DE
     {
         let _daemon = fx.daemon("de");
-        ctx.run(
+        ctx.run_with_env(
             "m2-drive-unmounted-nested-and-full-config",
             "wide",
             "de",
             "target/smoke-artifacts/m2-full-config-wide-de.png",
             &[],
+            &smoke_env,
         );
     }
 
     // 3. Narrow / EN
     {
         let _daemon = fx.daemon("en");
-        ctx.run(
+        ctx.run_with_env(
             "m2-drive-unmounted-nested-and-full-config",
             "narrow",
             "en",
             "target/smoke-artifacts/m2-full-config-narrow-en.png",
             &[],
+            &smoke_env,
         );
     }
     // 4. + 5. Mixed languages: the DTOs carry only codes, so the GUI shows its own language
@@ -533,7 +533,7 @@ fn m2_gui_smoke_drive_unmounted_nested_and_full_config_en_de_narrow() {
     // the GUI language.
     for (daemon_lang, gui_lang) in [("de", "en"), ("en", "de")] {
         let _daemon = fx.daemon(daemon_lang);
-        ctx.run(
+        ctx.run_with_env(
             "m2-drive-unmounted-nested-and-full-config",
             "wide",
             gui_lang,
@@ -541,6 +541,7 @@ fn m2_gui_smoke_drive_unmounted_nested_and_full_config_en_de_narrow() {
                 "target/smoke-artifacts/m2-full-config-wide-{gui_lang}-daemon-{daemon_lang}.png"
             ),
             &[],
+            &smoke_env,
         );
     }
 }

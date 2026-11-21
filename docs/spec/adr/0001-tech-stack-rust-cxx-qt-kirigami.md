@@ -24,7 +24,7 @@ Rust + CXX-Qt (`=0.10.0`) + Kirigami (QML). Workspace `core` (reines Rust) / `da
 
 | Komponente / Werkzeug | Festgelegte Version | Quelle / Pin |
 | --- | --- | --- |
-| Rust-Toolchain | `1.100.0` (Edition 2024, MSRV 1.85) | `rust-toolchain.toml` |
+| Rust-Toolchain | `1.100.0` (Edition 2024, MSRV 1.100) | `rust-toolchain.toml` |
 | CXX-Qt (`cxx-qt`, `cxx-qt-lib`, `cxx-qt-lib-extras`, `cxx-qt-build`) | `=0.10.0` | `Cargo.toml` |
 | `cxx` | `1.0` | `Cargo.toml` |
 | `cxx-kde-frameworks` (`ki18n`, `kcoreaddons`, `kcrash`, `kiconthemes`, `kconfigwidgets`) | Git-Commit `5c51af42ad078feb89e4b7e590da9e3eab9e4d6d` (`MPL-2.0`) | `Cargo.toml`, `deny.toml` |

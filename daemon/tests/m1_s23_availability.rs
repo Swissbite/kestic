@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::tools::RestServerGuard;
+use common::m3::connect_rest_repo;
 use common::{
     fetch_dbusmenu_items, restic_test_binaries, run_isolated_test, sandbox_run_config,
     start_fake_notifications, start_fake_sni_watcher, wait_for_file, wait_for_sni_service,
@@ -13,6 +13,7 @@ use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{Backup, Destination, DestinationKind, ResticProvider, Source};
 use kestic_daemon::service::{DaemonCore, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::sync::Arc;
 use std::thread;
@@ -28,11 +29,9 @@ fn ac_m1_23_3_daemon_core_availability_cache_respects_60s_fake_clock_ttl() {
         |root| {
             let rest_data = root.join("rest-data");
             let mut server = RestServerGuard::start_with_auth(&rest_data);
-            let port = server.port;
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
             let _state_dir = root.join("state").join("kestic");
-            let _secret_file = root.join("secrets.hex");
             let src_dir = root.join("src");
             fs::create_dir_all(&src_dir).expect("mkdir src");
 
@@ -99,8 +98,7 @@ fn ac_m1_23_3_daemon_core_availability_cache_respects_60s_fake_clock_ttl() {
             );
 
             // Restart server on the same port: within 60 s stays cached unreachable; after >60 s recovers!
-            let _restarted =
-                RestServerGuard::start_on_port(&rest_data, port, Some(("alice", "secret")));
+            let _restarted = server.restart();
             clock.advance(Duration::from_secs(45));
             let snap4 = core.refresh_availability_if_needed(false);
             assert_eq!(core.availability_probe_count(), 2);
@@ -127,7 +125,6 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
 
             let rest_data = root.join("rest-data");
             let mut server = RestServerGuard::start_with_auth(&rest_data);
-            let port = server.port;
 
             let src_dir = root.join("src-avail");
             fs::create_dir_all(&src_dir).expect("mkdir src");
@@ -147,7 +144,9 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
 
             let client = common::connect_default_client().expect("connect client");
             client
-                .set_restic_provider(&ResticProvider::Custom { path: restic_bin })
+                .set_restic_provider(&ResticProvider::Custom {
+                    path: restic_bin.clone(),
+                })
                 .expect("set provider");
 
             let dest = Destination::new(
@@ -158,9 +157,7 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
                 },
             )
             .expect("dest");
-            client
-                .add_destination(&dest, "init", "rest-repo-pw", "secret")
-                .expect("AddDestination REST");
+            connect_rest_repo(&client, &restic_bin, &server, &dest);
 
             let backup = Backup::new("REST Backup", Source::folder(&src_dir), dest.id.clone())
                 .expect("backup");
@@ -210,8 +207,7 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
             }
 
             // AC-M1-23-3: Restart rest-server; within 60 s cache holds unreachable!
-            let _restarted =
-                RestServerGuard::start_on_port(&rest_data, port, Some(("alice", "secret")));
+            let _restarted = server.restart();
             clock.advance(Duration::from_secs(30));
             client
                 .window_active(true, "overview")

@@ -16,7 +16,8 @@ use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
 use kestic_core::model::RunStatus;
 use kestic_core::restic::SECRET_KIND_REPO;
-use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
+use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_test_support::password::strong_password;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
@@ -48,7 +49,7 @@ fn start_lock_rig(root: &Path, variant: &ResticVariant, base: &str, mib: usize) 
         root,
         M3DaemonOpts::new(&sub, &bus, &wrapper.path, Arc::clone(&clock) as _),
     );
-    let fixture = add_local_backup(&daemon.client, root, &sub, "Docs", |_| {});
+    let fixture = add_local_backup(&daemon.client, &variant.bin, root, &sub, "Docs", |_| {});
     write_incompressible_dataset(&fixture.src_dir, mib, 1024 * 1024);
     LockRig {
         daemon,
@@ -80,15 +81,11 @@ impl LockRig {
         );
     }
 
-    fn password(&self) -> String {
-        format!("pw-{}", self.fixture.backup.name)
-    }
-
     fn restic_cmd(&self) -> Command {
         restic_repo_cmd(
             &self.variant.bin,
             &self.fixture.repo_dir,
-            &self.password(),
+            &self.fixture.password,
             &self.root.join("restic-cache"),
         )
     }
@@ -245,11 +242,11 @@ fn ac_m3_04_5_wrong_password_exit_12_is_permanent_error_without_retry() {
                 let rig = start_lock_rig(root, &variant, "M3E5", 1);
                 let client = &rig.daemon.client;
                 let bid = &rig.fixture.backup.id;
-                FileSecretStore::new(root.join("secrets.hex"))
+                common::isolated_secret_store()
                     .set_secret(
                         rig.fixture.dest.id.as_str(),
                         SECRET_KIND_REPO,
-                        &SecretValue::from_str_secret("completely-wrong-password"),
+                        &SecretValue::from_str_secret(strong_password()),
                     )
                     .expect("overwrite stored password");
                 fakes.notif.clear();

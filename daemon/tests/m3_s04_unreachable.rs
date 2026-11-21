@@ -8,11 +8,10 @@ mod common;
 
 use common::m3::{
     M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, StdFakes, assert_dbus_error_name,
-    backup_summary, dest_summary, latest_variant, notifications_for, restic_variants,
-    runtime_state, settle, spawn_m3_daemon, wait_for_backoff_attempt, wait_for_notifications,
-    wait_for_state,
+    backup_summary, connect_rest_repo, dest_summary, latest_variant, notifications_for,
+    restic_variants, runtime_state, settle, spawn_m3_daemon, wait_for_backoff_attempt,
+    wait_for_notifications, wait_for_state,
 };
-use common::tools::RestServerGuard;
 use common::{
     CapturedKesticSignal, KesticSignalCollector, fetch_dbusmenu_items, run_isolated_test,
     wait_for_sni_service,
@@ -24,6 +23,7 @@ use kestic_core::model::{
 use kestic_core::scheduler::TimezoneSpec;
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -43,8 +43,6 @@ struct RestRig {
     clock: Arc<FakeClock>,
     wrapper: ResticWrapper,
     rest: RestServerGuard,
-    rest_port: u16,
-    rest_data: std::path::PathBuf,
     dest_id: DestinationId,
     backup_id: BackupId,
     backup_id_str: String,
@@ -68,7 +66,6 @@ fn start_rest_rig(
     );
     let rest_data = root.join(&sub).join("rest-data");
     let rest = RestServerGuard::start_no_auth(&rest_data);
-    let rest_port = rest.port;
     let dest = Destination::new(
         "RestRepo",
         DestinationKind::Rest {
@@ -77,10 +74,7 @@ fn start_rest_rig(
         },
     )
     .expect("rest dest");
-    daemon
-        .client
-        .add_destination(&dest, "init", "rest-pw", "")
-        .expect("init rest destination");
+    connect_rest_repo(&daemon.client, &variant.bin, &rest, &dest);
     let src_dir = root.join(&sub).join("src");
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("file.txt"), b"hello rest").expect("write src");
@@ -96,8 +90,6 @@ fn start_rest_rig(
         clock,
         wrapper,
         rest,
-        rest_port,
-        rest_data,
         dest_id: dest.id,
         backup_id: BackupId::parse(&backup_id_str).expect("backup id"),
         backup_id_str,
@@ -120,7 +112,7 @@ impl RestRig {
     }
 
     fn restart_rest_server(&mut self) {
-        self.rest = RestServerGuard::start_on_port(&self.rest_data, self.rest_port, None);
+        self.rest = self.rest.restart();
     }
 }
 
@@ -467,10 +459,7 @@ fn ac_m3_04_7_real_clock_status_pending_within_15_seconds_of_due_time() {
                 },
             )
             .expect("dest");
-            daemon
-                .client
-                .add_destination(&dest, "init", "rest-pw", "")
-                .expect("init");
+            connect_rest_repo(&daemon.client, &variant.bin, &rest, &dest);
             rest.stop();
 
             // Due time: first whole UTC minute at least 4 s away.
