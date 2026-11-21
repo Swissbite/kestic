@@ -33,10 +33,7 @@ Use this skill for all `daemon/` stories, D-Bus API work (`docs/spec/dbus-api.md
 
 - Never touch the developer's live session bus or real KWallet (`AC-M1-Q-1`).
 - Run D-Bus tests in an isolated `dbus-run-session` (or dedicated test bus) with `DBUS_SESSION_BUS_ADDRESS` pointing strictly to the test bus.
-- For headless Secret Service tests (`SecretServiceStore` in `daemon/src/secrets.rs`), use `kestic_test_support::keyring::HeadlessKeyring` (crate `test-support`). It:
-  1. Clears the inherited host environment (`GNOME_KEYRING_CONTROL`, `SSH_AUTH_SOCK`, the live `DBUS_SESSION_BUS_ADDRESS`).
-  2. Starts `gnome-keyring-daemon --foreground --replace --unlock --components=secrets --control-directory <short /tmp path>` with an empty password on `stdin`.
-  3. Keeps the `--control-directory` path short (`< 107` bytes total `sun_path` socket limit).
+- Never start a keyring yourself; for headless Secret Service tests (`SecretServiceStore` in `daemon/src/secrets.rs`) always use `kestic_test_support::keyring::HeadlessKeyring`.
 - `run_isolated_test` (daemon tests) starts this keyring on every private bus; in-process daemons use `common::isolated_secret_store()`, which panics outside such a test. GUI smoke tests get it via `SmokeFixture` and seed passwords with `fx.keyring.store_secret(...)`.
 - There is no secret-file override in `kestic` itself: the daemon and `kestic secret get` always read the Secret Service of the session bus.
 

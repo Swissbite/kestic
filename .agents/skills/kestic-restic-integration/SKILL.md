@@ -11,7 +11,9 @@ Use this skill for all stories invoking `restic`, parsing `restic --json` output
 
 - Every `"Integration"` acceptance criterion must run against **both** `restic 0.18.0` and `restic-latest` installed by `scripts/bootstrap.sh`.
 - Always resolve test binaries via `restic_test_binaries()` (`core/tests/common/mod.rs`, `daemon/tests/common/mod.rs`) and `kestic_test_support::tools::rest_server_binary()`, never hardcode `/usr/bin/restic`.
-- Repositories in tests come from `kestic_test_support::repo_template::copy_template_repo(restic, dir)`: a copy of a per-run template with its own generated password and repository ID, connected through the production `ConnectExisting` path (`ResticRig::local_repo` in core tests, `add_local_destination`/`M3Rig::add_backup` in daemon tests). Run a real `restic init` only in tests that verify creating a repository.
+- Repositories in tests come from `kestic_test_support::repo_template::copy_template_repo(restic, dir)`: a copy of a per-run template with its own generated password and repository ID.
+- Connect such a copy through the production `ConnectExisting` path: `ResticRig::local_repo` in core tests, `add_local_destination`/`M3Rig::add_backup` in daemon tests.
+- Run a real `restic init` only in tests that verify creating a repository.
 - Never write a password or credential literal in a test: use `kestic_test_support::password::strong_password()` (shell metacharacters, quotes, inner space, non-ASCII, emoji) and check leaks with `assert_no_secret`, which never prints the secret.
 - `key add` / `key passwd` in tests create keys with restic's full (slow) KDF parameters again, and restic tries every key on open; use them only in tests that need them.
 - Local test servers bind to random free ports and are cleaned up on `Drop`:
