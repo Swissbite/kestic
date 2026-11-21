@@ -26,6 +26,7 @@ FR-24, FR-35, FR-38, FR-39, FR-49, FR-56 · NFR-08, NFR-09 · E10, F7, F8, F16, 
 | M6-S10 | Kit für bestehendes Ziel erzeugen (Ziele aus M1–M5 bzw. ohne Kit); Hinweis in Status und Tray, solange das Kit fehlt (FR-35) |
 | M6-S11 | Fehlerabbildung vollständig: alle bekannten Fehler aus M1–M6 (Exit-Codes, JSON `exit_error`, Backend-Fehler wie DNS/Auth/Timeout, KWallet gesperrt) mit Text + Aktion (FR-37) |
 | M6-S12 | Log-Ansicht aufbereiten: restic-JSON-Einträge im Lauf-Detail lesbar darstellen, strukturiert nach Schweregrad (Alle/Warnungen/Fehler) filtern und durchsuchen; Roh-JSON optional im Expertenmodus bzw. über Log-Datei (FR-18, NFR-10) |
+| M6-S13 | Handbuch (F1) als Teil des Onboardings; Details später |
 
 ## Akzeptanzkriterien
 

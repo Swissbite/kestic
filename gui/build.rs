@@ -62,6 +62,7 @@ fn main() {
         "src/qml/Main.qml",
         "src/qml/MainHeaderArea.qml",
         "src/qml/MainAboutPage.qml",
+        "src/qml/AboutWindow.qml",
         "src/qml/PageFocusManager.qml",
         "src/qml/ShowCommandDialog.qml",
         "src/qml/UpdatePasswordDialog.qml",

@@ -2696,14 +2696,6 @@ msgstr "Kestic einrichten…"
 msgid "About Kestic"
 msgstr "Über Kestic"
 
-#: gui/src/qml/Main.qml
-msgid "Configure Keyboard Shortcuts…"
-msgstr "Tastenkürzel einrichten…"
-
-#: gui/src/qml/Main.qml
-msgid "Handbook"
-msgstr "Handbuch"
-
 #: gui/src/qml/MainHeaderArea.qml
 msgid "Main Menu"
 msgstr "Hauptmenü"
@@ -2712,7 +2704,7 @@ msgstr "Hauptmenü"
 msgid "Source code %1"
 msgstr "Quellcode %1"
 
-#: gui/src/qml/MainAboutPage.qml
+#: gui/src/qml/AboutWindow.qml
 msgid ""
 "The background service runs another version. Close and reopen Kestic to "
 "load the new version."

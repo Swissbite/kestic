@@ -19,11 +19,9 @@ Fensteraufbau von oben nach unten: Titelleiste («Kestic») · Zustandsleiste (o
 
 **Hamburger-Menü** (statisch, ≤ 15 Einträge, nicht passende deaktiviert, kein «Beenden» – den Daemon beendet nur das Tray, §9.5):
 
-1. Zeitpläne pausieren ► (Untermenü; bzw. «Zeitpläne fortsetzen»)
-2. — Konfiguration als Script exportieren… (FR-24)
-3. — Kestic einrichten… (Ctrl+Shift+,) · Tastenkürzel einrichten… · Handbuch (F1) · Über Kestic
+1. Kestic einrichten… (Ctrl+Shift+,) · Über Kestic
 
-«Tastenkürzel einrichten…» und «Handbuch» sind deaktiviert, bis ein Editor für Tastenkürzel und ein Handbuch festgelegt sind ([questions.md](../questions.md), 2026-11-21). Die Kürzel hängen an den Aktionen des Menüs und wirken auch bei geschlossenem Menü. Die Einträge 1 (Zeitpläne pausieren, bisher in Übersicht und Tray) und 2 (FR-24, M6-S07) fehlen im Menü noch.
+Das Kürzel hängt an der Aktion des Menüs und wirkt auch bei geschlossenem Menü. Weitere Einträge kommen mit ihren Stories: «Konfiguration als Script exportieren…» (FR-24) mit M6-S07, «Handbuch» (F1) mit M6-S13; bis dahin erscheinen sie nicht. «Tastenkürzel einrichten…» steht in [nach-mvp.md](../milestones/nach-mvp.md). «Zeitpläne pausieren» steht nicht im Menü, sondern in der Fusszeile der Übersicht neben «Alle jetzt sichern» und im Tray (Leitlinie 7).
 
 Keine Doppelbeschriftung (Leitlinie 7): «Alle jetzt sichern» steht nur in der Übersicht, «Neues Backup…» (Ctrl+N) nur im Listenkopf «Backups», «Ziel hinzufügen…» nur im Listenkopf «Ziele»; Ctrl+N wirkt überall.
 

@@ -212,7 +212,10 @@ int scenario_all_pages(const Ctx& c) {
 
     QMetaObject::invokeMethod(w, "openAboutPage");
     M3_CHECK(4992, page_visible(w, "mainAboutPage"), "mainAboutPage");
-    M3_RECORD(4993, dump, QStringLiteral("about"), w, "about");
+    auto* about = qobject_cast<QQuickWindow*>(object_named(w, "aboutWindow"));
+    M3_CHECK2(4994, about != nullptr, about->isVisible(), "aboutWindow not open");
+    M3_RECORD(4993, dump, QStringLiteral("about"), about, "about");
+    about->close();
 
     file.close();
     M3_CHECK(4995, dump.pages == 20, "expected 20 recorded pages");

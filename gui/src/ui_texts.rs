@@ -63,6 +63,7 @@ gui_texts! {
     ChooseSourceFolder = "choose_source_folder" => i18n_noop("Choose source folder"),
 
     // Areas and sections
+    AboutKestic = "about_kestic" => i18n_noop("About Kestic"),
     Overview = "overview" => i18n_noop("Overview"),
     Backups = "backups" => i18n_noop("Backups"),
     Destinations = "destinations" => i18n_noop("Destinations"),

@@ -13,8 +13,6 @@ Kirigami.AboutPage {
 
     required property var appBackend
 
-    readonly property bool buildsDiffer: BuildInfo.differsFromApp(appBackend.daemon_version, appBackend.daemon_build_commit)
-
     // Version and build commit of one process; the commit links to GitHub when it is clean.
     component BuildRow: RowLayout {
         id: buildRow
@@ -49,14 +47,6 @@ Kirigami.AboutPage {
         }
     }
 
-    header: Kirigami.InlineMessage {
-        objectName: "buildsDifferMessage"
-        position: Kirigami.InlineMessage.Position.Header
-        type: Kirigami.MessageType.Information
-        visible: page.buildsDiffer
-        text: i18n("The background service runs another version. Close and reopen Kestic to load the new version.")
-    }
-
     aboutData: {
         "displayName": "Kestic",
         "productName": "kestic",
@@ -68,7 +58,7 @@ Kirigami.AboutPage {
         "otherText": "",
         "copyrightStatement": "© 2026 David Däster",
         "desktopFileName": "net.daester.Kestic",
-        "authors": [{ "name": "David Däster", "task": "", "emailAddress": "david@daester.net", "webAddress": "", "ocsUsername": "" }],
+        "authors": [{ "name": "David Däster", "task": "", "emailAddress": "", "webAddress": "", "ocsUsername": "" }],
         "credits": [],
         "translators": [],
         "licenses": [{ "name": "GPL-3.0-or-later", "spdx": "GPL-3.0-or-later", "text": "https://www.gnu.org/licenses/gpl-3.0.html" }]

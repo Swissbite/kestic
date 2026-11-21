@@ -23,14 +23,6 @@ Kirigami.ApplicationWindow {
     readonly property bool narrowMode: width < Kirigami.Units.gridUnit * 35
     readonly property bool inWizardLayer: wizardPageStack.depth > 0
     readonly property bool mainMenuOpen: hamburgerMenu.visible
-    // «About Kestic» asked for while a wizard covers the pages; it opens once the wizard closes.
-    property bool aboutAfterWizard: false
-    onInWizardLayerChanged: {
-        if (!inWizardLayer && aboutAfterWizard) {
-            aboutAfterWizard = false;
-            openAboutPage();
-        }
-    }
 
     property string cmdDialogText: ""
     property string cmdDialogTitle: ""
@@ -646,6 +638,13 @@ Kirigami.ApplicationWindow {
         appBackend: root.backendRef
     }
 
+    // Closing it gives the focus back to the main window, where the menu button still has it.
+    AboutWindow {
+        id: aboutWindow
+        appBackend: root.backendRef
+        onVisibleChanged: if (!visible) root.requestActivate()
+    }
+
     Timer {
         interval: 150
         running: true
@@ -684,22 +683,13 @@ Kirigami.ApplicationWindow {
     }
 
     // Shows «About Kestic» next to the list (or on top in narrow mode); an open one stays.
+    // Opens the «About Kestic» window, or brings an open one to the front.
     function openAboutPage() {
-        if (inWizardLayer) {
-            aboutAfterWizard = true;
-            return;
-        }
-        if (guardDirtyNavigation(function() { openAboutPage(); })) return;
-        var topPage = pageStack.depth > 0 ? pageStack.get(pageStack.depth - 1) : null;
-        if (topPage && topPage.objectName === "mainAboutPage") {
-            focusPageContent(topPage);
-            return;
-        }
-        pushSubPageAtDepth(aboutPageComponent.createObject(pageStack, {}), Math.min(pageStack.depth, 2));
+        aboutWindow.openWindow();
     }
 
     // Static main menu behind the ☰ button: no New Backup…, no Add Destination…, no Quit Kestic…
-    // Its actions carry the shortcuts, also while the menu is closed.
+    // Its action carries Ctrl+Shift+, also while the menu is closed.
     Controls.Menu {
         id: hamburgerMenu
         objectName: "hamburgerMenu"
@@ -714,27 +704,10 @@ Kirigami.ApplicationWindow {
             }
         }
         Controls.MenuItem {
-            objectName: "configureShortcutsMenuItem"
-            action: Kirigami.Action {
-                icon.name: "configure-shortcuts"
-                text: i18n("Configure Keyboard Shortcuts…")
-                enabled: false
-            }
-        }
-        Controls.MenuItem {
-            objectName: "handbookMenuItem"
-            action: Kirigami.Action {
-                icon.name: "help-contents"
-                text: i18n("Handbook")
-                shortcut: "F1"
-                enabled: false
-            }
-        }
-        Controls.MenuItem {
             objectName: "aboutKesticMenuItem"
             action: Kirigami.Action {
                 icon.name: "help-about"
-                text: i18n("About Kestic")
+                text: Texts.label("about_kestic")
                 onTriggered: root.openAboutPage()
             }
         }
@@ -1091,13 +1064,6 @@ Kirigami.ApplicationWindow {
             rootWindow: root
             appBackend: root.backendRef
             destinationsModel: root.destinationsModelRef
-        }
-    }
-
-    Component {
-        id: aboutPageComponent
-        MainAboutPage {
-            appBackend: root.backendRef
         }
     }
 }

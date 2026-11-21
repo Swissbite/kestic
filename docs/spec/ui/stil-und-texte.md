@@ -108,7 +108,7 @@ Undo nur, wo es wirklich alles zurückholt; alles andere mit Vorschau und Bestä
 
 ### 13.1 Tastenkürzel
 
-Standardaktionen über `KStandardShortcut`; Kürzel nie nur Funktionstaste (HIG), F-Tasten nur zusätzlich; keine Meta-Kürzel. Alle Kürzel unter «Tastenkürzel einrichten…» änderbar.
+Standardaktionen über `KStandardShortcut`; Kürzel nie nur Funktionstaste (HIG), F-Tasten nur zusätzlich; keine Meta-Kürzel. Alle Kürzel unter «Tastenkürzel einrichten…» änderbar (Editor nach dem MVP, [nach-mvp.md](../milestones/nach-mvp.md)); «Handbuch» (F1) kommt mit M6-S13.
 
 | Aktion | Kürzel |
 | --- | --- |
