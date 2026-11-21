@@ -38,6 +38,7 @@ Projektspezifische Skills liegen agenten-neutral unter [.agents/skills/](.agents
 | restic-Integration | [kestic-restic-integration](.agents/skills/kestic-restic-integration/SKILL.md) | `restic`-Aufrufe, JSON-Parsing, Exit-Codes, SFTP/S3/REST-Tests, Download/PGP |
 | i18n & Packaging | [kestic-i18n-packaging](.agents/skills/kestic-i18n-packaging/SKILL.md) | neue/geänderte UI-Strings (`po/de/kestic.po`), `packaging/`, `.deb` |
 | Manuelle Abnahme | [kestic-manual-acceptance](.agents/skills/kestic-manual-acceptance/SKILL.md) | Punkte in [docs/spec/manual-acceptance.md](docs/spec/manual-acceptance.md) mit dem Menschen geprüft werden |
+| Meilenstein-Autonomie | [kestic-milestone-autonomy](.agents/skills/kestic-milestone-autonomy/SKILL.md) | ein Meilenstein weitgehend selbstständig auf einem Integrationsbranch `m<n>` läuft (Entscheidungsstufen, Budgets, Ledger, Berichte, Stolperdraht, Merge-Skript) |
 
 ## Arbeitsweise
 
