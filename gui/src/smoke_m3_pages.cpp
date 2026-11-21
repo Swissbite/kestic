@@ -211,9 +211,9 @@ int scenario_all_pages(const Ctx& c) {
     settings->close();
 
     QMetaObject::invokeMethod(w, "openAboutPage");
-    M3_CHECK(4992, page_visible(w, "mainAboutPage"), "mainAboutPage");
     auto* about = qobject_cast<QQuickWindow*>(object_named(w, "aboutWindow"));
-    M3_CHECK2(4994, about != nullptr, about->isVisible(), "aboutWindow not open");
+    M3_CHECK2(4994, about != nullptr, wait_until([&] { return about->isVisible(); }, 3000), "aboutWindow not open");
+    M3_CHECK(4992, find_visual_item(about, QStringLiteral("mainAboutPage")) != nullptr, "mainAboutPage not in the About window");
     M3_RECORD(4993, dump, QStringLiteral("about"), about, "about");
     about->close();
 

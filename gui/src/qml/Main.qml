@@ -45,6 +45,7 @@ Kirigami.ApplicationWindow {
             return;
         }
         appBackend.windowActive(false, "");
+        aboutWindow.visible = false;
     }
 
     readonly property var backendRef: appBackend
@@ -641,6 +642,7 @@ Kirigami.ApplicationWindow {
     // Closing it gives the focus back to the main window, where the menu button still has it.
     AboutWindow {
         id: aboutWindow
+        transientParent: root
         appBackend: root.backendRef
         onVisibleChanged: if (!visible) root.requestActivate()
     }
@@ -682,7 +684,6 @@ Kirigami.ApplicationWindow {
         hamburgerMenu.popup(button, button.width - hamburgerMenu.width, button.height);
     }
 
-    // Shows «About Kestic» next to the list (or on top in narrow mode); an open one stays.
     // Opens the «About Kestic» window, or brings an open one to the front.
     function openAboutPage() {
         aboutWindow.openWindow();
