@@ -16,6 +16,7 @@ default:
 verify:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy -p kestic-gui --all-targets --features test-harness -- -D warnings
     just _check-file-sizes
     cargo deb -p kestic-gui --fast
     just smoke
@@ -50,7 +51,7 @@ deb:
 smoke:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --bin kestic
+    cargo build --bin kestic --features kestic-gui/test-harness
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
     mkdir -p "$tmpdir"/{home,cfg,data,cache,state,run}
@@ -80,7 +81,7 @@ smoke:
 
 # Build binary and .deb package, then run workspace tests
 test:
-    cargo build --bin kestic
+    cargo build --bin kestic --features kestic-gui/test-harness
     cargo deb -p kestic-gui --fast
     just _nextest
 
@@ -95,7 +96,7 @@ _nextest:
         find "{{fixtures_dir}}" -mindepth 1 -maxdepth 1 -mtime +0 -exec rm -rf {} +
     fi
     cargo nextest run -p kestic-test-support
-    cargo nextest run --workspace
+    cargo nextest run --workspace --features kestic-gui/test-harness
 
 # Showcase site (site/). Needs pnpm; pnpm provides Node
 # itself (devEngines.runtime). Screenshots come from target/smoke-artifacts/,

@@ -8,7 +8,9 @@
 mod common;
 
 use kestic_test_support::tools::short_tempdir;
-use kestic_test_support::workspace::{find_kestic_binary, find_target_dir, workspace_root};
+use kestic_test_support::workspace::{
+    file_contains, find_kestic_binary, find_target_dir, workspace_root,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -163,4 +165,72 @@ fn ac_m0_05_1_deb_contains_qml_depends_recommends_notifyrc_and_autostart() {
             .any(|l| l.trim() == "/etc/xdg/autostart/net.daester.Kestic.daemon.desktop"),
         "autostart desktop file must be listed in conffiles, got:\n{conffiles}"
     );
+}
+
+/// Names of harness pieces that must never ship: CLI flags and environment variables of the smoke
+/// scenes and `--simulate-status` (strings), and Qt's synthetic input functions (imported symbols).
+const HARNESS_STRINGS: [&str; 3] = ["--smoke-m1", "--simulate-status", "KESTIC_SMOKE_"];
+const HARNESS_SYMBOLS: [&str; 2] = ["qt_handleKeyEvent", "qt_handleMouseEvent"];
+
+fn undefined_dynamic_symbols(path: &std::path::Path) -> String {
+    let out = Command::new("nm")
+        .args(["-D", "--undefined-only"])
+        .arg(path)
+        .output()
+        .expect("run nm");
+    assert!(out.status.success(), "nm failed on {}", path.display());
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// The `kestic` binary in the `.deb` is the product without the test harness (architecture.md
+/// §Code-Struktur: test harness only with the `test-harness` feature, never in the `.deb`), and it
+/// runs. The same probes find the harness in the test build, so they are proven to work.
+#[test]
+fn shipped_binary_runs_and_carries_no_test_harness() {
+    let deb_path = find_deb_package();
+    let extracted = short_tempdir("kestic-m0-s05-shipped");
+    let status = Command::new("dpkg-deb")
+        .arg("-x")
+        .arg(&deb_path)
+        .arg(extracted.path().join("root"))
+        .status()
+        .expect("run dpkg-deb -x");
+    assert!(status.success(), "dpkg-deb -x failed");
+    let shipped = extracted.path().join("root/usr/bin/kestic");
+    let harness = find_kestic_binary();
+
+    // (a) the shipped binary runs: `kestic daemon --autostart` without config exits 0 (NFR-11)
+    fs::create_dir_all(extracted.path().join("cfg")).expect("create cfg dir");
+    fs::create_dir_all(extracted.path().join("home")).expect("create home dir");
+    let out = Command::new(&shipped)
+        .args(["daemon", "--autostart"])
+        .env("HOME", extracted.path().join("home"))
+        .env("XDG_CONFIG_HOME", extracted.path().join("cfg"))
+        .env("QT_QPA_PLATFORM", "offscreen")
+        .output()
+        .expect("run shipped kestic");
+    assert!(
+        out.status.success(),
+        "shipped kestic daemon --autostart failed"
+    );
+
+    // (b) no harness strings in the shipped binary, all of them in the harness build
+    for text in HARNESS_STRINGS {
+        assert!(
+            !file_contains(&shipped, text.as_bytes()),
+            "shipped kestic contains {text}"
+        );
+        assert!(
+            file_contains(&harness, text.as_bytes()),
+            "harness build lacks {text}"
+        );
+    }
+
+    // (c) no synthetic-input imports in the shipped binary, both in the harness build
+    let shipped_syms = undefined_dynamic_symbols(&shipped);
+    let harness_syms = undefined_dynamic_symbols(&harness);
+    for sym in HARNESS_SYMBOLS {
+        assert!(!shipped_syms.contains(sym), "shipped kestic imports {sym}");
+        assert!(harness_syms.contains(sym), "harness build lacks {sym}");
+    }
 }

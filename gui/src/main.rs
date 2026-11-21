@@ -6,6 +6,8 @@
 mod backend;
 mod models;
 mod overall_text;
+mod qt_bridge;
+#[cfg(feature = "test-harness")]
 mod smoke;
 mod state_cache;
 mod ui_texts;
@@ -20,6 +22,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+#[cfg(feature = "test-harness")]
 struct SmokeOptions {
     scenario: String,
     screenshot: String,
@@ -43,6 +46,7 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         .find_map(|pair| (pair[0] == flag).then(|| pair[1].clone()))
 }
 
+#[cfg(feature = "test-harness")]
 fn parse_simulated_status(raw: &str) -> Option<kestic_daemon::service::SimulatedOverallStatus> {
     use kestic_daemon::service::SimulatedOverallStatus as S;
     match raw {
@@ -93,6 +97,7 @@ fn parse_gui_launch_config(args: &[String]) -> state_cache::GuiLaunchConfig {
     cfg
 }
 
+#[cfg(feature = "test-harness")]
 fn parse_smoke_args() -> Option<SmokeOptions> {
     let mut args = env::args().skip(1);
     let mut smoke = false;
@@ -174,7 +179,7 @@ fn install_daemon_ki18n() {
         },
         translate_subs_fn: move |msgid: &str, args: &[&str]| {
             let _g = qt_lock_subs.lock_unpoisoned();
-            crate::smoke::ffi::i18n_subs(msgid, args)
+            crate::qt_bridge::ffi::i18n_subs(msgid, args)
         },
     });
     kestic_daemon::i18n::set_daemon_translator(translator);
@@ -204,9 +209,12 @@ fn run_daemon_subcommand(args: &[String]) -> ExitCode {
         flag_value(args, "--icon-theme-path").unwrap_or_else(default_icon_theme_path);
     let bus_name = flag_value(args, "--bus-name")
         .unwrap_or_else(|| kestic_daemon::dbus_api::KESTIC_BUS_NAME.to_string());
+    #[cfg(feature = "test-harness")]
     let simulated_status = flag_value(args, "--simulate-status")
         .as_deref()
         .and_then(parse_simulated_status);
+    #[cfg(not(feature = "test-harness"))]
+    let simulated_status = None;
 
     let config = kestic_daemon::service::DaemonRunConfig {
         bus_name,
@@ -285,6 +293,7 @@ fn main() -> ExitCode {
 
     cxx_qt::init_crate!(cxx_qt);
     cxx_qt::init_qml_module!("net.daester.kestic");
+    #[cfg(feature = "test-harness")]
     let smoke_opts = parse_smoke_args();
     let launch_cfg = parse_gui_launch_config(&raw_args);
     state_cache::set_launch_config(launch_cfg);
@@ -300,7 +309,8 @@ fn main() -> ExitCode {
     let mut engine = QQmlApplicationEngine::new();
     if let Some(mut engine_pin) = engine.as_mut() {
         ki18n::setup_localized_context(engine_pin.as_mut().upcast_pin());
-        smoke::ffi::install_keyboard_handlers(engine_pin.as_mut());
+        qt_bridge::ffi::install_keyboard_handlers(engine_pin.as_mut());
+        #[cfg(feature = "test-harness")]
         if let Some(opts) = smoke_opts.as_ref() {
             smoke::ffi::install_m1_smoke_check(
                 engine_pin.as_mut(),
