@@ -85,7 +85,7 @@ Zusätzlich gelten ohne Ausnahmen die Grössengrenzen aus [docs/spec/architectur
 ### Stack- & Werkzeug-Leitplanken (aus M0)
 
 - **Workspace-Grenzen:** Datei-Lesetools (`view_file`) nur im Repo aufrufen; bei Bedarf für System-QML (`/usr/lib/...`) oder `~/.cargo/...` über die Shell (`run_command`) nachschauen oder den passenden Skill laden.
-- **Umgebung:** Falls `cargo`/`just` in einer Non-Interactive-Shell fehlen, `~/.cargo/bin` in `PATH` einbinden; `rust-version = "1.85"` in `Cargo.toml` bei `clippy` beachten.
+- **Umgebung:** Falls `cargo`/`just` in einer Non-Interactive-Shell fehlen, `~/.cargo/bin` in `PATH` einbinden; `rust-version = "1.100"` (wie die Toolchain in `rust-toolchain.toml`) in `Cargo.toml` bei `clippy` beachten.
 - **D-Bus-Verbindungslebensdauer:** Zustandsbehaftete Handles (`JobViewHandle`, `PortalInhibitGuard`, später `logind`-Inhibitor) müssen ihre `zbus::Connection` dauerhaft halten.
 - **i18n-Tests:** `glibc` ignoriert `LANGUAGE` bei `LANG=C.UTF-8` → Tests mit `LANG=en_US.UTF-8` und `LANGUAGE=de|en` ausführen.
 

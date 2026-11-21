@@ -641,11 +641,11 @@ pub fn write_incompressible_dataset(dir: &Path, num_files: usize, bytes_per_file
     let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut buf = vec![0u8; bytes_per_file];
     for idx in 0..num_files {
-        for chunk in buf.chunks_exact_mut(8) {
+        for chunk in buf.as_chunks_mut::<8>().0 {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;
-            chunk.copy_from_slice(&state.to_le_bytes());
+            *chunk = state.to_le_bytes();
         }
         let path = dir.join(format!("blob_{idx:03}.bin"));
         let mut f = fs::File::create(&path).expect("create dataset file");

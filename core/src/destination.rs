@@ -156,17 +156,16 @@ pub fn setup_destination(
     runtime
         .secret_store
         .set_secret(dest.id.as_str(), SECRET_KIND_REPO, repo_password)?;
-    if let Some(rest_pw) = rest_password {
-        if let Err(err) =
+    if let Some(rest_pw) = rest_password
+        && let Err(err) =
             runtime
                 .secret_store
                 .set_secret(dest.id.as_str(), SECRET_KIND_REST, rest_pw)
-        {
-            let _ = runtime
-                .secret_store
-                .delete_secret(dest.id.as_str(), SECRET_KIND_REPO);
-            return Err(err.into());
-        }
+    {
+        let _ = runtime
+            .secret_store
+            .delete_secret(dest.id.as_str(), SECRET_KIND_REPO);
+        return Err(err.into());
     }
 
     Ok(res)

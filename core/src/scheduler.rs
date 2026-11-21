@@ -321,12 +321,12 @@ pub enum PauseDuration {
 
 /// Validates a [`PauseDuration`] before persisting or passing it to [`compute_pause_until`].
 pub fn validate_pause_duration(duration: PauseDuration) -> Result<(), crate::model::ModelError> {
-    if let PauseDuration::Hours { hours } = duration {
-        if hours == 0 || hours > MAX_PAUSE_HOURS {
-            return Err(crate::model::ModelError::InvalidBackup(format!(
-                "pause hours must be between 1 and {MAX_PAUSE_HOURS}, got {hours}"
-            )));
-        }
+    if let PauseDuration::Hours { hours } = duration
+        && (hours == 0 || hours > MAX_PAUSE_HOURS)
+    {
+        return Err(crate::model::ModelError::InvalidBackup(format!(
+            "pause hours must be between 1 and {MAX_PAUSE_HOURS}, got {hours}"
+        )));
     }
     Ok(())
 }

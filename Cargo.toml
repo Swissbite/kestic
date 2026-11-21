@@ -16,7 +16,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 authors = ["David Däster <david@daester.net>"]
-rust-version = "1.85"
+rust-version = "1.100"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

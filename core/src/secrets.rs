@@ -260,14 +260,14 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(hex: &str) -> Result<Vec<u8>, SecretError> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(SecretError::Io("odd hex length".to_string()));
     }
     let bytes = hex.as_bytes();
     let mut out = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
-        let hi = from_hex_nibble(chunk[0])?;
-        let lo = from_hex_nibble(chunk[1])?;
+    for [hi, lo] in bytes.as_chunks::<2>().0 {
+        let hi = from_hex_nibble(*hi)?;
+        let lo = from_hex_nibble(*lo)?;
         out.push((hi << 4) | lo);
     }
     Ok(out)
