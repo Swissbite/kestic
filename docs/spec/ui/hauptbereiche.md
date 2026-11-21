@@ -187,7 +187,7 @@ Lauf-Arten ([glossary.md](../glossary.md)), gleiche Seite mit festen Tabs Ergebn
 | Lauf-Art | Listenzeile / Titel | Statuszeile | Tab «Ergebnis» |
 | --- | --- | --- | --- |
 | Backup | «12:00 Persönlicher Ordner» / «Lauf vom 14.11.2026, 12:00» | Backup-Zustand (§6.2) + Dauer; darunter Backup · hinzugefügte Datenmenge | neu · geändert · unverändert; nicht lesbare Dateien mit `[Zu Ausschluss-Regeln hinzufügen…]` |
-| Wartung | «12:30 Wartung NAS» / «Wartung vom 15.11.2026, 12:30» | «Aufgeräumt und geprüft · 18 Minuten» bzw. Fehler (§6.4) | je Backup entfernte Snapshots, freigegebener Platz, Ergebnis der Prüfung |
+| Wartung | «12:30 Wartung NAS» / «Wartung vom 15.11.2026, 12:30» | «Aufgeräumt und geprüft» bzw. «Aufgeräumt» / «Geprüft» (je nach ausgeführten Schritten), sonst «Abgeschlossen» (nur offene `forget` oder älterer Lauf ohne gespeichertes Ergebnis) · 18 Minuten, bzw. Fehler (§6.4); darunter das Ziel (der Titel nennt nur das Datum) | je Backup entfernte Snapshots («Persönlicher Ordner: 2 Snapshots entfernt»), freigegebener Platz («Aufräumen: 1.3 MB freigegeben», nur wenn restic ihn nennt), Ergebnis der Prüfung («Prüfen: keine Fehler gefunden») |
 | Restore | «14:10 Wiederherstellung Persönlicher Ordner» bzw. ohne Backup-Bezug (nicht zugeordneter oder verwaister Snapshot) «14:10 Wiederherstellung von NAS» / «Wiederherstellung vom 15.11.2026, 14:10» | «120 Dateien wiederhergestellt · 2 Minuten» bzw. Fehler | Zielordner `[Ordner öffnen]`, Anzahl neu / überschrieben / nicht überschrieben |
 | Metadaten | «Backup-Beschreibung gespeichert» / «Beschreibung vom …» | «Gespeichert» bzw. «ausstehend» (FR-49) | betroffenes Backup und Ziel |
 

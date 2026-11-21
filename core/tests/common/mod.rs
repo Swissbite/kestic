@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod zurich;
+
 use std::env;
 use std::path::PathBuf;
 

@@ -79,12 +79,19 @@ impl DaemonCore {
             .iter()
             .position(|d| d.id == d_id)
             .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
+        let old = self.config.destinations[idx].maintenance.clone();
         let mut next = self.config.clone();
-        next.destinations[idx].maintenance = maintenance;
+        next.destinations[idx].maintenance = maintenance.clone();
         self.persist_config(next)?;
         self.ensure_baselines();
         let mut ds = self.load_destination_maintenance_state(&d_id);
         kestic_core::scheduler::clear_maintenance_backoff(&mut ds);
+        kestic_core::scheduler::anchor_changed_maintenance_schedules(
+            &mut ds,
+            &old,
+            &maintenance,
+            self.clock.now_utc(),
+        );
         let _ = self.store_destination_maintenance_state(&d_id, &ds);
         Ok(())
     }

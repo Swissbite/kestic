@@ -6,8 +6,8 @@
 
 use crate::history::{BackupRuntimeState, DestinationMaintenanceState, PauseState};
 use crate::model::{
-    Backup, BackupId, Destination, DestinationId, MaintenanceEntrySchedule, NthWeekday,
-    PendingReason, RunConditions, Schedule, Weekday,
+    Backup, BackupId, Destination, DestinationId, MaintenanceEntrySchedule, MaintenanceSchedule,
+    NthWeekday, PendingReason, RunConditions, Schedule, Weekday,
 };
 use jiff::Timestamp;
 use jiff::civil::{Date, Time};
@@ -443,16 +443,43 @@ pub fn catchup_anchor(
     }
 }
 
-/// Anchors from which due prune and check slots count: the last run of each kind, else the
-/// registration baseline, else `now`.
+/// Anchors from which due prune and check slots count: the later of the last run of each kind
+/// and the time its schedule was last set, else the registration baseline, else `now`.
 pub fn maintenance_anchors(
     state: &DestinationMaintenanceState,
     now: OffsetDateTime,
 ) -> (OffsetDateTime, OffsetDateTime) {
+    let anchor = |last_run: Option<OffsetDateTime>, set_at: Option<OffsetDateTime>| {
+        last_run.max(set_at).or(state.baseline_at).unwrap_or(now)
+    };
     (
-        state.last_prune_at.or(state.baseline_at).unwrap_or(now),
-        state.last_check_at.or(state.baseline_at).unwrap_or(now),
+        anchor(state.last_prune_at, state.prune_schedule_set_at),
+        anchor(state.last_check_at, state.check_schedule_set_at),
     )
+}
+
+/// A new or changed backup schedule counts from `now`: slots before the change are not caught
+/// up and the overdue count starts again.
+pub fn anchor_backup_schedule_at(rs: &mut BackupRuntimeState, now: OffsetDateTime) {
+    rs.baseline_at = Some(now);
+    rs.overdue_anchor_at = Some(now);
+    rs.last_overdue_notified_at = None;
+}
+
+/// Each maintenance schedule (`prune`, `check`) that differs between `old` and `new` counts
+/// from `now`; an unchanged one keeps its anchor.
+pub fn anchor_changed_maintenance_schedules(
+    state: &mut DestinationMaintenanceState,
+    old: &MaintenanceSchedule,
+    new: &MaintenanceSchedule,
+    now: OffsetDateTime,
+) {
+    if old.prune != new.prune {
+        state.prune_schedule_set_at = Some(now);
+    }
+    if old.check != new.check {
+        state.check_schedule_set_at = Some(now);
+    }
 }
 
 /// Forgets a backup's failures: no retry pending, the next regular slot starts normally.

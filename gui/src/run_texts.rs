@@ -73,8 +73,9 @@ pub fn run_result_summary(run: &Run, backup_name: &dyn Fn(&BackupId) -> Option<S
     }
 }
 
-/// Removed snapshots per backup, then the result of the check, one line each. «No snapshots
-/// removed» only for a successful run: after a failed `forget` it would not be true.
+/// Removed snapshots per backup, the space `prune` freed, then the result of the check, one line
+/// each. «No snapshots removed» only for a successful run: after a failed `forget` it would not
+/// be true.
 fn maintenance_result(
     stats: &MaintenanceStats,
     status: RunStatus,
@@ -100,6 +101,9 @@ fn maintenance_result(
         .collect();
     if lines.is_empty() && status == RunStatus::Ok {
         lines.push(i18n("No snapshots removed.").to_string());
+    }
+    if let Some(bytes) = stats.freed_bytes {
+        lines.push(i18n("Clean up: %1 freed").subs(&[&format_bytes(bytes)]));
     }
     if let Some(check) = &stats.check {
         lines.push(if check.num_errors == 0 {

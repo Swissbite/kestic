@@ -120,6 +120,8 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 
 Überschrift und Untertitel des Gesamtstatus (Übersicht und Tray) berechnen GUI und Daemon mit derselben Funktion `kestic_i18n::messages::overall_headline` bzw. `overall_subtitle` aus `OverallStatusDto` (Art, Zähler, aktiver Lauf) und `BlockingStateDto`; das DTO trägt keine `headline`, `subtitle` oder `paused_label`.
 
+**Ergebnis eines Wartungslaufs (`Run.maintenance`):** `Run` (in `RunDetailDto`, den Läufen in `GetState` und im Signal `RunUpdated`) trägt bei Wartungsläufen das optionale Feld `maintenance` (`MaintenanceStats`): `forgets` (je Backup `backup_id` und `removed_snapshots`, `null` ohne lesbares Ergebnis), `pruned` und `checked` (Schritt mit Exit 0), `freed_bytes` (freigegebener Platz aus `prune`, fehlt ohne lesbare Zeile) und `check` (`num_errors` aus `check --json`, auch bei gefundenen Fehlern). Andere Lauf-Arten und ältere Wartungsläufe haben kein `maintenance`. Gespeichert wird es ohne eigene Spalte in `runs.stats_json`, das je Lauf-Art `RunStats` (Backup) bzw. `MaintenanceStats` (Wartung) enthält ([domain-model.md](domain-model.md)); Fakten zur Herkunft in [restic-integration.md](restic-integration.md) §Wartung.
+
 ## Texte und Übersetzungen
 
 Jeder Text hat genau einen Ort:

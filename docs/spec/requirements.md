@@ -99,7 +99,7 @@ Akzeptanzkriterien je Anforderung stehen in den Meilensteinen ([backlog.md](back
 
 | ID | Anforderung | Prio |
 | --- | --- | --- |
-| NFR-01 | **Plattform:** TUXEDO OS als Referenz (Qt ≥ 6.10, KF ≥ 6.24); `.deb` für Debian/Ubuntu-basierte Systeme mit gleicher oder neuerer Basis. Flatpak in Phase 2 | MVP |
+| NFR-01 | **Plattform:** TUXEDO OS als Referenz (Qt ≥ 6.10, KF ≥ 6.24); `.deb` für Debian/Ubuntu-basierte Systeme mit gleicher oder neuerer Basis. Flatpak in Phase 2. Das ausgelieferte `/usr/bin/kestic` enthält keine Pfade des Build-Rechners (Arbeitskopie, Cargo-Verzeichnis, Toolchain); gebaut wird das `.deb` nur über `just deb` ([architecture.md](architecture.md) §Packaging). Test: `shipped_binary_carries_no_build_paths` | MVP |
 | NFR-02 | **Secrets** nie in argv, Logs oder Config. Repo-Passwort immer über `RESTIC_PASSWORD_COMMAND` → App-Helfer `kestic secret get` (gleicher Mechanismus wie FR-34); `kestic secret get` mit unbekannter ID → Exit 1 (genau 1), leere Ausgabe (P4). Backend-Credentials ohne `_COMMAND`-Variante (z. B. `RESTIC_REST_PASSWORD`, `AWS_*`) per Env im Child-Prozess (für denselben Benutzer über `/proc/<pid>/environ` lesbar – akzeptiert, [architecture.md](architecture.md)) | MVP |
 | NFR-03 | Config human-readable (TOML), versionierbar, enthält nur Secret-**Referenzen** | MVP |
 | NFR-04 | Backups laufen ohne offenes Hauptfenster | MVP |

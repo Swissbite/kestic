@@ -122,10 +122,8 @@ impl DaemonCore {
                 kestic_core::scheduler::clear_backup_backoff(&mut rs);
                 rs.last_overdue_notified_at = None;
                 self.queued_backups.retain(|id| id != &updated_for_file.id);
-            } else if matches!(old_schedule, Schedule::ManualOnly) {
-                rs.baseline_at = Some(now);
-                rs.overdue_anchor_at = Some(now);
-                rs.last_overdue_notified_at = None;
+            } else {
+                kestic_core::scheduler::anchor_backup_schedule_at(&mut rs, now);
             }
             let _ = self.store_backup_runtime_state(&updated_for_file.id, &rs);
         }

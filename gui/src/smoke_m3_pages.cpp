@@ -248,11 +248,11 @@ int scenario_backup_now_shortcut(const Ctx& c) {
     return 0;
 }
 
-/// A seeded maintenance run of «Restic Synology» (pending forget removed
-/// two snapshots of «Documents», prune and check ok). (a) The history row names the completed
-/// steps; the detail page shows (b) the title «Maintenance on …», (c) the status line «Cleaned
-/// up and verified · …», (d) the destination instead of «… added», (e) removed snapshots per
-/// backup and the check result in the «Result» tab.
+/// AC-M3-05-9: a seeded maintenance run of «Restic Synology» (pending forget removed two
+/// snapshots of «Documents», prune freed 1.3 MB, check ok). The detail page shows (a) the title
+/// «Maintenance on …», (b) the status line «Cleaned up and verified · …», (c) the destination
+/// below it, and in the «Result» tab (d) the removed snapshots per backup, (e) the freed space
+/// and (f) the check result. The history row names the completed steps as well.
 int scenario_maintenance_run_detail(const Ctx& c) {
     QQuickWindow* w = c.window;
     QAbstractItemModel* runs = model_named(w, "runsModel");
@@ -270,7 +270,7 @@ int scenario_maintenance_run_detail(const Ctx& c) {
     }, 10000);
     M3_CHECK(4702, listed, "maintenance run not in the history");
     M3_CHECK_EQ(4703, role_value(runs, row, "statusText").toString(),
-                loc(c.lang, "Cleaned up and verified", "Aufgeräumt und geprüft"), "(a) history row status");
+                loc(c.lang, "Cleaned up and verified", "Aufgeräumt und geprüft"), "history row status");
     const QString run_id = role_value(runs, row, "runId").toString();
     QMetaObject::invokeMethod(w, "openRunDetailById", Q_ARG(QVariant, run_id));
     M3_CHECK(4704, page_visible(w, "runDetailPage"), "runDetailPage did not open");
@@ -278,20 +278,24 @@ int scenario_maintenance_run_detail(const Ctx& c) {
     finish_incubation(w);
     QObject* page = object_named(w, "runDetailPage");
     M3_CHECK_STARTS(4705, page->property("title").toString(),
-                    loc(c.lang, "Maintenance on ", "Wartung vom "), "(b) page title");
+                    loc(c.lang, "Maintenance on ", "Wartung vom "), "(a) page title");
     QObject* status = object_named(w, "runStatusLineLabel");
     QObject* subtitle = object_named(w, "runSubtitleLabel");
     QObject* result = object_named(w, "runResultSummaryLabel");
     M3_CHECK3(4706, status, subtitle, result, "run detail labels missing");
     M3_CHECK_STARTS(4707, status->property("text").toString(),
-                    loc(c.lang, "Cleaned up and verified · ", "Aufgeräumt und geprüft · "), "(c) status line");
+                    loc(c.lang, "Cleaned up and verified · ", "Aufgeräumt und geprüft · "), "(b) status line");
     M3_CHECK_EQ(4708, subtitle->property("text").toString(), QStringLiteral("Restic Synology"),
-                "(d) destination below the status");
-    M3_CHECK_EQ(4709, result->property("text").toString(),
-                loc(c.lang, "Documents: 2 snapshots removed\nVerify: no errors found",
-                    "Documents: 2 Snapshots entfernt\nPrüfen: keine Fehler gefunden"),
-                "(e) result tab");
-    M3_CHECK(4710, save_screenshot(w, c.out_path), "screenshot failed");
+                "(c) destination below the status");
+    const QStringList lines = result->property("text").toString().split(QLatin1Char('\n'));
+    M3_CHECK(4709, lines.size() == 3, "result tab has three lines");
+    M3_CHECK_EQ(4710, lines.at(0), loc(c.lang, "Documents: 2 snapshots removed", "Documents: 2 Snapshots entfernt"),
+                "(d) removed snapshots");
+    M3_CHECK_EQ(4711, lines.at(1), loc(c.lang, "Clean up: 1.3 MB freed", "Aufräumen: 1.3 MB freigegeben"),
+                "(e) freed space");
+    M3_CHECK_EQ(4712, lines.at(2), loc(c.lang, "Verify: no errors found", "Prüfen: keine Fehler gefunden"),
+                "(f) check result");
+    M3_CHECK(4713, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
 

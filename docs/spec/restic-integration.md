@@ -14,6 +14,7 @@ Folgen für Kestic:
 - **Backends & Releases:** Grundlage für Onboarding ([architecture.md](architecture.md)) und Download inkl. Signaturprüfung (FR-33).
 - **Mindestversion 0.18.0** (Fehler als JSON, Exit-Codes 10–12, `check --json`). Ubuntu 24.04 und Derivate (inkl. TUXEDO OS, KDE neon) liefern 0.16.4 → FR-33 ist MVP.
 - **Fortschritt beim Sichern:** Die Prozentzahl gilt erst, wenn restic mit der Suche fertig ist; bis dahin zeigt Kestic keine Prozentzahl (Abschnitt «Fortschritt beim Sichern»).
+- **Ergebnis eines Wartungslaufs:** entfernte Snapshots aus `forget --json`, freigegebener Platz aus der Textzeile `total prune:` (einzige Ausnahme von «nur JSON», tolerant ausgewertet), Fehlerzahl aus `check --json` (Abschnitt «Wartung»).
 - **Source of Truth (E14):** Dieses Dokument ist Besitzer aller restic-Fakten, die Kestic nutzt (Exit-Codes, Ausschluss-Semantik, Versionen), jeweils mit Datum.
 
 ## Fakten
@@ -33,7 +34,7 @@ Folgen für Kestic:
 
 ### Integration & Locks
 
-- Code liegt unter `internal/`, keine dokumentierte Library-API. Dokumentierte Schnittstelle ist die JSON-Ausgabe (`--json`, [075_scripting](https://restic.readthedocs.io/en/stable/075_scripting.html)): rückwärtskompatibel gedacht, neue Felder/Message-Typen jederzeit möglich, `prune` ohne JSON, unbekannte Exit-Codes = Fehler.
+- Code liegt unter `internal/`, keine dokumentierte Library-API. Dokumentierte Schnittstelle ist die JSON-Ausgabe (`--json`, [075_scripting](https://restic.readthedocs.io/en/stable/075_scripting.html)): rückwärtskompatibel gedacht, neue Felder/Message-Typen jederzeit möglich, `prune` ohne JSON (Textausgabe, Abschnitt «Wartung»), unbekannte Exit-Codes = Fehler.
 - `backup` nimmt einen nicht-exklusiven Lock (mehrere Backups ins selbe Repo gleichzeitig möglich); `forget`, `prune`, `check` nehmen einen exklusiven und brechen bei laufendem Backup mit Exit 11 ab.
 - Lock-Verhalten (geprüft 2026-11-15, restic 0.19.1): SIGTERM → restic räumt auf und gibt den Lock frei; SIGKILL → Lock bleibt liegen, `restic unlock` entfernt ihn (Prozess auf demselben Host läuft nicht mehr). Ein so liegengebliebener **exklusiver** Lock (z. B. von `check`) blockiert danach `backup` und `forget` mit Exit 11, bis `unlock` läuft. Die Lock-Datei enthält System-Hostname, Benutzer, PID und `exclusive`; `RESTIC_HOST`/`--host` ändern nur den Snapshot-Host, nicht den Lock.
 - `forget --dry-run` und `prune --dry-run` nehmen ebenfalls einen Lock und scheitern während eines Backups mit Exit 11; mit `--no-lock` laufen sie. `restore --dry-run` läuft während eines Backups.
@@ -102,6 +103,20 @@ Folgen für Kestic:
 - In `scan_finished` zeigt Kestic `percent_done`, nie kleiner als der zuletzt gezeigte Wert, und die Restzeit aus `seconds_remaining`, wenn vorhanden.
 - Endet ein Lauf, bevor `seconds_remaining` kommt (häufig bei schnellen inkrementellen Läufen), bleibt er bis zum Ende in `scanning`. Die neu geschriebene Menge steht nach dem Lauf aus `summary.data_added` auf der Karte.
 - Normale Läufe laufen ohne `-vv` (zu viel Ausgabe); `-vv` nur für den Dry-Run.
+
+### Wartung (`forget`, `prune`, `check`)
+
+_Geprüft 2026-11-21 mit restic 0.18.0 und 0.19.1 an echten Temp-Repos; Ausgaben als Fixtures in `core/tests/fixtures/` (`forget_remove_two_restic_*.json`, `prune_restic_*.txt`, `check_summary_restic_*.json`)._
+
+- `forget --json` schreibt eine Zeile mit einem JSON-Array von Gruppen; jede Gruppe hat `keep`, `remove` (Snapshots, sonst `null`) und `reasons`. Einen freigegebenen Platz nennt `forget` nicht.
+- `prune` kennt kein JSON: Auch mit `--json` schreibt es dieselbe Textausgabe auf stdout. Die Zusammenfassung enthält die Zeile `total prune: <n> blobs / <Grösse>` (dazu `remaining:` und `unused size after prune:`); die Grösse ist `<n> B` oder eine Zahl mit drei Nachkommastellen und `KiB`, `MiB`, `GiB` oder `TiB` (Faktor 1024), in beiden Versionen gleich.
+- `check --json` schreibt eine `summary`-Zeile: `{"message_type":"summary","num_errors":0,"broken_packs":null,"suggest_repair_index":false,"suggest_prune":false}`. Backup-Zusammenfassungen tragen ebenfalls `message_type: "summary"`, aber kein `num_errors`.
+
+Folgen für Kestic:
+
+- Entfernte Snapshots je Backup: Summe der `remove`-Listen; ohne lesbare Ergebniszeile keine Zahl.
+- Freigegebener Platz: Zeile `total prune:` tolerant auswerten (Nachkommastellen abgeschnitten). Fehlt sie oder ist die Grösse nicht lesbar (andere Version, andere Einheit), gibt es keine Zahl und keinen Fehler; der Lauf bleibt `ok`.
+- Prüfung: nur eine `summary`-Zeile mit `num_errors` gilt als Ergebnis von `check`.
 
 ### Versionen
 

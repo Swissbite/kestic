@@ -482,7 +482,8 @@ impl RunHistory {
             .query_row(
                 "SELECT baseline_at_unix, last_prune_at_unix, last_check_at_unix,
                         maintenance_backoff_attempt, maintenance_backoff_until_unix,
-                        last_maintenance_failure_at_unix
+                        last_maintenance_failure_at_unix, prune_schedule_set_at_unix,
+                        check_schedule_set_at_unix
                  FROM destination_state WHERE destination_id = ?1",
                 params![destination_id.as_str()],
                 |r| {
@@ -492,10 +493,14 @@ impl RunHistory {
                     let maint_attempt: i64 = r.get(3)?;
                     let maint_until: Option<i64> = r.get(4)?;
                     let maint_failed: Option<i64> = r.get(5)?;
+                    let prune_set: Option<i64> = r.get(6)?;
+                    let check_set: Option<i64> = r.get(7)?;
                     Ok(DestinationMaintenanceState {
                         baseline_at: baseline.and_then(unix_to_utc),
                         last_prune_at: prune.and_then(unix_to_utc),
                         last_check_at: check.and_then(unix_to_utc),
+                        prune_schedule_set_at: prune_set.and_then(unix_to_utc),
+                        check_schedule_set_at: check_set.and_then(unix_to_utc),
                         maintenance_backoff_attempt: from_sql_int(3, maint_attempt)?,
                         maintenance_backoff_until: maint_until.and_then(unix_to_utc),
                         last_maintenance_failure_at: maint_failed.and_then(unix_to_utc),
@@ -516,15 +521,18 @@ impl RunHistory {
             "INSERT INTO destination_state (
                 destination_id, baseline_at_unix, last_prune_at_unix, last_check_at_unix,
                 maintenance_backoff_attempt, maintenance_backoff_until_unix,
-                last_maintenance_failure_at_unix
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                last_maintenance_failure_at_unix, prune_schedule_set_at_unix,
+                check_schedule_set_at_unix
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(destination_id) DO UPDATE SET
                 baseline_at_unix = excluded.baseline_at_unix,
                 last_prune_at_unix = excluded.last_prune_at_unix,
                 last_check_at_unix = excluded.last_check_at_unix,
                 maintenance_backoff_attempt = excluded.maintenance_backoff_attempt,
                 maintenance_backoff_until_unix = excluded.maintenance_backoff_until_unix,
-                last_maintenance_failure_at_unix = excluded.last_maintenance_failure_at_unix",
+                last_maintenance_failure_at_unix = excluded.last_maintenance_failure_at_unix,
+                prune_schedule_set_at_unix = excluded.prune_schedule_set_at_unix,
+                check_schedule_set_at_unix = excluded.check_schedule_set_at_unix",
             params![
                 destination_id.as_str(),
                 state.baseline_at.map(|t| t.unix_timestamp()),
@@ -535,6 +543,8 @@ impl RunHistory {
                 state
                     .last_maintenance_failure_at
                     .map(|t| t.unix_timestamp()),
+                state.prune_schedule_set_at.map(|t| t.unix_timestamp()),
+                state.check_schedule_set_at.map(|t| t.unix_timestamp()),
             ],
         )?;
         Ok(())
@@ -747,6 +757,10 @@ pub struct DestinationMaintenanceState {
     pub baseline_at: Option<OffsetDateTime>,
     pub last_prune_at: Option<OffsetDateTime>,
     pub last_check_at: Option<OffsetDateTime>,
+    /// When the `prune` schedule was last set; due slots count from here at the earliest.
+    pub prune_schedule_set_at: Option<OffsetDateTime>,
+    /// When the `check` schedule was last set; due slots count from here at the earliest.
+    pub check_schedule_set_at: Option<OffsetDateTime>,
     pub maintenance_backoff_attempt: u32,
     pub maintenance_backoff_until: Option<OffsetDateTime>,
     pub last_maintenance_failure_at: Option<OffsetDateTime>,

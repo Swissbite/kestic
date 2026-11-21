@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Result of a maintenance run for its run detail page: parsing the output of `forget --json`
-//! and `check --json` (fixtures recorded with restic 0.18.0 and 0.19.1), the completed steps and
-//! storage in the run history.
+//! Result of a maintenance run for its run detail page: parsing the output of `forget --json`,
+//! the text output of `prune` and `check --json` (fixtures recorded with restic 0.18.0 and
+//! 0.19.1), the completed steps and storage in the run history.
 
 use kestic_core::backup::parse_forget_removed_count;
 use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
-use kestic_core::maintenance::parse_check_summary;
+use kestic_core::maintenance::{parse_check_summary, parse_prune_freed_bytes};
 use kestic_core::model::{
     Backup, CheckSummary, Destination, DestinationKind, MaintenanceForget, MaintenanceOutcome,
     MaintenanceStats, Run, RunStats, RunStatus, Source,
@@ -57,6 +57,54 @@ fn finding1_forget_json_yields_removed_snapshot_count() {
         None,
         "(c) no result from a cut-off line"
     );
+}
+
+/// The freed space shown in the run detail page: the `total prune:` line of the real prune output of (a) restic
+/// 0.18.0 and (b) 0.19.1 yields its size in bytes (decimals cut off); sizes in (c) bytes and
+/// (d) GiB are converted; (e) without the line and (f) with an unreadable size there is no
+/// number and no error.
+#[test]
+fn freed_space_from_prune_text_line() {
+    let lines = |text: &str| vec![text.to_string()];
+    assert_eq!(
+        parse_prune_freed_bytes(&fixture_lines("prune_restic_0.18.0.txt")),
+        Some(1297),
+        "(a) 1.267 KiB"
+    );
+    assert_eq!(
+        parse_prune_freed_bytes(&fixture_lines("prune_restic_0.19.1.txt")),
+        Some(1_003_857),
+        "(b) 980.330 KiB"
+    );
+    assert_eq!(
+        parse_prune_freed_bytes(&lines("total prune:           3 blobs / 512 B")),
+        Some(512),
+        "(c) bytes"
+    );
+    assert_eq!(
+        parse_prune_freed_bytes(&lines("total prune:      9 blobs / 2.500 GiB")),
+        Some(2_684_354_560),
+        "(d) GiB"
+    );
+    assert_eq!(
+        parse_prune_freed_bytes(&lines("remaining:  5 blobs / 586.701 KiB")),
+        None,
+        "(e) no total prune line"
+    );
+    for unreadable in [
+        "total prune: 4 blobs / 1.2 XB",
+        "total prune: 4 blobs / many KiB",
+        "total prune: 4 blobs 1.267 KiB",
+        "total prune: 4 blobs / -1 KiB",
+        "total prune: 4 blobs / 99999999999999999999999 TiB",
+        "total prune: 4 blobs / 1.000 PiB",
+    ] {
+        assert_eq!(
+            parse_prune_freed_bytes(&lines(unreadable)),
+            None,
+            "(f) {unreadable}"
+        );
+    }
 }
 
 /// The `check --json` summary of both restic versions is parsed (a) with its error count; (b) a
@@ -148,6 +196,7 @@ fn finding1_history_keeps_maintenance_result_and_backup_stats() {
             removed_snapshots: Some(3),
         }],
         pruned: true,
+        freed_bytes: Some(1_262_485),
         checked: true,
         check: Some(CheckSummary::default()),
     };

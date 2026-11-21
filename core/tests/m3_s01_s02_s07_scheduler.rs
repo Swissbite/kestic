@@ -3,6 +3,9 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
+use common::zurich::{zdt, zurich};
 use kestic_core::clock::FakeClock;
 use kestic_core::config::AppConfig;
 use kestic_core::history::{BackupRuntimeState, PauseState, RunHistory, last_successful_backup_at};
@@ -12,25 +15,14 @@ use kestic_core::model::{
 };
 use kestic_core::scheduler::{
     BackupScheduleEvalInput, DestinationMaintenanceEvalInput, DestinationMaintenanceNeed,
-    PauseDuration, SystemEnvironment, TimezoneSpec, UnmetPrecondition, backup_slots_between,
+    PauseDuration, SystemEnvironment, UnmetPrecondition, backup_slots_between,
     compute_backoff_until, compute_pause_until, evaluate_backup_schedule,
     evaluate_destination_maintenance, next_maintenance_slot, plan_destination_actions,
-    resolve_local_slot,
 };
 use std::collections::{HashMap, HashSet};
 use tempfile::TempDir;
 use time::OffsetDateTime;
 use time::macros::datetime;
-
-fn zurich() -> TimezoneSpec {
-    TimezoneSpec::Named("Europe/Zurich".to_string())
-}
-
-fn zdt(year: i16, month: i8, day: i8, hour: u8, minute: u8) -> OffsetDateTime {
-    let tz = zurich().resolve();
-    let date = jiff::civil::Date::new(year, month, day).expect("valid date");
-    resolve_local_slot(date, hour, minute, &tz).expect("valid local time")
-}
 
 fn make_backup(name: &str, schedule: Schedule) -> (Destination, Backup) {
     let dest = Destination::new(
@@ -1174,6 +1166,7 @@ fn failed_maintenance_respects_backoff_and_does_not_restart_every_tick() {
         maintenance_backoff_attempt: 1,
         maintenance_backoff_until: Some(sun_1205),
         last_maintenance_failure_at: Some(sun_1200),
+        ..DestinationMaintenanceState::default()
     };
     let need_1201 = evaluate_destination_maintenance(
         &DestinationMaintenanceEvalInput {
@@ -1214,6 +1207,7 @@ fn failed_maintenance_respects_backoff_and_does_not_restart_every_tick() {
         maintenance_backoff_attempt: 4,
         maintenance_backoff_until: None,
         last_maintenance_failure_at: Some(sun_1205),
+        ..DestinationMaintenanceState::default()
     };
     let need_same_day = evaluate_destination_maintenance(
         &DestinationMaintenanceEvalInput {

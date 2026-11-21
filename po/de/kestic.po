@@ -3338,3 +3338,6 @@ msgid "%1 scheduled backup missed"
 msgid_plural "%1 scheduled backups missed"
 msgstr[0] "%1 geplantes Backup verpasst"
 msgstr[1] "%1 geplante Backups verpasst"
+
+msgid "Clean up: %1 freed"
+msgstr "Aufräumen: %1 freigegeben"

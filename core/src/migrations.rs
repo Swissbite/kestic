@@ -120,6 +120,11 @@ const HISTORY_MIGRATIONS: &[Migration] = &[
         name: "m3_backoff_tracking",
         apply: apply_v3_backoff_tracking,
     },
+    Migration {
+        version: 4,
+        name: "maintenance_schedule_anchors",
+        apply: apply_v4_maintenance_schedule_anchors,
+    },
 ];
 
 fn apply_v1_base_schema(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
@@ -220,6 +225,22 @@ fn apply_v3_backoff_tracking(tx: &Transaction<'_>) -> Result<(), rusqlite::Error
     Ok(())
 }
 
+fn apply_v4_maintenance_schedule_anchors(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
+    add_column_if_missing(
+        tx,
+        "destination_state",
+        "prune_schedule_set_at_unix",
+        "INTEGER",
+    )?;
+    add_column_if_missing(
+        tx,
+        "destination_state",
+        "check_schedule_set_at_unix",
+        "INTEGER",
+    )?;
+    Ok(())
+}
+
 /// Guard for upgrading pre-versioned databases that still had `user_version = 0`.
 /// Future migrations (`v3+`) can execute `ALTER TABLE` directly inside the transaction.
 fn add_column_if_missing(
@@ -304,8 +325,11 @@ mod tests {
         .expect("seed legacy M2 schema");
         assert_eq!(current_schema_version(&conn).unwrap(), 0);
 
-        run_migrations(&mut conn, history_migrations()).expect("upgrade M2 -> M3");
-        assert_eq!(current_schema_version(&conn).unwrap(), 3);
+        run_migrations(&mut conn, history_migrations()).expect("upgrade M2 -> current");
+        assert_eq!(
+            current_schema_version(&conn).unwrap(),
+            history_migrations().last().unwrap().version
+        );
 
         let pending_reason: Option<String> = conn
             .query_row("SELECT pending_reason FROM runs WHERE id = 'r1'", [], |r| {
@@ -331,12 +355,13 @@ mod tests {
         let mut conn = Connection::open_in_memory().expect("open memory db");
         conn.pragma_update(None, "user_version", 999).unwrap();
         let err = run_migrations(&mut conn, history_migrations()).unwrap_err();
+        let latest = history_migrations().last().unwrap().version;
         assert!(matches!(
             err,
             MigrationError::UnsupportedFutureVersion {
                 current: 999,
-                max_supported: 3
-            }
+                max_supported
+            } if max_supported == latest
         ));
     }
 }

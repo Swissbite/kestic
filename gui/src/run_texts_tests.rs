@@ -38,15 +38,16 @@ fn full_stats(backup_id: &BackupId) -> MaintenanceStats {
             removed_snapshots: Some(2),
         }],
         pruned: true,
+        freed_bytes: Some(1_262_485),
         checked: true,
         check: Some(CheckSummary::default()),
     }
 }
 
-/// The page title of a maintenance run reads «Maintenance on …»; a backup run keeps
-/// «Run on …».
+/// AC-M3-05-9 (a): the page title of a maintenance run reads «Maintenance on …»; a backup run
+/// keeps «Run on …».
 #[test]
-fn finding1_maintenance_title_names_the_run_kind() {
+fn ac_m3_05_9_a_maintenance_title_names_the_run_kind() {
     let backup = sample_backup();
     let run = maintenance_run(None);
     let started = format_datetime_display(run.started_at);
@@ -56,10 +57,10 @@ fn finding1_maintenance_title_names_the_run_kind() {
     assert_eq!(run_detail_title(&backup_run), format!("Run on {started}"));
 }
 
-/// The status of a successful maintenance run names its steps: (a) both, (b) only
-/// clean up, (c) only verify, (d) neither or no recorded result: «Completed».
+/// AC-M3-05-9 (b): the status of a successful maintenance run names its steps: both, only clean
+/// up or only verify; neither or no recorded result gives «Completed».
 #[test]
-fn finding1_maintenance_status_names_completed_steps() {
+fn ac_m3_05_9_b_maintenance_status_names_completed_steps() {
     let with = |pruned, checked| {
         run_status(&maintenance_run(Some(MaintenanceStats {
             pruned,
@@ -68,29 +69,33 @@ fn finding1_maintenance_status_names_completed_steps() {
         })))
         .0
     };
-    assert_eq!(with(true, true), "Cleaned up and verified", "(a)");
-    assert_eq!(with(true, false), "Cleaned up", "(b)");
-    assert_eq!(with(false, true), "Verified", "(c)");
-    assert_eq!(with(false, false), "Completed", "(d) only forget");
+    assert_eq!(
+        with(true, true),
+        "Cleaned up and verified",
+        "(b) both steps"
+    );
+    assert_eq!(with(true, false), "Cleaned up", "(b) only clean up");
+    assert_eq!(with(false, true), "Verified", "(b) only verify");
+    assert_eq!(with(false, false), "Completed", "(b) only forget");
     assert_eq!(
         run_status(&maintenance_run(None)).0,
         "Completed",
-        "(d) old run"
+        "(b) old run without result"
     );
 }
 
-/// Below the status a maintenance run shows its destination, not «… added».
+/// AC-M3-05-9 (c): below the status a maintenance run shows its destination, not «… added».
 #[test]
-fn finding1_maintenance_subtitle_is_the_destination() {
+fn ac_m3_05_9_c_maintenance_subtitle_is_the_destination() {
     let run = maintenance_run(None);
     assert_eq!(run_detail_subtitle(&run, None, "NAS"), "NAS");
 }
 
-/// The «Result» tab lists (a) the removed snapshots per backup and (b) the check
-/// result; (c) one removed snapshot uses the singular; (d) without forget it says that no
-/// snapshot was removed; (e) a deleted backup is named as deleted.
+/// AC-M3-05-9 (d), (e), (f): the «Result» tab lists (d) the removed snapshots per backup, (e) the
+/// space prune freed and (f) the check result. Also: one removed snapshot uses the singular,
+/// without forget it says that no snapshot was removed, and a deleted backup is named as deleted.
 #[test]
-fn finding1_maintenance_result_lists_removed_snapshots_and_check() {
+fn ac_m3_05_9_maintenance_result_lists_removed_snapshots_freed_space_and_check() {
     let backup = sample_backup();
     let names = |id: &BackupId| (id == &backup.id).then(|| backup.name.clone());
     let mut stats = full_stats(&backup.id);
@@ -99,24 +104,28 @@ fn finding1_maintenance_result_lists_removed_snapshots_and_check() {
     assert_eq!(
         lines.first().copied(),
         Some("Documents: 2 snapshots removed"),
-        "(a)"
+        "(d)"
     );
+    assert_eq!(lines.get(1).copied(), Some("Clean up: 1.3 MB freed"), "(e)");
     assert_eq!(
-        lines.get(1).copied(),
+        lines.get(2).copied(),
         Some("Verify: no errors found"),
-        "(b)"
+        "(f)"
     );
 
     stats.forgets[0].removed_snapshots = Some(1);
     let single = run_result_summary(&maintenance_run(Some(stats.clone())), &names);
     assert!(
         single.starts_with("Documents: 1 snapshot removed\n"),
-        "(c) singular: {single}"
+        "singular: {single}"
     );
 
     stats.forgets.clear();
     let none = run_result_summary(&maintenance_run(Some(stats.clone())), &names);
-    assert!(none.starts_with("No snapshots removed."), "(d) {none}");
+    assert!(
+        none.starts_with("No snapshots removed."),
+        "without forget: {none}"
+    );
 
     stats.forgets.push(MaintenanceForget {
         backup_id: BackupId::generate().expect("id"),
@@ -125,7 +134,7 @@ fn finding1_maintenance_result_lists_removed_snapshots_and_check() {
     let deleted = run_result_summary(&maintenance_run(Some(stats)), &names);
     assert!(
         deleted.starts_with("Deleted backup: 3 snapshots removed"),
-        "(e) {deleted}"
+        "deleted backup: {deleted}"
     );
 }
 
@@ -142,7 +151,8 @@ fn finding1_maintenance_result_counts_check_errors() {
 
 /// The «Result» tab claims nothing it does not know: (a) a forget without a readable count names
 /// no number; (b) after a failed forget (run `Warning`) it does not say that no snapshot was
-/// removed; (c) a run that is still active shows no result yet.
+/// removed; (c) a run that is still active shows no result yet; (d) without a readable size from
+/// prune it names no freed space.
 #[test]
 fn finding1_maintenance_result_claims_nothing_unknown() {
     let backup = sample_backup();
@@ -160,11 +170,19 @@ fn finding1_maintenance_result_claims_nothing_unknown() {
     warned.status = RunStatus::Warning;
     assert_eq!(
         run_result_summary(&warned, &names),
-        "Verify: no errors found",
+        "Clean up: 1.3 MB freed\nVerify: no errors found",
         "(b)"
     );
 
     let clock = FakeClock::new(datetime!(2026-11-21 15:25:00 UTC));
     let active = Run::new_maintenance(&clock, backup.destination_id.clone()).expect("run");
     assert_eq!(run_result_summary(&active, &names), "", "(c)");
+
+    let mut no_size = full_stats(&backup.id);
+    no_size.freed_bytes = None;
+    let text = run_result_summary(&maintenance_run(Some(no_size)), &names);
+    assert_eq!(
+        text, "Documents: 2 snapshots removed\nVerify: no errors found",
+        "(d)"
+    );
 }
