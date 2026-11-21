@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Detection of replaced executable binaries after package updates (`dpkg` rename, E11).
+//! Detection of replaced executable binaries after package updates (`dpkg` rename).
 
 use std::fs;
 use std::io;
@@ -88,5 +88,57 @@ impl BinaryIdentity {
             }
             Err(_) => BinaryStatus::Unchanged,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_file_is_not_reported_as_replaced() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("kestic-test-exe");
+        fs::write(&exe, b"v1").expect("write");
+        let identity = BinaryIdentity::from_path(exe).expect("identity");
+        assert_eq!(identity.check(), BinaryStatus::Unchanged);
+    }
+
+    #[test]
+    fn rename_over_the_path_is_reported_as_inode_changed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("kestic-test-exe");
+        fs::write(&exe, b"v1").expect("write");
+        let identity = BinaryIdentity::from_path(exe.clone()).expect("identity");
+        let update = dir.path().join("kestic-test-exe.new");
+        fs::write(&update, b"v2").expect("write");
+        fs::rename(&update, &exe).expect("rename");
+        assert_eq!(
+            identity.check(),
+            BinaryStatus::Replaced(ReplaceReason::InodeChanged)
+        );
+    }
+
+    #[test]
+    fn removed_file_is_reported_as_path_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("kestic-test-exe");
+        fs::write(&exe, b"v1").expect("write");
+        let identity = BinaryIdentity::from_path(exe.clone()).expect("identity");
+        fs::remove_file(&exe).expect("remove");
+        assert_eq!(
+            identity.check(),
+            BinaryStatus::Replaced(ReplaceReason::PathMissing)
+        );
+    }
+
+    #[test]
+    fn reasons_have_stable_log_identifiers() {
+        assert_eq!(ReplaceReason::InodeChanged.as_str(), "inode_changed");
+        assert_eq!(ReplaceReason::PathMissing.as_str(), "path_missing");
+        assert_eq!(
+            ReplaceReason::ProcSelfExeDeleted.as_str(),
+            "proc_self_exe_deleted"
+        );
     }
 }

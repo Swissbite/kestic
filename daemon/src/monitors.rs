@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! System D-Bus monitors and inhibitors (`UPower`, `NetworkManager`, `systemd-logind`, `UDisks2`)
-//! with injectable bus mode (`system` vs isolated `session` fakes for `AC-M1-Q-1`) and safe
-//! headless fallbacks (`M3-S03`, `M3-S04`, `M3-S09`, `M3-S13`).
+//! with injectable bus mode (`system` vs isolated `session` fakes for tests) and safe
+//! headless fallbacks.
 
 use crate::i18n::i18n;
 use kestic_core::scheduler::SystemEnvironment;
+use kestic_core::sync::LockUnpoisoned;
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
@@ -23,7 +24,6 @@ use zbus::{
 pub const DEFAULT_UPOWER_DEST: &str = "org.freedesktop.UPower";
 pub const DEFAULT_NM_DEST: &str = "org.freedesktop.NetworkManager";
 pub const DEFAULT_LOGIND_DEST: &str = "org.freedesktop.login1";
-pub const DEFAULT_UDISKS2_DEST: &str = "org.freedesktop.UDisks2";
 
 /// NetworkManager connection type of Wi-Fi profiles: only these are offered as allowed networks.
 const NM_WIFI_CONNECTION_TYPE: &str = "802-11-wireless";
@@ -37,7 +37,6 @@ pub struct MonitorBusConfig {
     pub upower_dest: String,
     pub nm_dest: String,
     pub logind_dest: String,
-    pub udisks2_dest: String,
     /// Enables spawning the background D-Bus signal listener thread.
     pub enable_watcher: bool,
 }
@@ -49,7 +48,6 @@ impl Default for MonitorBusConfig {
             upower_dest: DEFAULT_UPOWER_DEST.to_string(),
             nm_dest: DEFAULT_NM_DEST.to_string(),
             logind_dest: DEFAULT_LOGIND_DEST.to_string(),
-            udisks2_dest: DEFAULT_UDISKS2_DEST.to_string(),
             enable_watcher: true,
         }
     }
@@ -131,7 +129,7 @@ async fn get_prop_val(
 /// Reads current UPower & NetworkManager state asynchronously.
 ///
 /// Falls back to [`SystemEnvironment::desktop_connected()`] when services are absent
-/// (e.g., headless containers or isolated M1/M2 test buses without system fakes).
+/// (e.g., headless containers or isolated test buses without system fakes).
 pub async fn read_system_environment_async(
     conn: &Connection,
     cfg: &MonitorBusConfig,
@@ -259,7 +257,7 @@ pub fn read_system_environment(cfg: &MonitorBusConfig) -> SystemEnvironment {
     })
 }
 
-/// Queries NetworkManager for known saved connection IDs (`§7.4`, `M3-S14`).
+/// Queries NetworkManager for known saved connection IDs.
 pub fn list_known_networks(cfg: &MonitorBusConfig) -> Vec<String> {
     block_on(async move {
         let Ok(conn) = connect_target_bus(cfg).await else {
@@ -314,7 +312,7 @@ pub fn list_known_networks(cfg: &MonitorBusConfig) -> Vec<String> {
     })
 }
 
-/// Active `systemd-logind` sleep `delay` inhibitor (`M3-S09`, `AC-M3-09-1..2`).
+/// Active `systemd-logind` sleep `delay` inhibitor.
 ///
 /// Retains **both** the `zbus::Connection` and `OwnedFd` for its entire lifetime so logind
 /// keeps the inhibitor active until [`LogindSleepInhibitor::release`] or drop.
@@ -374,11 +372,6 @@ impl LogindSleepInhibitor {
     pub fn release(&mut self) {
         self.fd.take();
     }
-
-    /// Returns whether the inhibitor FD is currently held open.
-    pub fn is_held(&self) -> bool {
-        self.fd.is_some()
-    }
 }
 
 fn build_signal_rule<'a>(
@@ -417,12 +410,7 @@ impl StopSignal {
     /// Requests the stop and wakes the task currently waiting in [`StopSignal::until_stopped`].
     pub(crate) fn stop(&self) {
         self.inner.stopped.store(true, Ordering::SeqCst);
-        let waker = self
-            .inner
-            .waker
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take();
+        let waker = self.inner.waker.lock_unpoisoned().take();
         if let Some(w) = waker {
             w.wake();
         }
@@ -439,7 +427,7 @@ impl StopSignal {
             if self.is_stopped() {
                 return Poll::Ready(None);
             }
-            *self.inner.waker.lock().unwrap_or_else(|p| p.into_inner()) = Some(cx.waker().clone());
+            *self.inner.waker.lock_unpoisoned() = Some(cx.waker().clone());
             if self.is_stopped() {
                 return Poll::Ready(None);
             }
@@ -696,10 +684,10 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
-    /// M3 manual acceptance (2026-11-19): a stop request must end a listener waiting in an
-    /// await that never completes (e.g. a D-Bus reply that never arrives).
+    /// A stop request ends a listener that waits in an await which never completes, for
+    /// example a D-Bus reply that never arrives.
     #[test]
-    fn m3_acceptance_stop_signal_interrupts_await_that_never_completes() {
+    fn acceptance_stop_signal_interrupts_await_that_never_completes() {
         let stop = StopSignal::default();
         let stop_bg = stop.clone();
         let (tx, rx) = mpsc::channel();
@@ -717,10 +705,10 @@ mod tests {
         assert_eq!(res, None);
     }
 
-    /// M3 manual acceptance (2026-11-19): `stop()` may not wait forever for a listener thread
-    /// that does not react, or the daemon hangs in shutdown with tray and D-Bus still alive.
+    /// `stop()` returns within the timeout even when the listener thread ignores the stop, so
+    /// the daemon does not hang in shutdown with tray and D-Bus still alive.
     #[test]
-    fn m3_acceptance_stop_returns_within_timeout_when_thread_ignores_stop() {
+    fn acceptance_stop_returns_within_timeout_when_thread_ignores_stop() {
         let release = Arc::new(AtomicBool::new(false));
         let release_bg = Arc::clone(&release);
         let handle = SystemMonitorHandle::spawn(StopSignal::default(), move || {
@@ -740,9 +728,9 @@ mod tests {
         );
     }
 
-    /// The bounded wait does not cut short a thread that ends on its own after the stop.
+    /// The bounded wait in `stop()` still joins a thread that ends on its own after the stop.
     #[test]
-    fn m3_acceptance_stop_joins_thread_that_reacts_to_stop() {
+    fn acceptance_stop_joins_thread_that_reacts_to_stop() {
         let stop = StopSignal::default();
         let stop_bg = stop.clone();
         let ended = Arc::new(AtomicBool::new(false));

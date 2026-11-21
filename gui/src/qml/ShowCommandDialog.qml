@@ -41,7 +41,7 @@ Kirigami.Dialog {
             Layout.fillWidth: true
         }
 
-        Controls.TextArea {
+        TabNavTextArea {
             id: commandTextArea
             objectName: "showCommandTextArea"
             readOnly: true
@@ -50,24 +50,9 @@ Kirigami.Dialog {
             wrapMode: TextEdit.Wrap
             Layout.fillWidth: true
 
-            Keys.onTabPressed: function(event) {
-                var next = nextItemInFocusChain(true);
-                if (next) next.forceActiveFocus(Qt.TabFocusReason);
-                event.accepted = true;
-            }
-            Keys.onBacktabPressed: function(event) {
-                var prev = nextItemInFocusChain(false);
-                if (prev) prev.forceActiveFocus(Qt.BacktabFocusReason);
-                event.accepted = true;
-            }
-
-            Rectangle {
-                anchors.fill: parent
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: commandTextArea.activeFocus ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
+            FocusRing {
+                target: commandTextArea
+                z: 0
             }
         }
     }

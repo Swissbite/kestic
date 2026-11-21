@@ -7,13 +7,11 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-Kirigami.ScrollablePage {
+EditorPage {
     id: page
     objectName: "backupConditionsEditPage"
     title: i18n("Run Conditions")
 
-    required property var rootWindow
-    required property var appBackend
     required property string backupId
 
     property var initialData: null
@@ -25,8 +23,7 @@ Kirigami.ScrollablePage {
     property bool skipOnMetered: false
     property var allowedNetworks: []
     property var knownNetworks: []
-    // Network conditions only apply to network destinations, not to a local folder or drive
-    // (decision 2026-11-20).
+    // Network conditions only apply to network destinations, not to a local folder or drive.
     readonly property bool networkDestination: {
         var dest = initialData ? rootWindow.findDestinationData(initialData.destinationId) : null;
         return dest ? dest.kindName !== "local" : true;
@@ -46,33 +43,22 @@ Kirigami.ScrollablePage {
     }
 
     function normalizedConditionsJson(rawJson) {
-        try {
-            var obj = JSON.parse(rawJson || "{}");
-            var nets = (obj.allowed_networks || []).slice();
-            var net = page.networkDestination;
-            return JSON.stringify({
-                require_ac_power: obj.require_ac_power !== undefined ? Boolean(obj.require_ac_power) : true,
-                require_network: net && (obj.require_network !== undefined ? Boolean(obj.require_network) : true),
-                skip_on_metered_network: net && Boolean(obj.skip_on_metered_network),
-                allowed_networks: net ? nets : []
-            });
-        } catch (e) {
-            return "{}";
-        }
+        var obj = rootWindow.parseJsonOr(rawJson, {});
+        var nets = (obj.allowed_networks || []).slice();
+        var net = page.networkDestination;
+        return JSON.stringify({
+            require_ac_power: obj.require_ac_power !== undefined ? Boolean(obj.require_ac_power) : true,
+            require_network: net && (obj.require_network !== undefined ? Boolean(obj.require_network) : true),
+            skip_on_metered_network: net && Boolean(obj.skip_on_metered_network),
+            allowed_networks: net ? nets : []
+        });
     }
 
-    readonly property bool dirty: initialData !== null
+    dirty: initialData !== null
         && normalizedConditionsJson(currentConditionsJson()) !== normalizedConditionsJson(savedConditionsJson)
 
-    onDirtyChanged: appBackend.has_unsaved_changes = dirty
-
     function loadKnownNetworks() {
-        var list = [];
-        try {
-            list = JSON.parse(appBackend.listKnownNetworksJson() || "[]");
-        } catch (e) {
-            list = [];
-        }
+        var list = rootWindow.parseJsonOr(appBackend.listKnownNetworksJson(), []);
         var merged = list.slice();
         for (var i = 0; i < allowedNetworks.length; ++i) {
             if (merged.indexOf(allowedNetworks[i]) < 0) {
@@ -84,12 +70,7 @@ Kirigami.ScrollablePage {
 
     function loadFromSaved(condJson) {
         hydrating = true;
-        var obj = {};
-        try {
-            obj = JSON.parse(condJson || "{}");
-        } catch (e) {
-            obj = {};
-        }
+        var obj = rootWindow.parseJsonOr(condJson, {});
         requireAcPower = obj.require_ac_power !== undefined ? Boolean(obj.require_ac_power) : true;
         requireNetwork = obj.require_network !== undefined ? Boolean(obj.require_network) : true;
         skipOnMetered = Boolean(obj.skip_on_metered_network);
@@ -142,6 +123,10 @@ Kirigami.ScrollablePage {
         return false;
     }
 
+    function saveForGuard() {
+        return commitSave(false);
+    }
+
     Component.onCompleted: {
         initialData = rootWindow.findBackupData(backupId);
         if (initialData) {
@@ -150,25 +135,6 @@ Kirigami.ScrollablePage {
         } else {
             loadFromSaved("{}");
         }
-    }
-
-    onBackRequested: function(event) {
-        if (dirty) {
-            event.accepted = true;
-            unsavedDialog.open();
-        }
-    }
-
-    function handleEscape() {
-        if (unsavedDialog.opened || unsavedDialog.visible) {
-            unsavedDialog.close();
-            return true;
-        }
-        if (dirty) {
-            unsavedDialog.open();
-            return true;
-        }
-        return false;
     }
 
     actions: [
@@ -185,26 +151,17 @@ Kirigami.ScrollablePage {
             objectName: "closeConditionsAction"
             icon.name: "window-close"
             text: Texts.label("close")
-            onTriggered: {
-                if (page.dirty) {
-                    unsavedDialog.open();
-                } else {
-                    rootWindow.popSubPage();
-                }
-            }
+            onTriggered: page.requestClose()
         }
     ]
 
-    UnsavedChangesDialog {
-        id: unsavedDialog
-        objectName: "unsavedConditionsDialog"
-        subtitle: i18n("You have unsaved changes to run conditions.")
-        onSaveRequested: page.commitSave(true)
-        onDiscardRequested: {
-            appBackend.has_unsaved_changes = false;
-            page.loadFromSaved(page.savedConditionsJson);
-            rootWindow.popSubPage();
-        }
+    unsavedObjectName: "unsavedConditionsDialog"
+    unsavedSubtitle: i18n("You have unsaved changes to run conditions.")
+
+    onUnsavedSaveRequested: page.commitSave(true)
+    onUnsavedDiscardRequested: {
+        page.loadFromSaved(page.savedConditionsJson);
+        rootWindow.popSubPage();
     }
 
     ColumnLayout {

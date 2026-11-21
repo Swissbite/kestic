@@ -18,17 +18,8 @@ Kirigami.ScrollablePage {
 
     property string selectedDestinationId: ""
 
-    function focusSelectedRow() {
-        for (var i = 0; i < destinationsListView.count; ++i) {
-            var item = destinationsListView.itemAtIndex(i);
-            if (item && item.highlighted) {
-                destinationsListView.currentIndex = i;
-                rootWindow.focusItemInPageStack(item);
-                return true;
-            }
-        }
-        return false;
-    }
+    // The list whose selected row gets the focus when the page is shown again.
+    readonly property var primaryList: destinationsListView
 
     header: Kirigami.InlineViewHeader {
         width: parent.width
@@ -54,14 +45,7 @@ Kirigami.ScrollablePage {
 
         onActiveFocusChanged: {
             if (activeFocus && count > 0 && currentIndex < 0) {
-                var targetIdx = 0;
-                for (var i = 0; i < count; ++i) {
-                    if (destinationsModel.data(destinationsModel.index(i, 0), 0) === page.selectedDestinationId) {
-                        targetIdx = i;
-                        break;
-                    }
-                }
-                currentIndex = targetIdx;
+                currentIndex = Math.max(0, destinationsModel.rowOf(page.selectedDestinationId));
             }
         }
 
@@ -89,7 +73,6 @@ Kirigami.ScrollablePage {
             required property string destinationId
             required property string name
             required property string kindName
-            required property string kindLabel
             required property int backupCount
             required property string statusText
             required property string statusIcon
@@ -107,16 +90,11 @@ Kirigami.ScrollablePage {
                 rootWindow.openDestinationDetailById(destinationId);
             }
 
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: row.highlighted ? 2 : 0
-                z: 10
+            FocusRing {
                 // Focus ring only: a white wash over the row made the selected text unreadable.
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (row.activeFocus || row.visualFocus) ? 2 : 0
-                border.color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                visible: border.width > 0
+                target: row
+                anchors.margins: row.highlighted ? 2 : 0
+                ringColor: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {

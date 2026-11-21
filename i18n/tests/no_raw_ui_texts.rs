@@ -9,31 +9,14 @@
 //! Together with `simple_language.rs` (which checks every catalog entry) this covers all visible
 //! texts.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+mod common;
 
-fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root")
-        .to_path_buf()
-}
+use common::workspace::{files_with_ext, workspace_root};
+use std::fs;
+use std::path::PathBuf;
 
 fn files(dir: &str, ext: &str) -> Vec<PathBuf> {
-    fn walk(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
-        for entry in fs::read_dir(dir).expect("read dir") {
-            let path = entry.expect("entry").path();
-            if path.is_dir() {
-                walk(&path, ext, out);
-            } else if path.extension().is_some_and(|e| e == ext) {
-                out.push(path);
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(&root().join(dir), ext, &mut out);
-    out.sort();
-    out
+    files_with_ext(&workspace_root().join(dir), ext)
 }
 
 /// A string literal and whether it is an argument of a translating call.
@@ -180,16 +163,6 @@ const RUST_SINKS: &[&str] = &[
     "info_message: ",
 ];
 
-/// Developer-only spike commands of milestone M0 (`kestic spike-*`), not product UI.
-const SPIKE_TEXTS: &[&str] = &[
-    "Kestic backup inhibit spike check (F9)",
-    "Kestic spike backup",
-    "Kestic spike notification",
-    "Testing kestic.notifyrc event filtering with desktop-entry hint.",
-    "Backing up Personal folder ({pct} %)",
-    "Spike tray ({initial_status:?})",
-];
-
 /// Arguments of a call sink up to its closing parenthesis, or the value of a field sink up to
 /// the next comma or line end.
 fn sink_region(rest: &str, is_call: bool) -> &str {
@@ -235,10 +208,8 @@ fn rust_passes_no_raw_sentence_to_the_user() {
                 let rest = &src[at + sink.len()..];
                 let args = sink_region(rest, sink.ends_with('(')).replace('\n', " ");
                 for lit in literals(&args) {
-                    let allowed = lit.translated
-                        || !has_words(&lit.text)
-                        || !lit.text.contains(' ')
-                        || SPIKE_TEXTS.contains(&lit.text.as_str());
+                    let allowed =
+                        lit.translated || !has_words(&lit.text) || !lit.text.contains(' ');
                     if !allowed {
                         raw.push(format!("{}: {sink}{}", file.display(), lit.text));
                     }

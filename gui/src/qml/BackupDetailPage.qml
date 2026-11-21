@@ -16,7 +16,7 @@ Kirigami.ScrollablePage {
     required property var appBackend
     required property string backupId
 
-    // Shortcut of «Back Up Now» for the backup shown here (U12).
+    // Shortcut of «Back Up Now» for the backup shown here.
     readonly property string backUpNowShortcut: "Ctrl+Shift+B"
     property var currentData: null
     property var nestedWarnings: []
@@ -26,16 +26,8 @@ Kirigami.ScrollablePage {
         var found = rootWindow.findBackupData(backupId);
         currentData = found;
         if (found) {
-            try {
-                nestedWarnings = JSON.parse(found.nestedWarningsJson || "[]");
-            } catch (e) {
-                nestedWarnings = [];
-            }
-            try {
-                lintWarnings = JSON.parse(found.excludeLintJson || "[]");
-            } catch (e) {
-                lintWarnings = [];
-            }
+            nestedWarnings = rootWindow.parseJsonOr(found.nestedWarningsJson, []);
+            lintWarnings = rootWindow.parseJsonOr(found.excludeLintJson, []);
         } else {
             nestedWarnings = [];
             lintWarnings = [];
@@ -89,7 +81,6 @@ Kirigami.ScrollablePage {
             }
         },
         Kirigami.Action {
-            id: detailPauseAction
             objectName: "backupDetailPauseAction"
             icon.name: currentData && currentData.isPaused ? "media-playback-start" : "state-pause"
             text: currentData && currentData.isPaused ? Texts.label("resume") : i18n("Pause…")
@@ -98,7 +89,6 @@ Kirigami.ScrollablePage {
             onTriggered: currentData && currentData.isPaused ? appBackend.resumeBackup(backupId) : backupPauseMenu.popup()
         },
         Kirigami.Action {
-            id: detailBackUpAnywayAction
             objectName: "backupDetailBackUpAnywayAction"
             icon.name: "media-playback-start"
             text: Texts.label("back_up_now_anyway")
@@ -181,7 +171,6 @@ Kirigami.ScrollablePage {
         visible: currentData !== null
 
         Kirigami.InlineMessage {
-            id: pausedBanner
             objectName: "backupDetailPausedBanner"
             Layout.fillWidth: true
             type: Kirigami.MessageType.Information
@@ -198,7 +187,6 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.InlineMessage {
-            id: errorBanner
             objectName: "backupDetailErrorBanner"
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
@@ -242,7 +230,6 @@ Kirigami.ScrollablePage {
             spacing: Kirigami.Units.smallSpacing
 
             Kirigami.InlineMessage {
-                id: excludeLintWarningBanner
                 objectName: "backupDetailLintWarningBanner"
                 Layout.fillWidth: true
                 type: Kirigami.MessageType.Warning
@@ -287,7 +274,6 @@ Kirigami.ScrollablePage {
                     }
 
                     Controls.Label {
-                        id: backupStatusLine
                         objectName: "backupDetailStatusLine"
                         text: currentData ? (currentData.statusText + (currentData.lastRunSummary !== "" ? " · " + currentData.lastRunSummary : "")) : ""
                         color: Kirigami.Theme.textColor
@@ -310,7 +296,6 @@ Kirigami.ScrollablePage {
             }
 
             Controls.Label {
-                id: backupNextScheduledLabel
                 objectName: "backupDetailNextScheduledLabel"
                 visible: currentData !== null && !currentData.isRunning && currentData.nextScheduledAtText !== ""
                 text: currentData ? currentData.nextScheduledAtText : ""
@@ -333,7 +318,6 @@ Kirigami.ScrollablePage {
                 spacing: Kirigami.Units.smallSpacing
 
                 Controls.Button {
-                    id: inlineBackUpNowButton
                     objectName: "backupDetailBackUpNowButton"
                     visible: !(currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password")
                     icon.name: currentData && currentData.isRunning ? "process-stop" : "media-playback-start"
@@ -355,7 +339,6 @@ Kirigami.ScrollablePage {
                 }
 
                 Controls.Button {
-                    id: inlineUpdatePasswordButton
                     objectName: "backupDetailUpdatePasswordButton"
                     visible: currentData !== null && !currentData.isRunning && currentData.hasError && currentData.errorAction === "update_stored_password"
                     icon.name: "dialog-password"
@@ -382,44 +365,15 @@ Kirigami.ScrollablePage {
             text: i18n("Snapshots")
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: showSnapshotsButton
             objectName: "showSnapshotsButton"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("Show all snapshots")
+            accessibleName: i18n("Show all snapshots")
+            iconSource: "view-list-details"
+            labelText: i18n("Show all snapshots")
             onClicked: {
                 rootWindow.nextTriggerItem = showSnapshotsButton;
                 rootWindow.openBackupSnapshotsPage(backupId, currentData ? currentData.name : "");
-            }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (showSnapshotsButton.activeFocus || showSnapshotsButton.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: "view-list-details"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: i18n("Show all snapshots")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
             }
         }
 
@@ -428,300 +382,97 @@ Kirigami.ScrollablePage {
             text: Texts.label("settings")
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: editSourceRow
             objectName: "editSourceRow"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("Edit source folder")
+            accessibleName: i18n("Edit source folder")
+            iconSource: currentData && currentData.sourceKind === "drive" ? "drive-harddisk" : "folder"
+            labelText: currentData
+                ? i18n("Source: %1 (%2)", currentData.sourcePath, currentData.sourceKindLabel)
+                : Texts.label("source")
             onClicked: {
                 rootWindow.nextTriggerItem = editSourceRow;
                 rootWindow.openBackupSourcePage(backupId);
             }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (editSourceRow.activeFocus || editSourceRow.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: currentData && currentData.sourceKind === "drive" ? "drive-harddisk" : "folder"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: currentData
-                        ? i18n("Source: %1 (%2)", currentData.sourcePath, currentData.sourceKindLabel)
-                        : Texts.label("source")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
-            }
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: editExcludesRow
             objectName: "editExcludesRow"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("Edit exclude rules")
+            accessibleName: i18n("Edit exclude rules")
+            iconSource: "filter-symbolic"
+            labelText: currentData
+                ? i18n("Exclude rules: %1", currentData.excludeSummary)
+                : i18n("Exclude rules")
             onClicked: {
                 rootWindow.nextTriggerItem = editExcludesRow;
                 rootWindow.openBackupExcludesPage(backupId);
             }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (editExcludesRow.activeFocus || editExcludesRow.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: "filter-symbolic"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: currentData
-                        ? i18n("Exclude rules: %1", currentData.excludeSummary)
-                        : i18n("Exclude rules")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
-            }
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: editRetentionRow
             objectName: "editRetentionRow"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("Edit retention")
+            accessibleName: i18n("Edit retention")
+            iconSource: "chronometer"
+            labelText: currentData
+                ? i18n("Retention: %1", currentData.retentionSummary)
+                : Texts.label("retention")
             onClicked: {
                 rootWindow.nextTriggerItem = editRetentionRow;
                 rootWindow.openBackupRetentionPage(backupId);
             }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (editRetentionRow.activeFocus || editRetentionRow.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: "chronometer"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: currentData
-                        ? i18n("Retention: %1", currentData.retentionSummary)
-                        : Texts.label("retention")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
-            }
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: editScheduleRow
             objectName: "editScheduleRow"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("Edit schedule")
+            accessibleName: i18n("Edit schedule")
+            iconSource: "view-calendar"
+            labelText: currentData
+                ? i18n("Schedule: %1", currentData.scheduleSummary)
+                : Texts.label("schedule")
             onClicked: {
                 rootWindow.nextTriggerItem = editScheduleRow;
                 rootWindow.openBackupSchedulePage(backupId);
             }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (editScheduleRow.activeFocus || editScheduleRow.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: "view-calendar"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: currentData
-                        ? i18n("Schedule: %1", currentData.scheduleSummary)
-                        : Texts.label("schedule")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
-            }
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: editConditionsRow
             objectName: "editConditionsRow"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("Edit run conditions")
+            accessibleName: i18n("Edit run conditions")
+            iconSource: "preferences-system-power"
+            labelText: currentData
+                ? i18n("Run conditions: %1", currentData.conditionsSummary)
+                : Texts.label("run_conditions")
             onClicked: {
                 rootWindow.nextTriggerItem = editConditionsRow;
                 rootWindow.openBackupConditionsPage(backupId);
             }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (editConditionsRow.activeFocus || editConditionsRow.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: "preferences-system-power"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: currentData
-                        ? i18n("Run conditions: %1", currentData.conditionsSummary)
-                        : Texts.label("run_conditions")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
-            }
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: editDestinationRow
             objectName: "editDestinationRow"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("Assign destination")
+            accessibleName: i18n("Assign destination")
+            iconSource: "network-server"
+            labelText: i18n("Destination: %1", currentData ? currentData.destinationName : "")
             onClicked: {
                 rootWindow.nextTriggerItem = editDestinationRow;
                 rootWindow.openBackupReassignPage(backupId);
             }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (editDestinationRow.activeFocus || editDestinationRow.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: "network-server"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: i18n("Destination: %1", currentData ? currentData.destinationName : "")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
-            }
         }
 
-        Controls.ItemDelegate {
+        NavRow {
             id: viewFullConfigRow
             objectName: "viewFullConfigRow"
-            Layout.fillWidth: true
-            activeFocusOnTab: true
-            Accessible.name: i18n("View full configuration")
+            accessibleName: i18n("View full configuration")
+            iconSource: "document-properties"
+            labelText: i18n("View full configuration")
             onClicked: {
                 rootWindow.nextTriggerItem = viewFullConfigRow;
                 rootWindow.openBackupFullConfigPage(backupId);
-            }
-
-            Rectangle {
-                anchors.fill: parent
-                z: 10
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (viewFullConfigRow.activeFocus || viewFullConfigRow.visualFocus) ? 2 : 0
-                border.color: Kirigami.Theme.highlightColor
-                visible: border.width > 0
-            }
-
-            contentItem: RowLayout {
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.Icon {
-                    source: "document-properties"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                }
-                Controls.Label {
-                    text: i18n("View full configuration")
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Kirigami.Icon {
-                    source: "go-next"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                }
             }
         }
     }

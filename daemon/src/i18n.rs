@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Daemon localization abstraction (`NFR-06`, `AC-M1-16-2`).
+//! Daemon localization abstraction.
 //!
 //! Uses `i18n("...")` call sites so GNU `xgettext --keyword=i18n:1` extracts every
 //! daemon tray, notification, and error string into `po/de/kestic.po`, while
@@ -29,18 +29,6 @@ pub struct PassthroughTranslator;
 impl DaemonTranslator for PassthroughTranslator {
     fn translate(&self, msgid: &str) -> String {
         msgid.to_string()
-    }
-}
-
-/// Callback-backed translator used when only single-string lookup is supplied.
-pub struct CallbackTranslator<F>(pub F);
-
-impl<F> DaemonTranslator for CallbackTranslator<F>
-where
-    F: Fn(&str) -> String + Send + Sync,
-{
-    fn translate(&self, msgid: &str) -> String {
-        (self.0)(msgid)
     }
 }
 
@@ -117,7 +105,7 @@ pub fn i18n(msgid: &'static str) -> PendingI18n {
     PendingI18n(msgid)
 }
 
-/// Translates a `core` [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
+/// Translates a [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
 /// daemon language (tray, notifications, run history).
 pub fn tr(message: &Message) -> String {
     let guard = translator_lock()

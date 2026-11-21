@@ -17,65 +17,19 @@ use kestic_i18n::messages::{
     completed_message, connection_test_text, dns_failed_message, overall_headline,
     overall_subtitle, unmet_conditions_message,
 };
+mod common;
+
+use common::language;
+use common::workspace::workspace_root;
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
 
-/// Decodes one PO string literal line (`"..."`).
-fn po_literal(line: &str) -> String {
-    let inner = line
-        .trim()
-        .strip_prefix('"')
-        .and_then(|l| l.strip_suffix('"'))
-        .unwrap_or_else(|| panic!("malformed PO string line: {line}"));
-    let mut out = String::new();
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some(other) => out.push(other),
-                None => {}
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// msgid → msgstr of the German catalog (singular entries; plural entries are skipped).
+/// msgid -> German translation of the singular catalog entries.
 fn german_catalog() -> HashMap<String, String> {
-    let po = Path::new(env!("CARGO_MANIFEST_DIR")).join("../po/de/kestic.po");
-    let text = std::fs::read_to_string(&po).expect("read po/de/kestic.po");
-    let mut catalog = HashMap::new();
-    let (mut msgid, mut msgstr) = (None::<String>, None::<String>);
-    let mut current: Option<&mut String> = None;
-    let mut flush = |id: &mut Option<String>, s: &mut Option<String>| {
-        if let (Some(i), Some(t)) = (id.take(), s.take()) {
-            catalog.insert(i, t);
-        }
-    };
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("msgid ") {
-            flush(&mut msgid, &mut msgstr);
-            msgid = Some(po_literal(rest));
-            current = msgid.as_mut();
-        } else if let Some(rest) = line.strip_prefix("msgstr ") {
-            msgstr = Some(po_literal(rest));
-            current = msgstr.as_mut();
-        } else if line.starts_with('"') {
-            if let Some(buf) = current.as_mut() {
-                buf.push_str(&po_literal(line));
-            }
-        } else if line.starts_with("msgid_plural") || line.starts_with("msgstr[") {
-            msgid = None;
-            msgstr = None;
-            current = None;
-        }
-    }
-    flush(&mut msgid, &mut msgstr);
-    catalog
+    language::catalog(&workspace_root())
+        .into_iter()
+        .filter(|e| !e.plural)
+        .map(|e| (e.msgid().to_string(), e.german()[0].clone()))
+        .collect()
 }
 
 /// Distinct `%1`..`%9` placeholders of a template.

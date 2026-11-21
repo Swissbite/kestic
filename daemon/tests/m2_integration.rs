@@ -3,24 +3,25 @@
 
 mod common;
 
-use common::{
-    CapturedKesticSignal, KesticSignalCollector, RestServerGuard, fetch_dbusmenu_items,
-    find_kestic_binary, restic_test_binaries, run_isolated_test, start_fake_notifications,
-    start_fake_sni_watcher, wait_for_file, wait_for_sni_service,
+use common::load_config;
+use common::m3::{M3Daemon, M3DaemonOpts, ResticWrapper, assert_dbus_error_name, spawn_m3_daemon};
+use common::tools::{
+    RestServerGuard, assert_has_flag_pair, find_lock_file, install_args_spy, install_marker_spy,
 };
-use kestic_core::backup::{ForgetPreviewResult, exclude_file_path};
-use kestic_core::config::load_config;
+use common::{
+    CapturedKesticSignal, KesticSignalCollector, fetch_dbusmenu_items, restic_test_binaries,
+    run_isolated_test, start_fake_notifications, start_fake_sni_watcher, wait_for_sni_service,
+};
+use kestic_core::backup::exclude_file_path;
 use kestic_core::history::RunHistory;
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ExcludeRules, KeepCount, ResticProvider, RetentionPolicy,
     Run, RunKind, RunStatus, Source, SourceIdentity, SourceKind,
 };
 use kestic_core::mount::{FakeMountInspector, FakeMountState};
-use kestic_core::secrets::FileSecretStore;
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient,
 };
-use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
 use std::collections::HashMap;
 use std::fs;
@@ -32,19 +33,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use zbus::{Connection, block_on};
-
-fn assert_dbus_error_name(err: &zbus::Error, expected_name: &str) {
-    match err {
-        zbus::Error::MethodError(name, _, _) => {
-            assert_eq!(
-                name.as_str(),
-                expected_name,
-                "unexpected D-Bus error name: {err:?}"
-            );
-        }
-        other => panic!("expected D-Bus MethodError `{expected_name}`, got {other:?}"),
-    }
-}
 
 fn retention_to_explicit_json(ret: &RetentionPolicy) -> serde_json::Value {
     serde_json::json!({
@@ -99,25 +87,6 @@ fn update_backup_explicit(
     })
 }
 
-fn preview_retention_explicit(
-    client: &KesticClient,
-    bus_name: &str,
-    backup_id: &str,
-    retention: &RetentionPolicy,
-) -> Result<ForgetPreviewResult, zbus::Error> {
-    let json = serde_json::to_string(&retention_to_explicit_json(retention))
-        .expect("serialize explicit retention");
-    let conn = client.connection().clone();
-    let bus = bus_name.to_string();
-    let bid = backup_id.to_string();
-    let raw: String = block_on(async move {
-        let proxy =
-            zbus::Proxy::new(&conn, bus.as_str(), KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1).await?;
-        proxy.call("PreviewRetention", &(bid, json)).await
-    })?;
-    Ok(serde_json::from_str(&raw).expect("parse ForgetPreviewResult"))
-}
-
 fn spawn_daemon_on_bus(
     root: &Path,
     sub_dir: &Path,
@@ -125,40 +94,17 @@ fn spawn_daemon_on_bus(
     restic_path: PathBuf,
     mount_inspector: Option<Arc<dyn kestic_core::mount::MountInspector>>,
     assume_sni_available: bool,
-) -> (
-    KesticClient,
-    thread::JoinHandle<Result<DaemonOutcome, String>>,
-) {
-    let cfg_path = sub_dir.join("cfg").join("kestic").join("config.toml");
-    let state_dir = sub_dir.join("state").join("kestic");
-    let ready_file = sub_dir.join("daemon.ready");
-    let secret_file = root.join("secrets.hex");
-    let kestic_bin = find_kestic_binary();
-
-    let run_cfg = DaemonRunConfig {
-        bus_name: bus_name.to_string(),
-        assume_sni_available,
-        ready_file: Some(ready_file.clone()),
-        config_path: Some(cfg_path),
-        state_dir: Some(state_dir),
-        kestic_binary: Some(kestic_bin),
-        secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
-        mount_inspector,
-        suppress_ui_spawn: true,
-        enable_job_view: false,
-        enable_portal_inhibit: false,
-        ..Default::default()
-    };
-
-    let handle = thread::spawn(move || run_daemon(run_cfg));
-    wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
-
-    let client = KesticClient::connect(bus_name, KESTIC_OBJECT_PATH).expect("connect KesticClient");
-    let status = client
-        .set_restic_provider(&ResticProvider::Custom { path: restic_path })
-        .expect("configure test restic provider");
-    assert!(status.valid, "restic provider invalid: {status:?}");
-    (client, handle)
+) -> M3Daemon {
+    // `sub_dir` is absolute, so it replaces `root` in the sandbox path.
+    let sub = sub_dir.to_string_lossy();
+    spawn_m3_daemon(
+        root,
+        M3DaemonOpts {
+            mount_inspector,
+            assume_sni_available,
+            ..M3DaemonOpts::on_request(&sub, bus_name, &restic_path)
+        },
+    )
 }
 
 fn wait_for_run_finished(signals: &KesticSignalCollector, run_id: &str, timeout: Duration) -> Run {
@@ -186,23 +132,6 @@ fn wait_for_run_finished(signals: &KesticSignalCollector, run_id: &str, timeout:
             None
         })
         .expect("finished RunUpdated signal")
-}
-
-fn find_lock_file(locks_dir: &Path) -> Option<PathBuf> {
-    let entries = fs::read_dir(locks_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
-            && fs::metadata(&path).is_ok_and(|m| m.len() > 0)
-        {
-            return Some(path);
-        }
-    }
-    None
 }
 
 struct NonExclusiveLockHolder {
@@ -314,8 +243,8 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
         "KESTIC_M2_S02_EXCLUDES",
         |root| {
             let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
-            let (client, handle) =
-                spawn_daemon_on_bus(root, root, KESTIC_BUS_NAME, restic_bin, None, true);
+            let daemon = spawn_daemon_on_bus(root, root, KESTIC_BUS_NAME, restic_bin, None, true);
+            let client = &daemon.client;
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
             let state_dir = root.join("state").join("kestic");
@@ -449,11 +378,7 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
             assert_eq!(fs::read(&cfg_path).expect("cfg unchanged"), cfg_before);
             assert_eq!(fs::read(&excl_file).expect("excl unchanged"), excl_before);
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            daemon.stop();
         },
     );
 }
@@ -538,15 +463,7 @@ fn verify_stopped_rest_server_preflight(
     label: &str,
 ) {
     // AC-M2-04-3: Stop rest-server, install restic spy -> preflight fails <= 15s, unreachable, 0 restic.
-    let spy_marker = sub.join("restic-dryrun-spy.marker");
-    let spy_script = sub.join("restic-dryrun-spy.sh");
-    let script_body = format!(
-        "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  touch \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
-        spy_marker.display(),
-        restic_bin.display()
-    );
-    fs::write(&spy_script, script_body).expect("write spy script");
-    fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755)).expect("chmod spy");
+    let (spy_script, spy_marker) = install_marker_spy(sub, "restic-dryrun-spy", restic_bin);
     let prov = client
         .set_restic_provider(&ResticProvider::Custom { path: spy_script })
         .expect("install restic spy");
@@ -606,8 +523,8 @@ fn run_dry_run_and_stopped_server_case(root: &Path, label: &str, restic_bin: &Pa
         "net.daester.Kestic.M2DryRun_{}",
         label.replace(['.', '-'], "_")
     );
-    let (client, handle) =
-        spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let client = &daemon.client;
 
     let dest = Destination::new(
         format!("REST DryRun ({label})"),
@@ -630,14 +547,10 @@ fn run_dry_run_and_stopped_server_case(root: &Path, label: &str, restic_bin: &Pa
     backup.excludes = ExcludeRules::from_text("*.tmp");
     let backup_id = client.add_backup(&backup).expect("AddBackup");
 
-    verify_dry_run_with_excludes(&client, &backup_id, label);
-    verify_stopped_rest_server_preflight(&sub, restic_bin, &client, &mut server, &backup_id, label);
+    verify_dry_run_with_excludes(client, &backup_id, label);
+    verify_stopped_rest_server_preflight(&sub, restic_bin, client, &mut server, &backup_id, label);
 
-    client.confirm_quit().expect("confirm quit");
-    assert_eq!(
-        handle.join().expect("join daemon"),
-        Ok(DaemonOutcome::RanAndStopped)
-    );
+    daemon.stop();
 }
 
 #[test]
@@ -657,21 +570,12 @@ fn verify_retention_preview_under_lock(
     sub: &Path,
     restic_bin: &Path,
     client: &KesticClient,
-    bus_name: &str,
     backup_id: &str,
     label: &str,
 ) {
     let repo_dir = sub.join("repo");
     // Install spy wrapper logging argv for non-`version` restic invocations to verify `--no-lock`.
-    let spy_log = sub.join("restic-args.log");
-    let spy_script = sub.join("restic-args-spy.sh");
-    let script_body = format!(
-        "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  echo \"$*\" >> \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
-        spy_log.display(),
-        restic_bin.display()
-    );
-    fs::write(&spy_script, script_body).expect("write spy");
-    fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755)).expect("chmod spy");
+    let (spy_script, spy_log) = install_args_spy(sub, "restic-args-spy", restic_bin);
     client
         .set_restic_provider(&ResticProvider::Custom { path: spy_script })
         .expect("install spy");
@@ -683,10 +587,25 @@ fn verify_retention_preview_under_lock(
         keep_last: Some(KeepCount::Count(1)),
         ..RetentionPolicy::empty()
     };
-    let preview = preview_retention_explicit(client, bus_name, backup_id, &candidate_policy)
-        .unwrap_or_else(|e| {
-            panic!("[{label}] PreviewRetention failed under non-exclusive lock: {e}")
-        });
+    let preview_id = client
+        .start_retention_preview(backup_id, &candidate_policy)
+        .expect("StartRetentionPreview");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let dto = loop {
+        let st = client
+            .get_retention_preview_status(&preview_id)
+            .expect("GetRetentionPreviewStatus");
+        if st.state != "running" {
+            break st;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "[{label}] retention preview timed out"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(dto.state, "done", "[{label}] {dto:?}");
+    let preview = dto.result.expect("retention preview result");
     assert_eq!(preview.keep_count, 1, "[{label}] {preview:?}");
     assert_eq!(preview.remove_count, 1, "[{label}] {preview:?}");
     let kept = preview
@@ -708,29 +627,8 @@ fn verify_retention_preview_under_lock(
         logged.lines().any(|line| line.contains("forget")
             && line.contains("--dry-run")
             && line.contains("--no-lock")),
-        "[{label}] PreviewRetention must pass --dry-run and --no-lock:\n{logged}"
+        "[{label}] the retention preview must pass --dry-run and --no-lock:\n{logged}"
     );
-
-    // Also exercise non-blocking async StartRetentionPreview + GetRetentionPreviewStatus under the same lock.
-    let async_preview_id = client
-        .start_retention_preview(backup_id, &candidate_policy)
-        .expect("StartRetentionPreview");
-    let async_deadline = Instant::now() + Duration::from_secs(15);
-    let async_dto = loop {
-        let st = client
-            .get_retention_preview_status(&async_preview_id)
-            .expect("GetRetentionPreviewStatus");
-        if st.state != "running" {
-            break st;
-        }
-        assert!(
-            Instant::now() < async_deadline,
-            "[{label}] StartRetentionPreview timed out"
-        );
-        thread::sleep(Duration::from_millis(25));
-    };
-    assert_eq!(async_dto.state, "done", "[{label}] {async_dto:?}");
-    assert_eq!(async_dto.result.as_ref(), Some(&preview), "[{label}]");
 
     // Dry-run preview must not delete snapshots.
     let snaps = client
@@ -789,8 +687,8 @@ fn run_retention_preview_and_update_case(root: &Path, label: &str, restic_bin: &
         "net.daester.Kestic.M2Retention_{}",
         label.replace(['.', '-'], "_")
     );
-    let (client, handle) =
-        spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
 
     let dest = Destination::new(
@@ -825,14 +723,10 @@ fn run_retention_preview_and_update_case(root: &Path, label: &str, restic_bin: &
         RunStatus::Ok
     );
 
-    verify_retention_preview_under_lock(&sub, restic_bin, &client, &bus_name, &backup_id, label);
-    verify_retention_update_validation(&cfg_path, &client, &bus_name, &backup);
+    verify_retention_preview_under_lock(&sub, restic_bin, client, &backup_id, label);
+    verify_retention_update_validation(&cfg_path, client, &bus_name, &backup);
 
-    client.confirm_quit().expect("confirm quit");
-    assert_eq!(
-        handle.join().expect("join daemon"),
-        Ok(DaemonOutcome::RanAndStopped)
-    );
+    daemon.stop();
 }
 
 #[test]
@@ -867,8 +761,8 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                     "net.daester.Kestic.M2ForgetOk_{}",
                     label.replace(['.', '-'], "_")
                 );
-                let (client, handle) =
-                    spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin, None, true);
+                let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin, None, true);
+                let client = &daemon.client;
                 let signals = KesticSignalCollector::start(
                     &bus_name,
                     KESTIC_OBJECT_PATH,
@@ -896,8 +790,7 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                     keep_last: Some(KeepCount::Count(2)),
                     ..RetentionPolicy::empty()
                 };
-                let backup_id =
-                    add_backup_explicit(&client, &bus_name, &backup).expect("AddBackup");
+                let backup_id = add_backup_explicit(client, &bus_name, &backup).expect("AddBackup");
 
                 fs::write(src_dir.join("a.txt"), b"v1\n").expect("write a");
                 let r1 = client.start_backup(&backup_id).expect("StartBackup 1");
@@ -926,7 +819,7 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                     keep_last: Some(KeepCount::Count(1)),
                     ..RetentionPolicy::empty()
                 };
-                update_backup_explicit(&client, &bus_name, &backup)
+                update_backup_explicit(client, &bus_name, &backup)
                     .expect("UpdateBackup keep_last=1");
 
                 fs::write(src_dir.join("c.txt"), b"v3\n").expect("write c");
@@ -948,22 +841,8 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                     "[{label}] {:?}",
                     forget_cmd.args
                 );
-                assert!(
-                    forget_cmd
-                        .args
-                        .windows(2)
-                        .any(|w| w[0] == "--tag" && w[1] == format!("kestic:{backup_id}")),
-                    "[{label}] {:?}",
-                    forget_cmd.args
-                );
-                assert!(
-                    forget_cmd
-                        .args
-                        .windows(2)
-                        .any(|w| w[0] == "--group-by" && w[1] == "tags"),
-                    "[{label}] {:?}",
-                    forget_cmd.args
-                );
+                assert_has_flag_pair(&forget_cmd.args, "--tag", &format!("kestic:{backup_id}"));
+                assert_has_flag_pair(&forget_cmd.args, "--group-by", "tags");
                 assert_eq!(forget_cmd.exit_code, 0, "[{label}]");
 
                 let snaps_after = client
@@ -979,30 +858,39 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                 let state = client.get_state().expect("GetState");
                 assert!(!state.backups[0].pending_forget, "[{label}]");
 
-                client.confirm_quit().expect("confirm quit");
-                assert_eq!(
-                    handle.join().expect("join daemon"),
-                    Ok(DaemonOutcome::RanAndStopped)
-                );
+                daemon.stop();
             }
         },
     );
 }
 
-fn verify_exit_3_and_exclude_recovery(
-    sub: &Path,
-    client: &KesticClient,
-    signals: &KesticSignalCollector,
-    backup_id_str: &str,
-    label: &str,
-) {
-    let src_dir = sub.join("src");
-    let state_dir = sub.join("state").join("kestic");
-    let cfg_path = sub.join("cfg").join("kestic").join("config.toml");
-    let backup_id = kestic_core::model::BackupId::parse(backup_id_str).expect("backup id");
+/// A backup that just ended with Exit 3 because of an unreadable file.
+struct Exit3Run<'a> {
+    sub: &'a Path,
+    client: &'a KesticClient,
+    signals: &'a KesticSignalCollector,
+    backup_id_str: &'a str,
+    label: &'a str,
+    unreadable: PathBuf,
+    detail: kestic_daemon::dbus_api::RunDetailDto,
+}
 
-    // Create an unreadable file (`chmod 000`) -> restic backup exits 3.
-    let unreadable = src_dir.join("secret_unreadable.txt");
+impl Drop for Exit3Run<'_> {
+    fn drop(&mut self) {
+        // Restore permissions so directory cleanup never hits permission snags.
+        let _ = fs::set_permissions(&self.unreadable, fs::Permissions::from_mode(0o644));
+    }
+}
+
+/// Makes a file unreadable (`chmod 000`) and runs the backup: restic exits 3.
+fn run_backup_with_unreadable_file<'a>(
+    sub: &'a Path,
+    client: &'a KesticClient,
+    signals: &'a KesticSignalCollector,
+    backup_id_str: &'a str,
+    label: &'a str,
+) -> Exit3Run<'a> {
+    let unreadable = sub.join("src").join("secret_unreadable.txt");
     fs::write(&unreadable, b"cannot read this\n").expect("write unreadable");
     fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).expect("chmod 000");
 
@@ -1010,9 +898,22 @@ fn verify_exit_3_and_exclude_recovery(
     let fin2 = wait_for_run_finished(signals, &r2, Duration::from_secs(20));
     assert_eq!(fin2.status, RunStatus::Warning, "[{label}] {fin2:?}");
     assert_eq!(fin2.exit_code, Some(3), "[{label}]");
+    let detail = client.get_run_detail(&r2).expect("GetRunDetail 2");
+    Exit3Run {
+        sub,
+        client,
+        signals,
+        backup_id_str,
+        label,
+        unreadable,
+        detail,
+    }
+}
 
-    // AC-M2-07-2 & AC-M2-08-1: `forget` still ran, `unreadable_files` captured in detail & state.
-    let detail2 = client.get_run_detail(&r2).expect("GetRunDetail 2");
+/// AC-M2-07-2: after Exit 3 `forget` still runs and prunes down to `keep_last = 1`.
+fn verify_forget_runs_after_exit_3(run: &Exit3Run<'_>) {
+    let label = run.label;
+    let detail2 = &run.detail;
     assert_eq!(detail2.run.status, RunStatus::Warning, "[{label}]");
     assert_eq!(detail2.run.exit_code, Some(3), "[{label}]");
     assert_eq!(
@@ -1026,6 +927,27 @@ fn verify_exit_3_and_exclude_recovery(
         "[{label}]"
     );
     assert_eq!(detail2.run.commands[1].exit_code, 0, "[{label}]");
+    assert_eq!(
+        run.client
+            .list_backup_snapshots(run.backup_id_str)
+            .expect("snaps after exit 3")
+            .current_snapshots
+            .len(),
+        1,
+        "[{label}]"
+    );
+}
+
+/// AC-M2-08-1: the run detail and the state list exactly the unreadable path and offer
+/// «add to exclude rules». AC-M2-08-2: adding the rule excludes the path, the next run is `ok`.
+fn verify_unreadable_files_are_listed_and_excludable(run: &Exit3Run<'_>) {
+    let label = run.label;
+    let client = run.client;
+    let detail2 = &run.detail;
+    let state_dir = run.sub.join("state").join("kestic");
+    let cfg_path = run.sub.join("cfg").join("kestic").join("config.toml");
+    let backup_id = kestic_core::model::BackupId::parse(run.backup_id_str).expect("backup id");
+
     assert!(
         detail2
             .unreadable_files
@@ -1039,18 +961,6 @@ fn verify_exit_3_and_exclude_recovery(
         Some("add_to_excludes"),
         "[{label}]"
     );
-
-    // `forget` pruned older snapshot down to keep_last = 1.
-    assert_eq!(
-        client
-            .list_backup_snapshots(backup_id_str)
-            .expect("snaps after exit 3")
-            .current_snapshots
-            .len(),
-        1,
-        "[{label}]"
-    );
-
     let state2 = client.get_state().expect("GetState after exit 3");
     assert!(
         state2.backups[0]
@@ -1061,10 +971,9 @@ fn verify_exit_3_and_exclude_recovery(
         state2.backups[0].unreadable_files
     );
 
-    // AC-M2-08-2: Add unreadable path to excludes via D-Bus and re-run -> finishes Ok without warning.
     let unreadable_item = detail2.unreadable_files[0].clone();
     let preview = client
-        .add_exclude_rule_for_item(backup_id_str, &unreadable_item)
+        .add_exclude_rule_for_item(run.backup_id_str, &unreadable_item)
         .expect("AddExcludeRuleForItem");
     assert!(!preview.is_dir, "[{label}]");
     assert_eq!(preview.rule, unreadable_item, "[{label}]");
@@ -1084,23 +993,26 @@ fn verify_exit_3_and_exclude_recovery(
         "[{label}] {excl_content}"
     );
 
-    let r3 = client.start_backup(backup_id_str).expect("StartBackup 3");
-    let fin3 = wait_for_run_finished(signals, &r3, Duration::from_secs(20));
+    let r3 = client
+        .start_backup(run.backup_id_str)
+        .expect("StartBackup 3");
+    let fin3 = wait_for_run_finished(run.signals, &r3, Duration::from_secs(20));
     assert_eq!(fin3.status, RunStatus::Ok, "[{label}] {fin3:?}");
     assert_eq!(fin3.exit_code, Some(0), "[{label}]");
-
     let detail3 = client.get_run_detail(&r3).expect("GetRunDetail 3");
     assert!(
         detail3.unreadable_files.is_empty(),
         "[{label}] {:?}",
         detail3.unreadable_files
     );
-
-    // Restore permissions so directory cleanup never hits permission snags.
-    let _ = fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644));
 }
 
-fn run_exit_3_case(root: &Path, label: &str, restic_bin: &Path) {
+fn run_exit_3_case(
+    root: &Path,
+    label: &str,
+    restic_bin: &Path,
+    verify: impl FnOnce(&Exit3Run<'_>),
+) {
     let sub = root.join(label);
     let repo_dir = sub.join("repo");
     let src_dir = sub.join("src");
@@ -1112,8 +1024,8 @@ fn run_exit_3_case(root: &Path, label: &str, restic_bin: &Path) {
         "net.daester.Kestic.M2Exit3_{}",
         label.replace(['.', '-'], "_")
     );
-    let (client, handle) =
-        spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
 
     let dest = Destination::new(
@@ -1135,7 +1047,7 @@ fn run_exit_3_case(root: &Path, label: &str, restic_bin: &Path) {
         keep_last: Some(KeepCount::Count(1)),
         ..RetentionPolicy::empty()
     };
-    let backup_id_str = add_backup_explicit(&client, &bus_name, &backup).expect("AddBackup");
+    let backup_id_str = add_backup_explicit(client, &bus_name, &backup).expect("AddBackup");
 
     // Run 1 produces 1 clean snapshot.
     let r1 = client.start_backup(&backup_id_str).expect("StartBackup 1");
@@ -1144,29 +1056,55 @@ fn run_exit_3_case(root: &Path, label: &str, restic_bin: &Path) {
         RunStatus::Ok
     );
 
-    verify_exit_3_and_exclude_recovery(&sub, &client, &signals, &backup_id_str, label);
+    verify(&run_backup_with_unreadable_file(
+        &sub,
+        client,
+        &signals,
+        &backup_id_str,
+        label,
+    ));
 
-    client.confirm_quit().expect("confirm quit");
-    assert_eq!(
-        handle.join().expect("join daemon"),
-        Ok(DaemonOutcome::RanAndStopped)
-    );
+    daemon.stop();
 }
 
 #[test]
-fn ac_m2_07_2_08_1_08_2_exit_3_unreadable_file_runs_forget_and_add_to_excludes_dual_restic() {
+fn ac_m2_07_2_exit_3_still_runs_forget_dual_restic() {
     if is_running_as_root() {
         eprintln!("skipping chmod 000 Exit 3 test because running as root (euid == 0)");
         return;
     }
 
     run_isolated_test(
-        "ac_m2_07_2_08_1_08_2_exit_3_unreadable_file_runs_forget_and_add_to_excludes_dual_restic",
+        "ac_m2_07_2_exit_3_still_runs_forget_dual_restic",
+        "KESTIC_M2_S07_EXIT3",
+        |root| {
+            let _notif_guard = start_fake_notifications();
+            for (label, restic_bin) in restic_test_binaries() {
+                run_exit_3_case(root, label, &restic_bin, verify_forget_runs_after_exit_3);
+            }
+        },
+    );
+}
+
+#[test]
+fn ac_m2_08_1_08_2_exit_3_lists_unreadable_files_and_add_to_excludes_dual_restic() {
+    if is_running_as_root() {
+        eprintln!("skipping chmod 000 Exit 3 test because running as root (euid == 0)");
+        return;
+    }
+
+    run_isolated_test(
+        "ac_m2_08_1_08_2_exit_3_lists_unreadable_files_and_add_to_excludes_dual_restic",
         "KESTIC_M2_S08_EXIT3",
         |root| {
             let _notif_guard = start_fake_notifications();
             for (label, restic_bin) in restic_test_binaries() {
-                run_exit_3_case(root, label, &restic_bin);
+                run_exit_3_case(
+                    root,
+                    label,
+                    &restic_bin,
+                    verify_unreadable_files_are_listed_and_excludable,
+                );
             }
         },
     );
@@ -1211,7 +1149,7 @@ fn verify_exit_11_under_non_exclusive_lock(ctx: &Lock11Ctx<'_>) {
     );
     let lock_summary = fin2.summary_message.as_deref().unwrap_or("");
     assert!(
-        lock_summary.contains("locked") || lock_summary.contains("gesperrt"),
+        lock_summary.contains("locked"),
         "[{label}] expected locked summary_message on Exit 11 forget, got: {:?}",
         fin2.summary_message
     );
@@ -1248,7 +1186,7 @@ fn verify_exit_11_catchup_paths(ctx: &Lock11Ctx<'_>) {
     let src_dir = ctx.sub.join("src");
     let label = ctx.label;
 
-    // AC-M2-07-4 (Path A): RunDestinationMaintenance executes catch-up forget & clears pending_forget.
+    // AC-M2-07-4, catch-up path 1: RunDestinationMaintenance executes catch-up forget & clears pending_forget.
     let maint_id = ctx
         .client
         .run_destination_maintenance(ctx.dest_id)
@@ -1276,7 +1214,7 @@ fn verify_exit_11_catchup_paths(ctx: &Lock11Ctx<'_>) {
         "[{label}] maintenance forget must prune back to keep_last=1"
     );
 
-    // AC-M2-07-4 (Path B): Trigger pending_forget again, release lock, then next backup clears it.
+    // AC-M2-07-4, catch-up path 2: trigger pending_forget again, release lock, then next backup clears it.
     fs::write(src_dir.join("three.txt"), b"third\n").expect("write three");
     let lock_holder2 = NonExclusiveLockHolder::start(ctx.restic_bin, &repo_dir, "lock11-pw-123");
     let r3 = ctx
@@ -1329,8 +1267,8 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
         "net.daester.Kestic.M2Lock11_{}",
         label.replace(['.', '-'], "_")
     );
-    let (client, handle) =
-        spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
 
     let dest = Destination::new(
@@ -1352,7 +1290,7 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
         keep_last: Some(KeepCount::Count(1)),
         ..RetentionPolicy::empty()
     };
-    let backup_id_str = add_backup_explicit(&client, &bus_name, &backup).expect("AddBackup");
+    let backup_id_str = add_backup_explicit(client, &bus_name, &backup).expect("AddBackup");
 
     // Initial backup -> 1 snapshot, Ok.
     let r1 = client.start_backup(&backup_id_str).expect("StartBackup 1");
@@ -1364,7 +1302,7 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
     let ctx = Lock11Ctx {
         sub: &sub,
         restic_bin,
-        client: &client,
+        client,
         signals: &signals,
         dest_id: &dest_id,
         backup_id_str: &backup_id_str,
@@ -1373,11 +1311,7 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
     verify_exit_11_under_non_exclusive_lock(&ctx);
     verify_exit_11_catchup_paths(&ctx);
 
-    client.confirm_quit().expect("confirm quit");
-    assert_eq!(
-        handle.join().expect("join daemon"),
-        Ok(DaemonOutcome::RanAndStopped)
-    );
+    daemon.stop();
 }
 
 #[test]
@@ -1413,8 +1347,10 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                     "net.daester.Kestic.M2Exit1_{}",
                     label.replace(['.', '-'], "_")
                 );
-                let (client, handle) =
-                    spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.clone(), None, true);
+                let wrapper = ResticWrapper::create(&sub.join("wrapper"), &restic_bin);
+                let daemon =
+                    spawn_daemon_on_bus(root, &sub, &bus_name, wrapper.path.clone(), None, true);
+                let client = &daemon.client;
                 let signals = KesticSignalCollector::start(
                     &bus_name,
                     KESTIC_OBJECT_PATH,
@@ -1444,45 +1380,11 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                 };
                 let backup_id = client.add_backup(&backup).expect("AddBackup");
 
-                // Wrapper logs invoked restic subcommands and forces Exit 1 on `backup`
-                // (while delegating `version` and other subcommands to real restic).
-                let invoked_log = sub.join("invoked-subcommands.log");
-                let fail_wrapper = sub.join("restic-exit1.sh");
-                let script = format!(
-                    "#!/bin/sh\n\
-                     if [ \"$1\" = \"version\" ]; then\n\
-                       exec \"{restic}\" \"$@\"\n\
-                     fi\n\
-                     subcmd=\"\"\n\
-                     skip_next=0\n\
-                     for arg in \"$@\"; do\n\
-                       if [ \"$skip_next\" -eq 1 ]; then\n\
-                         skip_next=0\n\
-                         continue\n\
-                       fi\n\
-                       case \"$arg\" in\n\
-                         -r|--repo|--password-command) skip_next=1 ;;\n\
-                         -*) ;;\n\
-                         *) subcmd=\"$arg\"; break ;;\n\
-                       esac\n\
-                     done\n\
-                     echo \"$subcmd\" >> \"{log}\"\n\
-                     if [ \"$subcmd\" = \"backup\" ]; then\n\
-                       echo '{{\"message_type\":\"exit_error\",\"code\":1,\"message\":\"simulated fatal backup failure\"}}' >&2\n\
-                       exit 1\n\
-                     fi\n\
-                     exec \"{restic}\" \"$@\"\n",
-                    restic = restic_bin.display(),
-                    log = invoked_log.display(),
+                wrapper.fail(
+                    "backup",
+                    1,
+                    r#"{"message_type":"exit_error","code":1,"message":"simulated fatal backup failure"}"#,
                 );
-                fs::write(&fail_wrapper, script).expect("write exit1 wrapper");
-                fs::set_permissions(&fail_wrapper, fs::Permissions::from_mode(0o755))
-                    .expect("chmod exit1 wrapper");
-
-                let prov = client
-                    .set_restic_provider(&ResticProvider::Custom { path: fail_wrapper })
-                    .expect("install exit1 wrapper");
-                assert!(prov.valid, "[{label}]");
 
                 let r1 = client.start_backup(&backup_id).expect("StartBackup");
                 let fin = wait_for_run_finished(&signals, &r1, Duration::from_secs(20));
@@ -1502,19 +1404,20 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                     "[{label}]"
                 );
 
-                let invoked = fs::read_to_string(&invoked_log).expect("read invoked log");
-                let subcmds: Vec<&str> = invoked.lines().map(str::trim).collect();
+                // `init` belongs to the setup of the destination, not to the run.
+                let subcmds: Vec<String> = wrapper
+                    .entries()
+                    .into_iter()
+                    .filter(|e| e.kind == 'S' && e.sub != "version" && e.sub != "init")
+                    .map(|e| e.sub)
+                    .collect();
                 assert_eq!(
                     subcmds,
                     vec!["backup"],
                     "[{label}] only backup must be invoked, never forget: {subcmds:?}"
                 );
 
-                client.confirm_quit().expect("confirm quit");
-                assert_eq!(
-                    handle.join().expect("join daemon"),
-                    Ok(DaemonOutcome::RanAndStopped)
-                );
+                daemon.stop();
             }
         },
     );
@@ -1535,15 +1438,7 @@ struct DriveTestCtx<'a> {
 }
 
 fn install_drive_restic_spy(root: &Path, real_restic: &Path, client: &KesticClient) -> PathBuf {
-    let spy_marker = root.join("drive-restic-spy.marker");
-    let spy_script = root.join("drive-restic-spy.sh");
-    let script_body = format!(
-        "#!/bin/sh\nif [ \"$1\" != \"version\" ]; then\n  touch \"{}\"\nfi\nexec \"{}\" \"$@\"\n",
-        spy_marker.display(),
-        real_restic.display()
-    );
-    fs::write(&spy_script, script_body).expect("write spy");
-    fs::set_permissions(&spy_script, fs::Permissions::from_mode(0o755)).expect("chmod spy");
+    let (spy_script, spy_marker) = install_marker_spy(root, "drive-restic-spy", real_restic);
     client
         .set_restic_provider(&ResticProvider::Custom { path: spy_script })
         .expect("install spy");
@@ -1762,7 +1657,7 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
                 empty_dirs: HashMap::new(),
             }));
 
-            let (client, handle) = spawn_daemon_on_bus(
+            let daemon = spawn_daemon_on_bus(
                 root,
                 root,
                 KESTIC_BUS_NAME,
@@ -1770,6 +1665,7 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
                 Some(fake_inspector.clone()),
                 false,
             );
+            let client = &daemon.client;
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
             let signals = KesticSignalCollector::start(
                 KESTIC_BUS_NAME,
@@ -1804,9 +1700,9 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
             let backup_id = client.add_backup(&backup).expect("AddBackup");
 
             // Install restic spy AFTER init so any blocked StartBackup guarantees 0 restic invocations.
-            let spy_marker = install_drive_restic_spy(root, &real_restic, &client);
+            let spy_marker = install_drive_restic_spy(root, &real_restic, client);
             let ctx = DriveTestCtx {
-                client: &client,
+                client,
                 client_conn: &client_conn,
                 sni_svc: &sni_svc,
                 signals: &signals,
@@ -1822,11 +1718,7 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
             verify_drive_available_and_unmounted_block(&ctx);
             verify_drive_mismatch_empty_and_race_recovery(&ctx);
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            daemon.stop();
         },
     );
 }

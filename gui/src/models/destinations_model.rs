@@ -3,48 +3,44 @@
 
 //! CXX-Qt `DestinationsModel` implementation (`QAbstractListModel` for backup destinations).
 
-use super::{SyncPlan, plan_model_sync, qobject};
+use super::qobject;
+use super::rows::{id_at, row_map, row_of};
 use crate::overall_text::maintenance_status_line;
 use crate::state_cache::{
     daemon_now, format_datetime_display, format_destination_status, format_maintenance_entry,
-    format_slot_timestamp, i18n, shared_state,
+    format_slot_timestamp, i18n, json_or, shared_state,
 };
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
 use kestic_core::model::DestinationKind;
+use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{BackupSummaryDto, DestinationSummaryDto};
-use std::pin::Pin;
 use time::OffsetDateTime;
 
-#[derive(Clone, Default, PartialEq)]
-struct DestinationRow {
-    destination_id: String,
-    name: String,
-    kind_name: String,
-    kind_label: String,
-    location: String,
-    username: String,
-    backup_count: i32,
-    status_text: String,
-    status_icon: String,
-    reachable: bool,
-    password_rejected: bool,
-    has_stale_lock: bool,
-    has_problem: bool,
-    detail_text: String,
-    pending_forget_count: i32,
-    maintenance_json: String,
-    prune_summary: String,
-    check_summary: String,
-    next_prune_at_text: String,
-    next_check_at_text: String,
-    last_prune_at_text: String,
-    last_check_at_text: String,
-    maintenance_running: bool,
-    stale_lock_count: i32,
-    maintenance_status_text: String,
-}
+model_row!(DestinationRow {
+    destination_id: String => "destinationId",
+    name: String => "name",
+    kind_name: String => "kindName",
+    kind_label: String => "kindLabel",
+    location: String => "location",
+    username: String => "username",
+    backup_count: i32 => "backupCount",
+    status_text: String => "statusText",
+    status_icon: String => "statusIcon",
+    password_rejected: bool => "passwordRejected",
+    has_stale_lock: bool => "hasStaleLock",
+    has_problem: bool => "hasProblem",
+    pending_forget_count: i32 => "pendingForgetCount",
+    maintenance_json: String => "maintenanceJson",
+    prune_summary: String => "pruneSummary",
+    check_summary: String => "checkSummary",
+    next_prune_at_text: String => "nextPruneAtText",
+    next_check_at_text: String => "nextCheckAtText",
+    last_prune_at_text: String => "lastPruneAtText",
+    last_check_at_text: String => "lastCheckAtText",
+    maintenance_status_text: String => "maintenanceStatusText",
+});
 
 #[derive(Default)]
 pub struct DestinationsModelRust {
@@ -75,8 +71,7 @@ fn build_destination_row(
         .iter()
         .filter(|b| b.backup.destination_id == d.destination.id && b.pending_forget)
         .count();
-    let maintenance_json =
-        serde_json::to_string(&d.destination.maintenance).unwrap_or_else(|_| "{}".to_string());
+    let maintenance_json = json_or(&d.destination.maintenance, "{}");
     let last_prune_at_text = d
         .last_prune_at_unix
         .and_then(|ts| OffsetDateTime::from_unix_timestamp(ts).ok())
@@ -97,11 +92,9 @@ fn build_destination_row(
         backup_count: i32::try_from(d.backup_count).unwrap_or(i32::MAX),
         status_text,
         status_icon,
-        reachable: d.availability.reachable,
         password_rejected: d.password_rejected,
         has_stale_lock: d.has_stale_lock,
         has_problem: d.has_problem,
-        detail_text: d.availability.detail.clone().unwrap_or_default(),
         pending_forget_count: i32::try_from(pending_forget_count).unwrap_or(i32::MAX),
         maintenance_json,
         prune_summary: format_maintenance_entry(&d.destination.maintenance.prune),
@@ -110,8 +103,6 @@ fn build_destination_row(
         next_check_at_text: format_slot_timestamp(d.next_check_at_unix, now),
         last_prune_at_text,
         last_check_at_text,
-        maintenance_running: d.maintenance_running,
-        stale_lock_count: i32::try_from(d.stale_lock_count).unwrap_or(i32::MAX),
         maintenance_status_text: maintenance_status_line(
             d.maintenance_running,
             d.maintenance_pending_reason,
@@ -123,7 +114,7 @@ fn build_destination_row(
 
 impl DestinationsModelRust {
     fn compute_rows(&self) -> Vec<DestinationRow> {
-        let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+        let guard = shared_state().lock_unpoisoned();
         let Some(state) = &guard.state else {
             return Vec::new();
         };
@@ -136,159 +127,36 @@ impl DestinationsModelRust {
     }
 }
 
+list_model!(
+    DestinationsModel,
+    DestinationRow,
+    same: |a, b| a.destination_id == b.destination_id,
+    begin_reset: begin_reset_destinations,
+    end_reset: end_reset_destinations,
+    index: index_destinations,
+    changed: data_changed_destinations,
+);
+
 impl qobject::DestinationsModel {
-    pub fn sync(mut self: Pin<&mut Self>) {
-        let new_rows = self.as_ref().compute_rows();
-        match plan_model_sync(&self.rows, new_rows, |a, b| {
-            a.destination_id == b.destination_id
-        }) {
-            SyncPlan::NoChange => {}
-            SyncPlan::InPlace {
-                first,
-                last,
-                new_rows,
-            } => {
-                self.as_mut().rust_mut().rows = new_rows;
-                let parent = QModelIndex::default();
-                let top = self.as_ref().index_destinations(first, 0, &parent);
-                let bottom = self.as_ref().index_destinations(last, 0, &parent);
-                self.as_mut().data_changed_destinations(&top, &bottom);
-            }
-            SyncPlan::Reset(new_rows) => {
-                self.as_mut().begin_reset_destinations();
-                self.as_mut().rust_mut().rows = new_rows;
-                self.as_mut().end_reset_destinations();
-            }
-        }
+    /// Row of the destination `destination_id`, or -1 if unknown.
+    pub fn row_of(&self, destination_id: &QString) -> i32 {
+        let destination_id = destination_id.to_string();
+        row_of(&self.rows, |row| row.destination_id == destination_id)
     }
 
-    pub fn row_count(&self, _parent: &QModelIndex) -> i32 {
-        self.rows.len() as i32
+    /// Id of the destination in `row`, empty if there is no such row.
+    pub fn id_at(&self, row: i32) -> QString {
+        id_at(&self.rows, row, |row| &row.destination_id)
     }
 
-    pub fn role_names(&self) -> QHash<QHashPair_i32_QByteArray> {
-        let mut roles = QHash::<QHashPair_i32_QByteArray>::default();
-        for (role, name) in [
-            (qobject::DestinationRoles::DestinationId, "destinationId"),
-            (qobject::DestinationRoles::Name, "name"),
-            (qobject::DestinationRoles::KindName, "kindName"),
-            (qobject::DestinationRoles::KindLabel, "kindLabel"),
-            (qobject::DestinationRoles::Location, "location"),
-            (qobject::DestinationRoles::Username, "username"),
-            (qobject::DestinationRoles::BackupCount, "backupCount"),
-            (qobject::DestinationRoles::StatusText, "statusText"),
-            (qobject::DestinationRoles::StatusIcon, "statusIcon"),
-            (qobject::DestinationRoles::Reachable, "reachable"),
-            (
-                qobject::DestinationRoles::PasswordRejected,
-                "passwordRejected",
-            ),
-            (qobject::DestinationRoles::HasStaleLock, "hasStaleLock"),
-            (qobject::DestinationRoles::HasProblem, "hasProblem"),
-            (qobject::DestinationRoles::DetailText, "detailText"),
-            (
-                qobject::DestinationRoles::PendingForgetCount,
-                "pendingForgetCount",
-            ),
-            (
-                qobject::DestinationRoles::MaintenanceJson,
-                "maintenanceJson",
-            ),
-            (qobject::DestinationRoles::PruneSummary, "pruneSummary"),
-            (qobject::DestinationRoles::CheckSummary, "checkSummary"),
-            (
-                qobject::DestinationRoles::NextPruneAtText,
-                "nextPruneAtText",
-            ),
-            (
-                qobject::DestinationRoles::NextCheckAtText,
-                "nextCheckAtText",
-            ),
-            (
-                qobject::DestinationRoles::LastPruneAtText,
-                "lastPruneAtText",
-            ),
-            (
-                qobject::DestinationRoles::LastCheckAtText,
-                "lastCheckAtText",
-            ),
-            (
-                qobject::DestinationRoles::MaintenanceRunning,
-                "maintenanceRunning",
-            ),
-            (qobject::DestinationRoles::StaleLockCount, "staleLockCount"),
-            (
-                qobject::DestinationRoles::MaintenanceStatusText,
-                "maintenanceStatusText",
-            ),
-        ] {
-            roles.insert(role.repr, QByteArray::from(name));
-        }
-        roles
-    }
-
-    pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
-        let Some(row) = usize::try_from(index.row())
-            .ok()
-            .and_then(|i| self.rows.get(i))
-        else {
-            return QVariant::default();
-        };
-        match (qobject::DestinationRoles { repr: role }) {
-            qobject::DestinationRoles::DestinationId => {
-                QVariant::from(&QString::from(&row.destination_id))
-            }
-            qobject::DestinationRoles::Name => QVariant::from(&QString::from(&row.name)),
-            qobject::DestinationRoles::KindName => QVariant::from(&QString::from(&row.kind_name)),
-            qobject::DestinationRoles::KindLabel => QVariant::from(&QString::from(&row.kind_label)),
-            qobject::DestinationRoles::Location => QVariant::from(&QString::from(&row.location)),
-            qobject::DestinationRoles::Username => QVariant::from(&QString::from(&row.username)),
-            qobject::DestinationRoles::BackupCount => QVariant::from(&row.backup_count),
-            qobject::DestinationRoles::StatusText => {
-                QVariant::from(&QString::from(&row.status_text))
-            }
-            qobject::DestinationRoles::StatusIcon => {
-                QVariant::from(&QString::from(&row.status_icon))
-            }
-            qobject::DestinationRoles::Reachable => QVariant::from(&row.reachable),
-            qobject::DestinationRoles::PasswordRejected => QVariant::from(&row.password_rejected),
-            qobject::DestinationRoles::HasStaleLock => QVariant::from(&row.has_stale_lock),
-            qobject::DestinationRoles::HasProblem => QVariant::from(&row.has_problem),
-            qobject::DestinationRoles::DetailText => {
-                QVariant::from(&QString::from(&row.detail_text))
-            }
-            qobject::DestinationRoles::PendingForgetCount => {
-                QVariant::from(&row.pending_forget_count)
-            }
-            qobject::DestinationRoles::MaintenanceJson => {
-                QVariant::from(&QString::from(&row.maintenance_json))
-            }
-            qobject::DestinationRoles::PruneSummary => {
-                QVariant::from(&QString::from(&row.prune_summary))
-            }
-            qobject::DestinationRoles::CheckSummary => {
-                QVariant::from(&QString::from(&row.check_summary))
-            }
-            qobject::DestinationRoles::NextPruneAtText => {
-                QVariant::from(&QString::from(&row.next_prune_at_text))
-            }
-            qobject::DestinationRoles::NextCheckAtText => {
-                QVariant::from(&QString::from(&row.next_check_at_text))
-            }
-            qobject::DestinationRoles::LastPruneAtText => {
-                QVariant::from(&QString::from(&row.last_prune_at_text))
-            }
-            qobject::DestinationRoles::LastCheckAtText => {
-                QVariant::from(&QString::from(&row.last_check_at_text))
-            }
-            qobject::DestinationRoles::MaintenanceRunning => {
-                QVariant::from(&row.maintenance_running)
-            }
-            qobject::DestinationRoles::StaleLockCount => QVariant::from(&row.stale_lock_count),
-            qobject::DestinationRoles::MaintenanceStatusText => {
-                QVariant::from(&QString::from(&row.maintenance_status_text))
-            }
-            _ => QVariant::default(),
-        }
+    /// All roles of the destination `destination_id` as a QML object, or an invalid value if
+    /// unknown.
+    pub fn row_map(&self, destination_id: &QString) -> QVariant {
+        let destination_id = destination_id.to_string();
+        row_map(
+            self.rows
+                .iter()
+                .find(|row| row.destination_id == destination_id),
+        )
     }
 }

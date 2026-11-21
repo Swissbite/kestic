@@ -220,7 +220,7 @@ fn apply_v3_backoff_tracking(tx: &Transaction<'_>) -> Result<(), rusqlite::Error
     Ok(())
 }
 
-/// Guard for upgrading pre-versioned M2/early-M3 databases that still had `user_version = 0`.
+/// Guard for upgrading pre-versioned databases that still had `user_version = 0`.
 /// Future migrations (`v3+`) can execute `ALTER TABLE` directly inside the transaction.
 fn add_column_if_missing(
     tx: &Transaction<'_>,

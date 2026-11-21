@@ -5,17 +5,16 @@
 
 mod common;
 
-use kestic_core::backup::{execute_backup, list_snapshots_for_backup};
+use common::{execute_backup, load_config};
+
+use kestic_core::backup::list_snapshots_for_backup;
 use kestic_core::clock::FakeClock;
-use kestic_core::config::{AppConfig, ConfigError, load_config, save_config};
-use kestic_core::destination::{
-    DestinationSetupMode, remove_destination_secrets, setup_destination,
-};
+use kestic_core::config::{AppConfig, ConfigError, save_config};
+use kestic_core::destination::remove_destination_secrets;
 use kestic_core::model::{Backup, BackupId, Destination, DestinationId, DestinationKind, Source};
-use kestic_core::provider::check_binary_version;
-use kestic_core::restic::{ResticCommandSpec, ResticRuntime, run_restic};
+use kestic_core::restic::{ResticCommandSpec, run_restic};
 use kestic_core::secrets::{FileSecretStore, SecretStore, SecretValue};
-use kestic_core::snapshot::{ResticSnapshot, parse_snapshots_json};
+use kestic_core::snapshot::ResticSnapshot;
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
@@ -53,7 +52,7 @@ fn list_meta_snapshots(
     for line in &res.log_lines {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            return parse_snapshots_json(trimmed).expect("parse meta snapshots");
+            return serde_json::from_str(trimmed).expect("parse meta snapshots");
         }
     }
     Vec::new()
@@ -69,33 +68,14 @@ fn ac_m1_19_2_remove_backup_keeps_snapshots() {
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         fs::write(src_dir.join("doc.txt"), b"snapshot 1 content").expect("write doc");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 13:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 13:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("remove-backup-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Local", &repo_dir, "remove-backup-pw");
 
         let backup =
             Backup::new("Documents", Source::folder(&src_dir), dest.id.clone()).expect("bk");
@@ -116,10 +96,10 @@ fn ac_m1_19_2_remove_backup_keeps_snapshots() {
         let snaps_before = list_snapshots_for_backup(
             &backup.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list snapshots before remove");
@@ -137,10 +117,10 @@ fn ac_m1_19_2_remove_backup_keeps_snapshots() {
         let snaps_after = list_snapshots_for_backup(
             &backup.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list snapshots after remove");
@@ -159,31 +139,13 @@ fn ac_m1_19_3_remove_unused_destination_deletes_secrets_keeps_repo() {
         let cache_dir = common::restic_cache_dir(dir.path());
         let cfg_path = dir.path().join("config.toml");
         let repo_dir = dir.path().join("repo");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 13:30:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 13:30:00 UTC));
+        let _runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Unused Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
+        let dest = rig.init_local("Unused Local", &repo_dir, "remove-dest-pw");
         let pw = SecretValue::from_str_secret("remove-dest-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
 
         let mut cfg = AppConfig {
             destinations: vec![dest.clone()],
@@ -191,7 +153,7 @@ fn ac_m1_19_3_remove_unused_destination_deletes_secrets_keeps_repo() {
         };
         save_config(&cfg_path, &cfg).expect("save config");
         assert_eq!(
-            store.get_secret(dest.id.as_str(), "repo").expect("get"),
+            rig.store.get_secret(dest.id.as_str(), "repo").expect("get"),
             Some(pw)
         );
 
@@ -200,25 +162,25 @@ fn ac_m1_19_3_remove_unused_destination_deletes_secrets_keeps_repo() {
             .expect("remove unused dest");
         assert_eq!(removed.id, dest.id);
         save_config(&cfg_path, &cfg).expect("save updated config");
-        remove_destination_secrets(&removed, &store).expect("delete secrets");
+        remove_destination_secrets(&removed, &rig.store).expect("delete secrets");
 
         let reloaded = load_config(&cfg_path).expect("reload");
         assert!(reloaded.destination(&dest.id).is_none());
         assert_eq!(
-            store
+            rig.store
                 .get_secret(dest.id.as_str(), "repo")
                 .expect("get repo"),
             None
         );
         assert_eq!(
-            store
+            rig.store
                 .get_secret(dest.id.as_str(), "rest")
                 .expect("get rest"),
             None
         );
 
         // Repository on disk must stay intact (`restic snapshots` exits 0).
-        let snap_out = Command::new(&resolved.binary)
+        let snap_out = Command::new(&rig.resolved.binary)
             .args(["-r", &repo_dir.to_string_lossy(), "snapshots", "--no-lock"])
             .env("RESTIC_PASSWORD", "remove-dest-pw")
             .env("RESTIC_CACHE_DIR", &cache_dir)
@@ -325,21 +287,37 @@ fn ac_m1_19_5_aborting_removal_leaves_config_and_secrets_untouched() {
     save_config(&cfg_path, &cfg).expect("save config");
     let raw_before = fs::read_to_string(&cfg_path).expect("read config before");
 
-    // Simulate user staging/opening removal confirmation and aborting before commit.
+    // The removal is staged on a copy (the confirmation dialog is open) and then abandoned:
+    // nothing is committed.
     let mut staged = cfg.clone();
-    let aborted = true;
-    if !aborted {
-        let _ = staged.remove_backup(&bk.id);
-        save_config(&cfg_path, &staged).expect("save");
-        remove_destination_secrets(&dest, &store).expect("delete");
-    }
+    staged.remove_backup(&bk.id).expect("stage removal");
+    assert!(staged.backups.is_empty(), "precondition: removal is staged");
 
     let raw_after = fs::read_to_string(&cfg_path).expect("read config after");
-    assert_eq!(raw_after, raw_before);
-    assert_eq!(load_config(&cfg_path).expect("reload"), cfg);
+    assert_eq!(raw_after, raw_before, "(a) config.toml unchanged");
+    assert_eq!(
+        load_config(&cfg_path).expect("reload"),
+        cfg,
+        "(a) config.toml still holds the backup"
+    );
     assert_eq!(
         store.get_secret(dest.id.as_str(), "repo").expect("get"),
-        Some(pw)
+        Some(pw),
+        "(b) secret store unchanged"
+    );
+
+    // Control: confirming the same staged removal does change both, so the assertions above can fail.
+    save_config(&cfg_path, &staged).expect("commit removal");
+    remove_destination_secrets(&dest, &store).expect("delete secrets");
+    assert_ne!(
+        fs::read_to_string(&cfg_path).expect("read committed config"),
+        raw_before,
+        "control: the commit rewrites config.toml"
+    );
+    assert_eq!(
+        store.get_secret(dest.id.as_str(), "repo").expect("get"),
+        None,
+        "control: the commit deletes the secret"
     );
 }
 
@@ -354,52 +332,15 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
         let repo_b = dir.path().join("repo-b");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_a).expect("mkdir repo_a");
-        fs::create_dir_all(&repo_b).expect("mkdir repo_b");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         fs::write(src_dir.join("file.txt"), b"initial").expect("write");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 14:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 14:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest_a =
-            Destination::new("Dest A", DestinationKind::Local { path: repo_a }).expect("a");
-        let dest_b = Destination::new(
-            "Dest B",
-            DestinationKind::Local {
-                path: repo_b.clone(),
-            },
-        )
-        .expect("b");
-        let pw_a = SecretValue::from_str_secret("pw-a");
-        let pw_b = SecretValue::from_str_secret("pw-b");
-
-        setup_destination(
-            &dest_a,
-            DestinationSetupMode::InitNew,
-            &pw_a,
-            None,
-            &runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init A failed: {e}"));
-        setup_destination(
-            &dest_b,
-            DestinationSetupMode::InitNew,
-            &pw_b,
-            None,
-            &runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init B failed: {e}"));
+        let dest_a = rig.init_local("Dest A", &repo_a, "pw-a");
+        let dest_b = rig.init_local("Dest B", &repo_b, "pw-b");
 
         let backup =
             Backup::new("Work", Source::folder(&src_dir), dest_a.id.clone()).expect("backup");
@@ -460,17 +401,17 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
         let snaps_b = list_snapshots_for_backup(
             &original_backup_id,
             &dest_b,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list B");
         assert_eq!(snaps_b.len(), 1, "{label}: B should have 1 snapshot");
 
         // Confirm the first snapshot on B has no parent snapshot (`cat snapshot`).
-        let cat_out = Command::new(&resolved.binary)
+        let cat_out = Command::new(&rig.resolved.binary)
             .args([
                 "-r",
                 &repo_b.to_string_lossy(),
@@ -487,8 +428,7 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
         let snap_json: serde_json::Value =
             serde_json::from_slice(&cat_out.stdout).expect("parse snapshot json");
         assert!(
-            snap_json.get("parent").is_none()
-                || snap_json.get("parent").is_some_and(|v| v.is_null()),
+            snap_json["parent"].is_null(),
             "{label}: fresh snapshot on B must have no parent, got {snap_json}"
         );
 
@@ -496,10 +436,10 @@ fn ac_m1_22_1_reassign_backup_starts_fresh_chain_on_b_keeps_snapshots_on_a() {
         let snaps_a = list_snapshots_for_backup(
             &original_backup_id,
             &dest_a,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list A");
@@ -603,44 +543,16 @@ fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
         let meta_dir = dir.path().join("meta");
-        fs::create_dir_all(&repo_a).expect("mkdir a");
-        fs::create_dir_all(&repo_b).expect("mkdir b");
         fs::create_dir_all(&src_dir).expect("mkdir src");
         fs::create_dir_all(&meta_dir).expect("mkdir meta");
         fs::write(src_dir.join("data.txt"), b"payload").expect("write data");
         fs::write(meta_dir.join("backup.json"), b"{\"name\":\"Work\"}").expect("write meta");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 15:00:00 UTC));
-
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
-        let dest_a = Destination::new("A", DestinationKind::Local { path: repo_a }).expect("a");
-        let dest_b = Destination::new("B", DestinationKind::Local { path: repo_b }).expect("b");
-        setup_destination(
-            &dest_a,
-            DestinationSetupMode::InitNew,
-            &SecretValue::from_str_secret("pw-a"),
-            None,
-            &runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init A failed: {e}"));
-        setup_destination(
-            &dest_b,
-            DestinationSetupMode::InitNew,
-            &SecretValue::from_str_secret("pw-b"),
-            None,
-            &runtime,
-        )
-        .unwrap_or_else(|e| panic!("{label}: init B failed: {e}"));
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-12-01 15:00:00 UTC));
+        let runtime = rig.runtime();
+        let dest_a = rig.init_local("A", &repo_a, "pw-a");
+        let dest_b = rig.init_local("B", &repo_b, "pw-b");
 
         let backup =
             Backup::new("Work", Source::folder(&src_dir), dest_a.id.clone()).expect("backup");
@@ -652,8 +564,8 @@ fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
 
         // Create a `kestic-meta:<backup_id>` snapshot in A before reassigning.
         let mut meta_spec = ResticCommandSpec::for_destination(
-            &resolved.binary,
-            &helper,
+            &rig.resolved.binary,
+            &rig.helper,
             &dest_a,
             vec![
                 "backup".to_string(),
@@ -664,12 +576,26 @@ fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
         );
         meta_spec.low_priority = false;
         meta_spec.cache_dir = Some(cache_dir.clone());
-        let meta_res = run_restic(&meta_spec, &dest_a, Some(&store), &clock, None, &[], |_| {})
-            .expect("create meta snapshot");
+        let meta_res = run_restic(
+            &meta_spec,
+            &dest_a,
+            Some(&rig.store),
+            &rig.clock,
+            None,
+            &[],
+            |_| {},
+        )
+        .expect("create meta snapshot");
         assert_eq!(meta_res.exit_code, 0, "{label}");
 
         let meta_before = list_meta_snapshots(
-            &backup, &dest_a, &resolved, &helper, &store, &clock, &cache_dir,
+            &backup,
+            &dest_a,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
+            &cache_dir,
         );
         assert_eq!(meta_before.len(), 1, "{label}");
 
@@ -691,13 +617,25 @@ fn ac_m1_22_3_meta_snapshots_preserved_in_a_on_reassign() {
 
         // Meta snapshots in A must remain unchanged.
         let meta_after = list_meta_snapshots(
-            &backup, &dest_a, &resolved, &helper, &store, &clock, &cache_dir,
+            &backup,
+            &dest_a,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
+            &cache_dir,
         );
         assert_eq!(meta_after.len(), 1, "{label}");
         assert_eq!(meta_after[0].id, meta_before[0].id, "{label}");
 
         let meta_in_b = list_meta_snapshots(
-            &backup, &dest_b, &resolved, &helper, &store, &clock, &cache_dir,
+            &backup,
+            &dest_b,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
+            &cache_dir,
         );
         assert!(meta_in_b.is_empty(), "{label}");
     }

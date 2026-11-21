@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Restic command construction, tolerant `--json` stream parsing, execution, and error mapping
-//! (`NFR-02`, `NFR-10`, `FR-34`, `FR-37`, `FR-42`, `M1-S03`, `M1-S14`, `M1-S15`).
+//! Restic command construction, tolerant `--json` stream parsing, execution, and error mapping.
 
 use crate::clock::Clock;
 use crate::model::{
@@ -10,6 +9,7 @@ use crate::model::{
 };
 use crate::provider::ResolvedRestic;
 use crate::secrets::{SecretError, SecretStore, SecretValue};
+use crate::sync::LockUnpoisoned;
 use kestic_i18n::codes::ErrorKind;
 use kestic_i18n::messages::{Message, completed_message, dns_failed_message};
 use serde::Deserialize;
@@ -35,11 +35,36 @@ pub struct ResticRuntime<'a> {
     pub cache_dir: Option<&'a Path>,
 }
 
-/// Action offered to the user for recoverable errors (`FR-37`, `M1-S15`); a code from
+impl ResticRuntime<'_> {
+    /// Runs `spec` against `destination`, looking secrets up in the runtime's secret store.
+    pub(crate) fn run<F>(
+        &self,
+        spec: &ResticCommandSpec,
+        destination: &Destination,
+        cancel: Option<&CancelHandle>,
+        extra_env: &[(&str, &str)],
+        on_event: F,
+    ) -> Result<ResticExecutionResult, ResticRunError>
+    where
+        F: FnMut(&ResticStreamEvent) + Send,
+    {
+        run_restic(
+            spec,
+            destination,
+            Some(self.secret_store),
+            self.clock,
+            cancel,
+            extra_env,
+            on_event,
+        )
+    }
+}
+
+/// Action offered to the user for recoverable errors; a code from
 /// `kestic-i18n`, re-exported for the restic error mapping.
 pub use kestic_i18n::codes::RecoveryAction;
 
-/// Classified restic outcome (`AC-M1-03-2`, `FR-37`).
+/// Classified restic outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResticFailureKind {
     None,
@@ -56,20 +81,10 @@ pub enum ResticFailureKind {
 }
 
 impl ResticFailureKind {
-    /// Whether this failure is transient (`F2`: network, destination unreachable, DNS, lock /
-    /// Exit 11) and is therefore retried with backoff instead of blocking schedules like a
-    /// permanent error (Exit 12 wrong password, missing repository, configuration errors).
-    pub fn is_transient(&self) -> bool {
-        matches!(
-            self,
-            Self::DestinationUnreachable | Self::DnsResolutionFailed | Self::RepositoryLocked
-        )
-    }
-
-    /// Whether this failure needs the user before any further scheduled run makes sense (`F2`:
-    /// Exit 12 wrong password, Exit 10 missing repository, rejected backend credentials). Other
-    /// non-transient failures (e.g. disk full, unknown errors) are alerted at once but do not
-    /// block the next regular slot (docs/spec/questions.md, 2026-11-19).
+    /// Whether this failure needs the user before any further scheduled run makes sense
+    /// (e.g. exit 12 wrong password, exit 10 missing repository, rejected backend credentials). Other
+    /// failures (e.g. disk full, unknown errors) are alerted at once but do not
+    /// block the next regular slot.
     pub fn is_permanent(&self) -> bool {
         matches!(
             self,
@@ -96,7 +111,7 @@ impl ResticFailureKind {
         }
     }
 
-    /// One-sentence summary for notifications and the run history (`FR-37`); finer than
+    /// One-sentence summary for notifications and the run history; finer than
     /// [`ErrorKind`] (DNS, «Completed», exit code of unknown errors).
     pub fn summary_message(&self) -> Message {
         match self {
@@ -107,14 +122,14 @@ impl ResticFailureKind {
         }
     }
 
-    /// Canonical English summary (`NFR-06`); the translatable form is
+    /// Canonical English summary; the translatable form is
     /// [`ResticFailureKind::summary_message`].
     pub fn default_summary(&self) -> String {
         self.summary_message().english()
     }
 }
 
-/// User-facing error metadata derived from exit code and stderr/`exit_error` (`M1-S15`).
+/// User-facing error metadata derived from exit code and stderr/`exit_error`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorPresentation {
     pub status: RunStatus,
@@ -177,7 +192,7 @@ struct RawExitErrorMessage {
     message: String,
 }
 
-/// Parsed `message_type = "verbose_status"` line from `restic backup -vv --json` (`M2-S04`).
+/// Parsed `message_type = "verbose_status"` line from `restic backup -vv --json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct ResticVerboseStatusMessage {
@@ -189,7 +204,7 @@ pub struct ResticVerboseStatusMessage {
     pub total_files: Option<u64>,
 }
 
-/// Tolerant event representation for NDJSON lines emitted by `restic --json` (`AC-M1-03-1`).
+/// Tolerant event representation for NDJSON lines emitted by `restic --json`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResticStreamEvent {
     Status(ResticStatusMessage),
@@ -200,7 +215,7 @@ pub enum ResticStreamEvent {
     Unknown { message_type: Option<String> },
 }
 
-/// Parses one JSON line emitted by `restic --json`, ignoring unknown fields/types (`AC-M1-03-1`).
+/// Parses one JSON line emitted by `restic --json`, ignoring unknown fields/types.
 pub fn parse_json_line(line: &str) -> Result<ResticStreamEvent, serde_json::Error> {
     let value: serde_json::Value = serde_json::from_str(line.trim())?;
     let msg_type = value
@@ -249,7 +264,7 @@ pub fn parse_json_line(line: &str) -> Result<ResticStreamEvent, serde_json::Erro
     }
 }
 
-/// Maps restic exit code and error output into [`ErrorPresentation`] (`AC-M1-03-2`, `AC-M1-15-1..3`).
+/// Maps restic exit code and error output into [`ErrorPresentation`].
 pub fn classify_exit(
     exit_code: i32,
     exit_error_msg: Option<&str>,
@@ -359,7 +374,7 @@ pub fn classify_exit(
     }
 }
 
-/// Replaces any known secret values in `text` with `***REDACTED***` (`NFR-02`, `AC-M1-08-2`).
+/// Replaces any known secret values in `text` with `***REDACTED***`.
 pub fn redact_secrets(text: &str, secrets: &[&str]) -> String {
     let mut out = text.to_string();
     for secret in secrets {
@@ -375,15 +390,13 @@ pub fn redact_secrets(text: &str, secrets: &[&str]) -> String {
 pub enum ResticRunError {
     #[error("failed to read repository secret: {0}")]
     Secret(#[from] SecretError),
-    #[error("missing repository password in secret store for destination `{0}`")]
-    MissingRepoPassword(DestinationId),
     #[error("missing REST password in secret store for destination `{0}`")]
     MissingRestPassword(DestinationId),
     #[error("failed to spawn restic command: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// Specification for running a restic command safely via `RESTIC_PASSWORD_COMMAND` (`NFR-02`).
+/// Specification for running a restic command safely via `RESTIC_PASSWORD_COMMAND`.
 #[derive(Debug, Clone)]
 pub struct ResticCommandSpec {
     pub restic_binary: PathBuf,
@@ -430,7 +443,7 @@ impl ResticCommandSpec {
         self
     }
 
-    /// Creates a specification for running `restic unlock` against `destination` (`AC-M1-10-4`).
+    /// Creates a specification for running `restic unlock` against `destination`.
     pub fn unlock(
         restic_binary: impl Into<PathBuf>,
         kestic_binary: impl Into<PathBuf>,
@@ -446,7 +459,7 @@ impl ResticCommandSpec {
         spec
     }
 
-    /// Formats the command invocation for user inspection / clipboard (`FR-34`, `AC-M1-14-1`, `AC-M1-14-2`).
+    /// Formats the command invocation for user inspection / clipboard.
     ///
     /// Never includes plaintext secrets.
     pub fn to_transparent_shell_command(&self) -> String {
@@ -586,40 +599,13 @@ pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedI
     }
 }
 
-/// Builds an SSH command string for restic `sftp.command` / `sftp.args` that always enforces
-/// `-o UserKnownHostsFile=<path>` (`P24`, `NFR-07`, `AC-M1-Q-1`) and optionally adds
-/// `-F <ssh_config>` and `-o IdentitiesOnly=yes` for isolated test environments.
-pub fn build_isolated_ssh_sftp_command(
-    known_hosts_path: &Path,
-    ssh_config_path: Option<&Path>,
-    strict_identities: bool,
-) -> String {
-    let mut parts = vec![
-        "ssh".to_string(),
-        "-o".to_string(),
-        format!(
-            "UserKnownHostsFile={}",
-            quote_shell(&known_hosts_path.to_string_lossy())
-        ),
-    ];
-    if let Some(cfg) = ssh_config_path {
-        parts.push("-F".to_string());
-        parts.push(quote_shell(&cfg.to_string_lossy()));
-    }
-    if strict_identities {
-        parts.push("-o".to_string());
-        parts.push("IdentitiesOnly=yes".to_string());
-    }
-    parts.join(" ")
-}
-
 fn quote_shell(raw: &str) -> String {
     shlex::try_quote(raw)
         .map(|cow| cow.into_owned())
         .unwrap_or_else(|_| format!("'{raw}'"))
 }
 
-/// Handle allowing another thread to request graceful cancellation (`SIGTERM`, `FR-21`).
+/// Handle allowing another thread to request graceful cancellation (`SIGTERM`).
 #[derive(Debug, Clone, Default)]
 pub struct CancelHandle {
     cancelled: Arc<AtomicBool>,
@@ -634,10 +620,7 @@ impl CancelHandle {
     /// Marks the run cancelled and sends `SIGTERM` if the child process is currently running.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
-        let pid_opt = *self
-            .child_pid
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let pid_opt = *self.child_pid.lock_unpoisoned();
         if let Some(pid) = pid_opt {
             // If `ionice`/`nice` wrapped `restic`, try signalling both the process group / child tree
             // as well as the direct PID. First look up direct child `restic` processes if any.
@@ -651,10 +634,7 @@ impl CancelHandle {
     }
 
     fn set_pid(&self, pid: Option<u32>) {
-        let mut guard = self
-            .child_pid
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self.child_pid.lock_unpoisoned();
         *guard = pid;
     }
 }
@@ -718,6 +698,29 @@ struct PreparedCommand {
     env_keys: Vec<String>,
 }
 
+/// Sets the cache directory and the REST credentials of `spec` on `cmd`; returns the names of
+/// the variables set so a command record can list them without values.
+pub(crate) fn apply_backend_env(
+    cmd: &mut Command,
+    spec: &ResticCommandSpec,
+    rest_password: Option<&SecretValue>,
+) -> Result<Vec<String>, SecretError> {
+    let mut env_keys = Vec::new();
+    if let Some(ref cache_dir) = spec.cache_dir {
+        cmd.env("RESTIC_CACHE_DIR", cache_dir);
+        env_keys.push("RESTIC_CACHE_DIR".to_string());
+    }
+    if let Some(user) = spec.rest_username.as_deref().filter(|u| !u.is_empty()) {
+        cmd.env("RESTIC_REST_USERNAME", user);
+        env_keys.push("RESTIC_REST_USERNAME".to_string());
+    }
+    if let Some(rest_pw) = rest_password {
+        cmd.env("RESTIC_REST_PASSWORD", rest_pw.as_str()?);
+        env_keys.push("RESTIC_REST_PASSWORD".to_string());
+    }
+    Ok(env_keys)
+}
+
 fn build_restic_command(
     spec: &ResticCommandSpec,
     rest_password: Option<&SecretValue>,
@@ -742,18 +745,7 @@ fn build_restic_command(
 
     let mut env_keys = vec!["RESTIC_PASSWORD_COMMAND".to_string()];
 
-    if let Some(ref cache_dir) = spec.cache_dir {
-        cmd.env("RESTIC_CACHE_DIR", cache_dir);
-        env_keys.push("RESTIC_CACHE_DIR".to_string());
-    }
-    if let Some(user) = spec.rest_username.as_deref().filter(|u| !u.is_empty()) {
-        cmd.env("RESTIC_REST_USERNAME", user);
-        env_keys.push("RESTIC_REST_USERNAME".to_string());
-    }
-    if let Some(rest_pw) = rest_password {
-        cmd.env("RESTIC_REST_PASSWORD", rest_pw.as_str()?);
-        env_keys.push("RESTIC_REST_PASSWORD".to_string());
-    }
+    env_keys.extend(apply_backend_env(&mut cmd, spec, rest_password)?);
     for (k, v) in extra_env {
         cmd.env(k, v);
         env_keys.push((*k).to_string());

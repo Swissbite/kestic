@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Scheduler evaluation tick (`M3-S01..S13`), global/per-backup pause/resume, and settings updates.
+//! Scheduler evaluation tick, global/per-backup pause/resume, and settings updates.
 
 use super::availability::{drain_queued_backups_async, trigger_background_source_probe};
 use super::backup_runner::{start_scheduled_backup_async, upsert_pending_run_entry};
 use super::error::KesticServiceErr;
+use super::error::parse_backup_id;
 use super::maintenance::run_scheduled_maintenance_async;
 use super::run_errors::run_blocks_schedule;
 use super::state::DaemonCore;
@@ -23,6 +24,7 @@ use kestic_core::scheduler::{
     evaluate_destination_maintenance, evaluate_run_conditions, is_pause_active,
     maintenance_slots_between, plan_destination_actions, validate_pause_duration,
 };
+use kestic_core::sync::LockUnpoisoned;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -56,7 +58,7 @@ impl DaemonCore {
         let now = self.clock.now_utc();
         self.set_global_pause_cached(None)
             .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
-        // AC-M3-07-4: reset overdue anchor on resume so paused slots do not count as overdue.
+        // reset overdue anchor on resume so paused slots do not count as overdue.
         let backup_ids: Vec<BackupId> = self.config.backups.iter().map(|b| b.id.clone()).collect();
         for id in &backup_ids {
             let mut rs = self.load_backup_runtime_state(id);
@@ -74,8 +76,7 @@ impl DaemonCore {
         backup_id: &str,
         duration_json: &str,
     ) -> Result<(), KesticServiceErr> {
-        let b_id = BackupId::parse(backup_id)
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let b_id = parse_backup_id(backup_id)?;
         let backup = self
             .config
             .backup(&b_id)
@@ -100,15 +101,14 @@ impl DaemonCore {
     }
 
     pub fn resume_backup(&mut self, backup_id: &str) -> Result<(), KesticServiceErr> {
-        let b_id = BackupId::parse(backup_id)
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let b_id = parse_backup_id(backup_id)?;
         if self.config.backup(&b_id).is_none() {
             return Err(KesticServiceErr::NotFound(backup_id.to_string()));
         }
         let now = self.clock.now_utc();
         let mut rs = self.load_backup_runtime_state(&b_id);
         rs.pause = None;
-        // AC-M3-07-4: reset overdue anchor to resume timestamp.
+        // reset overdue anchor to resume timestamp.
         rs.overdue_anchor_at = Some(now);
         rs.last_overdue_notified_at = None;
         self.store_backup_runtime_state(&b_id, &rs)
@@ -151,16 +151,16 @@ struct TickPlan {
     drain_queue: bool,
 }
 
-/// Evaluates scheduled backups & destination maintenance for one tick (`M3-S01..S13`).
+/// Evaluates scheduled backups & destination maintenance for one tick.
 ///
 /// Runs on the daemon main loop, so it only evaluates and claims under the `DaemonCore` lock;
 /// everything that can block (restic/Secret Service probe, source stat, destination preflight,
-/// desktop notifications) runs on worker threads, keeping `PrepareForSleep` handling prompt (`F9`).
+/// desktop notifications) runs on worker threads, keeping `PrepareForSleep` handling prompt.
 pub fn tick_scheduler_async(shared: &Arc<Mutex<DaemonCore>>) {
     trigger_background_source_probe(Arc::clone(shared));
 
     let plan = {
-        let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = shared.lock_unpoisoned();
         if guard.sleep_in_progress {
             return;
         }
@@ -249,7 +249,7 @@ fn plan_scheduler_tick(guard: &mut DaemonCore) -> TickPlan {
         })
         .collect();
 
-    // Locked password store / unusable restic: wait for the re-probe cooldown (`AC-M1-13-5`).
+    // Locked password store / unusable restic: wait for the re-probe cooldown.
     let actions = if guard.scheduled_probe_blocked(now) {
         Vec::new()
     } else {
@@ -276,11 +276,7 @@ fn plan_scheduler_tick(guard: &mut DaemonCore) -> TickPlan {
     });
 
     let state_dto_opt = if !overdue_notices.is_empty() || !actions.is_empty() {
-        let (state_dto, tray_state) = guard.build_state_and_tray();
-        if let Some(tray) = &guard.tray {
-            tray.set_full_state(tray_state);
-        }
-        Some(state_dto)
+        Some(guard.push_tray_state())
     } else {
         None
     };
@@ -327,7 +323,7 @@ fn evaluate_single_backup_tick(
 ) -> BackupScheduleEvaluation {
     let mut rs = guard.load_backup_runtime_state(&backup.id);
 
-    // Expire finished per-backup pause (`AC-M3-07-3`, `AC-M3-07-4`).
+    // Expire finished per-backup pause.
     if let Some(ref p) = rs.pause
         && let Some(until) = p.paused_until
         && now >= until
@@ -341,14 +337,10 @@ fn evaluate_single_backup_tick(
 
     let last_success_at = guard.last_successful_backup_at_cached(&backup.id);
 
-    // Reset stale backoff state from an earlier slot once a newer regular slot arrives (`AC-M3-04-1`).
+    // Reset stale backoff state from an earlier slot once a newer regular slot arrives.
     let due_now_slots = {
-        let catchup_anchor = match (last_success_at, rs.baseline_at) {
-            (Some(a), Some(b)) => a.max(b),
-            (Some(a), None) => a,
-            (None, Some(b)) => b,
-            (None, None) => now,
-        };
+        let catchup_anchor =
+            kestic_core::scheduler::catchup_anchor(last_success_at, rs.baseline_at, now);
         backup_slots_between(&backup.schedule, catchup_anchor, now, &guard.timezone)
     };
     if let (Some(latest_slot), Some(failed_at)) =
@@ -356,17 +348,14 @@ fn evaluate_single_backup_tick(
         && latest_slot > failed_at
         && (rs.backoff_attempt > 0 || rs.backoff_until.is_some())
     {
-        rs.backoff_attempt = 0;
-        rs.backoff_until = None;
-        rs.backoff_kind = None;
-        rs.last_failure_at = None;
+        kestic_core::scheduler::clear_backup_backoff(&mut rs);
         let _ = guard.store_backup_runtime_state(&backup.id, &rs);
     }
 
     let backoff_elapsed = rs.backoff_until.is_some_and(|until| now >= until);
 
     // Only permanent errors (wrong password, missing repository, configuration) block the
-    // schedule; transient failures (network, DNS, lock) are retried (`F2`).
+    // schedule; transient failures (network, DNS, lock) are retried.
     let has_error = guard
         .runs_cache
         .iter()
@@ -415,7 +404,7 @@ fn evaluate_single_backup_tick(
         &guard.timezone,
     );
 
-    // AC-M3-09-3: Allow sleep-interrupted backups (even ManualOnly) to resume after wake.
+    // Allow sleep-interrupted backups (even ManualOnly) to resume after wake.
     if eval.due_slot.is_none()
         && !eval.is_paused
         && !has_error
@@ -451,7 +440,7 @@ fn evaluate_single_backup_tick(
         upsert_pending_run_entry(guard, backup, primary.to_pending_reason(), msg);
     } else if (eval.is_paused || has_error) && !guard.queued_backups.contains(&backup.id) {
         // Without a due slot the scheduler never wrote a pending entry; pending entries of
-        // not-due backups (e.g. a «Back up all» skip, AC-M3-08-6) stay in the history until the
+        // not-due backups (e.g. a «Back up all» skip) stay in the history until the
         // next run of that backup replaces them.
         let _ = guard.delete_pending_runs_cached(&backup.id);
     }
@@ -471,8 +460,7 @@ fn evaluate_scheduled_maintenance_tick(
     if let Some(failed_at) = ds.last_maintenance_failure_at
         && (ds.maintenance_backoff_attempt > 0 || ds.maintenance_backoff_until.is_some())
     {
-        let prune_anchor = ds.last_prune_at.or(ds.baseline_at).unwrap_or(now);
-        let check_anchor = ds.last_check_at.or(ds.baseline_at).unwrap_or(now);
+        let (prune_anchor, check_anchor) = kestic_core::scheduler::maintenance_anchors(&ds, now);
         let latest_slot =
             maintenance_slots_between(&dest.maintenance.prune, prune_anchor, now, &guard.timezone)
                 .into_iter()
@@ -484,9 +472,7 @@ fn evaluate_scheduled_maintenance_tick(
                 ))
                 .max();
         if latest_slot.is_some_and(|s| s > failed_at) {
-            ds.maintenance_backoff_attempt = 0;
-            ds.maintenance_backoff_until = None;
-            ds.last_maintenance_failure_at = None;
+            kestic_core::scheduler::clear_maintenance_backoff(&mut ds);
             let _ = guard.store_destination_maintenance_state(&dest.id, &ds);
         }
     }
@@ -522,7 +508,7 @@ struct ScheduledDispatchGuard {
 
 impl Drop for ScheduledDispatchGuard {
     fn drop(&mut self) {
-        let mut guard = self.shared.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.shared.lock_unpoisoned();
         guard.scheduled_dispatch.remove(&self.dest_id);
     }
 }

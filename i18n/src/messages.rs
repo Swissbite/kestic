@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The single mapping from language-independent codes ([`crate::codes`]) to English msgids
-//! (`NFR-06`, `docs/spec/dbus-api.md` §Sprachunabhängige Codes).
+//! (`docs/spec/dbus-api.md`).
 //!
 //! `core` never translates: it returns a [`Message`] (msgid + `%1`… arguments). The daemon (tray,
 //! notifications, run history) and the GUI translate it with their own i18n in their own
@@ -12,7 +12,7 @@
 use crate::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
     PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
-    SkipReason, SourceStatus,
+    SkipReason, SourceStatus, code_enum,
 };
 
 /// Marks `msgid` for extraction (`xgettext --keyword=i18n_noop:1`) without translating it.
@@ -139,7 +139,7 @@ pub fn dns_failed_message() -> Message {
 }
 
 impl RecoveryAction {
-    /// Button label of the recovery action (`FR-37`).
+    /// Button label of the recovery action.
     pub fn label_message(self) -> Message {
         Message::new(match self {
             Self::UpdateStoredPassword => i18n_noop("Update Saved Password…"),
@@ -225,7 +225,7 @@ impl SourceStatus {
 }
 
 impl BlockedReason {
-    /// Availability reason next to «Back Up Now» (FR-30).
+    /// Availability reason next to «Back Up Now».
     pub fn message(self, source_status: Option<SourceStatus>) -> Message {
         match self {
             Self::SourceUnavailable => SourceStatus::message(source_status),
@@ -246,7 +246,7 @@ impl BlockedReason {
         }
     }
 
-    /// Message after a blocked manual start (`ManualRunBlocked`, FR-30).
+    /// Message after a blocked manual start (`ManualRunBlocked`).
     pub fn manual_block_message(self, backup_name: &str) -> Message {
         let msgid = match self {
             Self::SourceUnavailable => i18n_noop("Cannot back up '%1': source is unavailable."),
@@ -260,7 +260,7 @@ impl BlockedReason {
 }
 
 impl SkipReason {
-    /// Reason of a backup skipped by «Back Up All Now» (FR-13b). For `error`, `error_kind`
+    /// Reason of a backup skipped by «Back Up All Now». For `error`, `error_kind`
     /// names the cause; an unknown cause shows the raw `detail`.
     pub fn text(self, error_kind: Option<ErrorKind>, detail: Option<&str>) -> UiText {
         let msgid = match self {
@@ -329,7 +329,7 @@ pub fn restic_status_text(
 }
 
 impl BlockingKind {
-    /// Blocking-state text (§6.1); `restic` is the reason of an unusable restic.
+    /// Blocking-state text; `restic` is the reason of an unusable restic.
     pub fn message(self, restic: Option<Message>) -> Message {
         match self {
             Self::SecretStoreLocked => Message::new(i18n_noop(
@@ -466,61 +466,26 @@ pub fn pause_message(since: &str, until: Option<&str>) -> Message {
     }
 }
 
-/// UI labels that both the tray (daemon) and the window (GUI) show. QML asks for them by
-/// code (`appBackend.sharedLabel("back_up_now")`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Label {
-    BackUpNow,
-    PauseSchedules,
-    ResumeSchedules,
-    AllBackups,
-    PauseOneHour,
-    PauseThreeHours,
-    PauseUntilTomorrow,
-    PauseUntilResume,
-    NoBackups,
-    AllBackedUp,
-    /// A destination with backups cannot be removed (same text as the `InUse` error).
-    RemoveBackupsFirst,
+code_enum! {
+    /// UI labels that both the tray (daemon) and the window (GUI) show. QML asks for them by
+    /// code (`Texts.label("back_up_now")`).
+    Label {
+        BackUpNow => "back_up_now",
+        PauseSchedules => "pause_schedules",
+        ResumeSchedules => "resume_schedules",
+        AllBackups => "all_backups",
+        PauseOneHour => "pause_one_hour",
+        PauseThreeHours => "pause_three_hours",
+        PauseUntilTomorrow => "pause_until_tomorrow",
+        PauseUntilResume => "pause_until_resume",
+        NoBackups => "no_backups",
+        AllBackedUp => "all_data_backed_up",
+        /// A destination with backups cannot be removed (same text as the `InUse` error).
+        RemoveBackupsFirst => "remove_backups_first",
+    }
 }
 
 impl Label {
-    pub const ALL: [Self; 11] = [
-        Self::BackUpNow,
-        Self::PauseSchedules,
-        Self::ResumeSchedules,
-        Self::AllBackups,
-        Self::PauseOneHour,
-        Self::PauseThreeHours,
-        Self::PauseUntilTomorrow,
-        Self::PauseUntilResume,
-        Self::NoBackups,
-        Self::AllBackedUp,
-        Self::RemoveBackupsFirst,
-    ];
-
-    /// Code used by QML.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::BackUpNow => "back_up_now",
-            Self::PauseSchedules => "pause_schedules",
-            Self::ResumeSchedules => "resume_schedules",
-            Self::AllBackups => "all_backups",
-            Self::PauseOneHour => "pause_one_hour",
-            Self::PauseThreeHours => "pause_three_hours",
-            Self::PauseUntilTomorrow => "pause_until_tomorrow",
-            Self::PauseUntilResume => "pause_until_resume",
-            Self::NoBackups => "no_backups",
-            Self::AllBackedUp => "all_data_backed_up",
-            Self::RemoveBackupsFirst => "remove_backups_first",
-        }
-    }
-
-    /// Parses a label code; `None` for unknown codes.
-    pub fn parse(code: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|l| l.as_str() == code)
-    }
-
     pub fn message(self) -> Message {
         match self {
             Self::BackUpNow => Message::new(i18n_noop("Back Up Now")),
@@ -580,7 +545,7 @@ pub struct OverallCounts {
     pub paused: bool,
 }
 
-/// Headline of the overall status (§6.2 priority: blocked, failed, overdue, warning, running,
+/// Headline of the overall status (priority: blocked, failed, overdue, warning, running,
 /// waiting, paused, empty, interrupted, cancelled, never run, ok) for overview and tray.
 pub fn overall_headline(
     counts: &OverallCounts,

@@ -2,21 +2,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Destination maintenance (`prune`, `prune --dry-run --no-lock`, `check`) and stale-lock
-//! inspection/unlock (`FR-11`, `FR-19`, `FR-45`, `NFR-08`, `P16`, `P33`, `P41`, `M3-S05`, `M3-S06`).
+//! inspection/unlock.
 
-use crate::backup::BackupRunError;
+use crate::backup::{BackupRunError, check_command_succeeded};
 use crate::destination::{DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination};
 use crate::model::{Destination, RunStatus};
 use crate::provider::ResolvedRestic;
-use crate::restic::{
-    CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticRuntime, run_restic,
-};
+use crate::restic::{CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticRuntime};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-/// Builds a [`ResticCommandSpec`] for `restic prune` or `restic prune --dry-run --no-lock`
-/// (`AC-M3-05-7`, `AC-M3-05-8`, `P33`, `P41`).
+/// Builds a [`ResticCommandSpec`] for `restic prune` or `restic prune --dry-run --no-lock`.
 ///
 /// Note: `restic prune` does NOT support `--json` (`restic-integration.md`), so `json_output = false`.
 pub fn build_prune_command_spec(
@@ -40,7 +37,7 @@ pub fn build_prune_command_spec(
     spec
 }
 
-/// Builds a [`ResticCommandSpec`] for `restic check` without `--read-data` (`AC-M3-05-6`, `FR-11`).
+/// Builds a [`ResticCommandSpec`] for `restic check` without `--read-data`.
 pub fn build_check_command_spec(
     destination: &Destination,
     resolved: &ResolvedRestic,
@@ -54,23 +51,21 @@ pub fn build_check_command_spec(
     )
 }
 
-/// Parsed preview output of `restic prune --dry-run --no-lock` (`AC-M3-05-7`, `AC-M3-05-8`, `P10`).
+/// Parsed preview output of `restic prune --dry-run --no-lock`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrunePreviewSummary {
-    pub raw_lines: Vec<String>,
     pub delete_packs: Option<u64>,
     pub keep_packs: Option<u64>,
     pub freed_summary: Option<String>,
     pub transparent_command: String,
 }
 
-/// Parses human-readable `restic prune --dry-run` output tolerantly (`NFR-10`).
+/// Parses human-readable `restic prune --dry-run` output tolerantly.
 pub fn parse_prune_dry_run_output(
     lines: &[String],
     transparent_command: String,
 ) -> PrunePreviewSummary {
     let mut summary = PrunePreviewSummary {
-        raw_lines: lines.to_vec(),
         delete_packs: None,
         keep_packs: None,
         freed_summary: None,
@@ -110,7 +105,7 @@ fn extract_pack_count(lower: &str) -> Option<u64> {
     None
 }
 
-/// Executes `restic prune --dry-run --no-lock` on `destination` (`AC-M3-05-7`, `AC-M3-05-8`, `P41`).
+/// Executes `restic prune --dry-run --no-lock` on `destination`.
 pub fn execute_prune_dry_run(
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -128,27 +123,12 @@ pub fn execute_prune_dry_run(
     .with_cache_dir(runtime.cache_dir);
     let transparent_command = spec.to_transparent_shell_command();
 
-    let res = run_restic(
-        &spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        cancel,
-        extra_env,
-        |_| {},
-    )?;
+    let res = runtime.run(&spec, destination, cancel, extra_env, |_| {})?;
 
     if res.presentation.status == RunStatus::Cancelled {
         return Err(BackupRunError::Cancelled);
     }
-    if res.presentation.status == RunStatus::Error {
-        return Err(BackupRunError::Destination(
-            DestinationError::CommandFailed {
-                exit_code: res.exit_code,
-                message: res.presentation.detail_or_summary(),
-            },
-        ));
-    }
+    check_command_succeeded(&res)?;
 
     Ok(parse_prune_dry_run_output(
         &res.log_lines,
@@ -156,7 +136,7 @@ pub fn execute_prune_dry_run(
     ))
 }
 
-/// Executes real `restic prune` on `destination` (`FR-45`, `M3-S05`).
+/// Executes real `restic prune` on `destination`.
 pub fn execute_prune(
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -172,18 +152,10 @@ pub fn execute_prune(
         runtime.kestic_binary,
     )
     .with_cache_dir(runtime.cache_dir);
-    Ok(run_restic(
-        &spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        cancel,
-        extra_env,
-        |_| {},
-    )?)
+    Ok(runtime.run(&spec, destination, cancel, extra_env, |_| {})?)
 }
 
-/// Executes `restic check` (without `--read-data`) on `destination` (`AC-M3-05-6`, `FR-11`).
+/// Executes `restic check` (without `--read-data`) on `destination`.
 pub fn execute_check(
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -193,18 +165,10 @@ pub fn execute_check(
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
     let spec = build_check_command_spec(destination, runtime.resolved, runtime.kestic_binary)
         .with_cache_dir(runtime.cache_dir);
-    Ok(run_restic(
-        &spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        cancel,
-        extra_env,
-        |_| {},
-    )?)
+    Ok(runtime.run(&spec, destination, cancel, extra_env, |_| {})?)
 }
 
-/// Lock metadata returned by `restic cat lock <id> --no-lock` (`NFR-10`, `FR-19`, `P16`).
+/// Lock metadata returned by `restic cat lock <id> --no-lock`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RepoLockInfo {
@@ -217,7 +181,7 @@ pub struct RepoLockInfo {
     pub pid: Option<u32>,
 }
 
-/// Result of classifying repository locks against local host & running PIDs (`AC-M3-06-1..3`).
+/// Result of classifying repository locks against local host & running PIDs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LockClassification {
     pub stale_lock_ids: Vec<String>,
@@ -226,7 +190,7 @@ pub struct LockClassification {
     pub has_stale_local_lock: bool,
 }
 
-/// Classifies repository locks (`FR-19`, `P16`):
+/// Classifies repository locks:
 /// Only locks created by `local_hostname` whose recorded local PID is no longer alive are stale.
 pub fn classify_locks<F>(
     locks: &[RepoLockInfo],
@@ -309,23 +273,8 @@ pub fn list_and_inspect_locks(
     list_spec.json_output = false;
     list_spec.low_priority = false;
 
-    let list_res = run_restic(
-        &list_spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        None,
-        extra_env,
-        |_| {},
-    )?;
-    if list_res.presentation.status == RunStatus::Error {
-        return Err(BackupRunError::Destination(
-            DestinationError::CommandFailed {
-                exit_code: list_res.exit_code,
-                message: list_res.presentation.detail_or_summary(),
-            },
-        ));
-    }
+    let list_res = runtime.run(&list_spec, destination, None, extra_env, |_| {})?;
+    check_command_succeeded(&list_res)?;
 
     let lock_ids: Vec<String> = list_res
         .log_lines
@@ -352,15 +301,7 @@ pub fn list_and_inspect_locks(
         cat_spec.json_output = false;
         cat_spec.low_priority = false;
 
-        let cat_res = run_restic(
-            &cat_spec,
-            destination,
-            Some(runtime.secret_store),
-            runtime.clock,
-            None,
-            extra_env,
-            |_| {},
-        )?;
+        let cat_res = runtime.run(&cat_spec, destination, None, extra_env, |_| {})?;
         if cat_res.exit_code == 0 {
             let joined = cat_res.log_lines.join("\n");
             if let Some(start) = joined.find('{')
@@ -375,7 +316,7 @@ pub fn list_and_inspect_locks(
     Ok(locks)
 }
 
-/// Inspects locks on `destination` using explicit `local_hostname` and `is_pid_alive` predicate (`AC-M3-06-1..3`).
+/// Inspects locks on `destination` using explicit `local_hostname` and `is_pid_alive` predicate.
 pub fn detect_stale_locks_with<F>(
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -390,7 +331,7 @@ where
     Ok(classify_locks(&locks, local_hostname, is_pid_alive))
 }
 
-/// Inspects locks on `destination` using the real local hostname and `/proc` PID check (`FR-19`, `P16`).
+/// Inspects locks on `destination` using the real local hostname and `/proc` PID check.
 pub fn detect_stale_locks(
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -401,7 +342,7 @@ pub fn detect_stale_locks(
 }
 
 /// Executes `restic unlock` on `destination` ONLY if lock inspection confirms stale local locks
-/// exist and neither foreign-host nor active local locks are present (`FR-19`, `P16`, `AC-M3-06-1..3`).
+/// exist and neither foreign-host nor active local locks are present.
 pub fn execute_unlock_with<F>(
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -454,18 +395,10 @@ where
     let spec =
         ResticCommandSpec::unlock(&runtime.resolved.binary, runtime.kestic_binary, destination)
             .with_cache_dir(runtime.cache_dir);
-    Ok(run_restic(
-        &spec,
-        destination,
-        Some(runtime.secret_store),
-        runtime.clock,
-        None,
-        extra_env,
-        |_| {},
-    )?)
+    Ok(runtime.run(&spec, destination, None, extra_env, |_| {})?)
 }
 
-/// Executes `restic unlock` on `destination` using the real local hostname and `/proc` PID check (`FR-19`, `P16`).
+/// Executes `restic unlock` on `destination` using the real local hostname and `/proc` PID check.
 pub fn execute_unlock(
     destination: &Destination,
     runtime: &ResticRuntime<'_>,

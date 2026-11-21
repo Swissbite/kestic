@@ -4,21 +4,20 @@
 //! Schedule/condition/maintenance editing, pause/resume controls, settings, run details,
 //! clipboard, and quit confirmation for [`super::qobject::KesticApp`].
 
-use super::{dbus_error_text, qobject};
+use super::{Finish, qobject};
 use crate::smoke;
 use crate::state_cache::{
     build_provider, cached_daemon_now, cached_destination_kind, cached_today_iso_date,
     clone_updated_backup_conditions, clone_updated_backup_schedule, format_bytes,
     format_conditions_summary, format_datetime_display, format_duration_ms,
     format_maintenance_summary, format_run_kind_name, format_run_status, format_schedule_summary,
-    lookup_backup_summary, make_client, not_found_text, preview_next_schedule_slots,
-    refresh_state_now, shared_state,
+    i18n, json_or, make_client, preview_next_schedule_slots, shared_state,
 };
 use crate::ui_texts::GuiText;
-use cxx_kde_frameworks::ki18n::i18n;
 use cxx_qt_lib::QString;
 use kestic_core::model::{MaintenanceSchedule, NotificationSettings, RunConditions, Schedule};
 use kestic_core::scheduler::PauseDuration;
+use kestic_core::sync::LockUnpoisoned;
 use std::env;
 use std::pin::Pin;
 
@@ -32,26 +31,15 @@ fn parse_pause_duration(kind: &str) -> PauseDuration {
 }
 
 impl qobject::KesticApp {
-    pub fn run_destination_maintenance(
-        mut self: Pin<&mut Self>,
-        destination_id: &QString,
-    ) -> QString {
+    pub fn run_destination_maintenance(self: Pin<&mut Self>, destination_id: &QString) -> QString {
         let Ok(client) = make_client() else {
             return QString::from("");
         };
-        match client.run_destination_maintenance(&destination_id.to_string()) {
-            Ok(run_id) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                QString::from(&run_id)
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                QString::from("")
-            }
-        }
+        self.finish_action(
+            client.run_destination_maintenance(&destination_id.to_string()),
+            Finish::Plain,
+        )
+        .map_or_else(QString::default, |run_id| QString::from(&run_id))
     }
 
     pub fn update_destination_maintenance(
@@ -59,36 +47,23 @@ impl qobject::KesticApp {
         dest_id: &QString,
         maintenance_json: &QString,
     ) -> bool {
-        let maint: MaintenanceSchedule = match serde_json::from_str(&maintenance_json.to_string()) {
-            Ok(m) => m,
-            Err(err) => {
-                self.as_mut()
-                    .set_last_action_error(QString::from(&err.to_string()));
-                return false;
-            }
+        let Some(maint) = self
+            .as_mut()
+            .parse_json_or_err::<MaintenanceSchedule>(maintenance_json)
+        else {
+            return false;
         };
-        if let Err(err) = maint.validate() {
-            self.as_mut()
-                .set_last_action_error(QString::from(&err.to_string()));
+        if self.as_mut().ok_or_show(maint.validate()).is_none() {
             return false;
         }
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.update_destination_maintenance(&dest_id.to_string(), &maint) {
-            Ok(()) => {
-                self.as_mut().set_has_unsaved_changes(false);
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(
+            client.update_destination_maintenance(&dest_id.to_string(), &maint),
+            Finish::Saved,
+        )
+        .is_some()
     }
 
     pub fn update_backup_schedule(
@@ -97,53 +72,25 @@ impl qobject::KesticApp {
         schedule_json: &QString,
         overdue_threshold: i32,
     ) -> bool {
-        let id_str = backup_id.to_string();
-        let existing = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-            guard
-                .state
-                .as_ref()
-                .and_then(|s| lookup_backup_summary(s, &id_str))
-                .map(|b| b.backup.clone())
-        };
-        let Some(existing) = existing else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&not_found_text()));
+        let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return false;
         };
-        let schedule: Schedule = match serde_json::from_str(&schedule_json.to_string()) {
-            Ok(s) => s,
-            Err(err) => {
-                self.as_mut()
-                    .set_last_action_error(QString::from(&err.to_string()));
-                return false;
-            }
+        let Some(schedule) = self.as_mut().parse_json_or_err::<Schedule>(schedule_json) else {
+            return false;
         };
         let threshold_opt = (overdue_threshold > 0).then_some(overdue_threshold as u32);
-        let updated = match clone_updated_backup_schedule(&existing, schedule, threshold_opt) {
-            Ok(b) => b,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return false;
-            }
+        let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup_schedule(
+            &existing,
+            schedule,
+            threshold_opt,
+        )) else {
+            return false;
         };
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.update_backup(&updated) {
-            Ok(()) => {
-                self.as_mut().set_has_unsaved_changes(false);
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.update_backup(&updated), Finish::Saved)
+            .is_some()
     }
 
     pub fn update_backup_conditions(
@@ -151,58 +98,32 @@ impl qobject::KesticApp {
         backup_id: &QString,
         conditions_json: &QString,
     ) -> bool {
-        let id_str = backup_id.to_string();
-        let existing = {
-            let guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
-            guard
-                .state
-                .as_ref()
-                .and_then(|s| lookup_backup_summary(s, &id_str))
-                .map(|b| b.backup.clone())
-        };
-        let Some(existing) = existing else {
-            self.as_mut()
-                .set_last_action_error(QString::from(&not_found_text()));
+        let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return false;
         };
-        let conditions: RunConditions = match serde_json::from_str(&conditions_json.to_string()) {
-            Ok(c) => c,
-            Err(err) => {
-                self.as_mut()
-                    .set_last_action_error(QString::from(&err.to_string()));
-                return false;
-            }
+        let Some(conditions) = self
+            .as_mut()
+            .parse_json_or_err::<RunConditions>(conditions_json)
+        else {
+            return false;
         };
         let dest_kind = cached_destination_kind(existing.destination_id.as_str());
-        let updated =
-            match clone_updated_backup_conditions(&existing, conditions, dest_kind.as_ref()) {
-                Ok(b) => b,
-                Err(err) => {
-                    self.as_mut().set_last_action_error(QString::from(&err));
-                    return false;
-                }
-            };
+        let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup_conditions(
+            &existing,
+            conditions,
+            dest_kind.as_ref(),
+        )) else {
+            return false;
+        };
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.update_backup(&updated) {
-            Ok(()) => {
-                self.as_mut().set_has_unsaved_changes(false);
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.update_backup(&updated), Finish::Saved)
+            .is_some()
     }
 
     pub fn update_settings(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         default_overdue_threshold: i32,
         on_error: bool,
         on_warning: bool,
@@ -221,19 +142,11 @@ impl qobject::KesticApp {
             on_maintenance_failed,
             on_restic_update,
         };
-        match client.update_settings(threshold, &notifications) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(
+            client.update_settings(threshold, &notifications),
+            Finish::Plain,
+        )
+        .is_some()
     }
 
     pub fn set_restic_provider(
@@ -241,92 +154,46 @@ impl qobject::KesticApp {
         kind: &QString,
         custom_path: &QString,
     ) -> bool {
-        let provider = match build_provider(&kind.to_string(), &custom_path.to_string()) {
-            Ok(p) => p,
-            Err(err) => {
-                self.as_mut().set_last_action_error(QString::from(&err));
-                return false;
-            }
+        let Some(provider) = self
+            .as_mut()
+            .ok_or_show(build_provider(&kind.to_string(), &custom_path.to_string()))
+        else {
+            return false;
         };
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.set_restic_provider(&provider) {
-            Ok(_) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                self.as_mut()
-                    .set_last_action_error(QString::from(&dbus_error_text(&err)));
-                false
-            }
-        }
+        self.finish_action(client.set_restic_provider(&provider), Finish::Plain)
+            .is_some()
     }
 
-    pub fn update_expert_mode(mut self: Pin<&mut Self>, enabled: bool) -> bool {
+    pub fn update_expert_mode(self: Pin<&mut Self>, enabled: bool) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.set_expert_mode(enabled) {
-            Ok(()) => {
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.set_expert_mode(enabled), Finish::Plain)
+            .is_some()
     }
 
-    pub fn pause_global(mut self: Pin<&mut Self>, duration_kind: &QString) -> bool {
+    pub fn pause_global(self: Pin<&mut Self>, duration_kind: &QString) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
         let duration = parse_pause_duration(&duration_kind.to_string());
-        match client.pause_global(&duration) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                self.as_mut().passive_notification(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.pause_global(&duration), Finish::NotifyOnError)
+            .is_some()
     }
 
-    pub fn resume_global(mut self: Pin<&mut Self>) -> bool {
+    pub fn resume_global(self: Pin<&mut Self>) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.resume_global() {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                self.as_mut().passive_notification(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(client.resume_global(), Finish::NotifyOnError)
+            .is_some()
     }
 
     pub fn pause_backup(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         backup_id: &QString,
         duration_kind: &QString,
     ) -> bool {
@@ -334,53 +201,33 @@ impl qobject::KesticApp {
             return false;
         };
         let duration = parse_pause_duration(&duration_kind.to_string());
-        match client.pause_backup(&backup_id.to_string(), &duration) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                self.as_mut().passive_notification(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(
+            client.pause_backup(&backup_id.to_string(), &duration),
+            Finish::NotifyOnError,
+        )
+        .is_some()
     }
 
-    pub fn resume_backup(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
+    pub fn resume_backup(self: Pin<&mut Self>, backup_id: &QString) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.resume_backup(&backup_id.to_string()) {
-            Ok(()) => {
-                self.as_mut().set_last_action_error(QString::from(""));
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                true
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                self.as_mut().passive_notification(QString::from(&msg));
-                false
-            }
-        }
+        self.finish_action(
+            client.resume_backup(&backup_id.to_string()),
+            Finish::NotifyOnError,
+        )
+        .is_some()
     }
 
     pub fn load_run_detail(mut self: Pin<&mut Self>, run_id: &QString) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        let detail = match client.get_run_detail(&run_id.to_string()) {
-            Ok(detail) => detail,
-            Err(err) => {
-                self.as_mut()
-                    .set_last_action_error(QString::from(&dbus_error_text(&err)));
-                return false;
-            }
+        let Some(detail) = self
+            .as_mut()
+            .ok_or_show_dbus(client.get_run_detail(&run_id.to_string()))
+        else {
+            return false;
         };
         self.as_mut().apply_run_detail(detail);
         true
@@ -393,8 +240,7 @@ impl qobject::KesticApp {
             meta: String,
         }
 
-        let title = crate::state_cache::i18n("Run on %1")
-            .subs(&[&format_datetime_display(detail.run.started_at)]);
+        let title = i18n("Run on %1").subs(&[&format_datetime_display(detail.run.started_at)]);
         let (status_text, status_icon, status_color) =
             format_run_status(&detail.run.kind, detail.run.status);
         let dur = detail
@@ -414,9 +260,9 @@ impl qobject::KesticApp {
             .as_ref()
             .map(|s| format_bytes(s.data_added))
             .unwrap_or_else(|| String::from("0 B"));
-        let subtitle = crate::state_cache::i18n("%1 · %2 added").subs(&[&kind_title, &added]);
+        let subtitle = i18n("%1 · %2 added").subs(&[&kind_title, &added]);
         let stats_summary = if let Some(s) = &detail.run.stats {
-            crate::state_cache::i18n("%1 new · %2 changed · %3 unchanged · %4 processed").subs(&[
+            i18n("%1 new · %2 changed · %3 unchanged · %4 processed").subs(&[
                 &s.files_new.to_string(),
                 &s.files_changed.to_string(),
                 &s.files_unmodified.to_string(),
@@ -435,7 +281,7 @@ impl qobject::KesticApp {
                     .commands
                     .get(idx)
                     .map(|c| {
-                        crate::state_cache::i18n("Exit code %1 · %2")
+                        i18n("Exit code %1 · %2")
                             .subs(&[&c.exit_code.to_string(), &format_duration_ms(c.duration_ms)])
                     })
                     .unwrap_or_default();
@@ -446,9 +292,8 @@ impl qobject::KesticApp {
             })
             .collect();
         let transparent_joined = detail.transparent_commands.join("\n");
-        let commands_json = serde_json::to_string(&cmds).unwrap_or_else(|_| "[]".into());
-        let unreadable_json =
-            serde_json::to_string(&detail.unreadable_files).unwrap_or_else(|_| "[]".into());
+        let commands_json = json_or(&cmds, "[]");
+        let unreadable_json = json_or(&detail.unreadable_files, "[]");
         let log_path_str = detail
             .run
             .log_path
@@ -503,7 +348,7 @@ impl qobject::KesticApp {
             .set_selected_run_backup_id(QString::from(&run_backup_id));
 
         {
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             guard.run_detail = Some(detail);
         }
         self.as_mut().models_updated();
@@ -513,18 +358,11 @@ impl qobject::KesticApp {
         smoke::ffi::copy_to_clipboard(&text.to_string());
     }
 
-    pub fn confirm_quit(mut self: Pin<&mut Self>) -> bool {
+    pub fn confirm_quit(self: Pin<&mut Self>) -> bool {
         let Ok(client) = make_client() else {
             return false;
         };
-        match client.confirm_quit() {
-            Ok(()) => true,
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_last_action_error(QString::from(&msg));
-                false
-            }
-        }
+        self.ok_or_show_dbus(client.confirm_quit()).is_some()
     }
 
     pub fn home_dir(&self) -> QString {
@@ -545,9 +383,7 @@ impl qobject::KesticApp {
             return QString::from("[]");
         };
         match client.list_known_networks() {
-            Ok(list) => {
-                QString::from(&serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()))
-            }
+            Ok(list) => QString::from(&json_or(&list, "[]")),
             Err(_) => QString::from("[]"),
         }
     }
@@ -597,7 +433,7 @@ impl qobject::KesticApp {
             return QString::from("[]");
         }
         let slots = preview_next_schedule_slots(&schedule, cached_daemon_now());
-        QString::from(&serde_json::to_string(&slots).unwrap_or_else(|_| "[]".into()))
+        QString::from(&json_or(&slots, "[]"))
     }
 
     pub fn format_schedule_summary_json(&self, schedule_json: &QString) -> QString {

@@ -14,12 +14,11 @@ use cxx_kde_frameworks::ki18n::{self, KLocalizedString};
 use cxx_qt::casting::Upcast;
 use cxx_qt_lib::{QByteArray, QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, QUrl};
 use cxx_qt_lib_extras::QApplication;
+use kestic_core::sync::LockUnpoisoned;
 use std::env;
-use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 struct SmokeOptions {
     scenario: String,
@@ -57,154 +56,6 @@ fn parse_simulated_status(raw: &str) -> Option<kestic_daemon::service::Simulated
     }
 }
 
-fn run_spike_watch_exe(args: &[String]) -> ExitCode {
-    let ready_file = flag_value(args, "--ready-file");
-    let detected_file = flag_value(args, "--detected-file");
-    let timeout_ms: u64 = flag_value(args, "--timeout-ms")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5_000);
-
-    let identity = match kestic_daemon::binary_watch::BinaryIdentity::capture_current() {
-        Ok(id) => id,
-        Err(err) => {
-            eprintln!("failed to capture binary identity: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if let Some(path) = ready_file
-        && let Err(err) = fs::write(&path, "ready\n")
-    {
-        eprintln!("failed to write ready file {path}: {err}");
-        return ExitCode::FAILURE;
-    }
-
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    while Instant::now() < deadline {
-        if let kestic_daemon::binary_watch::BinaryStatus::Replaced(reason) = identity.check() {
-            if let Some(path) = detected_file
-                && let Err(err) = fs::write(&path, format!("{}\n", reason.as_str()))
-            {
-                eprintln!("failed to write detected file {path}: {err}");
-                return ExitCode::FAILURE;
-            }
-            return ExitCode::SUCCESS;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-
-    eprintln!("timed out waiting for executable replacement");
-    ExitCode::FAILURE
-}
-
-fn run_spike_inhibit(args: &[String]) -> ExitCode {
-    let seconds: u64 = flag_value(args, "--seconds")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
-    let dest =
-        flag_value(args, "--dest").unwrap_or_else(|| "org.freedesktop.portal.Desktop".to_string());
-
-    let guard = match kestic_daemon::inhibit::PortalInhibitGuard::acquire(
-        &dest,
-        "Kestic backup inhibit spike check (F9)",
-        kestic_daemon::inhibit::INHIBIT_IDLE_AND_SUSPEND,
-    ) {
-        Ok(g) => g,
-        Err(err) => {
-            eprintln!("portal inhibit failed: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    println!("Portal inhibit active: handle={}", guard.handle_path());
-    thread::sleep(Duration::from_secs(seconds));
-    if let Err(err) = guard.release() {
-        eprintln!("portal inhibit close failed: {err}");
-        return ExitCode::FAILURE;
-    }
-    ExitCode::SUCCESS
-}
-
-fn run_spike_jobview(args: &[String]) -> ExitCode {
-    let seconds: u64 = flag_value(args, "--seconds")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
-    let dest = flag_value(args, "--dest")
-        .unwrap_or_else(|| kestic_daemon::job_view::DEFAULT_JOB_VIEW_DEST.to_string());
-
-    let handle = match kestic_daemon::job_view::JobViewHandle::request(
-        &dest,
-        kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY,
-        "Kestic spike backup",
-        kestic_daemon::job_view::CAPABILITY_KILLABLE,
-    ) {
-        Ok(h) => h,
-        Err(err) => {
-            eprintln!("job view request failed: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    println!("JobView active: path={}", handle.view_path());
-    let steps = seconds.max(1);
-    for i in 1..=steps {
-        let pct = u32::try_from((i * 100) / steps).unwrap_or(100).min(99);
-        let progress = kestic_daemon::job_view::JobProgress {
-            percent: pct,
-            processed_bytes: i * 50_000_000,
-            total_bytes: steps * 50_000_000,
-            speed_bytes_per_sec: 50_000_000,
-            info_message: format!("Backing up Personal folder ({pct} %)"),
-            elapsed_ms: i * 1_000,
-        };
-        if let Err(err) = handle.update(&progress) {
-            eprintln!("job view update failed: {err}");
-            return ExitCode::FAILURE;
-        }
-        match handle.wait_cancel_requested(Duration::from_secs(1)) {
-            Ok(true) => {
-                println!("JobView cancelRequested received!");
-                let _ = handle.terminate(1, "Cancelled by user");
-                return ExitCode::SUCCESS;
-            }
-            Ok(false) => {}
-            Err(err) => {
-                eprintln!("job view signal watch failed: {err}");
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-
-    if let Err(err) = handle.terminate(0, "") {
-        eprintln!("job view terminate failed: {err}");
-        return ExitCode::FAILURE;
-    }
-    ExitCode::SUCCESS
-}
-
-fn run_spike_notify(args: &[String]) -> ExitCode {
-    let event = match flag_value(args, "--event").as_deref() {
-        Some("BackupWarning") => kestic_daemon::notifications::KesticEvent::BackupWarning,
-        Some("BackupOverdue") => kestic_daemon::notifications::KesticEvent::BackupOverdue,
-        _ => kestic_daemon::notifications::KesticEvent::BackupFailed,
-    };
-
-    match kestic_daemon::notifications::send_event_notification(
-        event,
-        "Kestic spike notification",
-        "Testing kestic.notifyrc event filtering with desktop-entry hint.",
-    ) {
-        Ok(id) => {
-            println!("Sent notification id={id} event={}", event.as_str());
-            ExitCode::SUCCESS
-        }
-        Err(err) => {
-            eprintln!("notification failed: {err}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
 fn default_icon_theme_path() -> String {
     let repo_icons = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../packaging/icons")
@@ -226,87 +77,6 @@ fn default_icon_theme_path() -> String {
         return dir.to_string_lossy().into_owned();
     }
     String::new()
-}
-
-fn parse_tray_status(raw: &str) -> kestic_daemon::tray::TrayStatus {
-    match raw {
-        "passive" => kestic_daemon::tray::TrayStatus::Passive,
-        "needs-attention" => kestic_daemon::tray::TrayStatus::NeedsAttention,
-        _ => kestic_daemon::tray::TrayStatus::Active,
-    }
-}
-
-fn run_spike_tray(args: &[String]) -> ExitCode {
-    let seconds: u64 = flag_value(args, "--seconds")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
-    let cycle = args.iter().any(|a| a == "--cycle");
-    let assume_sni_available = !args.iter().any(|a| a == "--require-sni");
-    let icon_theme_path =
-        flag_value(args, "--icon-theme-path").unwrap_or_else(default_icon_theme_path);
-    let initial_status = flag_value(args, "--status")
-        .map(|s| parse_tray_status(&s))
-        .unwrap_or(kestic_daemon::tray::TrayStatus::Active);
-
-    let (quit_tx, quit_rx) = std::sync::mpsc::channel();
-    let state = kestic_daemon::tray::KesticTrayState {
-        status: initial_status,
-        icon_theme_path: icon_theme_path.clone(),
-        tooltip_description: format!("Spike tray ({initial_status:?})"),
-        ..Default::default()
-    };
-
-    let tray =
-        match kestic_daemon::tray::TrayHandle::spawn(state, assume_sni_available, Some(quit_tx)) {
-            Ok(t) => t,
-            Err(err) => {
-                eprintln!("tray spawn failed: {err}");
-                return ExitCode::FAILURE;
-            }
-        };
-
-    println!(
-        "Tray registered: icon=kestic-symbolic icon_theme_path={:?} status={initial_status:?}",
-        icon_theme_path
-    );
-
-    if cycle {
-        let steps = [
-            (
-                kestic_daemon::tray::TrayStatus::Active,
-                "",
-                "Active (visible in Plasma panel)",
-            ),
-            (
-                kestic_daemon::tray::TrayStatus::Passive,
-                "",
-                "Passive (hidden in Plasma expanded tray)",
-            ),
-            (
-                kestic_daemon::tray::TrayStatus::NeedsAttention,
-                "dialog-error",
-                "NeedsAttention (highlighted in Plasma panel)",
-            ),
-            (
-                kestic_daemon::tray::TrayStatus::Active,
-                "",
-                "Active again (returned to Plasma panel)",
-            ),
-        ];
-        let step_ms = ((seconds * 1000) / u64::try_from(steps.len()).unwrap_or(4)).max(500);
-        for (status, overlay, desc) in steps {
-            println!("SNI Status -> {status:?}: {desc}");
-            tray.update_state(status, overlay, desc);
-            if quit_rx.recv_timeout(Duration::from_millis(step_ms)).is_ok() {
-                break;
-            }
-        }
-    } else {
-        let _ = quit_rx.recv_timeout(Duration::from_secs(seconds));
-    }
-
-    tray.shutdown();
-    ExitCode::SUCCESS
 }
 
 fn parse_gui_launch_config(args: &[String]) -> state_cache::GuiLaunchConfig {
@@ -399,11 +169,11 @@ fn install_daemon_ki18n() {
     let qt_lock_subs = Arc::clone(&qt_lock);
     let translator = Arc::new(kestic_daemon::i18n::CallbackSubsTranslator {
         translate_fn: move |msgid: &str| {
-            let _g = qt_lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _g = qt_lock.lock_unpoisoned();
             ki18n::i18n(msgid).to_string()
         },
         translate_subs_fn: move |msgid: &str, args: &[&str]| {
-            let _g = qt_lock_subs.lock().unwrap_or_else(|p| p.into_inner());
+            let _g = qt_lock_subs.lock_unpoisoned();
             crate::smoke::ffi::i18n_subs(msgid, args)
         },
     });
@@ -441,7 +211,6 @@ fn run_daemon_subcommand(args: &[String]) -> ExitCode {
     let config = kestic_daemon::service::DaemonRunConfig {
         bus_name,
         assume_sni_available: !args.iter().any(|a| a == "--require-sni"),
-        send_test_notification: args.iter().any(|a| a == "--notify-test"),
         tray_state: kestic_daemon::tray::KesticTrayState {
             icon_theme_path,
             ..Default::default()
@@ -512,17 +281,11 @@ fn run_secret_subcommand(args: &[String]) -> ExitCode {
 }
 
 fn main() -> ExitCode {
-    let _ = kestic_daemon::daemon_version();
     let raw_args: Vec<String> = env::args().skip(1).collect();
     if let Some(subcmd) = raw_args.first().map(String::as_str) {
         match subcmd {
             "daemon" => return run_daemon_subcommand(&raw_args[1..]),
             "secret" => return run_secret_subcommand(&raw_args[1..]),
-            "spike-watch-exe" => return run_spike_watch_exe(&raw_args[1..]),
-            "spike-inhibit" => return run_spike_inhibit(&raw_args[1..]),
-            "spike-jobview" => return run_spike_jobview(&raw_args[1..]),
-            "spike-notify" => return run_spike_notify(&raw_args[1..]),
-            "spike-tray" => return run_spike_tray(&raw_args[1..]),
             _ => {}
         }
     }

@@ -39,8 +39,7 @@ fn sample_backup() -> Backup {
     Backup::new("Documents", Source::folder("/home/u/docs"), dest.id).expect("backup")
 }
 
-/// M3 manual acceptance (2026-11-19): runs of a deleted backup were titled with an
-/// internal ID (`dcde624u`) instead of a readable name.
+/// A run of a deleted backup is titled as deleted, not with an internal ID (`dcde624u`).
 #[test]
 fn m3_acceptance_run_of_deleted_backup_is_titled_as_deleted() {
     let clock = kestic_core::clock::FakeClock::new(datetime!(2026-11-19 12:00:00 UTC));
@@ -67,8 +66,8 @@ fn unreachable_destination() -> BackupAvailabilityDto {
     }
 }
 
-/// M3 manual acceptance (2026-11-19, decision): a manual-only backup with an unreachable
-/// destination never «waits» (it is never due); a scheduled one does.
+/// A manual-only backup with an unreachable destination never «waits» (it is never due); a
+/// scheduled one does.
 #[test]
 fn m3_acceptance_manual_backup_with_unreachable_destination_does_not_wait() {
     let (manual, manual_icon, _) =
@@ -86,8 +85,8 @@ fn m3_acceptance_manual_backup_with_unreachable_destination_does_not_wait() {
     assert_eq!(scheduled, "Waiting: destination unreachable");
 }
 
-/// M3 manual acceptance (2026-11-19): a successful maintenance run was shown as
-/// «Backed up», although it backs nothing up.
+/// A successful maintenance run is shown as completed, not as «Backed up», because it backs
+/// nothing up.
 #[test]
 fn m3_acceptance_successful_maintenance_is_completed_not_backed_up() {
     let clock = kestic_core::clock::FakeClock::new(datetime!(2026-11-19 12:00:00 UTC));
@@ -101,8 +100,8 @@ fn m3_acceptance_successful_maintenance_is_completed_not_backed_up() {
     );
 }
 
-/// Decision 2026-11-20 (M3 acceptance, finding 9): a new backup on a local destination gets
-/// no network run conditions; on a network destination it keeps the defaults (AC-M3-03-1).
+/// A new backup on a local destination gets no network run conditions; on a network
+/// destination it keeps the defaults (AC-M3-03-1).
 #[test]
 fn m3_acceptance_new_backup_has_network_conditions_only_on_network_destinations() {
     let local = DestinationKind::Local {

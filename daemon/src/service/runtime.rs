@@ -16,7 +16,7 @@ use crate::dbus_server::{
 };
 use crate::i18n::{i18n, tr_text};
 use crate::monitors::{SystemMonitorEvent, SystemMonitorHandle, read_system_environment};
-use crate::notifications::{KesticEvent, send_configured_notification, send_event_notification};
+use crate::notifications::{KesticEvent, send_configured_notification};
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::{KesticTrayState, TrayAction, TrayHandle};
 use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
@@ -24,6 +24,7 @@ use kestic_core::history::BackoffKind;
 use kestic_core::model::{BackupId, DestinationKind};
 use kestic_core::mount::{check_source_status_with, current_home_dir};
 use kestic_core::scheduler::SystemEnvironment;
+use kestic_core::sync::LockUnpoisoned;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -41,7 +42,7 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     let (action_tx, action_rx) = mpsc::channel();
 
     {
-        let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = core.lock_unpoisoned();
         guard.quit_tx = Some(quit_tx.clone());
     }
 
@@ -58,7 +59,7 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
 
     let conn = lock.connection().clone();
     let (_, initial_tray_state) = {
-        let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = core.lock_unpoisoned();
         guard.conn = Some(conn.clone());
         guard.build_state_and_tray()
     };
@@ -69,7 +70,7 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
         Arc::new(move || {
             let _ = refresh_availability_unlocked(&core_for_about, false);
             let (state_dto, tray_state) = {
-                let guard = core_for_about.lock().unwrap_or_else(|p| p.into_inner());
+                let guard = core_for_about.lock_unpoisoned();
                 guard.build_state_and_tray()
             };
             emit_status_changed(&conn_for_about, &state_dto);
@@ -88,17 +89,8 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     );
 
     {
-        let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = core.lock_unpoisoned();
         guard.tray = Some(Arc::clone(&tray));
-    }
-
-    if config.send_test_notification {
-        send_event_notification(
-            KesticEvent::BackupWarning,
-            &i18n("Kestic test notification").to_string(),
-            &i18n("Notifications work.").to_string(),
-        )
-        .map_err(|err| format!("failed to send test notification: {err}"))?;
     }
 
     if let Some(ready_path) = &config.ready_file {
@@ -214,7 +206,7 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
             state.last_bin_check = Instant::now();
             if let BinaryStatus::Replaced(reason) = bin_id.check() {
                 let has_active_runs = {
-                    let guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                    let guard = core.lock_unpoisoned();
                     !guard.active_runs.is_empty()
                 };
                 if !has_active_runs {
@@ -227,12 +219,7 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
             }
         }
 
-        if core
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .shutdown_flag
-            .load(Ordering::SeqCst)
-        {
+        if core.lock_unpoisoned().shutdown_flag.load(Ordering::SeqCst) {
             eprintln!("kestic-daemon: event loop ends: shutdown requested");
             return None;
         }
@@ -270,7 +257,7 @@ fn shutdown_daemon_and_maybe_reexec(
     pending_exec_path: Option<PathBuf>,
 ) -> Result<DaemonOutcome, String> {
     {
-        let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = core.lock_unpoisoned();
         // Runs cancelled by shutdown are interrupted, not user-cancelled (no slot handling).
         guard.shutdown_flag.store(true, Ordering::SeqCst);
         guard.cancel_any_active_run();
@@ -341,7 +328,7 @@ fn handle_environment_changed(
     last_network_reconnect_probe: &mut Option<time::OffsetDateTime>,
 ) {
     let ((state_dto, tray_state), network_changed, force_probe) = {
-        let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = core.lock_unpoisoned();
         let old_env = guard.system_env.clone();
         let network_changed = old_env.network_connected != new_env.network_connected
             || old_env.network_metered != new_env.network_metered
@@ -376,7 +363,7 @@ fn handle_environment_changed(
         thread::spawn(move || {
             let _ = refresh_availability_unlocked(&core_bg, force_probe);
             let (state_dto, tray_state) = {
-                let mut guard = core_bg.lock().unwrap_or_else(|p| p.into_inner());
+                let mut guard = core_bg.lock_unpoisoned();
                 for backup in guard.config.backups.clone() {
                     let dest_ok = guard
                         .dest_availability
@@ -390,10 +377,7 @@ fn handle_environment_changed(
                     if rs.backoff_kind == Some(BackoffKind::Network)
                         && (rs.backoff_until.is_some() || rs.backoff_attempt > 0)
                     {
-                        rs.backoff_until = None;
-                        rs.backoff_attempt = 0;
-                        rs.backoff_kind = None;
-                        rs.last_failure_at = None;
+                        kestic_core::scheduler::clear_backup_backoff(&mut rs);
                         let _ = guard.store_backup_runtime_state(&backup.id, &rs);
                     }
                 }
@@ -422,7 +406,7 @@ fn handle_mount_changed(
     let enable_scheduler = config.enable_scheduler;
     thread::spawn(move || {
         let (backups, destinations, mount_inspector, clock) = {
-            let guard = core_bg.lock().unwrap_or_else(|p| p.into_inner());
+            let guard = core_bg.lock_unpoisoned();
             (
                 guard.config.backups.clone(),
                 guard.config.destinations.clone(),
@@ -442,25 +426,12 @@ fn handle_mount_changed(
         for dest in &destinations {
             if matches!(dest.kind, DestinationKind::Local { .. }) {
                 let res = preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT);
-                let dto = match res {
-                    Ok(()) => DestinationAvailabilityDto {
-                        destination_id: dest.id.as_str().to_string(),
-                        reachable: true,
-                        detail: None,
-                        checked_at_unix: now_unix,
-                    },
-                    Err(err) => DestinationAvailabilityDto {
-                        destination_id: dest.id.as_str().to_string(),
-                        reachable: false,
-                        detail: Some(err.to_string()),
-                        checked_at_unix: now_unix,
-                    },
-                };
+                let dto = DestinationAvailabilityDto::from_probe(&dest.id, &res, now_unix);
                 dest_updates.push((dest.id.clone(), dto));
             }
         }
         let (state_dto, tray_state) = {
-            let mut guard = core_bg.lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = core_bg.lock_unpoisoned();
             for (id, status) in source_updates {
                 guard.source_availability.insert(id, status);
             }
@@ -485,9 +456,9 @@ fn handle_prepare_for_sleep(
     going_to_sleep: bool,
 ) {
     if going_to_sleep {
-        // AC-M3-09-2: interrupt running jobs cleanly, lock scheduler until wake, and mark for resume.
+        // interrupt running jobs cleanly, lock scheduler until wake, and mark for resume.
         let (state_dto, tray_state) = {
-            let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = core.lock_unpoisoned();
             guard.sleep_in_progress = true;
             let running_ids: Vec<BackupId> = guard
                 .active_runs
@@ -507,7 +478,7 @@ fn handle_prepare_for_sleep(
         tray.set_full_state(tray_state);
         emit_status_changed(conn, &state_dto);
     } else {
-        // AC-M3-09-3 / AC-M3-01-7: re-read environment, refresh availability, unlock, and catch up.
+        // re-read environment, refresh availability, unlock, and catch up.
         let core_bg = Arc::clone(core);
         let conn_bg = conn.clone();
         let tray_bg = Arc::clone(tray);
@@ -522,7 +493,7 @@ fn handle_prepare_for_sleep(
             };
             let _ = refresh_availability_unlocked(&core_bg, true);
             let (state_dto, tray_state) = {
-                let mut guard = core_bg.lock().unwrap_or_else(|p| p.into_inner());
+                let mut guard = core_bg.lock_unpoisoned();
                 guard.system_env = new_env;
                 guard.sleep_in_progress = false;
                 guard.build_state_and_tray()
@@ -548,18 +519,18 @@ fn check_gui_sender_alive(conn: &Connection, sender: &str) -> Result<bool, zbus:
 
 fn is_gui_live(core: &Arc<Mutex<DaemonCore>>, conn: &Connection) -> bool {
     let sender_opt = {
-        let guard = core.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = core.lock_unpoisoned();
         guard.registered_gui_sender.clone()
     };
     let Some(sender) = sender_opt else {
-        let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = core.lock_unpoisoned();
         guard.window_active = false;
         return false;
     };
     match check_gui_sender_alive(conn, &sender) {
         Ok(true) => true,
         Ok(false) | Err(_) => {
-            let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = core.lock_unpoisoned();
             if guard.registered_gui_sender.as_deref() == Some(sender.as_str()) {
                 guard.registered_gui_sender = None;
                 guard.window_active = false;
@@ -607,7 +578,7 @@ fn handle_tray_action(
                 let res = start_all_backups_async(&core_bg);
                 if !res.skipped.is_empty() {
                     let notif_settings = {
-                        let guard = core_bg.lock().unwrap_or_else(|p| p.into_inner());
+                        let guard = core_bg.lock_unpoisoned();
                         guard.config.notifications.clone()
                     };
                     let summary: Vec<String> = res
@@ -631,14 +602,14 @@ fn handle_tray_action(
             });
         }
         TrayAction::CancelRun(run_id) => {
-            let guard = core.lock().unwrap_or_else(|p| p.into_inner());
+            let guard = core.lock_unpoisoned();
             let _ = guard.cancel_run(&run_id);
         }
         TrayAction::PauseGlobal(duration) => {
             if let Ok(dur_json) = serde_json::to_string(&duration) {
                 let mut pair = None;
                 let tray_opt = {
-                    let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                    let mut guard = core.lock_unpoisoned();
                     if guard.pause_global(&dur_json).is_ok() {
                         pair = Some(guard.build_state_and_tray());
                     }
@@ -655,7 +626,7 @@ fn handle_tray_action(
         TrayAction::ResumeGlobal => {
             let mut pair = None;
             let tray_opt = {
-                let mut guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                let mut guard = core.lock_unpoisoned();
                 if guard.resume_global().is_ok() {
                     pair = Some(guard.build_state_and_tray());
                 }
@@ -675,7 +646,7 @@ fn handle_tray_action(
         TrayAction::OpenWindow => {
             let gui_live = is_gui_live(core, conn);
             let (kestic_binary, suppress) = {
-                let guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                let guard = core.lock_unpoisoned();
                 (
                     guard.kestic_binary.clone(),
                     guard.suppress_ui_spawn || config.suppress_ui_spawn,
@@ -687,10 +658,10 @@ fn handle_tray_action(
             }
         }
         TrayAction::RequestQuit => {
-            // AC-M1-11-3: Never terminate immediately; ask user via warning confirmation first.
+            // Never terminate immediately; ask user via warning confirmation first.
             let gui_live = is_gui_live(core, conn);
             let (has_running, running_name, kestic_binary, suppress) = {
-                let guard = core.lock().unwrap_or_else(|p| p.into_inner());
+                let guard = core.lock_unpoisoned();
                 let first_active = guard.active_runs.values().next();
                 (
                     first_active.is_some(),

@@ -5,7 +5,7 @@
 
 use kestic_core::clock::FakeClock;
 use kestic_core::config::AppConfig;
-use kestic_core::history::{BackupRuntimeState, PauseState, RunHistory};
+use kestic_core::history::{BackupRuntimeState, PauseState, RunHistory, last_successful_backup_at};
 use kestic_core::model::{
     Backup, Destination, DestinationKind, MaintenanceSchedule, PendingReason, Run, RunConditions,
     RunStatus, Schedule, Source, Weekday,
@@ -23,7 +23,7 @@ use time::OffsetDateTime;
 use time::macros::datetime;
 
 fn zurich() -> TimezoneSpec {
-    TimezoneSpec::named("Europe/Zurich")
+    TimezoneSpec::Named("Europe/Zurich".to_string())
 }
 
 fn zdt(year: i16, month: i8, day: i8, hour: u8, minute: u8) -> OffsetDateTime {
@@ -534,7 +534,10 @@ fn ac_m3_02_4_ok_and_warning_clear_overdue_error_keeps_it() {
             &BackupScheduleEvalInput {
                 backup: &bk,
                 runtime_state: &rs,
-                last_success_at: history.last_successful_backup_at(&bk.id).expect("query"),
+                last_success_at: last_successful_backup_at(
+                    &history.list_runs().expect("list runs"),
+                    &bk.id,
+                ),
                 overdue_anchor_at: None,
                 global_pause: None,
                 global_overdue_threshold: 2,
@@ -567,7 +570,10 @@ fn ac_m3_02_4_ok_and_warning_clear_overdue_error_keeps_it() {
             &BackupScheduleEvalInput {
                 backup: &bk,
                 runtime_state: &rs,
-                last_success_at: history.last_successful_backup_at(&bk.id).expect("query"),
+                last_success_at: last_successful_backup_at(
+                    &history.list_runs().expect("list runs"),
+                    &bk.id,
+                ),
                 overdue_anchor_at: None,
                 global_pause: None,
                 global_overdue_threshold: 2,
@@ -654,7 +660,7 @@ fn ac_m3_05_2_default_maintenance_schedule_december_2026() {
     assert_eq!(next_check_after, zdt(2027, 1, 3, 12, 0));
 }
 
-/// AC-M3-05-4 / FR-05, F4: an open `forget` is caught up by the next maintenance run at its
+/// AC-M3-05-4 / FR-05: an open `forget` is caught up by the next maintenance run at its
 /// slot, not by an extra maintenance run of its own.
 #[test]
 fn ac_m3_05_4_open_forget_waits_for_the_maintenance_slot() {
@@ -748,8 +754,10 @@ fn ac_m3_07_1_to_07_4_pause_per_backup_global_and_until_tomorrow() {
     let rs_b = BackupRuntimeState::default();
     let eval_a = eval_pause_case(&bk_a, &rs_a, sun_1200, mon_1200);
     let eval_b = eval_pause_case(&bk_b, &rs_b, sun_1200, mon_1200);
-    assert!(eval_a.is_paused && !eval_a.should_start_now);
-    assert!(!eval_b.is_paused && eval_b.should_start_now);
+    assert!(eval_a.is_paused, "paused backup is paused");
+    assert!(!eval_a.should_start_now, "paused backup does not start");
+    assert!(!eval_b.is_paused, "unpaused backup is not paused");
+    assert!(eval_b.should_start_now, "unpaused backup starts");
 
     let mut dest_map = HashMap::new();
     dest_map.insert(bk_a.id.clone(), dest.id.clone());

@@ -7,23 +7,23 @@ use super::availability::{
     DestinationClaimGuard, check_source_status_bounded, drain_queued_backups_async,
     unlockable_stale_lock_count,
 };
+use super::error::parse_backup_id;
 use super::error::{
     KesticServiceErr, localized_backup_run_error, localized_failure_summary,
     localized_source_check_reason,
 };
 use super::run_errors::{run_blocks_schedule, unreadable_items_from_lines};
-use super::state::{ActiveRunEntry, DaemonCore, probe_before_run};
-use crate::dbus_api::{ActiveRunProgressDto, DestinationAvailabilityDto};
+use super::state::{DaemonCore, ResticDeps, probe_before_run};
+use super::state_summary::{ActivatedRun, NewActiveRun};
+use super::supervision::{RunSupervision, SupervisionConfig};
+use crate::dbus_api::DestinationAvailabilityDto;
 use crate::dbus_server::{
     emit_manual_run_blocked, emit_run_progress, emit_run_updated, emit_status_changed,
 };
 use crate::i18n::{i18n, tr};
-use crate::inhibit::PortalInhibitGuard;
-use crate::job_view::{CAPABILITY_KILLABLE, JobProgress, JobViewHandle};
-use crate::monitors::{LogindSleepInhibitor, MonitorBusConfig};
-use crate::notifications::{
-    KESTIC_DESKTOP_ENTRY, KesticEvent, send_configured_notification, send_event_notification,
-};
+use crate::job_view::{JobProgress, JobViewHandle};
+use crate::monitors::LogindSleepInhibitor;
+use crate::notifications::{KesticEvent, send_configured_notification, send_event_notification};
 use crate::tray::TrayHandle;
 use kestic_core::backup::{
     BackupExecutionContext, BackupRunError, execute_backup_with_inspector, execute_forget,
@@ -37,7 +37,7 @@ use kestic_core::destination::{
 use kestic_core::history::BackoffKind;
 use kestic_core::maintenance::detect_stale_locks;
 use kestic_core::model::{
-    Backup, BackupId, Destination, PendingReason, ResticProvider, Run, RunId, RunKind, RunStatus,
+    Backup, BackupId, Destination, DestinationId, PendingReason, Run, RunId, RunKind, RunStatus,
 };
 use kestic_core::mount::{MountInspector, SourceCheckResult, current_home_dir};
 use kestic_core::provider::ResolvedRestic;
@@ -50,6 +50,7 @@ use kestic_core::scheduler::{
     mark_backup_slot_handled, record_backup_backoff_failure,
 };
 use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{BlockedReason, ErrorKind, RunProgressPhase};
 use kestic_i18n::messages::{ActiveRunInfo, active_run_message, interrupted_by_sleep_message};
 use std::path::PathBuf;
@@ -92,7 +93,7 @@ pub(super) fn upsert_pending_run_entry(
     }
 }
 
-/// Starts a backup manually (enforcing `RunConditions`, `AC-M3-03-7`).
+/// Starts a backup manually (enforcing `RunConditions`).
 pub fn start_backup_async(
     shared: &Arc<Mutex<DaemonCore>>,
     backup_id: &str,
@@ -100,7 +101,7 @@ pub fn start_backup_async(
     start_backup_internal(shared, backup_id, false, false)
 }
 
-/// Starts a backup manually overriding unmet `RunConditions` for this single run (`FR-13b`, `AC-M3-03-7`).
+/// Starts a backup manually overriding unmet `RunConditions` for this single run.
 pub fn start_backup_override_async(
     shared: &Arc<Mutex<DaemonCore>>,
     backup_id: &str,
@@ -108,7 +109,7 @@ pub fn start_backup_override_async(
     start_backup_internal(shared, backup_id, true, false)
 }
 
-/// Starts a scheduled backup triggered by the M3 scheduler (`M3-S01..S13`).
+/// Starts a scheduled backup triggered by the scheduler.
 pub(crate) fn start_scheduled_backup_async(
     shared: &Arc<Mutex<DaemonCore>>,
     backup_id: &str,
@@ -119,66 +120,30 @@ pub(crate) fn start_scheduled_backup_async(
 struct BackupClaimContext {
     backup: Backup,
     dest: Destination,
-    provider: ResticProvider,
+    deps: ResticDeps,
     state_dir: PathBuf,
-    kestic_binary: PathBuf,
-    secret_store: Arc<dyn SecretStore + Send + Sync>,
-    clock: Arc<dyn Clock>,
     mount_inspector: Arc<dyn MountInspector>,
     system_env: SystemEnvironment,
-    enable_job_view: bool,
-    job_view_dest: String,
-    enable_portal_inhibit: bool,
-    monitor_bus: MonitorBusConfig,
-    enable_system_monitors: bool,
+    supervision: SupervisionConfig,
     claim_guard: DestinationClaimGuard,
 }
 
 fn claim_backup_destination(
     shared: &Arc<Mutex<DaemonCore>>,
     b_id: &BackupId,
-    backup_id: &str,
     is_scheduled: bool,
 ) -> Result<BackupClaimContext, KesticServiceErr> {
-    let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
-    let backup = guard
-        .config
-        .backup(b_id)
-        .cloned()
-        .ok_or_else(|| KesticServiceErr::NotFound(backup_id.to_string()))?;
-    let dest = guard
-        .config
-        .destination(&backup.destination_id)
-        .cloned()
-        .ok_or_else(|| KesticServiceErr::NotFound(backup.destination_id.as_str().to_string()))?;
-
-    if is_scheduled && guard.sleep_in_progress {
-        return Err(KesticServiceErr::SleepInProgress);
-    }
-    if guard.is_destination_busy(&dest.id) {
-        return Err(KesticServiceErr::AlreadyRunning(format!(
-            "another run is already active on destination '{}'",
-            dest.name
-        )));
-    }
-
-    guard.claiming_destinations.insert(dest.id.clone());
-    let claim_guard = DestinationClaimGuard::new(Arc::clone(shared), dest.id.clone());
+    let mut guard = shared.lock_unpoisoned();
+    let (backup, dest) = guard.backup_with_destination(b_id)?;
+    let claim_guard = guard.claim_destination(shared, &dest, is_scheduled)?;
     Ok(BackupClaimContext {
         backup,
         dest,
-        provider: guard.config.restic_provider.clone(),
+        deps: guard.restic_deps(),
         state_dir: guard.state_dir.clone(),
-        kestic_binary: guard.kestic_binary.clone(),
-        secret_store: Arc::clone(&guard.secret_store),
-        clock: Arc::clone(&guard.clock),
         mount_inspector: Arc::clone(&guard.mount_inspector),
         system_env: guard.system_env.clone(),
-        enable_job_view: guard.enable_job_view,
-        job_view_dest: guard.job_view_dest.clone(),
-        enable_portal_inhibit: guard.enable_portal_inhibit,
-        monitor_bus: guard.monitor_bus.clone(),
-        enable_system_monitors: guard.enable_system_monitors,
+        supervision: guard.supervision_config(),
         claim_guard,
     })
 }
@@ -226,16 +191,8 @@ fn handle_backup_precheck_failure(
             };
             upsert_pending_run_entry(guard, backup, pending_reason, msg);
         }
-        guard.claiming_destinations.remove(&dest.id);
-        claim_guard.disarm();
-        let conn_opt = guard.conn.clone();
-        let (state_dto, tray_state) = guard.build_state_and_tray();
-        if let Some(tray) = &guard.tray {
-            tray.set_full_state(tray_state);
-        }
-        if let Some(conn) = &conn_opt {
-            emit_status_changed(conn, &state_dto);
-        }
+        guard.release_claim(&dest.id, claim_guard);
+        guard.push_state();
         return if !source_ok {
             KesticServiceErr::ManualRunBlocked(reason)
         } else {
@@ -243,21 +200,30 @@ fn handle_backup_precheck_failure(
         };
     }
 
-    guard.claiming_destinations.remove(&dest.id);
-    claim_guard.disarm();
+    notify_manual_run_blocked(guard, claim_guard, backup, &dest.id, reason, &source_body)
+}
+
+/// Ends the claim of a refused manual start, tells the GUI with `ManualRunBlocked` and, when no
+/// window is open, shows a notification with `body`. Returns the error for the caller.
+fn notify_manual_run_blocked(
+    guard: &mut DaemonCore,
+    claim_guard: &mut DestinationClaimGuard,
+    backup: &Backup,
+    dest_id: &DestinationId,
+    reason: BlockedReason,
+    body: &str,
+) -> KesticServiceErr {
+    guard.release_claim(dest_id, claim_guard);
     let window_active = guard.window_active;
     let conn_opt = guard.conn.clone();
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    if let Some(tray) = &guard.tray {
-        tray.set_full_state(tray_state);
-    }
+    let state_dto = guard.push_tray_state();
     if let Some(conn) = &conn_opt {
         emit_manual_run_blocked(conn, &backup.id, reason);
         emit_status_changed(conn, &state_dto);
     }
     if !window_active {
         let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
-        let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &source_body);
+        let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, body);
     }
     KesticServiceErr::ManualRunBlocked(reason)
 }
@@ -270,23 +236,14 @@ fn handle_backup_unmet_conditions(
     unmet_conditions: &[UnmetPrecondition],
 ) -> KesticServiceErr {
     let body = guard.localized_unmet_conditions(unmet_conditions);
-    guard.claiming_destinations.remove(&dest.id);
-    claim_guard.disarm();
-    let window_active = guard.window_active;
-    let conn_opt = guard.conn.clone();
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    if let Some(tray) = &guard.tray {
-        tray.set_full_state(tray_state);
-    }
-    if let Some(conn) = &conn_opt {
-        emit_manual_run_blocked(conn, &backup.id, BlockedReason::ConditionNotMet);
-        emit_status_changed(conn, &state_dto);
-    }
-    if !window_active {
-        let title = i18n("%1: Backup cannot start").subs(&[&backup.name]);
-        let _ = send_event_notification(KesticEvent::ManualRunBlocked, &title, &body);
-    }
-    KesticServiceErr::ManualRunBlocked(BlockedReason::ConditionNotMet)
+    notify_manual_run_blocked(
+        guard,
+        claim_guard,
+        backup,
+        &dest.id,
+        BlockedReason::ConditionNotMet,
+        &body,
+    )
 }
 
 struct LaunchedBackupRun {
@@ -325,40 +282,19 @@ fn launch_backup_run_record(
         .upsert_run_cached(&run, &[])
         .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
 
-    let cancel = CancelHandle::new();
-    let entry = ActiveRunEntry {
-        run: run.clone(),
-        backup_id: Some(backup.id.clone()),
-        backup_name: backup.name.clone(),
-        progress: ActiveRunProgressDto {
-            run_id: run.id.as_str().to_string(),
-            backup_id: Some(backup.id.as_str().to_string()),
-            backup_name: backup.name.clone(),
-            phase: RunProgressPhase::Scanning,
-            percent_done: 0.0,
-            bytes_done: 0,
-            total_bytes: 0,
-            files_done: 0,
-            speed_bps: 0,
-            seconds_remaining: 0,
+    let ActivatedRun {
+        cancel,
+        conn_opt,
+        tray_opt,
+    } = guard.activate_run(
+        NewActiveRun {
+            run: &run,
+            backup_id: Some(&backup.id),
+            display_name: &backup.name,
+            dest_id: &dest.id,
         },
-        cancel: cancel.clone(),
-        sleep_interrupted: false,
-    };
-    guard.active_runs.insert(run.id.clone(), entry);
-    guard.claiming_destinations.remove(&dest.id);
-    claim_guard.disarm();
-
-    let conn_opt = guard.conn.clone();
-    let tray_opt = guard.tray.clone();
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    if let Some(tray) = &tray_opt {
-        tray.set_full_state(tray_state);
-    }
-    if let Some(conn) = &conn_opt {
-        emit_run_updated(conn, &run);
-        emit_status_changed(conn, &state_dto);
-    }
+        claim_guard,
+    );
     Ok(LaunchedBackupRun {
         pending_other_backups,
         run,
@@ -374,15 +310,14 @@ fn start_backup_internal(
     allow_condition_override: bool,
     is_scheduled: bool,
 ) -> Result<String, KesticServiceErr> {
-    let b_id =
-        BackupId::parse(backup_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+    let b_id = parse_backup_id(backup_id)?;
 
-    let mut ctx = claim_backup_destination(shared, &b_id, backup_id, is_scheduled)?;
+    let mut ctx = claim_backup_destination(shared, &b_id, is_scheduled)?;
 
     let (probe, resolved) = probe_before_run(
         shared,
-        &ctx.provider,
-        ctx.secret_store.as_ref(),
+        &ctx.deps.provider,
+        ctx.deps.secret_store.as_ref(),
         &ctx.dest.id,
         &mut ctx.claim_guard,
     )?;
@@ -405,11 +340,10 @@ fn start_backup_internal(
         };
 
     let launched = {
-        let mut guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = shared.lock_unpoisoned();
         guard.record_probe(probe);
         if is_scheduled && guard.sleep_in_progress {
-            guard.claiming_destinations.remove(&ctx.dest.id);
-            ctx.claim_guard.disarm();
+            guard.release_claim(&ctx.dest.id, &mut ctx.claim_guard);
             return Err(KesticServiceErr::SleepInProgress);
         }
 
@@ -419,20 +353,11 @@ fn start_backup_internal(
             .insert(ctx.backup.id.clone(), source_status.clone());
         if source_ok {
             guard.availability_probe_count += 1;
-            let dto = match &dest_res {
-                Ok(()) => DestinationAvailabilityDto {
-                    destination_id: ctx.dest.id.as_str().to_string(),
-                    reachable: true,
-                    detail: None,
-                    checked_at_unix: now.unix_timestamp(),
-                },
-                Err(e) => DestinationAvailabilityDto {
-                    destination_id: ctx.dest.id.as_str().to_string(),
-                    reachable: false,
-                    detail: Some(e.to_string()),
-                    checked_at_unix: now.unix_timestamp(),
-                },
-            };
+            let dto = DestinationAvailabilityDto::from_probe(
+                &ctx.dest.id,
+                &dest_res,
+                now.unix_timestamp(),
+            );
             guard.dest_availability.insert(ctx.dest.id.clone(), dto);
         }
 
@@ -530,7 +455,7 @@ impl BackupProgressReporter<'_> {
             });
         }
 
-        let mut guard = self.shared_worker.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.shared_worker.lock_unpoisoned();
         let mut progress = None;
         if let Some(entry) = guard.active_runs.get_mut(self.run_id) {
             entry.progress.phase = p.phase;
@@ -581,44 +506,17 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         tray_opt,
     } = args;
 
-    let mut logind_sleep_guard = if ctx.enable_system_monitors {
-        LogindSleepInhibitor::acquire(&ctx.monitor_bus)
-    } else {
-        None
-    };
-    let _inhibit_guard = if ctx.enable_portal_inhibit {
-        PortalInhibitGuard::acquire_default(&i18n("Backing up %1").subs(&[&ctx.backup.name])).ok()
-    } else {
-        None
-    };
-
-    let job_view = if ctx.enable_job_view {
-        JobViewHandle::request(
-            &ctx.job_view_dest,
-            KESTIC_DESKTOP_ENTRY,
-            &i18n("Backing up %1").subs(&[&ctx.backup.name]),
-            CAPABILITY_KILLABLE,
-        )
-        .ok()
-    } else {
-        None
-    };
-    let job_view_cancel_guard = job_view.as_ref().map(|jv| {
-        let cancel_for_jv = cancel.clone();
-        jv.start_cancel_watcher(move || cancel_for_jv.cancel())
-    });
+    let mut supervision = RunSupervision::start(
+        &ctx.supervision,
+        &i18n("Backing up %1").subs(&[&ctx.backup.name]),
+        &cancel,
+    );
 
     let run_id = run.id.clone();
-    let start_unix = ctx.clock.now_unix_secs();
+    let start_unix = ctx.deps.clock.now_unix_secs();
     let home = current_home_dir();
 
-    let runtime = ResticRuntime {
-        resolved: &resolved,
-        kestic_binary: &ctx.kestic_binary,
-        secret_store: ctx.secret_store.as_ref(),
-        clock: ctx.clock.as_ref(),
-        cache_dir: None,
-    };
+    let runtime = ctx.deps.runtime(&resolved);
     let exec_ctx = BackupExecutionContext {
         state_dir: &ctx.state_dir,
         home_dir: home.as_deref(),
@@ -629,8 +527,8 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
     let mut reporter = BackupProgressReporter {
         backup_name: &ctx.backup.name,
         start_unix,
-        clock: ctx.clock.as_ref(),
-        job_view: job_view.as_ref(),
+        clock: ctx.deps.clock.as_ref(),
+        job_view: supervision.job_view.as_ref(),
         shared_worker: &shared_worker,
         run_id: &run_id,
         tray_opt: tray_opt.as_ref(),
@@ -643,38 +541,37 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
                 reporter.report(st);
             }
         });
-    drop(job_view_cancel_guard);
+    supervision.stop_cancel_watcher();
 
-    let sleep_interrupted = {
-        let guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
-        guard
-            .active_runs
-            .get(&run_id)
-            .is_some_and(|e| e.sleep_interrupted)
-    };
+    let sleep_interrupted = shared_worker
+        .lock_unpoisoned()
+        .run_sleep_interrupted(&run_id);
 
-    let secrets_owned = load_dest_secrets(&ctx.dest, ctx.secret_store.as_ref());
-    let secret_strs: Vec<&str> = secrets_owned
-        .iter()
-        .filter_map(|s| s.as_str().ok())
-        .collect();
+    let secrets_owned = load_dest_secrets(&ctx.dest, ctx.deps.secret_store.as_ref());
+    let secret_strs = secret_strs(&secrets_owned);
 
-    let outcome = process_backup_exec_result(BackupExecInputs {
-        shared_worker: &shared_worker,
-        backup: &ctx.backup,
-        dest: &ctx.dest,
-        runtime: &runtime,
-        pending_other_backups: &pending_other_backups,
-        run: &mut run,
+    let outcome = process_backup_exec_result(
+        BackupExecContext {
+            shared_worker: &shared_worker,
+            backup: &ctx.backup,
+            dest: &ctx.dest,
+            runtime: &runtime,
+            pending_other_backups: &pending_other_backups,
+            cancel: &cancel,
+            sleep_interrupted,
+            is_scheduled,
+            secret_strs: &secret_strs,
+        },
+        &mut run,
         exec_res,
-        cancel: &cancel,
-        sleep_interrupted,
-        is_scheduled,
-        secret_strs: &secret_strs,
-    });
+    );
 
-    run.finish(ctx.clock.as_ref(), outcome.final_status, outcome.exit_code);
-    if let Some(jv) = job_view {
+    run.finish(
+        ctx.deps.clock.as_ref(),
+        outcome.final_status,
+        outcome.exit_code,
+    );
+    if let Some(jv) = supervision.job_view.take() {
         let _ = jv.terminate(outcome.jv_code, &outcome.jv_msg);
     }
 
@@ -684,9 +581,14 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         run,
         outcome,
         &secret_strs,
-        logind_sleep_guard.as_mut(),
+        supervision.logind.as_mut(),
         (conn_opt.as_ref(), tray_opt.as_ref()),
     );
+}
+
+/// The secrets as text, for redacting them from logs and messages.
+pub(super) fn secret_strs(secrets: &[SecretValue]) -> Vec<&str> {
+    secrets.iter().filter_map(|s| s.as_str().ok()).collect()
 }
 
 pub(super) fn load_dest_secrets(
@@ -705,57 +607,24 @@ pub(super) fn load_dest_secrets(
     secrets_owned
 }
 
-struct BackupExecInputs<'a> {
-    shared_worker: &'a Arc<Mutex<DaemonCore>>,
-    backup: &'a Backup,
-    dest: &'a Destination,
-    runtime: &'a ResticRuntime<'a>,
-    pending_other_backups: &'a [Backup],
-    run: &'a mut Run,
+fn process_backup_exec_result(
+    ctx: BackupExecContext<'_>,
+    run: &mut Run,
     exec_res: Result<ResticExecutionResult, BackupRunError>,
-    cancel: &'a CancelHandle,
-    sleep_interrupted: bool,
-    is_scheduled: bool,
-    secret_strs: &'a [&'a str],
-}
-
-fn process_backup_exec_result(inputs: BackupExecInputs<'_>) -> BackupPostExecOutcome {
-    let BackupExecInputs {
-        shared_worker,
-        backup,
-        dest,
-        runtime,
-        pending_other_backups,
-        run,
-        exec_res,
-        cancel,
-        sleep_interrupted,
-        is_scheduled,
-        secret_strs,
-    } = inputs;
+) -> BackupPostExecOutcome {
     match exec_res {
-        Ok(res) => process_backup_success_result(
-            BackupSuccessContext {
-                shared_worker,
-                backup,
-                dest,
-                runtime,
-                pending_other_backups,
-                cancel,
-                sleep_interrupted,
-                is_scheduled,
-                secret_strs,
-            },
+        Ok(res) => process_backup_success_result(ctx, run, res),
+        Err(err) => process_backup_error_result(
             run,
-            res,
+            err,
+            ctx.sleep_interrupted,
+            ctx.is_scheduled,
+            ctx.secret_strs,
         ),
-        Err(err) => {
-            process_backup_error_result(run, err, sleep_interrupted, is_scheduled, secret_strs)
-        }
     }
 }
 
-struct BackupSuccessContext<'a> {
+struct BackupExecContext<'a> {
     shared_worker: &'a Arc<Mutex<DaemonCore>>,
     backup: &'a Backup,
     dest: &'a Destination,
@@ -768,11 +637,11 @@ struct BackupSuccessContext<'a> {
 }
 
 fn process_backup_success_result(
-    ctx: BackupSuccessContext<'_>,
+    ctx: BackupExecContext<'_>,
     run: &mut Run,
     res: ResticExecutionResult,
 ) -> BackupPostExecOutcome {
-    let BackupSuccessContext {
+    let BackupExecContext {
         shared_worker,
         backup,
         dest,
@@ -864,7 +733,7 @@ fn process_backup_success_result(
 
     let unreadable_items = unreadable_items_from_lines(combined_logs.iter().map(String::as_str));
     run.log_path = {
-        let guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = shared_worker.lock_unpoisoned();
         guard
             .history
             .write_redacted_log(&run.id, &combined_logs, secret_strs)
@@ -923,9 +792,9 @@ fn process_backup_error_result(
     } else {
         let localized = localized_backup_run_error(&err);
         let msg = redact_secrets(&localized, secret_strs);
-        // Pre-start availability failures keep `exit_code = None` (transient, `FR-29`/`FR-30`);
+        // Pre-start availability failures keep `exit_code = None` (transient);
         // other destination errors carry their restic exit code so permanent errors (Exit 12,
-        // Exit 10) block the schedule (`F2`).
+        // Exit 10) block the schedule.
         // The cause of a pre-start failure is kept in `pending_reason` (error kind for the GUI).
         run.pending_reason = match err {
             BackupRunError::SourceUnavailable(_) => Some(PendingReason::SourceUnavailable),
@@ -1037,7 +906,7 @@ fn finalize_backup_run_state(
     let (conn_opt, tray_opt) = handles;
     let run_id = run.id.clone();
     let (state_dto, notif_settings) = {
-        let mut guard = shared_worker.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = shared_worker.lock_unpoisoned();
         guard.active_runs.remove(&run_id);
         if let Some(stale_count) = outcome.detected_stale_locks {
             guard
@@ -1058,7 +927,7 @@ fn finalize_backup_run_state(
             }
         }
 
-        let finish_now = ctx.clock.now_utc();
+        let finish_now = ctx.deps.clock.now_utc();
         if let Some(kind) = outcome.transient_backoff_kind {
             if kind == BackoffKind::Network {
                 guard.dest_availability.insert(
@@ -1076,10 +945,7 @@ fn finalize_backup_run_state(
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);
         } else if matches!(outcome.final_status, RunStatus::Ok | RunStatus::Warning) {
             let mut rs = guard.load_backup_runtime_state(&ctx.backup.id);
-            rs.backoff_attempt = 0;
-            rs.backoff_until = None;
-            rs.backoff_kind = None;
-            rs.last_failure_at = None;
+            kestic_core::scheduler::clear_backup_backoff(&mut rs);
             rs.last_overdue_notified_at = None;
             rs.overdue_anchor_at = Some(finish_now);
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);
@@ -1089,10 +955,10 @@ fn finalize_backup_run_state(
             || (outcome.final_status == RunStatus::Cancelled
                 && !guard.shutdown_flag.load(Ordering::SeqCst))
         {
-            // A restic error that neither is transient nor blocks the schedule (`F2`: alert, no
-            // retry) or a user cancel handles the due slot: no restart before the next regular
-            // slot. Permanent errors block anyway; pre-start failures (no exit code: source or
-            // destination unavailable) stay retryable (`FR-29`, `FR-30`).
+            // Alert-only restic errors (neither transient nor blocking) and user cancels count
+            // as handling the due slot: no restart before the next regular slot. Permanent
+            // errors block anyway; pre-start failures (no exit code: source or destination
+            // unavailable) stay retryable.
             let mut rs = guard.load_backup_runtime_state(&ctx.backup.id);
             mark_backup_slot_handled(&mut rs, finish_now);
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);
@@ -1106,7 +972,7 @@ fn finalize_backup_run_state(
         }
         if let Err(err) = guard
             .history
-            .prune_logs_for_backup(&ctx.backup.id, ctx.clock.as_ref())
+            .prune_logs_for_backup(&ctx.backup.id, ctx.deps.clock.as_ref())
         {
             eprintln!(
                 "kestic-daemon: failed to prune old logs for backup {}: {err}",

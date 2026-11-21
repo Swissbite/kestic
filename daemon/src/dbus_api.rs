@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Versioned D-Bus API v1 (`net.daester.Kestic1`) shared DTOs, error types, and client proxy
-//! (`F14`, `FR-30`, `M1-S09`, `docs/spec/dbus-api.md`).
+//! (`docs/spec/dbus-api.md`).
 
 use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult};
 use kestic_core::config::AppConfig;
 use kestic_core::maintenance::PrunePreviewSummary;
 use kestic_core::model::{
-    Backup, Destination, ExcludeLintWarning, ExcludePathTestResult, ExcludeRules,
+    Backup, Destination, DestinationId, ExcludeLintWarning, ExcludePathTestResult, ExcludeRules,
     MaintenanceSchedule, NestedSourceConflict, NotificationSettings, RetentionPolicy, Run, Source,
 };
 use kestic_core::provider::MIN_RESTIC_VERSION;
@@ -24,7 +24,9 @@ use kestic_i18n::messages::{
 };
 
 use crate::tray::TrayStatus;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use zbus::zvariant::{DynamicDeserialize, DynamicType};
 use zbus::{Connection, DBusError, Proxy, block_on};
 
 /// Well-known session bus name used as the daemon single-instance lock.
@@ -33,7 +35,7 @@ pub const KESTIC_BUS_NAME: &str = "net.daester.Kestic";
 /// Primary object path exported by the Kestic daemon.
 pub const KESTIC_OBJECT_PATH: &str = "/net/daester/Kestic";
 
-/// Versioned v1 D-Bus interface name (`F14`).
+/// Versioned v1 D-Bus interface name.
 pub const KESTIC_INTERFACE_V1: &str = "net.daester.Kestic1";
 
 /// D-Bus error hierarchy under `net.daester.Kestic.Error.*`.
@@ -87,7 +89,7 @@ impl KesticDbusError {
     }
 }
 
-/// Restic binary probe state reported to GUI & Tray (`M1-S04`, `U19`).
+/// Restic binary probe state reported to GUI & Tray.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResticStatusDto {
     pub valid: bool,
@@ -101,7 +103,7 @@ pub struct ResticStatusDto {
     pub detail: Option<String>,
 }
 
-/// Secret store probe state reported to GUI (`U19`, `§6.1`).
+/// Secret store probe state reported to GUI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretStoreStatusDto {
     pub available: bool,
@@ -110,14 +112,14 @@ pub struct SecretStoreStatusDto {
     pub detail: Option<String>,
 }
 
-/// Blocking state rendered in the window header (`zustaende.md` §6.1, `AC-M1-13-5`).
+/// Blocking state rendered in the window header (`docs/spec/ui/zustaende.md`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockingStateDto {
     /// Parameters for `restic_unavailable` come from `ResticStatusDto`.
     pub kind: BlockingKind,
 }
 
-/// Cached destination reachability check (`P32`, `M1-S23`).
+/// Cached destination reachability check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DestinationAvailabilityDto {
     pub destination_id: String,
@@ -126,7 +128,23 @@ pub struct DestinationAvailabilityDto {
     pub checked_at_unix: i64,
 }
 
-/// Combined availability of a backup (`M1-S23`).
+impl DestinationAvailabilityDto {
+    /// Reachability of `destination_id` from the outcome of a preflight check.
+    pub fn from_probe<E: std::fmt::Display>(
+        destination_id: &DestinationId,
+        probe: &Result<(), E>,
+        checked_at_unix: i64,
+    ) -> Self {
+        Self {
+            destination_id: destination_id.as_str().to_string(),
+            reachable: probe.is_ok(),
+            detail: probe.as_ref().err().map(ToString::to_string),
+            checked_at_unix,
+        }
+    }
+}
+
+/// Combined availability of a backup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupAvailabilityDto {
     pub backup_id: String,
@@ -140,7 +158,7 @@ pub struct BackupAvailabilityDto {
     pub source_status: Option<SourceStatus>,
 }
 
-/// Progress snapshot for an active run (`AC-M1-11-5`).
+/// Progress snapshot for an active run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActiveRunProgressDto {
     pub run_id: String,
@@ -161,7 +179,7 @@ pub struct ActiveRunProgressDto {
     pub seconds_remaining: u64,
 }
 
-/// Overall system + tray status summary (`§6.2`, `§10.1`).
+/// Overall system + tray status summary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OverallStatusDto {
     pub kind: OverallStatusKind,
@@ -269,7 +287,7 @@ pub struct DestinationSummaryDto {
     pub pending_forget_count: usize,
     #[serde(default)]
     pub stale_lock_count: usize,
-    /// Why due maintenance waits (`ausstehend`, AC-M3-05-5): `destination_unreachable` |
+    /// Why due maintenance waits («pending»): `destination_unreachable` |
     /// `on_battery` | `metered` | `queue` | `backoff` (same codes as backup pending reasons).
     #[serde(default)]
     pub maintenance_pending_reason: Option<PendingReasonCode>,
@@ -294,7 +312,7 @@ pub struct DaemonStateDto {
     pub recent_runs: Vec<Run>,
 }
 
-/// Detailed run view returned by `GetRunDetail` (`§7.8`, `M1-S08`, `M1-S14`).
+/// Detailed run view returned by `GetRunDetail`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunDetailDto {
     pub run: Run,
@@ -312,7 +330,7 @@ pub struct RunDetailDto {
     pub error_exit_code: Option<i32>,
 }
 
-/// Compact snapshot DTO (`AC-M1-22-4`).
+/// Compact snapshot DTO.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotSummaryDto {
     pub id: String,
@@ -325,7 +343,7 @@ pub struct SnapshotSummaryDto {
     pub total_files_processed: Option<u64>,
 }
 
-/// Earlier snapshots on a previously assigned, still configured destination (`AC-M1-22-4`).
+/// Earlier snapshots on a previously assigned, still configured destination.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreviousDestinationSnapshotsDto {
     pub destination_id: String,
@@ -337,7 +355,6 @@ pub struct PreviousDestinationSnapshotsDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupSnapshotsDto {
     pub backup_id: String,
-    pub current_destination_id: String,
     pub current_destination_name: String,
     pub current_snapshots: Vec<SnapshotSummaryDto>,
     pub current_error: Option<String>,
@@ -354,7 +371,7 @@ pub struct ConnectionTestResultDto {
     pub detail: String,
 }
 
-/// Skipped backup reason returned by `StartAllBackups` (`§7.1`).
+/// Skipped backup reason returned by `StartAllBackups`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkippedBackupDto {
     pub backup_id: String,
@@ -451,7 +468,7 @@ impl ResticStatusDto {
     }
 }
 
-/// Blocking-state text (§6.1) from `BlockingStateDto.kind` and the `ResticStatusDto` parameters.
+/// Blocking-state text from `BlockingStateDto.kind` and the `ResticStatusDto` parameters.
 pub fn blocking_message(
     blocking: Option<&BlockingStateDto>,
     restic: &ResticStatusDto,
@@ -468,11 +485,6 @@ pub struct KesticClient {
 }
 
 impl KesticClient {
-    /// Connects to the current D-Bus session bus targeting default `net.daester.Kestic`.
-    pub fn connect_default() -> zbus::Result<Self> {
-        Self::connect(KESTIC_BUS_NAME, KESTIC_OBJECT_PATH)
-    }
-
     /// Connects targeting custom bus name and object path.
     pub fn connect(bus_name: &str, object_path: &str) -> zbus::Result<Self> {
         let conn = block_on(Connection::session())?;
@@ -518,35 +530,42 @@ impl KesticClient {
         .await
     }
 
+    /// Calls `method` on the daemon interface and blocks for the reply.
+    fn call<B, R>(&self, method: &'static str, body: &B) -> zbus::Result<R>
+    where
+        B: Serialize + DynamicType,
+        R: for<'d> DynamicDeserialize<'d>,
+    {
+        block_on(async { self.proxy().await?.call(method, body).await })
+    }
+
+    /// Calls a method that replies with a JSON string and parses the reply into `T`.
+    fn call_json<B, T>(&self, method: &'static str, body: &B) -> Result<T, KesticDbusError>
+    where
+        B: Serialize + DynamicType,
+        T: DeserializeOwned,
+    {
+        let raw: String = self.call(method, body).map_err(KesticDbusError::from)?;
+        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+    }
+
     pub fn daemon_version(&self) -> zbus::Result<String> {
-        block_on(async { self.proxy().await?.call("DaemonVersion", &()).await })
+        self.call("DaemonVersion", &())
     }
 
     pub fn get_state(&self) -> Result<DaemonStateDto, KesticDbusError> {
-        let raw: String = block_on(async { self.proxy().await?.call("GetState", &()).await })
-            .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("GetState", &())
     }
 
     pub fn get_run_detail(&self, run_id: &str) -> Result<RunDetailDto, KesticDbusError> {
-        let raw: String =
-            block_on(async { self.proxy().await?.call("GetRunDetail", &(run_id,)).await })
-                .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("GetRunDetail", &(run_id,))
     }
 
     pub fn list_backup_snapshots(
         &self,
         backup_id: &str,
     ) -> Result<BackupSnapshotsDto, KesticDbusError> {
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("ListBackupSnapshots", &(backup_id,))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("ListBackupSnapshots", &(backup_id,))
     }
 
     pub fn test_destination_connection(
@@ -556,19 +575,11 @@ impl KesticClient {
         repo_password: &str,
         rest_password: &str,
     ) -> Result<ConnectionTestResultDto, KesticDbusError> {
-        let json =
-            serde_json::to_string(dest).map_err(|e| KesticDbusError::Internal(e.to_string()))?;
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call(
-                    "TestDestinationConnection",
-                    &(json.as_str(), mode, repo_password, rest_password),
-                )
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let json = to_json_arg(dest)?;
+        self.call_json(
+            "TestDestinationConnection",
+            &(json.as_str(), mode, repo_password, rest_password),
+        )
     }
 
     pub fn add_destination(
@@ -578,17 +589,11 @@ impl KesticClient {
         repo_password: &str,
         rest_password: &str,
     ) -> zbus::Result<String> {
-        let json = serde_json::to_string(dest)
-            .map_err(|e| zbus::Error::Failure(format!("serialize dest: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call(
-                    "AddDestination",
-                    &(json.as_str(), mode, repo_password, rest_password),
-                )
-                .await
-        })
+        let json = to_failure_arg("dest", dest)?;
+        self.call(
+            "AddDestination",
+            &(json.as_str(), mode, repo_password, rest_password),
+        )
     }
 
     pub fn update_destination(
@@ -599,23 +604,17 @@ impl KesticClient {
         rest_password: &str,
         verify_connection: bool,
     ) -> zbus::Result<()> {
-        let json = serde_json::to_string(dest)
-            .map_err(|e| zbus::Error::Failure(format!("serialize dest: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call(
-                    "UpdateDestination",
-                    &(
-                        json.as_str(),
-                        mode,
-                        repo_password,
-                        rest_password,
-                        verify_connection,
-                    ),
-                )
-                .await
-        })
+        let json = to_failure_arg("dest", dest)?;
+        self.call(
+            "UpdateDestination",
+            &(
+                json.as_str(),
+                mode,
+                repo_password,
+                rest_password,
+                verify_connection,
+            ),
+        )
     }
 
     pub fn update_destination_password(
@@ -623,147 +622,84 @@ impl KesticClient {
         dest_id: &str,
         new_password: &str,
     ) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("UpdateDestinationPassword", &(dest_id, new_password))
-                .await
-        })
+        self.call("UpdateDestinationPassword", &(dest_id, new_password))
     }
 
     pub fn remove_destination(&self, dest_id: &str) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("RemoveDestination", &(dest_id,))
-                .await
-        })
+        self.call("RemoveDestination", &(dest_id,))
     }
 
     pub fn add_backup(&self, backup: &Backup) -> zbus::Result<String> {
-        let json = serde_json::to_string(backup)
-            .map_err(|e| zbus::Error::Failure(format!("serialize backup: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("AddBackup", &(json.as_str(),))
-                .await
-        })
+        let json = to_failure_arg("backup", backup)?;
+        self.call("AddBackup", &(json.as_str(),))
     }
 
     pub fn update_backup(&self, backup: &Backup) -> zbus::Result<()> {
-        let json = serde_json::to_string(backup)
-            .map_err(|e| zbus::Error::Failure(format!("serialize backup: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("UpdateBackup", &(json.as_str(),))
-                .await
-        })
+        let json = to_failure_arg("backup", backup)?;
+        self.call("UpdateBackup", &(json.as_str(),))
     }
 
     pub fn rename_backup(&self, backup_id: &str, new_name: &str) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("RenameBackup", &(backup_id, new_name))
-                .await
-        })
+        self.call("RenameBackup", &(backup_id, new_name))
     }
 
     pub fn reassign_backup(&self, backup_id: &str, new_dest_id: &str) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("ReassignBackup", &(backup_id, new_dest_id))
-                .await
-        })
+        self.call("ReassignBackup", &(backup_id, new_dest_id))
     }
 
     pub fn remove_backup(&self, backup_id: &str) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("RemoveBackup", &(backup_id,))
-                .await
-        })
+        self.call("RemoveBackup", &(backup_id,))
     }
 
     pub fn set_restic_provider(
         &self,
         provider: &kestic_core::model::ResticProvider,
     ) -> Result<ResticStatusDto, KesticDbusError> {
-        let json = serde_json::to_string(provider)
-            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("SetResticProvider", &(json.as_str(),))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let json = to_json_arg(provider)?;
+        self.call_json("SetResticProvider", &(json.as_str(),))
     }
 
     pub fn set_expert_mode(&self, enabled: bool) -> zbus::Result<()> {
-        block_on(async { self.proxy().await?.call("SetExpertMode", &(enabled,)).await })
+        self.call("SetExpertMode", &(enabled,))
     }
 
     pub fn start_backup(&self, backup_id: &str) -> zbus::Result<String> {
-        block_on(async { self.proxy().await?.call("StartBackup", &(backup_id,)).await })
+        self.call("StartBackup", &(backup_id,))
     }
 
     pub fn start_all_backups(&self) -> Result<StartAllResultDto, KesticDbusError> {
-        let raw: String =
-            block_on(async { self.proxy().await?.call("StartAllBackups", &()).await })
-                .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("StartAllBackups", &())
     }
 
     pub fn cancel_run(&self, run_id: &str) -> zbus::Result<()> {
-        block_on(async { self.proxy().await?.call("CancelRun", &(run_id,)).await })
+        self.call("CancelRun", &(run_id,))
     }
 
     pub fn check_availability(
         &self,
         force: bool,
     ) -> Result<AvailabilitySnapshotDto, KesticDbusError> {
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("CheckAvailability", &(force,))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("CheckAvailability", &(force,))
     }
 
     pub fn window_active(&self, active: bool, page: &str) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("WindowActive", &(active, page))
-                .await
-        })
+        self.call("WindowActive", &(active, page))
     }
 
     pub fn register_gui(&self) -> zbus::Result<()> {
-        block_on(async { self.proxy().await?.call("RegisterGui", &()).await })
+        self.call("RegisterGui", &())
     }
 
     pub fn confirm_quit(&self) -> zbus::Result<()> {
-        block_on(async { self.proxy().await?.call("ConfirmQuit", &()).await })
+        self.call("ConfirmQuit", &())
     }
 
     pub fn unlock_secret_store(&self) -> zbus::Result<bool> {
-        block_on(async { self.proxy().await?.call("UnlockSecretStore", &()).await })
+        self.call("UnlockSecretStore", &())
     }
 
     pub fn detect_source(&self, path: &str) -> Result<Source, KesticDbusError> {
-        let raw: String =
-            block_on(async { self.proxy().await?.call("DetectSource", &(path,)).await })
-                .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("DetectSource", &(path,))
     }
 
     pub fn check_nested_sources(
@@ -772,33 +708,18 @@ impl KesticClient {
         candidate_path: &str,
         destination_id: &str,
     ) -> Result<Vec<NestedSourceConflict>, KesticDbusError> {
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call(
-                    "CheckNestedSources",
-                    &(candidate_id, candidate_path, destination_id),
-                )
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json(
+            "CheckNestedSources",
+            &(candidate_id, candidate_path, destination_id),
+        )
     }
 
     pub fn lint_excludes(
         &self,
         excludes: &ExcludeRules,
     ) -> Result<Vec<ExcludeLintWarning>, KesticDbusError> {
-        let json = serde_json::to_string(excludes)
-            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("LintExcludes", &(json.as_str(),))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let json = to_json_arg(excludes)?;
+        self.call_json("LintExcludes", &(json.as_str(),))
     }
 
     pub fn test_exclude_path(
@@ -807,33 +728,8 @@ impl KesticClient {
         excludes: &ExcludeRules,
         test_path: &str,
     ) -> Result<ExcludePathTestResult, KesticDbusError> {
-        let json = serde_json::to_string(excludes)
-            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("TestExcludePath", &(backup_id, json.as_str(), test_path))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
-    }
-
-    pub fn preview_retention(
-        &self,
-        backup_id: &str,
-        retention: &RetentionPolicy,
-    ) -> Result<ForgetPreviewResult, KesticDbusError> {
-        let json = serde_json::to_string(retention)
-            .map_err(|e| KesticDbusError::Internal(e.to_string()))?;
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("PreviewRetention", &(backup_id, json.as_str()))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        let json = to_json_arg(excludes)?;
+        self.call_json("TestExcludePath", &(backup_id, json.as_str(), test_path))
     }
 
     pub fn start_retention_preview(
@@ -841,37 +737,19 @@ impl KesticClient {
         backup_id: &str,
         retention: &RetentionPolicy,
     ) -> zbus::Result<String> {
-        let json = serde_json::to_string(retention)
-            .map_err(|e| zbus::Error::Failure(format!("serialize retention: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("StartRetentionPreview", &(backup_id, json.as_str()))
-                .await
-        })
+        let json = to_failure_arg("retention", retention)?;
+        self.call("StartRetentionPreview", &(backup_id, json.as_str()))
     }
 
     pub fn cancel_retention_preview(&self, preview_id: &str) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("CancelRetentionPreview", &(preview_id,))
-                .await
-        })
+        self.call("CancelRetentionPreview", &(preview_id,))
     }
 
     pub fn get_retention_preview_status(
         &self,
         preview_id: &str,
     ) -> Result<RetentionPreviewStatusDto, KesticDbusError> {
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("GetRetentionPreviewStatus", &(preview_id,))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("GetRetentionPreviewStatus", &(preview_id,))
     }
 
     pub fn start_backup_dry_run(
@@ -880,53 +758,28 @@ impl KesticClient {
         excludes: Option<&ExcludeRules>,
     ) -> zbus::Result<String> {
         let json = match excludes {
-            Some(ex) => serde_json::to_string(ex)
-                .map_err(|e| zbus::Error::Failure(format!("serialize excludes: {e}")))?,
+            Some(ex) => to_failure_arg("excludes", ex)?,
             None => String::new(),
         };
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("StartBackupDryRun", &(backup_id, json.as_str()))
-                .await
-        })
+        self.call("StartBackupDryRun", &(backup_id, json.as_str()))
     }
 
     pub fn cancel_backup_dry_run(&self, preview_id: &str) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("CancelBackupDryRun", &(preview_id,))
-                .await
-        })
+        self.call("CancelBackupDryRun", &(preview_id,))
     }
 
     pub fn get_backup_dry_run_status(
         &self,
         preview_id: &str,
     ) -> Result<BackupDryRunStatusDto, KesticDbusError> {
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("GetBackupDryRunStatus", &(preview_id,))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("GetBackupDryRunStatus", &(preview_id,))
     }
 
     pub fn format_exclude_rule_for_item(
         &self,
         item_path: &str,
     ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("FormatExcludeRuleForItem", &(item_path,))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("FormatExcludeRuleForItem", &(item_path,))
     }
 
     pub fn add_exclude_rule_for_item(
@@ -934,90 +787,44 @@ impl KesticClient {
         backup_id: &str,
         item_path: &str,
     ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("AddExcludeRuleForItem", &(backup_id, item_path))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("AddExcludeRuleForItem", &(backup_id, item_path))
     }
 
     pub fn run_destination_maintenance(&self, destination_id: &str) -> zbus::Result<String> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("RunDestinationMaintenance", &(destination_id,))
-                .await
-        })
+        self.call("RunDestinationMaintenance", &(destination_id,))
     }
 
     pub fn pause_global(&self, duration: &PauseDuration) -> zbus::Result<()> {
-        let json = serde_json::to_string(duration)
-            .map_err(|e| zbus::Error::Failure(format!("serialize duration: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("PauseGlobal", &(json.as_str(),))
-                .await
-        })
+        let json = to_failure_arg("duration", duration)?;
+        self.call("PauseGlobal", &(json.as_str(),))
     }
 
     pub fn resume_global(&self) -> zbus::Result<()> {
-        block_on(async { self.proxy().await?.call("ResumeGlobal", &()).await })
+        self.call("ResumeGlobal", &())
     }
 
     pub fn pause_backup(&self, backup_id: &str, duration: &PauseDuration) -> zbus::Result<()> {
-        let json = serde_json::to_string(duration)
-            .map_err(|e| zbus::Error::Failure(format!("serialize duration: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("PauseBackup", &(backup_id, json.as_str()))
-                .await
-        })
+        let json = to_failure_arg("duration", duration)?;
+        self.call("PauseBackup", &(backup_id, json.as_str()))
     }
 
     pub fn resume_backup(&self, backup_id: &str) -> zbus::Result<()> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("ResumeBackup", &(backup_id,))
-                .await
-        })
+        self.call("ResumeBackup", &(backup_id,))
     }
 
     pub fn start_backup_override(&self, backup_id: &str) -> zbus::Result<String> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("StartBackupOverride", &(backup_id,))
-                .await
-        })
+        self.call("StartBackupOverride", &(backup_id,))
     }
 
     pub fn unlock_destination(&self, destination_id: &str) -> zbus::Result<u32> {
-        block_on(async {
-            self.proxy()
-                .await?
-                .call("UnlockDestination", &(destination_id,))
-                .await
-        })
+        self.call("UnlockDestination", &(destination_id,))
     }
 
     pub fn preview_destination_maintenance(
         &self,
         destination_id: &str,
     ) -> Result<PrunePreviewSummary, KesticDbusError> {
-        let raw: String = block_on(async {
-            self.proxy()
-                .await?
-                .call("PreviewDestinationMaintenance", &(destination_id,))
-                .await
-        })
-        .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("PreviewDestinationMaintenance", &(destination_id,))
     }
 
     pub fn update_destination_maintenance(
@@ -1025,17 +832,11 @@ impl KesticClient {
         destination_id: &str,
         maintenance: &MaintenanceSchedule,
     ) -> zbus::Result<()> {
-        let json = serde_json::to_string(maintenance)
-            .map_err(|e| zbus::Error::Failure(format!("serialize maintenance: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call(
-                    "UpdateDestinationMaintenance",
-                    &(destination_id, json.as_str()),
-                )
-                .await
-        })
+        let json = to_failure_arg("maintenance", maintenance)?;
+        self.call(
+            "UpdateDestinationMaintenance",
+            &(destination_id, json.as_str()),
+        )
     }
 
     pub fn update_settings(
@@ -1043,54 +844,49 @@ impl KesticClient {
         default_overdue_threshold: u32,
         notifications: &NotificationSettings,
     ) -> zbus::Result<()> {
-        let json = serde_json::to_string(notifications)
-            .map_err(|e| zbus::Error::Failure(format!("serialize notifications: {e}")))?;
-        block_on(async {
-            self.proxy()
-                .await?
-                .call(
-                    "UpdateSettings",
-                    &(default_overdue_threshold, json.as_str()),
-                )
-                .await
-        })
+        let json = to_failure_arg("notifications", notifications)?;
+        self.call(
+            "UpdateSettings",
+            &(default_overdue_threshold, json.as_str()),
+        )
     }
 
     pub fn list_known_networks(&self) -> Result<Vec<String>, KesticDbusError> {
-        let raw: String =
-            block_on(async { self.proxy().await?.call("ListKnownNetworks", &()).await })
-                .map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
+        self.call_json("ListKnownNetworks", &())
     }
 }
 
-/// Asynchronous dry-run preview status returned by `GetBackupDryRunStatus` (`M2-S04`).
+/// Serializes a method argument for a call whose error type is `KesticDbusError`.
+pub(crate) fn to_json_arg<T: Serialize>(value: &T) -> Result<String, KesticDbusError> {
+    serde_json::to_string(value).map_err(|e| KesticDbusError::Internal(e.to_string()))
+}
+
+/// Serializes a method argument for a call whose error type is `zbus::Error`.
+fn to_failure_arg<T: Serialize>(what: &str, value: &T) -> zbus::Result<String> {
+    serde_json::to_string(value).map_err(|e| zbus::Error::Failure(format!("serialize {what}: {e}")))
+}
+
+/// Status of an asynchronous preview (`GetBackupDryRunStatus`, `GetRetentionPreviewStatus`);
+/// `T` is the result of the finished preview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BackupDryRunStatusDto {
+pub struct PreviewStatusDto<T> {
     pub preview_id: String,
     /// `"running"` | `"done"` | `"cancelled"` | `"error"`
     pub state: String,
-    pub result: Option<BackupDryRunResult>,
+    pub result: Option<T>,
     /// Cause while `state == "error"`.
     pub error_kind: Option<ErrorKind>,
     /// Raw error text (shown for `unknown`).
     pub error_detail: Option<String>,
 }
 
-/// Asynchronous retention preview status returned by `GetRetentionPreviewStatus` (`M2-S06`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RetentionPreviewStatusDto {
-    pub preview_id: String,
-    /// `"running"` | `"done"` | `"cancelled"` | `"error"`
-    pub state: String,
-    pub result: Option<ForgetPreviewResult>,
-    /// Cause while `state == "error"`.
-    pub error_kind: Option<ErrorKind>,
-    /// Raw error text (shown for `unknown`).
-    pub error_detail: Option<String>,
-}
+/// Dry-run preview status returned by `GetBackupDryRunStatus`.
+pub type BackupDryRunStatusDto = PreviewStatusDto<BackupDryRunResult>;
 
-/// Preview of the exclude rule generated for an unreadable path (`M2-S08`).
+/// Retention preview status returned by `GetRetentionPreviewStatus`.
+pub type RetentionPreviewStatusDto = PreviewStatusDto<ForgetPreviewResult>;
+
+/// Preview of the exclude rule generated for an unreadable path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExcludeRulePreviewDto {
     pub is_dir: bool,

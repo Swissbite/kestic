@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! StatusNotifierItem tray integration via `ksni 0.3.7`
-//! (`K1`, `NFR-11`, `M1-S11`, `AC-M1-11-1..5`, `AC-M1-23-4`, `tray-und-benachrichtigungen.md` §10.1).
+//! (see `docs/spec/ui/tray-und-benachrichtigungen.md`).
 
 use crate::dbus_api::{ActiveRunProgressDto, OverallStatusKind};
 use crate::i18n::{i18n, tr};
@@ -18,7 +18,7 @@ pub(crate) fn active_run_line(active: &ActiveRunProgressDto) -> String {
     tr(&active_run_message(&active.info()))
 }
 
-/// Mapped StatusNotifierItem visibility state per `tray-und-benachrichtigungen.md` §10.1
+/// Mapped StatusNotifierItem visibility state per `docs/spec/ui/tray-und-benachrichtigungen.md`
 /// (serialised as `"Passive"` | `"Active"` | `"NeedsAttention"` in `OverallStatusDto`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TrayStatus {
@@ -67,7 +67,7 @@ pub struct TrayBackupItem {
     pub enabled: bool,
 }
 
-/// Computes `(TrayStatus, overlay_icon_name)` strictly following `tray-und-benachrichtigungen.md` §10.1:
+/// Computes `(TrayStatus, overlay_icon_name)` strictly following `docs/spec/ui/tray-und-benachrichtigungen.md`:
 /// - Blocking state or Error -> `NeedsAttention` + `"state-error"`
 /// - Overdue -> `NeedsAttention` + `"alarm-symbolic"`
 /// - Warning -> `Active` + `"state-warning"`
@@ -105,7 +105,7 @@ pub fn compute_tray_presentation(
     }
 }
 
-/// Snapshot of tray metadata and M1/M3 menu state presented via `org.kde.StatusNotifierItem`.
+/// Snapshot of tray metadata and menu state presented via `org.kde.StatusNotifierItem`.
 #[derive(Debug, Clone)]
 pub struct KesticTrayState {
     pub status: TrayStatus,
@@ -218,7 +218,7 @@ impl KesticTray {
     }
 
     fn build_backup_now_submenu(&self) -> MenuItem<Self> {
-        // "Back Up Now" submenu (M1-S11, AC-M1-11-2)
+        // "Back Up Now" submenu
         let mut backup_submenu: Vec<MenuItem<Self>> = Vec::new();
         let any_enabled =
             !self.state.blocking_active && self.state.backups.iter().any(|b| b.enabled);
@@ -263,7 +263,7 @@ impl KesticTray {
     }
 
     fn build_schedule_pause_item(&self) -> MenuItem<Self> {
-        // Pause / Resume Schedules (M3-S07, AC-M3-14-4, §10.1)
+        // Pause / Resume Schedules
         if self.state.global_paused {
             StandardItem {
                 label: tr(&Label::ResumeSchedules.message()),
@@ -425,7 +425,7 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
-    /// Spawns the `ksni` SNI service with M0 legacy `quit_tx` compatibility.
+    /// Spawns the `ksni` SNI service that only knows the optional `quit_tx` channel.
     pub fn spawn(
         state: KesticTrayState,
         assume_sni_available: bool,
@@ -454,17 +454,6 @@ impl TrayHandle {
             tray.spawn()?
         };
         Ok(Self { inner })
-    }
-
-    /// Updates tray state (`Status`, overlay icon, tooltip) dynamically.
-    pub fn update_state(&self, status: TrayStatus, overlay_icon_name: &str, description: &str) {
-        let overlay = overlay_icon_name.to_string();
-        let desc = description.to_string();
-        let _ = self.inner.update(|tray| {
-            tray.state.status = status;
-            tray.state.overlay_icon_name = overlay;
-            tray.state.tooltip_description = desc;
-        });
     }
 
     /// Replaces the complete tray state snapshot (`Status`, overlay, tooltip, and menu entries).
@@ -516,10 +505,10 @@ mod tests {
         }
     }
 
-    /// M3 manual acceptance (2026-11-19): with one running backup the menu showed
-    /// «quelle: backing up · 46%» twice (headline and run line).
+    /// With one running backup the menu lists «quelle: backing up · 46%» once, not in both
+    /// headline and run line.
     #[test]
-    fn m3_acceptance_single_running_backup_is_listed_once() {
+    fn acceptance_single_running_backup_is_listed_once() {
         let run = running("quelle", 46.0);
         let headline = active_run_line(&run);
         let labels = header_labels(KesticTrayState {
@@ -533,7 +522,7 @@ mod tests {
 
     /// The run line stays when the headline says something else (e.g. a failed backup).
     #[test]
-    fn m3_acceptance_run_line_stays_below_a_different_headline() {
+    fn acceptance_run_line_stays_below_a_different_headline() {
         let run = running("quelle", 40.0);
         let run_line = active_run_line(&run);
         let labels = header_labels(KesticTrayState {

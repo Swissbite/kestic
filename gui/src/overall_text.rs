@@ -3,14 +3,14 @@
 
 //! Overview headline and subtitle and the other code-based status texts, built in the GUI
 //! locale from the language-independent DTO codes via the shared mapping in
-//! `kestic_i18n::messages` (NFR-06); the DTOs carry no daemon-language texts.
+//! `kestic_i18n::messages`; the DTOs carry no daemon-language texts.
 
 use crate::state_cache::{i18np, tr};
 use kestic_daemon::dbus_api::{BackupAvailabilityDto, DaemonStateDto, blocking_message};
 use kestic_i18n::codes::PendingReasonCode;
 use kestic_i18n::messages::{maintenance_running_message, overall_headline as headline_message};
 
-/// Headline for the status card (§6.2 priority order, `kestic_i18n::messages::overall_headline`).
+/// Headline for the status card (priority order of the overall status, `kestic_i18n::messages::overall_headline`).
 pub fn overall_headline(state: &DaemonStateDto) -> String {
     let o = &state.overall;
     let active = o.active_run_info();
@@ -32,7 +32,7 @@ pub fn overall_subtitle(state: &DaemonStateDto) -> String {
 
 /// Number of backups «Back Up All Now» can start right now (source and destination
 /// available, no permanent error, run conditions met) and, when that is not every
-/// backup, the hint shown before the click (FR-13b).
+/// backup, the hint shown before the click.
 pub fn back_up_all_availability(state: &DaemonStateDto) -> (usize, String) {
     let total = state.backups.len();
     let startable = state
@@ -54,7 +54,7 @@ pub fn back_up_all_availability(state: &DaemonStateDto) -> (usize, String) {
 }
 
 /// Maintenance state line of a destination (detail page): running, or why due maintenance
-/// waits (`maintenance_pending_reason`, AC-M3-05-5), in the GUI locale.
+/// waits (`maintenance_pending_reason`), in the GUI locale.
 pub fn maintenance_status_line(
     running: bool,
     pending: Option<PendingReasonCode>,
@@ -69,7 +69,7 @@ pub fn maintenance_status_line(
         .unwrap_or_default()
 }
 
-/// Blocking-state text (§6.1) in the GUI locale from `BlockingStateDto.kind` and the
+/// Blocking-state text in the GUI locale from `BlockingStateDto.kind` and the
 /// `ResticStatusDto` parameters.
 pub fn localized_blocking_message(state: &DaemonStateDto) -> String {
     blocking_message(state.blocking.as_ref(), &state.restic_status)
@@ -77,7 +77,7 @@ pub fn localized_blocking_message(state: &DaemonStateDto) -> String {
         .unwrap_or_default()
 }
 
-/// Availability reason shown next to «Back Up Now» in the GUI locale (FR-30).
+/// Availability reason shown next to «Back Up Now» in the GUI locale.
 pub fn localized_availability_reason(avail: &BackupAvailabilityDto) -> String {
     avail
         .blocked_reason
@@ -90,7 +90,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn m3_review3_running_maintenance_uses_maintenance_wording() {
+    fn running_maintenance_uses_maintenance_wording() {
         let now = time::macros::datetime!(2026-12-06 11:00:00 UTC);
         assert_eq!(
             maintenance_status_line(true, None, None, now),

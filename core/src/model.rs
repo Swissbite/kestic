@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Core domain model and glossary types (`F15`, `P38`, `M1-S01`).
+//! Core domain model and glossary types.
 
 use crate::clock::Clock;
-use crate::excludes::lexical_normalize;
 pub use crate::excludes::*;
+use crate::mount::normalize_lexical_path;
 pub use crate::retention::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeSet, HashMap};
@@ -18,7 +18,7 @@ use time::OffsetDateTime;
 /// Base32 lowercase alphabet (`[a-z2-7]`, RFC 4648 without padding).
 const BASE32_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 
-/// Fixed character length for Kestic Base32 identifiers (`F15`, `AC-M1-01-1`).
+/// Fixed character length for Kestic Base32 identifiers.
 pub const ID_LEN: usize = 8;
 
 /// Validation errors for domain identifiers and model invariants.
@@ -136,9 +136,9 @@ pub enum ResticProvider {
     /// System `restic` resolved from `$PATH`.
     #[default]
     System,
-    /// App-managed download under `$XDG_DATA_HOME/kestic/` (M5).
+    /// App-managed download under `$XDG_DATA_HOME/kestic/`.
     AppManaged { path: PathBuf },
-    /// User-configured explicit binary path (`FR-33`).
+    /// User-configured explicit binary path.
     Custom { path: PathBuf },
 }
 
@@ -146,9 +146,9 @@ pub enum ResticProvider {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DestinationKind {
-    /// Local directory or mounted external drive (`FR-01`).
+    /// Local directory or mounted external drive.
     Local { path: PathBuf },
-    /// restic REST server (`FR-01`).
+    /// restic REST server.
     Rest {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,7 +158,7 @@ pub enum DestinationKind {
 
 impl DestinationKind {
     /// Whether the destination is reached over the network (all but a local directory or drive):
-    /// only then do the network run conditions apply (decision 2026-11-20).
+    /// only then do the network run conditions apply (a local directory or drive needs no network).
     pub fn is_network(&self) -> bool {
         !matches!(self, Self::Local { .. })
     }
@@ -324,7 +324,7 @@ fn normalize_rest_url(raw: &str) -> String {
 }
 
 /// Run conditions as they apply to a destination of `kind`: a local directory or drive needs
-/// no network, so its network conditions are dropped (decision 2026-11-20).
+/// no network, so its network conditions are dropped (a local directory or drive needs no network).
 impl RunConditions {
     pub fn for_destination(mut self, kind: &DestinationKind) -> Self {
         if !kind.is_network() {
@@ -336,7 +336,7 @@ impl RunConditions {
     }
 }
 
-/// Secret Service reference keys for a [`Destination`] (never plaintext values, `NFR-02`, `NFR-03`).
+/// Secret Service reference keys for a [`Destination`] (never plaintext values).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DestinationSecretRefs {
     /// Reference key for the repository password in [`crate::secrets::SecretStore`].
@@ -356,7 +356,7 @@ impl DestinationSecretRefs {
     }
 }
 
-/// ISO weekday for calendar schedules (`M3-S01`, `M3-S05`).
+/// ISO weekday for calendar schedules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Weekday {
@@ -399,18 +399,6 @@ impl Weekday {
         self as u8
     }
 
-    pub fn to_jiff(self) -> jiff::civil::Weekday {
-        match self {
-            Self::Monday => jiff::civil::Weekday::Monday,
-            Self::Tuesday => jiff::civil::Weekday::Tuesday,
-            Self::Wednesday => jiff::civil::Weekday::Wednesday,
-            Self::Thursday => jiff::civil::Weekday::Thursday,
-            Self::Friday => jiff::civil::Weekday::Friday,
-            Self::Saturday => jiff::civil::Weekday::Saturday,
-            Self::Sunday => jiff::civil::Weekday::Sunday,
-        }
-    }
-
     pub fn from_jiff(w: jiff::civil::Weekday) -> Self {
         match w {
             jiff::civil::Weekday::Monday => Self::Monday,
@@ -424,7 +412,7 @@ impl Weekday {
     }
 }
 
-/// Ordinal weekday within a month for monthly maintenance schedules (`M3-S05`, `§8.1`).
+/// Ordinal weekday within a month for monthly maintenance schedules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NthWeekday {
@@ -435,7 +423,7 @@ pub enum NthWeekday {
     Last,
 }
 
-/// Calendar schedule for `prune` / `check` destination maintenance (`FR-45`, `FR-11`, `P15`).
+/// Calendar schedule for `prune` / `check` destination maintenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MaintenanceEntrySchedule {
@@ -491,7 +479,7 @@ impl MaintenanceEntrySchedule {
     }
 }
 
-/// Maintenance schedule on a [`Destination`] (`FR-45`, `FR-11`, `P15`, `§8.1`).
+/// Maintenance schedule on a [`Destination`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MaintenanceSchedule {
@@ -620,7 +608,7 @@ pub struct Backup {
     pub run_conditions: RunConditions,
     #[serde(default)]
     pub retention: RetentionPolicy,
-    /// Optional per-backup override for missed-slot overdue threshold (`M3-S02`).
+    /// Optional per-backup override for missed-slot overdue threshold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overdue_threshold: Option<u32>,
 }
@@ -663,7 +651,7 @@ impl Backup {
         self.overdue_threshold.unwrap_or(global_default).max(1)
     }
 
-    /// Renames the backup while keeping its [`BackupId`] immutable (`AC-M1-01-2`).
+    /// Renames the backup while keeping its [`BackupId`] immutable.
     pub fn rename(&mut self, name: impl Into<String>) -> Result<(), ModelError> {
         let next = name.into();
         if next.trim().is_empty() {
@@ -675,7 +663,7 @@ impl Backup {
         Ok(())
     }
 
-    /// Updates the backup source while keeping its [`BackupId`] immutable (`AC-M1-01-2`).
+    /// Updates the backup source while keeping its [`BackupId`] immutable.
     pub fn set_source(&mut self, source: Source) -> Result<(), ModelError> {
         if source.path.as_os_str().is_empty() {
             return Err(ModelError::InvalidBackup(
@@ -692,17 +680,17 @@ impl Backup {
         Ok(())
     }
 
-    /// Assigns this backup to another [`DestinationId`] (`M1-S22`), keeping `self.id` stable.
+    /// Assigns this backup to another [`DestinationId`], keeping `self.id` stable.
     pub fn reassign_destination(&mut self, destination_id: DestinationId) {
         self.destination_id = destination_id;
     }
 
-    /// Returns the restic snapshot tag identifying this backup (`kestic:<backup-id>`, `FR-28`).
+    /// Returns the restic snapshot tag identifying this backup (`kestic:<backup-id>`).
     pub fn tag(&self) -> String {
         format!("kestic:{}", self.id)
     }
 
-    /// Returns the restic metadata snapshot tag (`kestic-meta:<backup-id>`, `FR-49`).
+    /// Returns the restic metadata snapshot tag (`kestic-meta:<backup-id>`).
     pub fn meta_tag(&self) -> String {
         format!("kestic-meta:{}", self.id)
     }
@@ -737,7 +725,7 @@ impl Backup {
     }
 }
 
-/// Relationship between two nested source paths on the same destination (`M2-S10`).
+/// Relationship between two nested source paths on the same destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NestedRelationship {
@@ -749,7 +737,7 @@ pub enum NestedRelationship {
     SamePath,
 }
 
-/// Warning entry for nested sources on the same destination (`FR-31`, `M2-S10`).
+/// Warning entry for nested sources on the same destination.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NestedSourceConflict {
     pub other_backup_id: BackupId,
@@ -759,8 +747,8 @@ pub struct NestedSourceConflict {
 }
 
 fn classify_component_nesting(a: &Path, b: &Path) -> Option<NestedRelationship> {
-    let na = lexical_normalize(a);
-    let nb = lexical_normalize(b);
+    let na = normalize_lexical_path(a);
+    let nb = normalize_lexical_path(b);
     let ca: Vec<_> = na.components().collect();
     let cb: Vec<_> = nb.components().collect();
     if ca.is_empty() || cb.is_empty() {
@@ -778,7 +766,7 @@ fn classify_component_nesting(a: &Path, b: &Path) -> Option<NestedRelationship> 
 }
 
 /// Checks whether `candidate_path` on `candidate_dest` nests with any existing backup
-/// (excluding `candidate_id` if editing an existing backup) (`FR-31`, `AC-M2-10-1..3`).
+/// (excluding `candidate_id` if editing an existing backup).
 pub fn check_nested_sources_for_candidate(
     candidate_id: Option<&BackupId>,
     candidate_path: &Path,
@@ -806,7 +794,7 @@ pub fn check_nested_sources_for_candidate(
 }
 
 /// Computes all nested-source conflicts across `backups` (bidirectional: both sides get a warning,
-/// strictly per destination and using component-wise path matching) (`M2-S10`).
+/// strictly per destination and using component-wise path matching).
 pub fn find_nested_source_warnings(
     backups: &[Backup],
 ) -> HashMap<BackupId, Vec<NestedSourceConflict>> {
@@ -825,7 +813,7 @@ pub fn find_nested_source_warnings(
     map
 }
 
-/// Kind of a [`Run`] (glossary: `RunKind`, `P38`, `AC-M1-01-3`).
+/// Kind of a [`Run`] (glossary: `RunKind`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunKind {
@@ -842,7 +830,30 @@ pub enum RunKind {
     Meta,
 }
 
-/// Lifecycle state of a [`Run`] (`AC-M1-01-3`).
+/// Adds `wire_name` / `from_wire_name` to an enum whose serde names are the strings stored in
+/// the history database.
+macro_rules! wire_names {
+    ($name:ident { $($variant:ident => $wire:literal),+ $(,)? }) => {
+        impl $name {
+            /// String stored in the history database.
+            pub fn wire_name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $wire),+
+                }
+            }
+
+            /// Parses a stored string; `None` when unknown.
+            pub fn from_wire_name(name: &str) -> Option<Self> {
+                match name {
+                    $($wire => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+/// Lifecycle state of a [`Run`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
@@ -862,6 +873,16 @@ pub enum RunStatus {
     Interrupted,
 }
 
+wire_names!(RunStatus {
+    Pending => "pending",
+    Running => "running",
+    Ok => "ok",
+    Warning => "warning",
+    Error => "error",
+    Cancelled => "cancelled",
+    Interrupted => "interrupted",
+});
+
 /// Reason a [`Run`] is in [`RunStatus::Pending`] (`domain-model.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -873,9 +894,17 @@ pub enum PendingReason {
     Backoff,
 }
 
-/// Record of an executed restic invocation for a [`Run`] (`FR-34`, `AC-M1-08-3`).
+wire_names!(PendingReason {
+    ConditionNotMet => "condition_not_met",
+    SourceUnavailable => "source_unavailable",
+    DestinationUnreachable => "destination_unreachable",
+    Queued => "queued",
+    Backoff => "backoff",
+});
+
+/// Record of an executed restic invocation for a [`Run`].
 ///
-/// Must never contain plaintext secret values (`NFR-02`).
+/// Must never contain plaintext secret values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandRecord {
     pub executable: String,
@@ -904,7 +933,7 @@ pub struct RunStats {
     pub snapshot_id: Option<String>,
 }
 
-/// Single execution record (glossary: `Run`, `AC-M1-01-3`).
+/// Single execution record (glossary: `Run`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Run {
     pub id: RunId,
@@ -956,7 +985,7 @@ impl Run {
         })
     }
 
-    /// Creates a new backup run belonging to `backup` and its `destination_id` (`AC-M1-01-3`).
+    /// Creates a new backup run belonging to `backup` and its `destination_id`.
     pub fn new_backup(clock: &dyn Clock, backup: &Backup) -> Result<Self, ModelError> {
         Self::create(
             clock,
@@ -986,7 +1015,7 @@ impl Run {
         )
     }
 
-    /// Creates a maintenance run belonging to `destination_id` (`AC-M1-01-3`).
+    /// Creates a maintenance run belonging to `destination_id`.
     pub fn new_maintenance(
         clock: &dyn Clock,
         destination_id: DestinationId,
@@ -1000,7 +1029,7 @@ impl Run {
         )
     }
 
-    /// Creates a restore run belonging to `destination_id` and optionally a [`BackupId`] (`AC-M1-01-3`).
+    /// Creates a restore run belonging to `destination_id` and optionally a [`BackupId`].
     pub fn new_restore(
         clock: &dyn Clock,
         destination_id: DestinationId,
@@ -1015,7 +1044,7 @@ impl Run {
         )
     }
 
-    /// Creates a metadata snapshot run belonging to `destination_id` (`AC-M1-01-3`).
+    /// Creates a metadata snapshot run belonging to `destination_id`.
     pub fn new_meta(clock: &dyn Clock, destination_id: DestinationId) -> Result<Self, ModelError> {
         Self::create(
             clock,

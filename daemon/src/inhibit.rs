@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! XDG Desktop Portal `Inhibit` client (F9, AC-M0-10-1).
+//! XDG Desktop Portal `Inhibit` client.
 
 use std::collections::HashMap;
 use zbus::{Connection, OwnedObjectPath, Proxy, Variant, block_on};
@@ -53,14 +53,6 @@ impl PortalInhibitGuard {
             dest: dest.to_string(),
             handle_path: Some(handle_path),
         })
-    }
-
-    /// Returns the portal request object path.
-    pub fn handle_path(&self) -> &str {
-        self.handle_path
-            .as_ref()
-            .map(|p| p.as_str())
-            .unwrap_or_default()
     }
 
     /// Releases the inhibit explicitly by calling `org.freedesktop.portal.Request.Close()`.

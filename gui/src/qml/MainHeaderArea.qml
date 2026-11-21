@@ -15,7 +15,7 @@ ColumnLayout {
     required property var appBackend
     required property var pageStackRef
 
-    // Priority order (§6.1): Daemon unreachable -> Secret store locked -> restic unavailable
+    // Priority order: Daemon unreachable -> Secret store locked -> restic unavailable
     Kirigami.InlineMessage {
         id: blockingStatusBanner
         objectName: "blockingStatusBanner"
@@ -157,13 +157,9 @@ ColumnLayout {
                 Accessible.name: Texts.label("back")
                 onClicked: headerArea.rootWindow.handleGlobalEscape()
 
-                Rectangle {
-                    anchors.fill: parent
-                    color: "transparent"
-                    radius: Kirigami.Units.cornerRadius
-                    border.width: (breadcrumbBackButton.activeFocus || breadcrumbBackButton.visualFocus) ? 2 : 0
-                    border.color: Kirigami.Theme.highlightColor
-                    visible: border.width > 0
+                FocusRing {
+                    target: breadcrumbBackButton
+                    z: 0
                 }
             }
 
@@ -172,7 +168,6 @@ ColumnLayout {
             }
 
             Repeater {
-                id: breadcrumbRepeater
                 model: headerArea.rootWindow.breadcrumbRevision >= 0 ? headerArea.pageStackRef.depth : 0
 
                 delegate: RowLayout {
@@ -207,13 +202,9 @@ ColumnLayout {
                         Accessible.name: crumbDelegate.crumbTitle
                         onClicked: headerArea.rootWindow.navigateToBreadcrumbIndex(crumbDelegate.index)
 
-                        Rectangle {
-                            anchors.fill: parent
-                            color: "transparent"
-                            radius: Kirigami.Units.cornerRadius
-                            border.width: (crumbButton.activeFocus || crumbButton.visualFocus) ? 2 : 0
-                            border.color: Kirigami.Theme.highlightColor
-                            visible: border.width > 0
+                        FocusRing {
+                            target: crumbButton
+                            z: 0
                         }
                     }
 

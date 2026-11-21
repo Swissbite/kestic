@@ -8,12 +8,15 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-Kirigami.ScrollablePage {
+WizardPage {
     id: page
     objectName: "newBackupWizard"
     title: wizardTitle
+    hasInput: hasAnyDestInput
+    canGoBack: stepIndex > 0
+    discardTitle: i18n("Discard backup setup?")
+    onBackClicked: stepIndex -= 1
 
-    required property var rootWindow
     required property var appBackend
     required property var destinationsModel
 
@@ -58,22 +61,13 @@ Kirigami.ScrollablePage {
             nestedWarnings = [];
             return;
         }
-        var detRaw = appBackend.detectSource(trimmed);
-        if (detRaw !== "") {
-            try {
-                var det = JSON.parse(detRaw);
-                detectedSourceKind = det.kind || "folder";
-                detectedDriveLabel = det.drive_label || "";
-            } catch (e) {
-            }
+        var det = rootWindow.detectSource(trimmed);
+        if (det) {
+            detectedSourceKind = det.kind || "folder";
+            detectedDriveLabel = det.drive_label || "";
         }
         if (!integratedDestFlow && selectedDestId !== "") {
-            var nestRaw = appBackend.checkNestedSources("", trimmed, selectedDestId);
-            try {
-                nestedWarnings = JSON.parse(nestRaw || "[]");
-            } catch (e) {
-                nestedWarnings = [];
-            }
+            nestedWarnings = rootWindow.nestedSourceWarnings("", trimmed, selectedDestId);
         } else {
             nestedWarnings = [];
         }
@@ -117,25 +111,6 @@ Kirigami.ScrollablePage {
         }
     }
 
-    onBackRequested: function(event) {
-        if (hasAnyDestInput) {
-            event.accepted = true;
-            discardDialog.open();
-        }
-    }
-
-    function handleEscape() {
-        if (discardDialog.opened || discardDialog.visible) {
-            discardDialog.close();
-            return true;
-        }
-        if (hasAnyDestInput) {
-            discardDialog.open();
-            return true;
-        }
-        return false;
-    }
-
     function deriveDefaultName(path) {
         var trimmed = path.replace(/\/+$/, "");
         var idx = trimmed.lastIndexOf("/");
@@ -144,10 +119,10 @@ Kirigami.ScrollablePage {
     }
 
     function preselectFirstDestinationIfNeeded() {
-        var count = destinationsModel.rowCount(destinationsModel.index(-1, -1));
-        if (count > 0 && selectedDestId === "") {
-            selectedDestId = destinationsModel.data(destinationsModel.index(0, 0), 0) || "";
-            selectedDestName = destinationsModel.data(destinationsModel.index(0, 0), 1) || "";
+        var firstId = destinationsModel.idAt(0);
+        if (firstId !== "" && selectedDestId === "") {
+            selectedDestId = firstId;
+            selectedDestName = destinationsModel.rowMap(firstId).name || "";
         }
     }
 
@@ -217,14 +192,6 @@ Kirigami.ScrollablePage {
         }
     }
 
-    Kirigami.PromptDialog {
-        id: discardDialog
-        title: i18n("Discard backup setup?")
-        subtitle: Texts.label("nothing_created_yet")
-        standardButtons: Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onDiscarded: rootWindow.closeWizardLayer()
-    }
-
     ColumnLayout {
         width: parent.width
 
@@ -259,7 +226,6 @@ Kirigami.ScrollablePage {
                         Layout.fillWidth: true
 
                         Controls.TextField {
-                            id: wizSourceField
                             objectName: "wizBackupSourceField"
                             text: page.sourcePath
                             onTextChanged: {
@@ -306,7 +272,6 @@ Kirigami.ScrollablePage {
                 }
 
                 ListView {
-                    id: wizDestList
                     objectName: "wizBackupDestList"
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.max(contentHeight, Kirigami.Units.gridUnit * 8)
@@ -317,14 +282,7 @@ Kirigami.ScrollablePage {
 
                     onActiveFocusChanged: {
                         if (activeFocus && count > 0 && currentIndex < 0) {
-                            var targetIdx = 0;
-                            for (var i = 0; i < count; ++i) {
-                                if (destinationsModel.data(destinationsModel.index(i, 0), 0) === page.selectedDestId) {
-                                    targetIdx = i;
-                                    break;
-                                }
-                            }
-                            currentIndex = targetIdx;
+                            currentIndex = Math.max(0, destinationsModel.rowOf(page.selectedDestId));
                         }
                     }
 
@@ -349,14 +307,9 @@ Kirigami.ScrollablePage {
                             page.refreshSourceMetadata();
                         }
 
-                        Rectangle {
-                            anchors.fill: parent
-                            z: 10
-                            color: "transparent"
-                            radius: Kirigami.Units.cornerRadius
-                            border.width: (destRow.activeFocus || destRow.visualFocus) ? 2 : 0
-                            border.color: destRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                            visible: border.width > 0
+                        FocusRing {
+                            target: destRow
+                            ringColor: destRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                         }
 
                         contentItem: RowLayout {
@@ -485,7 +438,7 @@ Kirigami.ScrollablePage {
                         Layout.fillWidth: true
                         Layout.preferredHeight: Kirigami.Units.gridUnit * 7
 
-                        Controls.TextArea {
+                        TabNavTextArea {
                             id: wizBackupExcludesArea
                             objectName: "wizBackupExcludesArea"
                             font: Kirigami.Theme.fixedWidthFont
@@ -494,25 +447,8 @@ Kirigami.ScrollablePage {
                             placeholderText: "*.tmp\n.cache"
                             Accessible.name: Texts.label("exclude_rules_syntax")
 
-                            Keys.onTabPressed: function(event) {
-                                var next = nextItemInFocusChain(true);
-                                if (next) next.forceActiveFocus(Qt.TabFocusReason);
-                                event.accepted = true;
-                            }
-                            Keys.onBacktabPressed: function(event) {
-                                var prev = nextItemInFocusChain(false);
-                                if (prev) prev.forceActiveFocus(Qt.BacktabFocusReason);
-                                event.accepted = true;
-                            }
-
-                            Rectangle {
-                                anchors.fill: parent
-                                z: 10
-                                color: "transparent"
-                                radius: Kirigami.Units.cornerRadius
-                                border.width: wizBackupExcludesArea.activeFocus ? 2 : 0
-                                border.color: Kirigami.Theme.highlightColor
-                                visible: border.width > 0
+                            FocusRing {
+                                target: wizBackupExcludesArea
                             }
                         }
                     }
@@ -521,63 +457,33 @@ Kirigami.ScrollablePage {
         }
     }
 
-    footer: Controls.ToolBar {
-        contentItem: RowLayout {
-            spacing: Kirigami.Units.smallSpacing
-
-            Controls.Button {
-                text: Texts.label("cancel")
-                Accessible.name: Texts.label("cancel")
-                onClicked: {
-                    if (page.hasAnyDestInput) {
-                        discardDialog.open();
-                    } else {
-                        rootWindow.closeWizardLayer();
-                    }
-                }
-            }
-
-            Item { Layout.fillWidth: true }
-
-            Controls.Button {
-                text: Texts.label("back")
-                visible: page.stepIndex > 0
-                Accessible.name: Texts.label("back")
-                onClicked: page.stepIndex -= 1
-            }
-
-            Controls.Button {
-                id: wizBackupNextBtn
-                objectName: "wizBackupNextButton"
-                visible: page.currentStage !== "summary"
-                text: Texts.label("next")
-                highlighted: true
-                enabled: page.canAdvance
-                Accessible.name: Texts.label("next")
-                onClicked: page.stepIndex += 1
-            }
-
-            Controls.Button {
-                id: saveLaterBtn
-                objectName: "wizBackupSaveLaterButton"
-                visible: page.currentStage === "summary"
-                text: i18n("Save, Back Up Later")
-                enabled: page.canAdvance
-                Accessible.name: i18n("Save, Back Up Later")
-                onClicked: page.submitBackup(false)
-            }
-
-            Controls.Button {
-                id: backUpNowBtn
-                objectName: "wizBackupStartNowButton"
-                visible: page.currentStage === "summary"
-                icon.name: "media-playback-start"
-                text: Texts.label("back_up_now")
-                highlighted: true
-                enabled: page.canAdvance
-                Accessible.name: i18n("Save and Back Up Now")
-                onClicked: page.submitBackup(true)
-            }
+    footerButtons: [
+        Controls.Button {
+            objectName: "wizBackupNextButton"
+            visible: page.currentStage !== "summary"
+            text: Texts.label("next")
+            highlighted: true
+            enabled: page.canAdvance
+            Accessible.name: Texts.label("next")
+            onClicked: page.stepIndex += 1
+        },
+        Controls.Button {
+            objectName: "wizBackupSaveLaterButton"
+            visible: page.currentStage === "summary"
+            text: i18n("Save, Back Up Later")
+            enabled: page.canAdvance
+            Accessible.name: i18n("Save, Back Up Later")
+            onClicked: page.submitBackup(false)
+        },
+        Controls.Button {
+            objectName: "wizBackupStartNowButton"
+            visible: page.currentStage === "summary"
+            icon.name: "media-playback-start"
+            text: Texts.label("back_up_now")
+            highlighted: true
+            enabled: page.canAdvance
+            Accessible.name: i18n("Save and Back Up Now")
+            onClicked: page.submitBackup(true)
         }
-    }
+    ]
 }

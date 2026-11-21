@@ -8,7 +8,6 @@ import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
 Kirigami.ScrollablePage {
-    id: page
     objectName: "backupSnapshotsPage"
     title: i18n("Snapshots · %1", backupName)
 
@@ -105,27 +104,19 @@ Kirigami.ScrollablePage {
                 id: snapRow
                 objectName: "snapshotListItem"
                 required property int index
-                required property string snapshotId
                 required property string shortId
                 required property string timeDisplay
-                required property string hostname
                 required property string pathsText
                 required property string statsText
-                required property bool isPrevious
 
                 width: ListView.view.width
                 highlighted: ListView.isCurrentItem && snapshotsListView.activeFocus
                 Accessible.name: timeDisplay
                 onClicked: ListView.view.currentIndex = index
 
-                Rectangle {
-                    anchors.fill: parent
-                    z: 10
-                    color: "transparent"
-                    radius: Kirigami.Units.cornerRadius
-                    border.width: (snapRow.activeFocus || snapRow.visualFocus) ? 2 : 0
-                    border.color: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                    visible: border.width > 0
+                FocusRing {
+                    target: snapRow
+                    ringColor: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                 }
 
                 contentItem: ColumnLayout {

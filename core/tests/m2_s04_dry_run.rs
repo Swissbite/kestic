@@ -5,21 +5,21 @@
 
 mod common;
 
-use kestic_core::backup::{
-    BackupRunError, build_backup_command_spec, execute_backup_dry_run, list_snapshots_for_backup,
-};
-use kestic_core::clock::FakeClock;
+use common::execute_backup_dry_run;
+
+use common::tools::write_executable;
+
+use kestic_core::backup::{BackupRunError, build_backup_command_spec, list_snapshots_for_backup};
 use kestic_core::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, DestinationSetupMode, setup_destination,
 };
 use kestic_core::model::{Backup, Destination, DestinationKind, ExcludeRules, Source};
-use kestic_core::provider::{ResolvedRestic, check_binary_version};
-use kestic_core::restic::{ResticRuntime, ResticStreamEvent, parse_json_line};
-use kestic_core::secrets::{FileSecretStore, SecretValue};
-use kestic_core::snapshot::parse_snapshots_json;
+use kestic_core::provider::ResolvedRestic;
+use kestic_core::restic::{ResticStreamEvent, parse_json_line};
+use kestic_core::secrets::SecretValue;
+use kestic_core::snapshot::ResticSnapshot;
 use semver::Version;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -44,7 +44,7 @@ fn count_all_repo_snapshots(
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    parse_snapshots_json(stdout.trim())
+    serde_json::from_str::<Vec<ResticSnapshot>>(stdout.trim())
         .expect("parse snapshots json")
         .len()
 }
@@ -116,7 +116,6 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
         let src_dir = dir.path().join("src");
         let sub_dir = src_dir.join("sub");
         let excluded_dir = src_dir.join("cache_dir");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&sub_dir).expect("mkdir sub");
         fs::create_dir_all(&excluded_dir).expect("mkdir excluded");
 
@@ -125,29 +124,11 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
         fs::write(src_dir.join("ignored.tmp"), vec![b't'; 500]).expect("write tmp");
         fs::write(excluded_dir.join("garbage.dat"), vec![b'g'; 900]).expect("write garbage");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-11-17 08:00:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 08:00:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Local DryRun",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("dry-run-test-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Local DryRun", &repo_dir, "dry-run-test-pw");
 
         let mut excludes = ExcludeRules::from_text("*.tmp");
         excludes
@@ -164,14 +145,24 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
 
         assert!(!dry_res.cancelled, "{label}: should not be cancelled");
         assert!(
-            dry_res.transparent_command.contains("--dry-run")
-                && dry_res.transparent_command.contains("-vv"),
-            "{label}: transparent command missing dry-run/-vv: {}",
+            dry_res.transparent_command.contains("--dry-run"),
+            "{label}: transparent command missing --dry-run: {}",
+            dry_res.transparent_command
+        );
+        assert!(
+            dry_res.transparent_command.contains("-vv"),
+            "{label}: transparent command missing -vv: {}",
             dry_res.transparent_command
         );
 
         let (mut direct_files, direct_total_bytes, direct_total_files) = run_direct_restic_dry_run(
-            label, &backup, &dest, &state_dir, &resolved, &helper, &cache_dir,
+            label,
+            &backup,
+            &dest,
+            &state_dir,
+            &rig.resolved,
+            &rig.helper,
+            &cache_dir,
         );
 
         let mut kestic_files = dry_res.files.clone();
@@ -192,10 +183,12 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
             "{label}: missing beta.bin in {kestic_files:?}"
         );
         assert!(
-            !kestic_files
-                .iter()
-                .any(|p| p.contains("ignored.tmp") || p.contains("garbage.dat")),
-            "{label}: excluded files leaked into dry-run list: {kestic_files:?}"
+            !kestic_files.iter().any(|p| p.contains("ignored.tmp")),
+            "{label}: ignored.tmp leaked into dry-run list: {kestic_files:?}"
+        );
+        assert!(
+            !kestic_files.iter().any(|p| p.contains("garbage.dat")),
+            "{label}: garbage.dat leaked into dry-run list: {kestic_files:?}"
         );
 
         assert_eq!(
@@ -225,7 +218,7 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
 
         assert_eq!(
             count_all_repo_snapshots(
-                &resolved.binary,
+                &rig.resolved.binary,
                 &dest.kind.repository_uri(),
                 "dry-run-test-pw",
                 &cache_dir
@@ -236,10 +229,10 @@ fn ac_m2_04_1_dry_run_matches_direct_restic_and_creates_zero_snapshots() {
         let snaps = list_snapshots_for_backup(
             &backup.id,
             &dest,
-            &resolved,
-            &helper,
-            &store,
-            &clock,
+            &rig.resolved,
+            &rig.helper,
+            &rig.store,
+            &rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_str())],
         )
         .expect("list snapshots");
@@ -255,39 +248,20 @@ fn ac_m2_04_2_dry_run_with_zero_prior_snapshots_reports_first_backup_estimate() 
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
         let src_dir = dir.path().join("src");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&src_dir).expect("mkdir src");
 
         fs::write(src_dir.join("doc1.txt"), vec![1u8; 1024]).expect("write doc1");
         fs::write(src_dir.join("doc2.txt"), vec![2u8; 2048]).expect("write doc2");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(&restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-11-17 08:15:00 UTC));
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: &helper,
-            secret_store: &store,
-            clock: &clock,
-            cache_dir: Some(&cache_dir),
-        };
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 08:15:00 UTC));
+        let runtime = rig.runtime();
 
-        let dest = Destination::new(
-            "Empty Repo",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-        let pw = SecretValue::from_str_secret("first-backup-pw");
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .unwrap_or_else(|e| panic!("{label}: init failed: {e}"));
+        let dest = rig.init_local("Empty Repo", &repo_dir, "first-backup-pw");
 
         assert_eq!(
             count_all_repo_snapshots(
-                &resolved.binary,
+                &rig.resolved.binary,
                 &dest.kind.repository_uri(),
                 "first-backup-pw",
                 &cache_dir
@@ -311,7 +285,7 @@ fn ac_m2_04_2_dry_run_with_zero_prior_snapshots_reports_first_backup_estimate() 
         assert_eq!(dry_res.files.len(), 2, "{label}: listed files");
         assert_eq!(
             count_all_repo_snapshots(
-                &resolved.binary,
+                &rig.resolved.binary,
                 &dest.kind.repository_uri(),
                 "first-backup-pw",
                 &cache_dir
@@ -327,36 +301,26 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
     assert_eq!(
         DEFAULT_CONNECT_TIMEOUT,
         Duration::from_secs(10),
-        "P32 requires 10s preflight connect timeout"
+        "the preflight connect timeout is 10 s"
     );
 
     let dir = TempDir::new().expect("tempdir");
-    let cache_dir = common::restic_cache_dir(dir.path());
+    let _cache_dir = common::restic_cache_dir(dir.path());
     let server_dir = dir.path().join("rest-data");
     let state_dir = dir.path().join("state");
     let src_dir = dir.path().join("src");
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("file.txt"), b"hello rest").expect("write file");
 
-    let server = common::start_rest_server_with_auth(&server_dir);
+    let server = common::tools::RestServerGuard::start_with_auth(&server_dir);
     let server_url = server.url.clone();
 
     let (_label, restic_bin) = common::restic_test_binaries()
         .into_iter()
         .next()
         .expect("restic binary");
-    let secrets_hex = dir.path().join("secrets.hex");
-    let store = FileSecretStore::new(&secrets_hex);
-    let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-    let real_resolved = check_binary_version(&restic_bin).expect("resolved restic");
-    let clock = FakeClock::new(datetime!(2026-11-17 08:30:00 UTC));
-    let real_runtime = ResticRuntime {
-        resolved: &real_resolved,
-        kestic_binary: &helper,
-        secret_store: &store,
-        clock: &clock,
-        cache_dir: Some(&cache_dir),
-    };
+    let rig = common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-17 08:30:00 UTC));
+    let real_runtime = rig.runtime();
 
     let dest = Destination::new(
         "REST DryRun",
@@ -387,22 +351,13 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
         "#!/bin/sh\ntouch '{}'\nexit 99\n",
         marker_file.to_string_lossy()
     );
-    fs::write(&spy_bin, spy_script).expect("write spy script");
-    let mut perms = fs::metadata(&spy_bin).expect("spy meta").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&spy_bin, perms).expect("chmod spy");
+    write_executable(&spy_bin, &spy_script);
 
     let spy_resolved = ResolvedRestic {
         binary: spy_bin,
         version: Version::new(0, 18, 0),
     };
-    let spy_runtime = ResticRuntime {
-        resolved: &spy_resolved,
-        kestic_binary: &helper,
-        secret_store: &store,
-        clock: &clock,
-        cache_dir: Some(&cache_dir),
-    };
+    let spy_runtime = rig.runtime_with(&spy_resolved);
 
     let backup =
         Backup::new("REST DryRun", Source::folder(&src_dir), dest.id.clone()).expect("backup");

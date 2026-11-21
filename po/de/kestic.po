@@ -422,7 +422,7 @@ msgid "Not backed up yet"
 msgstr "Noch nicht gesichert"
 
 #: daemon/src/service/state_summary.rs:842 daemon/src/tray.rs:127
-#: gui/src/overall_text.rs:74 gui/src/qml/SpikeMain.qml:274
+#: gui/src/overall_text.rs:74
 msgid "All data backed up"
 msgstr "Alle Daten gesichert"
 
@@ -433,7 +433,6 @@ msgstr "Alle Backups"
 #: daemon/src/tray.rs:246 gui/src/qml/BackupDetailPage.qml:64
 #: gui/src/qml/BackupDetailPage.qml:332 gui/src/qml/NewBackupWizard.qml:848
 #: gui/src/qml/OverviewPage.qml:363 gui/src/qml/OverviewPage.qml:404
-#: gui/src/qml/SpikeMain.qml:216
 msgid "Back Up Now"
 msgstr "Jetzt sichern"
 
@@ -574,7 +573,6 @@ msgid "The background service is not running. Scheduled backups will not run."
 msgstr "Der Hintergrunddienst läuft nicht. Geplante Backups laufen nicht."
 
 #: gui/src/list_model.rs:40 gui/src/qml/NewBackupWizard.qml:154
-#: gui/src/qml/SpikeMain.qml:209
 msgid "Personal folder"
 msgstr "Persönlicher Ordner"
 
@@ -645,7 +643,6 @@ msgid "all %1"
 msgstr "alle %1"
 
 #: gui/src/state_cache.rs:594 gui/src/qml/BackupRetentionPage.qml:587
-#: gui/src/qml/SpikeMain.qml:256
 msgid "Standard (7 daily, 4 weekly, 12 monthly)"
 msgstr "Standard (7 tägliche, 4 wöchentliche, 12 monatliche)"
 
@@ -1577,7 +1574,7 @@ msgstr "Aufbewahrung: %1"
 
 #: gui/src/qml/BackupDetailPage.qml:540
 #: gui/src/qml/BackupFullConfigPage.qml:194
-#: gui/src/qml/BackupRetentionPage.qml:12 gui/src/qml/SpikeMain.qml:251
+#: gui/src/qml/BackupRetentionPage.qml:12
 msgid "Retention"
 msgstr "Aufbewahrung"
 
@@ -2136,7 +2133,7 @@ msgstr "Zeiteinheit für %1"
 msgid "At least one retention rule must be active."
 msgstr "Mindestens eine Aufbewahrungsregel muss aktiv sein."
 
-#: gui/src/qml/BackupRetentionPage.qml:585 gui/src/qml/SpikeMain.qml:255
+#: gui/src/qml/BackupRetentionPage.qml:585
 msgid "Preset:"
 msgstr "Vorlage:"
 
@@ -2393,8 +2390,7 @@ msgid "Kind:"
 msgstr "Art:"
 
 #: gui/src/qml/BackupsPage.qml:12 gui/src/qml/Main.qml:716
-#: gui/src/qml/PageFocusManager.qml:132 gui/src/qml/SpikeMain.qml:83
-#: gui/src/qml/SpikeMain.qml:134 gui/src/qml/SpikeMain.qml:176
+#: gui/src/qml/PageFocusManager.qml:132
 msgid "Backups"
 msgstr "Backups"
 
@@ -2697,8 +2693,7 @@ msgid "Verify minute"
 msgstr "Minute fürs Prüfen"
 
 #: gui/src/qml/DestinationsPage.qml:12 gui/src/qml/Main.qml:723
-#: gui/src/qml/PageFocusManager.qml:133 gui/src/qml/SpikeMain.qml:95
-#: gui/src/qml/SpikeMain.qml:99
+#: gui/src/qml/PageFocusManager.qml:133
 msgid "Destinations"
 msgstr "Ziele"
 
@@ -2728,8 +2723,7 @@ msgstr[0] "%2 · %1 Backup"
 msgstr[1] "%2 · %1 Backups"
 
 #: gui/src/qml/HistoryPage.qml:12 gui/src/qml/Main.qml:730
-#: gui/src/qml/PageFocusManager.qml:134 gui/src/qml/SpikeMain.qml:104
-#: gui/src/qml/SpikeMain.qml:108
+#: gui/src/qml/PageFocusManager.qml:134
 msgid "History"
 msgstr "Verlauf"
 
@@ -2802,7 +2796,6 @@ msgstr "Über Kestic"
 
 #: gui/src/qml/Main.qml:709 gui/src/qml/OverviewPage.qml:12
 #: gui/src/qml/PageFocusManager.qml:131 gui/src/qml/PageFocusManager.qml:135
-#: gui/src/qml/SpikeMain.qml:65 gui/src/qml/SpikeMain.qml:269
 msgid "Overview"
 msgstr "Übersicht"
 
@@ -2857,7 +2850,7 @@ msgstr "Backup-Name"
 msgid "Source:"
 msgstr "Quelle:"
 
-#: gui/src/qml/NewBackupWizard.qml:746 gui/src/qml/SpikeMain.qml:229
+#: gui/src/qml/NewBackupWizard.qml:746
 msgid "Destination:"
 msgstr "Ziel:"
 
@@ -3202,7 +3195,7 @@ msgstr "Bei restic-Aktualisierungen benachrichtigen"
 msgid "Background Service"
 msgstr "Hintergrunddienst"
 
-#: gui/src/qml/SettingsDialog.qml:255 gui/src/qml/SpikeMain.qml:259
+#: gui/src/qml/SettingsDialog.qml:255
 msgid "Status:"
 msgstr "Status:"
 

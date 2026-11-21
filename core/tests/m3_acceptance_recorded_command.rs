@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! M3 manual acceptance (2026-11-19): the run history («Befehle» tab) rebuilt the recorded
-//! low-priority command wrongly (`ionice -c 3 nice -n 10 ionice -r <repo> --json 10 forget …`).
-//! The recorded invocation must be split back exactly (`FR-34`).
+//! The run history («Befehle» tab) splits a recorded low-priority command
+//! (`ionice -c 3 nice -n 10 ionice -r <repo> --json 10 forget …`) back into the restic
+//! invocation exactly (`FR-34`).
 
 use kestic_core::model::{Destination, DestinationKind};
 use kestic_core::restic::{RecordedInvocation, ResticCommandSpec, parse_recorded_invocation};

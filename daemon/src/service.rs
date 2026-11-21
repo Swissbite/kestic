@@ -18,6 +18,7 @@ mod scheduler;
 mod state;
 mod state_cache;
 mod state_summary;
+mod supervision;
 
 pub use availability::unlock_destination_async;
 pub(crate) use availability::{
@@ -31,11 +32,8 @@ pub(crate) use destinations::{
     update_destination_password_unlocked, update_destination_unlocked,
 };
 pub use error::KesticServiceErr;
-pub use maintenance::{
-    run_destination_maintenance_async, run_destination_maintenance_with_options,
-    start_all_backups_async,
-};
-pub(crate) use previews::{preview_destination_maintenance_unlocked, preview_retention_unlocked};
+pub use maintenance::{run_destination_maintenance_async, start_all_backups_async};
+pub(crate) use previews::preview_destination_maintenance_unlocked;
 pub use previews::{start_backup_dry_run_async, start_retention_preview_async};
 pub use runtime::run_daemon;
 pub use scheduler::tick_scheduler_async;

@@ -7,13 +7,11 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-Kirigami.ScrollablePage {
+EditorPage {
     id: page
     objectName: "backupRetentionPage"
     title: Texts.label("retention")
 
-    required property var rootWindow
-    required property var appBackend
     required property string backupId
 
     property var initialData: rootWindow.findBackupData(backupId)
@@ -104,12 +102,7 @@ Kirigami.ScrollablePage {
 
     function loadFromPolicyJson(jsonText) {
         hydrating = true;
-        var obj = {};
-        try {
-            obj = JSON.parse(jsonText || "{}");
-        } catch (e) {
-            obj = {};
-        }
+        var obj = rootWindow.parseJsonOr(jsonText, {});
         var kl = applyKeepCountField(obj.keep_last, 10);
         keepLastOn = kl.on; keepLastAll = kl.all; keepLastNum = kl.num;
 
@@ -179,19 +172,15 @@ Kirigami.ScrollablePage {
     }
 
     function normalizePolicyString(jsonText) {
-        try {
-            var obj = JSON.parse(jsonText || "{}");
-            var keys = [
-                "keep_last", "keep_hourly", "keep_daily", "keep_weekly", "keep_monthly", "keep_yearly",
-                "keep_within", "keep_within_hourly", "keep_within_daily", "keep_within_weekly",
-                "keep_within_monthly", "keep_within_yearly"
-            ];
-            var out = {};
-            keys.forEach(k => { if (obj[k] !== undefined && obj[k] !== null) out[k] = obj[k]; });
-            return JSON.stringify(out);
-        } catch (e) {
-            return "{}";
-        }
+        var obj = rootWindow.parseJsonOr(jsonText, {});
+        var keys = [
+            "keep_last", "keep_hourly", "keep_daily", "keep_weekly", "keep_monthly", "keep_yearly",
+            "keep_within", "keep_within_hourly", "keep_within_daily", "keep_within_weekly",
+            "keep_within_monthly", "keep_within_yearly"
+        ];
+        var out = {};
+        keys.forEach(k => { if (obj[k] !== undefined && obj[k] !== null) out[k] = obj[k]; });
+        return JSON.stringify(out);
     }
 
     function detectPresetFromFields() {
@@ -216,9 +205,7 @@ Kirigami.ScrollablePage {
     readonly property bool hasAnyRule: keepLastOn || keepHourlyOn || keepDailyOn || keepWeeklyOn || keepMonthlyOn || keepYearlyOn
         || withinAllOn || withinHourlyOn || withinDailyOn || withinWeeklyOn || withinMonthlyOn || withinYearlyOn
 
-    readonly property bool dirty: initialData !== null && normalizePolicyString(currentPolicyJson()) !== normalizePolicyString(savedPolicyJson)
-
-    onDirtyChanged: appBackend.has_unsaved_changes = dirty
+    dirty: initialData !== null && normalizePolicyString(currentPolicyJson()) !== normalizePolicyString(savedPolicyJson)
 
     Component.onCompleted: {
         if (initialData) {
@@ -232,33 +219,6 @@ Kirigami.ScrollablePage {
         if (saveBusy && savePreviewId !== "") {
             appBackend.cancelRetentionPreview(savePreviewId);
         }
-    }
-
-    onBackRequested: function(event) {
-        if (dirty) {
-            event.accepted = true;
-            unsavedDialog.open();
-        }
-    }
-
-    function handleEscape() {
-        if (retentionExamplesDialog.opened || retentionExamplesDialog.visible) {
-            retentionExamplesDialog.close();
-            return true;
-        }
-        if (confirmRemoveDialog.opened || confirmRemoveDialog.visible) {
-            confirmRemoveDialog.close();
-            return true;
-        }
-        if (unsavedDialog.opened || unsavedDialog.visible) {
-            unsavedDialog.close();
-            return true;
-        }
-        if (dirty) {
-            unsavedDialog.open();
-            return true;
-        }
-        return false;
     }
 
     function commitSave(jsonStr) {
@@ -300,6 +260,11 @@ Kirigami.ScrollablePage {
         return false;
     }
 
+    function saveForGuard() {
+        triggerSave(false);
+        return !appBackend.has_unsaved_changes && !dirty;
+    }
+
     function openPreviewPage() {
         if (!hasAnyRule) return;
         validationError = "";
@@ -316,40 +281,25 @@ Kirigami.ScrollablePage {
                 page.saveBusy = false;
                 return;
             }
-            var raw = appBackend.pollRetentionPreview(page.savePreviewId);
-            if (raw === "") {
-                stop();
-                page.saveBusy = false;
-                page.savePreviewId = "";
-                page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
+            var dto = rootWindow.parseJsonOr(appBackend.pollRetentionPreview(page.savePreviewId), null);
+            if (dto && dto.state === "running") {
                 return;
             }
-            try {
-                var dto = JSON.parse(raw);
-                if (dto.state === "running") {
-                    return;
-                }
-                stop();
-                page.saveBusy = false;
-                page.savePreviewId = "";
-                if (dto.state === "done" && dto.result && dto.result.remove_count && dto.result.remove_count > 0) {
-                    page.pendingRemoveCount = dto.result.remove_count;
-                    page.pendingRemoveSnapshots = (dto.result.snapshots || [])
-                        .filter(s => s.action === "remove")
-                        .map(s => s.short_id + " (" + s.time + ")");
-                    confirmRemoveDialog.open();
-                    return;
-                }
-                if (dto.state === "cancelled") {
-                    return;
-                }
-                page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
-            } catch (e) {
-                stop();
-                page.saveBusy = false;
-                page.savePreviewId = "";
-                page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
+            stop();
+            page.saveBusy = false;
+            page.savePreviewId = "";
+            if (dto && dto.state === "done" && dto.result && dto.result.remove_count && dto.result.remove_count > 0) {
+                page.pendingRemoveCount = dto.result.remove_count;
+                page.pendingRemoveSnapshots = (dto.result.snapshots || [])
+                    .filter(s => s.action === "remove")
+                    .map(s => s.short_id + " (" + s.time + ")");
+                confirmRemoveDialog.open();
+                return;
             }
+            if (dto && dto.state === "cancelled") {
+                return;
+            }
+            page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
         }
     }
 
@@ -375,13 +325,7 @@ Kirigami.ScrollablePage {
             objectName: "closeRetentionAction"
             icon.name: "window-close"
             text: Texts.label("close")
-            onTriggered: {
-                if (page.dirty) {
-                    unsavedDialog.open();
-                } else {
-                    rootWindow.popSubPage();
-                }
-            }
+            onTriggered: page.requestClose()
         }
     ]
 
@@ -410,18 +354,14 @@ Kirigami.ScrollablePage {
         }
     }
 
-    Kirigami.PromptDialog {
-        id: unsavedDialog
-        objectName: "unsavedRetentionDialog"
-        title: Texts.label("save_changes_question")
-        subtitle: i18n("You have unsaved changes to retention rules.")
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
-        onAccepted: page.triggerSave(true)
-        onDiscarded: {
-            appBackend.has_unsaved_changes = false;
-            page.loadFromPolicyJson(page.savedPolicyJson);
-            rootWindow.popSubPage();
-        }
+    unsavedObjectName: "unsavedRetentionDialog"
+    unsavedSubtitle: i18n("You have unsaved changes to retention rules.")
+    extraDialogs: [retentionExamplesDialog, confirmRemoveDialog]
+
+    onUnsavedSaveRequested: page.triggerSave(true)
+    onUnsavedDiscardRequested: {
+        page.loadFromPolicyJson(page.savedPolicyJson);
+        rootWindow.popSubPage();
     }
 
     Kirigami.PromptDialog {

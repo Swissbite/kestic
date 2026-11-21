@@ -8,27 +8,12 @@
 //! and no msgid is written in more than one production file. QML asks for a text used in
 //! several places by code (`Texts.label("close")`). Reads the source files only.
 
+mod common;
+
+use common::workspace::{files_with_ext, workspace_root};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root")
-        .to_path_buf()
-}
-
-fn files_with_ext(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).expect("read source dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            files_with_ext(&path, ext, out);
-        } else if path.extension().is_some_and(|e| e == ext) {
-            out.push(path);
-        }
-    }
-}
 
 /// String literal starting at byte `start` (just after the opening quote), unescaped.
 fn literal_at(src: &str, start: usize) -> Option<String> {
@@ -136,7 +121,7 @@ fn production_files(dirs: &[(&str, &str)]) -> Vec<PathBuf> {
     let root = workspace_root();
     let mut files = Vec::new();
     for (dir, ext) in dirs {
-        files_with_ext(&root.join(dir), ext, &mut files);
+        files.extend(files_with_ext(&root.join(dir), ext));
     }
     files.retain(|f| !f.to_string_lossy().ends_with("_tests.rs"));
     files.sort();

@@ -3,6 +3,8 @@
 
 mod common;
 
+use common::tools::write_executable;
+
 use kestic_core::model::ResticProvider;
 use kestic_core::provider::{
     MIN_RESTIC_VERSION, ResticProviderError, check_binary_version, parse_version_text,
@@ -29,10 +31,7 @@ if [ "${1:-}" = "version" ]; then
 fi
 exit 2
 "#;
-    fs::write(&fake_restic, script).expect("write script");
-    let mut perms = fs::metadata(&fake_restic).expect("meta").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&fake_restic, perms).expect("chmod");
+    write_executable(&fake_restic, script);
 
     let provider = ResticProvider::Custom { path: fake_restic };
     let err = resolve_and_check(&provider).expect_err("0.16.4 must be rejected");
@@ -106,10 +105,7 @@ fn ac_m1_04_5_json_failure_falls_back_to_text_and_unreadable_is_rejected() {
     let dir = TempDir::new().expect("tempdir");
     let unreadable = dir.path().join("broken-restic");
     let script = "#!/usr/bin/env sh\necho 'not a version'\nexit 0\n";
-    fs::write(&unreadable, script).expect("write");
-    let mut perms = fs::metadata(&unreadable).expect("meta").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&unreadable, perms).expect("chmod");
+    write_executable(&unreadable, script);
 
     let err = check_binary_version(&unreadable).expect_err("unreadable version must fail");
     assert!(matches!(err, ResticProviderError::UnreadableVersion { .. }));

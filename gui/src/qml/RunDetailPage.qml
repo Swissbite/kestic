@@ -22,20 +22,8 @@ Kirigami.ScrollablePage {
     property string pendingExcludeRuleLabel: ""
     property bool pendingExcludeIsDir: false
 
-    readonly property var unreadableFiles: {
-        try {
-            return JSON.parse(appBackend.selected_run_unreadable_json || "[]");
-        } catch (e) {
-            return [];
-        }
-    }
-    readonly property var commandsList: {
-        try {
-            return JSON.parse(appBackend.selected_run_commands_json || "[]");
-        } catch (e) {
-            return [];
-        }
-    }
+    readonly property var unreadableFiles: rootWindow.parseJsonOr(appBackend.selected_run_unreadable_json, [])
+    readonly property var commandsList: rootWindow.parseJsonOr(appBackend.selected_run_commands_json, [])
 
     function refreshDetail() {
         appBackend.loadRunDetail(runId);
@@ -79,7 +67,7 @@ Kirigami.ScrollablePage {
         }
     }
 
-    // Show Command is ALWAYS present in ⋮ regardless of expert_mode (AC-M1-14-4, FR-34)
+    // Show Command is ALWAYS present in ⋮ regardless of expert_mode
     actions: [
         Kirigami.Action {
             id: runDetailShowCommandAction
@@ -180,14 +168,8 @@ Kirigami.ScrollablePage {
                 text: i18n("Result")
                 Accessible.name: i18n("Result")
 
-                Rectangle {
-                    anchors.fill: parent
-                    z: 10
-                    color: "transparent"
-                    radius: Kirigami.Units.cornerRadius
-                    border.width: (resultTabButton.activeFocus || resultTabButton.visualFocus) ? 2 : 0
-                    border.color: Kirigami.Theme.highlightColor
-                    visible: border.width > 0
+                FocusRing {
+                    target: resultTabButton
                 }
             }
             Controls.TabButton {
@@ -195,14 +177,8 @@ Kirigami.ScrollablePage {
                 text: i18n("Log")
                 Accessible.name: i18n("Log")
 
-                Rectangle {
-                    anchors.fill: parent
-                    z: 10
-                    color: "transparent"
-                    radius: Kirigami.Units.cornerRadius
-                    border.width: (logTabButton.activeFocus || logTabButton.visualFocus) ? 2 : 0
-                    border.color: Kirigami.Theme.highlightColor
-                    visible: border.width > 0
+                FocusRing {
+                    target: logTabButton
                 }
             }
             Controls.TabButton {
@@ -210,14 +186,8 @@ Kirigami.ScrollablePage {
                 text: i18n("Commands")
                 Accessible.name: i18n("Commands")
 
-                Rectangle {
-                    anchors.fill: parent
-                    z: 10
-                    color: "transparent"
-                    radius: Kirigami.Units.cornerRadius
-                    border.width: (commandsTabButton.activeFocus || commandsTabButton.visualFocus) ? 2 : 0
-                    border.color: Kirigami.Theme.highlightColor
-                    visible: border.width > 0
+                FocusRing {
+                    target: commandsTabButton
                 }
             }
         }
@@ -264,7 +234,7 @@ Kirigami.ScrollablePage {
                     ]
                 }
 
-                Controls.TextArea {
+                TabNavTextArea {
                     id: rawErrorArea
                     visible: page.rawErrorExpanded && appBackend.selected_run_error_raw !== ""
                     readOnly: true
@@ -273,25 +243,8 @@ Kirigami.ScrollablePage {
                     wrapMode: TextEdit.Wrap
                     Layout.fillWidth: true
 
-                    Keys.onTabPressed: function(event) {
-                        var next = nextItemInFocusChain(true);
-                        if (next) next.forceActiveFocus(Qt.TabFocusReason);
-                        event.accepted = true;
-                    }
-                    Keys.onBacktabPressed: function(event) {
-                        var prev = nextItemInFocusChain(false);
-                        if (prev) prev.forceActiveFocus(Qt.BacktabFocusReason);
-                        event.accepted = true;
-                    }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        z: 10
-                        color: "transparent"
-                        radius: Kirigami.Units.cornerRadius
-                        border.width: rawErrorArea.activeFocus ? 2 : 0
-                        border.color: Kirigami.Theme.highlightColor
-                        visible: border.width > 0
+                    FocusRing {
+                        target: rawErrorArea
                     }
                 }
 
@@ -325,14 +278,10 @@ Kirigami.ScrollablePage {
                                 page.pendingExcludePath = modelData;
                                 page.pendingExcludeRuleLabel = modelData;
                                 page.pendingExcludeIsDir = false;
-                                var previewRaw = appBackend.formatExcludeRuleForItem(modelData);
-                                if (previewRaw !== "") {
-                                    try {
-                                        var dto = JSON.parse(previewRaw);
-                                        page.pendingExcludeRuleLabel = dto.rule || modelData;
-                                        page.pendingExcludeIsDir = Boolean(dto.is_dir);
-                                    } catch (e) {
-                                    }
+                                var dto = rootWindow.parseJsonOr(appBackend.formatExcludeRuleForItem(modelData), null);
+                                if (dto) {
+                                    page.pendingExcludeRuleLabel = dto.rule || modelData;
+                                    page.pendingExcludeIsDir = Boolean(dto.is_dir);
                                 }
                                 addExcludeDialog.open();
                             }
@@ -341,7 +290,7 @@ Kirigami.ScrollablePage {
                 }
             }
 
-            // Tab 1: Log (§8.13)
+            // Tab 1: Log
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
@@ -425,14 +374,10 @@ Kirigami.ScrollablePage {
                         Accessible.name: lineText
                         onClicked: ListView.view.currentIndex = index
 
-                        Rectangle {
-                            anchors.fill: parent
-                            z: 10
-                            color: "transparent"
-                            radius: Kirigami.Units.cornerRadius
-                            border.width: (logRow.activeFocus || logRow.visualFocus || (logRow.ListView.isCurrentItem && runLogsListView.activeFocus)) ? 2 : 0
-                            border.color: logRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                            visible: border.width > 0
+                        FocusRing {
+                            target: logRow
+                            focused: (logRow.activeFocus || logRow.visualFocus || (logRow.ListView.isCurrentItem && runLogsListView.activeFocus))
+                            ringColor: logRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                         }
 
                         contentItem: Controls.Label {
@@ -449,7 +394,7 @@ Kirigami.ScrollablePage {
                 }
             }
 
-            // Tab 2: Commands (§7.8, FR-34)
+            // Tab 2: Commands
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.mediumSpacing
@@ -471,7 +416,7 @@ Kirigami.ScrollablePage {
                         contentItem: ColumnLayout {
                             spacing: Kirigami.Units.smallSpacing
 
-                            Controls.TextArea {
+                            TabNavTextArea {
                                 id: runCmdTextArea
                                 objectName: "runCommandTextArea"
                                 readOnly: true
@@ -480,25 +425,8 @@ Kirigami.ScrollablePage {
                                 wrapMode: TextEdit.Wrap
                                 Layout.fillWidth: true
 
-                                Keys.onTabPressed: function(event) {
-                                    var next = nextItemInFocusChain(true);
-                                    if (next) next.forceActiveFocus(Qt.TabFocusReason);
-                                    event.accepted = true;
-                                }
-                                Keys.onBacktabPressed: function(event) {
-                                    var prev = nextItemInFocusChain(false);
-                                    if (prev) prev.forceActiveFocus(Qt.BacktabFocusReason);
-                                    event.accepted = true;
-                                }
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    z: 10
-                                    color: "transparent"
-                                    radius: Kirigami.Units.cornerRadius
-                                    border.width: runCmdTextArea.activeFocus ? 2 : 0
-                                    border.color: Kirigami.Theme.highlightColor
-                                    visible: border.width > 0
+                                FocusRing {
+                                    target: runCmdTextArea
                                 }
                             }
 

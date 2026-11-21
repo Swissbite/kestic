@@ -3,23 +3,24 @@
 
 mod common;
 
+use common::{execute_backup, load_config};
+
+use common::tools::assert_has_flag_pair;
+
 use kestic_core::backup::{
-    BackupExecutionContext, build_backup_command_spec_with_home, exclude_file_path, execute_backup,
+    BackupExecutionContext, build_backup_command_spec_with_home, exclude_file_path,
     execute_backup_dry_run_with, execute_backup_with_inspector, list_snapshots_for_backup,
     write_exclude_file_with_home,
 };
-use kestic_core::clock::FakeClock;
-use kestic_core::config::{AppConfig, CURRENT_CONFIG_VERSION, load_config, save_config};
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
+use kestic_core::config::{AppConfig, CURRENT_CONFIG_VERSION, save_config};
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ExcludeLintWarning, ExcludeRules, RunStatus, Source,
     TRASH_EXCLUDE_PATTERNS, evaluate_exclude_path, lint_exclude_rules, normalize_folder_rule,
     validate_exclude_larger_than,
 };
 use kestic_core::mount::SystemMountInspector;
-use kestic_core::provider::{ResolvedRestic, check_binary_version};
+use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::ResticRuntime;
-use kestic_core::secrets::{FileSecretStore, SecretValue};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,61 +31,29 @@ const TEST_REPO_PW: &str = "m2-excludes-test-pw";
 
 struct ResticTestEnv {
     _dir: TempDir,
-    cache_dir: PathBuf,
+    rig: common::ResticRig,
     repo_dir: PathBuf,
     state_dir: PathBuf,
-    store: FileSecretStore,
-    helper: PathBuf,
-    resolved: ResolvedRestic,
-    clock: FakeClock,
     dest: Destination,
 }
 
 impl ResticTestEnv {
     fn new(restic_bin: &Path) -> Self {
         let dir = TempDir::new().expect("tempdir");
-        let cache_dir = common::restic_cache_dir(dir.path());
         let repo_dir = dir.path().join("repo");
         let state_dir = dir.path().join("state");
-        fs::create_dir_all(&repo_dir).expect("mkdir repo");
         fs::create_dir_all(&state_dir).expect("mkdir state");
 
-        let secrets_hex = dir.path().join("secrets.hex");
-        let store = FileSecretStore::new(&secrets_hex);
-        let helper = common::write_secret_get_helper(dir.path(), &secrets_hex);
-        let resolved = check_binary_version(restic_bin).expect("resolved restic");
-        let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
-
-        let dest = Destination::new(
-            "Local",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
-        )
-        .expect("dest");
-
-        let env = Self {
+        let rig =
+            common::ResticRig::new(dir.path(), restic_bin, datetime!(2026-12-01 12:00:00 UTC));
+        let dest = rig.init_local("Local", &repo_dir, TEST_REPO_PW);
+        Self {
             _dir: dir,
-            cache_dir,
+            rig,
             repo_dir,
             state_dir,
-            store,
-            helper,
-            resolved,
-            clock,
             dest,
-        };
-
-        let pw = SecretValue::from_str_secret(TEST_REPO_PW);
-        setup_destination(
-            &env.dest,
-            DestinationSetupMode::InitNew,
-            &pw,
-            None,
-            &env.runtime(),
-        )
-        .expect("init repo");
-        env
+        }
     }
 
     fn root(&self) -> &Path {
@@ -92,13 +61,7 @@ impl ResticTestEnv {
     }
 
     fn runtime(&self) -> ResticRuntime<'_> {
-        ResticRuntime {
-            resolved: &self.resolved,
-            kestic_binary: &self.helper,
-            secret_store: &self.store,
-            clock: &self.clock,
-            cache_dir: Some(&self.cache_dir),
-        }
+        self.rig.runtime()
     }
 
     fn snapshot_relative_paths(
@@ -107,21 +70,21 @@ impl ResticTestEnv {
         src_root: &Path,
         label: &str,
     ) -> Vec<String> {
-        let cache_str = self.cache_dir.to_string_lossy();
+        let cache_str = self.rig.cache_dir.to_string_lossy();
         let snaps = list_snapshots_for_backup(
             &backup.id,
             &self.dest,
-            &self.resolved,
-            &self.helper,
-            &self.store,
-            &self.clock,
+            &self.rig.resolved,
+            &self.rig.helper,
+            &self.rig.store,
+            &self.rig.clock,
             &[("RESTIC_CACHE_DIR", cache_str.as_ref())],
         )
         .expect("list snapshots");
         assert_eq!(snaps.len(), 1, "{label}: expected exactly 1 snapshot");
         let snap_id = snaps[0].short_id.as_deref().unwrap_or(&snaps[0].id);
 
-        let ls_out = Command::new(&self.resolved.binary)
+        let ls_out = Command::new(&self.rig.resolved.binary)
             .args([
                 "-r",
                 &self.repo_dir.to_string_lossy(),
@@ -130,7 +93,7 @@ impl ResticTestEnv {
                 snap_id,
             ])
             .env("RESTIC_PASSWORD", TEST_REPO_PW)
-            .env("RESTIC_CACHE_DIR", &self.cache_dir)
+            .env("RESTIC_CACHE_DIR", &self.rig.cache_dir)
             .output()
             .expect("restic ls");
         assert!(
@@ -191,8 +154,8 @@ fn ac_m2_01_1_exclude_file_path_and_cli_flag() {
         &backup,
         &env.dest,
         &env.state_dir,
-        &env.resolved,
-        &env.helper,
+        &env.rig.resolved,
+        &env.rig.helper,
         Some(Path::new("/home/tester")),
     )
     .expect("build spec");
@@ -203,19 +166,8 @@ fn ac_m2_01_1_exclude_file_path_and_cli_flag() {
         expected_path.display()
     );
     let expected_str = expected_path.to_string_lossy().into_owned();
-    assert!(
-        spec.subcommand_args
-            .windows(2)
-            .any(|w| w[0] == "--exclude-file" && w[1] == expected_str),
-        "subcommand_args missing `--exclude-file {expected_str}`: {:?}",
-        spec.subcommand_args
-    );
-    assert!(
-        spec.restic_argv()
-            .windows(2)
-            .any(|w| w[0] == "--exclude-file" && w[1] == expected_str),
-        "restic_argv missing `--exclude-file {expected_str}`"
-    );
+    assert_has_flag_pair(&spec.subcommand_args, "--exclude-file", &expected_str);
+    assert_has_flag_pair(&spec.restic_argv(), "--exclude-file", &expected_str);
 
     let res = execute_backup(
         &backup,
@@ -230,14 +182,7 @@ fn ac_m2_01_1_exclude_file_path_and_cli_flag() {
     assert_eq!(res.exit_code, 0);
     assert_eq!(res.presentation.status, RunStatus::Ok);
     assert!(expected_path.is_file());
-    assert!(
-        res.command_record
-            .args
-            .windows(2)
-            .any(|w| w[0] == "--exclude-file" && w[1] == expected_str),
-        "command_record.args missing `--exclude-file {expected_str}`: {:?}",
-        res.command_record.args
-    );
+    assert_has_flag_pair(&res.command_record.args, "--exclude-file", &expected_str);
 }
 
 #[test]
@@ -837,37 +782,17 @@ fn exclude_options_validation_and_command_flags() {
     let excl_path = exclude_file_path(dir.path(), &backup.id)
         .to_string_lossy()
         .into_owned();
-    assert!(
-        spec.subcommand_args
-            .windows(2)
-            .any(|w| w[0] == "--iexclude-file" && w[1] == excl_path),
-        "expected --iexclude-file: {:?}",
-        spec.subcommand_args
-    );
+    assert_has_flag_pair(&spec.subcommand_args, "--iexclude-file", &excl_path);
     assert!(!spec.subcommand_args.iter().any(|a| a == "--exclude-file"));
     assert!(spec.subcommand_args.iter().any(|a| a == "--exclude-caches"));
-    assert!(
-        spec.subcommand_args
-            .windows(2)
-            .any(|w| w[0] == "--exclude-larger-than" && w[1] == "10M")
+    assert_has_flag_pair(&spec.subcommand_args, "--exclude-larger-than", "10M");
+    assert_has_flag_pair(&spec.subcommand_args, "--exclude-if-present", ".nobackup");
+    assert_has_flag_pair(
+        &spec.subcommand_args,
+        "--exclude-if-present",
+        ".kestic-ignore",
     );
-    assert!(
-        spec.subcommand_args
-            .windows(2)
-            .any(|w| w[0] == "--exclude-if-present" && w[1] == ".nobackup")
-    );
-    assert!(
-        spec.subcommand_args
-            .windows(2)
-            .any(|w| w[0] == "--exclude-if-present" && w[1] == ".kestic-ignore")
-    );
-    assert!(
-        spec.subcommand_args
-            .windows(2)
-            .any(|w| w[0] == "--" && w[1] == "/tmp/src"),
-        "expected `--` immediately before source path: {:?}",
-        spec.subcommand_args
-    );
+    assert_has_flag_pair(&spec.subcommand_args, "--", "/tmp/src");
 
     let excl_content = fs::read_to_string(exclude_file_path(dir.path(), &backup.id)).unwrap();
     for pat in TRASH_EXCLUDE_PATTERNS {
@@ -938,14 +863,20 @@ fn exclude_options_integration_size_trash_ignore_case_and_if_present() {
             "{label}: large.bin should be excluded by --exclude-larger-than 1k: {paths:?}"
         );
         assert!(
-            !paths.iter().any(|p| p == "skip.TMP" || p == "skip2.Tmp"),
-            "{label}: case-insensitive *.tmp should exclude skip.TMP/skip2.Tmp: {paths:?}"
+            !paths.iter().any(|p| p == "skip.TMP"),
+            "{label}: case-insensitive *.tmp should exclude skip.TMP: {paths:?}"
         );
         assert!(
-            !paths
-                .iter()
-                .any(|p| p.contains(".local/share/Trash") || p.contains(".Trash-1000")),
-            "{label}: trash directories should be excluded: {paths:?}"
+            !paths.iter().any(|p| p == "skip2.Tmp"),
+            "{label}: case-insensitive *.tmp should exclude skip2.Tmp: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains(".local/share/Trash")),
+            "{label}: the user trash should be excluded: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains(".Trash-1000")),
+            "{label}: the per-drive trash should be excluded: {paths:?}"
         );
         assert!(
             !paths.iter().any(|p| p == "marked/secret.txt"),

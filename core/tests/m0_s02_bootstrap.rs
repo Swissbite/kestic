@@ -3,6 +3,11 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
+use common::tools::{dev_tools_bin_dir, short_tempdir};
+use common::workspace::workspace_root;
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -13,51 +18,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("core crate has workspace root parent")
-        .to_path_buf()
-}
-
-fn tools_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("KESTIC_TOOLS_DIR") {
-        return PathBuf::from(dir);
-    }
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        return PathBuf::from(xdg).join("kestic-dev/bin");
-    }
-    let home = std::env::var("HOME").expect("HOME set");
-    PathBuf::from(home).join(".local/share/kestic-dev/bin")
-}
-
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new(prefix: &str) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
-        fs::create_dir_all(&path).expect("create temp dir");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
+use std::time::{Duration, Instant};
 
 struct ChildGuard {
     child: Option<Child>,
@@ -137,7 +98,7 @@ fn go_arch() -> &'static str {
 /// AC-M0-02-2: Second run of scripts/bootstrap.sh changes/downloads nothing and exits 0.
 #[test]
 fn ac_m0_02_2_bootstrap_is_idempotent() {
-    let tools = tools_dir();
+    let tools = dev_tools_bin_dir();
     let tracked_files = [
         tools.join("restic-0.18.0"),
         tools.join("restic-0.19.1"),
@@ -196,7 +157,7 @@ fn ac_m0_02_2_bootstrap_is_idempotent() {
 /// and installs nothing.
 #[test]
 fn ac_m0_02_3_bootstrap_aborts_on_checksum_mismatch() {
-    let temp = TempDir::new("kestic-ac-m0-02-3");
+    let temp = short_tempdir("kestic-ac-m0-02-3");
     let gnupg_dir = temp.path().join("gnupg-gen");
     fs::create_dir_all(&gnupg_dir).expect("create gnupg dir");
     fs::set_permissions(&gnupg_dir, fs::Permissions::from_mode(0o700)).expect("chmod 700 gnupg");
@@ -362,7 +323,7 @@ fn ac_m0_02_3_bootstrap_aborts_on_checksum_mismatch() {
 }
 
 fn verify_s3_server_unprivileged(rclone: &Path, restic_versions: &[PathBuf]) {
-    let s3_temp = TempDir::new("kestic-ac-m0-02-4-s3");
+    let s3_temp = short_tempdir("kestic-ac-m0-02-4-s3");
     let s3_root = s3_temp.path().join("s3-root");
     fs::create_dir_all(s3_root.join("testbucket")).expect("create s3 bucket dir");
     let s3_port = allocate_random_port();
@@ -421,7 +382,7 @@ fn verify_s3_server_unprivileged(rclone: &Path, restic_versions: &[PathBuf]) {
 }
 
 fn verify_sftp_server_unprivileged(restic_versions: &[PathBuf]) {
-    let sftp_temp = TempDir::new("kestic-ac-m0-02-4-sftp");
+    let sftp_temp = short_tempdir("kestic-ac-m0-02-4-sftp");
     let host_key = sftp_temp.path().join("ssh_host_ed25519_key");
     let client_key = sftp_temp.path().join("client_ed25519_key");
     for key in [&host_key, &client_key] {
@@ -542,7 +503,7 @@ fn verify_sftp_server_unprivileged(restic_versions: &[PathBuf]) {
 /// with temporary keys/config, work with restic 0.18.0 and current, and terminate on drop.
 #[test]
 fn ac_m0_02_4_s3_and_sftp_test_servers_run_unprivileged_and_stop() {
-    let tools = tools_dir();
+    let tools = dev_tools_bin_dir();
     let restic_versions = [tools.join("restic-0.18.0"), tools.join("restic-0.19.1")];
     let rclone = tools.join("rclone");
     assert!(rclone.exists(), "rclone missing in {}", tools.display());
@@ -551,7 +512,7 @@ fn ac_m0_02_4_s3_and_sftp_test_servers_run_unprivileged_and_stop() {
     verify_sftp_server_unprivileged(&restic_versions);
 }
 
-/// AC-M0-02-5 (P17): Pre-0.17 snapshot fixture exists without `summary` field,
+/// AC-M0-02-5: Pre-0.17 snapshot fixture exists without `summary` field,
 /// parses cleanly, and bootstrap.sh does not download restic 0.16.4.
 #[test]
 fn ac_m0_02_5_fixture_present_and_no_0_16_4_binary_loaded() {
@@ -562,7 +523,8 @@ fn ac_m0_02_5_fixture_present_and_no_0_16_4_binary_loaded() {
         !raw.contains("\"summary\""),
         "pre-0.17 fixture must not have a summary field"
     );
-    let parsed = kestic_core::snapshot::parse_snapshots_json(&raw).expect("parse fixture");
+    let parsed: Vec<kestic_core::snapshot::ResticSnapshot> =
+        serde_json::from_str(&raw).expect("parse fixture");
     assert_eq!(parsed.len(), 1);
     assert!(parsed[0].summary.is_none());
 

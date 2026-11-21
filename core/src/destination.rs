@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Destination initialization, connection verification, password updates, and preflight reachability checks
-//! (`FR-01`, `FR-15`, `FR-57`, `P32`, `P40`, `M1-S06`, `M1-S20`).
+//! Destination initialization, connection verification, password updates, and preflight reachability checks.
 
 use crate::clock::Clock;
 use crate::model::{Destination, DestinationKind, normalize_rest_url_to_ascii};
@@ -20,7 +19,7 @@ use std::process::Command;
 use std::time::Duration;
 use thiserror::Error;
 
-/// Default preflight connect timeout (`P32`: 10 s connect, overall failure <= 15 s).
+/// Default preflight connect timeout (10 s connect, overall failure <= 15 s).
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Errors returned during destination preflight, initialization, connection, or password verification.
@@ -44,7 +43,7 @@ pub enum DestinationError {
     Io(#[from] std::io::Error),
 }
 
-/// Mode used when setting up a [`Destination`] (`FR-15`).
+/// Mode used when setting up a [`Destination`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DestinationSetupMode {
     /// Create a brand new restic repository (`restic init`).
@@ -53,9 +52,9 @@ pub enum DestinationSetupMode {
     ConnectExisting,
 }
 
-/// Checks whether `dest` is reachable before launching restic (`P32`, `AC-M1-06-5`, `AC-M1-06-7`).
+/// Checks whether `dest` is reachable before launching restic.
 ///
-/// - `Local`: checks directory exists (`for_init`: parent or path exists and is writable).
+/// - `Local`: checks that the path exists and is a directory.
 /// - `Rest`: performs TCP connect + HTTP request within `connect_timeout` (default 10 s).
 ///   Any HTTP response (including 401/403/404) proves TCP+HTTP reachability.
 pub fn preflight_check_destination(
@@ -92,7 +91,7 @@ pub fn preflight_check_destination(
                 .timeout_global(Some(connect_timeout + Duration::from_secs(2)))
                 .http_status_as_error(false)
                 // Any HTTP status (including 3xx redirects, which may carry unescaped/IDN Location
-                // headers) proves TCP+TLS+HTTP reachability for preflight (`P32`).
+                // headers) proves TCP+TLS+HTTP reachability for preflight.
                 .max_redirects(0)
                 .max_redirects_will_error(false)
                 .build();
@@ -107,10 +106,10 @@ pub fn preflight_check_destination(
     }
 }
 
-/// Sets up a destination (either `init` or `connect`) and persists secrets ONLY on success (`AC-M1-06-1..6`).
+/// Sets up a destination (either `init` or `connect`) and persists secrets ONLY on success.
 ///
 /// Uses `--password-file` inside a private `0700` temp directory during the initial probe/init so
-/// `SecretStore` is never polluted if verification fails (`AC-M1-06-3`, `AC-M1-06-5`, `AC-M1-06-6`),
+/// `SecretStore` is never polluted if verification fails,
 /// and no password ever appears in `/proc/<pid>/cmdline`.
 pub fn setup_destination(
     dest: &Destination,
@@ -153,7 +152,7 @@ pub fn setup_destination(
         return Err(map_execution_failure(&res));
     }
 
-    // Persist secrets only after restic succeeded (`AC-M1-06-3`, `AC-M1-06-5`, `AC-M1-06-6`).
+    // Persist secrets only after restic succeeded.
     runtime
         .secret_store
         .set_secret(dest.id.as_str(), SECRET_KIND_REPO, repo_password)?;
@@ -174,7 +173,7 @@ pub fn setup_destination(
 }
 
 /// Verifies `candidate_password` against an existing repository without running `restic key`,
-/// and updates the stored secret only if verification succeeds (`FR-57`, `P40`, `AC-M1-20-1..3`).
+/// and updates the stored secret only if verification succeeds.
 pub fn verify_and_update_stored_password(
     dest: &Destination,
     candidate_password: &SecretValue,
@@ -194,7 +193,7 @@ pub fn verify_and_update_stored_password(
     )
 }
 
-/// Variant of [`verify_and_update_stored_password`] with explicit `RESTIC_CACHE_DIR` isolation.
+/// Like [`verify_and_update_stored_password`] with explicit `RESTIC_CACHE_DIR` isolation.
 pub fn verify_and_update_stored_password_with_cache(
     dest: &Destination,
     candidate_password: &SecretValue,
@@ -237,7 +236,7 @@ pub fn verify_and_update_stored_password_with_cache(
     Ok(())
 }
 
-/// Removes all Secret Service entries belonging to `dest` (`AC-M1-19-3`).
+/// Removes all Secret Service entries belonging to `dest`.
 pub fn remove_destination_secrets(
     dest: &Destination,
     secret_store: &dyn SecretStore,
@@ -316,25 +315,10 @@ fn run_with_temp_repo_password_file(
         // Override password command to empty/unused since `--password-file` is passed for pre-save probe.
         spec.password_command_override = Some(String::new());
 
-        // Run via custom env handling without hitting SecretStore yet.
-        let mut temp_env: Vec<(&str, &str)> = Vec::new();
-        let rest_pw_str = rest_password.map(|pw| pw.as_str()).transpose()?;
-        if let Some(pw) = rest_pw_str {
-            temp_env.push(("RESTIC_REST_PASSWORD", pw));
-        }
+        // The probe runs restic directly with `--password-file`: restic rejects an empty
+        // `RESTIC_PASSWORD_COMMAND` next to a password file, so the runner is bypassed.
 
-        // Note: `spec.password_command_override` set to empty avoids triggering `kestic secret get`,
-        // however restic errors if `RESTIC_PASSWORD_COMMAND=""` is set alongside `--password-file`.
-        // Use a dedicated invocation helper directly with `Command` cleanly!
-        drop(temp_env);
-        execute_probe_command(
-            &spec,
-            dest,
-            &pw_file,
-            repo_password,
-            rest_password,
-            probe.clock,
-        )
+        execute_probe_command(&spec, repo_password, rest_password, probe.clock)
     })();
 
     let _ = fs::remove_dir_all(&tmp_dir);
@@ -343,13 +327,10 @@ fn run_with_temp_repo_password_file(
 
 fn execute_probe_command(
     spec: &ResticCommandSpec,
-    dest: &Destination,
-    pw_file: &Path,
     repo_password: &SecretValue,
     rest_password: Option<&SecretValue>,
     clock: &dyn Clock,
 ) -> Result<ResticExecutionResult, DestinationError> {
-    let _ = pw_file;
     let started_at = clock.now_utc();
     let mut cmd = Command::new(&spec.restic_binary);
     cmd.args(spec.restic_argv())
@@ -357,24 +338,7 @@ fn execute_probe_command(
         .env_remove("RESTIC_PASSWORD_COMMAND")
         .env_remove("RESTIC_PASSWORD_FILE");
 
-    let mut env_keys = Vec::new();
-    if let Some(ref cache_dir) = spec.cache_dir {
-        cmd.env("RESTIC_CACHE_DIR", cache_dir);
-        env_keys.push("RESTIC_CACHE_DIR".to_string());
-    }
-    if let DestinationKind::Rest {
-        username: Some(user),
-        ..
-    } = &dest.kind
-        && !user.is_empty()
-    {
-        cmd.env("RESTIC_REST_USERNAME", user);
-        env_keys.push("RESTIC_REST_USERNAME".to_string());
-    }
-    if let Some(rest_pw) = rest_password {
-        cmd.env("RESTIC_REST_PASSWORD", rest_pw.as_str()?);
-        env_keys.push("RESTIC_REST_PASSWORD".to_string());
-    }
+    let env_keys = crate::restic::apply_backend_env(&mut cmd, spec, rest_password)?;
 
     let out = cmd.output()?;
     let finished_at = clock.now_utc();
@@ -447,30 +411,15 @@ fn fast_init_local_from_cache(
     cache_dir: Option<&Path>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     if target_path.join("config").exists() {
-        let spec = ResticCommandSpec::for_destination(
+        let msg = "create key in repository failed: config file already exists".to_string();
+        return Ok(synthetic_init_result(
+            dest,
             restic_binary,
             kestic_binary,
-            dest,
-            vec!["init".to_string()],
-        );
-        let msg = "create key in repository failed: config file already exists".to_string();
-        let presentation = crate::restic::classify_exit(1, Some(&msg), Vec::new(), &msg);
-        return Ok(ResticExecutionResult {
-            exit_code: 1,
-            cancelled: false,
-            presentation,
-            stats: None,
-            command_record: crate::model::CommandRecord {
-                executable: restic_binary.to_string_lossy().into_owned(),
-                args: spec.restic_argv(),
-                env_keys: Vec::new(),
-                started_at: clock.now_utc(),
-                duration_ms: 1,
-                exit_code: 1,
-            },
-            log_lines: vec![msg],
-            errors: Vec::new(),
-        });
+            clock,
+            1,
+            msg,
+        ));
     }
 
     let pw_str = repo_password.as_str()?;
@@ -526,15 +475,40 @@ fn fast_init_local_from_cache(
 
     copy_dir_recursive(&template_dir, target_path)?;
 
+    Ok(synthetic_init_result(
+        dest,
+        restic_binary,
+        kestic_binary,
+        clock,
+        0,
+        String::new(),
+    ))
+}
+
+/// Result of an `init` that was answered from the test cache instead of running restic.
+fn synthetic_init_result(
+    dest: &Destination,
+    restic_binary: &Path,
+    kestic_binary: &Path,
+    clock: &dyn Clock,
+    exit_code: i32,
+    message: String,
+) -> ResticExecutionResult {
     let spec = ResticCommandSpec::for_destination(
         restic_binary,
         kestic_binary,
         dest,
         vec!["init".to_string()],
     );
-    let presentation = crate::restic::classify_exit(0, None, Vec::new(), "");
-    Ok(ResticExecutionResult {
-        exit_code: 0,
+    let failed = exit_code != 0;
+    let presentation = crate::restic::classify_exit(
+        exit_code,
+        failed.then_some(message.as_str()),
+        Vec::new(),
+        &message,
+    );
+    ResticExecutionResult {
+        exit_code,
         cancelled: false,
         presentation,
         stats: None,
@@ -544,11 +518,11 @@ fn fast_init_local_from_cache(
             env_keys: Vec::new(),
             started_at: clock.now_utc(),
             duration_ms: 1,
-            exit_code: 0,
+            exit_code,
         },
-        log_lines: Vec::new(),
+        log_lines: if failed { vec![message] } else { Vec::new() },
         errors: Vec::new(),
-    })
+    }
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {

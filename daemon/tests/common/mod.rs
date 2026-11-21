@@ -4,16 +4,24 @@
 #![allow(dead_code)]
 
 pub mod fakes;
+#[path = "../../../core/tests/common/gui.rs"]
+pub mod gui;
 pub mod m3;
+#[path = "../../../core/tests/common/tools.rs"]
+pub mod tools;
+#[path = "../../../core/tests/common/workspace.rs"]
+pub mod workspace;
 
+pub use tools::PrivateDbusGuard;
+use tools::{dev_tools_bin_dir, rest_server_binary};
+pub use workspace::find_kestic_binary;
+
+use kestic_core::secrets::FileSecretStore;
+use kestic_daemon::service::DaemonRunConfig;
 use std::collections::HashMap;
 use std::env;
-use std::fs;
-use std::io::Read;
-use std::net::{TcpListener, TcpStream};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU32, Ordering},
@@ -22,245 +30,26 @@ use std::thread;
 use std::time::{Duration, Instant};
 use zbus::{Connection, OwnedVariant, Structure, Variant, block_on, interface};
 
-/// Returns the Cargo workspace root directory.
-pub fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("daemon crate has workspace root parent")
-        .to_path_buf()
+/// Connects a D-Bus client to the daemon under test on the current (private) session bus.
+pub fn connect_default_client() -> zbus::Result<kestic_daemon::dbus_api::KesticClient> {
+    kestic_daemon::dbus_api::KesticClient::connect(
+        kestic_daemon::dbus_api::KESTIC_BUS_NAME,
+        kestic_daemon::dbus_api::KESTIC_OBJECT_PATH,
+    )
 }
 
-/// Locates the compiled `kestic` binary (`CARGO_BIN_EXE_kestic`, `target/debug/kestic`, or `target/release/kestic`).
-pub fn find_kestic_binary() -> PathBuf {
-    if let Some(p) = env::var_os("CARGO_BIN_EXE_kestic").filter(|v| !v.is_empty()) {
-        let path = PathBuf::from(p);
-        if path.is_file() {
-            return path;
-        }
-    }
-    let target_dir = env::var_os("CARGO_TARGET_DIR")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join("target"));
-    for profile in ["debug", "release"] {
-        let candidate = target_dir.join(profile).join("kestic");
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    panic!(
-        "kestic binary not found under {}; build it with `cargo build --bin kestic`",
-        target_dir.display()
-    );
+/// Loads an existing `config.toml` through the production loader (`load_optional_config`).
+pub fn load_config(
+    path: &Path,
+) -> Result<kestic_core::config::AppConfig, kestic_core::config::ConfigError> {
+    kestic_core::config::load_optional_config(path)?.ok_or_else(|| {
+        kestic_core::config::ConfigError::Io(std::io::Error::from(std::io::ErrorKind::NotFound))
+    })
 }
 
-/// Resolves the `kestic-dev/bin` directory populated by `scripts/bootstrap.sh`.
-pub fn dev_tools_bin_dir() -> PathBuf {
-    if let Some(dir) = env::var_os("KESTIC_TOOLS_DIR").filter(|v| !v.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    if let Some(home) = env::var_os("KESTIC_HOST_HOME").filter(|v| !v.is_empty()) {
-        return PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("kestic-dev")
-            .join("bin");
-    }
-    if let Some(data) = env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-        let candidate = PathBuf::from(data).join("kestic-dev").join("bin");
-        if candidate.is_dir() {
-            return candidate;
-        }
-    }
-    let home = env::var_os("HOME").expect("HOME must be set for integration tests");
-    PathBuf::from(home)
-        .join(".local")
-        .join("share")
-        .join("kestic-dev")
-        .join("bin")
-}
-
-/// Resolves `restic 0.18.0` and latest (`0.19.1` / `restic-latest` / `$PATH`) test binaries (`AC-M1-Q-2`).
+/// Resolves restic 0.18.0 and latest test binaries (`AC-M1-Q-2`).
 pub fn restic_test_binaries() -> Vec<(&'static str, PathBuf)> {
-    let dir = dev_tools_bin_dir();
-    let v018 = env::var_os("KESTIC_RESTIC_0_18")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dir.join("restic-0.18.0"));
-
-    let vlatest = env::var_os("KESTIC_RESTIC_LATEST")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-        .or_else(|| {
-            let p = dir.join("restic-latest");
-            p.is_file().then_some(p)
-        })
-        .or_else(|| {
-            let p = dir.join("restic-0.19.1");
-            p.is_file().then_some(p)
-        })
-        .or_else(|| {
-            let p = PathBuf::from("/usr/local/bin/restic");
-            p.is_file().then_some(p)
-        })
-        .or_else(|| find_in_path("restic"))
-        .expect("latest restic binary (0.19.1 / restic-latest / PATH) must exist");
-
-    assert!(
-        v018.is_file(),
-        "restic-0.18.0 missing at {} (run scripts/bootstrap.sh)",
-        v018.display()
-    );
-
-    vec![("restic-0.18.0", v018), ("restic-latest", vlatest)]
-}
-
-fn find_in_path(exe: &str) -> Option<PathBuf> {
-    let path_var = env::var_os("PATH")?;
-    for dir in env::split_paths(&path_var) {
-        let candidate = dir.join(exe);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-/// Resolves `rest-server` binary installed by `scripts/bootstrap.sh`.
-pub fn rest_server_binary() -> PathBuf {
-    let bin = env::var_os("KESTIC_REST_SERVER")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dev_tools_bin_dir().join("rest-server"));
-    assert!(
-        bin.is_file(),
-        "rest-server missing at {} (run scripts/bootstrap.sh)",
-        bin.display()
-    );
-    bin
-}
-
-/// Guard removing a temporary test directory tree on `Drop`.
-pub struct TempDirGuard(pub PathBuf);
-
-impl Drop for TempDirGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-/// Isolated XDG + HOME directories (`home`, `cfg`, `data`, `cache`, `state`, `run` chmod `0700`).
-pub struct IsolatedDirs {
-    pub root: PathBuf,
-    pub home: PathBuf,
-    pub cfg: PathBuf,
-    pub data: PathBuf,
-    pub cache: PathBuf,
-    pub state: PathBuf,
-    pub run: PathBuf,
-    pub secret_file: PathBuf,
-}
-
-impl IsolatedDirs {
-    pub fn create(prefix: &str) -> Self {
-        let nonce = kestic_core::model::RunId::generate()
-            .map(|r| r.as_str().to_string())
-            .unwrap_or_else(|_| "00000000".to_string());
-        let root = env::temp_dir().join(format!("kestic-{prefix}-{}-{nonce}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-
-        let home = root.join("home");
-        let cfg = root.join("cfg");
-        let data = root.join("data");
-        let cache = root.join("cache");
-        let state = root.join("state");
-        let run = root.join("run");
-        for dir in [&home, &cfg, &data, &cache, &state, &run] {
-            fs::create_dir_all(dir).expect("create isolated dir");
-        }
-        fs::set_permissions(&run, fs::Permissions::from_mode(0o700))
-            .expect("chmod 0700 XDG_RUNTIME_DIR");
-
-        let secret_file = root.join("secrets.hex");
-        Self {
-            root,
-            home,
-            cfg,
-            data,
-            cache,
-            state,
-            run,
-            secret_file,
-        }
-    }
-
-    pub fn config_toml_path(&self) -> PathBuf {
-        self.cfg.join("kestic").join("config.toml")
-    }
-
-    pub fn state_kestic_dir(&self) -> PathBuf {
-        self.state.join("kestic")
-    }
-}
-
-impl Drop for IsolatedDirs {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-/// Private `dbus-daemon --session --fork` instance killed automatically on `Drop`.
-pub struct PrivateDbusGuard {
-    pub address: String,
-    pub pid: u32,
-}
-
-impl PrivateDbusGuard {
-    pub fn start() -> Self {
-        let out = Command::new("dbus-daemon")
-            .arg(format!(
-                "--config-file={}",
-                concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/tests/fixtures/private-session-bus.xml"
-                )
-            ))
-            .args(["--fork", "--print-address=1", "--print-pid=1"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .expect("spawn private dbus-daemon");
-        assert!(
-            out.status.success(),
-            "dbus-daemon failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let stdout = String::from_utf8(out.stdout).expect("utf8 dbus-daemon output");
-        let mut lines = stdout.lines();
-        let address = lines
-            .next()
-            .expect("dbus-daemon address line")
-            .trim()
-            .to_string();
-        let pid: u32 = lines
-            .next()
-            .expect("dbus-daemon pid line")
-            .trim()
-            .parse()
-            .expect("parse dbus-daemon pid");
-        Self { address, pid }
-    }
-}
-
-impl Drop for PrivateDbusGuard {
-    fn drop(&mut self) {
-        let _ = Command::new("kill")
-            .args(["-TERM", &self.pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
+    tools::resolve_restic_binaries()
 }
 
 /// Re-execs the current test (`test_name --exact`) inside an isolated subprocess with its own
@@ -274,10 +63,18 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         return;
     }
 
-    let dirs = IsolatedDirs::create(inner_env);
+    let dirs = gui::IsolatedEnv::create(inner_env, None);
     let dbus = PrivateDbusGuard::start();
     let tools_dir = dev_tools_bin_dir();
     let restic_bins = restic_test_binaries();
+    let restic_bin = |label: &str| {
+        restic_bins
+            .iter()
+            .find(|(l, _)| *l == label)
+            .unwrap_or_else(|| panic!("restic binary `{label}` resolved"))
+            .1
+            .clone()
+    };
     let rest_server = rest_server_binary();
 
     let current_exe = env::current_exe().expect("current test executable");
@@ -298,8 +95,8 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         .env("KESTIC_SECRET_FILE", &dirs.secret_file)
         .env("KESTIC_TEST_ROOT", &dirs.root)
         .env("KESTIC_TOOLS_DIR", &tools_dir)
-        .env("KESTIC_RESTIC_0_18", &restic_bins[0].1)
-        .env("KESTIC_RESTIC_LATEST", &restic_bins[1].1)
+        .env("KESTIC_RESTIC_0_18", restic_bin("restic-0.18.0"))
+        .env("KESTIC_RESTIC_LATEST", restic_bin("restic-latest"))
         .env("KESTIC_REST_SERVER", &rest_server)
         .env("KESTIC_TEST_FAST_INIT", "1")
         .env("LC_ALL", "C.UTF-8")
@@ -319,147 +116,39 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
     );
 }
 
-/// Allocates a free localhost TCP port for test servers or guaranteed-closed preflight probes.
-pub fn free_loopback_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("local addr").port()
+/// Asks the in-process daemon behind `client` to quit, asserts a clean shutdown and waits until
+/// it released the default bus name.
+pub fn stop_daemon(
+    client: &kestic_daemon::dbus_api::KesticClient,
+    handle: thread::JoinHandle<Result<kestic_daemon::service::DaemonOutcome, String>>,
+) {
+    client.confirm_quit().expect("confirm quit");
+    assert_eq!(
+        handle.join().expect("join daemon"),
+        Ok(kestic_daemon::service::DaemonOutcome::RanAndStopped)
+    );
+    wait_for_bus_name_released(
+        client.connection(),
+        kestic_daemon::dbus_api::KESTIC_BUS_NAME,
+        Duration::from_secs(3),
+    );
 }
 
-/// Running local `rest-server` instance on a localhost TCP port (`--no-auth` or `--htpasswd-file`).
-pub struct RestServerGuard {
-    pub url: String,
-    pub base_url: String,
-    pub port: u16,
-    pub data_dir: PathBuf,
-    child: Option<Child>,
-}
-
-impl RestServerGuard {
-    /// Starts `rest-server` on a random free port with `.htpasswd` authentication (`alice` / `secret`).
-    pub fn start_with_auth(data_dir: &Path) -> Self {
-        let port = free_loopback_port();
-        Self::start_on_port(data_dir, port, Some(("alice", "secret")))
+/// Daemon configuration inside the isolated test tree `root`: config, state and file secret
+/// store below `root`, the real `kestic` binary, a ready file `<root>/daemon.ready`, and no
+/// JobView, portal inhibit or UI spawn.
+pub fn sandbox_run_config(root: &Path) -> DaemonRunConfig {
+    DaemonRunConfig {
+        ready_file: Some(root.join("daemon.ready")),
+        config_path: Some(root.join("cfg").join("kestic").join("config.toml")),
+        state_dir: Some(root.join("state").join("kestic")),
+        kestic_binary: Some(find_kestic_binary()),
+        secret_store: Some(Arc::new(FileSecretStore::new(root.join("secrets.hex")))),
+        suppress_ui_spawn: true,
+        enable_job_view: false,
+        enable_portal_inhibit: false,
+        ..Default::default()
     }
-
-    /// Starts `rest-server` on a random free port with `--no-auth`.
-    pub fn start_no_auth(data_dir: &Path) -> Self {
-        let port = free_loopback_port();
-        Self::start_on_port(data_dir, port, None)
-    }
-
-    /// Starts `rest-server` on an explicit port with optional `(username, password)` auth.
-    pub fn start_on_port(data_dir: &Path, port: u16, auth: Option<(&str, &str)>) -> Self {
-        fs::create_dir_all(data_dir).expect("mkdir rest-server data");
-        let addr = format!("127.0.0.1:{port}");
-        let mut cmd = Command::new(rest_server_binary());
-        cmd.args(["--path", &data_dir.to_string_lossy(), "--listen", &addr]);
-
-        let base_url;
-        let url;
-        if let Some((user, pass)) = auth {
-            let htpasswd = data_dir.join(".htpasswd");
-            let entry = build_htpasswd_entry(user, pass);
-            fs::write(&htpasswd, entry).expect("write .htpasswd");
-            cmd.args(["--htpasswd-file", &htpasswd.to_string_lossy()]);
-            base_url = format!("http://{addr}/{user}");
-            url = base_url.clone();
-        } else {
-            cmd.arg("--no-auth");
-            base_url = format!("http://{addr}");
-            url = base_url.clone();
-        }
-
-        let child = cmd
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn rest-server");
-
-        let mut guard = Self {
-            url,
-            base_url,
-            port,
-            data_dir: data_dir.to_path_buf(),
-            child: Some(child),
-        };
-        guard.wait_ready();
-        guard
-    }
-
-    fn wait_ready(&mut self) {
-        let addr = format!("127.0.0.1:{}", self.port);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if let Some(ref mut child) = self.child
-                && let Some(status) = child.try_wait().expect("try_wait rest-server")
-            {
-                panic!("rest-server exited prematurely: {status}");
-            }
-            if let Ok(mut stream) = TcpStream::connect_timeout(
-                &addr.parse().expect("socket addr"),
-                Duration::from_millis(100),
-            ) {
-                let mut buf = [0u8; 1];
-                let _ = stream.set_read_timeout(Some(Duration::from_millis(20)));
-                let _ = stream.read(&mut buf);
-                return;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-        panic!("rest-server did not start listening on {addr} in time");
-    }
-
-    /// Stops `rest-server` immediately (keeps `data_dir` and `.htpasswd` intact for restarts).
-    pub fn stop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-impl Drop for RestServerGuard {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-fn build_htpasswd_entry(user: &str, pass: &str) -> String {
-    if find_in_path("htpasswd").is_some()
-        && let Ok(out) = Command::new("htpasswd").args(["-nbB", user, pass]).output()
-        && out.status.success()
-    {
-        return String::from_utf8_lossy(&out.stdout).into_owned();
-    }
-
-    // Fallback: Apache `{SHA}` entry generated with `openssl` (`rest-server` supports `{SHA}`).
-    let mut child = Command::new("openssl")
-        .args(["dgst", "-sha1", "-binary"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn openssl for htpasswd SHA1");
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(pass.as_bytes()).expect("write password");
-    }
-    let digest = child.wait_with_output().expect("openssl sha1");
-    assert!(digest.status.success(), "openssl sha1 failed");
-
-    let mut b64_child = Command::new("openssl")
-        .args(["base64", "-A"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn openssl base64");
-    if let Some(mut stdin) = b64_child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(&digest.stdout).expect("write sha1 digest");
-    }
-    let b64 = b64_child.wait_with_output().expect("openssl base64");
-    assert!(b64.status.success(), "openssl base64 failed");
-    let hash = String::from_utf8_lossy(&b64.stdout).trim().to_string();
-    format!("{user}:{{SHA}}{hash}\n")
 }
 
 /// Captured call to `org.freedesktop.Notifications.Notify`.
@@ -698,7 +387,6 @@ pub struct TrayMenuEntry {
     pub id: i32,
     pub label: String,
     pub enabled: bool,
-    pub item_type: Option<String>,
 }
 
 /// Calls `com.canonical.dbusmenu.AboutToShow(0)` followed by `GetLayout(0, -1, [])` on `/MenuBar`.
@@ -781,15 +469,9 @@ fn collect_menu_tuple(
         .get("enabled")
         .and_then(|v| unwrap_variant_bool(v))
         .unwrap_or(true);
-    let item_type = props.get("type").and_then(|v| unwrap_variant_str(v));
 
     if id != 0 {
-        out.push(TrayMenuEntry {
-            id,
-            label,
-            enabled,
-            item_type,
-        });
+        out.push(TrayMenuEntry { id, label, enabled });
     }
 
     for child in children {
@@ -813,7 +495,6 @@ fn collect_menu_variant(node: &Variant<'_>, out: &mut Vec<TrayMenuEntry>) {
     let id = i32::try_from(&fields[0]).unwrap_or(0);
     let mut label = String::new();
     let mut enabled = true;
-    let mut item_type = None;
 
     if let Variant::Dict(dict) = &fields[1] {
         for (k, v) in dict.iter() {
@@ -829,11 +510,6 @@ fn collect_menu_variant(node: &Variant<'_>, out: &mut Vec<TrayMenuEntry>) {
                             enabled = b_val;
                         }
                     }
-                    "type" => {
-                        if let Some(t_val) = unwrap_variant_str(v) {
-                            item_type = Some(t_val);
-                        }
-                    }
                     _ => {}
                 }
             }
@@ -841,12 +517,7 @@ fn collect_menu_variant(node: &Variant<'_>, out: &mut Vec<TrayMenuEntry>) {
     }
 
     if id != 0 {
-        out.push(TrayMenuEntry {
-            id,
-            label,
-            enabled,
-            item_type,
-        });
+        out.push(TrayMenuEntry { id, label, enabled });
     }
 
     if let Variant::Array(children) = &fields[2] {

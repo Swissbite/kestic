@@ -3,32 +3,54 @@
 
 //! State DTO, backup/destination summary, overall status, and tray state builders for `DaemonCore`.
 
+use super::availability::DestinationClaimGuard;
 use super::run_errors::extract_last_run_error_info;
-use super::state::{DaemonCore, SimulatedOverallStatus};
+use super::state::{ActiveRunEntry, DaemonCore, SimulatedOverallStatus};
 use crate::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSummaryDto, BlockingStateDto,
     DaemonStateDto, DestinationSummaryDto, OverallStatusDto, OverallStatusKind, ResticStatusDto,
     blocking_message,
 };
+use crate::dbus_server::{emit_run_updated, emit_status_changed};
 use crate::i18n::{i18n, tr};
-use crate::tray::{KesticTrayState, TrayBackupItem, compute_tray_presentation};
+use crate::tray::{KesticTrayState, TrayBackupItem, TrayHandle, compute_tray_presentation};
 use kestic_core::history::{BackupRuntimeState, PauseState};
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, NestedSourceConflict, Run, RunKind, RunStatus,
-    Schedule, find_nested_source_warnings, lint_exclude_rules,
+    Backup, BackupId, Destination, DestinationId, NestedSourceConflict, Run, RunId, RunKind,
+    RunStatus, Schedule, find_nested_source_warnings, lint_exclude_rules,
 };
+use kestic_core::restic::CancelHandle;
 use kestic_core::scheduler::{
     BackupScheduleEvalInput, BackupScheduleEvaluation, DestinationMaintenanceEvalInput,
     UnmetPrecondition, collect_pending_preconditions, evaluate_backup_schedule,
     evaluate_destination_maintenance, evaluate_run_conditions, format_local_slot_hint,
     is_pause_active,
 };
-use kestic_i18n::codes::PendingReasonCode;
+use kestic_i18n::codes::{PendingReasonCode, RunProgressPhase};
 use kestic_i18n::messages::{
     maintenance_running_message, overall_headline, schedules_paused_message,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use time::OffsetDateTime;
+use zbus::Connection;
+
+/// A run that has just been recorded and now takes over its destination.
+pub(super) struct NewActiveRun<'a> {
+    pub(super) run: &'a Run,
+    /// `None` for maintenance runs, which belong to a destination only.
+    pub(super) backup_id: Option<&'a BackupId>,
+    /// Name of the backup, or of the destination for a maintenance run.
+    pub(super) display_name: &'a str,
+    pub(super) dest_id: &'a DestinationId,
+}
+
+/// What the run's worker needs after [`DaemonCore::activate_run`].
+pub(super) struct ActivatedRun {
+    pub(super) cancel: CancelHandle,
+    pub(super) conn_opt: Option<Connection>,
+    pub(super) tray_opt: Option<Arc<TrayHandle>>,
+}
 
 struct OverallStatusCounts {
     failed_count: usize,
@@ -73,6 +95,86 @@ struct BackupPendingSummaryInput<'a> {
 }
 
 impl DaemonCore {
+    /// Rebuilds the state snapshot, pushes it to the tray and returns it for the
+    /// `StatusChanged` signal.
+    pub(super) fn push_tray_state(&self) -> DaemonStateDto {
+        let (state_dto, tray_state) = self.build_state_and_tray();
+        if let Some(tray) = &self.tray {
+            tray.set_full_state(tray_state);
+        }
+        state_dto
+    }
+
+    /// Rebuilds the state snapshot, pushes it to the tray and emits `StatusChanged`.
+    pub(super) fn push_state(&self) {
+        let state_dto = self.push_tray_state();
+        if let Some(conn) = &self.conn {
+            emit_status_changed(conn, &state_dto);
+        }
+    }
+
+    /// Ends the claim on `dest_id` once the run took over (or gave up on) the destination.
+    pub(super) fn release_claim(
+        &mut self,
+        dest_id: &DestinationId,
+        claim_guard: &mut DestinationClaimGuard,
+    ) {
+        self.claiming_destinations.remove(dest_id);
+        claim_guard.disarm();
+    }
+
+    /// Registers `new` as an active run, ends the claim on its destination, updates the tray and
+    /// announces the run with `RunUpdated` and `StatusChanged`.
+    pub(super) fn activate_run(
+        &mut self,
+        new: NewActiveRun<'_>,
+        claim_guard: &mut DestinationClaimGuard,
+    ) -> ActivatedRun {
+        let cancel = CancelHandle::new();
+        let entry = ActiveRunEntry {
+            run: new.run.clone(),
+            backup_id: new.backup_id.cloned(),
+            backup_name: new.display_name.to_string(),
+            progress: ActiveRunProgressDto {
+                run_id: new.run.id.as_str().to_string(),
+                backup_id: new.backup_id.map(|id| id.as_str().to_string()),
+                backup_name: new.display_name.to_string(),
+                // Maintenance has no percentage; its texts check `backup_id: None` first.
+                phase: RunProgressPhase::Scanning,
+                percent_done: 0.0,
+                bytes_done: 0,
+                total_bytes: 0,
+                files_done: 0,
+                speed_bps: 0,
+                seconds_remaining: 0,
+            },
+            cancel: cancel.clone(),
+            sleep_interrupted: false,
+        };
+        self.active_runs.insert(new.run.id.clone(), entry);
+        self.release_claim(new.dest_id, claim_guard);
+
+        let conn_opt = self.conn.clone();
+        let tray_opt = self.tray.clone();
+        let state_dto = self.push_tray_state();
+        if let Some(conn) = &conn_opt {
+            emit_run_updated(conn, new.run);
+            emit_status_changed(conn, &state_dto);
+        }
+        ActivatedRun {
+            cancel,
+            conn_opt,
+            tray_opt,
+        }
+    }
+
+    /// Whether the active run `run_id` was interrupted because the system goes to sleep.
+    pub(super) fn run_sleep_interrupted(&self, run_id: &RunId) -> bool {
+        self.active_runs
+            .get(run_id)
+            .is_some_and(|e| e.sleep_interrupted)
+    }
+
     /// Computes full state snapshot (`DaemonStateDto`) and synchronized `KesticTrayState`.
     pub fn build_state_and_tray(&self) -> (DaemonStateDto, KesticTrayState) {
         let now = self.clock.now_utc();
@@ -423,7 +525,7 @@ impl DaemonCore {
         }
     }
 
-    /// Why due maintenance work waits (`AC-M3-05-5`), with the backup pending-reason codes:
+    /// Why due maintenance work waits, with the backup pending-reason codes:
     /// `destination_unreachable`, `on_battery`, `metered`, `queue`, `backoff`.
     fn maintenance_pending_code(
         &self,
@@ -431,7 +533,7 @@ impl DaemonCore {
         reachable: bool,
         dest_busy: bool,
     ) -> Option<PendingReasonCode> {
-        // An open `forget` alone is not due maintenance work (FR-05, F4).
+        // An open `forget` alone is not due maintenance work.
         let any_work = m_eval.prune_due || m_eval.check_due;
         if !any_work || m_eval.due_now {
             None

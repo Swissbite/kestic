@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Secret storage abstraction and in-memory / file fallback backends (FR-08, NFR-02, M0-S08).
+//! Secret storage abstraction and in-memory / file fallback backends.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Wrapper for secret UTF-8/byte values whose `Debug` output is always redacted
-/// and whose buffer is overwritten with zeros on drop (NFR-02).
+/// and whose buffer is overwritten with zeros on drop.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SecretValue(Vec<u8>);
 
@@ -75,7 +75,7 @@ impl fmt::Display for SecretError {
 impl std::error::Error for SecretError {}
 
 /// Password store abstraction implemented by Secret Service (`org.freedesktop.secrets`),
-/// [`InMemorySecretStore`], and [`FileSecretStore`] (ADR-0004, AC-M0-08-1, AC-M0-08-2).
+/// [`InMemorySecretStore`], and [`FileSecretStore`].
 pub trait SecretStore {
     fn set_secret(
         &self,
@@ -151,7 +151,7 @@ impl SecretStore for InMemorySecretStore {
 }
 
 /// File-backed fallback [`SecretStore`] for headless test environments without a D-Bus keyring.
-/// Never intended for production persistence (ADR-0004 mandates Secret Service in production).
+/// Never intended for production persistence (production always uses the Secret Service).
 #[derive(Debug, Clone)]
 pub struct FileSecretStore {
     path: PathBuf,

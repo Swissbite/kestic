@@ -32,6 +32,9 @@ Index aller Entscheide (alle 2026-11-15), Details in der genannten Datei. Bestä
 | Qt im Daemon (E17) | MVP ein Binary mit Qt im Daemon, Trennung später | FR-52 |
 | Code-Repo | zuerst lokal, später GitHub; die Spec in `docs/spec/` ist die massgebliche Quelle (E14) | [test-strategy.md](test-strategy.md) |
 | restic-Fakten | [restic-integration.md](restic-integration.md) ist Besitzer aller restic-Fakten, die Kestic nutzt (E14) | [restic-integration.md](restic-integration.md) |
+| M0-Spike abgelöst (2026-11-20) | Die Spike-ACs gelten durch M1–M3 als abgelöst; ihre Tests entfallen, ausser für die Infrastruktur (M0-S01, S02, S03, S05). Was ein M0-Test als Einziger prüfte, wurde vorher in den späteren Test übernommen | [milestones/m0-spike.md](milestones/m0-spike.md) §Belege nach Entfernen des Spike-Fensters |
+| Kommentare im Code (2026-11-20) | Kommentare erklären was und höchstens warum; keine Verweise auf Entscheide, Daten, Abnahmen oder Review-Runden, Spec-IDs im Produktionscode nur als letzte Erklärung; AC-IDs in Tests bleiben. Herkunft von Abnahme-Tests steht in Commit-Message und [manual-acceptance.md](manual-acceptance.md) | [../../AGENTS.md](../../AGENTS.md) §Kommentare, [test-strategy.md](test-strategy.md) |
+| Rückfrage «Änderungen speichern?» (2026-11-20) | Alle Editoren nutzen dieselbe Rückfrage mit eigenen, übersetzten Aktionen `[Speichern]` `[Verwerfen]` `[Abbrechen]` statt Qt-Standardbuttons; die Texte kommen damit immer aus dem Kestic-Katalog (U18, AC-M3-14-9) | [ui/hauptbereiche.md](ui/hauptbereiche.md) |
 | Agentische Umsetzung | werkzeugneutral: Spec funktioniert für Claude Code und Antigravity gleichermassen; Agenten setzen selbständig um und validieren selbst | [test-strategy.md](test-strategy.md) |
 
 ## Positionierung und Marktumfeld

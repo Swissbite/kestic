@@ -8,6 +8,7 @@ use crate::i18n::tr;
 use kestic_core::backup::BackupRunError;
 use kestic_core::config::ConfigError;
 use kestic_core::destination::{DestinationError, DestinationSetupMode};
+use kestic_core::model::BackupId;
 use kestic_core::mount::SourceCheckResult;
 use kestic_core::provider::ResticProviderError;
 use kestic_core::restic::{ResticFailureKind, classify_exit};
@@ -19,6 +20,20 @@ pub(crate) fn localized_failure_summary(kind: &ResticFailureKind) -> String {
     tr(&kind.summary_message())
 }
 
+/// Maps the failure of a dry-run preview (retention or prune) to the service error.
+pub(crate) fn map_backup_run_err(err: BackupRunError) -> KesticServiceErr {
+    match err {
+        BackupRunError::Destination(d) => map_destination_err(d),
+        BackupRunError::InvalidModel(m) => KesticServiceErr::InvalidInput(m.to_string()),
+        other => KesticServiceErr::Internal(other.to_string()),
+    }
+}
+
+/// Parses a backup id received over D-Bus.
+pub(crate) fn parse_backup_id(raw: &str) -> Result<BackupId, KesticServiceErr> {
+    BackupId::parse(raw).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))
+}
+
 /// Internal service error mapped to `net.daester.Kestic.Error.*` D-Bus errors.
 #[derive(Debug)]
 pub enum KesticServiceErr {
@@ -28,7 +43,8 @@ pub enum KesticServiceErr {
     /// Manual start blocked by an unavailable source/destination or unmet run conditions; the
     /// D-Bus error payload is the reason code.
     ManualRunBlocked(BlockedReason),
-    /// Scheduled start refused while the system prepares for sleep (internal, never shown).
+    /// Scheduled start refused while the system prepares for sleep. Only scheduled runs fail
+    /// this way and the scheduler drops their result, so it never reaches D-Bus.
     SleepInProgress,
     DestinationUnreachable(String),
     WrongPassword(String),
@@ -75,9 +91,10 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::InvalidInput(m) => KesticDbusError::InvalidInput(m),
             KesticServiceErr::NotFound(m) => KesticDbusError::NotFound(m),
             KesticServiceErr::InUse(m) => KesticDbusError::InUse(m),
-            err @ (KesticServiceErr::ManualRunBlocked(_) | KesticServiceErr::SleepInProgress) => {
-                KesticDbusError::ManualRunBlocked(err.to_string())
+            KesticServiceErr::ManualRunBlocked(reason) => {
+                KesticDbusError::ManualRunBlocked(reason.as_str().to_string())
             }
+            err @ KesticServiceErr::SleepInProgress => KesticDbusError::Internal(err.to_string()),
             KesticServiceErr::DestinationUnreachable(m) => {
                 KesticDbusError::DestinationUnreachable(m)
             }
@@ -160,25 +177,30 @@ pub(super) fn localized_source_check_reason(status: &SourceCheckResult) -> Strin
     tr(&SourceStatus::message(status.status_code()))
 }
 
+/// Restic failure behind a destination error, if the error carries one.
+fn destination_failure(err: &DestinationError) -> Option<ResticFailureKind> {
+    match err {
+        DestinationError::Unreachable(_) => Some(ResticFailureKind::DestinationUnreachable),
+        DestinationError::AuthFailed(_) => Some(ResticFailureKind::BackendAuthFailed),
+        DestinationError::WrongPassword => Some(ResticFailureKind::WrongPassword),
+        DestinationError::RepositoryMissing(_) => Some(ResticFailureKind::RepositoryMissing),
+        DestinationError::CommandFailed { exit_code, message } => {
+            Some(classify_exit(*exit_code, None, Vec::new(), message).kind)
+        }
+        _ => None,
+    }
+}
+
 /// Error kind of a failed run or preview (`BackupDryRunStatusDto`, `RetentionPreviewStatusDto`);
 /// the raw detail is `err.to_string()`.
 pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
     match err {
         BackupRunError::SourceUnavailable(_) => ErrorKind::SourceUnavailable,
         BackupRunError::Cancelled => ErrorKind::Cancelled,
-        BackupRunError::Destination(dest_err) => match dest_err {
-            DestinationError::Unreachable(_) => ErrorKind::DestinationUnreachable,
-            DestinationError::AuthFailed(_) => ErrorKind::AuthFailed,
-            DestinationError::WrongPassword => ErrorKind::WrongPassword,
-            DestinationError::RepositoryMissing(_) => ErrorKind::RepoMissing,
-            DestinationError::Secret(_) => ErrorKind::SecretStoreLocked,
-            DestinationError::CommandFailed { exit_code, message } => {
-                classify_exit(*exit_code, None, Vec::new(), message)
-                    .kind
-                    .error_kind()
-            }
-            _ => ErrorKind::Unknown,
-        },
+        BackupRunError::Destination(DestinationError::Secret(_)) => ErrorKind::SecretStoreLocked,
+        BackupRunError::Destination(dest_err) => {
+            destination_failure(dest_err).map_or(ErrorKind::Unknown, |kind| kind.error_kind())
+        }
         _ => ErrorKind::Unknown,
     }
 }
@@ -186,25 +208,10 @@ pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
 pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
     match err {
         BackupRunError::SourceUnavailable(status) => localized_source_check_reason(status),
-        BackupRunError::Destination(dest_err) => match dest_err {
-            DestinationError::Unreachable(_) => {
-                localized_failure_summary(&ResticFailureKind::DestinationUnreachable)
-            }
-            DestinationError::AuthFailed(_) => {
-                localized_failure_summary(&ResticFailureKind::BackendAuthFailed)
-            }
-            DestinationError::WrongPassword => {
-                localized_failure_summary(&ResticFailureKind::WrongPassword)
-            }
-            DestinationError::RepositoryMissing(_) => {
-                localized_failure_summary(&ResticFailureKind::RepositoryMissing)
-            }
-            DestinationError::CommandFailed { exit_code, message } => {
-                let pres = classify_exit(*exit_code, None, Vec::new(), message);
-                localized_failure_summary(&pres.kind)
-            }
-            other => other.to_string(),
-        },
+        BackupRunError::Destination(dest_err) => destination_failure(dest_err).map_or_else(
+            || dest_err.to_string(),
+            |kind| localized_failure_summary(&kind),
+        ),
         other => other.to_string(),
     }
 }

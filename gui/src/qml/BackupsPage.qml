@@ -18,27 +18,8 @@ Kirigami.ScrollablePage {
 
     property string selectedBackupId: ""
 
-    function focusSelectedRow() {
-        for (var i = 0; i < backupsListView.count; ++i) {
-            var item = backupsListView.itemAtIndex(i);
-            if (item && item.highlighted) {
-                backupsListView.currentIndex = i;
-                rootWindow.focusItemInPageStack(item);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function iconColorFor(kind) {
-        switch (kind) {
-        case "positive": return Kirigami.Theme.positiveTextColor;
-        case "highlight": return Kirigami.Theme.highlightColor;
-        case "neutral": return Kirigami.Theme.neutralTextColor;
-        case "negative": return Kirigami.Theme.negativeTextColor;
-        default: return Kirigami.Theme.textColor;
-        }
-    }
+    // The list whose selected row gets the focus when the page is shown again.
+    readonly property var primaryList: backupsListView
 
     header: Kirigami.InlineViewHeader {
         width: parent.width
@@ -65,14 +46,7 @@ Kirigami.ScrollablePage {
         onActiveFocusChanged: {
             if (activeFocus && count > 0) {
                 if (currentIndex < 0) {
-                    var targetIdx = 0;
-                    for (var i = 0; i < count; ++i) {
-                        if (backupsModel.data(backupsModel.index(i, 0), 0) === page.selectedBackupId) {
-                            targetIdx = i;
-                            break;
-                        }
-                    }
-                    currentIndex = targetIdx;
+                    currentIndex = Math.max(0, backupsModel.rowOf(page.selectedBackupId));
                 }
             }
         }
@@ -100,15 +74,11 @@ Kirigami.ScrollablePage {
             required property int index
             required property string backupId
             required property string name
-            required property string sourcePath
             required property string sourceKind
-            required property string destinationId
-            required property string destinationName
             required property string statusText
             required property string statusIcon
             required property string statusColorKind
             required property string nextScheduledAtText
-            required property bool available
             required property bool isRunning
 
             width: ListView.view.width
@@ -123,16 +93,11 @@ Kirigami.ScrollablePage {
                 rootWindow.openBackupDetailById(backupId);
             }
 
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: row.highlighted ? 2 : 0
-                z: 10
+            FocusRing {
                 // Focus ring only: a white wash over the row made the selected text unreadable.
-                color: "transparent"
-                radius: Kirigami.Units.cornerRadius
-                border.width: (row.activeFocus || row.visualFocus) ? 2 : 0
-                border.color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                visible: border.width > 0
+                target: row
+                anchors.margins: row.highlighted ? 2 : 0
+                ringColor: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {
@@ -176,7 +141,7 @@ Kirigami.ScrollablePage {
 
                 Kirigami.Icon {
                     source: row.statusIcon
-                    color: page.iconColorFor(row.statusColorKind)
+                    color: rootWindow.iconColorFor(row.statusColorKind, page.Kirigami.Theme)
                     Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
                     Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                 }

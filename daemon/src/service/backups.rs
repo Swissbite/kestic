@@ -3,6 +3,7 @@
 
 //! Backup CRUD, run details, and source/exclude helpers.
 
+use super::error::parse_backup_id;
 use super::error::{KesticServiceErr, map_config_err};
 use super::run_errors::{error_run_kind, unreadable_items_from_lines};
 use super::state::DaemonCore;
@@ -19,6 +20,7 @@ use kestic_core::model::{
 use kestic_core::mount::{current_home_dir, detect_source_with};
 use kestic_core::provider::resolve_and_check;
 use kestic_core::restic::{ResticCommandSpec, classify_exit, parse_recorded_invocation};
+use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::ErrorKind;
 use kestic_i18n::messages::deleted_destination_message;
 use std::fs;
@@ -117,10 +119,7 @@ impl DaemonCore {
             let _ = self.delete_pending_runs_cached(&updated_for_file.id);
             let mut rs = self.load_backup_runtime_state(&updated_for_file.id);
             if matches!(updated_schedule, Schedule::ManualOnly) {
-                rs.backoff_attempt = 0;
-                rs.backoff_until = None;
-                rs.backoff_kind = None;
-                rs.last_failure_at = None;
+                kestic_core::scheduler::clear_backup_backoff(&mut rs);
                 rs.last_overdue_notified_at = None;
                 self.queued_backups.retain(|id| id != &updated_for_file.id);
             } else if matches!(old_schedule, Schedule::ManualOnly) {
@@ -138,8 +137,7 @@ impl DaemonCore {
         backup_id: &str,
         new_name: &str,
     ) -> Result<(), KesticServiceErr> {
-        let id = BackupId::parse(backup_id)
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let id = parse_backup_id(backup_id)?;
         let mut next = self.config.clone();
         let backup = next
             .backups
@@ -158,8 +156,7 @@ impl DaemonCore {
         backup_id: &str,
         new_dest_id: &str,
     ) -> Result<(), KesticServiceErr> {
-        let b_id = BackupId::parse(backup_id)
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let b_id = parse_backup_id(backup_id)?;
         let d_id = DestinationId::parse(new_dest_id)
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
         let mut next = self.config.clone();
@@ -175,8 +172,7 @@ impl DaemonCore {
     }
 
     pub fn remove_backup(&mut self, backup_id: &str) -> Result<(), KesticServiceErr> {
-        let id = BackupId::parse(backup_id)
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let id = parse_backup_id(backup_id)?;
         let mut next = self.config.clone();
         next.remove_backup(&id).map_err(|err| match err {
             ConfigError::Validation(msg) if msg.contains("not found") => {
@@ -255,10 +251,7 @@ impl DaemonCore {
         let c_id = if candidate_id.trim().is_empty() {
             None
         } else {
-            Some(
-                BackupId::parse(candidate_id.trim())
-                    .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?,
-            )
+            Some(parse_backup_id(candidate_id.trim())?)
         };
         Ok(check_nested_sources_for_candidate(
             c_id.as_ref(),
@@ -283,8 +276,7 @@ impl DaemonCore {
         excludes_json: &str,
         test_path: &str,
     ) -> Result<ExcludePathTestResult, KesticServiceErr> {
-        let b_id = BackupId::parse(backup_id)
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let b_id = parse_backup_id(backup_id)?;
         let backup = self
             .config
             .backup(&b_id)
@@ -333,8 +325,7 @@ impl DaemonCore {
         item_path: &str,
     ) -> Result<ExcludeRulePreviewDto, KesticServiceErr> {
         let preview = self.format_exclude_rule_for_item(item_path)?;
-        let b_id = BackupId::parse(backup_id)
-            .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        let b_id = parse_backup_id(backup_id)?;
         let idx = self
             .config
             .backups
@@ -383,7 +374,7 @@ pub(crate) fn get_run_detail_unlocked(
     run_id: &str,
 ) -> Result<RunDetailDto, KesticServiceErr> {
     let snap = {
-        let guard = shared.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = shared.lock_unpoisoned();
         guard.run_detail_snapshot(run_id)?
     };
     let log_lines: Vec<String> = match &snap.run.log_path {

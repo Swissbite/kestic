@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Scheduling, run conditions, notifications, retention policies, and recovery metadata (`M2-S05`, `M3-S01`).
+//! Scheduling, run conditions, notifications, retention policies, and recovery metadata.
 
-use crate::model::{BackupId, DestinationId, ModelError, Weekday};
+use crate::model::{ModelError, Weekday};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-use time::OffsetDateTime;
 
-/// Schedule definition (glossary: `Schedule`, `FR-03`, `P13`, `P35`, `M3-S01`, `§7.4`).
+/// Schedule definition (glossary: `Schedule`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Schedule {
@@ -30,7 +29,7 @@ pub enum Schedule {
     },
     EveryNDays {
         interval_days: u32,
-        /// Start date in `YYYY-MM-DD` format (`§7.4`).
+        /// Start date in `YYYY-MM-DD` format.
         start_date: String,
         hour: u8,
         minute: u8,
@@ -38,7 +37,7 @@ pub enum Schedule {
 }
 
 impl Schedule {
-    /// Default schedule for newly configured scheduled backups (`P35`: daily 12:00).
+    /// Default schedule for newly configured scheduled backups (daily 12:00).
     pub fn default_scheduled() -> Self {
         Self::Daily {
             hour: 12,
@@ -92,14 +91,6 @@ impl Schedule {
     }
 }
 
-/// Parses and validates a serialized [`Schedule`] JSON string (`U18`, `§7.4`).
-pub fn parse_and_validate_schedule_json(raw: &str) -> Result<Schedule, ModelError> {
-    let sched: Schedule = serde_json::from_str(raw)
-        .map_err(|err| ModelError::InvalidBackup(format!("invalid schedule JSON: {err}")))?;
-    sched.validate()?;
-    Ok(sched)
-}
-
 fn validate_hh_mm(hour: u8, minute: u8) -> Result<(), ModelError> {
     if hour >= 24 || minute >= 60 {
         return Err(ModelError::InvalidBackup(format!(
@@ -113,7 +104,7 @@ fn default_true() -> bool {
     true
 }
 
-/// Conditions controlling when scheduled runs may start (glossary: `RunConditions`, `FR-13`, `P35`).
+/// Conditions controlling when scheduled runs may start (glossary: `RunConditions`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RunConditions {
@@ -138,7 +129,7 @@ impl Default for RunConditions {
     }
 }
 
-/// Per-event notification toggles (`F3`, `§9.6`, `AC-M3-08-1`, `AC-M3-08-2`).
+/// Per-event notification toggles.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationSettings {
@@ -161,10 +152,10 @@ impl Default for NotificationSettings {
     }
 }
 
-/// Default number of missed scheduled slots before a backup is marked overdue (`M3-S02`).
+/// Default number of missed scheduled slots before a backup is marked overdue.
 pub const DEFAULT_OVERDUE_THRESHOLD: u32 = 2;
 
-/// Count specifier for retention rules (`--keep-daily 7` or `--keep-yearly unlimited`, `AC-M2-05-1`).
+/// Count specifier for retention rules (`--keep-daily 7` or `--keep-yearly unlimited`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeepCount {
     Count(u32),
@@ -230,7 +221,7 @@ impl<'de> Deserialize<'de> for KeepCount {
     }
 }
 
-/// Built-in retention presets (`M2-S05`, `M2-S06`).
+/// Built-in retention presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionPreset {
@@ -283,7 +274,7 @@ pub fn validate_restic_duration(raw: &str) -> Result<String, ModelError> {
     Ok(trimmed.to_string())
 }
 
-/// Snapshot retention configuration (glossary: `RetentionPolicy`, `M2-S05`).
+/// Snapshot retention configuration (glossary: `RetentionPolicy`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default = "RetentionPolicy::empty")]
 pub struct RetentionPolicy {
@@ -320,7 +311,7 @@ impl Default for RetentionPolicy {
 }
 
 impl RetentionPolicy {
-    /// Empty retention policy (invalid until at least one rule is set, `AC-M2-05-4`).
+    /// Empty retention policy (invalid until at least one rule is set).
     pub fn empty() -> Self {
         Self {
             keep_last: None,
@@ -338,7 +329,7 @@ impl RetentionPolicy {
         }
     }
 
-    /// Standard preset: 7 daily, 4 weekly, 12 monthly (`AC-M2-05-3`).
+    /// Standard preset: 7 daily, 4 weekly, 12 monthly.
     pub fn standard() -> Self {
         Self {
             keep_daily: Some(KeepCount::Count(7)),
@@ -348,7 +339,7 @@ impl RetentionPolicy {
         }
     }
 
-    /// Economical preset ("Sparsam"): 7 daily, 4 weekly (`M2-S06`).
+    /// Economical preset ("Sparsam"): 7 daily, 4 weekly.
     pub fn economical() -> Self {
         Self {
             keep_daily: Some(KeepCount::Count(7)),
@@ -357,7 +348,7 @@ impl RetentionPolicy {
         }
     }
 
-    /// Long preset ("Lang"): 7 daily, 4 weekly, 12 monthly, unlimited yearly (`M2-S06`).
+    /// Long preset ("Lang"): 7 daily, 4 weekly, 12 monthly, unlimited yearly.
     pub fn long() -> Self {
         Self {
             keep_daily: Some(KeepCount::Count(7)),
@@ -381,7 +372,7 @@ impl RetentionPolicy {
         }
     }
 
-    /// Validates all retention counts/durations and ensures at least one active rule (`AC-M2-05-4`).
+    /// Validates all retention counts/durations and ensures at least one active rule.
     pub fn validate(&self) -> Result<(), ModelError> {
         let counts = [
             ("keep_last", self.keep_last),
@@ -431,7 +422,7 @@ impl RetentionPolicy {
     }
 
     /// Converts active retention rules into restic `forget` CLI flags.
-    /// Never emits `--unsafe-allow-remove-all` (`AC-M2-05-5`, `FR-05`).
+    /// Never emits `--unsafe-allow-remove-all`.
     pub fn to_forget_args(&self) -> Vec<String> {
         let mut args = Vec::new();
         let count_flags = [
@@ -468,20 +459,4 @@ impl RetentionPolicy {
         }
         args
     }
-}
-
-/// Recovery kit metadata associated with a repository key (glossary: `RecoveryKit`, M6).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecoveryKit {
-    pub destination_id: DestinationId,
-    pub key_id: String,
-    pub created_at: OffsetDateTime,
-}
-
-/// Metadata snapshot reference (`kestic-meta:<backup-id>`, glossary: `MetaSnapshot`, M6).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MetaSnapshot {
-    pub snapshot_id: String,
-    pub backup_id: BackupId,
-    pub created_at: OffsetDateTime,
 }

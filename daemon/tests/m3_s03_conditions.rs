@@ -5,13 +5,14 @@
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
+use common::fakes::FakeNetworkManagerHandle;
 use common::m3::{
-    LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, add_local_backup,
-    assert_dbus_error_name, backup_summary, latest_variant, notifications_for, restic_variants,
-    settle, spawn_m3_daemon, wait_for_notifications, wait_for_state,
+    FakeSetup, LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, StdFakes,
+    add_local_backup, assert_dbus_error_name, backup_summary, executed_runs, latest_variant,
+    notifications_for, restic_variants, settle, spawn_m3_daemon, wait_for_notifications,
+    wait_for_state,
 };
-use common::{run_isolated_test, start_fake_notifications, start_fake_sni_watcher};
+use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{Backup, BackupId, RunStatus};
 use kestic_daemon::dbus_api::DaemonStateDto;
@@ -84,16 +85,6 @@ impl Rig {
     }
 }
 
-/// Number of runs of the backup that actually executed (neither pending nor still running).
-fn executed_runs(state: &DaemonStateDto, bid: &BackupId) -> usize {
-    state
-        .recent_runs
-        .iter()
-        .filter(|r| r.backup_id() == Some(bid))
-        .filter(|r| !matches!(r.status, RunStatus::Pending))
-        .count()
-}
-
 /// AC-M3-03-2: on battery the due backup is `ausstehend` (run condition); once AC power returns it
 /// starts in the same slot without waiting for the next one.
 #[test]
@@ -102,12 +93,9 @@ fn ac_m3_03_2_on_battery_pending_then_starts_on_ac_power() {
         "ac_m3_03_2_on_battery_pending_then_starts_on_ac_power",
         "KESTIC_M3_03_2_INNER",
         |root| {
-            let (_n, _notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let upower = FakeUPowerHandle::start(true, 60.0);
-            let _nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]);
+            let fakes = StdFakes::start_with_power(true, 60.0);
             for variant in restic_variants() {
-                upower.set_on_battery(true, 60.0);
+                fakes.upower.set_on_battery(true, 60.0);
                 let rig = Rig::start(root, &variant, "M3C2", |_| {});
 
                 rig.clock.set(SLOT_1);
@@ -129,7 +117,7 @@ fn ac_m3_03_2_on_battery_pending_then_starts_on_ac_power() {
                 );
 
                 // (b) AC power returns -> starts without advancing the clock to the next slot.
-                upower.set_on_battery(false, 100.0);
+                fakes.upower.set_on_battery(false, 100.0);
                 let done = rig.wait_ok_run();
                 let last = backup_summary(&done, rig.bid())
                     .last_run
@@ -161,12 +149,12 @@ fn ac_m3_03_3_metered_connection_pending_then_starts_when_unmetered() {
         "ac_m3_03_3_metered_connection_pending_then_starts_when_unmetered",
         "KESTIC_M3_03_3_INNER",
         |root| {
-            let (_n, _notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let _upower = FakeUPowerHandle::start(false, 100.0);
-            let nm = FakeNetworkManagerHandle::start(true, true, Some("Heim"), &["Heim"]);
+            let fakes = StdFakes::start_with(FakeSetup {
+                metered: true,
+                ..FakeSetup::default()
+            });
             for variant in restic_variants() {
-                nm.update(true, true, Some("Heim"));
+                fakes.nm.update(true, true, Some("Heim"));
                 let rig = Rig::start(root, &variant, "M3C3", |b| {
                     b.run_conditions.skip_on_metered_network = true;
                 });
@@ -190,7 +178,7 @@ fn ac_m3_03_3_metered_connection_pending_then_starts_when_unmetered() {
                 );
 
                 // (b) Metered=no directly -> starts.
-                nm.update(true, false, Some("Heim"));
+                fakes.nm.update(true, false, Some("Heim"));
                 let done = rig.wait_ok_run();
                 assert_eq!(executed_runs(&done, rig.bid()), 1, "{}: (b)", variant.label);
                 assert_eq!(
@@ -216,12 +204,13 @@ fn ac_m3_03_4_allowed_network_pending_then_starts_on_home_network() {
         "ac_m3_03_4_allowed_network_pending_then_starts_on_home_network",
         "KESTIC_M3_03_4_INNER",
         |root| {
-            let (_n, _notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let _upower = FakeUPowerHandle::start(false, 100.0);
-            let nm = FakeNetworkManagerHandle::start(true, false, Some("Cafe"), &["Heim", "Cafe"]);
+            let fakes = StdFakes::start_with(FakeSetup {
+                active_network: Some("Cafe"),
+                known_networks: &["Heim", "Cafe"],
+                ..FakeSetup::default()
+            });
             for variant in restic_variants() {
-                nm.update(true, false, Some("Cafe"));
+                fakes.nm.update(true, false, Some("Cafe"));
                 let rig = Rig::start(root, &variant, "M3C4", |b| {
                     b.run_conditions.allowed_networks = vec!["Heim".to_string()];
                 });
@@ -243,7 +232,7 @@ fn ac_m3_03_4_allowed_network_pending_then_starts_on_home_network() {
                     variant.label
                 );
 
-                nm.update(true, false, Some("Heim"));
+                fakes.nm.update(true, false, Some("Heim"));
                 let done = rig.wait_ok_run();
                 assert_eq!(executed_runs(&done, rig.bid()), 1, "{}: (b)", variant.label);
                 assert_eq!(
@@ -268,10 +257,11 @@ fn ac_m3_03_5_no_network_connection_is_pending() {
         "ac_m3_03_5_no_network_connection_is_pending",
         "KESTIC_M3_03_5_INNER",
         |root| {
-            let (_n, _notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let _upower = FakeUPowerHandle::start(false, 100.0);
-            let _nm = FakeNetworkManagerHandle::start(false, false, None, &["Heim"]);
+            let _fakes = StdFakes::start_with(FakeSetup {
+                connected: false,
+                active_network: None,
+                ..FakeSetup::default()
+            });
             let variant = latest_variant();
             let rig = Rig::start(root, &variant, "M3C5", |_| {});
 
@@ -304,10 +294,7 @@ fn ac_m3_03_6_unmet_condition_over_two_slots_notifies_overdue_exactly_once() {
         "ac_m3_03_6_unmet_condition_over_two_slots_notifies_overdue_exactly_once",
         "KESTIC_M3_03_6_INNER",
         |root| {
-            let (_n, notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let _upower = FakeUPowerHandle::start(true, 40.0);
-            let _nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]);
+            let fakes = StdFakes::start_with_power(true, 40.0);
             let variant = latest_variant();
             let rig = Rig::start(root, &variant, "M3C6", |_| {});
 
@@ -320,7 +307,7 @@ fn ac_m3_03_6_unmet_condition_over_two_slots_notifies_overdue_exactly_once() {
                 "(b) one missed slot is not overdue"
             );
             assert_eq!(
-                notifications_for(&notif, "BackupOverdue").len(),
+                notifications_for(&fakes.notif, "BackupOverdue").len(),
                 0,
                 "(b) no overdue notification before the second missed slot"
             );
@@ -332,13 +319,13 @@ fn ac_m3_03_6_unmet_condition_over_two_slots_notifies_overdue_exactly_once() {
                 "overdue",
                 |s| backup_summary(s, rig.bid()).is_overdue,
             );
-            wait_for_notifications(&notif, "BackupOverdue", 1, Duration::from_secs(5));
+            wait_for_notifications(&fakes.notif, "BackupOverdue", 1, Duration::from_secs(5));
             settle();
             assert_eq!(
-                notifications_for(&notif, "BackupOverdue").len(),
+                notifications_for(&fakes.notif, "BackupOverdue").len(),
                 1,
                 "(a) exactly one overdue notification: {:?}",
-                notif.snapshot()
+                fakes.notif.snapshot()
             );
             rig.daemon.stop();
         },
@@ -354,12 +341,9 @@ fn ac_m3_03_7_manual_override_applies_to_one_run_only() {
         "ac_m3_03_7_manual_override_applies_to_one_run_only",
         "KESTIC_M3_03_7_INNER",
         |root| {
-            let (_n, _notif) = start_fake_notifications();
-            let _sni = start_fake_sni_watcher();
-            let upower = FakeUPowerHandle::start(true, 55.0);
-            let _nm = FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]);
+            let fakes = StdFakes::start_with_power(true, 55.0);
             for variant in restic_variants() {
-                upower.set_on_battery(true, 55.0);
+                fakes.upower.set_on_battery(true, 55.0);
                 let rig = Rig::start(root, &variant, "M3C7", |_| {});
                 let client = &rig.daemon.client;
                 rig.clock.set(SLOT_1);
@@ -443,8 +427,8 @@ fn ac_m3_03_7_manual_override_applies_to_one_run_only() {
     );
 }
 
-/// M3 manual acceptance (2026-11-19): «Erlaubte WLAN-Netzwerke» listed the wired profile and
-/// the loopback device. Only saved Wi-Fi profiles may be offered as allowed networks (FR-13).
+/// «Allowed Wi-Fi networks» offers only saved Wi-Fi profiles, not the wired profile or the
+/// loopback device (FR-13).
 #[test]
 fn m3_acceptance_known_networks_lists_only_wifi_profiles() {
     run_isolated_test(

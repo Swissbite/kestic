@@ -3,16 +3,16 @@
 
 #![forbid(unsafe_code)]
 
+mod common;
+
+use common::workspace::workspace_root;
 use std::fs;
-use std::path::Path;
 
 /// AC-M0-03-1: CXX-Qt version is pinned with `=0.10.0` in Cargo.toml,
 /// resolved to `0.10.0` in Cargo.lock, and justified in ADR-0001.
 #[test]
 fn ac_m0_03_1_cxx_qt_is_pinned_and_documented() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("core crate has workspace root parent");
+    let root = workspace_root();
 
     let root_cargo = fs::read_to_string(root.join("Cargo.toml")).expect("read root Cargo.toml");
     assert!(
@@ -34,7 +34,11 @@ fn ac_m0_03_1_cxx_qt_is_pinned_and_documented() {
         fs::read_to_string(root.join("docs/spec/adr/0001-tech-stack-rust-cxx-qt-kirigami.md"))
             .expect("read ADR-0001");
     assert!(
-        adr.contains("0.8.1") && adr.contains("0.10.0"),
-        "ADR-0001 must justify 0.10.0 vs 0.8.1"
+        adr.contains("0.8.1"),
+        "ADR-0001 must name the rejected 0.8.1"
+    );
+    assert!(
+        adr.contains("0.10.0"),
+        "ADR-0001 must justify the chosen 0.10.0"
     );
 }

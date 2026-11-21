@@ -527,7 +527,13 @@ mod previews;
 mod schedules;
 mod state;
 
+use crate::state_cache::{lookup_backup_summary, not_found_text, refresh_state_now, shared_state};
 use cxx_qt_lib::QString;
+use kestic_core::model::Backup;
+use kestic_core::sync::LockUnpoisoned;
+use kestic_daemon::dbus_api::KesticDbusError;
+use serde::de::DeserializeOwned;
+use std::pin::Pin;
 
 #[derive(Default)]
 pub struct KesticAppRust {
@@ -607,3 +613,103 @@ pub struct KesticAppRust {
 }
 
 pub(super) use crate::state_cache::dbus_error_text;
+
+/// What a finished daemon call from QML does besides refreshing the state.
+#[derive(Clone, Copy, PartialEq)]
+enum Finish {
+    /// Only clear or show the error line.
+    Plain,
+    /// The call saved an editor page: it has no unsaved changes any more.
+    Saved,
+    /// A failure is also shown as a passive notification.
+    NotifyOnError,
+}
+
+impl qobject::KesticApp {
+    /// Shows `text` in the action error line.
+    fn show_action_error(mut self: Pin<&mut Self>, text: &str) {
+        self.as_mut().set_last_action_error(QString::from(text));
+    }
+
+    /// The value of `result`; otherwise shows the error text and returns `None`.
+    fn ok_or_show<T, E: ToString>(mut self: Pin<&mut Self>, result: Result<T, E>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(err) => {
+                self.as_mut().show_action_error(&err.to_string());
+                None
+            }
+        }
+    }
+
+    /// Like [`Self::ok_or_show`] for a failed daemon call.
+    fn ok_or_show_dbus<T, E>(mut self: Pin<&mut Self>, result: Result<T, E>) -> Option<T>
+    where
+        E: Clone + Into<KesticDbusError>,
+    {
+        match result {
+            Ok(value) => Some(value),
+            Err(err) => {
+                self.as_mut().show_action_error(&dbus_error_text(&err));
+                None
+            }
+        }
+    }
+
+    /// Ends a daemon call from QML: on success clears the error line and refreshes the state,
+    /// on failure shows the daemon's error text.
+    fn finish_action<T, E>(mut self: Pin<&mut Self>, result: Result<T, E>, how: Finish) -> Option<T>
+    where
+        E: Clone + Into<KesticDbusError>,
+    {
+        match result {
+            Ok(value) => {
+                if how == Finish::Saved {
+                    self.as_mut().set_has_unsaved_changes(false);
+                }
+                self.as_mut().show_action_error("");
+                refresh_state_now();
+                self.as_mut().apply_cached_state();
+                Some(value)
+            }
+            Err(err) => {
+                let msg = dbus_error_text(&err);
+                self.as_mut().show_action_error(&msg);
+                if how == Finish::NotifyOnError {
+                    self.as_mut().passive_notification(QString::from(&msg));
+                }
+                None
+            }
+        }
+    }
+
+    /// The configured backup `backup_id`; shows "not found" if there is none.
+    fn existing_backup_or_err(mut self: Pin<&mut Self>, backup_id: &str) -> Option<Backup> {
+        let existing = {
+            let guard = shared_state().lock_unpoisoned();
+            guard
+                .state
+                .as_ref()
+                .and_then(|s| lookup_backup_summary(s, backup_id))
+                .map(|b| b.backup.clone())
+        };
+        if existing.is_none() {
+            self.as_mut().show_action_error(&not_found_text());
+        }
+        existing
+    }
+
+    /// Parses `json` from QML; shows the parse error if it is malformed.
+    fn parse_json_or_err<T: DeserializeOwned>(
+        mut self: Pin<&mut Self>,
+        json: &QString,
+    ) -> Option<T> {
+        match serde_json::from_str(&json.to_string()) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                self.as_mut().show_action_error(&err.to_string());
+                None
+            }
+        }
+    }
+}

@@ -8,23 +8,17 @@
 //! technical words, except a few spec terms and expert texts listed with their reason. Also
 //! writes the whole catalog as a review list to `target/smoke-artifacts/texts-en-de.md`.
 
-#[path = "common/language.rs"]
-mod language;
+mod common;
+
+use common::language;
+use common::workspace::workspace_root;
 
 use std::fmt::Write as _;
 use std::fs;
-use std::path::{Path, PathBuf};
-
-fn workspace() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root")
-        .to_path_buf()
-}
 
 #[test]
 fn every_text_has_short_sentences() {
-    let entries = language::catalog(&workspace());
+    let entries = language::catalog(&workspace_root());
     assert!(
         entries.len() > 500,
         "expected the full catalog, got {}",
@@ -44,7 +38,7 @@ fn every_text_has_short_sentences() {
 
 #[test]
 fn no_text_uses_technical_words() {
-    let found: Vec<String> = language::catalog(&workspace())
+    let found: Vec<String> = language::catalog(&workspace_root())
         .iter()
         .flat_map(|e| e.texts.iter())
         .flat_map(|t| {
@@ -73,19 +67,16 @@ fn checks_find_planted_problems() {
 /// Review list of every catalog text (English, German), rebuilt on each run.
 #[test]
 fn writes_the_review_list_of_all_texts() {
-    let entries = language::catalog(&workspace());
+    let entries = language::catalog(&workspace_root());
     let mut md =
         String::from("# Kestic texts (English / German)\n\n| English | German |\n| --- | --- |\n");
     for e in &entries {
         let cell = |v: &[String]| v.join(" / ").replace('\n', "<br>").replace('|', "\\|");
         writeln!(md, "| {} | {} |", cell(e.english()), cell(e.german())).expect("write row");
     }
-    let dir = workspace().join("target/smoke-artifacts");
+    let dir = workspace_root().join("target/smoke-artifacts");
     fs::create_dir_all(&dir).expect("mkdir smoke-artifacts");
     fs::write(dir.join("texts-en-de.md"), md).expect("write review list");
-    assert!(
-        entries
-            .iter()
-            .all(|e| !e.msgid().is_empty() && !e.german().is_empty())
-    );
+    assert!(entries.iter().all(|e| !e.msgid().is_empty()));
+    assert!(entries.iter().all(|e| !e.german().is_empty()));
 }

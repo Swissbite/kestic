@@ -17,7 +17,7 @@ updates:
           - "minor"
           - "patch"
     ignore:
-      # CXX-Qt is explicitly pinned to =0.10.0 per ADR-0001 (AC-M0-03-1).
+      # CXX-Qt is explicitly pinned to =0.10.0 (the CXX-Qt crates must move together).
       - dependency-name: "cxx-qt*"
       - dependency-name: "qt-build-utils"
 

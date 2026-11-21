@@ -7,13 +7,11 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-Kirigami.ScrollablePage {
+EditorPage {
     id: page
     objectName: "destinationMaintenancePage"
     title: Texts.label("maintenance")
 
-    required property var rootWindow
-    required property var appBackend
     required property string destinationId
 
     property var initialData: null
@@ -34,7 +32,6 @@ Kirigami.ScrollablePage {
     property int checkHour: 12
     property int checkMinute: 0
 
-    property string pendingPreviewJson: ""
     property bool pendingPopAfterConfirm: false
     property string previewSummaryText: ""
     property bool previewSettled: false
@@ -94,36 +91,22 @@ Kirigami.ScrollablePage {
     }
 
     function normalizedSavedObj() {
-        try {
-            var parsed = JSON.parse(savedMaintenanceJson || "{}");
-            return {
-                prune: normalizeEntry(parsed.prune, "weekly"),
-                check: normalizeEntry(parsed.check, "monthly")
-            };
-        } catch (e) {
-            return {
-                prune: normalizeEntry(null, "weekly"),
-                check: normalizeEntry(null, "monthly")
-            };
-        }
+        var parsed = rootWindow.parseJsonOr(savedMaintenanceJson, {});
+        return {
+            prune: normalizeEntry(parsed.prune, "weekly"),
+            check: normalizeEntry(parsed.check, "monthly")
+        };
     }
 
     readonly property bool pruneDirty: initialData !== null
         && JSON.stringify(currentMaintObj().prune) !== JSON.stringify(normalizedSavedObj().prune)
 
-    readonly property bool dirty: initialData !== null
+    dirty: initialData !== null
         && JSON.stringify(currentMaintObj()) !== JSON.stringify(normalizedSavedObj())
-
-    onDirtyChanged: appBackend.has_unsaved_changes = dirty
 
     function loadFromSaved(maintJson) {
         hydrating = true;
-        var parsed = {};
-        try {
-            parsed = JSON.parse(maintJson || "{}");
-        } catch (e) {
-            parsed = {};
-        }
+        var parsed = rootWindow.parseJsonOr(maintJson, {});
         var p = normalizeEntry(parsed.prune, "weekly");
         pruneKind = p.kind;
         pruneNth = p.nth || "first";
@@ -158,33 +141,28 @@ Kirigami.ScrollablePage {
     }
 
     function formatPreviewSummary(rawJson) {
-        var txt = "";
-        if (rawJson !== "") {
-            try {
-                var sum = JSON.parse(rawJson);
-                var parts = [];
-                if (sum.delete_packs !== null && sum.delete_packs !== undefined) {
-                    parts.push(i18n("Data blocks to remove: %1", sum.delete_packs));
-                }
-                if (sum.keep_packs !== null && sum.keep_packs !== undefined) {
-                    parts.push(i18n("Data blocks to keep: %1", sum.keep_packs));
-                }
-                // restic's own summary line is English text: show only the localized size.
-                var sizeMatch = sum.freed_summary
-                    ? /(\d+(?:\.\d+)?\s?(?:B|KiB|MiB|GiB|TiB))/.exec(sum.freed_summary)
-                    : null;
-                if (sizeMatch) {
-                    parts.push(i18n("Space to free: %1", sizeMatch[1]));
-                }
-                if (parts.length === 0) {
-                    parts.push(i18n("The preview reported no data to remove."));
-                }
-                txt = parts.join("\n");
-            } catch (e) {
-                txt = "";
-            }
+        var sum = rootWindow.parseJsonOr(rawJson, null);
+        if (!sum) {
+            return i18n("The preview could not read the repository. It may be unreachable or locked.");
         }
-        return txt !== "" ? txt : i18n("The preview could not read the repository. It may be unreachable or locked.");
+        var parts = [];
+        if (sum.delete_packs !== null && sum.delete_packs !== undefined) {
+            parts.push(i18n("Data blocks to remove: %1", sum.delete_packs));
+        }
+        if (sum.keep_packs !== null && sum.keep_packs !== undefined) {
+            parts.push(i18n("Data blocks to keep: %1", sum.keep_packs));
+        }
+        // restic's own summary line is English text: show only the localized size.
+        var sizeMatch = sum.freed_summary
+            ? /(\d+(?:\.\d+)?\s?(?:B|KiB|MiB|GiB|TiB))/.exec(sum.freed_summary)
+            : null;
+        if (sizeMatch) {
+            parts.push(i18n("Space to free: %1", sizeMatch[1]));
+        }
+        if (parts.length === 0) {
+            parts.push(i18n("The preview reported no data to remove."));
+        }
+        return parts.join("\n");
     }
 
     Connections {
@@ -194,11 +172,7 @@ Kirigami.ScrollablePage {
                 return;
             }
             page.previewSettled = true;
-            if (errorMessage !== "") {
-                page.previewSummaryText = i18n("The preview could not read the repository. It may be unreachable or locked.");
-            } else {
-                page.previewSummaryText = page.formatPreviewSummary(summaryJson);
-            }
+            page.previewSummaryText = page.formatPreviewSummary(errorMessage !== "" ? "" : summaryJson);
         }
     }
 
@@ -213,6 +187,14 @@ Kirigami.ScrollablePage {
         } else {
             commitSave(popOnSuccess);
         }
+    }
+
+    function saveForGuard() {
+        if (pruneDirty) {
+            requestSave(false);
+            return false;
+        }
+        return commitSave(false);
     }
 
     function indexOfOption(arr, key) {
@@ -232,29 +214,6 @@ Kirigami.ScrollablePage {
         }
     }
 
-    onBackRequested: function(event) {
-        if (dirty) {
-            event.accepted = true;
-            unsavedDialog.open();
-        }
-    }
-
-    function handleEscape() {
-        if (pruneConfirmDialog.opened || pruneConfirmDialog.visible) {
-            pruneConfirmDialog.close();
-            return true;
-        }
-        if (unsavedDialog.opened || unsavedDialog.visible) {
-            unsavedDialog.close();
-            return true;
-        }
-        if (dirty) {
-            unsavedDialog.open();
-            return true;
-        }
-        return false;
-    }
-
     actions: [
         Kirigami.Action {
             id: saveMaintenanceAction
@@ -269,13 +228,7 @@ Kirigami.ScrollablePage {
             objectName: "closeMaintenanceAction"
             icon.name: "window-close"
             text: Texts.label("close")
-            onTriggered: {
-                if (page.dirty) {
-                    unsavedDialog.open();
-                } else {
-                    rootWindow.popSubPage();
-                }
-            }
+            onTriggered: page.requestClose()
         }
     ]
 
@@ -292,7 +245,7 @@ Kirigami.ScrollablePage {
                 objectName: "confirmPruneSaveAction"
                 icon.name: "document-save"
                 text: i18n("Save Maintenance Schedule")
-                // AC-M3-05-7(a): confirmation is only possible once the preview loaded or failed.
+                // confirmation is only possible once the preview loaded or failed.
                 enabled: page.previewSettled && !appBackend.maintenance_preview_loading
                 onTriggered: {
                     pruneConfirmDialog.close();
@@ -339,16 +292,14 @@ Kirigami.ScrollablePage {
         }
     }
 
-    UnsavedChangesDialog {
-        id: unsavedDialog
-        objectName: "unsavedMaintenanceDialog"
-        subtitle: i18n("You have unsaved changes to the maintenance schedule.")
-        onSaveRequested: page.requestSave(true)
-        onDiscardRequested: {
-            appBackend.has_unsaved_changes = false;
-            page.loadFromSaved(page.savedMaintenanceJson);
-            rootWindow.popSubPage();
-        }
+    unsavedObjectName: "unsavedMaintenanceDialog"
+    unsavedSubtitle: i18n("You have unsaved changes to the maintenance schedule.")
+    extraDialogs: [pruneConfirmDialog]
+
+    onUnsavedSaveRequested: page.requestSave(true)
+    onUnsavedDiscardRequested: {
+        page.loadFromSaved(page.savedMaintenanceJson);
+        rootWindow.popSubPage();
     }
 
     ColumnLayout {

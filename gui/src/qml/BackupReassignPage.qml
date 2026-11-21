@@ -96,7 +96,6 @@ Kirigami.ScrollablePage {
         }
 
         ListView {
-            id: otherDestinationsList
             objectName: "reassignDestinationsList"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(contentHeight, Kirigami.Units.gridUnit * 8)
@@ -106,10 +105,15 @@ Kirigami.ScrollablePage {
             activeFocusOnTab: count > 1
             keyNavigationEnabled: true
 
+            // Every destination except the backup's current one can be chosen.
+            function selectable(i) {
+                return !page.backupData
+                    || destinationsModel.idAt(i) !== page.backupData.destinationId;
+            }
+
             function firstSelectableIndex() {
                 for (var i = 0; i < count; ++i) {
-                    var id = destinationsModel.data(destinationsModel.index(i, 0), 0);
-                    if (!page.backupData || id !== page.backupData.destinationId) {
+                    if (selectable(i)) {
                         return i;
                     }
                 }
@@ -129,8 +133,7 @@ Kirigami.ScrollablePage {
 
             Keys.onUpPressed: function(event) {
                 for (var i = currentIndex - 1; i >= 0; --i) {
-                    var id = destinationsModel.data(destinationsModel.index(i, 0), 0);
-                    if (!page.backupData || id !== page.backupData.destinationId) {
+                    if (selectable(i)) {
                         currentIndex = i;
                         event.accepted = true;
                         return;
@@ -141,8 +144,7 @@ Kirigami.ScrollablePage {
 
             Keys.onDownPressed: function(event) {
                 for (var i = currentIndex + 1; i < count; ++i) {
-                    var id = destinationsModel.data(destinationsModel.index(i, 0), 0);
-                    if (!page.backupData || id !== page.backupData.destinationId) {
+                    if (selectable(i)) {
                         currentIndex = i;
                         event.accepted = true;
                         return;
@@ -174,14 +176,9 @@ Kirigami.ScrollablePage {
                     page.selectedDestName = name;
                 }
 
-                Rectangle {
-                    anchors.fill: parent
-                    z: 10
-                    color: "transparent"
-                    radius: Kirigami.Units.cornerRadius
-                    border.width: (row.activeFocus || row.visualFocus) ? 2 : 0
-                    border.color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                    visible: border.width > 0
+                FocusRing {
+                    target: row
+                    ringColor: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                 }
 
                 contentItem: RowLayout {

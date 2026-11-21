@@ -71,21 +71,11 @@ Kirigami.ScrollablePage {
         }
     }
 
-    function iconColorFor(kind) {
-        switch (kind) {
-        case "positive": return Kirigami.Theme.positiveTextColor;
-        case "highlight": return Kirigami.Theme.highlightColor;
-        case "neutral": return Kirigami.Theme.neutralTextColor;
-        case "negative": return Kirigami.Theme.negativeTextColor;
-        default: return Kirigami.Theme.textColor;
-        }
-    }
-
     ColumnLayout {
         width: parent.width
         spacing: Kirigami.Units.largeSpacing
 
-        // Welcome view when no config exists (§9.1)
+        // Welcome view when no config exists
         ColumnLayout {
             id: welcomeView
             objectName: "welcomeView"
@@ -142,7 +132,7 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // Populated overview (§7.1)
+        // Populated overview
         ColumnLayout {
             id: overviewContent
             objectName: "overviewContent"
@@ -167,7 +157,7 @@ Kirigami.ScrollablePage {
 
                 Kirigami.Icon {
                     source: appBackend.overall_icon !== "" ? appBackend.overall_icon : "state-ok"
-                    color: page.iconColorFor(appBackend.overall_color_kind)
+                    color: rootWindow.iconColorFor(appBackend.overall_color_kind, page.Kirigami.Theme)
                     Layout.preferredWidth: Kirigami.Units.iconSizes.large
                     Layout.preferredHeight: Kirigami.Units.iconSizes.large
                 }
@@ -207,7 +197,6 @@ Kirigami.ScrollablePage {
             }
 
             Kirigami.CardsLayout {
-                id: backupCardsLayout
                 objectName: "overviewCardsLayout"
                 Layout.fillWidth: true
 
@@ -226,22 +215,16 @@ Kirigami.ScrollablePage {
                         required property string statusText
                         required property string statusIcon
                         required property string statusColorKind
-                        required property string lastRunSummary
                         required property string availabilityReason
                         required property bool available
                         required property bool hasError
-                        required property bool isOverdue
                         required property bool isRunning
                         required property string activeRunId
                         required property double activePercent
                         required property string activeProgressText
                         required property bool activeScanning
                         required property string errorAction
-                        required property string errorSummary
                         required property string nextScheduledAtText
-                        required property bool isPaused
-                        required property string pausedLine
-                        required property string pendingPrimaryReason
                         required property string pendingReasonsTooltip
 
                         showClickFeedback: true
@@ -253,14 +236,8 @@ Kirigami.ScrollablePage {
                             rootWindow.openBackupDetailById(card.backupId);
                         }
 
-                        Rectangle {
-                            anchors.fill: parent
-                            z: 10
-                            color: "transparent"
-                            radius: Kirigami.Units.cornerRadius
-                            border.width: (card.activeFocus || card.visualFocus) ? 2 : 0
-                            border.color: Kirigami.Theme.highlightColor
-                            visible: border.width > 0
+                        FocusRing {
+                            target: card
                         }
 
                         contentItem: ColumnLayout {
@@ -307,7 +284,7 @@ Kirigami.ScrollablePage {
 
                                     Kirigami.Icon {
                                         source: card.statusIcon
-                                        color: page.iconColorFor(card.statusColorKind)
+                                        color: rootWindow.iconColorFor(card.statusColorKind, page.Kirigami.Theme)
                                         Layout.preferredWidth: Kirigami.Units.iconSizes.small
                                         Layout.preferredHeight: Kirigami.Units.iconSizes.small
                                     }

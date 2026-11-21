@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import QtQuick
+import org.kde.kirigami as Kirigami
+
+// Base of the editor pages with unsaved changes: reports `dirty` to the backend, asks
+// «Save changes?» before leaving and closes the open dialogs one by one on Escape. A page
+// binds `dirty`, sets the dialog texts, lists its own dialogs in `extraDialogs` and
+// handles `unsavedSaveRequested` / `unsavedDiscardRequested`.
+Kirigami.ScrollablePage {
+    id: editor
+
+    required property var rootWindow
+    required property var appBackend
+
+    property bool dirty: false
+    property string unsavedObjectName: ""
+    property string unsavedSubtitle: ""
+    // Dialogs of the page that Escape closes before the «Save changes?» prompt.
+    property var extraDialogs: []
+
+    signal unsavedSaveRequested()
+    signal unsavedDiscardRequested()
+
+    onDirtyChanged: appBackend.has_unsaved_changes = dirty
+
+    onBackRequested: function(event) {
+        if (dirty) {
+            event.accepted = true;
+            unsavedDialogItem.open();
+        }
+    }
+
+    // Closes the page, asking «Save changes?» first when it has unsaved changes.
+    function requestClose() {
+        if (dirty) {
+            unsavedDialogItem.open();
+        } else {
+            rootWindow.popSubPage();
+        }
+    }
+
+    // Saves for the navigation guard; true when the page is clean afterwards. A page
+    // that can be dirty overrides it.
+    function saveForGuard() {
+        return false;
+    }
+
+    function handleEscape() {
+        for (const dlg of extraDialogs.concat([unsavedDialogItem])) {
+            if (rootWindow.closeIfOpen(dlg)) return true;
+        }
+        if (dirty) {
+            unsavedDialogItem.open();
+            return true;
+        }
+        return false;
+    }
+
+    UnsavedChangesDialog {
+        id: unsavedDialogItem
+        objectName: editor.unsavedObjectName
+        subtitle: editor.unsavedSubtitle
+        onSaveRequested: editor.unsavedSaveRequested()
+        onDiscardRequested: {
+            editor.appBackend.has_unsaved_changes = false;
+            editor.unsavedDiscardRequested();
+        }
+    }
+}

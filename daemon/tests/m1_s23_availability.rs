@@ -3,17 +3,15 @@
 
 mod common;
 
+use common::tools::RestServerGuard;
 use common::{
-    RestServerGuard, fetch_dbusmenu_items, find_kestic_binary, restic_test_binaries,
-    run_isolated_test, start_fake_notifications, start_fake_sni_watcher, wait_for_file,
-    wait_for_sni_service,
+    fetch_dbusmenu_items, restic_test_binaries, run_isolated_test, sandbox_run_config,
+    start_fake_notifications, start_fake_sni_watcher, wait_for_file, wait_for_sni_service,
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{Backup, Destination, DestinationKind, ResticProvider, Source};
-use kestic_core::secrets::FileSecretStore;
-use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, KesticClient};
-use kestic_daemon::service::{DaemonCore, DaemonOutcome, DaemonRunConfig, run_daemon};
+use kestic_daemon::service::{DaemonCore, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
 use std::fs;
 use std::sync::Arc;
@@ -33,8 +31,8 @@ fn ac_m1_23_3_daemon_core_availability_cache_respects_60s_fake_clock_ttl() {
             let port = server.port;
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
-            let state_dir = root.join("state").join("kestic");
-            let secret_file = root.join("secrets.hex");
+            let _state_dir = root.join("state").join("kestic");
+            let _secret_file = root.join("secrets.hex");
             let src_dir = root.join("src");
             fs::create_dir_all(&src_dir).expect("mkdir src");
 
@@ -63,15 +61,9 @@ fn ac_m1_23_3_daemon_core_availability_cache_respects_60s_fake_clock_ttl() {
 
             let clock = Arc::new(FakeClock::new(datetime!(2026-11-16 12:00:00 UTC)));
             let run_cfg = DaemonRunConfig {
-                config_path: Some(cfg_path),
-                state_dir: Some(state_dir),
-                kestic_binary: Some(find_kestic_binary()),
+                ready_file: None,
                 clock: clock.clone(),
-                secret_store: Some(Arc::new(FileSecretStore::new(secret_file))),
-                suppress_ui_spawn: true,
-                enable_job_view: false,
-                enable_portal_inhibit: false,
-                ..Default::default()
+                ..sandbox_run_config(root)
             };
 
             let mut core = DaemonCore::new(&run_cfg).expect("DaemonCore::new");
@@ -144,25 +136,16 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
             let clock = Arc::new(FakeClock::new(datetime!(2026-11-16 14:00:00 UTC)));
             let ready_file = root.join("daemon.ready");
             let run_cfg = DaemonRunConfig {
-                bus_name: KESTIC_BUS_NAME.to_string(),
                 assume_sni_available: false,
-                ready_file: Some(ready_file.clone()),
-                config_path: Some(root.join("cfg").join("kestic").join("config.toml")),
-                state_dir: Some(root.join("state").join("kestic")),
-                kestic_binary: Some(find_kestic_binary()),
                 clock: clock.clone(),
-                secret_store: Some(Arc::new(FileSecretStore::new(root.join("secrets.hex")))),
-                suppress_ui_spawn: true,
-                enable_job_view: false,
-                enable_portal_inhibit: false,
-                ..Default::default()
+                ..sandbox_run_config(root)
             };
 
             let handle = thread::spawn(move || run_daemon(run_cfg));
             wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
 
-            let client = KesticClient::connect_default().expect("connect client");
+            let client = common::connect_default_client().expect("connect client");
             client
                 .set_restic_provider(&ResticProvider::Custom { path: restic_bin })
                 .expect("set provider");
@@ -277,11 +260,7 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
                 "tray menu item must be disabled when source is unavailable"
             );
 
-            client.confirm_quit().expect("confirm quit");
-            assert_eq!(
-                handle.join().expect("join daemon"),
-                Ok(DaemonOutcome::RanAndStopped)
-            );
+            common::stop_daemon(&client, handle);
         },
     );
 }

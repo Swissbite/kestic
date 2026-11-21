@@ -6,13 +6,107 @@
 
 use super::{dbus_error_text, qobject};
 use crate::state_cache::{
-    daemon_unavailable_text, format_retention_summary, make_client, shared_state, tr_text,
+    daemon_unavailable_text, format_retention_summary, json_or, make_client, shared_state, tr_text,
 };
 use cxx_qt_lib::QString;
 use kestic_core::model::{ExcludeRules, RetentionPolicy, normalize_folder_rule};
+use kestic_core::sync::LockUnpoisoned;
+use kestic_daemon::dbus_api::{KesticClient, KesticDbusError, PreviewStatusDto};
+use serde::Serialize;
 use std::env;
 use std::path::PathBuf;
 use std::pin::Pin;
+
+type Setter = fn(Pin<&mut qobject::KesticApp>, QString);
+
+/// The properties through which one kind of preview reports to QML.
+struct PreviewSlots {
+    id: Setter,
+    state: Setter,
+    result_json: Setter,
+    error: Setter,
+}
+
+const DRY_RUN: PreviewSlots = PreviewSlots {
+    id: qobject::KesticApp::set_dry_run_preview_id,
+    state: qobject::KesticApp::set_dry_run_state,
+    result_json: qobject::KesticApp::set_dry_run_result_json,
+    error: qobject::KesticApp::set_dry_run_error,
+};
+
+const RETENTION: PreviewSlots = PreviewSlots {
+    id: qobject::KesticApp::set_retention_preview_id,
+    state: qobject::KesticApp::set_retention_preview_state,
+    result_json: qobject::KesticApp::set_retention_preview_result_json,
+    error: qobject::KesticApp::set_retention_preview_error,
+};
+
+impl qobject::KesticApp {
+    /// Puts the preview into the error state with `text`.
+    fn preview_failed(mut self: Pin<&mut Self>, slots: &PreviewSlots, text: &str) {
+        (slots.state)(self.as_mut(), QString::from("error"));
+        (slots.error)(self.as_mut(), QString::from(text));
+    }
+
+    /// Starts a preview with `start`; returns its id, or an empty string after a failure.
+    fn start_preview(
+        mut self: Pin<&mut Self>,
+        slots: &PreviewSlots,
+        start: impl FnOnce(&KesticClient) -> zbus::Result<String>,
+    ) -> QString {
+        let Ok(client) = make_client() else {
+            self.as_mut()
+                .preview_failed(slots, &daemon_unavailable_text());
+            return QString::from("");
+        };
+        (slots.result_json)(self.as_mut(), QString::from(""));
+        (slots.error)(self.as_mut(), QString::from(""));
+        match start(&client) {
+            Ok(preview_id) => {
+                (slots.id)(self.as_mut(), QString::from(&preview_id));
+                (slots.state)(self.as_mut(), QString::from("running"));
+                QString::from(&preview_id)
+            }
+            Err(err) => {
+                self.preview_failed(slots, &dbus_error_text(&err));
+                QString::from("")
+            }
+        }
+    }
+
+    /// Fetches the status of a preview with `fetch`, publishes it and returns it as JSON.
+    fn poll_preview<T: Serialize>(
+        mut self: Pin<&mut Self>,
+        slots: &PreviewSlots,
+        preview_id: &QString,
+        fetch: impl FnOnce(&KesticClient, &str) -> Result<PreviewStatusDto<T>, KesticDbusError>,
+    ) -> QString {
+        let pid = preview_id.to_string();
+        if pid.is_empty() {
+            return QString::from("");
+        }
+        let Ok(client) = make_client() else {
+            return QString::from("");
+        };
+        match fetch(&client, &pid) {
+            Ok(status) => {
+                (slots.state)(self.as_mut(), QString::from(&status.state));
+                if let Some(ref res) = status.result {
+                    (slots.result_json)(self.as_mut(), QString::from(&json_or(res, "{}")));
+                }
+                if let Some(kind) = status.error_kind {
+                    let text = tr_text(&kind.text(status.error_detail.as_deref()));
+                    (slots.error)(self.as_mut(), QString::from(&text));
+                }
+                QString::from(&json_or(&status, "{}"))
+            }
+            Err(err) => {
+                self.preview_failed(slots, &dbus_error_text(&err));
+                QString::from("")
+            }
+        }
+    }
+}
 
 impl qobject::KesticApp {
     pub fn format_exclude_rule_for_item(&self, item_path: &QString) -> QString {
@@ -20,9 +114,7 @@ impl qobject::KesticApp {
             return QString::from("");
         };
         match client.format_exclude_rule_for_item(item_path.to_string().trim()) {
-            Ok(dto) => {
-                QString::from(&serde_json::to_string(&dto).unwrap_or_else(|_| "{}".to_string()))
-            }
+            Ok(dto) => QString::from(&json_or(&dto, "{}")),
             Err(_) => QString::from(""),
         }
     }
@@ -35,9 +127,7 @@ impl qobject::KesticApp {
             return QString::from("[]");
         };
         match client.lint_excludes(&excludes) {
-            Ok(warnings) => QString::from(
-                &serde_json::to_string(&warnings).unwrap_or_else(|_| "[]".to_string()),
-            ),
+            Ok(warnings) => QString::from(&json_or(&warnings, "[]")),
             Err(_) => QString::from("[]"),
         }
     }
@@ -55,9 +145,7 @@ impl qobject::KesticApp {
             return QString::from("");
         };
         match client.test_exclude_path(&backup_id.to_string(), &excludes, &test_path.to_string()) {
-            Ok(res) => {
-                QString::from(&serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string()))
-            }
+            Ok(res) => QString::from(&json_or(&res, "{}")),
             Err(_) => QString::from(""),
         }
     }
@@ -86,66 +174,22 @@ impl qobject::KesticApp {
             match serde_json::from_str::<ExcludeRules>(&excludes_json.to_string()) {
                 Ok(e) => Some(e),
                 Err(err) => {
-                    self.as_mut().set_dry_run_state(QString::from("error"));
-                    self.as_mut()
-                        .set_dry_run_error(QString::from(&err.to_string()));
+                    self.as_mut().preview_failed(&DRY_RUN, &err.to_string());
                     return QString::from("");
                 }
             }
         };
-        let Ok(client) = make_client() else {
-            self.as_mut().set_dry_run_state(QString::from("error"));
-            self.as_mut()
-                .set_dry_run_error(QString::from(&daemon_unavailable_text()));
-            return QString::from("");
-        };
-        self.as_mut().set_dry_run_result_json(QString::from(""));
-        self.as_mut().set_dry_run_error(QString::from(""));
-        match client.start_backup_dry_run(&backup_id.to_string(), excludes_opt.as_ref()) {
-            Ok(preview_id) => {
-                self.as_mut()
-                    .set_dry_run_preview_id(QString::from(&preview_id));
-                self.as_mut().set_dry_run_state(QString::from("running"));
-                QString::from(&preview_id)
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().set_dry_run_state(QString::from("error"));
-                self.as_mut().set_dry_run_error(QString::from(&msg));
-                QString::from("")
-            }
-        }
+        self.start_preview(&DRY_RUN, |client| {
+            client.start_backup_dry_run(&backup_id.to_string(), excludes_opt.as_ref())
+        })
     }
 
-    pub fn poll_backup_dry_run(mut self: Pin<&mut Self>, preview_id: &QString) -> QString {
-        let pid = preview_id.to_string();
-        if pid.is_empty() {
-            return QString::from("");
-        }
-        let Ok(client) = make_client() else {
-            return QString::from("");
-        };
-        match client.get_backup_dry_run_status(&pid) {
-            Ok(status) => {
-                self.as_mut()
-                    .set_dry_run_state(QString::from(&status.state));
-                if let Some(ref res) = status.result {
-                    let rjson = serde_json::to_string(res).unwrap_or_else(|_| "{}".to_string());
-                    self.as_mut().set_dry_run_result_json(QString::from(&rjson));
-                }
-                if let Some(kind) = status.error_kind {
-                    let text = tr_text(&kind.text(status.error_detail.as_deref()));
-                    self.as_mut().set_dry_run_error(QString::from(&text));
-                }
-                QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
-            }
-            Err(err) => {
-                self.as_mut().set_dry_run_state(QString::from("error"));
-                self.as_mut()
-                    .set_dry_run_error(QString::from(&dbus_error_text(&err)));
-                QString::from("")
-            }
-        }
+    pub fn poll_backup_dry_run(self: Pin<&mut Self>, preview_id: &QString) -> QString {
+        self.poll_preview(
+            &DRY_RUN,
+            preview_id,
+            KesticClient::get_backup_dry_run_status,
+        )
     }
 
     pub fn cancel_backup_dry_run(mut self: Pin<&mut Self>, preview_id: &QString) {
@@ -165,7 +209,7 @@ impl qobject::KesticApp {
             "long" => RetentionPolicy::long(),
             _ => RetentionPolicy::standard(),
         };
-        QString::from(&serde_json::to_string(&policy).unwrap_or_else(|_| "{}".to_string()))
+        QString::from(&json_or(&policy, "{}"))
     }
 
     pub fn format_retention_summary_json(&self, retention_json: &QString) -> QString {
@@ -184,74 +228,21 @@ impl qobject::KesticApp {
         let retention = match serde_json::from_str::<RetentionPolicy>(&retention_json.to_string()) {
             Ok(r) => r,
             Err(err) => {
-                self.as_mut()
-                    .set_retention_preview_state(QString::from("error"));
-                self.as_mut()
-                    .set_retention_preview_error(QString::from(&err.to_string()));
+                self.as_mut().preview_failed(&RETENTION, &err.to_string());
                 return QString::from("");
             }
         };
-        let Ok(client) = make_client() else {
-            self.as_mut()
-                .set_retention_preview_state(QString::from("error"));
-            self.as_mut()
-                .set_retention_preview_error(QString::from(&daemon_unavailable_text()));
-            return QString::from("");
-        };
-        self.as_mut()
-            .set_retention_preview_result_json(QString::from(""));
-        self.as_mut().set_retention_preview_error(QString::from(""));
-        match client.start_retention_preview(&backup_id.to_string(), &retention) {
-            Ok(preview_id) => {
-                self.as_mut()
-                    .set_retention_preview_id(QString::from(&preview_id));
-                self.as_mut()
-                    .set_retention_preview_state(QString::from("running"));
-                QString::from(&preview_id)
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut()
-                    .set_retention_preview_state(QString::from("error"));
-                self.as_mut()
-                    .set_retention_preview_error(QString::from(&msg));
-                QString::from("")
-            }
-        }
+        self.start_preview(&RETENTION, |client| {
+            client.start_retention_preview(&backup_id.to_string(), &retention)
+        })
     }
 
-    pub fn poll_retention_preview(mut self: Pin<&mut Self>, preview_id: &QString) -> QString {
-        let pid = preview_id.to_string();
-        if pid.is_empty() {
-            return QString::from("");
-        }
-        let Ok(client) = make_client() else {
-            return QString::from("");
-        };
-        match client.get_retention_preview_status(&pid) {
-            Ok(status) => {
-                self.as_mut()
-                    .set_retention_preview_state(QString::from(&status.state));
-                if let Some(ref res) = status.result {
-                    let rjson = serde_json::to_string(res).unwrap_or_else(|_| "{}".to_string());
-                    self.as_mut()
-                        .set_retention_preview_result_json(QString::from(&rjson));
-                }
-                if let Some(kind) = status.error_kind {
-                    let text = tr_text(&kind.text(status.error_detail.as_deref()));
-                    self.as_mut()
-                        .set_retention_preview_error(QString::from(&text));
-                }
-                QString::from(&serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string()))
-            }
-            Err(err) => {
-                self.as_mut()
-                    .set_retention_preview_state(QString::from("error"));
-                self.as_mut()
-                    .set_retention_preview_error(QString::from(&dbus_error_text(&err)));
-                QString::from("")
-            }
-        }
+    pub fn poll_retention_preview(self: Pin<&mut Self>, preview_id: &QString) -> QString {
+        self.poll_preview(
+            &RETENTION,
+            preview_id,
+            KesticClient::get_retention_preview_status,
+        )
     }
 
     pub fn cancel_retention_preview(mut self: Pin<&mut Self>, preview_id: &QString) {
@@ -270,20 +261,18 @@ impl qobject::KesticApp {
         self.as_mut().set_maintenance_preview_loading(true);
         self.as_mut().set_last_action_error(QString::from(""));
         {
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             guard.maintenance_preview = None;
         }
         std::thread::spawn(move || {
             let outcome = match make_client() {
                 Ok(client) => match client.preview_destination_maintenance(&dest) {
-                    Ok(summary) => {
-                        Ok(serde_json::to_string(&summary).unwrap_or_else(|_| "{}".to_string()))
-                    }
+                    Ok(summary) => Ok(json_or(&summary, "{}")),
                     Err(err) => Err(dbus_error_text(&err)),
                 },
                 Err(_) => Err(daemon_unavailable_text()),
             };
-            let mut guard = shared_state().lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = shared_state().lock_unpoisoned();
             guard.maintenance_preview = Some((dest, outcome));
         });
     }
@@ -293,9 +282,7 @@ impl qobject::KesticApp {
             return QString::from("");
         };
         match client.detect_source(path.to_string().trim()) {
-            Ok(src) => {
-                QString::from(&serde_json::to_string(&src).unwrap_or_else(|_| "{}".to_string()))
-            }
+            Ok(src) => QString::from(&json_or(&src, "{}")),
             Err(_) => QString::from(""),
         }
     }
@@ -314,9 +301,7 @@ impl qobject::KesticApp {
             candidate_path.to_string().trim(),
             destination_id.to_string().trim(),
         ) {
-            Ok(conflicts) => QString::from(
-                &serde_json::to_string(&conflicts).unwrap_or_else(|_| "[]".to_string()),
-            ),
+            Ok(conflicts) => QString::from(&json_or(&conflicts, "[]")),
             Err(_) => QString::from("[]"),
         }
     }

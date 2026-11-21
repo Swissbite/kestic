@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! D-Bus single-instance lock for the Kestic daemon (F14, AC-M0-07-1, AC-M1-09-1).
+//! D-Bus single-instance lock for the Kestic daemon.
 //!
 //! Claims the session bus name `net.daester.Kestic` with `DO_NOT_QUEUE` and
 //! without `ALLOW_REPLACEMENT` or `REPLACE_EXISTING` so a second daemon

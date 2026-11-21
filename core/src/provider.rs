@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Restic binary discovery and version checking (`ResticProvider`, `FR-33`, `NFR-05`, `P31`, `M1-S04`).
+//! Restic binary discovery and version checking (`ResticProvider`).
 
 use crate::model::ResticProvider;
 use semver::Version;
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use thiserror::Error;
 
-/// Minimum supported restic version (`FR-33`, `NFR-05`).
+/// Minimum supported restic version.
 pub const MIN_RESTIC_VERSION: Version = Version::new(0, 18, 0);
 
 /// Successfully resolved and validated restic binary.
@@ -87,7 +87,7 @@ pub fn validate_executable_path(path: &Path) -> Result<(), ResticProviderError> 
     Ok(())
 }
 
-/// Probes `binary` via `restic version --json` and falls back to plain-text `restic version` (`P31`).
+/// Probes `binary` via `restic version --json` and falls back to plain-text `restic version`.
 pub fn check_binary_version(binary: &Path) -> Result<ResolvedRestic, ResticProviderError> {
     validate_executable_path(binary)?;
 

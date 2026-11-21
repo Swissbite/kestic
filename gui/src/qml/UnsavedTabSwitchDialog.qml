@@ -4,7 +4,7 @@
 import QtQuick
 import org.kde.kirigami as Kirigami
 
-// Guards every navigation that would leave a dirty editor (AC-M3-14-9).
+// Guards every navigation that would leave a dirty editor.
 UnsavedChangesDialog {
     id: dialog
     objectName: "unsavedTabSwitchDialog"

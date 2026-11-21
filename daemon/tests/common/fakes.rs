@@ -116,7 +116,6 @@ pub struct FakeNmState {
     pub state: u32,
     pub metered: u32,
     pub active_connections: Vec<OwnedObjectPath>,
-    pub known_ids: Vec<String>,
 }
 
 pub struct FakeNetworkManager {
@@ -237,7 +236,6 @@ impl FakeNetworkManagerHandle {
             state: if connected { 70 } else { 20 },
             metered: if metered { 1 } else { 2 },
             active_connections,
-            known_ids: known_networks.iter().map(|s| s.to_string()).collect(),
         }));
         let active_id = Arc::new(Mutex::new(active_id_str));
 
@@ -517,9 +515,14 @@ pub struct FakeJobViewRecorder {
     /// `(processedBytes, totalBytes, speed)` of every `update`, in the order of `updates`.
     pub sizes: Mutex<Vec<(u64, u64, u64)>>,
     pub terminated: AtomicBool,
-    pub terminate_code: AtomicU32,
     /// Every `terminate(error_code, error_message, ..)` call in arrival order.
     pub terminations: Mutex<Vec<(u32, String)>>,
+    /// `immediate` hint of the last `requestView`.
+    pub immediate: AtomicBool,
+    /// D-Bus sender (unique name) of the last `requestView`, `update` and `terminate` call.
+    pub request_sender: Mutex<String>,
+    pub update_sender: Mutex<String>,
+    pub terminate_sender: Mutex<String>,
 }
 
 struct FakeJobViewServerV2 {
@@ -532,10 +535,17 @@ impl FakeJobViewServerV2 {
     #[zbus(name = "requestView")]
     fn request_view(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         desktop_entry: &str,
         capabilities: i32,
-        _hints: HashMap<String, OwnedVariant>,
+        hints: HashMap<String, OwnedVariant>,
     ) -> OwnedObjectPath {
+        if let Some(sender) = hdr.sender() {
+            *self.recorder.request_sender.lock().expect("lock") = sender.to_string();
+        }
+        if let Some(imm) = hints.get("immediate").and_then(|v| bool::try_from(v).ok()) {
+            self.recorder.immediate.store(imm, Ordering::SeqCst);
+        }
         self.recorder.request_count.fetch_add(1, Ordering::SeqCst);
         *self.recorder.desktop_entry.lock().expect("lock") = desktop_entry.to_string();
         self.recorder
@@ -552,7 +562,14 @@ struct FakeJobViewV3 {
 #[interface(name = "org.kde.JobViewV3")]
 impl FakeJobViewV3 {
     #[zbus(name = "update")]
-    fn update(&self, properties: HashMap<String, OwnedVariant>) {
+    fn update(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        properties: HashMap<String, OwnedVariant>,
+    ) {
+        if let Some(sender) = hdr.sender() {
+            *self.recorder.update_sender.lock().expect("lock") = sender.to_string();
+        }
         let pct = properties
             .get("percent")
             .and_then(|v| u32::try_from(v).ok())
@@ -579,18 +596,19 @@ impl FakeJobViewV3 {
     #[zbus(name = "terminate")]
     fn terminate(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         error_code: u32,
         error_message: &str,
         _hints: HashMap<String, OwnedVariant>,
     ) {
+        if let Some(sender) = hdr.sender() {
+            *self.recorder.terminate_sender.lock().expect("lock") = sender.to_string();
+        }
         self.recorder
             .terminations
             .lock()
             .expect("lock")
             .push((error_code, error_message.to_string()));
-        self.recorder
-            .terminate_code
-            .store(error_code, Ordering::SeqCst);
         self.recorder.terminated.store(true, Ordering::SeqCst);
     }
 
@@ -654,6 +672,7 @@ pub struct FakePortalRecorder {
     pub inhibit_count: AtomicU32,
     pub last_flags: AtomicU32,
     pub closed_count: AtomicU32,
+    pub last_reason: Mutex<String>,
 }
 
 struct FakePortalInhibit {
@@ -667,10 +686,13 @@ impl FakePortalInhibit {
         &self,
         _window: &str,
         flags: u32,
-        _options: HashMap<String, OwnedVariant>,
+        options: HashMap<String, OwnedVariant>,
     ) -> OwnedObjectPath {
         self.recorder.inhibit_count.fetch_add(1, Ordering::SeqCst);
         self.recorder.last_flags.store(flags, Ordering::SeqCst);
+        if let Some(reason) = options.get("reason").and_then(|v| <&str>::try_from(v).ok()) {
+            *self.recorder.last_reason.lock().expect("lock") = reason.to_string();
+        }
         self.req_path.clone()
     }
 }

@@ -1,22 +1,19 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! M3-S08 monitoring: notifications per event (F3), tray status and progress without GUI, and
+//! M3-S08 monitoring: notifications per event, tray status and progress without GUI, and
 //! "Back up all" with skipped backups (`AC-M3-08-1`, `-2`, `-4`, `-6`).
 
 mod common;
 
-use common::fakes::{FakeNetworkManagerHandle, FakeUPowerHandle};
 use common::m3::{
-    LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, add_local_backup,
-    backup_summary, latest_variant, notifications_for, restic_variants, settle, spawn_m3_daemon,
-    wait_for_notifications, wait_for_state,
+    LocalBackupFixture, M3Rig, StdFakes, backup_summary, latest_variant, notifications_for,
+    restic_variants, settle, wait_for_notifications, wait_for_state,
 };
 use common::{
-    NotificationCapture, click_dbusmenu_item, fetch_dbusmenu_items, read_sni_string_prop,
-    read_sni_tooltip, run_isolated_test, start_fake_notifications, start_fake_sni_watcher,
+    click_dbusmenu_item, fetch_dbusmenu_items, read_sni_string_prop, read_sni_tooltip,
+    run_isolated_test,
 };
-use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
 use kestic_core::model::{NotificationSettings, RunStatus, Schedule};
 use kestic_core::restic::SECRET_KIND_REPO;
@@ -25,7 +22,6 @@ use kestic_i18n::messages::UiText;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use time::macros::datetime;
@@ -33,35 +29,10 @@ use time::macros::datetime;
 /// 2026-12-01 11:59:30 Europe/Zurich.
 const BEFORE_SLOT: OffsetDateTime = datetime!(2026-12-01 10:59:30 UTC);
 
-struct Rig {
-    daemon: M3Daemon,
-    clock: Arc<FakeClock>,
-    wrapper: ResticWrapper,
-    root: std::path::PathBuf,
-    sub: String,
-}
-
-fn start_rig(root: &Path, variant: &ResticVariant, base: &str, scheduler: bool) -> Rig {
-    let sub = variant.sub(base);
-    let wrapper = ResticWrapper::create(&root.join(&sub).join("wrapper"), &variant.bin);
-    let clock = Arc::new(FakeClock::new(BEFORE_SLOT));
-    let bus = variant.bus_name(base);
-    let mut opts = M3DaemonOpts::new(&sub, &bus, &wrapper.path, Arc::clone(&clock) as _);
-    opts.enable_scheduler = scheduler;
-    let daemon = spawn_m3_daemon(root, opts);
-    Rig {
-        daemon,
-        clock,
-        wrapper,
-        root: root.to_path_buf(),
-        sub,
-    }
-}
-
-impl Rig {
+impl M3Rig {
     /// Manual-only backup without run conditions (so it starts regardless of power/network).
     fn add_manual(&self, name: &str) -> LocalBackupFixture {
-        add_local_backup(&self.daemon.client, &self.root, &self.sub, name, |b| {
+        self.add_backup(name, |b| {
             b.schedule = Schedule::ManualOnly;
             b.run_conditions.require_ac_power = false;
             b.run_conditions.require_network = false;
@@ -83,25 +54,6 @@ impl Rig {
             },
         );
     }
-}
-
-fn start_fakes(
-    on_battery: bool,
-) -> (
-    Arc<NotificationCapture>,
-    zbus::Connection,
-    zbus::Connection,
-    FakeUPowerHandle,
-    FakeNetworkManagerHandle,
-) {
-    let (nc, notif) = start_fake_notifications();
-    (
-        notif,
-        nc,
-        start_fake_sni_watcher(),
-        FakeUPowerHandle::start(on_battery, 70.0),
-        FakeNetworkManagerHandle::start(true, false, Some("Heim"), &["Heim"]),
-    )
 }
 
 /// Short wait (one scheduler tick plus async notification dispatch) before asserting an exact count.
@@ -136,7 +88,7 @@ fn wait_tooltip(
     }
 }
 
-/// AC-M3-08-1 (FR-12, F3): under default settings (a) `Fehler`, `Warnung` and "überfällig" each
+/// AC-M3-08-1 (FR-12): under default settings (a) `Fehler`, `Warnung` and "überfällig" each
 /// produce exactly one notification, (b) `ok` produces none but a tray state and a history entry.
 #[test]
 fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() {
@@ -144,13 +96,16 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
         "ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never",
         "KESTIC_M3_08_1_INNER",
         |root| {
-            let (notif, _nc, sni, _upower, _nm) = start_fakes(true);
+            let fakes = StdFakes::start_with_power(true, 70.0);
+            let (notif, sni) = (&fakes.notif, &fakes.sni_conn);
             for variant in restic_variants() {
                 notif.clear();
-                let rig = start_rig(root, &variant, "M3M1", true);
+                let rig = M3Rig::start(root, &variant, "M3M1", BEFORE_SLOT, |opts| {
+                    opts.enable_scheduler = true
+                });
                 let client = &rig.daemon.client;
                 let sni_service =
-                    common::wait_for_sni_service_at(&sni, variant.index, Duration::from_secs(5));
+                    common::wait_for_sni_service_at(sni, variant.index, Duration::from_secs(5));
 
                 // (b) ok: no notification, but tray state and history entry.
                 let ok_fx = rig.add_manual("OkBk");
@@ -179,10 +134,10 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
                 let warn_fx = rig.add_manual("WarnBk");
                 let bad = make_unreadable_file(&warn_fx.src_dir);
                 rig.run_to(&warn_fx, RunStatus::Warning);
-                wait_for_notifications(&notif, "BackupWarning", 1, Duration::from_secs(5));
+                wait_for_notifications(notif, "BackupWarning", 1, Duration::from_secs(5));
                 short_settle();
                 assert_eq!(
-                    notifications_for(&notif, "BackupWarning").len(),
+                    notifications_for(notif, "BackupWarning").len(),
                     1,
                     "{}: (a) exactly one warning notification",
                     variant.label
@@ -199,19 +154,17 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
                     )
                     .expect("wrong password");
                 rig.run_to(&err_fx, RunStatus::Error);
-                wait_for_notifications(&notif, "BackupFailed", 1, Duration::from_secs(5));
+                wait_for_notifications(notif, "BackupFailed", 1, Duration::from_secs(5));
                 short_settle();
                 assert_eq!(
-                    notifications_for(&notif, "BackupFailed").len(),
+                    notifications_for(notif, "BackupFailed").len(),
                     1,
                     "{}: (a) exactly one error notification",
                     variant.label
                 );
 
                 // (a) overdue: scheduled backup on battery misses two slots -> exactly one notification.
-                let late_id = add_local_backup(client, root, &rig.sub, "LateBk", |_| {})
-                    .backup
-                    .id;
+                let late_id = rig.add_backup("LateBk", |_| {}).backup.id;
                 rig.clock.set(datetime!(2026-12-01 11:00:05 UTC));
                 wait_for_state(client, Duration::from_secs(10), "late pending", |s| {
                     backup_summary(s, &late_id)
@@ -220,10 +173,10 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
                         == Some("on_battery")
                 });
                 rig.clock.set(datetime!(2026-12-02 11:00:05 UTC));
-                wait_for_notifications(&notif, "BackupOverdue", 1, Duration::from_secs(10));
+                wait_for_notifications(notif, "BackupOverdue", 1, Duration::from_secs(10));
                 settle();
                 assert_eq!(
-                    notifications_for(&notif, "BackupOverdue").len(),
+                    notifications_for(notif, "BackupOverdue").len(),
                     1,
                     "{}: (a) exactly one overdue notification",
                     variant.label
@@ -241,7 +194,7 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
     );
 }
 
-/// AC-M3-08-2 (F3): with the event kind "Warnung" switched off, a run ending with Exit 3
+/// AC-M3-08-2: with the event kind "Warnung" switched off, a run ending with Exit 3
 /// (a) raises no notification and (b) still shows `Warnung` in history and tray.
 #[test]
 fn ac_m3_08_2_disabled_warning_notification_still_shows_warning_in_history_and_tray() {
@@ -249,13 +202,16 @@ fn ac_m3_08_2_disabled_warning_notification_still_shows_warning_in_history_and_t
         "ac_m3_08_2_disabled_warning_notification_still_shows_warning_in_history_and_tray",
         "KESTIC_M3_08_2_INNER",
         |root| {
-            let (notif, _nc, sni, _upower, _nm) = start_fakes(false);
+            let fakes = StdFakes::start_with_power(false, 70.0);
+            let (notif, sni) = (&fakes.notif, &fakes.sni_conn);
             for variant in restic_variants() {
                 notif.clear();
-                let rig = start_rig(root, &variant, "M3M2", true);
+                let rig = M3Rig::start(root, &variant, "M3M2", BEFORE_SLOT, |opts| {
+                    opts.enable_scheduler = true
+                });
                 let client = &rig.daemon.client;
                 let sni_service =
-                    common::wait_for_sni_service_at(&sni, variant.index, Duration::from_secs(5));
+                    common::wait_for_sni_service_at(sni, variant.index, Duration::from_secs(5));
                 client
                     .update_settings(
                         2,
@@ -322,13 +278,16 @@ fn ac_m3_08_4_scheduled_run_without_gui_shows_tray_progress_and_lands_in_history
         "ac_m3_08_4_scheduled_run_without_gui_shows_tray_progress_and_lands_in_history",
         "KESTIC_M3_08_4_INNER",
         |root| {
-            let (_notif, _nc, sni, _upower, _nm) = start_fakes(false);
+            let fakes = StdFakes::start_with_power(false, 70.0);
+            let (_notif, sni) = (&fakes.notif, &fakes.sni_conn);
             for variant in restic_variants() {
-                let rig = start_rig(root, &variant, "M3M4", true);
+                let rig = M3Rig::start(root, &variant, "M3M4", BEFORE_SLOT, |opts| {
+                    opts.enable_scheduler = true
+                });
                 let client = &rig.daemon.client;
                 let sni_service =
-                    common::wait_for_sni_service_at(&sni, variant.index, Duration::from_secs(5));
-                let fx = add_local_backup(client, root, &rig.sub, "Docs", |_| {});
+                    common::wait_for_sni_service_at(sni, variant.index, Duration::from_secs(5));
+                let fx = rig.add_backup("Docs", |_| {});
                 rig.wrapper.hold("backup");
 
                 // No GUI is registered and no window is active; the scheduler starts the run.
@@ -402,12 +361,15 @@ fn ac_m3_08_6_back_up_all_starts_only_valid_backup_and_reports_skipped_with_reas
         "ac_m3_08_6_back_up_all_starts_only_valid_backup_and_reports_skipped_with_reason",
         "KESTIC_M3_08_6_INNER",
         |root| {
-            let (notif, _nc, sni, _upower, _nm) = start_fakes(false);
+            let fakes = StdFakes::start_with_power(false, 70.0);
+            let (notif, sni) = (&fakes.notif, &fakes.sni_conn);
             let variant = latest_variant();
             // Scheduler on: the skipped entries of "Back up all" must survive scheduler ticks.
-            let rig = start_rig(root, &variant, "M3M6", true);
+            let rig = M3Rig::start(root, &variant, "M3M6", BEFORE_SLOT, |opts| {
+                opts.enable_scheduler = true
+            });
             let client = &rig.daemon.client;
-            let sni_service = common::wait_for_sni_service(&sni, Duration::from_secs(5));
+            let sni_service = common::wait_for_sni_service(sni, Duration::from_secs(5));
 
             let ok_fx = rig.add_manual("GoodBk");
             let missing_fx = rig.add_manual("MissingSrc");
@@ -440,9 +402,12 @@ fn ac_m3_08_6_back_up_all_starts_only_valid_backup_and_reports_skipped_with_reas
             let skipped_ids: Vec<&str> = res.skipped.iter().map(|s| s.backup_id.as_str()).collect();
             assert_eq!(res.skipped.len(), 2, "(b) two skipped: {res:?}");
             assert!(
-                skipped_ids.contains(&missing_fx.backup_id_str.as_str())
-                    && skipped_ids.contains(&err_fx.backup_id_str.as_str()),
-                "(b) skipped ids: {res:?}"
+                skipped_ids.contains(&missing_fx.backup_id_str.as_str()),
+                "(b) missing-source backup is skipped: {res:?}"
+            );
+            assert!(
+                skipped_ids.contains(&err_fx.backup_id_str.as_str()),
+                "(b) erroneous backup is skipped: {res:?}"
             );
             let reason_of = |id: &str| {
                 res.skipped
@@ -516,9 +481,12 @@ fn ac_m3_08_6_back_up_all_starts_only_valid_backup_and_reports_skipped_with_reas
                 .map(|n| n.body)
                 .expect("skipped notification");
             assert!(
-                body.contains(&reason_of(&missing_fx.backup_id_str).1)
-                    && body.contains(&reason_of(&err_fx.backup_id_str).1),
-                "(b) notification names the reasons: {body:?}"
+                body.contains(&reason_of(&missing_fx.backup_id_str).1),
+                "(b) notification names the missing-source reason: {body:?}"
+            );
+            assert!(
+                body.contains(&reason_of(&err_fx.backup_id_str).1),
+                "(b) notification names the error reason: {body:?}"
             );
             rig.daemon.stop();
         },
