@@ -3,6 +3,11 @@
 
 set fallback := false
 
+# One id per `just` invocation: test fixtures (template repositories with generated passwords)
+# live in target/kestic-test-fixtures/<id> and are removed after the run.
+fixture_run := uuid()
+fixtures_dir := env_var_or_default("CARGO_TARGET_DIR", "target") / "kestic-test-fixtures"
+
 # List available recipes
 default:
     @just --list
@@ -14,7 +19,7 @@ verify:
     just _check-file-sizes
     cargo deb -p kestic-gui --fast
     just smoke
-    KESTIC_TEST_FAST_INIT=1 cargo nextest run --workspace
+    just _nextest
     cargo deny check
     reuse lint
 
@@ -77,6 +82,19 @@ smoke:
 test:
     cargo build --bin kestic
     cargo deb -p kestic-gui --fast
+    just _nextest
+
+# Workspace tests: fixtures first (a broken restic template fails once, clearly), then all tests;
+# fixture dirs of this run and of runs older than a day are removed afterwards.
+_nextest:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export KESTIC_TEST_FIXTURE_RUN={{fixture_run}}
+    trap 'rm -rf "{{fixtures_dir}}/{{fixture_run}}"' EXIT
+    if [ -d "{{fixtures_dir}}" ]; then
+        find "{{fixtures_dir}}" -mindepth 1 -maxdepth 1 -mtime +0 -exec rm -rf {} +
+    fi
+    cargo nextest run -p kestic-test-support
     KESTIC_TEST_FAST_INIT=1 cargo nextest run --workspace
 
 # Showcase site (site/). Needs pnpm; pnpm provides Node
