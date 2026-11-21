@@ -1102,7 +1102,7 @@ pub fn format_backup_status(
     if summary.active_run.is_some() {
         let text = match active_progress {
             Some(p) if p.phase == RunProgressPhase::ScanFinished => {
-                let pct = p.percent_done.round().clamp(0.0, 100.0) as u32;
+                let pct = kestic_i18n::messages::rounded_percent(p.percent_done);
                 i18n("Backing up · %1%").subs(&[&pct.to_string()])
             }
             _ => i18n("Backing up · looking through files").to_string(),

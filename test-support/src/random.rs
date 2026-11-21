@@ -18,8 +18,10 @@ pub(crate) fn random_bytes(len: usize) -> Vec<u8> {
 
 /// Random index below `bound`.
 pub(crate) fn random_index(bound: usize) -> usize {
-    let raw: [u8; 8] = random_bytes(8).try_into().expect("8 random bytes");
-    (u64::from_le_bytes(raw) % bound as u64) as usize
+    let raw: [u8; size_of::<usize>()] = random_bytes(size_of::<usize>())
+        .try_into()
+        .expect("usize-sized random bytes");
+    usize::from_le_bytes(raw) % bound
 }
 
 /// Lowercase hex of `bytes`.

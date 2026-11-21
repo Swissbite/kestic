@@ -1067,7 +1067,7 @@ impl Run {
     /// Marks the run finished at `clock.now_utc()` with final status and exit code.
     pub fn finish(&mut self, clock: &dyn Clock, status: RunStatus, exit_code: Option<i32>) {
         let now = clock.now_utc();
-        let elapsed_ms = (now - self.started_at).whole_milliseconds().max(0) as u64;
+        let elapsed_ms = crate::clock::elapsed_ms(self.started_at, now);
         self.status = status;
         if status != RunStatus::Pending {
             self.pending_reason = None;

@@ -30,10 +30,10 @@ use time::macros::datetime;
 fn populate_incompressible_blobs(dir: &Path, count_mb: usize) {
     let mut chunk = vec![0u8; 1024 * 1024];
     for (idx, b) in chunk.iter_mut().enumerate() {
-        *b = ((idx.wrapping_mul(31) ^ (idx >> 5)) & 0xff) as u8;
+        *b = (idx.wrapping_mul(31) ^ (idx >> 5)).to_le_bytes()[0];
     }
     for i in 0..count_mb {
-        chunk[0] = i as u8;
+        chunk[0] = i.to_le_bytes()[0];
         fs::write(dir.join(format!("blob_{i:02}.bin")), &chunk).expect("write blob");
     }
 }

@@ -87,7 +87,7 @@ fn format_active_progress_text(active_progress: Option<&ActiveRunProgressDto>) -
             &[&done_str],
         );
     }
-    let pct = p.percent_done.round().clamp(0.0, 100.0) as u32;
+    let pct = kestic_i18n::messages::rounded_percent(p.percent_done);
     let total_str = format_bytes(p.total_bytes);
     if p.total_bytes == 0 {
         return i18n("%1%").subs(&[&pct.to_string()]);

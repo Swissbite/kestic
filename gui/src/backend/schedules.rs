@@ -78,7 +78,7 @@ impl qobject::KesticApp {
         let Some(schedule) = self.as_mut().parse_json_or_err::<Schedule>(schedule_json) else {
             return false;
         };
-        let threshold_opt = (overdue_threshold > 0).then_some(overdue_threshold as u32);
+        let threshold_opt = u32::try_from(overdue_threshold).ok().filter(|&t| t > 0);
         let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup_schedule(
             &existing,
             schedule,
@@ -134,7 +134,7 @@ impl qobject::KesticApp {
         let Ok(client) = make_client() else {
             return false;
         };
-        let threshold = default_overdue_threshold.max(1) as u32;
+        let threshold = u32::try_from(default_overdue_threshold).unwrap_or(0).max(1);
         let notifications = NotificationSettings {
             on_error,
             on_warning,

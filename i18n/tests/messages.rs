@@ -10,7 +10,7 @@ use kestic_i18n::codes::{
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
-    connection_test_text, overall_headline, overall_subtitle, restic_status_text,
+    connection_test_text, overall_headline, overall_subtitle, restic_status_text, rounded_percent,
 };
 
 /// `unknown` depends on exit code and warning; all other kinds ignore both
@@ -507,4 +507,14 @@ fn active_run_while_scanning_shows_no_percentage() {
         active_run_message(&finished).english(),
         "Z: backing up · 99%"
     );
+}
+
+#[test]
+fn rounded_percent_stays_between_zero_and_hundred() {
+    assert_eq!(rounded_percent(42.5), 43);
+    assert_eq!(rounded_percent(99.4), 99);
+    assert_eq!(rounded_percent(99.5), 100);
+    assert_eq!(rounded_percent(-3.0), 0);
+    assert_eq!(rounded_percent(250.0), 100);
+    assert_eq!(rounded_percent(f64::NAN), 0);
 }

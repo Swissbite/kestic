@@ -481,7 +481,7 @@ pub fn unlock_destination_async(
         return Ok(0);
     }
 
-    let stale_count = classification.stale_lock_ids.len() as u32;
+    let stale_count = u32::try_from(classification.stale_lock_ids.len()).unwrap_or(u32::MAX);
     let res = execute_unlock(&dest, &runtime, &[]).map_err(|err| match err {
         BackupRunError::Destination(d) => map_destination_err(d),
         other => KesticServiceErr::Internal(other.to_string()),

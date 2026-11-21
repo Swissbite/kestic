@@ -878,7 +878,7 @@ where
     }
 
     let finished_at = clock.now_utc();
-    let duration_ms = (finished_at - started_at).whole_milliseconds().max(0) as u64;
+    let duration_ms = crate::clock::elapsed_ms(started_at, finished_at);
     let exit_code = status.code().unwrap_or(130);
     let cancelled = cancel.is_some_and(CancelHandle::is_cancelled);
 

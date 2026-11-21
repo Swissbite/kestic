@@ -159,7 +159,7 @@ pub async fn read_system_environment_async(
         .await
             && let Ok(pct) = f64::try_from(&val)
         {
-            env.battery_percent = Some(pct.round().clamp(0.0, 100.0) as u8);
+            env.battery_percent = Some(kestic_i18n::messages::rounded_percent(pct));
         }
     } else if !cfg.use_session_bus {
         eprintln!(

@@ -180,7 +180,7 @@ fn real_restic_backup_progress_follows_seconds_remaining_and_never_falls() {
                     seed ^= seed << 13;
                     seed ^= seed >> 7;
                     seed ^= seed << 17;
-                    (seed >> 24) as u8
+                    seed.to_le_bytes()[3]
                 })
                 .collect();
             fs::write(src.join(format!("file-{i}.bin")), data).expect("write source file");
