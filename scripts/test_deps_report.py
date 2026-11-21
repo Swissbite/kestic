@@ -6,8 +6,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import http.client
+import json
+import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
@@ -76,8 +80,90 @@ class FakeSources(dr.Sources):
         return self.prs
 
 
-def report_for(sources: FakeSources) -> str:
-    return dr.build_report(dr.ROOT, sources, dt.date(2026, 11, 21)).body
+FIXTURE_FILES = {
+    "Cargo.toml": """\
+[workspace]
+members = ["app", "gui"]
+[workspace.package]
+rust-version = "1.100"
+[workspace.dependencies]
+zbus = "6.3.0"
+cxx-qt = "=0.10.0"
+cxx-qt-lib = { version = "=0.10.0", features = ["qt_full"] }
+cxx-qt-build = "=0.10.0"
+cxx-kde-frameworks = { git = "https://invent.kde.org/libraries/cxx-kde-frameworks.git", rev = "5555555555555555555555555555555555555555" }
+""",
+    "app/Cargo.toml": """\
+[dependencies]
+zbus = { workspace = true }
+rusqlite = { version = "0.43", default-features = false }
+serde = "1.0"
+own = { path = "../own" }
+[dev-dependencies]
+tempfile = "3.27"
+""",
+    "gui/Cargo.toml": """\
+[package]
+name = "gui"
+[dependencies]
+cxx-qt = { workspace = true }
+cxx-qt-lib = { workspace = true }
+cxx-kde-frameworks = { workspace = true }
+[build-dependencies]
+cxx-qt-build = { workspace = true }
+[package.metadata.deb]
+depends = "$auto, qml6-module-org-kde-kirigami (>= 6.24)"
+recommends = "restic (>= 0.18.0)"
+""",
+    "Cargo.lock": "version = 4\n"
+    + "".join(
+        f'[[package]]\nname = "{name}"\nversion = "{version}"\n'
+        'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+        for name, version in [
+            ("zbus", "6.3.0"),
+            ("rusqlite", "0.43.0"),
+            ("serde", "1.0.228"),
+            ("tempfile", "3.27.0"),
+            ("cxx-qt", "0.10.0"),
+            ("cxx-qt-lib", "0.10.0"),
+            ("cxx-qt-build", "0.10.0"),
+            ("qt-build-utils", "0.10.0"),
+        ]
+    ),
+    "rust-toolchain.toml": '[toolchain]\nchannel = "1.100.0"\n',
+    "scripts/bootstrap.sh": 'RESTIC_MIN_VERSION="0.18.0"\nRESTIC_LATEST_VERSION="0.19.1"\nRCLONE_VERSION="1.76.0"\n',
+    ".github/workflows/verify.yml": """\
+jobs:
+  verify:
+    uses: ./.github/workflows/ci-image.yml
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cache
+        uses: actions/cache@v6
+""",
+    ".github/ci-image/Dockerfile": "FROM ubuntu:26.04\nRUN true\n",
+    "site/package.json": """\
+{"packageManager": "pnpm@12.21.0",
+ "devEngines": {"runtime": {"name": "node", "version": "26.13.1"}},
+ "dependencies": {"astro": "7.4.13"},
+ "devDependencies": {"typescript": "6.0.3"}}
+""",
+}
+
+
+def write_fixture(root: Path, skip: tuple[str, ...] = ()) -> Path:
+    """A small repository with every file the report reads."""
+    for name, content in FIXTURE_FILES.items():
+        if name not in skip:
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+    return root
+
+
+def report_for(sources: FakeSources, skip: tuple[str, ...] = ()) -> str:
+    with tempfile.TemporaryDirectory() as tmp:
+        return dr.build_report(write_fixture(Path(tmp), skip), sources, dt.date(2026, 11, 21)).body
 
 
 def table_line(body: str, component: str) -> str:
@@ -215,7 +301,6 @@ class IssueTest(unittest.TestCase):
         issues = [
             {"number": 10, "title": "Abhängigkeiten KW 46 2026"},
             {"number": 12, "title": "Abhängigkeiten KW 47 2026"},
-            {"number": 11, "title": "Abhängigkeiten KW 45 2026", "pull_request": {"url": "x"}},
             {"number": 9, "title": "Abhängigkeiten KWx"},
             {"number": 8, "title": "M2: Backup Configuration"},
             {"number": 30, "title": "Abhängigkeiten KW 48 2026"},
@@ -289,6 +374,124 @@ class ReportTest(unittest.TestCase):
             rows = dr.bootstrap_rows(Path(tmp), FakeSources())
         self.assertEqual([r.component for r in rows], ["NEW_TOOL_VERSION", "restic (Mindestversion)"])
         self.assertTrue(rows[0].failed)
+
+
+class RecordingSources(FakeSources):
+    """Answers `gh` calls of the issue workflow and records them."""
+
+    def __init__(self, open_issues: list[dict[str, Any]], failing_close: int | None = None) -> None:
+        super().__init__()
+        self.open_issues = open_issues
+        self.failing_close = failing_close
+        self.calls: list[tuple[list[str], str | None]] = []
+
+    def gh_api(self, path: str) -> Any:
+        raise dr.SourceError("HTTP 404")
+
+    def run(self, args: list[str], timeout: int = 60, stdin: str | None = None, with_stderr: bool = False) -> str:
+        self.calls.append((args, stdin))
+        if args[:3] == ["gh", "api", "-X"]:
+            return json.dumps({"number": 20, "html_url": "https://github.com/Swissbite/kestic/issues/20"})
+        if args[:3] == ["gh", "issue", "list"]:
+            return json.dumps(self.open_issues)
+        if args[:3] == ["gh", "issue", "close"] and args[3] == str(self.failing_close):
+            raise dr.SourceError("HTTP 502")
+        return ""
+
+
+class PublishTest(unittest.TestCase):
+    OPEN = [
+        {"number": 10, "title": "Abhängigkeiten KW 46 2026"},
+        {"number": 5, "title": "CI: run verify in a prebuilt container image"},
+    ]
+
+    def test_creates_issue_without_missing_label_and_closes_old_report(self) -> None:
+        sources = RecordingSources(self.OPEN)
+        with mock.patch("sys.stdout"):
+            status = dr.publish(dr.Report("Abhängigkeiten KW 47 2026", "Inhalt"), sources)
+        payload = json.loads(sources.calls[0][1] or "{}")
+        closes = [args for args, _ in sources.calls if args[:3] == ["gh", "issue", "close"]]
+        self.assertEqual(status, 0)
+        self.assertEqual(payload, {"title": "Abhängigkeiten KW 47 2026", "body": "Inhalt", "labels": []})
+        self.assertEqual(len(closes), 1)
+        self.assertEqual(closes[0][3], "10")
+        self.assertEqual(closes[0][closes[0].index("--comment") + 1], "Abgelöst durch #20")
+
+    def test_failed_close_is_a_warning_only(self) -> None:
+        sources = RecordingSources(self.OPEN, failing_close=10)
+        with mock.patch("sys.stdout") as stdout:
+            status = dr.publish(dr.Report("t", "b"), sources)
+        printed = "".join(call.args[0] for call in stdout.write.call_args_list)
+        self.assertEqual(status, 0)
+        self.assertIn("::warning::Issue #10 nicht geschlossen", printed)
+
+
+class SourcesTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sources = dr.Sources("Swissbite/kestic", root=Path(tempfile.gettempdir()), crates_delay=0)
+
+    def test_tool_failures_become_source_errors(self) -> None:
+        with self.assertRaisesRegex(dr.SourceError, "fehlt"):
+            self.sources.run(["kestic-no-such-tool"])
+        with self.assertRaisesRegex(dr.SourceError, "^sh -c: boom$"):
+            self.sources.run(["sh", "-c", "echo boom >&2; exit 3"])
+        with self.assertRaisesRegex(dr.SourceError, "Zeitüberschreitung"):
+            self.sources.run(["sleep", "5"], timeout=0.1)
+
+    def test_github_token_reaches_only_gh(self) -> None:
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "secret", "GITHUB_TOKEN": "secret"}):
+            output = self.sources.run(["sh", "-c", 'echo "${GH_TOKEN:-none} ${GITHUB_TOKEN:-none}"'])
+        self.assertEqual(output.strip(), "none none")
+
+    def test_broken_http_response_becomes_source_error(self) -> None:
+        with mock.patch("urllib.request.urlopen", side_effect=http.client.IncompleteRead(b"")):
+            with self.assertRaisesRegex(dr.SourceError, "nicht erreichbar"):
+                self.sources.crate_version("serde")
+
+    def test_node_compares_with_lts_only(self) -> None:
+        releases = [{"version": "v27.1.0", "lts": False}, {"version": "v26.13.1", "lts": "Krypton"}]
+        with mock.patch.object(dr.Sources, "_json", return_value=releases):
+            self.assertEqual(self.sources.node_version(), "26.13.1")
+
+    def test_repository_names_cannot_climb_paths(self) -> None:
+        with self.assertRaises(dr.SourceError):
+            dr.checked_repo("actions/..")
+        self.assertEqual(dr.checked_repo("actions/checkout"), "actions/checkout")
+
+
+class RobustnessTest(unittest.TestCase):
+    def test_broken_section_leaves_the_others(self) -> None:
+        body = report_for(FakeSources(crates={"zbus": "6.5.0"}), skip=("site/package.json",))
+        self.assertIn("## Showcase-Seite (`site/`)\n\nnicht prüfbar: FileNotFoundError", body)
+        self.assertIn("| zbus | `6.3.0` | `6.5.0` | Minor |", body)
+        self.assertIn("## Mindestversionen im `.deb`", body)
+
+    def test_too_long_body_drops_whole_sections(self) -> None:
+        with mock.patch.object(dr, "MAX_BODY_CHARS", 25):
+            body = dr.fit_body(["## A\n\nkurz", "## B\n\n" + "x" * 30, "## C"])
+        self.assertEqual(body, "## A\n\nkurz\n\n… gekürzt: 2 Abschnitt(e) fehlen (Grenze von GitHub).")
+
+    def test_deb_minimum_versions_are_listed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            text = dr.deb_section(write_fixture(Path(tmp)))
+        self.assertIn("- Depends: `qml6-module-org-kde-kirigami (>= 6.24)`", text)
+        self.assertIn("- Recommends: `restic (>= 0.18.0)`", text)
+        self.assertIn("`$auto`", text)
+
+    def test_lowest_requirement_compares_versions(self) -> None:
+        self.assertEqual(dr.lowest({"0.10", "0.9"}), "0.9")
+        self.assertEqual(dr.lowest({"v6", "v10"}), "v6")
+
+    def test_pinned_crate_missing_from_lockfile_is_not_checkable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = dr.cxx_qt_rows(write_fixture(Path(tmp)), FakeSources())
+        missing = next(r for r in rows if r.component == "cxx-qt-lib-extras")
+        self.assertTrue(missing.failed)
+        self.assertEqual(missing.kind, dr.NONE)
+
+    def test_pipe_in_reason_stays_inside_its_cell(self) -> None:
+        line = dr.table([dr.unchecked("x", "1.0.0", "a | b")])
+        self.assertTrue(line.endswith("nicht prüfbar: a \\| b |"))
 
 
 if __name__ == "__main__":

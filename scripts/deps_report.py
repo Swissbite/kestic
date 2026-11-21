@@ -22,6 +22,7 @@ import argparse
 import datetime as dt
 import functools
 import html
+import http.client
 import json
 import os
 import re
@@ -55,6 +56,8 @@ KIND_ORDER = {MAJOR: 0, MINOR: 1, PATCH: 2, NONE: 3}
 PINNED_CRATES = ("cxx-qt", "cxx-qt-lib", "cxx-qt-lib-extras", "cxx-qt-build", "qt-build-utils")
 CXX_QT_REPO = "KDAB/cxx-qt"
 CXX_QT_CHANGELOG = "https://github.com/KDAB/cxx-qt/blob/main/CHANGELOG.md"
+# Kestic's QML plugin ships a stale plugin.qmltypes with cxx-qt 0.10.0 (issue 1508); the
+# report shows the first release with the fix (PR 1509) until the pin moves past it.
 CXX_QT_FIX_PR = 1509
 KDE_FRAMEWORKS_URL = "https://invent.kde.org/libraries/cxx-kde-frameworks.git"
 KDE_FRAMEWORKS_PROJECT = "libraries/cxx-kde-frameworks"
@@ -83,12 +86,14 @@ SAFE_VERSION_RE = re.compile(r"^[0-9A-Za-z.+-]{1,64}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CRATE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 NPM_RE = re.compile(r"^(@[a-z0-9._-]+/)?[a-z0-9._-]{1,214}$")
-GH_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+GH_REPO_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}$")
 USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)[^@\s]*@(\S+)")
 CARGO_UPDATE_RE = re.compile(r"^\s*(?:Updating|Downgrading)\s+([A-Za-z0-9_-]+) v(\S+) -> v(\S+)\s*$")
 BOOTSTRAP_VERSION_RE = re.compile(r'^([A-Z][A-Z0-9_]*_VERSION)="([^"]*)"\s*$')
 DEPENDABOT_BODY_RE = re.compile(r"^Updates `([^`\s]+)` from (\S+) to (\S+)", re.MULTILINE)
 DEPENDABOT_TITLE_RE = re.compile(r"^Bump (\S+) from (\S+) to (\S+)")
+# Credentials that only the GitHub CLI needs; cargo and git run without them.
+GH_ONLY_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
 FAILED_CHECKS = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "ERROR", "STARTUP_FAILURE"}
 PENDING_CHECKS = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
 
@@ -171,6 +176,18 @@ def newest_stable(candidates: list[Any]) -> str:
     return max(stable, key=lambda pair: pair[0].key())[1].removeprefix("v")
 
 
+def lowest(requirements: set[str]) -> str:
+    """Lowest of several version requirements or refs, compared as versions."""
+    zero = Version(0, 0, 0)
+    return min(requirements, key=lambda t: ((parse_version(t.lstrip("=^~")) or zero).key(), t), default="")
+
+
+def checked_repo(repo: str) -> str:
+    if not GH_REPO_RE.match(repo):
+        raise SourceError("ungültiger Repository-Name")
+    return repo
+
+
 def checked_sha(value: Any) -> str:
     if isinstance(value, str) and SHA_RE.match(value):
         return value
@@ -251,16 +268,20 @@ def compare_row(
     component: str,
     used: str,
     fetch: Callable[[], str],
-    note: Callable[[str, str], str] = lambda newest, kind: "",
+    note: str | Callable[[str, str], str] = "",
     **extra: Any,
 ) -> Row:
-    """Row comparing `used` with the version `fetch` returns; failures become «nicht prüfbar»."""
+    """Row comparing `used` with the version `fetch` returns; failures become «nicht prüfbar».
+
+    `note` is the Hinweis text, or a function of (newest, kind) that returns it.
+    """
     try:
         newest = fetch()
         kind = classify(used, newest)
     except SourceError as err:
         return unchecked(component, used, err, **extra)
-    return Row(component, used, newest, kind, note=note(newest, kind), **extra)
+    text = note(newest, kind) if callable(note) else note
+    return Row(component, used, newest, kind, note=text, **extra)
 
 
 def with_dependabot(row: Row, updates: dict[str, int]) -> Row:
@@ -281,7 +302,7 @@ def table(rows: list[Row]) -> str:
         kind = f"**{row.kind}**" if row.kind == MAJOR else row.kind
         component = f"**{md_text(row.component)}**" if row.pinned else md_text(row.component)
         cells = [component, md_code(row.used), md_code(row.newest), kind, row.source, row.note]
-        lines.append("| " + " | ".join(c.replace("|", "\\|").replace("\n", " ") for c in cells) + " |")
+        lines.append("| " + " | ".join(c.replace("\n", " ") for c in cells) + " |")
     return "\n".join(lines)
 
 
@@ -317,13 +338,19 @@ class Sources:
         self._last_crates_request = 0.0
 
     def run(self, args: list[str], timeout: int = 60, stdin: str | None = None, with_stderr: bool = False) -> str:
+        env = os.environ.copy()
+        if args[0] != "gh":
+            for name in GH_ONLY_ENV:
+                env.pop(name, None)
         try:
             proc = subprocess.run(
                 args,
                 cwd=self.root,
+                env=env,
                 input=stdin,
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=timeout,
                 check=False,
             )
@@ -331,9 +358,11 @@ class Sources:
             raise SourceError(f"{args[0]} fehlt") from err
         except subprocess.TimeoutExpired as err:
             raise SourceError(f"{args[0]}: Zeitüberschreitung") from err
+        except OSError as err:
+            raise SourceError(f"{args[0]}: {err.strerror or 'nicht ausführbar'}") from err
         if proc.returncode != 0:
             detail = (proc.stderr.strip().splitlines() or ["ohne Meldung"])[-1]
-            raise SourceError(f"{args[0]} {args[1]}: {detail[:120]}")
+            raise SourceError(f"{' '.join(args[:2])}: {detail[:120]}")
         return proc.stdout + proc.stderr if with_stderr else proc.stdout
 
     def _http(self, url: str) -> bytes:
@@ -343,7 +372,7 @@ class Sources:
                 return response.read(MAX_RESPONSE_BYTES)
         except urllib.error.HTTPError as err:
             raise SourceError(f"HTTP {err.code}") from err
-        except (urllib.error.URLError, OSError) as err:
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as err:
             raise SourceError("nicht erreichbar") from err
 
     def _json(self, url: str) -> Any:
@@ -373,18 +402,17 @@ class Sources:
         return checked_version(field_of(data, "crate", "max_stable_version"))
 
     def github_release(self, repo: str) -> str:
-        if not GH_REPO_RE.match(repo):
-            raise SourceError("ungültiger Repository-Name")
-        tag = checked_version(field_of(self.gh_api(f"repos/{repo}/releases/latest"), "tag_name"))
+        path = f"repos/{checked_repo(repo)}/releases/latest"
+        tag = checked_version(field_of(self.gh_api(path), "tag_name"))
         return tag.removeprefix("v")
 
     def github_newest_tag(self, repo: str) -> str:
         """Highest stable semver tag; for actions whose releases also carry other tags."""
-        if not GH_REPO_RE.match(repo):
-            raise SourceError("ungültiger Repository-Name")
-        output = self.run(["git", "ls-remote", "--tags", "--refs", f"https://github.com/{repo}.git"])
+        url = f"https://github.com/{checked_repo(repo)}.git"
+        output = self.run(["git", "ls-remote", "--tags", "--refs", url])
         tags = [line.rpartition("refs/tags/")[2] for line in output.splitlines()]
-        return newest_stable(tags)
+        # Only dotted tags: date tags such as `20240101` would otherwise win.
+        return newest_stable([tag for tag in tags if "." in tag])
 
     def npm_version(self, name: str) -> str:
         if not NPM_RE.match(name):
@@ -393,10 +421,11 @@ class Sources:
         return checked_version(field_of(self._json(f"https://registry.npmjs.org/{quoted}/latest"), "version"))
 
     def node_version(self) -> str:
+        """Newest LTS release; odd-numbered majors never become LTS."""
         releases = self._json("https://nodejs.org/dist/index.json")
         if not isinstance(releases, list):
             raise SourceError("ungültige Antwort")
-        return newest_stable([r.get("version") for r in releases if isinstance(r, dict)])
+        return newest_stable([r.get("version") for r in releases if isinstance(r, dict) and r.get("lts")])
 
     def ubuntu_lts(self) -> str:
         text = self._http("https://changelogs.ubuntu.com/meta-release-lts").decode("utf-8", "replace")
@@ -619,7 +648,7 @@ def releases_link(repo: str) -> str:
 
 
 def crate_row(dep: CrateDep, locked: dict[str, list[str]], sources: Sources) -> Row:
-    requirement = min(dep.requirements, default="")
+    requirement = lowest(dep.requirements)
     used = locked_for(requirement, locked.get(dep.name, [])) or requirement.lstrip("=^")
 
     def note(newest: str, kind: str) -> str:
@@ -650,12 +679,9 @@ def direct_crate_rows(root: Path, sources: Sources, updates: dict[str, int]) -> 
     ]
 
 
-def lockfile_rows(root: Path, sources: Sources, updates: dict[str, int]) -> list[Row] | SourceError:
+def lockfile_rows(root: Path, sources: Sources, updates: dict[str, int]) -> list[Row]:
     """Transitive lockfile updates; direct crates already have their own rows."""
-    try:
-        output = sources.cargo_update_dry_run()
-    except SourceError as err:
-        return err
+    output = sources.cargo_update_dry_run()
     direct = set(cargo_dependencies(root))
     rows = []
     for name, old, new in parse_cargo_update(output):
@@ -671,20 +697,17 @@ def lockfile_rows(root: Path, sources: Sources, updates: dict[str, int]) -> list
 
 def cxx_qt_rows(root: Path, sources: Sources) -> list[Row]:
     locked = locked_versions(root)
-    pin_note = "gepinnt, nur Stop & Ask"
-    rows = [
-        compare_row(
-            name,
-            (locked.get(name) or ["0.0.0"])[0],
-            lambda name=name: sources.crate_version(name),
-            lambda newest, kind: pin_note,
-            source=link("Changelog", CXX_QT_CHANGELOG),
-            pinned=True,
-            name=name,
+    source = link("Changelog", CXX_QT_CHANGELOG)
+    rows = []
+    for name in PINNED_CRATES:
+        if name not in locked:
+            rows.append(unchecked(name, NONE, "nicht in Cargo.lock", source=source, pinned=True, name=name))
+            continue
+        fetch = functools.partial(sources.crate_version, name)
+        rows.append(
+            compare_row(name, locked[name][0], fetch, "gepinnt, nur Stop & Ask", source=source, pinned=True, name=name)
         )
-        for name in PINNED_CRATES
-    ]
-    rows.append(cxx_qt_fix_row(rows[0].used, sources))
+    rows.append(cxx_qt_fix_row(locked.get(PINNED_CRATES[0], ["0.0.0"])[0], sources))
     return rows
 
 
@@ -744,7 +767,7 @@ def toolchain_rows(root: Path, sources: Sources) -> list[Row]:
             "Rust-Toolchain (rust-toolchain.toml)",
             channel,
             fetch,
-            lambda n, k: "gepinnt, nur Stop & Ask; `rust-version` mitziehen",
+            "gepinnt, nur Stop & Ask; `rust-version` mitziehen",
             source=source,
             pinned=True,
         ),
@@ -752,7 +775,7 @@ def toolchain_rows(root: Path, sources: Sources) -> list[Row]:
             "rust-version (Cargo.toml)",
             msrv,
             fetch,
-            lambda n, k: "gepinnt, folgt der Toolchain",
+            "gepinnt, folgt der Toolchain",
             source=source,
             pinned=True,
         ),
@@ -790,7 +813,7 @@ def ci_image_rows(root: Path, sources: Sources) -> list[Row]:
                 "Basis-Image ubuntu (CI-Image)",
                 tag,
                 sources.ubuntu_lts,
-                lambda n, k: "neuste LTS-Version; ändert den Tag des CI-Images",
+                "neuste LTS-Version; ändert den Tag des CI-Images",
                 source=link("Ubuntu-Releases", "https://changelogs.ubuntu.com/meta-release-lts"),
             )
         )
@@ -798,22 +821,13 @@ def ci_image_rows(root: Path, sources: Sources) -> list[Row]:
 
 
 def action_row(repo: str, refs: set[str], sources: Sources, updates: dict[str, int]) -> Row:
-    used = ", ".join(sorted(refs))
-    ref = min(refs)
-    if len(refs) > 1 or not re.fullmatch(r"v?\d+", ref):
-        row = compare_row(repo, ref, lambda: sources.github_newest_tag(repo), name=repo)
-    else:
-        # A major tag such as `@v7` follows every minor and patch release by itself.
-        row = compare_row(
-            repo,
-            ref,
-            lambda: sources.github_newest_tag(repo),
-            lambda newest, kind: "folgt Minor/Patch automatisch" if kind != MAJOR else "",
-            name=repo,
-        )
-        if row.kind != MAJOR:
-            row.kind, row.update = NONE, False
-    row.used, row.source = used, releases_link(repo)
+    ref = lowest(refs)
+    fetch = functools.partial(sources.github_newest_tag, repo)
+    row = compare_row(repo, ref, fetch, name=repo, source=releases_link(repo))
+    # A major tag such as `@v7` follows every minor and patch release by itself.
+    if len(refs) == 1 and re.fullmatch(r"v?\d+", ref) and row.kind in (MINOR, PATCH):
+        row.kind, row.update = NONE, False
+    row.used = ", ".join(sorted(refs))
     return with_dependabot(row, updates)
 
 
@@ -855,11 +869,14 @@ def site_rows(root: Path, sources: Sources, updates: dict[str, int]) -> list[Row
                 "Node (devEngines.runtime)",
                 node.get("version", ""),
                 sources.node_version,
-                lambda n, k: "nicht von Dependabot abgedeckt",
+                "neuste LTS-Version; nicht von Dependabot abgedeckt",
                 source=link("Node-Releases", "https://nodejs.org/en/about/previous-releases"),
             )
         )
     return rows
+
+
+DEB_TITLE = "Mindestversionen im `.deb`"
 
 
 def deb_section(root: Path) -> str:
@@ -873,7 +890,7 @@ def deb_section(root: Path) -> str:
             elif entry:
                 items.append(f"- {kind.capitalize()}: {md_code(entry)}")
     intro = "Nur Information, kein Vergleich: Mindestversionen in `gui/Cargo.toml` (`[package.metadata.deb]`)."
-    return "\n\n".join(["## Mindestversionen im `.deb`", intro, "\n".join(items)])
+    return "\n\n".join([f"## {DEB_TITLE}", intro, "\n".join(items)])
 
 
 # --- Report ---------------------------------------------------------------------------
@@ -920,57 +937,92 @@ def issue_title(day: dt.date) -> str:
     return f"{TITLE_PREFIX} {week} {year}"
 
 
+@dataclass
+class Part:
+    markdown: str
+    rows: list[Row] = field(default_factory=list)
+
+
+def table_part(
+    title: str, rows: Callable[[], list[Row]], intro: str = "", show_current: bool = False
+) -> tuple[str, Callable[[], Part]]:
+    def build() -> Part:
+        built = rows()
+        return Part(section(title, built, intro, show_current), built)
+
+    return title, build
+
+
+def guarded(title: str, build: Callable[[], Part]) -> Part:
+    """Builds one section; a failure there leaves the other sections intact."""
+    try:
+        return build()
+    except Exception as err:  # also a malformed repository file must not stop the report
+        reason = err if isinstance(err, SourceError) else f"{type(err).__name__}: {err}"
+        return Part(f"## {title}\n\nnicht prüfbar: {md_text(reason)}", [unchecked(title, NONE, reason)])
+
+
+def pinned_part(root: Path, sources: Sources) -> Part:
+    kde_row, commits = kde_frameworks_row(root, sources)
+    rows = [*cxx_qt_rows(root, sources), kde_row]
+    table_md = section(PINNED_TITLE, rows, show_current=True)
+    return Part("\n\n".join(part for part in (table_md, commit_list(commits)) if part), rows)
+
+
+def fit_body(parts: list[str]) -> str:
+    """Joins the parts; whole sections that no longer fit GitHub's limit are left out."""
+    body = ""
+    for index, part in enumerate(parts):
+        candidate = f"{body}\n\n{part}" if body else part
+        if len(candidate) > MAX_BODY_CHARS:
+            return f"{body}\n\n… gekürzt: {len(parts) - index} Abschnitt(e) fehlen (Grenze von GitHub)."
+        body = candidate
+    return body
+
+
+PINNED_TITLE = "Gepinnt: CXX-Qt und cxx-kde-frameworks"
+FOOTER = (
+    "---\nErzeugt von `scripts/deps_report.py` (Workflow `dependency-report.yml`). "
+    "Der Report ändert keine Datei und öffnet keinen PR."
+)
+
+
 def build_report(root: Path, sources: Sources, day: dt.date) -> Report:
     try:
         prs: list[dict[str, Any]] | SourceError = sources.dependabot_prs()
     except SourceError as err:
         prs = err
     updates = dependabot_updates(prs) if isinstance(prs, list) else {}
-
-    direct = direct_crate_rows(root, sources, updates)
-    lockfile = lockfile_rows(root, sources, updates)
-    kde_row, kde_commits = kde_frameworks_row(root, sources)
-    pinned = [*cxx_qt_rows(root, sources), kde_row]
-    toolchain = toolchain_rows(root, sources)
-    tools = bootstrap_rows(root, sources)
-    ci = ci_image_rows(root, sources) + action_rows(root, sources, updates)
-    site = site_rows(root, sources, updates)
-
-    if isinstance(lockfile, SourceError):
-        lockfile_part = f"## Lockfile (`cargo update --dry-run`)\n\nnicht prüfbar: {md_text(lockfile)}"
-        lockfile = []
-    else:
-        lockfile_part = section(
+    specs = [
+        table_part(
+            "Rust-Crates (direkt)",
+            lambda: direct_crate_rows(root, sources, updates),
+            "Vergleich mit der neusten stabilen Version auf crates.io.",
+        ),
+        table_part(
             "Lockfile (`cargo update --dry-run`)",
-            lockfile,
+            lambda: lockfile_rows(root, sources, updates),
             "Transitive Crates mit neuerer kompatibler Version; die direkten stehen oben.",
-        )
-    all_rows = direct + lockfile + pinned + toolchain + tools + ci + site
-    parts = [
-        "## Zusammenfassung",
-        summary(all_rows, prs),
-        dependabot_section(prs),
-        section("Rust-Crates (direkt)", direct, "Vergleich mit der neusten stabilen Version auf crates.io."),
-        lockfile_part,
-        section("Gepinnt: CXX-Qt und cxx-kde-frameworks", pinned, show_current=True),
-        commit_list(kde_commits),
-        section("Rust-Toolchain", toolchain, show_current=True),
-        section(
+        ),
+        (PINNED_TITLE, lambda: pinned_part(root, sources)),
+        table_part("Rust-Toolchain", lambda: toolchain_rows(root, sources), show_current=True),
+        table_part(
             "restic und Testwerkzeuge (`scripts/bootstrap.sh`)",
-            tools,
+            lambda: bootstrap_rows(root, sources),
             "Eine Änderung an `scripts/bootstrap.sh` baut das CI-Image neu.",
             show_current=True,
         ),
-        section("CI-Image und GitHub Actions", ci),
-        section("Showcase-Seite (`site/`)", site),
-        deb_section(root),
-        "---\nErzeugt von `scripts/deps_report.py` (Workflow `dependency-report.yml`). "
-        "Der Report ändert keine Datei und öffnet keinen PR.",
+        table_part(
+            "CI-Image und GitHub Actions",
+            lambda: ci_image_rows(root, sources) + action_rows(root, sources, updates),
+        ),
+        table_part("Showcase-Seite (`site/`)", lambda: site_rows(root, sources, updates)),
+        (DEB_TITLE, lambda: Part(deb_section(root))),
     ]
-    body = "\n\n".join(part for part in parts if part)
-    if len(body) > MAX_BODY_CHARS:
-        body = body[:MAX_BODY_CHARS] + "\n\n… (gekürzt)"
-    return Report(issue_title(day), body)
+    parts = [guarded(title, build) for title, build in specs]
+    rows = [row for part in parts for row in part.rows]
+    head = ["## Zusammenfassung", summary(rows, prs), dependabot_section(prs)]
+    return Report(issue_title(day), fit_body([*head, *(p.markdown for p in parts), FOOTER]))
 
 
 # --- Issue ----------------------------------------------------------------------------
@@ -984,33 +1036,50 @@ def superseded_issues(issues: list[dict[str, Any]], new_number: int) -> list[int
         if isinstance(issue.get("number"), int)
         and issue["number"] < new_number
         and str(issue.get("title", "")).startswith(TITLE_PREFIX + " ")
-        and not issue.get("pull_request")
     )
 
 
 def publish(report: Report, sources: Sources) -> int:
-    """Opens the report as an issue and closes the previous ones; returns the exit code."""
-    repo = sources.repo
-    labels = [LABEL] if label_exists(sources, LABEL) else []
-    payload = json.dumps({"title": report.title, "body": report.body, "labels": labels})
-    created = json.loads(sources.run(["gh", "api", "-X", "POST", f"repos/{repo}/issues", "--input", "-"], stdin=payload))
-    number = field_of(created, "number")
-    print(f"Issue #{number}: {field_of(created, 'html_url')}")
-    listing = sources.run(
-        ["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number,title"]
-    )
-    status = 0
-    for old in superseded_issues(json.loads(listing), number):
+    """Opens the report as an issue and closes the previous ones; returns the exit code.
+
+    Only a failed issue creation fails the run; leftover old reports become a warning.
+    """
+    try:
+        number = create_issue(report, sources)
+    except (SourceError, ValueError) as err:
+        print(f"Issue nicht angelegt: {err}", file=sys.stderr)
+        return 1
+    try:
+        listing = json.loads(sources.run(
+            ["gh", "issue", "list", "--repo", sources.repo, "--state", "open", "--limit", "200",
+             "--json", "number,title"]
+        ))
+        old_reports = superseded_issues(listing if isinstance(listing, list) else [], number)
+    except (SourceError, ValueError) as err:
+        print(f"::warning::Ältere Reports nicht geprüft: {err}")
+        return 0
+    for old in old_reports:
         try:
             sources.run(
-                ["gh", "issue", "close", str(old), "--repo", repo, "--reason", "not planned",
+                ["gh", "issue", "close", str(old), "--repo", sources.repo, "--reason", "not planned",
                  "--comment", f"Abgelöst durch #{number}"]
             )
             print(f"Issue #{old} geschlossen")
         except SourceError as err:
-            print(f"Issue #{old} nicht geschlossen: {err}", file=sys.stderr)
-            status = 1
-    return status
+            print(f"::warning::Issue #{old} nicht geschlossen: {err}")
+    return 0
+
+
+def create_issue(report: Report, sources: Sources) -> int:
+    labels = [LABEL] if label_exists(sources, LABEL) else []
+    payload = json.dumps({"title": report.title, "body": report.body, "labels": labels})
+    output = sources.run(["gh", "api", "-X", "POST", f"repos/{sources.repo}/issues", "--input", "-"], stdin=payload)
+    created = json.loads(output)
+    number = field_of(created, "number")
+    if not isinstance(number, int):
+        raise SourceError("ungültige Issue-Nummer")
+    print(f"Issue #{number}: {field_of(created, 'html_url')}")
+    return number
 
 
 def label_exists(sources: Sources, name: str) -> bool:
@@ -1033,11 +1102,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.create_issue:
         print(f"# {report.title}\n\n{report.body}")
         return 0
-    try:
-        return publish(report, sources)
-    except (SourceError, ValueError) as err:
-        print(f"Issue nicht angelegt: {err}", file=sys.stderr)
-        return 1
+    return publish(report, sources)
 
 
 if __name__ == "__main__":

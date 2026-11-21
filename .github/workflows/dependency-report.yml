@@ -25,6 +25,7 @@ jobs:
   report:
     name: Dependency report
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       issues: write
