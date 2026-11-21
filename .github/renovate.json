@@ -7,7 +7,8 @@
   "lockFileMaintenance": {
     "enabled": true,
     "description": "Transitive updates in Cargo.lock and site/pnpm-lock.yaml",
-    "schedule": ["before 8am on monday"]
+    "schedule": ["before 8am on monday"],
+    "automerge": true
   },
   "customManagers": [
     {
@@ -63,6 +64,27 @@
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "site minor and patch"
+    },
+    {
+      "description": "Automerge patch and digest updates once the required checks pass",
+      "matchUpdateTypes": ["patch", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Automerge minor updates of 1.x and later; a minor step of a 0.x version may break, so a human reviews it. A group merges only if all its updates do",
+      "matchUpdateTypes": ["minor"],
+      "matchCurrentVersion": "!/^v?0\\./",
+      "automerge": true
+    },
+    {
+      "description": "restic and the test servers for it never merge on their own, patch and minor updates included. This rule stays after the automerge rules above, because a later rule overrides an earlier one",
+      "matchDepNames": ["restic/restic", "restic/rest-server", "rclone/rclone"],
+      "automerge": false
+    },
+    {
+      "description": "TypeScript 7 is not yet well supported across the tooling; stay on 6.x and remove this rule once it is",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
     }
   ]
 }
