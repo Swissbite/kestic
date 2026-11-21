@@ -332,8 +332,12 @@ where
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for condition ({label}); last overall={:?}, backups={:?}",
+            "timed out waiting for condition ({label}); last overall={:?}\n  blocking={:?}, \
+             secret store={:?}, restic={:?}\n  backups={:?}",
             state.overall,
+            state.blocking,
+            state.secret_store_status,
+            state.restic_status,
             state
                 .backups
                 .iter()
