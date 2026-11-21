@@ -6,7 +6,7 @@
 # rule `rust/hard-coded-cryptographic-value` is filtered out for test code
 # (`**/tests/**`), where hard-coded passwords only protect temporary test
 # repositories. All other rules still cover tests; the rule still covers
-# production code. Decision: docs/spec/questions.md (2026-11-19, CI).
+# production code.
 
 name: CodeQL
 
