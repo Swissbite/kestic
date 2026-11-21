@@ -100,25 +100,6 @@ impl JobViewHandle {
         })
     }
 
-    /// Waits up to `timeout` for a `cancelRequested` signal from Plasma / the job view server.
-    fn wait_cancel_requested(&self, timeout: Duration) -> zbus::Result<bool> {
-        let conn = self.conn.clone();
-        let dest = self.dest.clone();
-        let path = self.view_path.clone();
-
-        block_on(async move {
-            let proxy =
-                Proxy::new(&conn, dest.as_str(), path.as_str(), "org.kde.JobViewV3").await?;
-            let mut stream = proxy.receive_signal("cancelRequested").await?;
-
-            if timeout.is_zero() {
-                return Ok(false);
-            }
-            let next_fut = stream.next();
-            poll_for_message_until_timeout(next_fut, timeout).await
-        })
-    }
-
     /// Terminates the job view cleanly (`error_code = 0` for success).
     pub fn terminate(mut self, error_code: u32, error_message: &str) -> zbus::Result<()> {
         self.terminate_inner(error_code, error_message)
@@ -126,31 +107,44 @@ impl JobViewHandle {
 
     /// Spawns a background listener for `org.kde.JobViewV3.cancelRequested` that invokes `on_cancel`
     /// if Plasma's notification cancel button is pressed. Call [`JobViewCancelGuard::stop`] when done.
+    ///
+    /// The subscription is in place when this returns and stays until the guard stops, so no
+    /// cancel request is lost between start and stop.
     pub fn start_cancel_watcher<F>(&self, on_cancel: F) -> JobViewCancelGuard
     where
         F: Fn() + Send + 'static,
     {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let conn = self.conn.clone();
         let dest = self.dest.clone();
         let path = self.view_path.clone();
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stop_bg = std::sync::Arc::clone(&stop);
+        let subscribed = block_on(async move {
+            let proxy = Proxy::new(&conn, dest, path, "org.kde.JobViewV3").await?;
+            proxy.receive_signal("cancelRequested").await
+        });
+        let mut stream = match subscribed {
+            Ok(stream) => stream,
+            Err(err) => {
+                eprintln!("kestic-daemon: cancel in the Plasma progress view unavailable: {err}");
+                return JobViewCancelGuard { stop, handle: None };
+            }
+        };
 
+        let stop_bg = std::sync::Arc::clone(&stop);
         let handle = std::thread::spawn(move || {
-            let watcher = Self {
-                conn,
-                dest,
-                view_path: path,
-                terminated: true,
-            };
             while !stop_bg.load(std::sync::atomic::Ordering::SeqCst) {
-                match watcher.wait_cancel_requested(Duration::from_millis(120)) {
-                    Ok(true) => {
+                match block_on(next_message_within(stream.next(), CANCEL_POLL_INTERVAL)) {
+                    Some(Some(_)) => {
                         on_cancel();
                         break;
                     }
-                    Ok(false) => {}
-                    Err(_) => break,
+                    Some(None) => {
+                        eprintln!(
+                            "kestic-daemon: the Plasma progress view stopped sending cancel requests"
+                        );
+                        break;
+                    }
+                    None => {}
                 }
             }
         });
@@ -207,8 +201,12 @@ impl Drop for JobViewCancelGuard {
     }
 }
 
-/// Polls `fut` (sleeping briefly between polls) until a message arrives or `timeout` passes; `true` if one arrived.
-async fn poll_for_message_until_timeout<F>(fut: F, timeout: Duration) -> zbus::Result<bool>
+/// How often the cancel watcher checks whether it was stopped.
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(120);
+
+/// Polls `fut` (sleeping briefly between polls) until it is ready or `timeout` passes:
+/// `Some(item)` when ready (`Some(None)` = the stream ended), `None` on timeout.
+async fn next_message_within<F>(fut: F, timeout: Duration) -> Option<Option<zbus::Message>>
 where
     F: std::future::Future<Output = Option<zbus::Message>>,
 {
@@ -217,10 +215,10 @@ where
     let start = std::time::Instant::now();
     std::future::poll_fn(|cx| {
         if let std::task::Poll::Ready(item) = fut.as_mut().poll(cx) {
-            return std::task::Poll::Ready(Ok(item.is_some()));
+            return std::task::Poll::Ready(Some(item));
         }
         if start.elapsed() >= timeout {
-            return std::task::Poll::Ready(Ok(false));
+            return std::task::Poll::Ready(None);
         }
         std::thread::sleep(Duration::from_millis(10));
         cx.waker().wake_by_ref();
