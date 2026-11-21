@@ -52,7 +52,7 @@ Projektspezifische Skills liegen agenten-neutral unter [.agents/skills/](.agents
 
 ## Prüfbefehl
 
-`just verify` = `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test` + `cargo deny check` (Lizenzen + Advisories) + Integrationstests gegen restic 0.18.0 **und** die aktuelle Version + QML-Smoke + Offscreen-Screenshots pro Screen (Artefakt für die menschliche Abnahme) + `reuse lint` + Grössenprüfung gemäss [docs/spec/architecture.md](docs/spec/architecture.md) §Code-Struktur.
+`just verify` = `cargo fmt --check` + `cargo clippy -D warnings` (zusätzlich `kestic-gui` mit Feature `test-harness`) + Tests mit `cargo nextest` (Test-Binary mit Feature `test-harness`; ein Test prüft, dass das `kestic` im `.deb` keinen Test-Harness enthält) + `cargo deny check` (Lizenzen + Advisories) + Integrationstests gegen restic 0.18.0 **und** die aktuelle Version + QML-Smoke + Offscreen-Screenshots pro Screen (Artefakt für die menschliche Abnahme) + `reuse lint` + Grössenprüfung gemäss [docs/spec/architecture.md](docs/spec/architecture.md) §Code-Struktur.
 
 ## Harte Regeln
 

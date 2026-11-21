@@ -40,6 +40,8 @@ Use this skill whenever implementing or modifying anything in `gui/`, QML files,
 - Run GUI smoke tests with `QT_QPA_PLATFORM=offscreen`, isolated XDG tempdirs, `LC_ALL=` cleared, `LANG=en_US.UTF-8`, and `LANGUAGE=en` / `LANGUAGE=de`.
 - Check both wide and narrow (`26 gridUnit` minimum width) layouts for truncation or overlap.
 - Always inspect generated screenshots in `target/smoke-artifacts/` directly with your file-viewing tool to verify layout, readability, and alignment against `docs/spec/ui/`.
+- The smoke scenes (`gui/src/smoke*.cpp`, `gui/src/smoke.rs`), their synthetic input (`qt_handleKeyEvent`/`qt_handleMouseEvent`) and `--simulate-status` exist only with the Cargo feature `test-harness`: build test binaries with `cargo build --bin kestic --features kestic-gui/test-harness` (the justfile does). The `.deb` is built without it, and the test `shipped_binary_runs_and_carries_no_test_harness` (`core/tests/m0_s05_deb_packaging.rs`) fails if the shipped binary contains any of it. Product Qt helpers (clipboard, KI18n substitution, keyboard handling) live in `gui/src/qt_bridge.{rs,cpp,h}`, never in the smoke files.
+- Smoke scenes never contain secrets: the Rust test generates the repository password (`strong_password()`) and passes it to the scene via `KESTIC_SMOKE_REPO_PASSWORD`.
 
 ## External Reference Lookup
 

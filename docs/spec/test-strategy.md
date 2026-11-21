@@ -27,7 +27,9 @@ Jedes Akzeptanzkriterium (AC) in [milestones/](milestones/) wird durch einen aut
 
 ## Echte Abhängigkeiten statt Mocks, wo möglich
 
-- restic gegen Temp-Repo (`restic init` im Tempdir).
+- restic gegen Temp-Repo. Pro Testlauf und restic-Version legt `kestic-test-support` einmal ein Vorlage-Repo an (`restic init`, Schlüssel mit billigen scrypt-Parametern); Tests kopieren es (`copy_template_repo`) und erhalten pro Kopie ein eigenes Passwort und eine eigene Repo-ID. Ein echtes `restic init` läuft nur in Tests, die das Anlegen eines Repos prüfen.
+- Tests, die das `kestic`-Binary starten (GUI-Smoke, `kestic secret get`, Tray mit `--simulate-status`), brauchen den Build mit dem Cargo-Feature `test-harness` (`cargo build --bin kestic --features kestic-gui/test-harness`, im `justfile` eingebaut); ohne ihn bricht `find_kestic_binary` mit einem Hinweis ab.
+- Testpasswörter und Backend-Zugangsdaten werden zur Laufzeit erzeugt (`strong_password`: Shell-Sonderzeichen, Anführungszeichen, Leerzeichen innen, Umlaute, Emoji), nie als Literal im Test. Leck-Prüfungen nutzen `assert_no_secret`, das auch maskierte Formen findet und das Geheimnis nie ausgibt.
 - REST-Backend: `rest-server` lokal auf Zufallsport mit Auth.
 - S3: `rclone serve s3` (ab rclone 1.65, experimentell; Ubuntu 24.04 liefert 1.60.1 → `bootstrap.sh` lädt rclone selbst und prüft SHA256; Ersatz bei Problemen: Garage). MinIO entfällt: keine fertigen Community-Binaries mehr seit Ende 2025, Repo nicht mehr gepflegt ([linuxiac](https://linuxiac.com/minio-with-yet-another-controversial-move/), [GitHub minio](https://github.com/minio/minio)).
 - SFTP: `sshd` als normaler Benutzer auf Zufallsport mit Temp-Schlüsseln, nach dem Test beendet.
