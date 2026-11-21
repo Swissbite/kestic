@@ -273,14 +273,14 @@ ensure_rust_toolchain() {
 
     if ! "$CARGO_BIN_DIR/cargo-deny" --version 2>/dev/null | grep -q "${CARGO_DENY_VERSION}"; then
         echo "[cargo] Installing cargo-deny $CARGO_DENY_VERSION"
-        cargo install --locked cargo-deny --version "$CARGO_DENY_VERSION"
+        cargo "+$channel" install --locked cargo-deny --version "$CARGO_DENY_VERSION"
     else
         echo "[ok] cargo-deny $CARGO_DENY_VERSION already installed"
     fi
 
     if ! "$CARGO_BIN_DIR/cargo-deb" --version 2>/dev/null | grep -q "${CARGO_DEB_VERSION}"; then
         echo "[cargo] Installing cargo-deb $CARGO_DEB_VERSION"
-        cargo install --locked cargo-deb --version "$CARGO_DEB_VERSION"
+        cargo "+$channel" install --locked cargo-deb --version "$CARGO_DEB_VERSION"
     else
         echo "[ok] cargo-deb $CARGO_DEB_VERSION already installed"
     fi
@@ -300,7 +300,7 @@ ensure_rust_toolchain() {
             chmod 755 "$CARGO_BIN_DIR/cargo-nextest"
         else
             echo "[cargo] Installing cargo-nextest $CARGO_NEXTEST_VERSION"
-            cargo install --locked cargo-nextest --version "$CARGO_NEXTEST_VERSION"
+            cargo "+$channel" install --locked cargo-nextest --version "$CARGO_NEXTEST_VERSION"
         fi
     else
         echo "[ok] cargo-nextest $CARGO_NEXTEST_VERSION already installed"
