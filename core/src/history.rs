@@ -167,7 +167,7 @@ impl RunHistory {
                 run.started_at.unix_timestamp(),
                 started_rfc,
                 finished_rfc,
-                run.duration_ms.map(|v| v as i64),
+                run.duration_ms.map(to_sql_int).transpose()?,
                 run.exit_code,
                 summary_redacted,
                 stats_json,
@@ -198,12 +198,12 @@ impl RunHistory {
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     run.id.as_str(),
-                    idx as i64,
+                    to_sql_int(idx)?,
                     redact_secrets(&cmd.executable, secrets),
                     args_json,
                     env_keys_json,
                     cmd_started,
-                    cmd.duration_ms as i64,
+                    to_sql_int(cmd.duration_ms)?,
                     cmd.exit_code,
                 ],
             )?;
@@ -408,7 +408,7 @@ impl RunHistory {
                                 .unwrap_or(OffsetDateTime::UNIX_EPOCH),
                             paused_until: paused_until_unix.and_then(unix_to_utc),
                         }),
-                        backoff_attempt: backoff_attempt.max(0) as u32,
+                        backoff_attempt: from_sql_int(4, backoff_attempt)?,
                         backoff_until: backoff_until_unix.and_then(unix_to_utc),
                         backoff_kind: backoff_kind_raw
                             .as_deref()
@@ -495,7 +495,7 @@ impl RunHistory {
                         baseline_at: baseline.and_then(unix_to_utc),
                         last_prune_at: prune.and_then(unix_to_utc),
                         last_check_at: check.and_then(unix_to_utc),
-                        maintenance_backoff_attempt: maint_attempt.max(0) as u32,
+                        maintenance_backoff_attempt: from_sql_int(3, maint_attempt)?,
                         maintenance_backoff_until: maint_until.and_then(unix_to_utc),
                         last_maintenance_failure_at: maint_failed.and_then(unix_to_utc),
                     })
@@ -635,7 +635,7 @@ impl RunHistory {
                 args,
                 env_keys,
                 started_at,
-                duration_ms: duration_ms.max(0) as u64,
+                duration_ms: from_sql_int(4, duration_ms)?,
                 exit_code,
             });
         }
@@ -686,7 +686,7 @@ where
             args,
             env_keys,
             started_at,
-            duration_ms: duration_ms.max(0) as u64,
+            duration_ms: from_sql_int(5, duration_ms)?,
             exit_code,
         });
     }
@@ -753,6 +753,25 @@ pub struct DestinationMaintenanceState {
 
 fn unix_to_utc(ts: i64) -> Option<OffsetDateTime> {
     OffsetDateTime::from_unix_timestamp(ts).ok()
+}
+
+/// Converts a value for an SQLite `INTEGER` column, which holds a signed 64-bit number.
+/// A value above `i64::MAX` cannot be stored, so the write fails instead of wrapping.
+fn to_sql_int<T>(value: T) -> rusqlite::Result<i64>
+where
+    T: TryInto<i64> + Copy + std::fmt::Display,
+{
+    value.try_into().map_err(|_| {
+        rusqlite::Error::ToSqlConversionFailure(
+            format!("{value} exceeds the SQLite integer range").into(),
+        )
+    })
+}
+
+/// Reads an SQLite `INTEGER` from `column` into a narrower or unsigned type. A stored value
+/// outside that range means the row is corrupted, so the read fails instead of clamping.
+fn from_sql_int<T: TryFrom<i64>>(column: usize, value: i64) -> rusqlite::Result<T> {
+    T::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, value))
 }
 
 fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
@@ -828,11 +847,54 @@ fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         pending_reason,
         started_at,
         finished_at,
-        duration_ms: duration_ms.map(|v| v.max(0) as u64),
+        duration_ms: duration_ms.map(|v| from_sql_int(8, v)).transpose()?,
         exit_code,
         summary_message,
         commands: Vec::new(),
         stats,
         log_path: log_path.map(PathBuf::from),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stored_integer_outside_the_target_range_is_a_corrupted_row() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let history = RunHistory::open(dir.path()).expect("open history");
+        let backup_id = BackupId::generate().expect("backup id");
+        history
+            .conn
+            .execute(
+                "INSERT INTO backup_state (backup_id, backoff_attempt) VALUES (?1, -1)",
+                params![backup_id.as_str()],
+            )
+            .expect("insert corrupted row");
+
+        let err = history
+            .get_backup_runtime_state(&backup_id)
+            .expect_err("a negative retry count must not load");
+        assert!(
+            matches!(
+                err,
+                HistoryError::Sqlite(rusqlite::Error::IntegralValueOutOfRange(4, -1))
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn value_beyond_the_sqlite_integer_range_is_not_written() {
+        assert_eq!(
+            to_sql_int(u64::from(u32::MAX)).ok(),
+            Some(i64::from(u32::MAX))
+        );
+        let err = to_sql_int(u64::MAX).expect_err("u64::MAX does not fit into i64");
+        assert!(
+            matches!(err, rusqlite::Error::ToSqlConversionFailure(_)),
+            "unexpected error: {err:?}"
+        );
+    }
 }
