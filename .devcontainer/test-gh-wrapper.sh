@@ -48,6 +48,7 @@ expect() {
     local got=passed
     "$here/gh-wrapper.sh" "$@" 2>/dev/null || got=refused
     if [[ "$got" == passed && ! -s "$FAKE_LOG" ]]; then got="passed without calling gh"; fi
+    if [[ "$got" == passed && -s "$FAKE_LOG" && "$(<"$FAKE_LOG")" != "$*" ]]; then got="passed with changed arguments"; fi
     if [[ "$got" == refused && -s "$FAKE_LOG" ]]; then got="refused after calling gh"; fi
     if [[ "$got" != "$want" ]]; then
         echo "FAIL: gh $* -> $got, expected $want" >&2
