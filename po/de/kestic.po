@@ -1170,12 +1170,8 @@ msgid "Package: %1"
 msgstr "Paket: %1"
 
 #: gui/src/qml/DestinationTypeChooser.qml
-msgid "Open in Discover"
-msgstr "In Discover öffnen"
-
-#: gui/src/qml/DestinationTypeChooser.qml
-msgid "Or install it in a terminal:"
-msgstr "Oder im Terminal installieren:"
+msgid "Install it in a terminal:"
+msgstr "Im Terminal installieren:"
 
 #: gui/src/qml/DestinationTypeChooser.qml
 msgid "Install command"

@@ -19,7 +19,7 @@ FR-01 (alle Ziel-Typen), FR-33 (Download, Umstellen), FR-51, FR-56 · NFR-05 · 
 | M5-S01 | Ziel-Typ SFTP: Formular, Verbindungstest, Hinweis auf SSH-Schlüssel |
 | M5-S02 | Ziel-Typ S3-kompatibel: Formular, Credentials im Secret Service |
 | M5-S03 | Generisches Formular (URL + Umgebungsvariablen) für B2, Azure, GCS, Swift, rclone |
-| M5-S04 | Erkennung «bereit» / «braucht Installation» (z. B. `ssh`, `rclone`), Hinweis mit Paketname, Discover-Link, `apt install` |
+| M5-S04 | Erkennung «bereit» / «braucht Installation» (z. B. `ssh`, `rclone`), Hinweis mit Paketname und `apt install` (Discover-Link nur mit AppStream-Komponente) |
 | M5-S05 | Externes Laufwerk / USB: Wechseldatenträger erkennen (UDisks2), Hinweis bei SMB/CIFS-Ordner |
 | M5-S06 | restic herunterladen: Architektur (amd64/arm64), `SHA256SUMS` + `.asc` prüfen (Fingerprint im Code), atomar ersetzen, nie während Lauf (FR-33) |
 | M5-S07 | Einstellung «restic-Quelle» (Automatisch / System / Von Kestic verwaltet / Eigener Pfad), Anzeige beider Versionen, Umstellen auf «Automatisch», App-Binary löschen, Migration der Config (FR-33) |
@@ -59,7 +59,7 @@ Test-Isolation gemäss [test-strategy.md](../test-strategy.md). Zusätzlich: kei
 ### M5-S04 Erkennung «bereit» / «braucht Installation»
 - **AC-M5-04-1** (§9.1) – *Gegeben* `ssh` im `PATH`, `rclone` nicht, *wenn* die Ziel-Typ-Liste entsteht, *dann* (a) sind Externes Laufwerk, Ordner, NAS per SSH, REST-Server und Cloud-Speicher (S3, B2, Azure, Google Cloud, Swift) «bereit», (b) ist rclone «braucht Installation», und (c) stehen alle «bereit» davor · Test: Unit (PATH-Fake) + GUI-Smoke
 - **AC-M5-04-2** (§9.1) – *Gegeben* `ssh` fehlt im `PATH`, *wenn* die Liste entsteht, *dann* (a) ist «NAS / Server per SSH» «braucht Installation» · Test: Unit (PATH-Fake)
-- **AC-M5-04-3** (§9.1) – *Gegeben* rclone «braucht Installation», *wenn* der Eintrag geöffnet wird, *dann* (a) zeigt er Paketname `rclone`, (b) zeigt er den Knopf «In Discover öffnen» (`appstream://`-URL), und (c) zeigt er `sudo apt install rclone` · Test: GUI-Smoke (Screenshot)
+- **AC-M5-04-3** (§9.1) – *Gegeben* rclone «braucht Installation», *wenn* der Eintrag geöffnet wird, *dann* (a) zeigt er Paketname `rclone`, (b) zeigt er keinen Knopf «In Discover öffnen» (`rclone` hat keine AppStream-Komponente), und (c) zeigt er `sudo apt install rclone` · Test: GUI-Smoke (Screenshot)
 - **AC-M5-04-4** (§9.1) – *Gegeben* rclone wurde nachträglich in den `PATH` gelegt, *wenn* «erneut prüfen» gewählt wird, *dann* (a) wechselt der Eintrag auf «bereit» · Test: Unit (PATH-Fake)
 
 ### M5-S05 Externes Laufwerk / USB

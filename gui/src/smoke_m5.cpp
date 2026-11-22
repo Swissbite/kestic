@@ -66,7 +66,8 @@ int open_rclone_entry(QQuickWindow* w) {
 
 // AC-M5-04-1 (GUI) and AC-M5-04-3: with `ssh` and without `rclone` in the daemon's PATH, the five
 // ready cards stand under «Ready» before «Needs Installation» with rclone; the opened rclone entry
-// shows the package, «Open in Discover» with its `appstream://` link and `sudo apt install rclone`.
+// shows the package and `sudo apt install rclone` but no «Open in Discover» (rclone has no
+// AppStream component).
 int scenario_destination_types(const Ctx& c) {
     QQuickWindow* w = c.window;
     if (const int rc = open_destination_types(w)) {
@@ -103,15 +104,15 @@ int scenario_destination_types(const Ctx& c) {
         return rc;
     }
     QQuickItem* package = item_named(w, "wizDestInstallPackageLabel");
-    QQuickItem* discover = item_named(w, "wizDestOpenInDiscoverButton");
     QQuickItem* command = item_named(w, "wizDestInstallCommandField");
     // AC-M5-04-3 (a)
     M3_CHECK2(5070, package != nullptr, package->isVisible(), "AC-M5-04-3 (a): package label missing");
     M3_CHECK_EQ(5071, package->property("text").toString(), loc(c.lang, "Package: rclone", "Paket: rclone"), "AC-M5-04-3 (a): package");
     // AC-M5-04-3 (b)
-    M3_CHECK2(5072, discover != nullptr, discover->isVisible(), "AC-M5-04-3 (b): «Open in Discover» missing");
-    M3_CHECK_EQ(5073, discover->property("text").toString(), loc(c.lang, "Open in Discover", "In Discover öffnen"), "AC-M5-04-3 (b): button text");
-    M3_CHECK_EQ(5074, discover->property("url").toString(), QStringLiteral("appstream://rclone"), "AC-M5-04-3 (b): Discover link");
+    // The same lookup finds the button «Check Again» of the panel, so it would find a Discover one.
+    M3_CHECK(5073, visible_button(w->contentItem(), "Check Again|Erneut prüfen") != nullptr, "button lookup finds «Check Again»");
+    M3_CHECK(5072, visible_button(w->contentItem(), "Open in Discover|In Discover öffnen") == nullptr,
+        "AC-M5-04-3 (b): rclone has no AppStream component, but «Open in Discover» is shown");
     // AC-M5-04-3 (c)
     M3_CHECK2(5075, command != nullptr, command->isVisible(), "AC-M5-04-3 (c): install command missing");
     M3_CHECK_EQ(5076, command->property("text").toString(), QStringLiteral("sudo apt install rclone"), "AC-M5-04-3 (c): command");
@@ -121,13 +122,12 @@ int scenario_destination_types(const Ctx& c) {
     const QString unnamed = first_unnamed(w, {
         QStringLiteral("wizDestTypeCard_folder"),
         QStringLiteral("wizDestTypeCard_rclone"),
-        QStringLiteral("wizDestOpenInDiscoverButton"),
         QStringLiteral("wizDestInstallCommandField"),
         QStringLiteral("wizDestCopyInstallCommandButton"),
         QStringLiteral("wizDestCheckAgainButton"),
     });
     M3_CHECK_EQ(5079, unnamed, QString(), "control without accessible name");
-    M3_CHECK_EQ(5080, accessible_name(discover), loc(c.lang, "Open in Discover", "In Discover öffnen"), "accessible name of «Open in Discover»");
+    M3_CHECK_EQ(5080, accessible_name(item_named(w, "wizDestCopyInstallCommandButton")), loc(c.lang, "Copy", "Kopieren"), "accessible name of «Copy»");
     M3_CHECK(5078, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }

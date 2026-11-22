@@ -70,7 +70,8 @@ fn ready(types: &[DestinationTypeDto], kind: DestinationTypeCode) -> bool {
 /// `PATH`, `ListDestinationTypes` reports (a) SFTP ready and (b) rclone needing installation;
 /// the wizard shows (a) the ready cards under «Ready», (b) rclone under «Needs Installation» and
 /// (c) the ready cards first; the opened rclone entry shows (AC-M5-04-3 a) the package `rclone`,
-/// (b) «Open in Discover» with the `appstream://` link and (c) `sudo apt install rclone`.
+/// (b) no «Open in Discover», as rclone has no AppStream component, and (c)
+/// `sudo apt install rclone`.
 /// The C++ scenario checks each part; screenshots in English and German, wide and narrow.
 #[test]
 fn ac_m5_04_1_and_3_wizard_lists_ready_types_first_and_install_help() {

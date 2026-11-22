@@ -125,8 +125,8 @@ Ablauf FR-38 (5 Schritte):
 | Cloud-Speicher S3-kompatibel, Backblaze B2, Azure, Google Cloud, Swift | s3, b2, azure, gs, swift | – |
 | Cloud-Dienste über rclone (Google Drive, OneDrive, Dropbox …) | rclone | `rclone` |
 
-   - Für «braucht Installation»: Erklärung, Paketname, Knopf «In Discover öffnen» (`appstream://`-URL, von Discover unterstützt) bzw. Befehl `sudo apt install rclone`; danach erneut prüfen.
-   - Die Erkennung läuft im Daemon, weil er restic startet: Es zählt der `PATH` des Daemons (`ListDestinationTypes`). Pakete: `openssh-client` für `ssh`, `rclone` für `rclone`; die AppStream-ID prüft M5-S04 auf dem Referenzsystem.
+   - Für «braucht Installation»: Erklärung, Paketname und Befehl `sudo apt install <Paket>` zum Kopieren; danach erneut prüfen. Einen Knopf «In Discover öffnen» (`appstream://`-URL) gibt es nur für Pakete mit AppStream-Komponente; `rclone` und `openssh-client` haben keine **[verifiziert: Referenzsystem, `appstreamcli get`]**, also kein Knopf.
+   - Die Erkennung läuft im Daemon, weil er restic startet: Es zählt der `PATH` des Daemons (`ListDestinationTypes`). Pakete: `openssh-client` für `ssh`, `rclone` für `rclone`, beide ohne AppStream-Komponente.
    - «Externes Laufwerk» ist ein lokales Ziel (`local`) auf einem Wechseldatenträger. Kestic speichert nur den Pfad; Bezeichnung und FS-UUID ermittelt es zur Laufzeit (UDisks2, `/proc/self/mountinfo`) und zeigt sie nur an.
    - Nicht als eigener Typ: SSHFS-Mount (SFTP-Backend direkt ist einfacher), SMB/Windows-Freigabe (restic rät von CIFS ab; nur als bereits eingehängter Ordner mit Warnhinweis). Netzwerkorte aus Dolphin (`smb://`, `sftp://`) sind KIO-Adressen, keine Dateipfade; ohne `kio-fuse` für restic nicht nutzbar → Dateidialog auf lokale Pfade beschränken.
 3. **Ziel-Details** – Formular je Typ, Verbindungstest, Erkennung «Repo existiert» → verbinden, sonst `init`.

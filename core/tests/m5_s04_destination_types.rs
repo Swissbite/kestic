@@ -83,7 +83,10 @@ fn ac_m5_04_1_ssh_present_rclone_missing_ready_types_first() {
     assert!(!rclone.ready, "(b) rclone must need installation");
     assert_eq!(rclone.missing_program, Some(RequiredProgram::Rclone));
     assert_eq!(rclone.package.as_deref(), Some("rclone"));
-    assert_eq!(rclone.appstream_url.as_deref(), Some("appstream://rclone"));
+    assert_eq!(
+        rclone.appstream_url, None,
+        "rclone has no AppStream component"
+    );
 
     // (c)
     let cards = cards_ready_first(&types);
@@ -214,10 +217,11 @@ fn ac_m5_04_2_no_path_means_programs_missing() {
     assert!(!status(&types, DestinationTypeCode::Rclone).ready);
 }
 
-/// AC-M5-04-3 (data of the entry): the rclone card names the package `rclone`, the Discover
-/// link and the command `sudo apt install rclone`. The GUI smoke shows them.
+/// AC-M5-04-3 (data of the entry): the rclone card names (a) the package `rclone`, (b) no
+/// Discover link, as neither `rclone` nor `openssh-client` has an AppStream component, and
+/// (c) the command `sudo apt install rclone`. The GUI smoke shows them.
 #[test]
-fn ac_m5_04_3_rclone_card_carries_package_discover_link_and_command() {
+fn ac_m5_04_3_rclone_card_carries_package_and_command_without_discover_link() {
     let dir = TempDir::new().expect("tempdir");
     install(dir.path(), "ssh");
     let card = cards_ready_first(&destination_types(Some(&fake_path(dir.path()))))
@@ -227,7 +231,9 @@ fn ac_m5_04_3_rclone_card_carries_package_discover_link_and_command() {
     // (a)
     assert_eq!(card.package.as_deref(), Some("rclone"));
     // (b)
-    assert_eq!(card.appstream_url.as_deref(), Some("appstream://rclone"));
+    assert_eq!(card.appstream_url, None);
+    assert_eq!(RequiredProgram::Rclone.appstream_url(), None);
+    assert_eq!(RequiredProgram::Ssh.appstream_url(), None);
     // (c)
     assert_eq!(
         card.install_command.as_deref(),

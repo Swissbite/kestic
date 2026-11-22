@@ -9,8 +9,8 @@ import org.kde.kirigami.delegates as KD
 import net.daester.kestic 1.0
 
 // Wizard step «destination type»: the cards that are ready, then those that need a program to
-// be installed. An entry that needs installation opens the package name, a Discover link, the
-// install command and «Check Again».
+// be installed. An entry that needs installation opens the package name, the install command
+// and «Check Again».
 ColumnLayout {
     id: chooser
 
@@ -201,18 +201,10 @@ ColumnLayout {
                     text: i18n("Package: %1", missingEntry.modelData.package)
                 }
 
-                Controls.Button {
-                    objectName: chooser.namePrefix + "OpenInDiscoverButton"
-                    readonly property string url: missingEntry.modelData.appstream_url
-                    text: i18n("Open in Discover")
-                    Accessible.name: text
-                    onClicked: Qt.openUrlExternally(url)
-                }
-
                 Controls.Label {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: i18n("Or install it in a terminal:")
+                    text: i18n("Install it in a terminal:")
                 }
 
                 RowLayout {

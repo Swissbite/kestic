@@ -29,7 +29,7 @@ Teil von [index.md](index.md) (§11–§13). Verbindlichkeit, Referenz-Datensatz
 | --- | --- |
 | Datei-/Ordnerauswahl | KDE-Dateidialog (Portal), Start `~`, nur lokale Pfade |
 | Ordner öffnen | `Qt.openUrlExternally(file://…)` → Dolphin |
-| Fehlende Programme | `appstream://<id>` → Discover |
+| Fehlende Programme | Paketname und `sudo apt install <Paket>` zum Kopieren; `appstream://<id>` → Discover nur bei Paketen mit AppStream-Komponente |
 | Systemeinstellungen | Autostart- und Benachrichtigungs-Modul direkt öffnen **[verifiziert (M0-S11): `kcm_autostart`, `kcm_notifications`]** |
 | Ruhezustand | Inhibit über Portal sichtbar in Plasma (F9) |
 | Task-Manager | Prozent bei manuell gestartetem Lauf (FR-54, P2) |

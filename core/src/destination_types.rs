@@ -36,9 +36,17 @@ impl RequiredProgram {
         }
     }
 
-    /// Link that opens the package in Discover.
-    pub fn appstream_url(self) -> String {
-        format!("appstream://{}", self.package())
+    /// AppStream component of the package; Discover opens only packages that have one.
+    /// Neither `openssh-client` nor `rclone` ships AppStream metadata.
+    pub fn appstream_id(self) -> Option<&'static str> {
+        match self {
+            Self::Ssh | Self::Rclone => None,
+        }
+    }
+
+    /// Link that opens the package in Discover, if the package has an AppStream component.
+    pub fn appstream_url(self) -> Option<String> {
+        self.appstream_id().map(|id| format!("appstream://{id}"))
     }
 
     /// Terminal command that installs the package.
@@ -56,7 +64,8 @@ pub struct DestinationTypeStatus {
     pub missing_program: Option<RequiredProgram>,
     /// Package of the missing program; `None` when the type is ready.
     pub package: Option<String>,
-    /// Discover link for the missing program; `None` when the type is ready.
+    /// Discover link for the missing program; `None` when the type is ready or the package has
+    /// no AppStream component.
     pub appstream_url: Option<String>,
 }
 
@@ -105,7 +114,7 @@ pub fn destination_types(search_path: Option<&OsStr>) -> Vec<DestinationTypeStat
                 ready: missing.is_none(),
                 missing_program: missing,
                 package: missing.map(|p| p.package().to_string()),
-                appstream_url: missing.map(RequiredProgram::appstream_url),
+                appstream_url: missing.and_then(RequiredProgram::appstream_url),
             }
         })
         .collect()
