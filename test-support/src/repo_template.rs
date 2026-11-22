@@ -56,6 +56,38 @@ pub fn copy_template_repo(restic: &Path, dest: &Path) -> TestRepo {
     }
 }
 
+/// Rewrites snapshot `snapshot_id` of the local repository `repo` as if user `username` with
+/// `uid` had made it (restic records the user running `backup`, which a test cannot change).
+/// Returns the new snapshot ID: a snapshot file is named by the SHA-256 of its contents.
+pub fn set_snapshot_owner(
+    restic: &Path,
+    repo: &Path,
+    password: &str,
+    snapshot_id: &str,
+    owner: (u32, &str),
+) -> String {
+    let out = Command::new(restic)
+        .arg("-r")
+        .arg(repo)
+        .args(["cat", "--no-cache", "snapshot", snapshot_id])
+        .env("RESTIC_PASSWORD", password)
+        .output()
+        .expect("run restic cat snapshot");
+    assert!(out.status.success(), "restic cat snapshot {snapshot_id}");
+    let mut snapshot: Value = serde_json::from_slice(&out.stdout).expect("snapshot json");
+    snapshot["uid"] = Value::from(owner.0);
+    snapshot["username"] = Value::from(owner.1);
+    let (_, key_json) = read_single_key(repo);
+    let keys = Keys::from_master_json(&open_key(&key_json, password));
+    // restic reads an unpacked file that starts with `{` as uncompressed JSON.
+    let sealed = keys.seal(&serde_json::to_vec(&snapshot).expect("snapshot json"));
+    let new_id = hex(&Sha256::digest(&sealed));
+    let dir = repo.join("snapshots");
+    write_read_only(&dir.join(&new_id), &sealed);
+    fs::remove_file(dir.join(snapshot_id)).expect("remove old snapshot file");
+    new_id
+}
+
 /// Encryption and MAC keys as restic uses them: AES-256 key plus Poly1305-AES (`k`, `r`).
 struct Keys {
     encrypt: Vec<u8>,

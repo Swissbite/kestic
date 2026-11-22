@@ -51,7 +51,7 @@ use kestic_core::scheduler::{
 };
 use kestic_core::secrets::{SecretStore, SecretValue};
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::{BlockedReason, ErrorKind, RunProgressPhase};
+use kestic_i18n::codes::{BlockedReason, ErrorKind, RunKindCode, RunProgressPhase};
 use kestic_i18n::messages::{ActiveRunInfo, active_run_message, interrupted_by_sleep_message};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -293,7 +293,7 @@ fn launch_backup_run_record(
             display_name: &backup.name,
             dest_id: &dest.id,
         },
-        claim_guard,
+        Some(claim_guard),
     );
     Ok(LaunchedBackupRun {
         pending_other_backups,
@@ -449,7 +449,7 @@ impl BackupProgressReporter<'_> {
                 speed_bytes_per_sec: p.speed_bps,
                 info_message: tr(&active_run_message(&ActiveRunInfo {
                     name: self.backup_name,
-                    is_maintenance: false,
+                    kind: RunKindCode::Backup,
                     phase: p.phase,
                     percent_done: p.percent_done,
                 })),

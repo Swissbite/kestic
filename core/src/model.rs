@@ -987,6 +987,22 @@ impl MaintenanceStats {
     }
 }
 
+/// Result of a restore run (`RestoreStats`, stored in `runs.stats_json`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RestoreStats {
+    /// Files that did not exist at the target before.
+    pub files_new: u64,
+    pub files_overwritten: u64,
+    /// Existing, different files that stayed (from the preview).
+    pub files_kept: u64,
+    pub bytes_restored: u64,
+    pub target_dir: String,
+    pub overwrite: kestic_i18n::codes::RestoreOverwrite,
+    /// Number of selected entries (0 = the whole snapshot).
+    pub selection_count: u64,
+}
+
 /// Single execution record (glossary: `Run`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Run {
@@ -1014,6 +1030,9 @@ pub struct Run {
     /// recorded before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maintenance: Option<MaintenanceStats>,
+    /// Result of a restore run; `None` for other run kinds and before the restore ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore: Option<RestoreStats>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_path: Option<PathBuf>,
 }
@@ -1040,6 +1059,7 @@ impl Run {
             commands: Vec::new(),
             stats: None,
             maintenance: None,
+            restore: None,
             log_path: None,
         })
     }

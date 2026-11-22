@@ -26,7 +26,7 @@ use kestic_core::scheduler::{
     evaluate_destination_maintenance, evaluate_run_conditions, format_local_slot_hint,
     is_pause_active,
 };
-use kestic_i18n::codes::{PendingReasonCode, RunProgressPhase};
+use kestic_i18n::codes::{PendingReasonCode, RunKindCode, RunProgressPhase};
 use kestic_i18n::messages::{
     maintenance_running_message, overall_headline, schedules_paused_message,
 };
@@ -123,12 +123,12 @@ impl DaemonCore {
         claim_guard.disarm();
     }
 
-    /// Registers `new` as an active run, ends the claim on its destination, updates the tray and
-    /// announces the run with `RunUpdated` and `StatusChanged`.
+    /// Registers `new` as an active run, ends the claim on its destination (restores claim
+    /// none), updates the tray and announces the run with `RunUpdated` and `StatusChanged`.
     pub(super) fn activate_run(
         &mut self,
         new: NewActiveRun<'_>,
-        claim_guard: &mut DestinationClaimGuard,
+        claim_guard: Option<&mut DestinationClaimGuard>,
     ) -> ActivatedRun {
         let cancel = CancelHandle::new();
         let entry = ActiveRunEntry {
@@ -137,6 +137,7 @@ impl DaemonCore {
             backup_name: new.display_name.to_string(),
             progress: ActiveRunProgressDto {
                 run_id: new.run.id.as_str().to_string(),
+                kind: run_kind_code(&new.run.kind),
                 backup_id: new.backup_id.map(|id| id.as_str().to_string()),
                 backup_name: new.display_name.to_string(),
                 // Maintenance has no percentage; its texts check `backup_id: None` first.
@@ -152,7 +153,9 @@ impl DaemonCore {
             sleep_interrupted: false,
         };
         self.active_runs.insert(new.run.id.clone(), entry);
-        self.release_claim(new.dest_id, claim_guard);
+        if let Some(claim_guard) = claim_guard {
+            self.release_claim(new.dest_id, claim_guard);
+        }
 
         let conn_opt = self.conn.clone();
         let tray_opt = self.tray.clone();
@@ -466,6 +469,7 @@ impl DaemonCore {
             .iter()
             .filter(|b| b.destination_id == dest.id && self.is_pending_forget_cached(&b.id))
             .count();
+        // Maintenance waits for every other run on the destination, restores included.
         let dest_busy = self
             .active_runs
             .values()
@@ -568,7 +572,7 @@ impl DaemonCore {
                 let is_running_dest = self
                     .active_runs
                     .values()
-                    .any(|r| r.run.destination_id == b.backup.destination_id);
+                    .any(|r| r.run.destination_id == b.backup.destination_id && !r.is_restore());
                 let label = match b.availability.blocked_reason {
                     Some(reason) if !b.availability.available => {
                         let reason = tr(&reason.message(b.availability.source_status));
@@ -625,6 +629,7 @@ impl DaemonCore {
             global_paused: global_pause.is_some(),
             backups: tray_backups,
             blocking_active: blocking.is_some(),
+            has_destinations: !self.config.destinations.is_empty(),
         }
     }
 
@@ -821,5 +826,15 @@ fn simulated_headline(sim: SimulatedOverallStatus) -> Option<String> {
         SimulatedOverallStatus::MaintenanceRunning => Some(tr(&maintenance_running_message())),
         SimulatedOverallStatus::RestoreRunning => Some(i18n("Restore running").into()),
         _ => None,
+    }
+}
+
+/// The code of a run kind for progress DTOs.
+pub(super) fn run_kind_code(kind: &RunKind) -> RunKindCode {
+    match kind {
+        RunKind::Backup { .. } => RunKindCode::Backup,
+        RunKind::Maintenance => RunKindCode::Maintenance,
+        RunKind::Restore { .. } => RunKindCode::Restore,
+        RunKind::Meta => RunKindCode::Meta,
     }
 }

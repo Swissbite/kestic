@@ -6,6 +6,9 @@
 //! page by page.
 
 use super::error::{KesticServiceErr, backup_run_error_kind};
+use super::restore_preview::{
+    HeldPreview, RestoreContext, RestoreParams, execute_restore_preview, parse_preview_request,
+};
 use super::state::{DaemonCore, probe_for_run};
 use crate::dbus_api::{
     DiffResultDto, FindResultDto, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
@@ -23,7 +26,7 @@ use kestic_core::snapshot_ls::{
     LsListing, execute_ls, normalize_snapshot_path, validate_snapshot_id,
 };
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::{SnapshotChange, SnapshotQueryKind};
+use kestic_i18n::codes::{RestoreOutcome, SnapshotChange, SnapshotQueryKind};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -32,6 +35,7 @@ pub(crate) enum QueryResult {
     Ls(LsListing),
     Find(FindResult),
     Diff(DiffResult),
+    RestorePreview(Box<HeldPreview>),
 }
 
 impl HeldResult for QueryResult {
@@ -40,6 +44,7 @@ impl HeldResult for QueryResult {
             Self::Ls(listing) => listing.held_bytes(),
             Self::Find(found) => found.held_bytes(),
             Self::Diff(diff) => diff.held_bytes(),
+            Self::RestorePreview(preview) => preview.held_bytes(),
         }
     }
 }
@@ -65,6 +70,9 @@ impl QueryResult {
                 bytes_removed: diff.counts.bytes_removed,
                 identical: diff.identical(),
             }),
+            Self::RestorePreview(preview) => {
+                SnapshotQueryResultDto::RestorePreview(Box::new(preview.page(page)))
+            }
         }
     }
 }
@@ -74,6 +82,7 @@ enum QueryWork {
     Ls { snapshot_id: String, dir: String },
     Find { scope: FindScope, text: String },
     Diff { from: String, to: String },
+    RestorePreview(RestoreParams),
 }
 
 /// A validated request.
@@ -121,11 +130,8 @@ fn parse_request(request_json: &str) -> Result<ParsedQuery, KesticServiceErr> {
             validate_snapshot_id(&to).map_err(invalid)?;
             QueryWork::Diff { from, to }
         }
-        other => {
-            return Err(invalid(format!(
-                "snapshot query kind not supported yet: {}",
-                other.as_str()
-            )));
+        SnapshotQueryKind::RestorePreview => {
+            QueryWork::RestorePreview(parse_preview_request(&request)?)
         }
     };
     Ok(ParsedQuery {
@@ -153,7 +159,7 @@ pub fn start_snapshot_query_async(
         .map(|r| r.as_str().to_string())
         .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
     let cancel = CancelHandle::new();
-    let (dest, deps, limit_bytes, configured) = {
+    let (dest, deps, limit_bytes, configured, restore_ctx) = {
         let mut guard = shared.lock_unpoisoned();
         let dest = guard
             .config
@@ -168,10 +174,18 @@ pub fn start_snapshot_query_async(
             .collect();
         let now = guard.clock.now_utc();
         let limit_bytes = guard.snapshot_queries.limits().per_query_bytes;
+        let restore_ctx =
+            RestoreContext::from_config(&guard.config, dest.clone(), guard.timezone.clone());
         guard
             .snapshot_queries
             .register(query_id.clone(), cancel.clone(), now);
-        (dest, guard.restic_deps(), limit_bytes, configured)
+        (
+            dest,
+            guard.restic_deps(),
+            limit_bytes,
+            configured,
+            restore_ctx,
+        )
     };
     let resolved = match probe_for_run(&deps.provider, deps.secret_store.as_ref()).1 {
         Ok(resolved) => resolved,
@@ -208,6 +222,10 @@ pub fn start_snapshot_query_async(
             }
             QueryWork::Diff { from, to } => {
                 execute_diff(&access, from, to, Some(&cancel), limit_bytes).map(QueryResult::Diff)
+            }
+            QueryWork::RestorePreview(params) => {
+                execute_restore_preview(&access, &restore_ctx, params, Some(&cancel), limit_bytes)
+                    .map(|p| QueryResult::RestorePreview(Box::new(p)))
             }
         };
         let outcome = outcome_of(res);
@@ -248,6 +266,16 @@ impl DaemonCore {
                     .find(|k| SnapshotChange::parse(k).is_none())
                 {
                     return Err(invalid(format!("unknown kind of change: {unknown}")));
+                }
+            }
+            (Some(QueryResult::RestorePreview(_)), false) => {
+                if let Some(unknown) = page
+                    .filter
+                    .kinds
+                    .iter()
+                    .find(|k| RestoreOutcome::parse(k).is_none())
+                {
+                    return Err(invalid(format!("unknown restore outcome: {unknown}")));
                 }
             }
             _ => {}

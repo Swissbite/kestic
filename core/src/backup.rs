@@ -44,6 +44,10 @@ pub enum BackupRunError {
     SnapshotParse(#[from] serde_json::Error),
     #[error("operation cancelled")]
     Cancelled,
+    #[error("path not found in the snapshot: {0}")]
+    PathNotInSnapshot(String),
+    #[error("invalid restore target: {0}")]
+    InvalidTarget(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }

@@ -14,6 +14,9 @@ use kestic_core::model::{
 use kestic_core::provider::MIN_RESTIC_VERSION;
 pub use kestic_core::query_list::{PageFilter, PageRequest as SnapshotQueryPage};
 use kestic_core::restic::RecoveryAction;
+pub use kestic_core::restore::RestoreTarget;
+pub use kestic_core::restore_preview::RestorePreviewEntry as RestorePreviewEntryDto;
+pub use kestic_core::restore_target::OriginalLocation as RestoreOriginalDto;
 use kestic_core::scheduler::PauseDuration;
 use kestic_core::snapshot::ResticSnapshot;
 pub use kestic_core::snapshot_diff::DiffChange as DiffChangeDto;
@@ -24,7 +27,8 @@ use kestic_i18n::codes::{
     ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
 pub use kestic_i18n::codes::{
-    OverallStatusKind, RunProgressPhase, SnapshotChange, SnapshotQueryKind,
+    OverallStatusKind, RestoreNoteCode, RestoreOutcome, RestoreOverwrite, RestoreTargetCode,
+    RunKindCode, RunProgressPhase, SnapshotChange, SnapshotQueryKind,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
@@ -63,6 +67,7 @@ pub enum KesticDbusError {
     AlreadyRunning(String),
     LockInUse(String),
     DuplicateLocation(String),
+    PreviewRequired(String),
     Internal(String),
 }
 
@@ -83,6 +88,7 @@ impl KesticDbusError {
             Self::AlreadyRunning(_) => ServiceErrorCode::AlreadyRunning,
             Self::LockInUse(_) => ServiceErrorCode::LockInUse,
             Self::DuplicateLocation(_) => ServiceErrorCode::DuplicateLocation,
+            Self::PreviewRequired(_) => ServiceErrorCode::PreviewRequired,
             Self::Internal(_) => ServiceErrorCode::Internal,
         }
     }
@@ -169,6 +175,9 @@ pub struct BackupAvailabilityDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActiveRunProgressDto {
     pub run_id: String,
+    /// Backup, maintenance or restore.
+    #[serde(default)]
+    pub kind: RunKindCode,
     pub backup_id: Option<String>,
     pub backup_name: String,
     /// `scanning` until restic knows the total, then `scan_finished`.
@@ -454,6 +463,15 @@ pub struct SnapshotQueryRequest {
     /// `diff`: the full ID of the snapshot compared to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_snapshot_id: Option<String>,
+    /// `restore_preview`: absolute snapshot paths to restore; empty = everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<Vec<String>>,
+    /// `restore_preview`: the target; without it the daemon takes the suggested new folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<RestoreTarget>,
+    /// `restore_preview`: what happens to existing files (default `never`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overwrite: Option<RestoreOverwrite>,
 }
 
 impl SnapshotQueryRequest {
@@ -468,6 +486,9 @@ impl SnapshotQueryRequest {
             scope: None,
             from_snapshot_id: None,
             to_snapshot_id: None,
+            selection: None,
+            target: None,
+            overwrite: None,
         }
     }
 
@@ -482,6 +503,9 @@ impl SnapshotQueryRequest {
             scope: Some(scope),
             from_snapshot_id: None,
             to_snapshot_id: None,
+            selection: None,
+            target: None,
+            overwrite: None,
         }
     }
 
@@ -496,6 +520,33 @@ impl SnapshotQueryRequest {
             scope: None,
             from_snapshot_id: Some(from.to_string()),
             to_snapshot_id: Some(to.to_string()),
+            selection: None,
+            target: None,
+            overwrite: None,
+        }
+    }
+
+    /// Previews restoring `selection` of `snapshot_id` into `target` (`None` = the suggested
+    /// new folder).
+    pub fn restore_preview(
+        destination_id: &str,
+        snapshot_id: &str,
+        selection: &[String],
+        target: Option<RestoreTarget>,
+        overwrite: RestoreOverwrite,
+    ) -> Self {
+        Self {
+            kind: SnapshotQueryKind::RestorePreview,
+            destination_id: destination_id.to_string(),
+            snapshot_id: Some(snapshot_id.to_string()),
+            dir: None,
+            pattern: None,
+            scope: None,
+            from_snapshot_id: None,
+            to_snapshot_id: None,
+            selection: Some(selection.to_vec()),
+            target,
+            overwrite: Some(overwrite),
         }
     }
 }
@@ -536,6 +587,60 @@ pub struct DiffResultDto {
     pub identical: bool,
 }
 
+/// What the daemon suggests as target of a restore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreSuggestionDto {
+    /// The suggested new folder (`~/Restored/<backup> <time>`).
+    pub new_folder: String,
+    pub original: RestoreOriginalDto,
+}
+
+/// The daemon's check of a restore target; `detail` is the resolved folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreTargetCheckDto {
+    pub code: RestoreTargetCode,
+    pub detail: String,
+}
+
+/// The target a preview used, with its check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestorePreviewTargetDto {
+    #[serde(flatten)]
+    pub target: RestoreTarget,
+    pub check: RestoreTargetCheckDto,
+}
+
+/// Result of a `restore_preview` query. At the default target (a new, empty folder) no dry run
+/// runs: the counts and `entries` stay empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestorePreviewResultDto {
+    pub suggestion: RestoreSuggestionDto,
+    pub target: RestorePreviewTargetDto,
+    pub new_files: u64,
+    pub overwritten_files: u64,
+    pub kept_files: u64,
+    pub identical_files: u64,
+    pub bytes_to_write: u64,
+    pub entries: ListPageDto<RestorePreviewEntryDto>,
+    pub notes: Vec<RestoreNoteCode>,
+}
+
+/// Request of `StartRestore`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreRequest {
+    pub destination_id: String,
+    pub snapshot_id: String,
+    /// Absolute snapshot paths; empty = everything.
+    #[serde(default)]
+    pub selection: Vec<String>,
+    pub target: RestoreTarget,
+    #[serde(default)]
+    pub overwrite: RestoreOverwrite,
+    /// `query_id` of a finished `restore_preview` with the same parameters.
+    #[serde(default)]
+    pub preview_id: Option<String>,
+}
+
 /// Result of a finished snapshot query, tagged with its kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -543,6 +648,7 @@ pub enum SnapshotQueryResultDto {
     Ls(LsResultDto),
     Find(FindResultDto),
     Diff(DiffResultDto),
+    RestorePreview(Box<RestorePreviewResultDto>),
 }
 
 /// Status of a snapshot query (`GetSnapshotQueryStatus`).
@@ -607,7 +713,7 @@ impl ActiveRunProgressDto {
     pub fn info(&self) -> ActiveRunInfo<'_> {
         ActiveRunInfo {
             name: &self.backup_name,
-            is_maintenance: self.backup_id.is_none(),
+            kind: self.kind,
             phase: self.phase,
             percent_done: self.percent_done,
         }
@@ -792,6 +898,13 @@ impl KesticClient {
 
     pub fn cancel_snapshot_query(&self, query_id: &str) -> zbus::Result<()> {
         self.call("CancelSnapshotQuery", &(query_id,))
+    }
+
+    /// Starts a restore run; returns its run ID.
+    pub fn start_restore(&self, request: &RestoreRequest) -> Result<String, KesticDbusError> {
+        let json = to_json_arg(request)?;
+        self.call("StartRestore", &(json.as_str(),))
+            .map_err(KesticDbusError::from)
     }
 
     pub fn test_destination_connection(

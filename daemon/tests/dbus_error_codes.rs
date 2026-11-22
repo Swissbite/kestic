@@ -42,6 +42,7 @@ fn every_named_variant() -> Vec<KesticDbusError> {
         KesticDbusError::AlreadyRunning(d()),
         KesticDbusError::LockInUse(d()),
         KesticDbusError::DuplicateLocation(d()),
+        KesticDbusError::PreviewRequired(d()),
         KesticDbusError::Internal(d()),
     ]
 }

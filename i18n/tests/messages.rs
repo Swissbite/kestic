@@ -5,8 +5,8 @@
 
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
-    SkipReason, SourceStatus,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, RunKindCode, RunProgressPhase,
+    ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
@@ -136,13 +136,13 @@ fn counts(kind: OverallStatusKind) -> OverallCounts {
 fn overall_headline_follows_the_priority_order() {
     let run = ActiveRunInfo {
         name: "Z",
-        is_maintenance: false,
+        kind: RunKindCode::Backup,
         phase: RunProgressPhase::ScanFinished,
         percent_done: 45.6,
     };
     let maint = ActiveRunInfo {
         name: "NAS",
-        is_maintenance: true,
+        kind: RunKindCode::Maintenance,
         phase: RunProgressPhase::Scanning,
         percent_done: 0.0,
     };
@@ -482,7 +482,7 @@ fn every_service_error_code_maps_to_its_msgid() {
 fn active_run_while_scanning_shows_no_percentage() {
     let scanning = ActiveRunInfo {
         name: "Z",
-        is_maintenance: false,
+        kind: RunKindCode::Backup,
         phase: RunProgressPhase::Scanning,
         percent_done: 99.0,
     };

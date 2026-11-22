@@ -5,6 +5,7 @@
 
 use super::error::{KesticServiceErr, map_provider_err};
 use super::previews::PreviewEntry;
+use super::restore_runner::PendingRestore;
 use super::run_errors::unreadable_items_from_lines;
 use super::snapshot_queries::QueryResult;
 use super::supervision::SupervisionConfig;
@@ -25,7 +26,7 @@ use kestic_core::history::{
     last_successful_backup_at,
 };
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, ResticProvider, Run, RunId, RunStatus,
+    Backup, BackupId, Destination, DestinationId, ResticProvider, Run, RunId, RunKind, RunStatus,
 };
 use kestic_core::mount::{MountInspector, SourceCheckResult, SystemMountInspector};
 use kestic_core::provider::{ResolvedRestic, ResticProviderError, resolve_and_check};
@@ -174,6 +175,12 @@ pub(super) struct ActiveRunEntry {
     pub(super) sleep_interrupted: bool,
 }
 
+impl ActiveRunEntry {
+    pub(super) fn is_restore(&self) -> bool {
+        matches!(self.run.kind, RunKind::Restore { .. })
+    }
+}
+
 /// Core stateful daemon engine shared between D-Bus interface methods, tray actions, and unit tests.
 pub struct DaemonCore {
     pub(super) config_path: PathBuf,
@@ -211,6 +218,8 @@ pub struct DaemonCore {
     pub(super) active_runs: HashMap<RunId, ActiveRunEntry>,
     pub(super) claiming_destinations: HashSet<DestinationId>,
     pub(super) queued_backups: VecDeque<BackupId>,
+    /// Restores waiting for maintenance of their destination to end.
+    pub(super) pending_restores: Vec<PendingRestore>,
     pub(super) sleep_in_progress: bool,
     pub(super) dry_runs: HashMap<String, PreviewEntry<BackupDryRunResult>>,
     pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
@@ -324,6 +333,7 @@ impl DaemonCore {
             active_runs: HashMap::new(),
             claiming_destinations: HashSet::new(),
             queued_backups: VecDeque::new(),
+            pending_restores: Vec::new(),
             sleep_in_progress: false,
             dry_runs: HashMap::new(),
             retention_previews: HashMap::new(),
@@ -410,12 +420,28 @@ impl DaemonCore {
         &self.history
     }
 
+    /// Whether a backup or maintenance run holds or claims `dest_id`. Restores keep their own
+    /// accounting: they run beside backups ([`Self::has_active_restore`]).
     pub(super) fn is_destination_busy(&self, dest_id: &DestinationId) -> bool {
         self.claiming_destinations.contains(dest_id)
             || self
                 .active_runs
                 .values()
-                .any(|e| &e.run.destination_id == dest_id)
+                .any(|e| &e.run.destination_id == dest_id && !e.is_restore())
+    }
+
+    /// Whether a restore runs on `dest_id`; maintenance waits for it.
+    pub(super) fn has_active_restore(&self, dest_id: &DestinationId) -> bool {
+        self.active_runs
+            .values()
+            .any(|e| &e.run.destination_id == dest_id && e.is_restore())
+    }
+
+    /// Whether maintenance runs on `dest_id`; a restore waits for it.
+    pub(super) fn has_active_maintenance(&self, dest_id: &DestinationId) -> bool {
+        self.active_runs
+            .values()
+            .any(|e| &e.run.destination_id == dest_id && matches!(e.run.kind, RunKind::Maintenance))
     }
 
     pub(super) fn upsert_run_cached(

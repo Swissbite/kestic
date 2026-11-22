@@ -57,6 +57,8 @@ pub enum TrayAction {
     PauseGlobal(PauseDuration),
     ResumeGlobal,
     OpenWindow,
+    /// Opens the main window on the tab «Restore».
+    OpenRestore,
     OpenAbout,
     RequestQuit,
 }
@@ -123,6 +125,8 @@ pub struct KesticTrayState {
     pub global_paused: bool,
     pub backups: Vec<TrayBackupItem>,
     pub blocking_active: bool,
+    /// At least one destination is configured: «Restore Files…» is enabled.
+    pub has_destinations: bool,
 }
 
 impl Default for KesticTrayState {
@@ -141,6 +145,7 @@ impl Default for KesticTrayState {
             global_paused: false,
             backups: Vec::new(),
             blocking_active: false,
+            has_destinations: false,
         }
     }
 }
@@ -400,6 +405,33 @@ impl ksni::Tray for KesticTray {
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
+        self.build_menu()
+    }
+}
+
+impl KesticTray {
+    /// «Restore Files…»: enabled with at least one destination (every snapshot there can be
+    /// restored), otherwise disabled with the reason. The menu is built from the daemon state
+    /// only, never by running restic.
+    fn build_restore_item(&self) -> MenuItem<Self> {
+        let label = if self.state.has_destinations {
+            i18n("Restore Files…").to_string()
+        } else {
+            i18n("Restore Files… (no destination connected)").to_string()
+        };
+        StandardItem {
+            label,
+            icon_name: "document-revert".to_string(),
+            enabled: self.state.has_destinations,
+            activate: Box::new(|this: &mut Self| {
+                this.emit(TrayAction::OpenRestore);
+            }),
+            ..Default::default()
+        }
+        .into()
+    }
+
+    fn build_menu(&self) -> Vec<MenuItem<Self>> {
         let mut items = self.build_status_header_items();
         items.push(MenuItem::Separator);
         items.push(self.build_backup_now_submenu());
@@ -417,6 +449,7 @@ impl ksni::Tray for KesticTray {
             }
             .into(),
         );
+        items.push(self.build_restore_item());
         items.push(MenuItem::Separator);
         items.push(
             StandardItem {
@@ -574,6 +607,7 @@ mod tests {
 
     fn running(name: &str, percent: f64) -> ActiveRunProgressDto {
         ActiveRunProgressDto {
+            kind: kestic_i18n::codes::RunKindCode::Backup,
             run_id: "r1".to_string(),
             backup_id: Some("b1".to_string()),
             backup_name: name.to_string(),

@@ -56,6 +56,8 @@ pub enum KesticServiceErr {
     LockInUse(String),
     /// Location already used; the message is the name of that destination (raw detail).
     DuplicateLocation(String),
+    /// `StartRestore` without a matching, finished, fresh preview.
+    PreviewRequired(String),
     Internal(String),
 }
 
@@ -73,6 +75,7 @@ impl std::fmt::Display for KesticServiceErr {
             | Self::AlreadyRunning(m)
             | Self::LockInUse(m)
             | Self::DuplicateLocation(m)
+            | Self::PreviewRequired(m)
             | Self::Internal(m) => f.write_str(m),
             Self::ManualRunBlocked(reason) => f.write_str(reason.as_str()),
             Self::SleepInProgress => f.write_str("sleep_in_progress"),
@@ -105,6 +108,7 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::AlreadyRunning(m) => KesticDbusError::AlreadyRunning(m),
             KesticServiceErr::LockInUse(m) => KesticDbusError::LockInUse(m),
             KesticServiceErr::DuplicateLocation(m) => KesticDbusError::DuplicateLocation(m),
+            KesticServiceErr::PreviewRequired(m) => KesticDbusError::PreviewRequired(m),
             KesticServiceErr::Internal(m) => KesticDbusError::Internal(m),
         }
     }
@@ -197,6 +201,7 @@ pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
     match err {
         BackupRunError::SourceUnavailable(_) => ErrorKind::SourceUnavailable,
         BackupRunError::Cancelled => ErrorKind::Cancelled,
+        BackupRunError::PathNotInSnapshot(_) => ErrorKind::PathNotInSnapshot,
         BackupRunError::Destination(DestinationError::Secret(_)) => ErrorKind::SecretStoreLocked,
         BackupRunError::Destination(dest_err) => {
             destination_failure(dest_err).map_or(ErrorKind::Unknown, |kind| kind.error_kind())

@@ -13,9 +13,10 @@ use crate::service::{
     preview_destination_maintenance_unlocked, refresh_availability_unlocked,
     refresh_probe_unlocked, run_destination_maintenance_async, set_restic_provider_unlocked,
     start_all_backups_async, start_backup_async, start_backup_dry_run_async,
-    start_backup_override_async, start_retention_preview_async, start_snapshot_query_async,
-    test_destination_connection_unlocked, trigger_background_availability_probe,
-    unlock_destination_async, update_destination_password_unlocked, update_destination_unlocked,
+    start_backup_override_async, start_restore_async, start_retention_preview_async,
+    start_snapshot_query_async, test_destination_connection_unlocked,
+    trigger_background_availability_probe, unlock_destination_async,
+    update_destination_password_unlocked, update_destination_unlocked,
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
@@ -159,6 +160,14 @@ impl KesticDbusV1Service {
     async fn start_snapshot_query(&self, request_json: &str) -> Result<String, KesticDbusError> {
         let req = request_json.to_string();
         self.blocking(move |core| start_snapshot_query_async(core, &req))
+            .await
+            .map_err(KesticDbusError::from)
+    }
+
+    #[zbus(name = "StartRestore")]
+    async fn start_restore(&self, request_json: &str) -> Result<String, KesticDbusError> {
+        let req = request_json.to_string();
+        self.blocking(move |core| start_restore_async(core, &req))
             .await
             .map_err(KesticDbusError::from)
     }
@@ -651,6 +660,9 @@ impl KesticDbusV1Service {
     #[zbus(signal, name = "ShowAboutRequested")]
     async fn show_about_requested(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 
+    #[zbus(signal, name = "ShowRestoreRequested")]
+    async fn show_restore_requested(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
+
     #[zbus(signal, name = "QuitConfirmationRequested")]
     async fn quit_confirmation_requested(
         ctxt: &SignalEmitter<'_>,
@@ -805,6 +817,12 @@ pub(crate) fn emit_show_window_requested(conn: &Connection) {
 pub(crate) fn emit_show_about_requested(conn: &Connection) {
     queue_signal(conn, async move |emitter| {
         KesticDbusV1Service::show_about_requested(emitter).await
+    });
+}
+
+pub(crate) fn emit_show_restore_requested(conn: &Connection) {
+    queue_signal(conn, async move |emitter| {
+        KesticDbusV1Service::show_restore_requested(emitter).await
     });
 }
 

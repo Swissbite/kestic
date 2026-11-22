@@ -6,8 +6,8 @@
 use crate::clock::Clock;
 use crate::migrations::{MigrationError, history_migrations, run_migrations};
 use crate::model::{
-    BackupId, CommandRecord, DestinationId, MaintenanceStats, PendingReason, Run, RunId, RunKind,
-    RunStats, RunStatus,
+    BackupId, CommandRecord, DestinationId, MaintenanceStats, PendingReason, RestoreStats, Run,
+    RunId, RunKind, RunStats, RunStatus,
 };
 use crate::restic::redact_secrets;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -789,27 +789,43 @@ fn from_sql_int<T: TryFrom<i64>>(column: usize, value: i64) -> rusqlite::Result<
     T::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, value))
 }
 
-/// The `stats_json` column holds [`MaintenanceStats`] for maintenance runs and [`RunStats`]
-/// for every other run kind.
+/// The `stats_json` column holds [`MaintenanceStats`] for maintenance runs, [`RestoreStats`]
+/// for restore runs and [`RunStats`] for every other run kind.
 fn encode_stats_json(run: &Run) -> Result<Option<String>, serde_json::Error> {
     match run.kind {
         RunKind::Maintenance => run.maintenance.as_ref().map(serde_json::to_string),
+        RunKind::Restore { .. } => run.restore.as_ref().map(serde_json::to_string),
         _ => run.stats.as_ref().map(serde_json::to_string),
     }
     .transpose()
 }
 
-fn decode_stats_json(
-    kind: &RunKind,
-    raw: Option<&str>,
-) -> Result<(Option<RunStats>, Option<MaintenanceStats>), serde_json::Error> {
+/// The result columns of a run, decoded by its kind.
+#[derive(Default)]
+struct DecodedStats {
+    stats: Option<RunStats>,
+    maintenance: Option<MaintenanceStats>,
+    restore: Option<RestoreStats>,
+}
+
+fn decode_stats_json(kind: &RunKind, raw: Option<&str>) -> Result<DecodedStats, serde_json::Error> {
     let Some(raw) = raw else {
-        return Ok((None, None));
+        return Ok(DecodedStats::default());
     };
-    match kind {
-        RunKind::Maintenance => Ok((None, Some(serde_json::from_str(raw)?))),
-        _ => Ok((Some(serde_json::from_str(raw)?), None)),
-    }
+    Ok(match kind {
+        RunKind::Maintenance => DecodedStats {
+            maintenance: Some(serde_json::from_str(raw)?),
+            ..DecodedStats::default()
+        },
+        RunKind::Restore { .. } => DecodedStats {
+            restore: Some(serde_json::from_str(raw)?),
+            ..DecodedStats::default()
+        },
+        _ => DecodedStats {
+            stats: Some(serde_json::from_str(raw)?),
+            ..DecodedStats::default()
+        },
+    })
 }
 
 fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
@@ -871,8 +887,11 @@ fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         .map(|s| OffsetDateTime::parse(s, &Rfc3339))
         .transpose()
         .map_err(|e| to_sql_err(e.to_string()))?;
-    let (stats, maintenance) =
-        decode_stats_json(&kind, stats_json.as_deref()).map_err(|e| to_sql_err(e.to_string()))?;
+    let DecodedStats {
+        stats,
+        maintenance,
+        restore,
+    } = decode_stats_json(&kind, stats_json.as_deref()).map_err(|e| to_sql_err(e.to_string()))?;
 
     Ok(Run {
         id,
@@ -888,6 +907,7 @@ fn read_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         commands: Vec::new(),
         stats,
         maintenance,
+        restore,
         log_path: log_path.map(PathBuf::from),
     })
 }

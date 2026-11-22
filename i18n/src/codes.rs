@@ -71,6 +71,8 @@ code_enum! {
         SecretStoreLocked => "secret_store_locked",
         /// Only for skipped backups (`SkippedBackupDto`): restic is missing or too old.
         ResticUnavailable => "restic_unavailable",
+        /// A folder chosen for a restore does not exist in the snapshot.
+        PathNotInSnapshot => "path_not_in_snapshot",
         /// Anything not recognised (never a transient code).
         Unknown => "unknown",
     }
@@ -211,6 +213,9 @@ code_enum! {
         LockInUse => "LockInUse",
         /// The repository location is already used by another destination.
         DuplicateLocation => "DuplicateLocation",
+        /// A restore to the original location or into a folder with content needs a finished,
+        /// fresh preview with the same parameters.
+        PreviewRequired => "PreviewRequired",
         Internal => "Internal",
         /// No D-Bus error name: the daemon could not be reached (transport error, set by the GUI).
         DaemonUnreachable => "DaemonUnreachable",
@@ -265,6 +270,85 @@ code_enum! {
         TypeChanged => "type_changed",
         /// The content changed while all metadata stayed the same (`?`).
         Bitrot => "bitrot",
+    }
+}
+
+code_enum! {
+    /// Kind of a run (`ActiveRunProgressDto.kind`, signal `RunProgress`).
+    RunKindCode {
+        Backup => "backup",
+        Maintenance => "maintenance",
+        Restore => "restore",
+        Meta => "meta",
+    }
+}
+
+impl Default for RunKindCode {
+    /// Progress from a daemon that does not name the kind belongs to a backup.
+    fn default() -> Self {
+        Self::Backup
+    }
+}
+
+code_enum! {
+    /// What a restore does with a file that already exists at the target
+    /// (`RestoreRequest.overwrite`, `RestoreStats.overwrite`); passed to restic as
+    /// `--overwrite`.
+    RestoreOverwrite {
+        Never => "never",
+        IfNewer => "if_newer",
+        IfChanged => "if_changed",
+        Always => "always",
+    }
+}
+
+impl Default for RestoreOverwrite {
+    /// Existing files stay unless the user chooses otherwise for one restore.
+    fn default() -> Self {
+        Self::Never
+    }
+}
+
+code_enum! {
+    /// What a restore would do with one file (`RestorePreviewEntryDto.outcome`).
+    RestoreOutcome {
+        /// The file does not exist at the target yet.
+        New => "new",
+        /// The file exists and is replaced.
+        Overwritten => "overwritten",
+        /// The file exists with other content and stays as it is.
+        Kept => "kept",
+        /// The file exists with the same content.
+        Identical => "identical",
+    }
+}
+
+code_enum! {
+    /// Result of the daemon's check of a restore target (`RestoreTargetCheckDto.code`).
+    RestoreTargetCode {
+        Ok => "ok",
+        /// An existing folder with content: only with a preview.
+        ExistsNotEmpty => "exists_not_empty",
+        NotADirectory => "not_a_directory",
+        NotWritable => "not_writable",
+        /// The folder of the original location does not exist; Kestic does not create it.
+        MissingMappedDir => "missing_mapped_dir",
+        /// The target lies inside the repository of a local destination.
+        InsideRepository => "inside_repository",
+    }
+}
+
+code_enum! {
+    /// A note of a restore preview (`RestorePreviewResultDto.notes`).
+    RestoreNoteCode {
+        /// The snapshot belongs to another user; the restored files belong to the current one.
+        OwnershipNotRestored => "ownership_not_restored",
+        /// A file that is overwritten has further hard links.
+        HardLinksAffected => "hard_links_affected",
+        /// The selection matches no file of the snapshot.
+        NothingSelectedMatches => "nothing_selected_matches",
+        /// The target holds a symbolic link where the snapshot has an entry.
+        SymlinkInTarget => "symlink_in_target",
     }
 }
 
@@ -354,6 +438,21 @@ mod tests {
         for v in RunProgressPhase::ALL {
             assert_eq!(RunProgressPhase::parse(v.as_str()), Some(v));
             assert_eq!(RunProgressPhase::parse("nope"), None);
+        }
+        for v in RunKindCode::ALL {
+            assert_eq!(RunKindCode::parse(v.as_str()), Some(v));
+        }
+        for v in RestoreOverwrite::ALL {
+            assert_eq!(RestoreOverwrite::parse(v.as_str()), Some(v));
+        }
+        for v in RestoreOutcome::ALL {
+            assert_eq!(RestoreOutcome::parse(v.as_str()), Some(v));
+        }
+        for v in RestoreTargetCode::ALL {
+            assert_eq!(RestoreTargetCode::parse(v.as_str()), Some(v));
+        }
+        for v in RestoreNoteCode::ALL {
+            assert_eq!(RestoreNoteCode::parse(v.as_str()), Some(v));
         }
     }
 }
