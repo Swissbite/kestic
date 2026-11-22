@@ -97,6 +97,16 @@ fn mode_of(index: i32) -> RestoreOverwrite {
         .unwrap_or_default()
 }
 
+/// `path` with the home folder shown as `~`.
+fn tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && path.starts_with(&format!("{home}/")) => {
+            format!("~{}", &path[home.len()..])
+        }
+        _ => path.to_string(),
+    }
+}
+
 fn row_for(entry: &RestorePreviewEntryDto) -> PreviewRow {
     PreviewRow {
         path: entry.path.clone(),
@@ -371,17 +381,17 @@ impl qobject::RestorePreviewModel {
     fn apply_result(mut self: Pin<&mut Self>, p: &RestorePreviewResultDto) {
         let original = &p.suggestion.original;
         self.as_mut()
-            .set_new_folder(QString::from(&p.suggestion.new_folder));
-        self.as_mut().set_original_dir(QString::from(
+            .set_new_folder(QString::from(&tilde(&p.suggestion.new_folder)));
+        self.as_mut().set_original_dir(QString::from(&tilde(
             original
                 .mapped_dir
                 .as_deref()
                 .unwrap_or(&original.original_dir),
-        ));
+        )));
         self.as_mut()
             .set_original_available(!original.needs_user_choice && original.mapped_dir.is_some());
         self.as_mut()
-            .set_target_dir(QString::from(&p.target.check.detail));
+            .set_target_dir(QString::from(&tilde(&p.target.check.detail)));
         let check = p
             .target
             .check

@@ -863,6 +863,17 @@ int scenario_compare_identical(const Ctx& c) {
     return 0;
 }
 
+// Repaints the whole window. The offscreen software renderer repaints only changed regions, so
+// items of a lower layer that changed under an open dialog are drawn over it in a screenshot;
+// the desktop renders whole frames.
+void repaint_fully(QQuickWindow* w) {
+    const QSize size = w->size();
+    w->resize(size.width() + 1, size.height());
+    wait_ms(100);
+    w->resize(size);
+    wait_ms(300);
+}
+
 // `out_path` with `suffix` before `.png`, for a second screenshot of one scene.
 QString screenshot_variant(const QString& out_path, const char* suffix) {
     QString path = out_path;
@@ -937,7 +948,7 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK_EQ(6219, r.dialog->property("title").toString(),
         loc(c.lang, "Restore 1 Item", "1 Element wiederherstellen"), "dialog title");
     M4_CHECK(6220, restore_now->property("enabled").toBool(), "«Restore Now» enabled for a new folder");
-    wait_ms(400);
+    repaint_fully(w);
     M4_CHECK(6221, save_screenshot(w, c.out_path), "screenshot failed");
 
     // The preview at the original location waits for its held dry run.
@@ -981,13 +992,7 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK_EQ(6239, role_value(preview_rows, 0, "outcomeText").toString(),
         loc(c.lang, "Overwritten", "Überschrieben"), "AC-M4-05-4 (b) a.txt overwritten");
     wait_ms(400);
-    if (qEnvironmentVariableIsSet("KESTIC_DEBUG_FULL_REPAINT")) {
-        const QSize size = w->size();
-        w->resize(size.width() + 1, size.height());
-        wait_ms(100);
-        w->resize(size);
-        wait_ms(300);
-    }
+    repaint_fully(w);
     M4_CHECK(6240, save_screenshot(w, screenshot_variant(c.out_path, "-overwrite")), "screenshot failed");
 
     trigger(restore_now);
@@ -998,7 +1003,7 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK(6243, banner && banner->property("visible").toBool(), "the result of the restore is shown");
     M4_CHECK_EQ(6244, banner->property("text").toString(),
         loc(c.lang, "1 file restored", "1 Datei wiederhergestellt"), "result line");
-    wait_ms(400);
+    repaint_fully(w);
     M4_CHECK(6245, save_screenshot(w, screenshot_variant(c.out_path, "-done")), "screenshot failed");
 
     if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 6246)) {
@@ -1051,6 +1056,9 @@ int scenario_restic_outdated(const Ctx& c) {
     M4_CHECK(6304, label != nullptr, "resticSourceLabel missing");
     const QString text = label->property("text").toString();
     const QString note = loc(c.lang, "(outdated)", "(veraltet)");
+    for (const char* code : {"system", "app_managed", "custom"}) {
+        M4_CHECK(6308, !text.contains(QLatin1String(code)), "no raw provider code in the restic source");
+    }
     if (qEnvironmentVariable("KESTIC_SMOKE_EXPECT_OUTDATED") == QLatin1String("1")) {
         M4_CHECK(6305, text.contains(QStringLiteral("0.18.0 ") + note), "(b) «(outdated)» after 0.18.0");
     } else {

@@ -3787,3 +3787,12 @@ msgid "%1 file restored"
 msgid_plural "%1 files restored"
 msgstr[0] "%1 Datei wiederhergestellt"
 msgstr[1] "%1 Dateien wiederhergestellt"
+
+msgid "System restic"
+msgstr "System-restic"
+
+msgid "restic managed by Kestic"
+msgstr "Von Kestic verwaltetes restic"
+
+msgid "Own program"
+msgstr "Eigenes Programm"

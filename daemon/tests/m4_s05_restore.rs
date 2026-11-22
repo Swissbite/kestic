@@ -402,10 +402,10 @@ fn ac_m4_05_14_restore_without_fitting_fresh_preview_is_refused() {
                 };
                 refused(None, "without preview");
                 refused(Some(&never_id), "other mode");
-                let (whole_id, _) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Always);
-                refused(Some(&whole_id), "other selection");
                 refused(Some(&running_id), "unfinished");
                 fx.rig.wrapper.release("restore");
+                let (whole_id, _) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Always);
+                refused(Some(&whole_id), "other selection");
                 let (fresh_id, _) =
                     fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
                 fx.rig.clock.advance(std::time::Duration::from_mins(11));

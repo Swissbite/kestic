@@ -235,6 +235,14 @@ Kirigami.Dialog {
             }
         }
 
+        Kirigami.InlineMessage {
+            objectName: "restoreConsequenceMessage"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Warning
+            visible: dialog.model !== null && dialog.model.state === "done" && dialog.model.overwrites
+            text: dialog.model ? dialog.model.consequence_text : ""
+        }
+
         Flow {
             objectName: "restoreKindChips"
             Layout.fillWidth: true
@@ -304,12 +312,5 @@ Kirigami.Dialog {
             text: dialog.model ? dialog.model.notes_text : ""
         }
 
-        Kirigami.InlineMessage {
-            objectName: "restoreConsequenceMessage"
-            Layout.fillWidth: true
-            type: Kirigami.MessageType.Warning
-            visible: dialog.model !== null && dialog.model.state === "done" && dialog.model.overwrites
-            text: dialog.model ? dialog.model.consequence_text : ""
-        }
     }
 }
