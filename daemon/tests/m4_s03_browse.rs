@@ -16,8 +16,8 @@ use common::m4::{
 use common::run_isolated_test;
 use kestic_core::model::Destination;
 use kestic_daemon::dbus_api::{
-    LsEntryDto, LsResultDto, PageFilter, SnapshotQueryKind, SnapshotQueryPage,
-    SnapshotQueryRequest, SnapshotQueryResultDto, SnapshotQueryStatusDto,
+    LsEntryDto, LsResultDto, PageFilter, SnapshotQueryPage, SnapshotQueryRequest,
+    SnapshotQueryResultDto, SnapshotQueryStatusDto,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -81,12 +81,11 @@ impl Fixture {
         self.rig
             .daemon
             .client
-            .start_snapshot_query(&SnapshotQueryRequest {
-                kind: SnapshotQueryKind::Ls,
-                destination_id: self.dest.id.as_str().to_string(),
-                snapshot_id: Some(self.snapshot_id.clone()),
-                dir: Some(dir.to_string()),
-            })
+            .start_snapshot_query(&SnapshotQueryRequest::ls(
+                self.dest.id.as_str(),
+                &self.snapshot_id,
+                dir,
+            ))
             .expect("StartSnapshotQuery")
     }
 

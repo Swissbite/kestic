@@ -8,22 +8,19 @@
 
 use super::qobject;
 use super::rows::{role_names, row_count, row_data};
-use crate::state_cache::{
-    daemon_unavailable_text, dbus_error_text, format_bytes, i18n, i18np, make_client, to_local,
-    tr_text,
+use super::snapshot_query::{
+    QueryRun, StartPoll, count_text, fetch_error_text, to_i32, too_large_text,
 };
+use crate::state_cache::{format_bytes, i18np, to_local};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
-use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter};
+use kestic_core::snapshot_find::parent_dir;
 use kestic_core::snapshot_ls::path_segments;
-use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
-    KesticClient, KesticDbusError, LsEntryDto, LsResultDto, SnapshotQueryKind, SnapshotQueryPage,
-    SnapshotQueryRequest, SnapshotQueryResultDto,
+    KesticDbusError, LsEntryDto, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use std::collections::BTreeSet;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -36,16 +33,6 @@ model_row!(BrowseRow {
     modified_text: String => "modifiedText",
     selected: bool => "selected",
 });
-
-/// The query that lists the current folder, as far as it has started.
-enum QueryStart {
-    /// `StartSnapshotQuery` is still on its way.
-    Pending,
-    Started(String),
-    Failed(String),
-    /// The folder was left before the query started; the start cancels it right away.
-    Abandoned,
-}
 
 #[derive(Default)]
 pub struct SnapshotBrowseModelRust {
@@ -65,11 +52,8 @@ pub struct SnapshotBrowseModelRust {
     destination_id: String,
     snapshot_id: String,
     filter: String,
-    /// Where the start of the current folder's query arrives; each folder gets its own slot, so
-    /// a late answer for an earlier folder is ignored.
-    start: Option<Arc<Mutex<QueryStart>>>,
-    query_id: Option<String>,
-    client: Option<KesticClient>,
+    /// The query that lists the current folder.
+    query: QueryRun,
     /// Absolute snapshot paths marked for restore.
     selection: BTreeSet<String>,
 }
@@ -101,24 +85,8 @@ fn icon_name(e: &LsEntryDto) -> &'static str {
     }
 }
 
-fn parent_dir(path: &str) -> &str {
-    match path.rfind('/') {
-        Some(0) | None => "/",
-        Some(i) => &path[..i],
-    }
-}
-
 fn last_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
-}
-
-/// Number of entries line: «1000 entries», with a filter «37 of 1000».
-pub(crate) fn count_text(total: u64, matched: u64, filtered: bool) -> String {
-    if filtered {
-        i18n("%1 of %2").subs(&[&format_count(matched), &format_count(total)])
-    } else {
-        i18np("%1 entry", "%1 entries", total, &[])
-    }
 }
 
 /// Selection line: the number of selected entries, how many are in `dir`, and where the
@@ -153,14 +121,6 @@ pub(crate) fn selection_text(selection: &BTreeSet<String>, dir: &str) -> String 
     }
 }
 
-fn format_count(n: u64) -> String {
-    crate::qt_bridge::ffi::format_count(i64::try_from(n).unwrap_or(i64::MAX))
-}
-
-fn to_i32(n: u64) -> i32 {
-    i32::try_from(n).unwrap_or(i32::MAX)
-}
-
 impl SnapshotBrowseModelRust {
     fn row_for(&self, e: &LsEntryDto) -> BrowseRow {
         BrowseRow {
@@ -174,46 +134,15 @@ impl SnapshotBrowseModelRust {
         }
     }
 
-    fn client(&mut self) -> Result<&KesticClient, String> {
-        let client = match self.client.take() {
-            Some(client) => client,
-            None => make_client()?,
-        };
-        Ok(self.client.insert(client))
-    }
-
-    fn page(&self, offset: u64) -> SnapshotQueryPage {
-        SnapshotQueryPage {
-            offset,
-            limit: DEFAULT_PAGE_LIMIT,
-            filter: PageFilter {
-                text: self.filter.clone(),
-                kinds: Vec::new(),
-            },
-        }
-    }
-
-    /// Fetches the page at `offset` of the current query: `Ok(None)` while it runs.
+    /// Fetches the page at `offset` of the current folder: `Ok(None)` while it is listed.
     fn fetch(&mut self, offset: u64) -> Result<Option<LsResultDto>, KesticDbusError> {
-        let Some(query_id) = self.query_id.clone() else {
-            return Ok(None);
-        };
-        let page = self.page(offset);
-        let client = self.client().map_err(KesticDbusError::Internal)?;
-        let status = client.get_snapshot_query_status(&query_id, &page)?;
-        match (status.state.as_str(), status.result) {
-            ("running", _) => Ok(None),
-            ("done", Some(SnapshotQueryResultDto::Ls(ls))) => Ok(Some(ls)),
-            // Only a folder this model left is cancelled; treat it like a freed result.
-            ("cancelled", _) => Err(KesticDbusError::NotFound(query_id)),
-            _ => {
-                let detail = status.error_detail.unwrap_or_default();
-                let text = match status.error_kind {
-                    Some(kind) => tr_text(&kind.text(Some(&detail))),
-                    None => detail,
-                };
-                Err(KesticDbusError::Internal(text))
-            }
+        let filter = self.filter.clone();
+        match self.query.fetch(offset, &filter)? {
+            Some(SnapshotQueryResultDto::Ls(ls)) => Ok(Some(ls)),
+            Some(_) => Err(KesticDbusError::Internal(
+                "unexpected snapshot query result".to_string(),
+            )),
+            None => Ok(None),
         }
     }
 }
@@ -227,21 +156,18 @@ impl qobject::SnapshotBrowseModel {
         dir: &QString,
     ) {
         self.as_mut().abandon();
-        let request = SnapshotQueryRequest {
-            kind: SnapshotQueryKind::Ls,
-            destination_id: destination_id.to_string(),
-            snapshot_id: Some(snapshot_id.to_string()),
-            dir: Some(dir.to_string()),
-        };
+        let request = SnapshotQueryRequest::ls(
+            &destination_id.to_string(),
+            &snapshot_id.to_string(),
+            &dir.to_string(),
+        );
         {
             let mut rust = self.as_mut().rust_mut();
             rust.destination_id = request.destination_id.clone();
             rust.snapshot_id = snapshot_id.to_string();
             rust.filter.clear();
-            rust.query_id = None;
+            rust.query.start(request);
         }
-        let slot = Arc::new(Mutex::new(QueryStart::Pending));
-        self.as_mut().rust_mut().start = Some(Arc::clone(&slot));
         self.as_mut().begin_reset_browse();
         self.as_mut().rust_mut().rows.clear();
         self.as_mut().end_reset_browse();
@@ -254,46 +180,15 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().set_error_text(QString::from(""));
         self.as_mut().update_selection_text();
         self.as_mut().set_state(QString::from("running"));
-        // Starting a query checks restic first; that must not hold up the window.
-        std::thread::spawn(move || {
-            let Ok(client) = make_client() else {
-                *slot.lock_unpoisoned() = QueryStart::Failed(daemon_unavailable_text());
-                return;
-            };
-            let started = match client.start_snapshot_query(&request) {
-                Ok(id) => QueryStart::Started(id),
-                Err(err) => QueryStart::Failed(dbus_error_text(&err)),
-            };
-            let mut guard = slot.lock_unpoisoned();
-            match (&*guard, started) {
-                (QueryStart::Abandoned, QueryStart::Started(id)) => {
-                    drop(guard);
-                    // Nobody waits for the answer; a query that already ended needs nothing.
-                    let _ = client.cancel_snapshot_query(&id);
-                }
-                (QueryStart::Abandoned, _) => {}
-                (_, started) => *guard = started,
-            }
-        });
     }
 
     /// Checks the running query (called by a timer while `state` is `running`).
     pub fn poll(mut self: Pin<&mut Self>) {
-        if self.query_id.is_none() {
-            let started = self
-                .start
-                .as_ref()
-                .map(|slot| std::mem::replace(&mut *slot.lock_unpoisoned(), QueryStart::Pending));
-            match started {
-                Some(QueryStart::Started(id)) => self.as_mut().rust_mut().query_id = Some(id),
-                Some(QueryStart::Failed(text)) => {
-                    self.as_mut().fail(&text);
-                    return;
-                }
-                Some(QueryStart::Pending | QueryStart::Abandoned) | None => return,
-            }
+        match self.as_mut().rust_mut().query.poll_start() {
+            StartPoll::Waiting => {}
+            StartPoll::Failed(text) => self.as_mut().fail(&text),
+            StartPoll::Started => self.as_mut().load_first_page(),
         }
-        self.as_mut().load_first_page();
     }
 
     /// Filters the current folder by `text` (any case, in the names); the daemon filters.
@@ -318,22 +213,7 @@ impl qobject::SnapshotBrowseModel {
         if self.state.to_string() != "running" {
             return;
         }
-        // A query whose start arrived but was not picked up yet is cancelled like a known one.
-        let mut started = None;
-        if let Some(slot) = self.as_mut().rust_mut().start.take() {
-            let mut guard = slot.lock_unpoisoned();
-            match std::mem::replace(&mut *guard, QueryStart::Abandoned) {
-                QueryStart::Started(id) => started = Some(id),
-                QueryStart::Pending | QueryStart::Failed(_) | QueryStart::Abandoned => {}
-            }
-        }
-        let query_id = self.as_mut().rust_mut().query_id.take().or(started);
-        if let Some(id) = query_id
-            && let Ok(client) = self.as_mut().rust_mut().client()
-        {
-            // A query that ended meanwhile needs no cancel; the answer is not needed.
-            let _ = client.cancel_snapshot_query(&id);
-        }
+        self.as_mut().rust_mut().query.abandon();
         self.as_mut().set_state(QString::from("cancelled"));
     }
 
@@ -347,13 +227,7 @@ impl qobject::SnapshotBrowseModel {
             Ok(None) => {}
             Ok(Some(ls)) => self.as_mut().apply_first_page(&ls),
             Err(KesticDbusError::NotFound(_)) => self.as_mut().reopen(),
-            Err(err) => {
-                let text = match err {
-                    KesticDbusError::Internal(text) => text,
-                    other => dbus_error_text(&other),
-                };
-                self.as_mut().fail(&text);
-            }
+            Err(err) => self.as_mut().fail(&fetch_error_text(err)),
         }
     }
 
@@ -380,9 +254,7 @@ impl qobject::SnapshotBrowseModel {
         let filtered = !self.filter.is_empty() && !ls.entries.too_large;
         let count = count_text(ls.entries.total, ls.entries.matched, filtered);
         self.as_mut().set_count_text(QString::from(&count));
-        let too_large =
-            i18n("Too many entries to show (%1). Choose a subfolder or narrow the search.")
-                .subs(&[&format_count(ls.entries.total)]);
+        let too_large = too_large_text(ls.entries.total);
         self.as_mut().set_too_large_text(QString::from(&too_large));
         self.as_mut().set_error_text(QString::from(""));
         self.as_mut().set_state(QString::from("done"));
@@ -413,12 +285,26 @@ impl qobject::SnapshotBrowseModel {
             }
             Ok(_) => {}
             Err(KesticDbusError::NotFound(_)) => self.as_mut().reopen(),
-            Err(err) => {
-                let text = match err {
-                    KesticDbusError::Internal(text) => text,
-                    other => dbus_error_text(&other),
-                };
-                self.as_mut().fail(&text);
+            Err(err) => self.as_mut().fail(&fetch_error_text(err)),
+        }
+    }
+
+    /// The row of the entry at `path`, fetching further pages while it is not loaded yet; -1
+    /// when the folder does not list it.
+    pub fn row_of_path(mut self: Pin<&mut Self>, path: &QString) -> i32 {
+        let path = path.to_string();
+        loop {
+            if let Some(row) = self.rows.iter().position(|r| r.path == path) {
+                return to_i32(row as u64);
+            }
+            let parent = QModelIndex::default();
+            if !self.can_fetch_more(&parent) {
+                return -1;
+            }
+            let before = self.rows.len();
+            self.as_mut().fetch_more(&parent);
+            if self.rows.len() == before {
+                return -1;
             }
         }
     }

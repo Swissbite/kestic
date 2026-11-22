@@ -3,6 +3,7 @@
 
 //! Unit tests of the texts of the snapshot browser.
 
+use super::super::snapshot_query::format_count;
 use super::*;
 
 fn set(paths: &[&str]) -> BTreeSet<String> {

@@ -319,8 +319,9 @@ bool entry_to(QQuickWindow* w, QAbstractItemModel* m, const QString& name) {
     return false;
 }
 
-// Opens the restore area and, in the narrow layout, the snapshot list of the first backup.
-int open_restore_snapshots(const Ctx& c, int code) {
+// Opens the restore area and, in the narrow layout, the snapshot list of the first backup,
+// which holds `snapshots` snapshots.
+int open_restore_snapshots(const Ctx& c, int code, int snapshots = 2) {
     QQuickWindow* w = c.window;
     QObject* tab = object_named(w, "restoreTabAction");
     M4_CHECK(code, tab != nullptr, "restoreTabAction missing");
@@ -335,7 +336,7 @@ int open_restore_snapshots(const Ctx& c, int code) {
         M4_CHECK(code + 3, backup_row != nullptr, "Tab did not reach the backup row");
         send_key(w, Qt::Key_Return);
     }
-    M4_CHECK(code + 4, wait_for_snapshots(w, c.backend, 2), "both snapshots of «Home» listed");
+    M4_CHECK(code + 4, wait_for_snapshots(w, c.backend, snapshots), "the snapshots of «Home» listed");
     finish_incubation(w);
     return 0;
 }
@@ -544,6 +545,136 @@ int scenario_browse_leave(const Ctx& c) {
     return 0;
 }
 
+// Types `text` into the item with the keyboard focus, one key per character.
+void type_text(QQuickWindow* w, const QString& text) {
+    for (const QChar ch : text) {
+        send_key(w, ch.toUpper().unicode(), Qt::NoModifier, QString(ch));
+    }
+}
+
+// The search page and its model.
+struct Search {
+    QQuickItem* page = nullptr;
+    QAbstractItemModel* model = nullptr;
+};
+
+Search search_page(QQuickWindow* w) {
+    Search s;
+    s.page = visible_item(w, "restoreSearchPage");
+    s.model = s.page ? qobject_cast<QAbstractItemModel*>(
+                           s.page->findChild<QObject*>(QStringLiteral("snapshotSearchModel")))
+                     : nullptr;
+    return s;
+}
+
+// Index of the hit row that holds the keyboard focus, or -1.
+int focused_hit_index(QQuickWindow* w) {
+    for (QQuickItem* it = w->activeFocusItem(); it; it = it->parentItem()) {
+        if (it->objectName() == QLatin1String("searchHitRow")) {
+            return it->property("index").toInt();
+        }
+    }
+    return -1;
+}
+
+// Ctrl+F in the snapshot list, `text` and Return: waits until the search page lists its hits.
+int search_with_keyboard(const Ctx& c, const QString& text, int code) {
+    QQuickWindow* w = c.window;
+    w->requestActivate();
+    QCoreApplication::processEvents();
+    send_key(w, Qt::Key_F, Qt::ControlModifier);
+    M4_CHECK(code, wait_until([&] {
+        QQuickItem* field = item_named(w, "snapshotSearchField");
+        return field && field->hasActiveFocus();
+    }, 2000), "Ctrl+F moves the focus to the search field of the snapshot list");
+    type_text(w, text);
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(code + 1, wait_until([&] {
+        Search s = search_page(w);
+        return s.model && s.model->property("state").toString() == QLatin1String("done");
+    }, 30000), "Return searches the snapshots and shows the hits next to the list");
+    finish_incubation(w);
+    Search s = search_page(w);
+    M4_CHECK_EQ(code + 2, s.page->property("title").toString(), loc(c.lang, "Search", "Suche"),
+        "the breadcrumb names the search");
+    M4_CHECK_EQ(code + 3, s.model->property("search_text").toString(), text, "searched text");
+    return 0;
+}
+
+/// AC-M4-04-1 (smoke part): searching «bericht.pdf» lists (a) two hits with path and snapshot
+/// date, newest snapshot first, and (b) Return on a hit opens its folder in the folder list of
+/// its snapshot, with the hit selected and the breadcrumb named after the snapshot.
+int scenario_search(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 5701, 3)) {
+        return rc;
+    }
+    if (int rc = search_with_keyboard(c, QStringLiteral("bericht.pdf"), 5706)) {
+        return rc;
+    }
+    Search s = search_page(w);
+    M4_CHECK(5710, s.model->rowCount() == 2, "(a) two hits");
+    M4_CHECK(5711, role_value(s.model, 0, "path").toString().endsWith(QLatin1String("/t2/src/Archiv/2026/bericht.pdf")),
+        "(a) path of the hit in the newest snapshot first");
+    M4_CHECK(5712, role_value(s.model, 1, "path").toString().endsWith(QLatin1String("/t1/src/Dokumente/bericht.pdf")),
+        "(a) path of the hit in the older snapshot");
+    M4_CHECK(5713, role_value(s.model, 0, "subtitle").toString().startsWith(QLatin1String("2026-11-14 12:00")),
+        "(a) the hit names the date of its snapshot");
+    M4_CHECK(5714, role_value(s.model, 1, "subtitle").toString().startsWith(QLatin1String("2026-11-13 12:00")),
+        "(a) the other hit names the date of its snapshot");
+    QObject* count = object_named(w, "searchCountLabel");
+    M4_CHECK(5715, count != nullptr, "searchCountLabel missing");
+    M4_CHECK_EQ(5716, count->property("text").toString(),
+        loc(c.lang, "2 hits for ‹bericht.pdf› in 2 snapshots", "2 Treffer für ‹bericht.pdf› in 2 Snapshots"),
+        "(a) number of hits and snapshots");
+    wait_ms(600); // let the page transition end before the screenshot
+    M4_CHECK(5717, save_screenshot(w, c.out_path), "screenshot failed");
+
+    QQuickItem* row = tab_to(w, "searchHitRow", 40);
+    M4_CHECK(5718, row != nullptr, "Tab reaches the hits");
+    M4_CHECK(5719, row->property("index").toInt() == 0, "the first hit holds the focus");
+    for (int i = 0; i < 4 && focused_hit_index(w) != 1; ++i) {
+        press_and_wait(w, Qt::Key_Down, 80);
+    }
+    M4_CHECK(5727, focused_hit_index(w) == 1, "the arrow keys reach the second hit");
+    const QString path = role_value(s.model, 1, "path").toString();
+    const QString folder = role_value(s.model, 1, "folder").toString();
+    M4_CHECK_EQ(5720, folder + QStringLiteral("/bericht.pdf"), path, "the folder of the hit contains it");
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(5721, wait_for_dir(w, folder), "(b) Return opens the folder of the hit");
+    finish_incubation(w);
+    Browse b = browse_page(w);
+    M4_CHECK_EQ(5722, b.page->property("title").toString(), QStringLiteral("2026-11-13 12:00"),
+        "(b) the breadcrumb names the snapshot of the hit");
+    QQuickItem* list = item_named(w, "browseListView");
+    M4_CHECK(5723, list != nullptr, "browseListView missing");
+    const int current = list->property("currentIndex").toInt();
+    M4_CHECK(5724, current >= 0, "(b) an entry of the folder is selected");
+    M4_CHECK_EQ(5725, role_value(b.model, current, "path").toString(), path, "(b) the hit is selected");
+    return 0;
+}
+
+/// AC-M4-04-2 (smoke part): a search without hits shows (a) «No hits for ‹…›» and (b) no error.
+int scenario_search_none(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 5801, 3)) {
+        return rc;
+    }
+    if (int rc = search_with_keyboard(c, QStringLiteral("nirgends"), 5806)) {
+        return rc;
+    }
+    Search s = search_page(w);
+    M4_CHECK(5810, s.model->rowCount() == 0, "(a) no hit listed");
+    QQuickItem* message = visible_item(w, "searchNoHitsMessage");
+    M4_CHECK(5811, message != nullptr, "(a) the no-hits message is shown");
+    M4_CHECK_EQ(5812, message->property("text").toString(),
+        loc(c.lang, "No hits for ‹nirgends›", "Keine Treffer für ‹nirgends›"), "(a) no-hits text");
+    M4_CHECK(5813, visible_item(w, "searchErrorMessage") == nullptr, "(b) no error shown");
+    wait_ms(600); // let the page transition end before the screenshot
+    M4_CHECK(5814, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -570,6 +701,10 @@ void run_m4_smoke_scenario(
         rc = scenario_browse_leave(ctx);
     } else if (scen == QLatin1String("m4-browse-too-large")) {
         rc = scenario_browse_too_large(ctx);
+    } else if (scen == QLatin1String("m4-search")) {
+        rc = scenario_search(ctx);
+    } else if (scen == QLatin1String("m4-search-none")) {
+        rc = scenario_search_none(ctx);
     } else {
         std::fprintf(stderr, "M4 smoke failed (599): unknown m4 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

@@ -139,3 +139,42 @@ pub fn big_tree(work: &Path) -> std::path::PathBuf {
     }
     root
 }
+
+/// Paths `restic find --json --snapshot <snapshot_id> <pattern>` reports, to check what a
+/// snapshot holds independently of Kestic.
+pub fn restic_find_paths(
+    restic: &Path,
+    repo: &Path,
+    password: &str,
+    snapshot_id: &str,
+    pattern: &str,
+) -> Vec<String> {
+    let out = Command::new(restic)
+        .arg("-r")
+        .arg(repo)
+        .args([
+            "find",
+            "--no-cache",
+            "--json",
+            "--snapshot",
+            snapshot_id,
+            pattern,
+        ])
+        .env("RESTIC_PASSWORD", password)
+        .output()
+        .expect("run restic find");
+    assert!(out.status.success(), "restic find {pattern}");
+    let groups: Vec<serde_json::Value> =
+        serde_json::from_slice(&out.stdout).expect("restic find --json output");
+    groups
+        .iter()
+        .flat_map(|g| g["matches"].as_array().cloned().unwrap_or_default())
+        .filter_map(|m| m["path"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Writes `name` (with `content`) into the folder `dir`, creating it.
+pub fn write_file(dir: &Path, name: &str, content: &str) {
+    fs::create_dir_all(dir).expect("mkdir");
+    fs::write(dir.join(name), content).expect("write file");
+}

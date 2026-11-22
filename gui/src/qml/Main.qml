@@ -522,6 +522,28 @@ Kirigami.ApplicationWindow {
         }), 2);
     }
 
+    // Searches the snapshots of `backupId` for `text`, next to the snapshot list.
+    function openSnapshotSearch(backupId, text) {
+        var backup = backupsModel.rowMap(backupId);
+        pushSubPageAtDepth(restoreSearchComponent.createObject(pageStack, {
+            destinationId: backup ? backup.destinationId : "",
+            backupId: backupId,
+            searchText: text
+        }), 2);
+    }
+
+    // Opens the folder `folder` of snapshot `snapshotId` with the search hit `path` selected,
+    // next to the hits.
+    function openSearchHit(destinationId, snapshotId, folder, path, snapshotText) {
+        pushSubPageAtDepth(restoreBrowseComponent.createObject(pageStack, {
+            destinationId: destinationId,
+            snapshotId: snapshotId,
+            startDir: folder,
+            focusPath: path,
+            snapshotTitle: snapshotText
+        }), 3);
+    }
+
     function openBackupReassignPage(backupId) {
         pushSubPageAtDepth(backupReassignComponent.createObject(pageStack, { backupId: backupId }), targetDepthForBackupEditor());
     }
@@ -1001,6 +1023,20 @@ Kirigami.ApplicationWindow {
             restoreSnapshotsModel: root.restoreSnapshotsModelRef
             onBrowseRequested: function(destinationId, snapshotId) {
                 root.openSnapshotBrowser(destinationId, snapshotId);
+            }
+            onSearchRequested: function(backupId, text) {
+                root.openSnapshotSearch(backupId, text);
+            }
+        }
+    }
+
+    Component {
+        id: restoreSearchComponent
+        RestoreSearchPage {
+            rootWindow: root
+            appBackend: root.backendRef
+            onShowRequested: function(destinationId, snapshotId, folder, path, snapshotText) {
+                root.openSearchHit(destinationId, snapshotId, folder, path, snapshotText);
             }
         }
     }
