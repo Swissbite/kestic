@@ -271,12 +271,13 @@ journalctl --user -u kestic-agent-watch      # what it started or continued
 
 Each agent instance is a container with its own volumes, named by
 `KESTIC_AGENT_NAME` (default `kestic-agent`, volumes `<name>-home` and
-`<name>-claude`). A second instance needs its own Claude login once and its own
-watcher; the GitHub App, its key and `agent.conf` are shared. Remote Control
+`<name>-claude`). The name says nothing about the work: which milestone an instance
+works on is set only by its watcher. A second instance needs its own Claude
+login once and its own watcher; the GitHub App, its key and `agent.conf` are shared. Remote Control
 shows the session as `<name> #<issue>`.
 
 ```bash
-export KESTIC_AGENT_NAME=kestic-agent-m5 KESTIC_AGENT_CPUS=8
+export KESTIC_AGENT_NAME=kestic-agent-2 KESTIC_AGENT_CPUS=8
 .devcontainer/kestic-agent.sh login          # once for this instance
 .devcontainer/kestic-agent.sh attach         # every command acts on this instance
 ```
@@ -301,13 +302,13 @@ OnUnitInactiveSec=5min
 [Install]
 WantedBy=timers.target
 
-# ~/.config/kestic-agent/watch-kestic-agent-m5.env
-MILESTONE=M5 Targets and restic
-BASE=m5
+# ~/.config/kestic-agent/watch-<name>.env
+MILESTONE=<milestone title>
+BASE=<base branch>
 ```
 
 ```bash
-systemctl --user daemon-reload && systemctl --user enable --now kestic-agent-watch@kestic-agent-m5.timer
+systemctl --user daemon-reload && systemctl --user enable --now kestic-agent-watch@kestic-agent-2.timer
 ```
 
 Stories of different milestones touch some of the same files (D-Bus API, `po`
