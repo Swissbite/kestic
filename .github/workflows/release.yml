@@ -1,0 +1,393 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Releases on GitHub. Versions come from Git tags only; this workflow creates them through the
+# API, nobody pushes them.
+#
+# The maintainer runs this workflow on main (Actions → Release → Run workflow) and picks
+# a bump. The next version follows the highest version tag on main; a release needs the highlights
+# file docs/releases/<tag>.md, everything else in its notes is generated. With `dry-run` (the
+# default) everything runs except creating tag, attestation and release; the job summary of
+# `publish` shows notes and assets. Every 0.x version is a pre-release on GitHub.
+#
+#   prepare      plans tag and version and writes highlights and stories (release-notes.sh)
+#   ci-image     the CI image of verify.yml
+#   build        the .deb with the tag's version, same steps as job `release` in verify.yml
+#   screenshots  waits for the green Verify run of the commit on main and bundles its smoke
+#                screenshots
+#   attest       SHA256SUMS and a build provenance attestation of the .deb
+#   publish      GitHub's generated notes (pull requests since the previous tag, grouped by
+#                .github/release.yml), job summary, tag and release
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Next version after the highest version tag on main (pre… bumps give release candidates).
+        type: choice
+        options: [major, minor, patch, premajor, preminor, prepatch, prerelease]
+        default: minor
+      dry-run:
+        description: Dry run, without tag, attestation and release.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      commit: ${{ steps.plan.outputs.commit }}
+      dry-run: ${{ steps.plan.outputs.dry-run }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      title: ${{ steps.plan.outputs.title }}
+      previous-tag: ${{ steps.plan.outputs.previous-tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history and all tags: versions, previous tags and commit counts come from them.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Plan tag, version and notes
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          BUMP: ${{ inputs.bump }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" != true ] && [ "$REF" != refs/heads/main ]; then
+            echo "::error::A release runs on main; on $REF_NAME only a dry run is possible"
+            exit 1
+          fi
+          {
+            echo "commit=$GITHUB_SHA"
+            echo "dry-run=$DRY_RUN"
+          } >> "$GITHUB_OUTPUT"
+          .github/scripts/release-notes.sh "$BUMP" "$GITHUB_SHA" "$RUNNER_TEMP/notes" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes-head
+          path: ${{ runner.temp }}/notes/notes-head.md
+          overwrite: true
+          if-no-files-found: error
+
+  # After prepare, so a failed plan never builds or pushes an image.
+  ci-image:
+    name: CI image
+    needs: prepare
+    uses: ./.github/workflows/ci-image.yml
+    permissions:
+      contents: read
+      packages: write
+
+  # Same steps as job `release` in verify.yml, with the version of the tag and without saving the
+  # build cache.
+  build:
+    needs: [prepare, ci-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.ci-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/kestic-setup
+        with:
+          build-cache: release
+      - run: rm -rf target/debian
+      - run: .github/scripts/ci-just.sh deb
+        env:
+          KESTIC_VERSION: ${{ needs.prepare.outputs.version }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-deb
+          path: target/debian/*.deb
+          overwrite: true
+          if-no-files-found: error
+
+  # The screenshots of the GUI smoke tests come from the Verify run of the same commit, so a
+  # release only goes out once that run is green. A dry run without such a run takes the newest
+  # successful Verify run on main.
+  screenshots:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      found: ${{ steps.run.outputs.run-id != '' }}
+    steps:
+      - name: Find and wait for the Verify run
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
+        run: |
+          set -euo pipefail
+          find_run() {
+            local filter='.'
+            if [ "$DRY_RUN" != true ]; then filter='select(.event == "push" and .headBranch == "main")'; fi
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --commit "$COMMIT" --limit 50 \
+              --json databaseId,event,headBranch,createdAt,conclusion \
+              --jq "[.[] | select(.conclusion != \"cancelled\" and .conclusion != \"skipped\") | $filter]
+                    | sort_by(.createdAt) | last | .databaseId // empty"
+          }
+          # Verify starts with the push to main; give it a moment to appear.
+          attempts=10
+          if [ "$DRY_RUN" = true ]; then attempts=2; fi
+          run_id="$(find_run)"
+          for _ in $(seq "$attempts"); do
+            if [ -n "$run_id" ]; then break; fi
+            sleep 30
+            run_id="$(find_run)"
+          done
+          if [ -z "$run_id" ]; then
+            if [ "$DRY_RUN" != true ]; then
+              echo "::error::No Verify run for the push of $COMMIT to main"
+              exit 1
+            fi
+            run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --branch main \
+              --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            if [ -z "$run_id" ]; then
+              echo "::warning::No Verify run found; the dry run goes on without screenshots"
+              exit 0
+            fi
+            echo "::warning::No Verify run for $COMMIT; the dry run takes the screenshots of Verify run $run_id on main"
+          fi
+          echo "Verify run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          while :; do
+            state="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --json status,conclusion --jq '"\(.status) \(.conclusion)"')"
+            read -r status conclusion <<< "$state"
+            if [ "$status" = completed ]; then break; fi
+            sleep 60
+          done
+          if [ "$conclusion" != success ]; then
+            echo "::error::Verify run $run_id ended with $conclusion"
+            exit 1
+          fi
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - if: steps.run.outputs.run-id != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: smoke-artifacts
+          path: ${{ runner.temp }}/smoke-artifacts
+          run-id: ${{ steps.run.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      # Only PNG files go into the bundle; nothing from the artifact is executed.
+      - name: Bundle screenshots
+        if: steps.run.outputs.run-id != ''
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bundle"
+          cd "$RUNNER_TEMP/smoke-artifacts"
+          zip -q -X "$RUNNER_TEMP/bundle/kestic_${VERSION}_screenshots.zip" -- *.png
+          unzip -l "$RUNNER_TEMP/bundle/kestic_${VERSION}_screenshots.zip" | tail -1
+
+      - if: steps.run.outputs.run-id != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-screenshots
+          path: ${{ runner.temp }}/bundle/*.zip
+          compression-level: 0
+          overwrite: true
+          if-no-files-found: error
+
+  attest:
+    needs: [prepare, build, screenshots]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-deb
+          path: assets
+      - if: needs.screenshots.outputs.found == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: release-screenshots
+          path: assets
+
+      - name: Check the package and write SHA256SUMS
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd assets
+          shopt -s nullglob
+          debs=(*.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::Expected one .deb, found ${#debs[@]}"
+            exit 1
+          fi
+          package="$(dpkg-deb --field "${debs[0]}" Package)"
+          deb_version="$(dpkg-deb --field "${debs[0]}" Version)"
+          if [ "$package" != kestic ] || [ "$deb_version" != "$VERSION-1" ]; then
+            echo "::error::${debs[0]} is $package $deb_version, expected kestic $VERSION-1"
+            exit 1
+          fi
+          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" .
+          cat SHA256SUMS
+
+      # The screenshots come from the Verify run, not from this workflow, so only the .deb gets a
+      # provenance attestation; SHA256SUMS covers every asset.
+      - name: Attest build provenance
+        if: needs.prepare.outputs.dry-run != 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: assets/*.deb
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: assets/*
+          compression-level: 0
+          overwrite: true
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, attest]
+    runs-on: ubuntu-latest
+    permissions:
+      # Tag, release and the generate-notes endpoint, which needs write access in a dry run too.
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes-head
+          path: notes
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: assets
+
+      - name: Add generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          PREVIOUS_TAG: ${{ needs.prepare.outputs.previous-tag }}
+        run: |
+          set -euo pipefail
+          args=(-f "tag_name=$TAG" -f "target_commitish=$COMMIT")
+          if [ -n "$PREVIOUS_TAG" ]; then args+=(-f "previous_tag_name=$PREVIOUS_TAG"); fi
+          {
+            cat notes/notes-head.md
+            echo
+            gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" --jq .body
+          } > notes/notes.md
+
+      - name: Job summary
+        env:
+          TITLE: ${{ needs.prepare.outputs.title }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          PREVIOUS_TAG: ${{ needs.prepare.outputs.previous-tag }}
+        run: |
+          set -euo pipefail
+          {
+            if [ "$DRY_RUN" = true ]; then
+              echo "# Dry run: $TITLE"
+              echo
+              echo "Nothing was published. Run the workflow again without dry run to create tag and release."
+            else
+              echo "# $TITLE"
+            fi
+            echo
+            echo "- Package version: \`$VERSION-1\`"
+            echo "- Pre-release: $PRERELEASE"
+            echo "- Pull requests since: ${PREVIOUS_TAG:-the first commit (no earlier release)}"
+            echo
+            echo "## Assets"
+            echo
+            echo "| File | Size | SHA-256 |"
+            echo "| --- | ---: | --- |"
+            while read -r sum file; do
+              echo "| \`$file\` | $(numfmt --to=iec --suffix=B "$(stat -c %s "assets/$file")") | \`$sum\` |"
+            done < assets/SHA256SUMS
+            echo "| \`SHA256SUMS\` | $(numfmt --to=iec --suffix=B "$(stat -c %s assets/SHA256SUMS)") | |"
+            echo
+            echo "## Release notes"
+            echo
+            cat notes/notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The tag is created here, after the build succeeded, and points at the built commit. The
+      # release is a draft until all assets are uploaded. A re-run accepts its own tag and replaces
+      # its draft; a published release is never touched.
+      - name: Create tag and release
+        if: needs.prepare.outputs.dry-run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          TITLE: ${{ needs.prepare.outputs.title }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if tagged="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null)"; then
+            if [ "$tagged" != "$COMMIT" ]; then
+              echo "::error::Tag $TAG exists already on $tagged"
+              exit 1
+            fi
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$COMMIT" > /dev/null
+          fi
+          # Drafts are only visible through the list endpoint, so look the tag up there.
+          draft="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | .draft")"
+          case "$draft" in
+            "") ;;
+            true) gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes ;;
+            *)
+              echo "::error::Release $TAG exists already"
+              exit 1
+              ;;
+          esac
+          # A draft or pre-release cannot be the latest release; a final release becomes it on publishing.
+          create=(--draft)
+          publish=(--draft=false --latest)
+          if [ "$PRERELEASE" = true ]; then
+            create+=(--prerelease)
+            publish=(--draft=false)
+          fi
+          gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$TITLE" --notes-file notes/notes.md "${create[@]}"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${publish[@]}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
+
