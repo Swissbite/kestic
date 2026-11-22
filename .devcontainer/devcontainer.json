@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// Dev Container of the Kestic coding agent; README.md in this folder explains
+// it. Written for Podman ("dev.containers.dockerPath": "podman"): the secret
+// mount is a Podman option. kestic-agent.sh starts the same container without
+// the devcontainer CLI. The repository is cloned inside the container
+// (postStartCommand) into a named volume, never bind-mounted from the host.
+// The CI image tag must match .github/ci-image/tag.sh; set KESTIC_CI_IMAGE_TAG
+// to override the default.
+{
+  "name": "Kestic agent",
+  "build": {
+    "dockerfile": "Containerfile",
+    "context": ".",
+    "args": {
+      "CI_IMAGE": "ghcr.io/swissbite/kestic-ci:${localEnv:KESTIC_CI_IMAGE_TAG:c1f517bf7e516ed5}"
+    }
+  },
+  "overrideCommand": false,
+  "runArgs": [
+    "--init",
+    "--network=slirp4netns:allow_host_loopback=false,enable_ipv6=false",
+    "--cap-drop=all",
+    "--cap-add=NET_ADMIN,NET_BIND_SERVICE,SETUID,SETGID,SETPCAP,KILL",
+    "--security-opt=no-new-privileges",
+    "--cpu-shares=256",
+    "--memory=24g",
+    "--pids-limit=16384",
+    "--tmpfs=/var/log/kestic-agent:size=16m,mode=0755",
+    "--secret=kestic-agent-gh-token,type=mount,target=kestic-agent-gh-token,uid=1001,gid=1001,mode=0400"
+  ],
+  "workspaceMount": "type=volume,source=kestic-agent-home,target=/home/kesticci",
+  "workspaceFolder": "/home/kesticci/kestic",
+  "mounts": [
+    "type=volume,source=kestic-agent-claude,target=/home/kesticci/.claude"
+  ],
+  "userEnvProbe": "none",
+  "remoteUser": "kesticci",
+  "updateRemoteUserUID": false,
+  "postStartCommand": "kestic-agent setup",
+  "waitFor": "postStartCommand"
+}

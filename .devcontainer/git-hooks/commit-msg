@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Rejects commit messages that name an AI tool as author or co-author.
+
+set -euo pipefail
+
+if grep -Eiq '^co-authored-by:.*(claude|anthropic|copilot|openai|codex|gemini)|generated (with|by) .*(claude|copilot|codex|gemini)' "$1"; then
+    echo "commit-msg: remove the AI attribution (Co-Authored-By / Generated with); agents commit without it" >&2
+    exit 1
+fi

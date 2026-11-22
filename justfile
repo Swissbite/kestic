@@ -22,12 +22,14 @@ verify:
     just _smoke-run
     just _nextest
 
-# Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE
+# Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE, the merge
+# rule of the agent container
 _static-checks:
     cargo fmt --all -- --check
     just _check-file-sizes
     cargo deny check
     reuse lint
+    .devcontainer/test-gh-wrapper.sh
 
 # clippy without and with the test harness
 _clippy:
