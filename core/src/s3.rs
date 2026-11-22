@@ -24,11 +24,12 @@ pub fn validate(endpoint: &str, bucket: &str, path: Option<&str>) -> Result<(), 
             )));
         }
         // restic reads the address as URL: `#` and `?` would cut the path, `%` would decode it.
+        // Spaces and quotes would split the address in restic's messages, which Kestic reads.
         if p.chars()
-            .any(|c| matches!(c, '#' | '?' | '%') || c.is_control())
+            .any(|c| matches!(c, '#' | '?' | '%' | '"') || c.is_control() || c.is_whitespace())
         {
             return Err(ModelError::InvalidDestination(format!(
-                "S3 path must not contain '#', '?', '%' or control characters: '{p}'"
+                "S3 path must not contain '#', '?', '%', quotes, spaces or control characters: '{p}'"
             )));
         }
     }
@@ -189,6 +190,9 @@ mod tests {
             "a//b",
             "a/./b",
             ".",
+            "my forbidden zone",
+            "my\"p",
+            "tab\there",
         ] {
             assert!(
                 validate("https://s3.example.com", "backup", Some(bad)).is_err(),

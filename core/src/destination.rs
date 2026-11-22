@@ -504,10 +504,11 @@ fn execute_probe_command(
     })
 }
 
-/// Whether a restic message says the S3 bucket does not exist.
+/// Whether a restic message says the S3 bucket does not exist; the repository address restic
+/// repeats in its messages does not count (a bucket may be called `nosuchbucket`).
 fn is_missing_bucket(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    lower.contains("bucket does not exist") || lower.contains("nosuchbucket")
+    let text = crate::restic::without_locations(&message.to_lowercase());
+    text.contains("bucket does not exist") || text.contains("nosuchbucket")
 }
 
 /// How a probe sees restic's result: like a run, except that a missing S3 bucket means «no
@@ -619,6 +620,22 @@ mod tests {
             classify_probe(1, Some("Stat: The specified bucket does not exist"), "").kind,
             ResticFailureKind::RepositoryMissing
         );
+        // A bucket called `nosuchbucket` in the repository address is no missing bucket.
+        assert_eq!(
+            classify_probe(
+                10,
+                Some("Fatal: repository does not exist: unable to open config file: Stat: The specified key does not exist.\nIs there a repository at the following location?\ns3:http://127.0.0.1:9000/nosuchbucket"),
+                ""
+            )
+            .kind,
+            ResticFailureKind::RepositoryMissing
+        );
+        assert!(!is_missing_bucket(
+            "Is there a repository at the following location?\ns3:http://127.0.0.1:9000/nosuchbucket"
+        ));
+        assert!(is_missing_bucket(
+            "Stat: The specified bucket does not exist"
+        ));
         // A run keeps its own reading: a missing bucket is no permanent «repository missing».
         let run = crate::restic::classify_exit(
             1,

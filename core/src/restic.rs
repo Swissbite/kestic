@@ -395,7 +395,7 @@ fn is_backend_auth_failure(detail_lower: &str) -> bool {
 /// `message` without the places it names: quoted URLs (`Get "http://host/bucket/…"`) and
 /// addresses (`127.0.0.1:9000`, `[fd00::403]:9000`). A bucket, path or host name there must not
 /// read as a login error.
-fn without_locations(message: &str) -> String {
+pub(crate) fn without_locations(message: &str) -> String {
     let unquoted: String = message
         .split('"')
         .enumerate()
