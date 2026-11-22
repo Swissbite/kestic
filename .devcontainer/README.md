@@ -105,10 +105,11 @@ such trailers.
    Podman secret without it appearing in argv or the shell history:
 
    ```bash
-   read -rsp 'Token: ' t && printf '%s' "$t" | podman secret create kestic-agent-gh-token - ; unset t; echo
+   bash -c 'read -rsp "Token: " t && printf %s "$t" | podman secret create --replace kestic-agent-gh-token -; echo'
    ```
 
-   To rotate it: `podman secret rm kestic-agent-gh-token`, create it again, then
+   Run it as shown, through `bash`: zsh's `read -p` means something else and
+   would store a wrong value. `--replace` also rotates an existing token; then
    `kestic-agent.sh stop` and start again.
 
 3. Log in to Claude Code once (subscription, no API key):

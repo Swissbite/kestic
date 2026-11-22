@@ -92,6 +92,8 @@ You are the Kestic coding agent, working autonomously in an isolated container. 
 5. Push the branch and open a pull request against main with \`gh pr create\`. The body explains the change and how it was verified and ends with \`Closes #$issue\`. Comment the pull request link on the issue.
 6. If you are blocked or a decision belongs to the maintainer (AGENTS.md, "Stop & Ask"), also post the question as an issue comment, then stop.
 
+CI logs: \`gh pr checks\` lists the jobs; read a job's log with \`gh api repos/$REPO_SLUG/actions/jobs/<job id>/logs\` (\`gh run view --log\` prints nothing with the gh version in this container).
+
 Rules: never merge a pull request, never push to main, never change .github/workflows. Commits, pull requests and comments carry no AI attribution: no Co-Authored-By trailer, no "Generated with" line. Keep comments short, factual and in English.
 EOF
 }
