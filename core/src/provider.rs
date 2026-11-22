@@ -24,6 +24,11 @@ pub fn is_outdated(version: &Version) -> bool {
     *version < TESTED_RESTIC_VERSION
 }
 
+/// [`is_outdated`] for a version as text (`0.18.0`); unreadable text is not outdated.
+pub fn is_outdated_text(version: &str) -> bool {
+    Version::parse(version.trim()).is_ok_and(|v| is_outdated(&v))
+}
+
 /// Successfully resolved and validated restic binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedRestic {

@@ -29,14 +29,16 @@ impl qobject::KesticApp {
         initialize_and_sync();
         self.as_mut().set_initialized(true);
         self.as_mut().apply_cached_state();
-        let (show_quit, show_about) = {
+        let (show_quit, show_about, show_restore) = {
             let guard = shared_state().lock_unpoisoned();
             (
                 guard.launch.show_quit_dialog_on_start,
                 guard.launch.show_about_on_start,
+                guard.launch.show_restore_on_start,
             )
         };
         self.as_mut().set_show_about_on_start(show_about);
+        self.as_mut().set_show_restore_on_start(show_restore);
         if show_quit {
             let (has_running, running_name) = {
                 let guard = shared_state().lock_unpoisoned();
@@ -59,7 +61,16 @@ impl qobject::KesticApp {
     }
 
     pub fn poll_events(mut self: Pin<&mut Self>) {
-        let (fetch, progress_dirty, blocked, show_win, show_about, quit_req, maint_preview) = {
+        let (
+            fetch,
+            progress_dirty,
+            blocked,
+            show_win,
+            show_about,
+            quit_req,
+            maint_preview,
+            show_restore,
+        ) = {
             let mut guard = shared_state().lock_unpoisoned();
             let retry_unreachable = !guard.daemon_reachable
                 && guard
@@ -73,9 +84,10 @@ impl qobject::KesticApp {
             let sw = guard.pending_show_window;
             guard.pending_show_window = false;
             let sa = std::mem::take(&mut guard.pending_show_about);
+            let show_restore = std::mem::take(&mut guard.pending_show_restore);
             let qr = guard.pending_quit.take();
             let mp = guard.maintenance_preview.take();
-            (sd, pd, blocked, sw, sa, qr, mp)
+            (sd, pd, blocked, sw, sa, qr, mp, show_restore)
         };
 
         if fetch {
@@ -99,6 +111,10 @@ impl qobject::KesticApp {
 
         if show_about {
             self.as_mut().about_requested();
+        }
+
+        if show_restore {
+            self.as_mut().restore_tab_requested();
         }
 
         if let Some((has_running, name)) = quit_req {
@@ -241,6 +257,12 @@ impl qobject::KesticApp {
         self.as_mut().set_restic_version(QString::from(
             state.restic_status.version.as_deref().unwrap_or(""),
         ));
+        let outdated = state
+            .restic_status
+            .version
+            .as_deref()
+            .is_some_and(kestic_core::provider::is_outdated_text);
+        self.as_mut().set_restic_outdated(outdated);
         self.as_mut().set_restic_binary_path(QString::from(
             state.restic_status.binary_path.as_deref().unwrap_or(""),
         ));

@@ -23,6 +23,7 @@ pub mod qobject {
         #[qproperty(bool, daemon_reachable)]
         #[qproperty(bool, restic_valid)]
         #[qproperty(QString, restic_version)]
+        #[qproperty(bool, restic_outdated)]
         #[qproperty(QString, restic_binary_path)]
         #[qproperty(QString, restic_provider_kind)]
         #[qproperty(QString, restic_message)]
@@ -66,6 +67,7 @@ pub mod qobject {
         #[qproperty(QString, last_action_error)]
         #[qproperty(bool, show_quit_dialog_on_start)]
         #[qproperty(bool, show_about_on_start)]
+        #[qproperty(bool, show_restore_on_start)]
         #[qproperty(bool, quit_has_running_run)]
         #[qproperty(QString, quit_running_backup_name)]
         #[qproperty(QString, dry_run_preview_id)]
@@ -121,6 +123,10 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "aboutRequested"]
         fn about_requested(self: Pin<&mut KesticApp>);
+
+        #[qsignal]
+        #[cxx_name = "restoreTabRequested"]
+        fn restore_tab_requested(self: Pin<&mut KesticApp>);
 
         #[qsignal]
         #[cxx_name = "quitConfirmationRequested"]
@@ -572,6 +578,7 @@ pub struct KesticAppRust {
     daemon_reachable: bool,
     restic_valid: bool,
     restic_version: QString,
+    restic_outdated: bool,
     restic_binary_path: QString,
     restic_provider_kind: QString,
     restic_message: QString,
@@ -615,6 +622,7 @@ pub struct KesticAppRust {
     last_action_error: QString,
     show_quit_dialog_on_start: bool,
     show_about_on_start: bool,
+    show_restore_on_start: bool,
     quit_has_running_run: bool,
     quit_running_backup_name: QString,
     dry_run_preview_id: QString,

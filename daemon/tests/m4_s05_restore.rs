@@ -1004,8 +1004,7 @@ fn ac_m4_05_23_large_preview_filters_page_by_page_with_exact_counts() {
                 let id = fx.start_preview(&[], Some(fx.original()), RestoreOverwrite::Always);
                 let mut seen = std::collections::BTreeSet::new();
                 let mut offset = 0;
-                let mut last = None;
-                loop {
+                let p = loop {
                     let page = SnapshotQueryPage {
                         offset,
                         limit: 100,
@@ -1016,17 +1015,14 @@ fn ac_m4_05_23_large_preview_filters_page_by_page_with_exact_counts() {
                     };
                     let p = fx.preview_page(&id, &page);
                     if p.entries.items.is_empty() {
-                        last = Some(p);
-                        break;
+                        break p;
                     }
                     for e in &p.entries.items {
                         assert_eq!(e.outcome, RestoreOutcome::Overwritten, "{}", v.label);
                         seen.insert(e.path.clone());
                     }
                     offset += p.entries.items.len() as u64;
-                    last = Some(p);
-                }
-                let p = last.expect("pages");
+                };
                 assert_eq!(seen.len(), 300, "(a) {}: all 300 reachable", v.label);
                 assert_eq!(p.entries.matched, 300, "(b) {}", v.label);
                 assert_eq!(

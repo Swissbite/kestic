@@ -108,6 +108,9 @@ fn parse_gui_launch_config(args: &[String]) -> state_cache::GuiLaunchConfig {
     if args.iter().any(|a| a == "--show-about") {
         cfg.show_about_on_start = true;
     }
+    if args.iter().any(|a| a == "--show-restore") {
+        cfg.show_restore_on_start = true;
+    }
     if args.iter().any(|a| a == "--no-autostart") {
         cfg.no_autostart_daemon = true;
     }

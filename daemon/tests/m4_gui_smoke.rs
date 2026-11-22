@@ -8,7 +8,9 @@
 
 mod common;
 
-use common::m3::{FakeSetup, M3Rig, StdFakes, add_local_destination, latest_variant};
+use common::m3::{
+    FakeSetup, M3Rig, ResticVariant, StdFakes, add_local_destination, latest_variant,
+};
 use common::m4::{RawSnapshot, backup_dir, big_tree, small_tree, write_file, write_snapshot};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::query_list::QueryLimits;
@@ -541,6 +543,114 @@ fn ac_m4_02_3_identical_snapshots_show_no_differences() {
                 );
             }
             rig.daemon.stop();
+        },
+    );
+}
+
+/// A daemon on the real bus name with one destination «NAS» and the backup «Home» with one
+/// snapshot of a small folder, whose `a.txt` differs locally afterwards. The wrapper holds
+/// `restore`; the smoke scene releases it by removing the returned marker file.
+fn restore_dialog_env(root: &Path, variant: &ResticVariant) -> (M3Rig, StdFakes, String) {
+    let fakes = StdFakes::start_with(FakeSetup {
+        active_network: Some("HomeWifi"),
+        ..FakeSetup::default()
+    });
+    let rig = M3Rig::start_on(
+        root,
+        variant,
+        "",
+        KESTIC_BUS_NAME,
+        datetime!(2026-11-15 14:32:00 UTC),
+        |o| o.enable_scheduler = false,
+    );
+    let repo = root.join("repo-NAS");
+    let (dest, password) =
+        add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
+    let backup = rig.add_backup_to(&dest, "Home", |_| {});
+    let src = small_tree(&root.join("trees"));
+    backup_dir(
+        &variant.bin,
+        &repo,
+        &password,
+        &src,
+        &RawSnapshot {
+            tag: &format!("kestic:{}", backup.id),
+            time: "2026-11-15 12:00:00",
+            host: "laptop",
+        },
+    );
+    std::fs::write(src.join("a.txt"), "changed locally").expect("change a.txt");
+    let release = format!("{}.restore", rig.wrapper.hold.display());
+    (rig, fakes, release)
+}
+
+/// AC-M4-05-1, AC-M4-05-4 (smoke part), AC-M4-05-11 and AC-M4-05-15 (c, e): the restore dialog
+/// preselects a new folder, names the outcomes and the consequence of overwriting, keeps «Restore
+/// Now» disabled until the preview is done, and starts with «Never» every time (scene
+/// `m4-restore-dialog` in `smoke_m4.cpp`).
+#[test]
+fn ac_m4_05_1_4_11_15_restore_dialog() {
+    run_isolated_test(
+        "ac_m4_05_1_4_11_15_restore_dialog",
+        "KESTIC_AC_M4_05_DIALOG_INNER",
+        |root| {
+            for (layout, lang) in [
+                ("wide", "en"),
+                ("wide", "de"),
+                ("narrow", "en"),
+                ("narrow", "de"),
+            ] {
+                let sub = root.join(format!("{layout}-{lang}"));
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                let (rig, _fakes, release) = restore_dialog_env(&sub, &latest_variant());
+                rig.wrapper.hold("restore");
+                run_m4_gui_smoke_env(
+                    root,
+                    "m4-restore-dialog",
+                    layout,
+                    lang,
+                    &smoke_artifact("restore-dialog", layout, lang),
+                    &[("KESTIC_SMOKE_RELEASE_FILE", &release)],
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-22 (b, c): the setting «restic source» marks restic 0.18.0 «(outdated)» and the
+/// newest tested version not (scene `m4-restic-outdated`).
+#[test]
+fn ac_m4_05_22_settings_mark_outdated_restic() {
+    run_isolated_test(
+        "ac_m4_05_22_settings_mark_outdated_restic",
+        "KESTIC_AC_M4_05_22_SMOKE_INNER",
+        |root| {
+            for variant in common::m3::restic_variants() {
+                let outdated = if variant.label.contains("0.18.0") {
+                    "1"
+                } else {
+                    "0"
+                };
+                for lang in ["en", "de"] {
+                    let sub = root.join(format!("{}-{lang}", variant.index));
+                    std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                    let (rig, _fakes, _) = restore_dialog_env(&sub, &variant);
+                    run_m4_gui_smoke_env(
+                        root,
+                        "m4-restic-outdated",
+                        "wide",
+                        lang,
+                        &smoke_artifact(
+                            &format!("settings-restic-{}", variant.index),
+                            "wide",
+                            lang,
+                        ),
+                        &[("KESTIC_SMOKE_EXPECT_OUTDATED", outdated)],
+                    );
+                    rig.daemon.stop();
+                }
+            }
         },
     );
 }

@@ -276,9 +276,12 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.Label {
+                objectName: "resticSourceLabel"
                 Kirigami.FormData.label: i18n("restic source:")
                 text: appBackend.restic_valid
-                    ? i18n("%1 (%2 · %3)", appBackend.restic_provider_kind, appBackend.restic_version, appBackend.restic_binary_path)
+                    ? i18n("%1 (%2 · %3)", appBackend.restic_provider_kind,
+                        appBackend.restic_outdated ? i18n("%1 (outdated)", appBackend.restic_version) : appBackend.restic_version,
+                        appBackend.restic_binary_path)
                     : appBackend.restic_message
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true

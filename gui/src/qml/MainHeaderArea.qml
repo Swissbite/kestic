@@ -14,6 +14,8 @@ ColumnLayout {
     required property var rootWindow
     required property var appBackend
     required property var pageStackRef
+    // The restore dialog's model; it follows the restore it started.
+    required property var restoreModel
 
     // Priority order: Daemon unreachable -> Secret store locked -> restic unavailable
     Kirigami.InlineMessage {
@@ -65,6 +67,50 @@ ColumnLayout {
                 icon.name: "configure"
                 text: Texts.label("settings")
                 onTriggered: headerArea.rootWindow.openSettingsWindow()
+            }
+        ]
+    }
+
+    Timer {
+        interval: 1000
+        repeat: true
+        running: headerArea.restoreModel.run_state === "running"
+        onTriggered: headerArea.restoreModel.pollRun()
+    }
+
+    // A restore is a run: while it runs, with progress text and «Cancel»; at the end its result,
+    // with «Open Folder» after a successful one.
+    Kirigami.InlineMessage {
+        id: restoreRunBanner
+        objectName: "restoreRunBanner"
+        Layout.fillWidth: true
+        position: Kirigami.InlineMessage.Position.Header
+        type: {
+            switch (headerArea.restoreModel.run_state) {
+            case "ok": return Kirigami.MessageType.Positive;
+            case "warning": return Kirigami.MessageType.Warning;
+            case "error": return Kirigami.MessageType.Error;
+            default: return Kirigami.MessageType.Information;
+            }
+        }
+        visible: headerArea.restoreModel.run_state !== ""
+        showCloseButton: headerArea.restoreModel.run_state !== "running"
+        text: headerArea.restoreModel.run_text
+        onVisibleChanged: if (!visible && headerArea.restoreModel.run_state !== "") headerArea.restoreModel.dismissRun()
+        actions: [
+            Kirigami.Action {
+                objectName: "restoreRunCancelAction"
+                visible: headerArea.restoreModel.run_state === "running"
+                icon.name: "dialog-cancel"
+                text: Texts.label("cancel")
+                onTriggered: headerArea.restoreModel.cancelRun()
+            },
+            Kirigami.Action {
+                objectName: "restoreRunOpenFolderAction"
+                visible: headerArea.restoreModel.run_state === "ok"
+                icon.name: "document-open-folder"
+                text: i18n("Open Folder")
+                onTriggered: Qt.openUrlExternally("file://" + headerArea.restoreModel.run_target)
             }
         ]
     }

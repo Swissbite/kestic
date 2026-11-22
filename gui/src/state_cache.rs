@@ -113,6 +113,8 @@ pub struct GuiLaunchConfig {
     pub no_autostart_daemon: bool,
     pub show_quit_dialog_on_start: bool,
     pub show_about_on_start: bool,
+    /// Open the window on the tab «Restore» (`--show-restore`, tray «Restore Files…»).
+    pub show_restore_on_start: bool,
 }
 
 impl Default for GuiLaunchConfig {
@@ -123,6 +125,7 @@ impl Default for GuiLaunchConfig {
             no_autostart_daemon: false,
             show_quit_dialog_on_start: false,
             show_about_on_start: false,
+            show_restore_on_start: false,
         }
     }
 }
@@ -146,6 +149,7 @@ pub struct SharedGuiState {
     pub pending_blocked: Option<(String, BlockedReason)>,
     pub pending_show_window: bool,
     pub pending_show_about: bool,
+    pub pending_show_restore: bool,
     pub pending_quit: Option<(bool, String)>,
     pub maintenance_preview: Option<(String, Result<String, String>)>,
     pub signal_conn: Option<zbus::Connection>,
@@ -169,6 +173,7 @@ impl SharedGuiState {
             pending_blocked: None,
             pending_show_window: false,
             pending_show_about: false,
+            pending_show_restore: false,
             pending_quit: None,
             maintenance_preview: None,
             signal_conn: None,
@@ -423,6 +428,10 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                     Some("ShowAboutRequested") => {
                         let mut guard = shared_state().lock_unpoisoned();
                         guard.pending_show_about = true;
+                    }
+                    Some("ShowRestoreRequested") => {
+                        let mut guard = shared_state().lock_unpoisoned();
+                        guard.pending_show_restore = true;
                     }
                     Some("QuitConfirmationRequested") => {
                         if let Ok((has_running, name)) = msg.body().deserialize::<(bool, String)>()

@@ -863,6 +863,182 @@ int scenario_compare_identical(const Ctx& c) {
     return 0;
 }
 
+// `out_path` with `suffix` before `.png`, for a second screenshot of one scene.
+QString screenshot_variant(const QString& out_path, const char* suffix) {
+    QString path = out_path;
+    path.insert(path.length() - 4, QLatin1String(suffix));
+    return path;
+}
+
+// The restore dialog's model and the dialog itself.
+struct Restore {
+    QObject* dialog = nullptr;
+    QObject* model = nullptr;
+};
+
+Restore restore_dialog(QQuickWindow* w) {
+    return Restore { object_named(w, "restoreDialog"), object_named(w, "restorePreviewModel") };
+}
+
+bool wait_for_preview(QObject* model) {
+    return wait_until([&] { return model->property("state").toString() == QLatin1String("done"); }, 20000);
+}
+
+// Marks `name` in the open folder of the browse page and opens the restore dialog for it.
+int open_restore_dialog_for(const Ctx& c, const QString& name, int code) {
+    QQuickWindow* w = c.window;
+    Browse b = browse_page(w);
+    M4_CHECK(code, b.model != nullptr, "browse page shown");
+    const int row = browse_names(b.model).indexOf(name);
+    M4_CHECK(code + 1, row >= 0, "the file is listed");
+    if (!role_value(b.model, row, "selected").toBool()) {
+        QMetaObject::invokeMethod(b.model, "toggleSelected", Q_ARG(int, row));
+    }
+    QObject* action = object_named(w, "restoreSelectionAction");
+    M4_CHECK(code + 2, action && action->property("enabled").toBool(), "«Restore Selection…» enabled");
+    trigger(action);
+    Restore r = restore_dialog(w);
+    M4_CHECK(code + 3, r.dialog && r.model, "restore dialog and model exist");
+    M4_CHECK(code + 4, wait_until([&] { return is_open(r.dialog); }, 3000), "the restore dialog opens");
+    finish_incubation(w);
+    return 0;
+}
+
+/// AC-M4-05-1, AC-M4-05-4 (smoke part), AC-M4-05-11, AC-M4-05-15 (c, e): the restore dialog
+/// (AC-M4-05-1) preselects (a) a new folder and (b) not the original location. At the original
+/// location (AC-M4-05-15) (c) «Never» is preselected and (e) «Restore Now» stays disabled until
+/// the preview is done; (AC-M4-05-4) the preview names the outcomes and, when files are
+/// overwritten, the consequence («1 file will be overwritten. This cannot be undone.») and
+/// «Overwrite and Restore». After a restore with «Always» (AC-M4-05-11) (a) a new dialog starts
+/// with «Never» again.
+int scenario_restore_dialog(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 6201, 1)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 6206)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(6209, wait_for_dir(w, top), "the snapshot opens in its folder");
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 6210)) {
+        return rc;
+    }
+    Restore r = restore_dialog(w);
+    QObject* new_radio = object_named(w, "restoreNewFolderRadio");
+    QObject* original_radio = object_named(w, "restoreOriginalRadio");
+    QObject* restore_now = object_named(w, "restoreNowAction");
+    QObject* overwrite_box = object_named(w, "restoreOverwriteBox");
+    M4_CHECK(6215, new_radio && original_radio && restore_now && overwrite_box, "dialog controls exist");
+    M4_CHECK(6216, new_radio->property("checked").toBool(), "AC-M4-05-1 (a) a new folder is preselected");
+    M4_CHECK(6217, !original_radio->property("checked").toBool(), "AC-M4-05-1 (b) not the original location");
+    M4_CHECK(6218, wait_for_preview(r.model), "the preview of the new folder is done");
+    M4_CHECK_EQ(6219, r.dialog->property("title").toString(),
+        loc(c.lang, "Restore 1 Item", "1 Element wiederherstellen"), "dialog title");
+    M4_CHECK(6220, restore_now->property("enabled").toBool(), "«Restore Now» enabled for a new folder");
+    wait_ms(400);
+    M4_CHECK(6221, save_screenshot(w, c.out_path), "screenshot failed");
+
+    // The preview at the original location waits for its held dry run.
+    M4_CHECK(6222, click_ui_item(w, qobject_cast<QQuickItem*>(original_radio), "original location"),
+        "the original location could not be chosen");
+    M4_CHECK(6223, wait_until([&] { return r.model->property("target_original").toBool(); }, 3000),
+        "the original location is chosen");
+    M4_CHECK(6224, r.model->property("state").toString() == QLatin1String("running"), "the preview runs");
+    M4_CHECK(6225, !restore_now->property("enabled").toBool(),
+        "AC-M4-05-15 (e) «Restore Now» disabled while the preview runs");
+    M4_CHECK(6226, overwrite_box->property("currentIndex").toInt() == 0,
+        "AC-M4-05-15 (c) «Never» preselected");
+    const QString release = qEnvironmentVariable("KESTIC_SMOKE_RELEASE_FILE");
+    M4_CHECK(6227, !release.isEmpty() && QFile::remove(release), "the held dry run could not be released");
+    M4_CHECK(6228, wait_for_preview(r.model), "the preview at the original location is done");
+    M4_CHECK(6229, restore_now->property("enabled").toBool(), "AC-M4-05-15 (e) enabled after the preview");
+    QObject* summary = object_named(w, "restoreSummaryLabel");
+    M4_CHECK(6230, summary != nullptr, "restoreSummaryLabel missing");
+    M4_CHECK_EQ(6231, summary->property("text").toString(),
+        loc(c.lang, "1 existing file will not be overwritten",
+            "1 vorhandene Datei wird nicht überschrieben"),
+        "AC-M4-05-4 the preview names the kept file");
+
+    QMetaObject::invokeMethod(r.model, "chooseOverwrite", Q_ARG(int, 3));
+    M4_CHECK(6232, wait_until([&] { return r.model->property("overwrite").toInt() == 3; }, 2000), "«Always» chosen");
+    M4_CHECK(6233, wait_for_preview(r.model), "the preview with «Always» is done");
+    QObject* consequence = object_named(w, "restoreConsequenceMessage");
+    M4_CHECK(6234, consequence && consequence->property("visible").toBool(), "AC-M4-05-4 (c) consequence shown");
+    M4_CHECK_EQ(6235, consequence->property("text").toString(),
+        loc(c.lang, "1 file will be overwritten. This cannot be undone.",
+            "1 Datei wird überschrieben. Das lässt sich nicht rückgängig machen."),
+        "AC-M4-05-4 (c) the consequence before writing");
+    M4_CHECK_EQ(6236, restore_now->property("text").toString(),
+        loc(c.lang, "Overwrite and Restore", "Überschreiben und wiederherstellen"), "overwrite button");
+    QObject* list_button = object_named(w, "restoreListButton");
+    M4_CHECK(6237, list_button != nullptr, "restoreListButton missing");
+    r.dialog->setProperty("listShown", true);
+    finish_incubation(w);
+    auto* preview_rows = qobject_cast<QAbstractItemModel*>(r.model);
+    M4_CHECK(6238, preview_rows && preview_rows->rowCount() == 1, "AC-M4-05-4 (b) one file listed");
+    M4_CHECK_EQ(6239, role_value(preview_rows, 0, "outcomeText").toString(),
+        loc(c.lang, "Overwritten", "Überschrieben"), "AC-M4-05-4 (b) a.txt overwritten");
+    wait_ms(400);
+    M4_CHECK(6240, save_screenshot(w, screenshot_variant(c.out_path, "-overwrite")), "screenshot failed");
+
+    trigger(restore_now);
+    M4_CHECK(6241, wait_until([&] { return is_closed(r.dialog); }, 3000), "the dialog closes on «Overwrite and Restore»");
+    M4_CHECK(6242, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("ok"); }, 30000),
+        "the restore ends");
+    QObject* banner = object_named(w, "restoreRunBanner");
+    M4_CHECK(6243, banner && banner->property("visible").toBool(), "the result of the restore is shown");
+    M4_CHECK_EQ(6244, banner->property("text").toString(),
+        loc(c.lang, "1 file restored", "1 Datei wiederhergestellt"), "result line");
+    wait_ms(400);
+    M4_CHECK(6245, save_screenshot(w, screenshot_variant(c.out_path, "-done")), "screenshot failed");
+
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 6246)) {
+        return rc;
+    }
+    M4_CHECK(6251, r.model->property("overwrite").toInt() == 0, "AC-M4-05-11 (a) «Never» again");
+    M4_CHECK(6252, overwrite_box->property("currentIndex").toInt() == 0, "AC-M4-05-11 (a) list shows «Never»");
+    M4_CHECK(6253, new_radio->property("checked").toBool(), "AC-M4-05-11 a new folder again");
+    QMetaObject::invokeMethod(r.dialog, "reject");
+    return 0;
+}
+
+/// AC-M4-05-22 (b, c): the setting «restic source» shows «(outdated)» after the version of
+/// restic 0.18.0 (`KESTIC_SMOKE_EXPECT_OUTDATED=1`) and no such note with the newest tested
+/// version.
+int scenario_restic_outdated(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    M4_CHECK(6301, wait_until([&] { return c.backend->property("restic_valid").toBool(); }, 10000), "restic usable");
+    QMetaObject::invokeMethod(w, "openSettingsWindow");
+    auto* settings = qobject_cast<QQuickWindow*>(object_named(w, "settingsWindow"));
+    M4_CHECK(6302, settings != nullptr, "settingsWindow missing");
+    M4_CHECK(6303, wait_until([&] { return settings->isVisible(); }, 3000), "settings open");
+    QObject* label = settings->findChild<QObject*>(QStringLiteral("resticSourceLabel"));
+    M4_CHECK(6304, label != nullptr, "resticSourceLabel missing");
+    const QString text = label->property("text").toString();
+    const QString note = loc(c.lang, "(outdated)", "(veraltet)");
+    if (qEnvironmentVariable("KESTIC_SMOKE_EXPECT_OUTDATED") == QLatin1String("1")) {
+        M4_CHECK(6305, text.contains(QStringLiteral("0.18.0 ") + note), "(b) «(outdated)» after 0.18.0");
+    } else {
+        M4_CHECK(6306, !text.contains(note), "(c) no «(outdated)» with the newest version");
+    }
+    // Scroll the setting into view for the screenshot.
+    if (auto* item = qobject_cast<QQuickItem*>(label)) {
+        for (QQuickItem* p = item->parentItem(); p; p = p->parentItem()) {
+            if (p->inherits("QQuickFlickable")) {
+                const QPointF at = item->mapToItem(p->property("contentItem").value<QQuickItem*>(), QPointF(0, 0));
+                p->setProperty("contentY", qMax(0.0, at.y() - 120.0));
+                break;
+            }
+        }
+    }
+    wait_ms(400);
+    M4_CHECK(6307, save_screenshot(settings, c.out_path), "screenshot failed");
+    settings->close();
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -899,6 +1075,10 @@ void run_m4_smoke_scenario(
         rc = scenario_compare(ctx);
     } else if (scen == QLatin1String("m4-compare-identical")) {
         rc = scenario_compare_identical(ctx);
+    } else if (scen == QLatin1String("m4-restore-dialog")) {
+        rc = scenario_restore_dialog(ctx);
+    } else if (scen == QLatin1String("m4-restic-outdated")) {
+        rc = scenario_restic_outdated(ctx);
     } else {
         std::fprintf(stderr, "M4 smoke failed (599): unknown m4 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

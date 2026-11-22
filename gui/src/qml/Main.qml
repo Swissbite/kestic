@@ -700,6 +700,7 @@ Kirigami.ApplicationWindow {
             root.requestActivate();
         }
         onAboutRequested: root.openAboutPage()
+        onRestoreTabRequested: root.switchTab(4)
         onQuitConfirmationRequested: function() {
             root.show();
             if (Qt.platform.pluginName !== "offscreen") {
@@ -720,6 +721,12 @@ Kirigami.ApplicationWindow {
     RunLogsModel { id: runLogsModel; objectName: "runLogsModel" }
     RestoreBackupsModel { id: restoreBackupsModel; objectName: "restoreBackupsModel" }
     RestoreSnapshotsModel { id: restoreSnapshotsModel; objectName: "restoreSnapshotsModel" }
+    RestorePreviewModel { id: restorePreviewModel; objectName: "restorePreviewModel" }
+
+    RestoreDialog {
+        id: restoreDialog
+        model: restorePreviewModel
+    }
 
     PageFocusManager {
         id: focusManager
@@ -860,6 +867,7 @@ Kirigami.ApplicationWindow {
         rootWindow: root
         appBackend: root.backendRef
         pageStackRef: pageStack
+        restoreModel: restorePreviewModel
     }
 
     footer: Kirigami.NavigationTabBar {
@@ -951,6 +959,9 @@ Kirigami.ApplicationWindow {
         // some of them only once, so it opens after that.
         if (appBackend.show_about_on_start) {
             Qt.callLater(openAboutPage);
+        }
+        if (appBackend.show_restore_on_start) {
+            Qt.callLater(switchTab, 4);
         }
     }
 
@@ -1044,6 +1055,9 @@ Kirigami.ApplicationWindow {
             onCompareRequested: function(destinationId, fromSnapshotId, toSnapshotId) {
                 root.openSnapshotCompare(destinationId, fromSnapshotId, toSnapshotId);
             }
+            onRestoreRequested: function(destinationId, snapshotId) {
+                restoreDialog.openFor(destinationId, snapshotId, []);
+            }
         }
     }
 
@@ -1071,6 +1085,9 @@ Kirigami.ApplicationWindow {
         RestoreBrowsePage {
             rootWindow: root
             appBackend: root.backendRef
+            onRestoreRequested: function(destinationId, snapshotId, selection) {
+                restoreDialog.openFor(destinationId, snapshotId, selection);
+            }
         }
     }
 

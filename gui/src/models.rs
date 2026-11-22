@@ -113,6 +113,34 @@ pub mod qobject {
         #[qproperty(QStringList, kind_texts)]
         type SnapshotDiffModel = super::SnapshotDiffModelRust;
 
+        /// The dialog «Restore n items»: target, mode, preview list and the run it starts.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        #[qproperty(QString, state)]
+        #[qproperty(QString, error_text)]
+        #[qproperty(QString, title)]
+        #[qproperty(QString, new_folder)]
+        #[qproperty(QString, original_dir)]
+        #[qproperty(bool, original_available)]
+        #[qproperty(bool, target_original)]
+        #[qproperty(QString, target_dir)]
+        #[qproperty(i32, overwrite)]
+        #[qproperty(QString, check_text)]
+        #[qproperty(bool, preview_required)]
+        #[qproperty(QString, summary_text)]
+        #[qproperty(QString, consequence_text)]
+        #[qproperty(bool, overwrites)]
+        #[qproperty(QString, notes_text)]
+        #[qproperty(bool, can_restore)]
+        #[qproperty(i32, matched)]
+        #[qproperty(QStringList, kind_codes)]
+        #[qproperty(QStringList, kind_texts)]
+        #[qproperty(QString, run_state)]
+        #[qproperty(QString, run_text)]
+        #[qproperty(QString, run_target)]
+        type RestorePreviewModel = super::RestorePreviewModelRust;
+
         /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
         /// with the tray (`kestic-i18n`) and GUI texts (`ui_texts`). No daemon connection.
         #[qobject]
@@ -340,6 +368,24 @@ pub mod qobject {
         #[cxx_name = "endInsertRows"]
         #[inherit]
         fn end_insert_rows_diff(self: Pin<&mut SnapshotDiffModel>);
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_preview(self: Pin<&mut RestorePreviewModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_preview(self: Pin<&mut RestorePreviewModel>);
+        #[cxx_name = "beginInsertRows"]
+        #[inherit]
+        fn begin_insert_rows_preview(
+            self: Pin<&mut RestorePreviewModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[cxx_name = "endInsertRows"]
+        #[inherit]
+        fn end_insert_rows_preview(self: Pin<&mut RestorePreviewModel>);
     }
 
     extern "RustQt" {
@@ -632,6 +678,62 @@ pub mod qobject {
         fn set_kinds(self: Pin<&mut SnapshotDiffModel>, codes: &QStringList);
         #[qinvokable]
         fn cancel(self: Pin<&mut SnapshotDiffModel>);
+
+        // RestorePreviewModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &RestorePreviewModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &RestorePreviewModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &RestorePreviewModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &RestorePreviewModel, parent: &QModelIndex) -> bool;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut RestorePreviewModel>, parent: &QModelIndex);
+        #[qinvokable]
+        fn open(
+            self: Pin<&mut RestorePreviewModel>,
+            destination_id: &QString,
+            snapshot_id: &QString,
+            selection: &QStringList,
+        );
+        #[qinvokable]
+        #[cxx_name = "chooseFolder"]
+        fn choose_folder(self: Pin<&mut RestorePreviewModel>, dir: &QString);
+        #[qinvokable]
+        #[cxx_name = "chooseOriginal"]
+        fn choose_original(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "chooseOverwrite"]
+        fn choose_overwrite(self: Pin<&mut RestorePreviewModel>, index: i32);
+        #[qinvokable]
+        #[cxx_name = "setKinds"]
+        fn set_kinds(self: Pin<&mut RestorePreviewModel>, codes: &QStringList);
+        #[qinvokable]
+        fn poll(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        fn cancel(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "startRestore"]
+        fn start_restore(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "pollRun"]
+        fn poll_run(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "cancelRun"]
+        fn cancel_run(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "dismissRun"]
+        fn dismiss_run(self: Pin<&mut RestorePreviewModel>);
     }
 }
 
@@ -641,6 +743,7 @@ mod rows;
 mod backups_model;
 mod destinations_model;
 mod restore_backups_model;
+mod restore_preview_model;
 mod restore_snapshots_model;
 mod run_logs_model;
 mod runs_model;
@@ -653,6 +756,7 @@ mod snapshots_model;
 pub use backups_model::BackupsModelRust;
 pub use destinations_model::DestinationsModelRust;
 pub use restore_backups_model::RestoreBackupsModelRust;
+pub use restore_preview_model::RestorePreviewModelRust;
 pub use restore_snapshots_model::RestoreSnapshotsModelRust;
 pub use run_logs_model::RunLogsModelRust;
 pub use runs_model::RunsModelRust;

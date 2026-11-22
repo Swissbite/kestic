@@ -11,14 +11,14 @@ use super::rows::{role_names, row_count, row_data};
 use super::snapshot_query::{
     QueryRun, StartPoll, count_text, fetch_error_text, format_count, to_i32, too_large_text,
 };
-use crate::state_cache::{i18n, i18np};
+use crate::state_cache::{i18n, i18np, tr};
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
 use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter};
 use kestic_daemon::dbus_api::{
-    DiffChangeDto, DiffResultDto, KesticDbusError, SnapshotChange, SnapshotQueryPage,
-    SnapshotQueryRequest, SnapshotQueryResultDto,
+    DiffChangeDto, DiffResultDto, KesticDbusError, RestoreOutcome, SnapshotChange,
+    SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use std::pin::Pin;
 
@@ -55,7 +55,8 @@ pub struct SnapshotDiffModelRust {
 /// Text of a kind of change, as the «Change» column and the filter chips show it.
 pub(crate) fn change_text(change: SnapshotChange) -> String {
     match change {
-        SnapshotChange::Added => i18n("New").subs(&[]),
+        // The same word as for a file a restore adds.
+        SnapshotChange::Added => tr(&RestoreOutcome::New.message()),
         SnapshotChange::Removed => i18n("Removed").subs(&[]),
         // restic reports metadata changes only with `--metadata`, which Kestic does not pass;
         // one that comes anyway reads as changed.

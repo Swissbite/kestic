@@ -497,7 +497,7 @@ fn record_outcome(
             } else {
                 let files = result.files_new + result.files_overwritten;
                 run.summary_message =
-                    Some(i18np("%1 file restored", "%1 files restored", files, &[]));
+                    Some(i18np("Restored %1 file", "Restored %1 files", files, &[]));
                 RunStatus::Ok
             }
         }
