@@ -171,7 +171,12 @@ such trailers.
 The agent runs `claude --dangerously-skip-permissions` in the tmux session
 `agent`, with a fixed prompt that points it to the issue (see
 [kestic-agent-inner.sh](kestic-agent-inner.sh)). Its sessions are stored in
-`kestic-agent-claude`, so `resume` works after a container restart.
+`kestic-agent-claude`, so `resume` works after a container restart. Each
+session starts with Remote Control (`--remote-control "kestic-agent #42"`), so it
+can also be followed and answered on claude.ai/code and in the Claude app.
+Telemetry and error reports are off (`DISABLE_TELEMETRY`,
+`DISABLE_ERROR_REPORTING`); `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` would
+also hide Remote Control. Effort is `high` (managed-settings.json).
 
 From the host, without entering the container:
 
