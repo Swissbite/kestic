@@ -27,6 +27,9 @@
 # fixed PATH, because the home volume (first in the image PATH) is writable by
 # the agent.
 #
+# KESTIC_AGENT_NAME (default kestic-agent) names the container and its two
+# volumes <name>-home and <name>-claude; every command acts on that instance.
+#
 # Nothing from the host reaches the container except the image, a GitHub App
 # installation token (written through stdin, renewed every 40 minutes; the
 # App's private key stays on the host), the git author from agent.conf and two
@@ -44,8 +47,10 @@ REPO="${KESTIC_AGENT_REPO:-Swissbite/kestic}"
 CONF=.devcontainer/agent.conf
 # Installation tokens live 60 minutes; renew well before.
 TOKEN_MAX_AGE=2400
-VOL_HOME=kestic-agent-home
-VOL_CLAUDE=kestic-agent-claude
+# Each instance (KESTIC_AGENT_NAME) has its own clone and its own Claude login,
+# so several agents can work on different milestones side by side.
+VOL_HOME="$NAME-home"
+VOL_CLAUDE="$NAME-claude"
 DROP=(/usr/local/lib/kestic-agent/entrypoint.sh --drop)
 
 die() {

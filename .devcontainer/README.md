@@ -267,6 +267,54 @@ systemctl --user daemon-reload && systemctl --user enable --now kestic-agent-wat
 journalctl --user -u kestic-agent-watch      # what it started or continued
 ```
 
+### Several milestones side by side
+
+Each agent instance is a container with its own volumes, named by
+`KESTIC_AGENT_NAME` (default `kestic-agent`, volumes `<name>-home` and
+`<name>-claude`). The name says nothing about the work: which milestone an instance
+works on is set only by its watcher. A second instance needs its own Claude
+login once and its own watcher; the GitHub App, its key and `agent.conf` are shared. Remote Control
+shows the session as `<name> #<issue>`.
+
+```bash
+export KESTIC_AGENT_NAME=kestic-agent-2 KESTIC_AGENT_CPUS=8
+.devcontainer/kestic-agent.sh login          # once for this instance
+.devcontainer/kestic-agent.sh attach         # every command acts on this instance
+```
+
+One watcher per instance, as a template unit; the milestone and base branch
+come from an environment file per instance:
+
+```ini
+# ~/.config/systemd/user/kestic-agent-watch@.service
+[Service]
+Type=oneshot
+TimeoutStartSec=30min
+Environment=KESTIC_AGENT_NAME=%i
+EnvironmentFile=%h/.config/kestic-agent/watch-%i.env
+ExecStart=<checkout>/.devcontainer/kestic-agent-watch.sh "${MILESTONE}" "${BASE}"
+
+# ~/.config/systemd/user/kestic-agent-watch@.timer
+[Timer]
+OnActiveSec=1min
+OnUnitInactiveSec=5min
+
+[Install]
+WantedBy=timers.target
+
+# ~/.config/kestic-agent/watch-<name>.env
+MILESTONE=<milestone title>
+BASE=<base branch>
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now kestic-agent-watch@kestic-agent-2.timer
+```
+
+Stories of different milestones touch some of the same files (D-Bus API, `po`
+catalogue, test lists); the conflicts come when the second integration branch
+merges `main` after the first one landed there.
+
 No ready-made tool fits: reacting to issue events with GitHub Actions needs
 either a self-hosted runner on this machine, which GitHub advises against for
 public repositories because pull requests from forks can run code on it, or the
