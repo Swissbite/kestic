@@ -17,9 +17,10 @@ pub mod service;
 pub mod single_instance;
 pub mod tray;
 
-/// Returns the daemon crate version via core.
+/// Version of the binary, from the Git tags of its source tree or `KESTIC_VERSION` (see
+/// `build.rs`), e.g. `0.4.0` or `0.4.0~m4.3`.
 pub fn daemon_version() -> &'static str {
-    kestic_core::version()
+    env!("KESTIC_VERSION")
 }
 
 /// Git commit the binary was built from: short hash, `-dirty` when tracked source files had
@@ -56,11 +57,6 @@ pub(crate) fn startup_line(label: &str, pid: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn daemon_reports_core_version() {
-        assert_eq!(daemon_version(), kestic_core::version());
-    }
 
     /// The startup line names (a) version, (b) build commit and (c) PID, so the journal shows
     /// which build runs after a package update restarted the daemon with the same PID.

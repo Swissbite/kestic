@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! Build state of a source tree for the daemon's startup line: short commit hash, `-dirty` when
-//! tracked source files differ from it, `unknown` outside a Git checkout or without `git`. Shared
-//! by `build.rs` and the tests of this logic.
+//! Commit label of a source tree, as shown in the daemon's startup line, the tray and «About
+//! Kestic»: short commit hash, `-dirty` when tracked source files differ from it, `unknown`
+//! outside a Git checkout or without `git`.
 
 use std::path::Path;
 use std::process::Command;
@@ -11,9 +11,11 @@ use std::process::Command;
 /// Workspace paths whose content ends up in the `kestic` binary. Only changes there count for the
 /// `-dirty` marker, and each change reruns the build script so the marker stays current. A new
 /// workspace crate or source directory belongs in this list.
-pub const SOURCE_INPUTS: [&str; 13] = [
+pub const SOURCE_INPUTS: [&str; 15] = [
     "Cargo.toml",
     "Cargo.lock",
+    "build-stamp/Cargo.toml",
+    "build-stamp/src",
     "core/Cargo.toml",
     "core/src",
     "i18n/Cargo.toml",
