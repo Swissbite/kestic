@@ -172,7 +172,14 @@ set to `none`, no SSH agent forwarding). Processes started by the tool run as
 
 ## Resources
 
-`just verify` from a fresh clone compiles with all host cores. The container
+Measured on a 20-thread laptop (2026-11): `just verify` in the container took
+6:56 min from a fresh clone (toolchain already installed) and 2:57 min warm, with
+the same 381 tests as on the host; the container's memory peak (including page
+cache) was 9–11 GB. Bootstrap of toolchain and test tools in a new home volume:
+1:35 min. Disk: image 2.4 GB (including the 2.0 GB CI image), home volume about
+6 GB after one build, login volume under 1 MB.
+
+`just verify` compiles with all host cores. The container
 runs with a low CPU weight (`--cpu-shares=256`) and `nice 10`, which keep the
 desktop responsive without slowing the agent on an idle host. Optional limits:
 `KESTIC_AGENT_CPUS` (cores; cargo and nextest then use as many jobs),
