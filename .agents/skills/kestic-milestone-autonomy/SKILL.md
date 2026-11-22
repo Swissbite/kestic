@@ -83,7 +83,8 @@ and new visible texts that only name what the spec defines (a column header, an 
 6. **Merge it yourself** with `gh pr merge <pr> --squash --match-head-commit <head>
    --delete-branch` only when all of these hold:
    - `verify` is `SUCCESS` on the head (step 5);
-   - the last reviews of the current code report `must_fix: 0`;
+   - both reviews report `must_fix: 0`, and their `head` is the pull request's head or a commit
+     after which only merges of `origin/m<n>` followed (step 3);
    - the branch contains the current `origin/m<n>` (if not: merge it in, `just verify`, push,
      step 5);
    - the issue is not a maintainer-reviewed story (§5), and `gh pr diff <pr> --name-only`
@@ -169,6 +170,7 @@ Only this section is specific to the tooling (`.devcontainer/README.md`).
 - The watcher starts and continues sessions; the agent never polls for comments. When it waits
   for the maintainer, it ends its turn; a new comment, review, merge or label removal by the
   maintainer continues the session.
-- Reviews run as two sub-agents that only read; the model is set per review (§3).
+- Reviews run as two sub-agents that change nothing in the worktree (temp directories and temp
+  repositories are fine); the model is set per review (§3).
 - Commits, pull requests and comments carry no AI co-author trailers and no «Generated with»
   lines.
