@@ -430,7 +430,9 @@ fn execute_probe_command(
     let mut stderr_lines = Vec::new();
     let mut abort_line: Option<String> = None;
     if let Some(err) = child.stderr.take() {
-        for line in BufReader::new(err).lines().map_while(Result::ok) {
+        // Lines are read as bytes: one line that is no UTF-8 must not end the reading early.
+        for raw in BufReader::new(err).split(b'\n').map_while(Result::ok) {
+            let line = String::from_utf8_lossy(&raw);
             let redacted = crate::restic::redact_secrets(&line, &secrets_to_redact);
             // Only a connection test stops restic early; setup and `init` run to their end.
             let conclusive = timeout
@@ -714,6 +716,80 @@ mod tests {
         assert!(
             !Path::new(&format!("/proc/{}", pid.trim())).exists(),
             "restic still runs"
+        );
+    }
+
+    /// The connection test waits at most 15 s for restic; setup has no limit.
+    #[test]
+    fn connection_test_limit_is_15_seconds() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let resolved = ResolvedRestic {
+            binary: dir.path().join("restic"),
+            version: semver::Version::new(0, 18, 0),
+        };
+        let helper = dir.path().join("kestic");
+        let store = crate::secrets::InMemorySecretStore::new();
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+            cache_dir: None,
+        };
+        assert_eq!(
+            ProbeRuntime::connection_test(&runtime).timeout,
+            Some(Duration::from_secs(15))
+        );
+        assert_eq!(ProbeRuntime::without_timeout(&runtime).timeout, None);
+    }
+
+    /// A line that is no UTF-8 does not end the reading: the time limit still stops restic.
+    #[test]
+    fn connection_test_reads_on_after_a_line_that_is_no_utf8() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let script = dir.path().join("restic");
+        kestic_test_support::tools::write_executable(
+            &script,
+            "#!/bin/sh\nprintf '\\377\\n' >&2\nexec sleep 60\n",
+        );
+        let resolved = ResolvedRestic {
+            binary: script,
+            version: semver::Version::new(0, 18, 0),
+        };
+        let dest = Destination::new(
+            "Slow",
+            DestinationKind::Local {
+                path: dir.path().to_path_buf(),
+            },
+        )
+        .expect("destination");
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let helper = dir.path().join("kestic");
+        let started = std::time::Instant::now();
+
+        let res = run_with_temp_repo_password_file(
+            &dest,
+            mode_subcommand(DestinationSetupMode::ConnectExisting),
+            &SecretValue::from_str_secret(strong_password()),
+            &BackendCredentials::none(),
+            ProbeRuntime {
+                resolved: &resolved,
+                kestic_binary: &helper,
+                clock: &clock,
+                cache_dir: None,
+                timeout: Some(Duration::from_secs(1)),
+            },
+        );
+
+        assert!(
+            matches!(res, Err(DestinationError::NotResponding(_))),
+            "{res:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "waited {:?}",
+            started.elapsed()
         );
     }
 

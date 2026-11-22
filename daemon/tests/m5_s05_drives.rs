@@ -17,6 +17,7 @@ use kestic_core::mount::{FakeMountInspector, FakeMountState, MountInspector};
 use kestic_daemon::dbus_api::BackendSecrets;
 use kestic_daemon::dbus_api::RemovableDriveDto;
 use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode};
+use kestic_test_support::password::strong_password;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -191,7 +192,7 @@ fn ac_m5_05_2_cifs_folder_gets_note_and_can_be_added() {
                 .add_destination(
                     &dest,
                     "init",
-                    "correct horse battery",
+                    &strong_password(),
                     &BackendSecrets::default(),
                 )
                 .expect("(b) AddDestination despite the note");
