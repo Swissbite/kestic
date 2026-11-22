@@ -166,6 +166,9 @@ fn ac_m4_01_2_metadata_snapshots_are_hidden_and_not_counted() {
                 let meta_tag = format!("kestic-meta:{}", fx.b1.id);
                 fx.snapshot(&meta_tag, "2026-11-15 12:05:00", "laptop");
                 fx.snapshot(&meta_tag, "2026-11-15 12:06:00", "laptop");
+                // restic takes comma-separated tags: a metadata snapshot with the backup tag too.
+                let both = format!("{},{meta_tag}", fx.b1_tag());
+                fx.snapshot(&both, "2026-11-15 12:07:00", "laptop");
 
                 let list = fx.list_b1();
                 assert!(

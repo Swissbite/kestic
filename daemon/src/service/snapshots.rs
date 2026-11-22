@@ -57,6 +57,8 @@ impl ListDeps<'_> {
             self.clock,
             &[],
         )?;
+        // A metadata snapshot never belongs to the list, even when it also carries the tag.
+        snaps.retain(|s| !s.is_meta());
         sort_newest_first(&mut snaps);
         Ok(to_dtos(snaps))
     }

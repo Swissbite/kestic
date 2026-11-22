@@ -14,6 +14,7 @@ use crate::state_cache::{
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use kestic_core::snapshot::SnapshotSize;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::SnapshotSummaryDto;
 use time::OffsetDateTime;
@@ -38,10 +39,10 @@ pub struct RestoreSnapshotsModelRust {
 /// Size of a snapshot: the newly written data («312 MB new»), the processed data when the
 /// summary lacks it, or «unknown» without a summary.
 pub(crate) fn snapshot_size_text(s: &SnapshotSummaryDto) -> String {
-    match (s.data_added, s.total_bytes_processed) {
-        (Some(bytes), _) => i18n("%1 new").subs(&[&format_bytes(bytes)]),
-        (None, Some(bytes)) => format_bytes(bytes),
-        (None, None) => i18n("Size unknown").to_string(),
+    match SnapshotSize::from_summary(s.data_added, s.total_bytes_processed) {
+        SnapshotSize::NewData(bytes) => i18n("%1 new").subs(&[&format_bytes(bytes)]),
+        SnapshotSize::Processed(bytes) => format_bytes(bytes),
+        SnapshotSize::Unknown => i18n("Size unknown").to_string(),
     }
 }
 
@@ -104,15 +105,19 @@ impl RestoreSnapshotsModelRust {
                 })
                 .unwrap_or_default()
         };
-        let cache = restore_cache().lock_unpoisoned();
-        let Some((backup_id, Ok(dto))) = &cache.backup_snapshots else {
+        // Copied out, so the restore cache is never held while the shared state is locked.
+        let loaded = match &restore_cache().lock_unpoisoned().backup_snapshots {
+            Some((backup_id, Ok(dto))) => Some((backup_id.clone(), dto.clone())),
+            _ => None,
+        };
+        let Some((backup_id, dto)) = loaded else {
             return Vec::new();
         };
         let mut out = Vec::new();
         push_rows(
             &mut out,
             &dto.current_snapshots,
-            &current_dest_id(backup_id),
+            &current_dest_id(&backup_id),
             None,
             now,
         );

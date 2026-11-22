@@ -21,6 +21,10 @@ pub struct RestoreCache {
     pub backup_snapshots: Option<(String, Result<BackupSnapshotsDto, String>)>,
     overview_generation: u64,
     snapshots_generation: u64,
+    /// Destinations of the current overview load that have not answered yet.
+    overview_pending: usize,
+    /// A destination answered since the last poll.
+    overview_changed: bool,
     overview_done: bool,
     snapshots_done: bool,
 }
@@ -56,32 +60,35 @@ fn fetch_backup(backup_id: &str) -> Result<BackupSnapshotsDto, String> {
 }
 
 impl qobject::KesticApp {
-    /// Loads the snapshots of every destination for the backup list of the restore area.
+    /// Loads the snapshots of every destination for the backup list of the restore area. Each
+    /// destination is asked in its own thread, so a slow or unreachable one does not hold back
+    /// the counts of the others.
     pub fn load_restore_overview(mut self: Pin<&mut Self>) {
         let dest_ids = configured_destination_ids();
         let generation = {
             let mut cache = restore_cache().lock_unpoisoned();
             cache.overview_generation += 1;
-            cache.overview_done = false;
+            cache.overview_pending = dest_ids.len();
+            cache.overview_done = dest_ids.is_empty();
+            cache.overview_changed = false;
             cache.destinations.clear();
             cache.overview_generation
         };
-        self.as_mut().set_restore_overview_loading(true);
+        self.as_mut()
+            .set_restore_overview_loading(!dest_ids.is_empty());
         self.as_mut().restore_overview_updated();
-        std::thread::spawn(move || {
-            let results: HashMap<_, _> = dest_ids
-                .into_iter()
-                .map(|id| {
-                    let result = fetch_destination(&id);
-                    (id, result)
-                })
-                .collect();
-            let mut cache = restore_cache().lock_unpoisoned();
-            if cache.overview_generation == generation {
-                cache.destinations = results;
-                cache.overview_done = true;
-            }
-        });
+        for id in dest_ids {
+            std::thread::spawn(move || {
+                let result = fetch_destination(&id);
+                let mut cache = restore_cache().lock_unpoisoned();
+                if cache.overview_generation == generation {
+                    cache.destinations.insert(id, result);
+                    cache.overview_pending -= 1;
+                    cache.overview_changed = true;
+                    cache.overview_done = cache.overview_pending == 0;
+                }
+            });
+        }
     }
 
     /// Loads the snapshots of `backup_id` for the snapshot list of the restore area.
@@ -110,8 +117,9 @@ impl qobject::KesticApp {
 
     /// Hands finished snapshot lists to QML (called by `poll_events`).
     pub(super) fn poll_restore(mut self: Pin<&mut Self>) {
-        let (overview_done, snapshots_error) = {
+        let (overview_changed, overview_done, snapshots_error) = {
             let mut cache = restore_cache().lock_unpoisoned();
+            let overview_changed = std::mem::take(&mut cache.overview_changed);
             let overview_done = std::mem::take(&mut cache.overview_done);
             let snapshots_error = if std::mem::take(&mut cache.snapshots_done) {
                 Some(match &cache.backup_snapshots {
@@ -122,10 +130,12 @@ impl qobject::KesticApp {
             } else {
                 None
             };
-            (overview_done, snapshots_error)
+            (overview_changed, overview_done, snapshots_error)
         };
         if overview_done {
             self.as_mut().set_restore_overview_loading(false);
+        }
+        if overview_changed || overview_done {
             self.as_mut().restore_overview_updated();
         }
         if let Some(error) = snapshots_error {

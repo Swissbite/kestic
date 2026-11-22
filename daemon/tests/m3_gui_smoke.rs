@@ -907,7 +907,7 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
                     .collect();
                 let pages: std::collections::HashSet<&str> =
                     texts.iter().map(|(p, _)| *p).collect();
-                assert_eq!(pages.len(), 20, "{lang}: every page recorded: {pages:?}");
+                assert_eq!(pages.len(), 21, "{lang}: every page recorded: {pages:?}");
                 if lang == "de" {
                     let english: Vec<_> = texts
                         .iter()

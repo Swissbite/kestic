@@ -53,13 +53,37 @@ pub struct ResticSnapshot {
     pub summary: Option<SnapshotSummary>,
 }
 
+/// Size shown for a snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotSize {
+    /// Data newly written to the repository (`data_added`).
+    NewData(u64),
+    /// Data read for the snapshot (`total_bytes_processed`), when the summary lacks
+    /// `data_added`.
+    Processed(u64),
+    /// No summary (older restic versions, foreign snapshots); never computed with `stats`.
+    Unknown,
+}
+
+impl SnapshotSize {
+    /// The size from the summary fields `data_added` and `total_bytes_processed`.
+    pub fn from_summary(data_added: Option<u64>, total_bytes_processed: Option<u64>) -> Self {
+        match (data_added, total_bytes_processed) {
+            (Some(bytes), _) => Self::NewData(bytes),
+            (None, Some(bytes)) => Self::Processed(bytes),
+            (None, None) => Self::Unknown,
+        }
+    }
+}
+
 impl ResticSnapshot {
-    /// Size shown for the snapshot: the newly written data (`data_added`), or the processed
-    /// bytes when the summary lacks it; `None` without a summary.
-    pub fn new_data_bytes(&self) -> Option<u64> {
-        self.summary
-            .as_ref()
-            .and_then(|s| s.data_added.or(s.total_bytes_processed))
+    /// Size shown for the snapshot.
+    pub fn size(&self) -> SnapshotSize {
+        let summary = self.summary.as_ref();
+        SnapshotSize::from_summary(
+            summary.and_then(|s| s.data_added),
+            summary.and_then(|s| s.total_bytes_processed),
+        )
     }
 
     /// Backup IDs named by `kestic:<id>` tags, in tag order.

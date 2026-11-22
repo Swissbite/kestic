@@ -72,8 +72,7 @@ fn restore_env(root: &Path) -> (M3Rig, StdFakes) {
 }
 
 /// AC-M4-01-6: (a) the tab bar shows «Restore» between «Overview» and «Backups» (checked by
-/// every scene, wide and narrow), (b) the area opens the snapshot selection. Part (c) is the
-/// M1 build: there is no such build any more; see the pull request.
+/// every scene, wide and narrow), (b) the area opens the snapshot selection.
 #[test]
 fn ac_m4_01_6_restore_tab_between_overview_and_backups_opens_snapshot_selection() {
     run_isolated_test(

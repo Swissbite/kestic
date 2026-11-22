@@ -785,11 +785,8 @@ fn run_snapshots_listing(
     check_command_succeeded(&res)?;
 
     // `restic snapshots --json` outputs a JSON array line.
-    for line in &res.log_lines {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            return Ok(serde_json::from_str(trimmed)?);
-        }
+    match &res.stdout_json_array {
+        Some(line) => Ok(serde_json::from_str(line.trim())?),
+        None => Ok(Vec::new()),
     }
-    Ok(Vec::new())
 }

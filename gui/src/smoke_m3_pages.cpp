@@ -224,7 +224,7 @@ int scenario_all_pages(const Ctx& c) {
     about->close();
 
     file.close();
-    M3_CHECK(4995, dump.pages == 20, "expected 20 recorded pages");
+    M3_CHECK(4995, dump.pages == 21, "expected 21 recorded pages");
     QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
     wait_ms(150);
     M3_CHECK(4996, save_screenshot(w, c.out_path), "screenshot failed");

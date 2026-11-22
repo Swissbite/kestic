@@ -10,8 +10,9 @@ use kestic_core::backup::{
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{BackupId, Destination, DestinationKind};
 use kestic_core::provider::ResolvedRestic;
-use kestic_core::secrets::InMemorySecretStore;
-use kestic_core::snapshot::ResticSnapshot;
+use kestic_core::restic::SECRET_KIND_REPO;
+use kestic_core::secrets::{InMemorySecretStore, SecretStore, SecretValue};
+use kestic_core::snapshot::{ResticSnapshot, SnapshotSize};
 use kestic_core::snapshot_list::sort_destination_snapshots;
 use kestic_test_support::tools::write_executable;
 use semver::Version;
@@ -74,7 +75,7 @@ fn ac_m4_01_5_snapshot_without_summary_lists_without_stats_and_without_error() {
     );
     let snaps = result.expect("(c) listing a snapshot without summary is no error");
     assert_eq!(snaps.len(), 1, "(c) the snapshot is listed");
-    assert_eq!(snaps[0].new_data_bytes(), None, "(a) size unknown");
+    assert_eq!(snaps[0].size(), SnapshotSize::Unknown, "(a) size unknown");
 
     let access = SnapshotListAccess {
         destination: &dest,
@@ -160,4 +161,45 @@ fn ac_m4_07_7_destination_snapshots_are_sorted_meta_backup_orphaned_unassigned()
         ids(&sorted.unassigned).contains(&"own-tags".to_string()),
         "(e) own tags stay unassigned"
     );
+}
+
+/// AC-M4-01-1: a repository password that also occurs inside the snapshot JSON (here the word
+/// «kestic» of every backup tag) does not change the listed snapshots: (a) both snapshots of
+/// the backup are listed, still under their backup.
+#[test]
+fn ac_m4_01_1_password_inside_the_snapshot_json_does_not_change_the_list() {
+    let tmp = TempDir::new().expect("tempdir");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/m4/snapshots_summary_with_and_without_data_added.json");
+    let resolved = spy_restic(tmp.path(), &fixture);
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).expect("mkdir repo");
+    let dest = Destination::new("NAS", DestinationKind::Local { path: repo }).expect("dest");
+    let store = InMemorySecretStore::default();
+    store
+        .set_secret(
+            dest.id.as_str(),
+            SECRET_KIND_REPO,
+            &SecretValue::from_str_secret("kestic"),
+        )
+        .expect("store password");
+    let clock = FakeClock::new(datetime!(2026-11-15 14:32:00 UTC));
+    let kestic_bin = tmp.path().join("kestic");
+    let access = SnapshotListAccess {
+        destination: &dest,
+        resolved: &resolved,
+        kestic_binary: &kestic_bin,
+        secret_store: &store,
+        clock: &clock,
+        extra_env: &[],
+    };
+
+    let all = list_destination_snapshots(&access).expect("listing succeeds");
+    let sorted = sort_destination_snapshots(all, &["backup-home"]);
+    assert_eq!(
+        sorted.backups[0].1.len(),
+        2,
+        "(a) both snapshots stay with their backup"
+    );
+    assert!(sorted.unassigned.is_empty(), "(a) none becomes unassigned");
 }
