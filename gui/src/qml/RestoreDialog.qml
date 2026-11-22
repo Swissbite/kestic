@@ -43,12 +43,24 @@ Kirigami.Dialog {
     }
 
     onRejected: model.cancel()
+    onOpened: (originalRadio.checked ? originalRadio : newFolderRadio).forceActiveFocus(Qt.TabFocusReason)
+
+    // When files would be overwritten, «Cancel» is the default: it holds the focus and the
+    // default frame, so Return cancels.
+    readonly property bool overwrites: dialog.model !== null && dialog.model.overwrites
+    onOverwritesChanged: {
+        var cancel = dialog.standardButton(Kirigami.Dialog.Cancel);
+        if (cancel) {
+            cancel.Accessible.defaultButton = overwrites;
+            if (overwrites) cancel.forceActiveFocus(Qt.TabFocusReason);
+        }
+    }
 
     customFooterActions: [
         Kirigami.Action {
             id: restoreNowAction
             objectName: "restoreNowAction"
-            icon.name: dialog.model && dialog.model.overwrites ? "dialog-warning" : "document-revert"
+            icon.name: dialog.overwrites ? "document-replace" : "document-revert"
             text: dialog.model && dialog.model.overwrites
                 ? i18n("Overwrite and Restore")
                 : i18n("Restore Now")
@@ -91,8 +103,13 @@ Kirigami.Dialog {
             objectName: "restoreNewFolderRadio"
             Layout.fillWidth: true
             text: i18n("Into a new folder")
-            checked: dialog.model !== null && !dialog.model.target_original
             onClicked: dialog.model.chooseFolder("")
+        }
+        // A click must not break the link to the model: the dialog opens again with its state.
+        Binding {
+            target: newFolderRadio
+            property: "checked"
+            value: dialog.model !== null && !dialog.model.target_original
         }
 
         RowLayout {
@@ -108,7 +125,7 @@ Kirigami.Dialog {
                     : ""
                 textFormat: Text.PlainText
                 elide: Text.ElideMiddle
-                opacity: newFolderRadio.checked ? 1.0 : 0.6
+                enabled: newFolderRadio.checked
             }
             Controls.Button {
                 objectName: "restoreChooseFolderButton"
@@ -124,8 +141,12 @@ Kirigami.Dialog {
             Layout.fillWidth: true
             enabled: dialog.model !== null && dialog.model.original_available
             text: i18n("To the original location")
-            checked: dialog.model !== null && dialog.model.target_original
             onClicked: dialog.model.chooseOriginal()
+        }
+        Binding {
+            target: originalRadio
+            property: "checked"
+            value: dialog.model !== null && dialog.model.target_original
         }
 
         Controls.Label {
@@ -136,7 +157,7 @@ Kirigami.Dialog {
             text: dialog.model ? dialog.model.original_dir : ""
             textFormat: Text.PlainText
             elide: Text.ElideMiddle
-            opacity: originalRadio.checked ? 1.0 : 0.6
+            enabled: originalRadio.checked
         }
 
         Controls.Label {
@@ -160,7 +181,6 @@ Kirigami.Dialog {
             Controls.ComboBox {
                 id: overwriteBox
                 objectName: "restoreOverwriteBox"
-                Layout.fillWidth: true
                 model: [i18n("Never overwrite"), i18n("If older"), i18n("If changed"), i18n("Always")]
                 currentIndex: dialog.model ? dialog.model.overwrite : 0
                 Accessible.name: i18n("Existing files:")
@@ -229,6 +249,7 @@ Kirigami.Dialog {
                 objectName: "restoreListButton"
                 text: i18n("List")
                 icon.name: dialog.listShown ? "arrow-up" : "arrow-down"
+                Accessible.name: dialog.listShown ? i18n("Hide the list of files") : i18n("Show the list of files")
                 checkable: true
                 checked: dialog.listShown
                 onToggled: dialog.listShown = checked
@@ -243,11 +264,21 @@ Kirigami.Dialog {
             text: dialog.model ? dialog.model.consequence_text : ""
         }
 
+        Kirigami.InlineMessage {
+            objectName: "restoreNotesMessage"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Information
+            visible: dialog.model !== null && dialog.model.state === "done" && dialog.model.notes_text.length > 0
+            text: dialog.model ? dialog.model.notes_text : ""
+        }
+
         Flow {
             objectName: "restoreKindChips"
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
+            // One kind alone filters nothing.
             visible: dialog.listShown && restoreListView.visible
+                && dialog.model !== null && dialog.model.kind_codes.length > 1
 
             Repeater {
                 model: dialog.model ? dialog.model.kind_codes : []
@@ -269,10 +300,12 @@ Kirigami.Dialog {
             id: restoreListView
             objectName: "restorePreviewList"
             Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 10
+            Layout.preferredHeight: Math.min(contentHeight, Kirigami.Units.gridUnit * 10)
             visible: dialog.listShown && dialog.model !== null && dialog.model.state === "done"
                 && dialog.model.preview_required
             clip: true
+            activeFocusOnTab: true
+            keyNavigationEnabled: true
             model: dialog.model
             Controls.ScrollBar.vertical: Controls.ScrollBar {}
             delegate: Controls.ItemDelegate {
@@ -304,13 +337,6 @@ Kirigami.Dialog {
             }
         }
 
-        Kirigami.InlineMessage {
-            objectName: "restoreNotesMessage"
-            Layout.fillWidth: true
-            type: Kirigami.MessageType.Information
-            visible: dialog.model !== null && dialog.model.state === "done" && dialog.model.notes_text.length > 0
-            text: dialog.model ? dialog.model.notes_text : ""
-        }
 
     }
 }

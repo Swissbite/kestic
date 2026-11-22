@@ -983,6 +983,10 @@ int scenario_restore_dialog(const Ctx& c) {
         "AC-M4-05-4 (c) the consequence before writing");
     M4_CHECK_EQ(6236, restore_now->property("text").toString(),
         loc(c.lang, "Overwrite and Restore", "Überschreiben und wiederherstellen"), "overwrite button");
+    QQuickItem* focused = w->activeFocusItem();
+    M4_CHECK(6261, focused != nullptr, "an item holds the focus");
+    M4_CHECK_EQ(6262, focused->property("text").toString().remove(QLatin1Char('&')),
+        loc(c.lang, "Cancel", "Abbrechen"), "«Cancel» is the default while overwriting");
     QObject* list_button = object_named(w, "restoreListButton");
     M4_CHECK(6237, list_button != nullptr, "restoreListButton missing");
     r.dialog->setProperty("listShown", true);

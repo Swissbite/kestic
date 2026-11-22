@@ -389,7 +389,7 @@ fn ac_m4_05_14_restore_without_fitting_fresh_preview_is_refused() {
                     assert_eq!(
                         err.code(),
                         kestic_i18n::codes::ServiceErrorCode::PreviewRequired,
-                        "(a) {}: {case}: {err:?}",
+                        "(a) {}: {case}",
                         v.label
                     );
                     assert_eq!(

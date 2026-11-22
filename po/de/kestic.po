@@ -3796,3 +3796,9 @@ msgstr "Von Kestic verwaltetes restic"
 
 msgid "Own program"
 msgstr "Eigenes Programm"
+
+msgid "Hide the list of files"
+msgstr "Liste der Dateien ausblenden"
+
+msgid "Show the list of files"
+msgstr "Liste der Dateien anzeigen"
