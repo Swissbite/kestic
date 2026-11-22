@@ -274,6 +274,7 @@ int test_s3_connection(QQuickWindow* w, const QString& secret, int code) {
     item_named(w, "wizDestSecretKeyField")->setProperty("text", secret);
     QQuickItem* test = item_named(w, "wizDestTestButton");
     M3_CHECK(code, wait_until([&] { return test && test->isEnabled(); }, 2000), "«Test Connection» not enabled");
+    scroll_into_view(w, test);
     M3_CHECK(code + 1, click_ui_item(w, test, "Test Connection"), "click on «Test Connection» failed");
     QQuickItem* banner = item_named(w, "wizDestFeedbackBanner");
     M3_CHECK(code + 2, wait_until([&] { return banner && banner->isVisible(); }, 15000), "no result after the connection test");
@@ -320,6 +321,13 @@ int scenario_s3_form(const Ctx& c) {
     M3_CHECK_EQ(5419, path_error->property("text").toString(),
         loc(c.lang, "Use no spaces, quotes, #, ? or %.", "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder %."),
         "path hint text");
+    scroll_into_view(w, path_error);
+    wait_ms(600);
+    if (!c.out_path.isEmpty()) {
+        QString hint_shot = c.out_path;
+        hint_shot.replace(QStringLiteral("wrong-key"), QStringLiteral("path-hint"));
+        M3_CHECK(5399, save_screenshot(w, hint_shot), "screenshot failed");
+    }
     item_named(w, "wizDestS3PathField")->setProperty("text", QString());
     M3_CHECK(5409, wait_until([&] { return !path_error->isVisible(); }, 2000), "path hint stays for an empty path");
 
@@ -354,6 +362,7 @@ int scenario_s3_form(const Ctx& c) {
     });
     M3_CHECK_EQ(5433, unnamed, QString(), "control without accessible name");
     // The messages fade in before their text is drawn.
+    scroll_into_view(w, banner);
     wait_ms(600);
     M3_CHECK(5434, save_screenshot(w, c.out_path), "screenshot failed");
     QMetaObject::invokeMethod(check_keys, "trigger");
@@ -371,6 +380,7 @@ int scenario_s3_form(const Ctx& c) {
             "Erreichbar\nBucket «kestic-de» gibt es noch nicht; Kestic legt ihn beim Anlegen des Ziels an."),
         "result of the passed test names the missing bucket");
     M3_CHECK(5452, count_visible(w, "wizDestNoteConfirmCheck") == 0, "the missing bucket needs no confirmation");
+    scroll_into_view(w, banner);
     wait_ms(600);
     if (!c.out_path.isEmpty()) {
         QString bucket_shot = c.out_path;
