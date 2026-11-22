@@ -15,6 +15,7 @@ use kestic_core::model::{
 };
 use kestic_core::mount::MountInspector;
 use kestic_core::provider::check_binary_version;
+use kestic_core::query_list::QueryLimits;
 use kestic_core::restic::ResticRuntime;
 use kestic_core::scheduler::TimezoneSpec;
 use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
@@ -96,6 +97,8 @@ pub struct M3DaemonOpts<'a> {
     pub enable_portal_inhibit: bool,
     /// Skip the StatusNotifierWatcher check at startup.
     pub assume_sni_available: bool,
+    /// Memory limits for the lists of snapshot queries.
+    pub query_limits: QueryLimits,
 }
 
 impl<'a> M3DaemonOpts<'a> {
@@ -119,6 +122,7 @@ impl<'a> M3DaemonOpts<'a> {
             enable_job_view: false,
             enable_portal_inhibit: false,
             assume_sni_available: true,
+            query_limits: QueryLimits::default(),
         }
     }
 
@@ -190,6 +194,7 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
         },
         enable_system_monitors: opts.enable_monitors,
         enable_scheduler: opts.enable_scheduler,
+        query_limits: opts.query_limits,
         ..Default::default()
     };
 

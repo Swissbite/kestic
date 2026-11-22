@@ -12,14 +12,16 @@ use kestic_core::model::{
     MaintenanceSchedule, NestedSourceConflict, NotificationSettings, RetentionPolicy, Run, Source,
 };
 use kestic_core::provider::MIN_RESTIC_VERSION;
+pub use kestic_core::query_list::{PageFilter, PageRequest as SnapshotQueryPage};
 use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
 use kestic_core::snapshot::ResticSnapshot;
+pub use kestic_core::snapshot_ls::LsEntry as LsEntryDto;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
     ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
-pub use kestic_i18n::codes::{OverallStatusKind, RunProgressPhase};
+pub use kestic_i18n::codes::{OverallStatusKind, RunProgressPhase, SnapshotQueryKind};
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
 };
@@ -425,6 +427,52 @@ pub struct BackupSnapshotsDto {
     pub previous_destinations: Vec<PreviousDestinationSnapshotsDto>,
 }
 
+/// Request of `StartSnapshotQuery`: the kind, the destination and the fields of that kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotQueryRequest {
+    pub kind: SnapshotQueryKind,
+    pub destination_id: String,
+    /// `ls`: the full snapshot ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_id: Option<String>,
+    /// `ls`: the absolute folder to list (one level, never recursive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+}
+
+/// A page of a query list (`ListPageDto`): the page, its offset, all entries of the query,
+/// those matching the filter, and whether the list was too large to hold.
+pub type ListPageDto<T> = kestic_core::query_list::ListPage<T>;
+
+/// Result of an `ls` query: one folder level of a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LsResultDto {
+    pub dir: String,
+    /// From the first node; restic lists nothing for a missing folder.
+    pub dir_exists: bool,
+    pub entries: ListPageDto<LsEntryDto>,
+}
+
+/// Result of a finished snapshot query, tagged with its kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SnapshotQueryResultDto {
+    Ls(LsResultDto),
+}
+
+/// Status of a snapshot query (`GetSnapshotQueryStatus`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotQueryStatusDto {
+    /// `"running"` | `"done"` | `"cancelled"` | `"error"`
+    pub state: String,
+    /// Cause while `state == "error"`.
+    pub error_kind: Option<ErrorKind>,
+    /// Raw error text (shown for `unknown`).
+    pub error_detail: Option<String>,
+    /// Only once the query is done.
+    pub result: Option<SnapshotQueryResultDto>,
+}
+
 /// Result of `TestDestinationConnection`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionTestResultDto {
@@ -637,6 +685,28 @@ impl KesticClient {
         destination_id: &str,
     ) -> Result<DestinationSnapshotsDto, KesticDbusError> {
         self.call_json("ListDestinationSnapshots", &(destination_id,))
+    }
+
+    pub fn start_snapshot_query(
+        &self,
+        request: &SnapshotQueryRequest,
+    ) -> Result<String, KesticDbusError> {
+        let json = to_json_arg(request)?;
+        self.call("StartSnapshotQuery", &(json.as_str(),))
+            .map_err(KesticDbusError::from)
+    }
+
+    pub fn get_snapshot_query_status(
+        &self,
+        query_id: &str,
+        page: &SnapshotQueryPage,
+    ) -> Result<SnapshotQueryStatusDto, KesticDbusError> {
+        let json = to_json_arg(page)?;
+        self.call_json("GetSnapshotQueryStatus", &(query_id, json.as_str()))
+    }
+
+    pub fn cancel_snapshot_query(&self, query_id: &str) -> zbus::Result<()> {
+        self.call("CancelSnapshotQuery", &(query_id,))
     }
 
     pub fn test_destination_connection(

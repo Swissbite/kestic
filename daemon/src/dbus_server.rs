@@ -13,7 +13,7 @@ use crate::service::{
     preview_destination_maintenance_unlocked, refresh_availability_unlocked,
     refresh_probe_unlocked, run_destination_maintenance_async, set_restic_provider_unlocked,
     start_all_backups_async, start_backup_async, start_backup_dry_run_async,
-    start_backup_override_async, start_retention_preview_async,
+    start_backup_override_async, start_retention_preview_async, start_snapshot_query_async,
     test_destination_connection_unlocked, trigger_background_availability_probe,
     unlock_destination_async, update_destination_password_unlocked, update_destination_unlocked,
 };
@@ -153,6 +153,31 @@ impl KesticDbusV1Service {
             .blocking(move |core| list_destination_snapshots_unlocked(core, &id))
             .await?;
         to_json_arg(&snaps)
+    }
+
+    #[zbus(name = "StartSnapshotQuery")]
+    async fn start_snapshot_query(&self, request_json: &str) -> Result<String, KesticDbusError> {
+        let req = request_json.to_string();
+        self.blocking(move |core| start_snapshot_query_async(core, &req))
+            .await
+            .map_err(KesticDbusError::from)
+    }
+
+    #[zbus(name = "GetSnapshotQueryStatus")]
+    fn get_snapshot_query_status(
+        &self,
+        query_id: &str,
+        page_json: &str,
+    ) -> Result<String, KesticDbusError> {
+        let mut guard = self.core.lock_unpoisoned();
+        let st = guard.get_snapshot_query_status(query_id, page_json)?;
+        to_json_arg(&st)
+    }
+
+    #[zbus(name = "CancelSnapshotQuery")]
+    fn cancel_snapshot_query(&self, query_id: &str) -> Result<(), KesticDbusError> {
+        let guard = self.core.lock_unpoisoned();
+        Ok(guard.cancel_snapshot_query(query_id)?)
     }
 
     #[zbus(name = "TestDestinationConnection")]

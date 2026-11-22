@@ -12,6 +12,7 @@
 #include <QDateTime>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QLocale>
 #include <QMetaObject>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -162,6 +163,11 @@ rust::String i18np_subs(rust::Str singular, rust::Str plural, std::int64_t n, ru
         localized = localized.subs(QString::fromUtf8(arg.data(), static_cast<qsizetype>(arg.size())));
     }
     const QByteArray utf8 = localized.toString().toUtf8();
+    return rust::String(utf8.constData(), static_cast<size_t>(utf8.size()));
+}
+
+rust::String format_count(std::int64_t n) {
+    const QByteArray utf8 = QLocale().toString(static_cast<qlonglong>(n)).toUtf8();
     return rust::String(utf8.constData(), static_cast<size_t>(utf8.size()));
 }
 

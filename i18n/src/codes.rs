@@ -235,6 +235,20 @@ code_enum! {
     }
 }
 
+code_enum! {
+    /// Kind of a snapshot query (`SnapshotQueryRequest.kind`).
+    SnapshotQueryKind {
+        /// One folder level of a snapshot (`ls`).
+        Ls => "ls",
+        /// Search over snapshots (`find`).
+        Find => "find",
+        /// Changes between two snapshots (`diff`).
+        Diff => "diff",
+        /// Preview of a restore (`restore --dry-run`).
+        RestorePreview => "restore_preview",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +323,10 @@ mod tests {
         for v in ConnectionTestCode::ALL {
             assert_eq!(ConnectionTestCode::parse(v.as_str()), Some(v));
             assert_eq!(ConnectionTestCode::parse("nope"), None);
+        }
+        for v in SnapshotQueryKind::ALL {
+            assert_eq!(SnapshotQueryKind::parse(v.as_str()), Some(v));
+            assert_eq!(SnapshotQueryKind::parse("nope"), None);
         }
         for v in RunProgressPhase::ALL {
             assert_eq!(RunProgressPhase::parse(v.as_str()), Some(v));

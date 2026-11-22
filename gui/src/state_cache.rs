@@ -1280,10 +1280,17 @@ pub fn format_run_status(
     }
 }
 
+/// `ts` in the local time zone; unchanged when the shifted time is out of range (a time at the
+/// very end of year 9999, as a foreign snapshot may carry).
 pub(crate) fn to_local(ts: OffsetDateTime) -> OffsetDateTime {
     let offset_secs = crate::qt_bridge::ffi::local_offset_seconds(ts.unix_timestamp());
     let offset = time::UtcOffset::from_whole_seconds(offset_secs).unwrap_or(ts.offset());
-    ts.to_offset(offset)
+    to_offset_or_keep(ts, offset)
+}
+
+/// `ts` at `offset`, or `ts` unchanged when that leaves the representable range.
+pub(crate) fn to_offset_or_keep(ts: OffsetDateTime, offset: time::UtcOffset) -> OffsetDateTime {
+    ts.checked_to_offset(offset).unwrap_or(ts)
 }
 
 pub fn format_day_group(ts: OffsetDateTime, now: OffsetDateTime) -> String {

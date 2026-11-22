@@ -18,12 +18,14 @@ pub mod migrations;
 pub mod model;
 pub mod mount;
 pub mod provider;
+pub mod query_list;
 pub mod restic;
 pub mod retention;
 pub mod scheduler;
 pub mod secrets;
 pub mod snapshot;
 pub mod snapshot_list;
+pub mod snapshot_ls;
 pub mod sync;
 
 /// Returns the crate version string.
