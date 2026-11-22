@@ -4,8 +4,8 @@
 #
 # `gh` in the agent container.
 #
-# - Reads the token from the Podman secret for this call only, so it is neither
-#   in the general environment nor in a gh config file.
+# - Reads the GitHub App token from its file for this call only, so it is
+#   neither in the general environment nor in a gh config file.
 # - Refuses to merge a pull request into main: `gh pr merge` and a PUT on the
 #   REST endpoint `repos/<owner>/<repo>/pulls/<n>/merge`. Merges into other
 #   branches and all other commands go through unchanged. This guards against
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 REAL_GH="${KESTIC_REAL_GH:-/usr/bin/gh}"
-TOKEN_FILE=/run/secrets/kestic-agent-gh-token
+TOKEN_FILE=/run/kestic-agent-token/gh-token
 
 if [[ -r "$TOKEN_FILE" ]]; then
     GH_TOKEN="$(<"$TOKEN_FILE")"
@@ -35,6 +35,8 @@ refuse_if_base_main() {
         exit 1
     fi
 }
+
+original_args=("$@")
 
 if [[ "${1:-}" == pr ]]; then
     words=() repo=""
@@ -66,4 +68,4 @@ elif [[ "${1:-}" == api ]]; then
     fi
 fi
 
-exec "$REAL_GH" "$@"
+exec "$REAL_GH" "${original_args[@]}"
