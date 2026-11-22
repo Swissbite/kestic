@@ -24,7 +24,7 @@ use kestic_core::secrets::SecretStore;
 use kestic_daemon::dbus_api::{BackendSecrets, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
 use kestic_i18n::codes::{BlockedReason, ConnectionNoteCode, ConnectionTestCode};
 use kestic_i18n::messages::{UiText, connection_test_text};
-use kestic_test_support::password::strong_password;
+use kestic_test_support::password::{s3_key, strong_password};
 use kestic_test_support::s3_server::S3ServerGuard;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -278,7 +278,7 @@ fn ac_m5_02_3_wrong_secret_key_fails_with_action_and_creates_nothing() {
             for variant in restic_variants() {
                 let rig = start_s3_rig(root, &variant, "M5S3C");
                 let dest = rig.destination("Cloud");
-                let wrong = BackendSecrets::s3(&rig.server.access_key, "wrong-secret-key");
+                let wrong = BackendSecrets::s3(&rig.server.access_key, &s3_key(40));
                 let client = &rig.daemon.client;
                 let config_before = fs::read(&rig.daemon.config_path).ok();
 

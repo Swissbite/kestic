@@ -317,7 +317,10 @@ int scenario_s3_form(const Ctx& c) {
     item_named(w, "wizDestEndpointField")->setProperty("text", endpoint);
     item_named(w, "wizDestBucketField")->setProperty("text", QStringLiteral("kestic-") + c.lang);
     item_named(w, "wizDestAccessKeyField")->setProperty("text", access);
-    if (const int rc = test_s3_connection(w, QStringLiteral("wrong-secret-key"), 5420)) {
+    // A wrong secret key: the right one reversed.
+    QString wrong_secret = secret;
+    std::reverse(wrong_secret.begin(), wrong_secret.end());
+    if (const int rc = test_s3_connection(w, wrong_secret, 5420)) {
         return rc;
     }
     QQuickItem* banner = item_named(w, "wizDestFeedbackBanner");

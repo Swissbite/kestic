@@ -730,14 +730,13 @@ pub fn connect_rest_repo(
     dest: &Destination,
 ) -> String {
     let repo = copy_template_repo(restic, &server.repo_dir());
-    let backend_password = server.auth().map_or("", |(_, password)| password);
+    let backend = server
+        .auth()
+        .map_or_else(BackendSecrets::default, |(_, password)| {
+            BackendSecrets::rest(password)
+        });
     client
-        .add_destination(
-            dest,
-            "connect",
-            &repo.password,
-            &BackendSecrets::rest(backend_password),
-        )
+        .add_destination(dest, "connect", &repo.password, &backend)
         .expect("add REST destination");
     repo.password
 }
