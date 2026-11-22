@@ -7,7 +7,7 @@ description: Rules for running a whole Kestic milestone (M4–M6) largely on you
 
 A milestone agent implements a whole milestone with few check-ins of the maintainer: the
 kickoff (issues, this skill and spec changes approved), questions collected at most once a day,
-the halt before a risky write path (M4: before S05; M5: before S09 and the restic download),
+the halt before a risky write path (M4: before S05; M5: before S01, S09 and the restic download),
 reviews of the write-path stories and the closing pull request. Precedence: `AGENTS.md` > this skill > the issue > the start prompt of the
 agent container > the agent's own judgement. How a single story is done (research, inner loop,
 `just verify`) is in [kestic-story-execution](../kestic-story-execution/SKILL.md) and
@@ -136,9 +136,10 @@ change only through the closing issue.
 S05, S06, S07) and of the milestone review's clean-up. The write path spreads over restic
 arguments, path mapping, glob escaping, the preview check and the dialog, so a path list cannot
 catch it.
-M5: S09 (it changes the connection of an existing destination; a wrong repository would get
-the next backup and the retention's `forget`) and S06, S07, S08 (they download, check, choose,
-replace or delete the restic binary that Kestic runs).
+M5: S01 (it writes `known_hosts` and decides which server to trust), S09 (it changes the
+connection of an existing destination; a wrong repository would get the next backup and the
+retention's `forget`) and S06, S07, S08 (they download, check, choose, replace or delete the
+restic binary that Kestic runs).
 
 ## 6. Sync `main` → `m<n>`
 
