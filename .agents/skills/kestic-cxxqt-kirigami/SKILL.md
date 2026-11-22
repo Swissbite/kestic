@@ -26,6 +26,7 @@ Use this skill whenever implementing or modifying anything in `gui/`, QML files,
 - **Pushing/replacing pages:** Instantiate `Component` pages via `comp.createObject(pageStack, props || {})` before `pageStack.push(...)` / `pageStack.replace(...)` (see `gui/src/qml/Main.qml`).
 - **`NavigationTabBar` width:** In wide layout, `maximumContentWidth` must be wide enough per tab so longer German labels like `"Wiederherstellen"` (added in M4) do not wrap onto two lines.
 - **Window title:** Main window title always stays `"Kestic"` regardless of active subpage (`AC-M1-13-6`); settings window title is `"Kestic einrichten"`.
+- **Never replace `contentItem` of a `ToolButton` or `Button`:** with `org.kde.desktop` the style draws icon and text itself, so a custom `contentItem` draws them a second time, shifted (the doubled breadcrumb in the snapshot browser). Set `text`, `icon.name` and `display` instead; for fully custom content use `AbstractButton` or `ItemDelegate` with its own `background`.
 - **No silent QML warnings:** Treat any QML/Qt warning on `stderr` as a test failure (same assertion as `core/tests/m1_gui_smoke.rs`).
 
 ## Accessibility & Keyboard Navigation (NFR-09, M6-S09)
@@ -40,6 +41,7 @@ Use this skill whenever implementing or modifying anything in `gui/`, QML files,
 - Run GUI smoke tests with `QT_QPA_PLATFORM=offscreen`, isolated XDG tempdirs, `LC_ALL=` cleared, `LANG=en_US.UTF-8`, and `LANGUAGE=en` / `LANGUAGE=de`.
 - Check both wide and narrow (`26 gridUnit` minimum width) layouts for truncation or overlap.
 - Always inspect generated screenshots in `target/smoke-artifacts/` directly with your file-viewing tool to verify layout, readability, and alignment against `docs/spec/ui/`.
+- Look at every screenshot of a screen you changed at full size, then zoom into dense text (breadcrumbs, toolbars, table headers, footers). A doubled breadcrumb was plainly visible in the CI screenshot and still reached a release. A visible defect blocks the story like a failing test; the UI review (`kestic-milestone-autonomy`, `prompts/review-ui.md`) checks the same screenshots again.
 - The smoke scenes (`gui/src/smoke*.cpp`, `gui/src/smoke.rs`), their synthetic input (`qt_handleKeyEvent`/`qt_handleMouseEvent`) and `--simulate-status` exist only with the Cargo feature `test-harness`: build test binaries with `cargo build --bin kestic --features kestic-gui/test-harness` (the justfile does).
 - The `.deb` is built without `test-harness`; the test `shipped_binary_runs_and_carries_no_test_harness` (`core/tests/m0_s05_deb_packaging.rs`) fails if the shipped binary contains any of it.
 - Product Qt helpers (clipboard, KI18n substitution, keyboard handling) live in `gui/src/qt_bridge.{rs,cpp,h}`, never in the smoke files.
