@@ -1280,7 +1280,7 @@ pub fn format_run_status(
     }
 }
 
-fn to_local(ts: OffsetDateTime) -> OffsetDateTime {
+pub(crate) fn to_local(ts: OffsetDateTime) -> OffsetDateTime {
     let offset_secs = crate::qt_bridge::ffi::local_offset_seconds(ts.unix_timestamp());
     let offset = time::UtcOffset::from_whole_seconds(offset_secs).unwrap_or(ts.offset());
     ts.to_offset(offset)

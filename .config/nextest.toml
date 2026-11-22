@@ -16,13 +16,13 @@ max-threads = 2
 max-threads = 4
 
 [[profile.default.overrides]]
-filter = "binary(m1_gui_smoke) | binary(m2_gui_smoke) | binary(m3_gui_smoke) | binary(m3_gui_idle_polling)"
+filter = "binary(m1_gui_smoke) | binary(m2_gui_smoke) | binary(m3_gui_smoke) | binary(m3_gui_idle_polling) | binary(m4_gui_smoke)"
 test-group = "gui-smoke"
 
 # The CI splits the tests by these groups (verify.yml, job `test`): a new
 # integration binary belongs in this list.
 [[profile.default.overrides]]
-filter = "package(kestic-test-support) | binary(m0_s02_bootstrap) | binary(m1_s05_secrets) | binary(m1_s06_destination) | binary(m1_s07_backup) | binary(m1_s09_dbus) | binary(m1_s10_cancel) | binary(m1_s11_tray_notify) | binary(m1_s12_autostart) | binary(m1_s23_availability) | binary(m2_s01_s03_excludes) | binary(m2_s04_dry_run) | binary(m2_s05_retention) | binary(m2_s09_s10_mount_nested) | binary(m2_integration) | binary(m3_s03_conditions) | binary(m3_s04_unreachable) | binary(m3_s04_exit_codes) | binary(m3_s04_s05_s06_restic) | binary(m3_s05_queue_maintenance) | binary(m3_s06_stale_locks) | binary(m3_s07_pause) | binary(m3_s08_monitoring) | binary(m3_s09_sleep) | binary(m3_s10_catchup) | binary(m3_s11_binary_watch) | binary(m3_s12_jobview) | binary(m3_s13_source_check) | binary(m3_s14_editors) | binary(m3_daemon_regressions) | binary(m3_tray_lock_order) | binary(m3_jobview_cancel_watch)"
+filter = "package(kestic-test-support) | binary(m0_s02_bootstrap) | binary(m1_s05_secrets) | binary(m1_s06_destination) | binary(m1_s07_backup) | binary(m1_s09_dbus) | binary(m1_s10_cancel) | binary(m1_s11_tray_notify) | binary(m1_s12_autostart) | binary(m1_s23_availability) | binary(m2_s01_s03_excludes) | binary(m2_s04_dry_run) | binary(m2_s05_retention) | binary(m2_s09_s10_mount_nested) | binary(m2_integration) | binary(m3_s03_conditions) | binary(m3_s04_unreachable) | binary(m3_s04_exit_codes) | binary(m3_s04_s05_s06_restic) | binary(m3_s05_queue_maintenance) | binary(m3_s06_stale_locks) | binary(m3_s07_pause) | binary(m3_s08_monitoring) | binary(m3_s09_sleep) | binary(m3_s10_catchup) | binary(m3_s11_binary_watch) | binary(m3_s12_jobview) | binary(m3_s13_source_check) | binary(m3_s14_editors) | binary(m3_daemon_regressions) | binary(m3_tray_lock_order) | binary(m3_jobview_cancel_watch) | binary(m4_s01_snapshots)"
 test-group = "heavy-integration"
 
 # Binaries with the longest tests start first, so that no single long test

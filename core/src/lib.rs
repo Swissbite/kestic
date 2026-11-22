@@ -23,6 +23,7 @@ pub mod retention;
 pub mod scheduler;
 pub mod secrets;
 pub mod snapshot;
+pub mod snapshot_list;
 pub mod sync;
 
 /// Returns the crate version string.

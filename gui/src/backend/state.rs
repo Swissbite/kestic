@@ -108,6 +108,8 @@ impl qobject::KesticApp {
                 .quit_confirmation_requested(has_running, QString::from(&name));
         }
 
+        self.as_mut().poll_restore();
+
         if let Some((dest_id, outcome)) = maint_preview {
             self.as_mut().set_maintenance_preview_loading(false);
             match outcome {

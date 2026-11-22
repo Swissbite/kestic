@@ -115,7 +115,7 @@ QtObject {
     function canNavigateBackInBreadcrumb(rev) {
         if (!pageStack || !rootWindow || rev < 0 || rootWindow.inWizardLayer) return false;
         if (rootWindow.narrowMode) return pageStack.depth > 1;
-        if (rootWindow.activeTab === 1 || rootWindow.activeTab === 2 || rootWindow.activeTab === 3) {
+        if (rootWindow.isListDetailTab(rootWindow.activeTab)) {
             return pageStack.depth > 2;
         }
         return pageStack.depth > 1;
@@ -128,6 +128,7 @@ QtObject {
             case 1: return Texts.label("backups");
             case 2: return Texts.label("destinations");
             case 3: return Texts.label("history");
+            case 4: return Texts.label("restore");
             default: return Texts.label("overview");
             }
         }
@@ -223,7 +224,7 @@ QtObject {
                 return;
             }
         }
-        if (!rootWindow.narrowMode && targetIdx === 0 && (rootWindow.activeTab === 1 || rootWindow.activeTab === 2 || rootWindow.activeTab === 3)) {
+        if (!rootWindow.narrowMode && targetIdx === 0 && (rootWindow.isListDetailTab(rootWindow.activeTab))) {
             while (pageStack.depth > 2) {
                 removeTopPageFromStack();
             }

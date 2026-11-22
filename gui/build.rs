@@ -82,6 +82,8 @@ fn main() {
         "src/qml/BackupPreviewPage.qml",
         "src/qml/BackupReassignPage.qml",
         "src/qml/BackupSnapshotsPage.qml",
+        "src/qml/RestorePage.qml",
+        "src/qml/RestoreSnapshotsPage.qml",
         "src/qml/BackupFullConfigPage.qml",
         "src/qml/BackupScheduleEditPage.qml",
         "src/qml/BackupConditionsEditPage.qml",
@@ -119,6 +121,7 @@ fn main() {
         "src/smoke_m3.cpp",
         "src/smoke_m3_editors.cpp",
         "src/smoke_m3_pages.cpp",
+        "src/smoke_m4.cpp",
         "src/smoke_main_menu.cpp",
         "src/smoke_m3_util.h",
     ] {
@@ -145,6 +148,7 @@ fn main() {
             .cpp_file("src/smoke_m3.cpp")
             .cpp_file("src/smoke_m3_editors.cpp")
             .cpp_file("src/smoke_m3_pages.cpp")
+            .cpp_file("src/smoke_m4.cpp")
             .cpp_file("src/smoke_main_menu.cpp");
     }
 

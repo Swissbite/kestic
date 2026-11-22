@@ -658,6 +658,21 @@ pub struct ResticExecutionResult {
     pub command_record: CommandRecord,
     pub log_lines: Vec<String>,
     pub errors: Vec<ResticErrorMessage>,
+    /// The first stdout line holding a JSON array (`restic snapshots --json`), before
+    /// redaction: replacing a secret that happens to equal a tag, host name or key would change
+    /// the data. It is only parsed, never logged.
+    pub stdout_json_array: Option<UnredactedLine>,
+}
+
+/// A restic output line before redaction; its `Debug` output leaves the text out, so it never
+/// reaches a log through `{:?}`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct UnredactedLine(pub String);
+
+impl std::fmt::Debug for UnredactedLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UnredactedLine(..)")
+    }
 }
 
 struct ResolvedRunSecrets {
@@ -840,9 +855,13 @@ where
     let mut stats: Option<RunStats> = None;
     let mut error_messages: Vec<ResticErrorMessage> = Vec::new();
     let mut exit_error_msg: Option<String> = None;
+    let mut stdout_json_array: Option<UnredactedLine> = None;
 
     if let Some(out_stream) = stdout {
         for line in BufReader::new(out_stream).lines().map_while(Result::ok) {
+            if stdout_json_array.is_none() && line.trim_start().starts_with('[') {
+                stdout_json_array = Some(UnredactedLine(line.clone()));
+            }
             let redacted = handle_stream_line(
                 &line,
                 &secrets_to_redact,
@@ -914,5 +933,6 @@ where
         },
         log_lines,
         errors: error_messages,
+        stdout_json_array,
     })
 }

@@ -17,7 +17,8 @@ Kirigami.ApplicationWindow {
     minimumHeight: Math.round(Kirigami.Units.gridUnit * 24)
     visible: true
 
-    // Primary tabs: Overview, Backups, Destinations, History
+    // Primary tabs: Overview (0), Restore (4), Backups (1), Destinations (2), History (3); the
+    // number is the tab's `tabIndex`, not its position in the tab bar.
     property int activeTab: 0
     onActiveTabChanged: syncNavChecked()
     readonly property bool narrowMode: width < Kirigami.Units.gridUnit * 35
@@ -54,6 +55,8 @@ Kirigami.ApplicationWindow {
     readonly property var runsModelRef: runsModel
     readonly property var snapshotsModelRef: snapshotsModel
     readonly property var runLogsModelRef: runLogsModel
+    readonly property var restoreBackupsModelRef: restoreBackupsModel
+    readonly property var restoreSnapshotsModelRef: restoreSnapshotsModel
 
     function tabNameForIndex(idx) {
         switch (idx) {
@@ -61,6 +64,7 @@ Kirigami.ApplicationWindow {
         case 1: return "backups";
         case 2: return "destinations";
         case 3: return "history";
+        case 4: return "restore";
         default: return "overview";
         }
     }
@@ -139,7 +143,7 @@ Kirigami.ApplicationWindow {
 
     function syncNavChecked() {
         for (var i = 0; i < navActions.length; ++i) {
-            navActions[i].checked = (i === root.activeTab);
+            navActions[i].checked = (navActions[i].tabIndex === root.activeTab);
         }
     }
 
@@ -226,6 +230,18 @@ Kirigami.ApplicationWindow {
             replaceRootPage(primaryPage);
             if (!narrowMode && firstDest !== "") {
                 pageStack.push(destinationDetailComponent.createObject(pageStack, { destinationId: firstDest }));
+                pageStack.currentIndex = 0;
+            }
+        } else if (idx === 4) {
+            restoreBackupsModel.sync();
+            var firstRestoreId = restoreBackupsModel.idAt(0);
+            primaryPage = restorePageComponent.createObject(pageStack, { selectedBackupId: firstRestoreId });
+            replaceRootPage(primaryPage);
+            if (!narrowMode && firstRestoreId !== "") {
+                pageStack.push(restoreSnapshotsComponent.createObject(pageStack, {
+                    backupId: firstRestoreId,
+                    backupName: backupNameOf(firstRestoreId)
+                }));
                 pageStack.currentIndex = 0;
             }
         } else if (idx === 3) {
@@ -320,7 +336,7 @@ Kirigami.ApplicationWindow {
                 cur.backRequested(backEvent);
             }
             if (!backEvent.accepted) {
-                if (!root.narrowMode && pageStack.depth === 2 && (root.activeTab === 1 || root.activeTab === 2 || root.activeTab === 3)) {
+                if (!root.narrowMode && pageStack.depth === 2 && root.isListDetailTab(root.activeTab)) {
                     focusPrimaryListSelection();
                 } else {
                     popSubPage();
@@ -465,6 +481,34 @@ Kirigami.ApplicationWindow {
             mode: "retention",
             retentionJson: retentionJson || ""
         }), Math.min(pageStack.depth, 3));
+    }
+
+    // Name of the configured backup `backupId`, empty if there is none.
+    function backupNameOf(backupId) {
+        var data = backupsModel.rowMap(backupId);
+        return data ? data.name : "";
+    }
+
+    // Shows the snapshots of `backupId` next to the backup list of the restore area.
+    function openRestoreSnapshots(backupId) {
+        if (activeTab !== 4) {
+            performSwitchTab(4);
+        }
+        while (pageStack.depth > 2) {
+            removeTopPageFromStack();
+        }
+        var existing = pageStack.depth === 2 ? pageStack.get(1) : null;
+        if (existing && existing.objectName === "restoreSnapshotsPage") {
+            existing.backupName = backupNameOf(backupId);
+            existing.backupId = backupId;
+        } else {
+            while (pageStack.depth > 1) removeTopPageFromStack();
+            pageStack.push(restoreSnapshotsComponent.createObject(pageStack, {
+                backupId: backupId,
+                backupName: backupNameOf(backupId)
+            }));
+        }
+        updatePageStackViewportAndFocusability();
     }
 
     function openBackupReassignPage(backupId) {
@@ -627,6 +671,8 @@ Kirigami.ApplicationWindow {
     RunsModel { id: runsModel; objectName: "runsModel" }
     SnapshotsModel { id: snapshotsModel; objectName: "snapshotsModel" }
     RunLogsModel { id: runLogsModel; objectName: "runLogsModel" }
+    RestoreBackupsModel { id: restoreBackupsModel; objectName: "restoreBackupsModel" }
+    RestoreSnapshotsModel { id: restoreSnapshotsModel; objectName: "restoreSnapshotsModel" }
 
     PageFocusManager {
         id: focusManager
@@ -714,8 +760,14 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // Restore, Backups, Destinations and History show a list with its detail next to it.
+    function isListDetailTab(tab) {
+        return tab === 1 || tab === 2 || tab === 3 || tab === 4;
+    }
+
     property list<Kirigami.Action> navActions: [
         Kirigami.Action {
+            readonly property int tabIndex: 0
             objectName: "overviewTabAction"
             icon.name: "dashboard-show"
             text: Texts.label("overview")
@@ -723,6 +775,15 @@ Kirigami.ApplicationWindow {
             onTriggered: root.switchTab(0)
         },
         Kirigami.Action {
+            readonly property int tabIndex: 4
+            objectName: "restoreTabAction"
+            icon.name: "document-revert"
+            text: Texts.label("restore")
+            checked: root.activeTab === 4
+            onTriggered: root.switchTab(4)
+        },
+        Kirigami.Action {
+            readonly property int tabIndex: 1
             objectName: "backupsTabAction"
             icon.name: "folder-sync"
             text: Texts.label("backups")
@@ -730,6 +791,7 @@ Kirigami.ApplicationWindow {
             onTriggered: root.switchTab(1)
         },
         Kirigami.Action {
+            readonly property int tabIndex: 2
             objectName: "destinationsTabAction"
             icon.name: "network-server"
             text: Texts.label("destinations")
@@ -737,6 +799,7 @@ Kirigami.ApplicationWindow {
             onTriggered: root.switchTab(2)
         },
         Kirigami.Action {
+            readonly property int tabIndex: 3
             objectName: "historyTabAction"
             icon.name: "view-history"
             text: Texts.label("history")
@@ -907,6 +970,24 @@ Kirigami.ApplicationWindow {
             rootWindow: root
             appBackend: root.backendRef
             backupsModel: root.backupsModelRef
+        }
+    }
+
+    Component {
+        id: restorePageComponent
+        RestorePage {
+            rootWindow: root
+            appBackend: root.backendRef
+            restoreBackupsModel: root.restoreBackupsModelRef
+        }
+    }
+
+    Component {
+        id: restoreSnapshotsComponent
+        RestoreSnapshotsPage {
+            rootWindow: root
+            appBackend: root.backendRef
+            restoreSnapshotsModel: root.restoreSnapshotsModelRef
         }
     }
 

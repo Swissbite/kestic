@@ -14,6 +14,7 @@ use kestic_core::model::{
 use kestic_core::provider::MIN_RESTIC_VERSION;
 use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
+use kestic_core::snapshot::ResticSnapshot;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
     ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
@@ -345,6 +346,65 @@ pub struct SnapshotSummaryDto {
     pub tags: Vec<String>,
     pub total_bytes_processed: Option<u64>,
     pub total_files_processed: Option<u64>,
+    /// Data newly written by the snapshot; `null` without it in the summary.
+    #[serde(default)]
+    pub data_added: Option<u64>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub uid: Option<u32>,
+}
+
+impl From<ResticSnapshot> for SnapshotSummaryDto {
+    fn from(s: ResticSnapshot) -> Self {
+        let summary = s.summary.as_ref();
+        Self {
+            short_id: s.short_id.unwrap_or_else(|| s.id.chars().take(8).collect()),
+            total_bytes_processed: summary.and_then(|x| x.total_bytes_processed),
+            total_files_processed: summary.and_then(|x| x.total_files_processed),
+            data_added: summary.and_then(|x| x.data_added),
+            id: s.id,
+            time: s.time,
+            hostname: s.hostname.unwrap_or_default(),
+            paths: s.paths,
+            tags: s.tags,
+            username: s.username,
+            uid: s.uid,
+        }
+    }
+}
+
+/// Number of snapshots of one configured backup in a destination.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupSnapshotCountDto {
+    pub backup_id: String,
+    pub backup_name: String,
+    pub count: u64,
+    /// Time of the newest snapshot; `null` without snapshots.
+    pub latest_time: Option<String>,
+}
+
+/// Snapshots of a backup ID that is neither configured nor described by a metadata snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrphanedBackupDto {
+    pub backup_id: String,
+    pub count: u64,
+    pub latest_time: Option<String>,
+    pub latest_hostname: Option<String>,
+    pub snapshots: Vec<SnapshotSummaryDto>,
+}
+
+/// Result of `ListDestinationSnapshots`: all snapshots of a destination, sorted, newest first,
+/// without metadata snapshots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DestinationSnapshotsDto {
+    pub destination_id: String,
+    /// Why the snapshots could not be listed; detail: `error_detail`.
+    pub error_kind: Option<ErrorKind>,
+    pub error_detail: Option<String>,
+    pub backups: Vec<BackupSnapshotCountDto>,
+    pub unassigned: Vec<SnapshotSummaryDto>,
+    pub orphaned: Vec<OrphanedBackupDto>,
 }
 
 /// Earlier snapshots on a previously assigned, still configured destination.
@@ -570,6 +630,13 @@ impl KesticClient {
         backup_id: &str,
     ) -> Result<BackupSnapshotsDto, KesticDbusError> {
         self.call_json("ListBackupSnapshots", &(backup_id,))
+    }
+
+    pub fn list_destination_snapshots(
+        &self,
+        destination_id: &str,
+    ) -> Result<DestinationSnapshotsDto, KesticDbusError> {
+        self.call_json("ListDestinationSnapshots", &(destination_id,))
     }
 
     pub fn test_destination_connection(
