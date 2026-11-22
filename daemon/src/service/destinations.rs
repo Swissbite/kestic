@@ -720,3 +720,19 @@ pub(crate) fn list_backup_snapshots_unlocked(
         deps.clock.as_ref(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A connection test whose restic did not answer within the limit reports «the server does
+    /// not respond», the code the GUI shows with its action.
+    #[test]
+    fn restic_that_does_not_answer_is_reported_as_not_responding() {
+        let result = destination_error_result(DestinationError::NotResponding(
+            "restic did not finish within 15 s".to_string(),
+        ));
+        assert!(!result.ok, "the test failed");
+        assert_eq!(result.error_kind, Some(ConnectionTestCode::NotResponding));
+    }
+}
