@@ -15,7 +15,7 @@
 #   kestic-agent status [lines]     the last lines of the agent's terminal
 #   kestic-agent state              one line `<state> <issue> <turn start>` for the watcher;
 #                                   state is none, stopped (Claude Code exited), idle or busy
-#   kestic-agent hook turn|idle     called by Claude Code hooks (managed-settings.json) when a
+#   kestic-agent hook turn|idle     called by Claude Code hooks (agent-settings.json) when a
 #                                   turn starts and when it ends
 #   kestic-agent store-token        reads a GitHub token from stdin into the token file
 #   kestic-agent token-age          seconds since the token file was written, or none
@@ -33,6 +33,8 @@ REPO_DIR="$HOME/kestic"
 TOKEN_FILE="${KESTIC_AGENT_TOKEN_FILE:-/run/kestic-agent-token/gh-token}"
 SESSION=agent
 STATE_DIR="$HOME/.kestic-agent"
+# Hooks, attribution, deny rules and effort for every agent session (root-owned).
+AGENT_SETTINGS=/usr/local/lib/kestic-agent/agent-settings.json
 # A busy session whose terminal shows no change for this long is waiting for
 # input although the Stop hook did not run (interrupt, API error, usage limit).
 STALE_AFTER=900
@@ -140,8 +142,8 @@ session_state() {
 }
 
 start_session() {
-    local prompt="$1"
-    shift
+    local issue="$1" prompt="$2"
+    shift 2
     # The pane stays after Claude Code exits (tmux.conf). A session that is
     # waiting for input after a finished turn is replaced too; only a busy one blocks.
     case "$(session_state)" in
@@ -149,8 +151,12 @@ start_session() {
         busy) die "Claude Code is busy in tmux session '$SESSION' (attach, nudge or stop it first)" ;;
     esac
     mark_turn
+    # Remote Control shows the session on claude.ai/code and in the Claude app.
+    # The settings come by flag, not as managed settings in /etc/claude-code:
+    # an organisation's server-managed settings replace that file completely.
     tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$REPO_DIR" \
-        claude --dangerously-skip-permissions "$@" "$prompt"
+        claude --dangerously-skip-permissions --settings "$AGENT_SETTINGS" \
+        --remote-control "$HOSTNAME #$issue" "$@" "$prompt"
     echo "kestic-agent: Claude Code runs in tmux session '$SESSION'"
 }
 
@@ -167,18 +173,18 @@ case "${1:-}" in
     login)
         setup
         cd "$REPO_DIR"
-        exec claude --dangerously-skip-permissions
+        exec claude --dangerously-skip-permissions --settings "$AGENT_SETTINGS"
         ;;
     run)
         issue="$(issue_number "${2:-}" run)"
         base="$(base_branch "${3:-}")"
         setup
-        start_session "$(start_prompt "$issue" "$base")"
+        start_session "$issue" "$(start_prompt "$issue" "$base")"
         printf '%s\n' "$issue" > "$STATE_DIR/issue"
         ;;
     resume)
         issue="$(issue_number "${2:-}" resume)"
-        start_session "$(resume_prompt "$issue")" --continue
+        start_session "$issue" "$(resume_prompt "$issue")" --continue
         ;;
     nudge)
         shift
@@ -192,8 +198,9 @@ case "${1:-}" in
         tmux capture-pane -p -t "$SESSION" -S "-${2:-40}"
         ;;
     state)
-        issue="$(tr -dc 0-9 < "$STATE_DIR/issue" 2>/dev/null || true)"
-        turn="$(tr -dc 0-9 < "$STATE_DIR/turn" 2>/dev/null || true)"
+        # stderr first: a missing file (first run) is not an error.
+        issue="$(tr -dc 0-9 2>/dev/null < "$STATE_DIR/issue" || true)"
+        turn="$(tr -dc 0-9 2>/dev/null < "$STATE_DIR/turn" || true)"
         echo "$(session_state) ${issue:-0} ${turn:-0}"
         ;;
     store-token)
