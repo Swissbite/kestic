@@ -275,11 +275,13 @@ impl RunHistory {
             .now_utc()
             .format(&Rfc3339)
             .map_err(|e| HistoryError::Time(e.to_string()))?;
+        // A restore waiting for maintenance lives only in the daemon; it ends with it.
         let changed = self.conn.execute(
             "UPDATE runs
              SET status = 'interrupted',
+                 pending_reason = NULL,
                  finished_at = COALESCE(finished_at, ?1)
-             WHERE status = 'running'",
+             WHERE status = 'running' OR (status = 'pending' AND kind = 'restore')",
             params![now_rfc],
         )?;
         Ok(changed)

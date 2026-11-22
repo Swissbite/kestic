@@ -654,3 +654,33 @@ fn ac_m4_05_22_settings_mark_outdated_restic() {
         },
     );
 }
+
+/// AC-M4-05-24 (c) in the GUI: the GUI started with `--show-restore` opens on the tab «Restore»
+/// (scene `m4-show-restore`).
+#[test]
+fn ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab() {
+    run_isolated_test(
+        "ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab",
+        "KESTIC_AC_M4_05_24_SMOKE_INNER",
+        |root| {
+            let (rig, _fakes) = restore_env(root);
+            let iso = kestic_test_support::gui::IsolatedEnv::adopt(root);
+            let dbus_addr =
+                std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
+            kestic_test_support::gui::SmokeContext {
+                kestic_bin: &find_kestic_binary(),
+                iso: &iso,
+                dbus_addr: &dbus_addr,
+            }
+            .run_with_env(
+                "m4-show-restore",
+                "wide",
+                "en",
+                &smoke_artifact("show-restore", "wide", "en"),
+                &["--show-restore"],
+                &[],
+            );
+            rig.daemon.stop();
+        },
+    );
+}

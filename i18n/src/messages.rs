@@ -691,7 +691,7 @@ impl RestoreNoteCode {
                 i18n_noop("Nothing in the snapshot matches the selection.")
             }
             Self::SymlinkInTarget => i18n_noop(
-                "The target contains symbolic links where the snapshot has files or folders; restic replaces the links and leaves the data behind them alone.",
+                "The target contains symbolic links where the snapshot has files or folders; restic may replace such a link, but it never writes through it.",
             ),
         })
     }

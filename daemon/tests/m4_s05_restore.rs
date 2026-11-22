@@ -402,12 +402,53 @@ fn ac_m4_05_14_restore_without_fitting_fresh_preview_is_refused() {
                 };
                 refused(None, "without preview");
                 refused(Some(&never_id), "other mode");
+                let (whole_id, _) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Always);
+                refused(Some(&whole_id), "other selection");
                 refused(Some(&running_id), "unfinished");
                 fx.rig.wrapper.release("restore");
                 let (fresh_id, _) =
                     fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
                 fx.rig.clock.advance(std::time::Duration::from_mins(11));
                 refused(Some(&fresh_id), "older than 10 minutes");
+                // A preview of a folder that was empty ran no dry run; it does not count once
+                // the folder has content.
+                let folder = fx.new_dir("filled-later");
+                fs::create_dir_all(&folder).expect("mkdir folder");
+                let (empty_id, _) = fx.preview(
+                    &["a.txt"],
+                    Some(new_folder(&folder)),
+                    RestoreOverwrite::Always,
+                );
+                fs::write(folder.join("a.txt"), "local").expect("fill folder");
+                let started = fx.rig.wrapper.started_repo_count();
+                let runs = restore_runs(fx);
+                let err = fx
+                    .start_restore(
+                        &["a.txt"],
+                        new_folder(&folder),
+                        RestoreOverwrite::Always,
+                        Some(&empty_id),
+                    )
+                    .expect_err("a preview without dry run must not count");
+                assert_eq!(
+                    err.code(),
+                    kestic_i18n::codes::ServiceErrorCode::PreviewRequired,
+                    "(a) {}: preview without dry run",
+                    v.label
+                );
+                assert_eq!(
+                    fx.rig.wrapper.started_repo_count(),
+                    started,
+                    "(b) {}",
+                    v.label
+                );
+                assert_eq!(restore_runs(fx), runs, "(c) {}", v.label);
+                let (other_target, _) = fx.preview(
+                    &["a.txt"],
+                    Some(new_folder(&folder)),
+                    RestoreOverwrite::Always,
+                );
+                refused(Some(&other_target), "other target");
                 let (ok_id, _) =
                     fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
                 let run_id = fx
@@ -1292,6 +1333,140 @@ fn ac_m4_05_13_restored_folder_is_created_only_by_start_restore() {
                 );
                 fs::remove_dir_all(&parent).expect("clean up for the next variant");
             });
+        },
+    );
+}
+
+/// AC-M4-05-12 (on the daemon): a restore from a snapshot with `kestic:b1`, started with the
+/// dialog's preview, (c) carries `b1` from its creation on and (d) shows in the runs of `b1`
+/// and of the destination.
+#[test]
+fn ac_m4_05_12_restore_run_carries_its_backup_from_the_start() {
+    run_isolated_test(
+        "ac_m4_05_12_restore_run_carries_its_backup_from_the_start",
+        "KESTIC_AC_M4_05_12_INNER",
+        |root| {
+            for_each_variant(root, "M4R12", small_tree, |fx, v| {
+                fx.rig.wrapper.hold("restore");
+                let (id, p) = fx.preview(&["a.txt"], None, RestoreOverwrite::Never);
+                let run_id = fx
+                    .start_restore(
+                        &["a.txt"],
+                        p.target.target.clone(),
+                        RestoreOverwrite::Never,
+                        Some(&id),
+                    )
+                    .expect("StartRestore");
+                let first = fx
+                    .rig
+                    .daemon
+                    .client
+                    .get_run_detail(&run_id)
+                    .expect("detail");
+                assert_eq!(
+                    first.run.backup_id(),
+                    Some(&fx.backup.id),
+                    "(c) {}: backup from the start",
+                    v.label
+                );
+                fx.rig.wrapper.release("restore");
+                assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Ok);
+                let state = fx.rig.daemon.client.get_state().expect("GetState");
+                let of_backup = state
+                    .recent_runs
+                    .iter()
+                    .filter(|r| r.backup_id() == Some(&fx.backup.id))
+                    .any(|r| r.id.as_str() == run_id);
+                let of_dest = state
+                    .recent_runs
+                    .iter()
+                    .filter(|r| r.destination_id == fx.dest.id)
+                    .any(|r| r.id.as_str() == run_id);
+                assert!(of_backup, "(d) {}: in the runs of the backup", v.label);
+                assert!(of_dest, "(d) {}: in the runs of the destination", v.label);
+            });
+        },
+    );
+}
+
+/// A restore waiting for maintenance can be cancelled: it ends `cancelled` and never starts.
+#[test]
+fn m4_s05_waiting_restore_can_be_cancelled() {
+    run_isolated_test(
+        "m4_s05_waiting_restore_can_be_cancelled",
+        "KESTIC_M4_S05_CANCEL_WAITING_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            let variant = common::m3::latest_variant();
+            let fx = scheduled_fixture(root, &variant, "M4RC");
+            fx.rig.wrapper.hold("prune");
+            fx.rig.clock.set(SUNDAY_PRUNE);
+            fx.rig
+                .wrapper
+                .wait_for('S', "prune", 1, std::time::Duration::from_secs(30));
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&fx.new_dir("cancelled")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            fx.rig.daemon.client.cancel_run(&run_id).expect("CancelRun");
+            assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Cancelled);
+            fx.rig.wrapper.release("prune");
+            fx.rig
+                .wrapper
+                .wait_for('E', "prune", 1, std::time::Duration::from_secs(30));
+            common::m3::settle();
+            assert!(
+                fx.restore_calls().is_empty(),
+                "the cancelled restore never starts"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// The repository password never shows in the run of a restore, also when restic prints it.
+#[test]
+fn m4_s05_restore_never_shows_the_password() {
+    run_isolated_test(
+        "m4_s05_restore_never_shows_the_password",
+        "KESTIC_M4_S05_REDACT_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RX", small_tree, |_| {});
+            fx.rig
+                .wrapper
+                .fail("restore", 1, &format!("Fatal: echo {} failed", fx.password));
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&fx.new_dir("redacted")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            let detail = fx.wait_run(&run_id);
+            assert_eq!(detail.run.status, RunStatus::Error, "{detail:?}");
+            let shown = format!(
+                "{:?} {:?} {:?}",
+                detail.log_lines, detail.error_raw_detail, detail.run.summary_message
+            );
+            assert!(
+                !shown.contains(&fx.password),
+                "password in the run: {shown}"
+            );
+            assert!(
+                detail
+                    .log_lines
+                    .iter()
+                    .any(|l| l.contains("***REDACTED***")),
+                "the restic error is in the log, redacted: {:?}",
+                detail.log_lines
+            );
+            fx.rig.daemon.stop();
         },
     );
 }

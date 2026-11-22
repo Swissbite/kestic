@@ -58,6 +58,8 @@ struct RestoreJob {
 
 #[derive(Clone)]
 struct PreviewFacts {
+    /// The preview ran the dry runs (it was made for a target that needed them).
+    dry_run: bool,
     plan: RestorePlan,
     files_kept: u64,
     backup: Option<(BackupId, String)>,
@@ -117,6 +119,7 @@ fn matching_preview(
     };
     let wanted = fingerprint(&job.ctx, &job.params, &job.target, &job.check);
     (fresh && preview.fingerprint == wanted).then(|| PreviewFacts {
+        dry_run: preview.dry_run,
         plan: preview.plan.clone(),
         files_kept: preview.classification.counts.kept_files,
         backup: preview.backup.clone(),
@@ -168,7 +171,9 @@ fn prepare_job(
         request.preview_id.as_deref(),
         &job,
     );
-    if required && facts.is_none() {
+    // Where a preview is required, only one that ran the dry runs counts: a preview of a folder
+    // that was empty then lists nothing that would be overwritten now.
+    if required && !facts.as_ref().is_some_and(|f| f.dry_run) {
         return Err(KesticServiceErr::PreviewRequired(
             "no finished, fresh preview with these parameters".to_string(),
         ));
@@ -178,7 +183,9 @@ fn prepare_job(
     if job.check.missing {
         job.check = check_target(&job.target, job.ctx.repository());
         refuse_unusable(&job.check)?;
-        if job.check.code == RestoreTargetCode::ExistsNotEmpty && job.from_preview.is_none() {
+        if job.check.code == RestoreTargetCode::ExistsNotEmpty
+            && !job.from_preview.as_ref().is_some_and(|f| f.dry_run)
+        {
             return Err(KesticServiceErr::PreviewRequired(
                 "the new folder has content now".to_string(),
             ));
@@ -206,7 +213,14 @@ pub fn start_restore_async(
 
     let mut guard = shared.lock_unpoisoned();
     let dest_id = job.ctx.destination.id.clone();
-    let mut run = Run::new_restore(guard.clock.as_ref(), dest_id.clone(), None)
+    // The preview named the snapshot's backup already; without one the worker sets it once
+    // restic has read the snapshot.
+    let backup_id = job
+        .from_preview
+        .as_ref()
+        .and_then(|f| f.backup.as_ref())
+        .map(|(id, _)| id.clone());
+    let mut run = Run::new_restore(guard.clock.as_ref(), dest_id.clone(), backup_id)
         .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
     let run_id = run.id.as_str().to_string();
     if guard.has_active_maintenance(&dest_id) {
@@ -274,6 +288,32 @@ fn launch(
         });
     });
     Ok(())
+}
+
+impl DaemonCore {
+    /// Ends the waiting restore `run_id` as cancelled; `false` when no restore waits under it.
+    pub(super) fn cancel_pending_restore(&mut self, run_id: &RunId) -> bool {
+        let Some(pos) = self
+            .pending_restores
+            .iter()
+            .position(|p| &p.run.id == run_id)
+        else {
+            return false;
+        };
+        let mut run = self.pending_restores.remove(pos).run;
+        let clock = Arc::clone(&self.clock);
+        run.finish(clock.as_ref(), RunStatus::Cancelled, None);
+        run.summary_message = Some(tr(&ErrorKind::Cancelled.message(None, false)));
+        if let Err(err) = self.upsert_run_cached(&run, &[]) {
+            eprintln!("kestic-daemon: failed to record cancelled restore {run_id}: {err}");
+        }
+        let conn = self.conn.clone();
+        self.push_state();
+        if let Some(conn) = conn {
+            emit_run_updated(&conn, &run);
+        }
+        true
+    }
 }
 
 /// Starts the restores that waited for maintenance on `dest_id` to end.

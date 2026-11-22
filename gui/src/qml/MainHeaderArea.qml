@@ -110,7 +110,8 @@ ColumnLayout {
                 visible: headerArea.restoreModel.run_state === "ok"
                 icon.name: "document-open-folder"
                 text: i18n("Open Folder")
-                onTriggered: Qt.openUrlExternally("file://" + headerArea.restoreModel.run_target)
+                onTriggered: Qt.openUrlExternally("file://"
+                    + headerArea.restoreModel.run_target.split("/").map(encodeURIComponent).join("/"))
             }
         ]
     }

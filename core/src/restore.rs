@@ -76,16 +76,22 @@ pub fn normalize_selection(selection: &[String]) -> Result<Vec<String>, Snapshot
     }
     paths.sort();
     paths.dedup();
-    let mut kept: Vec<String> = Vec::with_capacity(paths.len());
-    for path in paths {
-        let below_kept = kept
-            .last()
-            .is_some_and(|k| path.starts_with(k.as_str()) && path[k.len()..].starts_with('/'));
-        if !below_kept {
-            kept.push(path);
+    let all: std::collections::HashSet<&str> = paths.iter().map(String::as_str).collect();
+    let below_another = |path: &str| {
+        let mut rest = path;
+        while let Some(i) = rest.rfind('/').filter(|i| *i > 0) {
+            rest = &rest[..i];
+            if all.contains(rest) {
+                return true;
+            }
         }
-    }
-    Ok(kept)
+        false
+    };
+    Ok(paths
+        .iter()
+        .filter(|p| !below_another(p))
+        .cloned()
+        .collect())
 }
 
 fn segments(path: &str) -> Vec<&str> {
@@ -515,6 +521,10 @@ mod tests {
         assert_eq!(
             normalize_selection(&sel(&["/ab", "/a"])).expect("ok"),
             sel(&["/a", "/ab"])
+        );
+        assert_eq!(
+            normalize_selection(&sel(&["/a", "/a b", "/a/c"])).expect("ok"),
+            sel(&["/a", "/a b"])
         );
         assert!(
             normalize_selection(&sel(&["/a", "/"]))

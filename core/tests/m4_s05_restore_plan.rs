@@ -127,7 +127,7 @@ fn ac_m4_05_13_suggested_new_folder_name() {
     assert_eq!(
         suggested_new_folder(&input(home.path(), None)),
         home.path()
-            .join("Wiederhergestellt/NAS nicht zugeordnet e3d4e5f6 2026-11-15 12-00"),
+            .join("Wiederhergestellt/NAS nicht zugeordnet e3d4e5f6"),
         "(c)"
     );
     assert_eq!(
@@ -228,4 +228,47 @@ fn ac_m4_05_22_outdated_is_older_than_the_tested_version() {
     );
     assert!(kestic_core::provider::is_outdated_text("0.18.0"), "(b)");
     assert!(!kestic_core::provider::is_outdated_text(&latest), "(c)");
+}
+
+/// A restore waiting for maintenance lives only in the daemon: at the next start it is no
+/// longer `pending`.
+#[test]
+fn m4_s05_waiting_restore_ends_at_daemon_start() {
+    let clock = FakeClock::new(datetime!(2026-11-15 12:00 UTC));
+    let mut run =
+        Run::new_restore(&clock, DestinationId::generate().expect("id"), None).expect("run");
+    run.status = RunStatus::Pending;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut history = RunHistory::open(dir.path()).expect("history");
+    history.upsert_run(&run, &[]).expect("store run");
+    history
+        .mark_interrupted_on_startup(&clock)
+        .expect("startup");
+    let runs = history.list_runs().expect("runs");
+    assert_eq!(runs[0].status, RunStatus::Interrupted);
+}
+
+/// A missing new folder is checked at its deepest existing ancestor.
+#[test]
+fn m4_s05_missing_folder_is_checked_at_its_parent() {
+    use kestic_core::restore::RestoreTarget;
+    use kestic_core::restore_target::check_target;
+    use kestic_i18n::codes::RestoreTargetCode;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("file");
+    std::fs::write(&file, "x").expect("file");
+    let locked = dir.path().join("locked");
+    std::fs::create_dir(&locked).expect("mkdir");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let target = |p: std::path::PathBuf| RestoreTarget::NewFolder {
+        dir: p.to_string_lossy().into_owned(),
+    };
+    let below_file = check_target(&target(file.join("new")), None).code;
+    let below_locked = check_target(&target(locked.join("a/b")), None).code;
+    let fresh = check_target(&target(dir.path().join("new/x")), None).code;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert_eq!(below_file, RestoreTargetCode::NotADirectory);
+    assert_eq!(below_locked, RestoreTargetCode::NotWritable);
+    assert_eq!(fresh, RestoreTargetCode::Ok);
 }

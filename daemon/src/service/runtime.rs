@@ -642,7 +642,7 @@ fn handle_tray_action(
             });
         }
         TrayAction::CancelRun(run_id) => {
-            let guard = core.lock_unpoisoned();
+            let mut guard = core.lock_unpoisoned();
             let _ = guard.cancel_run(&run_id);
         }
         TrayAction::PauseGlobal(duration) => {

@@ -9,19 +9,22 @@
 use super::qobject;
 use super::rows::{role_names, row_count, row_data};
 use super::snapshot_query::{QueryRun, StartPoll, fetch_error_text, format_count, to_i32};
-use crate::state_cache::{dbus_error_text, format_bytes, i18n, i18np, make_client, tr};
+use crate::state_cache::{
+    dbus_error_text, format_bytes, i18n, i18np, make_client, shared_state, tr,
+};
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
 use kestic_core::model::RunStatus;
 use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter};
+use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
     KesticDbusError, RestoreOutcome, RestoreOverwrite, RestorePreviewEntryDto,
     RestorePreviewResultDto, RestoreRequest, RestoreTarget, RestoreTargetCode, RunDetailDto,
     SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use kestic_i18n::codes::ErrorKind;
-use kestic_i18n::messages::nothing_restored_message;
+use kestic_i18n::messages::{active_run_message, nothing_restored_message};
 use std::pin::Pin;
 
 model_row!(PreviewRow {
@@ -235,8 +238,12 @@ impl qobject::RestorePreviewModel {
         self.as_mut().set_new_folder(QString::from(""));
         self.as_mut().set_original_dir(QString::from(""));
         self.as_mut().set_original_available(false);
-        self.as_mut().set_run_state(QString::from(""));
-        self.as_mut().set_run_text(QString::from(""));
+        // The message of a running restore stays; an ended one gives way to the new dialog.
+        if self.run_state.to_string() != "running" {
+            self.as_mut().rust_mut().run_id = None;
+            self.as_mut().set_run_state(QString::from(""));
+            self.as_mut().set_run_text(QString::from(""));
+        }
         self.as_mut().run_preview();
     }
 
@@ -248,12 +255,15 @@ impl qobject::RestorePreviewModel {
         } else {
             Choice::Folder(dir)
         };
+        // Overwriting is chosen for one target only; another target starts with «Never».
+        self.as_mut().set_overwrite(0);
         self.as_mut().run_preview();
     }
 
     /// Restores to the original location.
     pub fn choose_original(mut self: Pin<&mut Self>) {
         self.as_mut().rust_mut().choice = Choice::Original;
+        self.as_mut().set_overwrite(0);
         self.as_mut().run_preview();
     }
 
@@ -465,7 +475,17 @@ impl qobject::RestorePreviewModel {
             return;
         };
         let state = match detail.run.status {
-            RunStatus::Running | RunStatus::Pending => return,
+            RunStatus::Running | RunStatus::Pending => {
+                let progress = shared_state()
+                    .lock_unpoisoned()
+                    .active_progress
+                    .get(&run_id)
+                    .map(|p| tr(&active_run_message(&p.info())));
+                if let Some(text) = progress {
+                    self.as_mut().set_run_text(QString::from(&text));
+                }
+                return;
+            }
             RunStatus::Ok => "ok",
             RunStatus::Warning => "warning",
             _ => "error",

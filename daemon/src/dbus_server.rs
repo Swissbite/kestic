@@ -350,7 +350,7 @@ impl KesticDbusV1Service {
 
     #[zbus(name = "CancelRun")]
     fn cancel_run(&self, run_id: &str) -> Result<(), KesticDbusError> {
-        let guard = self.core.lock_unpoisoned();
+        let mut guard = self.core.lock_unpoisoned();
         Ok(guard.cancel_run(run_id)?)
     }
 

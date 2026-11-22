@@ -175,6 +175,8 @@ pub(crate) struct HeldPreview {
     pub target: RestoreTarget,
     pub check: TargetCheck,
     pub classification: PreviewClassification,
+    /// The dry runs ran (the target needed a preview and could be written to).
+    pub dry_run: bool,
     /// The configured backup of the snapshot, if any.
     pub backup: Option<(BackupId, String)>,
 }
@@ -257,7 +259,8 @@ pub(crate) fn execute_restore_preview(
         )));
     }
     let check = check_target(&target, ctx.repository());
-    let classification = if preview_required(&target, &check) && check.usable() {
+    let dry_run = preview_required(&target, &check) && check.usable();
+    let classification = if dry_run {
         let foreign_owner = snapshot.uid.is_some_and(|uid| uid != current_uid());
         execute_preview(
             access,
@@ -278,6 +281,7 @@ pub(crate) fn execute_restore_preview(
         target,
         check,
         classification,
+        dry_run,
         backup: ctx.backup_of(&snapshot),
     })
 }

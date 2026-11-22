@@ -601,14 +601,18 @@ impl DaemonCore {
         self.persist_config(next)
     }
 
-    pub fn cancel_run(&self, run_id: &str) -> Result<(), KesticServiceErr> {
+    /// Cancels the active run `run_id`, or a restore that still waits for maintenance (it ends
+    /// as cancelled without starting).
+    pub fn cancel_run(&mut self, run_id: &str) -> Result<(), KesticServiceErr> {
         let id = RunId::parse(run_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
-        let entry = self
-            .active_runs
-            .get(&id)
-            .ok_or_else(|| KesticServiceErr::NotFound(run_id.to_string()))?;
-        entry.cancel.cancel();
-        Ok(())
+        if let Some(entry) = self.active_runs.get(&id) {
+            entry.cancel.cancel();
+            return Ok(());
+        }
+        if self.cancel_pending_restore(&id) {
+            return Ok(());
+        }
+        Err(KesticServiceErr::NotFound(run_id.to_string()))
     }
 
     pub fn cancel_any_active_run(&self) -> bool {

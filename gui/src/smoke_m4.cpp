@@ -981,6 +981,13 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK_EQ(6239, role_value(preview_rows, 0, "outcomeText").toString(),
         loc(c.lang, "Overwritten", "Überschrieben"), "AC-M4-05-4 (b) a.txt overwritten");
     wait_ms(400);
+    if (qEnvironmentVariableIsSet("KESTIC_DEBUG_FULL_REPAINT")) {
+        const QSize size = w->size();
+        w->resize(size.width() + 1, size.height());
+        wait_ms(100);
+        w->resize(size);
+        wait_ms(300);
+    }
     M4_CHECK(6240, save_screenshot(w, screenshot_variant(c.out_path, "-overwrite")), "screenshot failed");
 
     trigger(restore_now);
@@ -1000,7 +1007,33 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK(6251, r.model->property("overwrite").toInt() == 0, "AC-M4-05-11 (a) «Never» again");
     M4_CHECK(6252, overwrite_box->property("currentIndex").toInt() == 0, "AC-M4-05-11 (a) list shows «Never»");
     M4_CHECK(6253, new_radio->property("checked").toBool(), "AC-M4-05-11 a new folder again");
+
+    // AC-M4-05-15 (c): another target starts with «Never» again.
+    M4_CHECK(6254, wait_for_preview(r.model), "the preview of the new folder is done");
+    M4_CHECK(6255, click_ui_item(w, qobject_cast<QQuickItem*>(original_radio), "original location"),
+        "the original location could not be chosen");
+    M4_CHECK(6256, wait_until([&] { return r.model->property("target_original").toBool(); }, 3000),
+        "the original location is chosen");
+    QMetaObject::invokeMethod(r.model, "chooseOverwrite", Q_ARG(int, 3));
+    M4_CHECK(6257, wait_until([&] { return r.model->property("overwrite").toInt() == 3; }, 2000), "«Always» chosen");
+    M4_CHECK(6258, click_ui_item(w, qobject_cast<QQuickItem*>(new_radio), "new folder"),
+        "the new folder could not be chosen");
+    M4_CHECK(6259, wait_until([&] { return !r.model->property("target_original").toBool(); }, 3000),
+        "the new folder is chosen");
+    M4_CHECK(6260, r.model->property("overwrite").toInt() == 0, "AC-M4-05-15 (c) «Never» for another target");
     QMetaObject::invokeMethod(r.dialog, "reject");
+    return 0;
+}
+
+/// AC-M4-05-24 (c) in the GUI: started with `--show-restore` (the tray's «Restore Files…»
+/// without a running GUI), the window opens on the tab «Restore».
+int scenario_show_restore(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    M4_CHECK(6401, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 5000),
+        "(c) the tab «Restore» is active");
+    finish_incubation(w);
+    wait_ms(400);
+    M4_CHECK(6402, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
 
@@ -1079,6 +1112,8 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_dialog(ctx);
     } else if (scen == QLatin1String("m4-restic-outdated")) {
         rc = scenario_restic_outdated(ctx);
+    } else if (scen == QLatin1String("m4-show-restore")) {
+        rc = scenario_show_restore(ctx);
     } else {
         std::fprintf(stderr, "M4 smoke failed (599): unknown m4 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

@@ -76,19 +76,19 @@ pub struct SuggestionInput<'a> {
 }
 
 /// The suggested new folder: `~/<restored>/<backup> <time>`, for a snapshot without backup
-/// `~/<restored>/<destination> <not assigned> <short id> <time>`.
+/// `~/<restored>/<destination> <not assigned> <short id>`.
 pub fn suggested_new_folder(input: &SuggestionInput<'_>) -> PathBuf {
-    let label = input.backup_name.map_or_else(
+    let name = input.backup_name.map_or_else(
         || {
-            format!(
+            sanitize_folder_name(&format!(
                 "{} {} {}",
                 input.destination_name, input.words.not_assigned, input.snapshot_short_id
-            )
+            ))
         },
-        str::to_string,
+        |backup| new_folder_name(backup, input.snapshot_time),
     );
     let parent = input.home.join(sanitize_folder_name(input.words.restored));
-    unique_folder(&parent, &new_folder_name(&label, input.snapshot_time))
+    unique_folder(&parent, &name)
 }
 
 /// The original location of a restore of `folder` (the common folder of the selection, from the
@@ -183,7 +183,7 @@ pub fn check_target(target: &RestoreTarget, repository: Option<&Path>) -> Target
         } else if target.is_original() {
             RestoreTargetCode::MissingMappedDir
         } else {
-            RestoreTargetCode::Ok
+            creatable_below(dir)
         };
         return TargetCheck {
             code,
@@ -205,6 +205,25 @@ pub fn check_target(target: &RestoreTarget, repository: Option<&Path>) -> Target
         check(RestoreTargetCode::Ok)
     } else {
         check(RestoreTargetCode::ExistsNotEmpty)
+    }
+}
+
+/// Whether the missing folder `dir` can be created: its deepest existing ancestor must be a
+/// writable folder.
+fn creatable_below(dir: &Path) -> RestoreTargetCode {
+    let Some(existing) = dir
+        .ancestors()
+        .skip(1)
+        .find(|a| std::fs::metadata(a).is_ok())
+    else {
+        return RestoreTargetCode::NotWritable;
+    };
+    if !existing.is_dir() {
+        RestoreTargetCode::NotADirectory
+    } else if access(existing, Access::WRITE_OK | Access::EXEC_OK).is_err() {
+        RestoreTargetCode::NotWritable
+    } else {
+        RestoreTargetCode::Ok
     }
 }
 
