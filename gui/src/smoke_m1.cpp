@@ -631,6 +631,9 @@ void install_m1_smoke_check(
             } else if (scen.startsWith(QLatin1String("m3-"))) {
                 run_m3_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
                 return;
+            } else if (scen.startsWith(QLatin1String("m5-"))) {
+                run_m5_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
+                return;
             } else if (scen == QLatin1String("welcome")) {
                 QQuickItem* wv = child_item(window, "welcomeView");
                 SMOKE_CHECK_VISIBLE("M1", 20, wv, "welcomeView should be visible when unconfigured");

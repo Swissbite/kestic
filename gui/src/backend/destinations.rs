@@ -10,6 +10,7 @@ use crate::state_cache::{
     shared_state, test_destination_connection, tr_text,
 };
 use cxx_qt_lib::QString;
+use kestic_core::destination_types::cards_ready_first;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::KesticDbusError;
 use kestic_i18n::codes::ServiceErrorCode;
@@ -17,6 +18,25 @@ use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
+    /// Cards of the wizard step «destination type», ready ones first, as
+    /// `{"cards": [DestinationTypeCardStatus…], "error": "<text or empty>"}`. The daemon checks
+    /// the programs anew on every call («Check Again»).
+    pub fn destination_type_cards_json(&self) -> QString {
+        let listed = make_client()
+            .map_err(|_| daemon_unavailable_text())
+            .and_then(|client| {
+                client
+                    .list_destination_types()
+                    .map_err(|e| dbus_error_text(&e))
+            });
+        let (cards, error) = match listed {
+            Ok(types) => (cards_ready_first(&types), String::new()),
+            Err(text) => (Vec::new(), text),
+        };
+        let reply = serde_json::json!({ "cards": cards, "error": error });
+        QString::from(&reply.to_string())
+    }
+
     pub fn test_destination(
         mut self: Pin<&mut Self>,
         fields_json: &QString,

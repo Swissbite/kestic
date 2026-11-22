@@ -43,7 +43,7 @@ Domänenmodell und Persistenz: [domain-model.md](domain-model.md). D-Bus-Schnitt
 | Root-/Systembackup | ausser Scope | ausser Scope |
 
 - Entwicklung nativ einfacher (keine Sandbox), Verteilung per Flatpak einfacher (ein Paket für alle Distros); Befehlsdarstellung (FR-34) packaging-abhängig.
-- **`gpgv` ist eine `Depends` des `.deb`** (in `gui/Cargo.toml`, `[package.metadata.deb]`). Kestic prüft damit die Signatur des App-verwalteten restic (FR-33, «restic-Bereitstellung») und sucht zur Laufzeit keinen Ersatz. `ssh` und `rclone` sind keine Abhängigkeit; fehlen sie, zeigt der Ziel-Typ «braucht Installation».
+- **`gpgv` ist eine `Depends` des `.deb`** (in `gui/Cargo.toml`, `[package.metadata.deb]`). Kestic prüft damit die Signatur des App-verwalteten restic (FR-33, «restic-Bereitstellung») und sucht zur Laufzeit keinen Ersatz. `ssh` und `rclone` sind keine Abhängigkeit; fehlen sie, zeigt der Ziel-Typ «braucht Installation». Das `.deb` nennt sie unter `Suggests: rclone, openssh-client` (Debian Policy 7.2: machen Kestic nützlicher, die meisten Installationen brauchen sie nicht), nie unter `Depends` oder `Recommends`.
 - **Build des `.deb` nur über `just deb`:** Es setzt `--remap-path-prefix` (Rust) und `-ffile-prefix-map` (C++), damit `/usr/bin/kestic` keine Pfade des Build-Rechners enthält (NFR-01); ein direktes `cargo deb` tut das nicht. Die Dev-Fallbacks für Icons und Übersetzungen aus dem Quellbaum gibt es nur in Debug- und `test-harness`-Builds.
 - **Build-Stand im Journal:** Die Startzeile des Daemons nennt Paketversion und Git-Stand des Builds (`kestic-daemon 0.1.0 (a561018[-dirty]): started (pid …)`), ermittelt von `daemon/build.rs` über `git`, ohne `git` oder ausserhalb eines Checkouts `unknown`. Nach einem Paket-Update (M3-S11) unterscheidet sich vorher und nachher nur dieser Stand (AC-M3-11-4).
 
@@ -125,8 +125,8 @@ Ablauf FR-38 (5 Schritte):
 | Cloud-Speicher S3-kompatibel, Backblaze B2, Azure, Google Cloud, Swift | s3, b2, azure, gs, swift | – |
 | Cloud-Dienste über rclone (Google Drive, OneDrive, Dropbox …) | rclone | `rclone` |
 
-   - Für «braucht Installation»: Erklärung, Paketname, Knopf «In Discover öffnen» (`appstream://`-URL, von Discover unterstützt) bzw. Befehl `sudo apt install rclone`; danach erneut prüfen.
-   - Die Erkennung läuft im Daemon, weil er restic startet: Es zählt der `PATH` des Daemons (`ListDestinationTypes`). Pakete: `openssh-client` für `ssh`, `rclone` für `rclone`; die AppStream-ID prüft M5-S04 auf dem Referenzsystem.
+   - Für «braucht Installation»: Erklärung, Paketname und Befehl `sudo apt install <Paket>` zum Kopieren; danach erneut prüfen. Einen Knopf «In Discover öffnen» (`appstream://`-URL) gibt es nur für Pakete mit AppStream-Komponente; `rclone` und `openssh-client` haben keine **[verifiziert: Referenzsystem, `appstreamcli get`]**, also kein Knopf.
+   - Die Erkennung läuft im Daemon, weil er restic startet: Es zählt der `PATH` des Daemons (`ListDestinationTypes`). Pakete: `openssh-client` für `ssh`, `rclone` für `rclone`, beide ohne AppStream-Komponente.
    - «Externes Laufwerk» ist ein lokales Ziel (`local`) auf einem Wechseldatenträger. Kestic speichert nur den Pfad; Bezeichnung und FS-UUID ermittelt es zur Laufzeit (UDisks2, `/proc/self/mountinfo`) und zeigt sie nur an.
    - Nicht als eigener Typ: SSHFS-Mount (SFTP-Backend direkt ist einfacher), SMB/Windows-Freigabe (restic rät von CIFS ab; nur als bereits eingehängter Ordner mit Warnhinweis). Netzwerkorte aus Dolphin (`smb://`, `sftp://`) sind KIO-Adressen, keine Dateipfade; ohne `kio-fuse` für restic nicht nutzbar → Dateidialog auf lokale Pfade beschränken.
 3. **Ziel-Details** – Formular je Typ, Verbindungstest, Erkennung «Repo existiert» → verbinden, sonst `init`.

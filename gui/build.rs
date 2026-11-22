@@ -120,6 +120,7 @@ fn main() {
         "src/smoke_m3_editors.cpp",
         "src/smoke_m3_pages.cpp",
         "src/smoke_main_menu.cpp",
+        "src/smoke_m5.cpp",
         "src/smoke_m3_util.h",
     ] {
         println!("cargo:rerun-if-changed={cpp}");
@@ -145,7 +146,8 @@ fn main() {
             .cpp_file("src/smoke_m3.cpp")
             .cpp_file("src/smoke_m3_editors.cpp")
             .cpp_file("src/smoke_m3_pages.cpp")
-            .cpp_file("src/smoke_main_menu.cpp");
+            .cpp_file("src/smoke_main_menu.cpp")
+            .cpp_file("src/smoke_m5.cpp");
     }
 
     // SAFETY: Configures an additional C++ include path during build-script compilation.

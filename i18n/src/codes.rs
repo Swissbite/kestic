@@ -194,6 +194,25 @@ code_enum! {
 }
 
 code_enum! {
+    /// Destination type offered by the wizard (`DestinationTypeDto.kind`), in the order of the
+    /// cards: each maps to one restic backend.
+    DestinationTypeCode {
+        /// A local repository on a removable drive.
+        Drive => "drive",
+        /// A local repository in a folder or on another internal disk.
+        Folder => "folder",
+        Sftp => "sftp",
+        Rest => "rest",
+        S3 => "s3",
+        B2 => "b2",
+        Azure => "azure",
+        Gs => "gs",
+        Swift => "swift",
+        Rclone => "rclone",
+    }
+}
+
+code_enum! {
     /// Code of a D-Bus error: the error name `net.daester.Kestic.Error.<Name>`
     /// (`dbus-api.md` §Fehler-Namen). The error message is raw detail only.
     ServiceErrorCode {
@@ -309,6 +328,9 @@ mod tests {
         for v in ConnectionTestCode::ALL {
             assert_eq!(ConnectionTestCode::parse(v.as_str()), Some(v));
             assert_eq!(ConnectionTestCode::parse("nope"), None);
+        }
+        for v in DestinationTypeCode::ALL {
+            assert_eq!(DestinationTypeCode::parse(v.as_str()), Some(v));
         }
         for v in RunProgressPhase::ALL {
             assert_eq!(RunProgressPhase::parse(v.as_str()), Some(v));

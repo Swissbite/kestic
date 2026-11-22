@@ -10,6 +10,8 @@ QtObject {
     required property var appBackend
     property string destinationId: ""
     property string kind: "local"
+    // Card chosen in the step «destination type» (`drive`, `folder`, `rest`, …).
+    property string typeCard: "folder"
     property string setupMode: "init"
     property string name: ""
     property string location: ""

@@ -177,6 +177,10 @@ pub mod qobject {
         fn dismiss_manual_run_blocked(self: Pin<&mut KesticApp>);
 
         #[qinvokable]
+        #[cxx_name = "destinationTypeCardsJson"]
+        fn destination_type_cards_json(self: &KesticApp) -> QString;
+
+        #[qinvokable]
         #[cxx_name = "testDestination"]
         fn test_destination(
             self: Pin<&mut KesticApp>,

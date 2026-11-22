@@ -18,6 +18,7 @@ use crate::service::{
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
+use kestic_core::destination_types::destination_types;
 use kestic_core::model::{BackupId, Run};
 use kestic_core::secrets::SecretError;
 use kestic_core::sync::LockUnpoisoned;
@@ -586,6 +587,19 @@ impl KesticDbusV1Service {
         };
         let networks = run_blocking_task(move || list_known_networks(&monitor_bus)).await;
         to_json_arg(&networks)
+    }
+
+    /// Destination types with «ready» or «needs installation», checked anew on every call
+    /// against the `PATH` the daemon starts restic with.
+    #[zbus(name = "ListDestinationTypes")]
+    async fn list_destination_types(&self) -> Result<String, KesticDbusError> {
+        let search_path = {
+            let guard = self.core.lock_unpoisoned();
+            guard.program_search_path.clone()
+        }
+        .or_else(|| std::env::var_os("PATH"));
+        let types = run_blocking_task(move || destination_types(search_path.as_deref())).await;
+        to_json_arg(&types)
     }
 
     #[zbus(signal, name = "StatusChanged")]

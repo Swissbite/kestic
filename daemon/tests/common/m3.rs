@@ -96,6 +96,8 @@ pub struct M3DaemonOpts<'a> {
     pub enable_portal_inhibit: bool,
     /// Skip the StatusNotifierWatcher check at startup.
     pub assume_sni_available: bool,
+    /// `PATH` the daemon searches for `ssh` and `rclone`; `None` uses the test's own.
+    pub program_search_path: Option<std::ffi::OsString>,
 }
 
 impl<'a> M3DaemonOpts<'a> {
@@ -119,6 +121,7 @@ impl<'a> M3DaemonOpts<'a> {
             enable_job_view: false,
             enable_portal_inhibit: false,
             assume_sni_available: true,
+            program_search_path: None,
         }
     }
 
@@ -190,6 +193,7 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
         },
         enable_system_monitors: opts.enable_monitors,
         enable_scheduler: opts.enable_scheduler,
+        program_search_path: opts.program_search_path,
         ..Default::default()
     };
 
