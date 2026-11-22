@@ -35,7 +35,7 @@ Use this skill when starting a story, a batch of stories, or a new milestone.
   3. Add SPDX headers (or `.reuse/dep5` entry) to every new file.
   4. Visually inspect any generated GUI screenshots in `target/smoke-artifacts/`.
   5. Confirm zero compiler/clippy/C++/QML warnings and no new `#[allow(...)]` or lint suppressions where a clean refactor or `-isystem` solves the root cause (`NFR-12`).
-  6. Run full `just verify` and confirm exit code `0`.
+  6. Run full `just verify` and confirm exit code `0`. In a milestone run (`kestic-milestone-autonomy` §3) this full run happens once before the first push; after review fixes CI runs it on every push.
 
 ## 4. Background Task Discipline
 
