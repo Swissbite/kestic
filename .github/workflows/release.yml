@@ -1,23 +1,27 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 
-# Releases on GitHub. Versions come from Git tags only; this workflow creates them through the
-# API, nobody pushes them.
+# Releases and pre-releases on GitHub. Versions come from Git tags only; this workflow creates
+# them through the API, nobody pushes them.
 #
-# The maintainer runs this workflow on main (Actions → Release → Run workflow) and picks
+# Release: the maintainer runs this workflow on main (Actions → Release → Run workflow) and picks
 # a bump. The next version follows the highest version tag on main; a release needs the highlights
 # file docs/releases/<tag>.md, everything else in its notes is generated. With `dry-run` (the
 # default) everything runs except creating tag, attestation and release; the job summary of
 # `publish` shows notes and assets. Every 0.x version is a pre-release on GitHub.
 #
+# Pre-release: every push to an integration branch m<n> publishes v0.<n>.0-m<n>.<k> (k first-parent
+# commits since the tag m<n>-start); only the newest three of a branch are kept.
+#
 #   prepare      plans tag and version and writes highlights and stories (release-notes.sh)
 #   ci-image     the CI image of verify.yml
 #   build        the .deb with the tag's version, same steps as job `release` in verify.yml
-#   screenshots  waits for the green Verify run of the commit on main and bundles its smoke
-#                screenshots
+#   screenshots  release only: waits for the green Verify run of the commit on main and bundles
+#                its smoke screenshots
 #   attest       SHA256SUMS and a build provenance attestation of the .deb
 #   publish      GitHub's generated notes (pull requests since the previous tag, grouped by
-#                .github/release.yml), job summary, tag and release
+#                .github/release.yml), job summary, tag and release; for a branch, removes older
+#                pre-releases with their tags
 
 name: Release
 
@@ -33,12 +37,14 @@ on:
         description: Dry run, without tag, attestation and release.
         type: boolean
         default: true
+  push:
+    branches: ["m[0-9]", "m[0-9][0-9]"]
 
 permissions:
   contents: read
 
 concurrency:
-  group: release
+  group: release-${{ github.event_name == 'push' && github.ref_name || 'main' }}
   cancel-in-progress: false
 
 jobs:
@@ -47,7 +53,9 @@ jobs:
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     outputs:
+      kind: ${{ steps.plan.outputs.kind }}
       commit: ${{ steps.plan.outputs.commit }}
       dry-run: ${{ steps.plan.outputs.dry-run }}
       tag: ${{ steps.plan.outputs.tag }}
@@ -66,21 +74,31 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           BUMP: ${{ inputs.bump }}
           DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
-          if [ "$DRY_RUN" != true ] && [ "$REF" != refs/heads/main ]; then
-            echo "::error::A release runs on main; on $REF_NAME only a dry run is possible"
-            exit 1
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            kind=release
+            what="$BUMP"
+            if [ "$DRY_RUN" != true ] && [ "$REF" != refs/heads/main ]; then
+              echo "::error::A release runs on main; on $REF_NAME only a dry run is possible"
+              exit 1
+            fi
+          else
+            kind=branch
+            what="$REF_NAME"
+            DRY_RUN=false
           fi
           {
+            echo "kind=$kind"
             echo "commit=$GITHUB_SHA"
             echo "dry-run=$DRY_RUN"
           } >> "$GITHUB_OUTPUT"
-          .github/scripts/release-notes.sh "$BUMP" "$GITHUB_SHA" "$RUNNER_TEMP/notes" >> "$GITHUB_OUTPUT"
+          .github/scripts/release-notes.sh "$kind" "$what" "$GITHUB_SHA" "$RUNNER_TEMP/notes" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -134,6 +152,7 @@ jobs:
   # successful Verify run on main.
   screenshots:
     needs: prepare
+    if: needs.prepare.outputs.kind == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -225,6 +244,10 @@ jobs:
 
   attest:
     needs: [prepare, build, screenshots]
+    # screenshots is skipped for a pre-release of an integration branch.
+    if: >-
+      !cancelled() && needs.build.result == 'success' &&
+      (needs.screenshots.result == 'success' || needs.screenshots.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -281,9 +304,10 @@ jobs:
 
   publish:
     needs: [prepare, attest]
+    if: ${{ !cancelled() && needs.attest.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      # Tag, release and the generate-notes endpoint, which needs write access in a dry run too.
+      # Tags, releases and the generate-notes endpoint, which needs write access in a dry run too.
       contents: write
     steps:
       - uses: actions/download-artifact@v8
@@ -391,3 +415,24 @@ jobs:
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${publish[@]}"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
 
+      # The newest three pre-releases of a branch stay; older ones go together with their tags.
+      - name: Remove older pre-releases of the branch
+        if: needs.prepare.outputs.kind == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
+        run: |
+          set -euo pipefail
+          n="${BRANCH#m}"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate |
+            jq -r --arg re "^v0\\.$n\\.0-m$n\\.[0-9]+$" '.[] | select(.tag_name | test($re)) | .tag_name' |
+            sort -t. -k4,4nr | tail -n +4 |
+            while read -r old; do
+              if [ "$DRY_RUN" = true ]; then
+                echo "Would remove $old"
+              else
+                echo "Removing $old"
+                gh release delete "$old" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+              fi
+            done

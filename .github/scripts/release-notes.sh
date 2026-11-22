@@ -2,13 +2,16 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 
-# Plans a release and writes the hand-made part of its notes.
+# Plans a release and writes the hand-made part of its notes. Two kinds:
 #
-#   release-notes.sh <bump> <commit> <out-dir>
-#
-# The tag is the next version after the version tags on main for <bump> (release-version.sh). A
-# release needs the highlights file docs/releases/<tag>.md (format in docs/releases/README.md); a
-# release candidate uses docs/releases/v<major>.<minor>.<patch>.md when it exists.
+#   release-notes.sh release <bump> <commit> <out-dir>
+#       The next version after the version tags on main (release-version.sh). A release needs
+#       the highlights file docs/releases/<tag>.md (format in docs/releases/README.md); a release
+#       candidate uses docs/releases/v<major>.<minor>.<patch>.md when it exists.
+#   release-notes.sh branch <branch> <commit> <out-dir>
+#       A pre-release of the integration branch m<n>: v0.<n>.0-m<n>.<k>, k being the number of
+#       first-parent commits since the tag m<n>-start. Its notes name the closed story issues
+#       that the pull request merged by <commit> refers to.
 #
 # Writes <out-dir>/notes-head.md and prints only `key=value` lines to stdout, for $GITHUB_OUTPUT: tag, version
 # (Debian form), prerelease, title, previous-tag (start of GitHub's generated notes). Needs git
@@ -28,10 +31,10 @@ warning() {
     echo "::warning::$*" >&2
 }
 
-[ $# -eq 3 ] || error "usage: release-notes.sh <bump> <commit> <out-dir>"
-bump="$1"
-commit="$(git rev-parse --verify "$2^{commit}")"
-out="$3"
+[ $# -eq 4 ] || error "usage: release-notes.sh release <bump> <commit> <out-dir> | branch <branch> <commit> <out-dir>"
+kind="$1"
+commit="$(git rev-parse --verify "$3^{commit}")"
+out="$4"
 repo="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 mkdir -p "$out"
 head="$out/notes-head.md"
@@ -133,23 +136,74 @@ release_notes() {
     echo "$title"
 }
 
-# A release tag on this commit means it was released already, or a run with this commit
-# is being re-run as a whole; re-running only the failed jobs keeps the planned tag.
-released="$(git tag --points-at "$commit" --list 'v*' | grep -v -- '-m[0-9]' || true)"
-[ -z "$released" ] ||
-    error "$commit already carries $released. To finish a failed release, re-run its failed jobs."
-tags="$(git tag --merged origin/main --list 'v*')"
-tag="$(next_tag "$bump" <<<"$tags")" || error "Unknown bump '$bump'"
-if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    error "Tag $tag exists already outside main; pick another bump"
-fi
-if [[ "$tag" == *-* ]]; then
-    title="$(release_notes "$tag" "docs/releases/${tag%%-*}.md" optional)"
-else
-    title="$(release_notes "$tag" "docs/releases/$tag.md" required)"
-fi
-# Generated notes cover everything since the previous release, pre-releases included.
-previous="$(grep -v -- - <<<"$tags" | max_tag || true)"
+case "$kind" in
+    release)
+        bump="$2"
+        # A release tag on this commit means it was released already, or a run with this commit
+        # is being re-run as a whole; re-running only the failed jobs keeps the planned tag.
+        released="$(git tag --points-at "$commit" --list 'v*' | grep -v -- '-m[0-9]' || true)"
+        [ -z "$released" ] ||
+            error "$commit already carries $released. To finish a failed release, re-run its failed jobs."
+        tags="$(git tag --merged origin/main --list 'v*')"
+        tag="$(next_tag "$bump" <<<"$tags")" || error "Unknown bump '$bump'"
+        if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            error "Tag $tag exists already outside main; pick another bump"
+        fi
+        if [[ "$tag" == *-* ]]; then
+            title="$(release_notes "$tag" "docs/releases/${tag%%-*}.md" optional)"
+        else
+            title="$(release_notes "$tag" "docs/releases/$tag.md" required)"
+        fi
+        # Generated notes cover everything since the previous release, pre-releases included.
+        previous="$(grep -v -- - <<<"$tags" | max_tag || true)"
+        ;;
+    branch)
+        branch="$2"
+        [[ "$branch" =~ ^m([0-9]+)$ ]] || error "'$branch' is no integration branch m<n>"
+        n="${BASH_REMATCH[1]}"
+        start="m$n-start"
+        git rev-parse -q --verify "refs/tags/$start" >/dev/null || error "Tag $start is missing"
+        git merge-base --is-ancestor "$start" "$commit" || error "$commit does not descend from $start"
+        k="$(git rev-list --first-parent --count "$start..$commit")"
+        tag="v0.$n.0-m$n.$k"
+        if existing="$(git rev-parse -q --verify "refs/tags/$tag^{commit}")" &&
+            [ "$existing" != "$commit" ]; then
+            error "Tag $tag exists already on another commit ($existing)"
+        fi
+
+        short="$(git rev-parse --short=7 "$commit")"
+        milestone="$(jq -c --arg p "M$n " '[.[] | select(.title | startswith($p))] | first // empty' <<<"$all_milestones")"
+        if [ -n "$milestone" ]; then
+            title="$(jq -r .title <<<"$milestone")"
+            printf 'Pre-release of milestone [%s](%s), built from %s. The release v0.%s.0 replaces it.\n' \
+                "$title" "$(jq -r .html_url <<<"$milestone")" "$short" "$n" >>"$head"
+        else
+            title=""
+            printf 'Pre-release of milestone M%s, built from %s. The release v0.%s.0 replaces it.\n' \
+                "$n" "$short" "$n" >>"$head"
+        fi
+
+        # Story issues of this milestone that the pull request merged by this commit refers to
+        # (`#<n>` in title or body) and that are closed. Closing keywords do not link issues to
+        # pull requests into a branch other than main, so the references are read directly.
+        printf '\n## Stories in this pre-release\n\n' >>"$head"
+        pulls="$(gh api "repos/$repo/commits/$commit/pulls" --jq '.[] | select(.merged_at != null) | .number')"
+        refs="$(for pull in $pulls; do
+            gh api "repos/$repo/pulls/$pull" --jq '"\(.title)\n\(.body // "")"' | grep -o '#[0-9]\+' || true
+        done | tr -d '#' | sort -un)"
+        # A reference to nothing (404) is skipped.
+        for ref in $refs; do
+            gh api "repos/$repo/issues/$ref" 2>/dev/null | jq -c --arg p "^M$n-S[0-9]+:" \
+                '[select(.pull_request == null and .state == "closed" and (.title | test($p)))]' || true
+        done | issue_list >>"$head"
+
+        previous="$(git tag --list "v0.$n.0-m$n.*" --merged "$commit" | grep -vx -- "$tag" | max_tag || true)"
+        previous="${previous:-$start}"
+        ;;
+    *)
+        error "unknown kind '$kind'"
+        ;;
+esac
 
 prerelease=false
 if [ "$(tag_major "$tag")" -eq 0 ] || tag_is_prerelease "$tag"; then prerelease=true; fi
