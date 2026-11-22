@@ -122,6 +122,11 @@ fn snap(id: &str, time: &str, tags: &[&str]) -> ResticSnapshot {
 fn ac_m4_07_7_destination_snapshots_are_sorted_meta_backup_orphaned_unassigned() {
     let snapshots = vec![
         snap("meta", "2026-11-15T12:05:00Z", &["kestic-meta:b1"]),
+        snap(
+            "meta-tagged",
+            "2026-11-15T12:06:00Z",
+            &["kestic:b1", "kestic-meta:b1"],
+        ),
         snap("b1-old", "2026-11-14T12:00:00Z", &["kestic:b1"]),
         snap("b1-new", "2026-11-15T12:00:00Z", &["kestic:b1"]),
         snap("x9", "2026-11-10T12:00:00Z", &["kestic:x9"]),
@@ -142,6 +147,10 @@ fn ac_m4_07_7_destination_snapshots_are_sorted_meta_backup_orphaned_unassigned()
     assert!(
         !all_ids.contains(&"meta".to_string()),
         "(a) metadata snapshot left out"
+    );
+    assert!(
+        !all_ids.contains(&"meta-tagged".to_string()),
+        "(a) a metadata snapshot with the backup tag too is left out"
     );
     assert_eq!(sorted.backups.len(), 1);
     assert_eq!(sorted.backups[0].0, "b1");

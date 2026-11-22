@@ -49,6 +49,11 @@ pub fn sort_destination_snapshots(
             by_backup.entry(id).or_default().push(snap);
             continue;
         }
+        // Tagged for several configured backups: it belongs to none of them.
+        if snap.has_several_backups(configured_backup_ids) {
+            unassigned.push(snap);
+            continue;
+        }
         let Some(id) = snap.backup_ids().next().map(str::to_string) else {
             unassigned.push(snap);
             continue;
