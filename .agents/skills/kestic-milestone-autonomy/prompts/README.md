@@ -13,7 +13,7 @@ during a milestone; changes are level 3.
 Give each reviewer the prompt with `{{BASE}}`, `{{STORIES}}` and `{{SPEC_FILES}}` filled in, and
 read access to the worktree – nothing else. No pull request body, commit messages or summaries
 of the author. The auditor takes `{{MILESTONE}}` (`M4`), `{{BRANCH}}` (`m4`), `{{START}}` (commit
-the milestone started from) and `{{GH_MILESTONE}}` (`M4 Restore`).
+the milestone started from: the tag `m4-start`) and `{{GH_MILESTONE}}` (`M4 Restore`).
 
 ## Verdict format
 

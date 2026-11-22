@@ -15,7 +15,7 @@ Use this skill when starting a story, a batch of stories, or a new milestone.
   - mandatory glossary terms and prohibited words,
   - UI copy/layout constraints,
   - Stop & Ask triggers (new crates, spec ambiguities).
-- If a Stop & Ask condition applies, log it in `docs/spec/questions.md`, mark the story blocked, and move to the next independent story.
+- If a Stop & Ask condition applies, log it in `docs/spec/questions.md`, mark the story blocked, and move to the next independent story. In a milestone run from GitHub issues, ask on the story's issue instead (`kestic-milestone-autonomy` §2).
 
 ## 2. Parallelize Independent Work
 

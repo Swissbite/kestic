@@ -100,7 +100,7 @@ Bei diesen Punkten **nicht** selbst entscheiden:
 - lizenzrelevante Crates,
 - destruktive Operationen gegen Repos, die keine Temp-Repos sind.
 
-Mechanik: Frage in [docs/spec/questions.md](docs/spec/questions.md) eintragen (Datum, Story, Frage, Optionen, Empfehlung), Story als blockiert markieren, mit der nächsten unabhängigen Story weitermachen.
+Mechanik: Frage in [docs/spec/questions.md](docs/spec/questions.md) eintragen (Datum, Story, Frage, Optionen, Empfehlung), Story als blockiert markieren, mit der nächsten unabhängigen Story weitermachen. In einem Meilenstein-Lauf über GitHub-Issues ([kestic-milestone-autonomy](.agents/skills/kestic-milestone-autonomy/SKILL.md)) steht die Frage stattdessen als Kommentar im Issue der Story, das das Label `needs-maintainer` erhält.
 
 ### Secrets
 

@@ -26,8 +26,10 @@ and their comments), the merged pull requests into `{{BRANCH}}` (`gh pr list --b
 3. **Test delta** – since `{{START}}`: test functions added and removed, assertions changed or
    removed in pre-existing tests (`git diff {{START}}..origin/{{BRANCH}} -- '*/tests/*'`), new
    suppressions, changed timeouts or retries, nextest config changes.
-4. **Rules touched** – protected paths (SKILL.md §5) changed, by which pull request, and whether
-   the maintainer approved it before it was merged.
+4. **Rules touched** – protected paths (SKILL.md §5) changed and pull requests of
+   maintainer-reviewed stories, by which pull request, and whether the maintainer merged or
+   approved them; every removal of `needs-maintainer` and every close of the halt or closing
+   issue by someone else than the maintainer (`gh api repos/<repo>/issues/<n>/events`).
 5. **Flakes and CI** – failed CI runs per pull request (`gh run list`), re-runs, any test that
    failed more than once, and whether a story went past three failed attempts at the same
    problem without a level-3 question.
