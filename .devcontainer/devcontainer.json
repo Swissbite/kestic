@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //
 // Dev Container of the Kestic coding agent; README.md in this folder explains
-// it. Written for Podman ("dev.containers.dockerPath": "podman"): the secret
-// mount is a Podman option. kestic-agent.sh starts the same container without
+// it. Written for Podman ("dev.containers.dockerPath": "podman"). The GitHub
+// token comes from the host (README.md, «Dev Container»). kestic-agent.sh
+// starts the same container without
 // the devcontainer CLI. The repository is cloned inside the container
 // (postStartCommand) into a named volume, never bind-mounted from the host.
 // The CI image tag must match .github/ci-image/tag.sh; set KESTIC_CI_IMAGE_TAG
@@ -28,8 +29,12 @@
     "--memory=24g",
     "--pids-limit=16384",
     "--tmpfs=/var/log/kestic-agent:size=16m,mode=0755",
-    "--secret=kestic-agent-gh-token,type=mount,target=kestic-agent-gh-token,uid=1001,gid=1001,mode=0400"
+    "--tmpfs=/run/kestic-agent-token:size=64k,mode=1777"
   ],
+  "containerEnv": {
+    "KESTIC_AGENT_GIT_NAME": "${localEnv:KESTIC_AGENT_GIT_NAME}",
+    "KESTIC_AGENT_GIT_EMAIL": "${localEnv:KESTIC_AGENT_GIT_EMAIL}"
+  },
   "workspaceMount": "type=volume,source=kestic-agent-home,target=/home/kesticci",
   "workspaceFolder": "/home/kesticci/kestic",
   "mounts": [

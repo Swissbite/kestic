@@ -12,7 +12,9 @@
 #   kestic-agent.sh nudge <text…>      type a message into the agent's Claude session
 #   kestic-agent.sh status [lines]     container state and the agent's last terminal lines
 #   kestic-agent.sh agent-state        `<state> <issue> <turn start>` for kestic-agent-watch.sh;
-#                                      state off when the container is not running
+#                                      state off when the container is not running; renews
+#                                      the GitHub token when it is due
+#   kestic-agent.sh token              a new GitHub App installation token for the agent now
 #   kestic-agent.sh attach             attach to the agent's tmux session (detach: Ctrl-b d)
 #   kestic-agent.sh exec <command…>    run a command as kesticci in the clone (e.g. just verify)
 #   kestic-agent.sh shell              interactive shell as kesticci
@@ -24,17 +26,23 @@
 # fixed PATH, because the home volume (first in the image PATH) is writable by
 # the agent.
 #
-# Nothing from the host reaches the container except the image, the Podman
-# secret with the GitHub token and two named volumes: no bind mount, no host
-# D-Bus, keyring, SSH agent or home directory.
+# Nothing from the host reaches the container except the image, a GitHub App
+# installation token (written through stdin, renewed every 40 minutes; the
+# App's private key stays on the host), the git author from agent.conf and two
+# named volumes: no bind mount, no host D-Bus, keyring, SSH agent or home
+# directory.
 
 set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 IMAGE=localhost/kestic-agent:latest
-NAME=kestic-agent
-SECRET="${KESTIC_AGENT_SECRET:-kestic-agent-gh-token}"
+NAME="${KESTIC_AGENT_NAME:-kestic-agent}"
+APP_KEY_SECRET="${KESTIC_AGENT_APP_KEY_SECRET:-kestic-agent-app-key}"
+REPO="${KESTIC_AGENT_REPO:-Swissbite/kestic}"
+CONF=.devcontainer/agent.conf
+# Installation tokens live 60 minutes; renew well before.
+TOKEN_MAX_AGE=2400
 VOL_HOME=kestic-agent-home
 VOL_CLAUDE=kestic-agent-claude
 DROP=(/usr/local/lib/kestic-agent/entrypoint.sh --drop)
@@ -48,11 +56,80 @@ running() {
     [[ "$(podman container inspect --format '{{.State.Running}}' "$NAME" 2>/dev/null)" == true ]]
 }
 
+# conf <key>: KESTIC_AGENT_<KEY> from the environment, else <key>= from agent.conf.
+conf() {
+    local env="KESTIC_AGENT_${1^^}"
+    if [[ -n "${!env:-}" ]]; then
+        printf '%s' "${!env}"
+    else
+        sed -n "s/^$1=//p" "$CONF" | tail -n 1
+    fi
+}
+
+base64url() {
+    openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+# A JSON Web Token for the GitHub App, valid for 9 minutes (GitHub allows 10).
+app_jwt() {
+    local app_id="$1" key="$2" now unsigned signature
+    now="$(date +%s)"
+    unsigned="$(printf '{"typ":"JWT","alg":"RS256"}' | base64url).$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' \
+        $((now - 60)) $((now + 540)) "$app_id" | base64url)"
+    signature="$(printf '%s' "$unsigned" | openssl dgst -sha256 -binary -sign <(printf '%s\n' "$key") | base64url)"
+    printf '%s.%s' "$unsigned" "$signature"
+}
+
+# github_api <method> <path> <bearer> [<json body>]: the response body. The
+# bearer goes to curl through a file descriptor, never through argv.
+github_api() {
+    local args=(--silent --show-error --fail-with-body --max-time 30 -X "$1"
+        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+    [[ $# -ge 4 ]] && args+=(--data "$4")
+    curl "${args[@]}" -H @<(printf 'Authorization: Bearer %s\n' "$3") "https://api.github.com$2"
+}
+
+json_field() {
+    python3 -I -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"
+}
+
+# Asks GitHub for an installation token limited to this repository and hands it
+# to the agent through stdin.
+renew_token() {
+    local app_id key jwt installation token
+    app_id="$(conf app_id)"
+    [[ "$app_id" =~ ^[0-9]+$ ]] || die "no GitHub App ID: set app_id in $CONF"
+    key="$(podman secret inspect --showsecret --format '{{.SecretData}}' "$APP_KEY_SECRET")" \
+        || die "no Podman secret $APP_KEY_SECRET with the App's private key; see .devcontainer/README.md"
+    jwt="$(app_jwt "$app_id" "$key")"
+    installation="$(github_api GET "/repos/$REPO/installation" "$jwt" | json_field id)" \
+        || die "the GitHub App is not installed on $REPO or the key does not match"
+    [[ "$installation" =~ ^[0-9]+$ ]] || die "unexpected installation id from GitHub"
+    token="$(github_api POST "/app/installations/$installation/access_tokens" "$jwt" \
+        "{\"repositories\":[\"${REPO#*/}\"]}" | json_field token)" || die "GitHub refused an installation token"
+    printf '%s\n' "$token" | podman exec -i "$NAME" "${DROP[@]}" kestic-agent store-token
+}
+
+ensure_token() {
+    local age
+    age="$(podman exec "$NAME" "${DROP[@]}" kestic-agent token-age)"
+    if [[ ! "$age" =~ ^[0-9]+$ ]] || ((age > TOKEN_MAX_AGE)); then
+        renew_token
+    fi
+}
+
 ensure_running() {
-    running && return 0
+    if running; then
+        ensure_token
+        return 0
+    fi
     podman image exists "$IMAGE" || die "no image $IMAGE; run: $0 build"
-    podman secret inspect "$SECRET" >/dev/null 2>&1 \
-        || die "no Podman secret $SECRET; see .devcontainer/README.md"
+    podman secret inspect "$APP_KEY_SECRET" >/dev/null 2>&1 \
+        || die "no Podman secret $APP_KEY_SECRET; see .devcontainer/README.md"
+    local git_name git_email
+    git_name="$(conf git_name)"
+    git_email="$(conf git_email)"
+    [[ -n "$git_name" && -n "$git_email" ]] || die "git_name and git_email missing in $CONF"
     podman rm --ignore "$NAME" >/dev/null
     # A low CPU weight keeps the desktop responsive without slowing the agent
     # down when the host is idle. KESTIC_AGENT_CPUS additionally caps the cores;
@@ -71,12 +148,16 @@ ensure_running() {
         --cpu-shares=256 --env KESTIC_AGENT_NICE="${KESTIC_AGENT_NICE:-0}" "${limits[@]}" \
         --memory="${KESTIC_AGENT_MEMORY:-24g}" --pids-limit=16384 \
         --tmpfs /var/log/kestic-agent:size=16m,mode=0755 \
-        --secret "$SECRET,type=mount,target=kestic-agent-gh-token,uid=1001,gid=1001,mode=0400" \
+        --tmpfs /run/kestic-agent-token:size=64k,mode=1777 \
+        --env KESTIC_AGENT_GIT_NAME="$git_name" --env KESTIC_AGENT_GIT_EMAIL="$git_email" \
         --volume "$VOL_HOME:/home/kesticci" \
         --volume "$VOL_CLAUDE:/home/kesticci/.claude" \
         "$IMAGE" >/dev/null
     for _ in $(seq 60); do
-        running && podman exec "$NAME" /usr/bin/test -e /run/kestic-agent/ready && return 0
+        if running && podman exec "$NAME" /usr/bin/test -e /run/kestic-agent/ready; then
+            renew_token
+            return 0
+        fi
         running || break
         sleep 1
     done
@@ -126,10 +207,16 @@ case "$cmd" in
         ;;
     agent-state)
         if running; then
+            # A failed renewal must not hide the state line (die exits only the subshell).
+            (ensure_token) >&2 || echo "kestic-agent.sh: renewing the GitHub token failed" >&2
             podman exec "$NAME" "${DROP[@]}" kestic-agent state
         else
             echo "off 0 0"
         fi
+        ;;
+    token)
+        running || die "container is not running"
+        renew_token
         ;;
     attach)
         running || die "container is not running"
@@ -163,10 +250,10 @@ case "$cmd" in
             fi
         done
         podman rmi --ignore "$IMAGE" >/dev/null
-        echo "removed; the secret $SECRET stays (podman secret rm $SECRET)"
+        echo "removed; the secret $APP_KEY_SECRET stays (podman secret rm $APP_KEY_SECRET)"
         ;;
     *)
-        sed -n '5,21p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '5,23p' "$0" | sed 's/^# \{0,1\}//'
         exit 2
         ;;
 esac
