@@ -14,6 +14,7 @@ Folgen für Kestic:
 - **Backends & Releases:** Grundlage für Onboarding ([architecture.md](architecture.md)) und Download inkl. Signaturprüfung (FR-33).
 - **Mindestversion 0.18.0** (Fehler als JSON, Exit-Codes 10–12, `check --json`). Ubuntu 24.04 und Derivate (inkl. TUXEDO OS, KDE neon) liefern 0.16.4 → FR-33 ist MVP.
 - **Getestete Versionen:** 0.18.0 (Mindestversion) und 0.20.0 (aktuell, `RESTIC_LATEST_VERSION` in `scripts/bootstrap.sh`); `just verify` führt die Integrationstests gegen beide aus.
+- **Fehler älterer restic-Versionen** behebt restic, nicht Kestic. Ein Beispiel ist restic/restic#22180, behoben in 0.20.0: Ein präparierter Snapshot mit Symlink und Ordner gleichen Namens lässt `restore` ausserhalb des Ziels schreiben. Kestic fängt solche Fehler nicht ab; jede unterstützte Version ab 0.18.0 sichert und stellt wieder her, ohne Sperre, Warnung oder Download-Pflicht. Ist die verwendete Version älter als die aktuell getestete, zeigt die Einstellung «restic-Quelle» nur den Zusatz «(veraltet)» (AC-M4-05-22).
 - **Fortschritt beim Sichern:** Die Prozentzahl gilt erst, wenn restic mit der Suche fertig ist; bis dahin zeigt Kestic keine Prozentzahl (Abschnitt «Fortschritt beim Sichern»).
 - **Ergebnis eines Wartungslaufs:** entfernte Snapshots aus `forget --json`, freigegebener Platz ab restic 0.20.0 aus `prune --json`, bei älteren Versionen aus der Textzeile `total prune:` (einzige Ausnahme von «nur JSON», tolerant ausgewertet), Fehlerzahl aus `check --json` (Abschnitt «Wartung»).
 - **Source of Truth (E14):** Dieses Dokument ist Besitzer aller restic-Fakten, die Kestic nutzt (Exit-Codes, Ausschluss-Semantik, Versionen), jeweils mit Datum.
@@ -119,6 +120,33 @@ Folgen für Kestic:
 - Entfernte Snapshots je Backup: Summe der `remove`-Listen; ohne lesbare Ergebniszeile keine Zahl.
 - Freigegebener Platz: Ab restic 0.20.0 startet Kestic das echte `prune` mit `--json` und liest `bytes.remove_total` aus der `summary`-Zeile; unbekannte Felder werden ignoriert. Bei 0.18.x und 0.19.x bleibt es ohne `--json`, und Kestic wertet die Zeile `total prune:` tolerant aus (Nachkommastellen abgeschnitten). Die Vorschau (`prune --dry-run --no-lock`) bleibt in allen Versionen ohne `--json`. Fehlt das Ergebnis oder ist es nicht lesbar (andere Version, andere Einheit, fehlendes Feld), gibt es keine Zahl und keinen Fehler; der Lauf bleibt `ok`.
 - Prüfung: nur eine `summary`-Zeile mit `num_errors` gilt als Ergebnis von `check`.
+
+### Snapshots lesen und wiederherstellen (`snapshots`, `ls`, `find`, `diff`, `restore`)
+
+_Geprüft 2026-11-22 mit restic 0.18.0 und 0.19.1 an echten Temp-Repos; für 0.20.0 nur aus dem CHANGELOG abgeleitet (nicht ausgeführt, Fixtures vor der Umstellung der CI-Version neu erzeugen)._
+
+- **Zielpfad:** `restore --target T` legt den vollen absoluten Pfad unter `T` an (`T/home/user/docs/a.txt`). Mit `<snapshot>:<ordner>` (z. B. `abc123:/home/user/docs`) landet der Inhalt flach in `T`; `--include` ist dann relativ zu diesem Ordner. `..` in Ordner und Include normalisiert restic. Ein unbekannter Ordner ist ein Fehler (JSON `exit_error`, «path … not found»).
+- **Vorfahren:** Im Ordner-Modus fasst restic nichts ausserhalb von `T` an. Ohne Ordner meldet es jeden Vorfahrenordner (`/`, `/home`, …) als `restored` und setzt deren Metadaten.
+- **Zielordner:** Ein fehlender Zielordner wird angelegt (auch verschachtelt); ein vorhandener, nicht leerer wird zusammengeführt.
+- **Probelauf:** `restore --dry-run --json -vv` schreibt je Eintrag `{"message_type":"verbose_status","action":"restored|updated|unchanged|deleted","item":…,"size":n}` und am Ende `summary` (`total_files`, `files_restored`, `files_skipped`, `files_deleted`, `total_bytes`, `bytes_restored`, `bytes_skipped`); in 0.18.0 und 0.19.1 gleich. Ohne `-vv` fehlen die Einzelzeilen. Ordner, Symlinks und Hardlinks erscheinen mit `size` 0 und ohne Typ-Feld; `files_restored` zählt Ordner mit. `deleted` gibt es nur mit `--delete`. Der Probelauf akzeptiert `--no-lock`.
+- **Aktion je Modus** (vorhandene Datei mit abweichendem Inhalt): `never` → `unchanged`; `if-changed` → `updated`; `if-newer` → `updated`, nur wenn die Datei im Snapshot jüngeren mtime hat, sonst `unchanged`; `always` → `updated`. Eine **identische** Datei ist in allen Modi `unchanged`, eine neue `restored`.
+- **Folge:** Unter `never` sind «nicht überschrieben» (abweichend, bleibt) und «unverändert» (identisch) nicht unterscheidbar. Trennen geht mit einem zweiten Probelauf mit `--overwrite always`: `updated` dort und `unchanged` im ersten = «nicht überschrieben»; `unchanged` in beiden = «unverändert».
+- **Include:** `--include` ist ein Glob. `*`, `?`, `[` und `\` müssen mit `\` maskiert werden. `[x].txt` unmaskiert trifft nichts und endet mit Exit 0 (`summary` ohne Zahlen); ein Muster ohne Treffer ist kein Fehler. Zeilenumbruch und führendes `-` im Namen sind unkritisch (Pfade beginnen mit `/`). Der Ordner in `<snapshot>:<ordner>` ist wörtlich, kein Glob.
+- **Besitzer:** Ein Snapshot mit fremder uid lässt sich als normaler Benutzer ohne Fehler, Warnung und mit Exit 0 wiederherstellen; die Dateien gehören danach dem wiederherstellenden Benutzer. restic meldet das nicht. `--ownership-by-name` gibt es ab 0.19.0 und ist nur als root sinnvoll.
+- **Hardlinks und Symlinks:** Hardlinks bleiben Hardlinks (nach dem Restore teilen die Namen einen Inode); beim Überschreiben ändert eine Aktion auf einem Namen daher auch den anderen. Symlinks werden als Symlink wiederhergestellt, nicht aufgelöst. Ein Symlink im Zielordner: restic schreibt vermutlich hindurch (nicht geprüft).
+- **`ls --json`:** Erste Zeile `{"message_type":"snapshot","struct_type":"snapshot",…}`, dann je Eintrag `{"message_type":"node","struct_type":"node","name","type":"file|dir|symlink","path","size","mode","permissions","mtime","uid","gid","inode",…}`. `ls <snapshot> <ordner>` listet **eine Ebene** (der Ordner selbst ist der erste Knoten); **ohne Ordner-Argument listet restic den ganzen Baum rekursiv**. Ein fehlender Ordner ergibt Exit 0 ohne Knoten und ist von einem leeren nicht unterscheidbar. `ls <snapshot>:<ordner>` liefert Pfade relativ zum Ordner.
+- **`find --json`:** Ein JSON-Array `[{"snapshot","hits","matches":[{path,type,size,mtime,…}]}]`; ohne Treffer `[]` und Exit 0. `--tag`, `--host`, `--path` filtern. `--tag a,b` ist UND, mehrfaches `--tag` ist ODER.
+- **`diff --json A B`:** Zeilen `{"message_type":"change","path","modifier":"+|-|M|U|T|?"}` und eine `statistics`-Zeile (`changed_files`, `added` und `removed` mit `files`, `dirs`, `bytes`, …). Identische Snapshots ergeben nur `statistics` mit Nullen und Exit 0. Ein geänderter Hardlink-Partner erscheint als zusätzliches `M`.
+- **`snapshots --json`:** Ein Array, **älteste zuerst**. `summary` (nur bei Snapshots, die mit ≥ 0.17 entstanden) enthält `data_added`, `data_added_packed`, `files_new`, `files_changed`, `files_unmodified`, `total_files_processed`, `total_bytes_processed`. Je Snapshot kommen `username`, `uid`, `gid`, `hostname`, `program_version` dazu. `latest` als Snapshot-ID ist mehrdeutig.
+
+Folgen für Kestic:
+
+- Kestic übergibt Snapshots immer mit der vollen ID, ruft `ls` immer mit Ordner-Argument auf und startet `restore` immer als `<snapshot>:<gemeinsamer Vorfahre der Auswahl>` (ein einzelner gewählter Ordner ist sein eigener Vorfahre). `--target` ist bei «neuer Ordner» bzw. einem gewählten Ordner dieser Ordner, beim Originalort der (abgebildete) Vorfahre, nie `/`. Jeder gewählte Eintrag geht als eigenes, maskiertes `--include=<muster>`-Argument.
+- Jeder `restore`-Aufruf trägt `--overwrite` explizit (restic-Default ist `always`); `if-newer` entscheidet restic allein, Kestic rechnet keine mtimes.
+- Die Vorschau liest `action` je Eintrag und zählt nicht über `summary.files_restored` (zählt Ordner mit). Ein leeres Ergebnis (Exit 0, keine Zahlen) ist eine Warnung, nie `ok`.
+- Besitzer und Hardlinks meldet restic nicht; Kestic leitet die Hinweise selbst ab (uid des Snapshots gegen die des Benutzers; Hardlink-Zähler aus `ls`).
+- Die Reihenfolge der Snapshot-Liste (neueste zuerst) stellt der Daemon her. Ein fehlender Ordner in `ls` ist aus dem ersten Knoten erkennbar, nicht aus der Ausgabe allein.
+- Kestic ruft für fremde und verwaiste Snapshots nur `snapshots`, `ls`, `find`, `diff` und `restore` auf, nie `tag`, `forget` oder `rewrite`.
 
 ### Versionen
 

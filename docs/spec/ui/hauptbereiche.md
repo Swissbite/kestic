@@ -138,18 +138,19 @@ Aufbau, Breadcrumb «Backups › Persönlicher Ordner › Aufbewahrung», Aktion
 - Auswahl bleibt beim Wechsel des Ordners erhalten; «Auswahl anzeigen» listet sie. `[Auswahl wiederherstellen…]` ist ohne Auswahl deaktiviert (Tooltip «Zuerst Dateien oder Ordner auswählen»).
 
 **Dialog «3 Elemente wiederherstellen»** (`Kirigami.Dialog`, eine Ebene; Vorschau inline, kein weiterer Dialog):
-- «Wohin»: `(•)` In neuen Ordner `[~/Wiederhergestellt/Persönlicher Ordner 2026-11-15]` `[Wählen…]` · `( )` An ursprünglichen Ort (`/home/user/…`) mit «Vorhandene Dateien: `[Nie überschreiben ▾]`» (Nie · Wenn älter · Wenn verändert · Immer).
-- Vorschau (läuft automatisch, Pflicht bei Originalort): z. B. «117 Dateien neu · 3 vorhandene Dateien werden nicht überschrieben» `[Liste ▾]`.
+- «Wohin»: `(•)` In neuen Ordner `[~/Wiederhergestellt/Persönlicher Ordner 2026-11-15 12-00]` `[Wählen…]` · `( )` An ursprünglichen Ort (`/home/user/…`) mit «Vorhandene Dateien: `[Nie überschreiben ▾]`» (Nie · Wenn älter · Wenn verändert · Immer).
+- Vorschau (läuft automatisch, Pflicht bei Originalort oder nicht leerem Ordner): z. B. «117 Dateien neu · 3 vorhandene Dateien werden nicht überschrieben» `[Liste ▾]`.
 - Fuss: `[Abbrechen]` `[Jetzt wiederherstellen]`.
 
 Regeln:
-- Default neuer Ordner (F5); dort keine Vorschau, weil nichts überschrieben wird. Bei «An ursprünglichen Ort» läuft die Vorschau (`--dry-run`) **immer** (AC-M4-05-4); der Knopf ist erst nach der Vorschau aktiv. Vorschautext passt zum Modus: «werden nicht überschrieben» bei «Nie» (Begriff wie AC-M4-05-3), «werden überschrieben» sonst; bei Überschreiben heisst der Knopf «Überschreiben und wiederherstellen» (negativer Stil, Abbrechen ist Default, Hinweis «nicht rückgängig»).
+- Default neuer Ordner (F5); dort kein Probelauf, weil nichts überschrieben wird (die Vorschau liefert nur Zielvorschlag und Prüfung). Bei «An ursprünglichen Ort» oder einem nicht leeren gewählten Ordner läuft die Vorschau (`--dry-run`) **immer** (AC-M4-05-4); der Daemon erzwingt sie (AC-M4-05-14); der Knopf ist erst nach der Vorschau aktiv. Vorschautext passt zum Modus: «werden nicht überschrieben» bei «Nie» (Begriff wie AC-M4-05-3), «werden überschrieben» sonst; bei Überschreiben heisst der Knopf «Überschreiben und wiederherstellen» (negativer Stil, Abbrechen ist Default, Hinweis «nicht rückgängig»).
 - Der Überschreib-Modus gilt nur für diesen Restore; der Dialog startet immer mit «Nie überschreiben» (P19b).
-- Anderer Benutzername (F6): Vorschlag auf `/home/<neu>/…` abgebildet, Hinweis «Original: `/home/<alt>/…`». Fehlt der abgebildete Ordner, ist «An ursprünglichen Ort» erst nach Wahl eines Zielordners möglich; Kestic legt keinen Ordner ungefragt an (P19a).
+- Anderer Benutzername (F6): Vorschlag auf den Heimordner des Benutzers abgebildet (z. B. `/home/<neu>/…`), Hinweis «Original: `/home/<alt>/…`». Fehlt der abgebildete Ordner, ist «An ursprünglichen Ort» erst nach Wahl eines Zielordners möglich; Kestic legt keinen Ordner ungefragt an (P19a).
 - Ordnerwahl über den System-Dateidialog (Portal; kein Kestic-Dialog).
 - **Ablauf:** Restore ist ein Lauf (Tray, Fortschrittsanzeige, Verlauf). Die Seite zeigt eine `InlineMessage` (Information) mit Fortschritt und `[Abbrechen]`; Ende → `InlineMessage` (Positive) «120 Dateien wiederhergestellt» `[Ordner öffnen]` (Dolphin via `Qt.openUrlExternally`); Fehler → `InlineMessage` (Error) nach §9.4. Endet der Restore mit Fenster im Hintergrund, zusätzlich Systembenachrichtigung (lange Aufgabe, HIG-Ausnahme).
 - **Vergleichen:** «Vergleichen…» schaltet die Snapshot-Liste in einen Auswahlmodus (Checkboxen, genau zwei; Leiste «2 von 2 gewählt» + `[Unterschiede anzeigen]` + `[Abbrechen]`); zusätzlich im Kontextmenü eines Snapshots «Mit vorherigem vergleichen». Ergebnis: Tabelle mit Spalte «Änderung» (Icon + Text: neu / geändert / entfernt), Pfad, Grösse; Filter-Chips nach Art mit Anzahl.
 - **Suche** (`find`, P18): Ergebnisliste mit Pfad und Snapshot-Datum, `[Anzeigen]` öffnet den Ordner im Snapshot.
+- **Grosse Listen** (Ordnerinhalt, Suchtreffer, Unterschiede, `[Liste ▾]` der Vorschau): laden seitenweise beim Scrollen, nie abgeschnitten. Das Feld «Filtern» filtert nach Text im Pfad, die Chips bei Unterschieden und Vorschau nach Art. Gefiltert wird im Daemon, die Anzahl ist immer genau («12 von 25 000»). Ist eine Liste zu gross, um sie zu halten, steht statt ihr «Zu viele Einträge für die Anzeige (n). Einen Unterordner wählen oder enger suchen.»; die Zahlen darüber bleiben vollständig (dbus-api.md, Speichergrenze).
 
 ### 7.7 Ziele (FR-01, FR-11, FR-15, FR-19, FR-35, FR-45, FR-49)
 
