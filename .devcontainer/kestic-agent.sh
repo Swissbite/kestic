@@ -51,9 +51,9 @@ ensure_running() {
     podman secret inspect "$SECRET" >/dev/null 2>&1 \
         || die "no Podman secret $SECRET; see .devcontainer/README.md"
     podman rm --ignore "$NAME" >/dev/null
-    # A low CPU weight and nice 10 keep the desktop responsive without slowing
-    # the agent down when the host is idle. KESTIC_AGENT_CPUS additionally caps
-    # the cores; cargo and nextest then use that many jobs.
+    # A low CPU weight keeps the desktop responsive without slowing the agent
+    # down when the host is idle. KESTIC_AGENT_CPUS additionally caps the cores;
+    # cargo and nextest then use that many jobs.
     local limits=()
     if [[ -n "${KESTIC_AGENT_CPUS:-}" ]]; then
         limits=(--cpus="$KESTIC_AGENT_CPUS"
@@ -65,7 +65,7 @@ ensure_running() {
         --network=slirp4netns:allow_host_loopback=false,enable_ipv6=false \
         --cap-drop=all --cap-add=NET_ADMIN,NET_BIND_SERVICE,SETUID,SETGID,SETPCAP,KILL \
         --security-opt=no-new-privileges \
-        --cpu-shares=256 --env KESTIC_AGENT_NICE="${KESTIC_AGENT_NICE:-10}" "${limits[@]}" \
+        --cpu-shares=256 --env KESTIC_AGENT_NICE="${KESTIC_AGENT_NICE:-0}" "${limits[@]}" \
         --memory="${KESTIC_AGENT_MEMORY:-24g}" --pids-limit=16384 \
         --tmpfs /var/log/kestic-agent:size=16m,mode=0755 \
         --secret "$SECRET,type=mount,target=kestic-agent-gh-token,uid=1001,gid=1001,mode=0400" \

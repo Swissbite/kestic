@@ -29,8 +29,9 @@ else
     /usr/local/lib/kestic-agent/init-firewall.sh
 fi
 
-# Lower priority for everything the agent runs; raising nice needs no capability.
-exec nice -n "${KESTIC_AGENT_NICE:-10}" setpriv --reuid=kesticci --regid=kesticci --init-groups \
+# Optionally lower the priority of everything the agent runs (raising nice needs
+# no capability). Off by default: Kestic's tests check the niceness of restic.
+exec nice -n "${KESTIC_AGENT_NICE:-0}" setpriv --reuid=kesticci --regid=kesticci --init-groups \
     --inh-caps=-all --bounding-set=-all --no-new-privs -- \
     env HOME=/home/kesticci USER=kesticci LOGNAME=kesticci SHELL=/bin/bash \
     PATH=/home/kesticci/.cargo/bin:/usr/local/bin:/usr/bin:/bin "$@"

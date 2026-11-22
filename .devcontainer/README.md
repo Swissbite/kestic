@@ -168,7 +168,7 @@ credentials and GPG into the container unless switched off in its settings
 (`dev.containers.copyGitConfig`, `dev.containers.gitCredentialHelperConfigLocation`
 set to `none`, no SSH agent forwarding). Processes started by the tool run as
 `kesticci` without capabilities, but outside the entrypoint, so without its
-`nice` and with the container's bounding set (`no_new_privs` still applies).
+optional `nice` and with the container's bounding set (`no_new_privs` still applies).
 
 ## Resources
 
@@ -180,10 +180,11 @@ cache) was 9–11 GB. Bootstrap of toolchain and test tools in a new home volume
 6 GB after one build, login volume under 1 MB.
 
 `just verify` compiles with all host cores. The container
-runs with a low CPU weight (`--cpu-shares=256`) and `nice 10`, which keep the
-desktop responsive without slowing the agent on an idle host. Optional limits:
+runs with a low CPU weight (`--cpu-shares=256`), which keeps the desktop
+responsive without slowing the agent on an idle host. Optional limits:
 `KESTIC_AGENT_CPUS` (cores; cargo and nextest then use as many jobs),
-`KESTIC_AGENT_MEMORY` (default `24g`), `KESTIC_AGENT_NICE`.
+`KESTIC_AGENT_MEMORY` (default `24g`), `KESTIC_AGENT_NICE` (default 0; with
+another value the test that checks restic's niceness fails, because nice adds up).
 
 ## Other agents
 
