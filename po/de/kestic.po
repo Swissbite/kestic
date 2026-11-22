@@ -3150,8 +3150,6 @@ msgid "restic source:"
 msgstr "restic-Quelle:"
 
 #: gui/src/qml/SettingsDialog.qml:280
-msgid "%1 (%2 · %3)"
-msgstr "%1 (%2 · %3)"
 
 #: gui/src/qml/SettingsDialog.qml:288
 msgid "Kestic needs restic 0.18.0 or newer."
@@ -3788,17 +3786,14 @@ msgid_plural "%1 files restored"
 msgstr[0] "%1 Datei wiederhergestellt"
 msgstr[1] "%1 Dateien wiederhergestellt"
 
-msgid "System restic"
-msgstr "System-restic"
 
-msgid "restic managed by Kestic"
-msgstr "Von Kestic verwaltetes restic"
 
-msgid "Own program"
-msgstr "Eigenes Programm"
 
 msgid "Hide the list of files"
 msgstr "Liste der Dateien ausblenden"
 
 msgid "Show the list of files"
 msgstr "Liste der Dateien anzeigen"
+
+msgid "Managed by Kestic"
+msgstr "Von Kestic verwaltet"

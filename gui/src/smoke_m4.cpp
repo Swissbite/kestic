@@ -1063,6 +1063,8 @@ int scenario_restic_outdated(const Ctx& c) {
     for (const char* code : {"system", "app_managed", "custom"}) {
         M4_CHECK(6308, !text.contains(QLatin1String(code)), "no raw provider code in the restic source");
     }
+    M4_CHECK(6309, text.startsWith(loc(c.lang, "Custom program path", "Eigener Programmpfad")),
+        "the source is named like the choice in the source dialog");
     if (qEnvironmentVariable("KESTIC_SMOKE_EXPECT_OUTDATED") == QLatin1String("1")) {
         M4_CHECK(6305, text.contains(QStringLiteral("0.18.0 ") + note), "(b) «(outdated)» after 0.18.0");
     } else {
