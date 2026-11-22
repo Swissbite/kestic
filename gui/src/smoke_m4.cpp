@@ -521,6 +521,29 @@ int scenario_browse_too_large(const Ctx& c) {
     return 0;
 }
 
+/// M4-S03: going back from a folder that still loads (restic ls held) cancels its query; the
+/// Rust test checks that restic got SIGTERM.
+int scenario_browse_leave(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 5601)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 1, 5606)) {
+        return rc;
+    }
+    Browse b = browse_page(w);
+    M4_CHECK(5609, b.model->property("state").toString() == QLatin1String("running"),
+        "the folder is still loading (restic ls held)");
+    wait_ms(1500);
+    QQuickItem* back = visible_item(w, "breadcrumbBackButton");
+    M4_CHECK(5610, back != nullptr, "breadcrumbBackButton missing");
+    M4_CHECK(5611, click_ui_item(w, back, "breadcrumb back"), "back button could not be clicked");
+    M4_CHECK(5612, wait_until([&] { return visible_item(w, "restoreBrowsePage") == nullptr; }, 3000),
+        "the browse page closes");
+    M4_CHECK(5614, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -543,6 +566,8 @@ void run_m4_smoke_scenario(
         rc = scenario_browse_keyboard(ctx);
     } else if (scen == QLatin1String("m4-browse-paging")) {
         rc = scenario_browse_paging(ctx);
+    } else if (scen == QLatin1String("m4-browse-leave")) {
+        rc = scenario_browse_leave(ctx);
     } else if (scen == QLatin1String("m4-browse-too-large")) {
         rc = scenario_browse_too_large(ctx);
     } else {

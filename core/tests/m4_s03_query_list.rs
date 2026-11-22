@@ -110,3 +110,41 @@ fn ac_m4_03_7_e_million_paths_of_100_bytes_stay_below_the_limit() {
     }
     assert_eq!(seen, 1_000_000, "(e) every entry fetched exactly once");
 }
+
+/// AC-M4-03-7 (d): freeing room drops only finished lists that hold memory; a cancelled query
+/// fetched long ago holds nothing and stays readable.
+#[test]
+fn ac_m4_03_7_d_freeing_room_keeps_records_without_a_list() {
+    let t0 = datetime!(2026-11-15 12:00 UTC);
+    let mut store = QueryStore::<Held>::new(QueryLimits {
+        per_query_bytes: 100,
+        total_bytes: 150,
+    });
+    store.register("cancelled".into(), CancelHandle::new(), t0);
+    store.finish("cancelled", QueryOutcome::Cancelled, t0);
+    store.register("old".into(), CancelHandle::new(), t0 + Duration::seconds(1));
+    store.finish(
+        "old",
+        QueryOutcome::Done(Held(100)),
+        t0 + Duration::seconds(1),
+    );
+    store.register("new".into(), CancelHandle::new(), t0 + Duration::seconds(2));
+    store.finish(
+        "new",
+        QueryOutcome::Done(Held(100)),
+        t0 + Duration::seconds(2),
+    );
+    let now = t0 + Duration::seconds(3);
+    assert!(
+        store.fetch("old", now).is_none(),
+        "(d) the list fetched longest ago is freed"
+    );
+    assert!(
+        store.fetch("cancelled", now).is_some(),
+        "(d) a record without a list stays"
+    );
+    assert!(
+        store.fetch("new", now).is_some(),
+        "(d) the new list is held"
+    );
+}

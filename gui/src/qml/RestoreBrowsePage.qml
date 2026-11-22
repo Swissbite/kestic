@@ -62,6 +62,14 @@ Kirigami.ScrollablePage {
         }
     }
     Component.onDestruction: snapshotBrowseModel.cancel()
+    // A page taken off the stack is hidden, not destroyed: stop listing there, too.
+    onVisibleChanged: {
+        if (!visible) {
+            snapshotBrowseModel.cancel();
+        } else if (snapshotBrowseModel.state === "cancelled") {
+            openDir(snapshotBrowseModel.dir);
+        }
+    }
 
     SnapshotBrowseModel {
         id: snapshotBrowseModel
@@ -134,6 +142,22 @@ Kirigami.ScrollablePage {
                             Accessible.name: text
                             Controls.ToolTip.visible: crumb.index === 0 && hovered
                             Controls.ToolTip.text: text
+                            // Folder names from the snapshot are shown literally, never as rich text.
+                            contentItem: RowLayout {
+                                spacing: 0
+                                Kirigami.Icon {
+                                    visible: crumb.index === 0
+                                    source: crumbButton.icon.name
+                                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                                }
+                                Controls.Label {
+                                    visible: crumb.index > 0
+                                    text: crumbButton.text
+                                    textFormat: Text.PlainText
+                                    font: crumbButton.font
+                                }
+                            }
                             onClicked: {
                                 if (!crumb.isCurrent) page.openDir(crumb.modelData);
                             }

@@ -318,13 +318,17 @@ impl qobject::SnapshotBrowseModel {
         if self.state.to_string() != "running" {
             return;
         }
+        // A query whose start arrived but was not picked up yet is cancelled like a known one.
+        let mut started = None;
         if let Some(slot) = self.as_mut().rust_mut().start.take() {
             let mut guard = slot.lock_unpoisoned();
-            if matches!(*guard, QueryStart::Pending) {
-                *guard = QueryStart::Abandoned;
+            match std::mem::replace(&mut *guard, QueryStart::Abandoned) {
+                QueryStart::Started(id) => started = Some(id),
+                QueryStart::Pending | QueryStart::Failed(_) | QueryStart::Abandoned => {}
             }
         }
-        if let Some(id) = self.as_mut().rust_mut().query_id.take()
+        let query_id = self.as_mut().rust_mut().query_id.take().or(started);
+        if let Some(id) = query_id
             && let Ok(client) = self.as_mut().rust_mut().client()
         {
             // A query that ended meanwhile needs no cancel; the answer is not needed.

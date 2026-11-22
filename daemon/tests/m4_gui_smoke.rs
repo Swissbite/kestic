@@ -288,3 +288,30 @@ fn ac_m4_03_7_list_over_the_limit_shows_too_many_entries() {
         },
     );
 }
+
+/// M4-S03: going back from a folder that still loads cancels its query, so `restic ls` stops.
+#[test]
+fn m4_s03_leaving_a_loading_folder_stops_restic_ls() {
+    run_isolated_test(
+        "m4_s03_leaving_a_loading_folder_stops_restic_ls",
+        "KESTIC_M4_S03_LEAVE_INNER",
+        |root| {
+            let (rig, _fakes) = browse_env(root, QueryLimits::default());
+            rig.wrapper.hold("ls");
+            run_m4_gui_smoke(
+                root,
+                "m4-browse-leave",
+                "wide",
+                "en",
+                &smoke_artifact("restore-browse-leave", "wide", "en"),
+            );
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while rig.wrapper.of('T', "ls").is_empty() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            rig.wrapper.release("ls");
+            assert_eq!(rig.wrapper.of('T', "ls").len(), 1, "restic ls got SIGTERM");
+            rig.daemon.stop();
+        },
+    );
+}
