@@ -32,7 +32,7 @@ use kestic_core::restic::{
 use kestic_core::restore::{RestorePlan, RestoreRunResult, RestoreTarget, execute_restore};
 use kestic_core::restore_target::{PREVIEW_MAX_AGE, TargetCheck, check_target, preview_required};
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::{ErrorKind, RestoreTargetCode, RunProgressPhase};
+use kestic_i18n::codes::{ErrorKind, RestoreTargetCode, RunProgressPhase, ServiceErrorCode};
 use kestic_i18n::messages::nothing_restored_message;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -54,6 +54,7 @@ struct RestoreJob {
     check: TargetCheck,
     /// Plan, backup and kept files of the matching preview, when one was given.
     from_preview: Option<PreviewFacts>,
+    preview_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -164,6 +165,7 @@ fn prepare_job(
         target,
         check: first_check,
         from_preview: None,
+        preview_id: request.preview_id.clone(),
     };
     let required = preview_required(&job.target, &job.check);
     let facts = matching_preview(
@@ -223,7 +225,7 @@ pub fn start_restore_async(
     let mut run = Run::new_restore(guard.clock.as_ref(), dest_id.clone(), backup_id)
         .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
     let run_id = run.id.as_str().to_string();
-    if guard.has_active_maintenance(&dest_id) {
+    if guard.has_exclusive_run(&dest_id) {
         run.status = RunStatus::Pending;
         run.pending_reason = Some(PendingReason::Queued);
         guard
@@ -316,11 +318,26 @@ impl DaemonCore {
     }
 }
 
+/// Checks a restore that waited again right before it starts: the target may have changed and
+/// its preview may have grown old meanwhile.
+fn recheck_waiting(core: &DaemonCore, job: &mut RestoreJob) -> Result<(), String> {
+    job.check = check_target(&job.target, job.ctx.repository());
+    refuse_unusable(&job.check).map_err(|e| e.to_string())?;
+    if preview_required(&job.target, &job.check) {
+        let facts = matching_preview(core, job.preview_id.as_deref(), job);
+        if !facts.as_ref().is_some_and(|f| f.dry_run) {
+            return Err(tr(&ServiceErrorCode::PreviewRequired.message()));
+        }
+        job.from_preview = facts;
+    }
+    Ok(())
+}
+
 /// Starts the restores that waited for maintenance on `dest_id` to end.
 pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationId) {
     let waiting: Vec<PendingRestore> = {
         let mut guard = shared.lock_unpoisoned();
-        if guard.has_active_maintenance(dest_id) {
+        if guard.has_exclusive_run(dest_id) {
             return;
         }
         let (start, keep) = std::mem::take(&mut guard.pending_restores)
@@ -329,7 +346,20 @@ pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &
         guard.pending_restores = keep;
         start
     };
-    for pending in waiting {
+    for mut pending in waiting {
+        if let Err(detail) = recheck_waiting(&shared.lock_unpoisoned(), &mut pending.job) {
+            let mut guard = shared.lock_unpoisoned();
+            let clock = Arc::clone(&guard.clock);
+            pending.run.finish(clock.as_ref(), RunStatus::Error, None);
+            pending.run.summary_message = Some(detail);
+            let _ = guard.upsert_run_cached(&pending.run, &[]);
+            let conn = guard.conn.clone();
+            guard.push_state();
+            if let Some(conn) = conn {
+                emit_run_updated(&conn, &pending.run);
+            }
+            continue;
+        }
         let deps = shared.lock_unpoisoned().restic_deps();
         let resolved = probe_for_run(&deps.provider, deps.secret_store.as_ref()).1;
         let mut guard = shared.lock_unpoisoned();

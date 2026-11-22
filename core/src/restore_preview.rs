@@ -247,6 +247,21 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
         }
         let node = input.tree.nodes.get(item.as_str());
         if node.is_some_and(|n| n.is_dir) {
+            // A folder is not counted, unless restic puts it in place of a file at the target
+            // (it does so even with `never`): that file is overwritten.
+            let replaces_file = action == "restored"
+                && existing
+                    .as_ref()
+                    .is_some_and(|m| !m.is_dir() && !m.file_type().is_symlink());
+            if !replaces_file {
+                continue;
+            }
+            counts.add(RestoreOutcome::Overwritten, 0);
+            builder.push(RestorePreviewEntry {
+                path: at_target.to_string_lossy().into_owned(),
+                outcome: RestoreOutcome::Overwritten,
+                size: 0,
+            });
             continue;
         }
         let outcome = match action.as_str() {

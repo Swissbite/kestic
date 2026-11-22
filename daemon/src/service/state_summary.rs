@@ -151,6 +151,7 @@ impl DaemonCore {
             },
             cancel: cancel.clone(),
             sleep_interrupted: false,
+            exclusive: false,
         };
         self.active_runs.insert(new.run.id.clone(), entry);
         if let Some(claim_guard) = claim_guard {

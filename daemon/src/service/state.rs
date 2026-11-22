@@ -173,6 +173,8 @@ pub(super) struct ActiveRunEntry {
     pub(super) progress: ActiveRunProgressDto,
     pub(super) cancel: CancelHandle,
     pub(super) sleep_interrupted: bool,
+    /// The run holds the exclusive repository lock (a backup's `forget`).
+    pub(super) exclusive: bool,
 }
 
 impl ActiveRunEntry {
@@ -437,11 +439,29 @@ impl DaemonCore {
             .any(|e| &e.run.destination_id == dest_id && e.is_restore())
     }
 
-    /// Whether maintenance runs on `dest_id`; a restore waits for it.
-    pub(super) fn has_active_maintenance(&self, dest_id: &DestinationId) -> bool {
-        self.active_runs
-            .values()
-            .any(|e| &e.run.destination_id == dest_id && matches!(e.run.kind, RunKind::Maintenance))
+    /// Whether a run on `dest_id` holds the exclusive lock (maintenance, or a backup in its
+    /// `forget`); a restore waits for it.
+    pub(super) fn has_exclusive_run(&self, dest_id: &DestinationId) -> bool {
+        self.active_runs.values().any(|e| {
+            &e.run.destination_id == dest_id
+                && (e.exclusive || matches!(e.run.kind, RunKind::Maintenance))
+        })
+    }
+
+    /// Marks run `run_id` as holding the exclusive lock unless a restore runs on `dest_id`;
+    /// returns whether it may go on.
+    pub(super) fn claim_exclusive_phase(
+        &mut self,
+        run_id: &RunId,
+        dest_id: &DestinationId,
+    ) -> bool {
+        if self.has_active_restore(dest_id) {
+            return false;
+        }
+        if let Some(entry) = self.active_runs.get_mut(run_id) {
+            entry.exclusive = true;
+        }
+        true
     }
 
     pub(super) fn upsert_run_cached(

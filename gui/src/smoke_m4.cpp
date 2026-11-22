@@ -995,6 +995,11 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK(6238, preview_rows && preview_rows->rowCount() == 1, "AC-M4-05-4 (b) one file listed");
     M4_CHECK_EQ(6239, role_value(preview_rows, 0, "outcomeText").toString(),
         loc(c.lang, "Overwritten", "Überschrieben"), "AC-M4-05-4 (b) a.txt overwritten");
+    QMetaObject::invokeMethod(r.model, "setFilter", Q_ARG(QString, QStringLiteral("no-such-file")));
+    M4_CHECK(6263, wait_until([&] { return preview_rows->rowCount() == 0; }, 3000), "the filter hides the file");
+    M4_CHECK(6264, r.model->property("matched").toInt() == 0, "nothing matches the filter");
+    QMetaObject::invokeMethod(r.model, "setFilter", Q_ARG(QString, QString()));
+    M4_CHECK(6265, wait_until([&] { return preview_rows->rowCount() == 1; }, 3000), "the file again without filter");
     wait_ms(400);
     repaint_fully(w);
     M4_CHECK(6240, save_screenshot(w, screenshot_variant(c.out_path, "-overwrite")), "screenshot failed");

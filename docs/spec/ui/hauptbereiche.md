@@ -138,7 +138,7 @@ Aufbau, Breadcrumb «Backups › Persönlicher Ordner › Aufbewahrung», Aktion
 - Auswahl bleibt beim Wechsel des Ordners erhalten; «Auswahl anzeigen» listet sie. `[Auswahl wiederherstellen…]` ist ohne Auswahl deaktiviert (Tooltip «Zuerst Dateien oder Ordner auswählen»).
 
 **Dialog «3 Elemente wiederherstellen»** (`Kirigami.Dialog`, eine Ebene; Vorschau inline, kein weiterer Dialog):
-- «Wohin»: `(•)` In neuen Ordner `[~/Wiederhergestellt/Persönlicher Ordner 2026-11-15 12-00]` `[Wählen…]` · `( )` An ursprünglichen Ort, darunter der Ordner (`/home/user/…`), mit «Vorhandene Dateien: `[Nie überschreiben ▾]`» (Nie überschreiben · Wenn älter · Wenn verändert · Immer), sichtbar bei Originalort oder nicht leerem Ordner.
+- «Wohin»: `(•)` In neuen Ordner `[~/Wiederhergestellt/Persönlicher Ordner 2026-11-15 12-00]` `[Wählen…]` · `( )` An ursprünglichen Ort (`/home/user/…`) mit «Vorhandene Dateien: `[Nie überschreiben ▾]`» (Nie · Wenn älter · Wenn verändert · Immer).
 - Vorschau (läuft automatisch, Pflicht bei Originalort oder nicht leerem Ordner): z. B. «117 Dateien neu · 3 vorhandene Dateien werden nicht überschrieben» `[Liste ▾]`.
 - Fuss: `[Abbrechen]` `[Jetzt wiederherstellen]`.
 

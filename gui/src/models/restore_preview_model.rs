@@ -8,7 +8,9 @@
 
 use super::qobject;
 use super::rows::{role_names, row_count, row_data};
-use super::snapshot_query::{QueryRun, StartPoll, fetch_error_text, format_count, to_i32};
+use super::snapshot_query::{
+    QueryRun, StartPoll, count_text, fetch_error_text, format_count, to_i32, too_large_text,
+};
 use crate::state_cache::{
     dbus_error_text, format_bytes, i18n, i18np, make_client, shared_state, tr,
 };
@@ -66,6 +68,9 @@ pub struct RestorePreviewModelRust {
     pub(crate) notes_text: QString,
     pub(crate) can_restore: bool,
     pub(crate) matched: i32,
+    pub(crate) too_large: bool,
+    pub(crate) too_large_text: QString,
+    pub(crate) count_text: QString,
     pub(crate) kind_codes: QStringList,
     pub(crate) kind_texts: QStringList,
     pub(crate) run_state: QString,
@@ -303,6 +308,18 @@ impl qobject::RestorePreviewModel {
         }
     }
 
+    /// Filters the listed files by `text` (any case, in the path); the daemon filters.
+    pub fn set_filter(mut self: Pin<&mut Self>, text: &QString) {
+        let text = text.to_string();
+        if text == self.filter.text {
+            return;
+        }
+        self.as_mut().rust_mut().filter.text = text;
+        if self.state.to_string() == "done" {
+            self.as_mut().load_first_page();
+        }
+    }
+
     fn run_preview(mut self: Pin<&mut Self>) {
         if self.state.to_string() == "running" {
             self.as_mut().rust_mut().query.abandon();
@@ -371,6 +388,15 @@ impl qobject::RestorePreviewModel {
         self.as_mut().rust_mut().rows = rows;
         self.as_mut().end_reset_preview();
         self.as_mut().set_matched(to_i32(p.entries.matched));
+        self.as_mut().set_too_large(p.entries.too_large);
+        self.as_mut()
+            .set_too_large_text(QString::from(&too_large_text(p.entries.total)));
+        let filtered = !self.filter.is_empty() && !p.entries.too_large;
+        self.as_mut().set_count_text(QString::from(&count_text(
+            p.entries.total,
+            p.entries.matched,
+            filtered,
+        )));
         if first_load {
             self.as_mut().apply_result(&p);
         }
@@ -522,6 +548,7 @@ impl qobject::RestorePreviewModel {
     pub fn can_fetch_more(&self, parent: &QModelIndex) -> bool {
         !parent.is_valid()
             && self.state.to_string() == "done"
+            && !self.too_large
             && i32::try_from(self.rows.len()).unwrap_or(i32::MAX) < self.matched
     }
 

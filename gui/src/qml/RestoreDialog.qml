@@ -31,6 +31,7 @@ Kirigami.Dialog {
     function openFor(destinationId, snapshotId, selection) {
         checkedKinds = [];
         listShown = false;
+        previewFilter.text = "";
         model.open(destinationId, snapshotId, selection);
         open();
     }
@@ -272,6 +273,46 @@ Kirigami.Dialog {
             text: dialog.model ? dialog.model.notes_text : ""
         }
 
+        RowLayout {
+            Layout.fillWidth: true
+            visible: dialog.listShown && dialog.model !== null && dialog.model.state === "done"
+                && dialog.model.preview_required
+            spacing: Kirigami.Units.mediumSpacing
+
+            Controls.Label {
+                objectName: "restorePreviewCountLabel"
+                Layout.fillWidth: true
+                text: dialog.model ? dialog.model.count_text : ""
+                elide: Text.ElideRight
+                opacity: 0.8
+            }
+            Kirigami.SearchField {
+                id: previewFilter
+                objectName: "restorePreviewFilter"
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 10
+                visible: dialog.model !== null && !dialog.model.too_large
+                placeholderText: Texts.label("filter")
+                Accessible.name: Texts.label("filter")
+                focusSequences: []
+                onTextChanged: previewFilterDelay.restart()
+            }
+        }
+
+        Timer {
+            id: previewFilterDelay
+            interval: 300
+            onTriggered: dialog.model.setFilter(previewFilter.text)
+        }
+
+        Controls.Label {
+            objectName: "restorePreviewTooLarge"
+            Layout.fillWidth: true
+            visible: dialog.listShown && dialog.model !== null && dialog.model.state === "done"
+                && dialog.model.too_large
+            text: dialog.model ? dialog.model.too_large_text : ""
+            wrapMode: Text.WordWrap
+        }
+
         Flow {
             objectName: "restoreKindChips"
             Layout.fillWidth: true
@@ -302,7 +343,7 @@ Kirigami.Dialog {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(contentHeight, Kirigami.Units.gridUnit * 10)
             visible: dialog.listShown && dialog.model !== null && dialog.model.state === "done"
-                && dialog.model.preview_required
+                && dialog.model.preview_required && !dialog.model.too_large
             clip: true
             activeFocusOnTab: true
             keyNavigationEnabled: true

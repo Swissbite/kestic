@@ -56,6 +56,13 @@ pub(crate) fn check_params(
     overwrite: RestoreOverwrite,
 ) -> Result<RestoreParams, KesticServiceErr> {
     validate_snapshot_id(snapshot_id).map_err(invalid)?;
+    // restic shows bytes of a name that are not UTF-8 as U+FFFD and cannot match such a name;
+    // its folder can be restored instead.
+    if let Some(path) = selection.iter().find(|p| p.contains('\u{FFFD}')) {
+        return Err(invalid(format!(
+            "{path}: the name is not valid UTF-8; restore its folder instead"
+        )));
+    }
     let selection = normalize_selection(selection).map_err(invalid)?;
     let target = target
         .map(|t| {

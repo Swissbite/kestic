@@ -134,6 +134,9 @@ pub mod qobject {
         #[qproperty(QString, notes_text)]
         #[qproperty(bool, can_restore)]
         #[qproperty(i32, matched)]
+        #[qproperty(bool, too_large)]
+        #[qproperty(QString, too_large_text)]
+        #[qproperty(QString, count_text)]
         #[qproperty(QStringList, kind_codes)]
         #[qproperty(QStringList, kind_texts)]
         #[qproperty(QString, run_state)]
@@ -718,6 +721,9 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setKinds"]
         fn set_kinds(self: Pin<&mut RestorePreviewModel>, codes: &QStringList);
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut RestorePreviewModel>, text: &QString);
         #[qinvokable]
         fn poll(self: Pin<&mut RestorePreviewModel>);
         #[qinvokable]

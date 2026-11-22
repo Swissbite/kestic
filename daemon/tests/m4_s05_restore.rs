@@ -406,6 +406,33 @@ fn ac_m4_05_14_restore_without_fitting_fresh_preview_is_refused() {
                 fx.rig.wrapper.release("restore");
                 let (whole_id, _) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Always);
                 refused(Some(&whole_id), "other selection");
+                let second = common::m4::backup_dir(
+                    &v.bin,
+                    &fx.repo,
+                    &fx.password,
+                    &fx.src,
+                    &common::m4::RawSnapshot {
+                        tag: &format!("kestic:{}", fx.backup.id),
+                        time: "2026-11-15 13:00:00",
+                        host: "laptop",
+                    },
+                );
+                let other_snapshot = fx
+                    .rig
+                    .daemon
+                    .client
+                    .start_snapshot_query(
+                        &kestic_daemon::dbus_api::SnapshotQueryRequest::restore_preview(
+                            fx.dest.id.as_str(),
+                            &second,
+                            &[fx.path("a.txt")],
+                            Some(fx.original()),
+                            RestoreOverwrite::Always,
+                        ),
+                    )
+                    .expect("preview of the second snapshot");
+                fx.preview_page(&other_snapshot, &big_page());
+                refused(Some(&other_snapshot), "other snapshot");
                 let (fresh_id, _) =
                     fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
                 fx.rig.clock.advance(std::time::Duration::from_mins(11));
@@ -655,6 +682,33 @@ fn ac_m4_05_16_notes_for_owner_hard_links_and_symlinks() {
                     "(c) {}: {:?}",
                     v.label,
                     always.notes
+                );
+                // Linked in the snapshot only: the second name is gone at the target.
+                fs::remove_file(fx.src.join("hard.txt")).expect("unlink hard.txt");
+                let (_, in_snapshot) =
+                    fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
+                assert!(
+                    in_snapshot
+                        .notes
+                        .contains(&kestic_daemon::dbus_api::RestoreNoteCode::HardLinksAffected),
+                    "(c) {}: linked in the snapshot: {:?}",
+                    v.label,
+                    in_snapshot.notes
+                );
+                // Linked at the target only: b.bin has one name in the snapshot.
+                let outside = fx.new_dir("outside-link");
+                fs::create_dir_all(outside.parent().expect("parent")).expect("mkdir");
+                fs::hard_link(fx.src.join("b.bin"), &outside).expect("link b.bin");
+                fs::write(fx.src.join("b.bin"), "changed").expect("change b.bin");
+                let (_, at_target) =
+                    fx.preview(&["b.bin"], Some(fx.original()), RestoreOverwrite::Always);
+                assert!(
+                    at_target
+                        .notes
+                        .contains(&kestic_daemon::dbus_api::RestoreNoteCode::HardLinksAffected),
+                    "(c) {}: linked at the target: {:?}",
+                    v.label,
+                    at_target.notes
                 );
                 fx.snapshot_id = kestic_test_support::repo_template::set_snapshot_owner(
                     &v.bin,
@@ -1465,6 +1519,122 @@ fn m4_s05_restore_never_shows_the_password() {
                     .any(|l| l.contains("***REDACTED***")),
                 "the restic error is in the log, redacted: {:?}",
                 detail.log_lines
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// A backup that ends while a restore runs leaves its `forget` (exclusive lock) for later: no
+/// restic call ends with exit 11, the backup is not a warning, and `forget` stays pending.
+#[test]
+fn m4_s05_backup_retention_waits_for_a_running_restore() {
+    run_isolated_test(
+        "m4_s05_backup_retention_waits_for_a_running_restore",
+        "KESTIC_M4_S05_FORGET_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RF", small_tree, |_| {});
+            fx.rig.wrapper.hold("restore");
+            let restore_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&fx.new_dir("during-backup")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            fx.rig
+                .wrapper
+                .wait_for('S', "restore", 1, std::time::Duration::from_secs(30));
+            let backup_run = fx
+                .rig
+                .daemon
+                .client
+                .start_backup(fx.backup.id.as_str())
+                .expect("StartBackup");
+            let backup = fx.wait_run(&backup_run);
+            assert_eq!(backup.run.status, RunStatus::Ok, "{:?}", backup.run.status);
+            assert!(
+                fx.rig.wrapper.of('S', "forget").is_empty(),
+                "no forget beside the restore"
+            );
+            let state = fx.rig.daemon.client.get_state().expect("GetState");
+            let summary = common::m3::backup_summary(&state, &fx.backup.id);
+            assert!(summary.pending_forget, "retention stays pending");
+            fx.rig.wrapper.release("restore");
+            assert_eq!(fx.wait_run(&restore_id).run.status, RunStatus::Ok);
+            let exit_11 = fx
+                .rig
+                .wrapper
+                .entries()
+                .into_iter()
+                .filter(|e| e.kind == 'E' && e.detail.trim() == "11")
+                .count();
+            assert_eq!(exit_11, 0, "no exit 11");
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// With `never`, restic still puts a folder of the snapshot in place of a file at the target;
+/// the preview counts that file as overwritten instead of reporting nothing.
+#[test]
+fn m4_s05_folder_replacing_a_file_counts_as_overwritten() {
+    run_isolated_test(
+        "m4_s05_folder_replacing_a_file_counts_as_overwritten",
+        "KESTIC_M4_S05_TYPE_CONFLICT_INNER",
+        |root| {
+            for_each_variant(root, "M4RT", small_tree, |fx, v| {
+                fs::remove_dir(fx.src.join("empty")).expect("remove empty folder");
+                fs::write(fx.src.join("empty"), "precious").expect("file in its place");
+                let (_, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+                assert_eq!(
+                    outcomes(&p).get("empty"),
+                    Some(&RestoreOutcome::Overwritten),
+                    "{}: the file is replaced: {p:?}",
+                    v.label
+                );
+                assert!(p.overwritten_files >= 1, "{}: counted", v.label);
+                assert!(
+                    !p.notes.contains(
+                        &kestic_daemon::dbus_api::RestoreNoteCode::NothingSelectedMatches
+                    ),
+                    "{}: something matches",
+                    v.label
+                );
+            });
+        },
+    );
+}
+
+/// A selected name that is not valid UTF-8 (restic shows U+FFFD) is refused before restic runs
+/// instead of being skipped silently.
+#[test]
+fn m4_s05_name_restic_cannot_match_is_refused() {
+    run_isolated_test(
+        "m4_s05_name_restic_cannot_match_is_refused",
+        "KESTIC_M4_S05_NON_UTF8_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RU", small_tree, |_| {});
+            let started = fx.rig.wrapper.started_repo_count();
+            let err = fx
+                .start_restore(
+                    &["a.txt", "bad\u{FFFD}name.txt"],
+                    new_folder(&fx.new_dir("non-utf8")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect_err("refused");
+            assert_eq!(
+                err.code(),
+                kestic_i18n::codes::ServiceErrorCode::InvalidInput
+            );
+            assert_eq!(
+                fx.rig.wrapper.started_repo_count(),
+                started,
+                "no restic call"
             );
             fx.rig.daemon.stop();
         },
