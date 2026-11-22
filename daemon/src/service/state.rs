@@ -383,6 +383,13 @@ impl DaemonCore {
         Ok((backup, dest))
     }
 
+    /// The `PATH` the daemon starts restic with: the configured one, else its own.
+    pub(crate) fn program_search_path(&self) -> Option<OsString> {
+        self.program_search_path
+            .clone()
+            .or_else(|| std::env::var_os("PATH"))
+    }
+
     pub(super) fn restic_deps(&self) -> ResticDeps {
         ResticDeps {
             provider: self.config.restic_provider.clone(),

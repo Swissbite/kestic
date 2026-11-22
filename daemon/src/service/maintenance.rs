@@ -25,7 +25,7 @@ use crate::notifications::{KesticEvent, send_configured_notification};
 use crate::tray::TrayHandle;
 use kestic_core::backup::{execute_forget, is_forget_lock_failure, parse_forget_removed_count};
 use kestic_core::clock::Clock;
-use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
+use kestic_core::destination::preflight_check_with_restic;
 use kestic_core::maintenance::{
     detect_stale_locks, execute_check, execute_prune, parse_check_summary, parse_prune_freed_bytes,
 };
@@ -180,7 +180,7 @@ fn run_destination_maintenance_internal(
         &d_id,
         &mut ctx.claim_guard,
     )?;
-    let preflight_res = preflight_check_destination(&ctx.dest, DEFAULT_CONNECT_TIMEOUT);
+    let preflight_res = preflight_check_with_restic(&ctx.dest, &ctx.deps.runtime(&resolved));
 
     let launched = {
         let mut guard = shared.lock_unpoisoned();

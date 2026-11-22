@@ -195,6 +195,13 @@ code_enum! {
         NotALocalPath => "not_a_local_path",
         /// restic got no answer from the server within the time limit of the connection test.
         NotResponding => "not_responding",
+        /// The repository URL of the generic form has no known scheme.
+        UnsupportedScheme => "unsupported_scheme",
+        /// A variable of the generic form would override Kestic's own environment or is no valid
+        /// name; `detail` = the name.
+        ReservedVariable => "reserved_variable",
+        /// The backend needs a program that is not installed (`rclone`); `detail` = the program.
+        ProgramMissing => "program_missing",
     }
 }
 

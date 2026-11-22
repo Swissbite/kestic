@@ -68,6 +68,7 @@ pub enum DestinationSetupMode {
 /// - `Local`: checks that the path exists and is a directory.
 /// - `Rest`, `S3`: performs TCP connect + HTTP request within `connect_timeout` (default 10 s).
 ///   Any HTTP response (including 401/403/404) proves TCP+HTTP reachability.
+/// - `Generic`: nothing Kestic can check without restic; passes.
 pub fn preflight_check_destination(
     dest: &Destination,
     connect_timeout: Duration,
@@ -98,6 +99,30 @@ pub fn preflight_check_destination(
                 .map_err(|err| DestinationError::Unreachable(err.to_string()))?;
             http_reachable(&ascii_url, connect_timeout)
         }
+        // Only restic can reach these backends: see [`preflight_check_with_restic`].
+        DestinationKind::Generic { .. } => Ok(()),
+    }
+}
+
+/// The pre-check before a run: [`preflight_check_destination`], and for a destination that only
+/// restic can reach (generic form) `restic cat --no-lock config` with the stored credentials,
+/// stopped after [`CONNECTION_TEST_TIMEOUT`]. Only a destination that does not answer or cannot
+/// be reached fails; every other answer (no repository, wrong password, refused login) is left to
+/// the run, which reports it.
+pub fn preflight_check_with_restic(
+    dest: &Destination,
+    runtime: &ResticRuntime<'_>,
+) -> Result<(), DestinationError> {
+    preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
+    if !dest.kind.needs_restic_preflight() {
+        return Ok(());
+    }
+    let backend = BackendCredentials::load_stored(dest, runtime.secret_store)?;
+    match probe_repository(dest, &backend, runtime) {
+        Err(err @ (DestinationError::Unreachable(_) | DestinationError::NotResponding(_))) => {
+            Err(err)
+        }
+        _ => Ok(()),
     }
 }
 

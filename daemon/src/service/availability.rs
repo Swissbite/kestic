@@ -9,12 +9,15 @@ use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, probe_for_run};
 use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto};
 use crate::dbus_server::emit_status_changed;
 use kestic_core::backup::BackupRunError;
-use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
+use kestic_core::destination::{
+    DEFAULT_CONNECT_TIMEOUT, preflight_check_destination, preflight_check_with_restic,
+};
 use kestic_core::maintenance::{LockClassification, detect_stale_locks, execute_unlock};
 use kestic_core::model::{Backup, Destination, DestinationId};
 use kestic_core::mount::{
     MountInspector, SourceCheckResult, check_source_status_with, current_home_dir,
 };
+use kestic_core::provider::{ResolvedRestic, resolve_and_check};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::path::Path;
@@ -34,7 +37,14 @@ impl DaemonCore {
 
         if should_run {
             let now_unix = now.unix_timestamp();
-            for dest in &self.config.destinations {
+            // A destination that only restic can check is left to the background refresh: restic
+            // may take up to 15 s, too long while the daemon state is locked.
+            for dest in self
+                .config
+                .destinations
+                .iter()
+                .filter(|d| !d.kind.needs_restic_preflight())
+            {
                 let res = preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT);
                 self.availability_probe_count += 1;
                 let dto = DestinationAvailabilityDto::from_probe(&dest.id, &res, now_unix);
@@ -192,7 +202,7 @@ pub(crate) fn refresh_availability_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     force: bool,
 ) -> AvailabilitySnapshotDto {
-    let (should_run, destinations, backups, mount_inspector, clock, current_snapshot) = {
+    let (should_run, destinations, backups, mount_inspector, clock, current_snapshot, deps) = {
         let guard = shared.lock_unpoisoned();
         let now = guard.clock.now_utc();
         let should_run = force
@@ -207,6 +217,7 @@ pub(crate) fn refresh_availability_unlocked(
             Arc::clone(&guard.mount_inspector),
             Arc::clone(&guard.clock),
             guard.current_availability_snapshot(),
+            guard.restic_deps(),
         )
     };
 
@@ -218,8 +229,19 @@ pub(crate) fn refresh_availability_unlocked(
     let now_unix = now.unix_timestamp();
     let home = current_home_dir();
     let mut dest_updates = Vec::with_capacity(destinations.len());
+    // Resolved only when a destination needs restic for its check; without a usable restic such
+    // a destination keeps its last status.
+    let mut resolved: Option<Option<ResolvedRestic>> = None;
     for dest in &destinations {
-        let res = preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT);
+        let res = if dest.kind.needs_restic_preflight() {
+            let restic = resolved.get_or_insert_with(|| resolve_and_check(&deps.provider).ok());
+            let Some(restic) = restic.as_ref() else {
+                continue;
+            };
+            preflight_check_with_restic(dest, &deps.runtime(restic))
+        } else {
+            preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)
+        };
         let dto = DestinationAvailabilityDto::from_probe(&dest.id, &res, now_unix);
         dest_updates.push((dest.id.clone(), dto));
     }

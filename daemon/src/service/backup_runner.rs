@@ -31,9 +31,7 @@ use kestic_core::backup::{
 };
 use kestic_core::backup_progress::BackupProgressTracker;
 use kestic_core::clock::Clock;
-use kestic_core::destination::{
-    DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
-};
+use kestic_core::destination::{DestinationError, preflight_check_with_restic};
 use kestic_core::history::BackoffKind;
 use kestic_core::maintenance::detect_stale_locks;
 use kestic_core::model::{
@@ -328,7 +326,7 @@ fn start_backup_internal(
     );
     let source_ok = source_status.is_ok();
     let dest_res = if source_ok {
-        preflight_check_destination(&ctx.dest, DEFAULT_CONNECT_TIMEOUT)
+        preflight_check_with_restic(&ctx.dest, &ctx.deps.runtime(&resolved))
     } else {
         Ok(())
     };
@@ -602,7 +600,7 @@ pub(super) fn load_dest_secrets(
         secrets_owned.push(s);
     }
     for slot in dest.kind.backend_secret_slots() {
-        if let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), slot.kind) {
+        if let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), &slot.kind) {
             secrets_owned.push(s);
         }
     }

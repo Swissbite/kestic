@@ -594,11 +594,7 @@ impl KesticDbusV1Service {
     /// against the `PATH` the daemon starts restic with.
     #[zbus(name = "ListDestinationTypes")]
     async fn list_destination_types(&self) -> Result<String, KesticDbusError> {
-        let search_path = {
-            let guard = self.core.lock_unpoisoned();
-            guard.program_search_path.clone()
-        }
-        .or_else(|| std::env::var_os("PATH"));
+        let search_path = self.core.lock_unpoisoned().program_search_path();
         let types = run_blocking_task(move || destination_types(search_path.as_deref())).await;
         to_json_arg(&types)
     }

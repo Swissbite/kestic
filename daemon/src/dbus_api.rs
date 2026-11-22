@@ -383,6 +383,9 @@ pub struct ConnectionTestResultDto {
     /// Warnings of a successful test that the user confirms before adding the destination.
     #[serde(default)]
     pub notes: Vec<ConnectionNoteCode>,
+    /// The program that is not installed, with `program_missing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
 }
 
 /// `backend_secrets_json` of `TestDestinationConnection`, `AddDestination` and
@@ -397,6 +400,9 @@ pub struct BackendSecrets {
     pub s3_access_key_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub s3_secret_access_key: String,
+    /// Values of the secret variables of a generic destination, by variable name.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for BackendSecrets {
@@ -410,6 +416,17 @@ impl BackendSecrets {
     pub fn rest(password: &str) -> Self {
         Self {
             rest_password: password.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Only the secret variables of a generic destination.
+    pub fn env(values: &[(&str, &str)]) -> Self {
+        Self {
+            env: values
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect(),
             ..Self::default()
         }
     }
@@ -448,6 +465,12 @@ impl BackendSecrets {
             (SECRET_KIND_S3_SECRET_KEY, &self.s3_secret_access_key),
         ] {
             creds.set(kind, Some(SecretValue::from_str_secret(value.as_str())));
+        }
+        for (name, value) in &self.env {
+            creds.set(
+                &kestic_core::generic::secret_kind(name),
+                Some(SecretValue::from_str_secret(value.as_str())),
+            );
         }
         creds
     }

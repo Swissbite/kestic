@@ -389,6 +389,21 @@ impl ConnectionTestCode {
             Self::NotResponding => Message::new(i18n_noop(
                 "The server does not respond. Check the address and test again.",
             )),
+            Self::UnsupportedScheme => Message::new(i18n_noop(
+                "The repository URL must start with b2:, azure:, gs:, swift: or rclone:.",
+            )),
+            Self::ReservedVariable => Message::with_args(
+                i18n_noop(
+                    "Kestic does not pass the variable '%1' to restic. Use only A–Z, 0–9 and _, and no name Kestic sets itself (RESTIC_PASSWORD…, RESTIC_REPOSITORY…, PATH, HOME, LD_…).",
+                ),
+                &[detail],
+            ),
+            Self::ProgramMissing => Message::with_args(
+                i18n_noop(
+                    "This destination needs the program '%1', which is not installed. Install it with 'sudo apt install %1' and test again.",
+                ),
+                &[detail],
+            ),
             Self::InvalidInput | Self::Internal | Self::CommandFailed | Self::DaemonUnreachable => {
                 return UiText::Raw(detail.to_string());
             }

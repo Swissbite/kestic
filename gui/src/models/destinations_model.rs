@@ -48,6 +48,17 @@ pub struct DestinationsModelRust {
     rows: Vec<DestinationRow>,
 }
 
+/// The backend name of a generic destination, from the scheme of its repository URL.
+fn generic_label(url: &str) -> String {
+    match kestic_core::generic::scheme(url) {
+        Some("b2") => GuiText::BackblazeB2.text(),
+        Some("azure") => GuiText::Azure.text(),
+        Some("gs") => GuiText::GoogleCloud.text(),
+        Some("swift") => GuiText::Swift.text(),
+        _ => GuiText::Rclone.text(),
+    }
+}
+
 fn build_destination_row(
     d: &DestinationSummaryDto,
     backups: &[BackupSummaryDto],
@@ -75,6 +86,12 @@ fn build_destination_row(
             "s3".to_string(),
             GuiText::S3Compatible.text(),
             kestic_core::s3::display_location(endpoint, bucket, path.as_deref()),
+            String::new(),
+        ),
+        DestinationKind::Generic { url, .. } => (
+            "generic".to_string(),
+            generic_label(url),
+            url.trim().to_string(),
             String::new(),
         ),
     };

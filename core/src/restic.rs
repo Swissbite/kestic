@@ -443,7 +443,7 @@ pub enum ResticRunError {
     #[error("missing backend credential `{kind}` in secret store for destination `{destination}`")]
     MissingBackendSecret {
         destination: DestinationId,
-        kind: &'static str,
+        kind: String,
     },
     #[error("failed to spawn restic command: {0}")]
     Io(#[from] std::io::Error),

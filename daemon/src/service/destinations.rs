@@ -23,6 +23,7 @@ use kestic_core::destination::{
     check_existing_repository, preflight_check_destination, probe_repository,
     remove_destination_secrets, setup_destination, verify_and_update_stored_password,
 };
+use kestic_core::generic::{GenericInputError, missing_program};
 use kestic_core::local_path::{NotALocalPath, connection_notes};
 use kestic_core::model::{
     BackupId, Destination, DestinationId, DestinationKind, MaintenanceSchedule, ModelError,
@@ -34,6 +35,7 @@ use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, Secret
 use kestic_core::snapshot::ResticSnapshot;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -107,6 +109,7 @@ fn test_failure(code: ConnectionTestCode, detail: String) -> ConnectionTestResul
         error_kind: Some(code),
         detail,
         notes: Vec::new(),
+        program: None,
     }
 }
 
@@ -116,6 +119,7 @@ fn test_ok() -> ConnectionTestResultDto {
         error_kind: None,
         detail: String::new(),
         notes: Vec::new(),
+        program: None,
     }
 }
 
@@ -125,6 +129,12 @@ fn parse_and_validate_dest(dest_json: &str) -> Result<Destination, ConnectionTes
     dest.validate().map_err(|e| match e {
         ModelError::NotALocalPath(NotALocalPath(address)) => {
             test_failure(ConnectionTestCode::NotALocalPath, address)
+        }
+        ModelError::Generic(GenericInputError::UnsupportedScheme(url)) => {
+            test_failure(ConnectionTestCode::UnsupportedScheme, url)
+        }
+        ModelError::Generic(GenericInputError::ReservedVariable(name)) => {
+            test_failure(ConnectionTestCode::ReservedVariable, name)
         }
         other => test_failure(ConnectionTestCode::InvalidInput, other.to_string()),
     })?;
@@ -142,6 +152,8 @@ struct DestinationTestInputs<'a> {
     kestic_binary: &'a Path,
     secret_store: &'a dyn SecretStore,
     clock: &'a dyn Clock,
+    /// The `PATH` the daemon starts restic with, for programs a backend needs (`rclone`).
+    search_path: Option<&'a OsStr>,
 }
 
 fn test_destination_connection_impl(inputs: DestinationTestInputs<'_>) -> ConnectionTestResultDto {
@@ -150,6 +162,15 @@ fn test_destination_connection_impl(inputs: DestinationTestInputs<'_>) -> Connec
             ConnectionTestCode::DuplicateLocation,
             existing_name.to_string(),
         );
+    }
+    if let Some(program) = missing_program(&inputs.dest.kind, inputs.search_path) {
+        return ConnectionTestResultDto {
+            program: Some(program.executable().to_string()),
+            ..test_failure(
+                ConnectionTestCode::ProgramMissing,
+                program.executable().to_string(),
+            )
+        };
     }
 
     if let Err(err) = preflight_check_destination(inputs.dest, DEFAULT_CONNECT_TIMEOUT) {
@@ -211,10 +232,13 @@ fn check_login_before_init(inputs: &DestinationTestInputs<'_>) -> ConnectionTest
     }
 }
 
-/// The first S3 key that is missing; the REST password stays optional because a REST server may
+/// The first S3 key or secret variable that is missing; the REST password stays optional because a REST server may
 /// accept a user name without one.
-fn missing_login(creds: &BackendCredentials, kind: &DestinationKind) -> Option<&'static str> {
-    if matches!(kind, DestinationKind::S3 { .. }) {
+fn missing_login(creds: &BackendCredentials, kind: &DestinationKind) -> Option<String> {
+    if matches!(
+        kind,
+        DestinationKind::S3 { .. } | DestinationKind::Generic { .. }
+    ) {
         creds.first_missing(kind)
     } else {
         None
@@ -488,6 +512,12 @@ pub(crate) fn add_destination_unlocked(
         }
         dest.validate()
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        if let Some(program) = missing_program(&dest.kind, guard.program_search_path().as_deref()) {
+            return Err(KesticServiceErr::InvalidInput(format!(
+                "the program `{}` is not installed",
+                program.executable()
+            )));
+        }
         if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
             return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
@@ -594,8 +624,10 @@ pub(crate) fn update_destination_unlocked(
         return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
     }
     let mut next = guard.config.clone();
-    next.destinations[existing_idx] = updated;
+    let previous = std::mem::replace(&mut next.destinations[existing_idx], updated.clone());
     guard.persist_config(next)?;
+    // A secret variable that was removed or renamed leaves nothing behind in the password store.
+    let _ = BackendCredentials::delete_unused(&previous, &updated, guard.secret_store.as_ref());
     let (state_dto, tray_state) = guard.build_state_and_tray();
     Ok((guard.conn.clone(), state_dto, tray_state))
 }
@@ -654,7 +686,7 @@ pub(crate) fn test_destination_connection_unlocked(
         Err(e) => return test_failure(ConnectionTestCode::InvalidInput, e),
     };
 
-    let (is_existing, dup_name, deps, mount_inspector) = {
+    let (is_existing, dup_name, deps, mount_inspector, search_path) = {
         let guard = shared.lock_unpoisoned();
         let is_existing = guard.config.destination(&dest.id).is_some();
         let exclude_id = is_existing.then_some(&dest.id);
@@ -667,6 +699,7 @@ pub(crate) fn test_destination_connection_unlocked(
             dup_name,
             guard.restic_deps(),
             Arc::clone(&guard.mount_inspector),
+            guard.program_search_path(),
         )
     };
 
@@ -681,6 +714,7 @@ pub(crate) fn test_destination_connection_unlocked(
         kestic_binary: &deps.kestic_binary,
         secret_store: deps.secret_store.as_ref(),
         clock: deps.clock.as_ref(),
+        search_path: search_path.as_deref(),
     });
     if result.ok {
         result
