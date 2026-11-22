@@ -105,6 +105,10 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 - `SnapshotQueryRequest`: `kind` (`SnapshotQueryKind`) und `destination_id`, dazu je Art:
   - `ls`: `snapshot_id`, `dir` (absolut; immer genau ein Ordner, nie rekursiv).
   - `find`: `pattern`, `scope` (`backup` mit `backup_id` \| `unassigned` \| `orphaned` mit `backup_id`).
+    - `pattern` ist der Suchtext des Benutzers, kein restic-Muster: Er trifft jeden Pfad, der ihn wörtlich enthält, ohne Rücksicht auf Gross-/Kleinschreibung. Der Daemon baut daraus `*<text>*` und ruft `restic find --ignore-case … -- <muster>` nur über die Snapshot-IDs des `scope` auf (höchstens 1000 je Aufruf). `*`, `?`, `[`, `\` und `!` maskiert er mit `\`, `--` steht vor dem Muster (ein Text mit führendem `-` ist kein Flag).
+    - Ein führendes `/` beginnt ein Pfadsegment: `/home/u/Dokumente` wird zu `home/u/Dokumente*` und findet so auch einen eingefügten absoluten Pfad. Ein Text mit einem leeren, `.`- oder `..`-Segment zwischen zwei `/` kommt in keinem Snapshot-Pfad vor und liefert ohne restic-Aufruf keine Treffer (restic würde das Muster sonst wie einen Pfad bereinigen).
+    - restic vergleicht jede Folge von Pfadsegmenten; ein Ordner-Treffer bringt deshalb auch alle Einträge darunter mit (seitenweise, an der Speichergrenze «Zu viele Einträge für die Anzeige»).
+    - Bekannte Grenze: keine Unicode-Normalisierung; ein in NFC getippter Text findet keinen Namen in NFD (z. B. von macOS oder SMB).
   - `diff`: `from_snapshot_id`, `to_snapshot_id`.
   - `restore_preview`: `snapshot_id`, `selection` (absolute Snapshot-Pfade, leer = alles), `target` (optional: `new_folder` mit `dir` \| `original` mit dem abgebildeten `dir`; bei `StartRestore` Pflicht), `overwrite` (`RestoreOverwrite`, Standard `never`). Ohne `target` nimmt der Daemon den vorgeschlagenen neuen Ordner.
 - `SnapshotQueryStatusDto`: `state`, `error_kind`, `error_detail` und `result`, getaggt nach `kind`: `LsResultDto`, `FindResultDto`, `DiffResultDto` oder `RestorePreviewResultDto`. `result` gibt es erst bei `done`.
