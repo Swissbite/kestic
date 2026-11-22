@@ -78,29 +78,40 @@ and new visible texts that only name what the spec defines (a column header, an 
 1. `git fetch`, a clean working tree, then read `AGENTS.md`, this skill (from `origin/m<n>`),
    the issue with its comments and the linked ACs. If the branch `agent/issue-<issue>` or its
    pull request exists, continue there.
-2. Implement and verify per `kestic-story-execution` until `just verify` is green.
-3. Two reviews with the frozen prompts (`prompts/README.md`): **correctness and spec**, and
-   **break it** on a different model than the author (`sonnet` when the author runs on `opus`,
-   otherwise `opus`). Reviewers get the diff, the ACs and the spec files, not the author's
-   reasoning. Fix every `must-fix`, then run the complete `just verify` and all reviews again.
-   Merging `origin/m<n>` into the branch needs `just verify` again, not new reviews.
-   A story that changes anything under `gui/` or `po/` gets a third review, **UI**
-   (`prompts/review-ui.md`): it gets the smoke screenshots of every screen the story adds or
-   changes (`target/smoke-artifacts/`, German and English, wide and narrow) and no code diff.
-   Its `must-fix` findings count like the others.
-4. Pull request into `m<n>`. The body maps each AC to its test, names level-2 decisions with
-   `Rückbau-Kosten` and ends with every reviewer's verdict JSON block as it was returned.
-5. Wait for CI with `gh pr checks <pr> --watch` (Bash timeout 40 minutes). The result counts
-   only from `gh pr view <pr> --json headRefOid,statusCheckRollup`: `verify` is `SUCCESS` for
-   exactly that head. No `verify` check at all means CI does not run for `m<n>`: do not merge,
-   ask (§2).
+2. Implement per `kestic-story-execution`. In the inner loop run only targeted checks: the
+   tests of the changed crates and ACs, clippy, and the smoke scenes of the screens you changed.
+3. **First full check, in parallel.** Commit, then start at the same time:
+   - `just verify` in the background, output to a log file;
+   - the two reviews with the frozen prompts (`prompts/README.md`): **correctness and spec**, and
+     **break it** on a different model than the author (`sonnet` when the author runs on `opus`,
+     otherwise `opus`). Reviewers get the diff, the ACs and the spec files, not the author's
+     reasoning. They do not wait for `just verify`.
+
+   When `just verify` is green, push and open the pull request into `m<n>` as a draft
+   (`gh pr create --draft`), so CI runs while the reviews finish. A story that changes anything
+   under `gui/` or `po/` then gets a third review, **UI** (`prompts/review-ui.md`), with the
+   smoke screenshots that `just verify` produced of every screen the story adds or changes
+   (`target/smoke-artifacts/`, German and English, wide and narrow) and no code diff. Its
+   `must-fix` findings count like the others.
+4. **Fix rounds.** Fix every `must-fix`. Locally run the targeted checks of what you changed
+   (step 2), not the full `just verify`: CI runs it on every push, in the same image. Push, then
+   run all reviews again on the new head while CI runs. Run the full `just verify` locally again
+   only when a fix touches `Cargo.toml`, `Cargo.lock`, a `build.rs`, the `justfile`,
+   `.config/nextest.toml` or packaging. Merging `origin/m<n>` into the branch needs no new
+   reviews and no local `just verify`; CI checks the pushed merge.
+5. When all reviews report `must_fix: 0`, complete the body: it maps each AC to its test, names
+   level-2 decisions with `Rückbau-Kosten` and ends with every reviewer's verdict JSON block as it
+   was returned. Then `gh pr ready <pr>` and wait for CI with `gh pr checks <pr> --watch` (Bash
+   timeout 40 minutes). The result counts only from
+   `gh pr view <pr> --json headRefOid,statusCheckRollup`: `verify` is `SUCCESS` for exactly that
+   head. No `verify` check at all means CI does not run for `m<n>`: do not merge, ask (§2). A red
+   `verify` or CodeQL check counts as a failed attempt (§4): read the job log, fix, back to step 4.
 6. **Merge it yourself** with `gh pr merge <pr> --squash --match-head-commit <head>
    --delete-branch` only when all of these hold:
    - `verify` is `SUCCESS` on the head (step 5);
    - all reviews report `must_fix: 0`, and their `head` is the pull request's head or a commit
-     after which only merges of `origin/m<n>` followed (step 3);
-   - the branch contains the current `origin/m<n>` (if not: merge it in, `just verify`, push,
-     step 5);
+     after which only merges of `origin/m<n>` followed (steps 3 and 4);
+   - the branch contains the current `origin/m<n>` (if not: merge it in, push, step 5);
    - the issue is not a maintainer-reviewed story (§5), and `gh pr diff <pr> --name-only`
      lists no protected path (§5).
 
