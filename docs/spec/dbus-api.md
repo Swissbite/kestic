@@ -106,18 +106,19 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
   - `ls`: `snapshot_id`, `dir` (absolut; immer genau ein Ordner, nie rekursiv).
   - `find`: `pattern`, `scope` (`backup` mit `backup_id` \| `unassigned` \| `orphaned` mit `backup_id`).
   - `diff`: `from_snapshot_id`, `to_snapshot_id`.
-  - `restore_preview`: `snapshot_id`, `selection` (absolute Snapshot-Pfade, leer = alles), `target` (optional: `new_folder` mit `dir` \| `original` mit dem abgebildeten `dir`), `overwrite` (`RestoreOverwrite`, Standard `never`). Ohne `target` nimmt der Daemon den vorgeschlagenen neuen Ordner.
+  - `restore_preview`: `snapshot_id`, `selection` (absolute Snapshot-Pfade, leer = alles), `target` (optional: `new_folder` mit `dir` \| `original` mit dem abgebildeten `dir`; bei `StartRestore` Pflicht), `overwrite` (`RestoreOverwrite`, Standard `never`). Ohne `target` nimmt der Daemon den vorgeschlagenen neuen Ordner.
 - `SnapshotQueryStatusDto`: `state`, `error_kind`, `error_detail` und `result`, getaggt nach `kind`: `LsResultDto`, `FindResultDto`, `DiffResultDto` oder `RestorePreviewResultDto`.
 - `LsResultDto`: `dir`, `dir_exists`, `entries` (`name`, `path`, `entry_type`, `size`, `mtime`, `uid`, `hard_links`). `dir_exists` stammt aus dem ersten Knoten; restic liefert für einen fehlenden Ordner nur eine leere Ausgabe.
 - `FindResultDto`: `hits` (`snapshot_id`, `snapshot_time`, `path`, `entry_type`, `size`, `backup_id`), `snapshots_matched`; leer heisst «keine Treffer».
 - `DiffResultDto`: `changes` (`path`, `change`), `added_files`, `removed_files`, `changed_files`, `bytes_added`, `bytes_removed`, `identical` (für «keine Unterschiede»), `truncated`.
-- `RestoreRequest` (für `StartRestore`): `destination_id`, `snapshot_id`, `selection`, `target`, `overwrite` wie bei `restore_preview`, dazu `preview_id` (`Option<String>`: `query_id` einer fertigen `restore_preview`).
+- `RestoreRequest` (für `StartRestore`): `destination_id`, `snapshot_id`, `selection`, `target` (Pflicht), `overwrite` wie bei `restore_preview`, dazu `preview_id` (`Option<String>`: `query_id` einer fertigen `restore_preview`). Eine Vorschau ohne `target` zählt für das Ziel, das ihr Ergebnis unter `target` nennt.
+- **Lebensdauer von Abfragen:** Fertige Ergebnisse (`done`, `cancelled`, `error`) bleiben höchstens 10 Minuten nach ihrem Ende abrufbar (über `Clock`), danach liefern `GetSnapshotQueryStatus` und `StartRestore` `NotFound`.
 - `RestorePreviewResultDto`:
   - `suggestion`: `new_folder` (Pfad) und `original` (`original_dir`, `mapped_dir`, `mapping` alt → neu, `needs_user_choice`).
   - `target`: das verwendete Ziel mit `check` (`RestoreTargetCode` und `detail`), vom Daemon geprüft.
-  - Zähler `new_files`, `overwritten_files`, `kept_files`, `identical_files` und `bytes_to_write`; für die Trennung von «nicht überschrieben» und «unverändert» fährt der Daemon bei Modus ≠ `always` einen zweiten Dry-Run mit `--overwrite always`.
+  - Zähler `new_files`, `overwritten_files`, `kept_files`, `identical_files` und `bytes_to_write`; für die Trennung von «nicht überschrieben» und «unverändert» fährt der Daemon bei Modus ≠ `always` einen zweiten Probelauf (`restore --dry-run`) mit `--overwrite always`.
   - `entries` (`path`, `outcome`, `size`) gekappt, `truncated`; `notes` (`RestoreNoteCode`).
-  - Beim Standardziel (neuer, leerer Ordner) fährt die Vorschau keinen Dry-Run: Sie liefert nur `suggestion` und `target`, die Zähler und `entries` bleiben leer, weil dort ohnehin alles neu ist.
+  - Beim Standardziel (neuer, leerer Ordner) fährt die Vorschau keinen Probelauf: Sie liefert nur `suggestion` und `target`, die Zähler und `entries` bleiben leer, weil dort ohnehin alles neu ist.
 - **Ablauf im Dialog:** Beim Öffnen startet die GUI eine `restore_preview` ohne `target` und erhält Vorschlag und Prüfung. Wählt der Benutzer den Originalort oder einen anderen Ordner, läuft eine neue Vorschau mit diesem Ziel; ihre `query_id` geht als `preview_id` an `StartRestore`.
 - **Erweitert:** `RunDetailDto` trägt `restore` (`RestoreStats`: `files_new`, `files_overwritten`, `files_kept`, `bytes_restored`, `target_dir`, `overwrite`, `selection_count`; gespeichert in `runs.stats_json`, wie `MaintenanceStats`). `ActiveRunProgressDto` und das Signal `RunProgress` tragen zusätzlich `kind`; `backup_id` und `backup_name` sind optional, weil Restores ohne Backup-Bezug (fremde Snapshots) keinen haben. `CancelRun` und die Signale bleiben unverändert.
 
@@ -131,7 +132,7 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 
 | Feld | Enum (`kestic_i18n`) | Codes |
 | --- | --- | --- |
-| `BackupSummaryDto.error_kind`, `RunDetailDto.error_kind` (Detail: `error_detail` bzw. `error_raw_detail`, dazu `error_exit_code`) | `codes::ErrorKind` | `wrong_password`, `repo_missing`, `locked`, `destination_unreachable` (inkl. DNS), `source_unavailable`, `auth_failed`, `incomplete_snapshot`, `retention_pending`, `cancelled`, `snapshot_missing`, `path_not_in_snapshot`, `unknown` (alles Nichterkannte, nie ein vorübergehender Code) |
+| `BackupSummaryDto.error_kind`, `RunDetailDto.error_kind` (Detail: `error_detail` bzw. `error_raw_detail`, dazu `error_exit_code`) | `codes::ErrorKind` | `wrong_password`, `repo_missing`, `locked`, `destination_unreachable` (inkl. DNS), `source_unavailable`, `auth_failed`, `incomplete_snapshot`, `retention_pending`, `cancelled`, `snapshot_missing` (die Snapshot-ID gibt es im Repository nicht mehr; restic «no matching ID found»), `path_not_in_snapshot`, `unknown` (alles Nichterkannte, nie ein vorübergehender Code) |
 | `SkippedBackupDto.error_kind` | `codes::ErrorKind` | bei `reason = permanent_error` der `error_kind` des letzten Laufs; bei `reason = error` `secret_store_locked` \| `restic_unavailable` \| `auth_failed` \| `wrong_password` \| `destination_unreachable` \| `unknown` (dann `error_detail` als Rohtext) |
 | `BackupDryRunStatusDto.error_kind`, `RetentionPreviewStatusDto.error_kind` (bei `state = "error"`, Rohtext: `error_detail`) | `codes::ErrorKind` | wie oben |
 | `SkippedBackupDto.reason` | `codes::SkipReason` | `permanent_error`, `source_unavailable`, `destination_unreachable`, `condition_not_met`, `error` |

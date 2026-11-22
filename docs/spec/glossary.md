@@ -14,8 +14,8 @@ Verbindliche Begriffe für UI, Spec und Code. Nicht verwenden: «Profil», «Job
 | Wartung | Maintenance | `Maintenance` | `prune`, `check` |
 | Lauf | Run | `Run` | ein restic-Aufruf bzw. eine Folge (backup → forget) |
 | Snapshot | Snapshot | `Snapshot` | Snapshot |
-| Wiederherstellen | Restore | `RunKind::Restore` | `restore`: Dateien oder Ordner aus einem Snapshot zurückholen; Standardziel ist ein neuer Ordner, Originalort nur mit Vorschau (F5) |
-| Vorschau | Preview | `SnapshotQueryKind::RestorePreview` | `restore --dry-run`: zeigt vor dem Wiederherstellen, welche Dateien neu, überschrieben, nicht überschrieben oder unverändert wären; ändert nichts |
+| Wiederherstellen | Restore | `RunKind::Restore` | `restore`: Dateien oder Ordner aus einem Snapshot zurückholen; Standardziel ist ein neuer Ordner, Originalort und nicht leerer Ordner nur mit Vorschau (F5) |
+| Vorschau | Preview | `SnapshotQueryKind::RestorePreview` | `restore --dry-run`: zeigt vor dem Wiederherstellen, welche Dateien neu, überschrieben, nicht überschrieben oder unverändert wären; ändert nichts. Beim Standardziel (neuer, leerer Ordner) läuft kein `restore --dry-run`, die Vorschau liefert nur Zielvorschlag und Prüfung |
 | Vergleichen | Compare | `SnapshotQueryKind::Diff` | `diff`: Unterschiede zwischen zwei Snapshots (FR-07) |
 | Wiederherstellungs-Kit | Recovery kit | `RecoveryKit` | zusätzlicher Key (`key add`) |
 | Hintergrunddienst | Background service | `daemon` | – |

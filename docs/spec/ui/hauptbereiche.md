@@ -138,12 +138,12 @@ Aufbau, Breadcrumb «Backups › Persönlicher Ordner › Aufbewahrung», Aktion
 - Auswahl bleibt beim Wechsel des Ordners erhalten; «Auswahl anzeigen» listet sie. `[Auswahl wiederherstellen…]` ist ohne Auswahl deaktiviert (Tooltip «Zuerst Dateien oder Ordner auswählen»).
 
 **Dialog «3 Elemente wiederherstellen»** (`Kirigami.Dialog`, eine Ebene; Vorschau inline, kein weiterer Dialog):
-- «Wohin»: `(•)` In neuen Ordner `[~/Wiederhergestellt/Persönlicher Ordner 2026-11-15]` `[Wählen…]` · `( )` An ursprünglichen Ort (`/home/user/…`) mit «Vorhandene Dateien: `[Nie überschreiben ▾]`» (Nie · Wenn älter · Wenn verändert · Immer).
-- Vorschau (läuft automatisch, Pflicht bei Originalort): z. B. «117 Dateien neu · 3 vorhandene Dateien werden nicht überschrieben» `[Liste ▾]`.
+- «Wohin»: `(•)` In neuen Ordner `[~/Wiederhergestellt/Persönlicher Ordner 2026-11-15 12-00]` `[Wählen…]` · `( )` An ursprünglichen Ort (`/home/user/…`) mit «Vorhandene Dateien: `[Nie überschreiben ▾]`» (Nie · Wenn älter · Wenn verändert · Immer).
+- Vorschau (läuft automatisch, Pflicht bei Originalort oder nicht leerem Ordner): z. B. «117 Dateien neu · 3 vorhandene Dateien werden nicht überschrieben» `[Liste ▾]`.
 - Fuss: `[Abbrechen]` `[Jetzt wiederherstellen]`.
 
 Regeln:
-- Default neuer Ordner (F5); dort keine Vorschau, weil nichts überschrieben wird. Bei «An ursprünglichen Ort» oder einem nicht leeren gewählten Ordner läuft die Vorschau (`--dry-run`) **immer** (AC-M4-05-4); der Daemon erzwingt sie (AC-M4-05-14); der Knopf ist erst nach der Vorschau aktiv. Vorschautext passt zum Modus: «werden nicht überschrieben» bei «Nie» (Begriff wie AC-M4-05-3), «werden überschrieben» sonst; bei Überschreiben heisst der Knopf «Überschreiben und wiederherstellen» (negativer Stil, Abbrechen ist Default, Hinweis «nicht rückgängig»).
+- Default neuer Ordner (F5); dort kein Probelauf, weil nichts überschrieben wird (die Vorschau liefert nur Zielvorschlag und Prüfung). Bei «An ursprünglichen Ort» oder einem nicht leeren gewählten Ordner läuft die Vorschau (`--dry-run`) **immer** (AC-M4-05-4); der Daemon erzwingt sie (AC-M4-05-14); der Knopf ist erst nach der Vorschau aktiv. Vorschautext passt zum Modus: «werden nicht überschrieben» bei «Nie» (Begriff wie AC-M4-05-3), «werden überschrieben» sonst; bei Überschreiben heisst der Knopf «Überschreiben und wiederherstellen» (negativer Stil, Abbrechen ist Default, Hinweis «nicht rückgängig»).
 - Der Überschreib-Modus gilt nur für diesen Restore; der Dialog startet immer mit «Nie überschreiben» (P19b).
 - Anderer Benutzername (F6): Vorschlag auf den Heimordner des Benutzers abgebildet (z. B. `/home/<neu>/…`), Hinweis «Original: `/home/<alt>/…`». Fehlt der abgebildete Ordner, ist «An ursprünglichen Ort» erst nach Wahl eines Zielordners möglich; Kestic legt keinen Ordner ungefragt an (P19a).
 - Ordnerwahl über den System-Dateidialog (Portal; kein Kestic-Dialog).
