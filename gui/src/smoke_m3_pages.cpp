@@ -132,6 +132,12 @@ int scenario_all_pages(const Ctx& c) {
         }
     }
 
+    QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 4));
+    M3_CHECK(4906, page_visible(w, "restorePage"), "restorePage");
+    M3_CHECK(4907, wait_until([&] { return !c.backend->property("restore_overview_loading").toBool(); }, 20000),
+             "restore area still loading");
+    M3_RECORD(4908, dump, QStringLiteral("restore"), w, "restore");
+
     M3_CHECK(4919, open_detail(w, bid), "backupDetailPage did not open");
     M3_RECORD(4920, dump, QStringLiteral("backup-detail"), w, "backup detail");
 
