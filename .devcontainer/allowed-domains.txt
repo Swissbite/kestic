@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Domains the agent container may reach (HTTPS only). Each entry includes its
+# subdomains. Everything else is neither resolved nor routed (init-firewall.sh).
+
+# GitHub: git, API, release downloads (restic, rest-server, nextest), raw files
+github.com
+githubusercontent.com
+
+# Rust: crates.io index and downloads, rustup and toolchains
+crates.io
+static.rust-lang.org
+
+# cxx-kde-frameworks is a git dependency (Cargo.lock)
+invent.kde.org
+
+# PGP keys for the restic and rclone signatures in scripts/bootstrap.sh
+keyserver.ubuntu.com
+keys.openpgp.org
+
+# rclone releases
+downloads.rclone.org
+
+# Claude Code: API and subscription login
+anthropic.com
+claude.ai
+claude.com

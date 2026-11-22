@@ -76,6 +76,10 @@ Entscheid vom 2026-11-20 ([decisions.md](decisions.md)). Die englische Projektse
 - **Pipeline:** `.github/workflows/pages.yml` startet nach jedem erfolgreichen Verify-Lauf eines Pushs auf `main` (`workflow_run`, nur Pushs dieses Repos), lädt dessen Artefakt `smoke-artifacts`, baut die Seite aus dem aktuellen `main` (nie aus einem Ref aus den Event-Daten; ist `main` inzwischen weiter, folgt mit dessen Verify-Lauf ein weiterer Deploy) und veröffentlicht sie mit `actions/deploy-pages`; kein `gh-pages`-Branch. PRs, die `site/` ändern, bauen nur. Die Seite zeigt den Commit der Screenshots als «Development preview». Nach dem ersten Release (Release-Workflow, Q7) kommen die Screenshots aus dem Release, und die Seite erhält einen Download-Link.
 - **Lokal:** `just site` (setzt einen Smoke-Lauf voraus), `just site-dev`, `just site-preview`. `just verify` braucht weiterhin kein Node.
 
+## Agent-Container (Entwicklung)
+
+Für weitgehend selbständige Arbeit eines Coding-Agenten (z. B. Claude Code) gibt es unter `.devcontainer/` einen rootless Podman-Container auf Basis des CI-Images: Dev-Container-Beschreibung (`devcontainer.json`, `Containerfile`) und das Startskript `.devcontainer/kestic-agent.sh`, das ohne devcontainer-CLI auskommt. Das Repo wird im Container geklont, nie aus dem Host eingebunden; Zugang zu GitHub nur über einen Fine-grained Token für dieses Repo als Podman-Secret (ohne Administration und Workflows); kein Zugriff auf Home-Ordner, Schlüsselbund, D-Bus oder SSH-Agent des Hosts. Ausgehend nur HTTPS zu einer Domain-Allowlist (GitHub, crates.io, rustup, PGP-Keyserver, rclone, Anthropic) über dnsmasq und nftables. Der Agent läuft als `kesticci` ohne Capabilities, bekommt seinen Auftrag aus einem GitHub-Issue und liefert einen PR; mergen tut ein Mensch. Details, Grenzen und Bedienung: `.devcontainer/README.md`.
+
 ## Secrets
 
 - **Secret Service API** (`org.freedesktop.secrets`) über den direkten Client `SecretServiceStore` (`daemon/src/secrets.rs`) auf Basis von `zbus 6.3.0` (statt `secret-service`/`keyring`, vgl. [ADR 0001](adr/0001-tech-stack-rust-cxx-qt-kirigami.md)) → auf Plasma KWallet, auf GNOME GNOME Keyring.
