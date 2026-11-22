@@ -10,5 +10,30 @@
       "Bash(git push -f:*)",
       "Bash(git push origin main:*)"
     ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/kestic-agent hook turn"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/kestic-agent hook idle"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "BASH_MAX_TIMEOUT_MS": "2700000"
   }
 }

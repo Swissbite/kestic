@@ -12,14 +12,17 @@ system packages as the `verify` job.
 
 The agent talks to the outside world only through GitHub: it gets its
 assignment from an issue, reports progress as issue comments and delivers a
-pull request. A maintainer reviews and merges; the agent never does.
+pull request. A maintainer reviews and merges into `main`; the agent never
+does. In a milestone run the agent merges its own story pull requests into the
+milestone's integration branch under that milestone's rules
+([Milestone runs](#milestone-runs)).
 
 ## Isolation
 
 | Host resource | In the container |
 | --- | --- |
 | Repository checkout | not mounted; the agent clones `Swissbite/kestic` into the volume `kestic-agent-home` |
-| GitHub credentials | only a fine-grained token for this repository, as the Podman secret `kestic-agent-gh-token` (file `/run/secrets/kestic-agent-gh-token`, read per call by `gh` and git, never in argv, environment, image or config files) |
+| GitHub credentials | only a one-hour installation token of the GitHub App `kestic-agent`, limited to this repository, in `/run/kestic-agent-token/gh-token` (tmpfs, owner `kesticci`, mode 0400; read per call by `gh` and git, never in argv, environment, image or volume). The App's private key stays on the host. |
 | Home directory, keyring, D-Bus, SSH agent | not mounted, no sockets, no environment variables passed |
 | Network | IPv4 HTTPS to the domains in [allowed-domains.txt](allowed-domains.txt) only; no host loopback, no LAN, no IPv6 |
 | User | the agent runs as `kesticci` (uid 1001 in the container, an unprivileged sub-uid on the host) without capabilities and with `no_new_privs`; `sudo` does not work |
@@ -69,34 +72,36 @@ Limits, by design of an IP filter:
 - dnsmasq keeps `NET_ADMIN` to fill the address set; a remote-code-execution bug
   in dnsmasq reachable from the agent would lift the firewall.
 
-### What the token can and cannot do
+### Identity and token
 
-The fine-grained token is limited to this repository: contents, pull requests
-and issues read/write; checks, commit statuses, actions and metadata read. It
-has no administration and no workflow permission, so the agent cannot change
-branch protection, secrets or `.github/workflows/`. It belongs to the
-maintainer's account, so GitHub shows the agent's commits, comments and pull
-requests under that account. The ruleset on `main` applies to it: no direct
-push or force push, changes only through a pull request with a green `verify`.
-The ruleset needs no approving review, so the token **can** merge a pull
-request once `verify` is green.
+The agent acts as the GitHub App `kestic-agent`, a private App of the
+maintainer installed only on this repository. Its permissions: contents, pull
+requests and issues read/write; actions, checks, commit statuses and metadata
+read. No administration, no workflows, no webhook: the agent cannot change
+rulesets, secrets or `.github/workflows/`. GitHub shows its pull requests,
+comments, labels and merges as `kestic-agent[bot]`; its commits carry the
+maintainer as author ([agent.conf](agent.conf)), who is responsible for them.
 
-The container has one rule against that: merging into `main` is refused.
-[gh-wrapper.sh](gh-wrapper.sh) rejects `gh pr merge` and a PUT on the REST
-endpoint `…/pulls/<n>/merge` when the pull request targets `main` (tested by
-[test-gh-wrapper.sh](test-gh-wrapper.sh) in `just verify`). Merges into other
-branches, such as story pull requests against a milestone branch, and all
-other commands go through; texts that mention merge or main never block
-anything. A `pre-push` hook rejects pushes to `main`. Both guard against
-mistakes only. Known gaps: GraphQL merge mutations, the branch merge API,
-gh aliases, the token with `curl`, `--no-verify`, and a pull request with
-`--auto` that GitHub later retargets to `main`.
+The App's private key never enters the container. It is the Podman secret
+`kestic-agent-app-key` on the host. [kestic-agent.sh](kestic-agent.sh) signs a
+JSON Web Token with it (openssl, as in GitHub's «Generating a JSON Web Token
+(JWT) for a GitHub App»), asks GitHub for an installation token limited to this
+repository and writes it into the running container through stdin
+(`kestic-agent store-token`). An installation token lives one hour;
+`kestic-agent.sh` renews it when the container starts, before each command that
+uses the container and whenever the watcher asks for the agent's state, as
+soon as it is 40 minutes old. Without the watcher timer, `kestic-agent.sh token`
+renews it by hand. JWT and token never appear in an argument list; curl reads
+the authorization header from a file descriptor. Tested by
+[test-kestic-agent-token.sh](test-kestic-agent-token.sh) in `just verify`.
 
-The binding lock belongs in the ruleset on `main`. Since the token is the
-maintainer's own, a required review would also block the maintainer, who
-cannot approve their own pull requests; it needs a second identity (a bot
-account for the agent, or a second reviewer) or a bypass for the maintainer
-that the agent's token does not have.
+The ruleset on `main` restricts updates to the maintainer and Renovate, so the
+App cannot merge into `main`. The container adds a second guard against
+mistakes: [gh-wrapper.sh](gh-wrapper.sh) rejects `gh pr merge` and a PUT on the
+REST endpoint `…/pulls/<n>/merge` when the pull request targets `main` (tested
+by [test-gh-wrapper.sh](test-gh-wrapper.sh)), and a `pre-push` hook rejects
+pushes to `main`. Merges into other branches, such as story pull requests
+against a milestone branch, go through.
 
 Podman keeps secrets unencrypted in its storage on the host
 (`~/.local/share/containers/storage/secrets/`), readable by the host user only.
@@ -113,18 +118,30 @@ such trailers.
    .devcontainer/kestic-agent.sh build
    ```
 
-2. Create a fine-grained token on GitHub (Settings → Developer settings →
-   Fine-grained tokens): resource owner `Swissbite`, only the repository
-   `Swissbite/kestic`, expiry about 90 days; permissions as above. Store it as a
-   Podman secret without it appearing in argv or the shell history:
+2. Create the GitHub App (Settings → Developer settings → GitHub Apps → New
+   GitHub App):
+   - name `kestic-agent`, homepage the repository URL;
+   - webhook **off**;
+   - repository permissions: Contents, Issues and Pull requests read and write;
+     Actions, Checks and Commit statuses read (Metadata read is implied); no
+     other permission;
+   - «Only on this account».
+
+   Note its App ID and put it into [agent.conf](agent.conf) (`app_id=`). Install
+   the App on `Swissbite/kestic` only («Only select repositories»). Generate a
+   private key; the browser downloads a `.pem` file. Store it as a Podman secret
+   and delete the download:
 
    ```bash
-   bash -c 'read -rsp "Token: " t && printf %s "$t" | podman secret create --replace kestic-agent-gh-token -; echo'
+   podman secret create --replace kestic-agent-app-key ~/Downloads/kestic-agent.*.private-key.pem
+   shred -u ~/Downloads/kestic-agent.*.private-key.pem
    ```
 
-   Run it as shown, through `bash`: zsh's `read -p` means something else and
-   would store a wrong value. `--replace` also rotates an existing token; then
-   `kestic-agent.sh stop` and start again.
+   To rotate the key, generate a new one on the App's page, store it the same
+   way and delete the old key there. A container that was started with a
+   personal access token (`kestic-agent-gh-token`) has to be stopped and
+   started again; then remove that secret (`podman secret rm
+   kestic-agent-gh-token`) and revoke the token on GitHub.
 
 3. Log in to Claude Code once (subscription, no API key):
 
@@ -142,11 +159,13 @@ such trailers.
 
 ```bash
 .devcontainer/kestic-agent.sh start 42      # container + agent on issue #42
+.devcontainer/kestic-agent.sh start 51 m4   # same, branch and pull request on m4 instead of main
 .devcontainer/kestic-agent.sh status        # resources and the agent's last terminal lines
 .devcontainer/kestic-agent.sh attach        # watch or step in (detach: Ctrl-b d)
 .devcontainer/kestic-agent.sh stop          # stop; volumes stay
 .devcontainer/kestic-agent.sh resume 42     # continue the last session after a stop
 .devcontainer/kestic-agent.sh nudge 'Please read the new comment on the pull request.'
+.devcontainer/kestic-agent.sh token         # a new GitHub token now (otherwise renewed when due)
 ```
 
 The agent runs `claude --dangerously-skip-permissions` in the tmux session
@@ -165,12 +184,94 @@ gh pr checks <pr> --repo Swissbite/kestic
 `kestic-agent.sh exec just verify` runs any command in the clone, e.g. to check
 the container itself.
 
+## Milestone runs
+
+For a milestone (M4–M6) the agent works through the issues of a GitHub
+milestone on the integration branch `m<n>`, one issue after another, each in a
+fresh session. The rules (when it merges its own story pull request into
+`m<n>`, protected paths, questions to the maintainer) are in
+`.agents/skills/kestic-milestone-autonomy/SKILL.md` on that branch. The
+maintainer asks for a decision by the label `needs-maintainer` and answers in a
+comment.
+
+[kestic-agent-watch.sh](kestic-agent-watch.sh) runs on the host and makes one
+pass per call:
+
+```bash
+.devcontainer/kestic-agent-watch.sh "M4 Restore" m4
+```
+
+- The container is off or the agent is busy: nothing. The watcher never starts
+  the container; stopping it pauses the milestone.
+- The agent's current issue is open and not labelled `needs-maintainer`: it
+  stays the only one. Something the maintainer did after the agent's last turn
+  started continues the idle session: a comment or review on the issue or on a
+  pull request from its branch, merging that pull request, or removing
+  `needs-maintainer`. Only people with write access count, never bots or
+  outsiders: the repository is public, and a comment must not wake an agent
+  that runs without permission prompts. A session that is gone (Claude Code
+  exited, the container restarted) is resumed, at most twice until it reaches
+  a turn again.
+- Otherwise it starts the open issue of the milestone with the lowest number
+  that is not labelled `needs-maintainer` and has no open «blocked by» issue.
+  New issues therefore queue at the end; a «blocked by» link changes the order.
+
+Busy or idle comes from two Claude Code hooks in
+[managed-settings.json](managed-settings.json): a prompt starts a turn, the end
+of a turn marks the session idle (`kestic-agent.sh agent-state`). A session
+whose terminal has not changed for 15 minutes counts as idle too, because the
+Stop hook does not run after an interrupt or an API error. The watcher treats
+the state line from the container as untrusted input.
+
+The watcher logs what it does and, where `notify-send` exists, tells the
+desktop once: an issue that waits for the maintainer, a session that does not
+come back after two resumes, an agent idle for four hours without a result, and
+(once an hour) a failed renewal of the agent's GitHub token.
+[test-kestic-agent-watch.sh](test-kestic-agent-watch.sh) in `just verify` tests
+its decisions with a fake `gh`; after changing a `--jq` filter, run one pass
+with `KESTIC_AGENT_SH` pointing to a script that prints a state line, against
+the real milestone.
+
+Run it every five minutes with a systemd user timer (`<checkout>` is the
+host checkout; `gh` on the host only reads issues and pull requests; the
+watcher also keeps the agent's GitHub token fresh):
+
+```ini
+# ~/.config/systemd/user/kestic-agent-watch.service
+[Service]
+Type=oneshot
+TimeoutStartSec=30min
+ExecStart=<checkout>/.devcontainer/kestic-agent-watch.sh "M4 Restore" m4
+
+# ~/.config/systemd/user/kestic-agent-watch.timer
+[Timer]
+OnActiveSec=1min
+OnUnitInactiveSec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now kestic-agent-watch.timer
+journalctl --user -u kestic-agent-watch      # what it started or continued
+```
+
+No ready-made tool fits: reacting to issue events with GitHub Actions needs
+either a self-hosted runner on this machine, which GitHub advises against for
+public repositories because pull requests from forks can run code on it, or the
+agent on GitHub's runners with an API key instead of this container; webhooks
+need an endpoint reachable from GitHub. A timer and `gh` need neither.
+
 ## Dev Container
 
 [devcontainer.json](devcontainer.json) describes the same container for tools
 that support the Dev Container standard (VS Code, JetBrains, the devcontainer
-CLI) with Podman as the container engine. The Podman secret and the firewall
-come along. The default CI image tag in it and in the
+CLI) with Podman as the container engine. The firewall and the token directory
+come along; the token comes from the host with
+`KESTIC_AGENT_NAME=<container name> .devcontainer/kestic-agent.sh token`, and the
+git author from `KESTIC_AGENT_GIT_NAME` and `KESTIC_AGENT_GIT_EMAIL` in the host
+environment. The default CI image tag in it and in the
 [Containerfile](Containerfile) must follow `.github/ci-image/tag.sh`;
 `kestic-agent.sh build` always uses the current one and warns when the default
 is stale.
@@ -218,6 +319,6 @@ The container does not depend on Claude Code except for these parts:
 
 ```bash
 .devcontainer/kestic-agent.sh clean --yes       # container, image, both volumes (also the login)
-podman secret rm kestic-agent-gh-token
+podman secret rm kestic-agent-app-key           # the App's key; delete the key on GitHub too
 podman rmi ghcr.io/swissbite/kestic-ci:<tag>    # the base image
 ```
