@@ -79,10 +79,17 @@ maintainer's account, so GitHub shows the agent's commits, comments and pull
 requests under that account. The ruleset on `main` applies to it: no direct
 push or force push, changes only through a pull request with a green `verify`.
 The ruleset needs no approving review, so the token **can** merge a pull
-request once `verify` is green. Claude Code settings
-([managed-settings.json](managed-settings.json)), a `pre-push` hook and the
-assignment forbid it, but the agent can get around all three (`--no-verify`,
-`gh api`, `curl`); they are rules for the agent, not a hard limit.
+request once `verify` is green.
+
+The container has one rule against that: merging into `main` is refused.
+[gh-wrapper.sh](gh-wrapper.sh) rejects `gh pr merge` and the merge endpoints
+of `gh api` when the target is `main` (tested by
+[test-gh-wrapper.sh](test-gh-wrapper.sh) in `just verify`); merges into other
+branches, such as story pull requests against a milestone branch, go through.
+A `pre-push` hook rejects pushes to `main`. Both guard against mistakes only:
+with the token and `curl` or `--no-verify` they can be bypassed. The binding
+lock belongs in the ruleset on `main` (a required review the agent's token
+cannot give).
 
 Podman keeps secrets unencrypted in its storage on the host
 (`~/.local/share/containers/storage/secrets/`), readable by the host user only.
