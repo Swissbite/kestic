@@ -704,6 +704,165 @@ int scenario_search_cancel(const Ctx& c) {
     return 0;
 }
 
+// The compare page and its model.
+struct Compare {
+    QQuickItem* page = nullptr;
+    QAbstractItemModel* model = nullptr;
+};
+
+Compare compare_page(QQuickWindow* w) {
+    Compare cmp;
+    cmp.page = visible_item(w, "restoreComparePage");
+    cmp.model = cmp.page ? qobject_cast<QAbstractItemModel*>(
+                               cmp.page->findChild<QObject*>(QStringLiteral("snapshotDiffModel")))
+                         : nullptr;
+    return cmp;
+}
+
+// Waits until the compare page shows the finished comparison.
+bool wait_for_compare(QQuickWindow* w) {
+    return wait_until([&] {
+        Compare cmp = compare_page(w);
+        return cmp.model && cmp.model->property("state").toString() == QLatin1String("done");
+    }, 30000);
+}
+
+// Row of the change whose path ends with `suffix`, or -1.
+int change_row(QAbstractItemModel* m, const QString& suffix) {
+    for (int r = 0; r < m->rowCount(); ++r) {
+        if (role_value(m, r, "path").toString().endsWith(suffix)) {
+            return r;
+        }
+    }
+    return -1;
+}
+
+// Moves the keyboard focus in the snapshot list to row `target` with the arrow keys.
+bool snapshot_to(QQuickWindow* w, int target) {
+    for (int i = 0; i < 6; ++i) {
+        QQuickItem* row = focused_snapshot_row(w);
+        if (!row) {
+            return false;
+        }
+        const int at = row->property("index").toInt();
+        if (at == target) {
+            return true;
+        }
+        press_and_wait(w, at < target ? Qt::Key_Down : Qt::Key_Up, 80);
+    }
+    return false;
+}
+
+/// AC-M4-02-1 and AC-M4-02-4 (smoke part): «Compare…», Space on two snapshots and «Show
+/// Differences» compare the older with the newer one: (a) `a.txt` shows as changed, `b.txt` as
+/// new and `c.txt` as removed, each with the text of its change; the chip «New · 3» leaves
+/// exactly the 3 added files («3 of 9»).
+int scenario_compare(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 6001, 3)) {
+        return rc;
+    }
+    QObject* compare = object_named(w, "restoreCompareAction");
+    M4_CHECK(6006, compare && compare->property("enabled").toBool(), "«Compare…» enabled");
+    trigger(compare);
+    M4_CHECK(6007, wait_until([&] { return visible_item(w, "cancelCompareButton") != nullptr; }, 3000),
+        "«Compare…» shows the bar with «Cancel»");
+    QQuickItem* row = tab_to(w, "restoreSnapshotListItem", 30);
+    M4_CHECK(6008, row != nullptr, "Tab reaches the snapshot list");
+    M4_CHECK(6009, snapshot_to(w, 1), "arrow keys reach the second snapshot");
+    send_key(w, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+    M4_CHECK(6010, snapshot_to(w, 2), "arrow keys reach the oldest snapshot");
+    send_key(w, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+    QObject* chosen = object_named(w, "compareChosenLabel");
+    M4_CHECK(6011, chosen != nullptr, "compareChosenLabel missing");
+    M4_CHECK_EQ(6012, chosen->property("text").toString(),
+        loc(c.lang, "2 of 2 chosen", "2 von 2 gewählt"), "two snapshots chosen");
+    QQuickItem* show = tab_to(w, "showDifferencesButton", 30);
+    M4_CHECK(6013, show != nullptr, "Tab reaches «Show Differences»");
+    send_key(w, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+    M4_CHECK(6014, wait_for_compare(w), "«Show Differences» compares the two snapshots");
+    finish_incubation(w);
+
+    Compare cmp = compare_page(w);
+    M4_CHECK_EQ(6015, cmp.page->property("title").toString(), loc(c.lang, "Compare", "Vergleichen"),
+        "the breadcrumb names the comparison");
+    QObject* between = object_named(w, "compareSnapshotsLabel");
+    M4_CHECK(6016, between != nullptr, "compareSnapshotsLabel missing");
+    M4_CHECK_EQ(6017, between->property("text").toString(),
+        loc(c.lang, "From 2026-11-13 12:00 to 2026-11-14 12:00", "Von 2026-11-13 12:00 bis 2026-11-14 12:00"),
+        "from the older to the newer snapshot");
+    M4_CHECK(6018, cmp.model->rowCount() == 9, "nine changes listed");
+    const int a = change_row(cmp.model, QStringLiteral("/docs/a.txt"));
+    const int b = change_row(cmp.model, QStringLiteral("/docs/b.txt"));
+    const int cc = change_row(cmp.model, QStringLiteral("/docs/c.txt"));
+    M4_CHECK(6019, a >= 0 && b >= 0 && cc >= 0, "(a) a.txt, b.txt and c.txt listed");
+    M4_CHECK_EQ(6020, role_value(cmp.model, a, "changeText").toString(), loc(c.lang, "Changed", "Geändert"),
+        "(a) a.txt changed");
+    M4_CHECK_EQ(6021, role_value(cmp.model, b, "changeText").toString(), loc(c.lang, "New", "Neu"),
+        "(a) b.txt new");
+    M4_CHECK_EQ(6022, role_value(cmp.model, cc, "changeText").toString(), loc(c.lang, "Removed", "Entfernt"),
+        "(a) c.txt removed");
+    QObject* count = object_named(w, "compareCountLabel");
+    M4_CHECK(6023, count != nullptr, "compareCountLabel missing");
+    M4_CHECK_EQ(6024, count->property("text").toString(), loc(c.lang, "9 changes", "9 Änderungen"),
+        "number of changes");
+    QObject* added_chip = object_named(w, "compareKindChip_added");
+    M4_CHECK(6025, added_chip != nullptr, "the chip of new files is shown");
+    M4_CHECK_EQ(6026, added_chip->property("text").toString(), loc(c.lang, "New · 3", "Neu · 3"),
+        "the chip names the kind and its number");
+    QObject* removed_chip = object_named(w, "compareKindChip_removed");
+    M4_CHECK(6027, removed_chip != nullptr, "the chip of removed files is shown");
+    M4_CHECK_EQ(6028, removed_chip->property("text").toString(), loc(c.lang, "Removed · 2", "Entfernt · 2"),
+        "the chip of removed files names their number");
+    wait_ms(600); // let the page transition end before the screenshot
+    M4_CHECK(6029, save_screenshot(w, c.out_path), "screenshot failed");
+
+    M4_CHECK(6030, click_ui_item(w, qobject_cast<QQuickItem*>(added_chip), "chip New"), "chip could not be clicked");
+    M4_CHECK(6031, wait_until([&] { return cmp.model->rowCount() == 3; }, 5000),
+        "AC-M4-02-4 (a) the chip leaves the 3 added files");
+    for (int r = 0; r < 3; ++r) {
+        M4_CHECK_EQ(6032, role_value(cmp.model, r, "change").toString(), QStringLiteral("added"),
+            "AC-M4-02-4 (a) only added files");
+    }
+    M4_CHECK(6033, cmp.model->property("matched").toInt() == 3, "AC-M4-02-4 (b) matched is 3");
+    M4_CHECK_EQ(6034, count->property("text").toString(), loc(c.lang, "3 of 9", "3 von 9"),
+        "the count names the filtered changes");
+    M4_CHECK_EQ(6035, removed_chip->property("text").toString(), loc(c.lang, "Removed · 2", "Entfernt · 2"),
+        "AC-M4-02-4 (c) the numbers of the other kinds stay");
+    return 0;
+}
+
+/// AC-M4-02-3 (smoke part): «Compare with Previous» on a snapshot equal to the one before
+/// shows (a) «No differences» rather than an empty list.
+int scenario_compare_identical(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 6101, 3)) {
+        return rc;
+    }
+    QQuickItem* row = tab_to(w, "restoreSnapshotListItem", 30);
+    M4_CHECK(6106, row != nullptr, "Tab reaches the snapshot list");
+    M4_CHECK(6107, snapshot_to(w, 0), "the newest snapshot holds the focus");
+    QObject* menu = object_named(w, "snapshotContextMenu");
+    M4_CHECK(6108, menu != nullptr, "snapshotContextMenu missing");
+    send_key(w, Qt::Key_Menu);
+    M4_CHECK(6109, wait_until([&] { return is_open(menu); }, 2000), "Menu key opens the context menu");
+    M4_CHECK(6110, menu_to(w, menu, 1), "arrow keys reach «Compare with Previous»");
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(6111, wait_for_compare(w), "the snapshot is compared with the previous one");
+    finish_incubation(w);
+    Compare cmp = compare_page(w);
+    M4_CHECK(6112, cmp.model->property("identical").toBool(), "(a) the snapshots are identical");
+    M4_CHECK(6113, cmp.model->rowCount() == 0, "(a) no change listed");
+    QQuickItem* message = visible_item(w, "compareNoDifferencesMessage");
+    M4_CHECK(6114, message != nullptr, "(a) «No differences» is shown");
+    M4_CHECK_EQ(6115, message->property("text").toString(),
+        loc(c.lang, "No differences", "Keine Unterschiede"), "(a) text instead of an empty list");
+    M4_CHECK(6116, visible_item(w, "compareErrorMessage") == nullptr, "no error shown");
+    wait_ms(600); // let the page transition end before the screenshot
+    M4_CHECK(6117, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -736,6 +895,10 @@ void run_m4_smoke_scenario(
         rc = scenario_search_none(ctx);
     } else if (scen == QLatin1String("m4-search-cancel")) {
         rc = scenario_search_cancel(ctx);
+    } else if (scen == QLatin1String("m4-compare")) {
+        rc = scenario_compare(ctx);
+    } else if (scen == QLatin1String("m4-compare-identical")) {
+        rc = scenario_compare_identical(ctx);
     } else {
         std::fprintf(stderr, "M4 smoke failed (599): unknown m4 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

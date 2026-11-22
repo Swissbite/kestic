@@ -97,6 +97,22 @@ pub mod qobject {
         #[qproperty(QString, no_hits_text)]
         type SnapshotSearchModel = super::SnapshotSearchModelRust;
 
+        /// The changes from one snapshot to another, fetched page by page.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        #[qproperty(QString, state)]
+        #[qproperty(QString, error_text)]
+        #[qproperty(bool, identical)]
+        #[qproperty(bool, too_large)]
+        #[qproperty(i32, total)]
+        #[qproperty(i32, matched)]
+        #[qproperty(QString, count_text)]
+        #[qproperty(QString, too_large_text)]
+        #[qproperty(QStringList, kind_codes)]
+        #[qproperty(QStringList, kind_texts)]
+        type SnapshotDiffModel = super::SnapshotDiffModelRust;
+
         /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
         /// with the tray (`kestic-i18n`) and GUI texts (`ui_texts`). No daemon connection.
         #[qobject]
@@ -306,6 +322,24 @@ pub mod qobject {
         #[cxx_name = "endInsertRows"]
         #[inherit]
         fn end_insert_rows_search(self: Pin<&mut SnapshotSearchModel>);
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_diff(self: Pin<&mut SnapshotDiffModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_diff(self: Pin<&mut SnapshotDiffModel>);
+        #[cxx_name = "beginInsertRows"]
+        #[inherit]
+        fn begin_insert_rows_diff(
+            self: Pin<&mut SnapshotDiffModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[cxx_name = "endInsertRows"]
+        #[inherit]
+        fn end_insert_rows_diff(self: Pin<&mut SnapshotDiffModel>);
     }
 
     extern "RustQt" {
@@ -560,6 +594,44 @@ pub mod qobject {
         fn set_filter(self: Pin<&mut SnapshotSearchModel>, text: &QString);
         #[qinvokable]
         fn cancel(self: Pin<&mut SnapshotSearchModel>);
+
+        // SnapshotDiffModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &SnapshotDiffModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &SnapshotDiffModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &SnapshotDiffModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &SnapshotDiffModel, parent: &QModelIndex) -> bool;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut SnapshotDiffModel>, parent: &QModelIndex);
+        #[qinvokable]
+        fn compare(
+            self: Pin<&mut SnapshotDiffModel>,
+            destination_id: &QString,
+            from_snapshot_id: &QString,
+            to_snapshot_id: &QString,
+        );
+        #[qinvokable]
+        fn poll(self: Pin<&mut SnapshotDiffModel>);
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut SnapshotDiffModel>, text: &QString);
+        #[qinvokable]
+        #[cxx_name = "setKinds"]
+        fn set_kinds(self: Pin<&mut SnapshotDiffModel>, codes: &QStringList);
+        #[qinvokable]
+        fn cancel(self: Pin<&mut SnapshotDiffModel>);
     }
 }
 
@@ -573,6 +645,7 @@ mod restore_snapshots_model;
 mod run_logs_model;
 mod runs_model;
 mod snapshot_browse_model;
+mod snapshot_diff_model;
 mod snapshot_query;
 mod snapshot_search_model;
 mod snapshots_model;
@@ -584,6 +657,7 @@ pub use restore_snapshots_model::RestoreSnapshotsModelRust;
 pub use run_logs_model::RunLogsModelRust;
 pub use runs_model::RunsModelRust;
 pub use snapshot_browse_model::SnapshotBrowseModelRust;
+pub use snapshot_diff_model::SnapshotDiffModelRust;
 pub use snapshot_search_model::SnapshotSearchModelRust;
 pub use snapshots_model::SnapshotsModelRust;
 

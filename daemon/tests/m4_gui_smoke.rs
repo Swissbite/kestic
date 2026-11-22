@@ -437,3 +437,110 @@ fn m4_s04_cancelling_a_search_stops_restic_find() {
         },
     );
 }
+
+/// A daemon on the real bus name with one destination «NAS» and the backup «Home» with three
+/// snapshots of one folder: from the first (2026-11-13) to the second (2026-11-14) `docs/a.txt`
+/// and three more files change, `docs/b.txt` and two more files are new, `docs/c.txt` and one
+/// more file are gone (3 new, 2 removed, 4 changed); the third (2026-11-15) equals the second.
+fn compare_env(root: &Path) -> (M3Rig, StdFakes) {
+    let fakes = StdFakes::start_with(FakeSetup {
+        active_network: Some("HomeWifi"),
+        ..FakeSetup::default()
+    });
+    let variant = latest_variant();
+    let rig = M3Rig::start_on(
+        root,
+        &variant,
+        "",
+        KESTIC_BUS_NAME,
+        datetime!(2026-11-15 14:32:00 UTC),
+        |o| o.enable_scheduler = false,
+    );
+    let repo = root.join("repo-NAS");
+    let (dest, password) =
+        add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
+    let backup = rig.add_backup_to(&dest, "Home", |_| {});
+    let tag = format!("kestic:{}", backup.id);
+    let src = root.join("trees/home");
+    let docs = src.join("docs");
+    write_file(&docs, "a.txt", "a, first");
+    write_file(&docs, "c.txt", "c");
+    for i in 0..3 {
+        write_file(&src, &format!("changed{i}.txt"), "before");
+    }
+    write_file(&src, "removed0.txt", "gone soon");
+    let snapshot = |time: &str| {
+        backup_dir(
+            &variant.bin,
+            &repo,
+            &password,
+            &src,
+            &RawSnapshot {
+                tag: &tag,
+                time,
+                host: "laptop",
+            },
+        );
+    };
+    snapshot("2026-11-13 12:00:00");
+    write_file(&docs, "a.txt", "a, second version");
+    write_file(&docs, "b.txt", "b");
+    std::fs::remove_file(docs.join("c.txt")).expect("remove c.txt");
+    for i in 0..3 {
+        write_file(&src, &format!("changed{i}.txt"), "after, longer");
+    }
+    std::fs::remove_file(src.join("removed0.txt")).expect("remove removed0.txt");
+    for i in 0..2 {
+        write_file(&src, &format!("added{i}.txt"), "new");
+    }
+    snapshot("2026-11-14 12:00:00");
+    snapshot("2026-11-15 12:00:00");
+    (rig, fakes)
+}
+
+/// AC-M4-02-1 and AC-M4-02-4 (smoke part): two snapshots chosen with «Compare…» show (a)
+/// `a.txt` as changed, `b.txt` as new and `c.txt` as removed; the chip «New» leaves exactly the
+/// 3 added files while the numbers of the other kinds stay.
+#[test]
+fn ac_m4_02_1_compare_shows_changed_new_and_removed_files() {
+    run_isolated_test(
+        "ac_m4_02_1_compare_shows_changed_new_and_removed_files",
+        "KESTIC_AC_M4_02_1_SMOKE_INNER",
+        |root| {
+            let (rig, _fakes) = compare_env(root);
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-compare",
+                    layout,
+                    lang,
+                    &smoke_artifact("restore-compare", layout, lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-02-3 (smoke part): comparing two identical snapshots shows (a) «No differences»
+/// rather than an empty list.
+#[test]
+fn ac_m4_02_3_identical_snapshots_show_no_differences() {
+    run_isolated_test(
+        "ac_m4_02_3_identical_snapshots_show_no_differences",
+        "KESTIC_AC_M4_02_3_SMOKE_INNER",
+        |root| {
+            let (rig, _fakes) = compare_env(root);
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-compare-identical",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-compare-identical", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}

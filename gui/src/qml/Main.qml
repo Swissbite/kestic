@@ -522,6 +522,20 @@ Kirigami.ApplicationWindow {
         }), 2);
     }
 
+    // Shows the differences from snapshot `fromId` to `toId` of the snapshot list, next to
+    // that list.
+    function openSnapshotCompare(destinationId, fromId, toId) {
+        var from = restoreSnapshotsModel.rowMap(fromId);
+        var to = restoreSnapshotsModel.rowMap(toId);
+        pushSubPageAtDepth(restoreCompareComponent.createObject(pageStack, {
+            destinationId: destinationId,
+            fromSnapshotId: fromId,
+            toSnapshotId: toId,
+            fromSnapshotText: from ? from.dateTime : "",
+            toSnapshotText: to ? to.dateTime : ""
+        }), 2);
+    }
+
     // Searches the snapshots of `backupId` for `text`, next to the snapshot list.
     function openSnapshotSearch(backupId, text) {
         var backup = backupsModel.rowMap(backupId);
@@ -1027,6 +1041,17 @@ Kirigami.ApplicationWindow {
             onSearchRequested: function(backupId, text) {
                 root.openSnapshotSearch(backupId, text);
             }
+            onCompareRequested: function(destinationId, fromSnapshotId, toSnapshotId) {
+                root.openSnapshotCompare(destinationId, fromSnapshotId, toSnapshotId);
+            }
+        }
+    }
+
+    Component {
+        id: restoreCompareComponent
+        RestoreComparePage {
+            rootWindow: root
+            appBackend: root.backendRef
         }
     }
 

@@ -107,19 +107,26 @@ impl QueryRun {
         offset: u64,
         filter: &str,
     ) -> Result<Option<SnapshotQueryResultDto>, KesticDbusError> {
-        let Some(query_id) = self.query_id.clone() else {
-            return Ok(None);
-        };
-        let page = SnapshotQueryPage {
+        self.fetch_page(&SnapshotQueryPage {
             offset,
             limit: DEFAULT_PAGE_LIMIT,
             filter: PageFilter {
                 text: filter.to_string(),
                 kinds: Vec::new(),
             },
+        })
+    }
+
+    /// Fetches `page` (offset, limit, text and kinds filter); errors as for [`Self::fetch`].
+    pub(crate) fn fetch_page(
+        &mut self,
+        page: &SnapshotQueryPage,
+    ) -> Result<Option<SnapshotQueryResultDto>, KesticDbusError> {
+        let Some(query_id) = self.query_id.clone() else {
+            return Ok(None);
         };
         let client = self.client().map_err(KesticDbusError::Internal)?;
-        let status = client.get_snapshot_query_status(&query_id, &page)?;
+        let status = client.get_snapshot_query_status(&query_id, page)?;
         match (status.state.as_str(), status.result) {
             ("running", _) => Ok(None),
             ("done", Some(result)) => Ok(Some(result)),

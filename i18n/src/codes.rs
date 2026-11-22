@@ -249,6 +249,25 @@ code_enum! {
     }
 }
 
+code_enum! {
+    /// Kind of a change between two snapshots (`DiffChangeDto.change`), from the modifier
+    /// `restic diff --json` reports.
+    SnapshotChange {
+        /// Added (`+`).
+        Added => "added",
+        /// Removed (`-`).
+        Removed => "removed",
+        /// Content modified (`M`).
+        Modified => "modified",
+        /// Only the metadata changed (`U`).
+        Metadata => "metadata",
+        /// The type changed, e.g. a file became a link (`T`).
+        TypeChanged => "type_changed",
+        /// The content changed while all metadata stayed the same (`?`).
+        Bitrot => "bitrot",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +346,10 @@ mod tests {
         for v in SnapshotQueryKind::ALL {
             assert_eq!(SnapshotQueryKind::parse(v.as_str()), Some(v));
             assert_eq!(SnapshotQueryKind::parse("nope"), None);
+        }
+        for v in SnapshotChange::ALL {
+            assert_eq!(SnapshotChange::parse(v.as_str()), Some(v));
+            assert_eq!(SnapshotChange::parse("nope"), None);
         }
         for v in RunProgressPhase::ALL {
             assert_eq!(RunProgressPhase::parse(v.as_str()), Some(v));

@@ -16,13 +16,16 @@ pub use kestic_core::query_list::{PageFilter, PageRequest as SnapshotQueryPage};
 use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
 use kestic_core::snapshot::ResticSnapshot;
+pub use kestic_core::snapshot_diff::DiffChange as DiffChangeDto;
 pub use kestic_core::snapshot_find::{FindHit as FindHitDto, FindScope};
 pub use kestic_core::snapshot_ls::LsEntry as LsEntryDto;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
     ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
-pub use kestic_i18n::codes::{OverallStatusKind, RunProgressPhase, SnapshotQueryKind};
+pub use kestic_i18n::codes::{
+    OverallStatusKind, RunProgressPhase, SnapshotChange, SnapshotQueryKind,
+};
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
 };
@@ -445,6 +448,12 @@ pub struct SnapshotQueryRequest {
     /// `find`: the snapshots to search.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<FindScope>,
+    /// `diff`: the full ID of the snapshot compared from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_snapshot_id: Option<String>,
+    /// `diff`: the full ID of the snapshot compared to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_snapshot_id: Option<String>,
 }
 
 impl SnapshotQueryRequest {
@@ -457,6 +466,8 @@ impl SnapshotQueryRequest {
             dir: Some(dir.to_string()),
             pattern: None,
             scope: None,
+            from_snapshot_id: None,
+            to_snapshot_id: None,
         }
     }
 
@@ -469,6 +480,22 @@ impl SnapshotQueryRequest {
             dir: None,
             pattern: Some(text.to_string()),
             scope: Some(scope),
+            from_snapshot_id: None,
+            to_snapshot_id: None,
+        }
+    }
+
+    /// Compares snapshot `from` with snapshot `to`.
+    pub fn diff(destination_id: &str, from: &str, to: &str) -> Self {
+        Self {
+            kind: SnapshotQueryKind::Diff,
+            destination_id: destination_id.to_string(),
+            snapshot_id: None,
+            dir: None,
+            pattern: None,
+            scope: None,
+            from_snapshot_id: Some(from.to_string()),
+            to_snapshot_id: Some(to.to_string()),
         }
     }
 }
@@ -495,12 +522,27 @@ pub struct FindResultDto {
     pub snapshots_matched: u64,
 }
 
+/// Result of a `diff` query: the changed paths by path, and the counts of the whole comparison
+/// (independent of the filter).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffResultDto {
+    pub changes: ListPageDto<DiffChangeDto>,
+    pub added_files: u64,
+    pub removed_files: u64,
+    pub changed_files: u64,
+    pub bytes_added: u64,
+    pub bytes_removed: u64,
+    /// restic reported no change («no differences»).
+    pub identical: bool,
+}
+
 /// Result of a finished snapshot query, tagged with its kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SnapshotQueryResultDto {
     Ls(LsResultDto),
     Find(FindResultDto),
+    Diff(DiffResultDto),
 }
 
 /// Status of a snapshot query (`GetSnapshotQueryStatus`).
