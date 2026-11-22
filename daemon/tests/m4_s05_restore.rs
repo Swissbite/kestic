@@ -42,8 +42,7 @@ fn outcomes(p: &RestorePreviewResultDto) -> BTreeMap<String, RestoreOutcome> {
         .map(|e| {
             let name = Path::new(&e.path)
                 .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
             (name, e.outcome)
         })
         .collect()
@@ -407,9 +406,7 @@ fn ac_m4_05_14_restore_without_fitting_fresh_preview_is_refused() {
                 fx.rig.wrapper.release("restore");
                 let (fresh_id, _) =
                     fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
-                fx.rig
-                    .clock
-                    .advance(std::time::Duration::from_secs(11 * 60));
+                fx.rig.clock.advance(std::time::Duration::from_mins(11));
                 refused(Some(&fresh_id), "older than 10 minutes");
                 let (ok_id, _) =
                     fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);

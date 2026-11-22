@@ -207,3 +207,25 @@ fn ac_m4_05_18_escape_glob_escapes_glob_characters_only() {
     assert_eq!(plan.folder, "/d");
     assert_eq!(plan.includes, vec!["--include=/\\[x].txt".to_string()]);
 }
+
+/// AC-M4-05-22 (b, c): «outdated» means older than the newest version the tests run against,
+/// `RESTIC_LATEST_VERSION` in `scripts/bootstrap.sh`; 0.18.0 is outdated, that version not.
+#[test]
+fn ac_m4_05_22_outdated_is_older_than_the_tested_version() {
+    let bootstrap = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/bootstrap.sh"),
+    )
+    .expect("bootstrap.sh");
+    let latest = bootstrap
+        .lines()
+        .find_map(|l| l.strip_prefix("RESTIC_LATEST_VERSION="))
+        .map(|v| v.trim_matches('"').to_string())
+        .expect("RESTIC_LATEST_VERSION");
+    assert_eq!(
+        kestic_core::provider::TESTED_RESTIC_VERSION.to_string(),
+        latest,
+        "the tested version follows bootstrap.sh"
+    );
+    assert!(kestic_core::provider::is_outdated_text("0.18.0"), "(b)");
+    assert!(!kestic_core::provider::is_outdated_text(&latest), "(c)");
+}
