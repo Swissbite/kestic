@@ -25,9 +25,11 @@ pull request. A maintainer reviews and merges; the agent never does.
 | User | the agent runs as `kesticci` (uid 1001 in the container, an unprivileged sub-uid on the host) without capabilities and with `no_new_privs`; `sudo` does not work |
 | Claude Code login | the volume `kestic-agent-claude` (`CLAUDE_CONFIG_DIR`) |
 
-The entrypoint starts as container root with five capabilities
-(`NET_ADMIN`, `NET_BIND_SERVICE`, `SETUID`, `SETGID`, `SETPCAP`), sets up the
-firewall and drops to `kesticci` with an empty bounding set. Container root is
+The entrypoint starts as container root with six capabilities
+(`NET_ADMIN` for nftables, `NET_BIND_SERVICE` for dnsmasq on port 53, `SETUID`
+and `SETGID` to change users, `SETPCAP` to empty the bounding set, `KILL` so
+that `podman stop` reaches the agent's processes), sets up the firewall and
+drops to `kesticci` with an empty bounding set. Container root is
 the host user only inside the user namespace; it has no capabilities on the host.
 
 ### Firewall
@@ -50,11 +52,22 @@ the host user only inside the user namespace; it has no capabilities on the host
   `sudo` for the firewall script. Here the firewall is set up before the drop
   to `kesticci`, and nothing in the container can become root again.
 
-Limits: the filter works on IP addresses. A CDN address that serves an allowed
-domain also serves other sites on that address. Subdomains of allowed domains
-resolve too (e.g. any `*.githubusercontent.com`). The allowlist does not stop
-the agent from sending data to GitHub or Anthropic, which it must reach anyway.
-`kestic-agent.sh dns-log` shows every query, refused ones included.
+Private address ranges are rejected even when an allowed name resolves to one.
+`kestic-agent.sh dns-log` shows every query, refused ones included (kept in a
+16 MB tmpfs).
+
+Limits, by design of an IP filter:
+
+- **Shared CDN edges:** an address that serves an allowed domain (Cloudflare
+  for claude.ai, Fastly/CloudFront for crates.io and rustup) also serves other
+  sites. An agent that wants to can reach such a site with
+  `curl --resolve other.example:443:<allowed address>`. The allowlist therefore
+  stops accidental and casual traffic, not a determined exfiltration. Closing
+  this needs an HTTPS proxy that checks the server name (SNI); not done here.
+- Subdomains of allowed domains resolve too (e.g. any `*.githubusercontent.com`).
+- The agent can always send data to GitHub and Anthropic, which it must reach.
+- dnsmasq keeps `NET_ADMIN` to fill the address set; a remote-code-execution bug
+  in dnsmasq reachable from the agent would lift the firewall.
 
 ### What the token can and cannot do
 
@@ -63,11 +76,16 @@ and issues read/write; checks, commit statuses, actions and metadata read. It
 has no administration and no workflow permission, so the agent cannot change
 branch protection, secrets or `.github/workflows/`. It belongs to the
 maintainer's account, so GitHub shows the agent's commits, comments and pull
-requests under that account. Branch protection on `main` (required `verify`)
-applies to it like to any push. It **can** merge a pull request once `verify` is
-green; Claude Code settings ([managed-settings.json](managed-settings.json)), a
-`pre-push` hook and the assignment forbid it, but these are rules for the
-agent, not a hard limit.
+requests under that account. The ruleset on `main` applies to it: no direct
+push or force push, changes only through a pull request with a green `verify`.
+The ruleset needs no approving review, so the token **can** merge a pull
+request once `verify` is green. Claude Code settings
+([managed-settings.json](managed-settings.json)), a `pre-push` hook and the
+assignment forbid it, but the agent can get around all three (`--no-verify`,
+`gh api`, `curl`); they are rules for the agent, not a hard limit.
+
+Podman keeps secrets unencrypted in its storage on the host
+(`~/.local/share/containers/storage/secrets/`), readable by the host user only.
 
 No AI attribution: the managed settings switch off Claude Code's
 `Co-Authored-By` and "Generated with" lines, and a `commit-msg` hook rejects
@@ -141,6 +159,23 @@ come along. The default CI image tag in it and in the
 [Containerfile](Containerfile) must follow `.github/ci-image/tag.sh`;
 `kestic-agent.sh build` always uses the current one and warns when the default
 is stale.
+
+Run the agent with `kestic-agent.sh`, not through an IDE: Dev Container tools
+add host integration that this container is meant to keep out. VS Code, for
+example, copies the host's `~/.gitconfig` and forwards the SSH agent, git
+credentials and GPG into the container unless switched off in its settings
+(`dev.containers.copyGitConfig`, `dev.containers.gitCredentialHelperConfigLocation`
+set to `none`, no SSH agent forwarding). Processes started by the tool run as
+`kesticci` without capabilities, but outside the entrypoint, so without its
+`nice` and with the container's bounding set (`no_new_privs` still applies).
+
+## Resources
+
+`just verify` from a fresh clone compiles with all host cores. The container
+runs with a low CPU weight (`--cpu-shares=256`) and `nice 10`, which keep the
+desktop responsive without slowing the agent on an idle host. Optional limits:
+`KESTIC_AGENT_CPUS` (cores; cargo and nextest then use as many jobs),
+`KESTIC_AGENT_MEMORY` (default `24g`), `KESTIC_AGENT_NICE`.
 
 ## Other agents
 

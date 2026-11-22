@@ -107,7 +107,12 @@ start_session() {
     local prompt="$1"
     shift
     if tmux has-session -t "$SESSION" 2>/dev/null; then
-        die "tmux session '$SESSION' is already running (attach, nudge or stop it first)"
+        # The pane stays after Claude Code exits (tmux.conf); only a live one blocks.
+        if [[ "$(tmux list-panes -t "$SESSION" -F '#{pane_dead}')" == 1 ]]; then
+            tmux kill-session -t "$SESSION"
+        else
+            die "Claude Code is still running in tmux session '$SESSION' (attach, nudge or stop it first)"
+        fi
     fi
     tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$REPO_DIR" \
         claude --dangerously-skip-permissions "$@" "$prompt"
@@ -136,7 +141,7 @@ case "${1:-}" in
         shift
         [[ $# -gt 0 ]] || die "usage: kestic-agent nudge <text…>"
         tmux has-session -t "$SESSION" 2>/dev/null || die "no running session '$SESSION'"
-        tmux send-keys -t "$SESSION" -l "$*"
+        tmux send-keys -t "$SESSION" -l -- "$*"
         tmux send-keys -t "$SESSION" Enter
         ;;
     status)

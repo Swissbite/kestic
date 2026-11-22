@@ -17,6 +17,10 @@
 #   kestic-agent.sh stop               stop and remove the container; volumes stay
 #   kestic-agent.sh clean --yes        remove container, image and both volumes (also the login)
 #
+# Root inside the container only ever runs commands by absolute path or with a
+# fixed PATH, because the home volume (first in the image PATH) is writable by
+# the agent.
+#
 # Nothing from the host reaches the container except the image, the Podman
 # secret with the GitHub token and two named volumes: no bind mount, no host
 # D-Bus, keyring, SSH agent or home directory.
@@ -47,20 +51,29 @@ ensure_running() {
     podman secret inspect "$SECRET" >/dev/null 2>&1 \
         || die "no Podman secret $SECRET; see .devcontainer/README.md"
     podman rm --ignore "$NAME" >/dev/null
+    # A low CPU weight and nice 10 keep the desktop responsive without slowing
+    # the agent down when the host is idle. KESTIC_AGENT_CPUS additionally caps
+    # the cores; cargo and nextest then use that many jobs.
+    local limits=()
+    if [[ -n "${KESTIC_AGENT_CPUS:-}" ]]; then
+        limits=(--cpus="$KESTIC_AGENT_CPUS"
+            --env CARGO_BUILD_JOBS="$KESTIC_AGENT_CPUS" --env NEXTEST_TEST_THREADS="$KESTIC_AGENT_CPUS")
+    fi
     # Capabilities are only for the root entrypoint (firewall, dnsmasq, dropping
     # to kesticci); the agent itself runs without any.
     podman run -d --name "$NAME" --hostname "$NAME" --init \
         --network=slirp4netns:allow_host_loopback=false,enable_ipv6=false \
         --cap-drop=all --cap-add=NET_ADMIN,NET_BIND_SERVICE,SETUID,SETGID,SETPCAP,KILL \
         --security-opt=no-new-privileges \
+        --cpu-shares=256 --env KESTIC_AGENT_NICE="${KESTIC_AGENT_NICE:-10}" "${limits[@]}" \
         --memory="${KESTIC_AGENT_MEMORY:-24g}" --pids-limit=16384 \
+        --tmpfs /var/log/kestic-agent:size=16m,mode=0755 \
         --secret "$SECRET,type=mount,target=kestic-agent-gh-token,uid=1001,gid=1001,mode=0400" \
         --volume "$VOL_HOME:/home/kesticci" \
         --volume "$VOL_CLAUDE:/home/kesticci/.claude" \
         "$IMAGE" >/dev/null
     for _ in $(seq 60); do
-        running && podman exec "$NAME" test -s /etc/resolv.conf -a -e /var/lib/kestic-agent/upstream \
-            && podman exec "$NAME" grep -q '^nameserver 127.0.0.1' /etc/resolv.conf && return 0
+        running && podman exec "$NAME" /usr/bin/test -e /run/kestic-agent/ready && return 0
         running || break
         sleep 1
     done
@@ -119,11 +132,12 @@ case "$cmd" in
         ;;
     shell)
         ensure_running
-        podman exec -it "$NAME" "${DROP[@]}" bash -c 'cd ~ && exec bash -l'
+        podman exec -it "$NAME" "${DROP[@]}" bash -c 'cd ~ && exec bash'
         ;;
     dns-log)
         running || die "container is not running"
-        podman exec "$NAME" tail -n "${1:-50}" /var/log/kestic-agent/dns.log
+        # The log holds names the agent chose; cat -v keeps escape sequences out of the terminal.
+        podman exec "$NAME" /usr/bin/tail -n "${1:-50}" /var/log/kestic-agent/dns.log | cat -v
         ;;
     stop)
         podman stop --ignore --time 20 "$NAME" >/dev/null
@@ -133,7 +147,11 @@ case "$cmd" in
     clean)
         [[ "${1:-}" == --yes ]] || die "removes container, image and volumes incl. the Claude login; confirm with: $0 clean --yes"
         podman rm --force --ignore "$NAME" >/dev/null
-        podman volume rm --force "$VOL_HOME" "$VOL_CLAUDE" 2>/dev/null || true
+        for volume in "$VOL_HOME" "$VOL_CLAUDE"; do
+            if podman volume exists "$volume"; then
+                podman volume rm --force "$volume" >/dev/null
+            fi
+        done
         podman rmi --ignore "$IMAGE" >/dev/null
         echo "removed; the secret $SECRET stays (podman secret rm $SECRET)"
         ;;

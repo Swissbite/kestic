@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 #
@@ -19,6 +19,8 @@
 
 set -euo pipefail
 
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
 LIB_DIR=/usr/local/lib/kestic-agent
 STATE_DIR=/var/lib/kestic-agent
 RUN_DIR=/run/kestic-agent
@@ -26,6 +28,7 @@ LOG_DIR=/var/log/kestic-agent
 DNSMASQ_USER=nobody
 
 mkdir -p "$STATE_DIR" "$RUN_DIR" "$LOG_DIR"
+rm -f "$RUN_DIR/ready"
 
 # Podman writes the upstream resolver into /etc/resolv.conf. After the first
 # start it points to dnsmasq; a restart may keep that file, so the upstream
@@ -64,6 +67,7 @@ table inet kestic_agent {
         ct state established,related accept
         meta skuid $dnsmasq_uid ip daddr $upstream udp dport 53 accept
         meta skuid $dnsmasq_uid ip daddr $upstream tcp dport 53 accept
+        ip daddr { 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } reject with icmpx admin-prohibited
         ip daddr @allowed tcp dport 443 accept
         meta l4proto tcp reject with tcp reset
         reject with icmpx admin-prohibited
@@ -102,6 +106,12 @@ if curl -sS --max-time 5 -o /dev/null https://1.1.1.1 2>/dev/null; then
     exit 1
 fi
 if ! curl -fsS --max-time 10 -o /dev/null https://api.github.com/zen; then
-    echo "init-firewall: warning: api.github.com is not reachable" >&2
+    echo "init-firewall: api.github.com is not reachable" >&2
+    exit 1
 fi
+if ! nft list set inet kestic_agent allowed | grep -q 'elements = {'; then
+    echo "init-firewall: dnsmasq did not fill the address set" >&2
+    exit 1
+fi
+touch "$RUN_DIR/ready"
 echo "init-firewall: egress limited to $(echo "${domains[*]}" | tr ' ' ',')"

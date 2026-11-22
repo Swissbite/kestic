@@ -59,8 +59,9 @@ COPY --chmod=644 allowed-domains.txt /usr/local/lib/kestic-agent/
 COPY --chmod=644 managed-settings.json /etc/claude-code/managed-settings.json
 COPY --chmod=644 tmux.conf /etc/tmux.conf
 
-# Mount points of the two volumes; a new volume copies this ownership.
-RUN mkdir -p /home/kesticci/.claude \
+# Mount points of the two volumes and the (empty) clone directory, which is
+# the Dev Container workspace; a new volume copies this ownership.
+RUN mkdir -p /home/kesticci/.claude /home/kesticci/kestic \
     && chown -R kesticci:kesticci /home/kesticci
 
 ENV KESTIC_CI_IMAGE=${CI_IMAGE} \
