@@ -29,6 +29,9 @@ pub enum GenericInputError {
     /// The repository URL does not start with a known scheme; carries what was entered.
     #[error("unsupported repository scheme in '{0}': expected b2:, azure:, gs:, swift: or rclone:")]
     UnsupportedScheme(String),
+    /// Only the scheme is there, no address of the backend after it.
+    #[error("the repository URL '{0}' has no address after the scheme")]
+    MissingAddress(String),
     /// The variable name would override Kestic's own environment or is no valid name.
     #[error(
         "environment variable '{0}' is not allowed: names are A-Z, 0-9 and _, and must not \
@@ -49,11 +52,14 @@ pub fn scheme(url: &str) -> Option<&'static str> {
 /// Checks the repository URL: a known scheme followed by the backend's address.
 pub fn validate_url(url: &str) -> Result<(), GenericInputError> {
     let trimmed = url.trim();
+    if scheme(trimmed).is_none() || trimmed.chars().any(char::is_control) {
+        return Err(GenericInputError::UnsupportedScheme(trimmed.to_string()));
+    }
     let address_given = trimmed
         .split_once(':')
         .is_some_and(|(_, rest)| !rest.trim().is_empty());
-    if scheme(trimmed).is_none() || !address_given || trimmed.chars().any(char::is_control) {
-        return Err(GenericInputError::UnsupportedScheme(trimmed.to_string()));
+    if !address_given {
+        return Err(GenericInputError::MissingAddress(trimmed.to_string()));
     }
     Ok(())
 }
@@ -155,7 +161,10 @@ mod tests {
     #[test]
     fn scheme_needs_an_address_after_it() {
         assert_eq!(scheme("b2:bucket:path"), Some("b2"));
-        assert!(validate_url("rclone:").is_err());
+        assert_eq!(
+            validate_url("rclone:"),
+            Err(GenericInputError::MissingAddress("rclone:".to_string()))
+        );
         assert!(validate_url("rclone:remote:backup").is_ok());
         assert!(validate_url("gs:bucket:/\u{0}").is_err());
     }

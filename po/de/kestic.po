@@ -3526,6 +3526,102 @@ msgid "Enter the access key and the secret key."
 msgstr "Geben Sie den Access-Key und den Secret-Key ein."
 
 #: gui/src/qml/DestinationDetailsForm.qml
+msgid "Which cloud service should be used?"
+msgstr "Welcher Cloud-Dienst soll verwendet werden?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "rclone remote:"
+msgstr "rclone-Remote:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "rclone remote*:"
+msgstr "rclone-Remote*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Repository URL:"
+msgstr "Repository-URL:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Repository URL*:"
+msgstr "Repository-URL*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "rclone remote"
+msgstr "rclone-Remote"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Repository URL"
+msgstr "Repository-URL"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Environment Variables"
+msgstr "Umgebungsvariablen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "NAME"
+msgstr "NAME"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Variable name"
+msgstr "Name der Variable"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Leave empty to keep the saved value"
+msgstr "Leer lassen, um den gespeicherten Wert zu behalten"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Value"
+msgstr "Wert"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Variable value"
+msgstr "Wert der Variable"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Secret"
+msgstr "Geheim"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Secret: keep the value only in the password store"
+msgstr "Geheim: Wert nur im Passwortspeicher aufbewahren"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Remove Variable"
+msgstr "Variable entfernen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Add Variable"
+msgstr "Variable hinzufügen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter a value for every secret variable."
+msgstr "Geben Sie für jede geheime Variable einen Wert ein."
+
+#: gui/src/destination_input.rs
+msgid "Enter the address of the storage after the scheme."
+msgstr "Geben Sie nach dem Schema die Adresse des Speichers ein."
+
+#: gui/src/ui_texts.rs
+msgid "Backblaze B2"
+msgstr "Backblaze B2"
+
+#: gui/src/ui_texts.rs
+msgid "Azure"
+msgstr "Azure"
+
+#: gui/src/ui_texts.rs
+msgid "Google Cloud"
+msgstr "Google Cloud"
+
+#: gui/src/ui_texts.rs
+msgid "Swift"
+msgstr "Swift"
+
+#: gui/src/ui_texts.rs
+msgid "rclone"
+msgstr "rclone"
+
+#: gui/src/qml/DestinationDetailsForm.qml
 msgid "Path in the bucket"
 msgstr "Pfad im Bucket"
 
@@ -3568,6 +3664,18 @@ msgstr "S3-Secret-Key"
 #: i18n/src/messages.rs
 msgid "The server does not respond. Check the address and test again."
 msgstr "Der Server antwortet nicht. Prüfen Sie die Adresse und testen Sie erneut."
+
+#: i18n/src/messages.rs
+msgid "The repository URL must start with b2:, azure:, gs:, swift: or rclone:."
+msgstr "Die Repository-URL muss mit b2:, azure:, gs:, swift: oder rclone: beginnen."
+
+#: i18n/src/messages.rs
+msgid "Kestic does not pass the variable '%1' to restic. Use only A–Z, 0–9 and _, and no name Kestic sets itself (RESTIC_PASSWORD…, RESTIC_REPOSITORY…, PATH, HOME, LD_…)."
+msgstr "Kestic gibt die Variable «%1» nicht an restic weiter. Verwenden Sie nur A–Z, 0–9 und _ und keinen Namen, den Kestic selbst setzt (RESTIC_PASSWORD…, RESTIC_REPOSITORY…, PATH, HOME, LD_…)."
+
+#: i18n/src/messages.rs
+msgid "This destination needs the program '%1', which is not installed. Install it with 'sudo apt install %1' and test again."
+msgstr "Dieses Ziel braucht das Programm «%1», das nicht installiert ist. Installieren Sie es mit «sudo apt install %1» und testen Sie erneut."
 
 #: i18n/src/messages.rs
 msgid ""

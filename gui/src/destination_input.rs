@@ -3,7 +3,7 @@
 
 //! Fields of the destination form: the destination they make and its connection test.
 
-use crate::state_cache::{dbus_error_text, make_client, tr_text};
+use crate::state_cache::{dbus_error_text, i18n, make_client, tr_text};
 use crate::ui_texts::GuiText;
 use kestic_core::generic::{EnvVar, GenericInputError};
 use kestic_core::local_path::NotALocalPath;
@@ -100,6 +100,9 @@ fn generic_error(err: GenericInputError) -> DestinationInputError {
         GenericInputError::ReservedVariable(name) => {
             DestinationInputError::Coded(ConnectionTestCode::ReservedVariable, name)
         }
+        GenericInputError::MissingAddress(_) => DestinationInputError::Invalid(
+            i18n("Enter the address of the storage after the scheme.").to_string(),
+        ),
         other @ GenericInputError::InvalidVariable(_) => {
             DestinationInputError::Invalid(other.to_string())
         }
@@ -216,4 +219,53 @@ pub fn destination_from_fields(
         Destination::new(trimmed_name, dest_kind).map_err(input_error)?
     };
     Ok(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn code_of(err: Option<DestinationInputError>) -> Option<(ConnectionTestCode, String)> {
+        match err {
+            Some(DestinationInputError::Coded(code, detail)) => Some((code, detail)),
+            _ => None,
+        }
+    }
+
+    /// AC-M5-03-1 (c): the form check behind «Test Connection» (and so «Anlegen») refuses an
+    /// unknown scheme with `core`'s code and accepts the known ones.
+    #[test]
+    fn ac_m5_03_1_unknown_scheme_keeps_adding_locked() {
+        assert_eq!(
+            code_of(generic_fields_error("ftp:host:/x", "[]")),
+            Some((
+                ConnectionTestCode::UnsupportedScheme,
+                "ftp:host:/x".to_string()
+            )),
+            "(c) unknown scheme"
+        );
+        assert!(
+            generic_fields_error("gs:bucket:/laptop", "[]").is_none(),
+            "(c) known scheme"
+        );
+    }
+
+    /// AC-M5-03-7 (b): a reserved or invalid variable name keeps «Anlegen» locked, with the name
+    /// in the message.
+    #[test]
+    fn ac_m5_03_7_reserved_variable_keeps_adding_locked() {
+        for name in ["LD_PRELOAD", "HOME", "lower_case"] {
+            let env = format!(r#"[{{"name":"{name}","secret":false,"value":"x"}}]"#);
+            assert_eq!(
+                code_of(generic_fields_error("b2:bucket:laptop", &env)),
+                Some((ConnectionTestCode::ReservedVariable, name.to_string())),
+                "(b) {name}"
+            );
+        }
+        let ok = r#"[{"name":"B2_ACCOUNT_KEY","secret":true,"value":""}]"#;
+        assert!(
+            generic_fields_error("b2:bucket:laptop", ok).is_none(),
+            "(b) a valid secret variable"
+        );
+    }
 }
