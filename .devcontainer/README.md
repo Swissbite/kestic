@@ -12,7 +12,10 @@ system packages as the `verify` job.
 
 The agent talks to the outside world only through GitHub: it gets its
 assignment from an issue, reports progress as issue comments and delivers a
-pull request. A maintainer reviews and merges; the agent never does.
+pull request. A maintainer reviews and merges into `main`; the agent never
+does. In a milestone run the agent merges its own story pull requests into the
+milestone's integration branch under that milestone's rules
+([Milestone runs](#milestone-runs)).
 
 ## Isolation
 
@@ -142,6 +145,7 @@ such trailers.
 
 ```bash
 .devcontainer/kestic-agent.sh start 42      # container + agent on issue #42
+.devcontainer/kestic-agent.sh start 51 m4   # same, branch and pull request on m4 instead of main
 .devcontainer/kestic-agent.sh status        # resources and the agent's last terminal lines
 .devcontainer/kestic-agent.sh attach        # watch or step in (detach: Ctrl-b d)
 .devcontainer/kestic-agent.sh stop          # stop; volumes stay
@@ -164,6 +168,69 @@ gh pr checks <pr> --repo Swissbite/kestic
 
 `kestic-agent.sh exec just verify` runs any command in the clone, e.g. to check
 the container itself.
+
+## Milestone runs
+
+For a milestone (M4–M6) the agent works through the issues of a GitHub
+milestone on the integration branch `m<n>`, one issue after another, each in a
+fresh session. The rules (when it merges its own story pull request into
+`m<n>`, protected paths, questions to the maintainer) are in
+`.agents/skills/kestic-milestone-autonomy/SKILL.md` on that branch. The
+maintainer asks for a decision by the label `needs-maintainer` and answers in a
+comment.
+
+[kestic-agent-watch.sh](kestic-agent-watch.sh) runs on the host and makes one
+pass per call:
+
+```bash
+.devcontainer/kestic-agent-watch.sh "M4 Restore" m4
+```
+
+- The container is off or the agent is busy: nothing. The watcher never starts
+  the container; stopping it pauses the milestone.
+- The agent's current issue is open and not labelled `needs-maintainer`: it
+  stays the only one. A new comment on the issue or on its pull request
+  continues the idle session; a session that is gone (Claude Code exited, the
+  container restarted) is resumed.
+- Otherwise it starts the open issue of the milestone with the lowest number
+  that is not labelled `needs-maintainer` and has no open «blocked by» issue.
+  New issues therefore queue at the end; a «blocked by» link changes the order.
+
+Busy or idle comes from two Claude Code hooks in
+[managed-settings.json](managed-settings.json): a prompt starts a turn, the end
+of a turn marks the session idle (`kestic-agent.sh agent-state`). The agent
+writes with the maintainer's token, so it ends every comment with
+`<!-- kestic-agent -->`; only comments without that mark and newer than the
+agent's last turn count as new.
+
+Run it every five minutes with a systemd user timer (`<checkout>` is the
+host checkout; `gh` on the host only reads issues and pull requests):
+
+```ini
+# ~/.config/systemd/user/kestic-agent-watch.service
+[Service]
+Type=oneshot
+ExecStart=<checkout>/.devcontainer/kestic-agent-watch.sh "M4 Restore" m4
+
+# ~/.config/systemd/user/kestic-agent-watch.timer
+[Timer]
+OnActiveSec=1min
+OnUnitInactiveSec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now kestic-agent-watch.timer
+journalctl --user -u kestic-agent-watch      # what it started or continued
+```
+
+No ready-made tool fits: reacting to issue events with GitHub Actions needs
+either a self-hosted runner on this machine, which GitHub advises against for
+public repositories because pull requests from forks can run code on it, or the
+agent on GitHub's runners with an API key instead of this container; webhooks
+need an endpoint reachable from GitHub. A timer and `gh` need neither.
 
 ## Dev Container
 

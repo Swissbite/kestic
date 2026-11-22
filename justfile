@@ -23,13 +23,14 @@ verify:
     just _nextest
 
 # Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE, the merge
-# rule of the agent container
+# rule and the watcher of the agent container
 _static-checks:
     cargo fmt --all -- --check
     just _check-file-sizes
     cargo deny check
     reuse lint
     .devcontainer/test-gh-wrapper.sh
+    .devcontainer/test-kestic-agent-watch.sh
 
 # clippy without and with the test harness
 _clippy:

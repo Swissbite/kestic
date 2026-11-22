@@ -6,10 +6,13 @@
 #
 #   kestic-agent.sh build              build the image on the CI image of this checkout
 #   kestic-agent.sh login              one-time interactive Claude Code login
-#   kestic-agent.sh start <issue>      start the container and the agent on a GitHub issue
+#   kestic-agent.sh start <issue> [<base>]  start the container and the agent on a GitHub
+#                                      issue; branch and pull request on <base> (default main)
 #   kestic-agent.sh resume <issue>     the agent continues its last session (after stop)
 #   kestic-agent.sh nudge <text…>      type a message into the agent's Claude session
 #   kestic-agent.sh status [lines]     container state and the agent's last terminal lines
+#   kestic-agent.sh agent-state        `<state> <issue> <turn start>` for kestic-agent-watch.sh;
+#                                      state off when the container is not running
 #   kestic-agent.sh attach             attach to the agent's tmux session (detach: Ctrl-b d)
 #   kestic-agent.sh exec <command…>    run a command as kesticci in the clone (e.g. just verify)
 #   kestic-agent.sh shell              interactive shell as kesticci
@@ -100,9 +103,9 @@ case "$cmd" in
         podman exec -it "$NAME" "${DROP[@]}" kestic-agent login
         ;;
     start)
-        [[ "${1:-}" =~ ^[0-9]+$ ]] || die "usage: $0 start <issue number>"
+        [[ "${1:-}" =~ ^[0-9]+$ ]] || die "usage: $0 start <issue number> [<base branch>]"
         ensure_running
-        podman exec "$NAME" "${DROP[@]}" kestic-agent run "$1"
+        podman exec "$NAME" "${DROP[@]}" kestic-agent run "$1" "${2:-main}"
         ;;
     resume)
         [[ "${1:-}" =~ ^[0-9]+$ ]] || die "usage: $0 resume <issue number>"
@@ -119,6 +122,13 @@ case "$cmd" in
         if running; then
             podman stats --no-stream --format '{{.Name}}  CPU {{.CPUPerc}}  MEM {{.MemUsage}}  PIDs {{.PIDs}}' "$NAME"
             podman exec "$NAME" "${DROP[@]}" kestic-agent status "${1:-40}" || true
+        fi
+        ;;
+    agent-state)
+        if running; then
+            podman exec "$NAME" "${DROP[@]}" kestic-agent state
+        else
+            echo "off 0 0"
         fi
         ;;
     attach)
@@ -156,7 +166,7 @@ case "$cmd" in
         echo "removed; the secret $SECRET stays (podman secret rm $SECRET)"
         ;;
     *)
-        sed -n '5,18p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '5,21p' "$0" | sed 's/^# \{0,1\}//'
         exit 2
         ;;
 esac

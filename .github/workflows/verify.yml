@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, "m[0-9]", "m[0-9][0-9]"]
   workflow_dispatch:
   # After the weekly CI image rebuild on main (ci-image.yml): builds the cache
   # of the new week, so the first pull request of the week starts warm.
