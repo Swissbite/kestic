@@ -95,6 +95,7 @@ gui_texts! {
     Drive = "drive" => i18n_noop("Drive"),
     DriveWithLabel = "drive_with_label" => i18n_noop("Drive (%1)"),
     RestServer = "rest_server" => i18n_noop("REST Server"),
+    S3Compatible = "s3_compatible" => i18n_noop("S3-Compatible Storage"),
     ManualOnly = "manual_only" => i18n_noop("Manual only"),
     DeletedBackup = "deleted_backup" => i18n_noop("Deleted backup"),
     Daily = "daily" => i18n_noop("Daily"),

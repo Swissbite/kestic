@@ -196,7 +196,7 @@ pub mod qobject {
             fields_json: &QString,
             mode: &QString,
             repo_pw: &QString,
-            rest_pw: &QString,
+            backend_secrets_json: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -206,7 +206,7 @@ pub mod qobject {
             fields_json: &QString,
             mode: &QString,
             repo_pw: &QString,
-            rest_pw: &QString,
+            backend_secrets_json: &QString,
         ) -> QString;
 
         #[qinvokable]
@@ -217,7 +217,7 @@ pub mod qobject {
             fields_json: &QString,
             mode: &QString,
             repo_pw: &QString,
-            rest_pw: &QString,
+            backend_secrets_json: &QString,
             verify_connection: bool,
         ) -> bool;
 

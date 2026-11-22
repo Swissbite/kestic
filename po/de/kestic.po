@@ -3461,3 +3461,116 @@ msgid ""
 msgstr ""
 "Dieser Ordner liegt auf einer CIFS/SMB-Netzwerkfreigabe. restic rät von "
 "Repositorys auf solchen Freigaben ab."
+
+#: gui/src/ui_texts.rs
+msgid "S3-Compatible Storage"
+msgstr "S3-kompatibler Speicher"
+
+#: i18n/src/messages.rs
+msgid ""
+"The destination rejected the login. Check the access data and test again."
+msgstr ""
+"Das Ziel hat die Anmeldung abgelehnt. Prüfen Sie die Zugangsdaten und testen "
+"Sie erneut."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Which S3-compatible storage should be used?"
+msgstr "Welcher S3-kompatible Speicher soll verwendet werden?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Check Keys"
+msgstr "Schlüssel prüfen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Cloud Backup"
+msgstr "Cloud-Backup"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Endpoint:"
+msgstr "Endpoint:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Endpoint*:"
+msgstr "Endpoint*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 endpoint"
+msgstr "S3-Endpoint"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter the address with http:// or https://, without a path."
+msgstr "Geben Sie die Adresse mit http:// oder https:// ein, ohne Pfad."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Bucket:"
+msgstr "Bucket:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Bucket*:"
+msgstr "Bucket*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 bucket"
+msgstr "S3-Bucket"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use 3 to 63 lowercase letters, digits, dots or hyphens."
+msgstr "Verwenden Sie 3 bis 63 Kleinbuchstaben, Ziffern, Punkte oder Bindestriche."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use no spaces, quotes, #, ? or %."
+msgstr "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder %."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter the access key and the secret key."
+msgstr "Geben Sie den Access-Key und den Secret-Key ein."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Path in the bucket"
+msgstr "Pfad im Bucket"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Region:"
+msgstr "Region:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 region"
+msgstr "S3-Region"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Access key:"
+msgstr "Access-Key:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Access key*:"
+msgstr "Access-Key*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Leave empty to keep the saved key"
+msgstr "Leer lassen, um den gespeicherten Schlüssel zu behalten"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 access key"
+msgstr "S3-Access-Key"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Secret key:"
+msgstr "Secret-Key:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Secret key*:"
+msgstr "Secret-Key*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 secret key"
+msgstr "S3-Secret-Key"
+
+#: i18n/src/messages.rs
+msgid "The server does not respond. Check the address and test again."
+msgstr "Der Server antwortet nicht. Prüfen Sie die Adresse und testen Sie erneut."
+
+#: i18n/src/messages.rs
+msgid ""
+"Bucket '%1' does not exist yet. Kestic creates it when the destination is "
+"added."
+msgstr "Bucket «%1» gibt es noch nicht; Kestic legt ihn beim Anlegen des Ziels an."

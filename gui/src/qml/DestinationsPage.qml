@@ -102,7 +102,7 @@ Kirigami.ScrollablePage {
                 spacing: Kirigami.Units.mediumSpacing
 
                 Kirigami.Icon {
-                    source: row.kindName === "rest" ? "network-server" : "folder"
+                    source: row.kindName === "rest" ? "network-server" : row.kindName === "s3" ? "folder-cloud" : "folder"
                     Layout.preferredWidth: Kirigami.Units.iconSizes.medium
                     Layout.preferredHeight: Kirigami.Units.iconSizes.medium
                 }

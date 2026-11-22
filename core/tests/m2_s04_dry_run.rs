@@ -333,7 +333,7 @@ fn ac_m2_04_3_stopped_rest_server_preflight_fails_within_15s_without_spawning_re
         &dest,
         DestinationSetupMode::ConnectExisting,
         &repo_pw,
-        Some(&rest_pw),
+        &kestic_core::backend_credentials::BackendCredentials::rest(Some(rest_pw.clone())),
         &real_runtime,
     )
     .expect("connect REST repo");

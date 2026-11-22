@@ -136,7 +136,7 @@ WizardPage {
                     destDraft.fieldsJson(),
                     destDraft.setupMode,
                     destDraft.repoPassword,
-                    destDraft.restPassword
+                    destDraft.backendSecretsJson()
                 );
                 if (newDestId === "") {
                     saveErrorText = appBackend.last_action_error;

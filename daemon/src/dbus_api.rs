@@ -4,6 +4,9 @@
 //! Versioned D-Bus API v1 (`net.daester.Kestic1`) shared DTOs, error types, and client proxy
 //! (`docs/spec/dbus-api.md`).
 
+use kestic_core::backend_credentials::{
+    BackendCredentials, SECRET_KIND_REST, SECRET_KIND_S3_ACCESS_KEY, SECRET_KIND_S3_SECRET_KEY,
+};
 use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult};
 use kestic_core::config::AppConfig;
 use kestic_core::maintenance::PrunePreviewSummary;
@@ -14,6 +17,7 @@ use kestic_core::model::{
 use kestic_core::provider::MIN_RESTIC_VERSION;
 use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
+use kestic_core::secrets::SecretValue;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
     PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
@@ -381,6 +385,74 @@ pub struct ConnectionTestResultDto {
     pub notes: Vec<ConnectionNoteCode>,
 }
 
+/// `backend_secrets_json` of `TestDestinationConnection`, `AddDestination` and
+/// `UpdateDestination`: the backend credentials entered in the form. An empty field keeps the
+/// saved value when editing. The values go only into the password store and into the
+/// environment of restic.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackendSecrets {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub rest_password: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub s3_access_key_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub s3_secret_access_key: String,
+}
+
+impl std::fmt::Debug for BackendSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BackendSecrets([REDACTED])")
+    }
+}
+
+impl BackendSecrets {
+    /// Only the REST server password.
+    pub fn rest(password: &str) -> Self {
+        Self {
+            rest_password: password.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Only the S3 keys.
+    pub fn s3(access_key_id: &str, secret_access_key: &str) -> Self {
+        Self {
+            s3_access_key_id: access_key_id.to_string(),
+            s3_secret_access_key: secret_access_key.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Parses `backend_secrets_json`; an empty string means no credentials.
+    pub fn parse(json: &str) -> Result<Self, String> {
+        if json.trim().is_empty() {
+            return Ok(Self::default());
+        }
+        // serde's message can quote the input, which holds secrets: only say where it failed.
+        serde_json::from_str(json).map_err(|e| {
+            format!(
+                "invalid backend secrets JSON ({:?} error at line {} column {})",
+                e.classify(),
+                e.line(),
+                e.column()
+            )
+        })
+    }
+
+    /// The entered values by password store kind; empty fields are left out.
+    pub fn credentials(&self) -> BackendCredentials {
+        let mut creds = BackendCredentials::none();
+        for (kind, value) in [
+            (SECRET_KIND_REST, &self.rest_password),
+            (SECRET_KIND_S3_ACCESS_KEY, &self.s3_access_key_id),
+            (SECRET_KIND_S3_SECRET_KEY, &self.s3_secret_access_key),
+        ] {
+            creds.set(kind, Some(SecretValue::from_str_secret(value.as_str())));
+        }
+        creds
+    }
+}
+
 /// Entry of `ListRemovableDrives`: a mounted removable drive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemovableDriveDto {
@@ -594,12 +666,13 @@ impl KesticClient {
         dest: &Destination,
         mode: &str,
         repo_password: &str,
-        rest_password: &str,
+        backend: &BackendSecrets,
     ) -> Result<ConnectionTestResultDto, KesticDbusError> {
         let json = to_json_arg(dest)?;
+        let secrets = to_json_arg(backend)?;
         self.call_json(
             "TestDestinationConnection",
-            &(json.as_str(), mode, repo_password, rest_password),
+            &(json.as_str(), mode, repo_password, secrets.as_str()),
         )
     }
 
@@ -608,12 +681,13 @@ impl KesticClient {
         dest: &Destination,
         mode: &str,
         repo_password: &str,
-        rest_password: &str,
+        backend: &BackendSecrets,
     ) -> zbus::Result<String> {
         let json = to_failure_arg("dest", dest)?;
+        let secrets = to_failure_arg("backend secrets", backend)?;
         self.call(
             "AddDestination",
-            &(json.as_str(), mode, repo_password, rest_password),
+            &(json.as_str(), mode, repo_password, secrets.as_str()),
         )
     }
 
@@ -622,17 +696,18 @@ impl KesticClient {
         dest: &Destination,
         mode: &str,
         repo_password: &str,
-        rest_password: &str,
+        backend: &BackendSecrets,
         verify_connection: bool,
     ) -> zbus::Result<()> {
         let json = to_failure_arg("dest", dest)?;
+        let secrets = to_failure_arg("backend secrets", backend)?;
         self.call(
             "UpdateDestination",
             &(
                 json.as_str(),
                 mode,
                 repo_password,
-                rest_password,
+                secrets.as_str(),
                 verify_connection,
             ),
         )
@@ -921,4 +996,26 @@ pub struct ExcludeRulePreviewDto {
     pub is_dir: bool,
     pub rule: String,
     pub is_expert_rule: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A malformed `backend_secrets_json` (an old GUI sent the REST password as a bare string)
+    /// is refused without quoting the value in the error.
+    #[test]
+    fn invalid_backend_secrets_error_does_not_quote_the_input() {
+        for (input, value) in [
+            ("\"hunter2-secret\"", "hunter2-secret"),
+            ("{\"rest_password\": 4711}", "4711"),
+        ] {
+            let err = BackendSecrets::parse(input).expect_err("malformed input is refused");
+            assert!(
+                err.starts_with("invalid backend secrets JSON"),
+                "the error says what failed"
+            );
+            assert!(!err.contains(value), "the error repeats the input");
+        }
+    }
 }

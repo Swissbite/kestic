@@ -26,7 +26,7 @@ ColumnLayout {
     property string openedCard: ""
     property bool commandCopied: false
     // Cards whose details form exists; the other ready cards can not be chosen yet.
-    readonly property var cardsWithForm: ["drive", "folder", "rest"]
+    readonly property var cardsWithForm: ["drive", "folder", "rest", "cloud"]
     readonly property var readyCards: cards.filter(function(c) { return c.ready; })
     readonly property var cardsNeedingInstallation: cards.filter(function(c) { return !c.ready; })
     // The chosen card is shown, ready and has a form.
@@ -56,7 +56,7 @@ ColumnLayout {
 
     function choose(card) {
         chooser.draft.typeCard = card;
-        chooser.draft.kind = card === "rest" ? "rest" : "local";
+        chooser.draft.kind = card === "rest" ? "rest" : card === "cloud" ? "s3" : "local";
         chooser.draft.connectionVerified = false;
     }
 
@@ -142,6 +142,23 @@ ColumnLayout {
             Accessible.name: text
             Accessible.description: subtitle
             onClicked: chooser.choose(modelData.card)
+        }
+    }
+
+    // «Cloud Storage»: the kind of cloud storage.
+    ColumnLayout {
+        objectName: chooser.namePrefix + "CloudServiceChoice"
+        visible: chooser.draft.typeCard === "cloud"
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.gridUnit * 2
+        spacing: Kirigami.Units.smallSpacing
+
+        Controls.RadioButton {
+            objectName: chooser.namePrefix + "CloudService_s3"
+            text: Texts.label("s3_compatible")
+            checked: chooser.draft.kind === "s3"
+            Accessible.name: text
+            onClicked: chooser.draft.kind = "s3"
         }
     }
 

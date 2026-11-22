@@ -236,7 +236,7 @@ impl ResticRig {
             &dest,
             kestic_core::destination::DestinationSetupMode::ConnectExisting,
             &kestic_core::secrets::SecretValue::from_str_secret(&repo.password),
-            None,
+            &kestic_core::backend_credentials::BackendCredentials::none(),
             &self.runtime(),
         )
         .unwrap_or_else(|e| {

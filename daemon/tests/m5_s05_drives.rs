@@ -14,8 +14,10 @@ use common::m3::{M3Rig, latest_variant};
 use common::run_isolated_test;
 use kestic_core::model::{Destination, DestinationKind};
 use kestic_core::mount::{FakeMountInspector, FakeMountState, MountInspector};
+use kestic_daemon::dbus_api::BackendSecrets;
 use kestic_daemon::dbus_api::RemovableDriveDto;
 use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode};
+use kestic_test_support::password::strong_password;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -126,7 +128,7 @@ fn m5_05_3_connection_test_reports_network_address() {
             let tested = rig
                 .daemon
                 .client
-                .test_destination_connection(&dest, "init", "", "")
+                .test_destination_connection(&dest, "init", "", &BackendSecrets::default())
                 .expect("TestDestinationConnection");
             assert!(!tested.ok, "network address accepted: {tested:?}");
             assert_eq!(
@@ -175,7 +177,7 @@ fn ac_m5_05_2_cifs_folder_gets_note_and_can_be_added() {
                 .expect("destination");
 
             let tested = client
-                .test_destination_connection(&dest, "init", "", "")
+                .test_destination_connection(&dest, "init", "", &BackendSecrets::default())
                 .expect("TestDestinationConnection");
             assert!(tested.ok, "connection test failed: {tested:?}");
             // (a)
@@ -187,7 +189,12 @@ fn ac_m5_05_2_cifs_folder_gets_note_and_can_be_added() {
 
             // (b)
             let id = client
-                .add_destination(&dest, "init", "correct horse battery", "")
+                .add_destination(
+                    &dest,
+                    "init",
+                    &strong_password(),
+                    &BackendSecrets::default(),
+                )
                 .expect("(b) AddDestination despite the note");
             let state = client.get_state().expect("GetState");
             assert!(

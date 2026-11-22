@@ -15,6 +15,7 @@ use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Source,
 };
 use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_daemon::dbus_api::BackendSecrets;
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, OverallStatusDto,
 };
@@ -107,7 +108,7 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
             .expect("valid dest");
             let repo_password = strong_password();
             let dest_id = client
-                .add_destination(&dest, "init", &repo_password, "")
+                .add_destination(&dest, "init", &repo_password, &BackendSecrets::default())
                 .expect("AddDestination");
             assert_eq!(dest_id, dest.id.as_str());
 
@@ -378,7 +379,13 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
                 username: Some("alice".to_string()),
             };
             let upd_dest_err = client
-                .update_destination(&bad_dest, "connect", &strong_password(), "", true)
+                .update_destination(
+                    &bad_dest,
+                    "connect",
+                    &strong_password(),
+                    &BackendSecrets::default(),
+                    true,
+                )
                 .expect_err("UpdateDestination with unreachable target must fail");
             assert_dbus_error_name(
                 &upd_dest_err,
@@ -562,7 +569,12 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             .expect("dup_dest");
 
             let test_dup = client
-                .test_destination_connection(&dup_dest, "connect", &repo_password, "")
+                .test_destination_connection(
+                    &dup_dest,
+                    "connect",
+                    &repo_password,
+                    &BackendSecrets::default(),
+                )
                 .expect("TestDestinationConnection dup");
             assert!(!test_dup.ok, "duplicate location test must fail");
             assert_eq!(
@@ -571,7 +583,12 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             );
 
             let add_dup_err = client
-                .add_destination(&dup_dest, "connect", &repo_password, "")
+                .add_destination(
+                    &dup_dest,
+                    "connect",
+                    &repo_password,
+                    &BackendSecrets::default(),
+                )
                 .expect_err("AddDestination with duplicate location must fail");
             assert_dbus_error_name(&add_dup_err, "net.daester.Kestic.Error.DuplicateLocation");
             assert_eq!(
@@ -594,7 +611,13 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
                 path: PathBuf::from(format!("{}/", repo_dir.display())),
             };
             let upd_dup_err = client
-                .update_destination(&dest2_collision, "connect", "", "", true)
+                .update_destination(
+                    &dest2_collision,
+                    "connect",
+                    "",
+                    &BackendSecrets::default(),
+                    true,
+                )
                 .expect_err("UpdateDestination into dest1 location must fail");
             assert_dbus_error_name(&upd_dup_err, "net.daester.Kestic.Error.DuplicateLocation");
 
@@ -605,7 +628,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             // Testing existing dest1 in `connect` mode must detect missing repo (`repository_missing`),
             // while testing in `init` mode with empty password uses the stored secret and succeeds.
             let check_missing = client
-                .test_destination_connection(&dest1, "connect", "", "")
+                .test_destination_connection(&dest1, "connect", "", &BackendSecrets::default())
                 .expect("TestDestinationConnection connect on empty dir");
             assert!(!check_missing.ok);
             assert_eq!(
@@ -614,7 +637,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             );
 
             let check_reinit = client
-                .test_destination_connection(&dest1, "init", "", "")
+                .test_destination_connection(&dest1, "init", "", &BackendSecrets::default())
                 .expect("TestDestinationConnection init on empty dir");
             assert!(
                 check_reinit.ok,
@@ -624,7 +647,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             // UpdateDestination with mode="init" initializes the repo in the empty folder while
             // keeping DestinationId, stored secrets, and attached backup intact.
             client
-                .update_destination(&dest1, "init", "", "", true)
+                .update_destination(&dest1, "init", "", &BackendSecrets::default(), true)
                 .expect("UpdateDestination init on empty folder");
             assert!(
                 repo_dir.join("config").is_file(),

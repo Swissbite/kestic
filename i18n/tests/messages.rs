@@ -410,7 +410,10 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
             Some("restic is unavailable or too old."),
         ),
         (C::WrongPassword, Some("Saved password does not match")),
-        (C::AuthFailed, Some("Login to the destination failed")),
+        (
+            C::AuthFailed,
+            Some("The destination rejected the login. Check the access data and test again."),
+        ),
         (C::RepositoryMissing, Some("Repository is missing")),
         (C::CommandFailed, None),
         (C::DaemonUnreachable, None),
@@ -420,17 +423,29 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
                 "'%1' is a network address, not a folder on this computer. restic cannot use it; choose a local or mounted folder.",
             ),
         ),
+        (
+            C::NotResponding,
+            Some("The server does not respond. Check the address and test again."),
+        ),
     ];
     assert_table(&C::ALL, &connection, |c| c.text("x"));
 
-    let notes = [(
-        ConnectionNoteCode::CifsShare,
-        Some(
-            "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
+    let notes = [
+        (
+            ConnectionNoteCode::CifsShare,
+            Some(
+                "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
+            ),
         ),
-    )];
+        (
+            ConnectionNoteCode::BucketMissing,
+            Some(
+                "Bucket '%1' does not exist yet. Kestic creates it when the destination is added.",
+            ),
+        ),
+    ];
     assert_table(&ConnectionNoteCode::ALL, &notes, |n| {
-        UiText::Message(n.message())
+        UiText::Message(n.message("x"))
     });
 
     use RecoveryAction as A;

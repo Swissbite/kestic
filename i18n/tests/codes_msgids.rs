@@ -132,7 +132,7 @@ fn all_messages() -> Vec<(String, Message)> {
         }
     }
     for note in ConnectionNoteCode::ALL {
-        push(format!("{note:?}"), note.message());
+        push(format!("{note:?}"), note.message("x"));
     }
     if let UiText::Message(m) = connection_test_text(true, None, "") {
         push("reachable".into(), m);

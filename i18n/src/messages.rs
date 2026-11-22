@@ -376,7 +376,9 @@ impl ConnectionTestCode {
             Self::SecretStoreLocked => ErrorKind::SecretStoreLocked.message(None, false),
             Self::ResticUnavailable => ErrorKind::ResticUnavailable.message(None, false),
             Self::WrongPassword => ErrorKind::WrongPassword.message(None, false),
-            Self::AuthFailed => ErrorKind::AuthFailed.message(None, false),
+            Self::AuthFailed => Message::new(i18n_noop(
+                "The destination rejected the login. Check the access data and test again.",
+            )),
             Self::RepositoryMissing => ErrorKind::RepoMissing.message(None, false),
             Self::NotALocalPath => Message::with_args(
                 i18n_noop(
@@ -384,6 +386,9 @@ impl ConnectionTestCode {
                 ),
                 &[detail],
             ),
+            Self::NotResponding => Message::new(i18n_noop(
+                "The server does not respond. Check the address and test again.",
+            )),
             Self::InvalidInput | Self::Internal | Self::CommandFailed | Self::DaemonUnreachable => {
                 return UiText::Raw(detail.to_string());
             }
@@ -393,12 +398,27 @@ impl ConnectionTestCode {
 }
 
 impl ConnectionNoteCode {
-    /// Warning shown with a successful connection test.
-    pub fn message(self) -> Message {
+    /// Text shown with a successful connection test; `bucket` names the S3 bucket.
+    pub fn message(self, bucket: &str) -> Message {
         match self {
             Self::CifsShare => Message::new(i18n_noop(
                 "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
             )),
+            Self::BucketMissing => Message::with_args(
+                i18n_noop(
+                    "Bucket '%1' does not exist yet. Kestic creates it when the destination is added.",
+                ),
+                &[bucket],
+            ),
+        }
+    }
+
+    /// Whether the user has to confirm the note before the destination can be added; otherwise
+    /// it is part of the test result.
+    pub fn needs_confirmation(self) -> bool {
+        match self {
+            Self::CifsShare => true,
+            Self::BucketMissing => false,
         }
     }
 }

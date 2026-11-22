@@ -150,9 +150,9 @@ impl KesticDbusV1Service {
         dest_json: &str,
         mode: &str,
         repo_password: &str,
-        rest_password: &str,
+        backend_secrets_json: &str,
     ) -> Result<String, KesticDbusError> {
-        let form = DestinationForm::new(dest_json, mode, repo_password, rest_password);
+        let form = DestinationForm::new(dest_json, mode, repo_password, backend_secrets_json);
         let res = self
             .blocking(move |core| {
                 test_destination_connection_unlocked(
@@ -160,7 +160,7 @@ impl KesticDbusV1Service {
                     &form.dest_json,
                     &form.mode,
                     &form.repo_password,
-                    &form.rest_password,
+                    &form.backend_secrets_json,
                 )
             })
             .await;
@@ -173,9 +173,9 @@ impl KesticDbusV1Service {
         dest_json: &str,
         mode: &str,
         repo_password: &str,
-        rest_password: &str,
+        backend_secrets_json: &str,
     ) -> Result<String, KesticDbusError> {
-        let form = DestinationForm::new(dest_json, mode, repo_password, rest_password);
+        let form = DestinationForm::new(dest_json, mode, repo_password, backend_secrets_json);
         let (new_id, conn_opt, state_dto, tray_state) = self
             .blocking(move |core| {
                 add_destination_unlocked(
@@ -183,7 +183,7 @@ impl KesticDbusV1Service {
                     &form.dest_json,
                     &form.mode,
                     &form.repo_password,
-                    &form.rest_password,
+                    &form.backend_secrets_json,
                 )
             })
             .await?;
@@ -198,10 +198,10 @@ impl KesticDbusV1Service {
         dest_json: &str,
         mode: &str,
         repo_password: &str,
-        rest_password: &str,
+        backend_secrets_json: &str,
         verify_connection: bool,
     ) -> Result<(), KesticDbusError> {
-        let form = DestinationForm::new(dest_json, mode, repo_password, rest_password);
+        let form = DestinationForm::new(dest_json, mode, repo_password, backend_secrets_json);
         let (conn_opt, state_dto, tray_state) = self
             .blocking(move |core| {
                 update_destination_unlocked(
@@ -209,7 +209,7 @@ impl KesticDbusV1Service {
                     &form.dest_json,
                     &form.mode,
                     &form.repo_password,
-                    &form.rest_password,
+                    &form.backend_secrets_json,
                     verify_connection,
                 )
             })
@@ -734,16 +734,16 @@ struct DestinationForm {
     dest_json: String,
     mode: String,
     repo_password: String,
-    rest_password: String,
+    backend_secrets_json: String,
 }
 
 impl DestinationForm {
-    fn new(dest_json: &str, mode: &str, repo_password: &str, rest_password: &str) -> Self {
+    fn new(dest_json: &str, mode: &str, repo_password: &str, backend_secrets_json: &str) -> Self {
         Self {
             dest_json: dest_json.to_string(),
             mode: mode.to_string(),
             repo_password: repo_password.to_string(),
-            rest_password: rest_password.to_string(),
+            backend_secrets_json: backend_secrets_json.to_string(),
         }
     }
 }

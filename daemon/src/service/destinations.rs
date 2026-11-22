@@ -10,15 +10,17 @@ use super::error::{
 };
 use super::state::DaemonCore;
 use crate::dbus_api::{
-    BackupSnapshotsDto, ConnectionTestResultDto, DaemonStateDto, PreviousDestinationSnapshotsDto,
-    SnapshotSummaryDto,
+    BackendSecrets, BackupSnapshotsDto, ConnectionTestResultDto, DaemonStateDto,
+    PreviousDestinationSnapshotsDto, SnapshotSummaryDto,
 };
 use crate::tray::KesticTrayState;
+use kestic_core::backend_credentials::BackendCredentials;
 use kestic_core::backup::list_snapshots_for_backup;
 use kestic_core::clock::Clock;
 use kestic_core::config::ConfigError;
 use kestic_core::destination::{
-    DEFAULT_CONNECT_TIMEOUT, DestinationError, DestinationSetupMode, preflight_check_destination,
+    DEFAULT_CONNECT_TIMEOUT, DestinationError, DestinationSetupMode, RepositoryProbe,
+    check_existing_repository, preflight_check_destination, probe_repository,
     remove_destination_secrets, setup_destination, verify_and_update_stored_password,
 };
 use kestic_core::local_path::{NotALocalPath, connection_notes};
@@ -27,11 +29,11 @@ use kestic_core::model::{
     ResticProvider, RunId,
 };
 use kestic_core::provider::resolve_and_check;
-use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO, SECRET_KIND_REST};
+use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO};
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
 use kestic_core::snapshot::ResticSnapshot;
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::ConnectionTestCode;
+use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode};
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -133,7 +135,7 @@ struct DestinationTestInputs<'a> {
     dest: &'a Destination,
     mode: &'a str,
     repo_password: &'a str,
-    rest_password: &'a str,
+    backend: &'a BackendSecrets,
     is_existing: bool,
     dup_name: Option<&'a str>,
     provider: &'a ResticProvider,
@@ -162,15 +164,94 @@ fn test_destination_connection_impl(inputs: DestinationTestInputs<'_>) -> Connec
     };
 
     if matches!(setup_mode, DestinationSetupMode::InitNew) {
-        return check_init_new_destination(
+        let local_result = check_init_new_destination(
             inputs.dest,
             inputs.is_existing,
             inputs.repo_password,
             inputs.secret_store,
         );
+        if !local_result.ok || !inputs.dest.kind.probes_login_before_init() {
+            return local_result;
+        }
+        return check_login_before_init(&inputs);
     }
 
     check_connect_existing_destination(&inputs)
+}
+
+/// The test of a new repository on a backend with a login (S3): checks the login and that no
+/// repository is there yet, without creating anything.
+fn check_login_before_init(inputs: &DestinationTestInputs<'_>) -> ConnectionTestResultDto {
+    let backend = match resolve_backend_credentials(inputs) {
+        Ok(creds) => creds,
+        Err(dto) => return dto,
+    };
+    let resolved = match resolve_and_check(inputs.provider) {
+        Ok(r) => r,
+        Err(e) => return test_failure(ConnectionTestCode::ResticUnavailable, e.to_string()),
+    };
+    let temp_store = InMemorySecretStore::new();
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: inputs.kestic_binary,
+        secret_store: &temp_store,
+        clock: inputs.clock,
+        cache_dir: None,
+    };
+    match probe_repository(inputs.dest, &backend, &runtime) {
+        Ok(RepositoryProbe::Missing) => test_ok(),
+        Ok(RepositoryProbe::BucketMissing) => ConnectionTestResultDto {
+            notes: vec![ConnectionNoteCode::BucketMissing],
+            ..test_ok()
+        },
+        Ok(RepositoryProbe::Exists) => {
+            test_failure(ConnectionTestCode::RepositoryExists, String::new())
+        }
+        Err(err) => destination_error_result(err),
+    }
+}
+
+/// The first S3 key that is missing; the REST password stays optional because a REST server may
+/// accept a user name without one.
+fn missing_login(creds: &BackendCredentials, kind: &DestinationKind) -> Option<&'static str> {
+    if matches!(kind, DestinationKind::S3 { .. }) {
+        creds.first_missing(kind)
+    } else {
+        None
+    }
+}
+
+/// The connection test result of a failed restic probe.
+fn destination_error_result(err: DestinationError) -> ConnectionTestResultDto {
+    let kind = match err {
+        DestinationError::WrongPassword => ConnectionTestCode::WrongPassword,
+        DestinationError::AuthFailed(_) => ConnectionTestCode::AuthFailed,
+        DestinationError::RepositoryMissing(_) => ConnectionTestCode::RepositoryMissing,
+        DestinationError::Unreachable(_) => ConnectionTestCode::DestinationUnreachable,
+        DestinationError::NotResponding(_) => ConnectionTestCode::NotResponding,
+        _ => ConnectionTestCode::CommandFailed,
+    };
+    test_failure(kind, err.to_string())
+}
+
+/// The backend credentials entered in the form, for an existing destination completed with the
+/// saved ones; every credential the backend needs must be there.
+fn resolve_backend_credentials(
+    inputs: &DestinationTestInputs<'_>,
+) -> Result<BackendCredentials, ConnectionTestResultDto> {
+    let mut creds = inputs.backend.credentials();
+    if inputs.is_existing {
+        creds = creds
+            .or_stored(inputs.dest, inputs.secret_store)
+            .map_err(secret_error_result)?;
+    }
+    if let Some(kind) = missing_login(&creds, &inputs.dest.kind) {
+        return Err(test_failure(
+            ConnectionTestCode::InvalidInput,
+            format!("missing backend credential `{kind}`"),
+        ));
+    }
+    Ok(creds)
 }
 
 fn check_init_new_destination(
@@ -221,47 +302,42 @@ fn check_connect_existing_destination(
         Err(dto) => return dto,
     };
 
-    if let Some(repo_pw) = effective_repo_pw {
-        let effective_rest_pw = match resolve_stored_rest_password(
-            inputs.dest,
-            inputs.is_existing,
-            inputs.rest_password,
-            inputs.secret_store,
-        ) {
-            Ok(pw) => pw,
-            Err(dto) => return dto,
-        };
-
-        let resolved = match resolve_and_check(inputs.provider) {
-            Ok(r) => r,
-            Err(e) => {
-                return test_failure(ConnectionTestCode::ResticUnavailable, e.to_string());
-            }
-        };
-        let temp_store = InMemorySecretStore::new();
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: inputs.kestic_binary,
-            secret_store: &temp_store,
-            clock: inputs.clock,
-            cache_dir: None,
-        };
-        if let Err(err) = setup_destination(
-            inputs.dest,
-            DestinationSetupMode::ConnectExisting,
-            &repo_pw,
-            effective_rest_pw.as_ref(),
-            &runtime,
-        ) {
-            let kind = match err {
-                DestinationError::WrongPassword => ConnectionTestCode::WrongPassword,
-                DestinationError::AuthFailed(_) => ConnectionTestCode::AuthFailed,
-                DestinationError::RepositoryMissing(_) => ConnectionTestCode::RepositoryMissing,
-                DestinationError::Unreachable(_) => ConnectionTestCode::DestinationUnreachable,
-                _ => ConnectionTestCode::CommandFailed,
-            };
-            return test_failure(kind, err.to_string());
+    // Without a repository password only a backend whose login can be checked on its own (S3)
+    // runs restic; the others are checked when the password is entered.
+    if effective_repo_pw.is_none() && !inputs.dest.kind.probes_login_before_init() {
+        return test_ok();
+    }
+    let backend = match resolve_backend_credentials(inputs) {
+        Ok(creds) => creds,
+        Err(dto) => return dto,
+    };
+    let resolved = match resolve_and_check(inputs.provider) {
+        Ok(r) => r,
+        Err(e) => {
+            return test_failure(ConnectionTestCode::ResticUnavailable, e.to_string());
         }
+    };
+    let temp_store = InMemorySecretStore::new();
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: inputs.kestic_binary,
+        secret_store: &temp_store,
+        clock: inputs.clock,
+        cache_dir: None,
+    };
+    match effective_repo_pw {
+        Some(repo_pw) => {
+            if let Err(err) = check_existing_repository(inputs.dest, &repo_pw, &backend, &runtime) {
+                return destination_error_result(err);
+            }
+        }
+        None => match probe_repository(inputs.dest, &backend, &runtime) {
+            Ok(RepositoryProbe::Exists) => {}
+            Ok(RepositoryProbe::Missing | RepositoryProbe::BucketMissing) => {
+                return test_failure(ConnectionTestCode::RepositoryMissing, String::new());
+            }
+            Err(err) => return destination_error_result(err),
+        },
     }
 
     test_ok()
@@ -306,18 +382,6 @@ fn resolve_stored_repo_password(
         Ok(pw) => Ok(pw),
         Err(err) => Err(secret_error_result(err)),
     }
-}
-
-fn resolve_stored_rest_password(
-    dest: &Destination,
-    is_existing: bool,
-    rest_password: &str,
-    secret_store: &dyn SecretStore,
-) -> Result<Option<SecretValue>, ConnectionTestResultDto> {
-    if rest_password.is_empty() && !(is_existing && dest.kind.uses_rest_credentials()) {
-        return Ok(None);
-    }
-    stored_secret(secret_store, dest, SECRET_KIND_REST, rest_password).map_err(secret_error_result)
 }
 
 fn collect_backup_snapshots(
@@ -394,7 +458,7 @@ pub(crate) fn add_destination_unlocked(
     dest_json: &str,
     mode: &str,
     repo_password: &str,
-    rest_password: &str,
+    backend_secrets_json: &str,
 ) -> Result<(String, Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
     let mut dest: Destination = serde_json::from_str(dest_json)
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid destination JSON: {e}")))?;
@@ -404,6 +468,14 @@ pub(crate) fn add_destination_unlocked(
             "repository password must not be empty".to_string(),
         ));
     }
+    let backend = BackendSecrets::parse(backend_secrets_json)
+        .map_err(KesticServiceErr::InvalidInput)?
+        .credentials();
+    if let Some(kind) = missing_login(&backend, &dest.kind) {
+        return Err(KesticServiceErr::InvalidInput(format!(
+            "missing backend credential `{kind}`"
+        )));
+    }
 
     let deps = {
         let guard = shared.lock_unpoisoned();
@@ -411,10 +483,8 @@ pub(crate) fn add_destination_unlocked(
             dest.id =
                 DestinationId::generate_unique(guard.config.destinations.iter().map(|d| &d.id))
                     .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
-            dest.secrets = kestic_core::model::DestinationSecretRefs::for_destination(
-                &dest.id,
-                dest.kind.uses_rest_credentials(),
-            );
+            dest.secrets =
+                kestic_core::model::DestinationSecretRefs::for_destination(&dest.id, &dest.kind);
         }
         dest.validate()
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
@@ -426,12 +496,11 @@ pub(crate) fn add_destination_unlocked(
 
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
     let repo_pw = SecretValue::from_str_secret(repo_password);
-    let rest_pw = (!rest_password.is_empty()).then(|| SecretValue::from_str_secret(rest_password));
     setup_destination(
         &dest,
         setup_mode,
         &repo_pw,
-        rest_pw.as_ref(),
+        &backend,
         &deps.runtime(&resolved),
     )
     .map_err(map_destination_err)?;
@@ -454,11 +523,14 @@ pub(crate) fn update_destination_unlocked(
     dest_json: &str,
     mode: &str,
     repo_password: &str,
-    rest_password: &str,
+    backend_secrets_json: &str,
     verify_connection: bool,
 ) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
     let updated: Destination = serde_json::from_str(dest_json)
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid destination JSON: {e}")))?;
+    let entered_backend = BackendSecrets::parse(backend_secrets_json)
+        .map_err(KesticServiceErr::InvalidInput)?
+        .credentials();
     updated
         .validate()
         .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
@@ -490,23 +562,19 @@ pub(crate) fn update_destination_unlocked(
         .ok_or_else(|| {
             KesticServiceErr::InvalidInput("missing stored repository password".to_string())
         })?;
-        let effective_rest_pw = if rest_password.is_empty() && !updated.kind.uses_rest_credentials()
-        {
-            None
-        } else {
-            stored_secret(
-                deps.secret_store.as_ref(),
-                &updated,
-                SECRET_KIND_REST,
-                rest_password,
-            )
-            .map_err(map_secret_err)?
-        };
+        let backend = entered_backend
+            .or_stored(&updated, deps.secret_store.as_ref())
+            .map_err(map_secret_err)?;
+        if let Some(kind) = missing_login(&backend, &updated.kind) {
+            return Err(KesticServiceErr::InvalidInput(format!(
+                "missing backend credential `{kind}`"
+            )));
+        }
         setup_destination(
             &updated,
             setup_mode,
             &effective_repo_pw,
-            effective_rest_pw.as_ref(),
+            &backend,
             &deps.runtime(&resolved),
         )
         .map_err(map_destination_err)?;
@@ -575,11 +643,15 @@ pub(crate) fn test_destination_connection_unlocked(
     dest_json: &str,
     mode: &str,
     repo_password: &str,
-    rest_password: &str,
+    backend_secrets_json: &str,
 ) -> ConnectionTestResultDto {
     let dest = match parse_and_validate_dest(dest_json) {
         Ok(d) => d,
         Err(dto) => return dto,
+    };
+    let backend = match BackendSecrets::parse(backend_secrets_json) {
+        Ok(b) => b,
+        Err(e) => return test_failure(ConnectionTestCode::InvalidInput, e),
     };
 
     let (is_existing, dup_name, deps, mount_inspector) = {
@@ -602,7 +674,7 @@ pub(crate) fn test_destination_connection_unlocked(
         dest: &dest,
         mode,
         repo_password,
-        rest_password,
+        backend: &backend,
         is_existing,
         dup_name: dup_name.as_deref(),
         provider: &deps.provider,
@@ -611,7 +683,9 @@ pub(crate) fn test_destination_connection_unlocked(
         clock: deps.clock.as_ref(),
     });
     if result.ok {
-        result.notes = connection_notes(&dest, mount_inspector.as_ref());
+        result
+            .notes
+            .extend(connection_notes(&dest, mount_inspector.as_ref()));
     }
     result
 }
@@ -645,4 +719,20 @@ pub(crate) fn list_backup_snapshots_unlocked(
         deps.secret_store.as_ref(),
         deps.clock.as_ref(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A connection test whose restic did not answer within the limit reports «the server does
+    /// not respond», the code the GUI shows with its action.
+    #[test]
+    fn restic_that_does_not_answer_is_reported_as_not_responding() {
+        let result = destination_error_result(DestinationError::NotResponding(
+            "restic did not finish within 15 s".to_string(),
+        ));
+        assert!(!result.ok, "the test failed");
+        assert_eq!(result.error_kind, Some(ConnectionTestCode::NotResponding));
+    }
 }

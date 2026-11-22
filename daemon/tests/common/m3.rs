@@ -18,6 +18,7 @@ use kestic_core::provider::check_binary_version;
 use kestic_core::restic::ResticRuntime;
 use kestic_core::scheduler::TimezoneSpec;
 use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
+use kestic_daemon::dbus_api::BackendSecrets;
 use kestic_daemon::dbus_api::{
     BackupSummaryDto, DaemonStateDto, DestinationSummaryDto, KESTIC_OBJECT_PATH, KesticClient,
 };
@@ -582,7 +583,7 @@ pub fn seed_local_destination(
         &dest,
         DestinationSetupMode::ConnectExisting,
         &SecretValue::from_str_secret(&repo.password),
-        None,
+        &kestic_core::backend_credentials::BackendCredentials::none(),
         &runtime,
     )
     .expect("connect repo");
@@ -701,7 +702,7 @@ pub fn add_local_destination(
     .expect("dest");
     configure(&mut dest);
     client
-        .add_destination(&dest, "connect", &repo.password, "")
+        .add_destination(&dest, "connect", &repo.password, &BackendSecrets::default())
         .expect("add destination");
     (dest, repo.password)
 }
@@ -714,7 +715,7 @@ pub fn connect_local_repo(client: &KesticClient, restic: &Path, dest: &Destinati
     };
     let repo = copy_template_repo(restic, path);
     client
-        .add_destination(dest, "connect", &repo.password, "")
+        .add_destination(dest, "connect", &repo.password, &BackendSecrets::default())
         .expect("add local destination");
     repo.password
 }
@@ -729,9 +730,13 @@ pub fn connect_rest_repo(
     dest: &Destination,
 ) -> String {
     let repo = copy_template_repo(restic, &server.repo_dir());
-    let backend_password = server.auth().map_or("", |(_, password)| password);
+    let backend = server
+        .auth()
+        .map_or_else(BackendSecrets::default, |(_, password)| {
+            BackendSecrets::rest(password)
+        });
     client
-        .add_destination(dest, "connect", &repo.password, backend_password)
+        .add_destination(dest, "connect", &repo.password, &backend)
         .expect("add REST destination");
     repo.password
 }

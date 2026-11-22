@@ -25,6 +25,7 @@ model_row!(DestinationRow {
     kind_label: String => "kindLabel",
     location: String => "location",
     username: String => "username",
+    kind_json: String => "kindJson",
     backup_count: i32 => "backupCount",
     status_text: String => "statusText",
     status_icon: String => "statusIcon",
@@ -65,7 +66,19 @@ fn build_destination_row(
             url.clone(),
             username.clone().unwrap_or_default(),
         ),
+        DestinationKind::S3 {
+            endpoint,
+            bucket,
+            path,
+            ..
+        } => (
+            "s3".to_string(),
+            GuiText::S3Compatible.text(),
+            kestic_core::s3::display_location(endpoint, bucket, path.as_deref()),
+            String::new(),
+        ),
     };
+    let kind_json = json_or(&d.destination.kind, "{}");
     let (status_text, status_icon) = format_destination_status(d, now);
     let pending_forget_count = backups
         .iter()
@@ -87,6 +100,7 @@ fn build_destination_row(
         kind_label,
         location,
         username,
+        kind_json,
         backup_count: i32::try_from(d.backup_count).unwrap_or(i32::MAX),
         status_text,
         status_icon,

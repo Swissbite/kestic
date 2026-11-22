@@ -5,6 +5,7 @@
 
 //! Core domain logic, restic integration, configuration, and scheduling for Kestic.
 
+pub mod backend_credentials;
 pub mod backup;
 pub mod backup_progress;
 pub mod build_info;
@@ -22,6 +23,7 @@ pub mod mount;
 pub mod provider;
 pub mod restic;
 pub mod retention;
+pub mod s3;
 pub mod scheduler;
 pub mod secrets;
 pub mod snapshot;
