@@ -140,8 +140,8 @@ session_state() {
 }
 
 start_session() {
-    local prompt="$1"
-    shift
+    local issue="$1" prompt="$2"
+    shift 2
     # The pane stays after Claude Code exits (tmux.conf). A session that is
     # waiting for input after a finished turn is replaced too; only a busy one blocks.
     case "$(session_state)" in
@@ -149,8 +149,9 @@ start_session() {
         busy) die "Claude Code is busy in tmux session '$SESSION' (attach, nudge or stop it first)" ;;
     esac
     mark_turn
+    # Remote Control shows the session on claude.ai/code and in the Claude app.
     tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$REPO_DIR" \
-        claude --dangerously-skip-permissions "$@" "$prompt"
+        claude --dangerously-skip-permissions --remote-control "kestic-agent #$issue" "$@" "$prompt"
     echo "kestic-agent: Claude Code runs in tmux session '$SESSION'"
 }
 
@@ -173,12 +174,12 @@ case "${1:-}" in
         issue="$(issue_number "${2:-}" run)"
         base="$(base_branch "${3:-}")"
         setup
-        start_session "$(start_prompt "$issue" "$base")"
+        start_session "$issue" "$(start_prompt "$issue" "$base")"
         printf '%s\n' "$issue" > "$STATE_DIR/issue"
         ;;
     resume)
         issue="$(issue_number "${2:-}" resume)"
-        start_session "$(resume_prompt "$issue")" --continue
+        start_session "$issue" "$(resume_prompt "$issue")" --continue
         ;;
     nudge)
         shift
@@ -192,8 +193,9 @@ case "${1:-}" in
         tmux capture-pane -p -t "$SESSION" -S "-${2:-40}"
         ;;
     state)
-        issue="$(tr -dc 0-9 < "$STATE_DIR/issue" 2>/dev/null || true)"
-        turn="$(tr -dc 0-9 < "$STATE_DIR/turn" 2>/dev/null || true)"
+        # stderr first: a missing file (first run) is not an error.
+        issue="$(tr -dc 0-9 2>/dev/null < "$STATE_DIR/issue" || true)"
+        turn="$(tr -dc 0-9 2>/dev/null < "$STATE_DIR/turn" || true)"
         echo "$(session_state) ${issue:-0} ${turn:-0}"
         ;;
     store-token)

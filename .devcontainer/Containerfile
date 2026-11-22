@@ -67,7 +67,8 @@ RUN mkdir -p /home/kesticci/.claude /home/kesticci/kestic \
 ENV KESTIC_CI_IMAGE=${CI_IMAGE} \
     CLAUDE_CONFIG_DIR=/home/kesticci/.claude \
     DISABLE_AUTOUPDATER=1 \
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    DISABLE_TELEMETRY=1 \
+    DISABLE_ERROR_REPORTING=1 \
     PATH=/home/kesticci/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=en_US.UTF-8 \
     CARGO_INCREMENTAL=0
