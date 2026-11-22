@@ -282,7 +282,9 @@ fn ac_m4_02_1_changed_new_and_removed_files_match_restic_diff() {
                 );
                 assert!(!diff.identical, "(a) {label}: the snapshots differ");
 
-                let (restic_changes, stats) = fx.restic_diff(&fx.docs);
+                // Kestic lists by path; restic prints the tree order.
+                let (mut restic_changes, stats) = fx.restic_diff(&fx.docs);
+                restic_changes.sort();
                 let ours: Vec<(String, String)> = diff
                     .changes
                     .items
@@ -462,6 +464,47 @@ fn m4_s02_diff_requests_and_pages_are_checked() {
                 fx.rig.wrapper.of('S', "diff").len(),
                 diffs_before,
                 "no restic diff for a refused request"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// M4-S02: cancelling a running comparison stops `restic diff`; the query ends as `cancelled`.
+#[test]
+fn m4_s02_cancelling_a_diff_stops_restic_diff() {
+    run_isolated_test(
+        "m4_s02_cancelling_a_diff_stops_restic_diff",
+        "KESTIC_M4_S02_CANCEL_INNER",
+        |root| {
+            let variant = latest_variant();
+            let fx = Fixture::start(root, &variant);
+            fx.rig.wrapper.hold("diff");
+            let id = fx
+                .start_diff(&fx.docs.from, &fx.docs.to)
+                .expect("StartSnapshotQuery");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while fx.rig.wrapper.of('S', "diff").is_empty() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert_eq!(
+                fx.rig.wrapper.of('S', "diff").len(),
+                1,
+                "restic diff started"
+            );
+            fx.rig
+                .daemon
+                .client
+                .cancel_snapshot_query(&id)
+                .expect("CancelSnapshotQuery");
+            let st = fx.wait(&id, &all_page());
+            fx.rig.wrapper.release("diff");
+            assert_eq!(st.state, "cancelled", "the comparison ends as cancelled");
+            assert!(st.result.is_none(), "a cancelled comparison has no result");
+            assert_eq!(
+                fx.rig.wrapper.of('T', "diff").len(),
+                1,
+                "restic diff got SIGTERM"
             );
             fx.rig.daemon.stop();
         },

@@ -59,9 +59,13 @@ impl DiffResult {
         self.changes.total()
     }
 
-    /// Whether restic reported no change at all («no differences»).
+    /// Whether restic reported no change at all («no differences»): no change line and no
+    /// added, removed or changed file in the statistics.
     pub fn identical(&self) -> bool {
         self.changes.total() == 0
+            && self.counts.added_files == 0
+            && self.counts.removed_files == 0
+            && self.counts.changed_files == 0
     }
 }
 
@@ -71,17 +75,25 @@ impl HeldResult for DiffResult {
     }
 }
 
-/// The kind of change of a `restic diff` modifier; `None` for a modifier Kestic does not know.
+/// The kind of change of a `restic diff` modifier; `None` for a modifier without a letter
+/// Kestic knows. restic combines letters for one path (`M?` is content changed with the same
+/// metadata, `TU` a type change with metadata); the most telling letter decides: `?` before
+/// `T` before `M` before `U`.
 pub fn change_of_modifier(modifier: &str) -> Option<SnapshotChange> {
     match modifier {
-        "+" => Some(SnapshotChange::Added),
-        "-" => Some(SnapshotChange::Removed),
-        "M" => Some(SnapshotChange::Modified),
-        "U" => Some(SnapshotChange::Metadata),
-        "T" => Some(SnapshotChange::TypeChanged),
-        "?" => Some(SnapshotChange::Bitrot),
-        _ => None,
+        "+" => return Some(SnapshotChange::Added),
+        "-" => return Some(SnapshotChange::Removed),
+        _ => {}
     }
+    [
+        ('?', SnapshotChange::Bitrot),
+        ('T', SnapshotChange::TypeChanged),
+        ('M', SnapshotChange::Modified),
+        ('U', SnapshotChange::Metadata),
+    ]
+    .into_iter()
+    .find(|(letter, _)| modifier.contains(*letter))
+    .map(|(_, change)| change)
 }
 
 /// Arguments of `restic diff` from snapshot `from` to snapshot `to` (full IDs; `--json` comes
@@ -220,6 +232,10 @@ mod tests {
         assert_eq!(change_of_modifier("U"), Some(SnapshotChange::Metadata));
         assert_eq!(change_of_modifier("T"), Some(SnapshotChange::TypeChanged));
         assert_eq!(change_of_modifier("?"), Some(SnapshotChange::Bitrot));
+        assert_eq!(change_of_modifier("M?"), Some(SnapshotChange::Bitrot));
+        assert_eq!(change_of_modifier("TU"), Some(SnapshotChange::TypeChanged));
+        assert_eq!(change_of_modifier("MU"), Some(SnapshotChange::Modified));
+        assert_eq!(change_of_modifier(""), None);
         assert_eq!(change_of_modifier("X"), None);
     }
 
@@ -275,6 +291,40 @@ mod tests {
             },
             "(a) the counts of the statistics line, its unknown fields ignored"
         );
+        assert!(!result.identical());
+    }
+
+    /// restic reports a file whose content changed while its metadata stayed the same as
+    /// `M?`; it is listed, so the snapshots are not identical.
+    #[test]
+    fn bitrot_is_listed_and_not_identical() {
+        let mut c = DiffCollector::new(u64::MAX);
+        c.push_line(r#"{"message_type":"change","path":"/f","modifier":"M?"}"#);
+        c.push_line(
+            r#"{"message_type":"statistics","changed_files":1,"added":{"files":0,"bytes":0},"removed":{"files":0,"bytes":0}}"#,
+        );
+        let mut result = c.finish();
+        let page = result.page(&PageRequest::default());
+        assert_eq!(
+            page.items,
+            [DiffChange {
+                path: "/f".to_string(),
+                change: SnapshotChange::Bitrot,
+            }]
+        );
+        assert!(!result.identical());
+    }
+
+    /// A change restic counts but Kestic cannot list never reads as «no differences».
+    #[test]
+    fn counted_changes_without_lines_are_not_identical() {
+        let mut c = DiffCollector::new(u64::MAX);
+        c.push_line(r#"{"message_type":"change","path":"/f","modifier":"Z"}"#);
+        c.push_line(
+            r#"{"message_type":"statistics","changed_files":1,"added":{"files":0,"bytes":0},"removed":{"files":0,"bytes":0}}"#,
+        );
+        let result = c.finish();
+        assert_eq!(result.total(), 0);
         assert!(!result.identical());
     }
 
