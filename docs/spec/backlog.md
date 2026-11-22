@@ -30,7 +30,7 @@ M0 → M1 → M2 → M3; M4 und M5 hängen nur von M1 ab und können parallel zu
 | M6 Onboarding und Sicherheit | Ein Endnutzer richtet sein erstes Backup in 5 Schritten ein, sichert sein Passwort und kommt auf einem neuen Rechner wieder an seine Daten. Abschluss des MVP. | 12 | 61 | [milestones/m6-onboarding-und-sicherheit.md](milestones/m6-onboarding-und-sicherheit.md) |
 | **Total** | | **89** | **433** | |
 
-Nach dem MVP: [milestones/nach-mvp.md](milestones/nach-mvp.md) (Phase 2, Luxus, P3). Versionsschema (SemVer) und Changelog folgen als späterer Meilenstein (Q7).
+Nach dem MVP: [milestones/nach-mvp.md](milestones/nach-mvp.md) (Phase 2, Luxus, P3). Versionen und Releases: ein Release pro Meilenstein ab M4 (`v0.4.0`), `v1.0.0` nach M6; Ablauf in [architecture.md](architecture.md) §Release (Q7).
 
 ## Definition of Done
 
