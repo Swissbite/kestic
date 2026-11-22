@@ -1,106 +1,104 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 
-# Publishes a GitHub release for a pushed tag v<major>.<minor>.<patch>; every 0.x release is a
-# pre-release. Only the highlights file docs/releases/<tag>.md is written by hand:
-#   prepare      checks tag, Cargo.toml version and docs/releases/<tag>.md, writes highlights and
-#                the closed story issues of the milestone (.github/scripts/release-notes.sh)
-#   ci-image     the CI image of verify.yml
-#   build        the .deb, with the same steps as job `release` in verify.yml (`just deb`)
-#   screenshots  waits for the Verify run of the commit and bundles its smoke screenshots;
-#                a release needs a green Verify run of the tagged commit on main
-#   attest       SHA256SUMS and a build provenance attestation of the .deb
-#   publish      adds GitHub's generated notes (pull requests since the previous tag, grouped by
-#                .github/release.yml), shows notes and assets in the job summary and creates the
-#                release
+# Releases and pre-releases on GitHub. Versions come from Git tags only; this workflow creates
+# them through the API, nobody pushes them.
 #
-# Dry run: a manual run (workflow_dispatch) on any branch, and pull requests from this repository
-# that add or change a highlights file, do everything except the attestation and the release, and
-# show the result in the job summary of `publish`. Only a pushed tag publishes.
+# Release: the maintainer runs this workflow on main (Actions → Release → Run workflow) and picks
+# a bump. The next version follows the highest version tag on main; a release needs the highlights
+# file docs/releases/<tag>.md, everything else in its notes is generated. With `dry-run` (the
+# default) everything runs except creating tag, attestation and release; the job summary of
+# `publish` shows notes and assets. Every 0.x version is a pre-release on GitHub.
+#
+# Pre-release: every push to an integration branch m<n> publishes v0.<n>.0-m<n>.<k> (k first-parent
+# commits since the tag m<n>-start); only the newest three of a branch are kept.
+#
+#   prepare      plans tag and version and writes highlights and stories (release-notes.sh)
+#   ci-image     the CI image of verify.yml
+#   build        the .deb with the tag's version, same steps as job `release` in verify.yml
+#   screenshots  release only: waits for the green Verify run of the commit on main and bundles
+#                its smoke screenshots
+#   attest       SHA256SUMS and a build provenance attestation of the .deb
+#   publish      GitHub's generated notes (pull requests since the previous tag, grouped by
+#                .github/release.yml), job summary, tag and release; for a branch, removes older
+#                pre-releases with their tags
 
 name: Release
 
 on:
-  push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
-  pull_request:
-    branches: [main, "m[0-9]", "m[0-9][0-9]"]
-    paths: ["docs/releases/v*.md"]
   workflow_dispatch:
     inputs:
-      tag:
-        description: Tag to preview; empty for v plus the version in Cargo.toml. A manual run never publishes.
-        type: string
-        default: ""
+      bump:
+        description: Next version after the highest version tag on main (pre… bumps give release candidates).
+        type: choice
+        options: [major, minor, patch, premajor, preminor, prepatch, prerelease]
+        default: minor
+      dry-run:
+        description: Dry run, without tag, attestation and release.
+        type: boolean
+        default: true
+  push:
+    branches: ["m[0-9]", "m[0-9][0-9]"]
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name == 'push' && github.ref_name || format('dry-run-{0}', github.ref) }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  group: release-${{ github.event_name == 'push' && github.ref_name || 'main' }}
+  cancel-in-progress: false
 
 jobs:
   prepare:
-    # Pull requests from forks get a read-only token, which neither the CI image nor the
-    # generated notes accept.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     outputs:
-      tag: ${{ steps.notes.outputs.tag }}
-      commit: ${{ steps.tag.outputs.commit }}
-      dry-run: ${{ steps.tag.outputs.dry-run }}
-      version: ${{ steps.notes.outputs.version }}
-      prerelease: ${{ steps.notes.outputs.prerelease }}
-      title: ${{ steps.notes.outputs.title }}
-      previous-tag: ${{ steps.notes.outputs.previous-tag }}
+      kind: ${{ steps.plan.outputs.kind }}
+      commit: ${{ steps.plan.outputs.commit }}
+      dry-run: ${{ steps.plan.outputs.dry-run }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      title: ${{ steps.plan.outputs.title }}
+      previous-tag: ${{ steps.plan.outputs.previous-tag }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # Full history and tags: the previous tag and the check that the tag is on main.
+          # Full history and all tags: versions, previous tags and commit counts come from them.
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Resolve tag and commit
-        id: tag
+      - name: Plan tag, version and notes
+        id: plan
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
-          REF_TYPE: ${{ github.ref_type }}
+          REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BUMP: ${{ inputs.bump }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
-          commit="$GITHUB_SHA"
-          if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then
-            tag="$REF_NAME"
-            dry_run=false
-            if ! git merge-base --is-ancestor "$commit" origin/main; then
-              echo "::error::Tag $tag points to $commit, which is not on main"
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            kind=release
+            what="$BUMP"
+            if [ "$DRY_RUN" != true ] && [ "$REF" != refs/heads/main ]; then
+              echo "::error::A release runs on main; on $REF_NAME only a dry run is possible"
               exit 1
             fi
           else
-            dry_run=true
-            # A pull request builds its merge commit; Verify run and notes use the head commit.
-            if [ -n "$PR_HEAD_SHA" ]; then commit="$PR_HEAD_SHA"; fi
+            kind=branch
+            what="$REF_NAME"
+            DRY_RUN=false
           fi
           {
-            echo "commit=$commit"
-            echo "dry-run=$dry_run"
+            echo "kind=$kind"
+            echo "commit=$GITHUB_SHA"
+            echo "dry-run=$DRY_RUN"
           } >> "$GITHUB_OUTPUT"
-          echo "Commit $commit, dry run: $dry_run"
-
-      - name: Check version and write highlights and stories
-        id: notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # Empty in a dry run without input: the script takes the version in Cargo.toml. The script
-          # checks the tag before it writes any output.
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          COMMIT: ${{ steps.tag.outputs.commit }}
-        run: .github/scripts/release-notes.sh "$TAG" "$COMMIT" "$RUNNER_TEMP/notes" >> "$GITHUB_OUTPUT"
+          .github/scripts/release-notes.sh "$kind" "$what" "$GITHUB_SHA" "$RUNNER_TEMP/notes" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -109,7 +107,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
-  # After prepare, so a wrong tag never builds or pushes an image.
+  # After prepare, so a failed plan never builds or pushes an image.
   ci-image:
     name: CI image
     needs: prepare
@@ -118,7 +116,8 @@ jobs:
       contents: read
       packages: write
 
-  # Same steps as job `release` in verify.yml, without saving the build cache.
+  # Same steps as job `release` in verify.yml, with the version of the tag and without saving the
+  # build cache.
   build:
     needs: [prepare, ci-image]
     runs-on: ubuntu-latest
@@ -139,6 +138,8 @@ jobs:
           build-cache: release
       - run: rm -rf target/debian
       - run: .github/scripts/ci-just.sh deb
+        env:
+          KESTIC_VERSION: ${{ needs.prepare.outputs.version }}
       - uses: actions/upload-artifact@v7
         with:
           name: release-deb
@@ -146,11 +147,12 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
-  # The screenshots of the GUI smoke tests come from the Verify run of the same commit, so the
+  # The screenshots of the GUI smoke tests come from the Verify run of the same commit, so a
   # release only goes out once that run is green. A dry run without such a run takes the newest
   # successful Verify run on main.
   screenshots:
     needs: prepare
+    if: needs.prepare.outputs.kind == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -175,7 +177,7 @@ jobs:
               --jq "[.[] | select(.conclusion != \"cancelled\" and .conclusion != \"skipped\") | $filter]
                     | sort_by(.createdAt) | last | .databaseId // empty"
           }
-          # Verify starts with the same push or pull request event; give it a moment to appear.
+          # Verify starts with the push to main; give it a moment to appear.
           attempts=10
           if [ "$DRY_RUN" = true ]; then attempts=2; fi
           run_id="$(find_run)"
@@ -242,6 +244,10 @@ jobs:
 
   attest:
     needs: [prepare, build, screenshots]
+    # screenshots is skipped for a pre-release of an integration branch.
+    if: >-
+      !cancelled() && needs.build.result == 'success' &&
+      (needs.screenshots.result == 'success' || needs.screenshots.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -272,8 +278,8 @@ jobs:
           fi
           package="$(dpkg-deb --field "${debs[0]}" Package)"
           deb_version="$(dpkg-deb --field "${debs[0]}" Version)"
-          if [ "$package" != kestic ] || { [ "$deb_version" != "$VERSION" ] && [[ "$deb_version" != "$VERSION"-* ]]; }; then
-            echo "::error::${debs[0]} is $package $deb_version, expected kestic $VERSION"
+          if [ "$package" != kestic ] || [ "$deb_version" != "$VERSION-1" ]; then
+            echo "::error::${debs[0]} is $package $deb_version, expected kestic $VERSION-1"
             exit 1
           fi
           sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
@@ -298,9 +304,10 @@ jobs:
 
   publish:
     needs: [prepare, attest]
+    if: ${{ !cancelled() && needs.attest.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      # The generate-notes endpoint needs write access as well, so the dry run has it too.
+      # Tags, releases and the generate-notes endpoint, which needs write access in a dry run too.
       contents: write
     steps:
       - uses: actions/download-artifact@v8
@@ -331,6 +338,7 @@ jobs:
       - name: Job summary
         env:
           TITLE: ${{ needs.prepare.outputs.title }}
+          VERSION: ${{ needs.prepare.outputs.version }}
           DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           PREVIOUS_TAG: ${{ needs.prepare.outputs.previous-tag }}
@@ -340,13 +348,14 @@ jobs:
             if [ "$DRY_RUN" = true ]; then
               echo "# Dry run: $TITLE"
               echo
-              echo "Nothing was published; a pushed tag creates this release."
+              echo "Nothing was published. Run the workflow again without dry run to create tag and release."
             else
               echo "# $TITLE"
             fi
             echo
+            echo "- Package version: \`$VERSION-1\`"
             echo "- Pre-release: $PRERELEASE"
-            echo "- Pull requests since: ${PREVIOUS_TAG:-the first commit (no earlier version tag)}"
+            echo "- Pull requests since: ${PREVIOUS_TAG:-the first commit (no earlier release)}"
             echo
             echo "## Assets"
             echo
@@ -362,17 +371,27 @@ jobs:
             cat notes/notes.md
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Created as a draft with all assets, then published, so nobody sees a half-uploaded
-      # release. A draft left by a failed attempt is replaced; a published release is never touched.
-      - name: Create release
+      # The tag is created here, after the build succeeded, and points at the built commit. The
+      # release is a draft until all assets are uploaded. A re-run accepts its own tag and replaces
+      # its draft; a published release is never touched.
+      - name: Create tag and release
         if: needs.prepare.outputs.dry-run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
           TITLE: ${{ needs.prepare.outputs.title }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
+          if tagged="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null)"; then
+            if [ "$tagged" != "$COMMIT" ]; then
+              echo "::error::Tag $TAG exists already on $tagged"
+              exit 1
+            fi
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$COMMIT" > /dev/null
+          fi
           # Drafts are only visible through the list endpoint, so look the tag up there.
           draft="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
             --jq ".[] | select(.tag_name == \"$TAG\") | .draft")"
@@ -380,7 +399,7 @@ jobs:
             "") ;;
             true) gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes ;;
             *)
-              echo "::error::Release $TAG already exists"
+              echo "::error::Release $TAG exists already"
               exit 1
               ;;
           esac
@@ -395,3 +414,25 @@ jobs:
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
+
+      # The newest three pre-releases of a branch stay; older ones go together with their tags.
+      - name: Remove older pre-releases of the branch
+        if: needs.prepare.outputs.kind == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
+        run: |
+          set -euo pipefail
+          n="${BRANCH#m}"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate |
+            jq -r --arg re "^v0\\.$n\\.0-m$n\\.[0-9]+$" '.[] | select(.tag_name | test($re)) | .tag_name' |
+            sort -t. -k4,4nr | tail -n +4 |
+            while read -r old; do
+              if [ "$DRY_RUN" = true ]; then
+                echo "Would remove $old"
+              else
+                echo "Removing $old"
+                gh release delete "$old" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+              fi
+            done

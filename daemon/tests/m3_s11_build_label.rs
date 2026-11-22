@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! AC-M3-11-4 (c), (d): the build state in the daemon's startup line comes from `build.rs`, which
-//! labels a source tree through `daemon/build_commit.rs`. These tests run that logic against
-//! temporary Git repositories.
+//! labels a source tree through `kestic_build_stamp`. These tests run that logic, and the version
+//! taken from Git tags, against temporary Git repositories.
 
 mod common;
 
-#[path = "../build_commit.rs"]
-mod build_commit;
-
-use build_commit::build_label;
 use common::run_isolated_test;
+use kestic_build_stamp::commit::build_label;
+use kestic_build_stamp::version::build_version;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -96,6 +94,54 @@ fn ac_m3_11_4_d_no_checkout_is_unknown() {
                 build_label(&nested),
                 "unknown",
                 "(d) inside another repository"
+            );
+        },
+    );
+}
+
+/// architecture.md §Release: the version of a build comes from the nearest version tag: (a)
+/// `0.0.0~dev+g<hash>` without one (another tag such as `m4-start` does not count), (b) the tag's
+/// version on the tagged commit, (c) commits after it add their number and the commit, and (d) a
+/// source tree outside a checkout is `0.0.0~dev`.
+#[test]
+fn build_version_follows_version_tags() {
+    run_isolated_test(
+        "build_version_follows_version_tags",
+        "KESTIC_BUILD_VERSION_TAGS_INNER",
+        |root| {
+            let repo = checkout(root);
+            git(&repo, &["tag", "m4-start"]);
+            let first = git(&repo, &["rev-parse", "--short=7", "HEAD"]);
+            assert_eq!(
+                build_version(&repo, None),
+                Ok(format!("0.0.0~dev+g{first}")),
+                "(a) no version tag"
+            );
+
+            git(&repo, &["tag", "v0.4.0-m4.3"]);
+            assert_eq!(
+                build_version(&repo, None),
+                Ok("0.4.0~m4.3".to_owned()),
+                "(b) tagged commit"
+            );
+
+            for n in 1..=2 {
+                fs::write(repo.join("core/src/lib.rs"), format!("// after {n}\n")).expect("write");
+                git(&repo, &["commit", "-q", "-am", "next"]);
+            }
+            let head = git(&repo, &["rev-parse", "--short=7", "HEAD"]);
+            assert_eq!(
+                build_version(&repo, None),
+                Ok(format!("0.4.0~m4.3+2.g{head}")),
+                "(c) two commits after the tag"
+            );
+
+            let plain = root.join("tarball");
+            fs::create_dir_all(&plain).expect("mkdir");
+            assert_eq!(
+                build_version(&plain, None),
+                Ok("0.0.0~dev".to_owned()),
+                "(d) outside a checkout"
             );
         },
     );

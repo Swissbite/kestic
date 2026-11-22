@@ -42,7 +42,7 @@ Strukturierte DTOs werden als UTF-8-JSON übergeben (mit festem Schema in `kesti
 
 | Methode | Signatur | Zweck | Quelle |
 | --- | --- | --- | --- |
-| `DaemonVersion` | `() -> s` | Gibt die Daemon-Version (`CARGO_PKG_VERSION`) zurück; unverändert, der Build-Stand steht in `GetState` (`daemon_build_commit`) | E11 |
+| `DaemonVersion` | `() -> s` | Gibt die Daemon-Version zurück (aus den Git-Tags, [architecture.md](architecture.md) §Release, z. B. `0.4.0~m4.3`); unverändert, der Build-Stand steht in `GetState` (`daemon_build_commit`) | E11 |
 | `GetState` | `() -> s` (`DaemonStateDto`-JSON) | Vollständiger Zustand: `daemon_version`, `daemon_build_commit` (Build-Stand des Daemons wie in seiner Startzeile: kurzer Git-Hash, mit `-dirty` oder `unknown`; fehlt bei älteren Daemons und gilt dann als leer, AC-M1-11-6), `config` (ohne Secrets), `restic_status`, `secret_store_status`, `availability`, `backups` (mit letztem/laufendem Lauf), `destinations`, `recent_runs`, `overall_status` | F14, §6.1, §6.2 |
 | `GetRunDetail` | `(run_id: s) -> s` (`RunDetailDto`-JSON) | Einzelner Lauf mit redacted Logzeilen, ausgeführten Befehlen (`CommandRecord`) und transparentem Shell-Aufruf ohne Secrets (`FR-34`) | FR-18, FR-34, M1-S14 |
 | `ListBackupSnapshots` | `(backup_id: s) -> s` (`BackupSnapshotsDto`-JSON) | Snapshots (`kestic:<backup_id>`) auf dem aktuellen Ziel sowie Abschnitt `previous_destinations` für früher genutzte, noch eingerichtete Ziele | FR-56, AC-M1-22-4 |

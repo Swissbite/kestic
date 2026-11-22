@@ -1,26 +1,38 @@
-# Release highlights
+# Releases
 
-Every release `v<major>.<minor>.<patch>` needs a highlights file `docs/releases/<tag>.md`, for example `docs/releases/v0.4.0.md`. It is the only hand-written part of the release notes; [`.github/workflows/release.yml`](../../.github/workflows/release.yml) fails without it.
+Kestic's version numbers come only from Git tags `v<major>.<minor>.<patch>[-<pre-release>]`. No commit changes a version: `Cargo.toml` stays at `0.0.0`, and a build takes its version from the nearest tag (details in [architecture.md §Release](../spec/architecture.md#release), German). Tags are created by [`.github/workflows/release.yml`](../../.github/workflows/release.yml) only.
 
-## Who writes it, and when
-
-The agent of a milestone writes the file in the closing pull request of the milestone into `main`, together with the version bump in the workspace `Cargo.toml` (`[workspace.package] version`, then `cargo update --workspace` for `Cargo.lock`). After the merge, the maintainer tags the merge commit on `main`:
-
-```bash
-git tag -a v0.4.0 -m "Kestic 0.4.0" && git push origin v0.4.0
-```
-
-The tag starts the release workflow. It fails if the tag is not on `main`, does not match the version in `Cargo.toml`, or the highlights file is missing or invalid. It then waits for the Verify run of the tagged commit (up to 90 minutes) and publishes only if that run is green, so tag a commit that had its own Verify run, normally the merge commit. If a later step fails, re-running the workflow replaces the draft it left; a published release is never changed. Agents never tag and never push to `main`.
-
-| Version | After milestone |
+| Version | When |
 | --- | --- |
-| `v0.4.0` | M4 |
-| `v0.5.0` | M5 |
-| `v1.0.0` | M6 (MVP) |
+| `v0.4.0-m4.<k>` | automatically, on every merge into the integration branch `m4` (pre-release) |
+| `v0.4.0` | after milestone M4, started by the maintainer |
+| `v0.5.0` | after M5 |
+| `v1.0.0` | after M6 (MVP) |
 
-Every `0.x` release is a pre-release. A fix release (`v0.4.1`) takes the same milestone as its minor version.
+Every `0.x` version is marked as a pre-release on GitHub. In apt, `0.4.0` replaces every `0.4.0~m4.<k>`.
 
-## Format
+## Starting a release (maintainer only)
+
+1. The closing pull request of the milestone, with the highlights file (below), is merged into `main`.
+2. In GitHub: Actions → **Release** → **Run workflow** on `main`. Pick the bump. `minor` turns the milestone's pre-releases (`v0.4.0-m4.12`) into `v0.4.0`. `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch` and `prerelease` work like npm's `semver inc`; the `pre…` bumps give release candidates (`v1.0.0-rc.1`).
+3. Leave **dry run** ticked first. That run shows the version, the release notes and the assets in the job summary of `publish` and creates nothing.
+4. Run it again with **dry run** unticked. The workflow waits for the green Verify run of the commit on `main` (up to 90 minutes), builds the `.deb` and creates the tag through the API. Then it publishes the release with the `.deb`, the GUI smoke screenshots (`kestic_<version>_screenshots.zip`), `SHA256SUMS` and a build provenance attestation of the `.deb` (`gh attestation verify kestic_<version>-1_amd64.deb --repo Swissbite/kestic`).
+
+If a step fails, re-run the failed jobs of the same run: it reuses its tag and replaces its own draft. A published release is never changed.
+
+Agents cannot start the workflow: the agents' GitHub App only has `actions: read`. A ruleset on `refs/tags/v*` lets only the admin role and GitHub Actions create or delete version tags.
+
+## Pre-releases of an integration branch
+
+Every push to `m<n>` (normally a merged story pull request) publishes `v0.<n>.0-m<n>.<k>`, where `k` is the number of first-parent commits since the tag `m<n>-start`. Its notes list:
+- the closed story issues of milestone M`<n>` that the merged pull request refers to (`#<n>` in its title or body);
+- the pull requests since the previous pre-release of the branch.
+
+No highlights file is needed, and the workflow does not wait for Verify: the pull request was green before the merge. Only the newest three pre-releases per branch stay; older ones are deleted together with their tags.
+
+## The highlights file
+
+Every release (not the pre-releases) needs `docs/releases/<tag>.md`, for example `docs/releases/v0.4.0.md`. It is the only hand-written part of the release notes. The agent of the milestone writes it in the closing pull request into `main`. A release candidate (`v0.5.0-rc.1`) uses `docs/releases/v0.5.0.md` if it exists.
 
 ```markdown
 ---
@@ -34,19 +46,13 @@ Kestic 0.4.0 brings your data back: …
 ```
 
 - **Front matter**, strictly in this form:
-  - `milestones:` lists GitHub milestones by their exact title, one `  - <title>` line each; a title without a matching milestone is an error. A `0.x` release names exactly one, and it must be milestone `M<minor>` (`v0.4.0` → `M4 …`). From `1.0.0` on, the file may name several, for example all MVP milestones without an earlier release.
+  - `milestones:` lists GitHub milestones by their exact title, one `  - <title>` line each; a title without a matching milestone is an error. A `0.x` release names exactly one, and it must be milestone `M<minor>` (`v0.4.0` → `M4 …`). From `1.0.0` on, the file may name several.
   - `title:` (optional) is the release title after the tag. Without it the title is the milestone title: `v0.4.0 – M4 Restore`. It is required when the file names several milestones.
   - Any other line in the front matter is an error.
 - **Body** (required): the highlights in Markdown, written for users, in English. Say what users can do now; leave out story IDs, internal names and anything the generated parts already list.
 
 ## What the release notes contain
 
-1. The body of this file.
-2. **Stories:** every closed story issue (title `M<n>-S<nn>: …`, closed as completed) of the named milestones, each with a link, and a link to the milestone. Open stories cause a warning in the workflow.
-3. GitHub's generated notes: all pull requests since the previous version tag, grouped by label as configured in [`.github/release.yml`](../../.github/release.yml).
-
-The release also carries the `.deb`, the GUI smoke screenshots of the tagged commit (`kestic_<version>_screenshots.zip`), `SHA256SUMS` and a build provenance attestation of the `.deb` (`gh attestation verify kestic_<version>-1_amd64.deb --repo Swissbite/kestic`).
-
-## Checking a release before tagging
-
-A pull request from this repository into `main` or a milestone branch (`m4`, `m5`, …) that adds or changes a highlights file runs the release workflow as a dry run, for the tag `v<version in Cargo.toml>`: put the version bump and the highlights file in the same pull request. A manual run (`gh workflow run release.yml --ref <branch>`, optional input `tag`) is a dry run too. A dry run does everything except the attestation and the release and shows notes and assets in the job summary of `publish`. Without a Verify run of its commit it takes the screenshots of the latest green Verify run on `main`; a red Verify run of the commit fails the dry run.
+1. The body of the highlights file.
+2. **Stories:** every closed story issue (title `M<n>-S<nn>: …`, closed as completed) of the named milestones, each with a link, and a link to the milestone. The workflow warns about open stories.
+3. GitHub's generated notes: all pull requests since the previous release, grouped by label as configured in [`.github/release.yml`](../../.github/release.yml).
