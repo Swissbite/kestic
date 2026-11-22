@@ -159,7 +159,12 @@ mod tests {
         assert!(normalized_endpoint("s3.example.com").is_err());
         assert!(normalized_endpoint("ftp://s3.example.com").is_err());
         assert!(normalized_endpoint("https://s3.example.com/backup").is_err());
-        assert!(normalized_endpoint("https://key:secret@s3.example.com").is_err());
+        let with_login = format!(
+            "https://{}:{}@s3.example.com",
+            kestic_test_support::password::s3_key(16),
+            kestic_test_support::password::s3_key(32)
+        );
+        assert!(normalized_endpoint(&with_login).is_err());
         assert_eq!(
             normalized_endpoint("HTTPS://S3.Example.com:9000/").expect("valid"),
             "https://s3.example.com:9000"

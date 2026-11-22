@@ -161,13 +161,7 @@ pub fn probe_repository(
     match res.presentation.kind {
         ResticFailureKind::None | ResticFailureKind::WrongPassword => Ok(RepositoryProbe::Exists),
         ResticFailureKind::RepositoryMissing
-            if crate::restic::is_missing_bucket(
-                &res.presentation
-                    .raw_detail
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_lowercase(),
-            ) =>
+            if is_missing_bucket(res.presentation.raw_detail.as_deref().unwrap_or_default()) =>
         {
             Ok(RepositoryProbe::BucketMissing)
         }
@@ -438,10 +432,13 @@ fn execute_probe_command(
     if let Some(err) = child.stderr.take() {
         for line in BufReader::new(err).lines().map_while(Result::ok) {
             let redacted = crate::restic::redact_secrets(&line, &secrets_to_redact);
-            let conclusive = conclusive_retry_error(&redacted).map(ToOwned::to_owned);
+            // Only a connection test stops restic early; setup and `init` run to their end.
+            let conclusive = timeout
+                .and_then(|_| conclusive_retry_error(&redacted))
+                .map(ToOwned::to_owned);
             stderr_lines.push(redacted);
             if let Some(error) = conclusive {
-                // restic would retry this for many minutes; for a probe the answer is known.
+                // restic would retry this for many minutes; for a test the answer is known.
                 crate::restic::send_sigterm_to_tree(child.id());
                 abort_line = Some(error);
                 break;
@@ -482,12 +479,7 @@ fn execute_probe_command(
         }
     }
 
-    let presentation = crate::restic::classify_exit(
-        exit_code,
-        exit_error_msg.as_deref(),
-        Vec::new(),
-        &stderr_raw,
-    );
+    let presentation = classify_probe(exit_code, exit_error_msg.as_deref(), &stderr_raw);
 
     let mut log_lines: Vec<String> = stdout_raw.lines().map(ToOwned::to_owned).collect();
     log_lines.extend(stderr_lines);
@@ -508,6 +500,27 @@ fn execute_probe_command(
         log_lines,
         errors: Vec::new(),
     })
+}
+
+/// Whether a restic message says the S3 bucket does not exist.
+fn is_missing_bucket(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("bucket does not exist") || lower.contains("nosuchbucket")
+}
+
+/// How a probe sees restic's result: like a run, except that a missing S3 bucket means «no
+/// repository yet» (`init` creates the bucket).
+fn classify_probe(
+    exit_code: i32,
+    exit_error_msg: Option<&str>,
+    raw_stderr: &str,
+) -> crate::restic::ErrorPresentation {
+    let mut presentation =
+        crate::restic::classify_exit(exit_code, exit_error_msg, Vec::new(), raw_stderr);
+    if exit_code == 1 && is_missing_bucket(&presentation.detail_or_summary()) {
+        presentation.kind = ResticFailureKind::RepositoryMissing;
+    }
+    presentation
 }
 
 /// Stops a process tree with `SIGTERM` unless [`Watchdog::stop`] comes first.
@@ -554,7 +567,7 @@ fn conclusive_retry_error(line: &str) -> Option<&str> {
         .and_then(|(_, rest)| rest.split_once(": "))
         .map(|(_, error)| error)?;
     matches!(
-        crate::restic::classify_exit(1, Some(error), Vec::new(), "").kind,
+        classify_probe(1, Some(error), "").kind,
         ResticFailureKind::BackendAuthFailed
             | ResticFailureKind::RepositoryMissing
             | ResticFailureKind::DestinationUnreachable
@@ -601,21 +614,22 @@ mod tests {
         let signature = "Stat(<config/>) returned error, retrying after 1.2s: Stat: The request signature we calculated does not match the signature you provided.";
         assert!(conclusive_retry_error(missing).is_some());
         assert_eq!(
-            crate::restic::classify_exit(
-                1,
-                Some("Stat: The specified bucket does not exist"),
-                Vec::new(),
-                ""
-            )
-            .kind,
+            classify_probe(1, Some("Stat: The specified bucket does not exist"), "").kind,
             ResticFailureKind::RepositoryMissing
         );
+        // A run keeps its own reading: a missing bucket is no permanent «repository missing».
+        let run = crate::restic::classify_exit(
+            1,
+            Some("Fatal: unable to open config file: Stat: The specified bucket does not exist"),
+            Vec::new(),
+            "",
+        );
+        assert_ne!(run.kind, ResticFailureKind::RepositoryMissing);
+        assert!(!run.kind.is_permanent());
         assert!(conclusive_retry_error(refused).is_some());
         assert!(conclusive_retry_error(signature).is_some());
         // The probe reports the error without the duration.
-        let reported = |line: &str| {
-            crate::restic::classify_exit(1, conclusive_retry_error(line), Vec::new(), "").kind
-        };
+        let reported = |line: &str| classify_probe(1, conclusive_retry_error(line), "").kind;
         assert_eq!(reported(refused), ResticFailureKind::DestinationUnreachable);
         assert_eq!(
             reported(

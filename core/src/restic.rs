@@ -331,13 +331,6 @@ pub fn classify_exit(
                     action: None,
                     raw_detail,
                 }
-            } else if is_missing_bucket(&detail_lower) {
-                ErrorPresentation {
-                    status: RunStatus::Error,
-                    kind: ResticFailureKind::RepositoryMissing,
-                    action: None,
-                    raw_detail,
-                }
             } else if detail_lower.contains("connection refused")
                 || detail_lower.contains("connection reset")
                 || detail_lower.contains("connection closed")
@@ -396,11 +389,6 @@ fn is_backend_auth_failure(detail_lower: &str) -> bool {
         ]
         .iter()
         .any(|needle| detail_lower.contains(needle))
-}
-
-/// Whether the lowercase restic message says the S3 bucket does not exist.
-pub(crate) fn is_missing_bucket(detail_lower: &str) -> bool {
-    detail_lower.contains("bucket does not exist") || detail_lower.contains("nosuchbucket")
 }
 
 /// Replaces any known secret values in `text` with `***REDACTED***`.
