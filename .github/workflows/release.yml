@@ -371,13 +371,25 @@ jobs:
             cat notes/notes.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Tags are created and deleted with a short-lived token of the GitHub App «Kestic Release»
+      # (contents: write on this repository only): on a personal account a ruleset cannot name
+      # GitHub Actions as a bypass actor, but it can name an installed app. The agents' app has no
+      # bypass, so agents cannot create, move or delete version tags.
+      - name: Token of the release app
+        id: app-token
+        if: needs.prepare.outputs.dry-run != 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       # The tag is created here, after the build succeeded, and points at the built commit. The
       # release is a draft until all assets are uploaded. A re-run accepts its own tag and replaces
       # its draft; a published release is never touched.
       - name: Create tag and release
         if: needs.prepare.outputs.dry-run != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
           COMMIT: ${{ needs.prepare.outputs.commit }}
           TITLE: ${{ needs.prepare.outputs.title }}
@@ -419,7 +431,8 @@ jobs:
       - name: Remove older pre-releases of the branch
         if: needs.prepare.outputs.kind == 'branch'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # A dry run only lists; deleting a tag needs the release app's bypass.
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           BRANCH: ${{ github.ref_name }}
           DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
         run: |

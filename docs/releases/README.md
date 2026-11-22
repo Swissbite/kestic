@@ -20,7 +20,7 @@ Every `0.x` version is marked as a pre-release on GitHub. In apt, `0.4.0` replac
 
 If a step fails, use **Re-run failed jobs** on the same run: it reuses its tag and replaces its own draft. **Re-run all jobs** or a new run refuses a commit that already carries a release tag. A published release is never changed.
 
-Agents cannot start the workflow: the agents' GitHub App only has `actions: read`. A ruleset on `refs/tags/v*` lets only the admin role and GitHub Actions create or delete version tags.
+Agents cannot start the workflow: the agents' GitHub App only has `actions: read`. A ruleset on `refs/tags/v*` lets only the admin role and the GitHub App «Kestic Release» create or delete version tags; the workflow uses a short-lived token of that app (variable `RELEASE_APP_ID`, secret `RELEASE_APP_PRIVATE_KEY`).
 
 ## Pre-releases of an integration branch
 
