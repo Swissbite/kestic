@@ -24,7 +24,7 @@ Verbindliche Begriffe für UI, Spec und Code. Nicht verwenden: «Profil», «Job
 | Verlauf | History | `RunHistory` | – (Lauf-Historie, FR-18) |
 | Aufräumen | Clean up | `Maintenance::Prune` | `prune` |
 | Prüfen | Verify | `Maintenance::Check` | `check` |
-| Nicht zugeordnet | Unassigned | – | Snapshots ohne Kestic-Tag (FR-36) |
+| Nicht zugeordnet | Unassigned | – | Snapshots ohne eindeutigen Kestic-Tag (FR-36) |
 | Wartet | Waiting | Status `ausstehend` | – (UI-Wort für `ausstehend`) |
 | Ausnahme | Exception | `ExcludeRule::Negated` | `!`-Negation in Ausschluss-Regeln |
 | Entfernen | Remove | – | nur aus der Kestic-Konfiguration nehmen; Daten im Ziel bleiben (FR-56) |
