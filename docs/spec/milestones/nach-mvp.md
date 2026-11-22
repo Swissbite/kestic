@@ -36,6 +36,7 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | FR-09 | Auto-Exclude-Presets mit Ausnahmen |
 | FR-25 | Snapshot in Dolphin browsen |
 | FR-26 | Grössen-Explorer |
+| – | «Frühere Versionen…» im Kontextmenü von Dolphin: zeigt die Versionen einer Datei über alle Snapshots (gleiche Fassungen zusammengefasst) und bietet «Diese Version speichern unter…» über `restic dump`; überschreibt nie still |
 
 ## Zuletzt (P3)
 

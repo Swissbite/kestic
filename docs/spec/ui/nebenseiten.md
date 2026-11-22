@@ -36,7 +36,7 @@ Aufbau, Breadcrumb «Ziele › NAS › Backups übernehmen», Aktion `[Ausgewäh
 - Je Backup Checkbox, Name, «Quelle ‹alt› → ‹neu›», «letzter Snapshot vor n Tagen von Rechner ‹Host›». Beispiel: `[✓]` Dokumente · `/home/owner/Dokumente → /home/user/Dokumente` · vor 2 Tagen von «notebook-alt», mit Warnung «Jünger als 7 Tage und von einem anderen Rechner: Übernehmen heisst, dass der andere Rechner dieses Backup nicht mehr ausführen soll.»; `[ ]` Musik · `/home/owner/Musik → /home/user/Musik` · vor 40 Tagen von «notebook-alt».
 - Zeile «Verwaist: 2 Backups ohne Beschreibung – unter ‹Wiederherstellen › Verwaist› durchsuchbar.»
 
-Regeln: Übernommene Backups behalten ihre IDs; die Quelle wird ggf. auf `/home/<neu>/…` abgebildet (F6) und vor dem Übernehmen angezeigt. Leer: «Keine weiteren Backups auf diesem Ziel».
+Regeln: Übernommene Backups behalten ihre IDs; die Quelle wird ggf. auf den Heimordner des Benutzers abgebildet (z. B. `/home/<neu>/…`, F6) und vor dem Übernehmen angezeigt. Leer: «Keine weiteren Backups auf diesem Ziel».
 
 ### 8.4 Gespeichertes Passwort aktualisieren (FR-37 Exit 12, FR-57)
 
