@@ -26,7 +26,6 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | FR-55 | Keine Systembenachrichtigung bei aktivem Fenster |
 | – | SFTP mit SSH-Schlüssel, der eine Passphrase hat, ohne ssh-agent: Passphrase im Passwortspeicher (im MVP nur Schlüssel ohne Passphrase oder ssh-agent, [architecture.md](../architecture.md) «Secrets») |
 | – | Flatpak ([architecture.md](../architecture.md) «Packaging», «Secrets») |
-| – | Release-Prozess: SemVer, Changelog (Q7) |
 | – | Projekt-Website auf GitHub Pages (inkl. automatisch generierter & aktualisierter GUI-Screenshots aus den QML-Offscreen-Smoke-Tests, optional über `kestic.daester.net` / GitHub Pages) |
 | – | «Tastenkürzel einrichten…» im Hauptmenü: Editor für alle Tastenkürzel ([ui/stil-und-texte.md](../ui/stil-und-texte.md) §13.1) |
 
