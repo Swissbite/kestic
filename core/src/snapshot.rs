@@ -100,6 +100,15 @@ impl ResticSnapshot {
             .filter_map(|t| t.strip_prefix(META_TAG_PREFIX))
     }
 
+    /// The configured backup this snapshot belongs to: the first of its `kestic:<id>` tags, in
+    /// tag order, whose ID is in `configured`. A metadata snapshot belongs to none.
+    pub fn assigned_backup(&self, configured: &[&str]) -> Option<&str> {
+        if self.is_meta() {
+            return None;
+        }
+        self.backup_ids().find(|id| configured.contains(id))
+    }
+
     /// Whether this is a metadata snapshot (`kestic-meta:<id>`).
     pub fn is_meta(&self) -> bool {
         self.meta_backup_ids().next().is_some()

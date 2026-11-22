@@ -209,6 +209,9 @@ fn ac_m4_01_3_list_of_b1_has_no_snapshot_of_b2() {
                 let b2_tag = format!("kestic:{}", fx.b2.id);
                 fx.snapshot(&b2_tag, "2026-11-15 13:00:00", "laptop");
                 fx.snapshot(&b2_tag, "2026-11-12 13:00:00", "laptop");
+                // Tags of both backups, b2 first: the snapshot belongs to b2 only.
+                let both = format!("{b2_tag},{}", fx.b1_tag());
+                fx.snapshot(&both, "2026-11-11 13:00:00", "laptop");
 
                 let list = fx.list_b1();
                 assert!(

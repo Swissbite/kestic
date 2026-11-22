@@ -43,8 +43,7 @@ pub fn sort_destination_snapshots(
             continue;
         }
         let configured = snap
-            .backup_ids()
-            .find(|id| configured_backup_ids.contains(id))
+            .assigned_backup(configured_backup_ids)
             .map(str::to_string);
         if let Some(id) = configured {
             by_backup.entry(id).or_default().push(snap);

@@ -29,6 +29,8 @@ struct ListDeps<'a> {
     kestic_binary: &'a Path,
     secret_store: &'a dyn SecretStore,
     clock: &'a dyn Clock,
+    /// IDs of the configured backups.
+    configured: &'a [&'a str],
 }
 
 impl ListDeps<'_> {
@@ -57,8 +59,9 @@ impl ListDeps<'_> {
             self.clock,
             &[],
         )?;
-        // A metadata snapshot never belongs to the list, even when it also carries the tag.
-        snaps.retain(|s| !s.is_meta());
+        // Like the destination list: a metadata snapshot never belongs to it, and a snapshot
+        // with the tags of several backups only to the first configured one.
+        snaps.retain(|s| s.assigned_backup(self.configured) == Some(b_id.as_str()));
         sort_newest_first(&mut snaps);
         Ok(to_dtos(snaps))
     }
@@ -106,7 +109,7 @@ pub(crate) fn list_backup_snapshots_unlocked(
     backup_id: &str,
 ) -> Result<BackupSnapshotsDto, KesticServiceErr> {
     let b_id = parse_backup_id(backup_id)?;
-    let (current_dest, other_dests, deps) = {
+    let (current_dest, other_dests, configured, deps) = {
         let guard = shared.lock_unpoisoned();
         let current_dest = guard.backup_destination(&b_id)?;
         let other_dests: Vec<Destination> = guard
@@ -116,8 +119,15 @@ pub(crate) fn list_backup_snapshots_unlocked(
             .filter(|d| d.id != current_dest.id)
             .cloned()
             .collect();
-        (current_dest, other_dests, guard.restic_deps())
+        let configured: Vec<String> = guard
+            .config
+            .backups
+            .iter()
+            .map(|b| b.id.as_str().to_string())
+            .collect();
+        (current_dest, other_dests, configured, guard.restic_deps())
     };
+    let configured: Vec<&str> = configured.iter().map(String::as_str).collect();
 
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
     let list_deps = ListDeps {
@@ -125,6 +135,7 @@ pub(crate) fn list_backup_snapshots_unlocked(
         kestic_binary: &deps.kestic_binary,
         secret_store: deps.secret_store.as_ref(),
         clock: deps.clock.as_ref(),
+        configured: &configured,
     };
     Ok(collect_backup_snapshots(
         &b_id,
@@ -162,6 +173,7 @@ pub(crate) fn list_destination_snapshots_unlocked(
         kestic_binary: &deps.kestic_binary,
         secret_store: deps.secret_store.as_ref(),
         clock: deps.clock.as_ref(),
+        configured: &[],
     };
     let mut dto = DestinationSnapshotsDto {
         destination_id: dest.id.as_str().to_string(),
