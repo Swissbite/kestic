@@ -198,7 +198,7 @@ case "${1:-}" in
         ;;
     store-token)
         IFS= read -r token || true
-        [[ "$token" =~ ^gh[a-z]_[A-Za-z0-9_]+$ ]] || die "store-token: no GitHub token on stdin"
+        [[ "$token" =~ ^gh[a-z]_[A-Za-z0-9_.-]+$ ]] || die "store-token: no GitHub token on stdin"
         rm -f "$TOKEN_FILE.new"
         (
             umask 077

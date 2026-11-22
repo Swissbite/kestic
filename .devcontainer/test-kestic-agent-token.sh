@@ -22,7 +22,8 @@ fail() {
 
 openssl genrsa -out "$tmp/key.pem" 2048 2>/dev/null
 openssl rsa -in "$tmp/key.pem" -pubout -out "$tmp/pub.pem" 2>/dev/null
-TOKEN=ghs_TestToken0123456789abcdefABCDEF
+# Installation tokens carry dots and dashes besides letters, digits and _.
+TOKEN=ghs_Test.Token-0123456789_abcdef.ABCDEF-xyz
 export FAKE_TOKEN="$TOKEN" FAKE_KEY="$tmp/key.pem" FAKE_DIR="$tmp" KESTIC_AGENT_APP_ID=123456 \
     FAKE_INSTALLATION='{"id":4711,"account":{"login":"Swissbite","id":99}}' \
     FAKE_ACCESS="{\"token\":\"$TOKEN\",\"expires_at\":\"2026-11-22T13:00:00Z\",\"repository_selection\":\"selected\"}"
