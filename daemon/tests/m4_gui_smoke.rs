@@ -30,8 +30,9 @@ fn smoke_artifact(name: &str, layout: &str, lang: &str) -> String {
     format!("target/smoke-artifacts/m4-{name}-{layout}-{lang}.png")
 }
 
-/// A daemon on the real bus name with one destination «NAS», one backup «Home» and three of
-/// its snapshots (today, yesterday, five days ago). Keep the fakes alive with the rig.
+/// A daemon on the real bus name with one destination «NAS», the backups «Home» (three
+/// snapshots: today, yesterday, five days ago) and «Photos» (none). Keep the fakes alive with
+/// the rig.
 fn restore_env(root: &Path) -> (M3Rig, StdFakes) {
     let fakes = StdFakes::start_with(FakeSetup {
         active_network: Some("HomeWifi"),
@@ -50,6 +51,7 @@ fn restore_env(root: &Path) -> (M3Rig, StdFakes) {
     let (dest, password) =
         add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
     let backup = rig.add_backup_to(&dest, "Home", |_| {});
+    rig.add_backup_to(&dest, "Photos", |_| {});
     let tag = format!("kestic:{}", backup.id);
     for (time, host) in [
         ("2026-11-10 12:00:00", "desktop"),

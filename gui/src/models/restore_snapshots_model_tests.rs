@@ -53,3 +53,30 @@ fn ac_m4_01_1_size_is_data_added_or_total_bytes_processed() {
         "(c) size and host"
     );
 }
+
+/// AC-M4-01-1 (c): every entry carries its time; the list groups by day as «Today»,
+/// «Yesterday», «This Week» (with the weekday) and «Earlier» (with the date).
+#[test]
+fn ac_m4_01_1_snapshots_are_grouped_by_day_with_their_time() {
+    use time::macros::datetime;
+    // Sunday, 15.11.2026: the week started on Monday, 09.11.
+    let now = datetime!(2026-11-15 14:32:00 UTC);
+    let today = day_section(datetime!(2026-11-15 12:00:00 UTC), now);
+    let yesterday = day_section(datetime!(2026-11-14 12:00:00 UTC), now);
+    let monday = day_section(datetime!(2026-11-09 12:00:00 UTC), now);
+    let earlier = day_section(datetime!(2026-11-08 12:00:00 UTC), now);
+    assert_eq!(today.1, "Today", "(c) today's group");
+    assert_eq!(yesterday.1, "Yesterday", "(c) yesterday's group");
+    assert_eq!(monday.1, "This Week", "(c) this week's group");
+    assert!(
+        monday.0.starts_with("Mon "),
+        "(c) weekday in this week's title: {}",
+        monday.0
+    );
+    assert_eq!(earlier.1, "Earlier", "(c) older snapshots");
+    assert!(
+        earlier.0.contains("2026-11-08"),
+        "(c) date of an older snapshot: {}",
+        earlier.0
+    );
+}

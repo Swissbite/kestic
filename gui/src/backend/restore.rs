@@ -5,9 +5,10 @@
 //! in a background thread; `poll_restore` hands the results to QML.
 
 use super::qobject;
-use crate::state_cache::{daemon_unavailable_text, dbus_error_text, make_client, shared_state};
+use crate::state_cache::{daemon_unavailable_text, dbus_error_text, make_client, shared_state, tr};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{BackupSnapshotsDto, DestinationSnapshotsDto};
+use kestic_i18n::codes::ErrorKind;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Mutex, OnceLock};
@@ -117,20 +118,13 @@ impl qobject::KesticApp {
 
     /// Hands finished snapshot lists to QML (called by `poll_events`).
     pub(super) fn poll_restore(mut self: Pin<&mut Self>) {
-        let (overview_changed, overview_done, snapshots_error) = {
+        let (overview_changed, overview_done, snapshots_done) = {
             let mut cache = restore_cache().lock_unpoisoned();
-            let overview_changed = std::mem::take(&mut cache.overview_changed);
-            let overview_done = std::mem::take(&mut cache.overview_done);
-            let snapshots_error = if std::mem::take(&mut cache.snapshots_done) {
-                Some(match &cache.backup_snapshots {
-                    Some((_, Ok(dto))) => dto.current_error.clone().unwrap_or_default(),
-                    Some((_, Err(err))) => err.clone(),
-                    None => String::new(),
-                })
-            } else {
-                None
-            };
-            (overview_changed, overview_done, snapshots_error)
+            (
+                std::mem::take(&mut cache.overview_changed),
+                std::mem::take(&mut cache.overview_done),
+                std::mem::take(&mut cache.snapshots_done),
+            )
         };
         if overview_done {
             self.as_mut().set_restore_overview_loading(false);
@@ -138,11 +132,51 @@ impl qobject::KesticApp {
         if overview_changed || overview_done {
             self.as_mut().restore_overview_updated();
         }
-        if let Some(error) = snapshots_error {
+        if snapshots_done {
             self.as_mut().set_restore_snapshots_loading(false);
+        }
+        // The destination's error code may arrive after the snapshot list: refresh the text.
+        if snapshots_done || overview_changed {
+            let error = snapshots_error_text();
             self.as_mut()
                 .set_restore_snapshots_error(cxx_qt_lib::QString::from(&error));
+        }
+        if snapshots_done {
             self.as_mut().restore_snapshots_updated();
         }
+    }
+}
+
+/// Error line of the snapshot list: the text of the destination's error code when the
+/// destination list names one, otherwise the raw detail.
+fn snapshots_error_text() -> String {
+    let (backup_id, raw) = match &restore_cache().lock_unpoisoned().backup_snapshots {
+        Some((id, Ok(dto))) => match &dto.current_error {
+            Some(raw) => (id.clone(), raw.clone()),
+            None => return String::new(),
+        },
+        Some((_, Err(err))) => return err.clone(),
+        None => return String::new(),
+    };
+    let dest_id = {
+        let guard = shared_state().lock_unpoisoned();
+        guard.state.as_ref().and_then(|s| {
+            s.backups
+                .iter()
+                .find(|b| b.backup.id.as_str() == backup_id)
+                .map(|b| b.backup.destination_id.as_str().to_string())
+        })
+    };
+    let kind = dest_id.and_then(|id| {
+        restore_cache()
+            .lock_unpoisoned()
+            .destinations
+            .get(&id)
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|d| d.error_kind)
+    });
+    match kind {
+        Some(kind) if kind != ErrorKind::Unknown => tr(&kind.message(None, false)),
+        _ => raw,
     }
 }

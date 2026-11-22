@@ -163,14 +163,20 @@ fn ac_m4_07_7_destination_snapshots_are_sorted_meta_backup_orphaned_unassigned()
     );
 }
 
-/// AC-M4-01-1: a repository password that also occurs inside the snapshot JSON (here the word
-/// «kestic» of every backup tag) does not change the listed snapshots: (a) both snapshots of
-/// the backup are listed, still under their backup.
+/// AC-M4-01-1: a repository password that also occurs inside the snapshot JSON (here the
+/// backup ID in every `kestic:<id>` tag, generated at runtime) does not change the listed
+/// snapshots: (a) both snapshots of the backup are listed, still under their backup.
 #[test]
 fn ac_m4_01_1_password_inside_the_snapshot_json_does_not_change_the_list() {
     let tmp = TempDir::new().expect("tempdir");
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/m4/snapshots_summary_with_and_without_data_added.json");
+    let backup_id = BackupId::generate().expect("backup id");
+    let tag = format!("kestic:{backup_id}");
+    let snapshots = serde_json::json!([
+        { "id": "a1", "time": "2026-11-14T12:00:00Z", "tags": [tag], "hostname": "laptop" },
+        { "id": "a2", "time": "2026-11-15T12:00:00Z", "tags": [tag], "hostname": "laptop" },
+    ]);
+    let fixture = tmp.path().join("snapshots.json");
+    fs::write(&fixture, snapshots.to_string()).expect("write fixture");
     let resolved = spy_restic(tmp.path(), &fixture);
     let repo = tmp.path().join("repo");
     fs::create_dir_all(&repo).expect("mkdir repo");
@@ -180,7 +186,7 @@ fn ac_m4_01_1_password_inside_the_snapshot_json_does_not_change_the_list() {
         .set_secret(
             dest.id.as_str(),
             SECRET_KIND_REPO,
-            &SecretValue::from_str_secret("kestic"),
+            &SecretValue::from_str_secret(backup_id.as_str()),
         )
         .expect("store password");
     let clock = FakeClock::new(datetime!(2026-11-15 14:32:00 UTC));
@@ -195,11 +201,12 @@ fn ac_m4_01_1_password_inside_the_snapshot_json_does_not_change_the_list() {
     };
 
     let all = list_destination_snapshots(&access).expect("listing succeeds");
-    let sorted = sort_destination_snapshots(all, &["backup-home"]);
+    let sorted = sort_destination_snapshots(all, &[backup_id.as_str()]);
     assert_eq!(
         sorted.backups[0].1.len(),
         2,
         "(a) both snapshots stay with their backup"
     );
     assert!(sorted.unassigned.is_empty(), "(a) none becomes unassigned");
+    assert!(sorted.orphaned.is_empty(), "(a) none becomes orphaned");
 }

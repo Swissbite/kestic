@@ -9,7 +9,7 @@ use super::rows::{id_at, row_of};
 use crate::backend::restore::restore_cache;
 use crate::state_cache::{
     cached_daemon_now, format_bytes, format_datetime_display, format_day_group, format_time_short,
-    i18n,
+    i18n, to_local,
 };
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
@@ -56,6 +56,36 @@ pub(crate) fn snapshot_subtitle(s: &SnapshotSummaryDto) -> String {
     }
 }
 
+fn weekday_text(day: time::Weekday) -> String {
+    match day {
+        time::Weekday::Monday => GuiText::Mon,
+        time::Weekday::Tuesday => GuiText::Tue,
+        time::Weekday::Wednesday => GuiText::Wed,
+        time::Weekday::Thursday => GuiText::Thu,
+        time::Weekday::Friday => GuiText::Fri,
+        time::Weekday::Saturday => GuiText::Sat,
+        time::Weekday::Sunday => GuiText::Sun,
+    }
+    .text()
+}
+
+/// Title and group of a snapshot taken at `t`: «12:00» under «Today» or «Yesterday»,
+/// «Mon 12:00» under «This Week» (Monday to the day before yesterday), otherwise date and time
+/// under «Earlier».
+pub(crate) fn day_section(t: OffsetDateTime, now: OffsetDateTime) -> (String, String) {
+    let date = to_local(t).date();
+    let today = to_local(now).date();
+    if date == today || today.previous_day() == Some(date) {
+        return (format_time_short(t), format_day_group(t, now));
+    }
+    let monday = today - time::Duration::days(i64::from(today.weekday().number_days_from_monday()));
+    if date >= monday && date < today {
+        let title = format!("{} {}", weekday_text(date.weekday()), format_time_short(t));
+        return (title, i18n("This Week").to_string());
+    }
+    (format_datetime_display(t), i18n("Earlier").to_string())
+}
+
 fn parse_time(s: &SnapshotSummaryDto) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(&s.time, &Rfc3339).ok()
 }
@@ -74,7 +104,7 @@ fn push_rows(
         let (title, section_name) = match (section, time) {
             (Some(name), Some(t)) => (format_datetime_display(t), name.to_string()),
             (Some(name), None) => (s.time.clone(), name.to_string()),
-            (None, Some(t)) => (format_time_short(t), format_day_group(t, now)),
+            (None, Some(t)) => day_section(t, now),
             (None, None) => (s.time.clone(), String::new()),
         };
         out.push(RestoreSnapshotRow {

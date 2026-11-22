@@ -136,10 +136,12 @@ int scenario_restore_tab(const Ctx& c) {
     M4_CHECK(5105, wait_until([&] { return !c.backend->property("restore_overview_loading").toBool(); }, 20000),
         "(b) snapshot counts loaded");
     finish_incubation(w);
-    M4_CHECK(5106, model_rows(w, "restoreBackupsModel") == 1, "(b) one backup listed");
+    M4_CHECK(5106, model_rows(w, "restoreBackupsModel") == 2, "(b) both backups listed");
     QAbstractItemModel* backups = model_named(w, "restoreBackupsModel");
     M4_CHECK_EQ(5107, role_value(backups, 0, "subtitle").toString(),
-        loc(c.lang, "3 snapshots", "3 Snapshots"), "(b) number of snapshots of the backup");
+        loc(c.lang, "3 snapshots", "3 Snapshots"), "(b) number of snapshots of the first backup");
+    M4_CHECK_EQ(5115, role_value(backups, 1, "subtitle").toString(),
+        loc(c.lang, "0 snapshots", "0 Snapshots"), "(b) number of snapshots of the second backup");
     if (w->property("narrowMode").toBool()) {
         // One column: the snapshot list opens from the backup row.
         M4_CHECK(5114, save_screenshot(w, c.out_path), "screenshot failed");
@@ -174,8 +176,19 @@ int scenario_restore_keyboard(const Ctx& c) {
 
     QQuickItem* backup_row = tab_to(w, "restoreBackupListItem", 30);
     M4_CHECK(5204, backup_row != nullptr, "Tab did not reach the backup row");
+    press_and_wait(w, Qt::Key_Down, 80);
     send_key(w, Qt::Key_Return);
-    M4_CHECK(5205, wait_for_snapshots(w, c.backend, 3), "Return on the backup row lists its snapshots");
+    M4_CHECK(5205, wait_until([&] {
+        QQuickItem* p = visible_item(w, "restoreSnapshotsPage");
+        return p && p->property("title").toString() == QLatin1String("Photos")
+            && !c.backend->property("restore_snapshots_loading").toBool();
+    }, 20000), "Down and Return on the second backup list its snapshots");
+    M4_CHECK(5225, model_rows(w, "restoreSnapshotsModel") == 0, "the second backup has no snapshots");
+    QQuickItem* photos_row = tab_to(w, "restoreBackupListItem", 30);
+    M4_CHECK(5226, photos_row != nullptr, "Tab did not return to the backup list");
+    press_and_wait(w, Qt::Key_Up, 80);
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(5227, wait_for_snapshots(w, c.backend, 3), "Up and Return on the first backup list its snapshots");
     finish_incubation(w);
 
     QQuickItem* first = tab_to(w, "restoreSnapshotListItem", 30);

@@ -603,7 +603,7 @@ msgstr "REST-Server"
 msgid "Current destination (%1)"
 msgstr "Aktuelles Ziel (%1)"
 
-#: gui/src/models/snapshots_model.rs:76
+#: gui/src/ui_texts.rs
 msgid "Earlier snapshots on '%1'"
 msgstr "Frühere Snapshots auf «%1»"
 
@@ -2239,15 +2239,15 @@ msgstr "Nächste 3 geplante Läufe:"
 msgid "Snapshots · %1"
 msgstr "Snapshots · %1"
 
-#: gui/src/qml/BackupSnapshotsPage.qml:35
+#: gui/src/ui_texts.rs
 msgid "Refresh"
 msgstr "Aktualisieren"
 
-#: gui/src/qml/BackupSnapshotsPage.qml:54
+#: gui/src/ui_texts.rs
 msgid "Loading snapshots…"
 msgstr "Snapshots werden geladen…"
 
-#: gui/src/qml/BackupSnapshotsPage.qml:75
+#: gui/src/ui_texts.rs
 msgid "No snapshots yet – the first backup is still pending"
 msgstr "Noch keine Snapshots – das erste Backup steht noch aus"
 
@@ -3403,3 +3403,11 @@ msgstr "Mit vorherigem vergleichen"
 #: gui/src/qml/RestoreSnapshotsPage.qml
 msgid "Restore…"
 msgstr "Wiederherstellen…"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "This Week"
+msgstr "Diese Woche"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Earlier"
+msgstr "Früher"
