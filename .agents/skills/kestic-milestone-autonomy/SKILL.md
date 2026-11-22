@@ -75,10 +75,14 @@ and new visible texts that only name what the spec defines (a column header, an 
 3. Two reviews with the frozen prompts (`prompts/README.md`): **correctness and spec**, and
    **break it** on a different model than the author (`sonnet` when the author runs on `opus`,
    otherwise `opus`). Reviewers get the diff, the ACs and the spec files, not the author's
-   reasoning. Fix every `must-fix`, then run the complete `just verify` and both reviews again.
+   reasoning. Fix every `must-fix`, then run the complete `just verify` and all reviews again.
    Merging `origin/m<n>` into the branch needs `just verify` again, not new reviews.
+   A story that changes anything under `gui/` or `po/` gets a third review, **UI**
+   (`prompts/review-ui.md`): it gets the smoke screenshots of every screen the story adds or
+   changes (`target/smoke-artifacts/`, German and English, wide and narrow) and no code diff.
+   Its `must-fix` findings count like the others.
 4. Pull request into `m<n>`. The body maps each AC to its test, names level-2 decisions with
-   `Rückbau-Kosten` and ends with both reviewers' verdict JSON blocks as they returned them.
+   `Rückbau-Kosten` and ends with every reviewer's verdict JSON block as it was returned.
 5. Wait for CI with `gh pr checks <pr> --watch` (Bash timeout 40 minutes). The result counts
    only from `gh pr view <pr> --json headRefOid,statusCheckRollup`: `verify` is `SUCCESS` for
    exactly that head. No `verify` check at all means CI does not run for `m<n>`: do not merge,
@@ -86,7 +90,7 @@ and new visible texts that only name what the spec defines (a column header, an 
 6. **Merge it yourself** with `gh pr merge <pr> --squash --match-head-commit <head>
    --delete-branch` only when all of these hold:
    - `verify` is `SUCCESS` on the head (step 5);
-   - both reviews report `must_fix: 0`, and their `head` is the pull request's head or a commit
+   - all reviews report `must_fix: 0`, and their `head` is the pull request's head or a commit
      after which only merges of `origin/m<n>` followed (step 3);
    - the branch contains the current `origin/m<n>` (if not: merge it in, `just verify`, push,
      step 5);
@@ -159,7 +163,7 @@ are absolute; no secrets and no paths of real data in issues, comments or pull r
   `docs/spec/manual-acceptance.md` with step-by-step instructions.
 - Exit criteria of the milestone file met.
 - Milestone review: `prompts/review-milestone-quality.md` plus the two story prompts over
-  `git diff m<n>-start...origin/m<n>`; findings fixed in one clean-up pull request.
+  `git diff m<n>-start...origin/m<n>`, and `prompts/review-ui.md` over all smoke screenshots; findings fixed in one clean-up pull request.
 - README (English) matches the milestone (`AGENTS.md` step 8).
 - Showcase site `site/`: milestone done in the roadmap, its features in «What it does» (glossary
   terms), its smoke screenshots in the manifest; `just site` green.
