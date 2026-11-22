@@ -49,3 +49,10 @@ fn size_column_shows_files_only() {
     e.size = None;
     assert_eq!(size_text(&e), "–");
 }
+
+#[test]
+fn the_last_representable_time_shifted_east_stays_in_utc() {
+    let far = OffsetDateTime::parse("9999-12-31T23:59:59Z", &Rfc3339).expect("parse");
+    let east = time::UtcOffset::from_hms(1, 0, 0).expect("offset");
+    assert_eq!(crate::state_cache::to_offset_or_keep(far, east), far);
+}

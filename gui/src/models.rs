@@ -470,6 +470,8 @@ pub mod qobject {
         #[qinvokable]
         fn poll(self: Pin<&mut SnapshotBrowseModel>);
         #[qinvokable]
+        fn cancel(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
         #[cxx_name = "setFilter"]
         fn set_filter(self: Pin<&mut SnapshotBrowseModel>, text: &QString);
         #[qinvokable]

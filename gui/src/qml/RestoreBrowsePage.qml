@@ -50,6 +50,19 @@ Kirigami.ScrollablePage {
 
     Component.onCompleted: openDir(startDir)
 
+    // A snapshot whose backed-up folder is not in its tree (made with a relative path or of a
+    // single file) opens at the top instead.
+    Connections {
+        target: snapshotBrowseModel
+        function onStateChanged() {
+            if (snapshotBrowseModel.state === "done" && !snapshotBrowseModel.dir_exists
+                    && snapshotBrowseModel.dir === page.startDir && page.startDir !== "/") {
+                page.openDir("/");
+            }
+        }
+    }
+    Component.onDestruction: snapshotBrowseModel.cancel()
+
     SnapshotBrowseModel {
         id: snapshotBrowseModel
         objectName: "snapshotBrowseModel"
@@ -160,6 +173,7 @@ Kirigami.ScrollablePage {
                 objectName: "browseSelectionLabel"
                 Layout.fillWidth: true
                 text: snapshotBrowseModel.selection_text
+                textFormat: Text.PlainText
                 elide: Text.ElideRight
             }
             Controls.Button {
@@ -308,6 +322,7 @@ Kirigami.ScrollablePage {
                 Controls.Label {
                     Layout.fillWidth: true
                     text: entryRow.name
+                    textFormat: Text.PlainText
                     elide: Text.ElideMiddle
                     color: entryRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                 }
@@ -341,6 +356,7 @@ Kirigami.ScrollablePage {
                 required property string modelData
                 width: ListView.view.width
                 text: modelData
+                textFormat: Text.PlainText
                 elide: Text.ElideMiddle
                 padding: Kirigami.Units.smallSpacing
             }

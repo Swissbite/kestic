@@ -404,7 +404,9 @@ impl<R: HeldResult> QueryStore<R> {
             let oldest = self
                 .queries
                 .iter()
-                .filter(|(qid, q)| qid.as_str() != id && q.state != QueryState::Running)
+                .filter(|(qid, q)| {
+                    qid.as_str() != id && q.result.as_ref().is_some_and(|r| r.held_bytes() > 0)
+                })
                 .min_by_key(|(_, q)| q.last_access)
                 .map(|(qid, _)| qid.clone());
             let Some(oldest) = oldest else {

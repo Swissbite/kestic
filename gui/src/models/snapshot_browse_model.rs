@@ -43,6 +43,8 @@ enum QueryStart {
     Pending,
     Started(String),
     Failed(String),
+    /// The folder was left before the query started; the start cancels it right away.
+    Abandoned,
 }
 
 #[derive(Default)]
@@ -202,6 +204,8 @@ impl SnapshotBrowseModelRust {
         match (status.state.as_str(), status.result) {
             ("running", _) => Ok(None),
             ("done", Some(SnapshotQueryResultDto::Ls(ls))) => Ok(Some(ls)),
+            // Only a folder this model left is cancelled; treat it like a freed result.
+            ("cancelled", _) => Err(KesticDbusError::NotFound(query_id)),
             _ => {
                 let detail = status.error_detail.unwrap_or_default();
                 let text = match status.error_kind {
@@ -222,6 +226,7 @@ impl qobject::SnapshotBrowseModel {
         snapshot_id: &QString,
         dir: &QString,
     ) {
+        self.as_mut().abandon();
         let request = SnapshotQueryRequest {
             kind: SnapshotQueryKind::Ls,
             destination_id: destination_id.to_string(),
@@ -251,14 +256,24 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().set_state(QString::from("running"));
         // Starting a query checks restic first; that must not hold up the window.
         std::thread::spawn(move || {
-            let started = match make_client() {
-                Ok(client) => match client.start_snapshot_query(&request) {
-                    Ok(id) => QueryStart::Started(id),
-                    Err(err) => QueryStart::Failed(dbus_error_text(&err)),
-                },
-                Err(_) => QueryStart::Failed(daemon_unavailable_text()),
+            let Ok(client) = make_client() else {
+                *slot.lock_unpoisoned() = QueryStart::Failed(daemon_unavailable_text());
+                return;
             };
-            *slot.lock_unpoisoned() = started;
+            let started = match client.start_snapshot_query(&request) {
+                Ok(id) => QueryStart::Started(id),
+                Err(err) => QueryStart::Failed(dbus_error_text(&err)),
+            };
+            let mut guard = slot.lock_unpoisoned();
+            match (&*guard, started) {
+                (QueryStart::Abandoned, QueryStart::Started(id)) => {
+                    drop(guard);
+                    // Nobody waits for the answer; a query that already ended needs nothing.
+                    let _ = client.cancel_snapshot_query(&id);
+                }
+                (QueryStart::Abandoned, _) => {}
+                (_, started) => *guard = started,
+            }
         });
     }
 
@@ -275,7 +290,7 @@ impl qobject::SnapshotBrowseModel {
                     self.as_mut().fail(&text);
                     return;
                 }
-                Some(QueryStart::Pending) | None => return,
+                Some(QueryStart::Pending | QueryStart::Abandoned) | None => return,
             }
         }
         self.as_mut().load_first_page();
@@ -291,6 +306,31 @@ impl qobject::SnapshotBrowseModel {
         if self.state.to_string() == "done" {
             self.as_mut().load_first_page();
         }
+    }
+
+    /// Stops listing the current folder (the page closes).
+    pub fn cancel(self: Pin<&mut Self>) {
+        self.abandon();
+    }
+
+    /// Cancels the query of the folder being left while it still runs, so restic stops.
+    fn abandon(mut self: Pin<&mut Self>) {
+        if self.state.to_string() != "running" {
+            return;
+        }
+        if let Some(slot) = self.as_mut().rust_mut().start.take() {
+            let mut guard = slot.lock_unpoisoned();
+            if matches!(*guard, QueryStart::Pending) {
+                *guard = QueryStart::Abandoned;
+            }
+        }
+        if let Some(id) = self.as_mut().rust_mut().query_id.take()
+            && let Ok(client) = self.as_mut().rust_mut().client()
+        {
+            // A query that ended meanwhile needs no cancel; the answer is not needed.
+            let _ = client.cancel_snapshot_query(&id);
+        }
+        self.as_mut().set_state(QString::from("cancelled"));
     }
 
     fn fail(mut self: Pin<&mut Self>, text: &str) {
@@ -332,7 +372,8 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().set_too_large(ls.entries.too_large);
         self.as_mut().set_total(to_i32(ls.entries.total));
         self.as_mut().set_matched(to_i32(ls.entries.matched));
-        let filtered = !self.filter.is_empty();
+        // A list too large to hold cannot be filtered: its count is the total.
+        let filtered = !self.filter.is_empty() && !ls.entries.too_large;
         let count = count_text(ls.entries.total, ls.entries.matched, filtered);
         self.as_mut().set_count_text(QString::from(&count));
         let too_large =

@@ -357,3 +357,44 @@ fn ac_m4_03_6_filter_finds_37_names_in_any_case() {
         },
     );
 }
+
+/// M4-S03: a folder the GUI leaves while it still loads is cancelled: `CancelSnapshotQuery`
+/// stops `restic ls` and the query ends as `cancelled`.
+#[test]
+fn m4_s03_cancel_snapshot_query_stops_restic_ls() {
+    run_isolated_test(
+        "m4_s03_cancel_snapshot_query_stops_restic_ls",
+        "KESTIC_M4_S03_CANCEL_INNER",
+        |root| {
+            for_each_variant(root, small_tree, |fx, label| {
+                fx.rig.wrapper.hold("ls");
+                let id = fx.start_ls(&fx.src_dir());
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while fx.rig.wrapper.of('S', "ls").is_empty() {
+                    assert!(Instant::now() < deadline, "{label}: restic ls started");
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                fx.rig
+                    .daemon
+                    .client
+                    .cancel_snapshot_query(&id)
+                    .expect("CancelSnapshotQuery");
+                let deadline = Instant::now() + Duration::from_secs(30);
+                let state = loop {
+                    let st = fx.status(&id, &SnapshotQueryPage::default());
+                    if st.state != "running" || Instant::now() > deadline {
+                        break st.state;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                };
+                fx.rig.wrapper.release("ls");
+                assert_eq!(state, "cancelled", "{label}: query cancelled");
+                assert_eq!(
+                    fx.rig.wrapper.of('T', "ls").len(),
+                    1,
+                    "{label}: restic ls got SIGTERM"
+                );
+            });
+        },
+    );
+}
