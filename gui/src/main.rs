@@ -5,6 +5,7 @@
 
 mod backend;
 mod build_info;
+mod destination_input;
 mod models;
 mod overall_text;
 mod qt_bridge;

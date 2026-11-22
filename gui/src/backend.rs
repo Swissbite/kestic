@@ -44,6 +44,7 @@ pub mod qobject {
         #[qproperty(bool, connection_test_ok)]
         #[qproperty(QString, connection_test_message)]
         #[qproperty(QString, connection_test_error_kind)]
+        #[qproperty(QString, connection_test_note)]
         #[qproperty(bool, snapshots_loading)]
         #[qproperty(QString, snapshots_error)]
         #[qproperty(bool, snapshots_has_previous)]
@@ -179,6 +180,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "destinationTypeCardsJson"]
         fn destination_type_cards_json(self: &KesticApp) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "removableDrivesJson"]
+        fn removable_drives_json(self: &KesticApp) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "localFolderFromUrl"]
+        fn local_folder_from_url(self: &KesticApp, url: &QString) -> QString;
 
         #[qinvokable]
         #[cxx_name = "testDestination"]
@@ -577,6 +586,7 @@ pub struct KesticAppRust {
     connection_test_ok: bool,
     connection_test_message: QString,
     connection_test_error_kind: QString,
+    connection_test_note: QString,
     snapshots_loading: bool,
     snapshots_error: QString,
     snapshots_has_previous: bool,

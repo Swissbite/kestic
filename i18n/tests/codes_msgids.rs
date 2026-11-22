@@ -8,9 +8,9 @@
 //! fills exactly the placeholders of its msgid.
 
 use kestic_i18n::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
-    SkipReason, SourceStatus,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
+    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase,
+    ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
@@ -130,6 +130,9 @@ fn all_messages() -> Vec<(String, Message)> {
             UiText::Message(m) => push(format!("{code:?}"), m),
             UiText::Raw(_) => assert!(raw_codes.contains(&code), "{code:?} must be translated"),
         }
+    }
+    for note in ConnectionNoteCode::ALL {
+        push(format!("{note:?}"), note.message());
     }
     if let UiText::Message(m) = connection_test_text(true, None, "") {
         push("reachable".into(), m);

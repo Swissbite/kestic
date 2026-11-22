@@ -4,9 +4,9 @@
 //! Tests of the code → msgid mapping (`kestic_i18n::messages`).
 
 use kestic_i18n::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
-    SkipReason, SourceStatus,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
+    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase,
+    ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
@@ -414,8 +414,24 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
         (C::RepositoryMissing, Some("Repository is missing")),
         (C::CommandFailed, None),
         (C::DaemonUnreachable, None),
+        (
+            C::NotALocalPath,
+            Some(
+                "'%1' is a network address, not a folder on this computer. restic cannot use it; choose a local or mounted folder.",
+            ),
+        ),
     ];
     assert_table(&C::ALL, &connection, |c| c.text("x"));
+
+    let notes = [(
+        ConnectionNoteCode::CifsShare,
+        Some(
+            "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
+        ),
+    )];
+    assert_table(&ConnectionNoteCode::ALL, &notes, |n| {
+        UiText::Message(n.message())
+    });
 
     use RecoveryAction as A;
     let actions = [

@@ -10,9 +10,9 @@
 //! `xgettext --keyword=i18n_noop:1` extracts it.
 
 use crate::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
-    SkipReason, SourceStatus, code_enum,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
+    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase,
+    ServiceErrorCode, SkipReason, SourceStatus, code_enum,
 };
 
 /// Marks `msgid` for extraction (`xgettext --keyword=i18n_noop:1`) without translating it.
@@ -378,11 +378,28 @@ impl ConnectionTestCode {
             Self::WrongPassword => ErrorKind::WrongPassword.message(None, false),
             Self::AuthFailed => ErrorKind::AuthFailed.message(None, false),
             Self::RepositoryMissing => ErrorKind::RepoMissing.message(None, false),
+            Self::NotALocalPath => Message::with_args(
+                i18n_noop(
+                    "'%1' is a network address, not a folder on this computer. restic cannot use it; choose a local or mounted folder.",
+                ),
+                &[detail],
+            ),
             Self::InvalidInput | Self::Internal | Self::CommandFailed | Self::DaemonUnreachable => {
                 return UiText::Raw(detail.to_string());
             }
         };
         UiText::Message(message)
+    }
+}
+
+impl ConnectionNoteCode {
+    /// Warning shown with a successful connection test.
+    pub fn message(self) -> Message {
+        match self {
+            Self::CifsShare => Message::new(i18n_noop(
+                "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
+            )),
+        }
     }
 }
 

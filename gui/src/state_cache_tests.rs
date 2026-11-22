@@ -4,6 +4,7 @@
 //! Unit tests of `state_cache` (kept in their own file, NFR-12 file size).
 
 use super::*;
+use kestic_core::model::Destination;
 use time::macros::datetime;
 
 #[test]

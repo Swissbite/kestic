@@ -190,6 +190,18 @@ code_enum! {
         CommandFailed => "command_failed",
         /// Set by the GUI when the daemon cannot be reached.
         DaemonUnreachable => "daemon_unreachable",
+        /// A network address of the file dialog (KIO, e.g. `smb://…`) instead of a local path;
+        /// `detail` = the address.
+        NotALocalPath => "not_a_local_path",
+    }
+}
+
+code_enum! {
+    /// Note of a successful connection test that the user confirms before the destination is
+    /// added (`ConnectionTestResultDto.notes`).
+    ConnectionNoteCode {
+        /// The folder is on a CIFS/SMB share, which restic advises against for repositories.
+        CifsShare => "cifs_share",
     }
 }
 
@@ -328,6 +340,10 @@ mod tests {
         for v in ConnectionTestCode::ALL {
             assert_eq!(ConnectionTestCode::parse(v.as_str()), Some(v));
             assert_eq!(ConnectionTestCode::parse("nope"), None);
+        }
+        for v in ConnectionNoteCode::ALL {
+            assert_eq!(ConnectionNoteCode::parse(v.as_str()), Some(v));
+            assert_eq!(ConnectionNoteCode::parse("nope"), None);
         }
         for v in DestinationTypeCode::ALL {
             assert_eq!(DestinationTypeCode::parse(v.as_str()), Some(v));

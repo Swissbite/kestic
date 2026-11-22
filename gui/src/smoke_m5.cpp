@@ -174,6 +174,100 @@ int scenario_check_again(const Ctx& c) {
     return 0;
 }
 
+// Chooses the ready card `card` and moves on to the step «destination details».
+int open_details_of(QQuickWindow* w, const char* card) {
+    if (const int rc = open_destination_types(w)) {
+        return rc;
+    }
+    QQuickItem* item = card_item(w, card);
+    M3_CHECK2(5200, item != nullptr, item->isVisible(), card_name(card).constData());
+    scroll_into_view(w, item);
+    M3_CHECK(5201, click_ui_item(w, item, card), "click on the card failed");
+    QQuickItem* next = item_named(w, "wizDestNextButton");
+    M3_CHECK(5202, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing the card");
+    M3_CHECK(5203, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    M3_CHECK(5204, wait_until([&] {
+        QQuickItem* name = item_named(w, "wizDestNameField");
+        return name && name->isVisible();
+    }, 2000), "step «destination details» did not open");
+    wait_ms(150);
+    return 0;
+}
+
+// AC-M5-05-1 (GUI): with the UDisks2 fake reporting the drive «USB-Disk» on
+// /media/user/USB-Disk, the type «External Drive / USB» offers it with name and mount point;
+// choosing it puts the mount point into the path.
+int scenario_drive_list(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (const int rc = open_details_of(w, "drive")) {
+        return rc;
+    }
+    M3_CHECK(5210, wait_until([&] { return count_visible(w, "wizDestDrive_0") == 1; }, 3000), "AC-M5-05-1 (a): the drive is not offered");
+    QQuickItem* drive = item_named(w, "wizDestDrive_0");
+    M3_CHECK_EQ(5211, drive->property("text").toString(), QStringLiteral("USB-Disk"), "AC-M5-05-1 (a): name");
+    M3_CHECK_EQ(5212, drive->property("subtitle").toString(), QStringLiteral("/media/user/USB-Disk"), "AC-M5-05-1 (a): mount point");
+    M3_CHECK(5213, count_visible(w, "wizDestDrive_1") == 0, "only the removable drive is offered");
+    M3_CHECK(5214, count_visible(w, "wizDestNoDriveMessage") == 0, "«no drive» message shown next to a drive");
+    M3_CHECK(5215, click_ui_item(w, drive, "drive"), "click on the drive failed");
+    QQuickItem* location = item_named(w, "wizDestLocationField");
+    M3_CHECK(5216, wait_until([&] { return location && location->property("text").toString() == QLatin1String("/media/user/USB-Disk"); }, 2000),
+        "choosing the drive did not set the path");
+    M3_CHECK(5217, drive->property("checked").toBool(), "chosen drive is not marked");
+    const QString unnamed = first_unnamed(w, {
+        QStringLiteral("wizDestDrive_0"),
+        QStringLiteral("wizDestDrivesCheckAgainButton"),
+    });
+    M3_CHECK_EQ(5218, unnamed, QString(), "control without accessible name");
+    M3_CHECK(5219, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
+// AC-M5-05-2 (GUI): a folder on a CIFS mount (mountinfo fake); after «Test Connection» Kestic
+// (a) warns that restic advises against repositories on CIFS/SMB shares, «Next» stays disabled
+// until the warning is confirmed, and (b) the destination can be saved after the confirmation.
+int scenario_cifs_note(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString dir = qEnvironmentVariable("KESTIC_SMOKE_CIFS_DIR");
+    M3_CHECK(5300, !dir.isEmpty(), "KESTIC_SMOKE_CIFS_DIR not set");
+    if (const int rc = open_details_of(w, "folder")) {
+        return rc;
+    }
+    item_named(w, "wizDestNameField")->setProperty("text", QStringLiteral("NAS share"));
+    item_named(w, "wizDestLocationField")->setProperty("text", dir);
+    QQuickItem* test = item_named(w, "wizDestTestButton");
+    M3_CHECK(5301, wait_until([&] { return test && test->isEnabled(); }, 2000), "«Test Connection» not enabled");
+    M3_CHECK(5302, click_ui_item(w, test, "Test Connection"), "click on «Test Connection» failed");
+    QQuickItem* note = item_named(w, "wizDestNoteBanner");
+    QQuickItem* confirm = item_named(w, "wizDestNoteConfirmCheck");
+    QQuickItem* next = item_named(w, "wizDestNextButton");
+    // (a)
+    M3_CHECK(5303, wait_until([&] { return note && note->isVisible(); }, 5000), "AC-M5-05-2 (a): no warning after the connection test");
+    M3_CHECK_EQ(5304, note->property("text").toString(),
+        loc(c.lang,
+            "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
+            "Dieser Ordner liegt auf einer CIFS/SMB-Netzwerkfreigabe. restic rät von Repositorys auf solchen Freigaben ab."),
+        "AC-M5-05-2 (a): warning text");
+    M3_CHECK2(5305, confirm != nullptr, confirm->isVisible(), "AC-M5-05-2 (b): confirmation missing");
+    M3_CHECK(5306, !next->isEnabled(), "AC-M5-05-2: «Next» enabled before the confirmation");
+    M3_CHECK_EQ(5307, accessible_name(confirm), loc(c.lang, "Use this folder anyway", "Diesen Ordner trotzdem verwenden"), "confirmation text");
+    // The messages fade in before their text is drawn.
+    wait_ms(600);
+    M3_CHECK(5308, save_screenshot(w, c.out_path), "screenshot failed");
+    // (b)
+    M3_CHECK(5309, click_ui_item(w, confirm, "confirm"), "click on the confirmation failed");
+    M3_CHECK(5310, wait_until([&] { return next->isEnabled(); }, 2000), "AC-M5-05-2 (b): «Next» disabled after the confirmation");
+    M3_CHECK(5311, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    QQuickItem* pw = item_named(w, "wizDestPasswordField");
+    M3_CHECK(5312, wait_until([&] { return pw && pw->isVisible(); }, 2000), "step «password» did not open");
+    pw->setProperty("text", QStringLiteral("correct horse battery"));
+    item_named(w, "wizDestPasswordConfirmField")->setProperty("text", QStringLiteral("correct horse battery"));
+    M3_CHECK(5313, wait_until([&] { return next->isEnabled(); }, 2000), "«Save Destination» not enabled");
+    M3_CHECK(5314, click_ui_item(w, next, "Save Destination"), "click on «Save Destination» failed");
+    M3_CHECK(5315, wait_until([&] { return count_visible(w, "addDestinationWizard") == 0; }, 15000),
+        "AC-M5-05-2 (b): the wizard did not close after saving");
+    return 0;
+}
+
 } // namespace
 
 void run_m5_smoke_scenario(
@@ -192,6 +286,10 @@ void run_m5_smoke_scenario(
         rc = scenario_destination_types(ctx);
     } else if (scen == QLatin1String("m5-destination-types-check-again")) {
         rc = scenario_check_again(ctx);
+    } else if (scen == QLatin1String("m5-drive-list")) {
+        rc = scenario_drive_list(ctx);
+    } else if (scen == QLatin1String("m5-cifs-note")) {
+        rc = scenario_cifs_note(ctx);
     } else {
         std::fprintf(stderr, "M5 smoke failed (599): unknown m5 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

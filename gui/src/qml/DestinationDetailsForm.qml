@@ -6,6 +6,7 @@ import QtQuick.Controls as Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.kirigami.delegates as KD
 import net.daester.kestic 1.0
 
 // Name, location, repository mode, credentials and connection test of a destination.
@@ -33,9 +34,16 @@ ColumnLayout {
         id: folderDialog
         title: i18n("Choose Repository Folder")
         onAccepted: {
-            var local = selectedFolder.toString().replace(/^file:\/\//, "");
-            if (local.length > 0) {
-                form.draft.location = local;
+            var reply = {};
+            try {
+                reply = JSON.parse(form.appBackend.localFolderFromUrl(selectedFolder.toString()));
+            } catch (e) {
+                reply = {};
+            }
+            if (reply.error) {
+                form.draft.showError(reply.error);
+            } else if (reply.path) {
+                form.draft.location = reply.path;
                 form.locationEdited();
             }
         }
@@ -67,6 +75,96 @@ ColumnLayout {
                 }
             }
         ]
+    }
+
+    Kirigami.InlineMessage {
+        objectName: form.namePrefix + "NoteBanner"
+        Layout.fillWidth: true
+        type: Kirigami.MessageType.Warning
+        visible: form.draft.connectionVerified && form.draft.testNote !== ""
+        text: form.draft.testNote
+    }
+
+    Controls.CheckBox {
+        objectName: form.namePrefix + "NoteConfirmCheck"
+        visible: form.draft.connectionVerified && form.draft.testNote !== ""
+        text: i18n("Use this folder anyway")
+        checked: form.draft.testNoteConfirmed
+        Accessible.name: text
+        onToggled: form.draft.testNoteConfirmed = checked
+    }
+
+    // Destination type «External Drive / USB»: the mounted removable drives; choosing one puts
+    // its mount point into the path.
+    ColumnLayout {
+        id: drivePicker
+
+        // `RemovableDriveDto`s from `removableDrivesJson()`.
+        property var drives: []
+        property string loadError: ""
+
+        function reload() {
+            var reply = {};
+            try {
+                reply = JSON.parse(form.appBackend.removableDrivesJson());
+            } catch (e) {
+                reply = {};
+            }
+            drivePicker.drives = reply.drives || [];
+            drivePicker.loadError = reply.error || "";
+        }
+
+        objectName: form.namePrefix + "DrivePicker"
+        visible: !form.editing && form.draft.typeCard === "drive"
+        Layout.fillWidth: true
+        spacing: Kirigami.Units.smallSpacing
+        onVisibleChanged: if (visible) reload()
+
+        Kirigami.ListSectionHeader {
+            Layout.fillWidth: true
+            text: i18n("Removable Drives")
+        }
+
+        Repeater {
+            model: drivePicker.drives
+
+            delegate: KD.SubtitleDelegate {
+                required property var modelData
+                required property int index
+
+                objectName: form.namePrefix + "Drive_" + index
+                Layout.fillWidth: true
+                // A filesystem without label is named after its mount point.
+                text: modelData.label !== "" ? modelData.label : modelData.mount_point.split("/").pop()
+                subtitle: modelData.mount_point
+                icon.name: "drive-removable-media"
+                checkable: true
+                checked: form.draft.location.trim() === modelData.mount_point
+                highlighted: checked
+                Accessible.name: text
+                Accessible.description: subtitle
+                onClicked: {
+                    form.draft.location = modelData.mount_point;
+                    form.locationEdited();
+                }
+            }
+        }
+
+        Kirigami.InlineMessage {
+            objectName: form.namePrefix + "NoDriveMessage"
+            Layout.fillWidth: true
+            type: drivePicker.loadError !== "" ? Kirigami.MessageType.Error : Kirigami.MessageType.Information
+            visible: drivePicker.drives.length === 0
+            text: drivePicker.loadError !== "" ? drivePicker.loadError : i18n("No removable drive is plugged in.")
+        }
+
+        Controls.Button {
+            objectName: form.namePrefix + "DrivesCheckAgainButton"
+            icon.name: "view-refresh"
+            text: Texts.label("check_again")
+            Accessible.name: text
+            onClicked: drivePicker.reload()
+        }
     }
 
     Kirigami.FormLayout {

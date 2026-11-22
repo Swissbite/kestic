@@ -7,6 +7,7 @@ use crate::dbus_api::{
     ActiveRunProgressDto, DaemonStateDto, KESTIC_OBJECT_PATH, KesticDbusError, to_json_arg,
 };
 use crate::monitors::list_known_networks;
+use crate::removable_drives::list_removable_drives;
 use crate::service::{
     DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
     list_backup_snapshots_unlocked, preview_destination_maintenance_unlocked,
@@ -600,6 +601,17 @@ impl KesticDbusV1Service {
         .or_else(|| std::env::var_os("PATH"));
         let types = run_blocking_task(move || destination_types(search_path.as_deref())).await;
         to_json_arg(&types)
+    }
+
+    /// Mounted removable drives from UDisks2, offered by the destination type «External Drive».
+    #[zbus(name = "ListRemovableDrives")]
+    async fn list_removable_drives(&self) -> Result<String, KesticDbusError> {
+        let monitor_bus = {
+            let guard = self.core.lock_unpoisoned();
+            guard.monitor_bus.clone()
+        };
+        let drives = run_blocking_task(move || list_removable_drives(&monitor_bus)).await;
+        to_json_arg(&drives)
     }
 
     #[zbus(signal, name = "StatusChanged")]

@@ -15,8 +15,8 @@ use kestic_core::provider::MIN_RESTIC_VERSION;
 use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
 use kestic_i18n::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
-    ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
+    PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
 pub use kestic_i18n::codes::{OverallStatusKind, RunProgressPhase};
 use kestic_i18n::messages::{
@@ -376,6 +376,20 @@ pub struct ConnectionTestResultDto {
     /// Raw error detail, or the parameter of the code's text (e.g. the destination name for
     /// `duplicate_location`).
     pub detail: String,
+    /// Warnings of a successful test that the user confirms before adding the destination.
+    #[serde(default)]
+    pub notes: Vec<ConnectionNoteCode>,
+}
+
+/// Entry of `ListRemovableDrives`: a mounted removable drive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemovableDriveDto {
+    /// Filesystem label; empty when the filesystem has none.
+    pub label: String,
+    pub mount_point: String,
+    /// Filesystem UUID; empty when unknown.
+    pub fs_uuid: String,
+    pub size_bytes: u64,
 }
 
 /// Skipped backup reason returned by `StartAllBackups`.
@@ -864,6 +878,10 @@ impl KesticClient {
 
     pub fn list_destination_types(&self) -> Result<Vec<DestinationTypeDto>, KesticDbusError> {
         self.call_json("ListDestinationTypes", &())
+    }
+
+    pub fn list_removable_drives(&self) -> Result<Vec<RemovableDriveDto>, KesticDbusError> {
+        self.call_json("ListRemovableDrives", &())
     }
 }
 

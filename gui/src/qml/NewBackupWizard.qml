@@ -89,7 +89,7 @@ WizardPage {
     readonly property bool summaryValid: {
         if (backupName.trim().length === 0 || !sourceValid) return false;
         if (integratedDestFlow) {
-            return destDetailsValid && destDraft.connectionVerified && destDraft.passwordsMatch;
+            return destDetailsValid && destDraft.connectionAccepted && destDraft.passwordsMatch;
         }
         return destValid;
     }
@@ -103,7 +103,7 @@ WizardPage {
         case "dest_type":
             return typeChooser.choiceValid;
         case "dest_details":
-            return destDetailsValid && destDraft.connectionVerified;
+            return destDetailsValid && destDraft.connectionAccepted;
         case "dest_password":
             return destDraft.passwordsMatch;
         default:

@@ -29,7 +29,7 @@ WizardPage {
     readonly property bool isFinalStep: step === totalSteps
     readonly property bool canAdvance: {
         if (step === 1) return typeChooser.choiceValid;
-        if (step === 2) return destDraft.detailsValid && destDraft.connectionVerified && (destDraft.setupMode !== "connect" || destDraft.repoPassword.length > 0);
+        if (step === 2) return destDraft.detailsValid && destDraft.connectionAccepted && (destDraft.setupMode !== "connect" || destDraft.repoPassword.length > 0);
         return destDraft.detailsValid && destDraft.passwordsMatch && appBackend.blocking_kind === "";
     }
 

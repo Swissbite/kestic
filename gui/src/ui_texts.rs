@@ -41,6 +41,7 @@ gui_texts! {
     Back = "back" => i18n_noop("Back"),
     BackUpNowAnyway = "back_up_now_anyway" => i18n_noop("Back Up Now Anyway"),
     Cancel = "cancel" => i18n_noop("Cancel"),
+    CheckAgain = "check_again" => i18n_noop("Check Again"),
     Choose = "choose" => i18n_noop("Choose…"),
     Close = "close" => i18n_noop("Close"),
     Copy = "copy" => i18n_noop("Copy"),

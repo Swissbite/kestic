@@ -30,6 +30,9 @@ pub enum ModelError {
     Entropy(String),
     #[error("invalid destination configuration: {0}")]
     InvalidDestination(String),
+    /// A network address (e.g. `smb://…`) given as the path of a local destination.
+    #[error("invalid destination configuration: {0}")]
+    NotALocalPath(#[from] crate::local_path::NotALocalPath),
     #[error("invalid backup configuration: {0}")]
     InvalidBackup(String),
 }
@@ -571,6 +574,13 @@ impl Destination {
                     return Err(ModelError::InvalidDestination(
                         "local destination path must not be empty".to_string(),
                     ));
+                }
+                let text = path.to_string_lossy();
+                if crate::local_path::kio_address_scheme(&text).is_some() {
+                    return Err(crate::local_path::NotALocalPath(
+                        crate::local_path::address_for_display(&text),
+                    )
+                    .into());
                 }
                 if !path.is_absolute() {
                     return Err(ModelError::InvalidDestination(format!(
