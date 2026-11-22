@@ -70,7 +70,7 @@ fn weekday_text(day: time::Weekday) -> String {
 }
 
 /// Title and group of a snapshot taken at `t`: «12:00» under «Today» or «Yesterday»,
-/// «Mon 12:00» under «This Week» (Monday to the day before yesterday), otherwise date and time
+/// «Mon 2026-11-09 12:00» under «This Week» (Monday to the day before yesterday), otherwise date and time
 /// under «Earlier».
 pub(crate) fn day_section(t: OffsetDateTime, now: OffsetDateTime) -> (String, String) {
     let date = to_local(t).date();
@@ -80,7 +80,11 @@ pub(crate) fn day_section(t: OffsetDateTime, now: OffsetDateTime) -> (String, St
     }
     let monday = today - time::Duration::days(i64::from(today.weekday().number_days_from_monday()));
     if date >= monday && date < today {
-        let title = format!("{} {}", weekday_text(date.weekday()), format_time_short(t));
+        let title = format!(
+            "{} {}",
+            weekday_text(date.weekday()),
+            format_datetime_display(t)
+        );
         return (title, i18n("This Week").to_string());
     }
     (format_datetime_display(t), i18n("Earlier").to_string())
