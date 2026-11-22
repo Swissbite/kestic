@@ -33,8 +33,8 @@ Folgen für Kestic:
 
 - `RESTIC_REST_USERNAME`/`RESTIC_REST_PASSWORD` → REST-Zugang muss nicht in die Repo-URL.
 - `RESTIC_PASSWORD_COMMAND` holt das Repo-Passwort aus einem beliebigen Programm (Secret-Store, Passwortmanager). Für Backend-Credentials gibt es keine `_COMMAND`-Variante.
-- S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_DEFAULT_REGION`; Repository `s3:<endpoint>/<bucket>[/<pfad>]`.
-- SFTP: Repository `sftp://<benutzer>@<host>:<port>/<pfad>`; ssh-Optionen über `-o sftp.args="…"` (Kestics Werte: [architecture.md](architecture.md) «SFTP und Host-Schlüssel»).
+- S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_DEFAULT_REGION`; Repository `s3:<endpoint mit Schema>/<bucket>[/<pfad>]`, z. B. `s3:https://s3.example.com:9000/backup`.
+- SFTP: Repository `sftp://<benutzer>@<host>:<port>/<pfad>`; ein Schrägstrich nach dem Host heisst «relativ zum Heimordner», ein absoluter Pfad braucht zwei (`sftp://u@h:22//srv/repo`) **[angenommen, prüft M5-S01 an der restic-Doku und im Test]**. Den Port gibt restic selbst an ssh weiter. ssh-Optionen über `-o sftp.args="…"` (Kestics Werte: [architecture.md](architecture.md) «SFTP und Host-Schlüssel»).
 - Kestic setzt `RESTIC_PASSWORD_COMMAND`, `RESTIC_REPOSITORY` und die Backend-Variablen selbst. Benutzer-Variablen des generischen Formulars, die damit kollidieren (`RESTIC_PASSWORD*`, `RESTIC_REPOSITORY*`) oder den Prozess umlenken (`PATH`, `HOME`, `LD_*`), weist `core` ab (AC-M5-03-7).
 
 ### Integration & Locks
@@ -166,6 +166,8 @@ Gerüst; wächst je Meilenstein, vollständig in M6-S11. Unbekannte Exit-Codes g
 | Exit 12 | `Fehler` (dauerhaft, sofort Alert, F2) | «Gespeichertes Passwort passt nicht» | «Gespeichertes Passwort aktualisieren…» ersetzt «Jetzt sichern»; «Trotzdem jetzt sichern» im ⋮-Menü |
 | unbekannter Code n | `Fehler` | «Unbekannter Fehler (Exit n)» + Rohmeldung (P6) | – |
 | JSON `exit_error` (ab 0.18.0) | wie Exit-Code | Meldung aus `exit_error` | je Fall |
+| SFTP: `Host key verification failed` | `Fehler` (dauerhaft, F2) | Kestic prüft selbst nach (`ssh-keygen -F`, `ssh-keyscan`): «Unbekannter Server» bzw. «Der Server meldet sich anders als bisher» (AC-M5-01-4, AC-M5-01-7) | Verbindung prüfen; bei geändertem Schlüssel keine |
+| SFTP: `Permission denied (publickey…)` | `Fehler` (dauerhaft, F2) | Anmeldung mit SSH-Schlüssel abgelehnt (`ssh_key_rejected`, AC-M5-01-3) | Hinweis auf `ssh-copy-id` und ssh-agent |
 | restic zu alt / nicht gefunden | blockierend | «restic x ist zu alt, mindestens 0.18.0 nötig» bzw. «restic nicht gefunden» (FR-33, P31) | Einstellung «restic-Quelle» |
 | Passwortspeicher gesperrt | blockierend | in M6-S11 festzulegen | in M6-S11 festzulegen |
 

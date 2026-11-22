@@ -41,7 +41,7 @@ Jedes Akzeptanzkriterium (AC) in [milestones/](milestones/) wird durch einen aut
 Tests berühren nie echte Benutzerdaten oder -konfiguration:
 
 - `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR` auf ein Tempdir.
-- `known_hosts` nur über die von Kestic übergebenen Pfade (P24): Kestics eigene Datei unter dem Tempdir-`XDG_DATA_HOME`, `~/.ssh/known_hosts` unter dem Tempdir-`HOME`; in Tests zusätzlich `-F <Test-ssh_config>` und `-o IdentitiesOnly=yes`, weil OpenSSH `~` über `/etc/passwd` auflöst **[angenommen]**.
+- `known_hosts` nur über die von Kestic übergebenen Pfade (P24): Kestics eigene Datei unter dem Tempdir-`XDG_DATA_HOME`, `~/.ssh/known_hosts` unter dem Tempdir-`HOME`; in Tests zusätzlich `-F <Test-ssh_config>` und `-o IdentitiesOnly=yes` (über `KESTIC_TEST_SSH_CONFIG`, nur im Build mit `test-harness`), weil OpenSSH `~` über `/etc/passwd` auflöst **[angenommen]**.
 - Eigener `dbus-run-session`; kein Zugriff auf die echte KWallet, echte Repos oder `~/.local/share/kestic`.
 - Tests setzen nichts unter `/etc/xdg/autostart` voraus.
 - Tests laufen nicht als root (Rechte-Tests mit `chmod 000` wären sonst wirkungslos).

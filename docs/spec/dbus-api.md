@@ -23,16 +23,17 @@ Der Fehler-Name ist der Code: `KesticDbusError` (`kestic_daemon::dbus_api`, von 
 | Fehler-Name | Bedeutung |
 | --- | --- |
 | `net.daester.Kestic.Error.InvalidInput` | Validierung in `core` oder D-Bus-Argument fehlgeschlagen (AC-M1-09-2) |
-| `net.daester.Kestic.Error.NotFound` | Ziel-, Backup- oder Lauf-ID unbekannt |
-| `net.daester.Kestic.Error.InUse` | Ziel wird noch von Backups referenziert und kann nicht entfernt werden (AC-M1-19-4) |
+| `net.daester.Kestic.Error.NotFound` | Ziel-, Backup- oder Lauf-ID unbekannt; ab M5 auch abgelaufene oder unbekannte `host_key_id` und `install_id` (z. B. nach Neustart des Daemons; die GUI startet Test bzw. Abfrage neu) |
+| `net.daester.Kestic.Error.InUse` | Ziel wird noch von Backups referenziert und kann nicht entfernt werden (AC-M1-19-4); ab M5 auch: das App-verwaltete restic ist die aktive restic-Quelle oder wird von einem Lauf benutzt (`RemoveAppManagedRestic`) |
 | `net.daester.Kestic.Error.ManualRunBlocked` | Quelle nicht verfügbar (`source_unavailable`) oder Ziel nicht erreichbar (`destination_unreachable`) vor manuellem Start (FR-30, AC-M1-09-6) |
 | `net.daester.Kestic.Error.DestinationUnreachable` | Vorab-Check (`P32`) fehlgeschlagen (Timeout 10 s / ≤ 15 s) |
 | `net.daester.Kestic.Error.WrongPassword` | Repository-Passwort abgelehnt (Exit 12, AC-M1-06-3, AC-M1-20-2) |
 | `net.daester.Kestic.Error.AuthFailed` | Backend-Anmeldung (z. B. REST 401/403) fehlgeschlagen (AC-M1-06-6) |
-| `net.daester.Kestic.Error.HostKeyChanged` | SFTP: Der Server zeigt einen anderen Host-Schlüssel als den bekannten; Meldung = Datei mit dem alten Eintrag (Rohdetail). Kein Übernehmen möglich (AC-M5-01-7) |
+| `net.daester.Kestic.Error.HostKeyUnknown` | SFTP: `AddDestination` oder `UpdateDestination` für einen Server ohne bekannten Host-Schlüssel; die GUI ruft zuerst `TestDestinationConnection` und `TrustHostKey` auf |
+| `net.daester.Kestic.Error.HostKeyChanged` | SFTP: `AddDestination` oder `UpdateDestination` für einen Server, der einen anderen Host-Schlüssel als den bekannten zeigt; Meldung = Datei mit dem alten Eintrag (Rohdetail). Kein Übernehmen möglich (AC-M5-01-7) |
 | `net.daester.Kestic.Error.SecretStoreLocked` | Passwortspeicher gesperrt oder nicht erreichbar |
 | `net.daester.Kestic.Error.ResticUnavailable` | `restic` fehlt, ist `< 0.18.0` oder nicht ausführbar |
-| `net.daester.Kestic.Error.AlreadyRunning` | Auf dem betroffenen Ziel bzw. Backup läuft bereits ein Lauf |
+| `net.daester.Kestic.Error.AlreadyRunning` | Auf dem betroffenen Ziel bzw. Backup läuft bereits ein Lauf; ab M5 auch: eine restic-Installation läuft schon (`StartResticInstall`) |
 | `net.daester.Kestic.Error.LockInUse` | Entsperren abgelehnt: Die Repository-Sperre gehört zu einem aktiven oder entfernten Prozess (P16) |
 | `net.daester.Kestic.Error.DuplicateLocation` | Der Speicherort wird bereits von einem anderen Ziel verwendet; Meldung = Name dieses Ziels (Rohdetail) |
 | `net.daester.Kestic.Error.Internal` | Unerwarteter I/O-, SQLite- oder Prozessfehler |
@@ -64,7 +65,7 @@ Strukturierte DTOs werden als UTF-8-JSON übergeben (mit festem Schema in `kesti
 | `StartResticInstall` | `() -> s` (`install_id`) | Lädt das neueste restic-Release für die CPU-Architektur, prüft und ersetzt das App-verwaltete Binary ([architecture.md](architecture.md) «restic-Bereitstellung»); Erstinstallation und Update. Läuft schon eine, Fehler `AlreadyRunning` | FR-33, FR-51, M5-S06, M5-S08 |
 | `GetResticInstallStatus` | `(install_id: s) -> s` (`ResticInstallStatusDto`-JSON) | Status, Fortschritt, Ergebnis oder Fehler einer Installation | FR-33, M5-S06 |
 | `CancelResticInstall` | `(install_id: s) -> ()` | Bricht eine Installation vor dem `rename` ab; das alte Binary bleibt | FR-33, M5-S06 |
-| `RemoveAppManagedRestic` | `() -> ()` | Löscht das App-verwaltete Binary; verweigert mit `InUse`, solange es die aktive restic-Quelle ist, und wartet wie das Ersetzen auf laufende Läufe | FR-33, AC-M5-07-5 |
+| `RemoveAppManagedRestic` | `() -> ()` | Löscht das App-verwaltete Binary sofort; verweigert mit `InUse`, solange es die aktive restic-Quelle ist oder ein Lauf es benutzt (kein Warten im Aufruf) | FR-33, AC-M5-07-5 |
 | `SetResticReleaseCheck` | `(enabled: b) -> ()` | Schalter «Wöchentlich nach neuen Versionen suchen» in `config.toml` | FR-51, M5-S08 |
 | `SetExpertMode` | `(enabled: b) -> ()` | Speichert `expert_mode` in `config.toml` | E16, K2 |
 | `StartBackup` | `(backup_id: s) -> s` (`run_id`) | Führt Vorab-Verfügbarkeitscheck für Quelle & Ziel (`P32`) aus; bei Nichtverfügbarkeit **kein** restic-Prozess, Signal `ManualRunBlocked` + Notification (falls Fenster nicht aktiv) + Fehler `Error.ManualRunBlocked`; sonst asynchroner Backup-Lauf | FR-13b, FR-30, AC-M1-09-6/7 |
@@ -139,10 +140,11 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 
 **Ergebnis eines Wartungslaufs (`Run.maintenance`):** `Run` (in `RunDetailDto`, den Läufen in `GetState` und im Signal `RunUpdated`) trägt bei Wartungsläufen das optionale Feld `maintenance` (`MaintenanceStats`): `forgets` (je Backup `backup_id` und `removed_snapshots`, `null` ohne lesbares Ergebnis), `pruned` und `checked` (Schritt mit Exit 0), `freed_bytes` (freigegebener Platz aus `prune`, fehlt ohne lesbare Zeile) und `check` (`num_errors` aus `check --json`, auch bei gefundenen Fehlern). Andere Lauf-Arten und ältere Wartungsläufe haben kein `maintenance`. Gespeichert wird es ohne eigene Spalte in `runs.stats_json`, das je Lauf-Art `RunStats` (Backup) bzw. `MaintenanceStats` (Wartung) enthält ([domain-model.md](domain-model.md)); Fakten zur Herkunft in [restic-integration.md](restic-integration.md) §Wartung.
 
-**Ziel-Typen, SFTP und restic-Bereitstellung (ab M5):**
+**Ziel-Typen, SFTP und restic-Bereitstellung (ab M5):** Die Signaturen von `TestDestinationConnection`, `AddDestination` und `UpdateDestination` ändern sich im Interface `net.daester.Kestic1`, ohne neues Interface: Die API ist privat, Daemon und GUI kommen im selben `.deb` (siehe «Sprachunabhängige Codes»).
 
 - `BackendSecrets` (`backend_secrets_json`): `rest_password`, `s3_access_key_id`, `s3_secret_access_key`, `env` (Name → Wert, nur Variablen mit «Geheim»). Ein leeres oder fehlendes Feld lässt beim Bearbeiten den gespeicherten Wert stehen. Die Werte gehen nur in den `SecretStore` und in die Umgebung des restic-Prozesses (NFR-02).
-- `Destination.kind` (`dest_json`, `config.toml`), getaggt mit `kind`: `local` (`path`), `rest` (`url`, `username`), neu `sftp` (`host`, `port` Standard 22, `user`, `path`), `s3` (`endpoint`, `bucket`, `path`, `region`; die beiden letzten optional) und `generic` (`url` mit Schema `b2:`, `azure:`, `gs:`, `swift:` oder `rclone:`; `env`: Liste von `EnvVar` mit `name`, `secret` und nur bei `secret = false` `value`). `DestinationSecretRefs` trägt dazu `s3_access_key_ref`, `s3_secret_key_ref` und `env_refs` (Name → Referenz).
+- `Destination.kind` (`dest_json`, `config.toml`), getaggt mit `kind`: `local` (`path`), `rest` (`url`, `username`), neu `sftp` (`host`, `port` Standard 22, `user`, `path`: absolut oder relativ zum Heimordner auf dem Server), `s3` (`endpoint` mit Schema, z. B. `https://s3.example.com:9000`; `bucket`; optional `path` und `region`) und `generic` (`url` mit Schema `b2:`, `azure:`, `gs:`, `swift:` oder `rclone:`; `env`: Liste von `EnvVar` mit `name`, `secret` und nur bei `secret = false` `value`). `DestinationSecretRefs` trägt dazu `s3_access_key_ref`, `s3_secret_key_ref` und `env_refs` (Name → Referenz).
+- **Host-Schlüssel:** `TestDestinationConnection` meldet einen unbekannten oder geänderten Schlüssel als Ergebnis-Code (`unknown_host_key` bzw. `host_key_changed`); `AddDestination` und `UpdateDestination` prüfen dasselbe und brechen mit `Error.HostKeyUnknown` bzw. `Error.HostKeyChanged` ab, ohne zu speichern; ein Lauf endet mit `ErrorKind` `host_key_unknown` bzw. `host_key_changed`. Die `host_key_id` lebt nur im Speicher des Daemons.
 - `ConnectionTestResultDto` trägt zusätzlich `host_key` (`HostKeyDto`: `host_key_id`, `host`, `port`, `key_type`, `fingerprint_sha256`) bei `unknown_host_key`, `program` bei `program_missing` und `notes` (`ConnectionNoteCode`, Hinweise, die das Anlegen nicht sperren).
 - `DestinationTypeDto`: `kind` (`DestinationTypeCode`), `ready`, `missing_program` (`ssh` \| `rclone` \| `null`), `package`, `appstream_url`. Die Reihenfolge der Liste ist die der Karten (§9.1); die GUI ordnet «bereit» vor «braucht Installation».
 - `RemovableDriveDto`: `label`, `mount_point`, `fs_uuid`, `size_bytes`.
@@ -150,7 +152,8 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 - `DestinationSummaryDto` trägt zusätzlich `kit_missing` (Merker «Kit fehlt» nach bestätigtem Umzug, [domain-model.md](domain-model.md)).
 - `ResticStatusDto` beschreibt wie bisher das aktive Binary und trägt zusätzlich `source` (`ResticSourceCode`), `system` und `app_managed` (je `ResticBinaryDto`: `path`, `version`, `too_old`; `null`, wenn nicht vorhanden), `offer_switch_to_system` (AC-M5-07-5), `release_check_enabled`, `last_release_check_unix`, `latest_release_version`, `update_available` und `install_id` (laufende Installation oder `null`).
 - `ResticInstallStatusDto`: `state` (`"running"` \| `"done"` \| `"cancelled"` \| `"error"`), `phase` (`ResticInstallPhase`), `version`, `bytes_done`, `total_bytes`, `outcome` (`ResticInstallOutcome`, bei `done`), `error_kind` (`ResticInstallCode`) und `error_detail` (Rohtext). Fertige Installationen bleiben 10 Minuten abrufbar (über `Clock`).
-- **Tray:** Eine neuere Version aus der Release-Prüfung zeigt der Daemon als Tray-Eintrag «restic <v> installieren» und, wenn die Benachrichtigung «restic-Updates» an ist, als Benachrichtigung mit derselben Aktion; beide starten dieselbe Installation wie `StartResticInstall`.
+- `ResticProvider` (`provider_json`, `config.toml` unter `restic_provider`), getaggt mit `kind`: `automatic`, `system`, `app_managed` (ohne Pfad; fester Ort `~/.local/share/kestic/restic`), `custom` (`path`). `restic_release_check` (`bool`, Standard `true`) steht auf oberster Ebene von `config.toml`.
+- **Tray:** Ist die Benachrichtigung «restic-Updates» (`on_restic_update`, Standard an) an, zeigt der Daemon eine neuere Version aus der Release-Prüfung als Tray-Eintrag «restic <v> installieren» und als Benachrichtigung mit derselben Aktion; beide starten dieselbe Installation wie `StartResticInstall`. Ist sie aus, gibt es keinen Hinweis; die Einstellungen zeigen die neue Version trotzdem.
 
 ## Texte und Übersetzungen
 
