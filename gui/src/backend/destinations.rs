@@ -5,15 +5,16 @@
 //! for [`super::qobject::KesticApp`].
 
 use super::{Finish, dbus_error_text, qobject};
+use crate::destination_input::{build_destination, test_destination_connection};
 use crate::state_cache::{
-    build_destination, daemon_unavailable_text, i18n, i18np, make_client, refresh_state_now,
-    shared_state, test_destination_connection, tr_text,
+    daemon_unavailable_text, i18n, i18np, make_client, refresh_state_now, shared_state, tr, tr_text,
 };
 use cxx_qt_lib::QString;
 use kestic_core::destination_types::cards_ready_first;
+use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::KesticDbusError;
-use kestic_i18n::codes::ServiceErrorCode;
+use kestic_i18n::codes::{ConnectionTestCode, ServiceErrorCode};
 use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
 
@@ -37,6 +38,37 @@ impl qobject::KesticApp {
         QString::from(&reply.to_string())
     }
 
+    /// Mounted removable drives for the destination type «External Drive / USB», as
+    /// `{"drives": [RemovableDriveDto…], "error": "<text or empty>"}`; every call asks anew.
+    pub fn removable_drives_json(&self) -> QString {
+        let listed = make_client()
+            .map_err(|_| daemon_unavailable_text())
+            .and_then(|client| {
+                client
+                    .list_removable_drives()
+                    .map_err(|e| dbus_error_text(&e))
+            });
+        let (drives, error) = match listed {
+            Ok(drives) => (drives, String::new()),
+            Err(text) => (Vec::new(), text),
+        };
+        let reply = serde_json::json!({ "drives": drives, "error": error });
+        QString::from(&reply.to_string())
+    }
+
+    /// Folder chosen in the folder dialog as `{"path": "…", "error": "…"}`: a `file://` URL
+    /// becomes its local path; a network address (e.g. `smb://…`) is rejected with a hint.
+    pub fn local_folder_from_url(&self, url: &QString) -> QString {
+        let reply = match local_path_from_dialog_url(&url.to_string()) {
+            Ok(path) => serde_json::json!({ "path": path.to_string_lossy(), "error": "" }),
+            Err(NotALocalPath(address)) => serde_json::json!({
+                "path": "",
+                "error": tr_text(&ConnectionTestCode::NotALocalPath.text(&address)),
+            }),
+        };
+        QString::from(&reply.to_string())
+    }
+
     pub fn test_destination(
         mut self: Pin<&mut Self>,
         fields_json: &QString,
@@ -57,6 +89,13 @@ impl qobject::KesticApp {
         self.as_mut().set_connection_test_error_kind(QString::from(
             res.error_kind.map_or("", |k| k.as_str()),
         ));
+        let note = res
+            .notes
+            .iter()
+            .map(|n| tr(&n.message()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.as_mut().set_connection_test_note(QString::from(&note));
         res.ok
     }
 

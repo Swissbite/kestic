@@ -9,13 +9,17 @@
 
 mod common;
 
-use common::m3::{FakeSetup, M3Rig, StdFakes, latest_variant};
+use common::fakes::{FakeUDisks2Filesystem, FakeUDisks2Handle};
+use common::m3::{FakeSetup, M3DaemonOpts, M3Rig, StdFakes, latest_variant};
 use common::run_isolated_test;
+use kestic_core::model::DestinationKind;
+use kestic_core::mount::{FakeMountInspector, FakeMountState, MountInspector};
 use kestic_daemon::dbus_api::{DestinationTypeDto, KESTIC_BUS_NAME};
 use kestic_i18n::codes::DestinationTypeCode;
 use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use time::macros::datetime;
 
 fn smoke_artifact(name: &str, layout: &str, lang: &str) -> String {
@@ -42,6 +46,14 @@ fn run_m5_gui_smoke(
 
 /// A program directory holding only a stand-in for `ssh`, and a daemon that searches it.
 fn start_with_ssh_only(root: &Path) -> (M3Rig, StdFakes, PathBuf) {
+    start_with_ssh_only_and(root, |_| {})
+}
+
+/// [`start_with_ssh_only`] with further daemon options set by `configure`.
+fn start_with_ssh_only_and(
+    root: &Path,
+    configure: impl FnOnce(&mut M3DaemonOpts<'_>),
+) -> (M3Rig, StdFakes, PathBuf) {
     let programs = root.join("programs");
     fs::create_dir_all(&programs).expect("mkdir programs");
     write_executable(&programs.join("ssh"), "#!/bin/sh\nexit 0\n");
@@ -53,7 +65,10 @@ fn start_with_ssh_only(root: &Path) -> (M3Rig, StdFakes, PathBuf) {
         "",
         KESTIC_BUS_NAME,
         datetime!(2026-12-01 10:00:00 UTC),
-        |o| o.program_search_path = Some(search_path),
+        |o| {
+            o.program_search_path = Some(search_path);
+            configure(o);
+        },
     );
     (rig, fakes, programs)
 }
@@ -150,6 +165,98 @@ fn ac_m5_04_4_check_again_finds_rclone_added_later() {
                     &[("KESTIC_SMOKE_PROGRAM_DIR", program_dir)],
                 );
                 fs::remove_file(programs.join("rclone")).expect("the scenario wrote rclone");
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M5-05-1 (GUI part of the D-Bus test in `m5_s05_drives`): the UDisks2 fake reports the
+/// removable drive «USB-Disk» next to an internal disk; the type «External Drive / USB» offers
+/// (a) the drive with name and mount point, and choosing it sets the path. Screenshots in
+/// English and German, wide and narrow.
+#[test]
+fn m5_05_1_gui_drive_type_offers_the_removable_drive() {
+    run_isolated_test(
+        "m5_05_1_gui_drive_type_offers_the_removable_drive",
+        "KESTIC_M5_GUI_DRIVES_INNER",
+        |root| {
+            let udisks = FakeUDisks2Handle::start();
+            for (device, label, mount_point, removable) in [
+                ("sdb1", "USB-Disk", "/media/user/USB-Disk", true),
+                ("nvme0n1p2", "System", "/", false),
+            ] {
+                udisks.add_filesystem(FakeUDisks2Filesystem {
+                    device_name: device.to_string(),
+                    label: label.to_string(),
+                    uuid: format!("uuid-{device}"),
+                    mount_points: vec![mount_point.to_string()],
+                    drive_name: format!("drive_{device}"),
+                    vendor: "Vendor".to_string(),
+                    model: "Model".to_string(),
+                    removable,
+                });
+            }
+            let (rig, _fakes, _programs) = start_with_ssh_only(root);
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                run_m5_gui_smoke(
+                    root,
+                    "m5-drive-list",
+                    layout,
+                    lang,
+                    &smoke_artifact("drive-list", layout, lang),
+                    &[],
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M5-05-2 (GUI part; detection in `core`, D-Bus in `m5_s05_drives`): a folder on a CIFS
+/// mount (mountinfo fake); the wizard (a) warns that restic advises against repositories on
+/// CIFS/SMB shares and keeps «Next» disabled until the warning is confirmed, and (b) saves the
+/// destination after the confirmation. Screenshots of the warning in English and German.
+#[test]
+fn m5_05_2_gui_cifs_warning_needs_confirmation() {
+    run_isolated_test(
+        "m5_05_2_gui_cifs_warning_needs_confirmation",
+        "KESTIC_M5_GUI_CIFS_INNER",
+        |root| {
+            let share = root.join("mnt").join("nas");
+            fs::create_dir_all(&share).expect("mkdir share");
+            let mounts = Arc::new(FakeMountInspector::new(FakeMountState {
+                mountinfo: format!(
+                    "110 25 0:45 / {} rw,relatime - cifs //nas/backups rw\n",
+                    share.display()
+                ),
+                ..FakeMountState::default()
+            }));
+            let (rig, _fakes, _programs) = start_with_ssh_only_and(root, |o| {
+                o.mount_inspector = Some(Arc::clone(&mounts) as Arc<dyn MountInspector>);
+            });
+            for lang in ["en", "de"] {
+                let repo = share.join(format!("kestic-{lang}"));
+                fs::create_dir_all(&repo).expect("mkdir repo");
+                let repo_text = repo.to_str().expect("utf-8 path");
+                run_m5_gui_smoke(
+                    root,
+                    "m5-cifs-note",
+                    "wide",
+                    lang,
+                    &smoke_artifact("cifs-note", "wide", lang),
+                    &[("KESTIC_SMOKE_CIFS_DIR", repo_text)],
+                );
+                // (b)
+                let state = rig.daemon.client.get_state().expect("GetState");
+                assert!(
+                    state.destinations.iter().any(|d| matches!(
+                        &d.destination.kind,
+                        DestinationKind::Local { path } if path == &repo
+                    )),
+                    "(b) destination on the share saved ({lang}): {:?}",
+                    state.destinations
+                );
             }
             rig.daemon.stop();
         },

@@ -110,7 +110,7 @@ ColumnLayout {
         text: chooser.loadError
         actions: [
             Kirigami.Action {
-                text: i18n("Check Again")
+                text: Texts.label("check_again")
                 onTriggered: chooser.reload()
             }
         ]
@@ -240,7 +240,7 @@ ColumnLayout {
 
                 Controls.Button {
                     objectName: chooser.namePrefix + "CheckAgainButton"
-                    text: i18n("Check Again")
+                    text: Texts.label("check_again")
                     Accessible.name: text
                     onClicked: chooser.reload()
                 }

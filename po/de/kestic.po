@@ -3433,3 +3433,31 @@ msgstr[1] "%1 geplante Backups verpasst"
 
 msgid "Clean up: %1 freed"
 msgstr "Aufräumen: %1 freigegeben"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Removable Drives"
+msgstr "Wechseldatenträger"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "No removable drive is plugged in."
+msgstr "Es ist kein Wechseldatenträger eingesteckt."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use this folder anyway"
+msgstr "Diesen Ordner trotzdem verwenden"
+
+#: i18n/src/messages.rs
+msgid ""
+"'%1' is a network address, not a folder on this computer. restic cannot use "
+"it; choose a local or mounted folder."
+msgstr ""
+"«%1» ist eine Netzwerkadresse, kein Ordner auf diesem Computer. restic kann "
+"sie nicht verwenden; wählen Sie einen lokalen oder eingehängten Ordner."
+
+#: i18n/src/messages.rs
+msgid ""
+"This folder is on a CIFS/SMB network share. restic advises against "
+"repositories on such shares."
+msgstr ""
+"Dieser Ordner liegt auf einer CIFS/SMB-Netzwerkfreigabe. restic rät von "
+"Repositorys auf solchen Freigaben ab."

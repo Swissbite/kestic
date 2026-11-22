@@ -67,7 +67,7 @@ use crate::ui_texts::GuiText;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeRules, KeepCount,
+    Backup, BackupId, DestinationId, DestinationKind, ExcludeRules, KeepCount,
     MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPolicy,
     RetentionPreset, Run, RunConditions, RunKind, RunStatus, Schedule, Source, SourceKind, Weekday,
 };
@@ -75,11 +75,10 @@ use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_s
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSnapshotsDto, BackupSummaryDto,
-    ConnectionTestResultDto, DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME,
-    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto,
-    StartAllResultDto,
+    DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME, KESTIC_INTERFACE_V1,
+    KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto, StartAllResultDto,
 };
-use kestic_i18n::codes::{BlockedReason, ConnectionTestCode, PendingReasonCode, RunProgressPhase};
+use kestic_i18n::codes::{BlockedReason, PendingReasonCode, RunProgressPhase};
 use kestic_i18n::codes::{ErrorKind, ServiceErrorCode};
 use kestic_i18n::messages::{
     Message, UiText, completed_message, interrupted_by_sleep_message, not_backed_up_message,
@@ -436,88 +435,6 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
             }
         });
     });
-}
-
-#[derive(serde::Deserialize)]
-struct DestinationFieldsInput {
-    #[serde(default)]
-    id: Option<String>,
-    kind: String,
-    name: String,
-    location: String,
-    #[serde(default)]
-    username: String,
-}
-
-pub fn test_destination_connection(
-    fields_json: &str,
-    mode: &str,
-    repo_pw: &str,
-    rest_pw: &str,
-) -> ConnectionTestResultDto {
-    let dest = match build_destination(None, fields_json) {
-        Ok(d) => d,
-        Err(err) => {
-            return ConnectionTestResultDto {
-                ok: false,
-                error_kind: Some(ConnectionTestCode::InvalidInput),
-                detail: if err.is_empty() {
-                    GuiText::FillRequiredFields.text()
-                } else {
-                    err
-                },
-            };
-        }
-    };
-    let client = match make_client() {
-        Ok(c) => c,
-        Err(err) => {
-            return ConnectionTestResultDto {
-                ok: false,
-                error_kind: Some(ConnectionTestCode::DaemonUnreachable),
-                detail: err,
-            };
-        }
-    };
-    match client.test_destination_connection(&dest, mode, repo_pw, rest_pw) {
-        Ok(res) => res,
-        // Already translated: the text of the D-Bus error name.
-        Err(err) => ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some(ConnectionTestCode::Internal),
-            detail: dbus_error_text(&err),
-        },
-    }
-}
-
-pub fn build_destination(
-    existing_id: Option<&str>,
-    fields_json: &str,
-) -> Result<Destination, String> {
-    let fields: DestinationFieldsInput =
-        serde_json::from_str(fields_json).map_err(|e| e.to_string())?;
-    let trimmed_loc = fields.location.trim();
-    let trimmed_name = fields.name.trim();
-    let trimmed_user = fields.username.trim();
-    let dest_kind = match fields.kind.as_str() {
-        "rest" => DestinationKind::Rest {
-            url: trimmed_loc.to_string(),
-            username: (!trimmed_user.is_empty()).then(|| trimmed_user.to_string()),
-        },
-        _ => DestinationKind::Local {
-            path: PathBuf::from(trimmed_loc),
-        },
-    };
-    let id_opt = existing_id
-        .filter(|s| !s.is_empty())
-        .or_else(|| fields.id.as_deref().filter(|s| !s.is_empty()));
-    let dest = if let Some(raw_id) = id_opt {
-        let id = DestinationId::parse(raw_id).map_err(|e| e.to_string())?;
-        Destination::with_id(id, trimmed_name, dest_kind).map_err(|e| e.to_string())?
-    } else {
-        Destination::new(trimmed_name, dest_kind).map_err(|e| e.to_string())?
-    };
-    Ok(dest)
 }
 
 /// Kind of the cached destination `dest_id`, if the daemon state knows it.

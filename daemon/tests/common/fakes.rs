@@ -6,7 +6,8 @@
 //! - `org.freedesktop.UPower` + `DisplayDevice`
 //! - `org.freedesktop.NetworkManager` + `Active` + `Settings`
 //! - `org.freedesktop.login1` (`Inhibit` delay pipe FD + `PrepareForSleep`)
-//! - `org.freedesktop.UDisks2` (`ObjectManager` `InterfacesAdded` / `InterfacesRemoved`)
+//! - `org.freedesktop.UDisks2` (`ObjectManager` `GetManagedObjects` with block devices, filesystems
+//!   and drives; `InterfacesAdded`)
 //! - `org.kde.JobViewServerV2` / `org.kde.JobViewV3` + `org.freedesktop.portal.Inhibit`
 
 use std::collections::HashMap;
@@ -434,10 +435,123 @@ impl FakeLogindHandle {
 
 // --- UDisks2 Fake -----------------------------------------------------------------------------
 
-struct FakeUDisks2Manager;
+/// A filesystem on a drive, as UDisks2 lists it in `GetManagedObjects`.
+#[derive(Debug, Clone)]
+pub struct FakeUDisks2Filesystem {
+    /// Last segment of the block device object path (`sdb1`).
+    pub device_name: String,
+    /// Filesystem label (`IdLabel`); empty for none.
+    pub label: String,
+    pub uuid: String,
+    /// Mount points; empty when not mounted.
+    pub mount_points: Vec<String>,
+    /// Last segment of the drive object path.
+    pub drive_name: String,
+    pub vendor: String,
+    pub model: String,
+    /// `org.freedesktop.UDisks2.Drive.Removable` (USB disks, SD cards).
+    pub removable: bool,
+}
+
+fn owned(value: Variant<'_>) -> OwnedVariant {
+    value.try_to_owned().expect("owned variant")
+}
+
+/// NUL-terminated bytes, as UDisks2 sends paths (`ay`).
+fn nul_terminated(text: &str) -> Vec<u8> {
+    text.bytes().chain(std::iter::once(0)).collect()
+}
+
+type FakeObjects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedVariant>>>;
+
+impl FakeUDisks2Filesystem {
+    fn block_path(&self) -> OwnedObjectPath {
+        OwnedObjectPath::try_from(format!(
+            "/org/freedesktop/UDisks2/block_devices/{}",
+            self.device_name
+        ))
+        .expect("block device path")
+    }
+
+    fn drive_path(&self) -> OwnedObjectPath {
+        OwnedObjectPath::try_from(format!(
+            "/org/freedesktop/UDisks2/drives/{}",
+            self.drive_name
+        ))
+        .expect("drive path")
+    }
+
+    fn insert_into(&self, objects: &mut FakeObjects) {
+        let mut block = HashMap::new();
+        block.insert(
+            "Device".to_string(),
+            owned(Variant::from(nul_terminated(&format!(
+                "/dev/{}",
+                self.device_name
+            )))),
+        );
+        block.insert(
+            "IdLabel".to_string(),
+            owned(Variant::from(self.label.as_str())),
+        );
+        block.insert(
+            "IdUUID".to_string(),
+            owned(Variant::from(self.uuid.as_str())),
+        );
+        block.insert(
+            "Drive".to_string(),
+            owned(Variant::from(self.drive_path().into_inner())),
+        );
+        block.insert("HintIgnore".to_string(), owned(Variant::from(false)));
+        let mut filesystem = HashMap::new();
+        let mount_points: Vec<Vec<u8>> = self
+            .mount_points
+            .iter()
+            .map(|m| nul_terminated(m))
+            .collect();
+        filesystem.insert(
+            "MountPoints".to_string(),
+            owned(Variant::from(mount_points)),
+        );
+        let mut block_ifaces = HashMap::new();
+        block_ifaces.insert("org.freedesktop.UDisks2.Block".to_string(), block);
+        block_ifaces.insert("org.freedesktop.UDisks2.Filesystem".to_string(), filesystem);
+        objects.insert(self.block_path(), block_ifaces);
+
+        let mut drive = HashMap::new();
+        drive.insert(
+            "Vendor".to_string(),
+            owned(Variant::from(self.vendor.as_str())),
+        );
+        drive.insert(
+            "Model".to_string(),
+            owned(Variant::from(self.model.as_str())),
+        );
+        drive.insert(
+            "Removable".to_string(),
+            owned(Variant::from(self.removable)),
+        );
+        let mut drive_ifaces = HashMap::new();
+        drive_ifaces.insert("org.freedesktop.UDisks2.Drive".to_string(), drive);
+        objects.insert(self.drive_path(), drive_ifaces);
+    }
+}
+
+#[derive(Default)]
+struct FakeUDisks2Manager {
+    filesystems: Arc<Mutex<Vec<FakeUDisks2Filesystem>>>,
+}
 
 #[interface(name = "org.freedesktop.DBus.ObjectManager")]
 impl FakeUDisks2Manager {
+    fn get_managed_objects(&self) -> FakeObjects {
+        let mut objects = HashMap::new();
+        for fs in self.filesystems.lock().expect("udisks2 state").iter() {
+            fs.insert_into(&mut objects);
+        }
+        objects
+    }
+
     #[zbus(signal, name = "InterfacesAdded")]
     async fn interfaces_added(
         emitter: &SignalEmitter<'_>,
@@ -448,19 +562,32 @@ impl FakeUDisks2Manager {
 
 pub struct FakeUDisks2Handle {
     conn: Connection,
+    filesystems: Arc<Mutex<Vec<FakeUDisks2Filesystem>>>,
 }
 
 impl FakeUDisks2Handle {
     pub fn start() -> Self {
+        let filesystems = Arc::new(Mutex::new(Vec::new()));
+        let manager = FakeUDisks2Manager {
+            filesystems: Arc::clone(&filesystems),
+        };
         let conn = block_on(async move {
             zbus::connection::Builder::session()
                 .name("org.freedesktop.UDisks2")
-                .serve_at("/org/freedesktop/UDisks2", FakeUDisks2Manager)
+                .serve_at("/org/freedesktop/UDisks2", manager)
                 .build()
                 .await
                 .expect("build fake UDisks2")
         });
-        Self { conn }
+        Self { conn, filesystems }
+    }
+
+    /// Lists `filesystem` in `GetManagedObjects` from now on (no signal).
+    pub fn add_filesystem(&self, filesystem: FakeUDisks2Filesystem) {
+        self.filesystems
+            .lock()
+            .expect("udisks2 state")
+            .push(filesystem);
     }
 
     pub fn emit_mount_added(&self, device_name: &str, uuid: &str, mount_point: &str) {

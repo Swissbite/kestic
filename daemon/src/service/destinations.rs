@@ -21,9 +21,10 @@ use kestic_core::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, DestinationSetupMode, preflight_check_destination,
     remove_destination_secrets, setup_destination, verify_and_update_stored_password,
 };
+use kestic_core::local_path::{NotALocalPath, connection_notes};
 use kestic_core::model::{
-    BackupId, Destination, DestinationId, DestinationKind, MaintenanceSchedule, ResticProvider,
-    RunId,
+    BackupId, Destination, DestinationId, DestinationKind, MaintenanceSchedule, ModelError,
+    ResticProvider, RunId,
 };
 use kestic_core::provider::resolve_and_check;
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO, SECRET_KIND_REST};
@@ -103,6 +104,7 @@ fn test_failure(code: ConnectionTestCode, detail: String) -> ConnectionTestResul
         ok: false,
         error_kind: Some(code),
         detail,
+        notes: Vec::new(),
     }
 }
 
@@ -111,14 +113,19 @@ fn test_ok() -> ConnectionTestResultDto {
         ok: true,
         error_kind: None,
         detail: String::new(),
+        notes: Vec::new(),
     }
 }
 
 fn parse_and_validate_dest(dest_json: &str) -> Result<Destination, ConnectionTestResultDto> {
     let dest: Destination = serde_json::from_str(dest_json)
         .map_err(|e| test_failure(ConnectionTestCode::InvalidInput, e.to_string()))?;
-    dest.validate()
-        .map_err(|e| test_failure(ConnectionTestCode::InvalidInput, e.to_string()))?;
+    dest.validate().map_err(|e| match e {
+        ModelError::NotALocalPath(NotALocalPath(address)) => {
+            test_failure(ConnectionTestCode::NotALocalPath, address)
+        }
+        other => test_failure(ConnectionTestCode::InvalidInput, other.to_string()),
+    })?;
     Ok(dest)
 }
 
@@ -575,7 +582,7 @@ pub(crate) fn test_destination_connection_unlocked(
         Err(dto) => return dto,
     };
 
-    let (is_existing, dup_name, deps) = {
+    let (is_existing, dup_name, deps, mount_inspector) = {
         let guard = shared.lock_unpoisoned();
         let is_existing = guard.config.destination(&dest.id).is_some();
         let exclude_id = is_existing.then_some(&dest.id);
@@ -583,10 +590,15 @@ pub(crate) fn test_destination_connection_unlocked(
             .config
             .find_duplicate_destination(&dest.kind, exclude_id)
             .map(|d| d.name.clone());
-        (is_existing, dup_name, guard.restic_deps())
+        (
+            is_existing,
+            dup_name,
+            guard.restic_deps(),
+            Arc::clone(&guard.mount_inspector),
+        )
     };
 
-    test_destination_connection_impl(DestinationTestInputs {
+    let mut result = test_destination_connection_impl(DestinationTestInputs {
         dest: &dest,
         mode,
         repo_password,
@@ -597,7 +609,11 @@ pub(crate) fn test_destination_connection_unlocked(
         kestic_binary: &deps.kestic_binary,
         secret_store: deps.secret_store.as_ref(),
         clock: deps.clock.as_ref(),
-    })
+    });
+    if result.ok {
+        result.notes = connection_notes(&dest, mount_inspector.as_ref());
+    }
+    result
 }
 
 pub(crate) fn list_backup_snapshots_unlocked(

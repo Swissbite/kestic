@@ -22,6 +22,10 @@ QtObject {
     property bool connectionVerified: false
     property string testFeedback: ""
     property bool testFeedbackOk: false
+    // Warning of the last successful connection test (a folder on a CIFS/SMB share) and whether
+    // the user confirmed it.
+    property string testNote: ""
+    property bool testNoteConfirmed: false
 
     readonly property bool kindIsRest: kind === "rest"
     readonly property bool nameValid: name.trim().length > 0
@@ -29,6 +33,8 @@ QtObject {
         ? /^https?:\/\//i.test(location.trim())
         : location.trim().length > 0
     readonly property bool detailsValid: nameValid && locationValid
+    // The connection test passed and its warning, if any, is confirmed.
+    readonly property bool connectionAccepted: connectionVerified && (testNote === "" || testNoteConfirmed)
     readonly property bool passwordsMatch: repoPassword.length > 0 && (setupMode === "connect" || repoPassword === repoPasswordConfirm)
     readonly property bool hasAnyInput: name.trim().length > 0 || location.trim().length > 0 || repoPassword.length > 0
 
@@ -51,11 +57,14 @@ QtObject {
     }
 
     function runConnectionTest() {
+        testNote = "";
+        testNoteConfirmed = false;
         if (!detailsValid) {
             showError(Texts.label("fill_required_fields"));
             return false;
         }
         var ok = appBackend.testDestination(fieldsJson(), setupMode, repoPassword, restPassword);
+        testNote = ok ? appBackend.connection_test_note : "";
         connectionVerified = ok;
         testFeedbackOk = ok;
         testFeedback = appBackend.connection_test_message;

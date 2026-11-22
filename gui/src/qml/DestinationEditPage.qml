@@ -48,7 +48,7 @@ EditorPage {
     dirty: initialData !== null && (
         destDraft.name.trim() !== initialData.name || needsVerification
     )
-    readonly property bool canSave: dirty && destDraft.detailsValid && (!needsVerification || destDraft.connectionVerified) && appBackend.blocking_kind === ""
+    readonly property bool canSave: dirty && destDraft.detailsValid && (!needsVerification || destDraft.connectionAccepted) && appBackend.blocking_kind === ""
 
     function saveForGuard() {
         if (!canSave || !initialData) return false;
