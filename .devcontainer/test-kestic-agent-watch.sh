@@ -180,6 +180,16 @@ pass "stopped 5 103"
 [[ "$(cat "$FAKE_LOG")" == "resume 5" ]] || fail "resumes count again after a turn: '$(cat "$FAKE_LOG")'"
 reset
 
+# Each agent instance counts its own resumes: two resumes of the default
+# instance leave a second instance free to resume its own session.
+fixture issue-5 "OPEN false"
+pass "stopped 5 100"
+pass "stopped 5 101"
+KESTIC_AGENT_NAME=kestic-agent-m5 pass "stopped 5 100"
+[[ "$(cat "$FAKE_LOG")" == "resume 5" ]] || fail "second instance shares the resume count: '$(cat "$FAKE_LOG")'"
+[[ -s "$XDG_STATE_HOME/kestic-agent/watch-resume-kestic-agent-m5" ]] || fail "second instance: no own resume file"
+reset
+
 # Current story closed or held: the next one starts; a hold is reported once.
 fixture issue-5 "CLOSED false"
 fixture "open-M4 Restore" "6 false"

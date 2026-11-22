@@ -156,7 +156,7 @@ start_session() {
     # an organisation's server-managed settings replace that file completely.
     tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$REPO_DIR" \
         claude --dangerously-skip-permissions --settings "$AGENT_SETTINGS" \
-        --remote-control "kestic-agent #$issue" "$@" "$prompt"
+        --remote-control "$HOSTNAME #$issue" "$@" "$prompt"
     echo "kestic-agent: Claude Code runs in tmux session '$SESSION'"
 }
 
