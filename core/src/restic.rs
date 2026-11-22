@@ -659,7 +659,11 @@ pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedI
 }
 
 fn quote_shell(raw: &str) -> String {
-    shlex::try_quote(raw).map_or_else(|_| format!("'{raw}'"), |cow| cow.into_owned())
+    // `try_quote` refuses a NUL byte; single quotes with every `'` escaped keep the rest inert.
+    shlex::try_quote(raw).map_or_else(
+        |_| format!("'{}'", raw.replace('\'', "'\\''")),
+        |cow| cow.into_owned(),
+    )
 }
 
 /// Handle allowing another thread to request graceful cancellation (`SIGTERM`).
@@ -986,4 +990,17 @@ where
         log_lines,
         errors: error_messages,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_shell;
+
+    /// A value `shlex` cannot quote (a NUL byte) is still quoted so that a `'` in it cannot end
+    /// the quotes in the shown command.
+    #[test]
+    fn quote_shell_escapes_quotes_when_shlex_refuses() {
+        let quoted = quote_shell("x\u{0}';id;'");
+        assert_eq!(quoted, "'x\u{0}'\\'';id;'\\'''");
+    }
 }

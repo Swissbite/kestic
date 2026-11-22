@@ -637,8 +637,11 @@ impl Destination {
                 endpoint,
                 bucket,
                 path,
-                ..
-            } => crate::s3::validate(endpoint, bucket, path.as_deref())?,
+                region,
+            } => {
+                crate::s3::validate(endpoint, bucket, path.as_deref())?;
+                crate::s3::validate_region(region.as_deref())?;
+            }
         }
         if self.secrets.repo_password_ref.trim().is_empty() {
             return Err(ModelError::InvalidDestination(

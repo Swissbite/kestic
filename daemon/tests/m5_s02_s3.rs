@@ -279,10 +279,16 @@ fn ac_m5_02_3_wrong_secret_key_fails_with_action_and_creates_nothing() {
                 let client = &rig.daemon.client;
                 let config_before = fs::read(&rig.daemon.config_path).ok();
 
-                for mode in ["init", "connect"] {
+                // Connecting without a repository password still checks the login.
+                let password = strong_password();
+                for (mode, repo_password) in [
+                    ("init", password.as_str()),
+                    ("connect", password.as_str()),
+                    ("connect", ""),
+                ] {
                     let started = Instant::now();
                     let tested = client
-                        .test_destination_connection(&dest, mode, &strong_password(), &wrong)
+                        .test_destination_connection(&dest, mode, repo_password, &wrong)
                         .expect("TestDestinationConnection");
                     // (a)
                     assert_eq!(

@@ -302,6 +302,8 @@ int scenario_s3_form(const Ctx& c) {
     M3_CHECK(5403, wait_until([&] { return s3_choice && s3_choice->isVisible(); }, 2000), "«S3-Compatible Storage» not offered");
     M3_CHECK(5404, s3_choice->property("checked").toBool(), "«S3-Compatible Storage» not chosen");
     M3_CHECK_EQ(5405, s3_choice->property("text").toString(), loc(c.lang, "S3-Compatible Storage", "S3-kompatibler Speicher"), "S3 choice text");
+    // The choice appears below the card; the page knows its new height only after a layout pass.
+    wait_ms(300);
     scroll_into_view(w, s3_choice);
     wait_ms(300);
     if (!c.out_path.isEmpty()) {

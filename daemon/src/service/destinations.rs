@@ -302,29 +302,42 @@ fn check_connect_existing_destination(
         Err(dto) => return dto,
     };
 
-    if let Some(repo_pw) = effective_repo_pw {
-        let backend = match resolve_backend_credentials(inputs) {
-            Ok(creds) => creds,
-            Err(dto) => return dto,
-        };
-
-        let resolved = match resolve_and_check(inputs.provider) {
-            Ok(r) => r,
-            Err(e) => {
-                return test_failure(ConnectionTestCode::ResticUnavailable, e.to_string());
-            }
-        };
-        let temp_store = InMemorySecretStore::new();
-        let runtime = ResticRuntime {
-            resolved: &resolved,
-            kestic_binary: inputs.kestic_binary,
-            secret_store: &temp_store,
-            clock: inputs.clock,
-            cache_dir: None,
-        };
-        if let Err(err) = check_existing_repository(inputs.dest, &repo_pw, &backend, &runtime) {
-            return destination_error_result(err);
+    // Without a repository password only a backend whose login can be checked on its own (S3)
+    // runs restic; the others are checked when the password is entered.
+    if effective_repo_pw.is_none() && !inputs.dest.kind.probes_login_before_init() {
+        return test_ok();
+    }
+    let backend = match resolve_backend_credentials(inputs) {
+        Ok(creds) => creds,
+        Err(dto) => return dto,
+    };
+    let resolved = match resolve_and_check(inputs.provider) {
+        Ok(r) => r,
+        Err(e) => {
+            return test_failure(ConnectionTestCode::ResticUnavailable, e.to_string());
         }
+    };
+    let temp_store = InMemorySecretStore::new();
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: inputs.kestic_binary,
+        secret_store: &temp_store,
+        clock: inputs.clock,
+        cache_dir: None,
+    };
+    match effective_repo_pw {
+        Some(repo_pw) => {
+            if let Err(err) = check_existing_repository(inputs.dest, &repo_pw, &backend, &runtime) {
+                return destination_error_result(err);
+            }
+        }
+        None => match probe_repository(inputs.dest, &backend, &runtime) {
+            Ok(RepositoryProbe::Exists) => {}
+            Ok(RepositoryProbe::Missing | RepositoryProbe::BucketMissing) => {
+                return test_failure(ConnectionTestCode::RepositoryMissing, String::new());
+            }
+            Err(err) => return destination_error_result(err),
+        },
     }
 
     test_ok()

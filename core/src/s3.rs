@@ -36,6 +36,20 @@ pub fn validate(endpoint: &str, bucket: &str, path: Option<&str>) -> Result<(), 
     Ok(())
 }
 
+/// Checks the optional region: it goes to restic as `AWS_DEFAULT_REGION`, so it holds no spaces
+/// or control characters (a NUL byte would stop every restic start).
+pub fn validate_region(region: Option<&str>) -> Result<(), ModelError> {
+    match region.map(str::trim) {
+        Some(r) if r.chars().any(|c| c.is_control() || c.is_whitespace()) => {
+            Err(ModelError::InvalidDestination(format!(
+                "S3 region must not contain spaces or control characters: '{}'",
+                r.escape_default()
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Whether `name` follows the S3 bucket naming rules: 3–63 characters of lowercase letters,
 /// digits, dots and hyphens, starting and ending with a letter or digit, no two dots in a row and
 /// not shaped like an IPv4 address.
@@ -176,6 +190,15 @@ mod tests {
     fn path_rejects_parent_segments() {
         assert!(validate("https://s3.example.com", "backup", Some("a/../b")).is_err());
         assert!(validate("https://s3.example.com", "backup", Some("a/b")).is_ok());
+    }
+
+    #[test]
+    fn region_rejects_spaces_and_control_characters() {
+        for bad in ["eu west 1", "x\u{0}';id;'", "eu\tcentral"] {
+            assert!(validate_region(Some(bad)).is_err(), "{bad:?} accepted");
+        }
+        assert!(validate_region(Some(" eu-central-1 ")).is_ok());
+        assert!(validate_region(None).is_ok());
     }
 
     #[test]
