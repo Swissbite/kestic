@@ -82,15 +82,15 @@ The ruleset needs no approving review, so the token **can** merge a pull
 request once `verify` is green.
 
 The container has one rule against that: merging into `main` is refused.
-[gh-wrapper.sh](gh-wrapper.sh) rejects `gh pr merge` and the REST merge
-endpoints of `gh api` when the target is `main`, and GraphQL merge mutations
-whatever their target (tested by [test-gh-wrapper.sh](test-gh-wrapper.sh) in
-`just verify`). Merges into other branches through `gh pr merge`, such as
-story pull requests against a milestone branch, go through. A `pre-push` hook
-rejects pushes to `main`. Both guard against mistakes only: aliases, the token
-with `curl`, or `--no-verify` bypass them, and the check happens when the
-command runs (a pull request with `--auto` that GitHub later retargets to
-`main`, e.g. after its base branch is deleted, is not caught).
+[gh-wrapper.sh](gh-wrapper.sh) rejects `gh pr merge` and a PUT on the REST
+endpoint `…/pulls/<n>/merge` when the pull request targets `main` (tested by
+[test-gh-wrapper.sh](test-gh-wrapper.sh) in `just verify`). Merges into other
+branches, such as story pull requests against a milestone branch, and all
+other commands go through; texts that mention merge or main never block
+anything. A `pre-push` hook rejects pushes to `main`. Both guard against
+mistakes only. Known gaps: GraphQL merge mutations, the branch merge API,
+gh aliases, the token with `curl`, `--no-verify`, and a pull request with
+`--auto` that GitHub later retargets to `main`.
 
 The binding lock belongs in the ruleset on `main`. Since the token is the
 maintainer's own, a required review would also block the maintainer, who

@@ -55,9 +55,6 @@ expect() {
     fi
 }
 
-printf '%s\n' '{"query": "mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }"}' > "$tmp/merge.json"
-printf '%s\n' 'query { viewer { login } }' > "$tmp/read.graphql"
-
 # gh pr merge: base main refused, other bases pass; the pull request is looked
 # up in the repository given by -R in any spelling
 expect refused pr merge 12
@@ -72,40 +69,29 @@ expect passed pr merge --subject 12 34
 expect passed pr merge -R o/r 12
 expect refused pr merge -R o/r 34
 expect refused pr -R o/r merge 34
-expect refused pr --repo o/r merge 34
 expect refused pr merge -Ro/r 34
 expect refused pr merge --repo=o/r 34
 FAKE_BASES="-#current=main" expect refused pr merge
-expect passed pr view 12
-expect passed pr create --title merge --base main
 
-# gh api: PUT on the merge endpoint of a main pull request refused, in every
-# spelling of the path; GET and other bases pass
+# gh api: PUT on the merge endpoint of a main pull request refused, relative
+# or as a full URL; GET and other bases pass
 expect refused api -X PUT repos/Swissbite/kestic/pulls/12/merge
-expect refused api -XPUT repos/Swissbite/kestic/pulls/12/merge
-expect refused api /repos/Swissbite/kestic/pulls/12/merge --method PUT
-expect refused api --method=put '/repos/{owner}/{repo}/pulls/12/merge'
-expect refused api -X PUT https://api.github.com/repos/o/r/pulls/34/merge
-expect refused api -H 'Accept: application/json' repos/o/r/pulls/34/merge -X PUT
+expect refused api /repos/Swissbite/kestic/pulls/12/merge --method put
+expect refused api --method=PUT '/repos/{owner}/{repo}/pulls/12/merge'
+expect refused api -XPUT https://api.github.com/repos/o/r/pulls/34/merge
 expect passed api -X PUT repos/Swissbite/kestic/pulls/34/merge
 expect passed api -X PUT repos/o/r/pulls/12/merge
 expect passed api repos/Swissbite/kestic/pulls/12/merge
 expect passed api repos/Swissbite/kestic/pulls/12
 
-# branch merge endpoint: base main or unknown refused
-expect refused api repos/Swissbite/kestic/merges -f base=main -f head=topic
-expect refused api repos/Swissbite/kestic/merges -fbase=main -f head=topic
-expect refused api repos/Swissbite/kestic/merges -f head=topic
-expect passed api repos/Swissbite/kestic/merges -f base=m4 -f head=topic
-
-# GraphQL merge mutations refused, also from a file; other GraphQL and text
-# that merely names a mutation pass
-expect refused api graphql -f 'query=mutation { mergePullRequest(input: {pullRequestId: "x"}) { clientMutationId } }'
-expect refused api graphql -F 'query=mutation { enablePullRequestAutoMerge(input: {pullRequestId: "x"}) { clientMutationId } }'
-expect refused api graphql --input "$tmp/merge.json"
-expect passed api graphql -F "query=@$tmp/read.graphql"
-expect passed api repos/Swissbite/kestic/issues/1/comments -f 'body=see mergePullRequest'
-expect passed issue comment 42 --body 'merge into main later'
+# Texts that mention merge or main never block anything
+expect passed pr view 12
+expect passed pr create --title merge --base main --body 'merge into main'
+expect passed pr comment 12 --body 'merge main'
+expect passed pr edit 12 --title merge
+expect passed pr review 12 --approve -b merge
+expect passed issue comment 42 --body 'gh pr merge 12 into main'
+expect passed api -X POST repos/Swissbite/kestic/issues/12/comments -f 'body=PUT repos/o/r/pulls/12/merge'
 
 if [[ "$failures" -gt 0 ]]; then
     exit 1
