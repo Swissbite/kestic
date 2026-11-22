@@ -511,7 +511,12 @@ impl qobject::RestorePreviewModel {
             return;
         };
         let state = match detail.run.status {
-            RunStatus::Running | RunStatus::Pending => {
+            RunStatus::Pending => {
+                let waiting = tr(&kestic_i18n::codes::PendingReasonCode::Queue.waiting_message(""));
+                self.as_mut().set_run_text(QString::from(&waiting));
+                return;
+            }
+            RunStatus::Running => {
                 let progress = shared_state()
                     .lock_unpoisoned()
                     .active_progress

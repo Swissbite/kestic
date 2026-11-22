@@ -1045,6 +1045,12 @@ int scenario_show_restore(const Ctx& c) {
     QQuickWindow* w = c.window;
     M4_CHECK(6401, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 5000),
         "(c) the tab «Restore» is active");
+    // A running GUI on another tab follows the tray's request (signal ShowRestoreRequested).
+    QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
+    M4_CHECK(6403, wait_until([&] { return w->property("activeTab").toInt() == 0; }, 3000), "the overview is shown");
+    M4_CHECK(6404, QMetaObject::invokeMethod(c.backend, "restoreTabRequested"), "restoreTabRequested could not be emitted");
+    M4_CHECK(6405, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 3000),
+        "(c) a running GUI switches to the tab «Restore»");
     finish_incubation(w);
     wait_ms(400);
     M4_CHECK(6402, save_screenshot(w, c.out_path), "screenshot failed");

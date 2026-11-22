@@ -1669,6 +1669,9 @@ fn m4_s05_waiting_restore_keeps_its_preview() {
                 )
                 .expect("StartRestore");
             fx.rig.clock.advance(std::time::Duration::from_mins(11));
+            // Another query meanwhile frees the old preview from the query store.
+            let other = fx.start_preview(&["b.bin"], None, RestoreOverwrite::Never);
+            fx.preview_page(&other, &big_page());
             fx.rig.wrapper.release("prune");
             let detail = fx.wait_run(&run_id);
             assert_eq!(

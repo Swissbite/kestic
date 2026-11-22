@@ -42,19 +42,18 @@ use zbus::Connection;
 /// A restore waiting for maintenance of its destination to end.
 pub(crate) struct PendingRestore {
     run: Run,
-    job: RestoreJob,
+    setup: RestoreSetup,
 }
 
 /// Everything a restore run needs once it starts.
 #[derive(Clone)]
-struct RestoreJob {
+struct RestoreSetup {
     ctx: RestoreContext,
     params: RestoreParams,
     target: RestoreTarget,
     check: TargetCheck,
     /// Plan, backup and kept files of the matching preview, when one was given.
     from_preview: Option<PreviewFacts>,
-    preview_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -103,35 +102,24 @@ fn create_new_folder(target: &RestoreTarget, check: &TargetCheck) -> Result<(), 
     }
 }
 
-/// How old a preview may be.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PreviewAge {
-    /// At most ten minutes since its end (by the clock), as `StartRestore` requires.
-    Fresh,
-    /// Any age: a restore that waited for maintenance was accepted with a fresh preview.
-    Any,
-}
-
-/// The facts of preview `preview_id` when it is done, young enough for `age` and made for
-/// exactly these parameters; `None` otherwise.
+/// The facts of preview `preview_id` when it is done, at most ten minutes old (by the clock)
+/// and made for exactly these parameters; `None` otherwise.
 fn matching_preview(
     core: &DaemonCore,
     preview_id: Option<&str>,
-    job: &RestoreJob,
-    age: PreviewAge,
+    setup: &RestoreSetup,
 ) -> Option<PreviewFacts> {
     let query = core.snapshot_queries.peek(preview_id?)?;
     if query.state != QueryState::Done {
         return None;
     }
-    let fresh = age == PreviewAge::Any
-        || query
-            .finished_at
-            .is_some_and(|t| core.clock.now_utc() - t <= PREVIEW_MAX_AGE);
+    let fresh = query
+        .finished_at
+        .is_some_and(|t| core.clock.now_utc() - t <= PREVIEW_MAX_AGE);
     let Some(QueryResult::RestorePreview(preview)) = &query.result else {
         return None;
     };
-    let wanted = fingerprint(&job.ctx, &job.params, &job.target, &job.check);
+    let wanted = fingerprint(&setup.ctx, &setup.params, &setup.target, &setup.check);
     (fresh && preview.fingerprint == wanted).then(|| PreviewFacts {
         dry_run: preview.dry_run,
         plan: preview.plan.clone(),
@@ -140,11 +128,11 @@ fn matching_preview(
     })
 }
 
-/// Checks a `StartRestore` request and returns the job, before anything is written or started.
-fn prepare_job(
+/// Checks a `StartRestore` request and returns the setup, before anything is written or started.
+fn prepare_setup(
     shared: &Arc<Mutex<DaemonCore>>,
     request: &RestoreRequest,
-) -> Result<(RestoreJob, ResticDeps, SupervisionConfig), KesticServiceErr> {
+) -> Result<(RestoreSetup, ResticDeps, SupervisionConfig), KesticServiceErr> {
     let destination_id = DestinationId::parse(&request.destination_id).map_err(invalid)?;
     let params = check_params(
         &request.snapshot_id,
@@ -172,20 +160,18 @@ fn prepare_job(
     // Checked again right before the start, so a folder that went missing meanwhile is caught.
     let first_check = check_target(&target, ctx.repository());
     refuse_unusable(&first_check)?;
-    let mut job = RestoreJob {
+    let mut setup = RestoreSetup {
         ctx,
         params,
         target,
         check: first_check,
         from_preview: None,
-        preview_id: request.preview_id.clone(),
     };
-    let required = preview_required(&job.target, &job.check);
+    let required = preview_required(&setup.target, &setup.check);
     let facts = matching_preview(
         &shared.lock_unpoisoned(),
         request.preview_id.as_deref(),
-        &job,
-        PreviewAge::Fresh,
+        &setup,
     );
     // Where a preview is required, only one that ran the dry runs counts: a preview of a folder
     // that was empty then lists nothing that would be overwritten now.
@@ -194,20 +180,20 @@ fn prepare_job(
             "no finished, fresh preview with these parameters".to_string(),
         ));
     }
-    job.from_preview = facts;
-    create_new_folder(&job.target, &job.check)?;
-    if job.check.missing {
-        job.check = check_target(&job.target, job.ctx.repository());
-        refuse_unusable(&job.check)?;
-        if job.check.code == RestoreTargetCode::ExistsNotEmpty
-            && !job.from_preview.as_ref().is_some_and(|f| f.dry_run)
+    setup.from_preview = facts;
+    create_new_folder(&setup.target, &setup.check)?;
+    if setup.check.missing {
+        setup.check = check_target(&setup.target, setup.ctx.repository());
+        refuse_unusable(&setup.check)?;
+        if setup.check.code == RestoreTargetCode::ExistsNotEmpty
+            && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)
         {
             return Err(KesticServiceErr::PreviewRequired(
                 "the new folder has content now".to_string(),
             ));
         }
     }
-    Ok((job, deps, supervision))
+    Ok((setup, deps, supervision))
 }
 
 /// Starts a restore (`StartRestore`); returns its run ID. While maintenance runs on the
@@ -218,7 +204,7 @@ pub fn start_restore_async(
 ) -> Result<String, KesticServiceErr> {
     let request: RestoreRequest = serde_json::from_str(request_json)
         .map_err(|e| invalid(format!("invalid restore request JSON: {e}")))?;
-    let (job, deps, supervision) = prepare_job(shared, &request)?;
+    let (setup, deps, supervision) = prepare_setup(shared, &request)?;
     let resolved = match probe_for_run(&deps.provider, deps.secret_store.as_ref()) {
         (_, Ok(resolved)) => resolved,
         (probe, Err(err)) => {
@@ -228,10 +214,10 @@ pub fn start_restore_async(
     };
 
     let mut guard = shared.lock_unpoisoned();
-    let dest_id = job.ctx.destination.id.clone();
+    let dest_id = setup.ctx.destination.id.clone();
     // The preview named the snapshot's backup already; without one the worker sets it once
     // restic has read the snapshot.
-    let backup_id = job
+    let backup_id = setup
         .from_preview
         .as_ref()
         .and_then(|f| f.backup.as_ref())
@@ -248,7 +234,7 @@ pub fn start_restore_async(
         let conn = guard.conn.clone();
         guard.pending_restores.push(PendingRestore {
             run: run.clone(),
-            job,
+            setup,
         });
         guard.push_state();
         if let Some(conn) = conn {
@@ -256,7 +242,7 @@ pub fn start_restore_async(
         }
         return Ok(run_id);
     }
-    launch(shared, &mut guard, run, job, deps, supervision, resolved)?;
+    launch(shared, &mut guard, run, setup, deps, supervision, resolved)?;
     Ok(run_id)
 }
 
@@ -265,7 +251,7 @@ fn launch(
     shared: &Arc<Mutex<DaemonCore>>,
     guard: &mut DaemonCore,
     mut run: Run,
-    job: RestoreJob,
+    setup: RestoreSetup,
     deps: ResticDeps,
     supervision: SupervisionConfig,
     resolved: ResolvedRestic,
@@ -284,8 +270,8 @@ fn launch(
         NewActiveRun {
             run: &run,
             backup_id: None,
-            display_name: &job.ctx.destination.name,
-            dest_id: &job.ctx.destination.id,
+            display_name: &setup.ctx.destination.name,
+            dest_id: &setup.ctx.destination.id,
         },
         None,
     );
@@ -294,7 +280,7 @@ fn launch(
         restore_worker(RestoreWorker {
             shared: shared_worker,
             run,
-            job,
+            setup,
             deps,
             supervision,
             resolved,
@@ -333,22 +319,15 @@ impl DaemonCore {
 }
 
 /// Checks a restore that waited again right before it starts: the target may have changed
-/// meanwhile, so where it now needs a preview, one with dry runs must have been given. The
-/// preview's age counted when the restore was accepted.
-fn recheck_waiting(shared: &Arc<Mutex<DaemonCore>>, job: &mut RestoreJob) -> Result<(), String> {
-    job.check = check_target(&job.target, job.ctx.repository());
-    refuse_unusable(&job.check).map_err(|e| e.to_string())?;
-    if preview_required(&job.target, &job.check) {
-        let facts = matching_preview(
-            &shared.lock_unpoisoned(),
-            job.preview_id.as_deref(),
-            job,
-            PreviewAge::Any,
-        );
-        if !facts.as_ref().is_some_and(|f| f.dry_run) {
-            return Err(tr(&ServiceErrorCode::PreviewRequired.message()));
-        }
-        job.from_preview = facts;
+/// meanwhile, so where it now needs a preview, the one it was accepted with must have run the
+/// dry runs. Its age counted when the restore was accepted.
+fn recheck_waiting(setup: &mut RestoreSetup) -> Result<(), String> {
+    setup.check = check_target(&setup.target, setup.ctx.repository());
+    refuse_unusable(&setup.check).map_err(|e| e.to_string())?;
+    if preview_required(&setup.target, &setup.check)
+        && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)
+    {
+        return Err(tr(&ServiceErrorCode::PreviewRequired.message()));
     }
     Ok(())
 }
@@ -367,7 +346,7 @@ pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &
         start
     };
     for mut pending in waiting {
-        if let Err(detail) = recheck_waiting(shared, &mut pending.job) {
+        if let Err(detail) = recheck_waiting(&mut pending.setup) {
             let mut guard = shared.lock_unpoisoned();
             let clock = Arc::clone(&guard.clock);
             pending.run.finish(clock.as_ref(), RunStatus::Error, None);
@@ -395,7 +374,7 @@ pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &
                 shared,
                 &mut guard,
                 run.clone(),
-                pending.job,
+                pending.setup,
                 deps,
                 supervision,
                 resolved,
@@ -419,7 +398,7 @@ pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &
 struct RestoreWorker {
     shared: Arc<Mutex<DaemonCore>>,
     run: Run,
-    job: RestoreJob,
+    setup: RestoreSetup,
     deps: ResticDeps,
     supervision: SupervisionConfig,
     resolved: ResolvedRestic,
@@ -491,7 +470,7 @@ impl RestoreWorker {
         let secret_store = Arc::clone(&self.deps.secret_store);
         let clock = Arc::clone(&self.deps.clock);
         let resolved = self.resolved.clone();
-        let destination = self.job.ctx.destination.clone();
+        let destination = self.setup.ctx.destination.clone();
         let access = SnapshotListAccess {
             destination: &destination,
             resolved: &resolved,
@@ -500,14 +479,14 @@ impl RestoreWorker {
             clock: clock.as_ref(),
             extra_env: &[],
         };
-        let plan = match self.job.from_preview.clone() {
+        let plan = match self.setup.from_preview.clone() {
             Some(facts) => {
                 self.set_backup(facts.backup);
                 facts.plan
             }
-            None => match resolve_plan(&access, &self.job.params, Some(&self.cancel)) {
+            None => match resolve_plan(&access, &self.setup.params, Some(&self.cancel)) {
                 Ok((snapshot, plan)) => {
-                    self.set_backup(self.job.ctx.backup_of(&snapshot));
+                    self.set_backup(self.setup.ctx.backup_of(&snapshot));
                     plan
                 }
                 Err(err) => {
@@ -518,8 +497,8 @@ impl RestoreWorker {
                 }
             },
         };
-        let target = self.job.check.resolved.clone();
-        let overwrite = self.job.params.overwrite;
+        let target = self.setup.check.resolved.clone();
+        let overwrite = self.setup.params.overwrite;
         let cancel = self.cancel.clone();
         let result = execute_restore(
             &access,
@@ -541,19 +520,19 @@ impl RestoreWorker {
 fn restore_worker(mut worker: RestoreWorker) {
     let mut supervision = RunSupervision::start(
         &worker.supervision,
-        &i18n("Restoring from %1").subs(&[&worker.job.ctx.destination.name]),
+        &i18n("Restoring from %1").subs(&[&worker.setup.ctx.destination.name]),
         &worker.cancel,
     );
     let outcome = worker.execute();
     supervision.stop_cancel_watcher();
 
     let secrets_owned = load_dest_secrets(
-        &worker.job.ctx.destination,
+        &worker.setup.ctx.destination,
         worker.deps.secret_store.as_ref(),
     );
     let secrets = secret_strs(&secrets_owned);
     let mut run = worker.run.clone();
-    let status = record_outcome(&mut run, &worker.job, outcome, &secrets, &worker.shared);
+    let status = record_outcome(&mut run, &worker.setup, outcome, &secrets, &worker.shared);
     run.finish(worker.deps.clock.as_ref(), status, run.exit_code);
     if let Some(jv) = supervision.job_view.take() {
         let code = u32::from(status != RunStatus::Ok);
@@ -568,16 +547,16 @@ fn restore_worker(mut worker: RestoreWorker) {
 /// Fills the result of `run` from the restic outcome and returns its status.
 fn record_outcome(
     run: &mut Run,
-    job: &RestoreJob,
+    setup: &RestoreSetup,
     outcome: RestoreOutcome,
     secrets: &[&str],
     shared: &Arc<Mutex<DaemonCore>>,
 ) -> RunStatus {
     let mut stats = RestoreStats {
-        target_dir: job.check.resolved.to_string_lossy().into_owned(),
-        overwrite: job.params.overwrite,
-        selection_count: job.params.selection.len() as u64,
-        files_kept: job.from_preview.as_ref().map_or(0, |f| f.files_kept),
+        target_dir: setup.check.resolved.to_string_lossy().into_owned(),
+        overwrite: setup.params.overwrite,
+        selection_count: setup.params.selection.len() as u64,
+        files_kept: setup.from_preview.as_ref().map_or(0, |f| f.files_kept),
         ..RestoreStats::default()
     };
     let status = match outcome.result {
@@ -675,7 +654,7 @@ fn finalize(worker: &RestoreWorker, run: &Run, secrets: &[&str]) {
         emit_status_changed(conn, &state_dto);
     }
     if !window_active {
-        let title = i18n("Restore from %1 finished").subs(&[&worker.job.ctx.destination.name]);
+        let title = i18n("Restore from %1 finished").subs(&[&worker.setup.ctx.destination.name]);
         let body = run.summary_message.clone().unwrap_or_default();
         let _ = send_event_notification(KesticEvent::RestoreFinished, &title, &body);
     }
