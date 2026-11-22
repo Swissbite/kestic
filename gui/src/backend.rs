@@ -89,6 +89,9 @@ pub mod qobject {
         #[qproperty(QString, condition_override_backup_name)]
         #[qproperty(QString, condition_override_message)]
         #[qproperty(bool, maintenance_preview_loading)]
+        #[qproperty(bool, restore_overview_loading)]
+        #[qproperty(bool, restore_snapshots_loading)]
+        #[qproperty(QString, restore_snapshots_error)]
         type KesticApp = super::KesticAppRust;
 
         #[qsignal]
@@ -98,6 +101,14 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "snapshotsUpdated"]
         fn snapshots_updated(self: Pin<&mut KesticApp>);
+
+        #[qsignal]
+        #[cxx_name = "restoreOverviewUpdated"]
+        fn restore_overview_updated(self: Pin<&mut KesticApp>);
+
+        #[qsignal]
+        #[cxx_name = "restoreSnapshotsUpdated"]
+        fn restore_snapshots_updated(self: Pin<&mut KesticApp>);
 
         #[qsignal]
         #[cxx_name = "passiveNotification"]
@@ -392,6 +403,14 @@ pub mod qobject {
         fn load_backup_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "loadRestoreOverview"]
+        fn load_restore_overview(self: Pin<&mut KesticApp>);
+
+        #[qinvokable]
+        #[cxx_name = "loadRestoreSnapshots"]
+        fn load_restore_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString);
+
+        #[qinvokable]
         #[cxx_name = "setResticProvider"]
         fn set_restic_provider(
             self: Pin<&mut KesticApp>,
@@ -530,6 +549,7 @@ pub mod qobject {
 mod backups;
 mod destinations;
 mod previews;
+pub(crate) mod restore;
 mod schedules;
 mod state;
 
@@ -618,6 +638,9 @@ pub struct KesticAppRust {
     condition_override_backup_name: QString,
     condition_override_message: QString,
     maintenance_preview_loading: bool,
+    restore_overview_loading: bool,
+    restore_snapshots_loading: bool,
+    restore_snapshots_error: QString,
 }
 
 pub(super) use crate::state_cache::dbus_error_text;

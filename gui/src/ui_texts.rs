@@ -50,6 +50,7 @@ gui_texts! {
     RemoveFromKesticEllipsis = "remove_from_kestic_ellipsis" => i18n_noop("Remove from Kestic…"),
     RenameEllipsis = "rename_ellipsis" => i18n_noop("Rename…"),
     Resume = "resume" => i18n_noop("Resume"),
+    Refresh = "refresh" => i18n_noop("Refresh"),
     Retry = "retry" => i18n_noop("Retry"),
     Save = "save" => i18n_noop("Save"),
     Settings = "settings" => i18n_noop("Settings"),
@@ -65,6 +66,7 @@ gui_texts! {
     // Areas and sections
     AboutKestic = "about_kestic" => i18n_noop("About Kestic"),
     Overview = "overview" => i18n_noop("Overview"),
+    Restore = "restore" => i18n_noop("Restore"),
     Backups = "backups" => i18n_noop("Backups"),
     Destinations = "destinations" => i18n_noop("Destinations"),
     History = "history" => i18n_noop("History"),
@@ -115,6 +117,9 @@ gui_texts! {
     Sat = "sat" => i18n_noop("Sat"),
     Sun = "sun" => i18n_noop("Sun"),
     TwoParts = "two_parts" => i18n_noop("%1 · %2"),
+    EarlierSnapshotsOn = "earlier_snapshots_on" => i18n_noop("Earlier snapshots on '%1'"),
+    LoadingSnapshots = "loading_snapshots" => i18n_noop("Loading snapshots…"),
+    NoSnapshotsYet = "no_snapshots_yet" => i18n_noop("No snapshots yet – the first backup is still pending"),
 
     // Messages
     SaveChangesQuestion = "save_changes_question" => i18n_noop("Save changes?"),

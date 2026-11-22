@@ -726,28 +726,59 @@ pub fn list_snapshots_for_backup(
     clock: &dyn Clock,
     extra_env: &[(&str, &str)],
 ) -> Result<Vec<ResticSnapshot>, BackupRunError> {
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
-
-    let mut spec = ResticCommandSpec::for_destination(
-        &resolved.binary,
-        kestic_binary,
+    let filter = ["--tag".to_string(), format!("kestic:{backup_id}")];
+    let access = SnapshotListAccess {
         destination,
-        vec![
-            "snapshots".to_string(),
-            "--no-lock".to_string(),
-            "--tag".to_string(),
-            format!("kestic:{backup_id}"),
-        ],
+        resolved,
+        kestic_binary,
+        secret_store,
+        clock,
+        extra_env,
+    };
+    run_snapshots_listing(&access, &filter)
+}
+
+/// What a `restic snapshots` call needs to reach a destination.
+pub struct SnapshotListAccess<'a> {
+    pub destination: &'a Destination,
+    pub resolved: &'a ResolvedRestic,
+    pub kestic_binary: &'a Path,
+    pub secret_store: &'a dyn SecretStore,
+    pub clock: &'a dyn Clock,
+    pub extra_env: &'a [(&'a str, &'a str)],
+}
+
+/// Lists every snapshot in a destination with one `restic snapshots` call, without any tag
+/// filter (backup, metadata and foreign snapshots alike).
+pub fn list_destination_snapshots(
+    access: &SnapshotListAccess<'_>,
+) -> Result<Vec<ResticSnapshot>, BackupRunError> {
+    run_snapshots_listing(access, &[])
+}
+
+fn run_snapshots_listing(
+    access: &SnapshotListAccess<'_>,
+    filter: &[String],
+) -> Result<Vec<ResticSnapshot>, BackupRunError> {
+    preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
+
+    let mut args = vec!["snapshots".to_string(), "--no-lock".to_string()];
+    args.extend(filter.iter().cloned());
+    let mut spec = ResticCommandSpec::for_destination(
+        &access.resolved.binary,
+        access.kestic_binary,
+        access.destination,
+        args,
     );
     spec.low_priority = false;
 
     let res = run_restic(
         &spec,
-        destination,
-        Some(secret_store),
-        clock,
+        access.destination,
+        Some(access.secret_store),
+        access.clock,
         None,
-        extra_env,
+        access.extra_env,
         |_| {},
     )?;
 

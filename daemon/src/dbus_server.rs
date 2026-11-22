@@ -9,10 +9,11 @@ use crate::dbus_api::{
 use crate::monitors::list_known_networks;
 use crate::service::{
     DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
-    list_backup_snapshots_unlocked, preview_destination_maintenance_unlocked,
-    refresh_availability_unlocked, refresh_probe_unlocked, run_destination_maintenance_async,
-    set_restic_provider_unlocked, start_all_backups_async, start_backup_async,
-    start_backup_dry_run_async, start_backup_override_async, start_retention_preview_async,
+    list_backup_snapshots_unlocked, list_destination_snapshots_unlocked,
+    preview_destination_maintenance_unlocked, refresh_availability_unlocked,
+    refresh_probe_unlocked, run_destination_maintenance_async, set_restic_provider_unlocked,
+    start_all_backups_async, start_backup_async, start_backup_dry_run_async,
+    start_backup_override_async, start_retention_preview_async,
     test_destination_connection_unlocked, trigger_background_availability_probe,
     unlock_destination_async, update_destination_password_unlocked, update_destination_unlocked,
 };
@@ -138,6 +139,18 @@ impl KesticDbusV1Service {
         let id = backup_id.to_string();
         let snaps = self
             .blocking(move |core| list_backup_snapshots_unlocked(core, &id))
+            .await?;
+        to_json_arg(&snaps)
+    }
+
+    #[zbus(name = "ListDestinationSnapshots")]
+    async fn list_destination_snapshots(
+        &self,
+        destination_id: &str,
+    ) -> Result<String, KesticDbusError> {
+        let id = destination_id.to_string();
+        let snaps = self
+            .blocking(move |core| list_destination_snapshots_unlocked(core, &id))
             .await?;
         to_json_arg(&snaps)
     }

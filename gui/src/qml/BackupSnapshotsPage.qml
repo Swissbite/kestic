@@ -32,7 +32,7 @@ Kirigami.ScrollablePage {
     actions: [
         Kirigami.Action {
             icon.name: "view-refresh"
-            text: i18n("Refresh")
+            text: Texts.label("refresh")
             onTriggered: appBackend.loadBackupSnapshots(backupId)
         },
         Kirigami.Action {
@@ -51,7 +51,7 @@ Kirigami.ScrollablePage {
         Kirigami.LoadingPlaceholder {
             Layout.fillWidth: true
             visible: appBackend.snapshots_loading
-            text: i18n("Loading snapshots…")
+            text: Texts.label("loading_snapshots")
         }
 
         Kirigami.InlineMessage {
@@ -72,7 +72,7 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 2
             visible: !appBackend.snapshots_loading && snapshotsListView.count === 0 && appBackend.snapshots_error === ""
             icon.name: "view-history"
-            text: i18n("No snapshots yet – the first backup is still pending")
+            text: Texts.label("no_snapshots_yet")
         }
 
         ListView {

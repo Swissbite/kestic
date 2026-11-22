@@ -55,6 +55,16 @@ pub mod qobject {
         #[qml_element]
         type RunLogsModel = super::RunLogsModelRust;
 
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        type RestoreBackupsModel = super::RestoreBackupsModelRust;
+
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        type RestoreSnapshotsModel = super::RestoreSnapshotsModelRust;
+
         /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
         /// with the tray (`kestic-i18n`) and GUI texts (`ui_texts`). No daemon connection.
         #[qobject]
@@ -166,6 +176,50 @@ pub mod qobject {
         #[inherit]
         fn data_changed_logs(
             self: Pin<&mut RunLogsModel>,
+            top_left: &QModelIndex,
+            bottom_right: &QModelIndex,
+        );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_restore_backups(self: Pin<&mut RestoreBackupsModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_restore_backups(self: Pin<&mut RestoreBackupsModel>);
+        #[cxx_name = "index"]
+        #[inherit]
+        fn index_restore_backups(
+            self: &RestoreBackupsModel,
+            row: i32,
+            column: i32,
+            parent: &QModelIndex,
+        ) -> QModelIndex;
+        #[cxx_name = "dataChanged"]
+        #[inherit]
+        fn data_changed_restore_backups(
+            self: Pin<&mut RestoreBackupsModel>,
+            top_left: &QModelIndex,
+            bottom_right: &QModelIndex,
+        );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_restore_snapshots(self: Pin<&mut RestoreSnapshotsModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_restore_snapshots(self: Pin<&mut RestoreSnapshotsModel>);
+        #[cxx_name = "index"]
+        #[inherit]
+        fn index_restore_snapshots(
+            self: &RestoreSnapshotsModel,
+            row: i32,
+            column: i32,
+            parent: &QModelIndex,
+        ) -> QModelIndex;
+        #[cxx_name = "dataChanged"]
+        #[inherit]
+        fn data_changed_restore_snapshots(
+            self: Pin<&mut RestoreSnapshotsModel>,
             top_left: &QModelIndex,
             bottom_right: &QModelIndex,
         );
@@ -290,6 +344,48 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setFilter"]
         fn set_filter(self: Pin<&mut RunLogsModel>, level_filter: &QString, query: &QString);
+
+        // RestoreBackupsModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &RestoreBackupsModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &RestoreBackupsModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &RestoreBackupsModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        fn sync(self: Pin<&mut RestoreBackupsModel>);
+        #[qinvokable]
+        #[cxx_name = "rowOf"]
+        fn row_of(self: &RestoreBackupsModel, backup_id: &QString) -> i32;
+        #[qinvokable]
+        #[cxx_name = "idAt"]
+        fn id_at(self: &RestoreBackupsModel, row: i32) -> QString;
+
+        // RestoreSnapshotsModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &RestoreSnapshotsModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &RestoreSnapshotsModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &RestoreSnapshotsModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        fn sync(self: Pin<&mut RestoreSnapshotsModel>);
+        #[qinvokable]
+        #[cxx_name = "rowOf"]
+        fn row_of(self: &RestoreSnapshotsModel, snapshot_id: &QString) -> i32;
+        #[qinvokable]
+        #[cxx_name = "idAt"]
+        fn id_at(self: &RestoreSnapshotsModel, row: i32) -> QString;
     }
 }
 
@@ -298,12 +394,16 @@ mod rows;
 
 mod backups_model;
 mod destinations_model;
+mod restore_backups_model;
+mod restore_snapshots_model;
 mod run_logs_model;
 mod runs_model;
 mod snapshots_model;
 
 pub use backups_model::BackupsModelRust;
 pub use destinations_model::DestinationsModelRust;
+pub use restore_backups_model::RestoreBackupsModelRust;
+pub use restore_snapshots_model::RestoreSnapshotsModelRust;
 pub use run_logs_model::RunLogsModelRust;
 pub use runs_model::RunsModelRust;
 pub use snapshots_model::SnapshotsModelRust;

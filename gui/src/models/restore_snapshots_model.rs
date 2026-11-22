@@ -1,0 +1,156 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! CXX-Qt `RestoreSnapshotsModel` implementation: the snapshots of one backup in the restore
+//! area, newest first, grouped by day, each with time, size and host.
+
+use super::qobject;
+use super::rows::{id_at, row_of};
+use crate::backend::restore::restore_cache;
+use crate::state_cache::{
+    cached_daemon_now, format_bytes, format_datetime_display, format_day_group, format_time_short,
+    i18n,
+};
+use crate::ui_texts::GuiText;
+use cxx_qt::CxxQtType;
+use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use kestic_core::sync::LockUnpoisoned;
+use kestic_daemon::dbus_api::SnapshotSummaryDto;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
+model_row!(RestoreSnapshotRow {
+    snapshot_id: String => "snapshotId",
+    short_id: String => "shortId",
+    title: String => "title",
+    subtitle: String => "subtitle",
+    section_name: String => "sectionName",
+    // The next older snapshot of the same list; empty for the oldest one.
+    previous_snapshot_id: String => "previousSnapshotId",
+    destination_id: String => "destinationId",
+});
+
+#[derive(Default)]
+pub struct RestoreSnapshotsModelRust {
+    rows: Vec<RestoreSnapshotRow>,
+}
+
+/// Size of a snapshot: the newly written data («312 MB new»), the processed data when the
+/// summary lacks it, or «unknown» without a summary.
+pub(crate) fn snapshot_size_text(s: &SnapshotSummaryDto) -> String {
+    match (s.data_added, s.total_bytes_processed) {
+        (Some(bytes), _) => i18n("%1 new").subs(&[&format_bytes(bytes)]),
+        (None, Some(bytes)) => format_bytes(bytes),
+        (None, None) => i18n("Size unknown").to_string(),
+    }
+}
+
+/// Second line of a snapshot: size and host.
+pub(crate) fn snapshot_subtitle(s: &SnapshotSummaryDto) -> String {
+    let size = snapshot_size_text(s);
+    if s.hostname.is_empty() {
+        size
+    } else {
+        GuiText::TwoParts.with_args(&[&size, &s.hostname])
+    }
+}
+
+fn parse_time(s: &SnapshotSummaryDto) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(&s.time, &Rfc3339).ok()
+}
+
+/// Rows of one list of snapshots (newest first); `section` names the group, or `None` to group
+/// by day.
+fn push_rows(
+    out: &mut Vec<RestoreSnapshotRow>,
+    snaps: &[SnapshotSummaryDto],
+    destination_id: &str,
+    section: Option<&str>,
+    now: OffsetDateTime,
+) {
+    for (i, s) in snaps.iter().enumerate() {
+        let time = parse_time(s);
+        let (title, section_name) = match (section, time) {
+            (Some(name), Some(t)) => (format_datetime_display(t), name.to_string()),
+            (Some(name), None) => (s.time.clone(), name.to_string()),
+            (None, Some(t)) => (format_time_short(t), format_day_group(t, now)),
+            (None, None) => (s.time.clone(), String::new()),
+        };
+        out.push(RestoreSnapshotRow {
+            snapshot_id: s.id.clone(),
+            short_id: s.short_id.clone(),
+            title,
+            subtitle: snapshot_subtitle(s),
+            section_name,
+            previous_snapshot_id: snaps.get(i + 1).map_or_default(|p| p.id.clone()),
+            destination_id: destination_id.to_string(),
+        });
+    }
+}
+
+impl RestoreSnapshotsModelRust {
+    fn compute_rows(&self) -> Vec<RestoreSnapshotRow> {
+        let now = cached_daemon_now();
+        let current_dest_id = |backup_id: &str| {
+            crate::state_cache::shared_state()
+                .lock_unpoisoned()
+                .state
+                .as_ref()
+                .and_then(|s| {
+                    s.backups
+                        .iter()
+                        .find(|b| b.backup.id.as_str() == backup_id)
+                        .map(|b| b.backup.destination_id.as_str().to_string())
+                })
+                .unwrap_or_default()
+        };
+        let cache = restore_cache().lock_unpoisoned();
+        let Some((backup_id, Ok(dto))) = &cache.backup_snapshots else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        push_rows(
+            &mut out,
+            &dto.current_snapshots,
+            &current_dest_id(backup_id),
+            None,
+            now,
+        );
+        for prev in &dto.previous_destinations {
+            let section = GuiText::EarlierSnapshotsOn.with_args(&[&prev.destination_name]);
+            push_rows(
+                &mut out,
+                &prev.snapshots,
+                &prev.destination_id,
+                Some(&section),
+                now,
+            );
+        }
+        out
+    }
+}
+
+impl qobject::RestoreSnapshotsModel {
+    pub fn row_of(&self, snapshot_id: &QString) -> i32 {
+        let id = snapshot_id.to_string();
+        row_of(&self.rows, |r| r.snapshot_id == id)
+    }
+
+    pub fn id_at(&self, row: i32) -> QString {
+        id_at(&self.rows, row, |r| &r.snapshot_id)
+    }
+}
+
+list_model!(
+    RestoreSnapshotsModel,
+    RestoreSnapshotRow,
+    same: |a, b| a.snapshot_id == b.snapshot_id && a.section_name == b.section_name,
+    begin_reset: begin_reset_restore_snapshots,
+    end_reset: end_reset_restore_snapshots,
+    index: index_restore_snapshots,
+    changed: data_changed_restore_snapshots,
+);
+
+#[cfg(test)]
+#[path = "restore_snapshots_model_tests.rs"]
+mod tests;
