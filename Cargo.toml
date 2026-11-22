@@ -4,6 +4,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "build-stamp",
     "core",
     "i18n",
     "daemon",
@@ -11,8 +12,9 @@ members = [
     "test-support",
 ]
 
+# Versions come from Git tags (build-stamp/src/version.rs); this one only satisfies Cargo.
 [workspace.package]
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 authors = ["David Däster <david@daester.net>"]

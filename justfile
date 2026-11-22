@@ -48,7 +48,7 @@ _check-file-sizes:
             echo "ERROR: $f has $lines lines (limit 1500, NFR-12)" >&2
             oversized=1
         fi
-    done < <(find core/src i18n/src daemon/src gui/src test-support/src -type f \( -name '*.rs' -o -name '*.qml' \) -print0 | sort -z)
+    done < <(find build-stamp/src core/src i18n/src daemon/src gui/src test-support/src -type f \( -name '*.rs' -o -name '*.qml' \) -print0 | sort -z)
     if [ "$oversized" -ne 0 ]; then
         exit 1
     fi
@@ -60,10 +60,13 @@ fmt:
 # Build the Debian package (fast profile). Paths of the build machine stay out of the shipped
 # binary: Rust panic locations (workspace, Cargo registry, toolchain sources) and `__FILE__` in
 # C/C++ code are remapped to fixed prefixes, so the package neither leaks them nor depends on them.
-# A plain `cargo deb` skips this remapping. Flags from RUSTFLAGS are kept.
+# A plain `cargo deb` skips this remapping. Flags from RUSTFLAGS are kept. The package version
+# comes from the Git tags or KESTIC_VERSION, the same one the binary shows
+# (build-stamp/src/version.rs), with Debian revision 1.
 deb:
     #!/usr/bin/env bash
     set -euo pipefail
+    version="$(cargo run --quiet -p kestic-build-stamp)"
     workspace="$(pwd -P)"
     target="$(realpath -m "${CARGO_TARGET_DIR:-target}")"
     cargo_home="${CARGO_HOME:-$HOME/.cargo}"
@@ -80,10 +83,11 @@ deb:
         rust_flags+=("--remap-path-prefix=$map")
         c_flags+=("-ffile-prefix-map=$map")
     done
+    KESTIC_VERSION="$version" \
     CARGO_ENCODED_RUSTFLAGS="$(IFS=$'\x1f'; echo "${rust_flags[*]}")" \
     CFLAGS="${CFLAGS:-} ${c_flags[*]}" \
     CXXFLAGS="${CXXFLAGS:-} ${c_flags[*]}" \
-        cargo deb -p kestic-gui --fast
+        cargo deb -p kestic-gui --fast --deb-version "$version-1"
 
 # Start the main window offscreen (QML smoke) and write a screenshot; builds only the binary
 smoke:

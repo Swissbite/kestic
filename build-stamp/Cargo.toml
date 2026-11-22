@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+
+# What a build stamps into the `kestic` binary: version and commit of the source tree. A
+# build-dependency of kestic-daemon; its binary prints the version for `just deb`.
+[package]
+name = "kestic-build-stamp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
