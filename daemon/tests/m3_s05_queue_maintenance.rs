@@ -2,21 +2,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! M3-S05 per-destination queue and maintenance runs (`AC-M3-05-1`, `-3`, `-4`, `-5`, `-6`) and
-//! the recorded result of a maintenance run.
+//! the recorded result of a maintenance run (including `issue-42-AC2`, `-AC4`).
 
 mod common;
 
 use common::m3::{
-    LocalBackupFixture, M3Rig, StdFakes, backup_summary, connect_local_repo, dest_summary,
-    hold_repo_lock, restic_repo_cmd, restic_variants, settle, wait_for_state,
+    LocalBackupFixture, M3Rig, ResticVariant, StdFakes, backup_summary, connect_local_repo,
+    dest_summary, hold_repo_lock, latest_variant, restic_repo_cmd, restic_variants, settle,
+    wait_for_state,
 };
 use common::run_isolated_test;
+use kestic_core::maintenance::PRUNE_JSON_MIN_VERSION;
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, MaintenanceForget, RunKind,
     RunStatus, Schedule, Source,
 };
+use kestic_core::provider::check_binary_version;
 use kestic_core::retention::{KeepCount, RetentionPolicy};
 use kestic_daemon::dbus_api::DaemonStateDto;
+use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -321,6 +325,12 @@ fn backup_with_open_forget(
             .as_ref()
             .is_some_and(|r| r.status == RunStatus::Ok)
     });
+    // The second run backs up other content, so forgetting the seed snapshot leaves data to prune.
+    fs::write(
+        alpha.src_dir.join("data.txt"),
+        "payload Alpha, second version",
+    )
+    .expect("change src");
 
     let mut cmd = restic_repo_cmd(
         &rig.variant.bin,
@@ -449,7 +459,8 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
 /// A maintenance run records its result for the run detail page: (a) the
 /// snapshots its pending `forget` removed per backup, (b) a successful `prune`, (c) a successful
 /// `check` and (d) the parsed `check` summary without errors, (e) `GetRunDetail` delivers it to
-/// the GUI, and (f) the space prune freed is read from its text output.
+/// the GUI, and (f) the space prune freed is read from its output (issue-42-AC4: text with
+/// restic 0.18.0, JSON from restic 0.20.0; the run removes data, so it is more than zero).
 #[test]
 fn finding1_maintenance_run_records_removed_snapshots_prune_and_check() {
     run_isolated_test(
@@ -493,9 +504,10 @@ fn finding1_maintenance_run_records_removed_snapshots_prune_and_check() {
                 );
                 assert!(stats.pruned, "{}: (b) prune recorded", variant.label);
                 assert!(
-                    stats.freed_bytes.is_some(),
-                    "{}: (f) freed space read from the prune output",
-                    variant.label
+                    stats.freed_bytes.is_some_and(|bytes| bytes > 0),
+                    "{}: (f) freed space read from the prune output: {:?}",
+                    variant.label,
+                    stats.freed_bytes
                 );
                 assert!(stats.checked, "{}: (c) check recorded", variant.label);
                 assert_eq!(
@@ -514,8 +526,87 @@ fn finding1_maintenance_run_records_removed_snapshots_prune_and_check() {
                     "{}: (e) GetRunDetail delivers the result",
                     variant.label
                 );
+                let prune_args = stored
+                    .commands
+                    .iter()
+                    .find(|c| c.args.iter().any(|a| a == "prune"))
+                    .map(|c| c.args.clone())
+                    .expect("prune command recorded");
+                let json_expected = check_binary_version(&variant.bin)
+                    .expect("restic version")
+                    .version
+                    >= PRUNE_JSON_MIN_VERSION;
+                assert_eq!(
+                    prune_args.iter().any(|a| a == "--json"),
+                    json_expected,
+                    "{}: (f) prune output is JSON exactly from restic 0.20.0: {prune_args:?}",
+                    variant.label
+                );
                 rig.daemon.stop();
             }
+        },
+    );
+}
+
+/// issue-42-AC2: a `prune` whose JSON result cannot be read (latest restic behind a wrapper that
+/// replaces the output with a `summary` without a number) leaves (a) the run `ok`, (b) `prune`
+/// recorded and (c) no freed space.
+#[test]
+fn issue_42_ac2_unreadable_prune_result_keeps_run_ok() {
+    run_isolated_test(
+        "issue_42_ac2_unreadable_prune_result_keeps_run_ok",
+        "KESTIC_ISSUE_42_AC2_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let latest = latest_variant();
+            let wrapper_dir = root.join("unreadable-prune");
+            fs::create_dir_all(&wrapper_dir).expect("mkdir wrapper dir");
+            let wrapper = wrapper_dir.join("restic");
+            write_executable(
+                &wrapper,
+                &format!(
+                    r#"#!/bin/sh
+real='{real}'
+prune=""; dry=""
+for a in "$@"; do
+  case "$a" in
+    prune) prune=1;;
+    --dry-run) dry=1;;
+  esac
+done
+if [ -n "$prune" ] && [ -z "$dry" ]; then
+  "$real" "$@" >/dev/null || exit $?
+  echo '{{"message_type":"summary","bytes":{{"remove_total":"unreadable"}}}}'
+  exit 0
+fi
+exec "$real" "$@"
+"#,
+                    real = latest.bin.display()
+                ),
+            );
+            let variant = ResticVariant {
+                index: latest.index,
+                label: "restic-latest, unreadable prune result",
+                bin: wrapper,
+            };
+            let rig = M3Rig::start(root, &variant, "I42", FRIDAY, |_| {});
+            let alpha = rig.add_backup("Alpha", |b| b.schedule = Schedule::ManualOnly);
+            rig.clock.set(SUNDAY_1200);
+            let done = wait_for_state(
+                &rig.daemon.client,
+                Duration::from_secs(40),
+                "maintenance done",
+                |s| maintenance_done(s, &alpha.dest.id),
+            );
+            let run = dest_summary(&done, &alpha.dest.id)
+                .last_maintenance_run
+                .clone()
+                .expect("last maintenance run");
+            assert_eq!(run.status, RunStatus::Ok, "(a) run ok");
+            let stats = run.maintenance.expect("maintenance result recorded");
+            assert!(stats.pruned, "(b) prune recorded");
+            assert_eq!(stats.freed_bytes, None, "(c) no freed space");
+            rig.daemon.stop();
         },
     );
 }

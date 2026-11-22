@@ -41,7 +41,7 @@ pub fn dev_tools_bin_dir() -> PathBuf {
 
 /// Resolves `(label, path)` of restic 0.18.0 and of the latest restic (`AC-M1-Q-2`): the
 /// `KESTIC_RESTIC_0_18` / `KESTIC_RESTIC_LATEST` overrides, the dev-tools directory
-/// (`restic-latest`, `restic-0.19.1`), `/usr/local/bin/restic`, then `$PATH`.
+/// (`restic-latest`, `restic-0.20.0`), `/usr/local/bin/restic`, then `$PATH`.
 pub fn resolve_restic_binaries() -> Vec<(&'static str, PathBuf)> {
     let dir = dev_tools_bin_dir();
     let v018 = env::var_os("KESTIC_RESTIC_0_18")
@@ -57,7 +57,7 @@ pub fn resolve_restic_binaries() -> Vec<(&'static str, PathBuf)> {
             p.is_file().then_some(p)
         })
         .or_else(|| {
-            let p = dir.join("restic-0.19.1");
+            let p = dir.join("restic-0.20.0");
             p.is_file().then_some(p)
         })
         .or_else(|| {
@@ -65,7 +65,7 @@ pub fn resolve_restic_binaries() -> Vec<(&'static str, PathBuf)> {
             p.is_file().then_some(p)
         })
         .or_else(|| find_in_path("restic"))
-        .expect("latest restic binary (0.19.1 / restic-latest / PATH) must exist");
+        .expect("latest restic binary (0.20.0 / restic-latest / PATH) must exist");
 
     assert!(
         v018.is_file(),

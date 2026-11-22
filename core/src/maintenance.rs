@@ -9,13 +9,18 @@ use crate::destination::{DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_ch
 use crate::model::{CheckSummary, Destination, RunStatus};
 use crate::provider::ResolvedRestic;
 use crate::restic::{CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticRuntime};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+/// First restic version whose `prune` writes its result as JSON with `--json`.
+pub const PRUNE_JSON_MIN_VERSION: Version = Version::new(0, 20, 0);
+
 /// Builds a [`ResticCommandSpec`] for `restic prune` or `restic prune --dry-run --no-lock`.
 ///
-/// Note: `restic prune` does NOT support `--json` (`restic-integration.md`), so `json_output = false`.
+/// The real `prune` asks for JSON output when restic writes it (see
+/// [`PRUNE_JSON_MIN_VERSION`]); older versions and the dry run print text only.
 pub fn build_prune_command_spec(
     destination: &Destination,
     dry_run: bool,
@@ -32,7 +37,7 @@ pub fn build_prune_command_spec(
     }
     let mut spec =
         ResticCommandSpec::for_destination(&resolved.binary, kestic_binary, destination, args);
-    spec.json_output = false;
+    spec.json_output = !dry_run && resolved.version >= PRUNE_JSON_MIN_VERSION;
     spec.low_priority = !dry_run;
     spec
 }
@@ -127,10 +132,36 @@ pub fn parse_check_summary(lines: &[String]) -> Option<CheckSummary> {
     })
 }
 
-/// Bytes a real `restic prune` freed: the size in its text line
-/// `total prune: <n> blobs / <size>` (prune has no JSON output). `None` when the line is missing
-/// or unreadable.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawPruneSummary {
+    message_type: String,
+    bytes: Option<RawPruneBytes>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPruneBytes {
+    remove_total: u64,
+}
+
+/// Bytes a real `restic prune` freed: `bytes.remove_total` of its JSON `summary` message, or the
+/// size in the text line `total prune: <n> blobs / <size>` of restic versions without JSON output.
+/// `None` when neither is present or readable.
 pub fn parse_prune_freed_bytes(lines: &[String]) -> Option<u64> {
+    parse_prune_json_freed_bytes(lines).or_else(|| parse_prune_text_freed_bytes(lines))
+}
+
+fn parse_prune_json_freed_bytes(lines: &[String]) -> Option<u64> {
+    lines.iter().rev().find_map(|line| {
+        let raw: RawPruneSummary = serde_json::from_str(line.trim()).ok()?;
+        if raw.message_type != "summary" {
+            return None;
+        }
+        Some(raw.bytes?.remove_total)
+    })
+}
+
+fn parse_prune_text_freed_bytes(lines: &[String]) -> Option<u64> {
     let rest = lines
         .iter()
         .find_map(|l| l.trim().strip_prefix("total prune:"))?;

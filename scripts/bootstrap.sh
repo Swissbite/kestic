@@ -14,7 +14,7 @@ CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
 # RESTIC_MIN_VERSION stays: the tests run against the oldest supported restic and the latest.
 RESTIC_MIN_VERSION="0.18.0"
 # renovate: datasource=github-releases depName=restic/restic
-RESTIC_LATEST_VERSION="0.19.1"
+RESTIC_LATEST_VERSION="0.20.0"
 # renovate: datasource=github-releases depName=restic/rest-server
 REST_SERVER_VERSION="0.14.0"
 # renovate: datasource=github-releases depName=rclone/rclone

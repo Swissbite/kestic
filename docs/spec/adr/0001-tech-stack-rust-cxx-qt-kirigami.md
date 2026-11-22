@@ -35,7 +35,7 @@ Die Tabelle zeigt den Stand am Ende von M0. Seit 2026-11-21 sind die Versionen n
 | `notify-rust` | `4.19.0` | `Cargo.toml` |
 | `cargo-deny` / `cargo-deb` | `0.20.2` / `3.8.0` | `scripts/bootstrap.sh` |
 | Linker (Qt6/CXX-Qt) | `lld` (`qt-build-utils` wählt `lld` vor `ld.gold`) | `scripts/bootstrap.sh` |
-| Test-Binaries (PGP + SHA256 geprüft) | `restic` `0.18.0` & `0.19.1`, `rest-server` `0.14.0`, `rclone` `1.76.0` | `scripts/bootstrap.sh` |
+| Test-Binaries (PGP + SHA256 geprüft) | `restic` `0.18.0` & `0.20.0`, `rest-server` `0.14.0`, `rclone` `1.76.0` | `scripts/bootstrap.sh` |
 
 ### CXX-Qt-Version (0.8.1 vs. 0.10.0, M0-S03, AC-M0-03-1)
 
