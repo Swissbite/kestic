@@ -150,6 +150,7 @@ Regeln:
 - **Ablauf:** Restore ist ein Lauf (Tray, Fortschrittsanzeige, Verlauf). Die Seite zeigt eine `InlineMessage` (Information) mit Fortschritt und `[Abbrechen]`; Ende → `InlineMessage` (Positive) «120 Dateien wiederhergestellt» `[Ordner öffnen]` (Dolphin via `Qt.openUrlExternally`); Fehler → `InlineMessage` (Error) nach §9.4. Endet der Restore mit Fenster im Hintergrund, zusätzlich Systembenachrichtigung (lange Aufgabe, HIG-Ausnahme).
 - **Vergleichen:** «Vergleichen…» schaltet die Snapshot-Liste in einen Auswahlmodus (Checkboxen, genau zwei; Leiste «2 von 2 gewählt» + `[Unterschiede anzeigen]` + `[Abbrechen]`); zusätzlich im Kontextmenü eines Snapshots «Mit vorherigem vergleichen». Ergebnis: Tabelle mit Spalte «Änderung» (Icon + Text: neu / geändert / entfernt), Pfad, Grösse; Filter-Chips nach Art mit Anzahl.
 - **Suche** (`find`, P18): Ergebnisliste mit Pfad und Snapshot-Datum, `[Anzeigen]` öffnet den Ordner im Snapshot.
+- **Grosse Listen** (Ordnerinhalt, Suchtreffer, Unterschiede, `[Liste ▾]` der Vorschau): laden seitenweise beim Scrollen, nie abgeschnitten. Das Feld «Filtern» filtert nach Text im Pfad, die Chips bei Unterschieden und Vorschau nach Art. Gefiltert wird im Daemon, die Anzahl ist immer genau («12 von 25 000»). Ist eine Liste zu gross, um sie zu halten, steht statt ihr «Zu viele Einträge für die Anzeige (n). Einen Unterordner wählen oder enger suchen.»; die Zahlen darüber bleiben vollständig (dbus-api.md, Speichergrenze).
 
 ### 7.7 Ziele (FR-01, FR-11, FR-15, FR-19, FR-35, FR-45, FR-49)
 
