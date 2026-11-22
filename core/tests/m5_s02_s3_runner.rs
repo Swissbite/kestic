@@ -286,21 +286,29 @@ fn ac_m5_02_2_setup_passes_s3_keys_only_as_environment_and_saves_them() {
     );
 }
 
-/// Inherited AWS variables set in the re-executed test process; the values must not reach
-/// restic for an S3 destination.
-const FOREIGN_AWS: [(&str, &str); 11] = [
-    ("AWS_ACCESS_KEY_ID", "FOREIGNACCESSKEY"),
-    ("AWS_SECRET_ACCESS_KEY", "foreign-secret"),
-    ("AWS_SESSION_TOKEN", "foreign-session-token"),
-    ("AWS_SECURITY_TOKEN", "foreign-security-token"),
-    ("AWS_PROFILE", "foreign-profile"),
-    ("AWS_SHARED_CREDENTIALS_FILE", "/foreign/credentials"),
-    ("AWS_CONFIG_FILE", "/foreign/config"),
-    ("AWS_ROLE_ARN", "arn:aws:iam::000000000000:role/foreign"),
-    ("AWS_WEB_IDENTITY_TOKEN_FILE", "/foreign/token"),
-    ("AWS_REGION", "foreign-region-1"),
-    ("AWS_DEFAULT_REGION", "foreign-region-2"),
+/// AWS variables set in the re-executed test process, as if the daemon had inherited them;
+/// their generated values must not reach restic for an S3 destination.
+const FOREIGN_AWS: [&str; 11] = [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+    "AWS_PROFILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CONFIG_FILE",
+    "AWS_ROLE_ARN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
 ];
+
+/// The inherited values of [`FOREIGN_AWS`] in this (re-executed) process.
+fn foreign_values() -> Vec<(&'static str, String)> {
+    FOREIGN_AWS
+        .iter()
+        .map(|name| (*name, std::env::var(name).expect("inherited AWS variable")))
+        .collect()
+}
 
 /// The value restic saw for `name`, if any.
 fn env_value(env: &str, name: &str) -> Option<String> {
@@ -321,8 +329,8 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
             "--exact",
         ])
         .env(INNER, "1");
-        for (name, value) in FOREIGN_AWS {
-            cmd.env(name, value);
+        for name in FOREIGN_AWS {
+            cmd.env(name, s3_key(24));
         }
         let out = cmd
             .output()
@@ -336,6 +344,7 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
         return;
     }
 
+    let foreign = foreign_values();
     let dir = TempDir::new().expect("tempdir");
     let keys = keys();
     let resolved = fake_restic(dir.path());
@@ -362,7 +371,7 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
     );
     run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
     let run_env = read(dir.path().join("env.log"));
-    for (name, value) in FOREIGN_AWS {
+    for (name, value) in &foreign {
         assert!(
             !run_env.contains(value),
             "run: inherited {name} reached restic"
@@ -409,7 +418,7 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
     )
     .expect("setup");
     let probe_env = read(dir.path().join("env.log"));
-    for (name, value) in FOREIGN_AWS {
+    for (name, value) in &foreign {
         assert!(
             !probe_env.contains(value),
             "probe: inherited {name} reached restic"
@@ -423,5 +432,64 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
     assert!(
         env_value(&probe_env, "AWS_SECRET_ACCESS_KEY").as_deref() == Some(keys.secret.as_str()),
         "probe: Kestic's secret key"
+    );
+}
+
+/// M5-S02, `BackendSecrets` (dbus-api.md: an empty field means no value): an empty REST
+/// password counts as absent, so restic gets no `RESTIC_REST_PASSWORD` and nothing is saved.
+#[test]
+fn m5_02_empty_backend_password_is_absent_and_never_sent() {
+    let dir = TempDir::new().expect("tempdir");
+    let resolved = fake_restic(dir.path());
+    let store = InMemorySecretStore::new();
+    let dest = Destination::new(
+        "NAS",
+        DestinationKind::Rest {
+            url: http_endpoint(),
+            username: Some(s3_key(8)),
+        },
+    )
+    .expect("REST destination");
+    let creds = BackendCredentials::rest(Some(SecretValue::from_bytes(Vec::new())));
+    assert!(
+        creds
+            .get(kestic_core::backend_credentials::SECRET_KIND_REST)
+            .is_none(),
+        "an empty password is no password"
+    );
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    let helper = dir.path().join("kestic");
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: &store,
+        clock: &clock,
+        cache_dir: None,
+    };
+
+    setup_destination(
+        &dest,
+        DestinationSetupMode::ConnectExisting,
+        &SecretValue::from_str_secret(strong_password()),
+        &creds,
+        &runtime,
+    )
+    .expect("setup");
+
+    let env = read(dir.path().join("env.log"));
+    assert_eq!(
+        env_value(&env, "RESTIC_REST_PASSWORD"),
+        None,
+        "no REST password sent to restic"
+    );
+    assert!(
+        store
+            .get_secret(
+                dest.id.as_str(),
+                kestic_core::backend_credentials::SECRET_KIND_REST
+            )
+            .expect("read store")
+            .is_none(),
+        "no REST password saved"
     );
 }

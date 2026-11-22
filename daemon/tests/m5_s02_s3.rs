@@ -119,7 +119,7 @@ fn ac_m5_02_1_s3_destination_is_initialised_and_backup_creates_snapshot_in_bucke
                 let client = &rig.daemon.client;
 
                 let tested = client
-                    .test_destination_connection(&dest, "init", "", &rig.keys())
+                    .test_destination_connection(&dest, "init", &strong_password(), &rig.keys())
                     .expect("TestDestinationConnection");
                 assert!(
                     tested.ok,
@@ -447,7 +447,7 @@ fn m5_02_missing_bucket_is_named_before_adding_creates_it() {
                 let client = &rig.daemon.client;
 
                 let tested = client
-                    .test_destination_connection(&dest, "init", "", &rig.keys())
+                    .test_destination_connection(&dest, "init", &strong_password(), &rig.keys())
                     .expect("TestDestinationConnection");
                 assert!(tested.ok, "{}: {tested:?}", variant.label);
                 assert_eq!(
