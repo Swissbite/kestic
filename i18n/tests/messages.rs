@@ -427,6 +427,22 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
             C::NotResponding,
             Some("The server does not respond. Check the address and test again."),
         ),
+        (
+            C::UnsupportedScheme,
+            Some("The repository URL must start with b2:, azure:, gs:, swift: or rclone:."),
+        ),
+        (
+            C::ReservedVariable,
+            Some(
+                "Kestic does not pass the variable '%1' to restic. Use only A–Z, 0–9 and _, and no name Kestic sets itself (RESTIC_PASSWORD…, RESTIC_REPOSITORY…, PATH, HOME, LD_…).",
+            ),
+        ),
+        (
+            C::ProgramMissing,
+            Some(
+                "This destination needs the program '%1', which is not installed. Install it with 'sudo apt install %1' and test again.",
+            ),
+        ),
     ];
     assert_table(&C::ALL, &connection, |c| c.text("x"));
 

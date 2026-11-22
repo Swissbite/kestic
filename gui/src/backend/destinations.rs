@@ -76,8 +76,7 @@ impl qobject::KesticApp {
     /// language; empty when they are accepted.
     pub fn generic_fields_error(&self, url: &QString, env_json: &QString) -> QString {
         let text = generic_fields_error(&url.to_string(), &env_json.to_string())
-            .map(|err| err.text())
-            .unwrap_or_default();
+            .map_or_else(String::new, |err| err.text());
         QString::from(&text)
     }
 

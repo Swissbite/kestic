@@ -44,7 +44,7 @@ EditorPage {
         || destDraft.restPassword.length > 0
         || destDraft.accessKeyId.length > 0
         || destDraft.secretAccessKey.length > 0
-        || destDraft.envVars.some(function(v) { return v.secret && v.value.length > 0; })
+        || destDraft.envList().some(function(v) { return v.secret && v.value.length > 0; })
     )
     readonly property bool needsVerification: locationChanged || destDraft.setupMode === "init"
     dirty: initialData !== null && (

@@ -128,8 +128,9 @@ impl GenericRig {
         let log = fs::read_to_string(&self.env_log).expect("read env log");
         log.split("== ")
             .find(|call| call.lines().next().is_some_and(|args| args.contains(sub)))
-            .map(|call| call.lines().skip(1).map(ToOwned::to_owned).collect())
-            .unwrap_or_default()
+            .map_or_else(Vec::new, |call| {
+                call.lines().skip(1).map(ToOwned::to_owned).collect()
+            })
     }
 }
 
@@ -198,9 +199,7 @@ fn ac_m5_03_2_secret_variable_in_secret_service_and_restic_environment() {
                     "(c) secret value in restic arguments"
                 );
                 assert_eq!(
-                    fs::read_dir(rig.repo.join("snapshots"))
-                        .map(|d| d.count())
-                        .unwrap_or(0),
+                    fs::read_dir(rig.repo.join("snapshots")).map_or(0, Iterator::count),
                     1,
                     "(c) the backup reached the rclone remote"
                 );

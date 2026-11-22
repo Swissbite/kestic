@@ -401,6 +401,160 @@ int scenario_s3_form(const Ctx& c) {
     return 0;
 }
 
+// Sets the text of the field `name`; returns false when it is missing.
+bool set_text(QQuickWindow* w, const char* name, const QString& text) {
+    QQuickItem* field = item_named(w, name);
+    if (!field) {
+        return false;
+    }
+    field->setProperty("text", text);
+    wait_ms(50);
+    return true;
+}
+
+QByteArray env_name(const char* field, int row) {
+    return QByteArray("wizDestEnv") + field + "_" + QByteArray::number(row);
+}
+
+// Adds a variable row named `name` with `value`; returns the row's «Geheim» switch.
+QQuickItem* add_variable(QQuickWindow* w, int row, const QString& name, const QString& value) {
+    QQuickItem* add = item_named(w, "wizDestEnvAdd");
+    if (!add) {
+        return nullptr;
+    }
+    scroll_into_view(w, add);
+    if (!click_ui_item(w, add, "Add Variable")) {
+        return nullptr;
+    }
+    if (!wait_until([&] { return item_named(w, env_name("Name", row).constData()) != nullptr; }, 2000)) {
+        return nullptr;
+    }
+    set_text(w, env_name("Name", row).constData(), name);
+    set_text(w, env_name("Value", row).constData(), value);
+    return item_named(w, env_name("Secret", row).constData());
+}
+
+// M5-S03 (GUI): «Cloud Storage» offers Backblaze B2, Azure, Google Cloud and Swift beside S3;
+// B2 opens the generic form with `b2:` filled in. An unknown scheme (AC-M5-03-1 c) and a reserved
+// variable (AC-M5-03-7 b) show `core`'s message and keep «Test Connection», and so adding the
+// destination, locked. «Geheim» starts on for `B2_ACCOUNT_KEY`, off for `RESTIC_HOST`, and can be
+// switched (AC-M5-03-4). Screenshots of the filled form and of the refused variable.
+int scenario_generic_form(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (const int rc = open_destination_types(w)) {
+        return rc;
+    }
+    QQuickItem* cloud = card_item(w, "cloud");
+    M3_CHECK2(5500, cloud != nullptr, cloud->isVisible(), "cloud card missing");
+    scroll_into_view(w, cloud);
+    M3_CHECK(5501, click_ui_item(w, cloud, "cloud"), "click on the cloud card failed");
+    int code = 5502;
+    for (const char* service : {"s3", "b2", "azure", "gs", "swift"}) {
+        const QByteArray radio = QByteArray("wizDestCloudService_") + service;
+        M3_CHECK(code, wait_until([&] { return count_visible(w, radio.constData()) == 1; }, 2000), radio.constData());
+        ++code;
+    }
+    QQuickItem* b2 = item_named(w, "wizDestCloudService_b2");
+    M3_CHECK_EQ(5507, b2->property("text").toString(), QStringLiteral("Backblaze B2"), "B2 choice text");
+    // The choices appear below the card; the page knows its new height only after a layout pass.
+    wait_ms(300);
+    scroll_into_view(w, b2);
+    M3_CHECK(5508, click_ui_item(w, b2, "Backblaze B2"), "click on «Backblaze B2» failed");
+    QQuickItem* next = item_named(w, "wizDestNextButton");
+    M3_CHECK(5509, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing B2");
+    M3_CHECK(5510, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    M3_CHECK(5511, wait_until([&] { return count_visible(w, "wizDestUrlField") == 1; }, 2000), "generic form did not open");
+    wait_ms(150);
+    QQuickItem* url = item_named(w, "wizDestUrlField");
+    M3_CHECK_EQ(5512, url->property("text").toString(), QStringLiteral("b2:"), "scheme filled in");
+    M3_CHECK(5513, count_visible(w, "wizDestEndpointField") == 0, "S3 fields shown for B2");
+    M3_CHECK(5514, count_visible(w, "wizDestLocationField") == 0, "path field shown for B2");
+
+    QQuickItem* test = item_named(w, "wizDestTestButton");
+    QQuickItem* error = item_named(w, "wizDestGenericError");
+    set_text(w, "wizDestNameField", QStringLiteral("Cloud"));
+    // AC-M5-03-1 (c)
+    set_text(w, "wizDestUrlField", QStringLiteral("ftp:host:/x"));
+    M3_CHECK(5520, wait_until([&] { return error && error->isVisible(); }, 2000), "AC-M5-03-1 (c): no message for an unknown scheme");
+    M3_CHECK_EQ(5521, error->property("text").toString(),
+        loc(c.lang,
+            "The repository URL must start with b2:, azure:, gs:, swift: or rclone:.",
+            "Die Repository-URL muss mit b2:, azure:, gs:, swift: oder rclone: beginnen."),
+        "AC-M5-03-1 (c): message");
+    M3_CHECK(5522, !test->isEnabled(), "AC-M5-03-1 (c): «Test Connection» enabled with an unknown scheme");
+    set_text(w, "wizDestUrlField", QStringLiteral("b2:kestic-bucket:laptop"));
+    M3_CHECK(5523, wait_until([&] { return !error->isVisible(); }, 2000), "message stays for a known scheme");
+
+    // AC-M5-03-4
+    QQuickItem* key_secret = add_variable(w, 0, QStringLiteral("B2_ACCOUNT_KEY"), QStringLiteral("K0012abcdefg"));
+    M3_CHECK(5530, key_secret != nullptr, "variable row 0 missing");
+    M3_CHECK(5531, key_secret->property("checked").toBool(), "AC-M5-03-4 (a): «Geheim» off for B2_ACCOUNT_KEY");
+    QQuickItem* key_value = item_named(w, env_name("Value", 0).constData());
+    M3_CHECK(5532, key_value->property("echoMode").toInt() == 2, "the secret value is not hidden");
+    QQuickItem* host_secret = add_variable(w, 1, QStringLiteral("RESTIC_HOST"), QStringLiteral("laptop"));
+    M3_CHECK(5533, host_secret != nullptr, "variable row 1 missing");
+    M3_CHECK(5534, !host_secret->property("checked").toBool(), "AC-M5-03-4 (b): «Geheim» on for RESTIC_HOST");
+    scroll_into_view(w, host_secret);
+    M3_CHECK(5535, click_ui_item(w, host_secret, "Secret"), "click on «Geheim» failed");
+    M3_CHECK(5536, wait_until([&] { return host_secret->property("checked").toBool(); }, 2000), "AC-M5-03-4 (c): «Geheim» not switchable");
+    M3_CHECK(5537, click_ui_item(w, host_secret, "Secret"), "second click on «Geheim» failed");
+    M3_CHECK(5538, wait_until([&] { return !host_secret->property("checked").toBool(); }, 2000), "AC-M5-03-4 (c): «Geheim» not switchable back");
+    M3_CHECK(5539, wait_until([&] { return test->isEnabled(); }, 2000), "«Test Connection» disabled with valid fields");
+    const QString unnamed = first_unnamed(w, {
+        QStringLiteral("wizDestUrlField"),
+        env_name("Name", 0),
+        env_name("Value", 1),
+        env_name("Secret", 0),
+        env_name("Remove", 0),
+        QStringLiteral("wizDestEnvAdd"),
+    });
+    M3_CHECK_EQ(5540, unnamed, QString(), "control without accessible name");
+    scroll_into_view(w, url);
+    wait_ms(300);
+    M3_CHECK(5541, save_screenshot(w, c.out_path), "screenshot failed");
+
+    // AC-M5-03-7 (b)
+    QQuickItem* preload = add_variable(w, 2, QStringLiteral("LD_PRELOAD"), QStringLiteral("/tmp/x.so"));
+    M3_CHECK(5550, preload != nullptr, "variable row 2 missing");
+    M3_CHECK(5551, wait_until([&] { return error->isVisible(); }, 2000), "AC-M5-03-7 (b): no message for LD_PRELOAD");
+    M3_CHECK(5552, error->property("text").toString().contains(QStringLiteral("LD_PRELOAD")), "AC-M5-03-7 (b): the message names the variable");
+    M3_CHECK(5553, !test->isEnabled(), "AC-M5-03-7 (b): «Test Connection» enabled with a reserved variable");
+    if (!c.out_path.isEmpty()) {
+        scroll_into_view(w, error);
+        wait_ms(300);
+        QString reserved_shot = c.out_path;
+        reserved_shot.replace(QStringLiteral("generic-form"), QStringLiteral("generic-reserved"));
+        M3_CHECK(5554, save_screenshot(w, reserved_shot), "screenshot failed");
+    }
+    QQuickItem* remove = item_named(w, env_name("Remove", 2).constData());
+    scroll_into_view(w, remove);
+    M3_CHECK(5555, click_ui_item(w, remove, "Remove Variable"), "click on «Remove Variable» failed");
+    M3_CHECK(5556, wait_until([&] { return !error->isVisible() && test->isEnabled(); }, 2000), "removing the variable does not unlock the test");
+    return 0;
+}
+
+// M5-S03 (GUI): with `rclone` installed the rclone card is ready and opens the generic form that
+// asks for the rclone remote only; the repository URL becomes `rclone:<remote>`.
+int scenario_rclone_form(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (const int rc = open_details_of(w, "rclone")) {
+        return rc;
+    }
+    QQuickItem* url = item_named(w, "wizDestUrlField");
+    M3_CHECK2(5600, url != nullptr, url->isVisible(), "rclone form did not open");
+    M3_CHECK_EQ(5601, url->property("text").toString(), QString(), "remote empty, without the scheme");
+    M3_CHECK_EQ(5602, url->property("placeholderText").toString(), QStringLiteral("myremote:backups/laptop"), "remote placeholder");
+    set_text(w, "wizDestNameField", QStringLiteral("Drive"));
+    set_text(w, "wizDestUrlField", QStringLiteral("gdrive:backup"));
+    QQuickItem* error = item_named(w, "wizDestGenericError");
+    QQuickItem* test = item_named(w, "wizDestTestButton");
+    // `gdrive:` is no scheme of its own: the form accepts it only as `rclone:gdrive:backup`.
+    M3_CHECK(5603, wait_until([&] { return !error->isVisible() && test->isEnabled(); }, 2000), "the remote is not put after rclone:");
+    wait_ms(300);
+    M3_CHECK(5605, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m5_smoke_scenario(
@@ -425,6 +579,10 @@ void run_m5_smoke_scenario(
         rc = scenario_cifs_note(ctx);
     } else if (scen == QLatin1String("m5-s3-form")) {
         rc = scenario_s3_form(ctx);
+    } else if (scen == QLatin1String("m5-generic-form")) {
+        rc = scenario_generic_form(ctx);
+    } else if (scen == QLatin1String("m5-rclone-form")) {
+        rc = scenario_rclone_form(ctx);
     } else {
         std::fprintf(stderr, "M5 smoke failed (599): unknown m5 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

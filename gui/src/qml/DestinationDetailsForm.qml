@@ -244,7 +244,7 @@ ColumnLayout {
                 ? (form.editing ? i18n("rclone remote:") : i18n("rclone remote*:"))
                 : (form.editing ? i18n("Repository URL:") : i18n("Repository URL*:"))
             text: form.draft.asksRcloneRemote ? form.draft.location.replace(/^rclone:/, "") : form.draft.location
-            placeholderText: form.draft.asksRcloneRemote ? "myremote:backup" : "b2:bucket-name:path"
+            placeholderText: form.draft.asksRcloneRemote ? "myremote:backups/laptop" : "b2:bucket-name:backups/laptop"
             onTextChanged: {
                 var url = form.draft.asksRcloneRemote ? "rclone:" + text : text;
                 if (url !== form.draft.location) {
@@ -271,54 +271,62 @@ ColumnLayout {
             Kirigami.FormData.label: i18n("Environment Variables")
         }
 
-        Repeater {
-            model: form.draft.kindIsGeneric ? form.draft.envVars : []
+        // The rows in one layout: the form layout keeps one item while rows come and go.
+        ColumnLayout {
+            visible: form.draft.kindIsGeneric && form.draft.envModel.count > 0
+            Layout.fillWidth: true
 
-            delegate: RowLayout {
-                id: envRow
+            Repeater {
+                model: form.draft.envModel
 
-                required property var modelData
-                required property int index
+                delegate: RowLayout {
+                    id: envRow
 
-                objectName: form.namePrefix + "EnvRow_" + index
-                Layout.fillWidth: true
+                    required property int index
+                    required property string name
+                    required property bool secret
+                    required property string value
 
-                Controls.TextField {
-                    objectName: form.namePrefix + "EnvName_" + envRow.index
-                    text: envRow.modelData.name
-                    placeholderText: i18n("NAME")
-                    Accessible.name: i18n("Variable name")
+                    objectName: form.namePrefix + "EnvRow_" + index
                     Layout.fillWidth: true
-                    onTextChanged: if (text !== envRow.modelData.name) form.draft.editEnvVar(envRow.index, "name", text)
-                }
 
-                Controls.TextField {
-                    objectName: form.namePrefix + "EnvValue_" + envRow.index
-                    text: envRow.modelData.value
-                    echoMode: envRow.modelData.secret ? TextInput.Password : TextInput.Normal
-                    placeholderText: form.editing && envRow.modelData.secret ? i18n("Leave empty to keep the saved value") : i18n("Value")
-                    Accessible.name: i18n("Variable value")
-                    Layout.fillWidth: true
-                    onTextChanged: if (text !== envRow.modelData.value) form.draft.editEnvVar(envRow.index, "value", text)
-                }
+                    Controls.TextField {
+                        objectName: form.namePrefix + "EnvName_" + envRow.index
+                        text: envRow.name
+                        placeholderText: i18n("NAME")
+                        Accessible.name: i18n("Variable name")
+                        Layout.fillWidth: true
+                        onTextChanged: if (text !== envRow.name) form.draft.editEnvVar(envRow.index, "name", text)
+                    }
 
-                Controls.Switch {
-                    objectName: form.namePrefix + "EnvSecret_" + envRow.index
-                    text: i18n("Secret")
-                    checked: envRow.modelData.secret
-                    Accessible.name: i18n("Secret: keep the value only in the password store")
-                    onToggled: form.draft.editEnvVar(envRow.index, "secret", checked)
-                }
+                    Controls.TextField {
+                        objectName: form.namePrefix + "EnvValue_" + envRow.index
+                        text: envRow.value
+                        echoMode: envRow.secret ? TextInput.Password : TextInput.Normal
+                        placeholderText: form.editing && envRow.secret ? i18n("Leave empty to keep the saved value") : i18n("Value")
+                        Accessible.name: i18n("Variable value")
+                        Layout.fillWidth: true
+                        onTextChanged: if (text !== envRow.value) form.draft.editEnvVar(envRow.index, "value", text)
+                    }
 
-                Controls.ToolButton {
-                    objectName: form.namePrefix + "EnvRemove_" + envRow.index
-                    icon.name: "list-remove"
-                    text: i18n("Remove Variable")
-                    display: Controls.AbstractButton.IconOnly
-                    Accessible.name: text
-                    Controls.ToolTip.text: text
-                    Controls.ToolTip.visible: hovered
-                    onClicked: form.draft.removeEnvVar(envRow.index)
+                    Controls.Switch {
+                        objectName: form.namePrefix + "EnvSecret_" + envRow.index
+                        text: i18n("Secret")
+                        checked: envRow.secret
+                        Accessible.name: i18n("Secret: keep the value only in the password store")
+                        onToggled: form.draft.editEnvVar(envRow.index, "secret", checked)
+                    }
+
+                    Controls.ToolButton {
+                        objectName: form.namePrefix + "EnvRemove_" + envRow.index
+                        icon.name: "list-remove"
+                        text: i18n("Remove Variable")
+                        display: Controls.AbstractButton.IconOnly
+                        Accessible.name: text
+                        Controls.ToolTip.text: text
+                        Controls.ToolTip.visible: hovered
+                        onClicked: form.draft.removeEnvVar(envRow.index)
+                    }
                 }
             }
         }
