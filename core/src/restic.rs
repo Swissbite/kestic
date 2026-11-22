@@ -422,11 +422,12 @@ fn is_location(word: &str) -> bool {
 
 /// Replaces any known secret values in `text` with `***REDACTED***`.
 pub fn redact_secrets(text: &str, secrets: &[&str]) -> String {
+    // Longest first: a secret that contains a shorter one must not be cut apart before its turn.
+    let mut ordered: Vec<&str> = secrets.iter().copied().filter(|s| !s.is_empty()).collect();
+    ordered.sort_by_key(|s| std::cmp::Reverse(s.len()));
     let mut out = text.to_string();
-    for secret in secrets {
-        if !secret.is_empty() {
-            out = out.replace(secret, "***REDACTED***");
-        }
+    for secret in ordered {
+        out = out.replace(secret, "***REDACTED***");
     }
     out
 }

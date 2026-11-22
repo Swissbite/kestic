@@ -540,3 +540,17 @@ fn m5_02_names_in_urls_do_not_read_as_login_errors() {
         ResticFailureKind::BackendAuthFailed
     );
 }
+
+/// M5-S02, redaction with several backend secrets: a secret that contains a shorter one (an
+/// access key inside the secret key) is redacted as a whole, whatever the order of the list.
+#[test]
+fn m5_02_redaction_handles_a_secret_inside_another() {
+    let short = s3_key(12);
+    let long = format!("{short}{}", strong_password());
+    let text = format!("restic said: {long} and {short}");
+
+    let redacted = kestic_core::restic::redact_secrets(&text, &[&short, &long]);
+
+    assert_no_secret(&redacted, &long, "redacted text");
+    assert!(!redacted.contains(&short), "short secret left in the text");
+}
