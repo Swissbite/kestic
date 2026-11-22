@@ -814,11 +814,76 @@ pub fn run_restic<F>(
     clock: &dyn Clock,
     cancel: Option<&CancelHandle>,
     extra_env: &[(&str, &str)],
-    mut on_event: F,
+    on_event: F,
 ) -> Result<ResticExecutionResult, ResticRunError>
 where
     F: FnMut(&ResticStreamEvent) + Send,
 {
+    let access = RunAccess {
+        destination,
+        secret_store,
+        clock,
+        cancel,
+        extra_env,
+    };
+    run_restic_with(spec, &access, on_event, StdoutSink::Log)
+}
+
+/// Like [`run_restic`], but hands every stdout line unredacted to `on_line` instead of logging
+/// and parsing it: the lines are data (file names of a snapshot) that redaction would change
+/// and that must never reach a log. Errors and `exit_error` still come from stderr.
+pub fn run_restic_streaming(
+    spec: &ResticCommandSpec,
+    destination: &Destination,
+    secret_store: Option<&dyn SecretStore>,
+    clock: &dyn Clock,
+    cancel: Option<&CancelHandle>,
+    extra_env: &[(&str, &str)],
+    on_line: &mut dyn FnMut(&str),
+) -> Result<ResticExecutionResult, ResticRunError> {
+    let access = RunAccess {
+        destination,
+        secret_store,
+        clock,
+        cancel,
+        extra_env,
+    };
+    run_restic_with(spec, &access, |_| {}, StdoutSink::Data(on_line))
+}
+
+/// What a restic call reaches and how it can be cancelled.
+struct RunAccess<'a> {
+    destination: &'a Destination,
+    secret_store: Option<&'a dyn SecretStore>,
+    clock: &'a dyn Clock,
+    cancel: Option<&'a CancelHandle>,
+    extra_env: &'a [(&'a str, &'a str)],
+}
+
+/// Where the stdout lines of a restic call go.
+enum StdoutSink<'a> {
+    /// Redacted into the log and parsed as events.
+    Log,
+    /// Unredacted to the caller only.
+    Data(&'a mut dyn FnMut(&str)),
+}
+
+fn run_restic_with<F>(
+    spec: &ResticCommandSpec,
+    access: &RunAccess<'_>,
+    mut on_event: F,
+    mut sink: StdoutSink<'_>,
+) -> Result<ResticExecutionResult, ResticRunError>
+where
+    F: FnMut(&ResticStreamEvent) + Send,
+{
+    let RunAccess {
+        destination,
+        secret_store,
+        clock,
+        cancel,
+        extra_env,
+    } = *access;
     let started_at = clock.now_utc();
     let secrets = resolve_restic_secrets(destination, secret_store)?;
     let mut prepared = build_restic_command(spec, secrets.rest_password.as_ref(), extra_env)?;
@@ -859,6 +924,10 @@ where
 
     if let Some(out_stream) = stdout {
         for line in BufReader::new(out_stream).lines().map_while(Result::ok) {
+            if let StdoutSink::Data(on_line) = &mut sink {
+                on_line(&line);
+                continue;
+            }
             if stdout_json_array.is_none() && line.trim_start().starts_with('[') {
                 stdout_json_array = Some(UnredactedLine(line.clone()));
             }

@@ -6,6 +6,7 @@
 use super::error::{KesticServiceErr, map_provider_err};
 use super::previews::PreviewEntry;
 use super::run_errors::unreadable_items_from_lines;
+use super::snapshot_queries::QueryResult;
 use super::supervision::SupervisionConfig;
 use crate::dbus_api::{
     ActiveRunProgressDto, BlockingStateDto, DaemonStateDto, DestinationAvailabilityDto,
@@ -28,6 +29,7 @@ use kestic_core::model::{
 };
 use kestic_core::mount::{MountInspector, SourceCheckResult, SystemMountInspector};
 use kestic_core::provider::{ResolvedRestic, ResticProviderError, resolve_and_check};
+use kestic_core::query_list::{QueryLimits, QueryStore};
 use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_core::scheduler::{
     SystemEnvironment, TimezoneSpec, UnmetPrecondition, format_local_hhmm, format_local_slot_hint,
@@ -117,6 +119,8 @@ pub struct DaemonRunConfig {
     pub enable_scheduler: bool,
     pub enable_binary_watch: bool,
     pub binary_watch_args: Option<Vec<String>>,
+    /// Memory limits for the lists of snapshot queries.
+    pub query_limits: QueryLimits,
 }
 
 impl Default for DaemonRunConfig {
@@ -147,6 +151,7 @@ impl Default for DaemonRunConfig {
             enable_scheduler: false,
             enable_binary_watch: false,
             binary_watch_args: None,
+            query_limits: QueryLimits::default(),
         }
     }
 }
@@ -209,6 +214,7 @@ pub struct DaemonCore {
     pub(super) sleep_in_progress: bool,
     pub(super) dry_runs: HashMap<String, PreviewEntry<BackupDryRunResult>>,
     pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
+    pub(super) snapshot_queries: QueryStore<QueryResult>,
     pub(super) window_active: bool,
     pub(super) window_page: String,
     pub(crate) registered_gui_sender: Option<String>,
@@ -321,6 +327,7 @@ impl DaemonCore {
             sleep_in_progress: false,
             dry_runs: HashMap::new(),
             retention_previews: HashMap::new(),
+            snapshot_queries: QueryStore::new(run_config.query_limits),
             window_active: false,
             window_page: String::new(),
             registered_gui_sender: None,

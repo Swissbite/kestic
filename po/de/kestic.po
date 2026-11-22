@@ -3411,3 +3411,95 @@ msgstr "Diese Woche"
 #: gui/src/models/restore_snapshots_model.rs
 msgid "Earlier"
 msgstr "Früher"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "%1 of %2"
+msgstr "%1 von %2"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "%1 entry"
+msgid_plural "%1 entries"
+msgstr[0] "%1 Eintrag"
+msgstr[1] "%1 Einträge"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "%1 item selected"
+msgid_plural "%1 items selected"
+msgstr[0] "%1 Element ausgewählt"
+msgstr[1] "%1 Elemente ausgewählt"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "%1 item selected (%2 here, %3 in ‹%4›)"
+msgid_plural "%1 items selected (%2 here, %3 in ‹%4›)"
+msgstr[0] "%1 Element ausgewählt (%2 hier, %3 in ‹%4›)"
+msgstr[1] "%1 Elemente ausgewählt (%2 hier, %3 in ‹%4›)"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "%1 item selected (%2 here, %3 in other folders)"
+msgid_plural "%1 items selected (%2 here, %3 in other folders)"
+msgstr[0] "%1 Element ausgewählt (%2 hier, %3 in anderen Ordnern)"
+msgstr[1] "%1 Elemente ausgewählt (%2 hier, %3 in anderen Ordnern)"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "Too many entries to show (%1). Choose a subfolder or narrow the search."
+msgstr "Zu viele Einträge für die Anzeige (%1). Einen Unterordner wählen oder enger suchen."
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Restore Selection…"
+msgstr "Auswahl wiederherstellen…"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Select files or folders first"
+msgstr "Zuerst Dateien oder Ordner auswählen"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Top folder"
+msgstr "Oberster Ordner"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Filter"
+msgstr "Filtern"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Show Selection"
+msgstr "Auswahl anzeigen"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Clear Selection"
+msgstr "Auswahl aufheben"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Name"
+msgstr "Name"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Size"
+msgstr "Grösse"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Modified"
+msgstr "Geändert"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "This folder is not in the snapshot."
+msgstr "Dieser Ordner ist nicht im Snapshot."
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "No entries match the filter."
+msgstr "Kein Eintrag passt zum Filter."
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "This folder is empty in the snapshot."
+msgstr "Dieser Ordner ist im Snapshot leer."
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Marked for restore"
+msgstr "Zum Wiederherstellen markiert"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Mark %1 for restore"
+msgstr "%1 zum Wiederherstellen markieren"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Selection"
+msgstr "Auswahl"

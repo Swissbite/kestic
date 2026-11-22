@@ -84,6 +84,7 @@ fn main() {
         "src/qml/BackupSnapshotsPage.qml",
         "src/qml/RestorePage.qml",
         "src/qml/RestoreSnapshotsPage.qml",
+        "src/qml/RestoreBrowsePage.qml",
         "src/qml/BackupFullConfigPage.qml",
         "src/qml/BackupScheduleEditPage.qml",
         "src/qml/BackupConditionsEditPage.qml",

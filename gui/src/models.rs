@@ -65,6 +65,23 @@ pub mod qobject {
         #[qml_element]
         type RestoreSnapshotsModel = super::RestoreSnapshotsModelRust;
 
+        /// One folder of a snapshot, fetched page by page, with the selection to restore.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        #[qproperty(QString, state)]
+        #[qproperty(QString, error_text)]
+        #[qproperty(QString, dir)]
+        #[qproperty(bool, dir_exists)]
+        #[qproperty(bool, too_large)]
+        #[qproperty(i32, total)]
+        #[qproperty(i32, matched)]
+        #[qproperty(QString, count_text)]
+        #[qproperty(QString, too_large_text)]
+        #[qproperty(i32, selection_count)]
+        #[qproperty(QString, selection_text)]
+        type SnapshotBrowseModel = super::SnapshotBrowseModelRust;
+
         /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
         /// with the tray (`kestic-i18n`) and GUI texts (`ui_texts`). No daemon connection.
         #[qobject]
@@ -220,6 +237,39 @@ pub mod qobject {
         #[inherit]
         fn data_changed_restore_snapshots(
             self: Pin<&mut RestoreSnapshotsModel>,
+            top_left: &QModelIndex,
+            bottom_right: &QModelIndex,
+        );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_browse(self: Pin<&mut SnapshotBrowseModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_browse(self: Pin<&mut SnapshotBrowseModel>);
+        #[cxx_name = "beginInsertRows"]
+        #[inherit]
+        fn begin_insert_rows_browse(
+            self: Pin<&mut SnapshotBrowseModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[cxx_name = "endInsertRows"]
+        #[inherit]
+        fn end_insert_rows_browse(self: Pin<&mut SnapshotBrowseModel>);
+        #[cxx_name = "index"]
+        #[inherit]
+        fn index_browse(
+            self: &SnapshotBrowseModel,
+            row: i32,
+            column: i32,
+            parent: &QModelIndex,
+        ) -> QModelIndex;
+        #[cxx_name = "dataChanged"]
+        #[inherit]
+        fn data_changed_browse(
+            self: Pin<&mut SnapshotBrowseModel>,
             top_left: &QModelIndex,
             bottom_right: &QModelIndex,
         );
@@ -386,6 +436,57 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "idAt"]
         fn id_at(self: &RestoreSnapshotsModel, row: i32) -> QString;
+        #[qinvokable]
+        #[cxx_name = "rowMap"]
+        fn row_map(self: &RestoreSnapshotsModel, snapshot_id: &QString) -> QVariant;
+
+        // SnapshotBrowseModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &SnapshotBrowseModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &SnapshotBrowseModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &SnapshotBrowseModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &SnapshotBrowseModel, parent: &QModelIndex) -> bool;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut SnapshotBrowseModel>, parent: &QModelIndex);
+        #[qinvokable]
+        fn open(
+            self: Pin<&mut SnapshotBrowseModel>,
+            destination_id: &QString,
+            snapshot_id: &QString,
+            dir: &QString,
+        );
+        #[qinvokable]
+        fn poll(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut SnapshotBrowseModel>, text: &QString);
+        #[qinvokable]
+        #[cxx_name = "toggleSelected"]
+        fn toggle_selected(self: Pin<&mut SnapshotBrowseModel>, row: i32);
+        #[qinvokable]
+        #[cxx_name = "clearSelection"]
+        fn clear_selection(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        #[cxx_name = "selectedPaths"]
+        fn selected_paths(self: &SnapshotBrowseModel) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "segmentNames"]
+        fn segment_names(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "segmentPaths"]
+        fn segment_paths(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
     }
 }
 
@@ -398,6 +499,7 @@ mod restore_backups_model;
 mod restore_snapshots_model;
 mod run_logs_model;
 mod runs_model;
+mod snapshot_browse_model;
 mod snapshots_model;
 
 pub use backups_model::BackupsModelRust;
@@ -406,6 +508,7 @@ pub use restore_backups_model::RestoreBackupsModelRust;
 pub use restore_snapshots_model::RestoreSnapshotsModelRust;
 pub use run_logs_model::RunLogsModelRust;
 pub use runs_model::RunsModelRust;
+pub use snapshot_browse_model::SnapshotBrowseModelRust;
 pub use snapshots_model::SnapshotsModelRust;
 
 /// Backing struct of the `Texts` QML singleton.

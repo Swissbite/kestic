@@ -5,7 +5,7 @@
 //! area, newest first, grouped by day, each with time, size and host.
 
 use super::qobject;
-use super::rows::{id_at, row_of};
+use super::rows::{id_at, row_map, row_of};
 use crate::backend::restore::restore_cache;
 use crate::state_cache::{
     cached_daemon_now, format_bytes, format_datetime_display, format_day_group, format_time_short,
@@ -15,6 +15,7 @@ use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
 use kestic_core::snapshot::SnapshotSize;
+use kestic_core::snapshot_ls::start_dir;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::SnapshotSummaryDto;
 use time::OffsetDateTime;
@@ -29,6 +30,10 @@ model_row!(RestoreSnapshotRow {
     // The next older snapshot of the same list; empty for the oldest one.
     previous_snapshot_id: String => "previousSnapshotId",
     destination_id: String => "destinationId",
+    // Date and time for the breadcrumb of the snapshot browser.
+    date_time: String => "dateTime",
+    // The folder the snapshot browser opens in.
+    start_dir: String => "startDir",
 });
 
 #[derive(Default)]
@@ -105,6 +110,7 @@ fn push_rows(
 ) {
     for (i, s) in snaps.iter().enumerate() {
         let time = parse_time(s);
+        let date_time = time.map_or_else(|| s.time.clone(), format_datetime_display);
         let (title, section_name) = match (section, time) {
             (Some(name), Some(t)) => (format_datetime_display(t), name.to_string()),
             (Some(name), None) => (s.time.clone(), name.to_string()),
@@ -119,6 +125,8 @@ fn push_rows(
             section_name,
             previous_snapshot_id: snaps.get(i + 1).map_or_default(|p| p.id.clone()),
             destination_id: destination_id.to_string(),
+            date_time,
+            start_dir: start_dir(&s.paths),
         });
     }
 }
@@ -177,6 +185,11 @@ impl qobject::RestoreSnapshotsModel {
 
     pub fn id_at(&self, row: i32) -> QString {
         id_at(&self.rows, row, |r| &r.snapshot_id)
+    }
+
+    pub fn row_map(&self, snapshot_id: &QString) -> QVariant {
+        let id = snapshot_id.to_string();
+        row_map(self.rows.iter().find(|r| r.snapshot_id == id))
     }
 }
 

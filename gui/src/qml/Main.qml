@@ -511,6 +511,17 @@ Kirigami.ApplicationWindow {
         updatePageStackViewportAndFocusability();
     }
 
+    // Opens snapshot `snapshotId` of the snapshot list for browsing, next to that list.
+    function openSnapshotBrowser(destinationId, snapshotId) {
+        var snap = restoreSnapshotsModel.rowMap(snapshotId);
+        pushSubPageAtDepth(restoreBrowseComponent.createObject(pageStack, {
+            destinationId: destinationId,
+            snapshotId: snapshotId,
+            startDir: snap ? snap.startDir : "/",
+            snapshotTitle: snap ? snap.dateTime : ""
+        }), 2);
+    }
+
     function openBackupReassignPage(backupId) {
         pushSubPageAtDepth(backupReassignComponent.createObject(pageStack, { backupId: backupId }), targetDepthForBackupEditor());
     }
@@ -988,6 +999,17 @@ Kirigami.ApplicationWindow {
             rootWindow: root
             appBackend: root.backendRef
             restoreSnapshotsModel: root.restoreSnapshotsModelRef
+            onBrowseRequested: function(destinationId, snapshotId) {
+                root.openSnapshotBrowser(destinationId, snapshotId);
+            }
+        }
+    }
+
+    Component {
+        id: restoreBrowseComponent
+        RestoreBrowsePage {
+            rootWindow: root
+            appBackend: root.backendRef
         }
     }
 

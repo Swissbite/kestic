@@ -7,9 +7,12 @@
 
 #include "src/smoke_m3_util.h"
 
+#include <QFile>
+#include <QLocale>
 #include <QMetaMethod>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QSet>
 #include <QUrl>
 
 namespace kestic::smoke {
@@ -216,8 +219,19 @@ int scenario_restore_keyboard(const Ctx& c) {
     send_key(w, Qt::Key_Return);
     M4_CHECK_EQ(5213, spy->property("last").toString(), QStringLiteral("browse:") + oldest,
         "(b) Return on a snapshot starts browsing it");
+    M4_CHECK(5228, wait_until([&] { return visible_item(w, "restoreBrowsePage") != nullptr; }, 5000),
+        "(b) the snapshot opens for browsing next to the list");
 
-    press_and_wait(w, Qt::Key_Up, 80);
+    // Back to the snapshot list with Tab; the arrow keys move from the current (oldest)
+    // snapshot to the middle one.
+    M4_CHECK(5229, tab_to(w, "restoreSnapshotListItem", 60) != nullptr, "Tab returns to the snapshot list");
+    QQuickItem* snapshot_list = item_named(w, "restoreSnapshotsListView");
+    for (int i = 0; i < 4 && snapshot_list->property("currentIndex").toInt() != 1; ++i) {
+        const int at = snapshot_list->property("currentIndex").toInt();
+        press_and_wait(w, at < 1 ? Qt::Key_Down : Qt::Key_Up, 80);
+    }
+    M4_CHECK(5230, focused_snapshot_row(w) && focused_snapshot_row(w)->property("index").toInt() == 1,
+        "arrow keys reach the middle snapshot");
     QObject* menu = object_named(w, "snapshotContextMenu");
     M4_CHECK(5214, menu != nullptr, "snapshotContextMenu missing");
     send_key(w, Qt::Key_Menu);
@@ -242,6 +256,271 @@ int scenario_restore_keyboard(const Ctx& c) {
     return 0;
 }
 
+// The browse page and its folder model.
+struct Browse {
+    QQuickItem* page = nullptr;
+    QAbstractItemModel* model = nullptr;
+};
+
+Browse browse_page(QQuickWindow* w) {
+    Browse b;
+    b.page = visible_item(w, "restoreBrowsePage");
+    b.model = b.page ? qobject_cast<QAbstractItemModel*>(
+                           b.page->findChild<QObject*>(QStringLiteral("snapshotBrowseModel")))
+                     : nullptr;
+    return b;
+}
+
+// Waits until the browse page lists `dir` (state «done»).
+bool wait_for_dir(QQuickWindow* w, const QString& dir) {
+    return wait_until([&] {
+        Browse b = browse_page(w);
+        return b.model && b.model->property("state").toString() == QLatin1String("done")
+            && b.model->property("dir").toString() == dir;
+    }, 30000);
+}
+
+QStringList browse_names(QAbstractItemModel* m) {
+    QStringList out;
+    for (int r = 0; r < m->rowCount(); ++r) {
+        out << role_value(m, r, "name").toString();
+    }
+    return out;
+}
+
+// The delegate of the folder list that holds the keyboard focus, or nullptr.
+QQuickItem* focused_entry_row(QQuickWindow* w) {
+    for (QQuickItem* it = w->activeFocusItem(); it; it = it->parentItem()) {
+        if (it->objectName() == QLatin1String("browseEntryRow")) {
+            return it;
+        }
+    }
+    return nullptr;
+}
+
+// Moves the keyboard focus in the folder list to the row named `name` with the arrow keys.
+bool entry_to(QQuickWindow* w, QAbstractItemModel* m, const QString& name) {
+    const QStringList names = browse_names(m);
+    const int target = names.indexOf(name);
+    if (target < 0) {
+        return false;
+    }
+    for (int i = 0; i < names.size() + 2; ++i) {
+        QQuickItem* row = focused_entry_row(w);
+        if (!row) {
+            return false;
+        }
+        const int at = row->property("index").toInt();
+        if (at == target) {
+            return true;
+        }
+        press_and_wait(w, at < target ? Qt::Key_Down : Qt::Key_Up, 60);
+    }
+    return false;
+}
+
+// Opens the restore area and, in the narrow layout, the snapshot list of the first backup.
+int open_restore_snapshots(const Ctx& c, int code) {
+    QQuickWindow* w = c.window;
+    QObject* tab = object_named(w, "restoreTabAction");
+    M4_CHECK(code, tab != nullptr, "restoreTabAction missing");
+    trigger(tab);
+    M4_CHECK(code + 1, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 3000),
+        "Restore tab active");
+    M4_CHECK(code + 2, wait_until([&] { return !c.backend->property("restore_overview_loading").toBool(); }, 20000),
+        "snapshot counts loaded");
+    finish_incubation(w);
+    if (w->property("narrowMode").toBool()) {
+        QQuickItem* backup_row = tab_to(w, "restoreBackupListItem", 30);
+        M4_CHECK(code + 3, backup_row != nullptr, "Tab did not reach the backup row");
+        send_key(w, Qt::Key_Return);
+    }
+    M4_CHECK(code + 4, wait_for_snapshots(w, c.backend, 2), "both snapshots of «Home» listed");
+    finish_incubation(w);
+    return 0;
+}
+
+// Opens snapshot `row` of the snapshot list for browsing (not by keyboard).
+int open_browser_at(const Ctx& c, int row, int code) {
+    QQuickWindow* w = c.window;
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    M4_CHECK(code, snaps != nullptr, "restoreSnapshotsModel missing");
+    const QVariant dest = role_value(snaps, row, "destinationId");
+    const QVariant snap = role_value(snaps, row, "snapshotId");
+    M4_CHECK(code + 1, QMetaObject::invokeMethod(w, "openSnapshotBrowser", Q_ARG(QVariant, dest), Q_ARG(QVariant, snap)),
+        "openSnapshotBrowser failed");
+    M4_CHECK(code + 2, wait_until([&] { return browse_page(w).model != nullptr; }, 5000),
+        "browse page shown");
+    finish_incubation(w);
+    return 0;
+}
+
+/// AC-M4-03-3 (smoke part) and AC-M4-03-1 (a) on screen: with the keyboard alone (a) Return
+/// opens sub-folders, (b) the path row leads back to every folder above, and (c) Space marks
+/// entries for restore; the selection stays when the folder changes.
+int scenario_browse_keyboard(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 5301)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(5306, top.endsWith(QLatin1String("/trees/src")), "newest snapshot opens in its folder");
+    QQuickItem* first = tab_to(w, "restoreSnapshotListItem", 40);
+    M4_CHECK(5307, first != nullptr, "Tab did not reach the snapshot list");
+    M4_CHECK(5308, first->property("index").toInt() == 0, "newest snapshot first");
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(5309, wait_for_dir(w, top), "Return opens the snapshot in its folder");
+    finish_incubation(w);
+    Browse b = browse_page(w);
+    M4_CHECK_EQ(5310, b.page->property("title").toString(), QStringLiteral("2026-11-15 12:00"),
+        "breadcrumb names the snapshot by date and time");
+    M4_CHECK_EQ(5311, browse_names(b.model).join(QLatin1Char(',')), QStringLiteral("a.txt,b.bin,docs,empty"),
+        "AC-M4-03-1 (a) folders and files of the top folder");
+    M4_CHECK_EQ(5312, role_value(b.model, 0, "sizeText").toString(), QStringLiteral("5 B"),
+        "AC-M4-03-1 (a) size of a file");
+    M4_CHECK_EQ(5313, role_value(b.model, 2, "sizeText").toString(), QStringLiteral("–"),
+        "AC-M4-03-1 (a) folders have no size");
+    M4_CHECK(5314, role_value(b.model, 0, "modifiedText").toString().length() == 10,
+        "AC-M4-03-1 (a) modification date shown");
+
+    QQuickItem* row = tab_to(w, "browseEntryRow", 40);
+    M4_CHECK(5315, row != nullptr, "Tab did not reach the folder list");
+    M4_CHECK(5316, entry_to(w, b.model, QStringLiteral("docs")), "arrow keys reach «docs»");
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(5317, wait_for_dir(w, top + QStringLiteral("/docs")), "(a) Return opens «docs»");
+    finish_incubation(w);
+    M4_CHECK_EQ(5318, browse_names(b.model).join(QLatin1Char(',')), QStringLiteral("deep,x.txt"),
+        "(a) entries of «docs»");
+    M4_CHECK(5319, tab_to(w, "browseEntryRow", 40) != nullptr, "Tab reaches the list of «docs»");
+    M4_CHECK(5320, entry_to(w, b.model, QStringLiteral("deep")), "arrow keys reach «deep»");
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(5321, wait_for_dir(w, top + QStringLiteral("/docs/deep")), "(a) Return opens «deep»");
+    finish_incubation(w);
+
+    M4_CHECK(5322, tab_to(w, "browseEntryRow", 40) != nullptr, "Tab reaches the list of «deep»");
+    M4_CHECK(5323, entry_to(w, b.model, QStringLiteral("y.txt")), "arrow keys reach «y.txt»");
+    send_key(w, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+    M4_CHECK(5324, wait_until([&] { return role_value(b.model, 0, "selected").toBool(); }, 2000),
+        "(c) Space marks the entry");
+    M4_CHECK(5325, b.model->property("selection_count").toInt() == 1, "(c) one entry marked");
+    QObject* restore_action = object_named(w, "restoreSelectionAction");
+    M4_CHECK(5326, restore_action && restore_action->property("enabled").toBool(),
+        "(c) «Restore Selection…» enabled with a selection");
+
+    // (b) Back up through every folder above with the path row, down to the top of the snapshot.
+    QStringList paths;
+    QMetaObject::invokeMethod(b.model, "segmentPaths", Q_RETURN_ARG(QStringList, paths),
+        Q_ARG(QString, top + QStringLiteral("/docs/deep")));
+    M4_CHECK(5327, paths.size() >= 4, "path row from the top down to «deep»");
+    for (int i = paths.size() - 2; i >= 0; --i) {
+        const QByteArray name = QStringLiteral("browsePathButton_%1").arg(i).toUtf8();
+        QQuickItem* button = tab_to(w, name.constData(), 60);
+        M4_CHECK(5328, button != nullptr, "(b) Tab reaches the path row button of a folder above");
+        send_key(w, Qt::Key_Return);
+        M4_CHECK(5329, wait_for_dir(w, paths.at(i)), "(b) the path row opens the folder above");
+        finish_incubation(w);
+        M4_CHECK(5330, b.model->property("selection_count").toInt() == 1,
+            "(c) the selection stays when the folder changes");
+        if (paths.at(i) == top) {
+            M4_CHECK_EQ(5331, b.model->property("selection_text").toString(),
+                loc(c.lang, "1 item selected (0 here, 1 in ‹deep›)", "1 Element ausgewählt (0 hier, 1 in ‹deep›)"),
+                "(c) the selection line names where the marked entry is");
+            M4_CHECK(5332, save_screenshot(w, c.out_path), "screenshot failed");
+        }
+    }
+    M4_CHECK(5333, item_named(w, "browseListView") != nullptr, "folder list, no tree");
+    return 0;
+}
+
+/// AC-M4-03-2 (c) and AC-M4-03-5: while the top folder with 1 000 entries loads, the view keeps
+/// reacting to input; it names 1 000 before scrolling, then fetches pages of at most 200 at the
+/// end of the list until every entry is there exactly once.
+int scenario_browse_paging(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 5401)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 1, 5406)) {
+        return rc;
+    }
+    Browse b = browse_page(w);
+    M4_CHECK(5409, b.model->property("state").toString() == QLatin1String("running"),
+        "the folder is still loading (restic ls held)");
+    QQuickItem* filter = tab_to(w, "browseFilterField", 40);
+    M4_CHECK(5410, filter != nullptr, "AC-M4-03-2 (c) Tab moves the focus while the folder loads");
+    send_key(w, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    M4_CHECK_EQ(5411, filter->property("text").toString(), QStringLiteral("x"),
+        "AC-M4-03-2 (c) typing reaches the filter field while the folder loads");
+    send_key(w, Qt::Key_Backspace);
+    M4_CHECK_EQ(5412, filter->property("text").toString(), QString(), "Backspace empties the filter field");
+    M4_CHECK(5413, b.model->property("state").toString() == QLatin1String("running"),
+        "the input happened while the folder loaded");
+    QFile marker(qEnvironmentVariable("KESTIC_SMOKE_TYPED_MARKER"));
+    M4_CHECK(5414, marker.open(QIODevice::WriteOnly), "typed marker could not be written");
+    marker.close();
+
+    const QString top = b.model->property("dir").toString();
+    M4_CHECK(5415, wait_for_dir(w, top), "the folder loads after restic ls is released");
+    finish_incubation(w);
+    M4_CHECK(5416, b.model->property("total").toInt() == 1000, "(c) total of 1 000 known");
+    M4_CHECK(5417, b.model->rowCount() == 200, "(a) the first page holds 200 entries");
+    QObject* count = object_named(w, "browseCountLabel");
+    M4_CHECK(5418, count != nullptr, "browseCountLabel missing");
+    M4_CHECK_EQ(5419, count->property("text").toString(),
+        QLocale().toString(1000) + loc(c.lang, " entries", " Einträge"),
+        "(c) the view names 1 000 before scrolling");
+    M4_CHECK(5420, save_screenshot(w, c.out_path), "screenshot failed");
+
+    QQuickItem* list = item_named(w, "browseListView");
+    M4_CHECK(5421, list != nullptr, "browseListView missing");
+    int rows = b.model->rowCount();
+    for (int step = 0; step < 20 && rows < 1000; ++step) {
+        QMetaObject::invokeMethod(list, "positionViewAtEnd");
+        wait_until([&] { return b.model->rowCount() > rows; }, 3000);
+        const int now = b.model->rowCount();
+        M4_CHECK(5422, now - rows <= 200, "(a) at most 200 entries per page");
+        M4_CHECK(5423, now > rows, "(a) scrolling to the end fetches the next page");
+        rows = now;
+    }
+    M4_CHECK(5424, rows == 1000, "(b) every entry fetched");
+    QSet<QString> paths;
+    for (int r = 0; r < rows; ++r) {
+        paths.insert(role_value(b.model, r, "path").toString());
+    }
+    M4_CHECK(5425, paths.size() == 1000, "(b) each entry exactly once");
+    M4_CHECK(5426, !b.model->canFetchMore(QModelIndex()), "nothing beyond the last entry");
+    return 0;
+}
+
+/// AC-M4-03-7 (c): a folder list over the memory limit shows «Too many entries to show»
+/// instead of a partial list.
+int scenario_browse_too_large(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 5501)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 1, 5506)) {
+        return rc;
+    }
+    Browse b = browse_page(w);
+    const QString top = b.model->property("dir").toString();
+    M4_CHECK(5509, wait_for_dir(w, top), "the folder query finishes");
+    finish_incubation(w);
+    M4_CHECK(5510, b.model->property("too_large").toBool(), "the list is too large");
+    M4_CHECK(5511, b.model->rowCount() == 0, "(c) no partial list");
+    QQuickItem* message = visible_item(w, "browseTooLargeMessage");
+    M4_CHECK(5512, message != nullptr, "(c) the too-large message is shown");
+    M4_CHECK_EQ(5513, message->property("text").toString(),
+        loc(c.lang, "Too many entries to show (%1). Choose a subfolder or narrow the search.",
+            "Zu viele Einträge für die Anzeige (%1). Einen Unterordner wählen oder enger suchen.")
+            .arg(QLocale().toString(1000)),
+        "(c) text names the number of entries");
+    M4_CHECK(5514, visible_item(w, "browseEmptyMessage") == nullptr, "not shown as an empty folder");
+    M4_CHECK(5515, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -260,6 +539,12 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_tab(ctx);
     } else if (scen == QLatin1String("m4-restore-keyboard")) {
         rc = scenario_restore_keyboard(ctx);
+    } else if (scen == QLatin1String("m4-browse-keyboard")) {
+        rc = scenario_browse_keyboard(ctx);
+    } else if (scen == QLatin1String("m4-browse-paging")) {
+        rc = scenario_browse_paging(ctx);
+    } else if (scen == QLatin1String("m4-browse-too-large")) {
+        rc = scenario_browse_too_large(ctx);
     } else {
         std::fprintf(stderr, "M4 smoke failed (599): unknown m4 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);
