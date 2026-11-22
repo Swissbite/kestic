@@ -64,7 +64,7 @@ pub fn restic_variants() -> Vec<ResticVariant> {
         .collect()
 }
 
-/// Latest restic only, for tests that never run a restic data command.
+/// Latest restic only, for tests whose behaviour does not depend on the restic version.
 pub fn latest_variant() -> ResticVariant {
     restic_variants()
         .pop()

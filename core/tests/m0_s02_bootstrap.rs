@@ -102,7 +102,7 @@ fn ac_m0_02_2_bootstrap_is_idempotent() {
     let tools = dev_tools_bin_dir();
     let tracked_files = [
         tools.join("restic-0.18.0"),
-        tools.join("restic-0.19.1"),
+        tools.join("restic-0.20.0"),
         tools.join("rest-server"),
         tools.join("rclone"),
     ];
@@ -510,7 +510,7 @@ fn verify_sftp_server_unprivileged(restic_versions: &[PathBuf]) {
 #[test]
 fn ac_m0_02_4_s3_and_sftp_test_servers_run_unprivileged_and_stop() {
     let tools = dev_tools_bin_dir();
-    let restic_versions = [tools.join("restic-0.18.0"), tools.join("restic-0.19.1")];
+    let restic_versions = [tools.join("restic-0.18.0"), tools.join("restic-0.20.0")];
     let rclone = tools.join("rclone");
     assert!(rclone.exists(), "rclone missing in {}", tools.display());
 
