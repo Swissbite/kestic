@@ -118,6 +118,16 @@ int scenario_destination_types(const Ctx& c) {
     QQuickItem* again = item_named(w, "wizDestCheckAgainButton");
     M3_CHECK2(5077, again != nullptr, again->isVisible(), "«Check Again» missing");
 
+    const QString unnamed = first_unnamed(w, {
+        QStringLiteral("wizDestTypeCard_folder"),
+        QStringLiteral("wizDestTypeCard_rclone"),
+        QStringLiteral("wizDestOpenInDiscoverButton"),
+        QStringLiteral("wizDestInstallCommandField"),
+        QStringLiteral("wizDestCopyInstallCommandButton"),
+        QStringLiteral("wizDestCheckAgainButton"),
+    });
+    M3_CHECK_EQ(5079, unnamed, QString(), "control without accessible name");
+    M3_CHECK_EQ(5080, accessible_name(discover), loc(c.lang, "Open in Discover", "In Discover öffnen"), "accessible name of «Open in Discover»");
     M3_CHECK(5078, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }

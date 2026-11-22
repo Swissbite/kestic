@@ -28,7 +28,7 @@ WizardPage {
     readonly property int totalSteps: destDraft.setupMode === "connect" ? 2 : 3
     readonly property bool isFinalStep: step === totalSteps
     readonly property bool canAdvance: {
-        if (step === 1) return true;
+        if (step === 1) return typeChooser.choiceValid;
         if (step === 2) return destDraft.detailsValid && destDraft.connectionVerified && (destDraft.setupMode !== "connect" || destDraft.repoPassword.length > 0);
         return destDraft.detailsValid && destDraft.passwordsMatch && appBackend.blocking_kind === "";
     }
@@ -72,6 +72,7 @@ WizardPage {
             }
 
             DestinationTypeChooser {
+                id: typeChooser
                 visible: page.step === 1
                 Layout.fillWidth: true
                 draft: destDraft

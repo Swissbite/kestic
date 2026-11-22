@@ -16,13 +16,24 @@ use kestic_test_support::tools::write_executable;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 /// A `PATH` of an empty directory plus an empty entry (current directory) and a missing
 /// directory, which the check must both skip.
 fn fake_path(dir: &Path) -> OsString {
     std::env::join_paths([dir.to_path_buf(), "".into(), dir.join("missing")]).expect("join PATH")
+}
+
+/// `dir` as a path relative to the working directory of the test (`../../tmp/...`).
+fn relative_to_cwd(dir: &Path) -> PathBuf {
+    let cwd = std::env::current_dir().expect("cwd");
+    let mut rel = PathBuf::new();
+    for _ in cwd.components().skip(1) {
+        rel.push("..");
+    }
+    rel.push(dir.strip_prefix("/").expect("absolute temp dir"));
+    rel
 }
 
 fn install(dir: &Path, program: &str) {
@@ -153,6 +164,45 @@ fn ac_m5_04_2_ssh_missing_sftp_needs_installation() {
     assert_eq!(
         card.install_command.as_deref(),
         Some("sudo apt install openssh-client")
+    );
+}
+
+/// AC-M5-04-2 with programs restic could not start: (a) an `ssh` only others may execute
+/// (mode 0o011) and an `ssh` found through a relative `PATH` entry both leave SFTP needing
+/// installation.
+#[test]
+fn ac_m5_04_2_ssh_not_executable_by_user_or_relative_is_missing() {
+    let dir = TempDir::new().expect("tempdir");
+    write_executable(&dir.path().join("ssh"), "#!/bin/sh\nexit 0\n");
+    fs::set_permissions(dir.path().join("ssh"), fs::Permissions::from_mode(0o011)).expect("chmod");
+    let types = destination_types(Some(&fake_path(dir.path())));
+    // (a)
+    assert!(
+        !status(&types, DestinationTypeCode::Sftp).ready,
+        "(a) an ssh this user may not execute must not count"
+    );
+
+    let rel_dir = TempDir::new().expect("tempdir");
+    install(rel_dir.path(), "ssh");
+    let relative = relative_to_cwd(rel_dir.path());
+    assert!(
+        relative.join("ssh").is_file(),
+        "precondition: the relative entry reaches ssh"
+    );
+    let types = destination_types(Some(relative.as_os_str()));
+    // (a)
+    assert!(
+        !status(&types, DestinationTypeCode::Sftp).ready,
+        "(a) an ssh found through a relative PATH entry must not count"
+    );
+    let absolute = rel_dir.path().as_os_str();
+    assert!(
+        status(
+            &destination_types(Some(absolute)),
+            DestinationTypeCode::Sftp
+        )
+        .ready,
+        "the same ssh counts through its absolute directory"
     );
 }
 

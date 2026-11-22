@@ -6,10 +6,10 @@
 //! The daemon checks its own `PATH`, because it is the one that starts restic and with it `ssh`
 //! or `rclone`. Every call checks again, so a program installed in the meantime is found.
 
-use crate::provider::validate_executable_path;
 use kestic_i18n::codes::DestinationTypeCode;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
+use std::path::PathBuf;
 
 /// A program a destination type needs on this computer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,15 +76,20 @@ pub fn required_program(kind: DestinationTypeCode) -> Option<RequiredProgram> {
     }
 }
 
-/// True when `search_path` (a `PATH` value) holds an executable file called `name`. Empty
-/// entries, which a shell reads as the current directory, are skipped.
+/// True when `search_path` (a `PATH` value) holds a file called `name` that this user may
+/// execute. Only absolute entries count: restic starts `ssh` and `rclone` the way Go does, and
+/// Go ignores programs found through a relative entry (or an empty one, the current directory).
 pub fn program_in_path(name: &str, search_path: Option<&OsStr>) -> bool {
     let Some(search_path) = search_path else {
         return false;
     };
-    std::env::split_paths(search_path)
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .any(|dir| validate_executable_path(&dir.join(name)).is_ok())
+    let absolute: Vec<PathBuf> = std::env::split_paths(search_path)
+        .filter(|dir| dir.is_absolute())
+        .collect();
+    let Ok(absolute) = std::env::join_paths(absolute) else {
+        return false;
+    };
+    which::which_in(name, Some(absolute), "/").is_ok()
 }
 
 /// All destination types in the order of the wizard's cards, each checked against

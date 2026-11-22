@@ -310,14 +310,15 @@ fn shipped_binary_carries_no_build_paths() {
     );
 }
 
-/// `Depends`, `Recommends` and `Suggests` of the `.deb` as lists of package names.
+/// `Depends`, `Recommends` and `Suggests` of the `.deb` as lists of package names, alternatives
+/// (`a | b`) included.
 fn control_field(control: &str, field: &str) -> Vec<String> {
     let prefix = format!("{field}: ");
     let Some(value) = control.lines().find_map(|l| l.strip_prefix(&prefix)) else {
         return Vec::new();
     };
     value
-        .split(',')
+        .split([',', '|'])
         .filter_map(|p| p.split_whitespace().next())
         .map(str::to_string)
         .collect()

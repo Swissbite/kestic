@@ -29,6 +29,10 @@ ColumnLayout {
     readonly property var cardsWithForm: ["drive", "folder", "rest"]
     readonly property var readyCards: cards.filter(function(c) { return c.ready; })
     readonly property var cardsNeedingInstallation: cards.filter(function(c) { return !c.ready; })
+    // The chosen card is shown, ready and has a form.
+    readonly property bool choiceValid: readyCards.some(function(c) {
+        return c.card === chooser.draft.typeCard && chooser.cardsWithForm.indexOf(c.card) >= 0;
+    })
 
     spacing: Kirigami.Units.mediumSpacing
 
@@ -218,7 +222,7 @@ ColumnLayout {
                         objectName: chooser.namePrefix + "InstallCommandField"
                         Layout.fillWidth: true
                         readOnly: true
-                        font.family: "monospace"
+                        font: Kirigami.Theme.fixedWidthFont
                         text: missingEntry.modelData.install_command
                         Accessible.name: i18n("Install command")
                     }

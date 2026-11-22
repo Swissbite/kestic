@@ -101,7 +101,7 @@ WizardPage {
         case "choose_dest":
             return destValid;
         case "dest_type":
-            return true;
+            return typeChooser.choiceValid;
         case "dest_details":
             return destDetailsValid && destDraft.connectionVerified;
         case "dest_password":
@@ -350,6 +350,7 @@ WizardPage {
             }
 
             DestinationTypeChooser {
+                id: typeChooser
                 visible: page.currentStage === "dest_type"
                 Layout.fillWidth: true
                 draft: destDraft
