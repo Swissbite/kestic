@@ -701,7 +701,7 @@ fn collect_start_all_entries(shared: &Arc<Mutex<DaemonCore>>) -> Vec<StartAllEnt
                     .runs_cache
                     .iter()
                     .find(|r| {
-                        r.backup_id() == Some(&s.backup.id)
+                        r.is_backup_run_of(&s.backup.id)
                             && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
                     })
                     .is_some_and(run_blocks_schedule);

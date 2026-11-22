@@ -497,7 +497,7 @@ impl DaemonCore {
         }
         self.history.delete_pending_runs_for_backup(backup_id)?;
         self.runs_cache
-            .retain(|r| !(r.backup_id() == Some(backup_id) && r.status == RunStatus::Pending));
+            .retain(|r| !(r.is_backup_run_of(backup_id) && r.status == RunStatus::Pending));
         Ok(())
     }
 
@@ -659,7 +659,7 @@ fn load_run_unreadable_cache(runs: &[Run], config: &AppConfig) -> HashMap<RunId,
     let mut cache = HashMap::new();
     for backup in &config.backups {
         let last = runs.iter().find(|r| {
-            r.backup_id() == Some(&backup.id)
+            r.is_backup_run_of(&backup.id)
                 && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
         });
         if let Some(run) = last

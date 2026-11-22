@@ -1134,6 +1134,11 @@ impl Run {
         )
     }
 
+    /// Whether this is a backup run of `backup` (a restore of one of its snapshots is not).
+    pub fn is_backup_run_of(&self, backup: &BackupId) -> bool {
+        matches!(&self.kind, RunKind::Backup { backup_id } if backup_id == backup)
+    }
+
     /// Returns the associated [`BackupId`], if any.
     pub fn backup_id(&self) -> Option<&BackupId> {
         match &self.kind {

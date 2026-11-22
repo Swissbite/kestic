@@ -375,7 +375,7 @@ fn evaluate_single_backup_tick(
         .runs_cache
         .iter()
         .find(|r| {
-            r.backup_id() == Some(&backup.id)
+            r.is_backup_run_of(&backup.id)
                 && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
         })
         .is_some_and(run_blocks_schedule);

@@ -20,6 +20,12 @@ pub const PREVIEW_MAX_AGE: Duration = Duration::minutes(10);
 /// The name of a new folder for a restore: `<label> <YYYY-MM-DD HH-MM>` with the snapshot time,
 /// without `/`, control characters or a leading dot.
 pub fn new_folder_name(label: &str, snapshot_time: OffsetDateTime) -> String {
+    let label = sanitize_folder_name(label);
+    let label: String = label
+        .char_indices()
+        .take_while(|(i, c)| i + c.len_utf8() <= MAX_NAME_BYTES - 17)
+        .map(|(_, c)| c)
+        .collect();
     let stamp = format!(
         "{:04}-{:02}-{:02} {:02}-{:02}",
         snapshot_time.year(),
@@ -31,16 +37,29 @@ pub fn new_folder_name(label: &str, snapshot_time: OffsetDateTime) -> String {
     sanitize_folder_name(&format!("{label} {stamp}"))
 }
 
-/// Removes `/`, control characters and leading dots and spaces from a folder name.
+/// Longest folder name Kestic suggests, in bytes: file systems allow 255, and « (n)» may be
+/// appended.
+const MAX_NAME_BYTES: usize = 240;
+
+/// Removes `/`, control characters and leading dots and spaces from a folder name and cuts it
+/// to [`MAX_NAME_BYTES`].
 pub fn sanitize_folder_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .filter(|c| *c != '/' && !c.is_control())
         .collect();
-    cleaned
+    let mut out = cleaned
         .trim_start_matches(|c: char| c == '.' || c.is_whitespace())
         .trim_end()
-        .to_string()
+        .to_string();
+    if out.len() > MAX_NAME_BYTES {
+        let mut end = MAX_NAME_BYTES;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+    }
+    out
 }
 
 /// `parent/name`, or with « (2)», « (3)», … when a folder of that name already exists.
@@ -270,6 +289,16 @@ mod tests {
     fn folder_names_drop_slashes_control_characters_and_leading_dots() {
         assert_eq!(sanitize_folder_name("..a/b\nc "), "abc");
         assert_eq!(sanitize_folder_name(" .x"), "x");
+    }
+
+    #[test]
+    fn long_folder_names_keep_the_time_and_fit_the_file_system() {
+        let name = new_folder_name(
+            &"ö".repeat(200),
+            time::macros::datetime!(2026-11-15 12:00 UTC),
+        );
+        assert!(name.len() <= MAX_NAME_BYTES, "{} bytes", name.len());
+        assert!(name.ends_with(" 2026-11-15 12-00"), "{name}");
     }
 
     #[test]

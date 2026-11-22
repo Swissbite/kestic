@@ -1640,3 +1640,95 @@ fn m4_s05_name_restic_cannot_match_is_refused() {
         },
     );
 }
+
+/// A restore to the original location that waits for maintenance longer than ten minutes still
+/// starts after it: the age of its preview counted when it was accepted.
+#[test]
+fn m4_s05_waiting_restore_keeps_its_preview() {
+    run_isolated_test(
+        "m4_s05_waiting_restore_keeps_its_preview",
+        "KESTIC_M4_S05_WAIT_LONG_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            let variant = common::m3::latest_variant();
+            let fx = scheduled_fixture(root, &variant, "M4RW");
+            fs::write(fx.src.join("a.txt"), "local").expect("change a.txt");
+            fx.rig.wrapper.hold("prune");
+            fx.rig.clock.set(SUNDAY_PRUNE);
+            fx.rig
+                .wrapper
+                .wait_for('S', "prune", 1, std::time::Duration::from_secs(30));
+            let (preview_id, _) =
+                fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    fx.original(),
+                    RestoreOverwrite::Always,
+                    Some(&preview_id),
+                )
+                .expect("StartRestore");
+            fx.rig.clock.advance(std::time::Duration::from_mins(11));
+            fx.rig.wrapper.release("prune");
+            let detail = fx.wait_run(&run_id);
+            assert_eq!(
+                detail.run.status,
+                RunStatus::Ok,
+                "{:?}",
+                detail.run.summary_message
+            );
+            assert_eq!(
+                fs::read_to_string(fx.src.join("a.txt")).expect("a.txt"),
+                "hello",
+                "restored after the maintenance"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-05-12 (d) without side effects: a restore of a snapshot of `b1` shows in b1's history,
+/// but a failed restore never becomes b1's last run nor gives b1 an error.
+#[test]
+fn m4_s05_failed_restore_leaves_the_backup_status_alone() {
+    run_isolated_test(
+        "m4_s05_failed_restore_leaves_the_backup_status_alone",
+        "KESTIC_M4_S05_BACKUP_STATUS_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RS", small_tree, |_| {});
+            let client = &fx.rig.daemon.client;
+            let backup_run = client
+                .start_backup(fx.backup.id.as_str())
+                .expect("StartBackup");
+            assert_eq!(fx.wait_run(&backup_run).run.status, RunStatus::Ok);
+            let (preview_id, p) = fx.preview(&["a.txt"], None, RestoreOverwrite::Never);
+            fx.rig.wrapper.fail("restore", 1, "Fatal: boom");
+            let restore_run = fx
+                .start_restore(
+                    &["a.txt"],
+                    p.target.target.clone(),
+                    RestoreOverwrite::Never,
+                    Some(&preview_id),
+                )
+                .expect("StartRestore");
+            let restore = fx.wait_run(&restore_run);
+            assert_eq!(restore.run.status, RunStatus::Error);
+            assert_eq!(
+                restore.run.backup_id(),
+                Some(&fx.backup.id),
+                "the restore belongs to b1"
+            );
+            let state = client.get_state().expect("GetState");
+            let summary = common::m3::backup_summary(&state, &fx.backup.id);
+            assert_eq!(
+                summary.last_run.as_ref().map(|r| r.id.as_str().to_string()),
+                Some(backup_run),
+                "the last run of the backup stays its backup run"
+            );
+            assert!(!summary.has_error, "a failed restore is no backup error");
+            assert_eq!(summary.error_kind, None, "no error kind from the restore");
+            fx.rig.daemon.stop();
+        },
+    );
+}

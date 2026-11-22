@@ -284,14 +284,14 @@ impl DaemonCore {
             .runs_cache
             .iter()
             .find(|r| {
-                r.backup_id() == Some(&backup.id)
+                r.is_backup_run_of(&backup.id)
                     && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
             })
             .cloned()
             .or_else(|| {
                 self.runs_cache
                     .iter()
-                    .find(|r| r.backup_id() == Some(&backup.id))
+                    .find(|r| r.is_backup_run_of(&backup.id))
                     .cloned()
             });
 
@@ -643,7 +643,12 @@ impl DaemonCore {
         paused_backup_window: Option<(OffsetDateTime, Option<OffsetDateTime>)>,
         now: OffsetDateTime,
     ) -> OverallStatusDto {
-        let active_run_progress = self.active_runs.values().next().map(|e| e.progress.clone());
+        // A backup or maintenance comes first: «Cancel Running Backup» in the tray acts on it.
+        let active_run_progress = self
+            .active_runs
+            .values()
+            .min_by_key(|e| e.is_restore())
+            .map(|e| e.progress.clone());
 
         if let Some(sim) = self.simulated_status {
             return self.compute_simulated_overall_status(sim, active_run_progress);

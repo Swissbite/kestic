@@ -88,9 +88,11 @@ fn create_new_folder(target: &RestoreTarget, check: &TargetCheck) -> Result<(), 
     if !(check.missing && matches!(target, RestoreTarget::NewFolder { .. })) {
         return Ok(());
     }
+    // Only the folder holding the new folder (`~/Restored`) and the new folder itself are
+    // created; a deeper missing path is refused.
     let dir = Path::new(target.dir());
-    if let Some(parent) = dir.parent() {
-        std::fs::create_dir_all(parent)
+    if let Some(parent) = dir.parent().filter(|p| !p.exists()) {
+        std::fs::create_dir(parent)
             .map_err(|e| invalid(format!("cannot create {}: {e}", parent.display())))?;
     }
     match std::fs::create_dir(dir) {
@@ -101,20 +103,31 @@ fn create_new_folder(target: &RestoreTarget, check: &TargetCheck) -> Result<(), 
     }
 }
 
-/// The facts of preview `preview_id` when it is done, at most ten minutes old (by the clock)
-/// and made for exactly these parameters; `None` otherwise.
+/// How old a preview may be.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PreviewAge {
+    /// At most ten minutes since its end (by the clock), as `StartRestore` requires.
+    Fresh,
+    /// Any age: a restore that waited for maintenance was accepted with a fresh preview.
+    Any,
+}
+
+/// The facts of preview `preview_id` when it is done, young enough for `age` and made for
+/// exactly these parameters; `None` otherwise.
 fn matching_preview(
     core: &DaemonCore,
     preview_id: Option<&str>,
     job: &RestoreJob,
+    age: PreviewAge,
 ) -> Option<PreviewFacts> {
     let query = core.snapshot_queries.peek(preview_id?)?;
     if query.state != QueryState::Done {
         return None;
     }
-    let fresh = query
-        .finished_at
-        .is_some_and(|t| core.clock.now_utc() - t <= PREVIEW_MAX_AGE);
+    let fresh = age == PreviewAge::Any
+        || query
+            .finished_at
+            .is_some_and(|t| core.clock.now_utc() - t <= PREVIEW_MAX_AGE);
     let Some(QueryResult::RestorePreview(preview)) = &query.result else {
         return None;
     };
@@ -172,6 +185,7 @@ fn prepare_job(
         &shared.lock_unpoisoned(),
         request.preview_id.as_deref(),
         &job,
+        PreviewAge::Fresh,
     );
     // Where a preview is required, only one that ran the dry runs counts: a preview of a folder
     // that was empty then lists nothing that would be overwritten now.
@@ -318,13 +332,19 @@ impl DaemonCore {
     }
 }
 
-/// Checks a restore that waited again right before it starts: the target may have changed and
-/// its preview may have grown old meanwhile.
-fn recheck_waiting(core: &DaemonCore, job: &mut RestoreJob) -> Result<(), String> {
+/// Checks a restore that waited again right before it starts: the target may have changed
+/// meanwhile, so where it now needs a preview, one with dry runs must have been given. The
+/// preview's age counted when the restore was accepted.
+fn recheck_waiting(shared: &Arc<Mutex<DaemonCore>>, job: &mut RestoreJob) -> Result<(), String> {
     job.check = check_target(&job.target, job.ctx.repository());
     refuse_unusable(&job.check).map_err(|e| e.to_string())?;
     if preview_required(&job.target, &job.check) {
-        let facts = matching_preview(core, job.preview_id.as_deref(), job);
+        let facts = matching_preview(
+            &shared.lock_unpoisoned(),
+            job.preview_id.as_deref(),
+            job,
+            PreviewAge::Any,
+        );
         if !facts.as_ref().is_some_and(|f| f.dry_run) {
             return Err(tr(&ServiceErrorCode::PreviewRequired.message()));
         }
@@ -347,7 +367,7 @@ pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &
         start
     };
     for mut pending in waiting {
-        if let Err(detail) = recheck_waiting(&shared.lock_unpoisoned(), &mut pending.job) {
+        if let Err(detail) = recheck_waiting(shared, &mut pending.job) {
             let mut guard = shared.lock_unpoisoned();
             let clock = Arc::clone(&guard.clock);
             pending.run.finish(clock.as_ref(), RunStatus::Error, None);
@@ -363,6 +383,11 @@ pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &
         let deps = shared.lock_unpoisoned().restic_deps();
         let resolved = probe_for_run(&deps.provider, deps.secret_store.as_ref()).1;
         let mut guard = shared.lock_unpoisoned();
+        // Maintenance or a backup's `forget` may have claimed the destination meanwhile.
+        if guard.has_exclusive_run(dest_id) {
+            guard.pending_restores.push(pending);
+            continue;
+        }
         let supervision = guard.supervision_config();
         let mut run = pending.run;
         let started = resolved.map_err(|e| e.to_string()).and_then(|resolved| {
@@ -382,7 +407,11 @@ pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &
             run.finish(clock.as_ref(), RunStatus::Error, None);
             run.summary_message = Some(detail);
             let _ = guard.upsert_run_cached(&run, &[]);
+            let conn = guard.conn.clone();
             guard.push_state();
+            if let Some(conn) = conn {
+                emit_run_updated(&conn, &run);
+            }
         }
     }
 }
@@ -420,6 +449,8 @@ impl RestoreWorker {
             entry.run = self.run.clone();
             entry.backup_name.clone_from(&name);
             entry.progress.backup_name = name;
+            // Only the progress names the backup: the run must not count as that backup running.
+            entry.progress.backup_id = self.run.backup_id().map(|id| id.as_str().to_string());
         }
         drop(guard);
         if let Some(conn) = &self.conn {
