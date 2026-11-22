@@ -624,6 +624,7 @@ pub enum CapturedKesticSignal {
     },
     ShowWindowRequested,
     ShowAboutRequested,
+    ShowRestoreRequested,
     QuitConfirmationRequested {
         has_running_run: bool,
         running_backup_name: String,
@@ -721,6 +722,7 @@ impl KesticSignalCollector {
                         }
                         "ShowWindowRequested" => Some(CapturedKesticSignal::ShowWindowRequested),
                         "ShowAboutRequested" => Some(CapturedKesticSignal::ShowAboutRequested),
+                        "ShowRestoreRequested" => Some(CapturedKesticSignal::ShowRestoreRequested),
                         "QuitConfirmationRequested" => {
                             msg.body().deserialize::<(bool, String)>().ok().map(
                                 |(has_running_run, running_backup_name)| {

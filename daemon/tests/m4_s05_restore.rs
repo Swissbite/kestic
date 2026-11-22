@@ -407,7 +407,9 @@ fn ac_m4_05_14_restore_without_fitting_fresh_preview_is_refused() {
                 fx.rig.wrapper.release("restore");
                 let (fresh_id, _) =
                     fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
-                fx.rig.clock.advance(std::time::Duration::from_secs(11 * 60));
+                fx.rig
+                    .clock
+                    .advance(std::time::Duration::from_secs(11 * 60));
                 refused(Some(&fresh_id), "older than 10 minutes");
                 let (ok_id, _) =
                     fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
@@ -833,7 +835,12 @@ fn ac_m4_05_18_special_names_restore_exactly_the_chosen_file() {
                 }
                 let target = fx.new_dir("special-dir");
                 let run_id = fx
-                    .start_restore(&["[dir]*"], new_folder(&target), RestoreOverwrite::Never, None)
+                    .start_restore(
+                        &["[dir]*"],
+                        new_folder(&target),
+                        RestoreOverwrite::Never,
+                        None,
+                    )
                     .expect("StartRestore");
                 let args = restore_args(fx, &run_id);
                 assert!(
@@ -875,7 +882,12 @@ fn ac_m4_05_19_selection_matching_nothing_ends_with_warning() {
                     )
                     .expect("StartRestore");
                 let detail = fx.wait_run(&run_id);
-                assert_eq!(detail.run.status, RunStatus::Warning, "(a) {}: {detail:?}", v.label);
+                assert_eq!(
+                    detail.run.status,
+                    RunStatus::Warning,
+                    "(a) {}: {detail:?}",
+                    v.label
+                );
                 assert_eq!(
                     detail.run.summary_message.as_deref(),
                     Some("Nothing restored"),
@@ -901,8 +913,14 @@ fn ac_m4_05_21_symlinked_target_folder_is_allowed_and_resolved() {
                 fs::create_dir_all(&real).expect("mkdir real");
                 let link = fx.new_dir("link");
                 std::os::unix::fs::symlink(&real, &link).expect("symlink");
-                let (_, p) = fx.preview(&["a.txt"], Some(new_folder(&link)), RestoreOverwrite::Never);
-                assert_eq!(p.target.check.code, RestoreTargetCode::Ok, "(a) {}", v.label);
+                let (_, p) =
+                    fx.preview(&["a.txt"], Some(new_folder(&link)), RestoreOverwrite::Never);
+                assert_eq!(
+                    p.target.check.code,
+                    RestoreTargetCode::Ok,
+                    "(a) {}",
+                    v.label
+                );
                 assert_eq!(
                     Path::new(&p.target.check.detail),
                     fs::canonicalize(&real).expect("canonical"),
@@ -928,7 +946,11 @@ fn ac_m4_05_22_restore_runs_with_restic_0_18_0() {
                 .expect("restic 0.18.0 variant");
             let fx = RestoreFixture::start(root, &variant, "M4R22", small_tree, |_| {});
             let state = fx.rig.daemon.client.get_state().expect("GetState");
-            assert!(state.blocking.is_none(), "(a) no block: {:?}", state.blocking);
+            assert!(
+                state.blocking.is_none(),
+                "(a) no block: {:?}",
+                state.blocking
+            );
             assert!(state.restic_status.valid, "(a) restic usable");
             assert_eq!(
                 state.restic_status.version.as_deref(),
@@ -937,7 +959,12 @@ fn ac_m4_05_22_restore_runs_with_restic_0_18_0() {
             );
             let target = fx.new_dir("old-restic");
             let run_id = fx
-                .start_restore(&["a.txt"], new_folder(&target), RestoreOverwrite::Never, None)
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&target),
+                    RestoreOverwrite::Never,
+                    None,
+                )
                 .expect("StartRestore");
             let detail = fx.wait_run(&run_id);
             assert_eq!(detail.run.status, RunStatus::Ok, "(a) {detail:?}");
@@ -1003,12 +1030,274 @@ fn ac_m4_05_23_large_preview_filters_page_by_page_with_exact_counts() {
                 assert_eq!(seen.len(), 300, "(a) {}: all 300 reachable", v.label);
                 assert_eq!(p.entries.matched, 300, "(b) {}", v.label);
                 assert_eq!(
-                    (p.new_files, p.overwritten_files, p.kept_files, p.identical_files),
+                    (
+                        p.new_files,
+                        p.overwritten_files,
+                        p.kept_files,
+                        p.identical_files
+                    ),
                     (600, 300, 0, 100),
                     "(c) {}: exact counts",
                     v.label
                 );
                 assert_eq!(p.entries.total, 1000, "(c) {}: total", v.label);
+            });
+        },
+    );
+}
+
+/// AC-M4-05-9: with a backup running on the destination, a restore (a) runs right away beside it
+/// (non-exclusive lock) and (b) is a run of the kind `Restore`.
+#[test]
+fn ac_m4_05_9_restore_runs_beside_a_running_backup() {
+    run_isolated_test(
+        "ac_m4_05_9_restore_runs_beside_a_running_backup",
+        "KESTIC_AC_M4_05_9_INNER",
+        |root| {
+            for_each_variant(root, "M4R9", small_tree, |fx, v| {
+                let client = &fx.rig.daemon.client;
+                fx.rig.wrapper.hold("backup");
+                client
+                    .start_backup(fx.backup.id.as_str())
+                    .expect("StartBackup");
+                fx.rig
+                    .wrapper
+                    .wait_for('S', "backup", 1, std::time::Duration::from_secs(30));
+                let run_id = fx
+                    .start_restore(
+                        &["a.txt"],
+                        new_folder(&fx.new_dir("beside-backup")),
+                        RestoreOverwrite::Never,
+                        None,
+                    )
+                    .expect("StartRestore");
+                let detail = fx.wait_run(&run_id);
+                assert_eq!(
+                    detail.run.status,
+                    RunStatus::Ok,
+                    "(a) {}: {detail:?}",
+                    v.label
+                );
+                assert!(
+                    fx.rig.wrapper.of('E', "backup").is_empty(),
+                    "(a) {}: the backup still runs while the restore ended",
+                    v.label
+                );
+                assert!(
+                    matches!(detail.run.kind, RunKind::Restore { .. }),
+                    "(b) {}: {:?}",
+                    v.label,
+                    detail.run.kind
+                );
+                fx.rig.wrapper.release("backup");
+            });
+        },
+    );
+}
+
+/// Sunday 2026-11-22 12:00:05 Europe/Zurich: the weekly `prune` of the destination is due.
+const SUNDAY_PRUNE: time::OffsetDateTime = time::macros::datetime!(2026-11-22 11:00:05 UTC);
+
+/// The fixture with the scheduler on (maintenance runs on its schedule) and the desktop fakes.
+fn scheduled_fixture(root: &Path, variant: &ResticVariant, base: &str) -> RestoreFixture {
+    let fx = RestoreFixture::start(root, variant, base, small_tree, |o| {
+        o.enable_scheduler = true
+    });
+    // One scheduler tick records the maintenance baseline of the new destination.
+    std::thread::sleep(std::time::Duration::from_millis(1300));
+    fx
+}
+
+/// Position of the first wrapper log entry of `kind` and `sub`.
+fn log_position(fx: &RestoreFixture, kind: char, sub: &str) -> Option<usize> {
+    fx.rig
+        .wrapper
+        .entries()
+        .iter()
+        .position(|e| e.kind == kind && e.sub == sub)
+}
+
+/// AC-M4-05-10: with maintenance (`prune`) running on the destination, a restore (a) is
+/// `ausstehend` with the reason «queue» and (b) starts only after the maintenance.
+#[test]
+fn ac_m4_05_10_restore_waits_for_running_maintenance() {
+    run_isolated_test(
+        "ac_m4_05_10_restore_waits_for_running_maintenance",
+        "KESTIC_AC_M4_05_10_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            for variant in restic_variants() {
+                let fx = scheduled_fixture(root, &variant, "M4R10");
+                let v = &variant;
+                fx.rig.wrapper.hold("prune");
+                fx.rig.clock.set(SUNDAY_PRUNE);
+                fx.rig
+                    .wrapper
+                    .wait_for('S', "prune", 1, std::time::Duration::from_secs(30));
+                let run_id = fx
+                    .start_restore(
+                        &["a.txt"],
+                        new_folder(&fx.new_dir("after-maintenance")),
+                        RestoreOverwrite::Never,
+                        None,
+                    )
+                    .expect("StartRestore");
+                common::m3::settle();
+                let waiting = fx
+                    .rig
+                    .daemon
+                    .client
+                    .get_run_detail(&run_id)
+                    .expect("detail");
+                assert_eq!(waiting.run.status, RunStatus::Pending, "(a) {}", v.label);
+                assert_eq!(
+                    waiting.run.pending_reason,
+                    Some(kestic_core::model::PendingReason::Queued),
+                    "(a) {}",
+                    v.label
+                );
+                assert!(
+                    fx.restore_calls().is_empty(),
+                    "(b) {}: no restore while maintenance runs",
+                    v.label
+                );
+                fx.rig.wrapper.release("prune");
+                let detail = fx.wait_run(&run_id);
+                assert_eq!(
+                    detail.run.status,
+                    RunStatus::Ok,
+                    "(b) {}: {detail:?}",
+                    v.label
+                );
+                let prune_end = log_position(&fx, 'E', "prune").expect("prune ended");
+                let restore_start = log_position(&fx, 'S', "restore").expect("restore started");
+                assert!(
+                    restore_start > prune_end,
+                    "(b) {}: restore after maintenance",
+                    v.label
+                );
+                fx.rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-20: with a restore running on the destination, due maintenance (a) is `ausstehend`
+/// with the reason «queue», (b) starts only after the restore and (c) no restic call ends with
+/// exit 11.
+#[test]
+fn ac_m4_05_20_maintenance_waits_for_running_restore() {
+    run_isolated_test(
+        "ac_m4_05_20_maintenance_waits_for_running_restore",
+        "KESTIC_AC_M4_05_20_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            for variant in restic_variants() {
+                let fx = scheduled_fixture(root, &variant, "M4R20");
+                let v = &variant;
+                fx.rig.wrapper.hold("restore");
+                let run_id = fx
+                    .start_restore(
+                        &["a.txt"],
+                        new_folder(&fx.new_dir("before-maintenance")),
+                        RestoreOverwrite::Never,
+                        None,
+                    )
+                    .expect("StartRestore");
+                fx.rig
+                    .wrapper
+                    .wait_for('S', "restore", 1, std::time::Duration::from_secs(30));
+                fx.rig.clock.set(SUNDAY_PRUNE);
+                let state = common::m3::wait_for_state(
+                    &fx.rig.daemon.client,
+                    std::time::Duration::from_secs(15),
+                    "maintenance waits",
+                    |s| {
+                        common::m3::dest_summary(s, &fx.dest.id).maintenance_pending_reason
+                            == Some(kestic_i18n::codes::PendingReasonCode::Queue)
+                    },
+                );
+                assert!(
+                    !common::m3::dest_summary(&state, &fx.dest.id).maintenance_running,
+                    "(a) {}: maintenance waits",
+                    v.label
+                );
+                common::m3::settle();
+                assert!(
+                    fx.rig.wrapper.of('S', "prune").is_empty(),
+                    "(b) {}: no prune while the restore runs",
+                    v.label
+                );
+                fx.rig.wrapper.release("restore");
+                assert_eq!(
+                    fx.wait_run(&run_id).run.status,
+                    RunStatus::Ok,
+                    "{}",
+                    v.label
+                );
+                fx.rig
+                    .wrapper
+                    .wait_for('S', "prune", 1, std::time::Duration::from_secs(30));
+                let restore_end = log_position(&fx, 'E', "restore").expect("restore ended");
+                let prune_start = log_position(&fx, 'S', "prune").expect("prune started");
+                assert!(
+                    prune_start > restore_end,
+                    "(b) {}: prune after restore",
+                    v.label
+                );
+                let exit_11 = fx
+                    .rig
+                    .wrapper
+                    .entries()
+                    .into_iter()
+                    .filter(|e| e.kind == 'E' && e.detail.trim() == "11")
+                    .count();
+                assert_eq!(exit_11, 0, "(c) {}: no exit 11", v.label);
+                fx.rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-13 (integration part, temp home): the preview suggests
+/// `~/Restored/<backup> <snapshot time>` and (e) the daemon creates `~/Restored` only with
+/// «Restore Now» (`StartRestore`).
+#[test]
+fn ac_m4_05_13_restored_folder_is_created_only_by_start_restore() {
+    run_isolated_test(
+        "ac_m4_05_13_restored_folder_is_created_only_by_start_restore",
+        "KESTIC_AC_M4_05_13_INNER",
+        |root| {
+            for_each_variant(root, "M4R13", small_tree, |fx, v| {
+                let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+                let parent = home.join("Restored");
+                let (_, p) = fx.preview(&["a.txt"], None, RestoreOverwrite::Never);
+                assert_eq!(
+                    Path::new(&p.suggestion.new_folder),
+                    parent.join("Home 2026-11-15 13-00"),
+                    "(a) {}: name from backup and local snapshot time",
+                    v.label
+                );
+                assert!(
+                    !parent.exists(),
+                    "(e) {}: not created by the preview",
+                    v.label
+                );
+                let run_id = fx
+                    .start_restore(
+                        &["a.txt"],
+                        p.target.target.clone(),
+                        RestoreOverwrite::Never,
+                        None,
+                    )
+                    .expect("StartRestore");
+                assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Ok);
+                assert!(
+                    Path::new(&p.suggestion.new_folder).join("a.txt").is_file(),
+                    "(e) {}: created by StartRestore",
+                    v.label
+                );
+                fs::remove_dir_all(&parent).expect("clean up for the next variant");
             });
         },
     );
