@@ -59,13 +59,14 @@ fn snapshot_text(hit: &FindHitDto) -> String {
         .map_or_else(|_| hit.snapshot_time.clone(), format_datetime_display)
 }
 
-/// Second line of a hit: the snapshot, and the size of a file.
+/// Second line of a hit: the snapshot, and the size of a file (restic reports none for an empty
+/// one).
 fn subtitle(hit: &FindHitDto, snapshot: &str) -> String {
-    match hit.size {
-        Some(bytes) if hit.entry_type == "file" => {
-            GuiText::TwoParts.with_args(&[snapshot, &format_bytes(bytes)])
-        }
-        _ => snapshot.to_string(),
+    if hit.entry_type == "file" {
+        let size = format_bytes(hit.size.unwrap_or(0));
+        GuiText::TwoParts.with_args(&[snapshot, &size])
+    } else {
+        snapshot.to_string()
     }
 }
 
@@ -297,6 +298,8 @@ mod tests {
         assert_eq!(file.folder, "/home/u/Archiv");
         assert_eq!(file.subtitle, format!("{} · 48 KB", file.snapshot_text));
         assert!(!file.is_dir);
+        let empty = row_for(&hit("file", None));
+        assert_eq!(empty.subtitle, format!("{} · 0 B", empty.snapshot_text));
         let dir = row_for(&hit("dir", None));
         assert_eq!(dir.subtitle, dir.snapshot_text);
         assert!(dir.is_dir);

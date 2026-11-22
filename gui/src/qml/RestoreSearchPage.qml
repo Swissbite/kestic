@@ -198,15 +198,34 @@ Kirigami.ScrollablePage {
             text: snapshotSearchModel.too_large_text
         }
 
-        Kirigami.PlaceholderMessage {
+        // Like a PlaceholderMessage, but the search text in it is shown literally, never as
+        // rich text.
+        ColumnLayout {
             objectName: "searchNoHitsMessage"
+            readonly property string text: snapshotSearchModel.total === 0
+                ? snapshotSearchModel.no_hits_text : Texts.label("no_entries_match_filter")
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.largeSpacing * 4
             visible: snapshotSearchModel.state === "done" && !snapshotSearchModel.too_large
                 && searchListView.count === 0
-            icon.name: "edit-find"
-            text: snapshotSearchModel.total === 0 ? snapshotSearchModel.no_hits_text
-                : Texts.label("no_entries_match_filter")
+            spacing: Kirigami.Units.largeSpacing
+
+            Kirigami.Icon {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: Kirigami.Units.iconSizes.huge
+                Layout.preferredHeight: Kirigami.Units.iconSizes.huge
+                source: "edit-find"
+                opacity: 0.5
+            }
+            Kirigami.Heading {
+                Layout.fillWidth: true
+                level: 2
+                text: parent.text
+                textFormat: Text.PlainText
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                opacity: 0.5
+            }
         }
 
         delegate: Controls.ItemDelegate {
