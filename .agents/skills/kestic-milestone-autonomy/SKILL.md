@@ -47,7 +47,7 @@ the kickoff; changing them is level 3.
 
 Post the question on the story's issue (options, recommendation, what continues), add the
 label `needs-maintainer` and end the turn. The maintainer answers in a comment and removes the
-label; the answer is binding: implementing it is level 1, only a deviation from it is level 3.
+label; only the maintainer removes it and closes the halt and closing issues. The answer is binding: implementing it is level 1, only a deviation from it is level 3.
 Restoring with `--target` into a fresh temp directory in a test is level 1.
 
 **Level 2 – decide, record, cheap to undo.** Only if no level-3 trigger applies, no AC text,
