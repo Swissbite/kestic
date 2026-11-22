@@ -35,7 +35,7 @@ Nach dem MVP: [milestones/nach-mvp.md](milestones/nach-mvp.md) (Phase 2, Luxus, 
 ## Definition of Done
 
 - **Story:** alle ACs der Story als automatisierte Tests grün in `just verify` (Test-Ebenen und Isolation: [test-strategy.md](test-strategy.md)); ACs mit «Test: manuell» in [manual-acceptance.md](manual-acceptance.md) abgehakt.
-- **Meilenstein:** alle Stories erledigt, Exit-Kriterien der Meilenstein-Datei erfüllt, manuelle Abnahme des Meilensteins in [manual-acceptance.md](manual-acceptance.md) vollständig.
+- **Meilenstein:** alle Stories erledigt, Exit-Kriterien der Meilenstein-Datei erfüllt, manuelle Abnahme des Meilensteins in [manual-acceptance.md](manual-acceptance.md) vollständig; ab M4 hebt der Abschluss-PR nach `main` die Version an und bringt die Highlights `docs/releases/<tag>.md` ([architecture.md](architecture.md) §Release).
 
 ## Format der Akzeptanzkriterien
 

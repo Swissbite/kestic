@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 # Publishes a GitHub release for a pushed tag v<major>.<minor>.<patch>; every 0.x release is a
-# pre-release. Nothing in the release is written by hand:
+# pre-release. Only the highlights file docs/releases/<tag>.md is written by hand:
 #   prepare      checks tag, Cargo.toml version and docs/releases/<tag>.md, writes highlights and
 #                the closed story issues of the milestone (.github/scripts/release-notes.sh)
 #   ci-image     the CI image of verify.yml
@@ -14,9 +14,9 @@
 #                .github/release.yml), shows notes and assets in the job summary and creates the
 #                release
 #
-# Dry run: a manual run (workflow_dispatch) on any branch, and pull requests that add or change a
-# highlights file, do everything except the attestation and the release, and show the result in
-# the job summary of `publish`. Only a pushed tag publishes.
+# Dry run: a manual run (workflow_dispatch) on any branch, and pull requests from this repository
+# that add or change a highlights file, do everything except the attestation and the release, and
+# show the result in the job summary of `publish`. Only a pushed tag publishes.
 
 name: Release
 
@@ -42,12 +42,15 @@ concurrency:
 
 jobs:
   prepare:
+    # Pull requests from forks get a read-only token, which neither the CI image nor the
+    # generated notes accept.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
     outputs:
-      tag: ${{ steps.tag.outputs.tag }}
+      tag: ${{ steps.notes.outputs.tag }}
       commit: ${{ steps.tag.outputs.commit }}
       dry-run: ${{ steps.tag.outputs.dry-run }}
       version: ${{ steps.notes.outputs.version }}
@@ -67,7 +70,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
-          INPUT_TAG: ${{ inputs.tag }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
@@ -83,25 +85,20 @@ jobs:
             dry_run=true
             # A pull request builds its merge commit; Verify run and notes use the head commit.
             if [ -n "$PR_HEAD_SHA" ]; then commit="$PR_HEAD_SHA"; fi
-            if [ -n "$INPUT_TAG" ]; then
-              tag="$INPUT_TAG"
-            else
-              version="$(awk '/^\[/ { s = ($0 == "[workspace.package]") } s && /^version *= *"/ { sub(/^version *= *"/, ""); sub(/".*/, ""); print; exit }' Cargo.toml)"
-              tag="v$version"
-            fi
           fi
           {
-            echo "tag=$tag"
             echo "commit=$commit"
             echo "dry-run=$dry_run"
           } >> "$GITHUB_OUTPUT"
-          echo "Tag $tag, commit $commit, dry run: $dry_run"
+          echo "Commit $commit, dry run: $dry_run"
 
       - name: Check version and write highlights and stories
         id: notes
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.tag.outputs.tag }}
+          # Empty in a dry run without input: the script takes the version in Cargo.toml. The script
+          # checks the tag before it writes any output.
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           COMMIT: ${{ steps.tag.outputs.commit }}
         run: .github/scripts/release-notes.sh "$TAG" "$COMMIT" "$RUNNER_TEMP/notes" >> "$GITHUB_OUTPUT"
 
@@ -109,12 +106,13 @@ jobs:
         with:
           name: release-notes-head
           path: ${{ runner.temp }}/notes/notes-head.md
-          retention-days: 7
           overwrite: true
           if-no-files-found: error
 
+  # After prepare, so a wrong tag never builds or pushes an image.
   ci-image:
     name: CI image
+    needs: prepare
     uses: ./.github/workflows/ci-image.yml
     permissions:
       contents: read
@@ -145,7 +143,6 @@ jobs:
         with:
           name: release-deb
           path: target/debian/*.deb
-          retention-days: 7
           overwrite: true
           if-no-files-found: error
 
@@ -174,8 +171,9 @@ jobs:
             local filter='.'
             if [ "$DRY_RUN" != true ]; then filter='select(.event == "push" and .headBranch == "main")'; fi
             gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --commit "$COMMIT" --limit 50 \
-              --json databaseId,event,headBranch,createdAt \
-              --jq "[.[] | $filter] | sort_by(.createdAt) | last | .databaseId // empty"
+              --json databaseId,event,headBranch,createdAt,conclusion \
+              --jq "[.[] | select(.conclusion != \"cancelled\" and .conclusion != \"skipped\") | $filter]
+                    | sort_by(.createdAt) | last | .databaseId // empty"
           }
           # Verify starts with the same push or pull request event; give it a moment to appear.
           attempts=10
@@ -200,10 +198,17 @@ jobs:
             echo "::warning::No Verify run for $COMMIT; the dry run takes the screenshots of Verify run $run_id on main"
           fi
           echo "Verify run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
-          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --interval 60 --exit-status > /dev/null || {
-            echo "::error::Verify run $run_id did not succeed"
+          while :; do
+            state="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --json status,conclusion --jq '"\(.status) \(.conclusion)"')"
+            read -r status conclusion <<< "$state"
+            if [ "$status" = completed ]; then break; fi
+            sleep 60
+          done
+          if [ "$conclusion" != success ]; then
+            echo "::error::Verify run $run_id ended with $conclusion"
             exit 1
-          }
+          fi
           echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
 
       - if: steps.run.outputs.run-id != ''
@@ -231,7 +236,6 @@ jobs:
         with:
           name: release-screenshots
           path: ${{ runner.temp }}/bundle/*.zip
-          retention-days: 7
           compression-level: 0
           overwrite: true
           if-no-files-found: error
@@ -288,7 +292,6 @@ jobs:
         with:
           name: release-assets
           path: assets/*
-          retention-days: 7
           compression-level: 0
           overwrite: true
           if-no-files-found: error
@@ -370,21 +373,25 @@ jobs:
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
-          if draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)"; then
-            if [ "$draft" != true ]; then
+          # Drafts are only visible through the list endpoint, so look the tag up there.
+          draft="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | .draft")"
+          case "$draft" in
+            "") ;;
+            true) gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes ;;
+            *)
               echo "::error::Release $TAG already exists"
               exit 1
-            fi
-            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
-          fi
+              ;;
+          esac
           # A draft or pre-release cannot be the latest release; a final release becomes it on publishing.
-          create_flags=()
-          publish_flags=(--latest)
           if [ "$PRERELEASE" = true ]; then
-            create_flags=(--prerelease)
-            publish_flags=()
+            gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+              --title "$TITLE" --notes-file notes/notes.md --prerelease
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          else
+            gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+              --title "$TITLE" --notes-file notes/notes.md
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           fi
-          gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-            --title "$TITLE" --notes-file notes/notes.md "${create_flags[@]}"
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false "${publish_flags[@]}"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
