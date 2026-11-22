@@ -9,7 +9,9 @@ use kestic_core::backend_credentials::{
     BackendCredentials, SECRET_KIND_S3_ACCESS_KEY, SECRET_KIND_S3_SECRET_KEY,
 };
 use kestic_core::clock::FakeClock;
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
+use kestic_core::destination::{
+    DestinationError, DestinationSetupMode, setup_destination, verify_and_update_stored_password,
+};
 use kestic_core::model::{Destination, DestinationKind};
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::{
@@ -232,6 +234,97 @@ fn ac_m5_02_2_runner_refuses_to_start_without_stored_s3_keys() {
     assert!(!dir.path().join("args.log").exists(), "restic started");
 }
 
+/// AC-M5-02-2 (c)/(d), FR-08: updating the stored repository password and setting up check the
+/// repository with restic only when both S3 keys are there. Without them restic would fall back
+/// to the user's credential files, since Kestic removes the inherited AWS variables; so restic
+/// does not start and the stored password stays.
+#[test]
+fn ac_m5_02_2_password_update_and_setup_refuse_without_s3_keys() {
+    let dir = TempDir::new().expect("tempdir");
+    let keys = keys();
+    let resolved = fake_restic(dir.path());
+    let store = InMemorySecretStore::new();
+    let dest = s3_destination(&http_endpoint());
+    let id = dest.id.as_str();
+    let old_password = strong_password();
+    store
+        .set_secret(
+            id,
+            SECRET_KIND_REPO,
+            &SecretValue::from_str_secret(&old_password),
+        )
+        .expect("store repository password");
+    store
+        .set_secret(
+            id,
+            SECRET_KIND_S3_ACCESS_KEY,
+            &SecretValue::from_str_secret(keys.access.as_str()),
+        )
+        .expect("store access key");
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    let helper = dir.path().join("kestic");
+
+    let update = verify_and_update_stored_password(
+        &dest,
+        &SecretValue::from_str_secret(strong_password()),
+        &store,
+        &resolved,
+        &helper,
+        &clock,
+    );
+    assert!(
+        matches!(
+            update,
+            Err(DestinationError::Runner(
+                ResticRunError::MissingBackendSecret {
+                    kind: SECRET_KIND_S3_SECRET_KEY,
+                    ..
+                }
+            ))
+        ),
+        "password update without the secret key is refused"
+    );
+    assert!(
+        !dir.path().join("args.log").exists(),
+        "password update started restic"
+    );
+    assert!(
+        store
+            .get_secret(id, SECRET_KIND_REPO)
+            .expect("read store")
+            .is_some_and(|v| v.as_str().expect("utf-8") == old_password),
+        "stored repository password unchanged"
+    );
+
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: &store,
+        clock: &clock,
+        cache_dir: None,
+    };
+    let setup = setup_destination(
+        &dest,
+        DestinationSetupMode::ConnectExisting,
+        &SecretValue::from_str_secret(strong_password()),
+        &BackendCredentials::none(),
+        &runtime,
+    );
+    assert!(
+        matches!(
+            setup,
+            Err(DestinationError::Runner(
+                ResticRunError::MissingBackendSecret { .. }
+            ))
+        ),
+        "setup without keys is refused"
+    );
+    assert!(
+        !dir.path().join("args.log").exists(),
+        "setup started restic"
+    );
+}
+
 /// AC-M5-02-2 (c)/(d), setup: connecting an S3 destination hands the entered keys to restic as
 /// environment variables only and saves them in the password store after success.
 #[test]
@@ -315,6 +408,10 @@ const FOREIGN_AWS: [&str; 22] = [
     "RESTIC_AWS_ASSUME_ROLE_STS_ENDPOINT",
 ];
 
+/// restic options of the caller's environment that conflict with Kestic's own password command
+/// and `-r`; restic would refuse to start with them.
+const FOREIGN_RESTIC_FILES: [&str; 2] = ["RESTIC_PASSWORD_FILE", "RESTIC_REPOSITORY_FILE"];
+
 /// The inherited values of [`FOREIGN_AWS`] in this (re-executed) process.
 fn foreign_values() -> Vec<(&'static str, String)> {
     FOREIGN_AWS
@@ -332,8 +429,9 @@ fn env_value(env: &str, name: &str) -> Option<String> {
 /// M5-S02, S3 environment (restic-integration.md §Credentials): variables named `AWS_*` or
 /// `RESTIC_AWS_*` inherited from the daemon's environment (among them
 /// `RESTIC_AWS_ASSUME_ROLE_ARN`) do not reach restic, neither in a run nor in the setup probe;
-/// other inherited variables do. The keys and the region are Kestic's own, and without a
-/// configured region restic gets none.
+/// other inherited variables do, except `RESTIC_PASSWORD_FILE` and `RESTIC_REPOSITORY_FILE`,
+/// which would make restic refuse Kestic's password command and `-r`. The keys and the region
+/// are Kestic's own, and without a configured region restic gets none.
 #[test]
 fn m5_02_inherited_aws_variables_do_not_reach_restic() {
     const INNER: &str = "KESTIC_M5_02_AWS_ENV_INNER";
@@ -346,6 +444,9 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
         .env(INNER, "1");
         for name in FOREIGN_AWS {
             cmd.env(name, s3_key(24));
+        }
+        for name in FOREIGN_RESTIC_FILES {
+            cmd.env(name, "/nonexistent/kestic-foreign");
         }
         let out = cmd
             .output()
@@ -409,6 +510,9 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
         Some("1"),
         "run: other inherited variables stay"
     );
+    for name in FOREIGN_RESTIC_FILES {
+        assert_eq!(env_value(&run_env, name), None, "run: inherited {name}");
+    }
     assert!(
         env_value(&run_env, "AWS_ACCESS_KEY_ID").as_deref() == Some(keys.access.as_str()),
         "run: Kestic's access key"
@@ -455,6 +559,9 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
             !probe_env.contains(value),
             "probe: inherited {name} reached restic"
         );
+    }
+    for name in FOREIGN_RESTIC_FILES {
+        assert_eq!(env_value(&probe_env, name), None, "probe: inherited {name}");
     }
     assert_eq!(
         env_value(&probe_env, "AWS_DEFAULT_REGION"),

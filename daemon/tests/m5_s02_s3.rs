@@ -205,11 +205,11 @@ fn ac_m5_02_2_keys_only_in_secret_service_and_never_in_restic_arguments() {
                 // (a)
                 assert!(
                     config.contains(&format!("endpoint = \"{}\"", rig.server.endpoint)),
-                    "(a) endpoint missing in config:\n{config}"
+                    "(a) endpoint missing in config"
                 );
                 assert!(
                     config.contains(&format!("bucket = \"{BUCKET}\"")),
-                    "(a) bucket missing in config:\n{config}"
+                    "(a) bucket missing in config"
                 );
                 // (b)
                 assert!(
@@ -248,10 +248,7 @@ fn ac_m5_02_2_keys_only_in_secret_service_and_never_in_restic_arguments() {
                     "(d) the backup reached the bucket"
                 );
                 let calls = fs::read_to_string(&rig.wrapper.log).expect("read wrapper log");
-                assert!(
-                    calls.contains(" backup "),
-                    "(d) the wrapper saw the backup: {calls}"
-                );
+                assert!(calls.contains(" backup "), "(d) the wrapper saw the backup");
                 assert!(
                     !calls.contains(&rig.server.access_key),
                     "(d) access key in restic arguments"

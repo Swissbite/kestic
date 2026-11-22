@@ -231,7 +231,7 @@ mod tests {
         ));
         assert!(
             matches!(err, KesticServiceErr::DestinationUnreachable(_)),
-            "{err:?}"
+            "restic that does not answer must map to an unreachable destination"
         );
     }
 }

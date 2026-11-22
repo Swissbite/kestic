@@ -805,7 +805,11 @@ fn build_restic_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // restic refuses a password file next to the command and a repository file next to
+        // `-r`, so inherited ones would make every call fail.
         .env_remove("RESTIC_PASSWORD")
+        .env_remove("RESTIC_PASSWORD_FILE")
+        .env_remove("RESTIC_REPOSITORY_FILE")
         .env("RESTIC_PASSWORD_COMMAND", &pw_command);
 
     let mut env_keys = vec!["RESTIC_PASSWORD_COMMAND".to_string()];

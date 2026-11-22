@@ -277,12 +277,13 @@ pub fn verify_and_update_stored_password_with_cache(
         ],
         candidate_password,
         &backend,
+        // The same read as connecting an existing repository, with the same time limit.
         ProbeRuntime {
             resolved,
             kestic_binary,
             clock,
             cache_dir,
-            timeout: None,
+            timeout: Some(CONNECTION_TEST_TIMEOUT),
         },
     )?;
 
@@ -377,6 +378,18 @@ fn run_with_temp_repo_password_file(
     backend: &BackendCredentials,
     probe: ProbeRuntime<'_>,
 ) -> Result<ResticExecutionResult, DestinationError> {
+    // Where inherited credentials are removed, restic without Kestic's own would fall back to
+    // the user's credential files and send their keys to this endpoint.
+    if !dest.kind.backend_env_cleared_prefixes().is_empty()
+        && let Some(kind) = backend.first_missing(&dest.kind)
+    {
+        return Err(DestinationError::Runner(
+            ResticRunError::MissingBackendSecret {
+                destination: dest.id.clone(),
+                kind,
+            },
+        ));
+    }
     let tmp_dir = create_private_temp_dir()?;
     let res = (|| -> Result<ResticExecutionResult, DestinationError> {
         let pw_file = write_private_password_file(&tmp_dir, repo_password)?;
@@ -421,7 +434,8 @@ fn execute_probe_command(
         .stderr(Stdio::piped())
         .env_remove("RESTIC_PASSWORD")
         .env_remove("RESTIC_PASSWORD_COMMAND")
-        .env_remove("RESTIC_PASSWORD_FILE");
+        .env_remove("RESTIC_PASSWORD_FILE")
+        .env_remove("RESTIC_REPOSITORY_FILE");
 
     let env_keys = crate::restic::apply_backend_env(&mut cmd, spec, backend)?;
 
@@ -828,7 +842,7 @@ mod tests {
         let (connect, connect_took) = setup(DestinationSetupMode::ConnectExisting);
         assert!(
             matches!(connect, Err(DestinationError::AuthFailed(_))),
-            "connect: {connect:?}"
+            "connect: a rejected login stops restic with AuthFailed"
         );
         assert!(
             connect_took < Duration::from_secs(2),
@@ -836,10 +850,70 @@ mod tests {
         );
 
         let (init, init_took) = setup(DestinationSetupMode::InitNew);
-        assert!(init.is_err(), "init: {init:?}");
+        assert!(init.is_err(), "init: the stand-in fails");
         assert!(
             init_took >= Duration::from_secs(3),
             "init ran to its end, took {init_took:?}"
+        );
+    }
+
+    /// Updating the stored repository password reads the repository like connecting does: a
+    /// conclusive retry error stops restic at once, and the stored password stays.
+    #[test]
+    fn password_update_stops_early_and_keeps_the_stored_password() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let script = dir.path().join("restic");
+        kestic_test_support::tools::write_executable(
+            &script,
+            "#!/bin/sh\n\
+             echo 'Stat(<config/>) returned error, retrying after 1.2s: Stat: The request signature we calculated does not match the signature you provided.' >&2\n\
+             sleep 30\n\
+             exit 1\n",
+        );
+        let resolved = ResolvedRestic {
+            binary: script,
+            version: semver::Version::new(0, 18, 0),
+        };
+        let repo = dir.path().join("repo");
+        fs::create_dir(&repo).expect("repo dir");
+        let dest = Destination::new("Revoked", DestinationKind::Local { path: repo })
+            .expect("destination");
+        let store = crate::secrets::InMemorySecretStore::new();
+        let old_password = strong_password();
+        store
+            .set_secret(
+                dest.id.as_str(),
+                SECRET_KIND_REPO,
+                &SecretValue::from_str_secret(&old_password),
+            )
+            .expect("store password");
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let started = std::time::Instant::now();
+
+        let res = verify_and_update_stored_password(
+            &dest,
+            &SecretValue::from_str_secret(strong_password()),
+            &store,
+            &resolved,
+            &dir.path().join("kestic"),
+            &clock,
+        );
+
+        assert!(
+            matches!(res, Err(DestinationError::AuthFailed(_))),
+            "a rejected login ends the check with AuthFailed"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "stopped early, took {:?}",
+            started.elapsed()
+        );
+        assert!(
+            store
+                .get_secret(dest.id.as_str(), SECRET_KIND_REPO)
+                .expect("read store")
+                .is_some_and(|v| v.as_str().expect("utf-8") == old_password),
+            "stored password unchanged"
         );
     }
 
