@@ -3547,3 +3547,81 @@ msgstr "Suchbegriff"
 #: gui/src/qml/RestoreSearchPage.qml
 msgid "Search cancelled"
 msgstr "Suche abgebrochen"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "New"
+msgstr "Neu"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Removed"
+msgstr "Entfernt"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Changed"
+msgstr "Geändert"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Metadata changed"
+msgstr "Metadaten geändert"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Type changed"
+msgstr "Typ geändert"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Content changed, metadata unchanged"
+msgstr "Inhalt geändert, Metadaten unverändert"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "%1 change"
+msgid_plural "%1 changes"
+msgstr[0] "%1 Änderung"
+msgstr[1] "%1 Änderungen"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Compare"
+msgstr "Vergleichen"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "From %1 to %2"
+msgstr "Von %1 bis %2"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Change"
+msgstr "Änderung"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Path"
+msgstr "Pfad"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Comparing…"
+msgstr "Vergleich läuft…"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Comparison cancelled"
+msgstr "Vergleich abgebrochen"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "No differences"
+msgstr "Keine Unterschiede"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Compare…"
+msgstr "Vergleichen…"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Chosen to compare"
+msgstr "Zum Vergleichen gewählt"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Choose %1 to compare"
+msgstr "%1 zum Vergleichen wählen"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "%1 of 2 chosen"
+msgstr "%1 von 2 gewählt"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Show Differences"
+msgstr "Unterschiede anzeigen"

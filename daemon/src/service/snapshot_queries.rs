@@ -8,13 +8,14 @@
 use super::error::{KesticServiceErr, backup_run_error_kind};
 use super::state::{DaemonCore, probe_for_run};
 use crate::dbus_api::{
-    FindResultDto, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
+    DiffResultDto, FindResultDto, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
     SnapshotQueryStatusDto,
 };
 use kestic_core::backup::{BackupRunError, SnapshotListAccess};
 use kestic_core::model::{DestinationId, RunId};
 use kestic_core::query_list::{HeldResult, PageRequest, QueryOutcome};
 use kestic_core::restic::CancelHandle;
+use kestic_core::snapshot_diff::{DiffResult, execute_diff};
 use kestic_core::snapshot_find::{
     FindRequest, FindResult, FindScope, execute_find, validate_search_text,
 };
@@ -22,7 +23,7 @@ use kestic_core::snapshot_ls::{
     LsListing, execute_ls, normalize_snapshot_path, validate_snapshot_id,
 };
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::SnapshotQueryKind;
+use kestic_i18n::codes::{SnapshotChange, SnapshotQueryKind};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -30,6 +31,7 @@ use std::thread;
 pub(crate) enum QueryResult {
     Ls(LsListing),
     Find(FindResult),
+    Diff(DiffResult),
 }
 
 impl HeldResult for QueryResult {
@@ -37,6 +39,7 @@ impl HeldResult for QueryResult {
         match self {
             Self::Ls(listing) => listing.held_bytes(),
             Self::Find(found) => found.held_bytes(),
+            Self::Diff(diff) => diff.held_bytes(),
         }
     }
 }
@@ -53,6 +56,15 @@ impl QueryResult {
                 hits: found.page(page),
                 snapshots_matched: found.snapshots_matched,
             }),
+            Self::Diff(diff) => SnapshotQueryResultDto::Diff(DiffResultDto {
+                changes: diff.page(page),
+                added_files: diff.counts.added_files,
+                removed_files: diff.counts.removed_files,
+                changed_files: diff.counts.changed_files,
+                bytes_added: diff.counts.bytes_added,
+                bytes_removed: diff.counts.bytes_removed,
+                identical: diff.identical(),
+            }),
         }
     }
 }
@@ -61,6 +73,7 @@ impl QueryResult {
 enum QueryWork {
     Ls { snapshot_id: String, dir: String },
     Find { scope: FindScope, text: String },
+    Diff { from: String, to: String },
 }
 
 /// A validated request.
@@ -96,6 +109,17 @@ fn parse_request(request_json: &str) -> Result<ParsedQuery, KesticServiceErr> {
                 .scope
                 .ok_or_else(|| invalid("find query without scope"))?;
             QueryWork::Find { scope, text }
+        }
+        SnapshotQueryKind::Diff => {
+            let from = request
+                .from_snapshot_id
+                .ok_or_else(|| invalid("diff query without from_snapshot_id"))?;
+            let to = request
+                .to_snapshot_id
+                .ok_or_else(|| invalid("diff query without to_snapshot_id"))?;
+            validate_snapshot_id(&from).map_err(invalid)?;
+            validate_snapshot_id(&to).map_err(invalid)?;
+            QueryWork::Diff { from, to }
         }
         other => {
             return Err(invalid(format!(
@@ -182,6 +206,9 @@ pub fn start_snapshot_query_async(
                 };
                 execute_find(&access, &request, Some(&cancel), limit_bytes).map(QueryResult::Find)
             }
+            QueryWork::Diff { from, to } => {
+                execute_diff(&access, from, to, Some(&cancel), limit_bytes).map(QueryResult::Diff)
+            }
         };
         let outcome = outcome_of(res);
         let now = deps.clock.now_utc();
@@ -207,12 +234,23 @@ impl DaemonCore {
             .snapshot_queries
             .fetch(query_id, now)
             .ok_or_else(|| KesticServiceErr::NotFound(query_id.to_string()))?;
-        if let (Some(QueryResult::Ls(_) | QueryResult::Find(_)), false) =
-            (&query.result, page.filter.kinds.is_empty())
-        {
-            return Err(invalid(
-                "folder lists and search hits have no kinds to filter by",
-            ));
+        match (&query.result, page.filter.kinds.is_empty()) {
+            (Some(QueryResult::Ls(_) | QueryResult::Find(_)), false) => {
+                return Err(invalid(
+                    "folder lists and search hits have no kinds to filter by",
+                ));
+            }
+            (Some(QueryResult::Diff(_)), false) => {
+                if let Some(unknown) = page
+                    .filter
+                    .kinds
+                    .iter()
+                    .find(|k| SnapshotChange::parse(k).is_none())
+                {
+                    return Err(invalid(format!("unknown kind of change: {unknown}")));
+                }
+            }
+            _ => {}
         }
         Ok(SnapshotQueryStatusDto {
             state: query.state.wire_name().to_string(),

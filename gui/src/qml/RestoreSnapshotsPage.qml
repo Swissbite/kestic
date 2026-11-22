@@ -10,7 +10,8 @@ import net.daester.kestic 1.0
 // Restore area, right column: the snapshots of one backup, newest first, grouped by day.
 // Return opens a snapshot for browsing; the context menu (Menu key, Shift+F10 or right click)
 // also compares it with the previous one or restores it. The search field (Ctrl+F) searches
-// all snapshots of the backup.
+// all snapshots of the backup. «Compare…» turns the list into a choice of exactly two snapshots
+// (Return or Space marks one) whose differences «Show Differences» opens.
 Kirigami.ScrollablePage {
     id: page
     objectName: "restoreSnapshotsPage"
@@ -30,9 +31,61 @@ Kirigami.ScrollablePage {
     signal restoreRequested(var destinationId, var snapshotId)
     signal searchRequested(var backupId, var text)
 
+    // The list chooses two snapshots to compare instead of opening one.
+    property bool compareMode: false
+    // The snapshots chosen to compare, in the order they were chosen.
+    property var compareIds: []
+    // The destination of the chosen snapshots; both must be on the same one.
+    property string compareDestinationId: ""
+
     function reload() {
+        endCompare();
         restoreSnapshotsListView.currentIndex = -1;
         appBackend.loadRestoreSnapshots(backupId);
+    }
+
+    function startCompare() {
+        compareIds = [];
+        compareDestinationId = "";
+        compareMode = true;
+        restoreSnapshotsListView.forceActiveFocus(Qt.TabFocusReason);
+    }
+
+    function endCompare() {
+        compareMode = false;
+        compareIds = [];
+        compareDestinationId = "";
+    }
+
+    // Whether the snapshot in `row` can be chosen next to those chosen already.
+    function canChoose(row) {
+        return compareIds.length < 2
+            && (compareDestinationId === "" || compareDestinationId === row.destinationId);
+    }
+
+    // Chooses the snapshot in `row` to compare, or takes it back.
+    function toggleCompare(row) {
+        if (compareIds.indexOf(row.snapshotId) >= 0) {
+            var rest = compareIds.filter(function(id) { return id !== row.snapshotId; });
+            compareIds = rest;
+            if (rest.length === 0) compareDestinationId = "";
+        } else if (canChoose(row)) {
+            compareIds = compareIds.concat([row.snapshotId]);
+            compareDestinationId = row.destinationId;
+        }
+    }
+
+    // Compares the two chosen snapshots, from the older to the newer (the list is newest
+    // first).
+    function showDifferences() {
+        if (compareIds.length !== 2) return;
+        var a = restoreSnapshotsModel.rowOf(compareIds[0]);
+        var b = restoreSnapshotsModel.rowOf(compareIds[1]);
+        var older = a > b ? compareIds[0] : compareIds[1];
+        var newer = a > b ? compareIds[1] : compareIds[0];
+        var destinationId = compareDestinationId;
+        endCompare();
+        page.compareRequested(destinationId, older, newer);
     }
 
     // Opens the context menu of the snapshot in `row` below that row.
@@ -57,6 +110,13 @@ Kirigami.ScrollablePage {
 
     actions: [
         Kirigami.Action {
+            objectName: "restoreCompareAction"
+            icon.name: "vcs-diff"
+            text: i18n("Compare…")
+            enabled: !page.compareMode && restoreSnapshotsListView.count >= 2
+            onTriggered: page.startCompare()
+        },
+        Kirigami.Action {
             objectName: "restoreSnapshotsRefreshAction"
             icon.name: "view-refresh"
             text: Texts.label("refresh")
@@ -64,6 +124,31 @@ Kirigami.ScrollablePage {
             onTriggered: page.reload()
         }
     ]
+
+    footer: Controls.ToolBar {
+        visible: page.compareMode
+        contentItem: RowLayout {
+            spacing: Kirigami.Units.mediumSpacing
+            Controls.Label {
+                objectName: "compareChosenLabel"
+                Layout.fillWidth: true
+                text: i18n("%1 of 2 chosen", page.compareIds.length)
+                elide: Text.ElideRight
+            }
+            Controls.Button {
+                objectName: "showDifferencesButton"
+                icon.name: "vcs-diff"
+                text: i18n("Show Differences")
+                enabled: page.compareIds.length === 2
+                onClicked: page.showDifferences()
+            }
+            Controls.Button {
+                objectName: "cancelCompareButton"
+                text: Texts.label("cancel")
+                onClicked: page.endCompare()
+            }
+        }
+    }
 
     ColumnLayout {
         width: parent.width
@@ -148,19 +233,32 @@ Kirigami.ScrollablePage {
                 required property string previousSnapshotId
                 required property string destinationId
 
+                readonly property bool chosen: page.compareIds.indexOf(snapshotId) >= 0
+
                 width: ListView.view.width
                 activeFocusOnTab: true
                 highlighted: ListView.isCurrentItem
                 Accessible.name: title
-                Accessible.description: subtitle
+                Accessible.description: page.compareMode && chosen
+                    ? i18n("Chosen to compare") : subtitle
 
                 onClicked: {
                     ListView.view.currentIndex = index;
-                    page.browseRequested(destinationId, snapshotId);
+                    if (page.compareMode) {
+                        page.toggleCompare(snapRow);
+                    } else {
+                        page.browseRequested(destinationId, snapshotId);
+                    }
                 }
 
                 Keys.onPressed: function(event) {
-                    if (event.key === Qt.Key_Menu
+                    if (page.compareMode && event.key === Qt.Key_Space) {
+                        page.toggleCompare(snapRow);
+                        event.accepted = true;
+                    } else if (page.compareMode && event.key === Qt.Key_Escape) {
+                        page.endCompare();
+                        event.accepted = true;
+                    } else if (event.key === Qt.Key_Menu
                             || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) {
                         page.openSnapshotMenu(snapRow);
                         event.accepted = true;
@@ -180,6 +278,16 @@ Kirigami.ScrollablePage {
 
                 contentItem: RowLayout {
                     spacing: Kirigami.Units.mediumSpacing
+
+                    Controls.CheckBox {
+                        objectName: "compareSnapshotCheck"
+                        visible: page.compareMode
+                        checked: snapRow.chosen
+                        enabled: snapRow.chosen || page.canChoose(snapRow)
+                        focusPolicy: Qt.NoFocus
+                        Accessible.name: i18n("Choose %1 to compare", snapRow.title)
+                        onToggled: page.toggleCompare(snapRow)
+                    }
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -211,6 +319,7 @@ Kirigami.ScrollablePage {
                     }
 
                     Kirigami.Icon {
+                        visible: !page.compareMode
                         source: "go-next-symbolic"
                         color: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                         Layout.preferredWidth: Kirigami.Units.iconSizes.small
