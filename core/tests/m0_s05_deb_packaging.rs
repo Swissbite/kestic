@@ -3,7 +3,8 @@
 
 #![forbid(unsafe_code)]
 
-//! Unit and integration tests for M0-S05: `.deb` packaging, QML Depends, notifyrc, and autostart.
+//! Unit and integration tests for M0-S05: `.deb` packaging, QML Depends, notifyrc, and autostart;
+//! plus the `Suggests` of M5-S04.
 
 mod common;
 
@@ -307,4 +308,51 @@ fn shipped_binary_carries_no_build_paths() {
         "shipped kestic contains the toolchain directory {}",
         rustup_home.display()
     );
+}
+
+/// `Depends`, `Recommends` and `Suggests` of the `.deb` as lists of package names.
+fn control_field(control: &str, field: &str) -> Vec<String> {
+    let prefix = format!("{field}: ");
+    let Some(value) = control.lines().find_map(|l| l.strip_prefix(&prefix)) else {
+        return Vec::new();
+    };
+    value
+        .split(',')
+        .filter_map(|p| p.split_whitespace().next())
+        .map(str::to_string)
+        .collect()
+}
+
+/// M5-S04: the `.deb` suggests `rclone` and `openssh-client` and neither depends on nor
+/// recommends them; a missing program stays «needs installation» at run time.
+#[test]
+fn m5_s04_deb_suggests_rclone_and_openssh_client_only() {
+    let out = Command::new("dpkg-deb")
+        .arg("-f")
+        .arg(find_deb_package())
+        .output()
+        .expect("run dpkg-deb -f");
+    assert!(out.status.success(), "dpkg-deb -f failed");
+    let control = String::from_utf8_lossy(&out.stdout);
+
+    let suggests = control_field(&control, "Suggests");
+    assert!(
+        suggests.contains(&"rclone".to_string()),
+        "Suggests lacks rclone:\n{control}"
+    );
+    assert!(
+        suggests.contains(&"openssh-client".to_string()),
+        "Suggests lacks openssh-client:\n{control}"
+    );
+    for field in ["Depends", "Recommends"] {
+        let packages = control_field(&control, field);
+        assert!(
+            !packages.contains(&"rclone".to_string()),
+            "{field} must not name rclone:\n{control}"
+        );
+        assert!(
+            !packages.contains(&"openssh-client".to_string()),
+            "{field} must not name openssh-client:\n{control}"
+        );
+    }
 }

@@ -1101,17 +1101,85 @@ msgstr "Schritt %1 von %2"
 msgid "Where should encrypted backups be stored?"
 msgstr "Wo sollen verschlüsselte Backups gespeichert werden?"
 
-#: gui/src/qml/AddDestinationWizard.qml:178 gui/src/qml/NewBackupWizard.qml:478
-msgid "Local Folder or External Drive"
-msgstr "Lokaler Ordner oder externes Laufwerk"
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "External Drive / USB"
+msgstr "Externes Laufwerk / USB"
 
-#: gui/src/qml/AddDestinationWizard.qml:188 gui/src/qml/NewBackupWizard.qml:488
-msgid "Store snapshots in a local folder or on a connected drive."
-msgstr "Snapshots in einem lokalen Ordner oder auf einem angeschlossenen Laufwerk speichern."
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Folder / Other Disk"
+msgstr "Ordner / anderer Datenträger"
 
-#: gui/src/qml/AddDestinationWizard.qml:208 gui/src/qml/NewBackupWizard.qml:507
-msgid "Connect to a restic REST server over HTTPS or HTTP."
-msgstr "Mit einem restic-REST-Server über HTTPS oder HTTP verbinden."
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "NAS / Server via SSH"
+msgstr "NAS / Server per SSH"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Cloud Storage"
+msgstr "Cloud-Speicher"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Cloud Services via rclone"
+msgstr "Cloud-Dienste über rclone"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "A drive you plug in"
+msgstr "Ein Laufwerk, das Sie einstecken"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Local folder, for example on a second hard disk"
+msgstr "Lokaler Ordner, z. B. auf einer zweiten Festplatte"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "SFTP"
+msgstr "SFTP"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "For example on the NAS"
+msgstr "Z. B. auf dem NAS"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "S3-compatible, Backblaze B2, Azure, Google Cloud, Swift"
+msgstr "S3-kompatibel, Backblaze B2, Azure, Google Cloud, Swift"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Google Drive, OneDrive, Dropbox …"
+msgstr "Google Drive, OneDrive, Dropbox …"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Check Again"
+msgstr "Erneut prüfen"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Ready"
+msgstr "Bereit"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Needs Installation"
+msgstr "Braucht Installation"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "needs the program '%1'"
+msgstr "braucht das Programm «%1»"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Install the program '%1', then check again."
+msgstr "Installieren Sie das Programm «%1» und prüfen Sie dann erneut."
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Package: %1"
+msgstr "Paket: %1"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Open in Discover"
+msgstr "In Discover öffnen"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Or install it in a terminal:"
+msgstr "Oder im Terminal installieren:"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Install command"
+msgstr "Befehl zum Installieren"
 
 #: gui/src/qml/AddDestinationWizard.qml:224 gui/src/qml/NewBackupWizard.qml:523
 msgid "Where is the REST server located?"

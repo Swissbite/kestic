@@ -16,7 +16,7 @@ max-threads = 2
 max-threads = 4
 
 [[profile.default.overrides]]
-filter = "binary(m1_gui_smoke) | binary(m2_gui_smoke) | binary(m3_gui_smoke) | binary(m3_gui_idle_polling)"
+filter = "binary(m1_gui_smoke) | binary(m2_gui_smoke) | binary(m3_gui_smoke) | binary(m3_gui_idle_polling) | binary(m5_gui_smoke)"
 test-group = "gui-smoke"
 
 # The CI splits the tests by these groups (verify.yml, job `test`): a new

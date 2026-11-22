@@ -365,6 +365,9 @@ pub struct BackupSnapshotsDto {
     pub previous_destinations: Vec<PreviousDestinationSnapshotsDto>,
 }
 
+/// Entry of `ListDestinationTypes`: a destination type and whether it is ready.
+pub type DestinationTypeDto = kestic_core::destination_types::DestinationTypeStatus;
+
 /// Result of `TestDestinationConnection`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionTestResultDto {
@@ -857,6 +860,10 @@ impl KesticClient {
 
     pub fn list_known_networks(&self) -> Result<Vec<String>, KesticDbusError> {
         self.call_json("ListKnownNetworks", &())
+    }
+
+    pub fn list_destination_types(&self) -> Result<Vec<DestinationTypeDto>, KesticDbusError> {
+        self.call_json("ListDestinationTypes", &())
     }
 }
 

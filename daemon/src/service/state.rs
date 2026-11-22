@@ -38,6 +38,7 @@ use kestic_i18n::codes::{BlockingKind, PendingReasonCode, ResticStatusCode};
 use kestic_i18n::messages::{pause_message, unmet_conditions_message};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -117,6 +118,9 @@ pub struct DaemonRunConfig {
     pub enable_scheduler: bool,
     pub enable_binary_watch: bool,
     pub binary_watch_args: Option<Vec<String>>,
+    /// `PATH` searched for the programs of the destination types (`ListDestinationTypes`);
+    /// `None` uses the daemon's own `PATH`.
+    pub program_search_path: Option<OsString>,
 }
 
 impl Default for DaemonRunConfig {
@@ -147,6 +151,7 @@ impl Default for DaemonRunConfig {
             enable_scheduler: false,
             enable_binary_watch: false,
             binary_watch_args: None,
+            program_search_path: None,
         }
     }
 }
@@ -220,6 +225,7 @@ pub struct DaemonCore {
     pub(super) suppress_ui_spawn: bool,
     pub(super) timezone: TimezoneSpec,
     pub(crate) monitor_bus: MonitorBusConfig,
+    pub(crate) program_search_path: Option<OsString>,
     pub(super) enable_system_monitors: bool,
     pub(super) system_env: SystemEnvironment,
     pub(super) dest_stale_locks: HashMap<DestinationId, usize>,
@@ -332,6 +338,7 @@ impl DaemonCore {
             suppress_ui_spawn: run_config.suppress_ui_spawn,
             timezone: run_config.timezone.clone(),
             monitor_bus: run_config.monitor_bus.clone(),
+            program_search_path: run_config.program_search_path.clone(),
             enable_system_monitors: run_config.enable_system_monitors,
             system_env,
             dest_stale_locks: HashMap::new(),

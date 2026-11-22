@@ -11,6 +11,7 @@ pub mod build_info;
 pub mod clock;
 pub mod config;
 pub mod destination;
+pub mod destination_types;
 pub mod excludes;
 pub mod history;
 pub mod maintenance;
