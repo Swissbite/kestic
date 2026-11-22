@@ -26,9 +26,9 @@ M0 → M1 → M2 → M3; M4 und M5 hängen nur von M1 ab und können parallel zu
 | M2 Backup-Konfiguration | Ein Backup lässt sich vollständig und verständlich konfigurieren: Ausschluss-Regeln (Hauptunterschied zu Déjà Dup), Aufbewahrung mit Vorschau, Quellen-Prüfung. Noch ohne Zeitplan. | 12 | 63 | [milestones/m2-backup-konfiguration.md](milestones/m2-backup-konfiguration.md) |
 | M3 Automatisierung | Backups laufen von selbst, zuverlässig und sichtbar: Zeitplan, Laufbedingungen, Neuversuch, Überfälligkeit, Wartung pro Ziel, Ruhezustand. | 14 | 76 | [milestones/m3-automatisierung.md](milestones/m3-automatisierung.md) |
 | M4 Restore | Daten kommen sicher zurück: Snapshots sehen, vergleichen, durchsuchen, wiederherstellen, ohne versehentlich zu überschreiben. | 8 | 39 | [milestones/m4-restore.md](milestones/m4-restore.md) |
-| M5 Ziele und restic-Bereitstellung | Alle restic-Backends sind nutzbar, und Kestic funktioniert auch dort, wo das System-restic zu alt ist (Ubuntu-24.04-Basis). | 9 | 63 | [milestones/m5-ziele-und-restic.md](milestones/m5-ziele-und-restic.md) |
+| M5 Ziele und restic-Bereitstellung | Alle restic-Backends sind nutzbar, und Kestic funktioniert auch dort, wo das System-restic zu alt ist (Ubuntu-24.04-Basis). | 9 | 67 | [milestones/m5-ziele-und-restic.md](milestones/m5-ziele-und-restic.md) |
 | M6 Onboarding und Sicherheit | Ein Endnutzer richtet sein erstes Backup in 5 Schritten ein, sichert sein Passwort und kommt auf einem neuen Rechner wieder an seine Daten. Abschluss des MVP. | 12 | 61 | [milestones/m6-onboarding-und-sicherheit.md](milestones/m6-onboarding-und-sicherheit.md) |
-| **Total** | | **89** | **433** | |
+| **Total** | | **89** | **437** | |
 
 Nach dem MVP: [milestones/nach-mvp.md](milestones/nach-mvp.md) (Phase 2, Luxus, P3). Versionsschema (SemVer) und Changelog folgen als späterer Meilenstein (Q7).
 

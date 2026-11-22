@@ -54,7 +54,9 @@ Regeln: Übernommene Backups behalten ihre IDs; die Quelle wird ggf. auf `/home/
 
 ### 8.7 SFTP: unbekannter Host-Schlüssel (P24)
 
-`PromptDialog` «Diesem Server vertrauen?»: Server, Schlüsseltyp, Fingerprint (Monospace), «Vergleichen Sie den Fingerprint mit dem des Servers. Danach wird er in ~/.ssh/known_hosts gespeichert.» `[Abbrechen]` `[Server vertrauen]`.
+`PromptDialog` «Diesem Server vertrauen?»: Server, Schlüsseltyp, Fingerprint (SHA256, Monospace), «Vergleichen Sie den Fingerprint mit dem des Servers. Danach merkt sich Kestic den Server.» `[Abbrechen]` `[Server vertrauen]`. Kestic speichert den Schlüssel nur in seiner eigenen Liste (`~/.local/share/kestic/known_hosts`), nie in `~/.ssh/known_hosts`.
+
+Hat sich der Schlüssel eines bekannten Servers geändert: kein Dialog, sondern `InlineMessage` (Error) «Der Host-Schlüssel des Servers hat sich geändert. Das kann ein Angriff sein. Fragen Sie den Betreiber des Servers.» mit der Datei, die den alten Eintrag enthält, als Detail. Kestic bietet kein Übernehmen an (AC-M5-01-7).
 
 ### 8.8 Backup einem anderen Ziel zuweisen (FR-56, M1-S22)
 

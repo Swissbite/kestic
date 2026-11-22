@@ -33,6 +33,9 @@ Folgen für Kestic:
 
 - `RESTIC_REST_USERNAME`/`RESTIC_REST_PASSWORD` → REST-Zugang muss nicht in die Repo-URL.
 - `RESTIC_PASSWORD_COMMAND` holt das Repo-Passwort aus einem beliebigen Programm (Secret-Store, Passwortmanager). Für Backend-Credentials gibt es keine `_COMMAND`-Variante.
+- S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_DEFAULT_REGION`; Repository `s3:<endpoint>/<bucket>[/<pfad>]`.
+- SFTP: Repository `sftp://<benutzer>@<host>:<port>/<pfad>`; ssh-Optionen über `-o sftp.args="…"` (Kestics Werte: [architecture.md](architecture.md) «SFTP und Host-Schlüssel»).
+- Kestic setzt `RESTIC_PASSWORD_COMMAND`, `RESTIC_REPOSITORY` und die Backend-Variablen selbst. Benutzer-Variablen des generischen Formulars, die damit kollidieren (`RESTIC_PASSWORD*`, `RESTIC_REPOSITORY*`) oder den Prozess umlenken (`PATH`, `HOME`, `LD_*`), weist `core` ab (AC-M5-03-7).
 
 ### Integration & Locks
 
@@ -87,7 +90,8 @@ _Geprüft 2026-11-15, restic 0.19.1._
 
 - Release-Assets: `restic_<v>_linux_amd64.bz2`, `restic_<v>_linux_arm64.bz2`, `SHA256SUMS`, `SHA256SUMS.asc`.
 - Signatur-Key-Fingerprint: `CF8F 18F2 8445 7597 3F79 D4E1 91A6 868B D3F7 A907` ([020_installation](https://restic.readthedocs.io/en/stable/020_installation.html)).
-- `self-update` nur bei offiziellen Release-Builds.
+- `self-update` nur bei offiziellen Release-Builds. Kestic nutzt es nicht: Updates des App-verwalteten restic laufen über denselben Download wie die Erstinstallation, damit es einen Vertrauensanker und einen testbaren Weg gibt ([architecture.md](architecture.md) «restic-Bereitstellung»).
+- **[angenommen, prüft M5-S06]** `releases/latest` der GitHub-API nennt nur veröffentlichte Releases ohne Entwürfe und Vorabversionen; Asset-Downloads leiten auf `*.githubusercontent.com` weiter; `gpgv --status-fd 1` meldet eine gültige Signatur als `[GNUPG:] VALIDSIG <fingerprint> …`. M5-S06 prüft das und trägt hier Datum und Version nach.
 
 ### Fortschritt beim Sichern (`backup --json`)
 

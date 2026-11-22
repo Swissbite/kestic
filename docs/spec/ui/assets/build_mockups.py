@@ -573,7 +573,7 @@ def s_dialogs_a():
         f'<div class="dlgcol"><div class="form"><div class="flabel">Server:</div><div class="fwidget">backup.example.org (Port 22)</div>'
         f'<div class="flabel">Schlüsseltyp:</div><div class="fwidget">ED25519</div><div class="flabel">Fingerprint:</div>'
         f'<div class="fwidget mono">SHA256:Qm4f…J8sY2k</div></div>'
-        f'<div class="muted small">Vergleichen Sie den Fingerprint mit dem des Servers. Danach wird er in ~/.ssh/known_hosts gespeichert.</div></div>',
+        f'<div class="muted small">Vergleichen Sie den Fingerprint mit dem des Servers. Danach merkt sich Kestic den Server.</div></div>',
         default_btn("Abbrechen","dialog-cancel") + btn("Server vertrauen","security-high"), w=500)
     exp = dlg_box("Konfiguration als Script exportieren",
         f'<div class="dlgcol"><div class="h h4">Backups</div>{checkbox("Persönlicher Ordner",True)}{checkbox("Fotos",True)}{checkbox("Projekte",True)}'
