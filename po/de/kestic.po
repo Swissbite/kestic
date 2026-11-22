@@ -3561,10 +3561,6 @@ msgid "Changed"
 msgstr "Geändert"
 
 #: gui/src/models/snapshot_diff_model.rs
-msgid "Metadata changed"
-msgstr "Metadaten geändert"
-
-#: gui/src/models/snapshot_diff_model.rs
 msgid "Type changed"
 msgstr "Typ geändert"
 
