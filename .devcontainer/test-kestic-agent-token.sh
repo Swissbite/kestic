@@ -23,7 +23,7 @@ fail() {
 openssl genrsa -out "$tmp/key.pem" 2048 2>/dev/null
 openssl rsa -in "$tmp/key.pem" -pubout -out "$tmp/pub.pem" 2>/dev/null
 TOKEN=ghs_TestToken0123456789abcdefABCDEF
-export FAKE_KEY="$tmp/key.pem" FAKE_DIR="$tmp" KESTIC_AGENT_APP_ID=123456 \
+export FAKE_TOKEN="$TOKEN" FAKE_KEY="$tmp/key.pem" FAKE_DIR="$tmp" KESTIC_AGENT_APP_ID=123456 \
     FAKE_INSTALLATION='{"id":4711,"account":{"login":"Swissbite","id":99}}' \
     FAKE_ACCESS="{\"token\":\"$TOKEN\",\"expires_at\":\"2026-11-22T13:00:00Z\",\"repository_selection\":\"selected\"}"
 
@@ -41,6 +41,7 @@ case "$1" in
             store-token) cat > "$FAKE_DIR/stored" ;;
             token-age) echo "$FAKE_AGE" ;;
             state) echo "idle 5 100" ;;
+            show-token) echo "$FAKE_TOKEN" ;;
         esac ;;
 esac
 FAKE
@@ -59,7 +60,9 @@ echo --- >> "$FAKE_DIR/curl.log"
 case "${@: -1}" in
     */installation) [[ -n "$FAKE_INSTALLATION" ]] || { echo '{"message":"Not Found"}'; exit 22; }
         echo "$FAKE_INSTALLATION" ;;
-    */access_tokens) echo "$FAKE_ACCESS" ;;
+    */access_tokens) [[ -n "$FAKE_ACCESS" ]] || { echo '{"message":"Forbidden"}'; exit 22; }
+        echo "$FAKE_ACCESS" ;;
+    */installation/token) ;;
     *) exit 22 ;;
 esac
 FAKE
@@ -145,18 +148,18 @@ openssl dgst -sha256 -verify "$tmp/pub.pem" -signature "$tmp/sig" "$tmp/signed" 
 # --- renewal by agent-state ---------------------------------------------------
 reset
 export FAKE_AGE=100
-[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100" ]] || fail "agent-state, fresh token: state line"
+[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok" ]] || fail "agent-state, fresh token: state line"
 [[ ! -e "$tmp/curl.log" ]] || fail "agent-state, fresh token: renewed although not due"
 reset
 export FAKE_AGE=2401
-[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100" ]] || fail "agent-state, old token: state line"
+[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok" ]] || fail "agent-state, old token: state line"
 [[ "$(cat "$tmp/stored" 2>/dev/null)" == "$TOKEN" ]] || fail "agent-state, old token: not renewed"
 reset
-[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100" ]] || fail "agent-state, no token: state line"
+[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok" ]] || fail "agent-state, no token: state line"
 [[ "$(cat "$tmp/stored" 2>/dev/null)" == "$TOKEN" ]] || fail "agent-state, no token: not renewed"
 reset
 export FAKE_RUNNING=false
-[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "off 0 0" ]] || fail "agent-state, container off: state line"
+[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "off 0 0 ok" ]] || fail "agent-state, container off: state line"
 [[ ! -e "$tmp/curl.log" ]] || fail "agent-state, container off: asked GitHub for a token"
 
 # --- failures store nothing -----------------------------------------------------
@@ -166,8 +169,42 @@ if KESTIC_AGENT_APP_ID=abc "$here/kestic-agent.sh" token 2>/dev/null; then fail 
 reset
 if FAKE_INSTALLATION= "$here/kestic-agent.sh" token 2>/dev/null; then fail "token, App not installed: succeeded"; fi
 [[ ! -e "$tmp/stored" ]] || fail "token, App not installed: stored something"
-[[ "$(FAKE_INSTALLATION= "$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100" ]] ||
-    fail "agent-state, renewal fails: state line missing"
+[[ "$(FAKE_INSTALLATION= "$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 failed" ]] ||
+    fail "agent-state, renewal fails: state line missing or not marked failed"
+reset
+if FAKE_ACCESS= "$here/kestic-agent.sh" token 2>/dev/null; then fail "token refused by GitHub: succeeded"; fi
+[[ ! -e "$tmp/stored" ]] || fail "token refused by GitHub: stored something"
+reset
+KESTIC_AGENT_NAME=other-box "$here/kestic-agent.sh" token || fail "token, other container: exit $?"
+tr '\n' ' ' < "$tmp/podman.log" | grep -qF -- "--- exec -i other-box " ||
+    fail "token, other container: KESTIC_AGENT_NAME not used"
+
+# --- stop revokes the token with itself ----------------------------------------
+reset
+"$here/kestic-agent.sh" stop > /dev/null || fail "stop: exit $?"
+expected_revoke="--silent
+--show-error
+--fail-with-body
+--max-time
+30
+-X
+DELETE
+-H
+Accept: application/vnd.github+json
+-H
+X-GitHub-Api-Version: 2022-11-28
+-H
+@FD
+https://api.github.com/installation/token
+---"
+[[ "$(cat "$tmp/curl.log" 2>/dev/null)" == "$expected_revoke" ]] || fail "stop: revoke request differs"
+[[ "$(cat "$tmp/headers" 2>/dev/null)" == "Authorization: Bearer $TOKEN" ]] || fail "stop: not revoked with the token itself"
+! grep -qF -- "$TOKEN" "$tmp/curl.log" "$tmp/podman.log" || fail "stop: the token appears in the arguments"
+grep -qx stop "$tmp/podman.log" || fail "stop: container not stopped"
+reset
+export FAKE_RUNNING=false
+"$here/kestic-agent.sh" stop > /dev/null || fail "stop, container off: exit $?"
+[[ ! -e "$tmp/curl.log" ]] || fail "stop, container off: called GitHub"
 
 # --- kestic-agent-inner.sh: store-token and state -----------------------------------
 inner="$here/kestic-agent-inner.sh"
@@ -179,6 +216,7 @@ printf '%s\n' "$TOKEN" | "$inner" store-token || fail "store-token: exit $?"
 printf '%s\n' ghs_Second | "$inner" store-token || fail "store-token, replace: exit $?"
 [[ "$(cat "$KESTIC_AGENT_TOKEN_FILE")" == ghs_Second ]] || fail "store-token: not replaced"
 if printf 'not a token\n' | "$inner" store-token 2>/dev/null; then fail "store-token: accepted garbage"; fi
+if printf 'ghs_ok; rm -rf x\n' | "$inner" store-token 2>/dev/null; then fail "store-token: accepted garbage"; fi
 [[ "$(cat "$KESTIC_AGENT_TOKEN_FILE")" == ghs_Second ]] || fail "store-token: garbage changed the file"
 [[ "$("$inner" token-age)" =~ ^[0-9]+$ ]] || fail "token-age: not a number"
 mkdir -p "$HOME/.kestic-agent"

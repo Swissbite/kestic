@@ -144,7 +144,11 @@ fixture issues_5_events "150 User OWNER"
 expect "idle, maintainer removed the label" "idle 5 100" "$NUDGE"
 fixture issue-5 "OPEN false"
 fixture issues_5_comments.fail
-expect "idle, activity unreadable" "idle 5 100" ""
+fixture issues_5_events "150 User OWNER"
+expect "idle, activity unreadable: no decision on a partial read" "idle 5 100" ""
+fixture issue-5 "OPEN false"
+fixture issues_5_events "150 Bot OWNER"
+expect "idle, the agent removed the label itself" "idle 5 100" ""
 fixture issue-5.fail
 fixture "open-M4 Restore" "6 false"
 expect "current issue unreadable" "idle 5 100" ""
@@ -160,6 +164,13 @@ pass "stopped 5 101"
 pass "stopped 5 102"
 [[ ! -s "$FAKE_LOG" ]] || fail "third resume in a row: agent called with '$(cat "$FAKE_LOG")'"
 grep -q "does not come back" "$FAKE_NOTES" || fail "third resume in a row: no notification"
+reset
+fixture issue-5 "OPEN false"
+pass "stopped 5 100"
+pass "busy 5 101"
+pass "stopped 5 102"
+pass "stopped 5 103"
+[[ "$(cat "$FAKE_LOG")" == "resume 5" ]] || fail "resumes count again after a busy pass: '$(cat "$FAKE_LOG")'"
 reset
 fixture issue-5 "OPEN false"
 pass "stopped 5 100"
@@ -201,6 +212,16 @@ pass 'idle 5$(touch '"$tmp"'/pwned2) 100'
 [[ ! -s "$FAKE_LOG" ]] || fail "invalid issue: agent called with '$(cat "$FAKE_LOG")'"
 reset
 expect "unknown state" "weird 5 100" ""
+expect "no state line" "" ""
+fixture issue-5 "OPEN true"
+fixture "open-M4 Restore" "5 true"
+expect "stopped session on a held issue is not resumed" "stopped 5 100" ""
+
+# A failed token renewal is reported once per hour.
+pass "busy 5 100 failed"
+pass "busy 5 100 failed"
+[[ "$(grep -c 'token failed' "$FAKE_NOTES")" == 1 ]] || fail "token failure not reported exactly once"
+reset
 
 if ((failures > 0)); then
     echo "test-kestic-agent-watch: $failures failure(s)" >&2

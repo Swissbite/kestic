@@ -20,8 +20,8 @@
 #   fresh session. Issue numbers give the order, so new issues queue at the end.
 #
 # The maintainer hears about it in the log and, where notify-send exists, on the
-# desktop: an issue waiting for them, a session that does not come back, and
-# an agent idle for hours without a result.
+# desktop: an issue waiting for them, a session that does not come back, an
+# agent idle for hours without a result, and a failed token renewal.
 #
 # Everything the agent reports (state line, issue) is treated as untrusted.
 
@@ -63,29 +63,32 @@ COMMENT_JQ='.[] | select((.created_at // .submitted_at) != null)
 UNLABEL_JQ=".[] | select(.event == \"unlabeled\" and .label.name == \"$HOLD\")
     | \"\(.created_at | fromdateiso8601) \(.actor.type) OWNER\""
 # `<number> <merged epoch or 0> <User|Bot>` per pull request from the issue's branch.
-PR_JQ='.[] | "\(.number) \(if .mergedAt then (.mergedAt | fromdateiso8601) else 0 end) \(if ((.mergedBy.login // "") | endswith("[bot]")) then "Bot" else "User" end)"'
+PR_JQ='.[] | "\(.number) \(if .mergedAt then (.mergedAt | fromdateiso8601) else 0 end) \(if (.mergedBy.is_bot // false) then "Bot" else "User" end)"'
 
 # Newest thing the maintainer did on the issue or its pull requests (epoch
 # seconds); empty if nothing. Only people (no bots, no apps) with write access
 # to the repository count; outsiders' comments never wake the agent.
 latest_event() {
-    local issue="$1" pr merged by
-    {
-        gh api "repos/$REPO/issues/$issue/comments" --paginate --jq "$COMMENT_JQ"
-        gh api "repos/$REPO/issues/$issue/events" --paginate --jq "$UNLABEL_JQ"
-        while read -r pr merged by; do
-            [[ "$pr" =~ ^[0-9]+$ ]] || continue
-            if [[ "$merged" != 0 ]]; then echo "$merged $by OWNER"; fi
-            gh api "repos/$REPO/issues/$pr/comments" --paginate --jq "$COMMENT_JQ"
-            gh api "repos/$REPO/pulls/$pr/comments" --paginate --jq "$COMMENT_JQ"
-            gh api "repos/$REPO/pulls/$pr/reviews" --paginate --jq "$COMMENT_JQ"
-        done < <(gh pr list --repo "$REPO" --head "agent/issue-$issue" --state all \
-            --json number,mergedAt,mergedBy --jq "$PR_JQ")
-    } | awk '$1 ~ /^[0-9]+$/ && $2 == "User" && $3 ~ /^(OWNER|MEMBER|COLLABORATOR)$/ { print $1 }' |
+    local issue="$1" events prs pr merged by
+    events="$(gh api "repos/$REPO/issues/$issue/comments" --paginate --jq "$COMMENT_JQ")" || return 1
+    events+=$'\n'"$(gh api "repos/$REPO/issues/$issue/events" --paginate --jq "$UNLABEL_JQ")" || return 1
+    prs="$(gh pr list --repo "$REPO" --head "agent/issue-$issue" --state all \
+        --json number,mergedAt,mergedBy --jq "$PR_JQ")" || return 1
+    while read -r pr merged by; do
+        [[ "$pr" =~ ^[0-9]+$ ]] || continue
+        if [[ "$merged" != 0 ]]; then events+=$'\n'"$merged $by OWNER"; fi
+        events+=$'\n'"$(gh api "repos/$REPO/issues/$pr/comments" --paginate --jq "$COMMENT_JQ")" || return 1
+        events+=$'\n'"$(gh api "repos/$REPO/pulls/$pr/comments" --paginate --jq "$COMMENT_JQ")" || return 1
+        events+=$'\n'"$(gh api "repos/$REPO/pulls/$pr/reviews" --paginate --jq "$COMMENT_JQ")" || return 1
+    done <<< "$prs"
+    awk '$1 ~ /^[0-9]+$/ && $2 == "User" && $3 ~ /^(OWNER|MEMBER|COLLABORATOR)$/ { print $1 }' <<< "$events" |
         sort -n | tail -n 1
 }
 
-read -r state issue turn _ < <("$AGENT" agent-state) || true
+read -r state issue turn token _ < <("$AGENT" agent-state) || true
+if [[ "${token:-}" == failed ]]; then
+    notify "token-$(date +%Y%m%d%H)" "renewing the agent's GitHub token failed (see kestic-agent.sh token)"
+fi
 case "$state" in
     off) exit 0 ;;
     busy)

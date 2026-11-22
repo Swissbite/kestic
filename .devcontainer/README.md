@@ -225,7 +225,8 @@ the state line from the container as untrusted input.
 
 The watcher logs what it does and, where `notify-send` exists, tells the
 desktop once: an issue that waits for the maintainer, a session that does not
-come back after two resumes, and an agent idle for four hours without a result.
+come back after two resumes, an agent idle for four hours without a result, and
+(once an hour) a failed renewal of the agent's GitHub token.
 [test-kestic-agent-watch.sh](test-kestic-agent-watch.sh) in `just verify` tests
 its decisions with a fake `gh`; after changing a `--jq` filter, run one pass
 with `KESTIC_AGENT_SH` pointing to a script that prints a state line, against

@@ -11,15 +11,16 @@
 #   kestic-agent.sh resume <issue>     the agent continues its last session (after stop)
 #   kestic-agent.sh nudge <text…>      type a message into the agent's Claude session
 #   kestic-agent.sh status [lines]     container state and the agent's last terminal lines
-#   kestic-agent.sh agent-state        `<state> <issue> <turn start>` for kestic-agent-watch.sh;
-#                                      state off when the container is not running; renews
-#                                      the GitHub token when it is due
+#   kestic-agent.sh agent-state        `<state> <issue> <turn start> <ok|failed>` for
+#                                      kestic-agent-watch.sh; state off when the container is
+#                                      not running; renews the GitHub token when it is due
 #   kestic-agent.sh token              a new GitHub App installation token for the agent now
 #   kestic-agent.sh attach             attach to the agent's tmux session (detach: Ctrl-b d)
 #   kestic-agent.sh exec <command…>    run a command as kesticci in the clone (e.g. just verify)
 #   kestic-agent.sh shell              interactive shell as kesticci
 #   kestic-agent.sh dns-log [lines]    DNS queries of the container, allowed and refused
-#   kestic-agent.sh stop               stop and remove the container; volumes stay
+#   kestic-agent.sh stop               revoke the GitHub token, stop and remove the container;
+#                                      volumes stay
 #   kestic-agent.sh clean --yes        remove container, image and both volumes (also the login)
 #
 # Root inside the container only ever runs commands by absolute path or with a
@@ -126,6 +127,7 @@ ensure_running() {
     podman image exists "$IMAGE" || die "no image $IMAGE; run: $0 build"
     podman secret inspect "$APP_KEY_SECRET" >/dev/null 2>&1 \
         || die "no Podman secret $APP_KEY_SECRET; see .devcontainer/README.md"
+    [[ "$(conf app_id)" =~ ^[0-9]+$ ]] || die "no GitHub App ID: set app_id in $CONF"
     local git_name git_email
     git_name="$(conf git_name)"
     git_email="$(conf git_email)"
@@ -208,10 +210,11 @@ case "$cmd" in
     agent-state)
         if running; then
             # A failed renewal must not hide the state line (die exits only the subshell).
-            (ensure_token) >&2 || echo "kestic-agent.sh: renewing the GitHub token failed" >&2
-            podman exec "$NAME" "${DROP[@]}" kestic-agent state
+            token_status=ok
+            (ensure_token) >&2 || token_status=failed
+            echo "$(podman exec "$NAME" "${DROP[@]}" kestic-agent state) $token_status"
         else
-            echo "off 0 0"
+            echo "off 0 0 ok"
         fi
         ;;
     token)
@@ -237,6 +240,14 @@ case "$cmd" in
         podman exec "$NAME" /usr/bin/tail -n "${1:-50}" /var/log/kestic-agent/dns.log | cat -v
         ;;
     stop)
+        if running; then
+            # The token would stay valid for up to an hour; revoke it with itself.
+            token="$(podman exec "$NAME" "${DROP[@]}" kestic-agent show-token 2>/dev/null || true)"
+            if [[ -n "$token" ]]; then
+                github_api DELETE /installation/token "$token" >/dev/null ||
+                    echo "kestic-agent.sh: revoking the GitHub token failed" >&2
+            fi
+        fi
         podman stop --ignore --time 20 "$NAME" >/dev/null
         podman rm --ignore "$NAME" >/dev/null
         echo "stopped; volumes $VOL_HOME and $VOL_CLAUDE are kept"
@@ -253,7 +264,7 @@ case "$cmd" in
         echo "removed; the secret $APP_KEY_SECRET stays (podman secret rm $APP_KEY_SECRET)"
         ;;
     *)
-        sed -n '5,23p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '5,24p' "$0" | sed 's/^# \{0,1\}//'
         exit 2
         ;;
 esac

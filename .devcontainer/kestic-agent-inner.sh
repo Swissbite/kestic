@@ -19,6 +19,7 @@
 #                                   turn starts and when it ends
 #   kestic-agent store-token        reads a GitHub token from stdin into the token file
 #   kestic-agent token-age          seconds since the token file was written, or none
+#   kestic-agent show-token         prints the token (for revoking it on stop)
 #
 # The GitHub issue is the agent's whole assignment; progress goes back as issue
 # comments and a pull request.
@@ -206,6 +207,9 @@ case "${1:-}" in
         chmod 0400 "$TOKEN_FILE.new"
         mv -f "$TOKEN_FILE.new" "$TOKEN_FILE"
         ;;
+    show-token)
+        cat "$TOKEN_FILE"
+        ;;
     token-age)
         if [[ -e "$TOKEN_FILE" ]]; then
             echo $(($(date +%s) - $(stat -c %Y "$TOKEN_FILE")))
@@ -221,7 +225,7 @@ case "${1:-}" in
         esac
         ;;
     *)
-        sed -n '5,24p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '5,25p' "$0" | sed 's/^# \{0,1\}//'
         exit 2
         ;;
 esac
