@@ -862,7 +862,7 @@ fn ac_m1_11_6_tray_version_line_opens_about_kestic() {
                 info.label,
                 format!(
                     "Kestic {} · {}",
-                    kestic_core::version(),
+                    kestic_daemon::daemon_version(),
                     kestic_daemon::build_commit()
                 ),
                 "(b) version line"

@@ -24,18 +24,3 @@ pub mod scheduler;
 pub mod secrets;
 pub mod snapshot;
 pub mod sync;
-
-/// Returns the crate version string.
-pub fn version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn core_version_is_non_empty() {
-        assert!(!version().is_empty());
-    }
-}

@@ -20,7 +20,11 @@ serde_json = "1.0"
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 zbus = { workspace = true }
 
+[build-dependencies]
+kestic-build-stamp = { path = "../build-stamp" }
+
 [dev-dependencies]
+kestic-build-stamp = { path = "../build-stamp" }
 tempfile = "3.27"
 kestic-test-support = { path = "../test-support" }
 
