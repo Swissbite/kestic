@@ -89,6 +89,8 @@ gui_texts! {
     SourceFolderPath = "source_folder_path" => i18n_noop("Source folder path"),
     ExcludeTrash = "exclude_trash" => i18n_noop("Exclude trash folders"),
     ExcludeRulesSyntax = "exclude_rules_syntax" => i18n_noop("Exclude rules in restic syntax"),
+    Filter = "filter" => i18n_noop("Filter"),
+    SearchInBackupSnapshots = "search_in_backup_snapshots" => i18n_noop("Search in the snapshots of this backup"),
 
     // Values
     None = "none" => i18n_noop("None"),
@@ -119,6 +121,7 @@ gui_texts! {
     TwoParts = "two_parts" => i18n_noop("%1 · %2"),
     EarlierSnapshotsOn = "earlier_snapshots_on" => i18n_noop("Earlier snapshots on '%1'"),
     LoadingSnapshots = "loading_snapshots" => i18n_noop("Loading snapshots…"),
+    NoEntriesMatchFilter = "no_entries_match_filter" => i18n_noop("No entries match the filter."),
     NoSnapshotsYet = "no_snapshots_yet" => i18n_noop("No snapshots yet – the first backup is still pending"),
 
     // Messages

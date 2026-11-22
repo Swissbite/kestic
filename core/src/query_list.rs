@@ -97,6 +97,15 @@ impl<T: ListEntry> ListBuilder<T> {
         }
     }
 
+    /// Counts `n` entries that were too large to collect: the list is dropped, its total stays
+    /// exact.
+    pub fn push_dropped(&mut self, n: u64) {
+        if n > 0 {
+            self.total += n;
+            self.items = None;
+        }
+    }
+
     /// The finished list, sorted by path.
     pub fn finish(self) -> QueryList<T> {
         self.finish_sorted_by(|a, b| a.path().cmp(b.path()))

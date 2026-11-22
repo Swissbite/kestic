@@ -851,6 +851,28 @@ pub fn run_restic_streaming(
     run_restic_with(spec, &access, |_| {}, StdoutSink::Data(on_line))
 }
 
+/// Like [`run_restic_streaming`], but hands stdout to `read` as one reader, for output that is
+/// not split into lines (`find --json` prints one JSON array, possibly very long). Whatever
+/// `read` leaves unread is drained, so restic never blocks on a full pipe.
+pub fn run_restic_reading(
+    spec: &ResticCommandSpec,
+    destination: &Destination,
+    secret_store: Option<&dyn SecretStore>,
+    clock: &dyn Clock,
+    cancel: Option<&CancelHandle>,
+    extra_env: &[(&str, &str)],
+    read: &mut dyn FnMut(&mut dyn BufRead),
+) -> Result<ResticExecutionResult, ResticRunError> {
+    let access = RunAccess {
+        destination,
+        secret_store,
+        clock,
+        cancel,
+        extra_env,
+    };
+    run_restic_with(spec, &access, |_| {}, StdoutSink::Reader(read))
+}
+
 /// What a restic call reaches and how it can be cancelled.
 struct RunAccess<'a> {
     destination: &'a Destination,
@@ -866,6 +888,8 @@ enum StdoutSink<'a> {
     Log,
     /// Unredacted to the caller only.
     Data(&'a mut dyn FnMut(&str)),
+    /// Unredacted to the caller only, as one reader.
+    Reader(&'a mut dyn FnMut(&mut dyn BufRead)),
 }
 
 fn run_restic_with<F>(
@@ -896,7 +920,7 @@ where
         }
     }
 
-    let stdout = child.stdout.take();
+    let mut stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
     let mut secrets_to_redact: Vec<&str> = Vec::new();
@@ -922,7 +946,12 @@ where
     let mut exit_error_msg: Option<String> = None;
     let mut stdout_json_array: Option<UnredactedLine> = None;
 
-    if let Some(out_stream) = stdout {
+    if let (Some(out_stream), StdoutSink::Reader(read)) = (stdout.as_mut(), &mut sink) {
+        let mut reader = BufReader::new(out_stream);
+        read(&mut reader);
+        // Unread output is dropped; reading errors end the drain like the end of the output.
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
+    } else if let Some(out_stream) = stdout {
         for line in BufReader::new(out_stream).lines().map_while(Result::ok) {
             if let StdoutSink::Data(on_line) = &mut sink {
                 on_line(&line);

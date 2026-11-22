@@ -16,6 +16,7 @@ pub use kestic_core::query_list::{PageFilter, PageRequest as SnapshotQueryPage};
 use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
 use kestic_core::snapshot::ResticSnapshot;
+pub use kestic_core::snapshot_find::{FindHit as FindHitDto, FindScope};
 pub use kestic_core::snapshot_ls::LsEntry as LsEntryDto;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
@@ -438,6 +439,38 @@ pub struct SnapshotQueryRequest {
     /// `ls`: the absolute folder to list (one level, never recursive).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
+    /// `find`: the text to search for in the paths, taken literally, any case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    /// `find`: the snapshots to search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<FindScope>,
+}
+
+impl SnapshotQueryRequest {
+    /// Lists `dir` of snapshot `snapshot_id` (one level).
+    pub fn ls(destination_id: &str, snapshot_id: &str, dir: &str) -> Self {
+        Self {
+            kind: SnapshotQueryKind::Ls,
+            destination_id: destination_id.to_string(),
+            snapshot_id: Some(snapshot_id.to_string()),
+            dir: Some(dir.to_string()),
+            pattern: None,
+            scope: None,
+        }
+    }
+
+    /// Searches the snapshots of `scope` for paths that contain `text`.
+    pub fn find(destination_id: &str, scope: FindScope, text: &str) -> Self {
+        Self {
+            kind: SnapshotQueryKind::Find,
+            destination_id: destination_id.to_string(),
+            snapshot_id: None,
+            dir: None,
+            pattern: Some(text.to_string()),
+            scope: Some(scope),
+        }
+    }
 }
 
 /// A page of a query list (`ListPageDto`): the page, its offset, all entries of the query,
@@ -453,11 +486,21 @@ pub struct LsResultDto {
     pub entries: ListPageDto<LsEntryDto>,
 }
 
+/// Result of a `find` query: the hits, newest snapshot first and by path; `total` 0 means «no
+/// hits».
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindResultDto {
+    pub hits: ListPageDto<FindHitDto>,
+    /// Number of snapshots with at least one hit.
+    pub snapshots_matched: u64,
+}
+
 /// Result of a finished snapshot query, tagged with its kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SnapshotQueryResultDto {
     Ls(LsResultDto),
+    Find(FindResultDto),
 }
 
 /// Status of a snapshot query (`GetSnapshotQueryStatus`).

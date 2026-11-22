@@ -24,6 +24,7 @@ pub mod retention;
 pub mod scheduler;
 pub mod secrets;
 pub mod snapshot;
+pub mod snapshot_find;
 pub mod snapshot_list;
 pub mod snapshot_ls;
 pub mod sync;

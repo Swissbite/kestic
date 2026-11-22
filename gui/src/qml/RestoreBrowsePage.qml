@@ -22,6 +22,8 @@ Kirigami.ScrollablePage {
     property string startDir: "/"
     // Date and time of the snapshot, shown in the breadcrumb.
     property string snapshotTitle: ""
+    // An entry of `startDir` to show selected once it is listed (a search hit).
+    property string focusPath: ""
 
     // The list whose selected row gets the focus when the page is shown again.
     readonly property var primaryList: browseListView
@@ -55,9 +57,18 @@ Kirigami.ScrollablePage {
     Connections {
         target: snapshotBrowseModel
         function onStateChanged() {
-            if (snapshotBrowseModel.state === "done" && !snapshotBrowseModel.dir_exists
-                    && snapshotBrowseModel.dir === page.startDir && page.startDir !== "/") {
+            if (snapshotBrowseModel.state !== "done" || snapshotBrowseModel.dir !== page.startDir) {
+                return;
+            }
+            if (!snapshotBrowseModel.dir_exists && page.startDir !== "/") {
                 page.openDir("/");
+            } else if (page.focusPath !== "") {
+                var row = snapshotBrowseModel.rowOfPath(page.focusPath);
+                page.focusPath = "";
+                if (row >= 0) {
+                    browseListView.currentIndex = row;
+                    browseListView.positionViewAtIndex(row, ListView.Center);
+                }
             }
         }
     }
@@ -175,8 +186,10 @@ Kirigami.ScrollablePage {
                     id: filterField
                     objectName: "browseFilterField"
                     Layout.fillWidth: true
-                    placeholderText: i18n("Filter")
-                    Accessible.name: i18n("Filter")
+                    placeholderText: Texts.label("filter")
+                    Accessible.name: Texts.label("filter")
+                    // Ctrl+F belongs to the search field of the snapshot list.
+                    focusSequences: []
                     onTextChanged: filterDelay.restart()
                 }
                 Controls.Label {
@@ -285,7 +298,7 @@ Kirigami.ScrollablePage {
                 && browseListView.count === 0
             icon.name: "folder"
             text: !snapshotBrowseModel.dir_exists ? i18n("This folder is not in the snapshot.")
-                : filterField.text !== "" ? i18n("No entries match the filter.")
+                : filterField.text !== "" ? Texts.label("no_entries_match_filter")
                 : i18n("This folder is empty in the snapshot.")
         }
 

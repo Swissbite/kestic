@@ -9,7 +9,8 @@ import net.daester.kestic 1.0
 
 // Restore area, right column: the snapshots of one backup, newest first, grouped by day.
 // Return opens a snapshot for browsing; the context menu (Menu key, Shift+F10 or right click)
-// also compares it with the previous one or restores it.
+// also compares it with the previous one or restores it. The search field (Ctrl+F) searches
+// all snapshots of the backup.
 Kirigami.ScrollablePage {
     id: page
     objectName: "restoreSnapshotsPage"
@@ -27,6 +28,7 @@ Kirigami.ScrollablePage {
     signal browseRequested(var destinationId, var snapshotId)
     signal compareRequested(var destinationId, var fromSnapshotId, var toSnapshotId)
     signal restoreRequested(var destinationId, var snapshotId)
+    signal searchRequested(var backupId, var text)
 
     function reload() {
         restoreSnapshotsListView.currentIndex = -1;
@@ -43,7 +45,10 @@ Kirigami.ScrollablePage {
     }
 
     Component.onCompleted: reload()
-    onBackupIdChanged: reload()
+    onBackupIdChanged: {
+        searchField.text = "";
+        reload();
+    }
 
     Connections {
         target: appBackend
@@ -63,6 +68,21 @@ Kirigami.ScrollablePage {
     ColumnLayout {
         width: parent.width
         spacing: Kirigami.Units.mediumSpacing
+
+        Kirigami.SearchField {
+            id: searchField
+            objectName: "snapshotSearchField"
+            Layout.fillWidth: true
+            placeholderText: Texts.label("search_in_backup_snapshots")
+            Accessible.name: Texts.label("search_in_backup_snapshots")
+            // Ctrl+F (the field's default) focuses this field; the other search and filter
+            // fields of the restore area have none, so the shortcut is never ambiguous.
+            // Searching runs restic over every snapshot, so it starts on Return only.
+            autoAccept: false
+            onAccepted: {
+                if (text.trim() !== "") page.searchRequested(page.backupId, text);
+            }
+        }
 
         Kirigami.LoadingPlaceholder {
             Layout.fillWidth: true

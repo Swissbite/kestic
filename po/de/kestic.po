@@ -3412,11 +3412,11 @@ msgstr "Diese Woche"
 msgid "Earlier"
 msgstr "Früher"
 
-#: gui/src/models/snapshot_browse_model.rs
+#: gui/src/models/snapshot_query.rs
 msgid "%1 of %2"
 msgstr "%1 von %2"
 
-#: gui/src/models/snapshot_browse_model.rs
+#: gui/src/models/snapshot_query.rs
 msgid "%1 entry"
 msgid_plural "%1 entries"
 msgstr[0] "%1 Eintrag"
@@ -3440,7 +3440,7 @@ msgid_plural "%1 items selected (%2 here, %3 in other folders)"
 msgstr[0] "%1 Element ausgewählt (%2 hier, %3 in anderen Ordnern)"
 msgstr[1] "%1 Elemente ausgewählt (%2 hier, %3 in anderen Ordnern)"
 
-#: gui/src/models/snapshot_browse_model.rs
+#: gui/src/models/snapshot_query.rs
 msgid "Too many entries to show (%1). Choose a subfolder or narrow the search."
 msgstr "Zu viele Einträge für die Anzeige (%1). Einen Unterordner wählen oder enger suchen."
 
@@ -3456,7 +3456,7 @@ msgstr "Zuerst Dateien oder Ordner auswählen"
 msgid "Top folder"
 msgstr "Oberster Ordner"
 
-#: gui/src/qml/RestoreBrowsePage.qml
+#: gui/src/ui_texts.rs
 msgid "Filter"
 msgstr "Filtern"
 
@@ -3484,7 +3484,7 @@ msgstr "Geändert"
 msgid "This folder is not in the snapshot."
 msgstr "Dieser Ordner ist nicht im Snapshot."
 
-#: gui/src/qml/RestoreBrowsePage.qml
+#: gui/src/ui_texts.rs
 msgid "No entries match the filter."
 msgstr "Kein Eintrag passt zum Filter."
 
@@ -3503,3 +3503,47 @@ msgstr "%1 zum Wiederherstellen markieren"
 #: gui/src/qml/RestoreBrowsePage.qml
 msgid "Selection"
 msgstr "Auswahl"
+
+#: gui/src/ui_texts.rs
+msgid "Search in the snapshots of this backup"
+msgstr "In Snapshots dieses Backups suchen"
+
+#: gui/src/models/snapshot_search_model.rs
+msgid "%1 hit for ‹%2›"
+msgid_plural "%1 hits for ‹%2›"
+msgstr[0] "%1 Treffer für ‹%2›"
+msgstr[1] "%1 Treffer für ‹%2›"
+
+#: gui/src/models/snapshot_search_model.rs
+msgid "in %1 snapshot"
+msgid_plural "in %1 snapshots"
+msgstr[0] "in %1 Snapshot"
+msgstr[1] "in %1 Snapshots"
+
+#: gui/src/models/snapshot_search_model.rs
+msgid "No hits for ‹%1›"
+msgstr "Keine Treffer für ‹%1›"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Search"
+msgstr "Suche"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Searching…"
+msgstr "Suche läuft…"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Show"
+msgstr "Anzeigen"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Show %1"
+msgstr "%1 anzeigen"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Search text"
+msgstr "Suchbegriff"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Search cancelled"
+msgstr "Suche abgebrochen"

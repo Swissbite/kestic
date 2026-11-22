@@ -9,7 +9,7 @@
 mod common;
 
 use common::m3::{FakeSetup, M3Rig, StdFakes, add_local_destination, latest_variant};
-use common::m4::{RawSnapshot, backup_dir, big_tree, small_tree, write_snapshot};
+use common::m4::{RawSnapshot, backup_dir, big_tree, small_tree, write_file, write_snapshot};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::query_list::QueryLimits;
 use kestic_daemon::dbus_api::KESTIC_BUS_NAME;
@@ -311,6 +311,128 @@ fn m4_s03_leaving_a_loading_folder_stops_restic_ls() {
             }
             rig.wrapper.release("ls");
             assert_eq!(rig.wrapper.of('T', "ls").len(), 1, "restic ls got SIGTERM");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// A daemon on the real bus name with one destination «NAS» and the backup «Home» with three
+/// snapshots of three folders: `bericht.pdf` is in the two older ones under different paths
+/// (`t1/src/Dokumente`, `t2/src/Archiv/2026`), the newest has none.
+fn search_env(root: &Path) -> (M3Rig, StdFakes) {
+    let fakes = StdFakes::start_with(FakeSetup {
+        active_network: Some("HomeWifi"),
+        ..FakeSetup::default()
+    });
+    let variant = latest_variant();
+    let rig = M3Rig::start_on(
+        root,
+        &variant,
+        "",
+        KESTIC_BUS_NAME,
+        datetime!(2026-11-15 14:32:00 UTC),
+        |o| o.enable_scheduler = false,
+    );
+    let repo = root.join("repo-NAS");
+    let (dest, password) =
+        add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
+    let backup = rig.add_backup_to(&dest, "Home", |_| {});
+    let tag = format!("kestic:{}", backup.id);
+    let trees = root.join("trees");
+    write_file(&trees.join("t1/src/Dokumente"), "bericht.pdf", "first");
+    write_file(&trees.join("t2/src/Archiv/2026"), "bericht.pdf", "second");
+    write_file(&trees.join("t3/src"), "other.txt", "other");
+    for (src, time) in [
+        ("t1/src", "2026-11-13 12:00:00"),
+        ("t2/src", "2026-11-14 12:00:00"),
+        ("t3/src", "2026-11-15 12:00:00"),
+    ] {
+        backup_dir(
+            &variant.bin,
+            &repo,
+            &password,
+            &trees.join(src),
+            &RawSnapshot {
+                tag: &tag,
+                time,
+                host: "laptop",
+            },
+        );
+    }
+    (rig, fakes)
+}
+
+/// AC-M4-04-1 (smoke part): Ctrl+F, «bericht.pdf» and Return list (a) two hits with path and
+/// snapshot date, and (b) Return on a hit opens it selected in the folder list of its snapshot.
+#[test]
+fn ac_m4_04_1_search_hits_open_in_the_folder_list() {
+    run_isolated_test(
+        "ac_m4_04_1_search_hits_open_in_the_folder_list",
+        "KESTIC_AC_M4_04_1_INNER",
+        |root| {
+            let (rig, _fakes) = search_env(root);
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-search",
+                    layout,
+                    lang,
+                    &smoke_artifact("restore-search", layout, lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-04-2 (smoke part): a search without hits shows (a) «No hits for ‹…›» and (b) no error.
+#[test]
+fn ac_m4_04_2_search_without_hits_shows_no_hits() {
+    run_isolated_test(
+        "ac_m4_04_2_search_without_hits_shows_no_hits",
+        "KESTIC_AC_M4_04_2_INNER",
+        |root| {
+            let (rig, _fakes) = search_env(root);
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-search-none",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-search-none", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// M4-S04: «Cancel» on a running search stops `restic find`, and the page says so.
+#[test]
+fn m4_s04_cancelling_a_search_stops_restic_find() {
+    run_isolated_test(
+        "m4_s04_cancelling_a_search_stops_restic_find",
+        "KESTIC_M4_S04_CANCEL_INNER",
+        |root| {
+            let (rig, _fakes) = search_env(root);
+            rig.wrapper.hold("find");
+            run_m4_gui_smoke(
+                root,
+                "m4-search-cancel",
+                "wide",
+                "en",
+                &smoke_artifact("restore-search-cancelled", "wide", "en"),
+            );
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while rig.wrapper.of('T', "find").is_empty() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            rig.wrapper.release("find");
+            assert_eq!(
+                rig.wrapper.of('T', "find").len(),
+                1,
+                "restic find got SIGTERM"
+            );
             rig.daemon.stop();
         },
     );

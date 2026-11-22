@@ -82,6 +82,21 @@ pub mod qobject {
         #[qproperty(QString, selection_text)]
         type SnapshotBrowseModel = super::SnapshotBrowseModelRust;
 
+        /// The hits of a search in the snapshots of one backup, fetched page by page.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        #[qproperty(QString, state)]
+        #[qproperty(QString, error_text)]
+        #[qproperty(QString, search_text)]
+        #[qproperty(bool, too_large)]
+        #[qproperty(i32, total)]
+        #[qproperty(i32, matched)]
+        #[qproperty(QString, count_text)]
+        #[qproperty(QString, too_large_text)]
+        #[qproperty(QString, no_hits_text)]
+        type SnapshotSearchModel = super::SnapshotSearchModelRust;
+
         /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
         /// with the tray (`kestic-i18n`) and GUI texts (`ui_texts`). No daemon connection.
         #[qobject]
@@ -273,6 +288,24 @@ pub mod qobject {
             top_left: &QModelIndex,
             bottom_right: &QModelIndex,
         );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_search(self: Pin<&mut SnapshotSearchModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_search(self: Pin<&mut SnapshotSearchModel>);
+        #[cxx_name = "beginInsertRows"]
+        #[inherit]
+        fn begin_insert_rows_search(
+            self: Pin<&mut SnapshotSearchModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[cxx_name = "endInsertRows"]
+        #[inherit]
+        fn end_insert_rows_search(self: Pin<&mut SnapshotSearchModel>);
     }
 
     extern "RustQt" {
@@ -489,6 +522,44 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "segmentPaths"]
         fn segment_paths(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "rowOfPath"]
+        fn row_of_path(self: Pin<&mut SnapshotBrowseModel>, path: &QString) -> i32;
+
+        // SnapshotSearchModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &SnapshotSearchModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &SnapshotSearchModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &SnapshotSearchModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &SnapshotSearchModel, parent: &QModelIndex) -> bool;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut SnapshotSearchModel>, parent: &QModelIndex);
+        #[qinvokable]
+        fn search(
+            self: Pin<&mut SnapshotSearchModel>,
+            destination_id: &QString,
+            backup_id: &QString,
+            text: &QString,
+        );
+        #[qinvokable]
+        fn poll(self: Pin<&mut SnapshotSearchModel>);
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut SnapshotSearchModel>, text: &QString);
+        #[qinvokable]
+        fn cancel(self: Pin<&mut SnapshotSearchModel>);
     }
 }
 
@@ -502,6 +573,8 @@ mod restore_snapshots_model;
 mod run_logs_model;
 mod runs_model;
 mod snapshot_browse_model;
+mod snapshot_query;
+mod snapshot_search_model;
 mod snapshots_model;
 
 pub use backups_model::BackupsModelRust;
@@ -511,6 +584,7 @@ pub use restore_snapshots_model::RestoreSnapshotsModelRust;
 pub use run_logs_model::RunLogsModelRust;
 pub use runs_model::RunsModelRust;
 pub use snapshot_browse_model::SnapshotBrowseModelRust;
+pub use snapshot_search_model::SnapshotSearchModelRust;
 pub use snapshots_model::SnapshotsModelRust;
 
 /// Backing struct of the `Texts` QML singleton.
