@@ -134,7 +134,8 @@ ColumnLayout {
 
                 objectName: form.namePrefix + "Drive_" + index
                 Layout.fillWidth: true
-                text: modelData.name
+                // A filesystem without label is named after its mount point.
+                text: modelData.label !== "" ? modelData.label : modelData.mount_point.split("/").pop()
                 subtitle: modelData.mount_point
                 icon.name: "drive-removable-media"
                 checkable: true

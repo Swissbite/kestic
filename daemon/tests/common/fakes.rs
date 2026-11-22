@@ -447,10 +447,12 @@ pub struct FakeUDisks2Filesystem {
     pub mount_points: Vec<String>,
     /// Last segment of the drive object path.
     pub drive_name: String,
-    pub vendor: String,
-    pub model: String,
-    /// `org.freedesktop.UDisks2.Drive.Removable` (USB disks, SD cards).
+    /// `org.freedesktop.UDisks2.Block.Size`.
+    pub size_bytes: u64,
+    /// `org.freedesktop.UDisks2.Drive.Removable` (USB sticks, SD cards).
     pub removable: bool,
+    /// `org.freedesktop.UDisks2.Drive.ConnectionBus` (`usb`, `ata`, `nvme` or empty).
+    pub connection_bus: String,
 }
 
 fn owned(value: Variant<'_>) -> OwnedVariant {
@@ -503,6 +505,7 @@ impl FakeUDisks2Filesystem {
             owned(Variant::from(self.drive_path().into_inner())),
         );
         block.insert("HintIgnore".to_string(), owned(Variant::from(false)));
+        block.insert("Size".to_string(), owned(Variant::from(self.size_bytes)));
         let mut filesystem = HashMap::new();
         let mount_points: Vec<Vec<u8>> = self
             .mount_points
@@ -520,16 +523,13 @@ impl FakeUDisks2Filesystem {
 
         let mut drive = HashMap::new();
         drive.insert(
-            "Vendor".to_string(),
-            owned(Variant::from(self.vendor.as_str())),
-        );
-        drive.insert(
-            "Model".to_string(),
-            owned(Variant::from(self.model.as_str())),
-        );
-        drive.insert(
             "Removable".to_string(),
             owned(Variant::from(self.removable)),
+        );
+        drive.insert("MediaRemovable".to_string(), owned(Variant::from(false)));
+        drive.insert(
+            "ConnectionBus".to_string(),
+            owned(Variant::from(self.connection_bus.as_str())),
         );
         let mut drive_ifaces = HashMap::new();
         drive_ifaces.insert("org.freedesktop.UDisks2.Drive".to_string(), drive);

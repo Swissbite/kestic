@@ -31,8 +31,7 @@ fn prop_bool(object: &ObjectInterfaces, iface: &str, name: &str) -> bool {
 fn prop_str(object: &ObjectInterfaces, iface: &str, name: &str) -> String {
     prop(object, iface, name)
         .and_then(|v| <&str>::try_from(v).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
+        .map_or_default(|s| s.trim().to_string())
 }
 
 fn prop_path(object: &ObjectInterfaces, iface: &str, name: &str) -> Option<String> {
@@ -72,53 +71,41 @@ fn drive_of<'a>(
     objects.get(&OwnedObjectPath::try_from(drive_path).ok()?)
 }
 
-/// Name shown for a drive: the filesystem label, else vendor and model, else the device.
-fn drive_name(
-    path: &OwnedObjectPath,
-    block: &ObjectInterfaces,
-    drive: &ObjectInterfaces,
-) -> String {
-    let label = prop_str(block, BLOCK_IFACE, "IdLabel");
-    if !label.is_empty() {
-        return label;
-    }
-    let vendor_model = [
-        prop_str(drive, DRIVE_IFACE, "Vendor"),
-        prop_str(drive, DRIVE_IFACE, "Model"),
-    ]
-    .into_iter()
-    .filter(|s| !s.is_empty())
-    .collect::<Vec<_>>()
-    .join(" ");
-    if !vendor_model.is_empty() {
-        return vendor_model;
-    }
-    path.as_str()
-        .rsplit('/')
-        .next()
-        .unwrap_or_default()
-        .to_string()
+/// Buses whose drives can be unplugged; UDisks2 does not always set `Removable` for USB hard
+/// disks behind a SATA bridge.
+const HOTPLUG_BUSES: [&str; 2] = ["usb", "ieee1394"];
+
+fn is_removable(drive: &ObjectInterfaces) -> bool {
+    prop_bool(drive, DRIVE_IFACE, "Removable")
+        || prop_bool(drive, DRIVE_IFACE, "MediaRemovable")
+        || HOTPLUG_BUSES.contains(&prop_str(drive, DRIVE_IFACE, "ConnectionBus").as_str())
 }
 
-/// Mounted filesystems on drives UDisks2 marks as removable (USB disks, SD cards, …), sorted
-/// by name and mount point.
+fn prop_u64(object: &ObjectInterfaces, iface: &str, name: &str) -> u64 {
+    prop(object, iface, name).map_or(0, |v| u64::try_from(v).unwrap_or(0))
+}
+
+/// Mounted filesystems on drives that can be unplugged (USB disks, SD cards, …), sorted by
+/// label and mount point.
 pub fn removable_drives(objects: &ManagedObjects) -> Vec<RemovableDriveDto> {
     let mut drives: Vec<RemovableDriveDto> = objects
-        .iter()
-        .filter(|(_, object)| !prop_bool(object, BLOCK_IFACE, "HintIgnore"))
-        .filter_map(|(path, object)| {
+        .values()
+        .filter(|object| !prop_bool(object, BLOCK_IFACE, "HintIgnore"))
+        .filter_map(|object| {
             let mount_point = first_mount_point(object)?;
             let drive = drive_of(objects, object)?;
-            prop_bool(drive, DRIVE_IFACE, "Removable").then(|| RemovableDriveDto {
-                name: drive_name(path, object, drive),
+            is_removable(drive).then(|| RemovableDriveDto {
+                label: prop_str(object, BLOCK_IFACE, "IdLabel"),
                 mount_point,
+                fs_uuid: prop_str(object, BLOCK_IFACE, "IdUUID"),
+                size_bytes: prop_u64(object, BLOCK_IFACE, "Size"),
             })
         })
         .collect();
     drives.sort_by(|a, b| {
-        a.name
+        a.label
             .to_lowercase()
-            .cmp(&b.name.to_lowercase())
+            .cmp(&b.label.to_lowercase())
             .then_with(|| a.mount_point.cmp(&b.mount_point))
     });
     drives

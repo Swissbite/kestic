@@ -192,9 +192,9 @@ fn m5_05_1_gui_drive_type_offers_the_removable_drive() {
                     uuid: format!("uuid-{device}"),
                     mount_points: vec![mount_point.to_string()],
                     drive_name: format!("drive_{device}"),
-                    vendor: "Vendor".to_string(),
-                    model: "Model".to_string(),
+                    size_bytes: 64_000_000_000,
                     removable,
+                    connection_bus: if removable { "usb" } else { "" }.to_string(),
                 });
             }
             let (rig, _fakes, _programs) = start_with_ssh_only(root);

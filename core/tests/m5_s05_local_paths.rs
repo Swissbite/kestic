@@ -16,6 +16,8 @@ const MOUNTINFO: &str = "\
 22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw
 110 22 0:45 / /mnt/nas rw,relatime - cifs //nas/backups rw,vers=3.1.1
 111 22 0:46 / /mnt/nas3 rw,relatime - smb3 //nas/other rw
+120 22 0:50 / /run/user/1000/kio-fuse-AbCdEf rw,nosuid - fuse.kio-fuse kio-fuse rw
+121 22 0:51 / /run/user/1000/gvfs rw,nosuid - fuse.gvfsd-fuse gvfsd-fuse rw
 ";
 
 fn local(path: &str) -> Destination {
@@ -28,8 +30,8 @@ fn local(path: &str) -> Destination {
     .expect("local destination")
 }
 
-/// AC-M5-05-2 (a), unit part (mountinfo fake): a folder below a `cifs` or `smb3` mount gets the
-/// note `cifs_share`; a folder on the ext4 root and a REST destination do not. The D-Bus and
+/// AC-M5-05-2 (a), unit part (mountinfo fake): a folder below a `cifs` or `smb3` mount, or on an
+/// SMB share shown by the FUSE mount of KIO or GVfs, gets the note `cifs_share`; a folder on the ext4 root and a REST destination do not. The D-Bus and
 /// GUI tests of this AC show that adding stays possible after the confirmation (b).
 #[test]
 fn ac_m5_05_2_folder_on_cifs_mount_gets_cifs_note() {
@@ -47,6 +49,30 @@ fn ac_m5_05_2_folder_on_cifs_mount_gets_cifs_note() {
         connection_notes(&local("/mnt/nas3"), &mounts),
         vec![ConnectionNoteCode::CifsShare],
         "(a) smb3 mount"
+    );
+    assert_eq!(
+        connection_notes(
+            &local("/run/user/1000/kio-fuse-AbCdEf/smb/nas/share/kestic"),
+            &mounts
+        ),
+        vec![ConnectionNoteCode::CifsShare],
+        "(a) SMB share through the FUSE mount of KIO"
+    );
+    assert_eq!(
+        connection_notes(
+            &local("/run/user/1000/gvfs/smb-share:server=nas,share=backups/kestic"),
+            &mounts
+        ),
+        vec![ConnectionNoteCode::CifsShare],
+        "(a) SMB share through the FUSE mount of GVfs"
+    );
+    assert_eq!(
+        connection_notes(
+            &local("/run/user/1000/kio-fuse-AbCdEf/sftp/nas/kestic"),
+            &mounts
+        ),
+        Vec::new(),
+        "an SFTP folder through KIO is no SMB share"
     );
     assert_eq!(
         connection_notes(&local("/mnt/nasa/kestic"), &mounts),

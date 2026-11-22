@@ -384,9 +384,12 @@ pub struct ConnectionTestResultDto {
 /// Entry of `ListRemovableDrives`: a mounted removable drive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemovableDriveDto {
-    /// Filesystem label, else vendor and model of the drive.
-    pub name: String,
+    /// Filesystem label; empty when the filesystem has none.
+    pub label: String,
     pub mount_point: String,
+    /// Filesystem UUID; empty when unknown.
+    pub fs_uuid: String,
+    pub size_bytes: u64,
 }
 
 /// Skipped backup reason returned by `StartAllBackups`.

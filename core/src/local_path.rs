@@ -5,7 +5,9 @@
 //! are no paths restic can use, and folders on a CIFS/SMB share get a warning.
 
 use crate::model::{Destination, DestinationKind};
-use crate::mount::{MountInspector, parse_mountinfo, resolve_mount_for_path};
+use crate::mount::{
+    MountInspector, normalize_lexical_path, parse_mountinfo, resolve_mount_for_path,
+};
 use kestic_i18n::codes::ConnectionNoteCode;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
@@ -14,6 +16,12 @@ use thiserror::Error;
 
 /// Filesystem types of CIFS/SMB mounts in `/proc/self/mountinfo`.
 const CIFS_FS_TYPES: [&str; 3] = ["cifs", "smb3", "smbfs"];
+
+/// FUSE mounts of the desktop that show network shares as folders, with the first path
+/// component below the mount point that marks an SMB share (`…/kio-fuse-XXXX/smb/nas/share`,
+/// `…/gvfs/smb-share:server=nas,share=x`).
+const FUSE_SMB_PREFIXES: [(&str, &str); 2] =
+    [("fuse.kio-fuse", "smb"), ("fuse.gvfsd-fuse", "smb-share:")];
 
 /// A folder chosen in the file dialog that is a network address, not a local path.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -39,9 +47,15 @@ pub fn address_for_display(address: &str) -> String {
         return address.to_string();
     };
     let authority_end = rest.find('/').unwrap_or(rest.len());
-    match rest[..authority_end].rfind('@') {
-        Some(at) => format!("{scheme}://{}", &rest[at + 1..]),
-        None => address.to_string(),
+    if let Some(at) = rest[..authority_end].rfind('@') {
+        return format!("{scheme}://{}", &rest[at + 1..]);
+    }
+    // A password may contain `/`: `user:pa/ss@nas/x`.
+    match rest.find('@') {
+        Some(at) if rest[..authority_end].contains(':') => {
+            format!("{scheme}://{}", &rest[at + 1..])
+        }
+        _ => address.to_string(),
     }
 }
 
@@ -77,6 +91,7 @@ fn percent_decode(text: &str) -> Vec<u8> {
     while i < bytes.len() {
         if bytes[i] == b'%'
             && let Some(hex) = text.get(i + 1..i + 3)
+            && hex.bytes().all(|b| b.is_ascii_hexdigit())
             && let Ok(byte) = u8::from_str_radix(hex, 16)
         {
             out.push(byte);
@@ -89,15 +104,31 @@ fn percent_decode(text: &str) -> Vec<u8> {
     out
 }
 
-/// Whether `path` lies on a CIFS/SMB mount according to `inspector`'s mountinfo.
+/// Whether `path` lies on a CIFS/SMB share according to `inspector`'s mountinfo: a CIFS mount
+/// or an SMB share shown by the FUSE mount of KIO or GVfs.
 pub fn is_on_cifs_share(path: &Path, inspector: &dyn MountInspector) -> bool {
     let Ok(raw) = inspector.read_mountinfo() else {
         return false;
     };
     let entries = parse_mountinfo(&raw);
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    resolve_mount_for_path(&resolved, &entries)
-        .is_some_and(|entry| CIFS_FS_TYPES.contains(&entry.fs_type.as_str()))
+    let Some(entry) = resolve_mount_for_path(&resolved, &entries) else {
+        return false;
+    };
+    if CIFS_FS_TYPES.contains(&entry.fs_type.as_str()) {
+        return true;
+    }
+    let first_below_mount = normalize_lexical_path(&resolved)
+        .strip_prefix(normalize_lexical_path(&entry.mount_point))
+        .ok()
+        .and_then(|rel| rel.components().next())
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    FUSE_SMB_PREFIXES.iter().any(|(fs_type, prefix)| {
+        entry.fs_type == *fs_type
+            && first_below_mount.as_deref().is_some_and(|first| {
+                first == *prefix || (prefix.ends_with(':') && first.starts_with(prefix))
+            })
+    })
 }
 
 /// Notes the user confirms before `dest` is added, e.g. a folder on a CIFS/SMB share.
@@ -136,6 +167,7 @@ mod tests {
         );
         assert_eq!(address_for_display("smb://nas/share"), "smb://nas/share");
         assert_eq!(address_for_display("smb://nas/a@b"), "smb://nas/a@b");
+        assert_eq!(address_for_display("smb://user:pa/ss@nas/x"), "smb://nas/x");
     }
 
     #[test]
@@ -151,6 +183,10 @@ mod tests {
         assert_eq!(
             local_path_from_dialog_url("/mnt/100%"),
             Ok(PathBuf::from("/mnt/100%"))
+        );
+        assert_eq!(
+            local_path_from_dialog_url("file:///a/%+1"),
+            Ok(PathBuf::from("/a/%+1"))
         );
         assert_eq!(
             local_path_from_dialog_url("file://nas/share"),
