@@ -493,3 +493,50 @@ fn m5_02_empty_backend_password_is_absent_and_never_sent() {
         "no REST password saved"
     );
 }
+
+/// M5-S02, error reading: a bucket, path or host in the URL or address of a connection error
+/// (`backup-403`, `authentication-logs`, `forbidden/x`, `[fd00::403]`) does not turn it into a
+/// rejected login; a real login error still counts as one.
+#[test]
+fn m5_02_names_in_urls_do_not_read_as_login_errors() {
+    use kestic_core::restic::{ResticFailureKind, classify_exit};
+    let refused = |url: &str, addr: &str| {
+        format!("Stat: Get \"{url}/?location=\": dial tcp {addr}: connect: connection refused")
+    };
+    for message in [
+        refused("http://127.0.0.1:9000/backup-403", "127.0.0.1:9000"),
+        refused(
+            "http://127.0.0.1:9000/authentication-logs",
+            "127.0.0.1:9000",
+        ),
+        refused("http://127.0.0.1:9000/backup/forbidden/x", "127.0.0.1:9000"),
+        refused("http://[fd00::403]:9000/backup", "[fd00::403]:9000"),
+        refused("http://127.0.0.1:40312/backup", "127.0.0.1:40312"),
+    ] {
+        assert_eq!(
+            classify_exit(1, Some(&message), Vec::new(), "").kind,
+            ResticFailureKind::DestinationUnreachable,
+            "{message}"
+        );
+    }
+    assert_eq!(
+        classify_exit(
+            1,
+            Some("Stat: The request signature we calculated does not match the signature you provided."),
+            Vec::new(),
+            ""
+        )
+        .kind,
+        ResticFailureKind::BackendAuthFailed
+    );
+    assert_eq!(
+        classify_exit(
+            1,
+            Some("unexpected HTTP response (403): 403 Forbidden"),
+            Vec::new(),
+            ""
+        )
+        .kind,
+        ResticFailureKind::BackendAuthFailed
+    );
+}
