@@ -4,6 +4,7 @@
 //! Unit tests of `state_cache` (kept in their own file, NFR-12 file size).
 
 use super::*;
+use crate::time_texts::{format_datetime_display, format_day_group, format_time_short};
 use time::macros::datetime;
 
 #[test]

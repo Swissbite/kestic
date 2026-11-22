@@ -9,11 +9,12 @@ use crate::overall_text::{
     back_up_all_availability, localized_blocking_message, overall_headline, overall_subtitle,
 };
 use crate::state_cache::{
-    daemon_now, daemon_unavailable_text, ensure_daemon_and_refresh, format_overall_visual,
-    format_pause_line, i18n, initialize_and_sync, localized_condition_override_message,
+    daemon_unavailable_text, ensure_daemon_and_refresh, format_overall_visual, format_pause_line,
+    i18n, initialize_and_sync, localized_condition_override_message,
     localized_manual_block_message, localized_unmet_conditions, lookup_backup_summary, make_client,
     refresh_state_now, shared_state, tr_text,
 };
+use crate::time_texts::daemon_now;
 use cxx_qt_lib::QString;
 use kestic_core::model::ResticProvider;
 use kestic_core::sync::LockUnpoisoned;

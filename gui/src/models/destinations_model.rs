@@ -7,9 +7,10 @@ use super::qobject;
 use super::rows::{id_at, row_map, row_of};
 use crate::overall_text::maintenance_status_line;
 use crate::state_cache::{
-    daemon_now, format_datetime_display, format_destination_status, format_maintenance_entry,
-    format_slot_timestamp, i18n, json_or, shared_state,
+    format_destination_status, format_maintenance_entry, format_slot_timestamp, i18n, json_or,
+    shared_state,
 };
+use crate::time_texts::{daemon_now, format_datetime_display};
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};

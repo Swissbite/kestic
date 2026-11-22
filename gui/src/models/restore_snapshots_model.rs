@@ -7,9 +7,9 @@
 use super::qobject;
 use super::rows::{id_at, row_map, row_of};
 use crate::backend::restore::restore_cache;
-use crate::state_cache::{
-    cached_daemon_now, format_bytes, format_datetime_display, format_day_group, format_time_short,
-    i18n, to_local,
+use crate::state_cache::{format_bytes, i18n};
+use crate::time_texts::{
+    cached_daemon_now, format_datetime_display, format_day_group, format_time_short, to_local,
 };
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;

@@ -60,7 +60,7 @@ fn ac_m4_01_1_size_is_data_added_or_total_bytes_processed() {
 fn ac_m4_01_1_snapshots_are_grouped_by_day_with_their_time() {
     use time::macros::datetime;
     // Times in the local zone of the test machine, so the days never shift.
-    let offset = crate::state_cache::to_local(datetime!(2026-11-15 12:00:00 UTC)).offset();
+    let offset = crate::time_texts::to_local(datetime!(2026-11-15 12:00:00 UTC)).offset();
     let local = |t: time::PrimitiveDateTime| t.assume_offset(offset);
     // Sunday, 15.11.2026: the week started on Monday, 09.11.
     let now = local(datetime!(2026-11-15 14:32:00));

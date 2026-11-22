@@ -12,6 +12,7 @@ mod run_texts;
 #[cfg(feature = "test-harness")]
 mod smoke;
 mod state_cache;
+mod time_texts;
 mod ui_texts;
 
 use cxx_kde_frameworks::ki18n::{self, KLocalizedString};
