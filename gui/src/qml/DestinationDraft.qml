@@ -50,7 +50,7 @@ QtObject {
         && !/^\d+\.\d+\.\d+\.\d+$/.test(bucket.trim())
     // A new S3 destination needs both keys; when editing, empty keys keep the saved ones.
     readonly property bool keysValid: !kindIsS3 || destinationId !== ""
-        || (accessKeyId.trim().length > 0 && secretAccessKey.length > 0)
+        || (accessKeyId.trim().length > 0 && secretAccessKey.trim().length > 0)
     readonly property bool detailsValid: nameValid && locationValid && keysValid
     // The connection test passed and its warning, if any, is confirmed.
     readonly property bool connectionAccepted: connectionVerified && (testNote === "" || testNoteConfirmed)
@@ -81,7 +81,7 @@ QtObject {
         if (kindIsS3) {
             return JSON.stringify({
                 s3_access_key_id: accessKeyId.trim(),
-                s3_secret_access_key: secretAccessKey
+                s3_secret_access_key: secretAccessKey.trim()
             });
         }
         if (kindIsRest) {

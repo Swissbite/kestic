@@ -16,7 +16,7 @@ use kestic_core::restic::{
     ResticCommandSpec, ResticRunError, ResticRuntime, SECRET_KIND_REPO, run_restic,
 };
 use kestic_core::secrets::{InMemorySecretStore, SecretStore, SecretValue};
-use kestic_test_support::password::strong_password;
+use kestic_test_support::password::{assert_no_secret, s3_key, strong_password};
 use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::net::TcpListener;
@@ -25,8 +25,19 @@ use std::thread;
 use tempfile::TempDir;
 use time::macros::datetime;
 
-const ACCESS_KEY: &str = "KESTICRUNNERACCESS1";
-const SECRET_KEY: &str = "runner-secret-key-0123456789";
+/// S3 keys generated for one test: the access key in S3 syntax, the secret key as strong test
+/// password, so `assert_no_secret` finds it in any form.
+struct Keys {
+    access: String,
+    secret: String,
+}
+
+fn keys() -> Keys {
+    Keys {
+        access: s3_key(20),
+        secret: strong_password(),
+    }
+}
 
 /// restic stand-in: writes its arguments (one per line) to `args.log`, its environment to
 /// `env.log` and prints an empty repository config.
@@ -79,11 +90,11 @@ fn read(path: PathBuf) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-fn assert_keys_only_in_env(dir: &Path, what: &str) {
+fn assert_keys_only_in_env(dir: &Path, keys: &Keys, what: &str) {
     let args = read(dir.join("args.log"));
     let env = read(dir.join("env.log"));
-    assert!(!args.contains(ACCESS_KEY), "{what}: access key in argv");
-    assert!(!args.contains(SECRET_KEY), "{what}: secret key in argv");
+    assert!(!args.contains(&keys.access), "{what}: access key in argv");
+    assert_no_secret(&args, &keys.secret, &format!("{what}: argv"));
     assert!(
         args.lines()
             .any(|a| a.starts_with("s3:http://127.0.0.1:") && a.ends_with("/kestic-backup/laptop")),
@@ -91,12 +102,12 @@ fn assert_keys_only_in_env(dir: &Path, what: &str) {
     );
     assert!(
         env.lines()
-            .any(|l| l == format!("AWS_ACCESS_KEY_ID={ACCESS_KEY}")),
+            .any(|l| l == format!("AWS_ACCESS_KEY_ID={}", keys.access)),
         "{what}: access key in the environment"
     );
     assert!(
         env.lines()
-            .any(|l| l == format!("AWS_SECRET_ACCESS_KEY={SECRET_KEY}")),
+            .any(|l| l == format!("AWS_SECRET_ACCESS_KEY={}", keys.secret)),
         "{what}: secret key in the environment"
     );
     assert!(
@@ -111,6 +122,7 @@ fn assert_keys_only_in_env(dir: &Path, what: &str) {
 #[test]
 fn ac_m5_02_2_runner_passes_s3_keys_only_as_environment_variables() {
     let dir = TempDir::new().expect("tempdir");
+    let keys = keys();
     let resolved = fake_restic(dir.path());
     let store = InMemorySecretStore::new();
     let dest = s3_destination("http://127.0.0.1:9");
@@ -126,14 +138,14 @@ fn ac_m5_02_2_runner_passes_s3_keys_only_as_environment_variables() {
         .set_secret(
             id,
             SECRET_KIND_S3_ACCESS_KEY,
-            &SecretValue::from_str_secret(ACCESS_KEY),
+            &SecretValue::from_str_secret(keys.access.as_str()),
         )
         .expect("store access key");
     store
         .set_secret(
             id,
             SECRET_KIND_S3_SECRET_KEY,
-            &SecretValue::from_str_secret(SECRET_KEY),
+            &SecretValue::from_str_secret(keys.secret.as_str()),
         )
         .expect("store secret key");
     let mut spec = ResticCommandSpec::for_destination(
@@ -149,16 +161,13 @@ fn ac_m5_02_2_runner_passes_s3_keys_only_as_environment_variables() {
         .expect("run the stand-in");
 
     assert_eq!(res.exit_code, 0);
-    assert_keys_only_in_env(dir.path(), "run");
+    assert_keys_only_in_env(dir.path(), &keys, "run");
     let record_args = res.command_record.args.join(" ");
     assert!(
-        !record_args.contains(ACCESS_KEY),
+        !record_args.contains(&keys.access),
         "access key in the command record"
     );
-    assert!(
-        !record_args.contains(SECRET_KEY),
-        "secret key in the command record"
-    );
+    assert_no_secret(&record_args, &keys.secret, "command record");
     for name in [
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
@@ -175,22 +184,20 @@ fn ac_m5_02_2_runner_passes_s3_keys_only_as_environment_variables() {
         shown.contains(&format!(
             "AWS_SECRET_ACCESS_KEY=\"$(kestic secret get {id} s3_secret_key)\""
         )),
-        "shown command reads the secret key from the password store: {shown}"
+        "shown command reads the secret key from the password store"
     );
     assert!(
-        !shown.contains(ACCESS_KEY),
-        "access key in the shown command: {shown}"
+        !shown.contains(&keys.access),
+        "access key in the shown command"
     );
-    assert!(
-        !shown.contains(SECRET_KEY),
-        "secret key in the shown command: {shown}"
-    );
+    assert_no_secret(&shown, &keys.secret, "shown command");
 }
 
 /// AC-M5-02-2 (d), runner: without a stored secret key a run does not start restic.
 #[test]
 fn ac_m5_02_2_runner_refuses_to_start_without_stored_s3_keys() {
     let dir = TempDir::new().expect("tempdir");
+    let keys = keys();
     let resolved = fake_restic(dir.path());
     let store = InMemorySecretStore::new();
     let dest = s3_destination("http://127.0.0.1:9");
@@ -198,7 +205,7 @@ fn ac_m5_02_2_runner_refuses_to_start_without_stored_s3_keys() {
         .set_secret(
             dest.id.as_str(),
             SECRET_KIND_S3_ACCESS_KEY,
-            &SecretValue::from_str_secret(ACCESS_KEY),
+            &SecretValue::from_str_secret(keys.access.as_str()),
         )
         .expect("store access key");
     let spec = ResticCommandSpec::for_destination(
@@ -230,17 +237,18 @@ fn ac_m5_02_2_runner_refuses_to_start_without_stored_s3_keys() {
 #[test]
 fn ac_m5_02_2_setup_passes_s3_keys_only_as_environment_and_saves_them() {
     let dir = TempDir::new().expect("tempdir");
+    let keys = keys();
     let resolved = fake_restic(dir.path());
     let store = InMemorySecretStore::new();
     let dest = s3_destination(&http_endpoint());
     let mut creds = BackendCredentials::none();
     creds.set(
         SECRET_KIND_S3_ACCESS_KEY,
-        Some(SecretValue::from_str_secret(ACCESS_KEY)),
+        Some(SecretValue::from_str_secret(keys.access.as_str())),
     );
     creds.set(
         SECRET_KIND_S3_SECRET_KEY,
-        Some(SecretValue::from_str_secret(SECRET_KEY)),
+        Some(SecretValue::from_str_secret(keys.secret.as_str())),
     );
     let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
     let helper = dir.path().join("kestic");
@@ -261,19 +269,19 @@ fn ac_m5_02_2_setup_passes_s3_keys_only_as_environment_and_saves_them() {
     )
     .expect("setup with the stand-in");
 
-    assert_keys_only_in_env(dir.path(), "setup");
+    assert_keys_only_in_env(dir.path(), &keys, "setup");
     let stored = |kind: &str| {
         store
             .get_secret(dest.id.as_str(), kind)
             .expect("read store")
             .map(|v| v.as_str().expect("utf-8").to_string())
     };
-    assert_eq!(
-        stored(SECRET_KIND_S3_ACCESS_KEY).as_deref(),
-        Some(ACCESS_KEY)
+    assert!(
+        stored(SECRET_KIND_S3_ACCESS_KEY).as_deref() == Some(keys.access.as_str()),
+        "access key saved"
     );
-    assert_eq!(
-        stored(SECRET_KIND_S3_SECRET_KEY).as_deref(),
-        Some(SECRET_KEY)
+    assert!(
+        stored(SECRET_KIND_S3_SECRET_KEY).as_deref() == Some(keys.secret.as_str()),
+        "secret key saved"
     );
 }

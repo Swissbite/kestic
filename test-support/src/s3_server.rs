@@ -4,7 +4,7 @@
 //! Local S3 test server: `rclone serve s3` with one access key pair on a random loopback port,
 //! serving a temp directory whose subdirectories are the buckets.
 
-use crate::random::{hex, random_bytes};
+use crate::password::s3_key;
 use crate::tools::{dev_tools_bin_dir, free_loopback_port};
 use std::env;
 use std::fs;
@@ -42,8 +42,8 @@ impl S3ServerGuard {
     /// Starts the server on a free port with generated keys; `bucket` exists and is empty.
     pub fn start(data_dir: &Path, bucket: &str) -> Self {
         fs::create_dir_all(data_dir.join(bucket)).expect("mkdir bucket");
-        let access_key = format!("KESTIC{}", hex(&random_bytes(8)).to_uppercase());
-        let secret_key = hex(&random_bytes(20));
+        let access_key = s3_key(20);
+        let secret_key = s3_key(40);
         Self::start_on_port(data_dir, free_loopback_port(), &access_key, &secret_key)
     }
 

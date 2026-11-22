@@ -447,11 +447,17 @@ fn execute_probe_command(
 /// Whether a restic line announces a retry of an error that will not go away by waiting: the
 /// backend rejected the login, the bucket does not exist or the server cannot be reached.
 fn is_conclusive_retry(line: &str) -> bool {
-    if !line.contains("retrying after") {
+    // `<op> returned error, retrying after 1.403627s: <error>`: only the error is classified,
+    // the random duration could look like an HTTP status.
+    let Some(error) = line
+        .split_once("retrying after ")
+        .and_then(|(_, rest)| rest.split_once(": "))
+        .map(|(_, error)| error)
+    else {
         return false;
-    }
+    };
     matches!(
-        crate::restic::classify_exit(1, Some(line), Vec::new(), "").kind,
+        crate::restic::classify_exit(1, Some(error), Vec::new(), "").kind,
         ResticFailureKind::BackendAuthFailed
             | ResticFailureKind::RepositoryMissing
             | ResticFailureKind::DestinationUnreachable
@@ -489,6 +495,40 @@ mod tests {
     use super::*;
     use kestic_test_support::password::strong_password;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn retry_duration_is_not_read_as_http_status() {
+        let missing = "Stat(<config/>) returned error, retrying after 1.403627s: Stat: The specified bucket does not exist";
+        let refused = "Stat(<config/>) returned error, retrying after 401.5ms: dial tcp 127.0.0.1:9: connect: connection refused";
+        let signature = "Stat(<config/>) returned error, retrying after 1.2s: Stat: The request signature we calculated does not match the signature you provided.";
+        assert!(is_conclusive_retry(missing));
+        assert_eq!(
+            crate::restic::classify_exit(
+                1,
+                Some("Stat: The specified bucket does not exist"),
+                Vec::new(),
+                ""
+            )
+            .kind,
+            ResticFailureKind::RepositoryMissing
+        );
+        assert!(is_conclusive_retry(refused));
+        assert!(is_conclusive_retry(signature));
+        assert!(!is_conclusive_retry(
+            "Load(<lock/1>) returned error, retrying after 1.4s: unexpected HTTP 500"
+        ));
+        assert!(!is_conclusive_retry(
+            "Stat: The specified bucket does not exist"
+        ));
+        let refused_on_port = "Stat(<config/>) returned error, retrying after 508.8ms: Stat: Get \"http://127.0.0.1:40312/bucket/?location=\": dial tcp 127.0.0.1:40312: connect: connection refused";
+        assert_eq!(
+            crate::restic::classify_exit(1, Some(refused_on_port), Vec::new(), "").kind,
+            ResticFailureKind::DestinationUnreachable
+        );
+        assert!(!is_conclusive_retry(
+            "Stat(<config/>) returned error, retrying after 1.403s: Stat: Please reduce your request rate."
+        ));
+    }
 
     #[test]
     fn probe_password_file_is_private() {

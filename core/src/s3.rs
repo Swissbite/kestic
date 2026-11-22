@@ -16,12 +16,21 @@ pub fn validate(endpoint: &str, bucket: &str, path: Option<&str>) -> Result<(), 
              hyphens, starting and ending with a letter or digit"
         )));
     }
-    if let Some(p) = path
-        && trimmed_path(p).split('/').any(|seg| seg == "..")
-    {
-        return Err(ModelError::InvalidDestination(format!(
-            "S3 path must not contain '..': '{p}'"
-        )));
+    if let Some(p) = path {
+        let trimmed = trimmed_path(p);
+        if !trimmed.is_empty() && trimmed.split('/').any(|seg| matches!(seg, "" | "." | "..")) {
+            return Err(ModelError::InvalidDestination(format!(
+                "S3 path must not contain empty, '.' or '..' segments: '{p}'"
+            )));
+        }
+        // restic reads the address as URL: `#` and `?` would cut the path, `%` would decode it.
+        if p.chars()
+            .any(|c| matches!(c, '#' | '?' | '%') || c.is_control())
+        {
+            return Err(ModelError::InvalidDestination(format!(
+                "S3 path must not contain '#', '?', '%' or control characters: '{p}'"
+            )));
+        }
     }
     Ok(())
 }
@@ -161,5 +170,25 @@ mod tests {
     fn path_rejects_parent_segments() {
         assert!(validate("https://s3.example.com", "backup", Some("a/../b")).is_err());
         assert!(validate("https://s3.example.com", "backup", Some("a/b")).is_ok());
+    }
+
+    #[test]
+    fn path_rejects_characters_that_change_the_url() {
+        for bad in [
+            "laptop#one",
+            "a?b",
+            "a%41",
+            "a/%2e%2e/b",
+            "100%",
+            "a\nb",
+            "a//b",
+            "a/./b",
+            ".",
+        ] {
+            assert!(
+                validate("https://s3.example.com", "backup", Some(bad)).is_err(),
+                "{bad} accepted"
+            );
+        }
     }
 }

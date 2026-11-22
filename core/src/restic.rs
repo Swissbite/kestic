@@ -378,20 +378,24 @@ pub fn classify_exit(
 /// Whether the lowercase restic message says the backend rejected the login: HTTP 401/403 or
 /// the S3 errors for a wrong access key or secret key.
 fn is_backend_auth_failure(detail_lower: &str) -> bool {
-    [
-        "401",
-        "403",
-        "unauthorized",
-        "forbidden",
-        "authentication",
-        "access denied",
-        "signature we calculated does not match",
-        "signaturedoesnotmatch",
-        "access key id you provided does not exist",
-        "invalidaccesskeyid",
-    ]
-    .iter()
-    .any(|needle| detail_lower.contains(needle))
+    // A status code counts only as a whole number: ports (`:40312`), durations (`1.403s`) and
+    // ids in the same message must not look like one.
+    let status = detail_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|token| token == "401" || token == "403");
+    status
+        || [
+            "unauthorized",
+            "forbidden",
+            "authentication",
+            "access denied",
+            "signature we calculated does not match",
+            "signaturedoesnotmatch",
+            "access key id you provided does not exist",
+            "invalidaccesskeyid",
+        ]
+        .iter()
+        .any(|needle| detail_lower.contains(needle))
 }
 
 /// Whether the lowercase restic message says the S3 bucket does not exist.

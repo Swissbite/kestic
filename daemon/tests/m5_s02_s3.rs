@@ -13,7 +13,7 @@ mod common;
 
 use common::m3::{
     M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, assert_dbus_error_name, backup_summary,
-    dest_summary, latest_variant, restic_variants, spawn_m3_daemon, wait_for_state,
+    dest_summary, restic_variants, spawn_m3_daemon, wait_for_state,
 };
 use common::{
     CapturedKesticSignal, KesticSignalCollector, isolated_secret_store, run_isolated_test,
@@ -184,83 +184,84 @@ fn ac_m5_02_2_keys_only_in_secret_service_and_never_in_restic_arguments() {
         "ac_m5_02_2_keys_only_in_secret_service_and_never_in_restic_arguments",
         "KESTIC_M5_02_2_INNER",
         |root| {
-            let variant = latest_variant();
-            let rig = start_s3_rig(root, &variant, "M5S3B");
-            let (dest, backup_id) = rig.add_destination_and_backup(root);
-            rig.daemon
-                .client
-                .start_backup(backup_id.as_str())
-                .expect("StartBackup");
-            let state = wait_for_state(
-                &rig.daemon.client,
-                Duration::from_secs(60),
-                "backup done",
-                |s| {
-                    let b = backup_summary(s, &backup_id);
-                    b.active_run.is_none() && b.last_run.is_some()
-                },
-            );
-            let config = fs::read_to_string(&rig.daemon.config_path).expect("read config.toml");
+            for variant in restic_variants() {
+                let rig = start_s3_rig(root, &variant, "M5S3B");
+                let (dest, backup_id) = rig.add_destination_and_backup(root);
+                rig.daemon
+                    .client
+                    .start_backup(backup_id.as_str())
+                    .expect("StartBackup");
+                let state = wait_for_state(
+                    &rig.daemon.client,
+                    Duration::from_secs(60),
+                    "backup done",
+                    |s| {
+                        let b = backup_summary(s, &backup_id);
+                        b.active_run.is_none() && b.last_run.is_some()
+                    },
+                );
+                let config = fs::read_to_string(&rig.daemon.config_path).expect("read config.toml");
 
-            // (a)
-            assert!(
-                config.contains(&format!("endpoint = \"{}\"", rig.server.endpoint)),
-                "(a) endpoint missing in config:\n{config}"
-            );
-            assert!(
-                config.contains(&format!("bucket = \"{BUCKET}\"")),
-                "(a) bucket missing in config:\n{config}"
-            );
-            // (b)
-            assert!(
-                !config.contains(&rig.server.access_key),
-                "(b) access key in config.toml"
-            );
-            assert!(
-                !config.contains(&rig.server.secret_key),
-                "(b) secret key in config.toml"
-            );
-            // (c)
-            let store = isolated_secret_store();
-            let stored = |kind: &str| {
-                store
-                    .get_secret(dest.id.as_str(), kind)
-                    .expect("read Secret Service")
-                    .map(|v| v.as_str().expect("utf-8").to_string())
-            };
-            assert_eq!(
-                stored(SECRET_KIND_S3_ACCESS_KEY).as_deref(),
-                Some(rig.server.access_key.as_str()),
-                "(c) access key in the Secret Service"
-            );
-            assert_eq!(
-                stored(SECRET_KIND_S3_SECRET_KEY).as_deref(),
-                Some(rig.server.secret_key.as_str()),
-                "(c) secret key in the Secret Service"
-            );
-            // (d)
-            assert_eq!(
-                backup_summary(&state, &backup_id)
-                    .last_run
-                    .as_ref()
-                    .map(|r| r.status),
-                Some(RunStatus::Ok),
-                "(d) the backup reached the bucket"
-            );
-            let calls = fs::read_to_string(&rig.wrapper.log).expect("read wrapper log");
-            assert!(
-                calls.contains(" backup "),
-                "(d) the wrapper saw the backup: {calls}"
-            );
-            assert!(
-                !calls.contains(&rig.server.access_key),
-                "(d) access key in restic arguments"
-            );
-            assert!(
-                !calls.contains(&rig.server.secret_key),
-                "(d) secret key in restic arguments"
-            );
-            rig.daemon.stop();
+                // (a)
+                assert!(
+                    config.contains(&format!("endpoint = \"{}\"", rig.server.endpoint)),
+                    "(a) endpoint missing in config:\n{config}"
+                );
+                assert!(
+                    config.contains(&format!("bucket = \"{BUCKET}\"")),
+                    "(a) bucket missing in config:\n{config}"
+                );
+                // (b)
+                assert!(
+                    !config.contains(&rig.server.access_key),
+                    "(b) access key in config.toml"
+                );
+                assert!(
+                    !config.contains(&rig.server.secret_key),
+                    "(b) secret key in config.toml"
+                );
+                // (c)
+                let store = isolated_secret_store();
+                let stored = |kind: &str| {
+                    store
+                        .get_secret(dest.id.as_str(), kind)
+                        .expect("read Secret Service")
+                        .map(|v| v.as_str().expect("utf-8").to_string())
+                };
+                assert!(
+                    stored(SECRET_KIND_S3_ACCESS_KEY).as_deref()
+                        == Some(rig.server.access_key.as_str()),
+                    "(c) access key in the Secret Service"
+                );
+                assert!(
+                    stored(SECRET_KIND_S3_SECRET_KEY).as_deref()
+                        == Some(rig.server.secret_key.as_str()),
+                    "(c) secret key in the Secret Service"
+                );
+                // (d)
+                assert_eq!(
+                    backup_summary(&state, &backup_id)
+                        .last_run
+                        .as_ref()
+                        .map(|r| r.status),
+                    Some(RunStatus::Ok),
+                    "(d) the backup reached the bucket"
+                );
+                let calls = fs::read_to_string(&rig.wrapper.log).expect("read wrapper log");
+                assert!(
+                    calls.contains(" backup "),
+                    "(d) the wrapper saw the backup: {calls}"
+                );
+                assert!(
+                    !calls.contains(&rig.server.access_key),
+                    "(d) access key in restic arguments"
+                );
+                assert!(
+                    !calls.contains(&rig.server.secret_key),
+                    "(d) secret key in restic arguments"
+                );
+                rig.daemon.stop();
+            }
         },
     );
 }
@@ -274,71 +275,72 @@ fn ac_m5_02_3_wrong_secret_key_fails_with_action_and_creates_nothing() {
         "ac_m5_02_3_wrong_secret_key_fails_with_action_and_creates_nothing",
         "KESTIC_M5_02_3_INNER",
         |root| {
-            let variant = latest_variant();
-            let rig = start_s3_rig(root, &variant, "M5S3C");
-            let dest = rig.destination("Cloud");
-            let wrong = BackendSecrets::s3(&rig.server.access_key, "wrong-secret-key");
-            let client = &rig.daemon.client;
-            let config_before = fs::read(&rig.daemon.config_path).ok();
+            for variant in restic_variants() {
+                let rig = start_s3_rig(root, &variant, "M5S3C");
+                let dest = rig.destination("Cloud");
+                let wrong = BackendSecrets::s3(&rig.server.access_key, "wrong-secret-key");
+                let client = &rig.daemon.client;
+                let config_before = fs::read(&rig.daemon.config_path).ok();
 
-            for mode in ["init", "connect"] {
-                let started = Instant::now();
-                let tested = client
-                    .test_destination_connection(&dest, mode, &strong_password(), &wrong)
-                    .expect("TestDestinationConnection");
-                // (a)
+                for mode in ["init", "connect"] {
+                    let started = Instant::now();
+                    let tested = client
+                        .test_destination_connection(&dest, mode, &strong_password(), &wrong)
+                        .expect("TestDestinationConnection");
+                    // (a)
+                    assert_eq!(
+                        tested.error_kind,
+                        Some(ConnectionTestCode::AuthFailed),
+                        "(a) {mode}: {tested:?}"
+                    );
+                    assert!(
+                        started.elapsed() < Duration::from_secs(15),
+                        "(a) {mode}: the test waited {:?} for restic's retries",
+                        started.elapsed()
+                    );
+                    let text =
+                        match connection_test_text(tested.ok, tested.error_kind, &tested.detail) {
+                            UiText::Message(m) => m.english(),
+                            UiText::Raw(raw) => raw,
+                        };
+                    assert_eq!(
+                        text,
+                        "The destination rejected the login. Check the access data and test again.",
+                        "(a) {mode}: message with what to do"
+                    );
+                }
+
+                let err = client
+                    .add_destination(&dest, "init", &strong_password(), &wrong)
+                    .expect_err("AddDestination with a wrong secret key");
+                assert_dbus_error_name(&err, "net.daester.Kestic.Error.AuthFailed");
+                // (b)
                 assert_eq!(
-                    tested.error_kind,
-                    Some(ConnectionTestCode::AuthFailed),
-                    "(a) {mode}: {tested:?}"
+                    fs::read(&rig.daemon.config_path).ok(),
+                    config_before,
+                    "(b) config.toml unchanged"
                 );
                 assert!(
-                    started.elapsed() < Duration::from_secs(15),
-                    "(a) {mode}: the test waited {:?} for restic's retries",
-                    started.elapsed()
+                    client
+                        .get_state()
+                        .expect("GetState")
+                        .destinations
+                        .is_empty(),
+                    "(b) no destination"
                 );
-                let text = match connection_test_text(tested.ok, tested.error_kind, &tested.detail)
-                {
-                    UiText::Message(m) => m.english(),
-                    UiText::Raw(raw) => raw,
-                };
+                assert!(
+                    !rig.bucket_dir().join("config").exists(),
+                    "(b) no repository in the bucket"
+                );
                 assert_eq!(
-                    text,
-                    "The destination rejected the login. Check the access data and test again.",
-                    "(a) {mode}: message with what to do"
+                    isolated_secret_store()
+                        .get_secret(dest.id.as_str(), SECRET_KIND_S3_SECRET_KEY)
+                        .expect("read Secret Service"),
+                    None,
+                    "(b) no key in the Secret Service"
                 );
+                rig.daemon.stop();
             }
-
-            let err = client
-                .add_destination(&dest, "init", &strong_password(), &wrong)
-                .expect_err("AddDestination with a wrong secret key");
-            assert_dbus_error_name(&err, "net.daester.Kestic.Error.AuthFailed");
-            // (b)
-            assert_eq!(
-                fs::read(&rig.daemon.config_path).ok(),
-                config_before,
-                "(b) config.toml unchanged"
-            );
-            assert!(
-                client
-                    .get_state()
-                    .expect("GetState")
-                    .destinations
-                    .is_empty(),
-                "(b) no destination"
-            );
-            assert!(
-                !rig.bucket_dir().join("config").exists(),
-                "(b) no repository in the bucket"
-            );
-            assert_eq!(
-                isolated_secret_store()
-                    .get_secret(dest.id.as_str(), SECRET_KIND_S3_SECRET_KEY)
-                    .expect("read Secret Service"),
-                None,
-                "(b) no key in the Secret Service"
-            );
-            rig.daemon.stop();
         },
     );
 }
@@ -353,67 +355,68 @@ fn ac_m5_02_4_stopped_s3_server_blocks_manual_run_within_15_seconds() {
         "ac_m5_02_4_stopped_s3_server_blocks_manual_run_within_15_seconds",
         "KESTIC_M5_02_4_INNER",
         |root| {
-            let variant = latest_variant();
-            let mut rig = start_s3_rig(root, &variant, "M5S3D");
-            let (dest, backup_id) = rig.add_destination_and_backup(root);
-            let client = rig.daemon.client.clone();
-            let before = client.get_state().expect("GetState");
-            assert!(
-                dest_summary(&before, &dest.id).availability.reachable,
-                "the status still says reachable"
-            );
-            let signals =
-                KesticSignalCollector::start(&rig.bus, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
-            rig.server.stop();
-            let restic_before = rig.wrapper.started_repo_count();
+            for variant in restic_variants() {
+                let mut rig = start_s3_rig(root, &variant, "M5S3D");
+                let (dest, backup_id) = rig.add_destination_and_backup(root);
+                let client = rig.daemon.client.clone();
+                let before = client.get_state().expect("GetState");
+                assert!(
+                    dest_summary(&before, &dest.id).availability.reachable,
+                    "the status still says reachable"
+                );
+                let signals =
+                    KesticSignalCollector::start(&rig.bus, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
+                rig.server.stop();
+                let restic_before = rig.wrapper.started_repo_count();
 
-            let started = Instant::now();
-            let err = client
-                .start_backup(backup_id.as_str())
-                .expect_err("StartBackup on a stopped server");
-            // (a)
-            assert_dbus_error_name(&err, "net.daester.Kestic.Error.ManualRunBlocked");
-            // (b)
-            assert_eq!(
-                rig.wrapper.started_repo_count(),
-                restic_before,
-                "(b) no restic call: {:?}",
-                rig.wrapper.entries()
-            );
-            // (c)
-            let sigs = signals.wait_until(Duration::from_secs(15), |s| {
-                s.iter()
-                    .any(|sig| matches!(sig, CapturedKesticSignal::ManualRunBlocked { .. }))
-            });
-            assert!(
-                started.elapsed() <= Duration::from_secs(15),
-                "(c) blocked after {:?}",
-                started.elapsed()
-            );
-            assert!(
-                sigs.iter().any(|s| matches!(
-                    s,
-                    CapturedKesticSignal::ManualRunBlocked { reason, .. }
-                        if reason == BlockedReason::DestinationUnreachable.as_str()
-                )),
-                "(c) ManualRunBlocked «destination unreachable»: {sigs:?}"
-            );
-            let state = client.get_state().expect("GetState");
-            // (d)
-            assert!(
-                !dest_summary(&state, &dest.id).availability.reachable,
-                "(d) status unreachable"
-            );
-            // (e)
-            let availability = &backup_summary(&state, &backup_id).availability;
-            assert!(!availability.available, "(e) «Back Up Now» disabled");
-            assert_eq!(
-                availability.blocked_reason,
-                Some(BlockedReason::DestinationUnreachable),
-                "(e) with the reason"
-            );
-            drop(signals);
-            rig.daemon.stop();
+                let started = Instant::now();
+                let err = client
+                    .start_backup(backup_id.as_str())
+                    .expect_err("StartBackup on a stopped server");
+                // (a)
+                assert_dbus_error_name(&err, "net.daester.Kestic.Error.ManualRunBlocked");
+                // (b)
+                assert_eq!(
+                    rig.wrapper.started_repo_count(),
+                    restic_before,
+                    "(b) no restic call: {:?}",
+                    rig.wrapper.entries()
+                );
+                // (c)
+                let sigs = signals.wait_until(Duration::from_secs(15), |s| {
+                    s.iter()
+                        .any(|sig| matches!(sig, CapturedKesticSignal::ManualRunBlocked { .. }))
+                });
+                assert!(
+                    started.elapsed() <= Duration::from_secs(15),
+                    "(c) blocked after {:?}",
+                    started.elapsed()
+                );
+                assert!(
+                    sigs.iter().any(|s| matches!(
+                        s,
+                        CapturedKesticSignal::ManualRunBlocked { reason, .. }
+                            if reason == BlockedReason::DestinationUnreachable.as_str()
+                    )),
+                    "(c) ManualRunBlocked «destination unreachable»: {sigs:?}"
+                );
+                let state = client.get_state().expect("GetState");
+                // (d)
+                assert!(
+                    !dest_summary(&state, &dest.id).availability.reachable,
+                    "(d) status unreachable"
+                );
+                // (e)
+                let availability = &backup_summary(&state, &backup_id).availability;
+                assert!(!availability.available, "(e) «Back Up Now» disabled");
+                assert_eq!(
+                    availability.blocked_reason,
+                    Some(BlockedReason::DestinationUnreachable),
+                    "(e) with the reason"
+                );
+                drop(signals);
+                rig.daemon.stop();
+            }
         },
     );
 }
