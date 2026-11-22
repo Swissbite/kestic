@@ -15,7 +15,7 @@
 #   kestic-agent status [lines]     the last lines of the agent's terminal
 #   kestic-agent state              one line `<state> <issue> <turn start>` for the watcher;
 #                                   state is none, stopped (Claude Code exited), idle or busy
-#   kestic-agent hook turn|idle     called by Claude Code hooks (managed-settings.json) when a
+#   kestic-agent hook turn|idle     called by Claude Code hooks (agent-settings.json) when a
 #                                   turn starts and when it ends
 #   kestic-agent store-token        reads a GitHub token from stdin into the token file
 #   kestic-agent token-age          seconds since the token file was written, or none
@@ -33,6 +33,8 @@ REPO_DIR="$HOME/kestic"
 TOKEN_FILE="${KESTIC_AGENT_TOKEN_FILE:-/run/kestic-agent-token/gh-token}"
 SESSION=agent
 STATE_DIR="$HOME/.kestic-agent"
+# Hooks, attribution, deny rules and effort for every agent session (root-owned).
+AGENT_SETTINGS=/usr/local/lib/kestic-agent/agent-settings.json
 # A busy session whose terminal shows no change for this long is waiting for
 # input although the Stop hook did not run (interrupt, API error, usage limit).
 STALE_AFTER=900
@@ -150,8 +152,11 @@ start_session() {
     esac
     mark_turn
     # Remote Control shows the session on claude.ai/code and in the Claude app.
+    # The settings come by flag, not as managed settings in /etc/claude-code:
+    # an organisation's server-managed settings replace that file completely.
     tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$REPO_DIR" \
-        claude --dangerously-skip-permissions --remote-control "kestic-agent #$issue" "$@" "$prompt"
+        claude --dangerously-skip-permissions --settings "$AGENT_SETTINGS" \
+        --remote-control "kestic-agent #$issue" "$@" "$prompt"
     echo "kestic-agent: Claude Code runs in tmux session '$SESSION'"
 }
 
@@ -168,7 +173,7 @@ case "${1:-}" in
     login)
         setup
         cd "$REPO_DIR"
-        exec claude --dangerously-skip-permissions
+        exec claude --dangerously-skip-permissions --settings "$AGENT_SETTINGS"
         ;;
     run)
         issue="$(issue_number "${2:-}" run)"

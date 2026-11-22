@@ -106,9 +106,14 @@ against a milestone branch, go through.
 Podman keeps secrets unencrypted in its storage on the host
 (`~/.local/share/containers/storage/secrets/`), readable by the host user only.
 
-No AI attribution: the managed settings switch off Claude Code's
-`Co-Authored-By` and "Generated with" lines, and a `commit-msg` hook rejects
-such trailers.
+No AI attribution: [agent-settings.json](agent-settings.json) switches off
+Claude Code's `Co-Authored-By` and "Generated with" lines, and a `commit-msg`
+hook rejects such trailers.
+
+The agent's settings (hooks, attribution, deny rules, effort) are passed with
+`--settings` from a root-owned file. They are not managed settings in
+`/etc/claude-code/`: when the Claude account belongs to an organisation with
+server-managed settings, Claude Code ignores that file completely.
 
 ## One-time setup (maintainer)
 
@@ -176,7 +181,7 @@ session starts with Remote Control (`--remote-control "kestic-agent #42"`), so i
 can also be followed and answered on claude.ai/code and in the Claude app.
 Telemetry and error reports are off (`DISABLE_TELEMETRY`,
 `DISABLE_ERROR_REPORTING`); `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` would
-also hide Remote Control. Effort is `high` (managed-settings.json).
+also hide Remote Control. Effort is `high` (agent-settings.json).
 
 From the host, without entering the container:
 
@@ -222,7 +227,7 @@ pass per call:
   New issues therefore queue at the end; a «blocked by» link changes the order.
 
 Busy or idle comes from two Claude Code hooks in
-[managed-settings.json](managed-settings.json): a prompt starts a turn, the end
+[agent-settings.json](agent-settings.json): a prompt starts a turn, the end
 of a turn marks the session idle (`kestic-agent.sh agent-state`). A session
 whose terminal has not changed for 15 minutes counts as idle too, because the
 Stop hook does not run after an interrupt or an API error. The watcher treats
