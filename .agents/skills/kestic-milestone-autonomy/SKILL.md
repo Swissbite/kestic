@@ -24,7 +24,10 @@ the kickoff; changing them is level 3.
   (`.devcontainer/kestic-agent-watch.sh`) starts the open issue with the lowest number that has
   no open blocker and no label `needs-maintainer`, one at a time, each in a fresh session.
 - **Integration branch** `m<n>` (a number only: `m4`, never `m4-x`), created from `main`; never
-  rebased or force-pushed. The tag `m<n>-start` marks its state after the kickoff.
+  rebased or force-pushed. The tag `m<n>-start` marks its state after the kickoff. No ruleset
+  protects `m<n>`: the merge rule (§3) holds only through the agent itself and the oversight of
+  the coordinating session. `main` keeps the hard protection (pull request, `verify`, no update
+  by the agent's App).
 - **Story branch** `agent/issue-<issue>` from the current `origin/m<n>`; one pull request into
   `m<n>`, title as the issue. Milestone issues do only what their text says; a step without
   code needs no branch, no `just verify` and no pull request.
@@ -132,7 +135,7 @@ catch it.
 Renovate and other sessions work on `main`; their changes reach `m<n>` only by a sync, which
 the coordinating session creates outside the container (the agent's token cannot push workflow
 changes): a fast-forward while `m<n>` has no commits of its own, afterwards a merge commit on
-`claude/m<n>-sync-<yyyymmdd>`, never a rebase. Syncs are bundled: after the Monday Renovate
+`claude/m<n>-sync-<yyyymmdd>`, never a rebase or a force-push. Syncs are bundled: after the Monday Renovate
 merges, when a story needs a change from `main` and before the closing. An agent that needs a
 change from `main` says so on its issue with `needs-maintainer`.
 
