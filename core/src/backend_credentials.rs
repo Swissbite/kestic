@@ -36,21 +36,10 @@ const S3_SECRET_KEY: BackendSecretSlot = BackendSecretSlot {
     kind: SECRET_KIND_S3_SECRET_KEY,
 };
 
-/// AWS variables of the caller's environment that would change which credentials, profile or
-/// region restic uses for S3; Kestic removes them so only its own values count.
-const INHERITED_AWS_VARIABLES: [&str; 11] = [
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-    "AWS_SECURITY_TOKEN",
-    "AWS_PROFILE",
-    "AWS_SHARED_CREDENTIALS_FILE",
-    "AWS_CONFIG_FILE",
-    "AWS_ROLE_ARN",
-    "AWS_WEB_IDENTITY_TOKEN_FILE",
-    "AWS_REGION",
-    "AWS_DEFAULT_REGION",
-];
+/// Prefixes of the variables in the caller's environment that would change which credentials,
+/// profile, role or region restic uses for S3; Kestic removes every such variable so only its
+/// own values count.
+const INHERITED_AWS_PREFIXES: [&str; 2] = ["AWS_", "RESTIC_AWS_"];
 
 /// Every slot any destination kind uses, for removing a destination's credentials.
 const ALL_SLOTS: [BackendSecretSlot; 3] = [REST_PASSWORD, S3_ACCESS_KEY, S3_SECRET_KEY];
@@ -66,11 +55,12 @@ impl DestinationKind {
         }
     }
 
-    /// Variables of the caller's environment that are removed before restic starts, so the
-    /// backend gets credentials only from Kestic: the AWS variables for S3.
-    pub fn backend_env_cleared(&self) -> Vec<&'static str> {
+    /// Name prefixes of the variables in the caller's environment that are removed before
+    /// restic starts, so the backend gets credentials only from Kestic: `AWS_` and
+    /// `RESTIC_AWS_` for S3.
+    pub fn backend_env_cleared_prefixes(&self) -> Vec<&'static str> {
         match self {
-            Self::S3 { .. } => INHERITED_AWS_VARIABLES.to_vec(),
+            Self::S3 { .. } => INHERITED_AWS_PREFIXES.to_vec(),
             Self::Local { .. } | Self::Rest { .. } => Vec::new(),
         }
     }

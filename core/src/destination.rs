@@ -189,7 +189,7 @@ pub fn setup_destination(
         mode_subcommand(mode),
         repo_password,
         backend,
-        ProbeRuntime::without_timeout(runtime),
+        ProbeRuntime::setup(mode, runtime),
     )?;
 
     if res.exit_code != 0 {
@@ -358,6 +358,16 @@ impl<'a> ProbeRuntime<'a> {
             ..Self::without_timeout(runtime)
         }
     }
+
+    /// Connecting only reads the repository config, so it gets the connection test's time limit
+    /// and early stop: restic would otherwise retry a revoked key or a deleted bucket for
+    /// minutes while the caller waits. `init` fails at once and writes, so it runs to its end.
+    fn setup(mode: DestinationSetupMode, runtime: &ResticRuntime<'a>) -> Self {
+        match mode {
+            DestinationSetupMode::InitNew => Self::without_timeout(runtime),
+            DestinationSetupMode::ConnectExisting => Self::connection_test(runtime),
+        }
+    }
 }
 
 fn run_with_temp_repo_password_file(
@@ -434,7 +444,7 @@ fn execute_probe_command(
         for raw in BufReader::new(err).split(b'\n').map_while(Result::ok) {
             let line = String::from_utf8_lossy(&raw);
             let redacted = crate::restic::redact_secrets(&line, &secrets_to_redact);
-            // Only a connection test stops restic early; setup and `init` run to their end.
+            // Only a read with a time limit stops restic early; `init` runs to its end.
             let conclusive = timeout
                 .and_then(|_| conclusive_retry_error(&redacted))
                 .map(ToOwned::to_owned);
@@ -759,6 +769,78 @@ mod tests {
             Some(Duration::from_secs(15))
         );
         assert_eq!(ProbeRuntime::without_timeout(&runtime).timeout, None);
+        assert_eq!(
+            ProbeRuntime::setup(DestinationSetupMode::ConnectExisting, &runtime).timeout,
+            Some(Duration::from_secs(15)),
+            "connecting an existing repository has the same limit"
+        );
+        assert_eq!(
+            ProbeRuntime::setup(DestinationSetupMode::InitNew, &runtime).timeout,
+            None,
+            "init has no limit"
+        );
+    }
+
+    /// Setting up in mode `connect` stops restic at a conclusive retry error, as the connection
+    /// test does; `init` lets restic run to its end.
+    #[test]
+    fn setup_connect_stops_early_and_init_runs_to_end() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let script = dir.path().join("restic");
+        kestic_test_support::tools::write_executable(
+            &script,
+            "#!/bin/sh\n\
+             echo 'Stat(<config/>) returned error, retrying after 1.2s: Stat: The request signature we calculated does not match the signature you provided.' >&2\n\
+             sleep 3\n\
+             exit 1\n",
+        );
+        let resolved = ResolvedRestic {
+            binary: script,
+            version: semver::Version::new(0, 18, 0),
+        };
+        let repo = dir.path().join("repo");
+        fs::create_dir(&repo).expect("repo dir");
+        let dest = Destination::new("Revoked", DestinationKind::Local { path: repo })
+            .expect("destination");
+        let helper = dir.path().join("kestic");
+        let store = crate::secrets::InMemorySecretStore::new();
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+            cache_dir: None,
+        };
+        let password = SecretValue::from_str_secret(strong_password());
+        let setup = |mode| {
+            let started = std::time::Instant::now();
+            let res = setup_destination(
+                &dest,
+                mode,
+                &password,
+                &BackendCredentials::none(),
+                &runtime,
+            );
+            (res, started.elapsed())
+        };
+
+        let (connect, connect_took) = setup(DestinationSetupMode::ConnectExisting);
+        assert!(
+            matches!(connect, Err(DestinationError::AuthFailed(_))),
+            "connect: {connect:?}"
+        );
+        assert!(
+            connect_took < Duration::from_secs(2),
+            "connect stopped early, took {connect_took:?}"
+        );
+
+        let (init, init_took) = setup(DestinationSetupMode::InitNew);
+        assert!(init.is_err(), "init: {init:?}");
+        assert!(
+            init_took >= Duration::from_secs(3),
+            "init ran to its end, took {init_took:?}"
+        );
     }
 
     /// A line that is no UTF-8 does not end the reading: the time limit still stops restic.

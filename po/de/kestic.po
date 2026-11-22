@@ -3518,6 +3518,10 @@ msgid "Use 3 to 63 lowercase letters, digits, dots or hyphens."
 msgstr "Verwenden Sie 3 bis 63 Kleinbuchstaben, Ziffern, Punkte oder Bindestriche."
 
 #: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use no spaces, quotes, #, ? or %."
+msgstr "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder %."
+
+#: gui/src/qml/DestinationDetailsForm.qml
 msgid "Path in the bucket"
 msgstr "Pfad im Bucket"
 

@@ -287,8 +287,10 @@ fn ac_m5_02_2_setup_passes_s3_keys_only_as_environment_and_saves_them() {
 }
 
 /// AWS variables set in the re-executed test process, as if the daemon had inherited them;
-/// their generated values must not reach restic for an S3 destination.
-const FOREIGN_AWS: [&str; 11] = [
+/// their generated values must not reach restic for an S3 destination. Besides the credential
+/// and region variables these are restic's role and container credential settings and a name
+/// no list knows, because every inherited `AWS_*` and `RESTIC_AWS_*` variable is removed.
+const FOREIGN_AWS: [&str; 22] = [
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
@@ -300,6 +302,17 @@ const FOREIGN_AWS: [&str; 11] = [
     "AWS_WEB_IDENTITY_TOKEN_FILE",
     "AWS_REGION",
     "AWS_DEFAULT_REGION",
+    "AWS_ROLE_SESSION_NAME",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+    "AWS_KESTIC_UNLISTED",
+    "RESTIC_AWS_ASSUME_ROLE_ARN",
+    "RESTIC_AWS_ASSUME_ROLE_EXTERNAL_ID",
+    "RESTIC_AWS_ASSUME_ROLE_POLICY",
+    "RESTIC_AWS_ASSUME_ROLE_REGION",
+    "RESTIC_AWS_ASSUME_ROLE_STS_ENDPOINT",
 ];
 
 /// The inherited values of [`FOREIGN_AWS`] in this (re-executed) process.
@@ -316,9 +329,11 @@ fn env_value(env: &str, name: &str) -> Option<String> {
         .find_map(|l| l.strip_prefix(&format!("{name}=")).map(ToOwned::to_owned))
 }
 
-/// M5-S02, S3 environment (restic-integration.md §Credentials): AWS variables inherited from
-/// the daemon's environment do not reach restic, neither in a run nor in the setup probe; the
-/// keys and the region are Kestic's own, and without a configured region restic gets none.
+/// M5-S02, S3 environment (restic-integration.md §Credentials): variables named `AWS_*` or
+/// `RESTIC_AWS_*` inherited from the daemon's environment (among them
+/// `RESTIC_AWS_ASSUME_ROLE_ARN`) do not reach restic, neither in a run nor in the setup probe;
+/// other inherited variables do. The keys and the region are Kestic's own, and without a
+/// configured region restic gets none.
 #[test]
 fn m5_02_inherited_aws_variables_do_not_reach_restic() {
     const INNER: &str = "KESTIC_M5_02_AWS_ENV_INNER";
@@ -377,6 +392,23 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
             "run: inherited {name} reached restic"
         );
     }
+    let set_by_kestic = [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_DEFAULT_REGION",
+    ];
+    for (name, _) in foreign.iter().filter(|(n, _)| !set_by_kestic.contains(n)) {
+        assert_eq!(
+            env_value(&run_env, name),
+            None,
+            "run: inherited {name} is removed, not only its value"
+        );
+    }
+    assert_eq!(
+        env_value(&run_env, INNER).as_deref(),
+        Some("1"),
+        "run: other inherited variables stay"
+    );
     assert!(
         env_value(&run_env, "AWS_ACCESS_KEY_ID").as_deref() == Some(keys.access.as_str()),
         "run: Kestic's access key"

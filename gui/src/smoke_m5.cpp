@@ -312,6 +312,16 @@ int scenario_s3_form(const Ctx& c) {
         ++code;
     }
     M3_CHECK(5416, count_visible(w, "wizDestLocationField") == 0, "the path field is shown for S3");
+    // The path in the bucket has no spaces, quotes, #, ? or %; the form says so.
+    M3_CHECK(5417, count_visible(w, "wizDestS3PathError") == 0, "path hint shown for an empty path");
+    item_named(w, "wizDestS3PathField")->setProperty("text", QStringLiteral("my backup"));
+    QQuickItem* path_error = item_named(w, "wizDestS3PathError");
+    M3_CHECK(5418, wait_until([&] { return path_error && path_error->isVisible(); }, 2000), "no hint for a path with a space");
+    M3_CHECK_EQ(5419, path_error->property("text").toString(),
+        loc(c.lang, "Use no spaces, quotes, #, ? or %.", "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder %."),
+        "path hint text");
+    item_named(w, "wizDestS3PathField")->setProperty("text", QString());
+    M3_CHECK(5409, wait_until([&] { return !path_error->isVisible(); }, 2000), "path hint stays for an empty path");
 
     item_named(w, "wizDestNameField")->setProperty("text", QStringLiteral("Cloud"));
     item_named(w, "wizDestEndpointField")->setProperty("text", endpoint);

@@ -136,7 +136,9 @@ pub(super) fn map_destination_err(err: DestinationError) -> KesticServiceErr {
     match err {
         err @ DestinationError::WrongPassword => KesticServiceErr::WrongPassword(err.to_string()),
         DestinationError::AuthFailed(m) => KesticServiceErr::AuthFailed(m),
-        DestinationError::Unreachable(m) => KesticServiceErr::DestinationUnreachable(m),
+        DestinationError::Unreachable(m) | DestinationError::NotResponding(m) => {
+            KesticServiceErr::DestinationUnreachable(m)
+        }
         DestinationError::Secret(e) => map_secret_err(e),
         other => KesticServiceErr::InvalidInput(other.to_string()),
     }
@@ -213,5 +215,23 @@ pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
             |kind| localized_failure_summary(&kind),
         ),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `AddDestination` / `UpdateDestination` in mode `connect`: restic stopped after the time
+    /// limit means the destination is not reachable, not invalid input.
+    #[test]
+    fn not_responding_restic_is_an_unreachable_destination() {
+        let err = map_destination_err(DestinationError::NotResponding(
+            "restic did not finish within 15 s".to_string(),
+        ));
+        assert!(
+            matches!(err, KesticServiceErr::DestinationUnreachable(_)),
+            "{err:?}"
+        );
     }
 }

@@ -38,7 +38,7 @@ QtObject {
     readonly property bool kindIsS3: kind === "s3"
     readonly property bool nameValid: name.trim().length > 0
     readonly property bool locationValid: kindIsS3
-        ? endpointValid && bucketValid
+        ? endpointValid && bucketValid && s3PathValid
         : kindIsRest
             ? /^https?:\/\//i.test(location.trim())
             : location.trim().length > 0
@@ -48,6 +48,9 @@ QtObject {
     readonly property bool bucketValid: /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket.trim())
         && bucket.indexOf("..") < 0
         && !/^\d+\.\d+\.\d+\.\d+$/.test(bucket.trim())
+    // restic reads the S3 address as URL (`#` and `?` cut it, `%` decodes) and repeats it unquoted
+    // in the messages Kestic reads, so the path has no such characters, spaces or quotes.
+    readonly property bool s3PathValid: !/[\s"#?%\x00-\x1f\x7f]/.test(s3Path.trim())
     // A new S3 destination needs both keys; when editing, empty keys keep the saved ones.
     readonly property bool keysValid: !kindIsS3 || destinationId !== ""
         || (accessKeyId.trim().length > 0 && secretAccessKey.trim().length > 0)

@@ -454,8 +454,9 @@ pub struct ResticCommandSpec {
     pub destination_id: DestinationId,
     pub repository_uri: String,
     pub subcommand_args: Vec<String>,
-    /// Variables of the caller's environment restic must not see (inherited AWS credentials).
-    pub backend_env_cleared: Vec<&'static str>,
+    /// Name prefixes of variables in the caller's environment restic must not see (inherited
+    /// AWS credentials and settings).
+    pub backend_env_cleared_prefixes: Vec<&'static str>,
     /// Backend variables that are not secret (REST user name, S3 region).
     pub backend_env: Vec<(String, String)>,
     /// Backend credentials restic reads from the environment.
@@ -480,7 +481,7 @@ impl ResticCommandSpec {
             destination_id: destination.id.clone(),
             repository_uri: destination.kind.repository_uri(),
             subcommand_args,
-            backend_env_cleared: destination.kind.backend_env_cleared(),
+            backend_env_cleared_prefixes: destination.kind.backend_env_cleared_prefixes(),
             backend_env: destination.kind.backend_plain_env(),
             backend_secret_slots: destination.kind.backend_secret_slots(),
             low_priority: true,
@@ -765,8 +766,17 @@ pub(crate) fn apply_backend_env(
         cmd.env("RESTIC_CACHE_DIR", cache_dir);
         env_keys.push("RESTIC_CACHE_DIR".to_string());
     }
-    for name in &spec.backend_env_cleared {
-        cmd.env_remove(name);
+    if !spec.backend_env_cleared_prefixes.is_empty() {
+        for (name, _) in std::env::vars_os() {
+            let bytes = name.as_encoded_bytes();
+            if spec
+                .backend_env_cleared_prefixes
+                .iter()
+                .any(|prefix| bytes.starts_with(prefix.as_bytes()))
+            {
+                cmd.env_remove(&name);
+            }
+        }
     }
     for (name, value) in &spec.backend_env {
         cmd.env(name, value);

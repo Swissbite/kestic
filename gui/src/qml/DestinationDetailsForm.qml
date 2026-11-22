@@ -289,6 +289,13 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
+        Controls.Label {
+            objectName: form.namePrefix + "S3PathError"
+            visible: form.draft.kindIsS3 && !form.draft.s3PathValid
+            text: i18n("Use no spaces, quotes, #, ? or %.")
+            color: Kirigami.Theme.negativeTextColor
+        }
+
         Controls.TextField {
             objectName: form.namePrefix + "RegionField"
             visible: form.draft.kindIsS3
