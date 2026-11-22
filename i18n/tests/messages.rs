@@ -256,6 +256,10 @@ fn every_error_kind_maps_to_its_msgid() {
             E::ResticUnavailable,
             Some("restic is unavailable or too old."),
         ),
+        (
+            E::PathNotInSnapshot,
+            Some("The chosen folder does not exist in the snapshot"),
+        ),
         (E::Unknown, Some("Backup command failed")),
     ];
     assert_table(&ErrorKind::ALL, &table, |k| msg(k.message(None, false)));
@@ -463,6 +467,10 @@ fn every_service_error_code_maps_to_its_msgid() {
         (
             S::DuplicateLocation,
             Some("This location is already used by another destination."),
+        ),
+        (
+            S::PreviewRequired,
+            Some("Check the preview again before restoring; it is missing or outdated."),
         ),
         (
             S::Internal,
