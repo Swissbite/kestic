@@ -7,6 +7,9 @@
 #
 #   kestic-agent-watch.sh "<milestone title>" <base branch>
 #
+# It watches the agent instance KESTIC_AGENT_NAME (default kestic-agent); run
+# one watcher per instance and milestone.
+#
 # - The container is off or the agent is busy: nothing. The watcher never
 #   starts the container: switching it off pauses the milestone.
 # - The agent's current issue is open and not labelled needs-maintainer: it
@@ -37,8 +40,12 @@ IDLE_ALERT=14400
 milestone="$1"
 base="$2"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kestic-agent"
-NOTE_FILE="$STATE_DIR/watch-notes"
-RESUME_FILE="$STATE_DIR/watch-resume"
+# One watcher per agent instance (KESTIC_AGENT_NAME, see kestic-agent.sh).
+instance="${KESTIC_AGENT_NAME:-kestic-agent}"
+suffix=""
+[[ "$instance" == kestic-agent ]] || suffix="-$instance"
+NOTE_FILE="$STATE_DIR/watch-notes$suffix"
+RESUME_FILE="$STATE_DIR/watch-resume$suffix"
 mkdir -p "$STATE_DIR"
 touch "$NOTE_FILE"
 
@@ -52,7 +59,7 @@ notify() {
     grep -qxF -- "$1" "$NOTE_FILE" && return 0
     echo "$1" >> "$NOTE_FILE"
     if command -v notify-send >/dev/null; then
-        notify-send --app-name="Kestic agent" "Kestic agent" "$2" || true
+        notify-send --app-name="Kestic agent" "$instance" "$2" || true
     fi
 }
 

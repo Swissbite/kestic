@@ -56,7 +56,7 @@ COPY --chmod=755 kestic-agent-inner.sh /usr/local/bin/kestic-agent
 COPY --chmod=755 gh-wrapper.sh /usr/local/bin/gh
 COPY --chmod=755 git-hooks/ /usr/local/lib/kestic-agent/git-hooks/
 COPY --chmod=644 allowed-domains.txt /usr/local/lib/kestic-agent/
-COPY --chmod=644 managed-settings.json /etc/claude-code/managed-settings.json
+COPY --chmod=644 agent-settings.json /usr/local/lib/kestic-agent/agent-settings.json
 COPY --chmod=644 tmux.conf /etc/tmux.conf
 
 # Mount points of the two volumes and the (empty) clone directory, which is
@@ -67,7 +67,8 @@ RUN mkdir -p /home/kesticci/.claude /home/kesticci/kestic \
 ENV KESTIC_CI_IMAGE=${CI_IMAGE} \
     CLAUDE_CONFIG_DIR=/home/kesticci/.claude \
     DISABLE_AUTOUPDATER=1 \
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    DISABLE_TELEMETRY=1 \
+    DISABLE_ERROR_REPORTING=1 \
     PATH=/home/kesticci/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=en_US.UTF-8 \
     CARGO_INCREMENTAL=0

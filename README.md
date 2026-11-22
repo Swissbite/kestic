@@ -1,6 +1,6 @@
 # Kestic
 
-Native KDE Plasma backup manager powered by [restic](https://restic.net). Pick what and where. Kestic does the rest and shows you the restic command behind every run.
+A KDE Plasma desktop app for easy backups with [restic](https://restic.net). Pick what and where. Kestic does the rest and shows you the restic command behind every run.
 
 **Status:** Milestones M0 (Spike), M1 (Walking Skeleton), M2 (Backup Configuration: exclude rules with simple/expert modes & negation linter, dry-run preview, retention rules & preview, automatic post-backup `forget` with lock catch-up, Exit 3 unreadable file handling, drive mount/UUID source checks, nested source overlap warnings, and full configuration overview), and M3 (Automation: schedules with catch-up after sleep or shutdown, run conditions for AC power, network, metered connections and allowed Wi-Fi networks, retries and overdue detection, per-destination maintenance with clean up and verify, pausing schedules, and sleep handling during runs: idle/suspend inhibit and a clean interruption on lid close) are complete and manually accepted on TUXEDO OS.
 
@@ -37,6 +37,12 @@ Native KDE Plasma backup manager powered by [restic](https://restic.net). Pick w
    ```
 
    The resulting `.deb` package is written under `target/debian/`.
+
+## Acknowledgements
+
+Kestic does not back up anything by itself: every backup, check and restore is done by [restic](https://restic.net), which Kestic runs and shows you the command for. Thanks to the restic authors and contributors for a backup tool that is fast, secure and well documented.
+
+Kestic is an independent project, not affiliated with or endorsed by the restic project. The name «restic» refers to that project and belongs to its authors.
 
 ## License
 

@@ -1143,8 +1143,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "kestic-build-stamp"
+version = "0.0.0"
+
+[[package]]
 name = "kestic-core"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "getrandom",
  "jiff",
@@ -1166,8 +1170,9 @@ dependencies = [
 
 [[package]]
 name = "kestic-daemon"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
+ "kestic-build-stamp",
  "kestic-core",
  "kestic-i18n",
  "kestic-test-support",
@@ -1182,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "kestic-gui"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "cxx",
  "cxx-kde-frameworks",
@@ -1201,7 +1206,7 @@ dependencies = [
 
 [[package]]
 name = "kestic-i18n"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "kestic-test-support",
  "serde",
@@ -1210,7 +1215,7 @@ dependencies = [
 
 [[package]]
 name = "kestic-test-support"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "aes",
  "base64",

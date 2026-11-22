@@ -1111,7 +1111,7 @@ fn finding4_destination_page_resets_maintenance_running_after_the_run() {
 /// Version and build commit of this build, for the About page checks of the smoke scenes.
 fn build_env() -> [(&'static str, &'static str); 2] {
     [
-        ("KESTIC_SMOKE_VERSION", kestic_core::version()),
+        ("KESTIC_SMOKE_VERSION", kestic_daemon::daemon_version()),
         ("KESTIC_SMOKE_COMMIT", kestic_daemon::build_commit()),
     ]
 }
