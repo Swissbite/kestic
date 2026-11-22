@@ -52,7 +52,7 @@ Quelle: [milestones/m3-automatisierung.md](milestones/m3-automatisierung.md)
 - [x] **AC-M3-12-2** – wenn dort abgebrochen, dann endet der Lauf mit `abgebrochen`
 - [x] **AC-M3-14-6** – wenn nur Tastatur, dann alle Felder erreichbar, jedes Bedienelement mit zugänglichem Namen
 - [x] **Fortschritt beim Sichern** – wenn ein Backup läuft und restic noch Dateien sucht, dann zeigen Karte, Backup-Detail und Fortschrittsanzeige im Benachrichtigungsbereich einen Balken ohne festen Endpunkt und keine Prozentzahl; danach Prozent ohne Rücksprung ([restic-integration.md](restic-integration.md) «Fortschritt beim Sichern»)
-- [ ] **Exit-Kriterium** – Ein Backup läuft eine Woche lang nach Zeitplan auf dem Laptop (parallel zu M4/M5 möglich), inkl. Akku/Netzwechsel und Suspend (manuelle Abnahme).
+- [x] **Exit-Kriterium** – Ein Backup läuft eine Woche lang nach Zeitplan auf dem Laptop (parallel zu M4/M5 möglich), inkl. Akku/Netzwechsel und Suspend (manuelle Abnahme). Vom Maintainer am 2026-11-22 auf vier Tage verkürzt (19.–22.11.) und abgenommen: geplante Läufe pünktlich, Nachholen nach Ausfall des Daemons, «wartet: Netzstrom» bis zum Einstecken, Netzwechsel per Hotspot und Suspend (siehe oben), Wartung in der Warteschlange nach dem Backup, Neustart des Daemons nach Paket-Updates.
 - [x] **Exit-Kriterium** – Manuelle Abnahme: Deckel zu während Lauf, PowerDevil/Portal-Inhibit, Hotspot.
 
 ## M4 Restore
