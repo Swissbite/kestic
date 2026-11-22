@@ -678,6 +678,29 @@ fn m5_02_names_in_urls_do_not_read_as_login_errors() {
         .kind,
         ResticFailureKind::BackendAuthFailed
     );
+    // A folder named 401 or 403 in a local path is no HTTP status.
+    for message in [
+        "Fatal: unable to open repository at /srv/backup/403: permission denied",
+        "Fatal: create repository at /mnt/401/repo failed: no space left on device",
+    ] {
+        assert_ne!(
+            classify_exit(1, Some(message), Vec::new(), "").kind,
+            ResticFailureKind::BackendAuthFailed,
+            "{message}"
+        );
+    }
+    // Without an exit message the whole stderr is read, retry delays included.
+    assert_eq!(
+        classify_exit(
+            1,
+            None,
+            Vec::new(),
+            "Stat(<config/>) returned error, retrying after 403.2ms: dial tcp 127.0.0.1:9: connect: connection refused"
+        )
+        .kind,
+        ResticFailureKind::DestinationUnreachable,
+        "a retry delay is no HTTP status"
+    );
 }
 
 /// M5-S02, redaction with several backend secrets: a secret that contains a shorter one (an

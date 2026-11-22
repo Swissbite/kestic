@@ -339,6 +339,13 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
+        Controls.Label {
+            objectName: form.namePrefix + "KeysError"
+            visible: form.draft.kindIsS3 && !form.draft.keysValid
+            text: i18n("Enter the access key and the secret key.")
+            color: Kirigami.Theme.negativeTextColor
+        }
+
         Controls.ComboBox {
             objectName: form.namePrefix + "SetupModeCombo"
             Kirigami.FormData.label: i18n("Repository:")

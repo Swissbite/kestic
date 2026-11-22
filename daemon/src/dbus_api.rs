@@ -428,7 +428,15 @@ impl BackendSecrets {
         if json.trim().is_empty() {
             return Ok(Self::default());
         }
-        serde_json::from_str(json).map_err(|e| format!("invalid backend secrets JSON: {e}"))
+        // serde's message can quote the input, which holds secrets: only say where it failed.
+        serde_json::from_str(json).map_err(|e| {
+            format!(
+                "invalid backend secrets JSON ({:?} error at line {} column {})",
+                e.classify(),
+                e.line(),
+                e.column()
+            )
+        })
     }
 
     /// The entered values by password store kind; empty fields are left out.
@@ -988,4 +996,26 @@ pub struct ExcludeRulePreviewDto {
     pub is_dir: bool,
     pub rule: String,
     pub is_expert_rule: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A malformed `backend_secrets_json` (an old GUI sent the REST password as a bare string)
+    /// is refused without quoting the value in the error.
+    #[test]
+    fn invalid_backend_secrets_error_does_not_quote_the_input() {
+        for (input, value) in [
+            ("\"hunter2-secret\"", "hunter2-secret"),
+            ("{\"rest_password\": 4711}", "4711"),
+        ] {
+            let err = BackendSecrets::parse(input).expect_err("malformed input is refused");
+            assert!(
+                err.starts_with("invalid backend secrets JSON"),
+                "the error says what failed"
+            );
+            assert!(!err.contains(value), "the error repeats the input");
+        }
+    }
 }

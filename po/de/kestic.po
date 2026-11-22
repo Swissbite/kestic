@@ -3522,6 +3522,10 @@ msgid "Use no spaces, quotes, #, ? or %."
 msgstr "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder %."
 
 #: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter the access key and the secret key."
+msgstr "Geben Sie den Access-Key und den Secret-Key ein."
+
+#: gui/src/qml/DestinationDetailsForm.qml
 msgid "Path in the bucket"
 msgstr "Pfad im Bucket"
 

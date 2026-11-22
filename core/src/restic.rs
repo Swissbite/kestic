@@ -372,10 +372,13 @@ pub fn classify_exit(
 /// the S3 errors for a wrong access key or secret key.
 fn is_backend_auth_failure(detail_lower: &str) -> bool {
     let text = without_locations(detail_lower);
-    // A status code counts only as a whole number: ports (`:40312`), durations (`1.403s`) and
-    // ids in the same message must not look like one.
+    // A status code counts only as a word of its own, apart from surrounding punctuation:
+    // ports (`:40312`), durations (`403.2ms`, `1.403s`), path parts (`/srv/403`) and ids in the
+    // same message must not look like one.
     let status = text
-        .split(|c: char| !c.is_ascii_alphanumeric())
+        .split_whitespace()
+        .filter(|word| !word.contains('/'))
+        .map(|word| word.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
         .any(|token| token == "401" || token == "403");
     status
         || [

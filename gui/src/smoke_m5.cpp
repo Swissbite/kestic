@@ -302,6 +302,13 @@ int scenario_s3_form(const Ctx& c) {
     M3_CHECK(5403, wait_until([&] { return s3_choice && s3_choice->isVisible(); }, 2000), "«S3-Compatible Storage» not offered");
     M3_CHECK(5404, s3_choice->property("checked").toBool(), "«S3-Compatible Storage» not chosen");
     M3_CHECK_EQ(5405, s3_choice->property("text").toString(), loc(c.lang, "S3-Compatible Storage", "S3-kompatibler Speicher"), "S3 choice text");
+    scroll_into_view(w, s3_choice);
+    wait_ms(300);
+    if (!c.out_path.isEmpty()) {
+        QString choice_shot = c.out_path;
+        choice_shot.replace(QStringLiteral("s3-form-wrong-key"), QStringLiteral("s3-type-choice"));
+        M3_CHECK(5398, save_screenshot(w, choice_shot), "screenshot failed");
+    }
     QQuickItem* next = item_named(w, "wizDestNextButton");
     M3_CHECK(5406, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing S3");
     M3_CHECK(5407, click_ui_item(w, next, "Next"), "click on «Next» failed");
@@ -315,6 +322,7 @@ int scenario_s3_form(const Ctx& c) {
     M3_CHECK(5416, count_visible(w, "wizDestLocationField") == 0, "the path field is shown for S3");
     // The path in the bucket has no spaces, quotes, #, ? or %; the form says so.
     M3_CHECK(5417, count_visible(w, "wizDestS3PathError") == 0, "path hint shown for an empty path");
+    M3_CHECK(5397, count_visible(w, "wizDestKeysError") == 1, "no hint for the empty keys");
     item_named(w, "wizDestS3PathField")->setProperty("text", QStringLiteral("my backup"));
     QQuickItem* path_error = item_named(w, "wizDestS3PathError");
     M3_CHECK(5418, wait_until([&] { return path_error && path_error->isVisible(); }, 2000), "no hint for a path with a space");
@@ -351,6 +359,7 @@ int scenario_s3_form(const Ctx& c) {
     QObject* check_keys = object_named(w, "wizDestCheckKeysAction");
     M3_CHECK2(5431, check_keys != nullptr, check_keys->property("visible").toBool(), "AC-M5-02-3 (a): action «Check Keys» missing");
     M3_CHECK(5432, !next->isEnabled(), "«Next» enabled after a failed test");
+    M3_CHECK(5396, count_visible(w, "wizDestKeysError") == 0, "key hint stays with both keys entered");
     // Like the other password fields of the form, the secret key field reports no accessible
     // name through Qt's interface, so it is not in this list.
     const QString unnamed = first_unnamed(w, {
