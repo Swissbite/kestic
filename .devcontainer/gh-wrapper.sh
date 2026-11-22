@@ -36,6 +36,8 @@ refuse_if_base_main() {
     fi
 }
 
+original_args=("$@")
+
 if [[ "${1:-}" == pr ]]; then
     words=() repo=""
     set -- "${@:2}"
@@ -66,4 +68,4 @@ elif [[ "${1:-}" == api ]]; then
     fi
 fi
 
-exec "$REAL_GH" "$@"
+exec "$REAL_GH" "${original_args[@]}"
