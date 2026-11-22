@@ -427,3 +427,51 @@ fn m4_s04_text_with_parent_segment_finds_nothing() {
         },
     );
 }
+
+/// M4-S04: characters restic gives a meaning are taken literally: a text that starts with
+/// `/-` is no flag, and one that starts with `/!` is no negated pattern.
+#[test]
+fn m4_s04_dash_and_exclamation_mark_are_taken_literally() {
+    run_isolated_test(
+        "m4_s04_dash_and_exclamation_mark_are_taken_literally",
+        "KESTIC_M4_S04_LITERAL_INNER",
+        |root| {
+            for_each_variant(root, |fx, label| {
+                let src = root.join(&fx.rig.sub).join("odd/src");
+                write_file(&src.join("-dash"), "f", "f");
+                write_file(&src.join("!xmas"), "b", "b");
+                write_file(&src.join("xray"), "a", "a");
+                backup_dir(
+                    &fx.rig.variant.bin,
+                    &fx.repo,
+                    &fx.password,
+                    &src,
+                    &RawSnapshot {
+                        tag: &format!("kestic:{}", fx.b1),
+                        time: "2026-11-15 20:00:00",
+                        host: "laptop",
+                    },
+                );
+                let paths = |text: &str| -> Vec<String> {
+                    fx.search(&fx.b1, text)
+                        .hits
+                        .items
+                        .into_iter()
+                        .map(|h| h.path)
+                        .collect()
+                };
+                let top = src.to_string_lossy().into_owned();
+                assert_eq!(
+                    paths("/-dash"),
+                    [format!("{top}/-dash"), format!("{top}/-dash/f")],
+                    "{label}: /-dash"
+                );
+                assert_eq!(
+                    paths("/!xmas"),
+                    [format!("{top}/!xmas"), format!("{top}/!xmas/b")],
+                    "{label}: /!xmas"
+                );
+            });
+        },
+    );
+}

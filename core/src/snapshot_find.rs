@@ -187,15 +187,15 @@ pub fn validate_search_text(text: &str) -> Result<(), FindTextError> {
 
 fn push_literal(pattern: &mut String, text: &str) {
     for c in text.chars() {
-        if matches!(c, '*' | '?' | '[' | '\\') {
+        if matches!(c, '*' | '?' | '[' | '\\' | '!') {
             pattern.push('\\');
         }
         pattern.push(c);
     }
 }
 
-/// The restic pattern that finds the paths containing `text`, taken literally (`*`, `?`, `[` and
-/// `\` masked), or `None` when no path can contain it.
+/// The restic pattern that finds the paths containing `text`, taken literally (`*`, `?`, `[`, `\`
+/// and `!`, which negates a leading pattern, masked), or `None` when no path can contain it.
 ///
 /// restic matches a pattern without a leading `/` segment by segment against every run of
 /// consecutive path segments, so a folder hit also finds the entries below it. A text inside a
@@ -224,7 +224,8 @@ pub fn find_pattern(text: &str) -> Option<String> {
 }
 
 /// Arguments of `restic find` for `pattern` in exactly the snapshots `snapshot_ids` (full IDs,
-/// at most [`FIND_BATCH_SNAPSHOTS`]; `--json` comes from the command spec). Case is ignored.
+/// at most [`FIND_BATCH_SNAPSHOTS`]; `--json` comes from the command spec). Case is ignored; `--`
+/// keeps a pattern that starts with `-` from being read as a flag.
 pub fn find_args(snapshot_ids: &[&str], pattern: &str) -> Vec<String> {
     let mut args = vec![
         "find".to_string(),
@@ -235,6 +236,7 @@ pub fn find_args(snapshot_ids: &[&str], pattern: &str) -> Vec<String> {
         args.push("--snapshot".to_string());
         args.push((*id).to_string());
     }
+    args.push("--".to_string());
     args.push(pattern.to_string());
     args
 }
@@ -583,6 +585,9 @@ mod tests {
         let pattern = |text| find_pattern(text).unwrap_or_default();
         assert_eq!(pattern("/home/u/bericht.pdf"), "home/u/bericht.pdf*");
         assert_eq!(pattern("/.."), "..*");
+        assert_eq!(pattern("/-dash"), "-dash*");
+        assert_eq!(pattern("/!x"), r"\!x*");
+        assert_eq!(pattern("a!b"), r"*a\!b*");
         assert_eq!(pattern("/"), "*");
     }
 
@@ -602,7 +607,7 @@ mod tests {
         let searched: Vec<&String> = calls
             .iter()
             .flat_map(|args| args.iter().skip_while(|a| *a != "--snapshot"))
-            .filter(|a| *a != "--snapshot" && *a != "*x*")
+            .filter(|a| !matches!(a.as_str(), "--snapshot" | "--" | "*x*"))
             .collect();
         assert_eq!(searched.len(), 2500, "every snapshot once");
         for args in &calls {
@@ -637,6 +642,7 @@ mod tests {
                 "aa",
                 "--snapshot",
                 "bb",
+                "--",
                 "*x*"
             ]
         );
