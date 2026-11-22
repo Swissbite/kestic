@@ -285,3 +285,143 @@ fn ac_m5_02_2_setup_passes_s3_keys_only_as_environment_and_saves_them() {
         "secret key saved"
     );
 }
+
+/// Inherited AWS variables set in the re-executed test process; the values must not reach
+/// restic for an S3 destination.
+const FOREIGN_AWS: [(&str, &str); 11] = [
+    ("AWS_ACCESS_KEY_ID", "FOREIGNACCESSKEY"),
+    ("AWS_SECRET_ACCESS_KEY", "foreign-secret"),
+    ("AWS_SESSION_TOKEN", "foreign-session-token"),
+    ("AWS_SECURITY_TOKEN", "foreign-security-token"),
+    ("AWS_PROFILE", "foreign-profile"),
+    ("AWS_SHARED_CREDENTIALS_FILE", "/foreign/credentials"),
+    ("AWS_CONFIG_FILE", "/foreign/config"),
+    ("AWS_ROLE_ARN", "arn:aws:iam::000000000000:role/foreign"),
+    ("AWS_WEB_IDENTITY_TOKEN_FILE", "/foreign/token"),
+    ("AWS_REGION", "foreign-region-1"),
+    ("AWS_DEFAULT_REGION", "foreign-region-2"),
+];
+
+/// The value restic saw for `name`, if any.
+fn env_value(env: &str, name: &str) -> Option<String> {
+    env.lines()
+        .find_map(|l| l.strip_prefix(&format!("{name}=")).map(ToOwned::to_owned))
+}
+
+/// M5-S02, S3 environment (restic-integration.md §Credentials): AWS variables inherited from
+/// the daemon's environment do not reach restic, neither in a run nor in the setup probe; the
+/// keys and the region are Kestic's own, and without a configured region restic gets none.
+#[test]
+fn m5_02_inherited_aws_variables_do_not_reach_restic() {
+    const INNER: &str = "KESTIC_M5_02_AWS_ENV_INNER";
+    if std::env::var_os(INNER).is_none() {
+        let mut cmd = std::process::Command::new(std::env::current_exe().expect("test binary"));
+        cmd.args([
+            "m5_02_inherited_aws_variables_do_not_reach_restic",
+            "--exact",
+        ])
+        .env(INNER, "1");
+        for (name, value) in FOREIGN_AWS {
+            cmd.env(name, value);
+        }
+        let out = cmd
+            .output()
+            .expect("run the test with inherited AWS variables");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("1 passed"),
+            "inner test failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        return;
+    }
+
+    let dir = TempDir::new().expect("tempdir");
+    let keys = keys();
+    let resolved = fake_restic(dir.path());
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    let helper = dir.path().join("kestic");
+
+    // A run of a destination with region.
+    let store = InMemorySecretStore::new();
+    let dest = s3_destination("http://127.0.0.1:9");
+    let id = dest.id.as_str();
+    for (kind, value) in [
+        (SECRET_KIND_S3_ACCESS_KEY, keys.access.as_str()),
+        (SECRET_KIND_S3_SECRET_KEY, keys.secret.as_str()),
+    ] {
+        store
+            .set_secret(id, kind, &SecretValue::from_str_secret(value))
+            .expect("store key");
+    }
+    let spec = ResticCommandSpec::for_destination(
+        &resolved.binary,
+        &helper,
+        &dest,
+        vec!["snapshots".to_string()],
+    );
+    run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
+    let run_env = read(dir.path().join("env.log"));
+    for (name, value) in FOREIGN_AWS {
+        assert!(
+            !run_env.contains(value),
+            "run: inherited {name} reached restic"
+        );
+    }
+    assert!(
+        env_value(&run_env, "AWS_ACCESS_KEY_ID").as_deref() == Some(keys.access.as_str()),
+        "run: Kestic's access key"
+    );
+    assert_eq!(
+        env_value(&run_env, "AWS_DEFAULT_REGION").as_deref(),
+        Some("eu-central-1"),
+        "run: the configured region"
+    );
+
+    // The setup probe of a destination without region.
+    let mut no_region = s3_destination(&http_endpoint());
+    if let DestinationKind::S3 { region, .. } = &mut no_region.kind {
+        *region = None;
+    }
+    let mut creds = BackendCredentials::none();
+    creds.set(
+        SECRET_KIND_S3_ACCESS_KEY,
+        Some(SecretValue::from_str_secret(keys.access.as_str())),
+    );
+    creds.set(
+        SECRET_KIND_S3_SECRET_KEY,
+        Some(SecretValue::from_str_secret(keys.secret.as_str())),
+    );
+    let probe_store = InMemorySecretStore::new();
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: &probe_store,
+        clock: &clock,
+        cache_dir: None,
+    };
+    setup_destination(
+        &no_region,
+        DestinationSetupMode::ConnectExisting,
+        &SecretValue::from_str_secret(strong_password()),
+        &creds,
+        &runtime,
+    )
+    .expect("setup");
+    let probe_env = read(dir.path().join("env.log"));
+    for (name, value) in FOREIGN_AWS {
+        assert!(
+            !probe_env.contains(value),
+            "probe: inherited {name} reached restic"
+        );
+    }
+    assert_eq!(
+        env_value(&probe_env, "AWS_DEFAULT_REGION"),
+        None,
+        "probe: no region without a configured one"
+    );
+    assert!(
+        env_value(&probe_env, "AWS_SECRET_ACCESS_KEY").as_deref() == Some(keys.secret.as_str()),
+        "probe: Kestic's secret key"
+    );
+}

@@ -266,8 +266,9 @@ fn m5_05_2_gui_cifs_warning_needs_confirmation() {
 
 /// M5-S02 (GUI part of `AC-M5-02-3`; D-Bus in `m5_s02_s3`): the card «Cloud Storage» offers
 /// «S3-Compatible Storage» and opens the S3 form; against `rclone serve s3` a wrong secret key
-/// (a) shows what to do and the action «Check Keys», and the right key passes the test. (b) No
-/// destination is saved by the tests. Screenshots of the failed test in English and German.
+/// (a) shows what to do and the action «Check Keys», and the right key passes the test and names
+/// the bucket that does not exist yet. (b) No destination is saved by the tests. Screenshots of
+/// the failed test and of the missing bucket in English and German.
 #[test]
 fn m5_02_3_gui_s3_form_wrong_secret_key_shows_action() {
     run_isolated_test(
@@ -275,8 +276,8 @@ fn m5_02_3_gui_s3_form_wrong_secret_key_shows_action() {
         "KESTIC_M5_GUI_S3_INNER",
         |root| {
             let (rig, _fakes, _programs) = start_with_ssh_only(root);
-            let server = S3ServerGuard::start(&root.join("s3-data"), "kestic-en");
-            fs::create_dir_all(server.bucket_dir("kestic-de")).expect("mkdir bucket");
+            // The buckets `kestic-en` and `kestic-de` of the scenario do not exist yet.
+            let server = S3ServerGuard::start(&root.join("s3-data"), "other");
             for lang in ["en", "de"] {
                 run_m5_gui_smoke(
                     root,

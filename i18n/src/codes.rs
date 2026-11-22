@@ -193,6 +193,8 @@ code_enum! {
         /// A network address of the file dialog (KIO, e.g. `smb://…`) instead of a local path;
         /// `detail` = the address.
         NotALocalPath => "not_a_local_path",
+        /// restic got no answer from the server within the time limit of the connection test.
+        NotResponding => "not_responding",
     }
 }
 
@@ -202,6 +204,8 @@ code_enum! {
     ConnectionNoteCode {
         /// The folder is on a CIFS/SMB share, which restic advises against for repositories.
         CifsShare => "cifs_share",
+        /// The S3 bucket does not exist yet; adding the destination creates it.
+        BucketMissing => "bucket_missing",
     }
 }
 

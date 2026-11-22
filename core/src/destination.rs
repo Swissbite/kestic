@@ -17,12 +17,19 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
 
 /// Default preflight connect timeout (10 s connect, overall failure <= 15 s).
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Longest a connection test waits for restic before it reports that the server does not
+/// respond.
+pub const CONNECTION_TEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Errors returned during destination preflight, initialization, connection, or password verification.
 #[derive(Debug, Error)]
@@ -31,6 +38,8 @@ pub enum DestinationError {
     Unreachable(String),
     #[error("authentication at destination failed: {0}")]
     AuthFailed(String),
+    #[error("the server does not respond: {0}")]
+    NotResponding(String),
     #[error("wrong repository password")]
     WrongPassword,
     #[error("repository missing: {0}")]
@@ -122,6 +131,8 @@ fn http_reachable(url: &str, connect_timeout: Duration) -> Result<(), Destinatio
 pub enum RepositoryProbe {
     /// No repository yet: `init` can create one.
     Missing,
+    /// The S3 bucket does not exist yet: `init` creates it together with the repository.
+    BucketMissing,
     /// A repository is already there.
     Exists,
 }
@@ -145,15 +156,21 @@ pub fn probe_repository(
         mode_subcommand(DestinationSetupMode::ConnectExisting),
         &throwaway,
         backend,
-        ProbeRuntime {
-            resolved: runtime.resolved,
-            kestic_binary: runtime.kestic_binary,
-            clock: runtime.clock,
-            cache_dir: runtime.cache_dir,
-        },
+        ProbeRuntime::connection_test(runtime),
     )?;
     match res.presentation.kind {
         ResticFailureKind::None | ResticFailureKind::WrongPassword => Ok(RepositoryProbe::Exists),
+        ResticFailureKind::RepositoryMissing
+            if crate::restic::is_missing_bucket(
+                &res.presentation
+                    .raw_detail
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase(),
+            ) =>
+        {
+            Ok(RepositoryProbe::BucketMissing)
+        }
         ResticFailureKind::RepositoryMissing => Ok(RepositoryProbe::Missing),
         _ => Err(map_execution_failure(&res)),
     }
@@ -178,12 +195,7 @@ pub fn setup_destination(
         mode_subcommand(mode),
         repo_password,
         backend,
-        ProbeRuntime {
-            resolved: runtime.resolved,
-            kestic_binary: runtime.kestic_binary,
-            clock: runtime.clock,
-            cache_dir: runtime.cache_dir,
-        },
+        ProbeRuntime::without_timeout(runtime),
     )?;
 
     if res.exit_code != 0 {
@@ -202,6 +214,29 @@ pub fn setup_destination(
     }
 
     Ok(res)
+}
+
+/// Connection test of an existing repository: checks reachability, the backend login and
+/// `repo_password` with `restic cat --no-lock config`, within [`CONNECTION_TEST_TIMEOUT`].
+/// Saves nothing.
+pub fn check_existing_repository(
+    dest: &Destination,
+    repo_password: &SecretValue,
+    backend: &BackendCredentials,
+    runtime: &ResticRuntime<'_>,
+) -> Result<(), DestinationError> {
+    preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
+    let res = run_with_temp_repo_password_file(
+        dest,
+        mode_subcommand(DestinationSetupMode::ConnectExisting),
+        repo_password,
+        backend,
+        ProbeRuntime::connection_test(runtime),
+    )?;
+    if res.exit_code != 0 {
+        return Err(map_execution_failure(&res));
+    }
+    Ok(())
 }
 
 /// Verifies `candidate_password` against an existing repository without running `restic key`,
@@ -253,6 +288,7 @@ pub fn verify_and_update_stored_password_with_cache(
             kestic_binary,
             clock,
             cache_dir,
+            timeout: None,
         },
     )?;
 
@@ -307,6 +343,27 @@ struct ProbeRuntime<'a> {
     kestic_binary: &'a Path,
     clock: &'a dyn Clock,
     cache_dir: Option<&'a Path>,
+    /// restic is stopped after this time and the server counts as not responding.
+    timeout: Option<Duration>,
+}
+
+impl<'a> ProbeRuntime<'a> {
+    fn without_timeout(runtime: &ResticRuntime<'a>) -> Self {
+        Self {
+            resolved: runtime.resolved,
+            kestic_binary: runtime.kestic_binary,
+            clock: runtime.clock,
+            cache_dir: runtime.cache_dir,
+            timeout: None,
+        }
+    }
+
+    fn connection_test(runtime: &ResticRuntime<'a>) -> Self {
+        Self {
+            timeout: Some(CONNECTION_TEST_TIMEOUT),
+            ..Self::without_timeout(runtime)
+        }
+    }
 }
 
 fn run_with_temp_repo_password_file(
@@ -338,7 +395,7 @@ fn run_with_temp_repo_password_file(
         // The probe runs restic directly with `--password-file`: restic rejects an empty
         // `RESTIC_PASSWORD_COMMAND` next to a password file, so the runner is bypassed.
 
-        execute_probe_command(&spec, repo_password, backend, probe.clock)
+        execute_probe_command(&spec, repo_password, backend, probe.clock, probe.timeout)
     })();
 
     let _ = fs::remove_dir_all(&tmp_dir);
@@ -350,6 +407,7 @@ fn execute_probe_command(
     repo_password: &SecretValue,
     backend: &BackendCredentials,
     clock: &dyn Clock,
+    timeout: Option<Duration>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     let started_at = clock.now_utc();
     let mut cmd = Command::new(&spec.restic_binary);
@@ -367,6 +425,7 @@ fn execute_probe_command(
     secrets_to_redact.extend(backend.redaction_values());
 
     let mut child = cmd.spawn()?;
+    let watchdog = timeout.map(|limit| Watchdog::start(child.id(), limit));
     let stdout_reader = child.stdout.take().map(|mut out| {
         thread::spawn(move || {
             let mut buf = Vec::new();
@@ -389,7 +448,14 @@ fn execute_probe_command(
             }
         }
     }
+    let timed_out = watchdog.is_some_and(Watchdog::stop);
     let status = child.wait()?;
+    if timed_out {
+        return Err(DestinationError::NotResponding(format!(
+            "restic did not finish within {} s",
+            timeout.unwrap_or_default().as_secs()
+        )));
+    }
     let stdout_bytes = stdout_reader
         .and_then(|h| h.join().ok())
         .unwrap_or_default();
@@ -442,6 +508,39 @@ fn execute_probe_command(
         log_lines,
         errors: Vec::new(),
     })
+}
+
+/// Stops a process tree with `SIGTERM` unless [`Watchdog::stop`] comes first.
+struct Watchdog {
+    done: mpsc::Sender<()>,
+    fired: Arc<AtomicBool>,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Watchdog {
+    fn start(pid: u32, limit: Duration) -> Self {
+        let (done, done_rx) = mpsc::channel::<()>();
+        let fired = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&fired);
+        let thread = thread::spawn(move || {
+            if done_rx.recv_timeout(limit) == Err(mpsc::RecvTimeoutError::Timeout) {
+                flag.store(true, Ordering::SeqCst);
+                crate::restic::send_sigterm_to_tree(pid);
+            }
+        });
+        Self {
+            done,
+            fired,
+            thread,
+        }
+    }
+
+    /// Stops the watchdog; returns whether it had already stopped the process.
+    fn stop(self) -> bool {
+        let _ = self.done.send(());
+        let _ = self.thread.join();
+        self.fired.load(Ordering::SeqCst)
+    }
 }
 
 /// The error of a restic line that announces a retry of an error that will not go away by
@@ -543,6 +642,65 @@ mod tests {
         )
         .is_none()
     );
+    }
+
+    /// A connection test whose restic does not answer ends after the time limit with «the server
+    /// does not respond» and stops restic.
+    #[test]
+    fn connection_test_stops_restic_that_does_not_answer() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let script = dir.path().join("restic");
+        let pid_file = dir.path().join("restic.pid");
+        kestic_test_support::tools::write_executable(
+            &script,
+            &format!(
+                "#!/bin/sh\necho $$ > '{}'\nexec sleep 60\n",
+                pid_file.display()
+            ),
+        );
+        let resolved = ResolvedRestic {
+            binary: script,
+            version: semver::Version::new(0, 18, 0),
+        };
+        let dest = Destination::new(
+            "Slow",
+            DestinationKind::Local {
+                path: dir.path().to_path_buf(),
+            },
+        )
+        .expect("destination");
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let helper = dir.path().join("kestic");
+        let started = std::time::Instant::now();
+
+        let res = run_with_temp_repo_password_file(
+            &dest,
+            mode_subcommand(DestinationSetupMode::ConnectExisting),
+            &SecretValue::from_str_secret(strong_password()),
+            &BackendCredentials::none(),
+            ProbeRuntime {
+                resolved: &resolved,
+                kestic_binary: &helper,
+                clock: &clock,
+                cache_dir: None,
+                timeout: Some(Duration::from_secs(1)),
+            },
+        );
+
+        assert!(
+            matches!(res, Err(DestinationError::NotResponding(_))),
+            "{res:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "waited {:?}",
+            started.elapsed()
+        );
+        let pid = fs::read_to_string(&pid_file).expect("restic started");
+        assert!(
+            !Path::new(&format!("/proc/{}", pid.trim())).exists(),
+            "restic still runs"
+        );
     }
 
     #[test]

@@ -22,7 +22,7 @@ use kestic_core::backend_credentials::{SECRET_KIND_S3_ACCESS_KEY, SECRET_KIND_S3
 use kestic_core::model::{Backup, BackupId, Destination, DestinationKind, RunStatus, Source};
 use kestic_core::secrets::SecretStore;
 use kestic_daemon::dbus_api::{BackendSecrets, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
-use kestic_i18n::codes::{BlockedReason, ConnectionTestCode};
+use kestic_i18n::codes::{BlockedReason, ConnectionNoteCode, ConnectionTestCode};
 use kestic_i18n::messages::{UiText, connection_test_text};
 use kestic_test_support::password::strong_password;
 use kestic_test_support::s3_server::S3ServerGuard;
@@ -415,6 +415,68 @@ fn ac_m5_02_4_stopped_s3_server_blocks_manual_run_within_15_seconds() {
                     "(e) with the reason"
                 );
                 drop(signals);
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// M5-S02, missing bucket (restic-integration.md §Credentials): the connection test of a new
+/// repository in a bucket that does not exist passes with the note `bucket_missing`, whose
+/// text names the bucket, and creates nothing; adding the destination then creates the bucket
+/// with the repository. Runs with restic 0.18.0 and the latest restic.
+#[test]
+fn m5_02_missing_bucket_is_named_before_adding_creates_it() {
+    run_isolated_test(
+        "m5_02_missing_bucket_is_named_before_adding_creates_it",
+        "KESTIC_M5_02_BUCKET_INNER",
+        |root| {
+            for variant in restic_variants() {
+                let rig = start_s3_rig(root, &variant, "M5S3E");
+                let new_bucket = "kestic-new-bucket";
+                let dest = Destination::new(
+                    "Cloud",
+                    DestinationKind::S3 {
+                        endpoint: rig.server.endpoint.clone(),
+                        bucket: new_bucket.to_string(),
+                        path: None,
+                        region: None,
+                    },
+                )
+                .expect("S3 destination");
+                let client = &rig.daemon.client;
+
+                let tested = client
+                    .test_destination_connection(&dest, "init", "", &rig.keys())
+                    .expect("TestDestinationConnection");
+                assert!(tested.ok, "{}: {tested:?}", variant.label);
+                assert_eq!(
+                    tested.notes,
+                    vec![ConnectionNoteCode::BucketMissing],
+                    "{}: the result says the bucket is missing",
+                    variant.label
+                );
+                assert_eq!(
+                    ConnectionNoteCode::BucketMissing
+                        .message(new_bucket)
+                        .english(),
+                    "Bucket 'kestic-new-bucket' does not exist yet. Kestic creates it when the destination is added.",
+                    "the text names the bucket"
+                );
+                assert!(
+                    !rig.server.bucket_dir(new_bucket).exists(),
+                    "{}: the test created the bucket",
+                    variant.label
+                );
+
+                client
+                    .add_destination(&dest, "init", &strong_password(), &rig.keys())
+                    .expect("AddDestination");
+                assert!(
+                    rig.server.bucket_dir(new_bucket).join("config").is_file(),
+                    "{}: adding the destination created bucket and repository",
+                    variant.label
+                );
                 rig.daemon.stop();
             }
         },

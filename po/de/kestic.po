@@ -3556,3 +3556,13 @@ msgstr "Secret-Key*:"
 #: gui/src/qml/DestinationDetailsForm.qml
 msgid "S3 secret key"
 msgstr "S3-Secret-Key"
+
+#: i18n/src/messages.rs
+msgid "The server does not respond. Check the address and test again."
+msgstr "Der Server antwortet nicht. Prüfen Sie die Adresse und testen Sie erneut."
+
+#: i18n/src/messages.rs
+msgid ""
+"Bucket '%1' does not exist yet. Kestic creates it when the destination is "
+"added."
+msgstr "Bucket «%1» gibt es noch nicht; Kestic legt ihn beim Anlegen des Ziels an."

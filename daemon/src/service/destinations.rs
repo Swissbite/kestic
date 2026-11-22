@@ -20,8 +20,8 @@ use kestic_core::clock::Clock;
 use kestic_core::config::ConfigError;
 use kestic_core::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, DestinationSetupMode, RepositoryProbe,
-    preflight_check_destination, probe_repository, remove_destination_secrets, setup_destination,
-    verify_and_update_stored_password,
+    check_existing_repository, preflight_check_destination, probe_repository,
+    remove_destination_secrets, setup_destination, verify_and_update_stored_password,
 };
 use kestic_core::local_path::{NotALocalPath, connection_notes};
 use kestic_core::model::{
@@ -33,7 +33,7 @@ use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO};
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
 use kestic_core::snapshot::ResticSnapshot;
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::ConnectionTestCode;
+use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode};
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -200,6 +200,10 @@ fn check_login_before_init(inputs: &DestinationTestInputs<'_>) -> ConnectionTest
     };
     match probe_repository(inputs.dest, &backend, &runtime) {
         Ok(RepositoryProbe::Missing) => test_ok(),
+        Ok(RepositoryProbe::BucketMissing) => ConnectionTestResultDto {
+            notes: vec![ConnectionNoteCode::BucketMissing],
+            ..test_ok()
+        },
         Ok(RepositoryProbe::Exists) => {
             test_failure(ConnectionTestCode::RepositoryExists, String::new())
         }
@@ -224,6 +228,7 @@ fn destination_error_result(err: DestinationError) -> ConnectionTestResultDto {
         DestinationError::AuthFailed(_) => ConnectionTestCode::AuthFailed,
         DestinationError::RepositoryMissing(_) => ConnectionTestCode::RepositoryMissing,
         DestinationError::Unreachable(_) => ConnectionTestCode::DestinationUnreachable,
+        DestinationError::NotResponding(_) => ConnectionTestCode::NotResponding,
         _ => ConnectionTestCode::CommandFailed,
     };
     test_failure(kind, err.to_string())
@@ -317,13 +322,7 @@ fn check_connect_existing_destination(
             clock: inputs.clock,
             cache_dir: None,
         };
-        if let Err(err) = setup_destination(
-            inputs.dest,
-            DestinationSetupMode::ConnectExisting,
-            &repo_pw,
-            &backend,
-            &runtime,
-        ) {
+        if let Err(err) = check_existing_repository(inputs.dest, &repo_pw, &backend, &runtime) {
             return destination_error_result(err);
         }
     }
@@ -671,7 +670,9 @@ pub(crate) fn test_destination_connection_unlocked(
         clock: deps.clock.as_ref(),
     });
     if result.ok {
-        result.notes = connection_notes(&dest, mount_inspector.as_ref());
+        result
+            .notes
+            .extend(connection_notes(&dest, mount_inspector.as_ref()));
     }
     result
 }

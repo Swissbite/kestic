@@ -351,7 +351,19 @@ int scenario_s3_form(const Ctx& c) {
         return rc;
     }
     M3_CHECK(5450, wait_until([&] { return next->isEnabled(); }, 2000), "«Next» disabled after a passed test");
-    M3_CHECK_EQ(5451, banner->property("text").toString(), loc(c.lang, "Reachable", "Erreichbar"), "result of the passed test");
+    // The bucket of the scenario does not exist yet: the result names it.
+    M3_CHECK_EQ(5451, banner->property("text").toString(),
+        loc(c.lang,
+            "Reachable\nBucket 'kestic-en' does not exist yet. Kestic creates it when the destination is added.",
+            "Erreichbar\nBucket «kestic-de» gibt es noch nicht; Kestic legt ihn beim Anlegen des Ziels an."),
+        "result of the passed test names the missing bucket");
+    M3_CHECK(5452, count_visible(w, "wizDestNoteConfirmCheck") == 0, "the missing bucket needs no confirmation");
+    wait_ms(600);
+    if (!c.out_path.isEmpty()) {
+        QString bucket_shot = c.out_path;
+        bucket_shot.replace(QStringLiteral("wrong-key"), QStringLiteral("missing-bucket"));
+        M3_CHECK(5453, save_screenshot(w, bucket_shot), "screenshot failed");
+    }
     return 0;
 }
 

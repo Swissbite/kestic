@@ -12,9 +12,10 @@ use crate::state_cache::{
 use cxx_qt_lib::QString;
 use kestic_core::destination_types::cards_ready_first;
 use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};
+use kestic_core::model::DestinationKind;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{BackendSecrets, KesticDbusError};
-use kestic_i18n::codes::{ConnectionTestCode, ServiceErrorCode};
+use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode, ServiceErrorCode};
 use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
 
@@ -83,16 +84,27 @@ impl qobject::KesticApp {
             &backend_secrets_json.to_string(),
         );
         self.as_mut().set_connection_test_ok(res.ok);
-        let text = connection_test_text(res.ok, res.error_kind, &res.detail);
+        let bucket = match build_destination(None, &fields_json.to_string()).map(|d| d.kind) {
+            Ok(DestinationKind::S3 { bucket, .. }) => bucket,
+            _ => String::new(),
+        };
+        // Notes without confirmation belong to the result line; the others need a confirmation.
+        let (to_confirm, informational): (Vec<ConnectionNoteCode>, Vec<ConnectionNoteCode>) =
+            res.notes.iter().partition(|n| n.needs_confirmation());
+        let mut lines = vec![tr_text(&connection_test_text(
+            res.ok,
+            res.error_kind,
+            &res.detail,
+        ))];
+        lines.extend(informational.iter().map(|n| tr(&n.message(&bucket))));
         self.as_mut()
-            .set_connection_test_message(QString::from(&tr_text(&text)));
+            .set_connection_test_message(QString::from(&lines.join("\n")));
         self.as_mut().set_connection_test_error_kind(QString::from(
             res.error_kind.map_or("", |k| k.as_str()),
         ));
-        let note = res
-            .notes
+        let note = to_confirm
             .iter()
-            .map(|n| tr(&n.message()))
+            .map(|n| tr(&n.message(&bucket)))
             .collect::<Vec<_>>()
             .join("\n");
         self.as_mut().set_connection_test_note(QString::from(&note));
