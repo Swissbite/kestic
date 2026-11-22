@@ -52,7 +52,9 @@ ColumnLayout {
     Kirigami.Heading {
         visible: !form.editing
         level: 2
-        text: form.draft.kindIsRest ? i18n("Where is the REST server located?") : i18n("Where should the local repository be stored?")
+        text: form.draft.kindIsS3
+            ? i18n("Which S3-compatible storage should be used?")
+            : form.draft.kindIsRest ? i18n("Where is the REST server located?") : i18n("Where should the local repository be stored?")
     }
 
     Kirigami.InlineMessage {
@@ -72,6 +74,17 @@ ColumnLayout {
                     form.draft.setupMode = "init";
                     form.locationEdited();
                     form.draft.runConnectionTest();
+                }
+            },
+            Kirigami.Action {
+                objectName: form.namePrefix + "CheckKeysAction"
+                icon.name: "dialog-password"
+                text: i18n("Check Keys")
+                visible: form.draft.kindIsS3 && !form.draft.testFeedbackOk
+                    && form.appBackend.connection_test_error_kind === "auth_failed"
+                onTriggered: {
+                    secretKeyField.forceActiveFocus();
+                    secretKeyField.selectAll();
                 }
             }
         ]
@@ -174,7 +187,7 @@ ColumnLayout {
             objectName: form.namePrefix + "NameField"
             Kirigami.FormData.label: form.editing ? Texts.label("name_label") : Texts.label("required_name_label")
             text: form.draft.name
-            placeholderText: form.editing ? "" : (form.draft.kindIsRest ? i18n("NAS") : i18n("Local Backup"))
+            placeholderText: form.editing ? "" : (form.draft.kindIsS3 ? i18n("Cloud Backup") : form.draft.kindIsRest ? i18n("NAS") : i18n("Local Backup"))
             onTextChanged: form.draft.name = text
             Accessible.name: i18n("Destination name")
         }
@@ -187,6 +200,7 @@ ColumnLayout {
         }
 
         RowLayout {
+            visible: !form.draft.kindIsS3
             Kirigami.FormData.label: form.draft.kindIsRest
                 ? (form.editing ? i18n("Address:") : i18n("Address*:"))
                 : (form.editing ? i18n("Path:") : i18n("Path*:"))
@@ -214,11 +228,108 @@ ColumnLayout {
 
         Controls.Label {
             objectName: form.namePrefix + "LocationError"
-            visible: !form.draft.locationValid
+            visible: !form.draft.kindIsS3 && !form.draft.locationValid
             text: form.draft.kindIsRest
                 ? i18n("Enter a valid http:// or https:// address.")
                 : i18n("Path is required.")
             color: Kirigami.Theme.negativeTextColor
+        }
+
+        Controls.TextField {
+            objectName: form.namePrefix + "EndpointField"
+            visible: form.draft.kindIsS3
+            Kirigami.FormData.label: form.editing ? i18n("Endpoint:") : i18n("Endpoint*:")
+            text: form.draft.endpoint
+            placeholderText: "https://s3.example.com"
+            onTextChanged: {
+                form.draft.endpoint = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("S3 endpoint")
+            Layout.fillWidth: true
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "EndpointError"
+            visible: form.draft.kindIsS3 && !form.draft.endpointValid
+            text: i18n("Enter the address with http:// or https://, without a path.")
+            color: Kirigami.Theme.negativeTextColor
+        }
+
+        Controls.TextField {
+            objectName: form.namePrefix + "BucketField"
+            visible: form.draft.kindIsS3
+            Kirigami.FormData.label: form.editing ? i18n("Bucket:") : i18n("Bucket*:")
+            text: form.draft.bucket
+            onTextChanged: {
+                form.draft.bucket = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("S3 bucket")
+            Layout.fillWidth: true
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "BucketError"
+            visible: form.draft.kindIsS3 && !form.draft.bucketValid
+            text: i18n("Use 3 to 63 lowercase letters, digits, dots or hyphens.")
+            color: Kirigami.Theme.negativeTextColor
+        }
+
+        Controls.TextField {
+            objectName: form.namePrefix + "S3PathField"
+            visible: form.draft.kindIsS3
+            Kirigami.FormData.label: i18n("Path:")
+            text: form.draft.s3Path
+            onTextChanged: {
+                form.draft.s3Path = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("Path in the bucket")
+            Layout.fillWidth: true
+        }
+
+        Controls.TextField {
+            objectName: form.namePrefix + "RegionField"
+            visible: form.draft.kindIsS3
+            Kirigami.FormData.label: i18n("Region:")
+            text: form.draft.region
+            onTextChanged: {
+                form.draft.region = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("S3 region")
+            Layout.fillWidth: true
+        }
+
+        Controls.TextField {
+            objectName: form.namePrefix + "AccessKeyField"
+            visible: form.draft.kindIsS3
+            Kirigami.FormData.label: form.editing ? i18n("Access key:") : i18n("Access key*:")
+            placeholderText: form.editing ? i18n("Leave empty to keep the saved key") : ""
+            text: form.draft.accessKeyId
+            onTextChanged: {
+                form.draft.accessKeyId = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("S3 access key")
+            Layout.fillWidth: true
+        }
+
+        Controls.TextField {
+            id: secretKeyField
+            objectName: form.namePrefix + "SecretKeyField"
+            visible: form.draft.kindIsS3
+            Kirigami.FormData.label: form.editing ? i18n("Secret key:") : i18n("Secret key*:")
+            echoMode: TextInput.Password
+            placeholderText: form.editing ? i18n("Leave empty to keep the saved key") : ""
+            text: form.draft.secretAccessKey
+            onTextChanged: {
+                form.draft.secretAccessKey = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("S3 secret key")
+            Layout.fillWidth: true
         }
 
         Controls.ComboBox {

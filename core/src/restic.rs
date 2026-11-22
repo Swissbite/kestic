@@ -3,10 +3,9 @@
 
 //! Restic command construction, tolerant `--json` stream parsing, execution, and error mapping.
 
+use crate::backend_credentials::{BackendCredentials, BackendSecretSlot};
 use crate::clock::Clock;
-use crate::model::{
-    CommandRecord, Destination, DestinationId, DestinationKind, RunStats, RunStatus,
-};
+use crate::model::{CommandRecord, Destination, DestinationId, RunStats, RunStatus};
 use crate::provider::ResolvedRestic;
 use crate::secrets::{SecretError, SecretStore, SecretValue};
 use crate::sync::LockUnpoisoned;
@@ -23,7 +22,7 @@ use thiserror::Error;
 
 /// Secret kind selector passed to `kestic secret get <dest-id> [kind]`.
 pub const SECRET_KIND_REPO: &str = "repo";
-pub const SECRET_KIND_REST: &str = "rest";
+pub use crate::backend_credentials::SECRET_KIND_REST;
 
 /// Shared runtime dependencies required to execute `restic` commands cleanly.
 #[derive(Clone, Copy)]
@@ -325,15 +324,17 @@ pub fn classify_exit(
                     action: None,
                     raw_detail,
                 }
-            } else if detail_lower.contains("401")
-                || detail_lower.contains("403")
-                || detail_lower.contains("unauthorized")
-                || detail_lower.contains("forbidden")
-                || detail_lower.contains("authentication")
-            {
+            } else if is_backend_auth_failure(&detail_lower) {
                 ErrorPresentation {
                     status: RunStatus::Error,
                     kind: ResticFailureKind::BackendAuthFailed,
+                    action: None,
+                    raw_detail,
+                }
+            } else if is_missing_bucket(&detail_lower) {
+                ErrorPresentation {
+                    status: RunStatus::Error,
+                    kind: ResticFailureKind::RepositoryMissing,
                     action: None,
                     raw_detail,
                 }
@@ -374,6 +375,30 @@ pub fn classify_exit(
     }
 }
 
+/// Whether the lowercase restic message says the backend rejected the login: HTTP 401/403 or
+/// the S3 errors for a wrong access key or secret key.
+fn is_backend_auth_failure(detail_lower: &str) -> bool {
+    [
+        "401",
+        "403",
+        "unauthorized",
+        "forbidden",
+        "authentication",
+        "access denied",
+        "signature we calculated does not match",
+        "signaturedoesnotmatch",
+        "access key id you provided does not exist",
+        "invalidaccesskeyid",
+    ]
+    .iter()
+    .any(|needle| detail_lower.contains(needle))
+}
+
+/// Whether the lowercase restic message says the S3 bucket does not exist.
+fn is_missing_bucket(detail_lower: &str) -> bool {
+    detail_lower.contains("bucket does not exist") || detail_lower.contains("nosuchbucket")
+}
+
 /// Replaces any known secret values in `text` with `***REDACTED***`.
 pub fn redact_secrets(text: &str, secrets: &[&str]) -> String {
     let mut out = text.to_string();
@@ -390,8 +415,11 @@ pub fn redact_secrets(text: &str, secrets: &[&str]) -> String {
 pub enum ResticRunError {
     #[error("failed to read repository secret: {0}")]
     Secret(#[from] SecretError),
-    #[error("missing REST password in secret store for destination `{0}`")]
-    MissingRestPassword(DestinationId),
+    #[error("missing backend credential `{kind}` in secret store for destination `{destination}`")]
+    MissingBackendSecret {
+        destination: DestinationId,
+        kind: &'static str,
+    },
     #[error("failed to spawn restic command: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -404,7 +432,10 @@ pub struct ResticCommandSpec {
     pub destination_id: DestinationId,
     pub repository_uri: String,
     pub subcommand_args: Vec<String>,
-    pub rest_username: Option<String>,
+    /// Backend variables that are not secret (REST user name, S3 region).
+    pub backend_env: Vec<(String, String)>,
+    /// Backend credentials restic reads from the environment.
+    pub backend_secret_slots: Vec<BackendSecretSlot>,
     pub low_priority: bool,
     pub json_output: bool,
     pub password_command_override: Option<String>,
@@ -419,17 +450,14 @@ impl ResticCommandSpec {
         destination: &Destination,
         subcommand_args: Vec<String>,
     ) -> Self {
-        let rest_username = match &destination.kind {
-            DestinationKind::Rest { username, .. } => username.clone(),
-            DestinationKind::Local { .. } => None,
-        };
         Self {
             restic_binary: restic_binary.into(),
             kestic_binary: kestic_binary.into(),
             destination_id: destination.id.clone(),
             repository_uri: destination.kind.repository_uri(),
             subcommand_args,
-            rest_username,
+            backend_env: destination.kind.backend_plain_env(),
+            backend_secret_slots: destination.kind.backend_secret_slots(),
             low_priority: true,
             json_output: true,
             password_command_override: None,
@@ -470,11 +498,13 @@ impl ResticCommandSpec {
             .unwrap_or_else(|| format!("kestic secret get {}", self.destination_id));
         parts.push(format!("RESTIC_PASSWORD_COMMAND={}", quote_shell(&pw_cmd)));
 
-        if let Some(user) = self.rest_username.as_deref().filter(|u| !u.is_empty()) {
-            parts.push(format!("RESTIC_REST_USERNAME={}", quote_shell(user)));
+        for (name, value) in &self.backend_env {
+            parts.push(format!("{name}={}", quote_shell(value)));
+        }
+        for slot in &self.backend_secret_slots {
             parts.push(format!(
-                "RESTIC_REST_PASSWORD=\"$(kestic secret get {} {SECRET_KIND_REST})\"",
-                self.destination_id
+                "{}=\"$(kestic secret get {} {})\"",
+                slot.env_name, self.destination_id, slot.kind
             ));
         }
 
@@ -637,7 +667,8 @@ impl CancelHandle {
     }
 }
 
-fn send_sigterm_to_tree(pid: u32) {
+/// Sends `SIGTERM` to the children of `pid` (restic behind a wrapper) and to `pid` itself.
+pub(crate) fn send_sigterm_to_tree(pid: u32) {
     // `nice`/`ionice` exec into restic directly on Linux (`execve`), so `pid` IS restic,
     // but sending SIGTERM via `pkill -TERM -P <pid>` first handles wrapper shells too.
     let _ = Command::new("pkill")
@@ -661,7 +692,7 @@ pub struct ResticExecutionResult {
 }
 
 struct ResolvedRunSecrets {
-    rest_password: Option<SecretValue>,
+    backend: BackendCredentials,
     repo_password_for_redaction: Option<SecretValue>,
 }
 
@@ -669,22 +700,22 @@ fn resolve_restic_secrets(
     destination: &Destination,
     secret_store: Option<&dyn SecretStore>,
 ) -> Result<ResolvedRunSecrets, ResticRunError> {
-    let mut rest_password: Option<SecretValue> = None;
+    let mut backend = BackendCredentials::none();
     let mut repo_password_for_redaction: Option<SecretValue> = None;
     if let Some(store) = secret_store {
         if let Some(pw) = store.get_secret(destination.id.as_str(), SECRET_KIND_REPO)? {
             repo_password_for_redaction = Some(pw);
         }
-        if destination.kind.uses_rest_credentials() {
-            rest_password = Some(
-                store
-                    .get_secret(destination.id.as_str(), SECRET_KIND_REST)?
-                    .ok_or_else(|| ResticRunError::MissingRestPassword(destination.id.clone()))?,
-            );
+        backend = BackendCredentials::load_stored(destination, store)?;
+        if let Some(kind) = backend.first_missing(&destination.kind) {
+            return Err(ResticRunError::MissingBackendSecret {
+                destination: destination.id.clone(),
+                kind,
+            });
         }
     }
     Ok(ResolvedRunSecrets {
-        rest_password,
+        backend,
         repo_password_for_redaction,
     })
 }
@@ -696,32 +727,30 @@ struct PreparedCommand {
     env_keys: Vec<String>,
 }
 
-/// Sets the cache directory and the REST credentials of `spec` on `cmd`; returns the names of
-/// the variables set so a command record can list them without values.
+/// Sets the cache directory and the backend variables of `spec` (credentials from `backend`) on
+/// `cmd`; returns the names of the variables set so a command record can list them without
+/// values.
 pub(crate) fn apply_backend_env(
     cmd: &mut Command,
     spec: &ResticCommandSpec,
-    rest_password: Option<&SecretValue>,
+    backend: &BackendCredentials,
 ) -> Result<Vec<String>, SecretError> {
     let mut env_keys = Vec::new();
     if let Some(ref cache_dir) = spec.cache_dir {
         cmd.env("RESTIC_CACHE_DIR", cache_dir);
         env_keys.push("RESTIC_CACHE_DIR".to_string());
     }
-    if let Some(user) = spec.rest_username.as_deref().filter(|u| !u.is_empty()) {
-        cmd.env("RESTIC_REST_USERNAME", user);
-        env_keys.push("RESTIC_REST_USERNAME".to_string());
+    for (name, value) in &spec.backend_env {
+        cmd.env(name, value);
+        env_keys.push(name.clone());
     }
-    if let Some(rest_pw) = rest_password {
-        cmd.env("RESTIC_REST_PASSWORD", rest_pw.as_str()?);
-        env_keys.push("RESTIC_REST_PASSWORD".to_string());
-    }
+    env_keys.extend(backend.apply_env(cmd, &spec.backend_secret_slots)?);
     Ok(env_keys)
 }
 
 fn build_restic_command(
     spec: &ResticCommandSpec,
-    rest_password: Option<&SecretValue>,
+    backend: &BackendCredentials,
     extra_env: &[(&str, &str)],
 ) -> Result<PreparedCommand, ResticRunError> {
     let pw_command = spec.password_command_override.clone().unwrap_or_else(|| {
@@ -743,7 +772,7 @@ fn build_restic_command(
 
     let mut env_keys = vec!["RESTIC_PASSWORD_COMMAND".to_string()];
 
-    env_keys.extend(apply_backend_env(&mut cmd, spec, rest_password)?);
+    env_keys.extend(apply_backend_env(&mut cmd, spec, backend)?);
     for (k, v) in extra_env {
         cmd.env(k, v);
         env_keys.push((*k).to_string());
@@ -789,9 +818,8 @@ where
 
 /// Executes `spec` with environment isolation (`RESTIC_PASSWORD_COMMAND`, `RESTIC_PASSWORD` unset).
 ///
-/// If `secret_store` is provided and `spec.rest_username` is set, looks up the optional REST backend
-/// password from `secret_store` (`<dest-id>`, `rest`) and passes it via `RESTIC_REST_PASSWORD`
-/// (never on CLI arguments).
+/// If `secret_store` is provided, looks up the backend credentials of `destination` (REST
+/// password, S3 keys) and passes them as environment variables (never as arguments).
 pub fn run_restic<F>(
     spec: &ResticCommandSpec,
     destination: &Destination,
@@ -806,7 +834,7 @@ where
 {
     let started_at = clock.now_utc();
     let secrets = resolve_restic_secrets(destination, secret_store)?;
-    let mut prepared = build_restic_command(spec, secrets.rest_password.as_ref(), extra_env)?;
+    let mut prepared = build_restic_command(spec, &secrets.backend, extra_env)?;
 
     let mut child: Child = prepared.cmd.spawn()?;
     if let Some(handle) = cancel {
@@ -823,9 +851,7 @@ where
     if let Some(s) = secrets.repo_password_for_redaction.as_ref() {
         secrets_to_redact.push(s.as_str()?);
     }
-    if let Some(s) = secrets.rest_password.as_ref() {
-        secrets_to_redact.push(s.as_str()?);
-    }
+    secrets_to_redact.extend(secrets.backend.redaction_values());
 
     let stderr_handle = thread::spawn(move || -> Vec<String> {
         let mut lines = Vec::new();

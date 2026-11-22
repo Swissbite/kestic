@@ -3,6 +3,7 @@
 
 mod common;
 
+use kestic_core::backend_credentials::BackendCredentials;
 use kestic_core::destination::{
     DestinationError, DestinationSetupMode, preflight_check_destination,
     remove_destination_secrets, setup_destination, verify_and_update_stored_password_with_cache,
@@ -37,8 +38,14 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
         let pw = SecretValue::from_str_secret(strong_password());
 
         // AC-M1-06-1: init empty folder -> repo exists and `restic snapshots` exits 0.
-        setup_destination(&dest, DestinationSetupMode::InitNew, &pw, None, &runtime)
-            .unwrap_or_else(|e| panic!("{label}: local init failed: {e}"));
+        setup_destination(
+            &dest,
+            DestinationSetupMode::InitNew,
+            &pw,
+            &BackendCredentials::none(),
+            &runtime,
+        )
+        .unwrap_or_else(|e| panic!("{label}: local init failed: {e}"));
 
         let snap_spec = ResticCommandSpec::for_destination(
             &rig.resolved.binary,
@@ -76,7 +83,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             &dest_wrong,
             DestinationSetupMode::ConnectExisting,
             &wrong_pw,
-            None,
+            &BackendCredentials::none(),
             &runtime,
         )
         .expect_err("wrong password must fail");
@@ -104,7 +111,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             &dest_ok,
             DestinationSetupMode::ConnectExisting,
             &pw,
-            None,
+            &BackendCredentials::none(),
             &runtime,
         )
         .unwrap_or_else(|e| panic!("{label}: connect failed: {e}"));
@@ -127,7 +134,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
             &missing_dest,
             DestinationSetupMode::ConnectExisting,
             &pw,
-            None,
+            &BackendCredentials::none(),
             &runtime,
         )
         .expect_err("missing folder must fail preflight");
@@ -172,7 +179,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             &dest,
             DestinationSetupMode::InitNew,
             &repo_pw,
-            Some(&rest_pw),
+            &BackendCredentials::rest(Some(rest_pw.clone())),
             &runtime,
         )
         .unwrap_or_else(|e| panic!("{label}: REST init failed: {e}"));
@@ -203,7 +210,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             &bad_auth_dest,
             DestinationSetupMode::ConnectExisting,
             &repo_pw,
-            Some(&wrong_rest_pw),
+            &BackendCredentials::rest(Some(wrong_rest_pw.clone())),
             &runtime,
         )
         .expect_err("wrong REST auth must fail");
@@ -234,7 +241,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             &down_dest,
             DestinationSetupMode::ConnectExisting,
             &repo_pw,
-            Some(&rest_pw),
+            &BackendCredentials::rest(Some(rest_pw.clone())),
             &runtime,
         )
         .expect_err("stopped server must fail");

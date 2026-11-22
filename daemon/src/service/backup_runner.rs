@@ -43,7 +43,7 @@ use kestic_core::mount::{MountInspector, SourceCheckResult, current_home_dir};
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::{
     CancelHandle, ResticExecutionResult, ResticFailureKind, ResticRuntime, ResticStatusMessage,
-    ResticStreamEvent, SECRET_KIND_REPO, SECRET_KIND_REST, redact_secrets,
+    ResticStreamEvent, SECRET_KIND_REPO, redact_secrets,
 };
 use kestic_core::scheduler::{
     SystemEnvironment, UnmetPrecondition, evaluate_run_conditions, format_local_slot_hint,
@@ -601,10 +601,10 @@ pub(super) fn load_dest_secrets(
     if let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REPO) {
         secrets_owned.push(s);
     }
-    if dest.kind.uses_rest_credentials()
-        && let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REST)
-    {
-        secrets_owned.push(s);
+    for slot in dest.kind.backend_secret_slots() {
+        if let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), slot.kind) {
+            secrets_owned.push(s);
+        }
     }
     secrets_owned
 }

@@ -11,5 +11,6 @@ pub mod keyring;
 pub mod password;
 mod random;
 pub mod repo_template;
+pub mod s3_server;
 pub mod tools;
 pub mod workspace;

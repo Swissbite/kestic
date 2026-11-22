@@ -16,6 +16,7 @@ use kestic_core::model::DestinationKind;
 use kestic_core::mount::{FakeMountInspector, FakeMountState, MountInspector};
 use kestic_daemon::dbus_api::{DestinationTypeDto, KESTIC_BUS_NAME};
 use kestic_i18n::codes::DestinationTypeCode;
+use kestic_test_support::s3_server::S3ServerGuard;
 use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -258,6 +259,45 @@ fn m5_05_2_gui_cifs_warning_needs_confirmation() {
                     state.destinations
                 );
             }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// M5-S02 (GUI part of `AC-M5-02-3`; D-Bus in `m5_s02_s3`): the card «Cloud Storage» offers
+/// «S3-Compatible Storage» and opens the S3 form; against `rclone serve s3` a wrong secret key
+/// (a) shows what to do and the action «Check Keys», and the right key passes the test. (b) No
+/// destination is saved by the tests. Screenshots of the failed test in English and German.
+#[test]
+fn m5_02_3_gui_s3_form_wrong_secret_key_shows_action() {
+    run_isolated_test(
+        "m5_02_3_gui_s3_form_wrong_secret_key_shows_action",
+        "KESTIC_M5_GUI_S3_INNER",
+        |root| {
+            let (rig, _fakes, _programs) = start_with_ssh_only(root);
+            let server = S3ServerGuard::start(&root.join("s3-data"), "kestic-en");
+            fs::create_dir_all(server.bucket_dir("kestic-de")).expect("mkdir bucket");
+            for lang in ["en", "de"] {
+                run_m5_gui_smoke(
+                    root,
+                    "m5-s3-form",
+                    "wide",
+                    lang,
+                    &smoke_artifact("s3-form-wrong-key", "wide", lang),
+                    &[
+                        ("KESTIC_SMOKE_S3_ENDPOINT", &server.endpoint),
+                        ("KESTIC_SMOKE_S3_ACCESS_KEY", &server.access_key),
+                        ("KESTIC_SMOKE_S3_SECRET_KEY", &server.secret_key),
+                    ],
+                );
+            }
+            // (b)
+            let state = rig.daemon.client.get_state().expect("GetState");
+            assert!(
+                state.destinations.is_empty(),
+                "(b) {:?}",
+                state.destinations
+            );
             rig.daemon.stop();
         },
     );

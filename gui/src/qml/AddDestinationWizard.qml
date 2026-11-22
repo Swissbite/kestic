@@ -44,7 +44,7 @@ WizardPage {
             destDraft.fieldsJson(),
             destDraft.setupMode,
             destDraft.repoPassword,
-            destDraft.restPassword
+            destDraft.backendSecretsJson()
         );
         if (createdId !== "") {
             rootWindow.showPassiveNotification(Texts.label("destination_saved"));

@@ -157,6 +157,16 @@ pub enum DestinationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         username: Option<String>,
     },
+    /// S3-compatible object storage; the keys are only in the password store.
+    S3 {
+        /// URL with scheme, e.g. `https://s3.example.com:9000`.
+        endpoint: String,
+        bucket: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        region: Option<String>,
+    },
 }
 
 impl DestinationKind {
@@ -177,7 +187,19 @@ impl DestinationKind {
                     normalize_rest_url_to_ascii(url).unwrap_or_else(|_| url.trim().to_string());
                 format!("rest:{normalized}")
             }
+            Self::S3 {
+                endpoint,
+                bucket,
+                path,
+                ..
+            } => crate::s3::repository_uri(endpoint, bucket, path.as_deref()),
         }
+    }
+
+    /// Whether the connection test of a new repository checks the login with restic first: a
+    /// wrong S3 key would otherwise only show when the repository is created.
+    pub fn probes_login_before_init(&self) -> bool {
+        matches!(self, Self::S3 { .. })
     }
 
     /// Whether this destination uses separate REST backend credentials.
@@ -193,6 +215,12 @@ impl DestinationKind {
                 format!("local:{}", normalize_local_path(path).to_string_lossy())
             }
             Self::Rest { url, .. } => format!("rest:{}", normalize_rest_url(url)),
+            Self::S3 {
+                endpoint,
+                bucket,
+                path,
+                ..
+            } => crate::s3::location_key(endpoint, bucket, path.as_deref()),
         }
     }
 
@@ -347,14 +375,28 @@ pub struct DestinationSecretRefs {
     /// Optional reference key for REST server password in [`crate::secrets::SecretStore`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rest_password_ref: Option<String>,
+    /// Reference key for the S3 access key ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_access_key_ref: Option<String>,
+    /// Reference key for the S3 secret access key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_secret_key_ref: Option<String>,
 }
 
 impl DestinationSecretRefs {
-    /// Derives canonical Secret Service reference keys for a destination ID.
-    pub fn for_destination(id: &DestinationId, with_rest_auth: bool) -> Self {
+    /// Derives canonical Secret Service reference keys for a destination of `kind`.
+    pub fn for_destination(id: &DestinationId, kind: &DestinationKind) -> Self {
+        let slot_ref = |wanted: &str| {
+            kind.backend_secret_slots()
+                .iter()
+                .any(|s| s.kind == wanted)
+                .then(|| format!("kestic:dest:{id}:{wanted}"))
+        };
         Self {
             repo_password_ref: format!("kestic:dest:{id}:repo"),
-            rest_password_ref: with_rest_auth.then(|| format!("kestic:dest:{id}:rest")),
+            rest_password_ref: slot_ref(crate::backend_credentials::SECRET_KIND_REST),
+            s3_access_key_ref: slot_ref(crate::backend_credentials::SECRET_KIND_S3_ACCESS_KEY),
+            s3_secret_key_ref: slot_ref(crate::backend_credentials::SECRET_KIND_S3_SECRET_KEY),
         }
     }
 }
@@ -548,9 +590,8 @@ impl Destination {
         kind: DestinationKind,
     ) -> Result<Self, ModelError> {
         let name = name.into();
-        let uses_rest_auth = kind.uses_rest_credentials();
         let dest = Self {
-            secrets: DestinationSecretRefs::for_destination(&id, uses_rest_auth),
+            secrets: DestinationSecretRefs::for_destination(&id, &kind),
             id,
             name,
             kind,
@@ -592,6 +633,12 @@ impl Destination {
             DestinationKind::Rest { url, .. } => {
                 normalize_rest_url_to_ascii(url)?;
             }
+            DestinationKind::S3 {
+                endpoint,
+                bucket,
+                path,
+                ..
+            } => crate::s3::validate(endpoint, bucket, path.as_deref())?,
         }
         if self.secrets.repo_password_ref.trim().is_empty() {
             return Err(ModelError::InvalidDestination(

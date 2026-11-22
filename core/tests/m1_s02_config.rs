@@ -49,7 +49,9 @@ fn ac_m1_02_1_and_02_2_config_toml_roundtrip_contains_no_secrets() {
         &dest,
         DestinationSetupMode::ConnectExisting,
         &SecretValue::from_str_secret(&repo.password),
-        Some(&SecretValue::from_str_secret(server.password())),
+        &kestic_core::backend_credentials::BackendCredentials::rest(Some(
+            SecretValue::from_str_secret(server.password()).clone(),
+        )),
         &rig.runtime(),
     )
     .expect("set up REST destination");

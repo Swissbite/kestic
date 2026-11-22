@@ -410,7 +410,10 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
             Some("restic is unavailable or too old."),
         ),
         (C::WrongPassword, Some("Saved password does not match")),
-        (C::AuthFailed, Some("Login to the destination failed")),
+        (
+            C::AuthFailed,
+            Some("The destination rejected the login. Check the access data and test again."),
+        ),
         (C::RepositoryMissing, Some("Repository is missing")),
         (C::CommandFailed, None),
         (C::DaemonUnreachable, None),

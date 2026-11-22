@@ -3,19 +3,21 @@
 
 //! Destination initialization, connection verification, password updates, and preflight reachability checks.
 
+use crate::backend_credentials::BackendCredentials;
 use crate::clock::Clock;
 use crate::model::{Destination, DestinationKind, normalize_rest_url_to_ascii};
 use crate::provider::ResolvedRestic;
 use crate::restic::{
     ResticCommandSpec, ResticExecutionResult, ResticFailureKind, ResticRunError, ResticRuntime,
-    SECRET_KIND_REPO, SECRET_KIND_REST,
+    SECRET_KIND_REPO,
 };
 use crate::secrets::{SecretError, SecretStore, SecretValue};
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -55,7 +57,7 @@ pub enum DestinationSetupMode {
 /// Checks whether `dest` is reachable before launching restic.
 ///
 /// - `Local`: checks that the path exists and is a directory.
-/// - `Rest`: performs TCP connect + HTTP request within `connect_timeout` (default 10 s).
+/// - `Rest`, `S3`: performs TCP connect + HTTP request within `connect_timeout` (default 10 s).
 ///   Any HTTP response (including 401/403/404) proves TCP+HTTP reachability.
 pub fn preflight_check_destination(
     dest: &Destination,
@@ -80,29 +82,80 @@ pub fn preflight_check_destination(
         DestinationKind::Rest { url, .. } => {
             let ascii_url = normalize_rest_url_to_ascii(url)
                 .map_err(|err| DestinationError::Unreachable(err.to_string()))?;
-
-            let tls_config = ureq::tls::TlsConfig::builder()
-                .provider(ureq::tls::TlsProvider::NativeTls)
-                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-                .build();
-            let config = ureq::Agent::config_builder()
-                .tls_config(tls_config)
-                .timeout_connect(Some(connect_timeout))
-                .timeout_global(Some(connect_timeout + Duration::from_secs(2)))
-                .http_status_as_error(false)
-                // Any HTTP status (including 3xx redirects, which may carry unescaped/IDN Location
-                // headers) proves TCP+TLS+HTTP reachability for preflight.
-                .max_redirects(0)
-                .max_redirects_will_error(false)
-                .build();
-            let agent = ureq::Agent::new_with_config(config);
-
-            agent
-                .get(&ascii_url)
-                .call()
-                .map(|_| ())
-                .map_err(|err| DestinationError::Unreachable(err.to_string()))
+            http_reachable(&ascii_url, connect_timeout)
         }
+        DestinationKind::S3 { endpoint, .. } => {
+            let ascii_url = crate::s3::normalized_endpoint(endpoint)
+                .map_err(|err| DestinationError::Unreachable(err.to_string()))?;
+            http_reachable(&ascii_url, connect_timeout)
+        }
+    }
+}
+
+/// Any HTTP answer from `url` within `connect_timeout` (plus 2 s for the answer).
+fn http_reachable(url: &str, connect_timeout: Duration) -> Result<(), DestinationError> {
+    let tls_config = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::NativeTls)
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+    let config = ureq::Agent::config_builder()
+        .tls_config(tls_config)
+        .timeout_connect(Some(connect_timeout))
+        .timeout_global(Some(connect_timeout + Duration::from_secs(2)))
+        .http_status_as_error(false)
+        // Any HTTP status (including 3xx redirects, which may carry unescaped/IDN Location
+        // headers) proves TCP+TLS+HTTP reachability for preflight.
+        .max_redirects(0)
+        .max_redirects_will_error(false)
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+
+    agent
+        .get(url)
+        .call()
+        .map(|_| ())
+        .map_err(|err| DestinationError::Unreachable(err.to_string()))
+}
+
+/// Whether a repository exists at a destination (see [`probe_repository`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepositoryProbe {
+    /// No repository yet: `init` can create one.
+    Missing,
+    /// A repository is already there.
+    Exists,
+}
+
+/// Checks with the backend credentials, but without a repository password, whether a
+/// repository exists at `dest`: runs `restic cat --no-lock config` with a random password, so
+/// a wrong login is found before anything is created. Writes nothing.
+pub fn probe_repository(
+    dest: &Destination,
+    backend: &BackendCredentials,
+    runtime: &ResticRuntime<'_>,
+) -> Result<RepositoryProbe, DestinationError> {
+    preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
+    let throwaway = SecretValue::from_str_secret(
+        crate::model::RunId::generate()
+            .map_err(|e| std::io::Error::other(e.to_string()))?
+            .as_str(),
+    );
+    let res = run_with_temp_repo_password_file(
+        dest,
+        mode_subcommand(DestinationSetupMode::ConnectExisting),
+        &throwaway,
+        backend,
+        ProbeRuntime {
+            resolved: runtime.resolved,
+            kestic_binary: runtime.kestic_binary,
+            clock: runtime.clock,
+            cache_dir: runtime.cache_dir,
+        },
+    )?;
+    match res.presentation.kind {
+        ResticFailureKind::None | ResticFailureKind::WrongPassword => Ok(RepositoryProbe::Exists),
+        ResticFailureKind::RepositoryMissing => Ok(RepositoryProbe::Missing),
+        _ => Err(map_execution_failure(&res)),
     }
 }
 
@@ -115,7 +168,7 @@ pub fn setup_destination(
     dest: &Destination,
     mode: DestinationSetupMode,
     repo_password: &SecretValue,
-    rest_password: Option<&SecretValue>,
+    backend: &BackendCredentials,
     runtime: &ResticRuntime<'_>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
@@ -124,7 +177,7 @@ pub fn setup_destination(
         dest,
         mode_subcommand(mode),
         repo_password,
-        rest_password,
+        backend,
         ProbeRuntime {
             resolved: runtime.resolved,
             kestic_binary: runtime.kestic_binary,
@@ -141,12 +194,7 @@ pub fn setup_destination(
     runtime
         .secret_store
         .set_secret(dest.id.as_str(), SECRET_KIND_REPO, repo_password)?;
-    if let Some(rest_pw) = rest_password
-        && let Err(err) =
-            runtime
-                .secret_store
-                .set_secret(dest.id.as_str(), SECRET_KIND_REST, rest_pw)
-    {
+    if let Err(err) = backend.persist(dest, runtime.secret_store) {
         let _ = runtime
             .secret_store
             .delete_secret(dest.id.as_str(), SECRET_KIND_REPO);
@@ -189,11 +237,7 @@ pub fn verify_and_update_stored_password_with_cache(
 ) -> Result<(), DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
 
-    let rest_pw = if dest.kind.uses_rest_credentials() {
-        secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REST)?
-    } else {
-        None
-    };
+    let backend = BackendCredentials::load_stored(dest, secret_store)?;
 
     let res = run_with_temp_repo_password_file(
         dest,
@@ -203,7 +247,7 @@ pub fn verify_and_update_stored_password_with_cache(
             "config".to_string(),
         ],
         candidate_password,
-        rest_pw.as_ref(),
+        &backend,
         ProbeRuntime {
             resolved,
             kestic_binary,
@@ -226,8 +270,7 @@ pub fn remove_destination_secrets(
     secret_store: &dyn SecretStore,
 ) -> Result<(), SecretError> {
     secret_store.delete_secret(dest.id.as_str(), SECRET_KIND_REPO)?;
-    secret_store.delete_secret(dest.id.as_str(), SECRET_KIND_REST)?;
-    Ok(())
+    BackendCredentials::delete_all(dest, secret_store)
 }
 
 fn mode_subcommand(mode: DestinationSetupMode) -> Vec<String> {
@@ -270,7 +313,7 @@ fn run_with_temp_repo_password_file(
     dest: &Destination,
     subcommand_args: Vec<String>,
     repo_password: &SecretValue,
-    rest_password: Option<&SecretValue>,
+    backend: &BackendCredentials,
     probe: ProbeRuntime<'_>,
 ) -> Result<ResticExecutionResult, DestinationError> {
     let tmp_dir = create_private_temp_dir()?;
@@ -295,7 +338,7 @@ fn run_with_temp_repo_password_file(
         // The probe runs restic directly with `--password-file`: restic rejects an empty
         // `RESTIC_PASSWORD_COMMAND` next to a password file, so the runner is bypassed.
 
-        execute_probe_command(&spec, repo_password, rest_password, probe.clock)
+        execute_probe_command(&spec, repo_password, backend, probe.clock)
     })();
 
     let _ = fs::remove_dir_all(&tmp_dir);
@@ -305,39 +348,71 @@ fn run_with_temp_repo_password_file(
 fn execute_probe_command(
     spec: &ResticCommandSpec,
     repo_password: &SecretValue,
-    rest_password: Option<&SecretValue>,
+    backend: &BackendCredentials,
     clock: &dyn Clock,
 ) -> Result<ResticExecutionResult, DestinationError> {
     let started_at = clock.now_utc();
     let mut cmd = Command::new(&spec.restic_binary);
     cmd.args(spec.restic_argv())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .env_remove("RESTIC_PASSWORD")
         .env_remove("RESTIC_PASSWORD_COMMAND")
         .env_remove("RESTIC_PASSWORD_FILE");
 
-    let env_keys = crate::restic::apply_backend_env(&mut cmd, spec, rest_password)?;
-
-    let out = cmd.output()?;
-    let finished_at = clock.now_utc();
-    let duration_ms = crate::clock::elapsed_ms(started_at, finished_at);
-    let exit_code = out.status.code().unwrap_or(1);
+    let env_keys = crate::restic::apply_backend_env(&mut cmd, spec, backend)?;
 
     let mut secrets_to_redact = vec![repo_password.as_str()?];
-    if let Some(rest_pw) = rest_password {
-        secrets_to_redact.push(rest_pw.as_str()?);
+    secrets_to_redact.extend(backend.redaction_values());
+
+    let mut child = cmd.spawn()?;
+    let stdout_reader = child.stdout.take().map(|mut out| {
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = out.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let mut stderr_lines = Vec::new();
+    let mut abort_line: Option<String> = None;
+    if let Some(err) = child.stderr.take() {
+        for line in BufReader::new(err).lines().map_while(Result::ok) {
+            let redacted = crate::restic::redact_secrets(&line, &secrets_to_redact);
+            let conclusive = is_conclusive_retry(&redacted);
+            stderr_lines.push(redacted.clone());
+            if conclusive {
+                // restic would retry this for many minutes; for a probe the answer is known.
+                crate::restic::send_sigterm_to_tree(child.id());
+                abort_line = Some(redacted);
+                break;
+            }
+        }
     }
+    let status = child.wait()?;
+    let stdout_bytes = stdout_reader
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let finished_at = clock.now_utc();
+    let duration_ms = crate::clock::elapsed_ms(started_at, finished_at);
+    let exit_code = if abort_line.is_some() {
+        1
+    } else {
+        status.code().unwrap_or(1)
+    };
 
     let stdout_raw =
-        crate::restic::redact_secrets(&String::from_utf8_lossy(&out.stdout), &secrets_to_redact);
-    let stderr_raw =
-        crate::restic::redact_secrets(&String::from_utf8_lossy(&out.stderr), &secrets_to_redact);
+        crate::restic::redact_secrets(&String::from_utf8_lossy(&stdout_bytes), &secrets_to_redact);
+    let stderr_raw = stderr_lines.join("\n");
 
-    let mut exit_error_msg: Option<String> = None;
-    for line in stderr_raw.lines().chain(stdout_raw.lines()) {
-        if let Ok(crate::restic::ResticStreamEvent::ExitError { message, .. }) =
-            crate::restic::parse_json_line(line)
-        {
-            exit_error_msg = Some(message);
+    let mut exit_error_msg: Option<String> = abort_line;
+    if exit_error_msg.is_none() {
+        for line in stderr_raw.lines().chain(stdout_raw.lines()) {
+            if let Ok(crate::restic::ResticStreamEvent::ExitError { message, .. }) =
+                crate::restic::parse_json_line(line)
+            {
+                exit_error_msg = Some(message);
+            }
         }
     }
 
@@ -349,7 +424,7 @@ fn execute_probe_command(
     );
 
     let mut log_lines: Vec<String> = stdout_raw.lines().map(ToOwned::to_owned).collect();
-    log_lines.extend(stderr_raw.lines().map(ToOwned::to_owned));
+    log_lines.extend(stderr_lines);
 
     Ok(ResticExecutionResult {
         exit_code,
@@ -367,6 +442,21 @@ fn execute_probe_command(
         log_lines,
         errors: Vec::new(),
     })
+}
+
+/// Whether a restic line announces a retry of an error that will not go away by waiting: the
+/// backend rejected the login, the bucket does not exist or the server cannot be reached.
+fn is_conclusive_retry(line: &str) -> bool {
+    if !line.contains("retrying after") {
+        return false;
+    }
+    matches!(
+        crate::restic::classify_exit(1, Some(line), Vec::new(), "").kind,
+        ResticFailureKind::BackendAuthFailed
+            | ResticFailureKind::RepositoryMissing
+            | ResticFailureKind::DestinationUnreachable
+            | ResticFailureKind::DnsResolutionFailed
+    )
 }
 
 /// A new directory only the owner can enter (`0700` from the moment it exists).

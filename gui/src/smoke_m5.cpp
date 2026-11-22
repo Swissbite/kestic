@@ -268,6 +268,93 @@ int scenario_cifs_note(const Ctx& c) {
     return 0;
 }
 
+// Fills the S3 form with the server of KESTIC_SMOKE_S3_* and the secret key `secret`, then
+// runs «Test Connection» and waits for its banner.
+int test_s3_connection(QQuickWindow* w, const QString& secret, int code) {
+    item_named(w, "wizDestSecretKeyField")->setProperty("text", secret);
+    QQuickItem* test = item_named(w, "wizDestTestButton");
+    M3_CHECK(code, wait_until([&] { return test && test->isEnabled(); }, 2000), "«Test Connection» not enabled");
+    M3_CHECK(code + 1, click_ui_item(w, test, "Test Connection"), "click on «Test Connection» failed");
+    QQuickItem* banner = item_named(w, "wizDestFeedbackBanner");
+    M3_CHECK(code + 2, wait_until([&] { return banner && banner->isVisible(); }, 15000), "no result after the connection test");
+    return 0;
+}
+
+// M5-S02 (GUI): the card «Cloud Storage» offers «S3-Compatible Storage» and opens the S3 form
+// (endpoint, bucket, path, region, access key, secret key). With a wrong secret key the
+// connection test (AC-M5-02-3 a) shows what to do and the action «Check Keys», which puts the
+// focus into the secret key; with the right key the test passes and «Next» is enabled.
+int scenario_s3_form(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString endpoint = qEnvironmentVariable("KESTIC_SMOKE_S3_ENDPOINT");
+    const QString access = qEnvironmentVariable("KESTIC_SMOKE_S3_ACCESS_KEY");
+    const QString secret = qEnvironmentVariable("KESTIC_SMOKE_S3_SECRET_KEY");
+    M3_CHECK(5400, !endpoint.isEmpty() && !access.isEmpty() && !secret.isEmpty(), "KESTIC_SMOKE_S3_* not set");
+    if (const int rc = open_destination_types(w)) {
+        return rc;
+    }
+    QQuickItem* cloud = card_item(w, "cloud");
+    M3_CHECK2(5401, cloud != nullptr, cloud->isVisible(), "cloud card missing");
+    scroll_into_view(w, cloud);
+    M3_CHECK(5402, click_ui_item(w, cloud, "cloud"), "click on the cloud card failed");
+    QQuickItem* s3_choice = item_named(w, "wizDestCloudService_s3");
+    M3_CHECK(5403, wait_until([&] { return s3_choice && s3_choice->isVisible(); }, 2000), "«S3-Compatible Storage» not offered");
+    M3_CHECK(5404, s3_choice->property("checked").toBool(), "«S3-Compatible Storage» not chosen");
+    M3_CHECK_EQ(5405, s3_choice->property("text").toString(), loc(c.lang, "S3-Compatible Storage", "S3-kompatibler Speicher"), "S3 choice text");
+    QQuickItem* next = item_named(w, "wizDestNextButton");
+    M3_CHECK(5406, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing S3");
+    M3_CHECK(5407, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    M3_CHECK(5408, wait_until([&] { return count_visible(w, "wizDestEndpointField") == 1; }, 2000), "S3 form did not open");
+    wait_ms(150);
+    int code = 5410;
+    for (const char* field : {"wizDestBucketField", "wizDestS3PathField", "wizDestRegionField", "wizDestAccessKeyField", "wizDestSecretKeyField"}) {
+        M3_CHECK(code, count_visible(w, field) == 1, field);
+        ++code;
+    }
+    M3_CHECK(5416, count_visible(w, "wizDestLocationField") == 0, "the path field is shown for S3");
+
+    item_named(w, "wizDestNameField")->setProperty("text", QStringLiteral("Cloud"));
+    item_named(w, "wizDestEndpointField")->setProperty("text", endpoint);
+    item_named(w, "wizDestBucketField")->setProperty("text", QStringLiteral("kestic-") + c.lang);
+    item_named(w, "wizDestAccessKeyField")->setProperty("text", access);
+    if (const int rc = test_s3_connection(w, QStringLiteral("wrong-secret-key"), 5420)) {
+        return rc;
+    }
+    QQuickItem* banner = item_named(w, "wizDestFeedbackBanner");
+    // AC-M5-02-3 (a)
+    M3_CHECK_EQ(5430, banner->property("text").toString(),
+        loc(c.lang,
+            "The destination rejected the login. Check the access data and test again.",
+            "Das Ziel hat die Anmeldung abgelehnt. Prüfen Sie die Zugangsdaten und testen Sie erneut."),
+        "AC-M5-02-3 (a): message with what to do");
+    QObject* check_keys = object_named(w, "wizDestCheckKeysAction");
+    M3_CHECK2(5431, check_keys != nullptr, check_keys->property("visible").toBool(), "AC-M5-02-3 (a): action «Check Keys» missing");
+    M3_CHECK(5432, !next->isEnabled(), "«Next» enabled after a failed test");
+    // Like the other password fields of the form, the secret key field reports no accessible
+    // name through Qt's interface, so it is not in this list.
+    const QString unnamed = first_unnamed(w, {
+        QStringLiteral("wizDestEndpointField"),
+        QStringLiteral("wizDestBucketField"),
+        QStringLiteral("wizDestS3PathField"),
+        QStringLiteral("wizDestRegionField"),
+        QStringLiteral("wizDestAccessKeyField"),
+    });
+    M3_CHECK_EQ(5433, unnamed, QString(), "control without accessible name");
+    // The messages fade in before their text is drawn.
+    wait_ms(600);
+    M3_CHECK(5434, save_screenshot(w, c.out_path), "screenshot failed");
+    QMetaObject::invokeMethod(check_keys, "trigger");
+    M3_CHECK(5435, wait_until([&] { return item_named(w, "wizDestSecretKeyField")->hasActiveFocus(); }, 2000),
+        "AC-M5-02-3 (a): «Check Keys» does not lead to the secret key");
+
+    if (const int rc = test_s3_connection(w, secret, 5440)) {
+        return rc;
+    }
+    M3_CHECK(5450, wait_until([&] { return next->isEnabled(); }, 2000), "«Next» disabled after a passed test");
+    M3_CHECK_EQ(5451, banner->property("text").toString(), loc(c.lang, "Reachable", "Erreichbar"), "result of the passed test");
+    return 0;
+}
+
 } // namespace
 
 void run_m5_smoke_scenario(
@@ -290,6 +377,8 @@ void run_m5_smoke_scenario(
         rc = scenario_drive_list(ctx);
     } else if (scen == QLatin1String("m5-cifs-note")) {
         rc = scenario_cifs_note(ctx);
+    } else if (scen == QLatin1String("m5-s3-form")) {
+        rc = scenario_s3_form(ctx);
     } else {
         std::fprintf(stderr, "M5 smoke failed (599): unknown m5 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

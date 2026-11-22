@@ -13,7 +13,7 @@ use cxx_qt_lib::QString;
 use kestic_core::destination_types::cards_ready_first;
 use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};
 use kestic_core::sync::LockUnpoisoned;
-use kestic_daemon::dbus_api::KesticDbusError;
+use kestic_daemon::dbus_api::{BackendSecrets, KesticDbusError};
 use kestic_i18n::codes::{ConnectionTestCode, ServiceErrorCode};
 use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
@@ -74,13 +74,13 @@ impl qobject::KesticApp {
         fields_json: &QString,
         mode: &QString,
         repo_pw: &QString,
-        rest_pw: &QString,
+        backend_secrets_json: &QString,
     ) -> bool {
         let res = test_destination_connection(
             &fields_json.to_string(),
             &mode.to_string(),
             &repo_pw.to_string(),
-            &rest_pw.to_string(),
+            &backend_secrets_json.to_string(),
         );
         self.as_mut().set_connection_test_ok(res.ok);
         let text = connection_test_text(res.ok, res.error_kind, &res.detail);
@@ -104,7 +104,7 @@ impl qobject::KesticApp {
         fields_json: &QString,
         mode: &QString,
         repo_pw: &QString,
-        rest_pw: &QString,
+        backend_secrets_json: &QString,
     ) -> QString {
         let Some(dest) = self
             .as_mut()
@@ -112,16 +112,18 @@ impl qobject::KesticApp {
         else {
             return QString::from("");
         };
+        let Some(backend) = self
+            .as_mut()
+            .ok_or_show(BackendSecrets::parse(&backend_secrets_json.to_string()))
+        else {
+            return QString::from("");
+        };
         let Ok(client) = make_client() else {
             self.as_mut().show_action_error(&daemon_unavailable_text());
             return QString::from("");
         };
-        let result = client.add_destination(
-            &dest,
-            &mode.to_string(),
-            &repo_pw.to_string(),
-            &rest_pw.to_string(),
-        );
+        let result =
+            client.add_destination(&dest, &mode.to_string(), &repo_pw.to_string(), &backend);
         let secret_store_locked = result.as_ref().err().is_some_and(|err| {
             KesticDbusError::from(err.clone()).code() == ServiceErrorCode::SecretStoreLocked
         });
@@ -139,13 +141,19 @@ impl qobject::KesticApp {
         fields_json: &QString,
         mode: &QString,
         repo_pw: &QString,
-        rest_pw: &QString,
+        backend_secrets_json: &QString,
         verify_connection: bool,
     ) -> bool {
         let Some(dest) = self.as_mut().ok_or_show(build_destination(
             Some(&id.to_string()),
             &fields_json.to_string(),
         )) else {
+            return false;
+        };
+        let Some(backend) = self
+            .as_mut()
+            .ok_or_show(BackendSecrets::parse(&backend_secrets_json.to_string()))
+        else {
             return false;
         };
         let Ok(client) = make_client() else {
@@ -156,7 +164,7 @@ impl qobject::KesticApp {
                 &dest,
                 &mode.to_string(),
                 &repo_pw.to_string(),
-                &rest_pw.to_string(),
+                &backend,
                 verify_connection,
             ),
             Finish::Saved,

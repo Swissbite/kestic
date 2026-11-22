@@ -7,7 +7,7 @@ use crate::state_cache::{dbus_error_text, make_client, tr_text};
 use crate::ui_texts::GuiText;
 use kestic_core::local_path::NotALocalPath;
 use kestic_core::model::{Destination, DestinationId, DestinationKind, ModelError};
-use kestic_daemon::dbus_api::ConnectionTestResultDto;
+use kestic_daemon::dbus_api::{BackendSecrets, ConnectionTestResultDto};
 use kestic_i18n::codes::ConnectionTestCode;
 use std::path::PathBuf;
 
@@ -20,6 +20,14 @@ struct DestinationFieldsInput {
     location: String,
     #[serde(default)]
     username: String,
+    #[serde(default)]
+    endpoint: String,
+    #[serde(default)]
+    bucket: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    region: String,
 }
 
 /// Failed connection test with `code` and its detail.
@@ -64,7 +72,7 @@ pub fn test_destination_connection(
     fields_json: &str,
     mode: &str,
     repo_pw: &str,
-    rest_pw: &str,
+    backend_secrets_json: &str,
 ) -> ConnectionTestResultDto {
     let dest = match destination_from_fields(None, fields_json) {
         Ok(d) => d,
@@ -80,15 +88,24 @@ pub fn test_destination_connection(
             return failed_test(ConnectionTestCode::InvalidInput, detail);
         }
     };
+    let backend = match BackendSecrets::parse(backend_secrets_json) {
+        Ok(b) => b,
+        Err(err) => return failed_test(ConnectionTestCode::InvalidInput, err),
+    };
     let client = match make_client() {
         Ok(c) => c,
         Err(err) => return failed_test(ConnectionTestCode::DaemonUnreachable, err),
     };
-    match client.test_destination_connection(&dest, mode, repo_pw, rest_pw) {
+    match client.test_destination_connection(&dest, mode, repo_pw, &backend) {
         Ok(res) => res,
         // Already translated: the text of the D-Bus error name.
         Err(err) => failed_test(ConnectionTestCode::Internal, dbus_error_text(&err)),
     }
+}
+
+fn non_empty(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 /// [`destination_from_fields`] with the error as text in the GUI language.
@@ -113,6 +130,12 @@ pub fn destination_from_fields(
         "rest" => DestinationKind::Rest {
             url: trimmed_loc.to_string(),
             username: (!trimmed_user.is_empty()).then(|| trimmed_user.to_string()),
+        },
+        "s3" => DestinationKind::S3 {
+            endpoint: fields.endpoint.trim().to_string(),
+            bucket: fields.bucket.trim().to_string(),
+            path: non_empty(&fields.path),
+            region: non_empty(&fields.region),
         },
         _ => DestinationKind::Local {
             path: PathBuf::from(trimmed_loc),

@@ -376,7 +376,9 @@ impl ConnectionTestCode {
             Self::SecretStoreLocked => ErrorKind::SecretStoreLocked.message(None, false),
             Self::ResticUnavailable => ErrorKind::ResticUnavailable.message(None, false),
             Self::WrongPassword => ErrorKind::WrongPassword.message(None, false),
-            Self::AuthFailed => ErrorKind::AuthFailed.message(None, false),
+            Self::AuthFailed => Message::new(i18n_noop(
+                "The destination rejected the login. Check the access data and test again.",
+            )),
             Self::RepositoryMissing => ErrorKind::RepoMissing.message(None, false),
             Self::NotALocalPath => Message::with_args(
                 i18n_noop(
