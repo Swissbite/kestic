@@ -7,10 +7,11 @@
 # - Reads the token from the Podman secret for this call only, so it is neither
 #   in the general environment nor in a gh config file.
 # - Refuses to merge into main: `gh pr merge` of a pull request whose base is
-#   main, `gh api` on the pull request merge endpoint of such a pull request or
-#   on the branch merge endpoint with base main, and GraphQL merge mutations.
-#   Merges into other branches go through. This guards against mistakes only;
-#   with the token and curl it can be bypassed.
+#   main, `gh api` PUT on the merge endpoint of such a pull request, the branch
+#   merge endpoint with base main (or an unknown base), and GraphQL merge
+#   mutations whatever their base. Merges into other branches through
+#   `gh pr merge` or the REST endpoints go through. This guards against
+#   mistakes only; aliases, the token with curl and similar detours bypass it.
 
 set -euo pipefail
 
@@ -33,23 +34,35 @@ pr_base() {
     local pr="$1" repo="$2"
     local args=(pr view)
     [[ -n "$pr" ]] && args+=("$pr")
-    # `{owner}/{repo}` placeholders of gh api mean the current repository.
-    [[ -n "$repo" && "$repo" != *"{"* ]] && args+=(--repo "$repo")
+    # `{owner}/{repo}` and `:owner/:repo` placeholders mean the current repository.
+    [[ -n "$repo" && "$repo" != *"{"* && "$repo" != *:* ]] && args+=(--repo "$repo")
     "$REAL_GH" "${args[@]}" --json baseRefName --jq .baseRefName
 }
 
+# `gh pr [-R repo] merge [<pr>] [flags]`: refuses when the base is main.
 check_pr_merge() {
-    local pr="" repo=""
+    local pr="" repo="" sub=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -R | --repo) repo="${2:-}"; shift 2 || shift ;;
-            --repo=*) repo="${1#*=}"; shift ;;
+            --repo=* | -R=*) repo="${1#*=}"; shift ;;
+            -R?*) repo="${1#-R}"; shift ;;
             -b | --body | -F | --body-file | -t | --subject | -A | --author-email | --match-head-commit)
                 shift 2 || shift ;;
+            --) shift ;;
             -*) shift ;;
-            *) [[ -z "$pr" ]] && pr="$1"; shift ;;
+            *)
+                if [[ -z "$sub" ]]; then
+                    sub="$1"
+                    [[ "$sub" == merge ]] || return 0
+                elif [[ -z "$pr" ]]; then
+                    pr="$1"
+                fi
+                shift
+                ;;
         esac
     done
+    [[ "$sub" == merge ]] || return 0
     local base
     base="$(pr_base "$pr" "$repo")" || refuse "cannot determine the base branch of the pull request"
     if [[ "$base" == "$PROTECTED_BRANCH" ]]; then
@@ -58,44 +71,66 @@ check_pr_merge() {
 }
 
 check_api() {
-    local arg base="" path_pr="" path_repo="" branch_merge=0
-    local prev=""
+    local prefix='^(https?://[^/]+/(api/v3/)?)?/?repos/([^/]+/[^/]+)/'
+    local arg prev="" endpoint="" method="" base="" queries=()
     for arg in "$@"; do
-        if [[ "$arg" =~ ^/?repos/([^/]+/[^/]+)/pulls/([0-9]+)/merge/?(\?.*)?$ ]]; then
-            path_repo="${BASH_REMATCH[1]}"
-            path_pr="${BASH_REMATCH[2]}"
-        elif [[ "$arg" =~ ^/?repos/[^/]+/[^/]+/merges/?(\?.*)?$ ]]; then
-            branch_merge=1
-        elif [[ "$arg" =~ (mergePullRequest|enablePullRequestAutoMerge|mergeBranch) ]]; then
-            refuse "GraphQL merge mutations are not allowed here; use gh pr merge"
-        fi
         case "$prev" in
-            -f | -F | --field | --raw-field) [[ "$arg" == base=* ]] && base="${arg#base=}" ;;
-        esac
-        case "$arg" in
-            -fbase=* | -Fbase=*) base="${arg#-?base=}" ;;
-            --field=base=* | --raw-field=base=*) base="${arg#*=base=}" ;;
+            -X | --method) method="$arg" ;;
+            -f | -F | --field | --raw-field)
+                [[ "$arg" == base=* ]] && base="${arg#base=}"
+                [[ "$arg" == query=* ]] && queries+=("${arg#query=}")
+                ;;
+            --input) queries+=("@$arg") ;;
+            -H | --header | -q | --jq | -t | --template | --cache | -p | --preview | --hostname) ;;
+            *)
+                case "$arg" in
+                    --method=*) method="${arg#*=}" ;;
+                    -X?*) method="${arg#-X}" ;;
+                    -fbase=* | -Fbase=*) base="${arg#-?base=}" ;;
+                    --field=base=* | --raw-field=base=*) base="${arg#*=base=}" ;;
+                    -fquery=* | -Fquery=*) queries+=("${arg#-?query=}") ;;
+                    --field=query=* | --raw-field=query=*) queries+=("${arg#*=query=}") ;;
+                    -*) ;;
+                    *) [[ -z "$endpoint" ]] && endpoint="$arg" ;;
+                esac
+                ;;
         esac
         prev="$arg"
     done
-    if [[ -n "$path_pr" ]]; then
-        local pr_base_branch
-        pr_base_branch="$(pr_base "$path_pr" "$path_repo")" \
-            || refuse "cannot determine the base branch of pull request $path_pr"
-        if [[ "$pr_base_branch" == "$PROTECTED_BRANCH" ]]; then
-            refuse "pull request $path_pr targets $pr_base_branch"
-        fi
+
+    if [[ "$endpoint" == graphql ]]; then
+        local query text
+        for query in "${queries[@]+"${queries[@]}"}"; do
+            text="$query"
+            if [[ "$query" == @* && "$query" != @- && -r "${query#@}" ]]; then
+                text="$(<"${query#@}")"
+            fi
+            if [[ "$text" =~ (mergePullRequest|enablePullRequestAutoMerge|mergeBranch) ]]; then
+                refuse "GraphQL merge mutations are not allowed here; use gh pr merge"
+            fi
+        done
+        return 0
     fi
-    if [[ "$branch_merge" == 1 && ( -z "$base" || "$base" == "$PROTECTED_BRANCH" ) ]]; then
-        refuse "branch merge into ${base:-an unknown base}"
+
+    if [[ "$endpoint" =~ ${prefix}pulls/([0-9]+)/merge/?(\?.*)?$ ]]; then
+        # Without -X it is the GET "is it merged" call.
+        [[ "${method^^}" == PUT ]] || return 0
+        local repo="${BASH_REMATCH[3]}" pr="${BASH_REMATCH[4]}" pr_base_branch
+        pr_base_branch="$(pr_base "$pr" "$repo")" \
+            || refuse "cannot determine the base branch of pull request $pr"
+        if [[ "$pr_base_branch" == "$PROTECTED_BRANCH" ]]; then
+            refuse "pull request $pr targets $pr_base_branch"
+        fi
+    elif [[ "$endpoint" =~ ${prefix}merges/?(\?.*)?$ ]]; then
+        if [[ -z "$base" || "$base" == "$PROTECTED_BRANCH" ]]; then
+            refuse "branch merge into ${base:-an unknown base}"
+        fi
     fi
 }
 
-case "${1:-} ${2:-}" in
-    "pr merge") check_pr_merge "${@:3}" ;;
+case "${1:-}" in
+    pr) check_pr_merge "${@:2}" ;;
+    api) check_api "${@:2}" ;;
 esac
-if [[ "${1:-}" == api ]]; then
-    check_api "${@:2}"
-fi
 
 exec "$REAL_GH" "$@"

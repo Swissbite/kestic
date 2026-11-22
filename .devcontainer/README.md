@@ -82,14 +82,21 @@ The ruleset needs no approving review, so the token **can** merge a pull
 request once `verify` is green.
 
 The container has one rule against that: merging into `main` is refused.
-[gh-wrapper.sh](gh-wrapper.sh) rejects `gh pr merge` and the merge endpoints
-of `gh api` when the target is `main` (tested by
-[test-gh-wrapper.sh](test-gh-wrapper.sh) in `just verify`); merges into other
-branches, such as story pull requests against a milestone branch, go through.
-A `pre-push` hook rejects pushes to `main`. Both guard against mistakes only:
-with the token and `curl` or `--no-verify` they can be bypassed. The binding
-lock belongs in the ruleset on `main` (a required review the agent's token
-cannot give).
+[gh-wrapper.sh](gh-wrapper.sh) rejects `gh pr merge` and the REST merge
+endpoints of `gh api` when the target is `main`, and GraphQL merge mutations
+whatever their target (tested by [test-gh-wrapper.sh](test-gh-wrapper.sh) in
+`just verify`). Merges into other branches through `gh pr merge`, such as
+story pull requests against a milestone branch, go through. A `pre-push` hook
+rejects pushes to `main`. Both guard against mistakes only: aliases, the token
+with `curl`, or `--no-verify` bypass them, and the check happens when the
+command runs (a pull request with `--auto` that GitHub later retargets to
+`main`, e.g. after its base branch is deleted, is not caught).
+
+The binding lock belongs in the ruleset on `main`. Since the token is the
+maintainer's own, a required review would also block the maintainer, who
+cannot approve their own pull requests; it needs a second identity (a bot
+account for the agent, or a second reviewer) or a bypass for the maintainer
+that the agent's token does not have.
 
 Podman keeps secrets unencrypted in its storage on the host
 (`~/.local/share/containers/storage/secrets/`), readable by the host user only.
