@@ -27,7 +27,11 @@ Kirigami.ScrollablePage {
 
     signal showRequested(var destinationId, var snapshotId, var folder, var path, var snapshotText)
 
+    // The user cancelled the search; a hidden page that comes back does not start it again.
+    property bool cancelledByUser: false
+
     function runSearch(text) {
+        cancelledByUser = false;
         filterDelay.stop();
         filterField.text = "";
         searchListView.currentIndex = -1;
@@ -52,7 +56,7 @@ Kirigami.ScrollablePage {
     onVisibleChanged: {
         if (!visible) {
             snapshotSearchModel.cancel();
-        } else if (snapshotSearchModel.state === "cancelled") {
+        } else if (snapshotSearchModel.state === "cancelled" && !cancelledByUser) {
             runSearch(snapshotSearchModel.search_text);
         }
     }
@@ -83,8 +87,8 @@ Kirigami.ScrollablePage {
                 id: searchField
                 objectName: "searchPageField"
                 Layout.fillWidth: true
-                placeholderText: Texts.label("search_in_backup_snapshots")
-                Accessible.name: Texts.label("search_in_backup_snapshots")
+                placeholderText: i18n("Search text")
+                Accessible.name: i18n("Search text")
                 // Ctrl+F belongs to the search field of the snapshot list.
                 focusSequences: []
                 autoAccept: false
@@ -150,7 +154,23 @@ Kirigami.ScrollablePage {
                 Layout.alignment: Qt.AlignHCenter
                 text: Texts.label("cancel")
                 icon.name: "process-stop"
-                onClicked: snapshotSearchModel.cancel()
+                onClicked: {
+                    page.cancelledByUser = true;
+                    snapshotSearchModel.cancel();
+                }
+            }
+        }
+
+        Kirigami.PlaceholderMessage {
+            objectName: "searchCancelledMessage"
+            anchors.centerIn: parent
+            width: parent.width - Kirigami.Units.largeSpacing * 4
+            visible: snapshotSearchModel.state === "cancelled"
+            icon.name: "process-stop"
+            text: i18n("Search cancelled")
+            helpfulAction: Kirigami.Action {
+                text: Texts.label("retry")
+                onTriggered: page.runSearch(snapshotSearchModel.search_text)
             }
         }
 

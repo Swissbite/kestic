@@ -367,3 +367,63 @@ fn ac_m4_04_4_search_in_b1_gives_only_hits_of_b1() {
         },
     );
 }
+
+/// M4-S04: a text that starts with `/` starts a path segment, so a pasted absolute path and a
+/// folder at the top of the snapshot are found.
+#[test]
+fn m4_s04_absolute_path_text_finds_the_hit() {
+    run_isolated_test(
+        "m4_s04_absolute_path_text_finds_the_hit",
+        "KESTIC_M4_S04_ABSOLUTE_INNER",
+        |root| {
+            for_each_variant(root, |fx, label| {
+                let (snapshot, path) = &fx.b1_hits[0];
+                let found = fx.search(&fx.b1, path);
+                let hits: Vec<(&String, &String)> = found
+                    .hits
+                    .items
+                    .iter()
+                    .map(|h| (&h.snapshot_id, &h.path))
+                    .collect();
+                assert_eq!(
+                    hits,
+                    [(snapshot, path)],
+                    "{label}: the absolute path is found"
+                );
+
+                let top = format!(
+                    "/{}",
+                    path.trim_start_matches('/')
+                        .split('/')
+                        .next()
+                        .unwrap_or_default()
+                );
+                let found = fx.search(&fx.b1, &top);
+                assert!(
+                    found.hits.items.iter().any(|h| &h.path == path),
+                    "{label}: {top} finds the entries below the top folder"
+                );
+            });
+        },
+    );
+}
+
+/// M4-S04: the text is taken literally; restic would clean `Dokumente/../Archiv` to `Archiv`,
+/// but no snapshot path contains that text, so the search finds nothing.
+#[test]
+fn m4_s04_text_with_parent_segment_finds_nothing() {
+    run_isolated_test(
+        "m4_s04_text_with_parent_segment_finds_nothing",
+        "KESTIC_M4_S04_PARENT_INNER",
+        |root| {
+            for_each_variant(root, |fx, label| {
+                assert!(
+                    fx.search(&fx.b1, "Archiv").hits.total > 0,
+                    "{label}: «Archiv» alone has hits"
+                );
+                let found = fx.search(&fx.b1, "Dokumente/../Archiv");
+                assert_eq!(found.hits.total, 0, "{label}: no path contains the text");
+            });
+        },
+    );
+}

@@ -675,6 +675,35 @@ int scenario_search_none(const Ctx& c) {
     return 0;
 }
 
+/// M4-S04: «Cancel» stops a running search (restic find held); the page says the search was
+/// cancelled. The Rust test checks that restic got SIGTERM.
+int scenario_search_cancel(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 5901, 3)) {
+        return rc;
+    }
+    w->requestActivate();
+    QCoreApplication::processEvents();
+    send_key(w, Qt::Key_F, Qt::ControlModifier);
+    type_text(w, QStringLiteral("bericht"));
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(5906, wait_until([&] { return visible_item(w, "searchCancelButton") != nullptr; }, 10000),
+        "the running search shows «Cancel»");
+    finish_incubation(w);
+    wait_ms(1500);
+    QQuickItem* cancel = visible_item(w, "searchCancelButton");
+    M4_CHECK(5907, cancel != nullptr, "«Cancel» still shown while restic find is held");
+    M4_CHECK(5908, click_ui_item(w, cancel, "cancel search"), "«Cancel» could not be clicked");
+    M4_CHECK(5909, wait_until([&] { return visible_item(w, "searchCancelledMessage") != nullptr; }, 5000),
+        "the page says the search was cancelled");
+    Search s = search_page(w);
+    M4_CHECK_EQ(5910, s.model->property("state").toString(), QStringLiteral("cancelled"), "search cancelled");
+    M4_CHECK(5911, visible_item(w, "searchCancelButton") == nullptr, "«Cancel» gone");
+    wait_ms(600); // let the page transition end before the screenshot
+    M4_CHECK(5912, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -705,6 +734,8 @@ void run_m4_smoke_scenario(
         rc = scenario_search(ctx);
     } else if (scen == QLatin1String("m4-search-none")) {
         rc = scenario_search_none(ctx);
+    } else if (scen == QLatin1String("m4-search-cancel")) {
+        rc = scenario_search_cancel(ctx);
     } else {
         std::fprintf(stderr, "M4 smoke failed (599): unknown m4 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

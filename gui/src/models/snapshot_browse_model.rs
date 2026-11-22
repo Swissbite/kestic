@@ -24,6 +24,10 @@ use std::pin::Pin;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+/// Pages [`qobject::SnapshotBrowseModel::row_of_path`] fetches at most; each page is one call to
+/// the daemon while the window waits.
+const FIND_ROW_PAGES: usize = 10;
+
 model_row!(BrowseRow {
     path: String => "path",
     name: String => "name",
@@ -289,24 +293,25 @@ impl qobject::SnapshotBrowseModel {
         }
     }
 
-    /// The row of the entry at `path`, fetching further pages while it is not loaded yet; -1
-    /// when the folder does not list it.
+    /// The row of the entry at `path`, fetching at most [`FIND_ROW_PAGES`] further pages while it
+    /// is not loaded yet; -1 when the folder does not list it there.
     pub fn row_of_path(mut self: Pin<&mut Self>, path: &QString) -> i32 {
         let path = path.to_string();
-        loop {
-            if let Some(row) = self.rows.iter().position(|r| r.path == path) {
-                return to_i32(row as u64);
-            }
-            let parent = QModelIndex::default();
-            if !self.can_fetch_more(&parent) {
-                return -1;
+        let parent = QModelIndex::default();
+        for _ in 0..FIND_ROW_PAGES {
+            if self.rows.iter().any(|r| r.path == path) || !self.can_fetch_more(&parent) {
+                break;
             }
             let before = self.rows.len();
             self.as_mut().fetch_more(&parent);
             if self.rows.len() == before {
-                return -1;
+                break;
             }
         }
+        self.rows
+            .iter()
+            .position(|r| r.path == path)
+            .map_or(-1, |row| to_i32(row as u64))
     }
 
     /// Marks or unmarks the entry at `row` for restore.

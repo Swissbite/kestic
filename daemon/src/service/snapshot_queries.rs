@@ -50,7 +50,7 @@ impl QueryResult {
                 entries: listing.entries.page(page),
             }),
             Self::Find(found) => SnapshotQueryResultDto::Find(FindResultDto {
-                hits: found.hits.page(page),
+                hits: found.page(page),
                 snapshots_matched: found.snapshots_matched,
             }),
         }

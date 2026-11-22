@@ -11,7 +11,9 @@
 use crate::backup::{
     BackupRunError, SnapshotListAccess, check_command_succeeded, list_destination_snapshots,
 };
-use crate::query_list::{ENTRY_OVERHEAD_BYTES, HeldResult, ListBuilder, ListEntry, QueryList};
+use crate::query_list::{
+    ENTRY_OVERHEAD_BYTES, HeldResult, ListBuilder, ListEntry, ListPage, PageRequest, QueryList,
+};
 use crate::restic::{CancelHandle, ResticCommandSpec, run_restic_reading};
 use crate::snapshot::ResticSnapshot;
 use crate::snapshot_list::sort_destination_snapshots;
@@ -28,7 +30,8 @@ use thiserror::Error;
 pub enum FindScope {
     /// The snapshots of a configured backup.
     Backup { backup_id: String },
-    /// The snapshots without a Kestic tag of a configured backup.
+    /// The unassigned snapshots: without a Kestic tag, or tagged for several configured
+    /// backups.
     Unassigned,
     /// The snapshots of a backup that is neither configured nor described in the destination.
     Orphaned { backup_id: String },
@@ -68,7 +71,18 @@ impl FindHit {
     }
 }
 
-impl ListEntry for FindHit {
+/// A hit as the daemon holds it: its snapshot by position in [`FindResult`], so the ID and time
+/// of a snapshot are held once, not once per hit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HeldHit {
+    /// Position of the snapshot, newest first.
+    snapshot: usize,
+    path: String,
+    entry_type: String,
+    size: Option<u64>,
+}
+
+impl ListEntry for HeldHit {
     fn path(&self) -> &str {
         &self.path
     }
@@ -84,9 +98,54 @@ pub fn parent_dir(path: &str) -> &str {
 
 /// The hits of a search, newest snapshot first and by path within a snapshot.
 pub struct FindResult {
-    pub hits: QueryList<FindHit>,
+    hits: QueryList<HeldHit>,
+    /// ID and time of the searched snapshots, newest first.
+    snapshots: Vec<(String, String)>,
+    backup_id: Option<String>,
     /// Number of snapshots with at least one hit.
     pub snapshots_matched: u64,
+}
+
+impl FindResult {
+    /// All hits, held or not.
+    pub fn total(&self) -> u64 {
+        self.hits.total()
+    }
+
+    pub fn too_large(&self) -> bool {
+        self.hits.too_large()
+    }
+
+    /// The page `request` asks for (the text filter searches the paths).
+    pub fn page(&mut self, request: &PageRequest) -> ListPage<FindHit> {
+        let page = self.hits.page(request);
+        let items = page
+            .items
+            .into_iter()
+            .map(|hit| {
+                let (id, time) = self
+                    .snapshots
+                    .get(hit.snapshot)
+                    .cloned()
+                    .unwrap_or_default();
+                FindHit {
+                    snapshot_id: id,
+                    snapshot_time: time,
+                    path: hit.path,
+                    entry_type: hit.entry_type,
+                    size: hit.size,
+                    backup_id: self.backup_id.clone(),
+                }
+            })
+            .collect();
+        ListPage {
+            items,
+            offset: page.offset,
+            total: page.total,
+            matched: page.matched,
+            too_large: page.too_large,
+        }
+    }
 }
 
 impl HeldResult for FindResult {
@@ -102,9 +161,17 @@ pub enum FindTextError {
     Empty,
     #[error("search text contains a NUL character")]
     Nul,
+    #[error("search text is longer than {MAX_SEARCH_TEXT_BYTES} bytes")]
+    TooLong,
 }
 
-/// Checks the search text: not empty or blank, no NUL.
+/// Longest search text in bytes; restic gets it as one argument.
+pub const MAX_SEARCH_TEXT_BYTES: usize = 4096;
+
+/// Most snapshot IDs per `restic find` call, so its arguments stay far below the system limit.
+pub const FIND_BATCH_SNAPSHOTS: usize = 1000;
+
+/// Checks the search text: not empty or blank, no NUL, at most [`MAX_SEARCH_TEXT_BYTES`].
 pub fn validate_search_text(text: &str) -> Result<(), FindTextError> {
     if text.trim().is_empty() {
         return Err(FindTextError::Empty);
@@ -112,27 +179,52 @@ pub fn validate_search_text(text: &str) -> Result<(), FindTextError> {
     if text.contains('\0') {
         return Err(FindTextError::Nul);
     }
+    if text.len() > MAX_SEARCH_TEXT_BYTES {
+        return Err(FindTextError::TooLong);
+    }
     Ok(())
 }
 
-/// The restic pattern that finds `text` anywhere in a path: the text taken literally (`*`, `?`,
-/// `[` and `\` masked) between two `*`. restic matches a pattern without a leading `/` against
-/// every run of consecutive path segments, so a folder hit also finds the entries below it.
-pub fn find_pattern(text: &str) -> String {
-    let mut pattern = String::with_capacity(text.len() + 2);
-    pattern.push('*');
+fn push_literal(pattern: &mut String, text: &str) {
     for c in text.chars() {
         if matches!(c, '*' | '?' | '[' | '\\') {
             pattern.push('\\');
         }
         pattern.push(c);
     }
-    pattern.push('*');
-    pattern
 }
 
-/// Arguments of `restic find` for `pattern` in exactly the snapshots `snapshot_ids` (full IDs;
-/// `--json` comes from the command spec). Case is ignored.
+/// The restic pattern that finds the paths containing `text`, taken literally (`*`, `?`, `[` and
+/// `\` masked), or `None` when no path can contain it.
+///
+/// restic matches a pattern without a leading `/` segment by segment against every run of
+/// consecutive path segments, so a folder hit also finds the entries below it. A text inside a
+/// path becomes `*text*`. A text that starts with `/` starts a segment: it becomes `text*`
+/// without the `/`, which also finds a segment at the top. restic cleans the pattern like a
+/// path, so a text with an empty, `.` or `..` segment between two `/` would match other paths;
+/// a snapshot path never holds such a segment, so it finds nothing.
+pub fn find_pattern(text: &str) -> Option<String> {
+    let segments: Vec<&str> = text.split('/').collect();
+    let inner = segments
+        .get(1..segments.len().saturating_sub(1))
+        .unwrap_or_default();
+    if inner.iter().any(|s| matches!(*s, "" | "." | "..")) {
+        return None;
+    }
+    let mut pattern = String::with_capacity(text.len() + 2);
+    match text.strip_prefix('/') {
+        Some(rest) => push_literal(&mut pattern, rest),
+        None => {
+            pattern.push('*');
+            push_literal(&mut pattern, text);
+        }
+    }
+    pattern.push('*');
+    Some(pattern)
+}
+
+/// Arguments of `restic find` for `pattern` in exactly the snapshots `snapshot_ids` (full IDs,
+/// at most [`FIND_BATCH_SNAPSHOTS`]; `--json` comes from the command spec). Case is ignored.
 pub fn find_args(snapshot_ids: &[&str], pattern: &str) -> Vec<String> {
     let mut args = vec![
         "find".to_string(),
@@ -159,8 +251,7 @@ pub fn scope_snapshots(
         groups
             .into_iter()
             .find(|(group, _)| group == id)
-            .map(|(_, snaps)| snaps)
-            .unwrap_or_default()
+            .map_or_default(|(_, snaps)| snaps)
     };
     match scope {
         FindScope::Backup { backup_id } => find_group(sorted.backups, backup_id),
@@ -194,11 +285,13 @@ struct RawGroup {
 /// array of `{"matches":[…],"hits":n,"snapshot":"<id>"}`, read as a stream: one very long line
 /// is never held as a whole. Unknown fields are ignored.
 pub struct FindCollector {
-    /// Position (newest first) and time of each searched snapshot, by ID.
-    snapshots: HashMap<String, (usize, String)>,
+    /// Position (newest first) of each searched snapshot, by ID.
+    positions: HashMap<String, usize>,
+    /// ID and time of the searched snapshots, newest first.
+    snapshots: Vec<(String, String)>,
     backup_id: Option<String>,
     limit_bytes: u64,
-    builder: ListBuilder<FindHit>,
+    builder: ListBuilder<HeldHit>,
     snapshots_matched: u64,
 }
 
@@ -207,10 +300,14 @@ impl FindCollector {
     /// dropped once it exceeds `limit_bytes`.
     pub fn new(snapshots: &[ResticSnapshot], backup_id: Option<&str>, limit_bytes: u64) -> Self {
         Self {
-            snapshots: snapshots
+            positions: snapshots
                 .iter()
                 .enumerate()
-                .map(|(i, s)| (s.id.clone(), (i, s.time.clone())))
+                .map(|(i, s)| (s.id.clone(), i))
+                .collect(),
+            snapshots: snapshots
+                .iter()
+                .map(|s| (s.id.clone(), s.time.clone()))
                 .collect(),
             backup_id: backup_id.map(str::to_string),
             limit_bytes,
@@ -227,7 +324,7 @@ impl FindCollector {
     }
 
     fn add_group(&mut self, group: RawGroup) {
-        let Some((_, time)) = self.snapshots.get(&group.snapshot) else {
+        let Some(&snapshot) = self.positions.get(&group.snapshot) else {
             return;
         };
         if group.count == 0 {
@@ -238,29 +335,26 @@ impl FindCollector {
             self.builder.push_dropped(group.count);
             return;
         }
-        let time = time.clone();
         for m in group.matches {
-            self.builder.push(FindHit {
-                snapshot_id: group.snapshot.clone(),
-                snapshot_time: time.clone(),
+            self.builder.push(HeldHit {
+                snapshot,
                 path: m.path,
                 entry_type: m.node_type,
                 size: m.size,
-                backup_id: self.backup_id.clone(),
             });
         }
     }
 
     pub fn finish(self) -> FindResult {
-        let order = self.snapshots;
-        let position = |hit: &FindHit| order.get(&hit.snapshot_id).map_or(usize::MAX, |p| p.0);
         let hits = self.builder.finish_sorted_by(|a, b| {
-            position(a)
-                .cmp(&position(b))
+            a.snapshot
+                .cmp(&b.snapshot)
                 .then_with(|| a.path.cmp(&b.path))
         });
         FindResult {
             hits,
+            snapshots: self.snapshots,
+            backup_id: self.backup_id,
             snapshots_matched: self.snapshots_matched,
         }
     }
@@ -397,9 +491,19 @@ pub struct FindRequest<'a> {
     pub text: &'a str,
 }
 
+/// The arguments of the `restic find` calls that search `pattern` in `snapshot_ids`, at most
+/// [`FIND_BATCH_SNAPSHOTS`] snapshots per call.
+pub fn find_calls(snapshot_ids: &[&str], pattern: &str) -> Vec<Vec<String>> {
+    snapshot_ids
+        .chunks(FIND_BATCH_SNAPSHOTS)
+        .map(|batch| find_args(batch, pattern))
+        .collect()
+}
+
 /// Searches the snapshots of `request.scope` for paths that contain `request.text` (any case),
 /// after the reachability check of the destination: one `restic snapshots` call, then
-/// `restic find --no-lock` over exactly these snapshots; without snapshots restic does not run.
+/// `restic find --no-lock` over exactly these snapshots ([`find_calls`]). Without snapshots, or
+/// for a text no path can contain, `find` does not run.
 pub fn execute_find(
     access: &SnapshotListAccess<'_>,
     request: &FindRequest<'_>,
@@ -412,32 +516,34 @@ pub fn execute_find(
     if cancel.is_some_and(CancelHandle::is_cancelled) {
         return Err(BackupRunError::Cancelled);
     }
-    if snapshots.is_empty() {
+    let Some(pattern) = find_pattern(request.text) else {
         return Ok(collector.finish());
-    }
+    };
     let ids: Vec<&str> = snapshots.iter().map(|s| s.id.as_str()).collect();
-    let mut spec = ResticCommandSpec::for_destination(
-        &access.resolved.binary,
-        access.kestic_binary,
-        access.destination,
-        find_args(&ids, &find_pattern(request.text)),
-    );
-    spec.low_priority = false;
-    let mut parsed = Ok(());
-    let res = run_restic_reading(
-        &spec,
-        access.destination,
-        Some(access.secret_store),
-        access.clock,
-        cancel,
-        access.extra_env,
-        &mut |reader| parsed = collector.read(reader),
-    )?;
-    if res.cancelled {
-        return Err(BackupRunError::Cancelled);
+    for args in find_calls(&ids, &pattern) {
+        let mut spec = ResticCommandSpec::for_destination(
+            &access.resolved.binary,
+            access.kestic_binary,
+            access.destination,
+            args,
+        );
+        spec.low_priority = false;
+        let mut parsed = Ok(());
+        let res = run_restic_reading(
+            &spec,
+            access.destination,
+            Some(access.secret_store),
+            access.clock,
+            cancel,
+            access.extra_env,
+            &mut |reader| parsed = collector.read(reader),
+        )?;
+        if res.cancelled {
+            return Err(BackupRunError::Cancelled);
+        }
+        check_command_succeeded(&res)?;
+        parsed?;
     }
-    check_command_succeeded(&res)?;
-    parsed?;
     Ok(collector.finish())
 }
 
@@ -464,9 +570,46 @@ mod tests {
 
     #[test]
     fn pattern_takes_the_text_literally_between_wildcards() {
-        assert_eq!(find_pattern("bericht.pdf"), "*bericht.pdf*");
-        assert_eq!(find_pattern(r"a*b?c[d]\e"), r"*a\*b\?c\[d]\\e*");
-        assert_eq!(find_pattern("Steuern/2026"), "*Steuern/2026*");
+        let pattern = |text| find_pattern(text).unwrap_or_default();
+        assert_eq!(pattern("bericht.pdf"), "*bericht.pdf*");
+        assert_eq!(pattern(r"a*b?c[d]\e"), r"*a\*b\?c\[d]\\e*");
+        assert_eq!(pattern("Steuern/2026"), "*Steuern/2026*");
+        assert_eq!(pattern("../x"), "*../x*");
+        assert_eq!(pattern("x/.."), "*x/..*");
+    }
+
+    #[test]
+    fn a_leading_slash_starts_a_segment() {
+        let pattern = |text| find_pattern(text).unwrap_or_default();
+        assert_eq!(pattern("/home/u/bericht.pdf"), "home/u/bericht.pdf*");
+        assert_eq!(pattern("/.."), "..*");
+        assert_eq!(pattern("/"), "*");
+    }
+
+    #[test]
+    fn a_text_no_path_can_contain_has_no_pattern() {
+        for text in ["a/../b", "a/./b", "a//b", "//a", "/../b"] {
+            assert_eq!(find_pattern(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn many_snapshots_are_searched_in_batches() {
+        let ids: Vec<String> = (0..2500).map(|i| format!("{i:064x}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let calls = find_calls(&refs, "*x*");
+        assert_eq!(calls.len(), 3);
+        let searched: Vec<&String> = calls
+            .iter()
+            .flat_map(|args| args.iter().skip_while(|a| *a != "--snapshot"))
+            .filter(|a| *a != "--snapshot" && *a != "*x*")
+            .collect();
+        assert_eq!(searched.len(), 2500, "every snapshot once");
+        for args in &calls {
+            let n = args.iter().filter(|a| *a == "--snapshot").count();
+            assert!(n <= FIND_BATCH_SNAPSHOTS, "{n} snapshots in one call");
+            assert_eq!(args.last().map(String::as_str), Some("*x*"));
+        }
     }
 
     #[test]
@@ -474,6 +617,12 @@ mod tests {
         assert_eq!(validate_search_text("  "), Err(FindTextError::Empty));
         assert_eq!(validate_search_text("a\0b"), Err(FindTextError::Nul));
         assert_eq!(validate_search_text(" a "), Ok(()));
+        let long = "a".repeat(MAX_SEARCH_TEXT_BYTES);
+        assert_eq!(validate_search_text(&long), Ok(()));
+        assert_eq!(
+            validate_search_text(&format!("{long}a")),
+            Err(FindTextError::TooLong)
+        );
     }
 
     #[test]
@@ -552,7 +701,7 @@ mod tests {
         );
         let mut result = collect(&output, u64::MAX);
         assert_eq!(result.snapshots_matched, 2);
-        let page = result.hits.page(&PageRequest::default());
+        let page = result.page(&PageRequest::default());
         let seen: Vec<(char, &str)> = page
             .items
             .iter()
@@ -568,19 +717,19 @@ mod tests {
     #[test]
     fn collector_reads_no_hits_and_counts_a_list_over_the_limit() {
         let mut none = collect("[]\n", u64::MAX);
-        assert_eq!(none.hits.total(), 0);
+        assert_eq!(none.total(), 0);
         assert_eq!(none.snapshots_matched, 0);
-        assert!(!none.hits.page(&PageRequest::default()).too_large);
+        assert!(!none.page(&PageRequest::default()).too_large);
 
         let a = "a".repeat(64);
         let output = format!(
             r#"[{{"matches":[{{"path":"/1"}},{{"path":"/2"}},{{"path":"/3"}}],"snapshot":"{a}"}}]"#
         );
         let mut over = collect(&output, 2 * (ENTRY_OVERHEAD_BYTES + 2));
-        assert_eq!(over.hits.total(), 3);
+        assert_eq!(over.total(), 3);
         assert_eq!(over.snapshots_matched, 1);
-        assert!(over.hits.too_large());
-        assert!(over.hits.page(&PageRequest::default()).items.is_empty());
+        assert!(over.too_large());
+        assert!(over.page(&PageRequest::default()).items.is_empty());
     }
 
     #[test]

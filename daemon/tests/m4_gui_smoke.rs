@@ -406,3 +406,34 @@ fn ac_m4_04_2_search_without_hits_shows_no_hits() {
         },
     );
 }
+
+/// M4-S04: «Cancel» on a running search stops `restic find`, and the page says so.
+#[test]
+fn m4_s04_cancelling_a_search_stops_restic_find() {
+    run_isolated_test(
+        "m4_s04_cancelling_a_search_stops_restic_find",
+        "KESTIC_M4_S04_CANCEL_INNER",
+        |root| {
+            let (rig, _fakes) = search_env(root);
+            rig.wrapper.hold("find");
+            run_m4_gui_smoke(
+                root,
+                "m4-search-cancel",
+                "wide",
+                "en",
+                &smoke_artifact("restore-search-cancelled", "wide", "en"),
+            );
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while rig.wrapper.of('T', "find").is_empty() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            rig.wrapper.release("find");
+            assert_eq!(
+                rig.wrapper.of('T', "find").len(),
+                1,
+                "restic find got SIGTERM"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
