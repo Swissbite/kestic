@@ -1035,6 +1035,17 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK(6259, wait_until([&] { return !r.model->property("target_original").toBool(); }, 3000),
         "the new folder is chosen");
     M4_CHECK(6260, r.model->property("overwrite").toInt() == 0, "AC-M4-05-15 (c) «Never» for another target");
+    // AC-M4-05-15 (c), (e) for an existing folder with content (the backed-up folder itself).
+    M4_CHECK(6266, wait_for_preview(r.model), "the preview of the new folder is done");
+    QMetaObject::invokeMethod(r.model, "chooseOverwrite", Q_ARG(int, 3));
+    M4_CHECK(6267, wait_until([&] { return r.model->property("overwrite").toInt() == 3; }, 2000), "«Always» chosen");
+    QMetaObject::invokeMethod(r.model, "chooseFolder", Q_ARG(QString, top));
+    M4_CHECK(6268, r.model->property("overwrite").toInt() == 0, "AC-M4-05-15 (c) «Never» for a folder with content");
+    M4_CHECK(6269, r.model->property("state").toString() == QLatin1String("running")
+        && !restore_now->property("enabled").toBool(), "AC-M4-05-15 (e) disabled while its preview runs");
+    M4_CHECK(6270, wait_for_preview(r.model), "the preview of the folder with content is done");
+    M4_CHECK(6271, r.model->property("preview_required").toBool(), "AC-M4-05-15 (d) a folder with content needs the preview");
+    M4_CHECK(6272, restore_now->property("enabled").toBool(), "AC-M4-05-15 (e) enabled after its preview");
     QMetaObject::invokeMethod(r.dialog, "reject");
     return 0;
 }

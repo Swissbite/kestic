@@ -3657,7 +3657,7 @@ msgid "Nothing in the snapshot matches the selection."
 msgstr "Nichts im Snapshot passt zur Auswahl."
 
 msgid "The target contains symbolic links where the snapshot has files or folders; restic may replace such a link, but it never writes through it."
-msgstr "Am Ziel liegen symbolische Links, wo der Snapshot Dateien oder Ordner hat; restic ersetzt einen solchen Link unter Umständen, schreibt aber nie hindurch."
+msgstr "Im Zielordner liegen symbolische Links, wo der Snapshot Dateien oder Ordner hat; restic ersetzt einen solchen Link unter Umständen, schreibt aber nie hindurch."
 
 msgid "%1 already contains files"
 msgstr "%1 enthält bereits Dateien"
