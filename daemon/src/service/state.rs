@@ -648,9 +648,15 @@ impl DaemonCore {
         any
     }
 
+    /// Whether the daemon is stopping: nothing new starts.
+    pub(super) fn stopping(&self) -> bool {
+        self.shutdown_flag.load(Ordering::SeqCst)
+    }
+
     pub fn request_shutdown(&self) {
-        self.cancel_any_active_run();
+        // Set first: a run ending on the cancel must already see that nothing starts any more.
         self.shutdown_flag.store(true, Ordering::SeqCst);
+        self.cancel_any_active_run();
         if let Some(tx) = &self.quit_tx {
             let _ = tx.send(());
         }

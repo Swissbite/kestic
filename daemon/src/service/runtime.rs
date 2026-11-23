@@ -265,6 +265,7 @@ fn shutdown_daemon_and_maybe_reexec(
         // Runs cancelled by shutdown are interrupted, not user-cancelled (no slot handling).
         guard.shutdown_flag.store(true, Ordering::SeqCst);
         guard.cancel_any_active_run();
+        guard.drop_pending_restores();
         guard.tray = None;
         guard.conn = None;
     }

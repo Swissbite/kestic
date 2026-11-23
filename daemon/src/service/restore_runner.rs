@@ -437,6 +437,16 @@ impl DaemonCore {
         }
     }
 
+    /// Removes the empty new folders of the restores still waiting when the daemon stops; their
+    /// runs count as interrupted at the next start.
+    pub(super) fn drop_pending_restores(&mut self) {
+        let pending = std::mem::take(&mut self.pending_restores);
+        for p in &pending {
+            remove_created_if_empty(&p.setup);
+            self.release_restore(&p.run.id);
+        }
+    }
+
     /// Ends the claim of restore `run_id` (its run has ended or never started).
     fn release_restore(&mut self, run_id: &RunId) {
         self.restore_claims.remove(run_id);
@@ -547,8 +557,9 @@ pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &
 fn start_pending_restore(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationId, run_id: &RunId) {
     let (mut setup, deps) = {
         let guard = shared.lock_unpoisoned();
-        // Nothing starts while the system goes to sleep; waking up starts the waiting ones.
-        if guard.sleep_in_progress || guard.has_exclusive_run(dest_id) {
+        // Nothing starts while the system goes to sleep (waking up starts the waiting ones) or
+        // the daemon stops.
+        if guard.sleep_in_progress || guard.stopping() || guard.has_exclusive_run(dest_id) {
             return;
         }
         let Some(pending) = guard.pending_restores.iter().find(|p| &p.run.id == run_id) else {
@@ -575,7 +586,7 @@ fn start_pending_restore(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationI
         return;
     };
     // Maintenance or a backup's `forget` may have claimed the destination meanwhile.
-    if guard.sleep_in_progress || guard.has_exclusive_run(dest_id) {
+    if guard.sleep_in_progress || guard.stopping() || guard.has_exclusive_run(dest_id) {
         return;
     }
     let PendingRestore { mut run, .. } = guard.pending_restores.remove(pos);

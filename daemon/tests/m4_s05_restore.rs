@@ -3339,3 +3339,43 @@ fn m4_s05_restore_failing_midway_keeps_what_it_did() {
         },
     );
 }
+
+/// When the daemon stops while a restore waits for maintenance, (a) the waiting restore does not
+/// start on the maintenance's end and (b) its empty new folder is removed.
+#[test]
+fn m4_s05_waiting_restore_leaves_no_folder_when_the_daemon_stops() {
+    run_isolated_test(
+        "m4_s05_waiting_restore_leaves_no_folder_when_the_daemon_stops",
+        "KESTIC_M4_S05_STOP_WAITING_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            let variant = common::m3::latest_variant();
+            let fx = scheduled_fixture(root, &variant, "M4RQ");
+            fx.rig.wrapper.hold("prune");
+            fx.rig.clock.set(SUNDAY_PRUNE);
+            fx.rig
+                .wrapper
+                .wait_for('S', "prune", 1, std::time::Duration::from_secs(30));
+            let target = fx.new_dir("waiting");
+            fx.start_restore(
+                &["a.txt"],
+                new_folder(&target),
+                RestoreOverwrite::Never,
+                None,
+            )
+            .expect("StartRestore");
+            assert!(target.is_dir(), "the new folder exists while it waits");
+            fx.rig.daemon.stop();
+            let started: Vec<String> = fx
+                .rig
+                .wrapper
+                .of('S', "restore")
+                .into_iter()
+                .map(|e| e.detail)
+                .filter(|c| !c.contains("--dry-run"))
+                .collect();
+            assert!(started.is_empty(), "(a) no restore started: {started:?}");
+            assert!(!target.exists(), "(b) the empty new folder is removed");
+        },
+    );
+}
