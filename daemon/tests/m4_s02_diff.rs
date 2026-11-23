@@ -238,7 +238,6 @@ fn modifier(change: SnapshotChange) -> &'static str {
         SnapshotChange::Added => "+",
         SnapshotChange::Removed => "-",
         SnapshotChange::Modified => "M",
-        SnapshotChange::Metadata => "U",
         SnapshotChange::TypeChanged => "T",
         SnapshotChange::Bitrot => "?",
     }

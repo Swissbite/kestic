@@ -271,8 +271,6 @@ code_enum! {
         Removed => "removed",
         /// Content modified (`M`).
         Modified => "modified",
-        /// Only the metadata changed (`U`).
-        Metadata => "metadata",
         /// The type changed, e.g. a file became a link (`T`).
         TypeChanged => "type_changed",
         /// The content changed while all metadata stayed the same (`?`).

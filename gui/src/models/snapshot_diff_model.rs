@@ -60,7 +60,7 @@ pub(crate) fn change_text(change: SnapshotChange) -> String {
         SnapshotChange::Removed => i18n("Removed").subs(&[]),
         // restic reports metadata changes only with `--metadata`, which Kestic does not pass;
         // one that comes anyway reads as changed.
-        SnapshotChange::Modified | SnapshotChange::Metadata => i18n("Changed").subs(&[]),
+        SnapshotChange::Modified => i18n("Changed").subs(&[]),
         SnapshotChange::TypeChanged => i18n("Type changed").subs(&[]),
         SnapshotChange::Bitrot => i18n("Content changed, metadata unchanged").subs(&[]),
     }
@@ -71,7 +71,7 @@ pub(crate) fn change_icon(change: SnapshotChange) -> &'static str {
     match change {
         SnapshotChange::Added => "list-add",
         SnapshotChange::Removed => "list-remove",
-        SnapshotChange::Modified | SnapshotChange::Metadata => "document-edit",
+        SnapshotChange::Modified => "document-edit",
         SnapshotChange::TypeChanged => "document-swap",
         SnapshotChange::Bitrot => "dialog-warning",
     }
@@ -367,12 +367,6 @@ mod tests {
         });
         assert_eq!(dir.change_text, "New");
         assert!(dir.is_dir);
-        let metadata = row_for(&DiffChangeDto {
-            path: "/home/u/docs/b.txt".to_string(),
-            change: SnapshotChange::Metadata,
-        });
-        assert_eq!(metadata.change, "metadata");
-        assert_eq!(metadata.change_text, "Changed");
     }
 
     #[test]

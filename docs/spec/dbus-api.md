@@ -159,7 +159,7 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 | `SnapshotQueryRequest.kind` | `codes::SnapshotQueryKind` | `ls`, `find`, `diff`, `restore_preview` |
 | `RestoreRequest.overwrite`, `RestoreStats.overwrite` | `codes::RestoreOverwrite` | `never`, `if_newer`, `if_changed`, `always` |
 | `RestorePreviewEntryDto.outcome` | `codes::RestoreOutcome` | `new`, `overwritten`, `kept` (vorhanden und abweichend, nicht überschrieben), `identical` |
-| `DiffChangeDto.change` | `codes::SnapshotChange` | `added`, `removed`, `modified`, `metadata`, `type_changed`, `bitrot`; Unbekanntes wird ignoriert (NFR-10) |
+| `DiffChangeDto.change` | `codes::SnapshotChange` | `added`, `removed`, `modified`, `type_changed`, `bitrot`; Unbekanntes wird ignoriert (NFR-10) |
 | `RestoreTargetCheckDto.code` (Parameter: `detail`) | `codes::RestoreTargetCode` | `ok`, `exists_not_empty`, `not_a_directory`, `not_writable`, `missing_mapped_dir`, `inside_repository` (das Ziel liegt im Repository eines lokalen Ziels, oder unter dem Ziel liegt ein solches Repository und die gewählten Einträge reichen hinein; Letzteres stellt erst die Vorschau mit dem Baum des Snapshots fest) |
 | `RestorePreviewResultDto.notes` | `codes::RestoreNoteCode` | `ownership_not_restored`, `hard_links_affected`, `nothing_selected_matches`, `symlink_in_target`, `folder_metadata_reset` (ein Ordner des Snapshots liegt am Ziel schon vor; restic setzt seine Rechte und Änderungszeit) |
 | `OverallStatusDto.tray_status` | `daemon::tray::TrayStatus` | `Passive`, `Active`, `NeedsAttention` (StatusNotifierItem-Werte) |

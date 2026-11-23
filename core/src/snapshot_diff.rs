@@ -78,7 +78,8 @@ impl HeldResult for DiffResult {
 /// The kind of change of a `restic diff` modifier; `None` for a modifier without a letter
 /// Kestic knows. restic combines letters for one path (`M?` is content changed with the same
 /// metadata, `TU` a type change with metadata); the most telling letter decides: `?` before
-/// `T` before `M` before `U`.
+/// `T` before `M`. `U` alone (only the metadata changed) appears only with `--metadata`, which
+/// Kestic does not pass, and is ignored.
 pub fn change_of_modifier(modifier: &str) -> Option<SnapshotChange> {
     match modifier {
         "+" => return Some(SnapshotChange::Added),
@@ -89,7 +90,6 @@ pub fn change_of_modifier(modifier: &str) -> Option<SnapshotChange> {
         ('?', SnapshotChange::Bitrot),
         ('T', SnapshotChange::TypeChanged),
         ('M', SnapshotChange::Modified),
-        ('U', SnapshotChange::Metadata),
     ]
     .into_iter()
     .find(|(letter, _)| modifier.contains(*letter))
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(change_of_modifier("+"), Some(SnapshotChange::Added));
         assert_eq!(change_of_modifier("-"), Some(SnapshotChange::Removed));
         assert_eq!(change_of_modifier("M"), Some(SnapshotChange::Modified));
-        assert_eq!(change_of_modifier("U"), Some(SnapshotChange::Metadata));
+        assert_eq!(change_of_modifier("U"), None);
         assert_eq!(change_of_modifier("T"), Some(SnapshotChange::TypeChanged));
         assert_eq!(change_of_modifier("?"), Some(SnapshotChange::Bitrot));
         assert_eq!(change_of_modifier("M?"), Some(SnapshotChange::Bitrot));
