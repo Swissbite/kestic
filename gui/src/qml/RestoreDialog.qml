@@ -189,10 +189,23 @@ Kirigami.Dialog {
         }
 
         Controls.Label {
+            objectName: "restoreMappingLabel"
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.gridUnit
+            visible: dialog.model !== null && dialog.model.mapping_text.length > 0
+            text: dialog.model ? dialog.model.mapping_text : ""
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            opacity: 0.75
+        }
+
+        Controls.Label {
+            objectName: "restoreOriginalNote"
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.gridUnit
             visible: dialog.model !== null && dialog.model.state === "done" && !dialog.model.original_available
-            text: i18n("The original location cannot be used for this selection; choose a folder.")
+            text: dialog.model ? dialog.model.original_note : ""
+            textFormat: Text.PlainText
             wrapMode: Text.WordWrap
             opacity: 0.75
         }

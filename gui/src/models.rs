@@ -123,6 +123,8 @@ pub mod qobject {
         #[qproperty(QString, new_folder)]
         #[qproperty(QString, original_dir)]
         #[qproperty(bool, original_available)]
+        #[qproperty(QString, mapping_text)]
+        #[qproperty(QString, original_note)]
         #[qproperty(bool, target_original)]
         #[qproperty(QString, target_dir)]
         #[qproperty(i32, overwrite)]

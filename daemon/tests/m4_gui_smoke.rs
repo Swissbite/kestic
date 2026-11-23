@@ -11,7 +11,10 @@ mod common;
 use common::m3::{
     FakeSetup, M3Rig, ResticVariant, StdFakes, add_local_destination, latest_variant,
 };
-use common::m4::{RawSnapshot, backup_dir, big_tree, small_tree, write_file, write_snapshot};
+use common::m4::{
+    RawSnapshot, backup_dir, backup_stdin, big_tree, small_tree, snapshot_username, write_file,
+    write_snapshot,
+};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::query_list::QueryLimits;
 use kestic_core::scheduler::TimezoneSpec;
@@ -716,6 +719,93 @@ fn ac_m4_05_16_25_restore_dialog_shows_folder_note_and_refusal() {
                     "wide",
                     lang,
                     &smoke_artifact("restore-target-texts", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// A daemon on the real bus name with one destination «NAS» and the backup «Home» with one
+/// snapshot of `/home/<user>/Dokumente/a.txt` (written with `--stdin`, `<user>` as restic records
+/// it), and `Dokumente` in the isolated home, so the original location maps to it.
+fn restore_mapping_env(root: &Path) -> (M3Rig, StdFakes) {
+    let fakes = StdFakes::start_with(FakeSetup {
+        active_network: Some("HomeWifi"),
+        ..FakeSetup::default()
+    });
+    let variant = latest_variant();
+    let rig = M3Rig::start_on(
+        root,
+        &variant,
+        "",
+        KESTIC_BUS_NAME,
+        datetime!(2026-11-15 14:32:00 UTC),
+        |o| {
+            o.enable_scheduler = false;
+            o.timezone = TimezoneSpec::System;
+        },
+    );
+    let repo = root.join("repo-NAS");
+    let (dest, password) =
+        add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
+    let backup = rig.add_backup_to(&dest, "Home", |_| {});
+    // A snapshot without Kestic tag tells the user name restic records.
+    let probe = backup_stdin(
+        &variant.bin,
+        &repo,
+        &password,
+        "probe.txt",
+        "x",
+        &RawSnapshot {
+            tag: "probe",
+            time: "2026-11-15 11:00:00",
+            host: "old-laptop",
+        },
+    );
+    let user = snapshot_username(&variant.bin, &repo, &password, &probe);
+    backup_stdin(
+        &variant.bin,
+        &repo,
+        &password,
+        &format!("home/{user}/Dokumente/a.txt"),
+        "hello",
+        &RawSnapshot {
+            tag: &format!("kestic:{}", backup.id),
+            time: "2026-11-15 12:00:00",
+            host: "old-laptop",
+        },
+    );
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME set"));
+    std::fs::create_dir_all(home.join("Dokumente")).expect("mkdir Dokumente");
+    (rig, fakes)
+}
+
+/// AC-M4-06-1 (smoke part): for a snapshot of `/home/<user>/Dokumente/a.txt` the restore dialog
+/// (a) offers `Dokumente` in the user's home as the original location and (b) shows the mapping
+/// «Original: /home/<user>/Dokumente (<user> → <home>)» (scene `m4-restore-mapping`).
+#[test]
+fn ac_m4_06_1_restore_dialog_shows_the_mapping() {
+    run_isolated_test(
+        "ac_m4_06_1_restore_dialog_shows_the_mapping",
+        "KESTIC_AC_M4_06_1_SMOKE_INNER",
+        |root| {
+            for (layout, lang) in [
+                ("wide", "en"),
+                ("wide", "de"),
+                ("narrow", "en"),
+                ("narrow", "de"),
+            ] {
+                let sub = root.join(format!("{layout}-{lang}"));
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes) = restore_mapping_env(&sub);
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-mapping",
+                    layout,
+                    lang,
+                    &smoke_artifact("restore-mapping", layout, lang),
                 );
                 rig.daemon.stop();
             }
