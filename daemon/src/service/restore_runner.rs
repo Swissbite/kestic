@@ -344,10 +344,24 @@ fn recheck_waiting(setup: &mut RestoreSetup) -> Result<(), String> {
 }
 
 /// Starts the restores that waited for maintenance on `dest_id` to end.
+/// Starts the waiting restores of every destination (after waking up).
+pub(crate) fn start_all_pending_restores(shared: &Arc<Mutex<DaemonCore>>) {
+    let mut dests: Vec<DestinationId> = Vec::new();
+    for pending in &shared.lock_unpoisoned().pending_restores {
+        if !dests.contains(&pending.run.destination_id) {
+            dests.push(pending.run.destination_id.clone());
+        }
+    }
+    for dest in dests {
+        start_pending_restores(shared, &dest);
+    }
+}
+
 pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationId) {
     let waiting: Vec<PendingRestore> = {
         let mut guard = shared.lock_unpoisoned();
-        if guard.has_exclusive_run(dest_id) {
+        // Nothing starts while the system goes to sleep; waking up starts the waiting ones.
+        if guard.sleep_in_progress || guard.has_exclusive_run(dest_id) {
             return;
         }
         let (start, keep) = std::mem::take(&mut guard.pending_restores)

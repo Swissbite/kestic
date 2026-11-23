@@ -1053,7 +1053,8 @@ int scenario_restore_unmatchable(const Ctx& c) {
     QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
     const QString top = role_value(snaps, 0, "startDir").toString();
     M4_CHECK(6309, wait_for_dir(w, top), "the snapshot opens in its folder");
-    const QString name = QStringLiteral("bad") + QChar(0xFFFD) + QStringLiteral("name.txt");
+    // The name also holds markup: the message must show it literally.
+    const QString name = QStringLiteral("<b>bad<b>") + QChar(0xFFFD) + QStringLiteral("name.txt");
     if (int rc = open_restore_dialog_for(c, name, 6310)) {
         return rc;
     }
@@ -1066,9 +1067,25 @@ int scenario_restore_unmatchable(const Ctx& c) {
         "(a) no preview runs");
     M4_CHECK(6317, error->property("visible").toBool(), "(a) the reason is shown");
     const QString folder = top.section(QLatin1Char('/'), -1);
-    M4_CHECK(6318, error->property("text").toString().contains(QStringLiteral("«%1»").arg(folder)),
+    M4_CHECK(6318, error->property("text").toString().contains(
+                       loc(c.lang, "'%1'", "«%1»").arg(folder)),
         "(a) the message names the folder to restore instead");
     M4_CHECK(6319, !restore_now->property("enabled").toBool(), "«Restore Now» stays disabled");
+    QQuickItem* shown = nullptr;
+    QList<QQuickItem*> parts;
+    collect_visual_descendants(qobject_cast<QQuickItem*>(error), parts);
+    for (QQuickItem* it : parts) {
+        if (it->inherits("QQuickTextEdit") && it->isVisible()) {
+            shown = it;
+        }
+    }
+    QString plain;
+    if (shown) {
+        QMetaObject::invokeMethod(shown, "getText", Q_RETURN_ARG(QString, plain), Q_ARG(int, 0),
+            Q_ARG(int, shown->property("length").toInt()));
+    }
+    M4_CHECK(6328, plain.contains(QStringLiteral("<b>bad<b>")), qPrintable(QStringLiteral(
+        "the name with markup is shown literally: ") + plain));
     M4_CHECK(6327, path_row_starts_with_whole_folder(w), "the path row starts with a whole folder");
     M4_CHECK(6320, instead->property("visible").toBool(), "(b) «Restore Folder» offered");
     repaint_fully(w);
@@ -1181,7 +1198,7 @@ int scenario_restore_dialog(const Ctx& c) {
         "the restore ends");
     QObject* banner = object_named(w, "restoreRunBanner");
     M4_CHECK(6243, banner && banner->property("visible").toBool(), "the result of the restore is shown");
-    M4_CHECK_EQ(6244, banner->property("text").toString(),
+    M4_CHECK_EQ(6244, r.model->property("run_text").toString(),
         loc(c.lang, "1 file restored", "1 Datei wiederhergestellt"), "result line");
     // The result message must not squeeze the folder list below one entry, also in the
     // narrow window at its minimum height.

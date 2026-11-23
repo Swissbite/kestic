@@ -2184,3 +2184,48 @@ fn m4_s05_target_with_a_real_path_that_is_not_utf8_is_refused() {
         },
     );
 }
+
+/// A restore waiting for maintenance does not start while the system goes to sleep (the
+/// maintenance ends then); it starts after waking up.
+#[test]
+fn m4_s05_waiting_restore_starts_after_waking_up() {
+    run_isolated_test(
+        "m4_s05_waiting_restore_starts_after_waking_up",
+        "KESTIC_M4_S05_WAKE_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            let logind = common::fakes::FakeLogindHandle::start();
+            let _portal = common::fakes::FakePortalInhibitHandle::start();
+            let variant = common::m3::latest_variant();
+            let fx = scheduled_fixture(root, &variant, "M4RK");
+            fx.rig.wrapper.hold("prune");
+            fx.rig.clock.set(SUNDAY_PRUNE);
+            fx.rig
+                .wrapper
+                .wait_for('S', "prune", 1, std::time::Duration::from_secs(30));
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&fx.new_dir("after-wake")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            common::m3::settle();
+            logind.emit_prepare_for_sleep(true);
+            fx.rig
+                .wrapper
+                .wait_for('E', "prune", 1, std::time::Duration::from_secs(30));
+            common::m3::settle();
+            assert!(
+                fx.restore_calls().is_empty(),
+                "no restore while the system goes to sleep"
+            );
+            fx.rig.wrapper.release("prune");
+            logind.emit_prepare_for_sleep(false);
+            let detail = fx.wait_run(&run_id);
+            assert_eq!(detail.run.status, RunStatus::Ok, "{detail:?}");
+            fx.rig.daemon.stop();
+        },
+    );
+}

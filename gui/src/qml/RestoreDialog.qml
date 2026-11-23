@@ -42,6 +42,13 @@ Kirigami.Dialog {
         open();
     }
 
+    // `text` for a Kirigami.InlineMessage, whose label shows rich text: escaped and marked as
+    // rich text, so names from a snapshot or the disk are always shown literally.
+    function literal(text) {
+        return "<span>" + text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            + "</span>";
+    }
+
     function toggleKind(code, checked) {
         var kinds = checkedKinds.filter(function(k) { return k !== code; });
         if (checked) kinds.push(code);
@@ -212,7 +219,7 @@ Kirigami.Dialog {
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
             visible: dialog.model !== null && dialog.model.check_text.length > 0
-            text: dialog.model ? dialog.model.check_text : ""
+            text: dialog.model ? dialog.literal(dialog.model.check_text) : ""
         }
 
         Kirigami.Separator {
@@ -239,7 +246,7 @@ Kirigami.Dialog {
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
             visible: dialog.model !== null && dialog.model.state === "error"
-            text: dialog.model ? dialog.model.error_text : ""
+            text: dialog.model ? dialog.literal(dialog.model.error_text) : ""
             actions: [
                 Kirigami.Action {
                     objectName: "restoreFolderInsteadAction"

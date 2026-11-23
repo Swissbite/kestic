@@ -676,7 +676,7 @@ fn m4_s05_restore_dialog_offers_the_folder_of_an_unmatchable_name() {
                 std::fs::create_dir_all(&sub).expect("mkdir scene root");
                 let (rig, _fakes, _) = restore_dialog_env_with(&sub, &latest_variant(), |src| {
                     use std::os::unix::ffi::OsStrExt;
-                    let name = std::ffi::OsStr::from_bytes(b"bad\xffname.txt");
+                    let name = std::ffi::OsStr::from_bytes(b"<b>bad<b>\xffname.txt");
                     std::fs::write(src.join(name), "x").expect("write a name that is not UTF-8");
                 });
                 run_m4_gui_smoke(

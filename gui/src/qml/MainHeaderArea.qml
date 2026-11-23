@@ -71,6 +71,13 @@ ColumnLayout {
         ]
     }
 
+    // `text` for a Kirigami.InlineMessage, whose label shows rich text: escaped and marked as
+    // rich text, so a name in the message is always shown literally.
+    function literal(text) {
+        return "<span>" + text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            + "</span>";
+    }
+
     Timer {
         interval: 1000
         repeat: true
@@ -95,7 +102,7 @@ ColumnLayout {
         }
         visible: headerArea.restoreModel.run_state !== ""
         showCloseButton: headerArea.restoreModel.run_state !== "running"
-        text: headerArea.restoreModel.run_text
+        text: headerArea.literal(headerArea.restoreModel.run_text)
         onVisibleChanged: if (!visible && headerArea.restoreModel.run_state !== "") headerArea.restoreModel.dismissRun()
         actions: [
             Kirigami.Action {

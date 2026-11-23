@@ -500,6 +500,7 @@ fn handle_prepare_for_sleep(
             tray_bg.set_full_state(tray_state);
             emit_status_changed(&conn_bg, &state_dto);
             drain_queued_backups_async(&core_bg);
+            super::restore_runner::start_all_pending_restores(&core_bg);
             if enable_scheduler {
                 tick_scheduler_async(&core_bg);
             }

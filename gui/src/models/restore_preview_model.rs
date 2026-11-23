@@ -137,7 +137,7 @@ pub(crate) fn title_text(selected: usize) -> String {
 
 /// Why a selected name cannot be restored on its own, and which folder can.
 pub(crate) fn unmatchable_text(path: &str, folder: &str) -> String {
-    i18n("«%1» cannot be restored on its own: its name contains characters that are not valid UTF-8. Restore its folder «%2» instead.")
+    i18n("'%1' cannot be restored on its own: its name contains characters that are not valid UTF-8. Restore its folder '%2' instead.")
         .subs(&[path, folder])
 }
 
