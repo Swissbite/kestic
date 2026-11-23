@@ -6,7 +6,7 @@
 //! M4-S06 against real restic with temp repositories: a snapshot of another user's home
 //! (`/home/<user>/…`, written with `restic backup --stdin --stdin-filename`) is restored at the
 //! original location in the isolated home of the test. Folders in `--stdin-filename` need
-//! restic 0.20 or newer, so these tests run with the latest restic only; the mapping itself
+//! restic 0.19 or newer, so these tests run with the latest restic only; the mapping itself
 //! calls no restic command.
 
 mod common;
@@ -120,6 +120,50 @@ fn ac_m4_06_1_restore_lands_in_the_users_home() {
                 fs::read_to_string(dokumente.join("a.txt")).expect("a.txt restored"),
                 "hello",
                 "(a) a.txt lands in the user's Dokumente"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-06-2 end to end: with `Dokumente` suggested in the user's home, a folder the user
+/// chooses instead (a) is the target of the preview and of the restore; nothing lands in the
+/// suggested folder.
+#[test]
+fn ac_m4_06_2_chosen_folder_wins_over_the_mapping() {
+    run_isolated_test(
+        "ac_m4_06_2_chosen_folder_wins_over_the_mapping",
+        "KESTIC_AC_M4_06_2_INNER",
+        |root| {
+            let (fx, _) = other_home_fixture(root, "M4M2", "Dokumente/a.txt");
+            let dokumente = home().join("Dokumente");
+            fs::create_dir_all(&dokumente).expect("mkdir Dokumente");
+            let chosen = RestoreTarget::NewFolder {
+                dir: fx.new_dir("chosen").to_string_lossy().into_owned(),
+            };
+            let (_, preview) = fx.preview(
+                &["Dokumente/a.txt"],
+                Some(chosen.clone()),
+                RestoreOverwrite::Never,
+            );
+            assert_eq!(
+                preview.suggestion.original.mapped_dir.as_deref(),
+                Some(dokumente.to_string_lossy().as_ref()),
+                "the mapped folder is still suggested"
+            );
+            assert_eq!(preview.target.target, chosen, "(a) the preview's target");
+            let run_id = fx
+                .start_restore(&["Dokumente/a.txt"], chosen, RestoreOverwrite::Never, None)
+                .expect("StartRestore");
+            assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Ok);
+            assert_eq!(
+                fs::read_to_string(fx.new_dir("chosen").join("a.txt")).expect("a.txt restored"),
+                "hello",
+                "(a) a.txt lands in the chosen folder"
+            );
+            assert!(
+                fs::symlink_metadata(dokumente.join("a.txt")).is_err(),
+                "(a) nothing lands in the suggested folder"
             );
             fx.rig.daemon.stop();
         },

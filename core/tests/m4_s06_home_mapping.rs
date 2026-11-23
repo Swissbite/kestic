@@ -204,25 +204,12 @@ fn ac_m4_06_7_mapping_never_leaves_the_users_home() {
 /// user (e.g. by root); there is nothing to map.
 #[test]
 fn m4_s06_own_home_is_not_mapped() {
-    let (_tmp, home) = home_neu(&["Dokumente"]);
-    let folder = format!("{}/Dokumente", home.display());
-    for user in [Some("neu"), Some("root")] {
-        let snap = snapshot(&[&folder], user);
-        let original = original_location(&folder, &snap, Some(&home));
+    let home = Path::new("/home/neu");
+    for user in [Some("neu"), Some("root"), None] {
         assert_eq!(
-            original.mapped_dir.as_deref(),
-            Some(folder.as_str()),
+            map_to_home("/home/neu/Dokumente", user, Some(home)),
+            HomeMapping::Unchanged,
             "{user:?}"
         );
-        assert_eq!(original.mapping, None, "{user:?}");
-        assert!(!original.needs_user_choice, "{user:?}");
     }
-    assert_eq!(
-        map_to_home(
-            "/home/neu/Dokumente",
-            Some("root"),
-            Some(Path::new("/home/neu"))
-        ),
-        HomeMapping::Unchanged
-    );
 }

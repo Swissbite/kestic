@@ -182,7 +182,7 @@ pub fn write_file(dir: &Path, name: &str, content: &str) {
 /// Backs up `content` as the file `path` (absolute, without the leading `/`) with
 /// `restic backup --stdin --stdin-filename`, so the snapshot holds a path that does not exist
 /// here (e.g. `home/alt/Dokumente/a.txt`); returns the full snapshot ID. Folders in the file
-/// name need restic 0.20 or newer.
+/// name need restic 0.19 or newer.
 pub fn backup_stdin(
     restic: &Path,
     repo: &Path,
