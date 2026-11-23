@@ -9,30 +9,18 @@
 mod common;
 
 use common::m3::{ResticVariant, restic_variants};
-use common::m4::small_tree;
-use common::m4_restore::{RestoreFixture, big_page, set_mtime, tree_contents};
+use common::m4::{big_page, small_tree};
+use common::m4_restore::{RestoreFixture, for_each_variant, set_mtime, tree_contents};
 use common::run_isolated_test;
 use kestic_core::model::{RunKind, RunStatus};
 use kestic_daemon::dbus_api::{
     KesticDbusError, PageFilter, RestoreOutcome, RestoreOverwrite, RestorePreviewResultDto,
     RestoreRequest, RestoreTarget, RestoreTargetCode, SnapshotQueryPage,
 };
+use kestic_test_support::tools::find_lock_file;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-
-fn for_each_variant(
-    root: &Path,
-    base: &str,
-    make_tree: fn(&Path) -> std::path::PathBuf,
-    body: impl Fn(&RestoreFixture, &ResticVariant),
-) {
-    for variant in restic_variants() {
-        let fx = RestoreFixture::start(root, &variant, base, make_tree, |_| {});
-        body(&fx, &variant);
-        fx.rig.daemon.stop();
-    }
-}
 
 /// Outcome of every entry of a preview by its file name.
 fn outcomes(p: &RestorePreviewResultDto) -> BTreeMap<String, RestoreOutcome> {
@@ -1225,8 +1213,15 @@ fn scheduled_fixture(root: &Path, variant: &ResticVariant, base: &str) -> Restor
     let fx = RestoreFixture::start(root, variant, base, small_tree, |o| {
         o.enable_scheduler = true
     });
-    // One scheduler tick records the maintenance baseline of the new destination.
-    std::thread::sleep(std::time::Duration::from_millis(1300));
+    // Maintenance becomes due only for slots after the baseline of the new destination.
+    common::m3::wait_until("maintenance baseline recorded", || {
+        kestic_core::history::RunHistory::open(&fx.rig.daemon.state_dir)
+            .expect("open history")
+            .get_destination_maintenance_state(&fx.dest.id)
+            .expect("maintenance state")
+            .baseline_at
+            .is_some()
+    });
     fx
 }
 
@@ -1317,7 +1312,8 @@ fn ac_m4_05_20_maintenance_waits_for_running_restore() {
             for variant in restic_variants() {
                 let fx = scheduled_fixture(root, &variant, "M4R20");
                 let v = &variant;
-                fx.rig.wrapper.hold("restore");
+                let locks = fx.repo.join("locks");
+                fx.rig.wrapper.hold_with_lock("restore", &locks);
                 let run_id = fx
                     .start_restore(
                         &["a.txt"],
@@ -1328,7 +1324,12 @@ fn ac_m4_05_20_maintenance_waits_for_running_restore() {
                     .expect("StartRestore");
                 fx.rig
                     .wrapper
-                    .wait_for('S', "restore", 1, std::time::Duration::from_secs(30));
+                    .wait_for('L', "restore", 1, std::time::Duration::from_secs(30));
+                assert!(
+                    find_lock_file(&locks).is_some(),
+                    "{}: the restore holds its repository lock",
+                    v.label
+                );
                 fx.rig.clock.set(SUNDAY_PRUNE);
                 let state = common::m3::wait_for_state(
                     &fx.rig.daemon.client,
@@ -1569,7 +1570,8 @@ fn m4_s05_backup_retention_waits_for_a_running_restore() {
         |root| {
             let variant = common::m3::latest_variant();
             let fx = RestoreFixture::start(root, &variant, "M4RF", small_tree, |_| {});
-            fx.rig.wrapper.hold("restore");
+            let locks = fx.repo.join("locks");
+            fx.rig.wrapper.hold_with_lock("restore", &locks);
             let restore_id = fx
                 .start_restore(
                     &["a.txt"],
@@ -1580,7 +1582,11 @@ fn m4_s05_backup_retention_waits_for_a_running_restore() {
                 .expect("StartRestore");
             fx.rig
                 .wrapper
-                .wait_for('S', "restore", 1, std::time::Duration::from_secs(30));
+                .wait_for('L', "restore", 1, std::time::Duration::from_secs(30));
+            assert!(
+                find_lock_file(&locks).is_some(),
+                "the restore holds its repository lock"
+            );
             let backup_run = fx
                 .rig
                 .daemon

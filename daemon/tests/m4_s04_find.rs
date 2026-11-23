@@ -8,17 +8,19 @@
 
 mod common;
 
-use common::m3::{M3Rig, ResticVariant, add_local_destination, restic_variants};
-use common::m4::{RawSnapshot, backup_dir, restic_find_paths, write_file};
+use common::m3::{M3Rig, ResticVariant, add_local_destination};
+use common::m4::{
+    RawSnapshot, VariantFixture, backup_dir, big_page, for_each_variant_with, restic_find_paths,
+    wait_query, write_file,
+};
 use common::run_isolated_test;
 use kestic_core::model::Destination;
 use kestic_core::snapshot_ls::path_segments;
 use kestic_daemon::dbus_api::{
-    FindResultDto, FindScope, LsResultDto, SnapshotQueryPage, SnapshotQueryRequest,
-    SnapshotQueryResultDto, SnapshotQueryStatusDto,
+    FindResultDto, FindScope, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
+    SnapshotQueryStatusDto,
 };
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 use time::macros::datetime;
 
 /// A daemon behind the restic wrapper with one local destination and two backups:
@@ -127,24 +129,7 @@ impl Fixture {
 
     /// Waits until query `query_id` has ended and returns its last status.
     fn wait(&self, query_id: &str) -> SnapshotQueryStatusDto {
-        let page = SnapshotQueryPage {
-            limit: 1000,
-            ..SnapshotQueryPage::default()
-        };
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            let st = self
-                .rig
-                .daemon
-                .client
-                .get_snapshot_query_status(query_id, &page)
-                .expect("GetSnapshotQueryStatus");
-            if st.state != "running" {
-                return st;
-            }
-            assert!(Instant::now() < deadline, "query still running");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        wait_query(&self.rig.daemon.client, query_id, &big_page())
     }
 
     /// Searches the snapshots of backup `backup_id` for `text` and returns the finished result.
@@ -193,11 +178,9 @@ impl Fixture {
     }
 }
 
-fn for_each_variant(root: &Path, body: impl Fn(&Fixture, &str)) {
-    for variant in restic_variants() {
-        let fixture = Fixture::start(root, &variant);
-        body(&fixture, variant.label);
-        fixture.rig.daemon.stop();
+impl VariantFixture for Fixture {
+    fn stop(self) {
+        self.rig.daemon.stop();
     }
 }
 
@@ -211,7 +194,8 @@ fn ac_m4_04_1_two_hits_with_snapshot_and_path_open_in_the_folder_list() {
         "ac_m4_04_1_two_hits_with_snapshot_and_path_open_in_the_folder_list",
         "KESTIC_AC_M4_04_1_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 let found = fx.search(&fx.b1, "bericht.pdf");
                 let hits: Vec<(String, String)> = found
                     .hits
@@ -267,7 +251,8 @@ fn ac_m4_04_2_search_without_hits_ends_without_error() {
         "ac_m4_04_2_search_without_hits_ends_without_error",
         "KESTIC_AC_M4_04_2_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 let found = fx.search(&fx.b1, "nirgends-zu-finden");
                 assert_eq!(found.hits.total, 0, "(a) {label}: no hits");
                 assert!(found.hits.items.is_empty(), "(a) {label}: nothing listed");
@@ -294,7 +279,8 @@ fn ac_m4_04_3_metadata_snapshots_give_no_hits() {
         "ac_m4_04_3_metadata_snapshots_give_no_hits",
         "KESTIC_AC_M4_04_3_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 for meta in &fx.meta_snapshots {
                     assert_eq!(
                         fx.restic_finds_bericht(meta).len(),
@@ -326,7 +312,8 @@ fn ac_m4_04_4_search_in_b1_gives_only_hits_of_b1() {
         "ac_m4_04_4_search_in_b1_gives_only_hits_of_b1",
         "KESTIC_AC_M4_04_4_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 assert_eq!(
                     fx.restic_finds_bericht(&fx.b2_snapshot).len(),
                     1,
@@ -376,7 +363,8 @@ fn m4_s04_absolute_path_text_finds_the_hit() {
         "m4_s04_absolute_path_text_finds_the_hit",
         "KESTIC_M4_S04_ABSOLUTE_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 let (snapshot, path) = &fx.b1_hits[0];
                 let found = fx.search(&fx.b1, path);
                 let hits: Vec<(&String, &String)> = found
@@ -416,7 +404,8 @@ fn m4_s04_text_with_parent_segment_finds_nothing() {
         "m4_s04_text_with_parent_segment_finds_nothing",
         "KESTIC_M4_S04_PARENT_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 assert!(
                     fx.search(&fx.b1, "Archiv").hits.total > 0,
                     "{label}: «Archiv» alone has hits"
@@ -436,7 +425,8 @@ fn m4_s04_dash_and_exclamation_mark_are_taken_literally() {
         "m4_s04_dash_and_exclamation_mark_are_taken_literally",
         "KESTIC_M4_S04_LITERAL_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 let src = root.join(&fx.rig.sub).join("odd/src");
                 write_file(&src.join("-dash"), "f", "f");
                 write_file(&src.join("!xmas"), "b", "b");

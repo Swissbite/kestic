@@ -875,7 +875,8 @@ fn every_page_shows_simple_texts_in_the_gui_language() {
         "KESTIC_M3_GUI_ALL_PAGES_INNER",
         |root| {
             let (rig, _fakes, _dest, _id) = editor_env(root);
-            let catalog = language::catalog(&kestic_test_support::workspace::workspace_root());
+            let catalog =
+                kestic_test_support::po::catalog(&kestic_test_support::workspace::workspace_root());
             let english_with_translation: std::collections::HashSet<&str> = catalog
                 .iter()
                 .filter(|e| !e.msgid().is_empty())

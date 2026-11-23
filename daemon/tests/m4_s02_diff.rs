@@ -8,8 +8,11 @@
 
 mod common;
 
-use common::m3::{M3Rig, ResticVariant, add_local_destination, latest_variant, restic_variants};
-use common::m4::{RawSnapshot, backup_dir, write_file};
+use common::m3::{M3Rig, ResticVariant, add_local_destination, latest_variant, restic_cmd};
+use common::m4::{
+    RawSnapshot, VariantFixture, backup_dir, big_page, for_each_variant_with, wait_query,
+    write_file,
+};
 use common::run_isolated_test;
 use kestic_core::model::Destination;
 use kestic_daemon::dbus_api::{
@@ -18,7 +21,6 @@ use kestic_daemon::dbus_api::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant};
 use time::macros::datetime;
 
@@ -155,15 +157,7 @@ impl Fixture {
 
     /// Waits until query `query_id` has ended and returns its last status for `page`.
     fn wait(&self, query_id: &str, page: &SnapshotQueryPage) -> SnapshotQueryStatusDto {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            let st = self.status(query_id, page).expect("GetSnapshotQueryStatus");
-            if st.state != "running" {
-                return st;
-            }
-            assert!(Instant::now() < deadline, "query still running");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        wait_query(&self.rig.daemon.client, query_id, page)
     }
 
     /// Compares `pair` (from → to) and returns the finished result for `page`, with the
@@ -184,11 +178,8 @@ impl Fixture {
     /// What restic itself reports for `restic diff --json from to`: the changes (path and
     /// modifier) and the statistics line.
     fn restic_diff(&self, pair: &Pair) -> (Vec<(String, String)>, serde_json::Value) {
-        let out = Command::new(&self.rig.variant.bin)
-            .arg("-r")
-            .arg(&self.repo)
+        let out = restic_cmd(&self.rig.variant.bin, &self.repo, &self.password)
             .args(["diff", "--no-cache", "--json", &pair.from, &pair.to])
-            .env("RESTIC_PASSWORD", &self.password)
             .output()
             .expect("run restic diff");
         assert!(out.status.success(), "restic diff");
@@ -214,13 +205,6 @@ impl Fixture {
     }
 }
 
-fn all_page() -> SnapshotQueryPage {
-    SnapshotQueryPage {
-        limit: 1000,
-        ..SnapshotQueryPage::default()
-    }
-}
-
 fn kinds_page(kinds: &[&str]) -> SnapshotQueryPage {
     SnapshotQueryPage {
         limit: 1000,
@@ -243,11 +227,9 @@ fn modifier(change: SnapshotChange) -> &'static str {
     }
 }
 
-fn for_each_variant(root: &Path, body: impl Fn(&Fixture, &str)) {
-    for variant in restic_variants() {
-        let fixture = Fixture::start(root, &variant);
-        body(&fixture, variant.label);
-        fixture.rig.daemon.stop();
+impl VariantFixture for Fixture {
+    fn stop(self) {
+        self.rig.daemon.stop();
     }
 }
 
@@ -260,8 +242,9 @@ fn ac_m4_02_1_changed_new_and_removed_files_match_restic_diff() {
         "ac_m4_02_1_changed_new_and_removed_files_match_restic_diff",
         "KESTIC_AC_M4_02_1_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
-                let (_, diff) = fx.diff(&fx.docs, &all_page());
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
+                let (_, diff) = fx.diff(&fx.docs, &big_page());
                 let docs = fx.docs.src.join("docs");
                 let path = |name: &str| docs.join(name).to_string_lossy().into_owned();
                 let changes: Vec<(String, SnapshotChange)> = diff
@@ -348,12 +331,13 @@ fn ac_m4_02_3_identical_snapshots_give_no_differences() {
         "ac_m4_02_3_identical_snapshots_give_no_differences",
         "KESTIC_AC_M4_02_3_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 assert_ne!(fx.same.from, fx.same.to, "{label}: two different snapshots");
-                let (_, diff) = fx.diff(&fx.same, &all_page());
+                let (_, diff) = fx.diff(&fx.same, &big_page());
                 assert!(diff.identical, "(a) {label}: «no differences»");
                 assert_eq!(diff.changes.total, 0, "(a) {label}: no change listed");
-                let (_, changed) = fx.diff(&fx.docs, &all_page());
+                let (_, changed) = fx.diff(&fx.docs, &big_page());
                 assert!(
                     !changed.identical,
                     "(a) {label}: snapshots with changes are not identical"
@@ -372,7 +356,8 @@ fn ac_m4_02_4_filter_by_kind_keeps_the_counts() {
         "ac_m4_02_4_filter_by_kind_keeps_the_counts",
         "KESTIC_AC_M4_02_4_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 let (_, diff) = fx.diff(&fx.many, &kinds_page(&["added"]));
                 let src = &fx.many.src;
                 let added: Vec<String> = (0..3)
@@ -412,7 +397,7 @@ fn m4_s02_diff_requests_and_pages_are_checked() {
         |root| {
             let variant = latest_variant();
             let fx = Fixture::start(root, &variant);
-            let (id, _) = fx.diff(&fx.many, &all_page());
+            let (id, _) = fx.diff(&fx.many, &big_page());
             let removed_and_changed = fx
                 .status(&id, &kinds_page(&["removed", "modified"]))
                 .expect("two kinds");
@@ -496,7 +481,7 @@ fn m4_s02_cancelling_a_diff_stops_restic_diff() {
                 .client
                 .cancel_snapshot_query(&id)
                 .expect("CancelSnapshotQuery");
-            let st = fx.wait(&id, &all_page());
+            let st = fx.wait(&id, &big_page());
             fx.rig.wrapper.release("diff");
             assert_eq!(st.state, "cancelled", "the comparison ends as cancelled");
             assert!(st.result.is_none(), "a cancelled comparison has no result");

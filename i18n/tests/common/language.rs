@@ -5,9 +5,6 @@
 //! by `i18n/tests/simple_language.rs` (whole catalog) and `daemon/tests/m3_gui_smoke.rs`
 //! (texts visible on every page).
 
-use std::fs;
-use std::path::Path;
-
 /// Longest allowed sentence, in words.
 pub const MAX_WORDS_PER_SENTENCE: usize = 20;
 
@@ -70,64 +67,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "expert mode hint about restic syntax",
     ),
 ];
-
-/// One catalog entry: msgid, optional msgid_plural, then the German forms.
-pub struct Entry {
-    pub texts: Vec<String>,
-    pub plural: bool,
-}
-
-impl Entry {
-    pub fn msgid(&self) -> &str {
-        &self.texts[0]
-    }
-
-    /// English forms (msgid and plural).
-    pub fn english(&self) -> &[String] {
-        &self.texts[..if self.plural { 2 } else { 1 }]
-    }
-
-    /// German forms.
-    pub fn german(&self) -> &[String] {
-        &self.texts[if self.plural { 2 } else { 1 }..]
-    }
-}
-
-fn literal(line: &str) -> String {
-    let inner = line
-        .trim()
-        .strip_prefix('"')
-        .and_then(|l| l.strip_suffix('"'))
-        .unwrap_or_else(|| panic!("malformed PO line: {line}"));
-    inner.replace("\\n", "\n").replace("\\\"", "\"")
-}
-
-/// All entries of `po/de/kestic.po`; `workspace` is the workspace root.
-pub fn catalog(workspace: &Path) -> Vec<Entry> {
-    let text = fs::read_to_string(workspace.join("po/de/kestic.po")).expect("read po/de/kestic.po");
-    let mut out = Vec::new();
-    for block in text.split("\n\n") {
-        let mut texts: Vec<String> = Vec::new();
-        let mut plural = false;
-        for line in block.lines() {
-            if line.starts_with('#') {
-                continue;
-            }
-            if line.starts_with('"') {
-                if let Some(last) = texts.last_mut() {
-                    last.push_str(&literal(line));
-                }
-            } else if let Some((key, rest)) = line.split_once(' ') {
-                plural |= key == "msgid_plural";
-                texts.push(literal(rest));
-            }
-        }
-        if texts.first().is_some_and(|m| !m.is_empty()) {
-            out.push(Entry { texts, plural });
-        }
-    }
-    out
-}
 
 /// Sentences of `text` longer than [`MAX_WORDS_PER_SENTENCE`] words.
 pub fn long_sentences(text: &str) -> Vec<String> {
