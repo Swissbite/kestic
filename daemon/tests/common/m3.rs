@@ -787,7 +787,8 @@ pub fn add_local_backup(
 /// One line of the restic wrapper call log.
 #[derive(Debug, Clone)]
 pub struct WrapperEntry {
-    /// `S` = process start, `E` = process end (with exit code in `detail`), `T` = SIGTERM received.
+    /// `S` = process start, `E` = process end (with exit code in `detail`), `T` = SIGTERM received,
+    /// `L` = stopped while holding its lock (with the number of lock files in `detail`).
     pub kind: char,
     pub at_ms: u128,
     pub sub: String,
@@ -834,8 +835,9 @@ if [ -n "$sub" ] && [ -f "$FAIL.$sub" ]; then
   exit "$code"
 fi
 # A held call prints the repeated output, else the one-off output, else (backup) one progress line;
-# a SIGTERM while it prints or waits is logged like one during the real call.
-if [ -n "$sub" ] && [ -f "$HOLD.$sub" ]; then
+# a SIGTERM while it prints or waits is logged like one during the real call. A call held with
+# its lock starts the real restic instead (below).
+if [ -n "$sub" ] && [ -f "$HOLD.$sub" ] && [ ! -f "$HOLD.$sub.locked" ]; then
   trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"; echo "E $(now) $sub 143" >> "$LOG"; exit 143' TERM INT
   if [ -f "$HOLD.$sub.repeat" ]; then
     while [ -f "$HOLD.$sub" ] && cat "$HOLD.$sub.repeat" 2>/dev/null; do :; done
@@ -847,9 +849,28 @@ if [ -n "$sub" ] && [ -f "$HOLD.$sub" ]; then
   while [ -f "$HOLD.$sub" ]; do sleep 0.1; done
   trap - TERM INT
 fi
+# Held with its lock: once the real restic created a lock file in the folder named by the marker,
+# it is stopped (logged as `L` with the number of lock files) until the hold ends, 60 s at most.
+# restic writes a lock under a temporary name first; only the final, hex-named file counts.
+locks=""
+lock_files() {{ ls "$locks" 2>/dev/null | grep -E '^[0-9a-f]{{64}}$'; }}
+if [ -n "$sub" ] && [ -f "$HOLD.$sub.locked" ]; then
+  locks=$(cat "$HOLD.$sub.locked")
+  before=$(lock_files)
+fi
 "$REAL" "$@" &
 pid=$!
-trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"; kill -TERM $pid 2>/dev/null' TERM INT
+stop=""
+trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"; stop=1; kill -TERM $pid 2>/dev/null; kill -CONT $pid 2>/dev/null' TERM INT
+if [ -n "$locks" ]; then
+  i=0
+  while [ -z "$stop" ] && [ $i -lt 2000 ] && [ "$(lock_files)" = "$before" ]; do sleep 0.005; i=$((i+1)); done
+  [ -z "$stop" ] && kill -STOP $pid 2>/dev/null
+  echo "L $(now) $sub $(lock_files | wc -l)" >> "$LOG"
+  i=0
+  while [ -z "$stop" ] && [ -f "$HOLD.$sub" ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+  kill -CONT $pid 2>/dev/null
+fi
 wait $pid
 code=$?
 if kill -0 $pid 2>/dev/null; then wait $pid; code=$?; fi
@@ -925,11 +946,25 @@ exit $code
         self.hold(sub);
     }
 
+    /// Like [`Self::hold`], but the real restic starts and is stopped (`SIGSTOP`) right after
+    /// it created its lock file in `locks_dir` (the `locks` folder of the repository), so the
+    /// held call keeps its lock until [`Self::release`]. The wrapper logs `L` with the number of
+    /// lock files once it is stopped ([`Self::wait_for`] with kind `'L'`).
+    pub fn hold_with_lock(&self, sub: &str, locks_dir: &Path) {
+        fs::write(
+            PathBuf::from(format!("{}.{sub}.locked", self.hold.display())),
+            locks_dir.as_os_str().as_encoded_bytes(),
+        )
+        .expect("write lock hold marker");
+        self.hold(sub);
+    }
+
     /// Lets held (and future) calls of restic subcommand `sub` run on and drops the output
-    /// set by [`Self::hold_with_output`] or [`Self::hold_with_repeated_output`].
+    /// set by [`Self::hold_with_output`] or [`Self::hold_with_repeated_output`] and the hold of
+    /// [`Self::hold_with_lock`].
     pub fn release(&self, sub: &str) {
         let _ = fs::remove_file(self.hold_marker(sub));
-        for kind in ["status", "repeat"] {
+        for kind in ["status", "repeat", "locked"] {
             let _ = fs::remove_file(PathBuf::from(format!(
                 "{}.{sub}.{kind}",
                 self.hold.display()

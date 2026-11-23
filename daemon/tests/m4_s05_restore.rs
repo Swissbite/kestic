@@ -17,6 +17,7 @@ use kestic_daemon::dbus_api::{
     KesticDbusError, PageFilter, RestoreOutcome, RestoreOverwrite, RestorePreviewResultDto,
     RestoreRequest, RestoreTarget, RestoreTargetCode, SnapshotQueryPage,
 };
+use kestic_test_support::tools::find_lock_file;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -1317,7 +1318,8 @@ fn ac_m4_05_20_maintenance_waits_for_running_restore() {
             for variant in restic_variants() {
                 let fx = scheduled_fixture(root, &variant, "M4R20");
                 let v = &variant;
-                fx.rig.wrapper.hold("restore");
+                let locks = fx.repo.join("locks");
+                fx.rig.wrapper.hold_with_lock("restore", &locks);
                 let run_id = fx
                     .start_restore(
                         &["a.txt"],
@@ -1328,7 +1330,12 @@ fn ac_m4_05_20_maintenance_waits_for_running_restore() {
                     .expect("StartRestore");
                 fx.rig
                     .wrapper
-                    .wait_for('S', "restore", 1, std::time::Duration::from_secs(30));
+                    .wait_for('L', "restore", 1, std::time::Duration::from_secs(30));
+                assert!(
+                    find_lock_file(&locks).is_some(),
+                    "{}: the restore holds its repository lock",
+                    v.label
+                );
                 fx.rig.clock.set(SUNDAY_PRUNE);
                 let state = common::m3::wait_for_state(
                     &fx.rig.daemon.client,
@@ -1569,7 +1576,8 @@ fn m4_s05_backup_retention_waits_for_a_running_restore() {
         |root| {
             let variant = common::m3::latest_variant();
             let fx = RestoreFixture::start(root, &variant, "M4RF", small_tree, |_| {});
-            fx.rig.wrapper.hold("restore");
+            let locks = fx.repo.join("locks");
+            fx.rig.wrapper.hold_with_lock("restore", &locks);
             let restore_id = fx
                 .start_restore(
                     &["a.txt"],
@@ -1580,7 +1588,11 @@ fn m4_s05_backup_retention_waits_for_a_running_restore() {
                 .expect("StartRestore");
             fx.rig
                 .wrapper
-                .wait_for('S', "restore", 1, std::time::Duration::from_secs(30));
+                .wait_for('L', "restore", 1, std::time::Duration::from_secs(30));
+            assert!(
+                find_lock_file(&locks).is_some(),
+                "the restore holds its repository lock"
+            );
             let backup_run = fx
                 .rig
                 .daemon
