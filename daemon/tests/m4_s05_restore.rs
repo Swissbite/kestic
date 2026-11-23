@@ -2898,7 +2898,8 @@ fn m4_s05_selection_of_folders_only_is_restored() {
     );
 }
 
-/// A selection that spans folders (`a.txt` and `docs/deep/y.txt`): restic creates the folders
+/// AC-M4-05-4 (b), AC-M4-05-16 (f) and AC-M4-05-25 for a selection that spans folders (`a.txt`
+/// and `docs/deep/y.txt`): restic creates the folders
 /// in between, and the preview treats them as folders: at the original location (a) the
 /// preview ends without refusing its target, (b) counts the two files only and (c) notes that
 /// the existing folders get the snapshot's metadata; into a folder with content (d) both files
