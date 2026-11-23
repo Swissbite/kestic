@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 fn ac_m1_09_1_single_instance_lock_exits_cleanly_as_already_running() {
@@ -758,8 +758,8 @@ impl SecretStore for GatedUnlockStore {
 }
 
 /// A method call still under way when `ConfirmQuit` stops the daemon gets its reply instead of
-/// `NoReply`: the daemon closes its D-Bus connection only once the replies under way have been
-/// written, as the reply to `ConfirmQuit` itself.
+/// `NoReply`: the daemon waits with closing its D-Bus connection until the replies under way,
+/// such as the one to `ConfirmQuit` itself, have been written, and no longer.
 #[test]
 fn reply_under_way_at_shutdown_reaches_its_caller() {
     run_isolated_test(
@@ -794,13 +794,30 @@ fn reply_under_way_at_shutdown_reaches_its_caller() {
                 .recv_timeout(Duration::from_secs(10))
                 .expect("UnlockSecretStore is under way");
 
+            let gate = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(300));
+                let opened = Instant::now();
+                gate_tx.send(()).expect("open the unlock gate");
+                opened
+            });
             daemon.stop();
-            gate_tx.send(()).expect("open the unlock gate");
+            let stopped = Instant::now();
+            let gate_opened = gate.join().expect("gate thread");
 
             let reply = unlocking.join().expect("unlocking thread");
             assert!(
                 matches!(reply, Ok(true)),
-                "the call under way at shutdown must get its reply, not an error: {reply:?}"
+                "(a) the call under way at shutdown must get its reply, not an error: {reply:?}"
+            );
+            assert!(
+                stopped > gate_opened,
+                "(b) the daemon must stop only after the call under way could answer"
+            );
+            let waited = stopped.duration_since(gate_opened);
+            assert!(
+                waited < Duration::from_secs(1),
+                "(c) the daemon must stop once the reply is out, not when the 2 s limit ends: \
+                 stopped {waited:?} after the gate opened"
             );
         },
     );
