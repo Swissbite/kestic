@@ -7,7 +7,7 @@
 use crate::clock::Clock;
 use crate::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
-    preflight_check_with_restic,
+    preflight_check_with_restic, verify_sftp_host_key,
 };
 use crate::model::{
     Backup, BackupId, Destination, ModelError, RunId, RunStatus, evaluate_exclude_path,
@@ -267,6 +267,7 @@ where
 {
     check_source_available_with(backup, ctx.home_dir, ctx.inspector)?;
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    verify_sftp_host_key(destination)?;
 
     let spec = build_backup_command_spec_with_home(
         backup,

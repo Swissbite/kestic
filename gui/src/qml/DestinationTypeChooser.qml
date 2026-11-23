@@ -26,7 +26,7 @@ ColumnLayout {
     property string openedCard: ""
     property bool commandCopied: false
     // Cards whose details form exists; the other ready cards can not be chosen yet.
-    readonly property var cardsWithForm: ["drive", "folder", "rest", "cloud", "rclone"]
+    readonly property var cardsWithForm: ["drive", "folder", "sftp", "rest", "cloud", "rclone"]
     // Choices under «Cloud Storage»: S3 has its own form, the others the generic form with the
     // scheme filled in.
     readonly property var cloudServices: [
@@ -68,7 +68,7 @@ ColumnLayout {
         if (card === "rclone") {
             chooseGeneric("rclone");
         } else {
-            chooser.draft.kind = card === "rest" ? "rest" : card === "cloud" ? "s3" : "local";
+            chooser.draft.kind = card === "rest" ? "rest" : card === "sftp" ? "sftp" : card === "cloud" ? "s3" : "local";
         }
         chooser.draft.connectionVerified = false;
     }

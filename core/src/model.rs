@@ -160,6 +160,15 @@ pub enum DestinationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         username: Option<String>,
     },
+    /// SFTP server reached with ssh; the login uses an SSH key or the ssh-agent.
+    Sftp {
+        host: String,
+        #[serde(default = "default_sftp_port")]
+        port: u16,
+        user: String,
+        /// Absolute, or relative to the user's home folder on the server.
+        path: String,
+    },
     /// S3-compatible object storage; the keys are only in the password store.
     S3 {
         /// URL with scheme, e.g. `https://s3.example.com:9000`.
@@ -177,6 +186,10 @@ pub enum DestinationKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         env: Vec<crate::generic::EnvVar>,
     },
+}
+
+fn default_sftp_port() -> u16 {
+    crate::sftp::DEFAULT_PORT
 }
 
 impl DestinationKind {
@@ -197,6 +210,12 @@ impl DestinationKind {
                     normalize_rest_url_to_ascii(url).unwrap_or_else(|_| url.trim().to_string());
                 format!("rest:{normalized}")
             }
+            Self::Sftp {
+                host,
+                port,
+                user,
+                path,
+            } => crate::sftp::repository_uri(host, *port, user, path),
             Self::S3 {
                 endpoint,
                 bucket,
@@ -208,15 +227,20 @@ impl DestinationKind {
     }
 
     /// Whether the connection test of a new repository checks the login with restic first: a
-    /// wrong S3 key or backend variable would otherwise only show when the repository is created.
+    /// wrong S3 key, backend variable or SSH key would otherwise only show when the repository
+    /// is created.
     pub fn probes_login_before_init(&self) -> bool {
-        matches!(self, Self::S3 { .. } | Self::Generic { .. })
+        matches!(
+            self,
+            Self::Sftp { .. } | Self::S3 { .. } | Self::Generic { .. }
+        )
     }
 
     /// Whether only restic itself can tell if the destination is reachable: the generic backends
-    /// have no address Kestic could check on its own.
+    /// have no address Kestic could check on its own, and an SFTP server may allow no command
+    /// but SFTP.
     pub fn needs_restic_preflight(&self) -> bool {
-        matches!(self, Self::Generic { .. })
+        matches!(self, Self::Sftp { .. } | Self::Generic { .. })
     }
 
     /// Whether this destination uses separate REST backend credentials.
@@ -232,6 +256,12 @@ impl DestinationKind {
                 format!("local:{}", normalize_local_path(path).to_string_lossy())
             }
             Self::Rest { url, .. } => format!("rest:{}", normalize_rest_url(url)),
+            Self::Sftp {
+                host,
+                port,
+                user,
+                path,
+            } => crate::sftp::location_key(host, *port, user, path),
             Self::S3 {
                 endpoint,
                 bucket,
@@ -665,6 +695,12 @@ impl Destination {
             DestinationKind::Rest { url, .. } => {
                 normalize_rest_url_to_ascii(url)?;
             }
+            DestinationKind::Sftp {
+                host,
+                port,
+                user,
+                path,
+            } => crate::sftp::validate(host, *port, user, path)?,
             DestinationKind::S3 {
                 endpoint,
                 bucket,

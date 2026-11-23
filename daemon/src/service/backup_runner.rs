@@ -31,7 +31,7 @@ use kestic_core::backup::{
 };
 use kestic_core::backup_progress::BackupProgressTracker;
 use kestic_core::clock::Clock;
-use kestic_core::destination::{DestinationError, preflight_check_with_restic};
+use kestic_core::destination::{DestinationError, preflight_check_with_restic, reachability};
 use kestic_core::history::BackoffKind;
 use kestic_core::maintenance::detect_stale_locks;
 use kestic_core::model::{
@@ -326,7 +326,10 @@ fn start_backup_internal(
     );
     let source_ok = source_status.is_ok();
     let dest_res = if source_ok {
-        preflight_check_with_restic(&ctx.dest, &ctx.deps.runtime(&resolved))
+        reachability(preflight_check_with_restic(
+            &ctx.dest,
+            &ctx.deps.runtime(&resolved),
+        ))
     } else {
         Ok(())
     };

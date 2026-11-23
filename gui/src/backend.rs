@@ -45,6 +45,7 @@ pub mod qobject {
         #[qproperty(QString, connection_test_message)]
         #[qproperty(QString, connection_test_error_kind)]
         #[qproperty(QString, connection_test_note)]
+        #[qproperty(QString, connection_test_host_key)]
         #[qproperty(bool, snapshots_loading)]
         #[qproperty(QString, snapshots_error)]
         #[qproperty(bool, snapshots_has_previous)]
@@ -236,6 +237,10 @@ pub mod qobject {
             dest_id: &QString,
             new_pw: &QString,
         ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "trustHostKey"]
+        fn trust_host_key(self: Pin<&mut KesticApp>, host_key_id: &QString) -> bool;
 
         #[qinvokable]
         #[cxx_name = "removeDestination"]
@@ -595,6 +600,9 @@ pub struct KesticAppRust {
     connection_test_message: QString,
     connection_test_error_kind: QString,
     connection_test_note: QString,
+    /// `HostKeyDto` as JSON when the last connection test reported `unknown_host_key`, else
+    /// empty.
+    connection_test_host_key: QString,
     snapshots_loading: bool,
     snapshots_error: QString,
     snapshots_has_previous: bool,

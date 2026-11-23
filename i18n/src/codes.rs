@@ -71,6 +71,10 @@ code_enum! {
         SecretStoreLocked => "secret_store_locked",
         /// Only for skipped backups (`SkippedBackupDto`): restic is missing or too old.
         ResticUnavailable => "restic_unavailable",
+        /// SFTP: no `known_hosts` file knows the server's host key.
+        HostKeyUnknown => "host_key_unknown",
+        /// SFTP: a `known_hosts` file has another host key of the same type for the server.
+        HostKeyChanged => "host_key_changed",
         /// Anything not recognised (never a transient code).
         Unknown => "unknown",
     }
@@ -202,6 +206,15 @@ code_enum! {
         ReservedVariable => "reserved_variable",
         /// The backend needs a program that is not installed (`rclone`); `detail` = the program.
         ProgramMissing => "program_missing",
+        /// SFTP: no `known_hosts` file knows the server; the result carries the key to confirm.
+        UnknownHostKey => "unknown_host_key",
+        /// SFTP: the server shows another key than a `known_hosts` file has; `detail` = that
+        /// file.
+        HostKeyChanged => "host_key_changed",
+        /// SFTP: the server rejected the SSH key.
+        SshKeyRejected => "ssh_key_rejected",
+        /// SFTP: ssh reaches the server through a jump host (`ProxyJump`, `ProxyCommand`).
+        JumpHostUnsupported => "jump_host_unsupported",
     }
 }
 
@@ -253,6 +266,10 @@ code_enum! {
         LockInUse => "LockInUse",
         /// The repository location is already used by another destination.
         DuplicateLocation => "DuplicateLocation",
+        /// SFTP: the server's host key is not known yet.
+        HostKeyUnknown => "HostKeyUnknown",
+        /// SFTP: the server shows another host key than before; the message is the file.
+        HostKeyChanged => "HostKeyChanged",
         Internal => "Internal",
         /// No D-Bus error name: the daemon could not be reached (transport error, set by the GUI).
         DaemonUnreachable => "DaemonUnreachable",

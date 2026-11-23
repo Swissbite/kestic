@@ -5,6 +5,7 @@
 
 use crate::backend_credentials::BackendCredentials;
 use crate::clock::Clock;
+use crate::known_hosts::{HostKeyCheck, HostKeyError, ScannedHostKey, check_host_key};
 use crate::model::{Destination, DestinationKind, normalize_rest_url_to_ascii};
 use crate::provider::ResolvedRestic;
 use crate::restic::{
@@ -17,13 +18,13 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 /// Default preflight connect timeout (10 s connect, overall failure <= 15 s).
@@ -54,6 +55,38 @@ pub enum DestinationError {
     CommandFailed { exit_code: i32, message: String },
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// SFTP: no `known_hosts` file knows the server; the key the server shows.
+    #[error("unknown SSH host key of {}", .0.name)]
+    HostKeyUnknown(Box<ScannedHostKey>),
+    /// SFTP: a `known_hosts` file has another key of the same type for the server: that file.
+    #[error("SSH host key changed; the old entry is in {}", .0.display())]
+    HostKeyChanged(PathBuf),
+    /// SFTP: the server rejected the SSH key (ssh's line).
+    #[error("the server rejected the SSH key: {0}")]
+    SshKeyRejected(String),
+    /// SFTP: the host key could not be checked (jump host, missing tool, unusable paths).
+    #[error(transparent)]
+    HostKeyCheck(#[from] HostKeyError),
+}
+
+impl DestinationError {
+    /// Whether an SFTP server answered with a host key that is unknown or changed: it is
+    /// reachable, but restic must not connect to it.
+    pub fn is_host_key_problem(&self) -> bool {
+        matches!(self, Self::HostKeyUnknown(_) | Self::HostKeyChanged(_))
+    }
+}
+
+/// The result of [`preflight_check_with_restic`] as reachability: a server with an unknown or
+/// changed host key is reachable; the run itself stops at that key and reports it.
+pub fn reachability(result: Result<(), DestinationError>) -> Result<(), DestinationError> {
+    result.or_else(|err| {
+        if err.is_host_key_problem() {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    })
 }
 
 /// Mode used when setting up a [`Destination`].
@@ -102,15 +135,16 @@ pub fn preflight_check_destination(
             http_reachable(&ascii_url, connect_timeout)
         }
         // Only restic can reach these backends: see [`preflight_check_with_restic`].
-        DestinationKind::Generic { .. } => Ok(()),
+        DestinationKind::Sftp { .. } | DestinationKind::Generic { .. } => Ok(()),
     }
 }
 
 /// The pre-check before a run: [`preflight_check_destination`], and for a destination that only
-/// restic can reach (generic form) `restic cat --no-lock config` with the stored credentials,
-/// stopped after [`CONNECTION_TEST_TIMEOUT`]. Only a destination that does not answer or cannot
-/// be reached fails; every other answer (no repository, wrong password, refused login) is left to
-/// the run, which reports it.
+/// restic can reach (SFTP, generic form) `restic cat --no-lock config` with the stored
+/// credentials; for SFTP the host key check comes first, and both together stop after
+/// [`CONNECTION_TEST_TIMEOUT`]. A destination that does not answer or cannot be reached fails,
+/// and so does an unknown or changed SFTP host key (restic does not start); every other answer
+/// (no repository, wrong password, refused login) is left to the run, which reports it.
 pub fn preflight_check_with_restic(
     dest: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -119,17 +153,47 @@ pub fn preflight_check_with_restic(
     if !dest.kind.needs_restic_preflight() {
         return Ok(());
     }
+    let started = Instant::now();
+    verify_sftp_host_key(dest)?;
     // A locked password store says nothing about the destination; the run reports it.
     let Ok(backend) = BackendCredentials::load_stored(dest, runtime.secret_store) else {
         return Ok(());
     };
-    let result =
-        probe_repository_with(dest, &backend, ProbeRuntime::preflight(runtime)).map(|_| ());
+    let probe = ProbeRuntime {
+        timeout: Some(
+            CONNECTION_TEST_TIMEOUT
+                .saturating_sub(started.elapsed())
+                .max(Duration::from_secs(1)),
+        ),
+        host_key_checked: true,
+        ..ProbeRuntime::preflight(runtime)
+    };
+    let result = probe_repository_with(dest, &backend, probe).map(|_| ());
     match result {
-        Err(err @ (DestinationError::Unreachable(_) | DestinationError::NotResponding(_))) => {
-            Err(err)
-        }
+        Err(
+            err @ (DestinationError::Unreachable(_)
+            | DestinationError::NotResponding(_)
+            | DestinationError::HostKeyUnknown(_)
+            | DestinationError::HostKeyChanged(_)),
+        ) => Err(err),
         _ => Ok(()),
+    }
+}
+
+/// For an SFTP destination: compares the key the server shows with the `known_hosts` files
+/// before restic connects. A server that shows no key is left to restic, which reports why.
+pub fn verify_sftp_host_key(dest: &Destination) -> Result<(), DestinationError> {
+    let DestinationKind::Sftp {
+        host, port, user, ..
+    } = &dest.kind
+    else {
+        return Ok(());
+    };
+    let paths = crate::sftp::KnownHostsPaths::from_env().map_err(HostKeyError::from)?;
+    match check_host_key(host, *port, user, &paths, crate::known_hosts::SCAN_TIMEOUT)? {
+        HostKeyCheck::Known | HostKeyCheck::NoKey(_) => Ok(()),
+        HostKeyCheck::Unknown(key) => Err(DestinationError::HostKeyUnknown(Box::new(key))),
+        HostKeyCheck::Changed(file) => Err(DestinationError::HostKeyChanged(file)),
     }
 }
 
@@ -325,6 +389,7 @@ pub fn verify_and_update_stored_password_with_cache(
             cache_dir,
             timeout: Some(CONNECTION_TEST_TIMEOUT),
             stop_on_unreachable: true,
+            host_key_checked: false,
         },
     )?;
 
@@ -363,6 +428,11 @@ fn map_execution_failure(res: &ResticExecutionResult) -> DestinationError {
     match res.presentation.kind {
         ResticFailureKind::WrongPassword => DestinationError::WrongPassword,
         ResticFailureKind::RepositoryMissing => DestinationError::RepositoryMissing(detail),
+        ResticFailureKind::BackendAuthFailed
+            if crate::sftp::ssh_failure(&detail).is_some_and(|f| f.is_key_rejected()) =>
+        {
+            DestinationError::SshKeyRejected(detail)
+        }
         ResticFailureKind::BackendAuthFailed => DestinationError::AuthFailed(detail),
         ResticFailureKind::DestinationUnreachable | ResticFailureKind::DnsResolutionFailed => {
             DestinationError::Unreachable(detail)
@@ -384,6 +454,8 @@ struct ProbeRuntime<'a> {
     /// With a time limit: a connection error restic keeps retrying (refused, reset, DNS) also
     /// stops restic at once. A refused login or a missing repository always does.
     stop_on_unreachable: bool,
+    /// The SFTP host key was checked just before; otherwise it is checked before restic starts.
+    host_key_checked: bool,
 }
 
 impl<'a> ProbeRuntime<'a> {
@@ -395,6 +467,7 @@ impl<'a> ProbeRuntime<'a> {
             cache_dir: runtime.cache_dir,
             timeout: None,
             stop_on_unreachable: false,
+            host_key_checked: false,
         }
     }
 
@@ -446,6 +519,9 @@ fn run_with_temp_repo_password_file(
             },
         ));
     }
+    if !probe.host_key_checked {
+        verify_sftp_host_key(dest)?;
+    }
     let tmp_dir = create_private_temp_dir()?;
     let res = (|| -> Result<ResticExecutionResult, DestinationError> {
         let pw_file = write_private_password_file(&tmp_dir, repo_password)?;
@@ -481,7 +557,51 @@ fn run_with_temp_repo_password_file(
     })();
 
     let _ = fs::remove_dir_all(&tmp_dir);
+    // ssh refused the host key although the check passed (it changed meanwhile): the check
+    // again tells unknown from changed.
+    if let Ok(result) = &res
+        && result.presentation.kind == ResticFailureKind::HostKeyUnknown
+    {
+        verify_sftp_host_key(dest)?;
+    }
+    if let Ok(result) = &res
+        && let Some(failure) = sftp_session_failure(dest, result)
+    {
+        match failure {
+            crate::sftp::SshFailure::KeyRejected(line) => {
+                return Err(DestinationError::SshKeyRejected(line));
+            }
+            crate::sftp::SshFailure::HostKeyVerificationFailed(_) => verify_sftp_host_key(dest)?,
+        }
+    }
     res
+}
+
+/// When restic reports only that the SFTP session ended, without ssh's reason: the reason ssh
+/// gives on its own.
+fn sftp_session_failure(
+    dest: &Destination,
+    result: &ResticExecutionResult,
+) -> Option<crate::sftp::SshFailure> {
+    let DestinationKind::Sftp {
+        host, port, user, ..
+    } = &dest.kind
+    else {
+        return None;
+    };
+    let session_ended = matches!(
+        result.presentation.kind,
+        ResticFailureKind::DestinationUnreachable | ResticFailureKind::GenericFailure
+    ) && result
+        .presentation
+        .raw_detail
+        .as_deref()
+        .is_some_and(|d| d.contains("unable to start the sftp session"));
+    if !session_ended {
+        return None;
+    }
+    let paths = crate::sftp::KnownHostsPaths::from_env().ok()?;
+    crate::known_hosts::login_failure(host, *port, user, &paths)
 }
 
 /// When a probe stops restic (see [`ProbeRuntime`]).
@@ -958,6 +1078,7 @@ mod tests {
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
                 stop_on_unreachable: true,
+                host_key_checked: false,
             },
         );
 
@@ -1018,6 +1139,7 @@ mod tests {
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
                 stop_on_unreachable: true,
+                host_key_checked: false,
             },
         );
 
@@ -1078,6 +1200,7 @@ mod tests {
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
                 stop_on_unreachable: true,
+                host_key_checked: false,
             },
         );
 
@@ -1241,6 +1364,7 @@ mod tests {
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
                 stop_on_unreachable: true,
+                host_key_checked: false,
             },
         );
 
@@ -1453,6 +1577,7 @@ mod tests {
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
                 stop_on_unreachable: true,
+                host_key_checked: false,
             },
         );
 

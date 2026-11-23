@@ -7,7 +7,7 @@
 use crate::backup::{BackupRunError, check_command_succeeded};
 use crate::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
-    preflight_check_with_restic,
+    preflight_check_with_restic, verify_sftp_host_key,
 };
 use crate::model::{CheckSummary, Destination, RunStatus};
 use crate::provider::ResolvedRestic;
@@ -232,6 +232,7 @@ pub fn execute_prune(
     extra_env: &[(&str, &str)],
 ) -> Result<ResticExecutionResult, BackupRunError> {
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    verify_sftp_host_key(destination)?;
     let spec = build_prune_command_spec(
         destination,
         false,
@@ -251,6 +252,7 @@ pub fn execute_check(
     extra_env: &[(&str, &str)],
 ) -> Result<ResticExecutionResult, BackupRunError> {
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    verify_sftp_host_key(destination)?;
     let spec = build_check_command_spec(destination, runtime.resolved, runtime.kestic_binary)
         .with_cache_dir(runtime.cache_dir);
     Ok(runtime.run(&spec, destination, cancel, extra_env, |_| {})?)

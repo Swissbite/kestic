@@ -311,6 +311,13 @@ fn run_secret_subcommand(args: &[String]) -> ExitCode {
 
 fn main() -> ExitCode {
     let raw_args: Vec<String> = env::args().skip(1).collect();
+    // Tests point every ssh call at their own configuration instead of the user's `~/.ssh`.
+    #[cfg(feature = "test-harness")]
+    kestic_core::sftp::set_test_ssh_config(
+        env::var_os("KESTIC_TEST_SSH_CONFIG")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from),
+    );
     if let Some(subcmd) = raw_args.first().map(String::as_str) {
         match subcmd {
             "daemon" => return run_daemon_subcommand(&raw_args[1..]),

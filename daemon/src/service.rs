@@ -10,6 +10,7 @@ mod backup_runner;
 mod backups;
 mod destinations;
 mod error;
+mod host_keys;
 mod maintenance;
 mod previews;
 mod run_errors;
@@ -32,6 +33,7 @@ pub(crate) use destinations::{
     update_destination_password_unlocked, update_destination_unlocked,
 };
 pub use error::KesticServiceErr;
+pub(crate) use host_keys::trust_host_key_unlocked;
 pub use maintenance::{run_destination_maintenance_async, start_all_backups_async};
 pub(crate) use previews::preview_destination_maintenance_unlocked;
 pub use previews::{start_backup_dry_run_async, start_retention_preview_async};

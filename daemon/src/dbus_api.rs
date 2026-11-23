@@ -60,6 +60,8 @@ pub enum KesticDbusError {
     AlreadyRunning(String),
     LockInUse(String),
     DuplicateLocation(String),
+    HostKeyUnknown(String),
+    HostKeyChanged(String),
     Internal(String),
 }
 
@@ -80,6 +82,8 @@ impl KesticDbusError {
             Self::AlreadyRunning(_) => ServiceErrorCode::AlreadyRunning,
             Self::LockInUse(_) => ServiceErrorCode::LockInUse,
             Self::DuplicateLocation(_) => ServiceErrorCode::DuplicateLocation,
+            Self::HostKeyUnknown(_) => ServiceErrorCode::HostKeyUnknown,
+            Self::HostKeyChanged(_) => ServiceErrorCode::HostKeyChanged,
             Self::Internal(_) => ServiceErrorCode::Internal,
         }
     }
@@ -386,6 +390,20 @@ pub struct ConnectionTestResultDto {
     /// The program that is not installed, with `program_missing`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub program: Option<String>,
+    /// The host key to confirm, with `unknown_host_key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_key: Option<Box<HostKeyDto>>,
+}
+
+/// Host key of an SFTP server that no `known_hosts` file knows yet (`unknown_host_key`);
+/// `TrustHostKey(host_key_id)` adds exactly this key to Kestic's `known_hosts`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostKeyDto {
+    pub host_key_id: String,
+    pub host: String,
+    pub port: u16,
+    pub key_type: String,
+    pub fingerprint_sha256: String,
 }
 
 /// `backend_secrets_json` of `TestDestinationConnection`, `AddDestination` and
@@ -742,6 +760,10 @@ impl KesticClient {
         new_password: &str,
     ) -> zbus::Result<()> {
         self.call("UpdateDestinationPassword", &(dest_id, new_password))
+    }
+
+    pub fn trust_host_key(&self, host_key_id: &str) -> zbus::Result<()> {
+        self.call("TrustHostKey", &(host_key_id,))
     }
 
     pub fn remove_destination(&self, dest_id: &str) -> zbus::Result<()> {

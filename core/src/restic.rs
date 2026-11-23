@@ -68,7 +68,9 @@ pub use kestic_i18n::codes::RecoveryAction;
 pub enum ResticFailureKind {
     None,
     Cancelled,
-    IncompleteSnapshot { unreadable_items: Vec<String> },
+    IncompleteSnapshot {
+        unreadable_items: Vec<String>,
+    },
     DestinationUnreachable,
     DnsResolutionFailed,
     BackendAuthFailed,
@@ -76,7 +78,13 @@ pub enum ResticFailureKind {
     RepositoryMissing,
     RepositoryLocked,
     WrongPassword,
-    Unknown { exit_code: i32 },
+    /// SFTP: the server's host key is not in any `known_hosts` file.
+    HostKeyUnknown,
+    /// SFTP: a `known_hosts` file has another host key of the same type for the server.
+    HostKeyChanged,
+    Unknown {
+        exit_code: i32,
+    },
 }
 
 impl ResticFailureKind {
@@ -87,7 +95,11 @@ impl ResticFailureKind {
     pub fn is_permanent(&self) -> bool {
         matches!(
             self,
-            Self::WrongPassword | Self::RepositoryMissing | Self::BackendAuthFailed
+            Self::WrongPassword
+                | Self::RepositoryMissing
+                | Self::BackendAuthFailed
+                | Self::HostKeyUnknown
+                | Self::HostKeyChanged
         )
     }
 
@@ -104,6 +116,8 @@ impl ResticFailureKind {
                 ErrorKind::DestinationUnreachable
             }
             Self::BackendAuthFailed => ErrorKind::AuthFailed,
+            Self::HostKeyUnknown => ErrorKind::HostKeyUnknown,
+            Self::HostKeyChanged => ErrorKind::HostKeyChanged,
             Self::IncompleteSnapshot { .. } => ErrorKind::IncompleteSnapshot,
             Self::Cancelled => ErrorKind::Cancelled,
             Self::None | Self::GenericFailure | Self::Unknown { .. } => ErrorKind::Unknown,
@@ -279,7 +293,28 @@ pub fn classify_exit(
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         });
 
+    // restic only says the SFTP session ended; the reason is in the line of ssh.
+    let ssh_failure = crate::sftp::ssh_failure(raw_stderr).filter(|_| exit_code == 1);
+    let raw_detail = ssh_failure
+        .as_ref()
+        .map_or(raw_detail, |failure| Some(failure.line().to_string()));
     let detail_lower = raw_detail.as_deref().unwrap_or_default().to_lowercase();
+    let ssh_kind = ssh_failure.map(|failure| match failure {
+        crate::sftp::SshFailure::KeyRejected(_) => ResticFailureKind::BackendAuthFailed,
+        crate::sftp::SshFailure::HostKeyVerificationFailed(_) => ResticFailureKind::HostKeyUnknown,
+    });
+    if let Some(kind) = ssh_kind.or_else(|| {
+        (exit_code == 1)
+            .then(|| host_key_failure(&detail_lower))
+            .flatten()
+    }) {
+        return ErrorPresentation {
+            status: RunStatus::Error,
+            kind,
+            action: None,
+            raw_detail,
+        };
+    }
 
     match exit_code {
         0 => ErrorPresentation {
@@ -365,6 +400,25 @@ pub fn classify_exit(
             action: None,
             raw_detail,
         },
+    }
+}
+
+/// Text Kestic records when its own host key check stops an SFTP run before restic starts
+/// (see `DestinationError`); a run's error kind is read back from it.
+pub const HOST_KEY_UNKNOWN_MARKER: &str = "unknown ssh host key";
+/// See [`HOST_KEY_UNKNOWN_MARKER`].
+pub const HOST_KEY_CHANGED_MARKER: &str = "ssh host key changed";
+
+/// The host key failure a lowercase message names: Kestic's own check, or ssh refusing the key.
+fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
+    if detail_lower.contains(HOST_KEY_CHANGED_MARKER) {
+        Some(ResticFailureKind::HostKeyChanged)
+    } else if detail_lower.contains(HOST_KEY_UNKNOWN_MARKER)
+        || detail_lower.contains("host key verification failed")
+    {
+        Some(ResticFailureKind::HostKeyUnknown)
+    } else {
+        None
     }
 }
 
@@ -456,6 +510,8 @@ pub struct ResticCommandSpec {
     pub kestic_binary: PathBuf,
     pub destination_id: DestinationId,
     pub repository_uri: String,
+    /// Backend options (`-o key=value`) after the repository: `sftp.args` for SFTP.
+    pub backend_options: Vec<String>,
     pub subcommand_args: Vec<String>,
     /// Name prefixes of variables in the caller's environment restic must not see (inherited
     /// AWS credentials and settings).
@@ -483,6 +539,7 @@ impl ResticCommandSpec {
             kestic_binary: kestic_binary.into(),
             destination_id: destination.id.clone(),
             repository_uri: destination.kind.repository_uri(),
+            backend_options: destination.kind.restic_backend_options(),
             subcommand_args,
             backend_env_cleared_prefixes: destination.kind.backend_env_cleared_prefixes(),
             backend_env: destination.kind.backend_plain_env(),
@@ -556,6 +613,7 @@ impl ResticCommandSpec {
     /// Returns the argument vector passed directly to `restic`.
     pub fn restic_argv(&self) -> Vec<String> {
         let mut args = vec!["-r".to_string(), self.repository_uri.clone()];
+        args.extend(self.backend_options.iter().cloned());
         if self.json_output && !self.subcommand_args.iter().any(|a| a == "--json") {
             args.push("--json".to_string());
         }
@@ -610,7 +668,7 @@ impl ResticCommandSpec {
 
 /// A recorded restic invocation split back into its parts: the inverse of the low-priority
 /// wrapper `ionice -c 3 [nice -n 10] <restic>` / `nice -n 10 <restic>` that
-/// [`ResticCommandSpec`] adds when it runs restic, and of `-r <repo> [--json]`.
+/// [`ResticCommandSpec`] adds when it runs restic, and of `-r <repo> [-o <option>…] [--json]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedInvocation {
     pub restic_binary: String,
@@ -644,6 +702,9 @@ pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedI
     let restic_binary = tokens.get(i).copied().unwrap_or(executable).to_string();
     let mut rest = tokens.get(i + 1..).unwrap_or(&[]);
     if rest.first() == Some(&"-r") && rest.len() >= 2 {
+        rest = &rest[2..];
+    }
+    while rest.first() == Some(&"-o") && rest.len() >= 2 {
         rest = &rest[2..];
     }
     let json_output = rest.first() == Some(&"--json");

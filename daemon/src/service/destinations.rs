@@ -24,6 +24,7 @@ use kestic_core::destination::{
     remove_destination_secrets, setup_destination, verify_and_update_stored_password,
 };
 use kestic_core::generic::{GenericInputError, missing_program};
+use kestic_core::known_hosts::HostKeyError;
 use kestic_core::local_path::{NotALocalPath, connection_notes};
 use kestic_core::model::{
     BackupId, Destination, DestinationId, DestinationKind, MaintenanceSchedule, ModelError,
@@ -57,6 +58,7 @@ impl DaemonCore {
         })?;
 
         self.persist_config(next)?;
+        super::host_keys::forget_unused_host(&removed, &self.config.destinations);
         remove_destination_secrets(&removed, self.secret_store.as_ref()).map_err(map_secret_err)?;
         self.dest_availability.remove(&id);
         self.dest_stale_locks.remove(&id);
@@ -110,6 +112,7 @@ fn test_failure(code: ConnectionTestCode, detail: String) -> ConnectionTestResul
         detail,
         notes: Vec::new(),
         program: None,
+        host_key: None,
     }
 }
 
@@ -120,6 +123,7 @@ fn test_ok() -> ConnectionTestResultDto {
         detail: String::new(),
         notes: Vec::new(),
         program: None,
+        host_key: None,
     }
 }
 
@@ -228,7 +232,7 @@ fn check_login_before_init(inputs: &DestinationTestInputs<'_>) -> ConnectionTest
         Ok(RepositoryProbe::Exists) => {
             test_failure(ConnectionTestCode::RepositoryExists, String::new())
         }
-        Err(err) => destination_error_result(err),
+        Err(err) => destination_error_result(err, inputs.clock),
     }
 }
 
@@ -245,9 +249,26 @@ fn missing_login(creds: &BackendCredentials, kind: &DestinationKind) -> Option<S
     }
 }
 
-/// The connection test result of a failed restic probe.
-fn destination_error_result(err: DestinationError) -> ConnectionTestResultDto {
+/// The connection test result of a failed restic probe; an unknown SFTP host key is kept for
+/// `TrustHostKey`.
+fn destination_error_result(err: DestinationError, clock: &dyn Clock) -> ConnectionTestResultDto {
     let kind = match err {
+        DestinationError::HostKeyUnknown(key) => {
+            return ConnectionTestResultDto {
+                host_key: Some(Box::new(super::host_keys::offer_host_key(&key, clock))),
+                ..test_failure(ConnectionTestCode::UnknownHostKey, key.name.clone())
+            };
+        }
+        DestinationError::HostKeyChanged(file) => {
+            return test_failure(
+                ConnectionTestCode::HostKeyChanged,
+                file.to_string_lossy().into_owned(),
+            );
+        }
+        DestinationError::HostKeyCheck(HostKeyError::JumpHost(_)) => {
+            ConnectionTestCode::JumpHostUnsupported
+        }
+        DestinationError::SshKeyRejected(_) => ConnectionTestCode::SshKeyRejected,
         DestinationError::WrongPassword => ConnectionTestCode::WrongPassword,
         DestinationError::AuthFailed(_) => ConnectionTestCode::AuthFailed,
         DestinationError::RepositoryMissing(_) => ConnectionTestCode::RepositoryMissing,
@@ -352,7 +373,7 @@ fn check_connect_existing_destination(
     match effective_repo_pw {
         Some(repo_pw) => {
             if let Err(err) = check_existing_repository(inputs.dest, &repo_pw, &backend, &runtime) {
-                return destination_error_result(err);
+                return destination_error_result(err, inputs.clock);
             }
         }
         None => match probe_repository(inputs.dest, &backend, &runtime) {
@@ -360,7 +381,7 @@ fn check_connect_existing_destination(
             Ok(RepositoryProbe::Missing | RepositoryProbe::BucketMissing) => {
                 return test_failure(ConnectionTestCode::RepositoryMissing, String::new());
             }
-            Err(err) => return destination_error_result(err),
+            Err(err) => return destination_error_result(err, inputs.clock),
         },
     }
 
@@ -773,9 +794,10 @@ mod tests {
     /// not respond», the code the GUI shows with its action.
     #[test]
     fn restic_that_does_not_answer_is_reported_as_not_responding() {
-        let result = destination_error_result(DestinationError::NotResponding(
-            "restic did not finish within 15 s".to_string(),
-        ));
+        let result = destination_error_result(
+            DestinationError::NotResponding("restic did not finish within 15 s".to_string()),
+            &kestic_core::clock::SystemClock,
+        );
         assert!(!result.ok, "the test failed");
         assert_eq!(result.error_kind, Some(ConnectionTestCode::NotResponding));
     }

@@ -15,7 +15,8 @@ use crate::service::{
     set_restic_provider_unlocked, start_all_backups_async, start_backup_async,
     start_backup_dry_run_async, start_backup_override_async, start_retention_preview_async,
     test_destination_connection_unlocked, trigger_background_availability_probe,
-    unlock_destination_async, update_destination_password_unlocked, update_destination_unlocked,
+    trust_host_key_unlocked, unlock_destination_async, update_destination_password_unlocked,
+    update_destination_unlocked,
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
@@ -232,6 +233,14 @@ impl KesticDbusV1Service {
             .await?;
         self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
             .await;
+        Ok(())
+    }
+
+    #[zbus(name = "TrustHostKey")]
+    async fn trust_host_key(&self, host_key_id: &str) -> Result<(), KesticDbusError> {
+        let id = host_key_id.to_string();
+        self.blocking(move |core| trust_host_key_unlocked(core, &id))
+            .await?;
         Ok(())
     }
 

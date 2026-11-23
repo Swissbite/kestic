@@ -29,6 +29,11 @@ struct DestinationFieldsInput {
     path: String,
     #[serde(default)]
     region: String,
+    /// SFTP server; `path` and `username` hold the path and the user.
+    #[serde(default)]
+    host: String,
+    #[serde(default)]
+    port: Option<u16>,
     /// Variables of the generic form; the value of a secret one goes in `backendSecretsJson()`.
     #[serde(default)]
     env: Vec<EnvFieldInput>,
@@ -61,6 +66,7 @@ fn failed_test(code: ConnectionTestCode, detail: String) -> ConnectionTestResult
         detail,
         notes: Vec::new(),
         program: None,
+        host_key: None,
     }
 }
 
@@ -208,6 +214,12 @@ pub fn destination_from_fields(
         "rest" => DestinationKind::Rest {
             url: trimmed_loc.to_string(),
             username: (!trimmed_user.is_empty()).then(|| trimmed_user.to_string()),
+        },
+        "sftp" => DestinationKind::Sftp {
+            host: fields.host.trim().to_string(),
+            port: fields.port.unwrap_or(kestic_core::sftp::DEFAULT_PORT),
+            user: trimmed_user.to_string(),
+            path: fields.path.trim().to_string(),
         },
         "s3" => DestinationKind::S3 {
             endpoint: fields.endpoint.trim().to_string(),

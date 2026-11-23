@@ -111,6 +111,10 @@ impl ErrorKind {
             Self::Cancelled => i18n_noop("Cancelled by user"),
             Self::SecretStoreLocked => i18n_noop("Password store is locked"),
             Self::ResticUnavailable => i18n_noop("restic is unavailable or too old."),
+            Self::HostKeyUnknown => i18n_noop("Unknown server"),
+            Self::HostKeyChanged => {
+                i18n_noop("The server identifies itself differently than before")
+            }
             Self::Unknown if is_warning => i18n_noop("Backed up with warning"),
             Self::Unknown => {
                 return match exit_code {
@@ -404,6 +408,21 @@ impl ConnectionTestCode {
                 ),
                 &[detail],
             ),
+            Self::UnknownHostKey => Message::new(i18n_noop(
+                "Unknown server. Compare its fingerprint and trust it to continue.",
+            )),
+            Self::HostKeyChanged => Message::with_args(
+                i18n_noop(
+                    "The server identifies itself differently than before. This can be an attack. Ask the operator of the server. Old entry: %1",
+                ),
+                &[detail],
+            ),
+            Self::SshKeyRejected => Message::new(i18n_noop(
+                "The server rejected the login with your SSH key. Copy your public key to the server (ssh-copy-id) or load the key into the ssh-agent, then test again.",
+            )),
+            Self::JumpHostUnsupported => Message::new(i18n_noop(
+                "Servers behind a jump host are not supported yet.",
+            )),
             Self::InvalidInput | Self::Internal | Self::CommandFailed | Self::DaemonUnreachable => {
                 return UiText::Raw(detail.to_string());
             }
@@ -465,6 +484,10 @@ impl ServiceErrorCode {
             Self::DuplicateLocation => {
                 i18n_noop("This location is already used by another destination.")
             }
+            Self::HostKeyUnknown => {
+                i18n_noop("Unknown server: test the connection and trust the server first.")
+            }
+            Self::HostKeyChanged => return ErrorKind::HostKeyChanged.message(None, false),
             Self::Internal => i18n_noop("Internal error in the background service."),
             Self::DaemonUnreachable => i18n_noop("Background service unavailable."),
         };

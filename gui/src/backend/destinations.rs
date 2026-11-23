@@ -128,7 +128,26 @@ impl qobject::KesticApp {
             .collect::<Vec<_>>()
             .join("\n");
         self.as_mut().set_connection_test_note(QString::from(&note));
+        let host_key = res
+            .host_key
+            .as_ref()
+            .and_then(|key| serde_json::to_string(key).ok())
+            .unwrap_or_default();
+        self.as_mut()
+            .set_connection_test_host_key(QString::from(&host_key));
         res.ok
+    }
+
+    /// Trusts the SFTP host key the last connection test showed (`TrustHostKey`).
+    pub fn trust_host_key(self: Pin<&mut Self>, host_key_id: &QString) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        self.finish_action(
+            client.trust_host_key(&host_key_id.to_string()),
+            Finish::Plain,
+        )
+        .is_some()
     }
 
     pub fn add_destination(
