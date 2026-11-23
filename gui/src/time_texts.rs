@@ -8,7 +8,7 @@ use crate::state_cache::{i18n, shared_state};
 use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::DaemonStateDto;
-use time::OffsetDateTime;
+use time::{Date, OffsetDateTime};
 
 /// `ts` in the local time zone; unchanged when the shifted time is out of range (a time at the
 /// very end of year 9999, as a foreign snapshot may carry).
@@ -23,6 +23,16 @@ pub(crate) fn to_offset_or_keep(ts: OffsetDateTime, offset: time::UtcOffset) -> 
     ts.checked_to_offset(offset).unwrap_or(ts)
 }
 
+/// `date` as `YYYY-MM-DD`.
+pub(crate) fn iso_date(date: Date) -> String {
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        date.month() as u8,
+        date.day()
+    )
+}
+
 pub fn format_day_group(ts: OffsetDateTime, now: OffsetDateTime) -> String {
     let date = to_local(ts).date();
     let today = to_local(now).date();
@@ -34,12 +44,7 @@ pub fn format_day_group(ts: OffsetDateTime, now: OffsetDateTime) -> String {
     {
         return i18n("Yesterday").to_string();
     }
-    format!(
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
+    iso_date(date)
 }
 
 pub fn format_time_short(ts: OffsetDateTime) -> String {
@@ -49,12 +54,9 @@ pub fn format_time_short(ts: OffsetDateTime) -> String {
 
 pub fn format_datetime_display(ts: OffsetDateTime) -> String {
     let local = to_local(ts);
-    let date = local.date();
     format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day(),
+        "{} {:02}:{:02}",
+        iso_date(local.date()),
         local.hour(),
         local.minute()
     )
@@ -74,11 +76,5 @@ pub fn cached_daemon_now() -> OffsetDateTime {
 }
 
 pub fn cached_today_iso_date() -> String {
-    let date = to_local(cached_daemon_now()).date();
-    format!(
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
+    iso_date(to_local(cached_daemon_now()).date())
 }

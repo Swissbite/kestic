@@ -11,7 +11,7 @@ use super::snapshot_query::{
     QueryList, QueryListModel, QueryListView, count_text, to_i32, too_large_text,
 };
 use crate::state_cache::{format_bytes, i18np};
-use crate::time_texts::to_local;
+use crate::time_texts::{iso_date, to_local};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QModelIndex, QString, QStringList};
 use kestic_core::query_list::QueryState;
@@ -74,10 +74,7 @@ fn modified_text(e: &LsEntryDto) -> String {
     e.mtime
         .as_deref()
         .and_then(|t| OffsetDateTime::parse(t, &Rfc3339).ok())
-        .map_or_default(|t| {
-            let d = to_local(t).date();
-            format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day())
-        })
+        .map_or_default(|t| iso_date(to_local(t).date()))
 }
 
 fn icon_name(e: &LsEntryDto) -> &'static str {

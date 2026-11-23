@@ -19,6 +19,7 @@ use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList};
 use kestic_core::model::RunStatus;
+use kestic_core::mount::current_home_dir;
 use kestic_core::query_list::QueryState;
 use kestic_core::restore::{folder_instead_of_unmatchable, selection_with_folders_instead};
 use kestic_core::restore_target::{code_usable, preview_needed};
@@ -30,6 +31,7 @@ use kestic_daemon::dbus_api::{
 };
 use kestic_i18n::codes::ErrorKind;
 use kestic_i18n::messages::{active_run_message, nothing_restored_message};
+use std::path::Path;
 use std::pin::Pin;
 
 model_row!(PreviewRow {
@@ -94,27 +96,20 @@ pub struct RestorePreviewModelRust {
     run_id: Option<String>,
 }
 
-/// The overwrite modes in the order of the dialog's list (index 0 = «Never»).
-const MODES: [RestoreOverwrite; 4] = [
-    RestoreOverwrite::Never,
-    RestoreOverwrite::IfNewer,
-    RestoreOverwrite::IfChanged,
-    RestoreOverwrite::Always,
-];
-
+/// The overwrite mode at `index` of the dialog's list, which lists the modes in the order of
+/// [`RestoreOverwrite::ALL`] (index 0 = «Never»).
 fn mode_of(index: i32) -> RestoreOverwrite {
     usize::try_from(index)
         .ok()
-        .and_then(|i| MODES.get(i).copied())
+        .and_then(|i| RestoreOverwrite::ALL.get(i).copied())
         .unwrap_or_default()
 }
 
 /// `path` with the home folder shown as `~`.
 fn tilde(path: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && path.starts_with(&format!("{home}/")) => {
-            format!("~{}", &path[home.len()..])
-        }
+    let home = current_home_dir();
+    match home.as_deref().and_then(Path::to_str) {
+        Some(home) if path.starts_with(&format!("{home}/")) => format!("~{}", &path[home.len()..]),
         _ => path.to_string(),
     }
 }
