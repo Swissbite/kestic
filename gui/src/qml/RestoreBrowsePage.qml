@@ -143,28 +143,34 @@ Kirigami.ScrollablePage {
                             id: crumbButton
                             objectName: "browsePathButton_" + crumb.index
                             readonly property string path: crumb.modelData
-                            icon.name: crumb.index === 0 ? "drive-harddisk-root" : ""
-                            text: crumb.index === 0 ? i18n("Top folder") : crumb.crumbName
-                            display: crumb.index === 0 ? Controls.AbstractButton.IconOnly
-                                : Controls.AbstractButton.TextOnly
+                            readonly property string label: crumb.index === 0 ? i18n("Top folder") : crumb.crumbName
+                            // The button's own text and icon stay empty: the desktop style paints
+                            // them in its background, beneath the content item below, so every
+                            // folder would be drawn twice. The content item draws the folder.
+                            padding: Kirigami.Units.smallSpacing
                             checkable: false
                             font.bold: crumb.isCurrent
                             activeFocusOnTab: true
-                            Accessible.name: text
+                            Accessible.name: label
                             Controls.ToolTip.visible: crumb.index === 0 && hovered
-                            Controls.ToolTip.text: text
+                            Controls.ToolTip.text: label
                             // Folder names from the snapshot are shown literally, never as rich text.
                             contentItem: RowLayout {
                                 spacing: 0
                                 Kirigami.Icon {
                                     visible: crumb.index === 0
-                                    source: crumbButton.icon.name
+                                    source: "drive-harddisk-root"
                                     Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
                                     Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                                 }
                                 Controls.Label {
                                     visible: crumb.index > 0
-                                    text: crumbButton.text
+                                    Layout.fillWidth: true
+                                    // As tall as the top folder icon, so all folders share one line.
+                                    Layout.minimumHeight: Kirigami.Units.iconSizes.smallMedium
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: crumbButton.label
                                     textFormat: Text.PlainText
                                     font: crumbButton.font
                                 }

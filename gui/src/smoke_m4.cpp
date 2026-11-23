@@ -8,6 +8,7 @@
 #include "src/smoke_m3_util.h"
 
 #include <QFile>
+#include <QImage>
 #include <QLocale>
 #include <QMetaMethod>
 #include <QQmlComponent>
@@ -19,6 +20,7 @@ namespace kestic::smoke {
 
 namespace {
 
+using m3::accessible_name;
 using m3::Ctx;
 using m3::item_named;
 using m3::loc;
@@ -431,6 +433,95 @@ int scenario_browse_keyboard(const Ctx& c) {
         }
     }
     M4_CHECK(5333, item_named(w, "browseListView") != nullptr, "folder list, no tree");
+    return 0;
+}
+
+// The part of the window that `item` covers, as drawn right now.
+QImage drawn_under(QQuickWindow* w, QQuickItem* item) {
+    const QImage all = w->grabWindow().convertToFormat(QImage::Format_ARGB32);
+    const qreal dpr = w->effectiveDevicePixelRatio();
+    const QRectF r = item->mapRectToScene(QRectF(0.0, 0.0, item->width(), item->height()));
+    return all.copy(QRectF(r.topLeft() * dpr, r.size() * dpr).toAlignedRect());
+}
+
+// The visible Text item below `root` that shows `text` (nullptr when there is none).
+QQuickItem* text_item_showing(QQuickItem* root, const QString& text) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(root, items);
+    for (QQuickItem* it : items) {
+        if (it->isVisible() && it->inherits("QQuickText") && it->property("text").toString() == text) {
+            return it;
+        }
+    }
+    return nullptr;
+}
+
+/// AC-M4-03-1 (a), breadcrumb: every folder of the path row is drawn exactly once. With its
+/// content hidden, a button that is neither hovered nor focused looks like no button at all: the
+/// style draws no second name or icon beneath the content. Folder names are shown literally as
+/// plain text (the path holds «R&D <b>x<b>»), and the top folder keeps its accessible name.
+int scenario_browse_path_row(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 6201)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 6206)) {
+        return rc;
+    }
+    Browse b = browse_page(w);
+    M4_CHECK(6209, wait_until([&] { return b.model->property("state").toString() == QLatin1String("done"); }, 30000),
+        "the folder is listed");
+    finish_incubation(w);
+    const QString dir = b.model->property("dir").toString();
+    const QString odd_name = QStringLiteral("R&D <b>x<b>");
+    M4_CHECK(6210, dir.endsWith(QLatin1Char('/') + odd_name + QStringLiteral("/src")),
+        "the snapshot opens in its folder");
+    QStringList names;
+    QMetaObject::invokeMethod(b.model, "segmentNames", Q_RETURN_ARG(QStringList, names), Q_ARG(QString, dir));
+    M4_CHECK(6211, names.size() >= 4, "path row from the top down to «src»");
+    M4_CHECK(6226, names.contains(odd_name), "the path holds «R&D <b>x<b>»");
+    QQuickItem* row = visible_item(w, "browsePathRow");
+    M4_CHECK(6212, row != nullptr, "browsePathRow missing");
+    // The page transition has ended once two grabs in a row are the same.
+    QImage last;
+    M4_CHECK(6213, wait_until([&] {
+        const QImage now = drawn_under(w, row);
+        const bool still = !last.isNull() && now == last;
+        last = now;
+        return still;
+    }, 5000), "the path row stops moving");
+    for (int i = 0; i < names.size(); ++i) {
+        const QByteArray name = QStringLiteral("browsePathButton_%1").arg(i).toUtf8();
+        QQuickItem* button = visible_item(w, name.constData());
+        M4_CHECK(6214, button != nullptr, "path row button missing");
+        M4_CHECK(6215, !button->property("hovered").toBool(), "button not hovered");
+        M4_CHECK(6216, !button->hasActiveFocus(), "button without focus");
+        auto* content = button->property("contentItem").value<QQuickItem*>();
+        M4_CHECK(6217, content != nullptr, "button without content");
+
+        const QImage drawn = drawn_under(w, button);
+        button->setOpacity(0.0);
+        const QImage without_button = drawn_under(w, button);
+        button->setOpacity(1.0);
+        content->setOpacity(0.0);
+        const QImage without_content = drawn_under(w, button);
+        content->setOpacity(1.0);
+        M4_CHECK(6218, drawn != without_button, "the button shows its folder");
+        M4_CHECK(6219, drawn != without_content, "hiding the content changes the picture");
+        M4_CHECK(6220, without_content == without_button,
+            qPrintable(QStringLiteral("path row button %1 is drawn a second time beneath its content").arg(i)));
+
+        if (i == 0) {
+            M4_CHECK_EQ(6221, accessible_name(button), loc(c.lang, "Top folder", "Oberster Ordner"),
+                "accessible name of the top folder");
+        } else {
+            M4_CHECK_EQ(6222, accessible_name(button), names.at(i), "accessible name of a folder");
+            QQuickItem* label = text_item_showing(button, names.at(i));
+            M4_CHECK(6223, label != nullptr, "the folder name is shown");
+            M4_CHECK(6224, label->property("textFormat").toInt() == 0, "the folder name is plain text");
+        }
+    }
+    M4_CHECK(6225, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
 
@@ -883,6 +974,8 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_keyboard(ctx);
     } else if (scen == QLatin1String("m4-browse-keyboard")) {
         rc = scenario_browse_keyboard(ctx);
+    } else if (scen == QLatin1String("m4-browse-path-row")) {
+        rc = scenario_browse_path_row(ctx);
     } else if (scen == QLatin1String("m4-browse-paging")) {
         rc = scenario_browse_paging(ctx);
     } else if (scen == QLatin1String("m4-browse-leave")) {
