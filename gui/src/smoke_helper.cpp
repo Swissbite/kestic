@@ -198,7 +198,14 @@ bool save_screenshot(QQuickWindow* window, const QString& out_path) {
     const QFileInfo fi(out_path);
     QDir().mkpath(fi.absolutePath());
     if (window) {
-        wait_until([&] { return !page_rows_moving(window); }, 3000);
+        if (!wait_until([&] { return !page_rows_moving(window); }, 3000)) {
+            std::fprintf(
+                stderr,
+                "QML smoke failed: pages still moving after 3 s, no screenshot %s\n",
+                qPrintable(out_path)
+            );
+            return false;
+        }
         repaint_whole_window(window);
     }
     QImage img;

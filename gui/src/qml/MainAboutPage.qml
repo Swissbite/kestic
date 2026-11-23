@@ -27,6 +27,8 @@ Kirigami.AboutPage {
     }
 
     Component.onCompleted: alignLinksLeft(page)
+    // Kirigami builds the licence link again when the data changes (the restic version).
+    onAboutDataChanged: Qt.callLater(alignLinksLeft, page)
 
     // Version and build commit of one process; the commit links to GitHub when it is clean.
     component BuildRow: RowLayout {

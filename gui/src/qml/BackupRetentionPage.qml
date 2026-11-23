@@ -292,7 +292,7 @@ EditorPage {
                 page.pendingRemoveCount = dto.result.remove_count;
                 page.pendingRemoveSnapshots = (dto.result.snapshots || [])
                     .filter(s => s.action === "remove")
-                    .map(s => s.short_id + " (" + s.time + ")");
+                    .map(s => s.short_id + " (" + s.time_text + ")");
                 confirmRemoveDialog.open();
                 return;
             }

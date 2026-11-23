@@ -230,6 +230,10 @@ int scenario_all_pages(const Ctx& c) {
         M3_CHECK(code++, page_visible(w, p.page), p.page);
         M3_RECORD(code++, dump, QString::fromLatin1(p.name), w, "destination");
     }
+    // Like the backup row: the selected destination row puts its icon on the background colour.
+    QQuickItem* dest_backdrop = find_visual_item(w, QStringLiteral("destinationRowIconBackdrop"));
+    M3_CHECK2(4964, dest_backdrop != nullptr, dest_backdrop->isVisible(),
+              "icon of the selected destination row must sit on the background colour");
 
     QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
     wait_ms(150);

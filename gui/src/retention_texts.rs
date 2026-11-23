@@ -86,7 +86,8 @@ pub struct RetentionPreviewView {
 
 fn summary_text(keep: usize, remove: usize) -> String {
     if remove == 0 {
-        return i18n("No snapshots would be removed (%1 kept).").subs(&[&keep.to_string()]);
+        let count = crate::qt_bridge::ffi::format_count(i64::try_from(keep).unwrap_or(i64::MAX));
+        return i18n("No snapshots would be removed (%1 kept).").subs(&[&count]);
     }
     GuiText::TwoParts.with_args(&[
         &i18np("%1 snapshot kept", "%1 snapshots kept", keep, &[]),

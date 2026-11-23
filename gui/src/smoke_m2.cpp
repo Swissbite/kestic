@@ -3,6 +3,7 @@
 
 #include "src/smoke_common.h"
 
+#include <QJSValue>
 #include <QRegularExpression>
 
 namespace kestic::smoke {
@@ -235,7 +236,10 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     ret_page->setProperty("keepLastOn", true);
     ret_page->setProperty("keepLastNum", 1);
     ret_page->setProperty("keepLastAll", false);
-    ret_page->setProperty("keepDailyOn", false);
+    // keep_daily = 1 keeps the same (newest) snapshot a second time, for a second reason.
+    ret_page->setProperty("keepDailyOn", true);
+    ret_page->setProperty("keepDailyNum", 1);
+    ret_page->setProperty("keepDailyAll", false);
     ret_page->setProperty("keepWeeklyOn", false);
     ret_page->setProperty("keepMonthlyOn", false);
     ret_page->setProperty("keepYearlyOn", false);
@@ -268,7 +272,7 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     QQuickItem* kept_result = find_visual_item(window, QStringLiteral("retentionPreviewSnapshotResult"));
     SMOKE_CHECK("M2", 254, kept_result, "(b) retention preview rows missing");
     const QString kept_text = kept_result->property("text").toString();
-    SMOKE_CHECK("M2", 254, kept_text == (de ? QStringLiteral("Behalten — jüngster") : QStringLiteral("Keep — latest snapshot")),
+    SMOKE_CHECK("M2", 254, kept_text == (de ? QStringLiteral("Behalten — jüngster, täglich") : QStringLiteral("Keep — latest snapshot, daily snapshot")),
         QStringLiteral("(b) unexpected result of the kept snapshot '%1'").arg(kept_text));
     QQuickItem* kept_time = find_visual_item(window, QStringLiteral("retentionPreviewSnapshotTime"));
     SMOKE_CHECK("M2", 255, kept_time, "(c) retention preview time missing");
@@ -288,6 +292,18 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     QObject* confirm_act = child_object(window, "confirmRetentionSaveAction");
     SMOKE_CHECK4("M2", 249, confirm_dlg, confirm_dlg->property("visible").toBool(), confirm_act, ret_page->property("pendingRemoveCount").toInt() == 2,
         "confirmRetentionRemoveDialog did not open with pendingRemoveCount=2");
+    // AC-M2-06-3: the dialog lists each snapshot to remove with its local date and time.
+    QVariant pending_var = ret_page->property("pendingRemoveSnapshots");
+    if (pending_var.canConvert<QJSValue>()) {
+        pending_var = pending_var.value<QJSValue>().toVariant();
+    }
+    const QStringList pending_removals = pending_var.toStringList();
+    SMOKE_CHECK("M2", 256, pending_removals.size() == 2, "confirmation must list the 2 snapshots to remove");
+    static const QRegularExpression removal_entry(QStringLiteral("^[0-9a-f]{8} \\(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}\\)$"));
+    for (const QString& entry : pending_removals) {
+        SMOKE_CHECK("M2", 256, removal_entry.match(entry).hasMatch(),
+            QStringLiteral("unexpected entry in the confirmation list: '%1'").arg(entry));
+    }
     trigger(confirm_act);
     wait_ms(200);
     SMOKE_CHECK("M2", 250, !ret_page->property("dirty").toBool(), "retention rules still dirty after confirming save");

@@ -100,3 +100,30 @@ fn ac_m2_06_2_retention_preview_view_has_summary_times_and_reasons() {
         "(d)"
     );
 }
+
+/// AC-M2-06-2: the time of a snapshot is shown in local time whatever offset restic writes
+/// (`TZ` of the backing-up machine); a time that cannot be read is shown as restic wrote it.
+#[test]
+fn ac_m2_06_2_retention_preview_times_with_offsets_and_unreadable_times() {
+    let result = ForgetPreviewResult {
+        backup_id: "b1".to_string(),
+        snapshots: vec![
+            snapshot(
+                "a1b2c3d4",
+                "2026-11-23T10:51:25.5+05:45",
+                "keep",
+                &["last snapshot"],
+            ),
+            snapshot("e5f6a7b8", "2026-11-23T05:06:25.5Z", "remove", &[]),
+            snapshot("c9d0e1f2", "garbage", "remove", &[]),
+        ],
+        keep_count: 1,
+        remove_count: 2,
+    };
+    let view = retention_preview_view(&result);
+    assert_eq!(
+        view.snapshots[0].time_text, view.snapshots[1].time_text,
+        "same moment, other offset"
+    );
+    assert_eq!(view.snapshots[2].time_text, "garbage", "unreadable time");
+}
