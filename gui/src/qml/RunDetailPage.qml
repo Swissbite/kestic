@@ -383,7 +383,6 @@ Kirigami.ScrollablePage {
                         FocusRing {
                             target: logRow
                             focused: (logRow.activeFocus || logRow.visualFocus || (logRow.ListView.isCurrentItem && runLogsListView.activeFocus))
-                            ringColor: logRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                         }
 
                         contentItem: Controls.Label {
