@@ -280,6 +280,14 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     static const QRegularExpression local_time(QStringLiteral("^[0-9a-f]{8} · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$"));
     SMOKE_CHECK("M2", 255, local_time.match(time_text).hasMatch(),
         QStringLiteral("(c) snapshot time is not local date and time: '%1'").arg(time_text));
+    // The title of the current page stays inside the window: it elides where the bar is too narrow.
+    QQuickItem* current_crumb = find_visual_item(window, QStringLiteral("breadcrumbCurrentLabel"));
+    SMOKE_CHECK_VISIBLE("M2", 257, current_crumb, "current breadcrumb missing");
+    const qreal crumb_right = current_crumb->mapToScene(QPointF(current_crumb->width(), 0)).x();
+    SMOKE_CHECK("M2", 257, crumb_right <= window->width() + 0.5,
+        QStringLiteral("current breadcrumb ends at %1, outside the window").arg(crumb_right));
+    SMOKE_CHECK("M2", 257, current_crumb->property("contentWidth").toReal() <= current_crumb->width() + 0.5,
+        "current breadcrumb text wider than its label");
     SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
 
     // Go back to BackupRetentionPage and save -> must show confirmation dialog (AC-M2-06-3).

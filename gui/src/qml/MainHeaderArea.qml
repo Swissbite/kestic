@@ -226,6 +226,10 @@ ColumnLayout {
                         : headerArea.rootWindow.defaultTitleForDepth(index, headerArea.rootWindow.breadcrumbRevision)
                     readonly property bool isCurrentCrumb: headerArea.rootWindow.breadcrumbRevision >= 0 && index === headerArea.pageStackRef.depth - 1
 
+                    // The current page's title gives way when the bar is too narrow (it elides).
+                    Layout.fillWidth: isCurrentCrumb
+                    Layout.minimumWidth: 0
+
                     Kirigami.Icon {
                         visible: crumbDelegate.index > 0
                         source: "go-next-symbolic"
@@ -256,8 +260,12 @@ ColumnLayout {
                         visible: crumbDelegate.isCurrentCrumb
                         text: crumbDelegate.crumbTitle
                         font.bold: true
+                        elide: Text.ElideRight
                         leftPadding: Kirigami.Units.smallSpacing
                         rightPadding: Kirigami.Units.smallSpacing
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.maximumWidth: implicitWidth
                     }
                 }
             }
