@@ -6,10 +6,10 @@
 //! Browsing a snapshot one folder at a time with `restic ls --json <snapshot> <folder>`: always
 //! with a folder argument, so restic lists one level and never the whole tree.
 
-use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded};
+use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded, run_streaming};
 use crate::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use crate::query_list::{HeldResult, ListBuilder, ListEntry, QueryList};
-use crate::restic::{CancelHandle, ResticCommandSpec, run_restic_streaming};
+use crate::restic::CancelHandle;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -127,19 +127,26 @@ pub fn ls_args(snapshot_id: &str, dir: &str) -> Vec<String> {
     ]
 }
 
-/// The folder a snapshot opens in: the deepest folder that contains all its backed-up paths
-/// (the backed-up folder itself for a snapshot of one folder), `/` without paths.
-pub fn start_dir(paths: &[String]) -> String {
+/// The folder that contains `path` (`/` for an entry at the top).
+pub fn parent_dir(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(0) | None => "/",
+        Some(i) => &path[..i],
+    }
+}
+
+/// The deepest folder that contains or is each of `paths`, `/` without paths.
+pub(crate) fn common_dir<'a>(paths: impl IntoIterator<Item = &'a str>) -> String {
     let mut common: Option<Vec<&str>> = None;
     for path in paths {
-        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let segments = path.split('/').filter(|s| !s.is_empty());
         common = Some(match common {
-            None => segments,
+            None => segments.collect(),
             Some(prev) => prev
-                .iter()
-                .zip(&segments)
+                .into_iter()
+                .zip(segments)
                 .take_while(|(a, b)| a == b)
-                .map(|(a, _)| *a)
+                .map(|(a, _)| a)
                 .collect(),
         });
     }
@@ -149,6 +156,12 @@ pub fn start_dir(paths: &[String]) -> String {
     } else {
         format!("/{}", segments.join("/"))
     }
+}
+
+/// The folder a snapshot opens in: the deepest folder that contains all its backed-up paths
+/// (the backed-up folder itself for a snapshot of one folder), `/` without paths.
+pub fn start_dir(paths: &[String]) -> String {
+    common_dir(paths.iter().map(String::as_str))
 }
 
 /// The folders from `/` down to `dir`, each as (name, path); `/` has an empty name.
@@ -163,31 +176,46 @@ pub fn path_segments(dir: &str) -> Vec<(String, String)> {
     out
 }
 
+/// One line of `restic ls --json`: a node (an entry of the snapshot) or another message such
+/// as the snapshot. Unknown fields are ignored.
 #[derive(Deserialize)]
-struct RawNode {
+pub(crate) struct RawLsNode {
     #[serde(default)]
-    message_type: Option<String>,
+    pub message_type: Option<String>,
     #[serde(default)]
     struct_type: Option<String>,
     #[serde(default)]
-    name: String,
+    pub name: String,
     #[serde(default, rename = "type")]
-    node_type: String,
+    pub node_type: String,
     #[serde(default)]
-    path: String,
+    pub path: String,
     #[serde(default)]
-    size: Option<u64>,
+    pub size: Option<u64>,
     #[serde(default)]
-    mtime: Option<String>,
+    pub mtime: Option<String>,
     #[serde(default)]
-    uid: Option<u32>,
+    pub uid: Option<u32>,
     #[serde(default)]
-    links: Option<u64>,
+    pub links: Option<u64>,
+    #[serde(default)]
+    pub inode: Option<u64>,
 }
 
-impl RawNode {
-    fn is_node(&self) -> bool {
+impl RawLsNode {
+    /// Parses one stdout line; `None` for a line that is no JSON object of this shape.
+    pub fn parse(line: &str) -> Option<Self> {
+        serde_json::from_str(line.trim()).ok()
+    }
+
+    /// Whether the line is a node; restic names the kind of a line in `message_type` and in
+    /// `struct_type`, either one is enough.
+    pub fn is_node(&self) -> bool {
         self.message_type.as_deref() == Some("node") || self.struct_type.as_deref() == Some("node")
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.node_type == "dir"
     }
 }
 
@@ -195,7 +223,7 @@ impl RawNode {
 /// restic prints the snapshot first, then the folder itself as the first node (except for `/`),
 /// then its entries; for a missing folder it prints no node at all. Unknown lines and fields
 /// are ignored.
-pub struct LsCollector {
+struct LsCollector {
     dir: String,
     seen_first_node: bool,
     dir_exists: bool,
@@ -205,7 +233,7 @@ pub struct LsCollector {
 impl LsCollector {
     /// Collects the entries of `dir` (normalised); the list is dropped once it exceeds
     /// `limit_bytes`.
-    pub fn new(dir: &str, limit_bytes: u64) -> Self {
+    fn new(dir: &str, limit_bytes: u64) -> Self {
         Self {
             dir: dir.to_string(),
             seen_first_node: false,
@@ -214,21 +242,19 @@ impl LsCollector {
         }
     }
 
-    pub fn push_line(&mut self, line: &str) {
-        let Ok(node) = serde_json::from_str::<RawNode>(line.trim()) else {
+    fn push_line(&mut self, line: &str) {
+        let Some(node) = RawLsNode::parse(line).filter(RawLsNode::is_node) else {
             return;
         };
-        if !node.is_node() {
-            return;
-        }
         if !self.seen_first_node {
             self.seen_first_node = true;
             if self.dir != "/" && node.path == self.dir {
-                self.dir_exists = node.node_type == "dir";
+                self.dir_exists = node.is_dir();
                 return;
             }
         }
-        if self.dir_exists && parent_of(&node.path) == self.dir {
+        // restic's paths are absolute; a node without one is no entry of the folder.
+        if self.dir_exists && node.path.starts_with('/') && parent_dir(&node.path) == self.dir {
             self.builder.push(LsEntry {
                 name: node.name,
                 path: node.path,
@@ -241,20 +267,12 @@ impl LsCollector {
         }
     }
 
-    pub fn finish(self) -> LsListing {
+    fn finish(self) -> LsListing {
         LsListing {
             dir: self.dir,
             dir_exists: self.dir_exists,
             entries: self.builder.finish(),
         }
-    }
-}
-
-fn parent_of(path: &str) -> &str {
-    match path.rfind('/') {
-        Some(0) => "/",
-        Some(i) => &path[..i],
-        None => "",
     }
 }
 
@@ -268,26 +286,10 @@ pub fn execute_ls(
     limit_bytes: u64,
 ) -> Result<LsListing, BackupRunError> {
     preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
-    let mut spec = ResticCommandSpec::for_destination(
-        &access.resolved.binary,
-        access.kestic_binary,
-        access.destination,
-        ls_args(snapshot_id, dir),
-    );
-    spec.low_priority = false;
     let mut collector = LsCollector::new(dir, limit_bytes);
-    let res = run_restic_streaming(
-        &spec,
-        access.destination,
-        Some(access.secret_store),
-        access.clock,
-        cancel,
-        access.extra_env,
-        &mut |line| collector.push_line(line),
-    )?;
-    if res.cancelled {
-        return Err(BackupRunError::Cancelled);
-    }
+    let res = run_streaming(access, ls_args(snapshot_id, dir), cancel, &mut |line| {
+        collector.push_line(line)
+    })?;
     check_command_succeeded(&res)?;
     Ok(collector.finish())
 }

@@ -15,8 +15,7 @@ use crate::state_cache::{format_bytes, i18np};
 use crate::time_texts::to_local;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
-use kestic_core::snapshot_find::parent_dir;
-use kestic_core::snapshot_ls::path_segments;
+use kestic_core::snapshot_ls::{parent_dir, path_segments};
 use kestic_daemon::dbus_api::{
     KesticDbusError, LsEntryDto, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
 };

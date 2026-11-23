@@ -6,10 +6,10 @@
 //! Comparing two snapshots with `restic diff --json <from> <to>`: the changed paths with the
 //! kind of their change, and the counts of the statistics line.
 
-use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded};
+use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded, run_streaming};
 use crate::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use crate::query_list::{HeldResult, ListBuilder, ListEntry, ListPage, PageRequest, QueryList};
-use crate::restic::{CancelHandle, ResticCommandSpec, run_restic_streaming};
+use crate::restic::CancelHandle;
 use kestic_i18n::codes::SnapshotChange;
 use serde::{Deserialize, Serialize};
 
@@ -80,7 +80,7 @@ impl HeldResult for DiffResult {
 /// metadata, `TU` a type change with metadata); the most telling letter decides: `?` before
 /// `T` before `M`. `U` alone (only the metadata changed) appears only with `--metadata`, which
 /// Kestic does not pass, and is ignored.
-pub fn change_of_modifier(modifier: &str) -> Option<SnapshotChange> {
+fn change_of_modifier(modifier: &str) -> Option<SnapshotChange> {
     match modifier {
         "+" => return Some(SnapshotChange::Added),
         "-" => return Some(SnapshotChange::Removed),
@@ -133,21 +133,21 @@ struct RawLine {
 
 /// Turns the output lines of `restic diff --json` into the changes and the counts. Unknown
 /// lines, message types, modifiers and fields are ignored.
-pub struct DiffCollector {
+struct DiffCollector {
     builder: ListBuilder<DiffChange>,
     counts: DiffCounts,
 }
 
 impl DiffCollector {
     /// Collects the changes; the list is dropped once it exceeds `limit_bytes`.
-    pub fn new(limit_bytes: u64) -> Self {
+    fn new(limit_bytes: u64) -> Self {
         Self {
             builder: ListBuilder::new(limit_bytes),
             counts: DiffCounts::default(),
         }
     }
 
-    pub fn push_line(&mut self, line: &str) {
+    fn push_line(&mut self, line: &str) {
         let Ok(raw) = serde_json::from_str::<RawLine>(line.trim()) else {
             return;
         };
@@ -177,7 +177,7 @@ impl DiffCollector {
         }
     }
 
-    pub fn finish(self) -> DiffResult {
+    fn finish(self) -> DiffResult {
         DiffResult {
             changes: self.builder.finish(),
             counts: self.counts,
@@ -195,26 +195,10 @@ pub fn execute_diff(
     limit_bytes: u64,
 ) -> Result<DiffResult, BackupRunError> {
     preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
-    let mut spec = ResticCommandSpec::for_destination(
-        &access.resolved.binary,
-        access.kestic_binary,
-        access.destination,
-        diff_args(from, to),
-    );
-    spec.low_priority = false;
     let mut collector = DiffCollector::new(limit_bytes);
-    let res = run_restic_streaming(
-        &spec,
-        access.destination,
-        Some(access.secret_store),
-        access.clock,
-        cancel,
-        access.extra_env,
-        &mut |line| collector.push_line(line),
-    )?;
-    if res.cancelled {
-        return Err(BackupRunError::Cancelled);
-    }
+    let res = run_streaming(access, diff_args(from, to), cancel, &mut |line| {
+        collector.push_line(line)
+    })?;
     check_command_succeeded(&res)?;
     Ok(collector.finish())
 }
