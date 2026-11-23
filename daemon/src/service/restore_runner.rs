@@ -33,7 +33,7 @@ use kestic_core::restore::{RestorePlan, RestoreRunResult, RestoreTarget, execute
 use kestic_core::restore_target::{PREVIEW_MAX_AGE, TargetCheck, check_target, preview_required};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ErrorKind, RestoreTargetCode, RunProgressPhase, ServiceErrorCode};
-use kestic_i18n::messages::nothing_restored_message;
+use kestic_i18n::messages::{interrupted_by_sleep_message, nothing_restored_message};
 use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -583,6 +583,13 @@ fn record_outcome(
                     Some(i18np("Restored %1 file", "Restored %1 files", files, &[]));
                 RunStatus::Ok
             }
+        }
+        // Stopped because the system goes to sleep: interrupted, not cancelled by the user.
+        Err(BackupRunError::Cancelled)
+            if shared.lock_unpoisoned().run_sleep_interrupted(&run.id) =>
+        {
+            run.summary_message = Some(tr(&interrupted_by_sleep_message()));
+            RunStatus::Interrupted
         }
         Err(BackupRunError::Cancelled) => {
             run.summary_message = Some(tr(&ErrorKind::Cancelled.message(None, false)));

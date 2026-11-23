@@ -2102,3 +2102,37 @@ fn m4_s05_target_inside_another_local_repository_is_refused() {
         },
     );
 }
+
+/// A restore stopped because the system goes to sleep is `unterbrochen`, not cancelled by the
+/// user, like backups and maintenance.
+#[test]
+fn m4_s05_restore_stopped_by_sleep_is_interrupted() {
+    run_isolated_test(
+        "m4_s05_restore_stopped_by_sleep_is_interrupted",
+        "KESTIC_M4_S05_SLEEP_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            let logind = common::fakes::FakeLogindHandle::start();
+            let _portal = common::fakes::FakePortalInhibitHandle::start();
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RZ", small_tree, |_| {});
+            fx.rig.wrapper.hold("restore");
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&fx.new_dir("sleep")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            fx.rig
+                .wrapper
+                .wait_for('S', "restore", 1, std::time::Duration::from_secs(15));
+            logind.emit_prepare_for_sleep(true);
+            let detail = fx.wait_run(&run_id);
+            fx.rig.wrapper.release("restore");
+            assert_eq!(detail.run.status, RunStatus::Interrupted, "{detail:?}");
+            fx.rig.daemon.stop();
+        },
+    );
+}
