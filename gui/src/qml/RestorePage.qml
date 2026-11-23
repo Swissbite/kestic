@@ -212,8 +212,6 @@ Kirigami.ScrollablePage {
 
                                 RowIcon {
                                     objectName: "restoreGroupIcon"
-                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
                                     Layout.alignment: Qt.AlignTop
                                     source: groupRow.iconName
                                     onSelection: groupRow.highlighted

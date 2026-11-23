@@ -102,8 +102,7 @@ Kirigami.ScrollablePage {
                 spacing: Kirigami.Units.mediumSpacing
 
                 RowIcon {
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.medium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.medium
+                    iconSize: Kirigami.Units.iconSizes.medium
                     source: row.sourceKind === "drive" ? "drive-harddisk" : "folder"
                     onSelection: row.highlighted
                     backdropObjectName: "backupRowSourceIconBackdrop"

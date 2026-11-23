@@ -396,8 +396,6 @@ Kirigami.ScrollablePage {
                             RowIcon {
                                 source: "dialog-information"
                                 onSelection: snapRow.highlighted
-                                Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                Layout.preferredHeight: Kirigami.Units.iconSizes.small
                             }
                             Controls.Label {
                                 objectName: "restoreSnapshotHint"

@@ -98,25 +98,11 @@ Kirigami.ScrollablePage {
             contentItem: RowLayout {
                 spacing: Kirigami.Units.mediumSpacing
 
-                Item {
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.medium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-
-                    // The folder icon has the colour of the selection: on the selected row it
-                    // sits on the background colour, or its body would vanish.
-                    Rectangle {
-                        objectName: "destinationRowIconBackdrop"
-                        visible: row.highlighted
-                        anchors.fill: parent
-                        anchors.margins: -2
-                        radius: Kirigami.Units.cornerRadius
-                        color: Kirigami.Theme.backgroundColor
-                    }
-
-                    Kirigami.Icon {
-                        anchors.fill: parent
-                        source: row.kindName === "rest" ? "network-server" : "folder"
-                    }
+                RowIcon {
+                    iconSize: Kirigami.Units.iconSizes.medium
+                    source: row.kindName === "rest" ? "network-server" : "folder"
+                    onSelection: row.highlighted
+                    backdropObjectName: "destinationRowIconBackdrop"
                 }
 
                 ColumnLayout {
