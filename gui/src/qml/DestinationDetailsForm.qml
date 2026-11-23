@@ -246,7 +246,7 @@ ColumnLayout {
             text: form.draft.asksRcloneRemote ? form.draft.location.replace(/^rclone:/, "") : form.draft.location
             placeholderText: form.draft.asksRcloneRemote ? "myremote:backups/laptop" : "b2:bucket-name:backups/laptop"
             onTextChanged: {
-                var url = form.draft.asksRcloneRemote ? "rclone:" + text : text;
+                var url = form.draft.asksRcloneRemote ? "rclone:" + text.replace(/^rclone:/, "") : text;
                 if (url !== form.draft.location) {
                     form.draft.location = url;
                     form.locationEdited();
@@ -258,11 +258,12 @@ ColumnLayout {
 
         Controls.Label {
             objectName: form.namePrefix + "GenericError"
-            visible: form.draft.kindIsGeneric && form.draft.genericError !== ""
-            text: form.draft.genericError
+            visible: form.draft.kindIsGeneric && form.draft.genericErrors.url !== ""
+            text: form.draft.genericErrors.url
             color: Kirigami.Theme.negativeTextColor
             wrapMode: Text.Wrap
             Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
         }
 
         Kirigami.Separator {
@@ -271,10 +272,54 @@ ColumnLayout {
             Kirigami.FormData.label: i18n("Environment Variables")
         }
 
+        Controls.Label {
+            objectName: form.namePrefix + "EnvHint"
+            visible: form.draft.kindIsGeneric
+            text: i18n("Settings the storage service reads, for example its account ID and key. Secret values are kept only in the password store.")
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+        }
+
         // The rows in one layout: the form layout keeps one item while rows come and go.
         ColumnLayout {
             visible: form.draft.kindIsGeneric && form.draft.envModel.count > 0
             Layout.fillWidth: true
+
+            // Column labels; the switch and the button stand in invisibly so the labels sit over
+            // their fields.
+            RowLayout {
+                Controls.Label {
+                    text: i18n("Name")
+                    font: Kirigami.Theme.smallFont
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                    Layout.fillWidth: true
+                }
+
+                Controls.Label {
+                    text: i18n("Value")
+                    font: Kirigami.Theme.smallFont
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                    Layout.fillWidth: true
+                }
+
+                Controls.Switch {
+                    text: i18n("Secret")
+                    opacity: 0
+                    enabled: false
+                    activeFocusOnTab: false
+                    Accessible.ignored: true
+                }
+
+                Controls.ToolButton {
+                    icon.name: "list-remove"
+                    display: Controls.AbstractButton.IconOnly
+                    opacity: 0
+                    enabled: false
+                    activeFocusOnTab: false
+                    Accessible.ignored: true
+                }
+            }
 
             Repeater {
                 model: form.draft.envModel
@@ -295,6 +340,7 @@ ColumnLayout {
                         text: envRow.name
                         placeholderText: i18n("NAME")
                         Accessible.name: i18n("Variable name")
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
                         Layout.fillWidth: true
                         onTextChanged: if (text !== envRow.name) form.draft.editEnvVar(envRow.index, "name", text)
                     }
@@ -305,6 +351,7 @@ ColumnLayout {
                         echoMode: envRow.secret ? TextInput.Password : TextInput.Normal
                         placeholderText: form.editing && envRow.secret ? i18n("Leave empty to keep the saved value") : i18n("Value")
                         Accessible.name: i18n("Variable value")
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
                         Layout.fillWidth: true
                         onTextChanged: if (text !== envRow.value) form.draft.editEnvVar(envRow.index, "value", text)
                     }
@@ -329,6 +376,16 @@ ColumnLayout {
                     }
                 }
             }
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "EnvError"
+            visible: form.draft.kindIsGeneric && form.draft.genericErrors.env !== ""
+            text: form.draft.genericErrors.env
+            color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
         }
 
         Controls.Button {

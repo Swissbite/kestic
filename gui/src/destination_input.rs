@@ -103,16 +103,33 @@ fn generic_error(err: GenericInputError) -> DestinationInputError {
         GenericInputError::MissingAddress(_) => DestinationInputError::Invalid(
             i18n("Enter the address of the storage after the scheme.").to_string(),
         ),
-        other @ GenericInputError::InvalidVariable(_) => {
+        GenericInputError::OptionLikeAddress(_) => DestinationInputError::Invalid(
+            i18n("The address after the scheme must not start with '-'.").to_string(),
+        ),
+        GenericInputError::DuplicateVariable(name) => {
+            DestinationInputError::Invalid(i18n("The variable '%1' is given twice.").subs(&[&name]))
+        }
+        GenericInputError::NulInValue(name) => DestinationInputError::Invalid(
+            i18n("The value of '%1' contains a character that cannot be passed on.").subs(&[&name]),
+        ),
+        other @ GenericInputError::SecretValueStored(_) => {
             DestinationInputError::Invalid(other.to_string())
         }
     }
 }
 
-/// Why the repository URL and the variables of the generic form (`env_json`: the `env` list of
-/// `fieldsJson()`) are refused, checked by `core` as on saving; `None` when they are accepted.
-/// The form keeps «Test Connection» and so adding the destination locked while there is one.
-pub fn generic_fields_error(url: &str, env_json: &str) -> Option<DestinationInputError> {
+/// Why `core` refuses the repository URL of the generic form, as on saving; `None` when it is
+/// accepted. The form keeps «Test Connection», and so adding the destination, locked while there
+/// is one.
+pub fn generic_url_error(url: &str) -> Option<DestinationInputError> {
+    kestic_core::generic::validate_url(url)
+        .err()
+        .map(generic_error)
+}
+
+/// Why `core` refuses the variables of the generic form (`env_json`: the `env` list of
+/// `fieldsJson()`); `None` when they are accepted.
+pub fn generic_env_error(env_json: &str) -> Option<DestinationInputError> {
     let fields: Vec<EnvFieldInput> = match serde_json::from_str(env_json) {
         Ok(f) => f,
         Err(e) => return Some(DestinationInputError::Invalid(e.to_string())),
@@ -121,8 +138,7 @@ pub fn generic_fields_error(url: &str, env_json: &str) -> Option<DestinationInpu
         .into_iter()
         .map(EnvFieldInput::into_env_var)
         .collect();
-    kestic_core::generic::validate_url(url)
-        .and_then(|()| kestic_core::generic::validate_env(&env))
+    kestic_core::generic::validate_env(&env)
         .err()
         .map(generic_error)
 }
@@ -237,7 +253,7 @@ mod tests {
     #[test]
     fn ac_m5_03_1_unknown_scheme_keeps_adding_locked() {
         assert_eq!(
-            code_of(generic_fields_error("ftp:host:/x", "[]")),
+            code_of(generic_url_error("ftp:host:/x")),
             Some((
                 ConnectionTestCode::UnsupportedScheme,
                 "ftp:host:/x".to_string()
@@ -245,7 +261,7 @@ mod tests {
             "(c) unknown scheme"
         );
         assert!(
-            generic_fields_error("gs:bucket:/laptop", "[]").is_none(),
+            generic_url_error("gs:bucket:/laptop").is_none(),
             "(c) known scheme"
         );
     }
@@ -257,14 +273,14 @@ mod tests {
         for name in ["LD_PRELOAD", "HOME", "lower_case"] {
             let env = format!(r#"[{{"name":"{name}","secret":false,"value":"x"}}]"#);
             assert_eq!(
-                code_of(generic_fields_error("b2:bucket:laptop", &env)),
+                code_of(generic_env_error(&env)),
                 Some((ConnectionTestCode::ReservedVariable, name.to_string())),
                 "(b) {name}"
             );
         }
         let ok = r#"[{"name":"B2_ACCOUNT_KEY","secret":true,"value":""}]"#;
         assert!(
-            generic_fields_error("b2:bucket:laptop", ok).is_none(),
+            generic_env_error(ok).is_none(),
             "(b) a valid secret variable"
         );
     }

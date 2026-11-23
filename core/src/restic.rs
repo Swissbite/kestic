@@ -702,13 +702,23 @@ impl CancelHandle {
 
 /// Sends `SIGTERM` to the children of `pid` (restic behind a wrapper) and to `pid` itself.
 pub(crate) fn send_sigterm_to_tree(pid: u32) {
+    send_signal_to_tree(pid, "-TERM");
+}
+
+/// Sends `SIGKILL` to the children of `pid` and to `pid` itself, for a process that ignored
+/// `SIGTERM`.
+pub(crate) fn send_sigkill_to_tree(pid: u32) {
+    send_signal_to_tree(pid, "-KILL");
+}
+
+fn send_signal_to_tree(pid: u32, signal: &str) {
     // `nice`/`ionice` exec into restic directly on Linux (`execve`), so `pid` IS restic,
-    // but sending SIGTERM via `pkill -TERM -P <pid>` first handles wrapper shells too.
+    // but signalling its children (`pkill -P <pid>`) first handles wrapper shells too.
     let _ = Command::new("pkill")
-        .args(["-TERM", "-P", &pid.to_string()])
+        .args([signal, "-P", &pid.to_string()])
         .status();
     let _ = Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
+        .args([signal, &pid.to_string()])
         .status();
 }
 
@@ -769,10 +779,6 @@ pub(crate) fn apply_backend_env(
     backend: &BackendCredentials,
 ) -> Result<Vec<String>, SecretError> {
     let mut env_keys = Vec::new();
-    if let Some(ref cache_dir) = spec.cache_dir {
-        cmd.env("RESTIC_CACHE_DIR", cache_dir);
-        env_keys.push("RESTIC_CACHE_DIR".to_string());
-    }
     if !spec.backend_env_cleared_prefixes.is_empty() {
         for (name, _) in std::env::vars_os() {
             let bytes = name.as_encoded_bytes();
@@ -790,6 +796,11 @@ pub(crate) fn apply_backend_env(
         env_keys.push(name.clone());
     }
     env_keys.extend(backend.apply_env(cmd, &spec.backend_secret_slots)?);
+    // Set last, so a variable of a generic destination cannot move Kestic's own cache.
+    if let Some(ref cache_dir) = spec.cache_dir {
+        cmd.env("RESTIC_CACHE_DIR", cache_dir);
+        env_keys.push("RESTIC_CACHE_DIR".to_string());
+    }
     Ok(env_keys)
 }
 

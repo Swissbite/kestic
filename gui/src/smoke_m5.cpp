@@ -514,13 +514,15 @@ int scenario_generic_form(const Ctx& c) {
     M3_CHECK(5541, save_screenshot(w, c.out_path), "screenshot failed");
 
     // AC-M5-03-7 (b)
+    QQuickItem* env_error = item_named(w, "wizDestEnvError");
     QQuickItem* preload = add_variable(w, 2, QStringLiteral("LD_PRELOAD"), QStringLiteral("/tmp/x.so"));
     M3_CHECK(5550, preload != nullptr, "variable row 2 missing");
-    M3_CHECK(5551, wait_until([&] { return error->isVisible(); }, 2000), "AC-M5-03-7 (b): no message for LD_PRELOAD");
-    M3_CHECK(5552, error->property("text").toString().contains(QStringLiteral("LD_PRELOAD")), "AC-M5-03-7 (b): the message names the variable");
+    M3_CHECK(5551, wait_until([&] { return env_error && env_error->isVisible(); }, 2000), "AC-M5-03-7 (b): no message for LD_PRELOAD");
+    M3_CHECK(5552, env_error->property("text").toString().contains(QStringLiteral("LD_PRELOAD")), "AC-M5-03-7 (b): the message names the variable");
+    M3_CHECK(5557, !error->isVisible(), "the variable's message stands at the URL");
     M3_CHECK(5553, !test->isEnabled(), "AC-M5-03-7 (b): «Test Connection» enabled with a reserved variable");
     if (!c.out_path.isEmpty()) {
-        scroll_into_view(w, error);
+        scroll_into_view(w, env_error);
         wait_ms(300);
         QString reserved_shot = c.out_path;
         reserved_shot.replace(QStringLiteral("generic-form"), QStringLiteral("generic-reserved"));
@@ -529,7 +531,7 @@ int scenario_generic_form(const Ctx& c) {
     QQuickItem* remove = item_named(w, env_name("Remove", 2).constData());
     scroll_into_view(w, remove);
     M3_CHECK(5555, click_ui_item(w, remove, "Remove Variable"), "click on «Remove Variable» failed");
-    M3_CHECK(5556, wait_until([&] { return !error->isVisible() && test->isEnabled(); }, 2000), "removing the variable does not unlock the test");
+    M3_CHECK(5556, wait_until([&] { return !env_error->isVisible() && test->isEnabled(); }, 2000), "removing the variable does not unlock the test");
     return 0;
 }
 

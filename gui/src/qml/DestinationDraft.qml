@@ -45,15 +45,16 @@ QtObject {
     readonly property bool kindIsGeneric: kind === "generic"
     // The rclone card asks for the remote only; the URL is `rclone:` and the remote.
     readonly property bool asksRcloneRemote: kindIsGeneric && typeCard === "rclone"
-    // Why `core` refuses the URL or the variables of the generic form; empty when accepted.
-    readonly property string genericError: kindIsGeneric
-        ? appBackend.genericFieldsError(location, JSON.stringify(envFields()))
-        : ""
+    // Why `core` refuses the URL and the variables of the generic form (`{url, env}`, each empty
+    // when accepted).
+    readonly property var genericErrors: kindIsGeneric
+        ? JSON.parse(appBackend.genericFieldsErrors(location, JSON.stringify(envFields())))
+        : ({ url: "", env: "" })
     readonly property bool nameValid: name.trim().length > 0
     readonly property bool locationValid: kindIsS3
         ? endpointValid && bucketValid && s3PathValid
         : kindIsGeneric
-            ? genericError === ""
+            ? genericErrors.url === "" && genericErrors.env === ""
             : kindIsRest
                 ? /^https?:\/\//i.test(location.trim())
                 : location.trim().length > 0

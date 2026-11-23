@@ -477,6 +477,21 @@ fn snapshot_to_dto(s: ResticSnapshot) -> SnapshotSummaryDto {
     }
 }
 
+/// Refuses a destination whose backend needs a program that is not in the daemon's `PATH`
+/// (`rclone`): restic would fail with its own unclear error.
+fn refuse_missing_program(
+    kind: &DestinationKind,
+    core: &DaemonCore,
+) -> Result<(), KesticServiceErr> {
+    match missing_program(kind, core.program_search_path().as_deref()) {
+        Some(program) => Err(KesticServiceErr::InvalidInput(format!(
+            "the program `{}` is not installed",
+            program.executable()
+        ))),
+        None => Ok(()),
+    }
+}
+
 pub(crate) fn add_destination_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     dest_json: &str,
@@ -512,12 +527,7 @@ pub(crate) fn add_destination_unlocked(
         }
         dest.validate()
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
-        if let Some(program) = missing_program(&dest.kind, guard.program_search_path().as_deref()) {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "the program `{}` is not installed",
-                program.executable()
-            )));
-        }
+        refuse_missing_program(&dest.kind, &guard)?;
         if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
             return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
@@ -571,6 +581,7 @@ pub(crate) fn update_destination_unlocked(
         if guard.config.destination(&updated.id).is_none() {
             return Err(KesticServiceErr::NotFound(updated.id.as_str().to_string()));
         }
+        refuse_missing_program(&updated.kind, &guard)?;
         if let Some(existing) = guard
             .config
             .find_duplicate_destination(&updated.kind, Some(&updated.id))

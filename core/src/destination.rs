@@ -117,7 +117,10 @@ pub fn preflight_check_with_restic(
     if !dest.kind.needs_restic_preflight() {
         return Ok(());
     }
-    let backend = BackendCredentials::load_stored(dest, runtime.secret_store)?;
+    // A locked password store says nothing about the destination; the run reports it.
+    let Ok(backend) = BackendCredentials::load_stored(dest, runtime.secret_store) else {
+        return Ok(());
+    };
     match probe_repository(dest, &backend, runtime) {
         Err(err @ (DestinationError::Unreachable(_) | DestinationError::NotResponding(_))) => {
             Err(err)
@@ -496,9 +499,11 @@ fn execute_probe_command(
             }
         }
     }
-    let timed_out = watchdog.is_some_and(Watchdog::stop);
+    // An early stop that restic ignores ends with the watchdog's time limit; the conclusive
+    // error found before stays the answer.
     let status = child.wait()?;
-    if timed_out {
+    let timed_out = watchdog.is_some_and(Watchdog::stop);
+    if timed_out && abort_line.is_none() {
         return Err(DestinationError::NotResponding(format!(
             "restic did not finish within {} s",
             timeout.unwrap_or_default().as_secs()
@@ -576,6 +581,11 @@ fn classify_probe(
 }
 
 /// Stops a process tree with `SIGTERM` unless [`Watchdog::stop`] comes first.
+/// How long a process stopped with SIGTERM gets to end before SIGKILL.
+const KILL_GRACE: Duration = Duration::from_secs(2);
+
+/// Stops a process after a time limit; it is stopped only after the process was reaped, so the
+/// signals never reach a reused process ID.
 struct Watchdog {
     done: mpsc::Sender<()>,
     fired: Arc<AtomicBool>,
@@ -591,6 +601,10 @@ impl Watchdog {
             if done_rx.recv_timeout(limit) == Err(mpsc::RecvTimeoutError::Timeout) {
                 flag.store(true, Ordering::SeqCst);
                 crate::restic::send_sigterm_to_tree(pid);
+                // A backend that ignores SIGTERM must not keep the check waiting.
+                if done_rx.recv_timeout(KILL_GRACE) == Err(mpsc::RecvTimeoutError::Timeout) {
+                    crate::restic::send_sigkill_to_tree(pid);
+                }
             }
         });
         Self {
@@ -724,6 +738,124 @@ mod tests {
         )
         .is_none()
     );
+    }
+
+    /// A restic that ignores SIGTERM (a backend program trapping it) is killed after the grace
+    /// period: the check still ends with «the server does not respond» and leaves no process.
+    #[test]
+    fn connection_test_kills_restic_that_ignores_sigterm() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let script = dir.path().join("restic");
+        let pid_file = dir.path().join("restic.pid");
+        kestic_test_support::tools::write_executable(
+            &script,
+            &format!(
+                "#!/bin/sh\ntrap '' TERM\necho $$ > '{}'\nsleep 60\n",
+                pid_file.display()
+            ),
+        );
+        let resolved = ResolvedRestic {
+            binary: script,
+            version: semver::Version::new(0, 18, 0),
+        };
+        let dest = Destination::new(
+            "Stubborn",
+            DestinationKind::Local {
+                path: dir.path().to_path_buf(),
+            },
+        )
+        .expect("destination");
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let helper = dir.path().join("kestic");
+        let started = std::time::Instant::now();
+
+        let res = run_with_temp_repo_password_file(
+            &dest,
+            mode_subcommand(DestinationSetupMode::ConnectExisting),
+            &SecretValue::from_str_secret(strong_password()),
+            &BackendCredentials::none(),
+            ProbeRuntime {
+                resolved: &resolved,
+                kestic_binary: &helper,
+                clock: &clock,
+                cache_dir: None,
+                timeout: Some(Duration::from_secs(1)),
+            },
+        );
+
+        assert!(
+            matches!(res, Err(DestinationError::NotResponding(_))),
+            "a restic that ignores SIGTERM ends as not responding"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "killed after the grace period, took {:?}",
+            started.elapsed()
+        );
+        let pid = fs::read_to_string(&pid_file).expect("restic started");
+        assert!(
+            !Path::new(&format!("/proc/{}", pid.trim())).exists(),
+            "restic still runs"
+        );
+    }
+
+    /// A password store that cannot be read says nothing about the destination: the pre-check of
+    /// a generic destination passes and leaves the error to the run.
+    #[test]
+    fn restic_preflight_passes_when_the_password_store_fails() {
+        struct LockedStore;
+        impl SecretStore for LockedStore {
+            fn set_secret(&self, _: &str, _: &str, _: &SecretValue) -> Result<(), SecretError> {
+                Err(SecretError::LockedOrPromptRequired("locked".to_string()))
+            }
+            fn get_secret(&self, _: &str, _: &str) -> Result<Option<SecretValue>, SecretError> {
+                Err(SecretError::LockedOrPromptRequired("locked".to_string()))
+            }
+            fn delete_secret(&self, _: &str, _: &str) -> Result<(), SecretError> {
+                Err(SecretError::LockedOrPromptRequired("locked".to_string()))
+            }
+        }
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let marker = dir.path().join("started");
+        let script = dir.path().join("restic");
+        kestic_test_support::tools::write_executable(
+            &script,
+            &format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        );
+        let resolved = ResolvedRestic {
+            binary: script,
+            version: semver::Version::new(0, 18, 0),
+        };
+        let dest = Destination::new(
+            "Cloud",
+            DestinationKind::Generic {
+                url: "b2:bucket:laptop".to_string(),
+                env: vec![crate::generic::EnvVar {
+                    name: "B2_ACCOUNT_KEY".to_string(),
+                    secret: true,
+                    value: None,
+                }],
+            },
+        )
+        .expect("destination");
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let helper = dir.path().join("kestic");
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &LockedStore,
+            clock: &clock,
+            cache_dir: None,
+        };
+
+        assert!(
+            preflight_check_with_restic(&dest, &runtime).is_ok(),
+            "a locked password store is no unreachable destination"
+        );
+        assert!(
+            !marker.exists(),
+            "restic started without the secret variable"
+        );
     }
 
     /// A connection test whose restic does not answer ends after the time limit with «the server

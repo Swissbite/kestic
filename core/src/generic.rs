@@ -32,15 +32,25 @@ pub enum GenericInputError {
     /// Only the scheme is there, no address of the backend after it.
     #[error("the repository URL '{0}' has no address after the scheme")]
     MissingAddress(String),
+    /// The address after the scheme starts with `-`, which the backend program would read as one
+    /// of its options.
+    #[error("the address in the repository URL '{0}' must not start with '-'")]
+    OptionLikeAddress(String),
     /// The variable name would override Kestic's own environment or is no valid name.
     #[error(
         "environment variable '{0}' is not allowed: names are A-Z, 0-9 and _, and must not \
          override RESTIC_PASSWORD*, RESTIC_REPOSITORY*, PATH, HOME or LD_*"
     )]
     ReservedVariable(String),
-    /// Any other problem with the variables (a name twice, a stored secret value).
-    #[error("invalid environment variable: {0}")]
-    InvalidVariable(String),
+    /// The variable name is given more than once.
+    #[error("the environment variable '{0}' is given twice")]
+    DuplicateVariable(String),
+    /// A value is stored for a secret variable; it belongs in the password store only.
+    #[error("the value of the secret variable '{0}' belongs in the password store")]
+    SecretValueStored(String),
+    /// The value contains a NUL byte, which no process environment can hold.
+    #[error("the value of the environment variable '{0}' contains a NUL byte")]
+    NulInValue(String),
 }
 
 /// The scheme of `url` (`b2` for `b2:bucket:path`), if it is one of [`SCHEMES`].
@@ -55,11 +65,14 @@ pub fn validate_url(url: &str) -> Result<(), GenericInputError> {
     if scheme(trimmed).is_none() || trimmed.chars().any(char::is_control) {
         return Err(GenericInputError::UnsupportedScheme(trimmed.to_string()));
     }
-    let address_given = trimmed
-        .split_once(':')
-        .is_some_and(|(_, rest)| !rest.trim().is_empty());
-    if !address_given {
+    let address = trimmed.split_once(':').map_or("", |(_, rest)| rest.trim());
+    if address.is_empty() {
         return Err(GenericInputError::MissingAddress(trimmed.to_string()));
+    }
+    // restic hands the address to the backend program (`rclone`), which would read a leading `-`
+    // as one of its options.
+    if address.starts_with('-') {
+        return Err(GenericInputError::OptionLikeAddress(trimmed.to_string()));
     }
     Ok(())
 }
@@ -91,23 +104,12 @@ pub fn validate_env(vars: &[EnvVar]) -> Result<(), GenericInputError> {
     for var in vars {
         validate_variable_name(&var.name)?;
         if !seen.insert(var.name.as_str()) {
-            return Err(GenericInputError::InvalidVariable(format!(
-                "'{}' is given twice",
-                var.name
-            )));
+            return Err(GenericInputError::DuplicateVariable(var.name.clone()));
         }
         match (&var.value, var.secret) {
-            (Some(_), true) => {
-                return Err(GenericInputError::InvalidVariable(format!(
-                    "the value of the secret variable '{}' belongs in the password store",
-                    var.name
-                )));
-            }
+            (Some(_), true) => return Err(GenericInputError::SecretValueStored(var.name.clone())),
             (Some(value), false) if value.contains('\0') => {
-                return Err(GenericInputError::InvalidVariable(format!(
-                    "the value of '{}' contains a NUL byte",
-                    var.name
-                )));
+                return Err(GenericInputError::NulInValue(var.name.clone()));
             }
             _ => {}
         }
@@ -166,6 +168,7 @@ mod tests {
             Err(GenericInputError::MissingAddress("rclone:".to_string()))
         );
         assert!(validate_url("rclone:remote:backup").is_ok());
+        assert!(validate_url("rclone:--log-file=/tmp/x").is_err());
         assert!(validate_url("gs:bucket:/\u{0}").is_err());
     }
 
@@ -178,7 +181,7 @@ mod tests {
         };
         assert!(matches!(
             validate_env(&[var]),
-            Err(GenericInputError::InvalidVariable(_))
+            Err(GenericInputError::SecretValueStored(_))
         ));
     }
 }

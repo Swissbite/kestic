@@ -361,3 +361,39 @@ fn ac_m5_03_7_reserved_and_invalid_variable_names_are_refused() {
         "(c) valid variables still reach restic"
     );
 }
+
+/// M5-S03, variables of the generic form: a variable named `RESTIC_CACHE_DIR` does not move
+/// Kestic's own cache directory.
+#[test]
+fn m5_03_kestic_cache_dir_wins_over_a_variable() {
+    let dir = TempDir::new().expect("tempdir");
+    let resolved = fake_restic(dir.path());
+    let store = InMemorySecretStore::new();
+    let dest = generic(
+        "b2:bucket:laptop",
+        vec![var("RESTIC_CACHE_DIR", false, Some("/tmp/elsewhere"))],
+    )
+    .expect("destination");
+    store
+        .set_secret(
+            dest.id.as_str(),
+            SECRET_KIND_REPO,
+            &SecretValue::from_str_secret(strong_password()),
+        )
+        .expect("store repository password");
+    let cache = dir.path().join("cache");
+    let spec = ResticCommandSpec::for_destination(
+        &resolved.binary,
+        dir.path().join("kestic"),
+        &dest,
+        vec!["snapshots".to_string()],
+    )
+    .with_cache_dir(Some(&cache));
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
+    assert_eq!(
+        env_value(&read(dir.path().join("env.log")), "RESTIC_CACHE_DIR").as_deref(),
+        Some(cache.to_string_lossy().as_ref()),
+        "Kestic's cache directory"
+    );
+}
