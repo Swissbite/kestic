@@ -28,7 +28,9 @@ use kestic_daemon::dbus_api::{
     SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use kestic_i18n::codes::ErrorKind;
-use kestic_i18n::messages::{active_run_message, nothing_restored_message};
+use kestic_i18n::messages::{
+    active_run_message, interrupted_by_sleep_message, nothing_restored_message,
+};
 use std::pin::Pin;
 
 model_row!(PreviewRow {
@@ -202,10 +204,19 @@ pub(crate) fn run_end_text(detail: &RunDetailDto) -> String {
         }
         RunStatus::Warning => tr(&nothing_restored_message()),
         RunStatus::Cancelled => tr(&ErrorKind::Cancelled.message(None, false)),
-        _ => tr(&detail
-            .error_kind
-            .unwrap_or(ErrorKind::Unknown)
-            .message(detail.error_exit_code, false)),
+        // Stopped by sleep, or ended at the next daemon start: the run says why.
+        RunStatus::Interrupted => detail
+            .run
+            .summary_message
+            .clone()
+            .unwrap_or_else(|| tr(&interrupted_by_sleep_message())),
+        // The generic text of an unrecognised error names a backup.
+        _ => match detail.error_kind {
+            Some(kind) if kind != ErrorKind::Unknown => {
+                tr(&kind.message(detail.error_exit_code, false))
+            }
+            _ => i18n("Restore failed").to_string(),
+        },
     }
 }
 
@@ -694,5 +705,41 @@ mod tests {
         assert_eq!(mode_of(0), RestoreOverwrite::Never);
         assert_eq!(mode_of(3), RestoreOverwrite::Always);
         assert_eq!(mode_of(9), RestoreOverwrite::Never);
+    }
+
+    fn ended_run(status: RunStatus, summary: Option<&str>) -> RunDetailDto {
+        let clock =
+            kestic_core::clock::FakeClock::new(time::macros::datetime!(2026-11-15 12:00 UTC));
+        let dest = kestic_core::model::DestinationId::generate().expect("destination id");
+        let mut run = kestic_core::model::Run::new_restore(&clock, dest, None).expect("run");
+        run.status = status;
+        run.summary_message = summary.map(str::to_string);
+        RunDetailDto {
+            run,
+            backup_name: None,
+            destination_name: "NAS".into(),
+            log_lines: Vec::new(),
+            transparent_commands: Vec::new(),
+            error_action: None,
+            error_raw_detail: None,
+            unreadable_files: Vec::new(),
+            error_kind: None,
+            error_exit_code: Some(1),
+        }
+    }
+
+    #[test]
+    fn ended_restore_never_names_a_backup() {
+        assert_eq!(
+            run_end_text(&ended_run(
+                RunStatus::Interrupted,
+                Some("Interrupted by system sleep")
+            )),
+            "Interrupted by system sleep"
+        );
+        assert_eq!(
+            run_end_text(&ended_run(RunStatus::Error, Some("restic failed"))),
+            "Restore failed"
+        );
     }
 }

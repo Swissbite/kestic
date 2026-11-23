@@ -125,6 +125,18 @@ fn ac_m4_05_3_original_location_keeps_differing_file_by_default() {
                     "(a) {}: {args:?}",
                     v.label
                 );
+                // AC-M4-05-17 (c): at the original location `--target` is the common folder.
+                let target = args
+                    .iter()
+                    .position(|a| a == "--target")
+                    .and_then(|i| args.get(i + 1));
+                let src = fs::canonicalize(&fx.src).expect("canonical src");
+                assert_eq!(
+                    target.map(String::as_str),
+                    Some(src.to_string_lossy().as_ref()),
+                    "AC-M4-05-17 (c) {}: {args:?}",
+                    v.label
+                );
                 assert_eq!(
                     fs::read_to_string(fx.src.join("a.txt")).expect("read a.txt"),
                     "changed locally",
@@ -2133,47 +2145,6 @@ fn m4_s05_restore_stopped_by_sleep_is_interrupted() {
             fx.rig.wrapper.release("restore");
             assert_eq!(detail.run.status, RunStatus::Interrupted, "{detail:?}");
             fx.rig.daemon.stop();
-        },
-    );
-}
-
-/// A symbolic link and a hard-linked file that are the same at the target as in the snapshot
-/// count as unchanged in every mode, although restic reports them `restored` with `always`
-/// and `if-changed`.
-#[test]
-fn m4_s05_identical_links_are_unchanged() {
-    run_isolated_test(
-        "m4_s05_identical_links_are_unchanged",
-        "KESTIC_M4_S05_SAME_LINKS_INNER",
-        |root| {
-            for_each_variant(root, "M4RL", linked_tree, |fx, v| {
-                for mode in [
-                    RestoreOverwrite::Never,
-                    RestoreOverwrite::IfChanged,
-                    RestoreOverwrite::Always,
-                ] {
-                    let (_, p) = fx.preview(&[], Some(fx.original()), mode);
-                    let o = outcomes(&p);
-                    assert_eq!(
-                        o.get("link"),
-                        Some(&RestoreOutcome::Identical),
-                        "{} {mode:?}: symlink",
-                        v.label
-                    );
-                    assert_eq!(
-                        o.get("hard.txt"),
-                        Some(&RestoreOutcome::Identical),
-                        "{} {mode:?}: hard link",
-                        v.label
-                    );
-                    assert_eq!(p.kept_files, 0, "{} {mode:?}: nothing kept", v.label);
-                    assert_eq!(
-                        p.overwritten_files, 0,
-                        "{} {mode:?}: nothing overwritten",
-                        v.label
-                    );
-                }
-            });
         },
     );
 }

@@ -20,8 +20,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 /// One file of a preview (`RestorePreviewEntryDto`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,10 +121,8 @@ impl PreviewClassification {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TreeNode {
     pub is_dir: bool,
-    pub is_symlink: bool,
     pub size: u64,
     pub inode: Option<u64>,
-    pub mtime: Option<OffsetDateTime>,
 }
 
 /// The entries of the restored folder by their path relative to it (starting with `/`, as the
@@ -179,8 +175,6 @@ struct RawTreeNode {
     size: Option<u64>,
     #[serde(default)]
     inode: Option<u64>,
-    #[serde(default)]
-    mtime: Option<String>,
 }
 
 impl TreeCollector {
@@ -205,12 +199,8 @@ impl TreeCollector {
             .or_default()
             .push(TreeNode {
                 is_dir: node.node_type == "dir",
-                is_symlink: node.node_type == "symlink",
                 size: node.size.unwrap_or(0),
                 inode: node.inode,
-                mtime: node
-                    .mtime
-                    .and_then(|t| OffsetDateTime::parse(&t, &Rfc3339).ok()),
             });
     }
 
@@ -289,12 +279,10 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             |(p, _)| p.clone(),
         );
         let existing = picked.map(|(_, m)| m.clone());
-        // A symbolic link where the snapshot has one too is no surprise.
-        if !node.is_some_and(|n| n.is_symlink)
-            && found
-                .entries
-                .iter()
-                .any(|(_, m)| m.file_type().is_symlink())
+        if found
+            .entries
+            .iter()
+            .any(|(_, m)| m.file_type().is_symlink())
         {
             note(RestoreNoteCode::SymlinkInTarget, &mut notes);
         }
@@ -314,17 +302,9 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             });
             continue;
         }
-        // restic reports a symbolic link or a hard-linked file as `restored` with `always` and
-        // `if-changed` even when the target already holds the same entry; the same type, size
-        // and modification time as in the snapshot count as unchanged.
-        let same_link = node.is_some_and(|n| {
-            let linked = n.is_symlink || n.inode.is_some_and(|i| shared_inodes.contains(&i));
-            linked && existing.as_ref().is_some_and(|m| same_link_entry(n, m))
-        });
         let outcome = match action.as_str() {
             // The dry run looks through the link; the run writes into a new, real folder.
             _ if behind_link => RestoreOutcome::New,
-            "restored" | "unchanged" if same_link => RestoreOutcome::Identical,
             "restored" if existing.is_some() => RestoreOutcome::Overwritten,
             "restored" => RestoreOutcome::New,
             "updated" => RestoreOutcome::Overwritten,
@@ -383,19 +363,6 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             .filter(|c| notes.contains(c))
             .collect(),
     }
-}
-
-/// Whether `existing` at the target is the link-like snapshot entry `node`: a symbolic link for
-/// a symbolic link, a file of the same size for a hard-linked file, with the same modification
-/// time (restic restores it, also for symbolic links).
-fn same_link_entry(node: &TreeNode, existing: &std::fs::Metadata) -> bool {
-    let same_type = if node.is_symlink {
-        existing.file_type().is_symlink()
-    } else {
-        existing.is_file() && existing.len() == node.size
-    };
-    let modified = existing.modified().ok().map(OffsetDateTime::from);
-    same_type && node.mtime.is_some() && modified == node.mtime
 }
 
 /// The existing entry at the target that belongs to the `rank`-th action of its kind

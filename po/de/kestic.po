@@ -3696,6 +3696,9 @@ msgstr "«%1» lässt sich nicht einzeln wiederherstellen: Der Name enthält Zei
 msgid "Restore Folder"
 msgstr "Ordner wiederherstellen"
 
+msgid "Restore failed"
+msgstr "Wiederherstellen fehlgeschlagen"
+
 msgid "Restoring files…"
 msgstr "Dateien werden wiederhergestellt…"
 
