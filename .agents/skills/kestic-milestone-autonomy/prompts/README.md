@@ -6,7 +6,7 @@ during a milestone; changes are level 3.
 | Prompt | When |
 | --- | --- |
 | `review-correctness-spec.md` | every story pull request |
-| `review-break-it.md` | every story pull request, on a different model than the author |
+| `review-break-it.md` | every story pull request, on a different model than the author; in contract mode before the code of a maintainer-reviewed story |
 | `review-ui.md` | every story pull request that changes `gui/` or `po/`, and once over all smoke screenshots in the milestone review |
 | `review-milestone-quality.md` | once, over the whole milestone diff |
 | `auditor.md` | at the halt and at the closing |
@@ -15,7 +15,9 @@ Give each reviewer the prompt with `{{BASE}}`, `{{STORIES}}` and `{{SPEC_FILES}}
 `{{SCREENSHOTS}}`: the list of PNG paths) filled in, and
 read access to the worktree – nothing else. No pull request body, commit messages or summaries
 of the author. The auditor takes `{{MILESTONE}}` (`M4`), `{{BRANCH}}` (`m4`), `{{START}}` (commit
-the milestone started from: the tag `m4-start`) and `{{GH_MILESTONE}}` (`M4 Restore`).
+the milestone started from: the tag `m4-start`) and `{{GH_MILESTONE}}` (`M4 Restore`). In
+contract mode the break-it review gets `{{CONTRACT}}` (the text of the story contract comment),
+`{{STORIES}}` and `{{SPEC_FILES}}`, no `{{BASE}}`, and answers with `"head": null`.
 
 ## Verdict format
 

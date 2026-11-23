@@ -78,8 +78,10 @@ and new visible texts that only name what the spec defines (a column header, an 
 1. `git fetch`, a clean working tree, then read `AGENTS.md`, this skill (from `origin/m<n>`),
    the issue with its comments and the linked ACs. If the branch `agent/issue-<issue>` or its
    pull request exists, continue there.
-2. Implement per `kestic-story-execution`. In the inner loop run only targeted checks: the
-   tests of the changed crates and ACs, clippy, and the smoke scenes of the screens you changed.
+2. **Read [story-contract.md](story-contract.md) now** and follow it: story contract on the
+   issue, open questions, contract review (§5 stories), tests first. Then implement per
+   `kestic-story-execution`. In the inner loop run only targeted checks: the tests of the
+   changed crates and ACs, clippy, and the smoke scenes of the screens you changed.
 3. **First full check, in parallel.** Commit, then start at the same time:
    - `just verify` in the background, output to a log file;
    - the two reviews with the frozen prompts (`prompts/README.md`): **correctness and spec**, and
@@ -104,7 +106,8 @@ and new visible texts that only name what the spec defines (a column header, an 
    `.config/nextest.toml` or packaging. Merging `origin/m<n>` into the branch needs no new
    reviews and no local `just verify`; CI checks the pushed merge.
 5. When all reviews report `must_fix: 0`, complete the body: it maps each AC to its test, names
-   level-2 decisions with `Rückbau-Kosten` and ends with every reviewer's verdict JSON block as it
+   level-2 decisions with `Rückbau-Kosten`, lists **Prevention**
+   ([story-contract.md](story-contract.md) §4) and ends with every reviewer's verdict JSON block as it
    was returned. Then `gh pr ready <pr>` and wait for CI with `gh pr checks <pr> --watch` (Bash
    timeout 40 minutes). The result counts only from
    `gh pr view <pr> --json headRefOid,statusCheckRollup`: `verify` is `SUCCESS` for exactly that
@@ -125,8 +128,8 @@ and new visible texts that only name what the spec defines (a column header, an 
    Otherwise add `needs-maintainer` to the issue, say what the maintainer has to review, and
    end the turn. The maintainer merges or comments; either continues the session.
 7. After the merge, by you or the maintainer: tick the AC checklist in the issue, close it with
-   a comment naming the pull request (a pull request into `m<n>` does not close issues), and
-   end the session.
+   a comment naming the pull request and the numbers of [story-contract.md](story-contract.md)
+   §4 (a pull request into `m<n>` does not close issues), and end the session.
 
 ## 4. Budgets and flakes
 
@@ -209,7 +212,7 @@ Only this section is specific to the tooling (`.devcontainer/README.md`).
 - The watcher starts and continues sessions; the agent never polls for comments. When it waits
   for the maintainer, it ends its turn; a new comment, review, merge or label removal by the
   maintainer continues the session.
-- Reviews run as two sub-agents that change nothing in the worktree (temp directories and temp
-  repositories are fine); the model is set per review (§3).
+- Reviews run as sub-agents that change nothing in the worktree (temp directories and temp
+  repositories are fine).
 - Commits, pull requests and comments carry no AI co-author trailers and no «Generated with»
   lines.
