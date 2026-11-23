@@ -21,6 +21,7 @@ use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringL
 use kestic_core::model::RunStatus;
 use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter};
 use kestic_core::restore::{folder_instead_of_unmatchable, selection_with_folders_instead};
+use kestic_core::restore_target::{code_usable, preview_needed};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
     KesticDbusError, RestoreOriginalDto, RestoreOutcome, RestoreOverwrite, RestorePreviewEntryDto,
@@ -513,12 +514,8 @@ impl qobject::RestorePreviewModel {
             .filter(|_| p.target.check.code != RestoreTargetCode::ExistsNotEmpty)
             .map_or_else(String::new, |m| tr(&m));
         self.as_mut().set_check_text(QString::from(&check));
-        let usable = matches!(
-            p.target.check.code,
-            RestoreTargetCode::Ok | RestoreTargetCode::ExistsNotEmpty
-        );
-        let required = p.target.target.is_original()
-            || p.target.check.code == RestoreTargetCode::ExistsNotEmpty;
+        let usable = code_usable(p.target.check.code);
+        let required = preview_needed(&p.target.target, p.target.check.code);
         self.as_mut().set_preview_required(required);
         self.as_mut()
             .set_summary_text(QString::from(&summary_text(p)));

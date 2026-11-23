@@ -231,11 +231,16 @@ pub struct TargetCheck {
 impl TargetCheck {
     /// Whether a restore may write into the folder (with a preview where one is required).
     pub fn usable(&self) -> bool {
-        matches!(
-            self.code,
-            RestoreTargetCode::Ok | RestoreTargetCode::ExistsNotEmpty
-        )
+        code_usable(self.code)
     }
+}
+
+/// Whether a restore may write into a folder whose check gave `code`.
+pub fn code_usable(code: RestoreTargetCode) -> bool {
+    matches!(
+        code,
+        RestoreTargetCode::Ok | RestoreTargetCode::ExistsNotEmpty
+    )
 }
 
 /// `path` with symbolic links resolved; for a path that does not exist yet, its deepest
@@ -338,7 +343,12 @@ fn creatable_below(dir: &Path) -> RestoreTargetCode {
 /// Whether a restore into `target` needs a finished, fresh preview: always at the original
 /// location, otherwise when the folder has content.
 pub fn preview_required(target: &RestoreTarget, check: &TargetCheck) -> bool {
-    target.is_original() || check.code == RestoreTargetCode::ExistsNotEmpty
+    preview_needed(target, check.code)
+}
+
+/// [`preview_required`] for a folder whose check gave `code`.
+pub fn preview_needed(target: &RestoreTarget, code: RestoreTargetCode) -> bool {
+    target.is_original() || code == RestoreTargetCode::ExistsNotEmpty
 }
 
 /// The user ID of the running process (the user a restore writes as).
