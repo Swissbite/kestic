@@ -471,3 +471,44 @@ fn m5_03_snapshot_list_and_prune_preview_check_a_generic_destination_first() {
         "restic ran a command after the failed pre-check"
     );
 }
+
+/// M5-S03, pre-check (P32) of an rclone destination whose remote cannot be reached: rclone fails
+/// fast and restic only says that rclone ended, so the reason comes from rclone's own line. The
+/// pre-check fails as unreachable, and the run is not started.
+#[test]
+fn m5_03_rclone_connection_error_fails_the_pre_check() {
+    use kestic_core::destination::{DestinationError, preflight_check_with_restic};
+
+    let dir = TempDir::new().expect("tempdir");
+    let script = dir.path().join("restic");
+    write_executable(
+        &script,
+        "#!/bin/sh\n\
+         echo 'rclone: 2026/12/01 10:00:00 CRITICAL: Failed to create file system for \"X:path\": NewFs: couldn'\\''t connect SSH: dial tcp 127.0.0.1:1: connect: connection refused' >&2\n\
+         echo '{\"message_type\":\"exit_error\",\"code\":1,\"message\":\"Fatal: unable to open repository at rclone:X:path: error talking HTTP to rclone: exit status 1\"}' >&2\n\
+         exit 1\n",
+    );
+    let resolved = ResolvedRestic {
+        binary: script,
+        version: semver::Version::new(0, 18, 0),
+    };
+    let store = InMemorySecretStore::new();
+    let dest = generic("rclone:X:path", Vec::new()).expect("destination");
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    let helper = dir.path().join("kestic");
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: &store,
+        clock: &clock,
+        cache_dir: None,
+    };
+
+    assert!(
+        matches!(
+            preflight_check_with_restic(&dest, &runtime),
+            Err(DestinationError::Unreachable(_))
+        ),
+        "the remote rclone cannot reach makes the destination unreachable"
+    );
+}

@@ -659,7 +659,31 @@ fn classify_probe(
     if exit_code == 1 && is_missing_bucket(&presentation.detail_or_summary()) {
         presentation.kind = ResticFailureKind::RepositoryMissing;
     }
+    if presentation.kind == ResticFailureKind::GenericFailure
+        && let Some(rclone) = rclone_failure(exit_error_msg, raw_stderr)
+    {
+        return rclone;
+    }
     presentation
+}
+
+/// When restic reports only that rclone ended («error talking HTTP to rclone»), the reason is in
+/// rclone's own lines (`rclone: … CRITICAL: …`): their classification, if it names a cause.
+fn rclone_failure(
+    exit_error_msg: Option<&str>,
+    raw_stderr: &str,
+) -> Option<crate::restic::ErrorPresentation> {
+    let restic_says_rclone_ended = exit_error_msg
+        .unwrap_or(raw_stderr)
+        .contains("error talking HTTP to rclone");
+    if !restic_says_rclone_ended {
+        return None;
+    }
+    raw_stderr
+        .lines()
+        .filter(|line| line.trim_start().starts_with("rclone:"))
+        .map(|line| crate::restic::classify_exit(1, Some(line), Vec::new(), ""))
+        .find(|p| p.kind != ResticFailureKind::GenericFailure)
 }
 
 /// How long a process stopped with SIGTERM gets to end before SIGKILL.
