@@ -117,12 +117,12 @@ QtObject {
     }
 
     // Sets one field of variable `index`; a new name switches «Geheim» as `core` suggests until it
-    // is switched by hand.
+    // is switched by hand or a value is typed (a typed secret never turns visible by a rename).
     function editEnvVar(index, field, fieldValue) {
         envModel.setProperty(index, field, fieldValue);
         if (field === "secret") {
             envModel.setProperty(index, "secretTouched", true);
-        } else if (field === "name" && !envModel.get(index).secretTouched) {
+        } else if (field === "name" && !envModel.get(index).secretTouched && envModel.get(index).value === "") {
             envModel.setProperty(index, "secret", appBackend.envVarSecretByDefault(fieldValue));
         }
         envChanged();

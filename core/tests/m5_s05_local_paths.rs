@@ -117,7 +117,7 @@ fn ac_m5_05_3_kio_address_is_rejected_with_hint() {
     .expect_err("(a) sftp:// as a local path");
     assert!(
         matches!(&err, ModelError::NotALocalPath(NotALocalPath(a)) if a == "sftp://nas/backups"),
-        "(a) rejected as not a local path: {err:?}"
+        "(a) rejected as not a local path"
     );
 
     // (a) the hint

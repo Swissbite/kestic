@@ -434,7 +434,7 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
         (
             C::ReservedVariable,
             Some(
-                "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and _, and none of RESTIC_PASSWORD…, RESTIC_REPOSITORY…, PATH, HOME or LD_….",
+                "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY or LD_, and PATH and HOME, are not allowed.",
             ),
         ),
         (

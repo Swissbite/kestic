@@ -198,11 +198,15 @@ impl Drop for DestinationClaimGuard {
     }
 }
 
+/// Refreshes the availability of all destinations and sources. `with_restic` also checks the
+/// destinations only restic can reach (up to 15 s each); a caller that waits for the answer, such
+/// as the GUI, leaves them out and they keep their last status.
 pub(crate) fn refresh_availability_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     force: bool,
+    with_restic: bool,
 ) -> AvailabilitySnapshotDto {
-    let (should_run, destinations, backups, mount_inspector, clock, current_snapshot, deps) = {
+    let (should_run, destinations, backups, mount_inspector, clock, current_snapshot, deps, busy) = {
         let guard = shared.lock_unpoisoned();
         let now = guard.clock.now_utc();
         let should_run = force
@@ -218,6 +222,7 @@ pub(crate) fn refresh_availability_unlocked(
             Arc::clone(&guard.clock),
             guard.current_availability_snapshot(),
             guard.restic_deps(),
+            guard.claiming_destinations.clone(),
         )
     };
 
@@ -234,6 +239,11 @@ pub(crate) fn refresh_availability_unlocked(
     let mut resolved: Option<Option<ResolvedRestic>> = None;
     for dest in &destinations {
         let res = if dest.kind.needs_restic_preflight() {
+            // A destination in a run is being written to: restic needs no second connection,
+            // and a busy uplink must not make it look unreachable.
+            if !with_restic || busy.contains(&dest.id) {
+                continue;
+            }
             let restic = resolved.get_or_insert_with(|| resolve_and_check(&deps.provider).ok());
             let Some(restic) = restic.as_ref() else {
                 continue;
@@ -317,7 +327,7 @@ pub(crate) fn trigger_background_availability_probe(shared: Arc<Mutex<DaemonCore
     };
 
     thread::spawn(move || {
-        let _ = refresh_availability_unlocked(&shared, false);
+        let _ = refresh_availability_unlocked(&shared, false, true);
         let (conn_opt, state_dto, tray_opt, tray_state) = {
             let mut guard = shared.lock_unpoisoned();
             if guard.availability_probe_generation == generation {

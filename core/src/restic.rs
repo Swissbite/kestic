@@ -705,10 +705,23 @@ pub(crate) fn send_sigterm_to_tree(pid: u32) {
     send_signal_to_tree(pid, "-TERM");
 }
 
-/// Sends `SIGKILL` to the children of `pid` and to `pid` itself, for a process that ignored
-/// `SIGTERM`.
-pub(crate) fn send_sigkill_to_tree(pid: u32) {
-    send_signal_to_tree(pid, "-KILL");
+/// Sends `SIGTERM` to the process group led by `pid` (a process started with its own group) and
+/// to the direct children of `pid`, which may have a group of their own (restic starts `rclone`
+/// so).
+pub(crate) fn send_sigterm_to_group(pid: u32) {
+    send_signal_to_group(pid, "-TERM");
+}
+
+/// Like [`send_sigterm_to_group`] with `SIGKILL`, for processes that ignored `SIGTERM`.
+pub(crate) fn send_sigkill_to_group(pid: u32) {
+    send_signal_to_group(pid, "-KILL");
+}
+
+fn send_signal_to_group(pid: u32, signal: &str) {
+    let _ = Command::new("kill")
+        .args([signal, "--", &format!("-{pid}")])
+        .status();
+    send_signal_to_tree(pid, signal);
 }
 
 fn send_signal_to_tree(pid: u32, signal: &str) {

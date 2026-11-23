@@ -581,7 +581,6 @@ pub(crate) fn update_destination_unlocked(
         if guard.config.destination(&updated.id).is_none() {
             return Err(KesticServiceErr::NotFound(updated.id.as_str().to_string()));
         }
-        refuse_missing_program(&updated.kind, &guard)?;
         if let Some(existing) = guard
             .config
             .find_duplicate_destination(&updated.kind, Some(&updated.id))

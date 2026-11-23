@@ -258,96 +258,98 @@ fn ac_m5_03_3_rclone_missing_is_reported_and_restic_not_started() {
 /// not answer (the `cat` of the wrapper is held), Kestic (a) runs `restic cat config`, (b) stops
 /// the process after 15 s, (c) starts no `restic backup`, (d) sets the status to «nicht
 /// erreichbar», and (e) reports «Ziel nicht erreichbar» (`ManualRunBlocked`); (f) when restic
-/// answers within 15 s the run starts normally.
+/// answers within 15 s the run starts normally. Runs with restic 0.18.0 and the latest restic.
 #[test]
 fn ac_m5_03_5_unanswered_preflight_blocks_run_after_15_seconds() {
     run_isolated_test(
         "ac_m5_03_5_unanswered_preflight_blocks_run_after_15_seconds",
         "KESTIC_M5_03_5_INNER",
         |root| {
-            let rig = start_rig(root, &latest_variant(), "M5G5", true);
-            let (dest, backup_id) = rig.add_destination_and_backup(root, &strong_password());
-            let client = rig.daemon.client.clone();
-            let signals =
-                KesticSignalCollector::start(&rig.bus, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
-            rig.wrapper.hold("cat");
-            let cat_before = rig.wrapper.of('S', "cat").len();
+            for variant in restic_variants() {
+                let rig = start_rig(root, &variant, "M5G5", true);
+                let (dest, backup_id) = rig.add_destination_and_backup(root, &strong_password());
+                let client = rig.daemon.client.clone();
+                let signals =
+                    KesticSignalCollector::start(&rig.bus, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
+                rig.wrapper.hold("cat");
+                let cat_before = rig.wrapper.of('S', "cat").len();
 
-            let started = Instant::now();
-            let err = client
-                .start_backup(backup_id.as_str())
-                .expect_err("StartBackup on a destination that does not answer");
-            let blocked_after = started.elapsed();
-            // (a)
-            assert!(
-                rig.wrapper.of('S', "cat").len() > cat_before,
-                "(a) restic cat config ran: {:?}",
-                rig.wrapper.entries()
-            );
-            // (b)
-            assert!(
-                blocked_after >= Duration::from_secs(15),
-                "(b) stopped after {blocked_after:?}, before the 15 s limit"
-            );
-            assert!(
-                blocked_after < Duration::from_secs(22),
-                "(b) stopped only after {blocked_after:?}"
-            );
-            assert!(
-                !rig.wrapper.of('T', "cat").is_empty(),
-                "(b) the held restic got SIGTERM: {:?}",
-                rig.wrapper.entries()
-            );
-            // (c)
-            assert!(
-                rig.wrapper.of('S', "backup").is_empty(),
-                "(c) restic backup started"
-            );
-            let state = client.get_state().expect("GetState");
-            // (d)
-            assert!(
-                !dest_summary(&state, &dest.id).availability.reachable,
-                "(d) status unreachable"
-            );
-            // (e)
-            assert_dbus_error_name(&err, "net.daester.Kestic.Error.ManualRunBlocked");
-            let sigs = signals.wait_until(Duration::from_secs(5), |s| {
-                s.iter()
-                    .any(|sig| matches!(sig, CapturedKesticSignal::ManualRunBlocked { .. }))
-            });
-            assert!(
-                sigs.iter().any(|s| matches!(
-                    s,
-                    CapturedKesticSignal::ManualRunBlocked { reason, .. }
-                        if reason == BlockedReason::DestinationUnreachable.as_str()
-                )),
-                "(e) ManualRunBlocked «destination unreachable»: {sigs:?}"
-            );
+                let started = Instant::now();
+                let err = client
+                    .start_backup(backup_id.as_str())
+                    .expect_err("StartBackup on a destination that does not answer");
+                let blocked_after = started.elapsed();
+                // (a)
+                assert!(
+                    rig.wrapper.of('S', "cat").len() > cat_before,
+                    "(a) restic cat config ran: {:?}",
+                    rig.wrapper.entries()
+                );
+                // (b)
+                assert!(
+                    blocked_after >= Duration::from_secs(15),
+                    "(b) stopped after {blocked_after:?}, before the 15 s limit"
+                );
+                assert!(
+                    blocked_after < Duration::from_secs(22),
+                    "(b) stopped only after {blocked_after:?}"
+                );
+                assert!(
+                    !rig.wrapper.of('T', "cat").is_empty(),
+                    "(b) the held restic got SIGTERM: {:?}",
+                    rig.wrapper.entries()
+                );
+                // (c)
+                assert!(
+                    rig.wrapper.of('S', "backup").is_empty(),
+                    "(c) restic backup started"
+                );
+                let state = client.get_state().expect("GetState");
+                // (d)
+                assert!(
+                    !dest_summary(&state, &dest.id).availability.reachable,
+                    "(d) status unreachable"
+                );
+                // (e)
+                assert_dbus_error_name(&err, "net.daester.Kestic.Error.ManualRunBlocked");
+                let sigs = signals.wait_until(Duration::from_secs(5), |s| {
+                    s.iter()
+                        .any(|sig| matches!(sig, CapturedKesticSignal::ManualRunBlocked { .. }))
+                });
+                assert!(
+                    sigs.iter().any(|s| matches!(
+                        s,
+                        CapturedKesticSignal::ManualRunBlocked { reason, .. }
+                            if reason == BlockedReason::DestinationUnreachable.as_str()
+                    )),
+                    "(e) ManualRunBlocked «destination unreachable»: {sigs:?}"
+                );
 
-            // (f)
-            rig.wrapper.release("cat");
-            client
-                .start_backup(backup_id.as_str())
-                .expect("StartBackup once restic answers");
-            let state = wait_for_state(&client, Duration::from_secs(60), "backup done", |s| {
-                let b = backup_summary(s, &backup_id);
-                b.active_run.is_none() && b.last_run.is_some()
-            });
-            assert_eq!(
-                backup_summary(&state, &backup_id)
-                    .last_run
-                    .as_ref()
-                    .map(|r| r.status),
-                Some(RunStatus::Ok),
-                "(f) the run started normally"
-            );
-            assert_eq!(
-                rig.wrapper.of('S', "backup").len(),
-                1,
-                "(f) one restic backup"
-            );
-            drop(signals);
-            rig.daemon.stop();
+                // (f)
+                rig.wrapper.release("cat");
+                client
+                    .start_backup(backup_id.as_str())
+                    .expect("StartBackup once restic answers");
+                let state = wait_for_state(&client, Duration::from_secs(60), "backup done", |s| {
+                    let b = backup_summary(s, &backup_id);
+                    b.active_run.is_none() && b.last_run.is_some()
+                });
+                assert_eq!(
+                    backup_summary(&state, &backup_id)
+                        .last_run
+                        .as_ref()
+                        .map(|r| r.status),
+                    Some(RunStatus::Ok),
+                    "(f) the run started normally"
+                );
+                assert_eq!(
+                    rig.wrapper.of('S', "backup").len(),
+                    1,
+                    "(f) one restic backup"
+                );
+                drop(signals);
+                rig.daemon.stop();
+            }
         },
     );
 }

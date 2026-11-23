@@ -515,6 +515,12 @@ ColumnLayout {
             color: Kirigami.Theme.negativeTextColor
         }
 
+        // Ends the variables section of the generic form, so the repository rows stand apart.
+        Kirigami.Separator {
+            visible: form.draft.kindIsGeneric
+            Kirigami.FormData.isSection: true
+        }
+
         Controls.ComboBox {
             objectName: form.namePrefix + "SetupModeCombo"
             Kirigami.FormData.label: i18n("Repository:")

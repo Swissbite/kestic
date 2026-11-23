@@ -311,7 +311,7 @@ fn ac_m5_03_7_reserved_and_invalid_variable_names_are_refused() {
             .expect_err("destination with the variable");
         assert!(
             err.to_string().contains(&format!("'{name}'")),
-            "(a) message names {name:?}: {err}"
+            "(a) message names {name:?}"
         );
     }
 
