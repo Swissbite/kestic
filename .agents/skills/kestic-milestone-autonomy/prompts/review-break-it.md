@@ -39,4 +39,9 @@ directory), and whether a test covers it. An attack that succeeds and is not cov
 `must-fix` with a `suggested_test` that fails today. If you are convinced an AC cannot be
 broken, say why in one line.
 
+**Contract mode** (`{{CONTRACT}}` instead of a change, before any code): attack the story
+contract, one row per AC with its test and, for runs, a state × event table. For every AC find
+an input or state from the list above that the contract's behaviour or tests miss. Such a gap
+is `must-fix` with `file` and `line` `null` and the missing test as `suggested_test`.
+
 Answer in the verdict format of `prompts/README.md` with `"reviewer": "break-it"`.
