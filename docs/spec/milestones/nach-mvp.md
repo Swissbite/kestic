@@ -8,7 +8,7 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 
 | ID | Anforderung |
 | --- | --- |
-| FR-14 | `restic copy` zwischen Zielen |
+| FR-14 | `restic copy` zwischen Zielen; dazu ein umgezogenes Repo mit neuer Repo-ID übernehmen (Abgleich der Snapshots über `original`, Bestätigung, neues Kit; früher M5-S09) |
 | FR-16 | Ausschluss-Regeln rückwirkend anwenden (`rewrite --forget`) |
 | FR-20 | Pre/Post-Hooks |
 | FR-22 | Trigger «externe Disk eingesteckt» |
