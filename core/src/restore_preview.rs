@@ -161,16 +161,13 @@ impl SnapshotTree {
         })
     }
 
-    /// Adds the folders between the restored folder and each selected entry the walk found
-    /// (`selected`, paths relative to it): the walk lists only the selected entries, but restic
-    /// creates the folders above them, and the dry run reports them.
+    /// Adds the folders between the restored folder and each selected entry (`selected`, paths
+    /// relative to it): the walk lists only the selected entries, but restic creates the folders
+    /// above them, and the dry run reports them. Folders above an entry the snapshot lacks are
+    /// added too, so the preview checks them like the run does; they never count as written
+    /// below a repository, because only entries below a selected one do.
     pub fn add_folders_above(&mut self, selected: Option<&[String]>) {
-        let found: Vec<&String> = selected
-            .unwrap_or_default()
-            .iter()
-            .filter(|p| self.nodes.contains_key(p.as_str()))
-            .collect();
-        for path in found {
+        for path in selected.unwrap_or_default() {
             let mut end = path.len();
             while let Some(slash) = path[..end].rfind('/').filter(|&i| i > 0) {
                 end = slash;
@@ -809,16 +806,55 @@ mod tests {
     }
 
     #[test]
-    fn no_folders_above_an_entry_the_snapshot_lacks() {
+    fn folders_above_a_missing_entry_write_nothing_below_it() {
+        let selected = ["/docs/deep/y.txt".to_string(), "/docs/ghost/q".to_string()];
         let mut t = tree(&["/docs/deep/y.txt"]);
-        t.add_folders_above(Some(&[
-            "/docs/deep/y.txt".to_string(),
-            "/docs/ghost/q".to_string(),
-        ]));
+        t.add_folders_above(Some(&selected));
         assert!(t.nodes.contains_key("/docs/deep"), "above a found entry");
         assert!(
-            !t.nodes.contains_key("/docs/ghost"),
-            "nothing above a missing entry"
+            t.nodes.contains_key("/docs/ghost"),
+            "checked like in the run"
+        );
+        assert!(
+            !t.writes_below(Some(&selected), "/docs/ghost"),
+            "a folder above the selection is no write below a repository there"
+        );
+    }
+
+    #[test]
+    fn folders_above_the_selection_must_be_real_folders() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let t = tmp.path();
+        std::fs::create_dir_all(t.join("real/sub")).expect("real folders");
+        std::fs::write(t.join("file"), "x").expect("file");
+        std::fs::create_dir(t.join("other")).expect("other");
+        std::os::unix::fs::symlink(t.join("other"), t.join("link")).expect("link");
+        std::os::unix::fs::symlink(t.join("nowhere"), t.join("dangling")).expect("dangling");
+        let plan = RestorePlan {
+            snapshot_id: "abc".to_string(),
+            folder: "/s".to_string(),
+            includes: vec!["--include=/x".to_string(), "--include=/y".to_string()],
+        };
+        let blocked = |entries: &[&str]| {
+            let selection: Vec<String> = entries.iter().map(|e| format!("/s{e}")).collect();
+            blocked_above_selection(&plan, &selection, t)
+        };
+        let at = |p: &str| vec![t.join(p).to_string_lossy().into_owned()];
+        assert!(blocked(&["/a", "/real/sub/f"]).is_empty(), "real folders");
+        assert!(
+            blocked(&["/a", "/missing/f"]).is_empty(),
+            "a folder restic creates"
+        );
+        assert_eq!(blocked(&["/a", "/file/f"]), at("file"), "a file");
+        assert_eq!(
+            blocked(&["/a", "/link/f"]),
+            at("link"),
+            "a link to a folder"
+        );
+        assert_eq!(
+            blocked(&["/a", "/dangling/f"]),
+            at("dangling"),
+            "a dangling link"
         );
     }
 

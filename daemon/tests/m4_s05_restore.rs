@@ -3048,8 +3048,8 @@ fn m4_s05_file_above_the_selection_is_refused() {
     );
 }
 
-/// A folder above the selected entries that becomes a symbolic link after the preview is caught
-/// right before restic writes: the run (a) ends with `Fehler` and (b) `invalid_target`, and
+/// AC-M4-05-25 right before the run: a folder above the selected entries that becomes a
+/// symbolic link after the preview is caught before restic writes: the run (a) ends with `Fehler` and (b) `invalid_target`, and
 /// (c) the folder behind the link is unchanged.
 #[test]
 fn m4_s05_link_above_the_selection_after_the_preview_ends_the_run() {
