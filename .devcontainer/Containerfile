@@ -59,6 +59,10 @@ COPY --chmod=644 allowed-domains.txt /usr/local/lib/kestic-agent/
 COPY --chmod=644 agent-settings.json /usr/local/lib/kestic-agent/agent-settings.json
 COPY --chmod=644 tmux.conf /etc/tmux.conf
 
+# Owner of the container's main process (entrypoint.sh): a user of its own, so
+# the agent cannot end the container by signalling it.
+RUN useradd --system --no-create-home --home-dir / --shell /usr/sbin/nologin kestic-infra
+
 # Mount points of the two volumes and the (empty) clone directory, which is
 # the Dev Container workspace; a new volume copies this ownership.
 RUN mkdir -p /home/kesticci/.claude /home/kesticci/kestic \
@@ -73,8 +77,9 @@ ENV KESTIC_CI_IMAGE=${CI_IMAGE} \
     LANG=en_US.UTF-8 \
     CARGO_INCREMENTAL=0
 
-# Starts as root only to set up the firewall, then drops to `kesticci`
-# without any capabilities (entrypoint.sh).
+# Starts as root only to set up the firewall, then runs the main command as
+# `kestic-infra` without any capabilities; the agent runs as `kesticci` through
+# `podman exec` (entrypoint.sh).
 WORKDIR /home/kesticci
 ENTRYPOINT ["/usr/local/lib/kestic-agent/entrypoint.sh"]
 CMD ["sleep", "infinity"]

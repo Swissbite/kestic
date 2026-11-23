@@ -233,6 +233,59 @@ pass "busy 5 100 failed"
 [[ "$(grep -c 'token failed' "$FAKE_NOTES")" == 1 ]] || fail "token failure not reported exactly once"
 reset
 
+# A session stopped at a usage limit is continued once the limit has reset,
+# once per turn; before that it is neither continued nor reported as idle.
+LIMIT_NUDGE="nudge The usage limit has reset. Continue where you stopped; read your state comment on the issue first."
+fixture issue-5 "OPEN false"
+pass "idle 5 100 ok 200"
+[[ "$(cat "$FAKE_LOG")" == "$LIMIT_NUDGE" ]] || fail "limit reset: agent called with '$(cat "$FAKE_LOG")'"
+pass "idle 5 100 ok 200"
+[[ ! -s "$FAKE_LOG" ]] || fail "limit reset, second pass: agent called with '$(cat "$FAKE_LOG")'"
+reset
+fixture issue-5 "OPEN false"
+pass "idle 5 100 ok $(($(date +%s) + 3600))"
+[[ ! -s "$FAKE_LOG" ]] || fail "limit not yet reset: agent called with '$(cat "$FAKE_LOG")'"
+! grep -q 'idle on #5' "$FAKE_NOTES" || fail "limit not yet reset: reported as idle"
+reset
+fixture issue-5 "OPEN false"
+pass 'idle 5 100 ok $(touch '"$tmp"'/pwned3)'
+[[ ! -e "$tmp/pwned3" ]] || fail "reset time from the container ran a command on the host"
+[[ "$(cat "$FAKE_LOG")" != "$LIMIT_NUDGE" ]] || fail "invalid reset time: continued as after a limit"
+reset
+
+# While the limit has not reset, the maintainer's news waits too; afterwards it
+# continues the session as usual.
+fixture issue-5 "OPEN false"
+fixture prs-5 ""
+fixture issues_5_comments "150 User OWNER"
+pass "idle 5 100 ok $(($(date +%s) + 3600))"
+[[ ! -s "$FAKE_LOG" ]] || fail "news during a limit: agent called with '$(cat "$FAKE_LOG")'"
+pass "idle 5 100 ok 200"
+[[ "$(cat "$FAKE_LOG")" == "$NUDGE" ]] || fail "news after the limit: agent called with '$(cat "$FAKE_LOG")'"
+reset
+
+# Once the limit nudge is used and the turn does not move on, the long-idle
+# report still comes.
+fixture issue-5 "OPEN false"
+pass "idle 5 100 ok 200"
+pass "idle 5 100 ok 200"
+grep -q 'idle on #5' "$FAKE_NOTES" || fail "limit nudge used: long idle not reported"
+reset
+
+# A reset time with a leading zero does not stop the watcher.
+fixture issue-5 "OPEN false"
+pass "idle 5 100 ok 0200" || fail "reset time 0200: watcher failed"
+[[ "$(cat "$FAKE_LOG")" == "$LIMIT_NUDGE" ]] || fail "reset time 0200: agent called with '$(cat "$FAKE_LOG")'"
+reset
+
+# A container that is not running is reported once per hour, nothing is started.
+fixture "open-M4 Restore" "6 false"
+pass "off 0 0 ok 0"
+pass "off 0 0 ok 0"
+[[ ! -s "$FAKE_LOG" ]] || fail "container off: agent called with '$(cat "$FAKE_LOG")'"
+[[ "$(grep -c 'not running' "$FAKE_NOTES")" == 1 ]] || fail "container off not reported exactly once"
+reset
+
 if ((failures > 0)); then
     echo "test-kestic-agent-watch: $failures failure(s)" >&2
     exit 1
