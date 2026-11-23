@@ -5,6 +5,7 @@
 //! and source detection / nested-warning checks for [`super::qobject::KesticApp`].
 
 use super::{dbus_error_text, qobject};
+use crate::retention_texts::retention_preview_view;
 use crate::state_cache::{
     daemon_unavailable_text, format_retention_summary, json_or, make_client, shared_state, tr_text,
 };
@@ -237,12 +238,19 @@ impl qobject::KesticApp {
         })
     }
 
+    /// Status of the retention preview with its result as the page shows it (translated
+    /// reasons, local times, summary).
     pub fn poll_retention_preview(self: Pin<&mut Self>, preview_id: &QString) -> QString {
-        self.poll_preview(
-            &RETENTION,
-            preview_id,
-            KesticClient::get_retention_preview_status,
-        )
+        self.poll_preview(&RETENTION, preview_id, |client, pid| {
+            let status = client.get_retention_preview_status(pid)?;
+            Ok(PreviewStatusDto {
+                preview_id: status.preview_id,
+                state: status.state,
+                result: status.result.as_ref().map(retention_preview_view),
+                error_kind: status.error_kind,
+                error_detail: status.error_detail,
+            })
+        })
     }
 
     pub fn cancel_retention_preview(mut self: Pin<&mut Self>, preview_id: &QString) {

@@ -195,6 +195,10 @@ Kirigami.ApplicationWindow {
             Controls.SpinBox {
                 id: defaultOverdueSpinBox
                 objectName: "defaultOverdueSpinBox"
+                // The digits are centred in the whole box: Fusion makes the box lower than the
+                // padding of the style allows and would cut them.
+                topPadding: 0
+                bottomPadding: 0
                 Kirigami.FormData.label: i18n("Mark overdue after missed runs:")
                 from: 1
                 to: 99

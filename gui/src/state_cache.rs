@@ -63,13 +63,15 @@ where
 }
 
 use crate::overall_text::localized_availability_reason;
+use crate::retention_texts::within_text;
 use crate::time_texts::{format_datetime_display, format_time_short};
 use crate::ui_texts::GuiText;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeRules, KeepCount,
-    MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPolicy,
-    RetentionPreset, Run, RunConditions, RunKind, RunStatus, Schedule, Source, SourceKind, Weekday,
+    MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPeriod,
+    RetentionPolicy, RetentionPreset, Run, RunConditions, RunKind, RunStatus, Schedule, Source,
+    SourceKind, Weekday,
 };
 use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_slots};
 use kestic_core::sync::LockUnpoisoned;
@@ -691,23 +693,18 @@ pub fn format_retention_summary(policy: &RetentionPolicy) -> String {
     if let Some(kc) = policy.keep_yearly {
         parts.push(format_keep_count_part(kc, &i18n("yearly").to_string()));
     }
-    if let Some(w) = &policy.keep_within {
-        parts.push(i18n("all within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_hourly {
-        parts.push(i18n("hourly within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_daily {
-        parts.push(i18n("daily within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_weekly {
-        parts.push(i18n("weekly within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_monthly {
-        parts.push(i18n("monthly within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_yearly {
-        parts.push(i18n("yearly within %1").subs(&[w]));
+    let within_rules = [
+        (None, &policy.keep_within),
+        (Some(RetentionPeriod::Hourly), &policy.keep_within_hourly),
+        (Some(RetentionPeriod::Daily), &policy.keep_within_daily),
+        (Some(RetentionPeriod::Weekly), &policy.keep_within_weekly),
+        (Some(RetentionPeriod::Monthly), &policy.keep_within_monthly),
+        (Some(RetentionPeriod::Yearly), &policy.keep_within_yearly),
+    ];
+    for (period, duration) in within_rules {
+        if let Some(duration) = duration {
+            parts.push(within_text(period, duration));
+        }
     }
     if parts.is_empty() {
         i18n("No rules configured").to_string()

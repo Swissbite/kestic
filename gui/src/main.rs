@@ -8,6 +8,7 @@ mod build_info;
 mod models;
 mod overall_text;
 mod qt_bridge;
+mod retention_texts;
 mod run_texts;
 #[cfg(feature = "test-harness")]
 mod smoke;

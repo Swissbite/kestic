@@ -3,6 +3,9 @@
 
 #include "src/smoke_common.h"
 
+#include <QJSValue>
+#include <QRegularExpression>
+
 namespace kestic::smoke {
 
 namespace {
@@ -233,7 +236,10 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     ret_page->setProperty("keepLastOn", true);
     ret_page->setProperty("keepLastNum", 1);
     ret_page->setProperty("keepLastAll", false);
-    ret_page->setProperty("keepDailyOn", false);
+    // keep_daily = 1 keeps the same (newest) snapshot a second time, for a second reason.
+    ret_page->setProperty("keepDailyOn", true);
+    ret_page->setProperty("keepDailyNum", 1);
+    ret_page->setProperty("keepDailyAll", false);
     ret_page->setProperty("keepWeeklyOn", false);
     ret_page->setProperty("keepMonthlyOn", false);
     ret_page->setProperty("keepYearlyOn", false);
@@ -256,6 +262,36 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     QQuickItem* ret_banner = child_item(window, "retentionPreviewSummaryBanner");
     SMOKE_CHECK3("M2", 247, prev_page->property("retentionPreviewState").toString() == QLatin1String("done"), ret_banner, ret_banner->isVisible(),
         "retention preview summary banner missing or preview did not complete");
+    // AC-M2-06-2: (a) the summary counts kept and removed snapshots, (b) a kept snapshot names
+    // its reason in the GUI language, (c) each snapshot shows its local date and time.
+    const bool de = s.lang == QLatin1String("de");
+    const QString summary = ret_banner->property("text").toString();
+    SMOKE_CHECK("M2", 253, summary == (de ? QStringLiteral("1 Snapshot behalten · 2 Snapshots würden entfernt")
+                                         : QStringLiteral("1 snapshot kept · 2 snapshots would be removed")),
+        QStringLiteral("(a) unexpected retention preview summary '%1'").arg(summary));
+    QQuickItem* kept_result = find_visual_item(window, QStringLiteral("retentionPreviewSnapshotResult"));
+    SMOKE_CHECK("M2", 254, kept_result, "(b) retention preview rows missing");
+    const QString kept_text = kept_result->property("text").toString();
+    SMOKE_CHECK("M2", 254, kept_text == (de ? QStringLiteral("Behalten — jüngster, täglich") : QStringLiteral("Keep — latest snapshot, daily snapshot")),
+        QStringLiteral("(b) unexpected result of the kept snapshot '%1'").arg(kept_text));
+    QQuickItem* kept_time = find_visual_item(window, QStringLiteral("retentionPreviewSnapshotTime"));
+    SMOKE_CHECK("M2", 255, kept_time, "(c) retention preview time missing");
+    const QString time_text = kept_time->property("text").toString();
+    static const QRegularExpression local_time(QStringLiteral("^[0-9a-f]{8} · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$"));
+    SMOKE_CHECK("M2", 255, local_time.match(time_text).hasMatch(),
+        QStringLiteral("(c) snapshot time is not local date and time: '%1'").arg(time_text));
+    // The title of the current page stays inside the window: it elides where the bar is too narrow.
+    QQuickItem* current_crumb = find_visual_item(window, QStringLiteral("breadcrumbCurrentLabel"));
+    SMOKE_CHECK_VISIBLE("M2", 257, current_crumb, "current breadcrumb missing");
+    const qreal crumb_right = current_crumb->mapToScene(QPointF(current_crumb->width(), 0)).x();
+    SMOKE_CHECK("M2", 257, crumb_right <= window->width() + 0.5,
+        QStringLiteral("current breadcrumb ends at %1, outside the window").arg(crumb_right));
+    // It elides only where the bar is too narrow: in the wide layout it shows in full.
+    SMOKE_CHECK("M2", 257, current_crumb->property("truncated").toBool() == (window->width() < 600),
+        QStringLiteral("current breadcrumb '%1' elided %2 in a window %3 px wide")
+            .arg(current_crumb->property("text").toString())
+            .arg(current_crumb->property("truncated").toBool())
+            .arg(window->width()));
     SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
 
     // Go back to BackupRetentionPage and save -> must show confirmation dialog (AC-M2-06-3).
@@ -268,6 +304,18 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     QObject* confirm_act = child_object(window, "confirmRetentionSaveAction");
     SMOKE_CHECK4("M2", 249, confirm_dlg, confirm_dlg->property("visible").toBool(), confirm_act, ret_page->property("pendingRemoveCount").toInt() == 2,
         "confirmRetentionRemoveDialog did not open with pendingRemoveCount=2");
+    // AC-M2-06-3: the dialog lists each snapshot to remove with its local date and time.
+    QVariant pending_var = ret_page->property("pendingRemoveSnapshots");
+    if (pending_var.canConvert<QJSValue>()) {
+        pending_var = pending_var.value<QJSValue>().toVariant();
+    }
+    const QStringList pending_removals = pending_var.toStringList();
+    SMOKE_CHECK("M2", 256, pending_removals.size() == 2, "confirmation must list the 2 snapshots to remove");
+    static const QRegularExpression removal_entry(QStringLiteral("^[0-9a-f]{8} \\(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}\\)$"));
+    for (const QString& entry : pending_removals) {
+        SMOKE_CHECK("M2", 256, removal_entry.match(entry).hasMatch(),
+            QStringLiteral("unexpected entry in the confirmation list: '%1'").arg(entry));
+    }
     trigger(confirm_act);
     wait_ms(200);
     SMOKE_CHECK("M2", 250, !ret_page->property("dirty").toBool(), "retention rules still dirty after confirming save");
@@ -357,6 +405,12 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 3));
     QMetaObject::invokeMethod(window, "openRunDetailById", Q_ARG(QVariant, rid));
     wait_ms(200);
+
+    // A run that ended with a warning (exit 3) shows its cause as a warning, not as an error
+    // (Kirigami.MessageType.Warning is 2).
+    QQuickItem* cause = find_visual_item(window, QStringLiteral("runDetailErrorMessage"));
+    SMOKE_CHECK_VISIBLE("M2", 275, cause, "cause of the run missing on the Exit 3 RunDetailPage");
+    SMOKE_CHECK("M2", 275, cause->property("type").toInt() == 2, "cause of a run with a warning must be shown as a warning");
 
     QQuickItem* add_btn = find_visual_item(window, QStringLiteral("addUnreadableExcludeButton"));
     SMOKE_CHECK_VISIBLE("M2", 271, add_btn, "addUnreadableExcludeButton missing or not visible on Exit 3 RunDetailPage");

@@ -394,6 +394,10 @@ EditorPage {
                     Controls.SpinBox {
                         id: intervalSpinBox
                         objectName: "scheduleIntervalSpinBox"
+                        // The digits are centred in the whole box: Fusion makes the box lower than the
+                        // padding of the style allows and would cut them.
+                        topPadding: 0
+                        bottomPadding: 0
                         anchors.centerIn: parent
                         from: 0
                         to: 365
@@ -468,6 +472,10 @@ EditorPage {
                 Controls.SpinBox {
                     id: hourSpinBox
                     objectName: "scheduleHourSpinBox"
+                    // The digits are centred in the whole box: Fusion makes the box lower than the
+                    // padding of the style allows and would cut them.
+                    topPadding: 0
+                    bottomPadding: 0
                     from: 0
                     to: 23
                     value: page.hour
@@ -494,6 +502,10 @@ EditorPage {
                 Controls.SpinBox {
                     id: minuteSpinBox
                     objectName: "scheduleMinuteSpinBox"
+                    // The digits are centred in the whole box: Fusion makes the box lower than the
+                    // padding of the style allows and would cut them.
+                    topPadding: 0
+                    bottomPadding: 0
                     from: 0
                     to: 59
                     value: page.minute
@@ -540,6 +552,10 @@ EditorPage {
                 Controls.SpinBox {
                     id: overdueThresholdSpinBox
                     objectName: "overdueThresholdSpinBox"
+                    // The digits are centred in the whole box: Fusion makes the box lower than the
+                    // padding of the style allows and would cut them.
+                    topPadding: 0
+                    bottomPadding: 0
                     from: 1
                     to: 99
                     value: page.customOverdueThreshold

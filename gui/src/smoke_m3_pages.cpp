@@ -40,9 +40,35 @@ void collect_texts(QQuickItem* root, QStringList& out) {
     }
 }
 
+/// The first visible control the style draws cut off: a spin box whose text field is lower than
+/// its digits, or a progress bar without height. Empty when there is none.
+QString cut_control(QQuickItem* root) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(root, items);
+    for (QQuickItem* it : items) {
+        if (!it->isVisible()) {
+            continue;
+        }
+        const QString cls = QString::fromLatin1(it->metaObject()->className());
+        if (cls.contains(QLatin1String("SpinBox"))) {
+            auto* field = it->property("contentItem").value<QQuickItem*>();
+            if (field && field->height() + 0.5 < field->implicitHeight()) {
+                return QStringLiteral("spin box %1").arg(it->objectName());
+            }
+        } else if (cls.contains(QLatin1String("ProgressBar"))) {
+            auto* bar = it->property("background").value<QQuickItem*>();
+            if (bar && bar->height() <= 0.0) {
+                return QStringLiteral("progress bar %1").arg(it->objectName());
+            }
+        }
+    }
+    return {};
+}
+
 struct PageRecord {
     bool has_texts;
     bool saved;
+    QString cut_control;
 };
 
 struct PageDump {
@@ -66,9 +92,10 @@ struct PageDump {
         out.flush();
         ++pages;
         const QString shot = screenshot_dir + QStringLiteral("/m3-page-") + name + QLatin1Char('-') + lang + QStringLiteral(".png");
+        const QString cut = cut_control(window->contentItem());
         const bool saved = save_screenshot(window, shot);
         finish_incubation(window);
-        return { !texts.isEmpty(), saved };
+        return { !texts.isEmpty(), saved, cut };
     }
 };
 
@@ -94,6 +121,9 @@ bool open_detail(QQuickWindow* w, const QString& bid) {
         const PageRecord recorded_ = (dump).record((name), (window));                  \
         M3_CHECK(record_code_, recorded_.has_texts, what " page without texts");     \
         M3_CHECK(record_code_, recorded_.saved, what " page screenshot not saved");  \
+        M3_CHECK(record_code_, recorded_.cut_control.isEmpty(),                       \
+                 qPrintable(QStringLiteral(what " page draws a control cut off: ")      \
+                                + recorded_.cut_control));                             \
     } while (0)
 
 int scenario_all_pages(const Ctx& c) {
@@ -140,6 +170,11 @@ int scenario_all_pages(const Ctx& c) {
 
     M3_CHECK(4919, open_detail(w, bid), "backupDetailPage did not open");
     M3_RECORD(4920, dump, QStringLiteral("backup-detail"), w, "backup detail");
+    // The selected row of the backup list puts its source icon on the background colour: the
+    // folder icon has the colour of the selection and would lose its body.
+    QQuickItem* icon_backdrop = find_visual_item(w, QStringLiteral("backupRowSourceIconBackdrop"));
+    M3_CHECK2(4999, icon_backdrop != nullptr, icon_backdrop->isVisible(),
+              "source icon of the selected backup row must sit on the background colour");
 
     // Editors open the way a user opens them: a click on their row in the detail page.
     struct Editor {
@@ -195,6 +230,10 @@ int scenario_all_pages(const Ctx& c) {
         M3_CHECK(code++, page_visible(w, p.page), p.page);
         M3_RECORD(code++, dump, QString::fromLatin1(p.name), w, "destination");
     }
+    // Like the backup row: the selected destination row puts its icon on the background colour.
+    QQuickItem* dest_backdrop = find_visual_item(w, QStringLiteral("destinationRowIconBackdrop"));
+    M3_CHECK2(4964, dest_backdrop != nullptr, dest_backdrop->isVisible(),
+              "icon of the selected destination row must sit on the background colour");
 
     QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
     wait_ms(150);
@@ -221,6 +260,20 @@ int scenario_all_pages(const Ctx& c) {
     M3_CHECK2(4994, about != nullptr, wait_until([&] { return about->isVisible(); }, 3000), "aboutWindow not open");
     M3_CHECK(4992, find_visual_item(about, QStringLiteral("mainAboutPage")) != nullptr, "mainAboutPage not in the About window");
     M3_RECORD(4993, dump, QStringLiteral("about"), about, "about");
+    // The homepage and licence links start where the text around them starts (Kirigami
+    // centres the text of a link button that fills its row).
+    QList<QQuickItem*> about_items;
+    collect_visual_descendants(about->contentItem(), about_items);
+    int about_links = 0;
+    for (QQuickItem* it : about_items) {
+        if (!it->isVisible() || !it->property("normalColor").isValid() || it->property("text").toString().isEmpty()) {
+            continue;
+        }
+        ++about_links;
+        M3_CHECK(4997, it->property("horizontalAlignment").toInt() == Qt::AlignLeft,
+                 qPrintable(QStringLiteral("about link not aligned left: ") + it->property("text").toString()));
+    }
+    M3_CHECK(4998, about_links >= 3, "about page must show the homepage, licence and issue links");
     about->close();
 
     file.close();
