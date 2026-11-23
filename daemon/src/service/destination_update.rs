@@ -309,6 +309,8 @@ fn reply(guard: &DaemonCore, outcome: DestinationUpdateOutcome) -> UpdateReply {
 struct Accepted {
     credentials: BackendCredentials,
     repository_id: Option<RepositoryId>,
+    /// `init` created a new repository at the unchanged address.
+    new_repository: bool,
 }
 
 /// `UpdateDestination`: checks every change of the connection or of the credentials (whatever
@@ -332,19 +334,28 @@ pub(crate) fn update_destination_unlocked(
         .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
     let setup_mode = parse_setup_mode(mode)?;
 
-    let (saved, stored_id, deps) = {
+    let (saved, stored_id, deps, changed) = {
         let guard = shared.lock_unpoisoned();
         let saved = guard
             .config
             .destination(&updated.id)
             .cloned()
             .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
-        guard.refuse_duplicate_and_missing_program(&updated)?;
+        guard.refuse_duplicate(&updated)?;
+        let changed = connection_changed(&saved.kind, &updated.kind);
+        // A new name alone needs no restic, so it can be saved while `ssh` or `rclone` is
+        // missing.
+        if changed
+            || !entered.is_empty()
+            || verify_connection
+            || setup_mode == DestinationSetupMode::InitNew
+        {
+            super::destinations::refuse_missing_program(&updated.kind, &guard)?;
+        }
         let stored_id = guard.history.repository_id(&saved.id).ok().flatten();
-        (saved, stored_id, guard.restic_deps())
+        (saved, stored_id, guard.restic_deps(), changed)
     };
 
-    let changed = connection_changed(&saved.kind, &updated.kind);
     let accepted = if setup_mode == DestinationSetupMode::InitNew {
         if changed {
             // A new repository has a new ID: at another address it is another destination.
@@ -367,6 +378,7 @@ pub(crate) fn update_destination_unlocked(
             } => Accepted {
                 credentials,
                 repository_id: Some(repository_id),
+                new_repository: false,
             },
             EditVerdict::Other => {
                 let guard = shared.lock_unpoisoned();
@@ -377,6 +389,7 @@ pub(crate) fn update_destination_unlocked(
         Accepted {
             credentials: BackendCredentials::none(),
             repository_id: None,
+            new_repository: false,
         }
     };
 
@@ -396,19 +409,15 @@ pub(crate) fn update_destination_unlocked(
 }
 
 impl DaemonCore {
-    /// Refuses `dest` when another destination uses its location or a program its backend needs
-    /// is missing.
-    fn refuse_duplicate_and_missing_program(
-        &self,
-        dest: &Destination,
-    ) -> Result<(), KesticServiceErr> {
-        if let Some(existing) = self
+    /// Refuses `dest` when another destination uses its location.
+    fn refuse_duplicate(&self, dest: &Destination) -> Result<(), KesticServiceErr> {
+        match self
             .config
             .find_duplicate_destination(&dest.kind, Some(&dest.id))
         {
-            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
+            Some(existing) => Err(KesticServiceErr::DuplicateLocation(existing.name.clone())),
+            None => Ok(()),
         }
-        super::destinations::refuse_missing_program(&dest.kind, self)
     }
 }
 
@@ -460,11 +469,12 @@ fn init_in_place(
     Ok(Accepted {
         credentials,
         repository_id: prepared.repository_id,
+        new_repository: true,
     })
 }
 
-/// Saves an accepted edit under the daemon lock: checks again that the destination exists and
-/// its location is free, writes the secrets, then `config.toml`; when the config cannot be
+/// Saves an accepted edit under the daemon lock: checks again that the destination exists with
+/// the connection that was checked and that its location is free, writes the secrets, then `config.toml`; when the config cannot be
 /// written the secrets get their previous values back.
 fn save_update(
     guard: &mut DaemonCore,
@@ -478,7 +488,13 @@ fn save_update(
         .iter()
         .position(|d| d.id == updated.id)
         .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
-    guard.refuse_duplicate_and_missing_program(&updated)?;
+    // The check was made against the connection saved then; another save in between voids it.
+    if guard.config.destinations[idx].kind != saved.kind {
+        return Err(KesticServiceErr::InvalidInput(
+            "the destination was changed meanwhile; check the connection again".to_string(),
+        ));
+    }
+    guard.refuse_duplicate(&updated)?;
     let store = Arc::clone(&guard.secret_store);
     let previous = accepted
         .credentials
@@ -492,8 +508,15 @@ fn save_update(
     }
     // A secret variable that was removed or renamed leaves nothing behind in the password store.
     let _ = BackendCredentials::delete_unused(saved, &updated, store.as_ref());
-    if let Some(id) = accepted.repository_id {
-        let _ = guard.history.set_repository_id(&updated.id, &id);
+    match accepted.repository_id {
+        Some(id) => {
+            let _ = guard.history.set_repository_id(&updated.id, &id);
+        }
+        // A repository created in place whose ID restic did not print: the old ID is void.
+        None if accepted.new_repository => {
+            let _ = guard.history.forget_repository_id(&updated.id);
+        }
+        None => {}
     }
     Ok(())
 }

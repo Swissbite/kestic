@@ -117,6 +117,35 @@ fn saved(daemon: &M3Daemon, id: &Destination) -> Destination {
         .expect("destination in config")
 }
 
+/// `edited` leads to a repository of its own `init`: the test reports another backup
+/// destination, `UpdateDestination` saves nothing and `config.toml` stays as `before`.
+fn assert_other_repository(
+    daemon: &M3Daemon,
+    edited: &Destination,
+    before: &Option<Vec<u8>>,
+    ac: &str,
+) {
+    let tested = daemon
+        .client
+        .test_destination_connection(edited, "connect", "", &none())
+        .expect("TestDestinationConnection");
+    assert_eq!(
+        tested.error_kind,
+        Some(ConnectionTestCode::OtherRepository),
+        "{ac} the repository ID is compared: {tested:?}"
+    );
+    let result = daemon
+        .client
+        .update_destination(edited, "connect", "", &none(), true)
+        .expect("UpdateDestination");
+    assert_eq!(
+        result.outcome,
+        DestinationUpdateOutcome::OtherRepository,
+        "{ac} another repository is not saved"
+    );
+    assert_eq!(&config_bytes(daemon), before, "{ac} config unchanged");
+}
+
 fn english(result: &ConnectionTestResultDto) -> String {
     match connection_test_text(result.ok, result.error_kind, &result.detail) {
         UiText::Message(m) => m.english(),
@@ -566,8 +595,8 @@ impl SftpRig {
             .expect("TrustHostKey");
     }
 
-    /// An SFTP destination on 127.0.0.1 with a copied repository at `repo`.
-    fn add(&self, variant: &ResticVariant, repo: &str) -> Destination {
+    /// An SFTP destination on 127.0.0.1 with a copied repository at `repo`, and its password.
+    fn add(&self, variant: &ResticVariant, repo: &str) -> (Destination, String) {
         let created = copy_template_repo(&variant.bin, &self.dir.join(repo));
         let dest = Destination::new("Server", self.kind("127.0.0.1", repo)).expect("SFTP");
         self.trust(&dest);
@@ -575,7 +604,7 @@ impl SftpRig {
             .client
             .add_destination(&dest, "connect", &created.password, &none())
             .expect("AddDestination");
-        dest
+        (dest, created.password)
     }
 }
 
@@ -592,7 +621,7 @@ fn ac_m5_09_2_sftp_new_host_asks_for_host_key_then_saves() {
             for variant in restic_variants() {
                 let rig = start_sftp(root, &variant, "M5E092");
                 let client = &rig.daemon.client;
-                let dest = rig.add(&variant, "repo");
+                let (dest, _) = rig.add(&variant, "repo");
                 let mut edited = dest.clone();
                 edited.kind = rig.kind("localhost", "repo");
                 let before = config_bytes(&rig.daemon);
@@ -625,7 +654,7 @@ fn ac_m5_09_2_sftp_new_host_asks_for_host_key_then_saves() {
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(c)");
                 assert_eq!(saved(&rig.daemon, &dest).kind, edited.kind, "(c) new host");
-                // Q4 (b) of #72: the old server's line goes when no destination uses it.
+                // The old server's line goes when no destination uses it.
                 let known = fs::read_to_string(
                     KnownHostsPaths::from_env()
                         .expect("known_hosts paths")
@@ -659,7 +688,7 @@ fn ac_m5_01_6_sftp_path_change_is_checked_before_saving() {
             for variant in restic_variants() {
                 let rig = start_sftp(root, &variant, "M5E016");
                 let client = &rig.daemon.client;
-                let dest = rig.add(&variant, "repo");
+                let (dest, password) = rig.add(&variant, "repo");
                 let before = config_bytes(&rig.daemon);
 
                 // (c) no repository at the new path.
@@ -699,6 +728,13 @@ fn ac_m5_01_6_sftp_path_change_is_checked_before_saving() {
                     "(c) reason: {tested:?}"
                 );
                 assert_eq!(config_bytes(&rig.daemon), before, "(c) config unchanged");
+
+                // (a) a repository of its own `init` that the saved password opens: the ID
+                // decides.
+                init_repo(&variant.bin, &rig.dir.join("own-init"), &password);
+                let mut own_init = dest.clone();
+                own_init.kind = rig.kind("127.0.0.1", "own-init");
+                assert_other_repository(&rig.daemon, &own_init, &before, "(a)");
 
                 // (a), (b) the repository copied to a new path.
                 copy_dir(&rig.dir.join("repo"), &rig.dir.join("moved"));
@@ -743,11 +779,14 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
                 };
                 let dest =
                     Destination::new("Cloud", s3(&server.endpoint, "one")).expect("S3 destination");
+                let password = strong_password();
                 client
-                    .add_destination(&dest, "init", &strong_password(), &keys)
+                    .add_destination(&dest, "init", &password, &keys)
                     .expect("AddDestination");
-                // The same repository in a second bucket; the server lists it after a restart.
+                // The same repository in a second bucket, and a repository of its own `init` with
+                // the same password in a third; the server lists them after a restart.
                 copy_dir(&server.bucket_dir("one"), &server.bucket_dir("two"));
+                init_repo(&variant.bin, &server.bucket_dir("three"), &password);
                 server.stop();
                 let server = server.restart();
                 let store = isolated_secret_store();
@@ -808,6 +847,11 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
                     "restic never ran with the saved keys for the new endpoint"
                 );
 
+                // (a) the repository ID is compared.
+                let mut own_init = dest.clone();
+                own_init.kind = s3(&server.endpoint, "three");
+                assert_other_repository(&daemon, &own_init, &before, "(a)");
+
                 // (a), (b) the same repository in another bucket, keys reused.
                 let tested = client
                     .test_destination_connection(&other_bucket, "connect", "", &none())
@@ -838,6 +882,33 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
                     stored(SECRET_KIND_S3_ACCESS_KEY).as_deref(),
                     Some(server.access_key.as_str()),
                     "(c) access key in the Secret Service"
+                );
+
+                // Keys entered with `verify_connection = false` are checked and saved too.
+                store
+                    .set_secret(
+                        dest.id.as_str(),
+                        SECRET_KIND_S3_SECRET_KEY,
+                        &kestic_core::secrets::SecretValue::from_str_secret("stale-key"),
+                    )
+                    .expect("stale key");
+                let err = client
+                    .update_destination(&moved, "connect", "", &wrong, false)
+                    .expect_err("wrong keys without verify_connection");
+                assert_dbus_error_name(&err, "net.daester.Kestic.Error.AuthFailed");
+                assert_eq!(
+                    stored(SECRET_KIND_S3_SECRET_KEY).as_deref(),
+                    Some("stale-key"),
+                    "wrong keys are not saved"
+                );
+                let result = client
+                    .update_destination(&moved, "connect", "", &keys, false)
+                    .expect("keys without verify_connection");
+                assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
+                assert_eq!(
+                    stored(SECRET_KIND_S3_SECRET_KEY).as_deref(),
+                    Some(server.secret_key.as_str()),
+                    "the entered keys are saved"
                 );
                 daemon.stop();
             }
@@ -894,98 +965,123 @@ fn generic_kind(repo: &Path, plain: &str) -> DestinationKind {
 /// AC-M5-03-6 (FR-56, U18): a destination of the generic form whose URL or variables change. (a)
 /// The check runs `restic cat config` (15 s) and compares the repository ID, (b)
 /// `UpdateDestination` saves only after it, and (c) otherwise nothing changes. A changed variable
-/// that is not secret can name another server, so the secret values must be entered again.
+/// that is not secret can name another server, so the secret values must be entered again. Runs
+/// with restic 0.18.0 and the latest restic.
 #[test]
 fn ac_m5_03_6_generic_change_is_checked_before_saving() {
     run_isolated_test(
         "ac_m5_03_6_generic_change_is_checked_before_saving",
         "KESTIC_M5_09_036_INNER",
         |root| {
-            let variant = latest_variant();
-            let (daemon, wrapper, dir) = spawn_generic(root, &variant, "M5E036");
-            let client = &daemon.client;
-            let token = strong_password();
-            let secrets = BackendSecrets::env(&[("KESTIC_TEST_TOKEN", token.as_str())]);
-            let dest = Destination::new("Cloud", generic_kind(&dir.join("repo"), "one"))
-                .expect("generic destination");
-            client
-                .add_destination(&dest, "init", &strong_password(), &secrets)
-                .expect("AddDestination");
-            let before = config_bytes(&daemon);
+            for variant in restic_variants() {
+                let (daemon, wrapper, dir) = spawn_generic(root, &variant, "M5E036");
+                let client = &daemon.client;
+                let token = strong_password();
+                let secrets = BackendSecrets::env(&[("KESTIC_TEST_TOKEN", token.as_str())]);
+                let dest = Destination::new("Cloud", generic_kind(&dir.join("repo"), "one"))
+                    .expect("generic destination");
+                let password = strong_password();
+                client
+                    .add_destination(&dest, "init", &password, &secrets)
+                    .expect("AddDestination");
+                let before = config_bytes(&daemon);
 
-            // (a), (c) restic does not answer: stopped after 15 s, nothing saved.
-            copy_dir(&dir.join("repo"), &dir.join("moved"));
-            let mut moved = dest.clone();
-            moved.kind = generic_kind(&dir.join("moved"), "one");
-            wrapper.hold("cat");
-            let started = Instant::now();
-            let tested = client
-                .test_destination_connection(&moved, "connect", "", &none())
-                .expect("TestDestinationConnection");
-            wrapper.release("cat");
-            assert_eq!(
-                tested.error_kind,
-                Some(ConnectionTestCode::NotResponding),
-                "(a) {tested:?}"
-            );
-            assert!(
-                started.elapsed() < Duration::from_secs(22),
-                "(a) took {:?}",
-                started.elapsed()
-            );
-            assert_eq!(config_bytes(&daemon), before, "(c) config unchanged");
+                // (a), (c) restic does not answer: stopped after 15 s, nothing saved.
+                copy_dir(&dir.join("repo"), &dir.join("moved"));
+                let mut moved = dest.clone();
+                moved.kind = generic_kind(&dir.join("moved"), "one");
+                wrapper.hold("cat");
+                let started = Instant::now();
+                let tested = client
+                    .test_destination_connection(&moved, "connect", "", &none())
+                    .expect("TestDestinationConnection");
+                wrapper.release("cat");
+                assert_eq!(
+                    tested.error_kind,
+                    Some(ConnectionTestCode::NotResponding),
+                    "(a) {tested:?}"
+                );
+                assert!(
+                    started.elapsed() < Duration::from_secs(22),
+                    "(a) took {:?}",
+                    started.elapsed()
+                );
+                assert_eq!(config_bytes(&daemon), before, "(c) config unchanged");
 
-            // A changed plain variable needs the secret value again.
-            let mut plain_changed = dest.clone();
-            plain_changed.kind = generic_kind(&dir.join("repo"), "two");
-            let tested = client
-                .test_destination_connection(&plain_changed, "connect", "", &none())
-                .expect("TestDestinationConnection");
-            assert_eq!(
-                tested.error_kind,
-                Some(ConnectionTestCode::CredentialsRequired),
-                "{tested:?}"
-            );
+                // A changed plain variable needs the secret value again.
+                let mut plain_changed = dest.clone();
+                plain_changed.kind = generic_kind(&dir.join("repo"), "two");
+                let tested = client
+                    .test_destination_connection(&plain_changed, "connect", "", &none())
+                    .expect("TestDestinationConnection");
+                assert_eq!(
+                    tested.error_kind,
+                    Some(ConnectionTestCode::CredentialsRequired),
+                    "{tested:?}"
+                );
 
-            // A secret inside an rclone URL is refused.
-            let mut secret_url = dest.clone();
-            secret_url.kind = DestinationKind::Generic {
-                url: "rclone::sftp,host=nas,pass=hunter2:backup".to_string(),
-                env: Vec::new(),
-            };
-            let tested = client
-                .test_destination_connection(&secret_url, "connect", "", &none())
-                .expect("TestDestinationConnection");
-            assert_eq!(
-                tested.error_kind,
-                Some(ConnectionTestCode::SecretInUrl),
-                "{tested:?}"
-            );
+                // A secret inside an rclone URL is refused.
+                let mut secret_url = dest.clone();
+                secret_url.kind = DestinationKind::Generic {
+                    url: "rclone::sftp,host=nas,pass=hunter2:backup".to_string(),
+                    env: Vec::new(),
+                };
+                let tested = client
+                    .test_destination_connection(&secret_url, "connect", "", &none())
+                    .expect("TestDestinationConnection");
+                assert_eq!(
+                    tested.error_kind,
+                    Some(ConnectionTestCode::SecretInUrl),
+                    "{tested:?}"
+                );
 
-            // (a), (b) the repository at a new path: compared and saved, token reused.
-            let tested = client
-                .test_destination_connection(&moved, "connect", "", &none())
-                .expect("TestDestinationConnection");
-            assert!(tested.ok, "(a) {tested:?}");
-            let result = client
-                .update_destination(&moved, "connect", "", &none(), true)
-                .expect("UpdateDestination");
-            assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(b)");
-            assert_eq!(saved(&daemon, &dest).kind, moved.kind, "(b) saved");
-            assert_eq!(
-                isolated_secret_store()
-                    .get_secret(dest.id.as_str(), &secret_kind("KESTIC_TEST_TOKEN"))
-                    .expect("read")
-                    .map(|v| v.as_str().expect("utf-8").to_string()),
-                Some(token),
-                "the token stays"
-            );
-            daemon.stop();
+                // (a) a repository of its own `init` that the saved password opens.
+                init_repo(&variant.bin, &dir.join("own-init"), &password);
+                let mut own_init = dest.clone();
+                own_init.kind = generic_kind(&dir.join("own-init"), "one");
+                let tested = client
+                    .test_destination_connection(&own_init, "connect", "", &none())
+                    .expect("TestDestinationConnection");
+                assert_eq!(
+                    tested.error_kind,
+                    Some(ConnectionTestCode::OtherRepository),
+                    "(a) the repository ID is compared: {tested:?}"
+                );
+                let result = client
+                    .update_destination(&own_init, "connect", "", &none(), true)
+                    .expect("UpdateDestination");
+                assert_eq!(
+                    result.outcome,
+                    DestinationUpdateOutcome::OtherRepository,
+                    "(a) another repository is not saved"
+                );
+                assert_eq!(config_bytes(&daemon), before, "(c) config unchanged");
+
+                // (a), (b) the repository at a new path: compared and saved, token reused.
+                let tested = client
+                    .test_destination_connection(&moved, "connect", "", &none())
+                    .expect("TestDestinationConnection");
+                assert!(tested.ok, "(a) {tested:?}");
+                let result = client
+                    .update_destination(&moved, "connect", "", &none(), true)
+                    .expect("UpdateDestination");
+                assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(b)");
+                assert_eq!(saved(&daemon, &dest).kind, moved.kind, "(b) saved");
+                assert_eq!(
+                    isolated_secret_store()
+                        .get_secret(dest.id.as_str(), &secret_kind("KESTIC_TEST_TOKEN"))
+                        .expect("read")
+                        .map(|v| v.as_str().expect("utf-8").to_string()),
+                    Some(token),
+                    "the token stays"
+                );
+                daemon.stop();
+            }
         },
     );
 }
 
-/// Decision on #70: `UpdateDestination` with `verify_connection = false` still checks a changed
+/// `UpdateDestination` with `verify_connection = false` still checks a changed
 /// connection or new credentials, and never saves the configuration without the entered keys.
 #[test]
 fn m5_09_verify_connection_false_still_checks_changes() {
@@ -1038,7 +1134,7 @@ fn m5_09_verify_connection_false_still_checks_changes() {
     );
 }
 
-/// Decision on #70: when `config.toml` cannot be written after the secrets were, the secrets get
+/// When `config.toml` cannot be written after the secrets were, the secrets get
 /// their previous values back and an entry that had none is removed.
 #[test]
 fn m5_09_failed_config_write_restores_secrets() {
@@ -1122,6 +1218,19 @@ fn m5_09_init_only_in_place() {
                 add_local_destination(client, &variant.bin, &dir.join("repo"), "Disk", |_| {});
             fs::create_dir_all(dir.join("elsewhere")).expect("mkdir");
             let calls_before = wrapper.entries().len();
+            let tested = client
+                .test_destination_connection(
+                    &local(&dest, &dir.join("elsewhere")),
+                    "init",
+                    "",
+                    &none(),
+                )
+                .expect("TestDestinationConnection");
+            assert_eq!(
+                tested.error_kind,
+                Some(ConnectionTestCode::OtherRepository),
+                "the test of init elsewhere: {tested:?}"
+            );
             let result = client
                 .update_destination(
                     &local(&dest, &dir.join("elsewhere")),
@@ -1170,6 +1279,48 @@ fn m5_09_init_only_in_place() {
                     .expect("read")
                     .is_some(),
                 "the repository password stays"
+            );
+            daemon.stop();
+        },
+    );
+}
+
+/// `AddDestination` whose `config.toml` cannot be written afterwards removes the secrets it has
+/// just written for the new destination.
+#[test]
+fn m5_09_failed_config_write_after_add_removes_new_secrets() {
+    run_isolated_test(
+        "m5_09_failed_config_write_after_add_removes_new_secrets",
+        "KESTIC_M5_09_ADD_INNER",
+        |root| {
+            let variant = latest_variant();
+            let (daemon, _wrapper, sub) = spawn(root, &variant, "M5EADD");
+            let dir = root.join(&sub);
+            let repo = copy_template_repo(&variant.bin, &dir.join("repo"));
+            let dest = Destination::new(
+                "Disk",
+                DestinationKind::Local {
+                    path: dir.join("repo"),
+                },
+            )
+            .expect("destination");
+            let config_dir = daemon
+                .config_path
+                .parent()
+                .expect("config dir")
+                .to_path_buf();
+            fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o555)).expect("chmod");
+            let result = daemon
+                .client
+                .add_destination(&dest, "connect", &repo.password, &none());
+            fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o755)).expect("chmod");
+            assert!(result.is_err(), "the config write failed: {result:?}");
+            assert_eq!(
+                isolated_secret_store()
+                    .get_secret(dest.id.as_str(), SECRET_KIND_REPO)
+                    .expect("read"),
+                None,
+                "no repository password left behind"
             );
             daemon.stop();
         },

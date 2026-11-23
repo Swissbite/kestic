@@ -588,6 +588,16 @@ impl RunHistory {
         Ok(())
     }
 
+    /// Forgets the repository ID of `destination_id`: the repository there is a new one whose ID
+    /// Kestic could not read.
+    pub fn forget_repository_id(&self, destination_id: &DestinationId) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "UPDATE destination_state SET repo_id = NULL WHERE destination_id = ?1",
+            params![destination_id.as_str()],
+        )?;
+        Ok(())
+    }
+
     /// Removes per-destination state row when a destination is deleted.
     pub fn clear_destination_state(
         &self,

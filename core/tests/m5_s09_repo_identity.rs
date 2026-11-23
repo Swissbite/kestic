@@ -197,7 +197,7 @@ fn m5_09_connection_changed_by_every_field() {
     }
 }
 
-/// Decision on #70 and Q3 of #72: saved credentials go only to the server they were entered for.
+/// Saved credentials go only to the server they were entered for.
 /// S3: the same endpoint (another bucket is fine); REST: the same host, the port may change;
 /// generic form: the same URL up to the path.
 #[test]
@@ -307,7 +307,7 @@ fn m5_09_same_server_rules_per_destination_kind() {
     ));
 }
 
-/// Q1 of #72: the repository ID is kept per destination in `history.db`, survives reopening and
+/// The repository ID is kept per destination in `history.db`, survives reopening and
 /// goes with the destination's state row.
 #[test]
 fn m5_09_repository_id_is_stored_per_destination() {
@@ -334,6 +334,15 @@ fn m5_09_repository_id_is_stored_per_destination() {
         Some(id(ID_B)),
         "the maintenance state leaves the ID alone"
     );
+    history.forget_repository_id(&other).expect("forget");
+    assert_eq!(
+        history.repository_id(&other).expect("read"),
+        None,
+        "a forgotten ID is gone"
+    );
+    history
+        .set_repository_id(&other, &id(ID_B))
+        .expect("store again");
     history.clear_destination_state(&dest).expect("clear");
     assert_eq!(history.repository_id(&dest).expect("read"), None);
     assert_eq!(history.repository_id(&other).expect("read"), Some(id(ID_B)));
@@ -412,7 +421,7 @@ fn fake_restic(dir: &Path) -> ResolvedRestic {
     }
 }
 
-/// Decision on #70: when a password store write fails after others succeeded, the entries
+/// When a password store write fails after others succeeded, the entries
 /// written before get their previous values back instead of being deleted, in
 /// `BackendCredentials::persist` and in `setup_destination`.
 #[test]
@@ -490,7 +499,7 @@ fn m5_09_failed_secret_write_restores_previous_values() {
     );
 }
 
-/// Q6 of #72 for the generic form: (a) more reserved names, (b) inherited variables of the
+/// The generic form: (a) more reserved names, (b) inherited variables of the
 /// backends removed, (c) a wider «Geheim» default, (d) no secrets inside an `rclone:` URL.
 #[test]
 fn m5_09_q6_reserved_names_cleared_prefixes_secret_default_and_rclone_url_secrets() {
