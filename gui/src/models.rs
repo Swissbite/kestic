@@ -744,6 +744,8 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "restoreFolderInstead"]
         fn restore_folder_instead(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        fn retry(self: Pin<&mut RestorePreviewModel>);
     }
 }
 

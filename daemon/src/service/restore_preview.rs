@@ -288,7 +288,7 @@ pub(crate) fn execute_restore_preview(
     }
     let mut dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
-        let tree = walk_folder(access, &plan, cancel)?;
+        let tree = walk_folder(access, &plan, &params.selection, cancel)?;
         if writes_into_repository(&tree, &plan, params, &check, ctx) {
             check.code = RestoreTargetCode::InsideRepository;
             dry_run = false;

@@ -80,8 +80,8 @@ pub struct PreviewClassification {
     pub counts: PreviewCounts,
     pub entries: QueryList<RestorePreviewEntry>,
     pub notes: Vec<RestoreNoteCode>,
-    /// Folders with content at the target where the snapshot has a file: restic cannot put the
-    /// file there, fails, and changes the folder's mode.
+    /// Folders with content at the target where the snapshot has a file the restore would
+    /// write: restic cannot put the file there, fails, and changes the folder's mode.
     pub blocked: Vec<String>,
 }
 
@@ -224,9 +224,35 @@ impl TreeCollector {
     }
 }
 
+/// What a dry run reports for one entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DryRunAction {
+    /// restic writes the entry where nothing of its kind is (`restored`).
+    Restored,
+    /// restic replaces the content of an existing entry (`updated`).
+    Updated,
+    /// restic leaves the entry as it is (`unchanged` or anything else).
+    Unchanged,
+}
+
+impl DryRunAction {
+    /// The action of a `verbose_status` line.
+    pub fn parse(action: &str) -> Self {
+        match action {
+            "restored" => Self::Restored,
+            "updated" => Self::Updated,
+            _ => Self::Unchanged,
+        }
+    }
+
+    fn writes(self) -> bool {
+        self != Self::Unchanged
+    }
+}
+
 /// The actions of one dry run by the path of the entry relative to the target; entries whose
 /// names restic shows alike (U+FFFD) share a path and keep the order of the dry run.
-pub type DryRunActions = HashMap<String, Vec<String>>;
+pub type DryRunActions = HashMap<String, Vec<DryRunAction>>;
 
 /// What the preview needs besides the dry runs.
 pub struct ClassifyInput<'a> {
@@ -257,10 +283,10 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
         }
     };
     let mut blocked: Vec<String> = Vec::new();
-    let mut items: Vec<(&String, usize, &String)> = input
+    let mut items: Vec<(&String, usize, DryRunAction)> = input
         .chosen
         .iter()
-        .flat_map(|(item, actions)| actions.iter().enumerate().map(move |(i, a)| (item, i, a)))
+        .flat_map(|(item, actions)| actions.iter().enumerate().map(move |(i, a)| (item, i, *a)))
         .collect();
     items.sort();
     for (item, index, action) in items {
@@ -273,10 +299,10 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             .nodes
             .get(item.as_str())
             .and_then(|nodes| nodes.get(index).or(nodes.first()));
-        let restored = action == "restored";
+        let restored = action == DryRunAction::Restored;
         let rank = input.chosen[item][..index]
             .iter()
-            .filter(|a| (*a == "restored") == restored)
+            .filter(|a| (**a == DryRunAction::Restored) == restored)
             .count();
         let picked = if behind_link {
             None
@@ -304,8 +330,7 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
         if node.is_some_and(|n| n.is_dir) {
             // A folder is not counted, unless restic puts it in place of a file or a symbolic
             // link at the target (it does so even with `never`): that entry is overwritten.
-            let replaces_file =
-                action == "restored" && existing.as_ref().is_some_and(|m| !m.is_dir());
+            let replaces_file = restored && existing.as_ref().is_some_and(|m| !m.is_dir());
             // restic sets mode and mtime of a folder that exists, even with `never`.
             if existing.as_ref().is_some_and(std::fs::Metadata::is_dir) {
                 note(RestoreNoteCode::FolderMetadataReset, &mut notes);
@@ -321,35 +346,44 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             });
             continue;
         }
-        let outcome = match action.as_str() {
+        let outcome = match action {
             // The dry run looks through the link; the run writes into a new, real folder.
             _ if behind_link => RestoreOutcome::New,
-            "restored" if existing.is_some() => RestoreOutcome::Overwritten,
-            "restored" => RestoreOutcome::New,
-            "updated" => RestoreOutcome::Overwritten,
-            _ if input.overwrite == RestoreOverwrite::Always => RestoreOutcome::Identical,
-            _ => match input
+            DryRunAction::Restored if existing.is_some() => RestoreOutcome::Overwritten,
+            DryRunAction::Restored => RestoreOutcome::New,
+            DryRunAction::Updated => RestoreOutcome::Overwritten,
+            DryRunAction::Unchanged if input.overwrite == RestoreOverwrite::Always => {
+                RestoreOutcome::Identical
+            }
+            DryRunAction::Unchanged => match input
                 .always
                 .and_then(|a| a.get(item.as_str()))
                 .and_then(|actions| actions.get(index))
             {
-                Some(a) if a == "updated" || a == "restored" => RestoreOutcome::Kept,
+                Some(a) if a.writes() => RestoreOutcome::Kept,
                 _ => RestoreOutcome::Identical,
             },
         };
-        // Entries whose names restic shows alike cannot be told apart at the target: any of
-        // them that is a folder with content blocks the file.
+        let linked_in_snapshot = node
+            .and_then(|n| n.inode)
+            .is_some_and(|i| shared_inodes.contains(&i));
+        // restic cannot put a file where the target has a folder with content: the run fails
+        // and gives the folder the file's mode and time. It tries only where the dry run
+        // writes the file, or for a file hard-linked in the snapshot (another name links to
+        // it). Entries whose names restic shows alike cannot be told apart at the target: any
+        // of them that is such a folder counts.
+        let tried = action.writes() || linked_in_snapshot;
         if let Some((dir, _)) = found.entries.iter().find(|(p, m)| {
-            !behind_link && m.is_dir() && std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_some())
+            tried
+                && !behind_link
+                && m.is_dir()
+                && std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_some())
         }) {
             blocked.push(dir.to_string_lossy().into_owned());
             continue;
         }
         let size = node.map_or(0, |n| n.size);
         if outcome == RestoreOutcome::Overwritten {
-            let linked_in_snapshot = node
-                .and_then(|n| n.inode)
-                .is_some_and(|i| shared_inodes.contains(&i));
             let linked_at_target = !behind_link
                 && found
                     .entries
@@ -370,7 +404,8 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
     if input.foreign_owner {
         note(RestoreNoteCode::OwnershipNotRestored, &mut notes);
     }
-    if entries.total() == 0 {
+    // A selection of folders alone counts no file, but restic still creates the folders.
+    if input.chosen.is_empty() {
         note(RestoreNoteCode::NothingSelectedMatches, &mut notes);
     }
     PreviewClassification {
@@ -463,23 +498,36 @@ fn find_at_target(target: &Path, item: &str) -> AtTarget {
     }
 }
 
-/// Walks the restored folder of `plan` (`restic ls --json --recursive --no-lock`).
+/// Walks what the restore of `plan` writes (`restic ls --json --recursive --no-lock`): the
+/// selected entries of `selection` with everything below them, or the restored folder when the
+/// whole folder is restored. Nothing else of the snapshot is read or held.
 pub fn walk_folder(
     access: &SnapshotListAccess<'_>,
     plan: &RestorePlan,
+    selection: &[String],
     cancel: Option<&CancelHandle>,
 ) -> Result<SnapshotTree, BackupRunError> {
-    let args = vec![
+    let mut args = vec![
         "ls".to_string(),
         "--no-lock".to_string(),
         "--recursive".to_string(),
         plan.snapshot_id.clone(),
-        plan.folder.clone(),
     ];
+    args.extend(walk_paths(plan, selection));
     let mut collector = SnapshotTree::collector(&plan.folder);
     let res = run_streaming(access, args, cancel, &mut |line| collector.push_line(line))?;
     check_command_succeeded(&res)?;
     Ok(collector.finish())
+}
+
+/// The paths `restic ls` lists for the walk of `plan`: the selected entries when the plan
+/// restores only them (`--include`), otherwise its folder.
+pub fn walk_paths(plan: &RestorePlan, selection: &[String]) -> Vec<String> {
+    if plan.includes.is_empty() || selection.is_empty() {
+        vec![plan.folder.clone()]
+    } else {
+        selection.to_vec()
+    }
 }
 
 /// One dry run of `plan` into `target` with `overwrite` (`--dry-run --no-lock -vv`).
@@ -494,7 +542,10 @@ pub fn dry_run(
     let mut actions = DryRunActions::new();
     let res = run_streaming(access, args, cancel, &mut |line| {
         if let RestoreLine::Item(item) = parse_restore_line(line) {
-            actions.entry(item.item).or_default().push(item.action);
+            actions
+                .entry(item.item)
+                .or_default()
+                .push(DryRunAction::parse(&item.action));
         }
     })?;
     // Where the target has a file and the snapshot a folder with content, the dry run cannot
@@ -502,7 +553,7 @@ pub fn dry_run(
     // place of the file, so the entries below it are new.
     if let Some(items) = below_replaced_files(&res) {
         for item in items {
-            actions.insert(item, vec!["restored".to_string()]);
+            actions.insert(item, vec![DryRunAction::Restored]);
         }
         return Ok(actions);
     }
@@ -612,6 +663,34 @@ mod tests {
                 });
         }
         tree
+    }
+
+    #[test]
+    fn walk_reads_only_the_selected_entries() {
+        let plan = |folder: &str, includes: &[&str]| RestorePlan {
+            snapshot_id: "abc".to_string(),
+            folder: folder.to_string(),
+            includes: includes.iter().map(|i| (*i).to_string()).collect(),
+        };
+        let sel = ["/h/u/a.txt".to_string(), "/h/u/docs".to_string()];
+        assert_eq!(
+            walk_paths(
+                &plan("/h/u", &["--include=/a.txt", "--include=/docs"]),
+                &sel
+            ),
+            sel.to_vec(),
+            "the selected entries, not their common folder"
+        );
+        assert_eq!(
+            walk_paths(&plan("/h/u/docs", &[]), &["/h/u/docs".to_string()]),
+            vec!["/h/u/docs".to_string()],
+            "a selected folder restored as a whole"
+        );
+        assert_eq!(
+            walk_paths(&plan("/h/u", &[]), &[]),
+            vec!["/h/u".to_string()],
+            "nothing selected: the whole folder"
+        );
     }
 
     #[test]

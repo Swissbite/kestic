@@ -35,7 +35,7 @@ use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ErrorKind, RestoreTargetCode, RunProgressPhase, ServiceErrorCode};
 use kestic_i18n::messages::{interrupted_by_sleep_message, nothing_restored_message};
 use std::os::unix::fs::DirBuilderExt;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use zbus::Connection;
@@ -44,6 +44,13 @@ use zbus::Connection;
 pub(crate) struct PendingRestore {
     run: Run,
     setup: RestoreSetup,
+}
+
+/// What an accepted restore holds until its run ends.
+pub(crate) struct RestoreClaim {
+    destination_id: DestinationId,
+    /// The resolved target folder; a second restore into it is refused meanwhile.
+    target: PathBuf,
 }
 
 /// Everything a restore run needs once it starts.
@@ -55,6 +62,9 @@ struct RestoreSetup {
     check: TargetCheck,
     /// Plan, backup and kept files of the matching preview, when one was given.
     from_preview: Option<PreviewFacts>,
+    /// The folders this restore created for its new folder, outermost first; they are removed
+    /// again when the restore ends and they are still empty.
+    created: Vec<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -95,25 +105,58 @@ fn refuse_unusable(check: &TargetCheck) -> Result<(), KesticServiceErr> {
 
 /// Creates the new folder of a restore (and the folder holding it); only this leaf is ever
 /// created, never a missing original location.
-fn create_new_folder(target: &RestoreTarget, check: &TargetCheck) -> Result<(), KesticServiceErr> {
-    if !(check.missing && matches!(target, RestoreTarget::NewFolder { .. })) {
+fn create_new_folder(setup: &mut RestoreSetup) -> Result<(), KesticServiceErr> {
+    if !(setup.check.missing && matches!(setup.target, RestoreTarget::NewFolder { .. })) {
         return Ok(());
     }
     // Only the folder holding the new folder (`~/Restored`) and the new folder itself are
     // created; a deeper missing path is refused.
-    let dir = Path::new(target.dir());
+    let dir = PathBuf::from(setup.target.dir());
     if let Some(parent) = dir.parent().filter(|p| !p.exists()) {
         std::fs::create_dir(parent)
             .map_err(|e| invalid(format!("cannot create {}: {e}", parent.display())))?;
+        setup.created.push(parent.to_path_buf());
     }
     // Private to the user: restic keeps the mode of an existing target folder, and the
     // restored folder may be private (e.g. ~/.ssh).
-    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
-        Ok(()) => Ok(()),
+    match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+        Ok(()) => {
+            setup.created.push(dir);
+            Ok(())
+        }
         // Someone created it meanwhile: the check below decides like for any existing folder.
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(invalid(format!("cannot create {}: {e}", dir.display()))),
     }
+}
+
+/// Removes the folders the restore created while they are empty, so a failed, cancelled or
+/// empty restore leaves no empty new folder behind; a folder with anything in it stays.
+fn remove_created_if_empty(setup: &RestoreSetup) {
+    for dir in setup.created.iter().rev() {
+        if std::fs::remove_dir(dir).is_err() {
+            break;
+        }
+    }
+}
+
+/// Creates a missing new folder and checks it again. It runs after the restic probe, so a
+/// start that fails before leaves no folder behind.
+fn make_target(setup: &mut RestoreSetup) -> Result<(), KesticServiceErr> {
+    if !setup.check.missing {
+        return Ok(());
+    }
+    create_new_folder(setup)?;
+    setup.check = check_target(&setup.target, setup.ctx.repositories());
+    refuse_unusable(&setup.check)?;
+    if setup.check.code == RestoreTargetCode::ExistsNotEmpty
+        && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)
+    {
+        return Err(KesticServiceErr::PreviewRequired(
+            "the new folder has content now".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// The facts of preview `preview_id` when it is done, at most ten minutes old (by the clock)
@@ -181,6 +224,7 @@ fn prepare_setup(
         target,
         check: first_check,
         from_preview: None,
+        created: Vec::new(),
     };
     let required = preview_required(&setup.target, &setup.check);
     let facts = matching_preview(
@@ -206,19 +250,63 @@ fn prepare_setup(
         ));
     }
     setup.from_preview = facts;
-    create_new_folder(&setup.target, &setup.check)?;
-    if setup.check.missing {
-        setup.check = check_target(&setup.target, setup.ctx.repositories());
-        refuse_unusable(&setup.check)?;
-        if setup.check.code == RestoreTargetCode::ExistsNotEmpty
-            && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)
-        {
-            return Err(KesticServiceErr::PreviewRequired(
-                "the new folder has content now".to_string(),
-            ));
-        }
-    }
     Ok((setup, deps, supervision))
+}
+
+/// Accepts a checked restore: a second restore into the same target folder is refused while
+/// the first one starts, waits or runs. Returns the new run, not yet recorded.
+fn claim(shared: &Arc<Mutex<DaemonCore>>, setup: &RestoreSetup) -> Result<Run, KesticServiceErr> {
+    let mut guard = shared.lock_unpoisoned();
+    let dest_id = &setup.ctx.destination.id;
+    // Removed while the request was checked.
+    if guard.config.destination(dest_id).is_none() {
+        return Err(KesticServiceErr::NotFound(dest_id.to_string()));
+    }
+    let target = &setup.check.resolved;
+    if guard.restore_claims.values().any(|c| &c.target == target) {
+        return Err(KesticServiceErr::AlreadyRunning(format!(
+            "a restore into {} already runs or waits",
+            target.display()
+        )));
+    }
+    // The preview named the snapshot's backup already; without one the worker sets it once
+    // restic has read the snapshot.
+    let backup_id = setup
+        .from_preview
+        .as_ref()
+        .and_then(|f| f.backup.as_ref())
+        .map(|(id, _)| id.clone());
+    let run = Run::new_restore(
+        guard.clock.as_ref(),
+        setup.ctx.destination.id.clone(),
+        backup_id,
+    )
+    .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+    guard.restore_claims.insert(
+        run.id.clone(),
+        RestoreClaim {
+            destination_id: setup.ctx.destination.id.clone(),
+            target: target.clone(),
+        },
+    );
+    Ok(run)
+}
+
+/// Probes restic and creates the new folder of a claimed restore.
+fn accept(
+    shared: &Arc<Mutex<DaemonCore>>,
+    setup: &mut RestoreSetup,
+    deps: &ResticDeps,
+) -> Result<ResolvedRestic, KesticServiceErr> {
+    let resolved = match probe_for_run(&deps.provider, deps.secret_store.as_ref()) {
+        (_, Ok(resolved)) => resolved,
+        (probe, Err(err)) => {
+            shared.lock_unpoisoned().record_probe(probe);
+            return Err(err);
+        }
+    };
+    make_target(setup)?;
+    Ok(resolved)
 }
 
 /// Starts a restore (`StartRestore`); returns its run ID. While maintenance runs on the
@@ -229,33 +317,28 @@ pub fn start_restore_async(
 ) -> Result<String, KesticServiceErr> {
     let request: RestoreRequest = serde_json::from_str(request_json)
         .map_err(|e| invalid(format!("invalid restore request JSON: {e}")))?;
-    let (setup, deps, supervision) = prepare_setup(shared, &request)?;
-    let resolved = match probe_for_run(&deps.provider, deps.secret_store.as_ref()) {
-        (_, Ok(resolved)) => resolved,
-        (probe, Err(err)) => {
-            shared.lock_unpoisoned().record_probe(probe);
+    let (mut setup, deps, supervision) = prepare_setup(shared, &request)?;
+    let mut run = claim(shared, &setup)?;
+    let resolved = match accept(shared, &mut setup, &deps) {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            remove_created_if_empty(&setup);
+            shared.lock_unpoisoned().release_restore(&run.id);
             return Err(err);
         }
     };
 
     let mut guard = shared.lock_unpoisoned();
     let dest_id = setup.ctx.destination.id.clone();
-    // The preview named the snapshot's backup already; without one the worker sets it once
-    // restic has read the snapshot.
-    let backup_id = setup
-        .from_preview
-        .as_ref()
-        .and_then(|f| f.backup.as_ref())
-        .map(|(id, _)| id.clone());
-    let mut run = Run::new_restore(guard.clock.as_ref(), dest_id.clone(), backup_id)
-        .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
     let run_id = run.id.as_str().to_string();
     if guard.has_exclusive_run(&dest_id) {
         run.status = RunStatus::Pending;
         run.pending_reason = Some(PendingReason::Queued);
-        guard
-            .upsert_run_cached(&run, &[])
-            .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+        if let Err(err) = guard.upsert_run_cached(&run, &[]) {
+            remove_created_if_empty(&setup);
+            guard.release_restore(&run.id);
+            return Err(KesticServiceErr::Internal(err.to_string()));
+        }
         let conn = guard.conn.clone();
         guard.pending_restores.push(PendingRestore {
             run: run.clone(),
@@ -271,7 +354,8 @@ pub fn start_restore_async(
     Ok(run_id)
 }
 
-/// Registers `run` as active and starts its worker thread.
+/// Registers `run` as active and starts its worker thread. A run that cannot be recorded ends
+/// its claim and leaves no new folder behind.
 fn launch(
     shared: &Arc<Mutex<DaemonCore>>,
     guard: &mut DaemonCore,
@@ -284,9 +368,11 @@ fn launch(
     run.status = RunStatus::Running;
     run.pending_reason = None;
     run.started_at = guard.clock.now_utc();
-    guard
-        .upsert_run_cached(&run, &[])
-        .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
+    if let Err(err) = guard.upsert_run_cached(&run, &[]) {
+        remove_created_if_empty(&setup);
+        guard.release_restore(&run.id);
+        return Err(KesticServiceErr::Internal(err.to_string()));
+    }
     let ActivatedRun {
         cancel,
         conn_opt,
@@ -318,6 +404,18 @@ fn launch(
 }
 
 impl DaemonCore {
+    /// Ends the claim of restore `run_id` (its run has ended or never started).
+    fn release_restore(&mut self, run_id: &RunId) {
+        self.restore_claims.remove(run_id);
+    }
+
+    /// Whether a restore of `dest_id` starts, waits or runs.
+    pub(super) fn has_restore_on(&self, dest_id: &DestinationId) -> bool {
+        self.restore_claims
+            .values()
+            .any(|c| &c.destination_id == dest_id)
+    }
+
     /// Ends the waiting restore `run_id` as cancelled; `false` when no restore waits under it.
     pub(super) fn cancel_pending_restore(&mut self, run_id: &RunId) -> bool {
         let Some(pos) = self
@@ -327,38 +425,53 @@ impl DaemonCore {
         else {
             return false;
         };
-        let mut run = self.pending_restores.remove(pos).run;
+        let PendingRestore { mut run, setup } = self.pending_restores.remove(pos);
         let clock = Arc::clone(&self.clock);
         run.finish(clock.as_ref(), RunStatus::Cancelled, None);
         run.summary_message = Some(tr(&ErrorKind::Cancelled.message(None, false)));
-        if let Err(err) = self.upsert_run_cached(&run, &[]) {
-            eprintln!("kestic-daemon: failed to record cancelled restore {run_id}: {err}");
+        self.end_pending(&run, &setup);
+        true
+    }
+
+    /// Records the end of a restore that never started and ends its claim.
+    fn end_pending(&mut self, run: &Run, setup: &RestoreSetup) {
+        remove_created_if_empty(setup);
+        self.release_restore(&run.id);
+        if let Err(err) = self.upsert_run_cached(run, &[]) {
+            eprintln!("kestic-daemon: failed to record restore {}: {err}", run.id);
         }
         let conn = self.conn.clone();
         self.push_state();
         if let Some(conn) = conn {
-            emit_run_updated(&conn, &run);
+            emit_run_updated(&conn, run);
         }
-        true
     }
 }
 
-/// Checks a restore that waited again right before it starts: the target may have changed
-/// meanwhile, so where it now needs a preview, the one it was accepted with must have run the
-/// dry runs. Its age counted when the restore was accepted.
-fn recheck_waiting(setup: &mut RestoreSetup) -> Result<(), String> {
+/// Checks the target of a restore again right before restic starts: the folder must still be
+/// the one that was checked (and previewed), it must exist, and where it now needs a preview,
+/// the one the restore was accepted with must have run the dry runs. The age of that preview
+/// counted when the restore was accepted. The reason goes into the run history, so it is said
+/// in the daemon's language.
+fn recheck_target(setup: &mut RestoreSetup) -> Result<(), String> {
+    let accepted = setup.check.resolved.clone();
     setup.check = check_target(&setup.target, setup.ctx.repositories());
-    // The reason goes into the run history, so it is said in the daemon's language.
     let path = setup.check.resolved.to_string_lossy().into_owned();
-    if setup.check.resolved.to_str().is_none() {
+    if setup.check.resolved.to_str().is_none() || setup.check.resolved != accepted {
         return Err(tr_text(&ErrorKind::InvalidTarget.text(Some(&path))));
     }
-    if !setup.check.usable() {
-        return Err(setup
-            .check
-            .code
-            .message(&path)
-            .map_or_else(|| path.clone(), |m| tr(&m)));
+    // The folder was there (or created) when the restore was accepted; restic would create a
+    // missing one with all its parents.
+    let code = if setup.check.missing {
+        RestoreTargetCode::MissingMappedDir
+    } else {
+        setup.check.code
+    };
+    if !matches!(
+        code,
+        RestoreTargetCode::Ok | RestoreTargetCode::ExistsNotEmpty
+    ) {
+        return Err(code.message(&path).map_or_else(|| path.clone(), |m| tr(&m)));
     }
     if preview_required(&setup.target, &setup.check)
         && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)
@@ -368,7 +481,6 @@ fn recheck_waiting(setup: &mut RestoreSetup) -> Result<(), String> {
     Ok(())
 }
 
-/// Starts the restores that waited for maintenance on `dest_id` to end.
 /// Starts the waiting restores of every destination (after waking up).
 pub(crate) fn start_all_pending_restores(shared: &Arc<Mutex<DaemonCore>>) {
     let mut dests: Vec<DestinationId> = Vec::new();
@@ -382,66 +494,72 @@ pub(crate) fn start_all_pending_restores(shared: &Arc<Mutex<DaemonCore>>) {
     }
 }
 
+/// Starts the restores that waited for maintenance on `dest_id` to end.
 pub(crate) fn start_pending_restores(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationId) {
-    let waiting: Vec<PendingRestore> = {
-        let mut guard = shared.lock_unpoisoned();
+    let waiting: Vec<RunId> = shared
+        .lock_unpoisoned()
+        .pending_restores
+        .iter()
+        .filter(|p| &p.run.destination_id == dest_id)
+        .map(|p| p.run.id.clone())
+        .collect();
+    for run_id in waiting {
+        start_pending_restore(shared, dest_id, &run_id);
+    }
+}
+
+/// Starts the waiting restore `run_id`. It stays in the queue (and so can be cancelled) while
+/// its target is checked and restic is probed; only under the lock it leaves the queue and
+/// becomes active in one step.
+fn start_pending_restore(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationId, run_id: &RunId) {
+    let (mut setup, deps) = {
+        let guard = shared.lock_unpoisoned();
         // Nothing starts while the system goes to sleep; waking up starts the waiting ones.
         if guard.sleep_in_progress || guard.has_exclusive_run(dest_id) {
             return;
         }
-        let (start, keep) = std::mem::take(&mut guard.pending_restores)
-            .into_iter()
-            .partition(|p| &p.run.destination_id == dest_id);
-        guard.pending_restores = keep;
-        start
+        let Some(pending) = guard.pending_restores.iter().find(|p| &p.run.id == run_id) else {
+            return;
+        };
+        (pending.setup.clone(), guard.restic_deps())
     };
-    for mut pending in waiting {
-        if let Err(detail) = recheck_waiting(&mut pending.setup) {
-            let mut guard = shared.lock_unpoisoned();
-            let clock = Arc::clone(&guard.clock);
-            pending.run.finish(clock.as_ref(), RunStatus::Error, None);
-            pending.run.summary_message = Some(detail);
-            let _ = guard.upsert_run_cached(&pending.run, &[]);
-            let conn = guard.conn.clone();
-            guard.push_state();
-            if let Some(conn) = conn {
-                emit_run_updated(&conn, &pending.run);
-            }
-            continue;
-        }
-        let deps = shared.lock_unpoisoned().restic_deps();
-        let resolved = probe_for_run(&deps.provider, deps.secret_store.as_ref()).1;
-        let mut guard = shared.lock_unpoisoned();
-        // Maintenance or a backup's `forget` may have claimed the destination meanwhile.
-        if guard.has_exclusive_run(dest_id) {
-            guard.pending_restores.push(pending);
-            continue;
-        }
-        let supervision = guard.supervision_config();
-        let mut run = pending.run;
-        let started = resolved.map_err(|e| e.to_string()).and_then(|resolved| {
-            launch(
-                shared,
-                &mut guard,
-                run.clone(),
-                pending.setup,
-                deps,
-                supervision,
-                resolved,
-            )
+    let ready = recheck_target(&mut setup).and_then(|()| {
+        probe_for_run(&deps.provider, deps.secret_store.as_ref())
+            .1
             .map_err(|e| e.to_string())
-        });
-        if let Err(detail) = started {
-            let clock = Arc::clone(&guard.clock);
-            run.finish(clock.as_ref(), RunStatus::Error, None);
-            run.summary_message = Some(detail);
-            let _ = guard.upsert_run_cached(&run, &[]);
-            let conn = guard.conn.clone();
-            guard.push_state();
-            if let Some(conn) = conn {
-                emit_run_updated(&conn, &run);
-            }
-        }
+    });
+    let mut guard = shared.lock_unpoisoned();
+    // Cancelled meanwhile, or started by another caller.
+    let Some(pos) = guard
+        .pending_restores
+        .iter()
+        .position(|p| &p.run.id == run_id)
+    else {
+        return;
+    };
+    // Maintenance or a backup's `forget` may have claimed the destination meanwhile.
+    if guard.sleep_in_progress || guard.has_exclusive_run(dest_id) {
+        return;
+    }
+    let PendingRestore { mut run, .. } = guard.pending_restores.remove(pos);
+    let supervision = guard.supervision_config();
+    let started = ready.and_then(|resolved| {
+        launch(
+            shared,
+            &mut guard,
+            run.clone(),
+            setup.clone(),
+            deps,
+            supervision,
+            resolved,
+        )
+        .map_err(|e| e.to_string())
+    });
+    if let Err(detail) = started {
+        let clock = Arc::clone(&guard.clock);
+        run.finish(clock.as_ref(), RunStatus::Error, None);
+        run.summary_message = Some(detail);
+        guard.end_pending(&run, &setup);
     }
 }
 
@@ -547,6 +665,17 @@ impl RestoreWorker {
                 }
             },
         };
+        // The probe and the plan may have taken a while (the password store, restic reading
+        // the snapshot): the folder is checked once more right before restic writes into it.
+        if let Err(reason) = recheck_target(&mut self.setup) {
+            return RestoreOutcome {
+                plan: None,
+                result: Err(BackupRunError::InvalidTarget {
+                    path: self.setup.check.resolved.to_string_lossy().into_owned(),
+                    reason,
+                }),
+            };
+        }
         let target = self.setup.check.resolved.clone();
         let overwrite = self.setup.params.overwrite;
         let cancel = self.cancel.clone();
@@ -647,6 +776,8 @@ fn record_outcome(
                 BackupRunError::PathNotInSnapshot(_) => {
                     tr(&backup_run_error_kind(&err).message(None, false))
                 }
+                // The target check right before the run says why, in the daemon's language.
+                BackupRunError::InvalidTarget { reason, .. } => reason.clone(),
                 other => localized_backup_run_error(other),
             };
             let detail = redact_secrets(&err.to_string(), secrets);
@@ -697,6 +828,8 @@ fn finalize(worker: &RestoreWorker, run: &Run, secrets: &[&str]) {
     let (state_dto, window_active) = {
         let mut guard = worker.shared.lock_unpoisoned();
         guard.active_runs.remove(&run_id);
+        remove_created_if_empty(&worker.setup);
+        guard.release_restore(&run_id);
         if let Err(err) = guard.upsert_run_cached(run, secrets) {
             eprintln!("kestic-daemon: failed to record finished restore {run_id}: {err}");
         }

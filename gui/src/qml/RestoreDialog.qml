@@ -56,9 +56,10 @@ Kirigami.Dialog {
         model.setKinds(kinds);
     }
 
-    onRejected: model.cancel()
     onOpened: (originalRadio.checked ? originalRadio : newFolderRadio).forceActiveFocus(Qt.TabFocusReason)
+    // However the dialog closes (Cancel, Escape, a click outside), a running preview stops.
     onClosed: {
+        model.cancel();
         var list = returnFocusList;
         returnFocusList = null;
         if (list) {
@@ -68,13 +69,14 @@ Kirigami.Dialog {
     }
 
     // When files would be overwritten, «Cancel» is the default: it holds the focus and the
-    // default frame, so Return cancels.
+    // default frame, so Return cancels. The focus stays on the list of modes while the user
+    // steps through it.
     readonly property bool overwrites: dialog.model !== null && dialog.model.overwrites
     onOverwritesChanged: {
         var cancel = dialog.standardButton(Kirigami.Dialog.Cancel);
         if (cancel) {
             cancel.Accessible.defaultButton = overwrites;
-            if (overwrites) cancel.forceActiveFocus(Qt.TabFocusReason);
+            if (overwrites && !overwriteBox.activeFocus) cancel.forceActiveFocus(Qt.TabFocusReason);
         }
     }
 
@@ -208,9 +210,15 @@ Kirigami.Dialog {
                 id: overwriteBox
                 objectName: "restoreOverwriteBox"
                 model: [i18n("Never overwrite"), i18n("If older"), i18n("If changed"), i18n("Always")]
-                currentIndex: dialog.model ? dialog.model.overwrite : 0
                 Accessible.name: i18n("Existing files:")
                 onActivated: function(index) { dialog.model.chooseOverwrite(index); }
+            }
+            // Choosing a mode must not break the link to the model: the dialog opens again
+            // with «Never».
+            Binding {
+                target: overwriteBox
+                property: "currentIndex"
+                value: dialog.model ? dialog.model.overwrite : 0
             }
         }
 
@@ -254,6 +262,13 @@ Kirigami.Dialog {
                     text: i18n("Restore Folder")
                     visible: dialog.model !== null && dialog.model.folder_instead.length > 0
                     onTriggered: dialog.model.restoreFolderInstead()
+                },
+                Kirigami.Action {
+                    objectName: "restoreRetryAction"
+                    icon.name: "view-refresh"
+                    text: Texts.label("retry")
+                    visible: dialog.model !== null && dialog.model.folder_instead.length === 0
+                    onTriggered: dialog.model.retry()
                 }
             ]
         }

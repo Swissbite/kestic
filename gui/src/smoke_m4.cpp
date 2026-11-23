@@ -1105,7 +1105,8 @@ int scenario_restore_unmatchable(const Ctx& c) {
 
 /// AC-M4-05-16 (f) and AC-M4-05-25 (c), smoke part: at the original location of `docs` (its
 /// subfolder exists there) the dialog shows the note on folder permissions; for `b.bin`, which
-/// is a folder with content at the target, it shows the translated refusal naming that folder.
+/// is a folder with content at the target, it shows with «Always» the translated refusal naming
+/// that folder and offers «Retry».
 int scenario_restore_target_texts(const Ctx& c) {
     QQuickWindow* w = c.window;
     if (int rc = open_restore_snapshots(c, 6501, 1)) {
@@ -1154,6 +1155,9 @@ int scenario_restore_target_texts(const Ctx& c) {
     M4_CHECK(6525, wait_for_preview(refused.model), "the preview of the new folder is done");
     M4_CHECK(6526, click_ui_item(w, qobject_cast<QQuickItem*>(refused_original), "original location"),
         "the original location could not be chosen");
+    // With «Never» restic leaves the folder alone; with «Always» it would fail there.
+    M4_CHECK(6538, wait_for_preview(refused.model), "the preview with «Never» is done");
+    QMetaObject::invokeMethod(refused.model, "chooseOverwrite", Q_ARG(int, 3));
     M4_CHECK(6527, wait_until([&] { return refused.model->property("state").toString() == QLatin1String("error"); },
                        30000),
         "AC-M4-05-25 the preview refuses the target");
@@ -1167,8 +1171,16 @@ int scenario_restore_target_texts(const Ctx& c) {
     M4_CHECK(6529, text.contains(expected),
         qPrintable(QStringLiteral("AC-M4-05-25 (c) translated text naming the folder: ") + text));
     M4_CHECK(6530, !text.contains(QStringLiteral("invalid restore target")), "AC-M4-05-25 (c) no raw text");
+    QObject* retry = object_named(w, "restoreRetryAction");
+    M4_CHECK(6535, retry && retry->property("visible").toBool(), "an error offers «Retry»");
     repaint_fully(w);
     M4_CHECK(6531, save_screenshot(w, screenshot_variant(c.out_path, "-refused")), "screenshot failed");
+    trigger(retry);
+    M4_CHECK(6536, refused.model->property("state").toString() == QLatin1String("running"),
+        "«Retry» runs the preview again");
+    M4_CHECK(6537, wait_until([&] { return refused.model->property("state").toString() == QLatin1String("error"); },
+                       30000),
+        "the target is refused again");
     return 0;
 }
 
@@ -1229,8 +1241,24 @@ int scenario_restore_dialog(const Ctx& c) {
             "1 vorhandene Datei wird nicht überschrieben"),
         "AC-M4-05-4 the preview names the kept file");
 
+    // The modes chosen the way a user does, with the keyboard on the list: the focus stays on
+    // the list while previews that overwrite files come in.
+    auto* box_item = qobject_cast<QQuickItem*>(overwrite_box);
+    M4_CHECK(6276, box_item != nullptr, "the list of modes is an item");
+    box_item->forceActiveFocus(Qt::TabFocusReason);
+    for (int mode = 1; mode <= 3; ++mode) {
+        send_key(w, Qt::Key_Down);
+        M4_CHECK(6277, wait_until([&] { return r.model->property("overwrite").toInt() == mode; }, 2000),
+            "a mode chosen with the keyboard");
+        M4_CHECK(6278, wait_for_preview(r.model), "the preview of the mode is done");
+        M4_CHECK(6279, w->activeFocusItem() == box_item, "the focus stays on the list of modes");
+    }
+    M4_CHECK(6232, overwrite_box->property("currentIndex").toInt() == 3, "«Always» chosen");
+    // Reached with the focus elsewhere, overwriting puts the focus on «Cancel».
+    qobject_cast<QQuickItem*>(original_radio)->forceActiveFocus(Qt::TabFocusReason);
+    QMetaObject::invokeMethod(r.model, "chooseOverwrite", Q_ARG(int, 0));
+    M4_CHECK(6280, wait_for_preview(r.model), "the preview with «Never» is done");
     QMetaObject::invokeMethod(r.model, "chooseOverwrite", Q_ARG(int, 3));
-    M4_CHECK(6232, wait_until([&] { return r.model->property("overwrite").toInt() == 3; }, 2000), "«Always» chosen");
     M4_CHECK(6233, wait_for_preview(r.model), "the preview with «Always» is done");
     QObject* consequence = object_named(w, "restoreConsequenceMessage");
     M4_CHECK(6234, consequence && consequence->property("visible").toBool(), "AC-M4-05-4 (c) consequence shown");
@@ -1313,7 +1341,13 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK(6270, wait_for_preview(r.model), "the preview of the folder with content is done");
     M4_CHECK(6271, r.model->property("preview_required").toBool(), "AC-M4-05-15 (d) a folder with content needs the preview");
     M4_CHECK(6272, restore_now->property("enabled").toBool(), "AC-M4-05-15 (e) enabled after its preview");
-    QMetaObject::invokeMethod(r.dialog, "reject");
+    // Closed without «Cancel» (Escape, a click outside), the dialog stops its running preview.
+    QMetaObject::invokeMethod(r.model, "chooseOverwrite", Q_ARG(int, 1));
+    M4_CHECK(6281, r.model->property("state").toString() == QLatin1String("running"), "a preview runs");
+    QMetaObject::invokeMethod(r.dialog, "close");
+    M4_CHECK(6282, wait_until([&] { return is_closed(r.dialog); }, 3000), "the dialog closes");
+    M4_CHECK_EQ(6283, r.model->property("state").toString(), QStringLiteral("cancelled"),
+        "the running preview stopped");
     return 0;
 }
 

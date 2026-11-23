@@ -406,6 +406,17 @@ impl qobject::RestorePreviewModel {
         }
     }
 
+    /// Tries again after an error (the preview failed, or a page or a filter could not be
+    /// fetched): runs the preview again, with the same filter.
+    pub fn retry(mut self: Pin<&mut Self>) {
+        if self.state.to_string() != "error" || !self.folder_instead.is_empty() {
+            return;
+        }
+        let filter = self.filter.clone();
+        self.as_mut().run_preview();
+        self.as_mut().rust_mut().filter = filter;
+    }
+
     /// Stops a running preview; nothing is written (the dialog was closed).
     pub fn cancel(mut self: Pin<&mut Self>) {
         if self.state.to_string() == "running" {

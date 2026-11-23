@@ -5,7 +5,7 @@
 
 use super::error::{KesticServiceErr, map_provider_err};
 use super::previews::PreviewEntry;
-use super::restore_runner::PendingRestore;
+use super::restore_runner::{PendingRestore, RestoreClaim};
 use super::run_errors::unreadable_items_from_lines;
 use super::snapshot_queries::QueryResult;
 use super::supervision::SupervisionConfig;
@@ -222,6 +222,9 @@ pub struct DaemonCore {
     pub(super) queued_backups: VecDeque<BackupId>,
     /// Restores waiting for maintenance of their destination to end.
     pub(super) pending_restores: Vec<PendingRestore>,
+    /// Every accepted restore until its run ends (starting, waiting or running): its
+    /// destination and resolved target folder.
+    pub(super) restore_claims: HashMap<RunId, RestoreClaim>,
     pub(super) sleep_in_progress: bool,
     pub(super) dry_runs: HashMap<String, PreviewEntry<BackupDryRunResult>>,
     pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
@@ -336,6 +339,7 @@ impl DaemonCore {
             claiming_destinations: HashSet::new(),
             queued_backups: VecDeque::new(),
             pending_restores: Vec::new(),
+            restore_claims: HashMap::new(),
             sleep_in_progress: false,
             dry_runs: HashMap::new(),
             retention_previews: HashMap::new(),

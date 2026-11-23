@@ -30,9 +30,21 @@ use std::sync::{Arc, Mutex};
 use zbus::Connection;
 
 impl DaemonCore {
+    /// A destination a restore starts from, waits for or runs from stays as it is until the
+    /// restore has ended.
+    fn refuse_while_restoring(&self, id: &DestinationId) -> Result<(), KesticServiceErr> {
+        if self.has_restore_on(id) {
+            return Err(KesticServiceErr::InUse(format!(
+                "a restore from destination {id} runs or waits"
+            )));
+        }
+        Ok(())
+    }
+
     pub fn remove_destination(&mut self, dest_id: &str) -> Result<(), KesticServiceErr> {
         let id = DestinationId::parse(dest_id)
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        self.refuse_while_restoring(&id)?;
         let mut next = self.config.clone();
         let removed = next.remove_destination(&id).map_err(|err| match err {
             ConfigError::Validation(msg) if msg.contains("still referenced by") => {
@@ -386,6 +398,7 @@ pub(crate) fn update_destination_unlocked(
         if guard.config.destination(&updated.id).is_none() {
             return Err(KesticServiceErr::NotFound(updated.id.as_str().to_string()));
         }
+        guard.refuse_while_restoring(&updated.id)?;
         if let Some(existing) = guard
             .config
             .find_duplicate_destination(&updated.kind, Some(&updated.id))
@@ -436,6 +449,7 @@ pub(crate) fn update_destination_unlocked(
         .iter()
         .position(|d| d.id == updated.id)
         .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
+    guard.refuse_while_restoring(&updated.id)?;
     if let Some(existing) = guard
         .config
         .find_duplicate_destination(&updated.kind, Some(&updated.id))
