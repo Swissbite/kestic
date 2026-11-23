@@ -29,26 +29,15 @@ Kirigami.ScrollablePage {
     readonly property var primaryList: diffListView
     readonly property alias diffModel: snapshotDiffModel
 
-    // The kinds of change whose chip is checked; none shows all changes.
-    property var checkedKinds: []
     // The user cancelled the comparison; a hidden page that comes back does not start it again.
     property bool cancelledByUser: false
 
     function runCompare() {
         cancelledByUser = false;
-        filterDelay.stop();
-        filterField.text = "";
-        checkedKinds = [];
+        filterField.resetFilter();
+        kindChips.uncheckAll();
         diffListView.currentIndex = -1;
         snapshotDiffModel.compare(destinationId, fromSnapshotId, toSnapshotId);
-    }
-
-    function toggleKind(code, checked) {
-        var kinds = checkedKinds.filter(function(k) { return k !== code; });
-        if (checked) kinds.push(code);
-        checkedKinds = kinds;
-        diffListView.currentIndex = -1;
-        snapshotDiffModel.setKinds(kinds);
     }
 
     Component.onCompleted: runCompare()
@@ -67,20 +56,9 @@ Kirigami.ScrollablePage {
         objectName: "snapshotDiffModel"
     }
 
-    Timer {
-        interval: 150
-        repeat: true
-        running: snapshotDiffModel.state === "running"
-        onTriggered: snapshotDiffModel.poll()
-    }
-
-    Timer {
-        id: filterDelay
-        interval: 300
-        onTriggered: snapshotDiffModel.setFilter(filterField.text)
-    }
-
     header: Controls.ToolBar {
+        leftPadding: Kirigami.Units.largeSpacing
+        rightPadding: Kirigami.Units.largeSpacing
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.smallSpacing
 
@@ -91,9 +69,13 @@ Kirigami.ScrollablePage {
                 elide: Text.ElideRight
             }
 
-            RowLayout {
+            // On a narrow page the filter gets a line of its own below the number of changes.
+            GridLayout {
+                id: countRow
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.mediumSpacing
+                columns: page.width < Kirigami.Units.gridUnit * 30 ? 1 : 2
+                columnSpacing: Kirigami.Units.mediumSpacing
+                rowSpacing: Kirigami.Units.smallSpacing
                 visible: snapshotDiffModel.state === "done" && snapshotDiffModel.total > 0
 
                 Controls.Label {
@@ -101,54 +83,29 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     text: snapshotDiffModel.count_text
                     textFormat: Text.PlainText
-                    elide: Text.ElideRight
+                    wrapMode: Text.Wrap
                     font.bold: true
                     opacity: 0.8
                 }
-                Kirigami.SearchField {
+                FilterField {
                     id: filterField
                     objectName: "compareFilterField"
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 12
+                    Layout.fillWidth: countRow.columns === 1
                     visible: !snapshotDiffModel.too_large
-                    placeholderText: Texts.label("filter")
-                    Accessible.name: Texts.label("filter")
-                    // Ctrl+F belongs to the search field of the snapshot list.
-                    focusSequences: []
-                    onTextChanged: filterDelay.restart()
+                    onFilterRequested: function(text) { snapshotDiffModel.setFilter(text); }
                 }
             }
 
-            Flow {
+            KindChips {
+                id: kindChips
                 objectName: "compareKindChips"
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
                 visible: snapshotDiffModel.state === "done" && !snapshotDiffModel.too_large
                     && snapshotDiffModel.kind_codes.length > 0
-
-                Repeater {
-                    model: snapshotDiffModel.kind_codes
-                    delegate: Kirigami.Chip {
-                        id: kindChip
-                        required property int index
-                        required property string modelData
-                        objectName: "compareKindChip_" + modelData
-                        text: snapshotDiffModel.kind_texts[index]
-                        checkable: true
-                        closable: false
-                        checked: page.checkedKinds.indexOf(modelData) >= 0
-                        Accessible.name: text
-                        onToggled: {
-                            page.toggleKind(kindChip.modelData, kindChip.checked);
-                            kindChip.forceActiveFocus(Qt.TabFocusReason);
-                        }
-
-                        FocusRing {
-                            target: kindChip
-                            radius: Math.round(kindChip.height / 2)
-                            ringColor: kindChip.checked ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
-                        }
-                    }
-                }
+                listModel: snapshotDiffModel
+                namePrefix: "compareKindChip_"
+                onKindsToggled: diffListView.currentIndex = -1
             }
         }
     }
@@ -183,64 +140,16 @@ Kirigami.ScrollablePage {
             }
         }
 
-        ColumnLayout {
-            objectName: "compareBusy"
-            anchors.centerIn: parent
-            visible: snapshotDiffModel.state === "running"
-            spacing: Kirigami.Units.largeSpacing
-
-            Controls.BusyIndicator {
-                Layout.alignment: Qt.AlignHCenter
-                running: parent.visible
-                Accessible.name: i18n("Comparing…")
+        QueryStatus {
+            queryModel: snapshotDiffModel
+            namePrefix: "compare"
+            busyText: i18n("Comparing…")
+            cancelledText: i18n("Comparison cancelled")
+            onCancelRequested: {
+                page.cancelledByUser = true;
+                snapshotDiffModel.cancel();
             }
-            Controls.Button {
-                objectName: "compareCancelButton"
-                Layout.alignment: Qt.AlignHCenter
-                text: Texts.label("cancel")
-                icon.name: "process-stop"
-                onClicked: {
-                    page.cancelledByUser = true;
-                    snapshotDiffModel.cancel();
-                }
-            }
-        }
-
-        Kirigami.PlaceholderMessage {
-            objectName: "compareCancelledMessage"
-            anchors.centerIn: parent
-            width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: snapshotDiffModel.state === "cancelled"
-            icon.name: "process-stop"
-            text: i18n("Comparison cancelled")
-            helpfulAction: Kirigami.Action {
-                text: Texts.label("retry")
-                onTriggered: page.runCompare()
-            }
-        }
-
-        Kirigami.InlineMessage {
-            objectName: "compareErrorMessage"
-            anchors.top: parent.top
-            width: parent.width
-            type: Kirigami.MessageType.Error
-            visible: snapshotDiffModel.state === "error"
-            text: snapshotDiffModel.error_text
-            actions: [
-                Kirigami.Action {
-                    text: Texts.label("retry")
-                    onTriggered: page.runCompare()
-                }
-            ]
-        }
-
-        Kirigami.PlaceholderMessage {
-            objectName: "compareTooLargeMessage"
-            anchors.centerIn: parent
-            width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: snapshotDiffModel.state === "done" && snapshotDiffModel.too_large
-            icon.name: "dialog-information"
-            text: snapshotDiffModel.too_large_text
+            onRetryRequested: page.runCompare()
         }
 
         Kirigami.PlaceholderMessage {
@@ -273,8 +182,6 @@ Kirigami.ScrollablePage {
 
             FocusRing {
                 target: changeRow
-                anchors.margins: changeRow.highlighted ? 2 : 0
-                ringColor: changeRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {
@@ -287,7 +194,7 @@ Kirigami.ScrollablePage {
 
                     Kirigami.Icon {
                         source: changeRow.iconName
-                        color: changeRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                        selected: changeRow.highlighted
                         Layout.preferredWidth: Kirigami.Units.iconSizes.small
                         Layout.preferredHeight: Kirigami.Units.iconSizes.small
                     }

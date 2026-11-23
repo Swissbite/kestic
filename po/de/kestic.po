@@ -3734,6 +3734,9 @@ msgstr "Wohin"
 msgid "Into a new folder"
 msgstr "In neuen Ordner"
 
+msgid "Into a New Folder"
+msgstr "In neuen Ordner"
+
 msgid "To the original location"
 msgstr "An ursprünglichen Ort"
 

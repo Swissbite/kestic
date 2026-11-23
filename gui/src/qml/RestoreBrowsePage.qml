@@ -33,8 +33,7 @@ Kirigami.ScrollablePage {
 
     // Lists `dir`; the filter starts empty in every folder, the selection stays.
     function openDir(dir) {
-        filterDelay.stop();
-        filterField.text = "";
+        filterField.resetFilter();
         browseListView.currentIndex = -1;
         snapshotBrowseModel.open(destinationId, snapshotId, dir);
     }
@@ -87,19 +86,6 @@ Kirigami.ScrollablePage {
         objectName: "snapshotBrowseModel"
     }
 
-    Timer {
-        interval: 150
-        repeat: true
-        running: snapshotBrowseModel.state === "running"
-        onTriggered: snapshotBrowseModel.poll()
-    }
-
-    Timer {
-        id: filterDelay
-        interval: 300
-        onTriggered: snapshotBrowseModel.setFilter(filterField.text)
-    }
-
     actions: [
         Kirigami.Action {
             objectName: "restoreSelectionAction"
@@ -113,6 +99,8 @@ Kirigami.ScrollablePage {
     ]
 
     header: Controls.ToolBar {
+        leftPadding: Kirigami.Units.largeSpacing
+        rightPadding: Kirigami.Units.largeSpacing
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.smallSpacing
 
@@ -234,15 +222,11 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.mediumSpacing
 
-                Kirigami.SearchField {
+                FilterField {
                     id: filterField
                     objectName: "browseFilterField"
                     Layout.fillWidth: true
-                    placeholderText: Texts.label("filter")
-                    Accessible.name: Texts.label("filter")
-                    // Ctrl+F belongs to the search field of the snapshot list.
-                    focusSequences: []
-                    onTextChanged: filterDelay.restart()
+                    onFilterRequested: function(text) { snapshotBrowseModel.setFilter(text); }
                 }
                 Controls.Label {
                     objectName: "browseCountLabel"
@@ -313,33 +297,10 @@ Kirigami.ScrollablePage {
             }
         }
 
-        Kirigami.LoadingPlaceholder {
-            anchors.centerIn: parent
-            visible: snapshotBrowseModel.state === "running"
-        }
-
-        Kirigami.InlineMessage {
-            objectName: "browseErrorMessage"
-            anchors.top: parent.top
-            width: parent.width
-            type: Kirigami.MessageType.Error
-            visible: snapshotBrowseModel.state === "error"
-            text: snapshotBrowseModel.error_text
-            actions: [
-                Kirigami.Action {
-                    text: Texts.label("retry")
-                    onTriggered: page.openDir(snapshotBrowseModel.dir)
-                }
-            ]
-        }
-
-        Kirigami.PlaceholderMessage {
-            objectName: "browseTooLargeMessage"
-            anchors.centerIn: parent
-            width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: snapshotBrowseModel.state === "done" && snapshotBrowseModel.too_large
-            icon.name: "dialog-information"
-            text: snapshotBrowseModel.too_large_text
+        QueryStatus {
+            queryModel: snapshotBrowseModel
+            namePrefix: "browse"
+            onRetryRequested: page.openDir(snapshotBrowseModel.dir)
         }
 
         Kirigami.PlaceholderMessage {
@@ -389,8 +350,6 @@ Kirigami.ScrollablePage {
 
             FocusRing {
                 target: entryRow
-                anchors.margins: entryRow.highlighted ? 2 : 0
-                ringColor: entryRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {
