@@ -24,6 +24,8 @@ pub mod model;
 pub mod mount;
 pub mod provider;
 pub mod restic;
+pub mod restic_install;
+pub mod restic_release;
 pub mod retention;
 pub mod s3;
 pub mod scheduler;

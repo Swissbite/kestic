@@ -4,7 +4,8 @@
 #![forbid(unsafe_code)]
 
 //! Unit and integration tests for M0-S05: `.deb` packaging, QML Depends, notifyrc, and autostart;
-//! plus the `Suggests` of M5-S04.
+//! plus the `Suggests` of M5-S04, and of M5-S06 the `gpgv` dependency and the trust anchor that
+//! only test builds can replace.
 
 mod common;
 
@@ -354,6 +355,157 @@ fn m5_s04_deb_suggests_rclone_and_openssh_client_only() {
         assert!(
             !packages.contains(&"openssh-client".to_string()),
             "{field} must not name openssh-client:\n{control}"
+        );
+    }
+}
+
+/// AC-M5-06-13 (a): the `.deb` depends on `gpgv`, which checks the signature of a downloaded
+/// restic.
+#[test]
+fn m5_s06_deb_depends_on_gpgv() {
+    let out = Command::new("dpkg-deb")
+        .arg("-f")
+        .arg(find_deb_package())
+        .output()
+        .expect("run dpkg-deb -f");
+    assert!(out.status.success(), "dpkg-deb -f failed");
+    let control = String::from_utf8_lossy(&out.stdout);
+
+    // (a)
+    assert!(
+        control_field(&control, "Depends").contains(&"gpgv".to_string()),
+        "Depends lacks gpgv:\n{control}"
+    );
+}
+
+/// The `[features]` and dependency tables of a workspace crate's `Cargo.toml`.
+fn manifest(crate_dir: &str) -> toml::Table {
+    let path = workspace_root().join(crate_dir).join("Cargo.toml");
+    fs::read_to_string(&path)
+        .expect("read Cargo.toml")
+        .parse()
+        .expect("parse Cargo.toml")
+}
+
+/// Features a dependency table enables on `kestic-core`.
+fn core_features(manifest: &toml::Table, table: &str) -> Vec<String> {
+    manifest
+        .get(table)
+        .and_then(|t| t.get("kestic-core"))
+        .and_then(|dep| dep.get("features"))
+        .and_then(toml::Value::as_array)
+        .map_or_else(Vec::new, |features| {
+            features
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+}
+
+/// AC-M5-06-10: release URL, signing key and fingerprint can only be replaced with the feature
+/// `test-trust-anchor` of `kestic-core`, which only the integration tests switch on and the
+/// `.deb` build never does.
+#[test]
+fn ac_m5_06_10_trust_anchor_only_with_test_feature() {
+    use kestic_core::restic_release::TrustAnchor;
+    const FEATURE: &str = "test-trust-anchor";
+    let names = [
+        TrustAnchor::RELEASE_URL_VAR,
+        TrustAnchor::SIGNING_KEY_VAR,
+        TrustAnchor::SIGNING_FPR_VAR,
+    ];
+    assert_eq!(
+        names,
+        [
+            "KESTIC_TEST_RELEASE_URL",
+            "KESTIC_TEST_SIGNING_KEY",
+            "KESTIC_TEST_SIGNING_FPR"
+        ]
+    );
+
+    // (a) the shipped binary cannot read the variables: their names are not in it; this test
+    // binary, built with the feature, reads them through `for_this_build`
+    let this_build = TrustAnchor::for_this_build().expect("anchor of this build");
+    assert_eq!(this_build, TrustAnchor::production());
+    let (_extracted, shipped) = extract_shipped_binary("kestic-m5-s06-anchor");
+    let test_binary = std::env::current_exe().expect("test binary");
+    for name in names {
+        assert!(
+            !file_contains(&shipped, name.as_bytes()),
+            "shipped kestic contains {name}"
+        );
+        assert!(
+            file_contains(&test_binary, name.as_bytes()),
+            "the feature build lacks {name}, so the probe proves nothing"
+        );
+    }
+
+    // (b) the feature is declared by kestic-core, off by default, and only kestic-core's own
+    // dev-dependency (the integration tests) switches it on
+    let core = manifest("core");
+    let features = core.get("features").and_then(toml::Value::as_table);
+    assert!(
+        features.is_some_and(|f| f.contains_key(FEATURE)),
+        "kestic-core declares no feature {FEATURE}"
+    );
+    let default = features
+        .and_then(|f| f.get("default"))
+        .and_then(toml::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !default.iter().any(|f| f.as_str() == Some(FEATURE)),
+        "{FEATURE} is a default feature"
+    );
+    assert_eq!(
+        core_features(&core, "dev-dependencies"),
+        vec![FEATURE.to_string()]
+    );
+    for crate_dir in [
+        "build-stamp",
+        "core",
+        "i18n",
+        "daemon",
+        "gui",
+        "test-support",
+    ] {
+        let manifest = manifest(crate_dir);
+        for table in ["dependencies", "build-dependencies"] {
+            assert!(
+                !core_features(&manifest, table).contains(&FEATURE.to_string()),
+                "{crate_dir} enables {FEATURE} in [{table}]"
+            );
+        }
+        let enabled_by_features = manifest
+            .get("features")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|f| {
+                f.values()
+                    .filter_map(toml::Value::as_array)
+                    .flatten()
+                    .any(|v| v.as_str() == Some(&format!("kestic-core/{FEATURE}")))
+            });
+        assert!(
+            !enabled_by_features,
+            "a feature of {crate_dir} switches on kestic-core/{FEATURE}"
+        );
+    }
+
+    // (c) `just deb` builds the package without any feature
+    let justfile = fs::read_to_string(workspace_root().join("justfile")).expect("read justfile");
+    let deb_builds: Vec<&str> = justfile
+        .lines()
+        .filter(|l| l.contains("cargo deb") && !l.trim_start().starts_with('#'))
+        .collect();
+    assert_eq!(deb_builds.len(), 1, "{deb_builds:?}");
+    for flag in ["--features", "-F", "--all-features"] {
+        assert!(
+            !deb_builds[0]
+                .split_whitespace()
+                .any(|w| w.starts_with(flag)),
+            "`cargo deb` in the justfile passes {flag}: {}",
+            deb_builds[0]
         );
     }
 }
