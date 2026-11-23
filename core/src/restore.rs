@@ -541,7 +541,7 @@ pub struct RestoreRun {
 }
 
 /// Runs the restore of `plan` into `target` and reports progress lines to `on_status`. Folders
-/// are told apart from files on disk after restic wrote them. `Err` only when restic did not
+/// are told apart from files on disk as restic reports them. `Err` only when restic did not
 /// run to its end (cancelled, not started).
 pub fn execute_restore(
     access: &SnapshotListAccess<'_>,
@@ -553,8 +553,23 @@ pub fn execute_restore(
 ) -> Result<RestoreRun, BackupRunError> {
     preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
     let args = restore_args(plan, target, overwrite, RestoreCall::Run);
-    let mut items: Vec<RestoreItem> = Vec::new();
+    let mut result = RestoreRunResult::default();
     let mut summary: Option<RestoreSummary> = None;
+    // Each item is counted when restic reports it (the file is written by then), so a restore
+    // of millions of files holds no list of them.
+    let mut count = |item: &RestoreItem| {
+        // restic reports a file it could not write as restored too: only files that are there
+        // count, folders never.
+        let written = target.join(item.item.trim_start_matches('/'));
+        if !std::fs::symlink_metadata(&written).is_ok_and(|m| !m.is_dir()) {
+            return;
+        }
+        match item.action.as_str() {
+            "restored" => result.files_new += 1,
+            "updated" => result.files_overwritten += 1,
+            _ => {}
+        }
+    };
     let res =
         run_streaming_at(
             access,
@@ -562,31 +577,15 @@ pub fn execute_restore(
             Priority::Low,
             cancel,
             &mut |line| match parse_restore_line(line) {
-                RestoreLine::Item(item) => items.push(item),
+                RestoreLine::Item(item) => count(&item),
                 RestoreLine::Status(status) => on_status(&status),
                 RestoreLine::Summary(s) => summary = Some(s),
                 RestoreLine::Other => {}
             },
         )?;
     let failure = check_restore_succeeded(&res, plan).err();
-    let mut result = RestoreRunResult {
-        nothing_matched: summary.as_ref().is_none_or(RestoreSummary::is_empty),
-        bytes_restored: summary.as_ref().and_then(|s| s.bytes_restored).unwrap_or(0),
-        ..RestoreRunResult::default()
-    };
-    for item in items {
-        // restic reports a file it could not write as restored too: only files that are there
-        // count, folders never.
-        let written = target.join(item.item.trim_start_matches('/'));
-        if !std::fs::symlink_metadata(&written).is_ok_and(|m| !m.is_dir()) {
-            continue;
-        }
-        match item.action.as_str() {
-            "restored" => result.files_new += 1,
-            "updated" => result.files_overwritten += 1,
-            _ => {}
-        }
-    }
+    result.nothing_matched = summary.as_ref().is_none_or(RestoreSummary::is_empty);
+    result.bytes_restored = summary.as_ref().and_then(|s| s.bytes_restored).unwrap_or(0);
     Ok(RestoreRun {
         result,
         execution: res,

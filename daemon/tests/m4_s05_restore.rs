@@ -3379,3 +3379,38 @@ fn m4_s05_waiting_restore_leaves_no_folder_when_the_daemon_stops() {
         },
     );
 }
+
+/// A preview whose walk of the snapshot would hold more than the memory limit of one query stops
+/// there: (a) its list is too large and empty, (b) no dry run runs, and (c) `StartRestore` with
+/// it is refused with `PreviewRequired`, since it classified nothing.
+#[test]
+fn m4_s05_preview_over_the_memory_limit_stops() {
+    run_isolated_test(
+        "m4_s05_preview_over_the_memory_limit_stops",
+        "KESTIC_M4_S05_PREVIEW_LIMIT_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RL", thousand_tree, |o| {
+                o.query_limits = kestic_core::query_list::QueryLimits {
+                    per_query_bytes: 20_000,
+                    total_bytes: 40_000,
+                };
+            });
+            let (preview_id, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+            assert!(p.entries.too_large, "(a) too large: {:?}", p.entries.total);
+            assert!(p.entries.items.is_empty(), "(a) no items");
+            assert!(dry_runs(&fx).is_empty(), "(b) {:?}", dry_runs(&fx));
+            let refused = fx.start_restore(
+                &[],
+                fx.original(),
+                RestoreOverwrite::Never,
+                Some(&preview_id),
+            );
+            assert!(
+                matches!(refused, Err(KesticDbusError::PreviewRequired(_))),
+                "(c) {refused:?}"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}

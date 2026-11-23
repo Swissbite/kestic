@@ -284,7 +284,7 @@ pub(crate) fn execute_restore_preview(
     }
     let mut dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
-        let tree = walk_folder(access, &plan, &params.selection, cancel)?;
+        let tree = walk_folder(access, &plan, &params.selection, cancel, limit_bytes)?;
         if writes_into_repository(&tree, &plan, params, &check, ctx) {
             check.code = RestoreTargetCode::InsideRepository;
             dry_run = false;
@@ -300,7 +300,13 @@ pub(crate) fn execute_restore_preview(
                 foreign_owner,
                 limit_bytes,
             };
-            execute_preview(access, &run, cancel)?
+            let classification = execute_preview(access, &run, cancel)?;
+            // A preview that stopped at the memory limit classified nothing: no restore can
+            // rely on it.
+            if classification.is_too_large() {
+                dry_run = false;
+            }
+            classification
         }
     } else {
         PreviewClassification::empty()

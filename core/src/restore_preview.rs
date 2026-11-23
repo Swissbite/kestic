@@ -9,7 +9,9 @@
 //! run leaves out.
 
 use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded};
-use crate::query_list::{HeldResult, ListBuilder, ListEntry, ListPage, PageRequest, QueryList};
+use crate::query_list::{
+    ENTRY_OVERHEAD_BYTES, HeldResult, ListBuilder, ListEntry, ListPage, PageRequest, QueryList,
+};
 use crate::restic::CancelHandle;
 use crate::restore::{
     RestoreCall, RestoreLine, RestorePlan, check_restore_succeeded, parse_restore_line,
@@ -92,6 +94,24 @@ impl HeldResult for PreviewClassification {
 }
 
 impl PreviewClassification {
+    /// A preview over the memory limit of a query: nothing classified, the list is too large
+    /// with `files` entries.
+    pub fn too_large(files: u64) -> Self {
+        let mut entries = ListBuilder::new(0);
+        entries.push_dropped(files.max(1));
+        Self {
+            counts: PreviewCounts::default(),
+            entries: entries.finish(),
+            notes: Vec::new(),
+            blocked: Vec::new(),
+        }
+    }
+
+    /// Whether the preview stopped at the memory limit instead of classifying the files.
+    pub fn is_too_large(&self) -> bool {
+        self.entries.too_large()
+    }
+
     /// An empty preview (the default target: everything is new there anyway).
     pub fn empty() -> Self {
         Self {
@@ -135,14 +155,23 @@ pub struct TreeNode {
 #[derive(Debug, Default)]
 pub struct SnapshotTree {
     pub nodes: HashMap<String, Vec<TreeNode>>,
+    /// Memory of `nodes`, counted like a list entry (path plus overhead).
+    pub held_bytes: u64,
+    /// The walk exceeded the memory limit of a query: `nodes` is empty, the preview cannot
+    /// classify anything.
+    pub too_large: bool,
+    /// Entries that are no folders, also those dropped for the limit.
+    pub files: u64,
 }
 
 impl SnapshotTree {
-    /// Collects the output lines of `restic ls --json --recursive <id> <folder>`.
-    pub fn collector(folder: &str) -> TreeCollector {
+    /// Collects the output lines of `restic ls --json --recursive <id> <folder>`, holding at
+    /// most `limit_bytes`.
+    pub fn collector(folder: &str, limit_bytes: u64) -> TreeCollector {
         TreeCollector {
             folder: folder.to_string(),
             tree: SnapshotTree::default(),
+            limit_bytes,
         }
     }
 
@@ -204,6 +233,7 @@ impl SnapshotTree {
 pub struct TreeCollector {
     folder: String,
     tree: SnapshotTree,
+    limit_bytes: u64,
 }
 
 #[derive(Deserialize)]
@@ -236,12 +266,25 @@ impl TreeCollector {
                 _ => return,
             }
         };
+        let is_dir = node.node_type == "dir";
+        if !is_dir {
+            self.tree.files += 1;
+        }
+        if self.tree.too_large {
+            return;
+        }
+        self.tree.held_bytes += relative.len() as u64 + ENTRY_OVERHEAD_BYTES;
+        if self.tree.held_bytes > self.limit_bytes {
+            self.tree.too_large = true;
+            self.tree.nodes = HashMap::new();
+            return;
+        }
         self.tree
             .nodes
             .entry(relative.to_string())
             .or_default()
             .push(TreeNode {
-                is_dir: node.node_type == "dir",
+                is_dir,
                 size: node.size.unwrap_or(0),
                 inode: node.inode,
                 above: false,
@@ -585,6 +628,7 @@ pub fn walk_folder(
     plan: &RestorePlan,
     selection: &[String],
     cancel: Option<&CancelHandle>,
+    limit_bytes: u64,
 ) -> Result<SnapshotTree, BackupRunError> {
     let mut args = vec![
         "ls".to_string(),
@@ -593,11 +637,13 @@ pub fn walk_folder(
         plan.snapshot_id.clone(),
     ];
     args.extend(walk_paths(plan, selection));
-    let mut collector = SnapshotTree::collector(&plan.folder);
+    let mut collector = SnapshotTree::collector(&plan.folder, limit_bytes);
     let res = run_streaming(access, args, cancel, &mut |line| collector.push_line(line))?;
     check_command_succeeded(&res)?;
     let mut tree = collector.finish();
-    tree.add_folders_above(crate::restore::selected_paths(plan, selection).as_deref());
+    if !tree.too_large {
+        tree.add_folders_above(crate::restore::selected_paths(plan, selection).as_deref());
+    }
     Ok(tree)
 }
 
@@ -611,24 +657,40 @@ pub fn walk_paths(plan: &RestorePlan, selection: &[String]) -> Vec<String> {
     }
 }
 
-/// One dry run of `plan` into `target` with `overwrite` (`--dry-run --no-lock -vv`).
+/// One dry run of `plan` into `target` with `overwrite` (`--dry-run --no-lock -vv`); `None`
+/// when what it reports would hold more than `limit_bytes`.
 pub fn dry_run(
     access: &SnapshotListAccess<'_>,
     plan: &RestorePlan,
     target: &Path,
     overwrite: RestoreOverwrite,
     cancel: Option<&CancelHandle>,
-) -> Result<DryRunActions, BackupRunError> {
+    limit_bytes: u64,
+) -> Result<Option<(DryRunActions, u64)>, BackupRunError> {
     let args = restore_args(plan, target, overwrite, RestoreCall::DryRun);
     let mut actions = DryRunActions::new();
+    let mut held: u64 = 0;
+    let mut too_large = false;
     let res = run_streaming(access, args, cancel, &mut |line| {
+        if too_large {
+            return;
+        }
         if let RestoreLine::Item(item) = parse_restore_line(line) {
+            held += item.item.len() as u64 + ENTRY_OVERHEAD_BYTES;
+            if held > limit_bytes {
+                too_large = true;
+                actions = DryRunActions::new();
+                return;
+            }
             actions
                 .entry(item.item)
                 .or_default()
                 .push(DryRunAction::parse(&item.action));
         }
     })?;
+    if too_large {
+        return Ok(None);
+    }
     // Where the target has a file and the snapshot a folder with content, the dry run cannot
     // look below the file and fails («not a directory»); the run itself puts the folder in
     // place of the file, so the entries below it are new.
@@ -636,10 +698,10 @@ pub fn dry_run(
         for item in items {
             actions.insert(item, vec![DryRunAction::Restored]);
         }
-        return Ok(actions);
+        return Ok(Some((actions, held)));
     }
     check_restore_succeeded(&res, plan)?;
-    Ok(actions)
+    Ok(Some((actions, held)))
 }
 
 /// The items of a dry run that failed only because entries lie below a file at the target.
@@ -703,17 +765,32 @@ pub fn execute_preview(
             reason: "not a real folder where restic needs one above the selection".to_string(),
         });
     }
-    let chosen = dry_run(access, plan, target, overwrite, cancel)?;
+    // The walk and both dry runs together hold at most the limit of one query; beyond it the
+    // preview stops with a list that is too large instead of growing without bound.
+    let files = tree.files;
+    if tree.too_large {
+        return Ok(PreviewClassification::too_large(files));
+    }
+    let budget = limit_bytes.saturating_sub(tree.held_bytes);
+    let Some((chosen, held)) = dry_run(access, plan, target, overwrite, cancel, budget)? else {
+        return Ok(PreviewClassification::too_large(files));
+    };
     let always = if overwrite == RestoreOverwrite::Always {
         None
     } else {
-        Some(dry_run(
+        let budget = budget.saturating_sub(held);
+        let always = dry_run(
             access,
             plan,
             target,
             RestoreOverwrite::Always,
             cancel,
-        )?)
+            budget,
+        )?;
+        let Some((always, _)) = always else {
+            return Ok(PreviewClassification::too_large(files));
+        };
+        Some(always)
     };
     let classification = classify_preview(&ClassifyInput {
         tree,
