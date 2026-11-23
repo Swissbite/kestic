@@ -128,12 +128,12 @@ Monospace, Secrets bereits redacted (ab M6-S12 lesbar aufbereitete Log-Einträge
 
 ### 8.14 Nicht zugeordnete und verwaiste Snapshots (FR-36, FR-49, P20)
 
-![unassigned light](assets/kestic-unassigned-light.png)
+![restore select light](assets/kestic-restore-select-light.png)
 
-Unterseiten von «Wiederherstellen», nach Ziel gruppiert. Zeile: Datum, Host, Pfade, im Expertenmodus Tags.
+Gruppen im Abschnitt «Weitere Snapshots» der Liste «Aus welchem Backup?» (§7.6), über alle Ziele: «Nicht zugeordnet», «Verwaist» und, sobald es welche gibt, «Hier nicht angelegte Backups». Jede Gruppe ist eine Zeile wie ein Backup (Symbol, Name, Anzahl, `›`). Ein Klick öffnet die Snapshot-Liste rechts wie bei einem Backup: Zeilen mit `›`, die zum Durchsuchen führen (gleiche Restore-Regeln wie §7.6), keine eigene Seite und keine Schaltfläche «Durchsuchen» je Zeile. Die Liste hat eine Überschrift je Ziel (nicht zugeordnet) bzw. je Backup-ID (verwaist, hier nicht angelegt); tragen zwei Ziele denselben Namen, nennt die Überschrift zusätzlich den Ort. Zeile: Datum, Host, Pfade, im Expertenmodus Tags, dazu der Hinweis «Von Kestic nicht verwaltet» bzw. «Backup hier nicht angelegt». Die Gruppen haben kein Suchfeld.
 
-- **Nicht zugeordnet:** Snapshots ohne Kestic-Tag (z. B. aus einem früheren Script). Aktionen: «Durchsuchen» (gleiche Restore-Regeln wie §7.6); P2: «Einem Backup zuordnen…» (FR-44).
-- **Verwaist** ([glossary.md](../glossary.md)): Snapshots mit Tag `kestic:<id>`, deren Backup-ID weder in der Konfiguration noch in einem Metadaten-Snapshot des Ziels vorkommt. Anzeige je Reihe: «Backup ohne Beschreibung · n Snapshots · zuletzt ‹Datum› von ‹Host›»; Aktion «Durchsuchen».
+- **Nicht zugeordnet:** Snapshots ohne eindeutigen Kestic-Tag (z. B. aus einem früheren Script). P2: «Einem Backup zuordnen…» (FR-44).
+- **Verwaist** ([glossary.md](../glossary.md)): Snapshots mit Tag `kestic:<id>`, deren Backup-ID weder in der Konfiguration noch in einem Metadaten-Snapshot des Ziels vorkommt. Überschrift je Backup: «Backup ohne Beschreibung auf «Ziel»», darunter «n Snapshots · zuletzt ‹Datum› von ‹Host› · ID ‹id›».
 - Leer: «Keine nicht zugeordneten Snapshots» bzw. «Keine verwaisten Backups».
 
 ### 8.15 Formulare in M1 (M1-S13, AC-M1-13-1)
