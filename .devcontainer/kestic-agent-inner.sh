@@ -209,8 +209,9 @@ case "${1:-}" in
         # (the next one after the turn started), or 0. A limit resets within
         # five hours, so a time further ahead comes from an older message.
         turn="$(tr -dc 0-9 2>/dev/null < "$STATE_DIR/turn" || true)"
+        # The message may wrap onto the next line, so the lines are searched as one.
         at="$(tmux capture-pane -p -t "$SESSION" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 15 |
-            grep 'hit your' | grep -o 'resets [0-9][0-9:]*[ap]m (UTC)' | tail -n 1 || true)"
+            tr '\n' ' ' | grep 'hit your' | grep -o 'resets [0-9][0-9:]*[ap]m (UTC)' | tail -n 1 || true)"
         at="${at#resets }"
         at="${at% (UTC)}"
         if [[ -z "$at" || -z "$turn" ]]; then
