@@ -458,7 +458,7 @@ mod tests {
                 format!(
                     "ignoring error for /home/u/Downloads/{name}: permission denied\nFatal: There were 1 errors"
                 ),
-                format!("error: open /srv/a: {name}"),
+                format!("a: {name}"),
                 format!("Fatal: unable to open /srv/a: {name}"),
             ] {
                 for transport in [Transport::Sftp, Transport::Other] {
@@ -620,16 +620,23 @@ mod tests {
         assert_eq!(
             sftp(
                 None,
-                "Login to the destination failed: subprocess ssh: u@h: Permission denied (publickey)."
+                "subprocess ssh: u@h: Permission denied (publickey). (Login to the destination failed)"
             ),
             crate::restic::ResticFailureKind::BackendAuthFailed
         );
         assert_eq!(
             sftp(
                 None,
-                "Unknown server: subprocess ssh: Host key verification failed."
+                "subprocess ssh: Host key verification failed. (Unknown server)"
             ),
             crate::restic::ResticFailureKind::HostKeyUnknown
+        );
+        assert_eq!(
+            sftp(
+                None,
+                "Backup failed: Fatal: x\nb: subprocess ssh: Host key verification failed."
+            ),
+            crate::restic::ResticFailureKind::GenericFailure
         );
         assert_eq!(
             sftp(

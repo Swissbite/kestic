@@ -475,16 +475,12 @@ fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
     }
 }
 
-/// The text of a line of ssh in a lowercase message: restic starts it with `subprocess ssh: `,
-/// at the start of a line or, in a run's stored summary, after Kestic's text and `: `.
+/// The text of the lines of ssh in a lowercase message: restic starts them with
+/// `subprocess ssh: `, and a run's stored summary starts with ssh's line too.
 fn ssh_lines(detail_lower: &str) -> impl Iterator<Item = &str> {
-    detail_lower.lines().filter_map(|line| {
-        let line = line.trim_start();
-        line.strip_prefix("subprocess ssh: ").or_else(|| {
-            line.split_once(": ")
-                .and_then(|(_, rest)| rest.strip_prefix("subprocess ssh: "))
-        })
-    })
+    detail_lower
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("subprocess ssh: "))
 }
 
 /// Whether a lowercase message has a line of ssh saying that the SFTP server rejected the key.

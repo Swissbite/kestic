@@ -681,6 +681,10 @@ fn process_backup_success_result(
             .map_or_default(|d| redact_secrets(d, secret_strs));
         Some(if raw.is_empty() {
             base
+        } else if raw.starts_with("subprocess ssh: ") {
+            // ssh's line starts the summary: the run's error kind is read back only from a line
+            // that starts with it, never from a file name after other text.
+            format!("{raw} ({base})")
         } else {
             format!("{base}: {raw}")
         })
