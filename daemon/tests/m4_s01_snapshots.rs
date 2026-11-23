@@ -8,8 +8,8 @@
 
 mod common;
 
-use common::m3::{M3Rig, ResticVariant, restic_variants};
-use common::m4::{RawSnapshot, write_snapshot};
+use common::m3::{M3Rig, ResticVariant};
+use common::m4::{RawSnapshot, VariantFixture, for_each_variant_with, write_snapshot};
 use common::run_isolated_test;
 use kestic_core::model::{Backup, Destination, DestinationKind};
 use kestic_daemon::dbus_api::{BackupSnapshotsDto, DestinationSnapshotsDto};
@@ -101,11 +101,9 @@ impl Fixture {
     }
 }
 
-fn for_each_variant(root: &Path, body: impl Fn(&Fixture, &str)) {
-    for variant in restic_variants() {
-        let fixture = Fixture::start(root, &variant);
-        body(&fixture, variant.label);
-        fixture.rig.daemon.stop();
+impl VariantFixture for Fixture {
+    fn stop(self) {
+        self.rig.daemon.stop();
     }
 }
 
@@ -117,7 +115,8 @@ fn ac_m4_01_1_lists_three_snapshots_newest_first_with_time_size_and_host() {
         "ac_m4_01_1_lists_three_snapshots_newest_first_with_time_size_and_host",
         "KESTIC_AC_M4_01_1_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 fx.three_b1_snapshots();
                 let list = fx.list_b1();
                 let snaps = &list.current_snapshots;
@@ -161,7 +160,8 @@ fn ac_m4_01_2_metadata_snapshots_are_hidden_and_not_counted() {
         "ac_m4_01_2_metadata_snapshots_are_hidden_and_not_counted",
         "KESTIC_AC_M4_01_2_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 fx.three_b1_snapshots();
                 let meta_tag = format!("kestic-meta:{}", fx.b1.id);
                 fx.snapshot(&meta_tag, "2026-11-15 12:05:00", "laptop");
@@ -214,7 +214,8 @@ fn ac_m4_01_3_list_of_b1_has_no_snapshot_of_b2() {
         "ac_m4_01_3_list_of_b1_has_no_snapshot_of_b2",
         "KESTIC_AC_M4_01_3_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 fx.three_b1_snapshots();
                 let b2_tag = format!("kestic:{}", fx.b2.id);
                 fx.snapshot(&b2_tag, "2026-11-15 13:00:00", "laptop");

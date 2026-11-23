@@ -9,9 +9,9 @@
 
 mod common;
 
-use common::m3::{ResticVariant, restic_variants};
-use common::m4::{RawSnapshot, backup_dir, restic_ls_nodes, small_tree};
-use common::m4_restore::{RestoreFixture, big_page, set_mtime, tree_contents};
+use common::m3::{restic_cmd, restic_variants};
+use common::m4::{RawSnapshot, backup_dir, big_page, restic_ls_nodes, small_tree};
+use common::m4_restore::{RestoreFixture, for_each_tagged_variant, set_mtime, tree_contents};
 use common::run_isolated_test;
 use kestic_core::model::{RunKind, RunStatus};
 use kestic_core::snapshot_find::FindScope;
@@ -27,28 +27,6 @@ use std::path::Path;
 
 /// The restic subcommands Kestic may run on a foreign or orphaned snapshot.
 const READ_ONLY_COMMANDS: [&str; 5] = ["snapshots", "ls", "find", "diff", "restore"];
-
-/// Starts a fixture per restic version whose one snapshot of `small_tree` carries `tag` (empty:
-/// none) instead of the tag of the configured backup «Home».
-fn for_each_variant(
-    root: &Path,
-    base: &str,
-    tag: &str,
-    body: impl Fn(&RestoreFixture, &ResticVariant),
-) {
-    for variant in restic_variants() {
-        let fx = RestoreFixture::start_tagged(
-            root,
-            &variant,
-            base,
-            small_tree,
-            |_| {},
-            |_| tag.to_string(),
-        );
-        body(&fx, &variant);
-        fx.rig.daemon.stop();
-    }
-}
 
 fn list_destination(fx: &RestoreFixture) -> DestinationSnapshotsDto {
     let dto = fx
@@ -189,7 +167,7 @@ fn ac_m4_07_1_snapshot_without_kestic_tag_is_unassigned() {
         "ac_m4_07_1_snapshot_without_kestic_tag_is_unassigned",
         "KESTIC_AC_M4_07_1_INNER",
         |root| {
-            for_each_variant(root, "M4F1", "", |fx, v| {
+            for_each_tagged_variant(root, "M4F1", "", |fx, v| {
                 let dto = list_destination(fx);
                 assert_eq!(
                     unassigned_ids(&dto),
@@ -411,15 +389,12 @@ fn check_modes(fx: &RestoreFixture, label: &str) {
             fs::write(dir.join("a.txt"), "local").expect("write a.txt");
             set_mtime(&dir.join("a.txt"), mtime);
         }
-        let out = std::process::Command::new(&fx.rig.variant.bin)
-            .arg("-r")
-            .arg(&fx.repo)
+        let out = restic_cmd(&fx.rig.variant.bin, &fx.repo, &fx.password)
             .args(["restore", "--no-cache"])
             .arg(format!("{}:{}", fx.snapshot_id, fx.path("")))
             .arg("--target")
             .arg(&reference)
             .args(["--overwrite", arg, "--include=/a.txt"])
-            .env("RESTIC_PASSWORD", &fx.password)
             .output()
             .expect("run restic restore");
         assert!(out.status.success(), "restic restore --overwrite {arg}");
@@ -465,7 +440,7 @@ fn ac_m4_07_2_foreign_snapshot_is_browsed_and_restored_like_any_other() {
         "ac_m4_07_2_foreign_snapshot_is_browsed_and_restored_like_any_other",
         "KESTIC_AC_M4_07_2_INNER",
         |root| {
-            for_each_variant(root, "M4F2", "", |fx, v| {
+            for_each_tagged_variant(root, "M4F2", "", |fx, v| {
                 let label = v.label;
                 check_browse(fx, label);
                 let detail = check_new_folder(fx, label);
@@ -538,7 +513,7 @@ fn ac_m4_07_4_snapshot_of_an_unknown_backup_is_orphaned() {
         "ac_m4_07_4_snapshot_of_an_unknown_backup_is_orphaned",
         "KESTIC_AC_M4_07_4_INNER",
         |root| {
-            for_each_variant(root, "M4F4", "kestic:x9", |fx, v| {
+            for_each_tagged_variant(root, "M4F4", "kestic:x9", |fx, v| {
                 let dto = list_destination(fx);
                 assert_eq!(
                     orphaned_ids(&dto, "x9"),
@@ -567,7 +542,7 @@ fn ac_m4_07_5_described_backup_is_not_orphaned_and_orphaned_ones_restore() {
         "KESTIC_AC_M4_07_5_INNER",
         |root| {
             // The fixture's snapshot is orphaned (y7 has no metadata snapshot).
-            for_each_variant(root, "M4F5", "kestic:y7", |fx, v| {
+            for_each_tagged_variant(root, "M4F5", "kestic:y7", |fx, v| {
                 let label = v.label;
                 let described = extra_snapshot(fx, "kestic:x9", "2026-11-14 12:00:00");
                 extra_snapshot(fx, "kestic-meta:x9", "2026-11-14 12:01:00");
@@ -624,7 +599,7 @@ fn ac_m4_07_6_foreign_and_orphaned_snapshots_are_only_read() {
         "ac_m4_07_6_foreign_and_orphaned_snapshots_are_only_read",
         "KESTIC_AC_M4_07_6_INNER",
         |root| {
-            for_each_variant(root, "M4F6", "", |fx, v| {
+            for_each_tagged_variant(root, "M4F6", "", |fx, v| {
                 let label = v.label;
                 let orphaned = extra_snapshot(fx, "kestic:x9", "2026-11-14 12:00:00");
                 let older_foreign = extra_snapshot(fx, "", "2026-11-13 12:00:00");

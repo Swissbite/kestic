@@ -1062,6 +1062,13 @@ pub fn wait_for_backoff_attempt(
     }
 }
 
+/// `restic -r <repo>` command with the repository password.
+pub fn restic_cmd(bin: &Path, repo: &Path, password: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(bin);
+    cmd.arg("-r").arg(repo).env("RESTIC_PASSWORD", password);
+    cmd
+}
+
 /// `restic -r <repo>` command with password and cache dir from the isolated test environment.
 pub fn restic_repo_cmd(
     bin: &Path,
@@ -1069,10 +1076,8 @@ pub fn restic_repo_cmd(
     password: &str,
     cache_dir: &Path,
 ) -> std::process::Command {
-    let mut cmd = std::process::Command::new(bin);
-    cmd.args(["-r", &repo.to_string_lossy()])
-        .env("RESTIC_PASSWORD", password)
-        .env("RESTIC_CACHE_DIR", cache_dir);
+    let mut cmd = restic_cmd(bin, repo, password);
+    cmd.env("RESTIC_CACHE_DIR", cache_dir);
     cmd
 }
 

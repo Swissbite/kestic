@@ -1,11 +1,62 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Shared helpers for the M4 restore tests: snapshots written directly with restic.
+//! Shared helpers for the M4 tests: one fixture per restic version, snapshot queries over
+//! D-Bus, and snapshots written and read directly with restic.
 
+use super::m3::{ResticVariant, restic_cmd, restic_variants};
+use kestic_daemon::dbus_api::{KesticClient, SnapshotQueryPage, SnapshotQueryStatusDto};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::time::{Duration, Instant};
+
+/// A fixture around a daemon started for one restic version.
+pub trait VariantFixture {
+    /// Stops the daemon of the fixture.
+    fn stop(self);
+}
+
+/// Runs `body` once per restic version (0.18.0 and latest) with the fixture `start` creates for
+/// it below the test root `root`, and stops the fixture's daemon afterwards.
+pub fn for_each_variant_with<F: VariantFixture>(
+    root: &Path,
+    start: impl Fn(&Path, &ResticVariant) -> F,
+    body: impl Fn(&F, &ResticVariant),
+) {
+    for variant in restic_variants() {
+        let fixture = start(root, &variant);
+        body(&fixture, &variant);
+        fixture.stop();
+    }
+}
+
+/// A page of up to 1000 entries without filter.
+pub fn big_page() -> SnapshotQueryPage {
+    SnapshotQueryPage {
+        limit: 1000,
+        ..SnapshotQueryPage::default()
+    }
+}
+
+/// Waits until snapshot query `query_id` is no longer running and returns its status with
+/// `page`.
+pub fn wait_query(
+    client: &KesticClient,
+    query_id: &str,
+    page: &SnapshotQueryPage,
+) -> SnapshotQueryStatusDto {
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let st = client
+            .get_snapshot_query_status(query_id, page)
+            .expect("GetSnapshotQueryStatus");
+        if st.state != "running" {
+            return st;
+        }
+        assert!(Instant::now() < deadline, "query still running: {st:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 
 /// A snapshot to write with restic: tag (empty: none), time (restic format «2026-11-15
 /// 12:00:00») and host.
@@ -40,14 +91,11 @@ pub fn write_snapshot(
         format!("{} {} {}", snap.tag, snap.time, snap.host).repeat(200),
     )
     .expect("write raw source");
-    let out = Command::new(restic)
-        .arg("-r")
-        .arg(repo)
+    let out = restic_cmd(restic, repo, password)
         .args(["backup", "--no-cache", "--json"])
         .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
         .arg(&src)
-        .env("RESTIC_PASSWORD", password)
         .output()
         .expect("run restic backup");
     assert!(
@@ -67,14 +115,11 @@ pub fn backup_dir(
     src: &Path,
     snap: &RawSnapshot<'_>,
 ) -> String {
-    let out = Command::new(restic)
-        .arg("-r")
-        .arg(repo)
+    let out = restic_cmd(restic, repo, password)
         .args(["backup", "--no-cache", "--json"])
         .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
         .arg(src)
-        .env("RESTIC_PASSWORD", password)
         .output()
         .expect("run restic backup");
     assert!(
@@ -100,11 +145,8 @@ pub fn restic_ls_nodes(
     snapshot_id: &str,
     dir: &str,
 ) -> Vec<serde_json::Value> {
-    let out = Command::new(restic)
-        .arg("-r")
-        .arg(repo)
+    let out = restic_cmd(restic, repo, password)
         .args(["ls", "--no-cache", "--json", snapshot_id, dir])
-        .env("RESTIC_PASSWORD", password)
         .output()
         .expect("run restic ls");
     assert!(out.status.success(), "restic ls {dir}");
@@ -161,9 +203,7 @@ pub fn restic_find_paths(
     snapshot_id: &str,
     pattern: &str,
 ) -> Vec<String> {
-    let out = Command::new(restic)
-        .arg("-r")
-        .arg(repo)
+    let out = restic_cmd(restic, repo, password)
         .args([
             "find",
             "--no-cache",
@@ -172,7 +212,6 @@ pub fn restic_find_paths(
             snapshot_id,
             pattern,
         ])
-        .env("RESTIC_PASSWORD", password)
         .output()
         .expect("run restic find");
     assert!(out.status.success(), "restic find {pattern}");
@@ -204,14 +243,11 @@ pub fn backup_stdin(
     snap: &RawSnapshot<'_>,
 ) -> String {
     use std::io::Write;
-    let mut child = Command::new(restic)
-        .arg("-r")
-        .arg(repo)
+    let mut child = restic_cmd(restic, repo, password)
         .args(["backup", "--no-cache", "--json"])
         .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
         .args(["--stdin", "--stdin-filename", path])
-        .env("RESTIC_PASSWORD", password)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -235,11 +271,8 @@ pub fn backup_stdin(
 
 /// The `username` restic recorded in snapshot `snapshot_id` (the user running the tests).
 pub fn snapshot_username(restic: &Path, repo: &Path, password: &str, snapshot_id: &str) -> String {
-    let out = Command::new(restic)
-        .arg("-r")
-        .arg(repo)
+    let out = restic_cmd(restic, repo, password)
         .args(["snapshots", "--no-cache", "--json", snapshot_id])
-        .env("RESTIC_PASSWORD", password)
         .output()
         .expect("run restic snapshots");
     assert!(out.status.success(), "restic snapshots {snapshot_id}");

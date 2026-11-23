@@ -9,8 +9,8 @@
 mod common;
 
 use common::m3::{ResticVariant, restic_variants};
-use common::m4::small_tree;
-use common::m4_restore::{RestoreFixture, big_page, set_mtime, tree_contents};
+use common::m4::{big_page, small_tree};
+use common::m4_restore::{RestoreFixture, for_each_variant, set_mtime, tree_contents};
 use common::run_isolated_test;
 use kestic_core::model::{RunKind, RunStatus};
 use kestic_daemon::dbus_api::{
@@ -21,19 +21,6 @@ use kestic_test_support::tools::find_lock_file;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-
-fn for_each_variant(
-    root: &Path,
-    base: &str,
-    make_tree: fn(&Path) -> std::path::PathBuf,
-    body: impl Fn(&RestoreFixture, &ResticVariant),
-) {
-    for variant in restic_variants() {
-        let fx = RestoreFixture::start(root, &variant, base, make_tree, |_| {});
-        body(&fx, &variant);
-        fx.rig.daemon.stop();
-    }
-}
 
 /// Outcome of every entry of a preview by its file name.
 fn outcomes(p: &RestorePreviewResultDto) -> BTreeMap<String, RestoreOutcome> {
