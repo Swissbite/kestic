@@ -368,8 +368,14 @@ QtObject {
         Qt.callLater(function() {
             if (!pageItem) return;
             updatePageStackViewportAndFocusability();
-            var first = (preferSelection ? selectPrimaryListRow(pageItem) : null)
-                || findFirstTabFocusable(pageItem);
+            var selected = preferSelection ? selectPrimaryListRow(pageItem) : null;
+            if (selected && focusRestoreTimer.targetPage === pageItem) {
+                // Found: later ticks only keep the focus there and never select the row again,
+                // so a key the user pressed meanwhile is not undone.
+                focusRestoreTimer.preferSelection = false;
+                focusRestoreTimer.targetItem = selected;
+            }
+            var first = selected || findFirstTabFocusable(pageItem);
             if (first) {
                 focusItemInPageStack(first);
             } else {
