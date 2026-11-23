@@ -397,3 +397,77 @@ fn m5_03_kestic_cache_dir_wins_over_a_variable() {
         "Kestic's cache directory"
     );
 }
+
+/// M5-S03, pre-check (P32) of the other restic calls: the snapshot list and the prune preview of
+/// a generic destination first run `restic cat config` and stop when it cannot reach the
+/// backend, instead of starting the actual command, which restic would retry for minutes.
+#[test]
+fn m5_03_snapshot_list_and_prune_preview_check_a_generic_destination_first() {
+    use kestic_core::backup::{BackupRunError, list_snapshots_for_backup};
+    use kestic_core::destination::DestinationError;
+    use kestic_core::maintenance::execute_prune_dry_run;
+    use kestic_core::model::BackupId;
+
+    let dir = TempDir::new().expect("tempdir");
+    let script = dir.path().join("restic");
+    let others = dir.path().join("other-commands.log");
+    write_executable(
+        &script,
+        &format!(
+            "#!/bin/sh\ncase \" $* \" in\n  *\" cat \"*) echo 'Stat(<config/>) returned error, retrying after 1.2s: dial tcp 192.0.2.1:443: connect: connection refused' >&2; exec sleep 30;;\nesac\necho \"$*\" >> '{}'\nexit 1\n",
+            others.display()
+        ),
+    );
+    let resolved = ResolvedRestic {
+        binary: script,
+        version: semver::Version::new(0, 18, 0),
+    };
+    let store = InMemorySecretStore::new();
+    let dest = generic("b2:bucket:laptop", Vec::new()).expect("destination");
+    store
+        .set_secret(
+            dest.id.as_str(),
+            SECRET_KIND_REPO,
+            &SecretValue::from_str_secret(strong_password()),
+        )
+        .expect("store repository password");
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    let helper = dir.path().join("kestic");
+    let unreachable = |res: &BackupRunError| {
+        matches!(
+            res,
+            BackupRunError::Destination(DestinationError::Unreachable(_))
+        )
+    };
+
+    let listed = list_snapshots_for_backup(
+        &BackupId::generate().expect("backup id"),
+        &dest,
+        &resolved,
+        &helper,
+        &store,
+        &clock,
+        &[],
+    );
+    assert!(
+        listed.as_ref().is_err_and(unreachable),
+        "the snapshot list stops at the pre-check"
+    );
+
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: &store,
+        clock: &clock,
+        cache_dir: None,
+    };
+    let preview = execute_prune_dry_run(&dest, &runtime, None, &[]);
+    assert!(
+        preview.as_ref().is_err_and(unreachable),
+        "the prune preview stops at the pre-check"
+    );
+    assert!(
+        !others.exists(),
+        "restic ran a command after the failed pre-check"
+    );
+}

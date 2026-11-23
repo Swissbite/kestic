@@ -965,9 +965,13 @@ mod tests {
     fn connection_test_does_not_wait_for_output_held_after_restic_ended() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let script = dir.path().join("restic");
+        let pid_file = dir.path().join("left-behind.pid");
         kestic_test_support::tools::write_executable(
             &script,
-            "#!/bin/sh\nsh -c 'exec sleep 30' &\nexit 0\n",
+            &format!(
+                "#!/bin/sh\nsh -c 'echo $$ > \"{}\"; exec sleep 30' &\nexit 0\n",
+                pid_file.display()
+            ),
         );
         let resolved = ResolvedRestic {
             binary: script,
@@ -1007,6 +1011,12 @@ mod tests {
             "waited {:?} for output held by a left-behind process",
             started.elapsed()
         );
+        // The test started the left-behind process, so it ends it by its PID.
+        let pid = fs::read_to_string(&pid_file).expect("left-behind process started");
+        Command::new("kill")
+            .arg(pid.trim())
+            .status()
+            .expect("stop the left-behind process");
     }
 
     /// A password store that cannot be read says nothing about the destination: the pre-check of

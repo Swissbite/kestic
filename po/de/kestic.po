@@ -3526,8 +3526,12 @@ msgid "Enter the access key and the secret key."
 msgstr "Geben Sie den Access-Key und den Secret-Key ein."
 
 #: gui/src/qml/DestinationDetailsForm.qml
-msgid "Which cloud service should be used?"
-msgstr "Welcher Cloud-Dienst soll verwendet werden?"
+msgid "Which rclone remote should be used?"
+msgstr "Welches rclone-Remote soll verwendet werden?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Where on %1 is the repository?"
+msgstr "Wo bei %1 liegt das Repository?"
 
 #: gui/src/qml/DestinationDetailsForm.qml
 msgid "rclone remote:"

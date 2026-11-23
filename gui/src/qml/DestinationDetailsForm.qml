@@ -26,6 +26,17 @@ ColumnLayout {
 
     spacing: Kirigami.Units.mediumSpacing
 
+    // The service of a generic destination, from the scheme of its repository URL.
+    function serviceLabel() {
+        switch (form.draft.location.split(":")[0]) {
+        case "b2": return Texts.label("backblaze_b2");
+        case "azure": return Texts.label("azure");
+        case "gs": return Texts.label("google_cloud");
+        case "swift": return Texts.label("swift");
+        }
+        return Texts.label("rclone");
+    }
+
     function locationEdited() {
         form.draft.connectionVerified = false;
     }
@@ -54,7 +65,8 @@ ColumnLayout {
         level: 2
         text: form.draft.kindIsS3
             ? i18n("Which S3-compatible storage should be used?")
-            : form.draft.kindIsGeneric ? i18n("Which cloud service should be used?")
+            : form.draft.asksRcloneRemote ? i18n("Which rclone remote should be used?")
+            : form.draft.kindIsGeneric ? i18n("Where on %1 is the repository?", form.serviceLabel())
             : form.draft.kindIsRest ? i18n("Where is the REST server located?") : i18n("Where should the local repository be stored?")
     }
 
