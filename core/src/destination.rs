@@ -123,30 +123,7 @@ pub fn preflight_check_with_restic(
     let Ok(backend) = BackendCredentials::load_stored(dest, runtime.secret_store) else {
         return Ok(());
     };
-    // With the stored password restic stops at the repository's own key; another password
-    // would make it try every key first, which can outlast the time limit.
-    let stored_password = runtime
-        .secret_store
-        .get_secret(dest.id.as_str(), SECRET_KIND_REPO)
-        .ok()
-        .flatten();
-    let result = match stored_password {
-        Some(password) => run_with_temp_repo_password_file(
-            dest,
-            mode_subcommand(DestinationSetupMode::ConnectExisting),
-            &password,
-            &backend,
-            ProbeRuntime::connection_test(runtime),
-        )
-        .and_then(|res| {
-            if res.exit_code == 0 {
-                Ok(())
-            } else {
-                Err(map_execution_failure(&res))
-            }
-        }),
-        None => probe_repository(dest, &backend, runtime).map(|_| ()),
-    };
+    let result = probe_repository(dest, &backend, runtime).map(|_| ());
     match result {
         Err(err @ (DestinationError::Unreachable(_) | DestinationError::NotResponding(_))) => {
             Err(err)
@@ -513,9 +490,37 @@ fn execute_probe_command(
     });
     let mut stderr_lines = Vec::new();
     let mut abort_line: Option<String> = None;
-    if let Some(err) = stderr {
-        // Lines are read as bytes: one line that is no UTF-8 must not end the reading early.
-        for raw in BufReader::new(err).split(b'\n').map_while(Result::ok) {
+    let lines = stderr.map(|err| {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        thread::spawn(move || {
+            // Lines are read as bytes: one line that is no UTF-8 must not end the reading early.
+            for raw in BufReader::new(err).split(b'\n').map_while(Result::ok) {
+                if tx.send(raw).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    });
+    let mut gave_up_reading = false;
+    if let Some(rx) = lines {
+        loop {
+            let raw = match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(raw) => raw,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // restic was stopped and has ended, but a process it started still holds
+                    // its output open: that process cannot be signalled safely any more, and
+                    // its output does not matter.
+                    if watchdog.as_ref().is_some_and(Watchdog::has_fired)
+                        && wait_try(&child).is_some()
+                    {
+                        gave_up_reading = true;
+                        break;
+                    }
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            };
             let line = String::from_utf8_lossy(&raw);
             let redacted = crate::restic::redact_secrets(&line, &secrets_to_redact);
             // Only a read with a time limit stops restic early; `init` runs to its end.
@@ -525,7 +530,7 @@ fn execute_probe_command(
             stderr_lines.push(redacted);
             if let Some(error) = conclusive {
                 // restic would retry this for many minutes; for a test the answer is known.
-                signal_if_running(&child, crate::restic::send_sigterm_to_group);
+                let _ = signal_if_running(&child, crate::restic::send_sigterm_to_group);
                 abort_line = Some(error);
                 break;
             }
@@ -541,7 +546,9 @@ fn execute_probe_command(
             timeout.unwrap_or_default().as_secs()
         )));
     }
+    // Output held open by a left-behind process is not waited for.
     let stdout_bytes = stdout_reader
+        .filter(|h| !gave_up_reading || h.is_finished())
         .and_then(|h| h.join().ok())
         .unwrap_or_default();
     let finished_at = clock.now_utc();
@@ -619,12 +626,20 @@ const KILL_GRACE: Duration = Duration::from_secs(2);
 /// only under the lock, so a signal never reaches a process ID that was reaped and reused.
 type SharedChild = Arc<Mutex<Child>>;
 
-/// Sends `signal` to `child` and its children unless it has already ended (and been reaped).
-fn signal_if_running(child: &SharedChild, signal: fn(u32)) {
+/// Sends `signal` to `child` and its children unless it has already ended (and been reaped);
+/// returns whether it was sent.
+fn signal_if_running(child: &SharedChild, signal: fn(u32)) -> bool {
     let mut guard = child.lock_unpoisoned();
-    if matches!(guard.try_wait(), Ok(None)) {
+    let running = matches!(guard.try_wait(), Ok(None));
+    if running {
         signal(guard.id());
     }
+    running
+}
+
+/// The exit status of `child` if it has ended (reaping it).
+fn wait_try(child: &SharedChild) -> Option<std::process::ExitStatus> {
+    child.lock_unpoisoned().try_wait().ok().flatten()
 }
 
 /// Waits for `child` to end without holding the lock, so the watchdog can still stop it.
@@ -641,7 +656,10 @@ fn wait_shared(child: &SharedChild) -> std::io::Result<std::process::ExitStatus>
 /// that, unless [`Watchdog::stop`] comes first.
 struct Watchdog {
     done: mpsc::Sender<()>,
+    /// The time limit has passed.
     fired: Arc<AtomicBool>,
+    /// The process was still running at the time limit and was told to stop.
+    stopped: Arc<AtomicBool>,
     thread: thread::JoinHandle<()>,
 }
 
@@ -649,13 +667,17 @@ impl Watchdog {
     fn start(child: SharedChild, limit: Duration) -> Self {
         let (done, done_rx) = mpsc::channel::<()>();
         let fired = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&fired);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let (fired_flag, stopped_flag) = (Arc::clone(&fired), Arc::clone(&stopped));
         let thread = thread::spawn(move || {
             if done_rx.recv_timeout(limit) == Err(mpsc::RecvTimeoutError::Timeout) {
-                flag.store(true, Ordering::SeqCst);
-                signal_if_running(&child, crate::restic::send_sigterm_to_group);
+                let signalled = signal_if_running(&child, crate::restic::send_sigterm_to_group);
+                stopped_flag.store(signalled, Ordering::SeqCst);
+                fired_flag.store(true, Ordering::SeqCst);
                 // A backend that ignores SIGTERM must not keep the check waiting.
-                if done_rx.recv_timeout(KILL_GRACE) == Err(mpsc::RecvTimeoutError::Timeout) {
+                if signalled
+                    && done_rx.recv_timeout(KILL_GRACE) == Err(mpsc::RecvTimeoutError::Timeout)
+                {
                     signal_if_running(&child, crate::restic::send_sigkill_to_group);
                 }
             }
@@ -663,15 +685,21 @@ impl Watchdog {
         Self {
             done,
             fired,
+            stopped,
             thread,
         }
     }
 
-    /// Stops the watchdog; returns whether it had already stopped the process.
+    /// Whether the time limit has passed and the process was told to stop.
+    fn has_fired(&self) -> bool {
+        self.fired.load(Ordering::SeqCst)
+    }
+
+    /// Stops the watchdog; returns whether it had to stop the process at the time limit.
     fn stop(self) -> bool {
         let _ = self.done.send(());
         let _ = self.thread.join();
-        self.fired.load(Ordering::SeqCst)
+        self.stopped.load(Ordering::SeqCst)
     }
 }
 
@@ -793,6 +821,26 @@ mod tests {
     );
     }
 
+    /// Whether the process `pid` ends within 3 s; a zombie that waits to be reaped by its new
+    /// parent counts as ended.
+    fn process_ends(pid: &str) -> bool {
+        for _ in 0..60 {
+            match fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Err(_) => return true,
+                Ok(stat)
+                    if stat
+                        .rsplit(") ")
+                        .next()
+                        .is_some_and(|rest| rest.starts_with('Z')) =>
+                {
+                    return true;
+                }
+                Ok(_) => std::thread::sleep(Duration::from_millis(50)),
+            }
+        }
+        false
+    }
+
     /// A restic that ignores SIGTERM (a backend program trapping it) is killed after the grace
     /// period: the check still ends with «the server does not respond» and leaves no process.
     #[test]
@@ -906,8 +954,58 @@ mod tests {
         );
         let pid = fs::read_to_string(&pid_file).expect("process below restic started");
         assert!(
-            !Path::new(&format!("/proc/{}", pid.trim())).exists(),
+            process_ends(pid.trim()),
             "the process below restic still runs"
+        );
+    }
+
+    /// restic that ends by itself while a process it started keeps its output open: the check
+    /// gives up waiting for the output after the time limit and reports restic's own result.
+    #[test]
+    fn connection_test_does_not_wait_for_output_held_after_restic_ended() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let script = dir.path().join("restic");
+        kestic_test_support::tools::write_executable(
+            &script,
+            "#!/bin/sh\nsh -c 'exec sleep 30' &\nexit 0\n",
+        );
+        let resolved = ResolvedRestic {
+            binary: script,
+            version: semver::Version::new(0, 18, 0),
+        };
+        let dest = Destination::new(
+            "Lingering",
+            DestinationKind::Local {
+                path: dir.path().to_path_buf(),
+            },
+        )
+        .expect("destination");
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let helper = dir.path().join("kestic");
+        let started = std::time::Instant::now();
+
+        let res = run_with_temp_repo_password_file(
+            &dest,
+            mode_subcommand(DestinationSetupMode::ConnectExisting),
+            &SecretValue::from_str_secret(strong_password()),
+            &BackendCredentials::none(),
+            ProbeRuntime {
+                resolved: &resolved,
+                kestic_binary: &helper,
+                clock: &clock,
+                cache_dir: None,
+                timeout: Some(Duration::from_secs(1)),
+            },
+        );
+
+        assert!(
+            res.is_ok_and(|r| r.exit_code == 0),
+            "restic's own result counts"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "waited {:?} for output held by a left-behind process",
+            started.elapsed()
         );
     }
 

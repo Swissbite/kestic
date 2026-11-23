@@ -192,6 +192,8 @@ pub struct DaemonCore {
     pub(super) source_availability: HashMap<BackupId, SourceCheckResult>,
     pub(super) availability_probe_count: u64,
     pub(super) availability_probe_in_flight: bool,
+    /// The background check of the destinations only restic can reach is running.
+    pub(super) restic_availability_in_flight: bool,
     pub(super) availability_probe_started_at: Option<OffsetDateTime>,
     pub(super) availability_probe_generation: u64,
     pub(super) source_probe_in_flight: bool,
@@ -309,6 +311,7 @@ impl DaemonCore {
             source_availability: HashMap::new(),
             availability_probe_count: 0,
             availability_probe_in_flight: false,
+            restic_availability_in_flight: false,
             availability_probe_started_at: None,
             availability_probe_generation: 0,
             source_probe_in_flight: false,

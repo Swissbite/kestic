@@ -67,7 +67,7 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     let conn_for_about = conn.clone();
     let about_to_show_hook: Arc<dyn Fn() -> Option<KesticTrayState> + Send + Sync> =
         Arc::new(move || {
-            let _ = refresh_availability_unlocked(&core_for_about, false, false);
+            let _ = refresh_availability_unlocked(&core_for_about, false);
             let (state_dto, tray_state) = {
                 let guard = core_for_about.lock_unpoisoned();
                 guard.build_state_and_tray()
@@ -361,7 +361,7 @@ fn handle_environment_changed(
         let tray_bg = Arc::clone(tray);
         let enable_scheduler = config.enable_scheduler;
         thread::spawn(move || {
-            let _ = refresh_availability_unlocked(&core_bg, force_probe, true);
+            let _ = refresh_availability_unlocked(&core_bg, force_probe);
             let (state_dto, tray_state) = {
                 let mut guard = core_bg.lock_unpoisoned();
                 for backup in guard.config.backups.clone() {
@@ -490,7 +490,7 @@ fn handle_prepare_for_sleep(
             } else {
                 SystemEnvironment::desktop_connected()
             };
-            let _ = refresh_availability_unlocked(&core_bg, true, true);
+            let _ = refresh_availability_unlocked(&core_bg, true);
             let (state_dto, tray_state) = {
                 let mut guard = core_bg.lock_unpoisoned();
                 guard.system_env = new_env;

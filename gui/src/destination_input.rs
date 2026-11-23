@@ -97,6 +97,9 @@ fn generic_error(err: GenericInputError) -> DestinationInputError {
         GenericInputError::UnsupportedScheme(url) => {
             DestinationInputError::Coded(ConnectionTestCode::UnsupportedScheme, url)
         }
+        GenericInputError::ReservedVariable(name) if name.is_empty() => {
+            DestinationInputError::Invalid(i18n("Enter a name for every variable.").to_string())
+        }
         GenericInputError::ReservedVariable(name) => {
             DestinationInputError::Coded(ConnectionTestCode::ReservedVariable, name)
         }

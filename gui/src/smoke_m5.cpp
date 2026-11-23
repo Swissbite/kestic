@@ -500,6 +500,18 @@ int scenario_generic_form(const Ctx& c) {
     M3_CHECK(5537, click_ui_item(w, host_secret, "Secret"), "second click on «Geheim» failed");
     M3_CHECK(5538, wait_until([&] { return !host_secret->property("checked").toBool(); }, 2000), "AC-M5-03-4 (c): «Geheim» not switchable back");
     M3_CHECK(5539, wait_until([&] { return test->isEnabled(); }, 2000), "«Test Connection» disabled with valid fields");
+    // A value typed before the name: a secret name still switches «Geheim» on.
+    QQuickItem* add = item_named(w, "wizDestEnvAdd");
+    scroll_into_view(w, add);
+    M3_CHECK(5542, click_ui_item(w, add, "Add Variable"), "click on «Add Variable» failed");
+    M3_CHECK(5543, wait_until([&] { return item_named(w, env_name("Name", 2).constData()) != nullptr; }, 2000), "variable row 2 missing");
+    set_text(w, env_name("Value", 2).constData(), QStringLiteral("t0ken-value"));
+    set_text(w, env_name("Name", 2).constData(), QStringLiteral("MY_TOKEN"));
+    M3_CHECK(5544, item_named(w, env_name("Secret", 2).constData())->property("checked").toBool(), "AC-M5-03-4 (a): «Geheim» off for MY_TOKEN typed after its value");
+    QQuickItem* remove_token = item_named(w, env_name("Remove", 2).constData());
+    scroll_into_view(w, remove_token);
+    M3_CHECK(5545, click_ui_item(w, remove_token, "Remove Variable"), "click on «Remove Variable» failed");
+    M3_CHECK(5546, wait_until([&] { return item_named(w, env_name("Name", 2).constData()) == nullptr; }, 2000), "variable row 2 not removed");
     const QString unnamed = first_unnamed(w, {
         QStringLiteral("wizDestUrlField"),
         env_name("Name", 0),

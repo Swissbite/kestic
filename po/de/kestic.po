@@ -3614,6 +3614,10 @@ msgid "The address after the scheme must not start with '-'."
 msgstr "Die Adresse nach dem Schema darf nicht mit «-» beginnen."
 
 #: gui/src/destination_input.rs
+msgid "Enter a name for every variable."
+msgstr "Geben Sie jeder Variable einen Namen."
+
+#: gui/src/destination_input.rs
 msgid "The variable '%1' is given twice."
 msgstr "Die Variable «%1» ist doppelt angegeben."
 

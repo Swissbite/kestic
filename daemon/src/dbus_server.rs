@@ -312,7 +312,7 @@ impl KesticDbusV1Service {
     #[zbus(name = "CheckAvailability")]
     async fn check_availability(&self, force: bool) -> Result<String, KesticDbusError> {
         let avail = self
-            .blocking(move |core| refresh_availability_unlocked(core, force, false))
+            .blocking(move |core| refresh_availability_unlocked(core, force))
             .await;
         self.publish_current().await;
         to_json_arg(&avail)
