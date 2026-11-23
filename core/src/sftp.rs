@@ -482,8 +482,14 @@ mod tests {
         );
         assert!(!is_host_key(&kind(Transport::Other, changed)));
 
-        let refused = "subprocess ssh: No ED25519 host key is known for [127.0.0.1]:2222\n\
-                       subprocess ssh: Host key verification failed.";
+        let not_started = "Fatal: unable to open repository at sftp://u@h:22//r: unable to start \
+                           the sftp session, error: error receiving version packet from server: \
+                           server unexpectedly closed connection: unexpected EOF";
+        let refused = format!(
+            "subprocess ssh: No ED25519 host key is known for [127.0.0.1]:2222\n\
+             subprocess ssh: Host key verification failed.\n{not_started}"
+        );
+        let refused = refused.as_str();
         assert_eq!(
             kind(Transport::Sftp, refused),
             ResticFailureKind::HostKeyUnknown
@@ -491,7 +497,9 @@ mod tests {
         assert!(!is_host_key(&kind(Transport::Other, refused)));
 
         // ssh's login error, from a server banner or a file name.
-        let rejected = "subprocess ssh: anna@h: Permission denied (publickey).";
+        let rejected =
+            format!("subprocess ssh: anna@h: Permission denied (publickey).\n{not_started}");
+        let rejected = rejected.as_str();
         assert_eq!(
             kind(Transport::Sftp, rejected),
             ResticFailureKind::BackendAuthFailed
@@ -509,9 +517,12 @@ mod tests {
             );
         }
         // A banner is shown with the same prefix, before ssh's own reason.
-        let banner = "subprocess ssh: Welcome\n\
-                      subprocess ssh: Host key verification failed.\n\
-                      subprocess ssh: anna@h: Permission denied (publickey).";
+        let banner = format!(
+            "subprocess ssh: Welcome\n\
+             subprocess ssh: Host key verification failed.\n\
+             subprocess ssh: anna@h: Permission denied (publickey).\n{not_started}"
+        );
+        let banner = banner.as_str();
         assert_eq!(
             kind(Transport::Sftp, banner),
             ResticFailureKind::BackendAuthFailed
@@ -520,6 +531,19 @@ mod tests {
             ssh_failure(banner),
             Some(SshFailure::KeyRejected(_))
         ));
+        // After a login, a banner names no failure, whatever restic fails at later.
+        for fatal in [
+            "Fatal: create repository at sftp://u@h:22//r failed: config file already exists",
+            "Fatal: unable to save snapshot: no space left on device",
+        ] {
+            let logged_in = format!(
+                "subprocess ssh: Welcome Permission denied (publickey).\n\
+                 subprocess ssh: Host key verification failed.\n{fatal}"
+            );
+            let found = kind(Transport::Sftp, &logged_in);
+            assert!(!is_host_key(&found), "{fatal}: {found:?}");
+            assert_ne!(found, ResticFailureKind::BackendAuthFailed, "{fatal}");
+        }
     }
 
     #[test]
@@ -645,8 +669,10 @@ mod tests {
             ),
             crate::restic::ResticFailureKind::GenericFailure
         );
+        let not_started = "Fatal: unable to open repository at sftp://u@h:22//x: unable to start \
+                           the sftp session, error: unexpected EOF";
         assert_eq!(
-            sftp(Some("unexpected EOF"), changed),
+            sftp(Some(not_started), changed),
             crate::restic::ResticFailureKind::HostKeyChanged
         );
         // Without a line of ssh, a session that never started means the server was not reached.

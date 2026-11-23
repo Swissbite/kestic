@@ -333,7 +333,14 @@ pub fn classify_exit_for(
 
     // restic only says the SFTP session ended; the reason is in the line of ssh.
     let sftp_failure = exit_code == 1 && transport == Transport::Sftp;
-    let ssh_failure = crate::sftp::ssh_failure(raw_stderr).filter(|_| sftp_failure);
+    // ssh's lines name a failure only when the SFTP session never started: after a login the
+    // server's banner, shown with the same prefix, can say anything.
+    let session_not_started = exit_error_msg
+        .into_iter()
+        .chain([raw_stderr])
+        .any(|text| text.contains(SFTP_SESSION_NOT_STARTED));
+    let ssh_failure =
+        crate::sftp::ssh_failure(raw_stderr).filter(|_| sftp_failure && session_not_started);
     let raw_detail = ssh_failure
         .as_ref()
         .map_or(raw_detail, |failure| Some(failure.line().to_string()));
@@ -475,12 +482,18 @@ fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
     }
 }
 
-/// The text of the lines of ssh in a lowercase message: restic starts them with
-/// `subprocess ssh: `, and a run's stored summary starts with ssh's line too.
+/// What restic says when ssh ended before the SFTP session started.
+pub(crate) const SFTP_SESSION_NOT_STARTED: &str = "unable to start the sftp session";
+
+/// The line of ssh that a lowercase message is: the detail of an ssh failure, and a run's
+/// stored summary of one, is ssh's single line (restic starts it with `subprocess ssh: `).
+/// restic's own output around a banner has more lines.
 fn ssh_lines(detail_lower: &str) -> impl Iterator<Item = &str> {
-    detail_lower
-        .lines()
-        .filter_map(|line| line.trim_start().strip_prefix("subprocess ssh: "))
+    let detail = detail_lower.trim();
+    (!detail.contains('\n'))
+        .then(|| detail.strip_prefix("subprocess ssh: "))
+        .flatten()
+        .into_iter()
 }
 
 /// Whether a lowercase message has a line of ssh saying that the SFTP server rejected the key.

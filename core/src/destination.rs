@@ -631,7 +631,7 @@ fn sftp_session_failure(
         .presentation
         .raw_detail
         .as_deref()
-        .is_some_and(|d| d.contains("unable to start the sftp session"));
+        .is_some_and(|d| d.contains(crate::restic::SFTP_SESSION_NOT_STARTED));
     if !session_ended {
         return None;
     }

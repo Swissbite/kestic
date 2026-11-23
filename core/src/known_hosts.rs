@@ -178,6 +178,16 @@ fn run_tool_within(
 
 /// Asks ssh how it would reach `host` (`ssh -G`, which only reads the configuration).
 pub fn resolve_target(host: &str, port: u16, user: &str) -> Result<SshTarget, HostKeyError> {
+    resolve_target_within(host, port, user, TOOL_TIMEOUT)
+}
+
+/// [`resolve_target`] that stops ssh after `limit` (the user's configuration may run commands).
+fn resolve_target_within(
+    host: &str,
+    port: u16,
+    user: &str,
+    limit: Duration,
+) -> Result<SshTarget, HostKeyError> {
     let host = ssh_host(host);
     let mut args = ssh_config_args();
     args.extend([
@@ -189,7 +199,7 @@ pub fn resolve_target(host: &str, port: u16, user: &str) -> Result<SshTarget, Ho
         "--".to_string(),
         host.clone(),
     ]);
-    let out = run_tool("ssh", &args, None)?;
+    let out = run_tool_within("ssh", &args, None, limit)?;
     if !out.status.success() {
         return Err(HostKeyError::Tool {
             program: "ssh -G".to_string(),
@@ -450,15 +460,16 @@ pub fn check_host_key(
     paths: &KnownHostsPaths,
     timeout: Duration,
 ) -> Result<HostKeyCheck, HostKeyError> {
-    let target = resolve_target(host, port, user)?;
+    // Asking ssh and the files counts against the time of the scan.
+    let started = std::time::Instant::now();
+    let target = resolve_target_within(host, port, user, timeout)?;
     let name = target.known_hosts_name();
     let mut entries = Vec::new();
     for file in paths.all() {
         entries.extend(lookup(&name, file)?.into_iter().map(|e| (file, e)));
     }
     let types = scan_types(entries.iter().map(|(_, e)| e));
-    let started = std::time::Instant::now();
-    let (mut scanned, answered) = scan(&target, &types, timeout)?;
+    let (mut scanned, answered) = scan(&target, &types, timeout.saturating_sub(started.elapsed()))?;
     // The server answered without a key of the known types: ask for all types in the time left,
     // to tell a server that now shows another type from one that did not finish its answer.
     let left = timeout.saturating_sub(started.elapsed());
@@ -875,6 +886,26 @@ mod tests {
             scan_addresses(&target, Duration::from_secs(5), twice),
             vec!["192.0.2.7".to_string(), "192.0.2.8".to_string()]
         );
+    }
+
+    /// M5-S01 (AC-M5-01-5 (c)): `ssh -G`, which may run commands of the user's configuration
+    /// (`Match exec`), counts against the time of the host key check.
+    #[test]
+    fn m5_01_asking_ssh_counts_against_the_time_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = dir.path().join("ssh_config");
+        fs::write(&config, "Match exec \"sleep 5\"\n  HostKeyAlias slow\n").expect("write");
+        crate::sftp::set_test_ssh_config(Some(config));
+        let paths = temp_paths(dir.path());
+        let started = std::time::Instant::now();
+        let checked = check_host_key("nas.example", 22, "anna", &paths, Duration::from_secs(1));
+        let elapsed = started.elapsed();
+        crate::sftp::set_test_ssh_config(None);
+        assert!(
+            matches!(checked, Err(HostKeyError::NoAnswer { .. })),
+            "{checked:?}"
+        );
+        assert!(elapsed < Duration::from_secs(3), "waited {elapsed:?}");
     }
 
     #[test]

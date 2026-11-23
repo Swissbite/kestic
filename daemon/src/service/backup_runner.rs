@@ -681,9 +681,16 @@ fn process_backup_success_result(
             .map_or_default(|d| redact_secrets(d, secret_strs));
         Some(if raw.is_empty() {
             base
-        } else if raw.starts_with("subprocess ssh: ") {
-            // ssh's line starts the summary: the run's error kind is read back only from a line
-            // that starts with it, never from a file name after other text.
+        } else if raw.starts_with("subprocess ssh: ")
+            && matches!(
+                res.presentation.kind,
+                ResticFailureKind::BackendAuthFailed
+                    | ResticFailureKind::HostKeyUnknown
+                    | ResticFailureKind::HostKeyChanged
+            )
+        {
+            // ssh's line starts the summary: the run's error kind is read back only from a
+            // summary that starts with it, never from a file name or banner after other text.
             format!("{raw} ({base})")
         } else {
             format!("{base}: {raw}")
