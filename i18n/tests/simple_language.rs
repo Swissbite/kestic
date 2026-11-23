@@ -11,6 +11,7 @@
 mod common;
 
 use common::language;
+use kestic_test_support::po::catalog;
 use kestic_test_support::workspace::workspace_root;
 
 use std::fmt::Write as _;
@@ -18,7 +19,7 @@ use std::fs;
 
 #[test]
 fn every_text_has_short_sentences() {
-    let entries = language::catalog(&workspace_root());
+    let entries = catalog(&workspace_root());
     assert!(
         entries.len() > 500,
         "expected the full catalog, got {}",
@@ -38,7 +39,7 @@ fn every_text_has_short_sentences() {
 
 #[test]
 fn no_text_uses_technical_words() {
-    let found: Vec<String> = language::catalog(&workspace_root())
+    let found: Vec<String> = catalog(&workspace_root())
         .iter()
         .flat_map(|e| e.texts.iter())
         .flat_map(|t| {
@@ -67,7 +68,7 @@ fn checks_find_planted_problems() {
 /// Review list of every catalog text (English, German), rebuilt on each run.
 #[test]
 fn writes_the_review_list_of_all_texts() {
-    let entries = language::catalog(&workspace_root());
+    let entries = catalog(&workspace_root());
     let mut md =
         String::from("# Kestic texts (English / German)\n\n| English | German |\n| --- | --- |\n");
     for e in &entries {

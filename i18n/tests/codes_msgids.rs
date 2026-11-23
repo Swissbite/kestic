@@ -17,15 +17,13 @@ use kestic_i18n::messages::{
     completed_message, connection_test_text, dns_failed_message, nothing_restored_message,
     overall_headline, overall_subtitle, unmet_conditions_message,
 };
-mod common;
-
-use common::language;
+use kestic_test_support::po::catalog;
 use kestic_test_support::workspace::workspace_root;
 use std::collections::{BTreeSet, HashMap};
 
 /// msgid -> German translation of the singular catalog entries.
 fn german_catalog() -> HashMap<String, String> {
-    language::catalog(&workspace_root())
+    catalog(&workspace_root())
         .into_iter()
         .filter(|e| !e.plural)
         .map(|e| (e.msgid().to_string(), e.german()[0].clone()))
