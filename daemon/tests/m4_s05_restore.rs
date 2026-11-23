@@ -2788,7 +2788,8 @@ fn m4_s05_new_folder_is_left_only_with_restored_files() {
 }
 
 /// While a restore runs from a destination, (a) `RemoveDestination` and (b)
-/// `UpdateDestination` are refused with `RestoreRunning`; (c) the restore ends `ok`.
+/// `UpdateDestination` are refused with `RestoreRunning`; (c) the restore ends `ok`, and (d)
+/// afterwards the destination can be removed (the restore no longer holds it).
 #[test]
 fn m4_s05_destination_of_a_running_restore_cannot_change() {
     run_isolated_test(
@@ -2834,6 +2835,8 @@ fn m4_s05_destination_of_a_running_restore_cannot_change() {
             fx.rig.wrapper.release("restore");
             let detail = fx.wait_run(&run_id);
             assert_eq!(detail.run.status, RunStatus::Ok, "(c) {detail:?}");
+            let removed = fx.rig.daemon.client.remove_destination(fx.dest.id.as_str());
+            assert!(removed.is_ok(), "(d) {removed:?}");
             fx.rig.daemon.stop();
         },
     );
@@ -2948,8 +2951,8 @@ fn m4_s05_selection_across_folders_previews_its_folders_as_folders() {
 /// link to a folder further up (and writes into another folder), replaces one at the folder
 /// holding a selected entry and fails at a link loop, so the preview refuses the target with
 /// (a) `invalid_target` and (b) the link as `error_detail`, for (1) a link at `docs` above
-/// `docs/deep/y.txt`, (2) a link at `docs/deep` and (3) a link loop at `docs`; (c) nothing
-/// behind the links changes.
+/// `docs/deep/y.txt`, (2) a link at `docs/deep`, (3) a link loop at `docs` and (4) a link to
+/// nothing at `docs`; (c) nothing behind the links changes.
 #[test]
 fn m4_s05_symlink_above_the_selection_is_refused() {
     run_isolated_test(
@@ -2991,6 +2994,10 @@ fn m4_s05_symlink_above_the_selection_is_refused() {
                 fs::remove_dir_all(fx.src.join("docs")).expect("remove docs");
                 std::os::unix::fs::symlink("docs", fx.src.join("docs")).expect("docs -> docs");
                 refused_at("docs", "(3)");
+                fs::remove_file(fx.src.join("docs")).expect("remove loop");
+                std::os::unix::fs::symlink(fx.new_dir("nowhere"), fx.src.join("docs"))
+                    .expect("docs -> nothing");
+                refused_at("docs", "(4)");
                 assert_eq!(
                     fs::read_to_string(out.join("deep/y.txt")).expect("y.txt"),
                     "different",

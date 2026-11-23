@@ -259,9 +259,16 @@ fn prepare_setup(
 fn claim(shared: &Arc<Mutex<DaemonCore>>, setup: &RestoreSetup) -> Result<Run, KesticServiceErr> {
     let mut guard = shared.lock_unpoisoned();
     let dest_id = &setup.ctx.destination.id;
-    // Removed while the request was checked.
-    if guard.config.destination(dest_id).is_none() {
-        return Err(KesticServiceErr::NotFound(dest_id.to_string()));
+    // Removed or changed while the request was checked: restic would run against the old
+    // settings.
+    match guard.config.destination(dest_id) {
+        None => return Err(KesticServiceErr::NotFound(dest_id.to_string())),
+        Some(current) if current != &setup.ctx.destination => {
+            return Err(invalid(format!(
+                "destination {dest_id} changed while the restore was checked; try again"
+            )));
+        }
+        Some(_) => {}
     }
     let target = &setup.check.resolved;
     if guard.restore_claims.values().any(|c| &c.target == target) {
