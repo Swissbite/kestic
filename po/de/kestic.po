@@ -3784,8 +3784,8 @@ msgid "SSH user"
 msgstr "SSH-Benutzer"
 
 #: gui/src/qml/DestinationDetailsForm.qml
-msgid "Enter the user name on the server, without spaces or '@'."
-msgstr "Geben Sie den Benutzernamen auf dem Server ein, ohne Leerzeichen oder «@»."
+msgid "Enter the user name on the server: only letters, digits, '.', '_' and '-'."
+msgstr "Geben Sie den Benutzernamen auf dem Server ein: nur Buchstaben, Ziffern, «.», «_» und «-»."
 
 #: gui/src/qml/DestinationDetailsForm.qml
 msgid "Repository path on the server"

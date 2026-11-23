@@ -82,7 +82,8 @@ QtObject {
     // user starting with `-` would reach ssh as an option.
     readonly property bool hostValid: /^(\[[0-9a-fA-F:.]+\]|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*|[A-Za-z0-9_][A-Za-z0-9._-]*)$/.test(host.trim())
     readonly property bool portValid: /^[0-9]{1,5}$/.test(port.trim()) && Number(port) >= 1 && Number(port) <= 65535
-    readonly property bool sftpUserValid: /^[^\s@:\/\\'"-][^\s@:\/\\'"]*$/.test(username.trim())
+    // As core: letters (also non-ASCII), digits, '.', '_' and '-', not starting with '-'.
+    readonly property bool sftpUserValid: /^[A-Za-z0-9._\u0080-\uffff][A-Za-z0-9._\u0080-\uffff-]*$/.test(username.trim())
     readonly property bool sftpPathValid: sftpPath.trim().length > 0 && sftpPath.trim()[0] !== "~"
         && !/[\x00-\x1f\x7f]/.test(sftpPath)
     // A new S3 destination needs both keys; when editing, empty keys keep the saved ones.

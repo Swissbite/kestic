@@ -473,8 +473,18 @@ int scenario_sftp_form(const Ctx& c) {
     set_text(w, "wizDestNameField", QStringLiteral("NAS"));
     set_text(w, "wizDestHostField", QStringLiteral("127.0.0.1"));
     set_text(w, "wizDestPortField", port);
-    set_text(w, "wizDestSftpUserField", user);
     set_text(w, "wizDestSftpPathField", path);
+    // A user name with a character a shell reads is refused in the form, as in core.
+    set_text(w, "wizDestSftpUserField", QStringLiteral("anna;id"));
+    QQuickItem* user_error = item_named(w, "wizDestSftpUserError");
+    M3_CHECK(5631, wait_until([&] { return user_error && user_error->isVisible(); }, 2000), "no hint for the user name «anna;id»");
+    M3_CHECK_EQ(5632, user_error->property("text").toString(),
+        loc(c.lang, "Enter the user name on the server: only letters, digits, '.', '_' and '-'.",
+            "Geben Sie den Benutzernamen auf dem Server ein: nur Buchstaben, Ziffern, «.», «_» und «-»."),
+        "hint for the user name");
+    M3_CHECK(5633, !item_named(w, "wizDestTestButton")->isEnabled(), "«Test Connection» enabled for «anna;id»");
+    set_text(w, "wizDestSftpUserField", user);
+    M3_CHECK(5634, wait_until([&] { return !user_error->isVisible(); }, 2000), "hint stays for a valid user name");
     const QString unnamed = first_unnamed(w, {
         QStringLiteral("wizDestHostField"),
         QStringLiteral("wizDestPortField"),

@@ -400,8 +400,7 @@ pub fn classify_exit_for(
                     raw_detail,
                 }
             } else if is_backend_auth_failure(&detail_lower)
-                || transport == Transport::Sftp
-                    && detail_lower.contains("permission denied (publickey")
+                || transport == Transport::Sftp && ssh_rejected_key(&detail_lower)
             {
                 ErrorPresentation {
                     status: RunStatus::Error,
@@ -456,17 +455,11 @@ pub const HOST_KEY_UNKNOWN_MARKER: &str = "unknown ssh host key of ";
 pub const HOST_KEY_CHANGED_MARKER: &str = "ssh host key changed; the old entry is in ";
 
 /// The host key failure a lowercase message of an SFTP destination names: Kestic's own check,
-/// whose text starts the message, or a line of ssh (restic starts it with `subprocess ssh: `).
-/// A marker elsewhere is part of a file name or a server text.
+/// whose text starts the message, or a line of ssh (see [`ssh_lines`]). A marker elsewhere is
+/// part of a file name or a server text.
 fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
     let detail = detail_lower.trim_start();
-    let ssh_line = |test: &dyn Fn(&str) -> bool| {
-        detail.lines().any(|line| {
-            line.trim_start()
-                .strip_prefix("subprocess ssh: ")
-                .is_some_and(test)
-        })
-    };
+    let ssh_line = |test: &dyn Fn(&str) -> bool| ssh_lines(detail).any(test);
     if detail.starts_with(HOST_KEY_CHANGED_MARKER)
         || ssh_line(&|rest| {
             rest.starts_with("host key for") && rest.contains("has changed and you have requested")
@@ -480,6 +473,23 @@ fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
     } else {
         None
     }
+}
+
+/// The text of a line of ssh in a lowercase message: restic starts it with `subprocess ssh: `,
+/// at the start of a line or, in a run's stored summary, after Kestic's text and `: `.
+fn ssh_lines(detail_lower: &str) -> impl Iterator<Item = &str> {
+    detail_lower.lines().filter_map(|line| {
+        let line = line.trim_start();
+        line.strip_prefix("subprocess ssh: ").or_else(|| {
+            line.split_once(": ")
+                .and_then(|(_, rest)| rest.strip_prefix("subprocess ssh: "))
+        })
+    })
+}
+
+/// Whether a lowercase message has a line of ssh saying that the SFTP server rejected the key.
+fn ssh_rejected_key(detail_lower: &str) -> bool {
+    ssh_lines(detail_lower).any(|rest| rest.contains("permission denied (publickey"))
 }
 
 /// Whether the lowercase restic message says the backend rejected the login: HTTP 401/403 or

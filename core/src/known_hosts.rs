@@ -201,10 +201,12 @@ pub fn resolve_target(host: &str, port: u16, user: &str) -> Result<SshTarget, Ho
         text.lines()
             .filter_map(|line| line.split_once(' '))
             .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v.trim().to_string())
-            .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("none"))
+            .map(|(_, v)| v.to_string())
+            .filter(|v| !v.is_empty())
     };
-    if value("proxyjump").is_some() || value("proxycommand").is_some() {
+    // `none` turns a jump host off; as a name or alias it is a name.
+    let jump = |key: &str| value(key).filter(|v| !v.eq_ignore_ascii_case("none"));
+    if jump("proxyjump").is_some() || jump("proxycommand").is_some() {
         return Err(HostKeyError::JumpHost(host));
     }
     let target = SshTarget {
@@ -292,7 +294,7 @@ fn scan(
 ) -> Result<(Vec<(String, String)>, bool), HostKeyError> {
     let started = std::time::Instant::now();
     let mut result = (Vec::new(), false);
-    for address in scan_addresses(target) {
+    for address in scan_addresses(target, timeout, resolve) {
         let left = timeout.saturating_sub(started.elapsed());
         if left < Duration::from_secs(1) {
             break;
@@ -305,20 +307,33 @@ fn scan(
     Ok(result)
 }
 
-/// The addresses ssh would try for `target`: the IP address itself, else those the host name
-/// resolves to (the name itself when it does not resolve, so `ssh-keyscan` reports that).
-fn scan_addresses(target: &SshTarget) -> Vec<String> {
+/// The addresses of a host name and port, as the system resolves them.
+fn resolve(host: &str, port: u16) -> Vec<std::net::IpAddr> {
     use std::net::ToSocketAddrs;
+    (host, port)
+        .to_socket_addrs()
+        .map_or_default(|addrs| addrs.map(|addr| addr.ip()).collect())
+}
+
+/// The addresses ssh would try for `target`: the IP address itself, else those the host name
+/// resolves to within `limit` (the name itself when it does not resolve in time, so
+/// `ssh-keyscan` reports that). A resolver that hangs keeps only its own thread.
+fn scan_addresses(
+    target: &SshTarget,
+    limit: Duration,
+    resolver: fn(&str, u16) -> Vec<std::net::IpAddr>,
+) -> Vec<String> {
     if target.hostname.parse::<std::net::IpAddr>().is_ok() {
         return vec![target.hostname.clone()];
     }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (host, port) = (target.hostname.clone(), target.port);
+    std::thread::spawn(move || tx.send(resolver(&host, port)));
     let mut addresses: Vec<String> = Vec::new();
-    if let Ok(resolved) = (target.hostname.as_str(), target.port).to_socket_addrs() {
-        for addr in resolved {
-            let ip = addr.ip().to_string();
-            if !addresses.contains(&ip) {
-                addresses.push(ip);
-            }
+    for ip in rx.recv_timeout(limit).unwrap_or_default() {
+        let ip = ip.to_string();
+        if !addresses.contains(&ip) {
+            addresses.push(ip);
         }
     }
     if addresses.is_empty() {
@@ -767,7 +782,8 @@ mod tests {
              Host dash\n  HostName -oProxyCommand=x\n\
              Host pipe\n  HostName a|b\n\
              Host alias\n  HostName 127.0.0.1\n  HostKeyAlias mynas\n\
-             Host six\n  HostName ::1\n",
+             Host six\n  HostName ::1\n\
+             Host literal\n  HostName 127.0.0.1\n  HostKeyAlias none\n",
         )
         .expect("write ssh_config");
         crate::sftp::set_test_ssh_config(Some(config));
@@ -784,6 +800,9 @@ mod tests {
         assert_eq!(alias.known_hosts_name(), "mynas");
         let six = resolve_target("six", 2222, "anna").expect("IPv6 address");
         assert_eq!(six.known_hosts_name(), "[::1]:2222");
+        // ssh takes the alias `none` literally; only a jump host is turned off by `none`.
+        let literal = resolve_target("literal", 22, "anna").expect("alias none");
+        assert_eq!(literal.known_hosts_name(), "none");
         crate::sftp::set_test_ssh_config(None);
 
         // Trust writes nothing for such a name either.
@@ -824,6 +843,37 @@ mod tests {
             fs::read_to_string(&paths.user).expect("read user"),
             revoked,
             "the user's file stays as it is"
+        );
+    }
+
+    /// M5-S01 (AC-M5-01-5 (c)): resolving the host name counts against the time of the key scan;
+    /// a resolver that does not answer leaves the name itself, at once after the limit.
+    #[test]
+    fn m5_01_name_resolution_stays_within_the_time_limit() {
+        fn hanging(_: &str, _: u16) -> Vec<std::net::IpAddr> {
+            std::thread::sleep(Duration::from_secs(30));
+            Vec::new()
+        }
+        fn twice(_: &str, _: u16) -> Vec<std::net::IpAddr> {
+            let ip = std::net::IpAddr::from([192, 0, 2, 7]);
+            vec![ip, ip, std::net::IpAddr::from([192, 0, 2, 8])]
+        }
+        let target = SshTarget {
+            hostname: "nas.example".to_string(),
+            port: 22,
+            host_key_alias: None,
+        };
+        let started = std::time::Instant::now();
+        let addresses = scan_addresses(&target, Duration::from_millis(300), hanging);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "waited {:?}",
+            started.elapsed()
+        );
+        assert_eq!(addresses, vec!["nas.example".to_string()]);
+        assert_eq!(
+            scan_addresses(&target, Duration::from_secs(5), twice),
+            vec!["192.0.2.7".to_string(), "192.0.2.8".to_string()]
         );
     }
 

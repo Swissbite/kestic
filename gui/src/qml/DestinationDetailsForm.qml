@@ -380,7 +380,7 @@ ColumnLayout {
         Controls.Label {
             objectName: form.namePrefix + "SftpUserError"
             visible: form.draft.kindIsSftp && !form.draft.sftpUserValid
-            text: i18n("Enter the user name on the server, without spaces or '@'.")
+            text: i18n("Enter the user name on the server: only letters, digits, '.', '_' and '-'.")
             color: Kirigami.Theme.negativeTextColor
         }
 

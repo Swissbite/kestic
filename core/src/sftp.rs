@@ -315,28 +315,36 @@ impl SshFailure {
 }
 
 /// The ssh failure in restic's error output, if any: the line of ssh that names it.
+///
+/// restic passes the server's banner on with the same prefix as ssh's own lines. ssh names its
+/// reason last, after any banner, and a server shows its banner only after ssh accepted its host
+/// key: the last line that names a failure is ssh's own.
 pub fn ssh_failure(stderr: &str) -> Option<SshFailure> {
-    let lines = || {
-        stderr
-            .lines()
-            .map(str::trim)
-            .filter(|line| line.starts_with("subprocess ssh:"))
-    };
-    if lines().any(|l| l.contains("Host key verification failed")) {
-        if let Some(line) =
-            lines().find(|l| l.contains("has changed and you have requested strict checking"))
-        {
-            return Some(SshFailure::HostKeyChanged(line.to_string()));
-        }
-        let line = lines().find(|l| l.contains("Host key verification failed"))?;
-        return Some(SshFailure::HostKeyVerificationFailed(line.to_string()));
-    }
+    let lines: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("subprocess ssh:"))
+        .collect();
     // Many keys offered by the agent can use up the server's attempts before the right one.
-    lines()
-        .find(|l| {
-            l.contains("Permission denied (") || l.contains("Too many authentication failures")
-        })
-        .map(|line| SshFailure::KeyRejected(line.to_string()))
+    let rejected = |l: &str| {
+        l.contains("Permission denied (") || l.contains("Too many authentication failures")
+    };
+    let refused = |l: &str| l.contains("Host key verification failed");
+    let last = lines.iter().rposition(|l| rejected(l) || refused(l))?;
+    let line = lines[last];
+    if rejected(line) {
+        return Some(SshFailure::KeyRejected(line.to_string()));
+    }
+    // ssh explains a changed key in the lines just before its verdict.
+    if let Some(changed) = lines[..last]
+        .iter()
+        .rev()
+        .take_while(|l| !rejected(l))
+        .find(|l| l.contains("has changed and you have requested strict checking"))
+    {
+        return Some(SshFailure::HostKeyChanged((*changed).to_string()));
+    }
+    Some(SshFailure::HostKeyVerificationFailed(line.to_string()))
 }
 
 #[cfg(test)]
@@ -450,7 +458,7 @@ mod tests {
                 format!(
                     "ignoring error for /home/u/Downloads/{name}: permission denied\nFatal: There were 1 errors"
                 ),
-                format!("a: {name}"),
+                format!("error: open /srv/a: {name}"),
                 format!("Fatal: unable to open /srv/a: {name}"),
             ] {
                 for transport in [Transport::Sftp, Transport::Other] {
@@ -493,10 +501,25 @@ mod tests {
             ResticFailureKind::BackendAuthFailed
         );
         let file = "error: open /home/u/Permission denied (publickey).txt: no such file";
-        assert_ne!(
-            kind(Transport::Other, file),
+        for transport in [Transport::Sftp, Transport::Other] {
+            assert_ne!(
+                kind(transport, file),
+                ResticFailureKind::BackendAuthFailed,
+                "{transport:?}"
+            );
+        }
+        // A banner is shown with the same prefix, before ssh's own reason.
+        let banner = "subprocess ssh: Welcome\n\
+                      subprocess ssh: Host key verification failed.\n\
+                      subprocess ssh: anna@h: Permission denied (publickey).";
+        assert_eq!(
+            kind(Transport::Sftp, banner),
             ResticFailureKind::BackendAuthFailed
         );
+        assert!(matches!(
+            ssh_failure(banner),
+            Some(SshFailure::KeyRejected(_))
+        ));
     }
 
     #[test]
@@ -593,6 +616,27 @@ mod tests {
         assert_eq!(
             sftp(None, "subprocess ssh: u@h: Permission denied (publickey)."),
             crate::restic::ResticFailureKind::BackendAuthFailed
+        );
+        assert_eq!(
+            sftp(
+                None,
+                "Login to the destination failed: subprocess ssh: u@h: Permission denied (publickey)."
+            ),
+            crate::restic::ResticFailureKind::BackendAuthFailed
+        );
+        assert_eq!(
+            sftp(
+                None,
+                "Unknown server: subprocess ssh: Host key verification failed."
+            ),
+            crate::restic::ResticFailureKind::HostKeyUnknown
+        );
+        assert_eq!(
+            sftp(
+                None,
+                "error: open /x/subprocess ssh: Host key verification failed.: no such file"
+            ),
+            crate::restic::ResticFailureKind::GenericFailure
         );
         assert_eq!(
             sftp(Some("unexpected EOF"), changed),
