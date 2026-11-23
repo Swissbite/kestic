@@ -10,13 +10,16 @@
 
 use crate::backup::{
     BackupRunError, SnapshotListAccess, check_command_succeeded, list_destination_snapshots,
+    run_reading,
 };
 use crate::query_list::{
     ENTRY_OVERHEAD_BYTES, HeldResult, ListBuilder, ListEntry, ListPage, PageRequest, QueryList,
 };
-use crate::restic::{CancelHandle, ResticCommandSpec, run_restic_reading};
+use crate::restic::CancelHandle;
+use crate::restore::escape_glob;
 use crate::snapshot::ResticSnapshot;
 use crate::snapshot_list::sort_destination_snapshots;
+use crate::snapshot_ls::parent_dir;
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -85,14 +88,6 @@ struct HeldHit {
 impl ListEntry for HeldHit {
     fn path(&self) -> &str {
         &self.path
-    }
-}
-
-/// The folder that contains `path` (`/` for an entry at the top).
-pub fn parent_dir(path: &str) -> &str {
-    match path.rfind('/') {
-        Some(0) | None => "/",
-        Some(i) => &path[..i],
     }
 }
 
@@ -169,7 +164,7 @@ pub enum FindTextError {
 pub const MAX_SEARCH_TEXT_BYTES: usize = 4096;
 
 /// Most snapshot IDs per `restic find` call, so its arguments stay far below the system limit.
-pub const FIND_BATCH_SNAPSHOTS: usize = 1000;
+const FIND_BATCH_SNAPSHOTS: usize = 1000;
 
 /// Checks the search text: not empty or blank, no NUL, at most [`MAX_SEARCH_TEXT_BYTES`].
 pub fn validate_search_text(text: &str) -> Result<(), FindTextError> {
@@ -185,15 +180,6 @@ pub fn validate_search_text(text: &str) -> Result<(), FindTextError> {
     Ok(())
 }
 
-fn push_literal(pattern: &mut String, text: &str) {
-    for c in text.chars() {
-        if matches!(c, '*' | '?' | '[' | '\\' | '!') {
-            pattern.push('\\');
-        }
-        pattern.push(c);
-    }
-}
-
 /// The restic pattern that finds the paths containing `text`, taken literally (`*`, `?`, `[`, `\`
 /// and `!`, which negates a leading pattern, masked), or `None` when no path can contain it.
 ///
@@ -203,7 +189,7 @@ fn push_literal(pattern: &mut String, text: &str) {
 /// without the `/`, which also finds a segment at the top. restic cleans the pattern like a
 /// path, so a text with an empty, `.` or `..` segment between two `/` would match other paths;
 /// a snapshot path never holds such a segment, so it finds nothing.
-pub fn find_pattern(text: &str) -> Option<String> {
+fn find_pattern(text: &str) -> Option<String> {
     let segments: Vec<&str> = text.split('/').collect();
     let inner = segments
         .get(1..segments.len().saturating_sub(1))
@@ -211,20 +197,14 @@ pub fn find_pattern(text: &str) -> Option<String> {
     if inner.iter().any(|s| matches!(*s, "" | "." | "..")) {
         return None;
     }
-    let mut pattern = String::with_capacity(text.len() + 2);
-    match text.strip_prefix('/') {
-        Some(rest) => push_literal(&mut pattern, rest),
-        None => {
-            pattern.push('*');
-            push_literal(&mut pattern, text);
-        }
-    }
-    pattern.push('*');
-    Some(pattern)
+    Some(match text.strip_prefix('/') {
+        Some(rest) => format!("{}*", escape_glob(rest)),
+        None => format!("*{}*", escape_glob(text)),
+    })
 }
 
 /// Arguments of `restic find` for `pattern` in exactly the snapshots `snapshot_ids` (full IDs,
-/// at most [`FIND_BATCH_SNAPSHOTS`]; `--json` comes from the command spec). Case is ignored; `--`
+/// one batch of a search; `--json` comes from the command spec). Case is ignored; `--`
 /// keeps a pattern that starts with `-` from being read as a flag.
 pub fn find_args(snapshot_ids: &[&str], pattern: &str) -> Vec<String> {
     let mut args = vec![
@@ -243,7 +223,7 @@ pub fn find_args(snapshot_ids: &[&str], pattern: &str) -> Vec<String> {
 
 /// The snapshots of `scope` among all snapshots of a destination, newest first, sorted like the
 /// snapshot lists: never a metadata snapshot, never one of another backup.
-pub fn scope_snapshots(
+fn scope_snapshots(
     snapshots: Vec<ResticSnapshot>,
     configured_backup_ids: &[&str],
     scope: &FindScope,
@@ -286,7 +266,7 @@ struct RawGroup {
 /// Collects the hits of the searched snapshots from the output of `restic find --json`, an
 /// array of `{"matches":[…],"hits":n,"snapshot":"<id>"}`, read as a stream: one very long line
 /// is never held as a whole. Unknown fields are ignored.
-pub struct FindCollector {
+struct FindCollector {
     /// Position (newest first) of each searched snapshot, by ID.
     positions: HashMap<String, usize>,
     /// ID and time of the searched snapshots, newest first.
@@ -300,7 +280,7 @@ pub struct FindCollector {
 impl FindCollector {
     /// Collects the hits of `snapshots` (newest first) for the backup `backup_id`; the list is
     /// dropped once it exceeds `limit_bytes`.
-    pub fn new(snapshots: &[ResticSnapshot], backup_id: Option<&str>, limit_bytes: u64) -> Self {
+    fn new(snapshots: &[ResticSnapshot], backup_id: Option<&str>, limit_bytes: u64) -> Self {
         Self {
             positions: snapshots
                 .iter()
@@ -319,7 +299,7 @@ impl FindCollector {
     }
 
     /// Reads the whole output of `restic find --json`.
-    pub fn read(&mut self, reader: &mut dyn BufRead) -> Result<(), serde_json::Error> {
+    fn read(&mut self, reader: &mut dyn BufRead) -> Result<(), serde_json::Error> {
         let mut de = serde_json::Deserializer::from_reader(reader);
         GroupsSeed { collector: self }.deserialize(&mut de)?;
         de.end()
@@ -347,7 +327,7 @@ impl FindCollector {
         }
     }
 
-    pub fn finish(self) -> FindResult {
+    fn finish(self) -> FindResult {
         let hits = self.builder.finish_sorted_by(|a, b| {
             a.snapshot
                 .cmp(&b.snapshot)
@@ -495,7 +475,7 @@ pub struct FindRequest<'a> {
 
 /// The arguments of the `restic find` calls that search `pattern` in `snapshot_ids`, at most
 /// [`FIND_BATCH_SNAPSHOTS`] snapshots per call.
-pub fn find_calls(snapshot_ids: &[&str], pattern: &str) -> Vec<Vec<String>> {
+fn find_calls(snapshot_ids: &[&str], pattern: &str) -> Vec<Vec<String>> {
     snapshot_ids
         .chunks(FIND_BATCH_SNAPSHOTS)
         .map(|batch| find_args(batch, pattern))
@@ -504,7 +484,7 @@ pub fn find_calls(snapshot_ids: &[&str], pattern: &str) -> Vec<Vec<String>> {
 
 /// Searches the snapshots of `request.scope` for paths that contain `request.text` (any case),
 /// after the reachability check of the destination: one `restic snapshots` call, then
-/// `restic find --no-lock` over exactly these snapshots ([`find_calls`]). Without snapshots, or
+/// `restic find --no-lock` over exactly these snapshots, in batches. Without snapshots, or
 /// for a text no path can contain, `find` does not run.
 pub fn execute_find(
     access: &SnapshotListAccess<'_>,
@@ -523,26 +503,10 @@ pub fn execute_find(
     };
     let ids: Vec<&str> = snapshots.iter().map(|s| s.id.as_str()).collect();
     for args in find_calls(&ids, &pattern) {
-        let mut spec = ResticCommandSpec::for_destination(
-            &access.resolved.binary,
-            access.kestic_binary,
-            access.destination,
-            args,
-        );
-        spec.low_priority = false;
         let mut parsed = Ok(());
-        let res = run_restic_reading(
-            &spec,
-            access.destination,
-            Some(access.secret_store),
-            access.clock,
-            cancel,
-            access.extra_env,
-            &mut |reader| parsed = collector.read(reader),
-        )?;
-        if res.cancelled {
-            return Err(BackupRunError::Cancelled);
-        }
+        let res = run_reading(access, args, cancel, &mut |reader| {
+            parsed = collector.read(reader);
+        })?;
         check_command_succeeded(&res)?;
         parsed?;
     }

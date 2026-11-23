@@ -8,15 +8,16 @@
 //! recursive `restic ls` of the restored folder, which gives the types, sizes and inodes the dry
 //! run leaves out.
 
-use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded};
+use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded, run_streaming};
 use crate::query_list::{
     ENTRY_OVERHEAD_BYTES, HeldResult, ListBuilder, ListEntry, ListPage, PageRequest, QueryList,
 };
 use crate::restic::CancelHandle;
 use crate::restore::{
     RestoreCall, RestoreLine, RestorePlan, check_restore_succeeded, parse_restore_line,
-    restore_args, run_streaming,
+    restore_args,
 };
+use crate::snapshot_ls::RawLsNode;
 use kestic_i18n::codes::{RestoreNoteCode, RestoreOutcome, RestoreOverwrite};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
@@ -236,28 +237,11 @@ pub struct TreeCollector {
     limit_bytes: u64,
 }
 
-#[derive(Deserialize)]
-struct RawTreeNode {
-    #[serde(default)]
-    message_type: Option<String>,
-    #[serde(default, rename = "type")]
-    node_type: String,
-    #[serde(default)]
-    path: String,
-    #[serde(default)]
-    size: Option<u64>,
-    #[serde(default)]
-    inode: Option<u64>,
-}
-
 impl TreeCollector {
     pub fn push_line(&mut self, line: &str) {
-        let Ok(node) = serde_json::from_str::<RawTreeNode>(line.trim()) else {
+        let Some(node) = RawLsNode::parse(line).filter(RawLsNode::is_node) else {
             return;
         };
-        if node.message_type.as_deref() != Some("node") {
-            return;
-        }
         let relative = if self.folder == "/" {
             node.path.as_str()
         } else {
@@ -266,7 +250,7 @@ impl TreeCollector {
                 _ => return,
             }
         };
-        let is_dir = node.node_type == "dir";
+        let is_dir = node.is_dir();
         if !is_dir {
             self.tree.files += 1;
         }

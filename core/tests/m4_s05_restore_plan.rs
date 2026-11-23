@@ -194,8 +194,9 @@ fn ac_m4_05_17_restore_runs_from_the_common_folder_never_into_root() {
     );
 }
 
-/// AC-M4-05-18 (unit part): `escape_glob` escapes `\`, `*`, `?` and `[` with `\` and leaves
-/// everything else (spaces, umlauts, line breaks, leading `-`, `]`) alone.
+/// AC-M4-05-18 (unit part): `escape_glob` escapes `\`, `*`, `?` and `[` with `\` (and `!`,
+/// which restic reads literally as `\!`) and leaves the rest (spaces, umlauts, line breaks,
+/// leading `-`, `]`) alone.
 #[test]
 fn ac_m4_05_18_escape_glob_escapes_glob_characters_only() {
     assert_eq!(escape_glob("[x].txt"), "\\[x].txt");
