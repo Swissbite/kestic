@@ -92,10 +92,7 @@ Kirigami.ScrollablePage {
             }
 
             FocusRing {
-                // Focus ring only: a white wash over the row made the selected text unreadable.
                 target: row
-                anchors.margins: row.highlighted ? 2 : 0
-                ringColor: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {

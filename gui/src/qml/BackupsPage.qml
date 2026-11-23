@@ -95,34 +95,18 @@ Kirigami.ScrollablePage {
             }
 
             FocusRing {
-                // Focus ring only: a white wash over the row made the selected text unreadable.
                 target: row
-                anchors.margins: row.highlighted ? 2 : 0
-                ringColor: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {
                 spacing: Kirigami.Units.mediumSpacing
 
-                Item {
+                RowIcon {
                     Layout.preferredWidth: Kirigami.Units.iconSizes.medium
                     Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-
-                    // The folder icon has the colour of the selection: on the selected row it
-                    // sits on the background colour, or its body would vanish.
-                    Rectangle {
-                        objectName: "backupRowSourceIconBackdrop"
-                        visible: row.highlighted
-                        anchors.fill: parent
-                        anchors.margins: -2
-                        radius: Kirigami.Units.cornerRadius
-                        color: Kirigami.Theme.backgroundColor
-                    }
-
-                    Kirigami.Icon {
-                        anchors.fill: parent
-                        source: row.sourceKind === "drive" ? "drive-harddisk" : "folder"
-                    }
+                    source: row.sourceKind === "drive" ? "drive-harddisk" : "folder"
+                    onSelection: row.highlighted
+                    backdropObjectName: "backupRowSourceIconBackdrop"
                 }
 
                 ColumnLayout {

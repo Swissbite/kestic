@@ -166,6 +166,12 @@ int scenario_all_pages(const Ctx& c) {
     M3_CHECK(4906, page_visible(w, "restorePage"), "restorePage");
     M3_CHECK(4907, wait_until([&] { return !c.backend->property("restore_overview_loading").toBool(); }, 20000),
              "restore area still loading");
+    // The selected backup row holds the focus, not the first row of «Other snapshots».
+    M3_CHECK(4909, wait_until([&] {
+        QQuickItem* focused = w->activeFocusItem();
+        return focused && focused->objectName() == QLatin1String("restoreBackupListItem")
+            && focused->property("highlighted").toBool();
+    }, 3000), "the selected backup row of the restore area holds the focus");
     M3_RECORD(4908, dump, QStringLiteral("restore"), w, "restore");
 
     M3_CHECK(4919, open_detail(w, bid), "backupDetailPage did not open");

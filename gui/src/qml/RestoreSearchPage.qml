@@ -32,8 +32,7 @@ Kirigami.ScrollablePage {
 
     function runSearch(text) {
         cancelledByUser = false;
-        filterDelay.stop();
-        filterField.text = "";
+        filterField.resetFilter();
         searchListView.currentIndex = -1;
         snapshotSearchModel.search(destinationId, backupId, text);
     }
@@ -66,20 +65,9 @@ Kirigami.ScrollablePage {
         objectName: "snapshotSearchModel"
     }
 
-    Timer {
-        interval: 150
-        repeat: true
-        running: snapshotSearchModel.state === "running"
-        onTriggered: snapshotSearchModel.poll()
-    }
-
-    Timer {
-        id: filterDelay
-        interval: 300
-        onTriggered: snapshotSearchModel.setFilter(filterField.text)
-    }
-
     header: Controls.ToolBar {
+        leftPadding: Kirigami.Units.largeSpacing
+        rightPadding: Kirigami.Units.largeSpacing
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.smallSpacing
 
@@ -97,9 +85,13 @@ Kirigami.ScrollablePage {
                 }
             }
 
-            RowLayout {
+            // On a narrow page the filter gets a line of its own below the number of hits.
+            GridLayout {
+                id: countRow
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.mediumSpacing
+                columns: page.width < Kirigami.Units.gridUnit * 30 ? 1 : 2
+                columnSpacing: Kirigami.Units.mediumSpacing
+                rowSpacing: Kirigami.Units.smallSpacing
                 visible: snapshotSearchModel.state === "done" && snapshotSearchModel.total > 0
 
                 Controls.Label {
@@ -107,19 +99,17 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     text: snapshotSearchModel.count_text
                     textFormat: Text.PlainText
-                    elide: Text.ElideRight
+                    wrapMode: Text.Wrap
                     font.bold: true
                     opacity: 0.8
                 }
-                Kirigami.SearchField {
+                FilterField {
                     id: filterField
                     objectName: "searchFilterField"
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 12
+                    Layout.fillWidth: countRow.columns === 1
                     visible: !snapshotSearchModel.too_large
-                    placeholderText: Texts.label("filter")
-                    Accessible.name: Texts.label("filter")
-                    focusSequences: []
-                    onTextChanged: filterDelay.restart()
+                    onFilterRequested: function(text) { snapshotSearchModel.setFilter(text); }
                 }
             }
         }
@@ -138,64 +128,16 @@ Kirigami.ScrollablePage {
             }
         }
 
-        ColumnLayout {
-            objectName: "searchBusy"
-            anchors.centerIn: parent
-            visible: snapshotSearchModel.state === "running"
-            spacing: Kirigami.Units.largeSpacing
-
-            Controls.BusyIndicator {
-                Layout.alignment: Qt.AlignHCenter
-                running: parent.visible
-                Accessible.name: i18n("Searching…")
+        QueryStatus {
+            queryModel: snapshotSearchModel
+            namePrefix: "search"
+            busyText: i18n("Searching…")
+            cancelledText: i18n("Search cancelled")
+            onCancelRequested: {
+                page.cancelledByUser = true;
+                snapshotSearchModel.cancel();
             }
-            Controls.Button {
-                objectName: "searchCancelButton"
-                Layout.alignment: Qt.AlignHCenter
-                text: Texts.label("cancel")
-                icon.name: "process-stop"
-                onClicked: {
-                    page.cancelledByUser = true;
-                    snapshotSearchModel.cancel();
-                }
-            }
-        }
-
-        Kirigami.PlaceholderMessage {
-            objectName: "searchCancelledMessage"
-            anchors.centerIn: parent
-            width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: snapshotSearchModel.state === "cancelled"
-            icon.name: "process-stop"
-            text: i18n("Search cancelled")
-            helpfulAction: Kirigami.Action {
-                text: Texts.label("retry")
-                onTriggered: page.runSearch(snapshotSearchModel.search_text)
-            }
-        }
-
-        Kirigami.InlineMessage {
-            objectName: "searchErrorMessage"
-            anchors.top: parent.top
-            width: parent.width
-            type: Kirigami.MessageType.Error
-            visible: snapshotSearchModel.state === "error"
-            text: snapshotSearchModel.error_text
-            actions: [
-                Kirigami.Action {
-                    text: Texts.label("retry")
-                    onTriggered: page.runSearch(snapshotSearchModel.search_text)
-                }
-            ]
-        }
-
-        Kirigami.PlaceholderMessage {
-            objectName: "searchTooLargeMessage"
-            anchors.centerIn: parent
-            width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: snapshotSearchModel.state === "done" && snapshotSearchModel.too_large
-            icon.name: "dialog-information"
-            text: snapshotSearchModel.too_large_text
+            onRetryRequested: page.runSearch(snapshotSearchModel.search_text)
         }
 
         // Like a PlaceholderMessage, but the search text in it is shown literally, never as
@@ -250,8 +192,6 @@ Kirigami.ScrollablePage {
 
             FocusRing {
                 target: hitRow
-                anchors.margins: hitRow.highlighted ? 2 : 0
-                ringColor: hitRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {

@@ -340,6 +340,12 @@ Kirigami.ScrollablePage {
                                 Layout.fillWidth: true
                             }
 
+                            // A card stretched to a taller neighbour keeps its rows together and
+                            // its buttons at the bottom.
+                            Item {
+                                Layout.fillHeight: true
+                            }
+
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: Kirigami.Units.smallSpacing

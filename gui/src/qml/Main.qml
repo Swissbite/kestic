@@ -106,7 +106,7 @@ Kirigami.ApplicationWindow {
     function navigateToBreadcrumbIndex(targetIdx) { focusManager.navigateToBreadcrumbIndex(targetIdx); }
     function cancelFocusRestoreTimer() { focusManager.cancelFocusRestoreTimer(); }
     function focusItemInPageStack(targetItem) { return focusManager.focusItemInPageStack(targetItem); }
-    function focusPageContent(pageItem) { focusManager.focusPageContent(pageItem); }
+    function focusPageContent(pageItem, preferSelection) { focusManager.focusPageContent(pageItem, preferSelection); }
     function pushSubPageAtDepth(pageObj, targetDepth) { focusManager.pushSubPageAtDepth(pageObj, targetDepth); }
     function popSubPage() { focusManager.popSubPage(); }
     function replaceRootPage(pageObj) { focusManager.replaceRootPage(pageObj); }
@@ -257,7 +257,7 @@ Kirigami.ApplicationWindow {
         }
         updatePageStackViewportAndFocusability();
         if (primaryPage) {
-            focusPageContent(primaryPage);
+            focusPageContent(primaryPage, true);
         }
     }
 

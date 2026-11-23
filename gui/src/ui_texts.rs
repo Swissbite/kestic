@@ -123,7 +123,7 @@ gui_texts! {
     EarlierSnapshotsOn = "earlier_snapshots_on" => i18n_noop("Earlier snapshots on '%1'"),
     LoadingSnapshots = "loading_snapshots" => i18n_noop("Loading snapshots…"),
     NoEntriesMatchFilter = "no_entries_match_filter" => i18n_noop("No entries match the filter."),
-    NoSnapshotsYet = "no_snapshots_yet" => i18n_noop("No snapshots yet – the first backup is still pending"),
+    NoSnapshotsYet = "no_snapshots_yet" => i18n_noop("No snapshots yet. The first backup is still pending."),
 
     // Messages
     SaveChangesQuestion = "save_changes_question" => i18n_noop("Save changes?"),
