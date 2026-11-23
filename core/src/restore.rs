@@ -220,12 +220,31 @@ pub fn plan_restore(
 }
 
 fn include_pattern(folder: &str, path: &str) -> String {
-    let relative = if folder == "/" {
+    format!("--include={}", escape_glob(relative_to(folder, path)))
+}
+
+/// `path` relative to `folder`, starting with `/` (the form restic's `--include` and the dry
+/// run use).
+fn relative_to<'a>(folder: &str, path: &'a str) -> &'a str {
+    if folder == "/" {
         path
     } else {
         &path[folder.len()..]
-    };
-    format!("--include={}", escape_glob(relative))
+    }
+}
+
+/// The selected entries of `plan` relative to its folder (each starting with `/`); `None` when
+/// the whole folder is restored.
+pub fn selected_paths(plan: &RestorePlan, selection: &[String]) -> Option<Vec<String>> {
+    if plan.includes.is_empty() {
+        return None;
+    }
+    Some(
+        selection
+            .iter()
+            .map(|p| relative_to(&plan.folder, p).to_string())
+            .collect(),
+    )
 }
 
 /// A dry run (preview: nothing is written, no lock) or the restore itself.

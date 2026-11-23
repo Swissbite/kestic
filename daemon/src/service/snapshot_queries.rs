@@ -26,7 +26,7 @@ use kestic_core::snapshot_ls::{
     LsListing, execute_ls, normalize_snapshot_path, validate_snapshot_id,
 };
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::{RestoreOutcome, SnapshotChange, SnapshotQueryKind};
+use kestic_i18n::codes::{ErrorKind, RestoreOutcome, SnapshotChange, SnapshotQueryKind};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -144,6 +144,10 @@ fn outcome_of(res: Result<QueryResult, BackupRunError>) -> QueryOutcome<QueryRes
     match res {
         Ok(result) => QueryOutcome::Done(result),
         Err(BackupRunError::Cancelled) => QueryOutcome::Cancelled,
+        // The folder is the detail the text of `invalid_target` names.
+        Err(BackupRunError::InvalidTarget { path, .. }) => {
+            QueryOutcome::Error(ErrorKind::InvalidTarget, path)
+        }
         Err(err) => QueryOutcome::Error(backup_run_error_kind(&err), err.to_string()),
     }
 }

@@ -8,15 +8,18 @@
 
 mod common;
 
-use common::m3::connect_local_repo;
-use common::m4::{RawSnapshot, write_snapshot};
+use common::m3::{StdFakes, connect_local_repo, latest_variant};
+use common::m4::{RawSnapshot, small_tree, write_snapshot};
+use common::m4_restore::RestoreFixture;
 use common::{
     CapturedKesticSignal, KesticSignalCollector, TrayMenuEntry, click_dbusmenu_item,
     fetch_dbusmenu_items, restic_test_binaries, run_isolated_test, sandbox_run_config,
     start_fake_sni_watcher, wait_for_file, wait_for_sni_service, wait_for_sni_service_at,
 };
 use kestic_core::model::{Destination, DestinationKind, ResticProvider};
-use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
+use kestic_daemon::dbus_api::{
+    KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, RestoreOverwrite, RestoreTarget,
+};
 use kestic_daemon::service::{DaemonRunConfig, run_daemon};
 use kestic_test_support::tools::write_executable;
 use std::fs;
@@ -143,6 +146,81 @@ fn ac_m4_05_24_tray_entry_restore_files() {
                 "(c) GUI start"
             );
             common::stop_daemon(&client, handle);
+        },
+    );
+}
+
+fn cancel_entry(conn: &Connection, sni: &str) -> TrayMenuEntry {
+    fetch_dbusmenu_items(conn, sni)
+        .into_iter()
+        .find(|i| i.label == "Cancel Running Backup")
+        .expect("no «Cancel Running Backup» entry")
+}
+
+/// Waits until the tray menu shows a line containing `text` (the tray follows the daemon's
+/// state asynchronously).
+fn wait_for_menu_line(conn: &Connection, sni: &str, text: &str) -> Vec<TrayMenuEntry> {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let items = fetch_dbusmenu_items(conn, sni);
+        if items.iter().any(|i| i.label.contains(text)) {
+            return items;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no line with {text:?}: {items:?}"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// AC-M4-05-24: the tray entry «Cancel Running Backup» is (d) disabled while only a restore
+/// runs and (e) enabled while a backup runs beside it.
+#[test]
+fn ac_m4_05_24_cancel_backup_entry_ignores_a_running_restore() {
+    run_isolated_test(
+        "ac_m4_05_24_cancel_backup_entry_ignores_a_running_restore",
+        "KESTIC_AC_M4_05_24_CANCEL_INNER",
+        |root| {
+            let fakes = StdFakes::start();
+            let client_conn = block_on(Connection::session()).expect("session conn");
+            let variant = latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4TC", small_tree, |_| {});
+            let sni = wait_for_sni_service(&fakes.sni_conn, Duration::from_secs(5));
+
+            fx.rig.wrapper.hold("restore");
+            fx.start_restore(
+                &["a.txt"],
+                RestoreTarget::NewFolder {
+                    dir: fx.new_dir("tray").to_string_lossy().into_owned(),
+                },
+                RestoreOverwrite::Never,
+                None,
+            )
+            .expect("StartRestore");
+            fx.rig
+                .wrapper
+                .wait_for('S', "restore", 1, Duration::from_secs(30));
+            wait_for_menu_line(&client_conn, &sni, "restoring");
+            let entry = cancel_entry(&client_conn, &sni);
+            assert!(!entry.enabled, "(d) disabled while only a restore runs");
+
+            fx.rig.wrapper.hold("backup");
+            fx.rig
+                .daemon
+                .client
+                .start_backup(fx.backup.id.as_str())
+                .expect("StartBackup");
+            fx.rig
+                .wrapper
+                .wait_for('S', "backup", 1, Duration::from_secs(30));
+            wait_for_menu_line(&client_conn, &sni, "backing up");
+            let entry = cancel_entry(&client_conn, &sni);
+            assert!(entry.enabled, "(e) enabled while a backup runs");
+
+            fx.rig.wrapper.release("backup");
+            fx.rig.wrapper.release("restore");
+            fx.rig.daemon.stop();
         },
     );
 }

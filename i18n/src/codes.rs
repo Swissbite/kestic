@@ -73,6 +73,9 @@ code_enum! {
         ResticUnavailable => "restic_unavailable",
         /// A folder chosen for a restore does not exist in the snapshot.
         PathNotInSnapshot => "path_not_in_snapshot",
+        /// A restore preview refused its target (`error_detail` is the folder concerned): restic
+        /// would fail there or write into another folder.
+        InvalidTarget => "invalid_target",
         /// Anything not recognised (never a transient code).
         Unknown => "unknown",
     }
@@ -333,7 +336,8 @@ code_enum! {
         NotWritable => "not_writable",
         /// The folder of the original location does not exist; Kestic does not create it.
         MissingMappedDir => "missing_mapped_dir",
-        /// The target lies inside the repository of a local destination.
+        /// The target lies inside the repository of a local destination, or the selection
+        /// would write into such a repository below the target.
         InsideRepository => "inside_repository",
     }
 }
@@ -349,6 +353,9 @@ code_enum! {
         NothingSelectedMatches => "nothing_selected_matches",
         /// The target holds a symbolic link where the snapshot has an entry.
         SymlinkInTarget => "symlink_in_target",
+        /// restic sets mode and modification time of existing folders at the target from the
+        /// snapshot, in every overwrite mode.
+        FolderMetadataReset => "folder_metadata_reset",
     }
 }
 

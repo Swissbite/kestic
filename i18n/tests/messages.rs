@@ -260,11 +260,22 @@ fn every_error_kind_maps_to_its_msgid() {
             E::PathNotInSnapshot,
             Some("The chosen folder does not exist in the snapshot"),
         ),
+        (
+            E::InvalidTarget,
+            Some("This folder cannot be used for the restore"),
+        ),
         (E::Unknown, Some("Backup command failed")),
     ];
     assert_table(&ErrorKind::ALL, &table, |k| msg(k.message(None, false)));
-    // `text`: only `unknown` with a detail shows the detail raw.
-    let raw_unknown = table.map(|(k, m)| (k, if k == E::Unknown { None } else { m }));
+    // `text`: `unknown` with a detail shows the detail raw, `invalid_target` names the folder.
+    let raw_unknown = table.map(|(k, m)| match k {
+        E::Unknown => (k, None),
+        E::InvalidTarget => (
+            k,
+            Some("Cannot restore safely to %1; restore into a new folder instead."),
+        ),
+        _ => (k, m),
+    });
     assert_table(&ErrorKind::ALL, &raw_unknown, |k| k.text(Some("raw")));
 }
 

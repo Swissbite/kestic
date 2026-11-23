@@ -19,17 +19,19 @@ use kestic_core::query_list::PageRequest;
 use kestic_core::restic::CancelHandle;
 use kestic_core::restore::{
     EntryKind, RestorePlan, RestoreTarget, folder_instead_of_unmatchable, normalize_selection,
-    plan_restore, probe_path, probe_snapshot_path,
+    plan_restore, probe_path, probe_snapshot_path, selected_paths,
 };
-use kestic_core::restore_preview::{PreviewClassification, execute_preview};
+use kestic_core::restore_preview::{
+    PreviewClassification, PreviewRun, SnapshotTree, execute_preview, walk_folder,
+};
 use kestic_core::restore_target::{
     FolderWords, PreviewFingerprint, SuggestionInput, TargetCheck, check_target, current_uid,
-    original_location, preview_required, suggested_new_folder,
+    original_location, preview_required, repositories_below, suggested_new_folder,
 };
 use kestic_core::scheduler::{TimezoneSpec, to_local_offset};
 use kestic_core::snapshot::ResticSnapshot;
 use kestic_core::snapshot_ls::{normalize_snapshot_path, start_dir, validate_snapshot_id};
-use kestic_i18n::codes::RestoreOverwrite;
+use kestic_i18n::codes::{RestoreOverwrite, RestoreTargetCode};
 use std::path::PathBuf;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -270,33 +272,40 @@ pub(crate) fn execute_restore_preview(
             dir: suggestion.new_folder.clone(),
         });
     if target.is_original() && suggestion.original.mapped_dir.as_deref() != Some(target.dir()) {
-        return Err(BackupRunError::InvalidTarget(format!(
-            "{} is not the original location of the selection",
-            target.dir()
-        )));
+        return Err(BackupRunError::InvalidTarget {
+            path: target.dir().to_string(),
+            reason: "not the original location of the selection".to_string(),
+        });
     }
-    let check = check_target(&target, ctx.repositories());
+    let mut check = check_target(&target, ctx.repositories());
     // restic takes the target as text: a folder whose real path is not UTF-8 would become
     // another folder.
     if check.resolved.to_str().is_none() {
-        return Err(BackupRunError::InvalidTarget(format!(
-            "{}: the real path of the target folder is not valid UTF-8",
-            check.resolved.display()
-        )));
+        return Err(BackupRunError::InvalidTarget {
+            path: check.resolved.to_string_lossy().into_owned(),
+            reason: "the real path of the target folder is not valid UTF-8".to_string(),
+        });
     }
-    let dry_run = preview_required(&target, &check) && check.usable();
+    let mut dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
-        // restic leaves `uid` out of the snapshot when it is 0 (a snapshot made by root).
-        let foreign_owner = snapshot.uid.unwrap_or(0) != current_uid();
-        execute_preview(
-            access,
-            &plan,
-            &check.resolved,
-            params.overwrite,
-            foreign_owner,
-            cancel,
-            limit_bytes,
-        )?
+        let tree = walk_folder(access, &plan, cancel)?;
+        if writes_into_repository(&tree, &plan, params, &check, ctx) {
+            check.code = RestoreTargetCode::InsideRepository;
+            dry_run = false;
+            PreviewClassification::empty()
+        } else {
+            // restic leaves `uid` out of the snapshot when it is 0 (a snapshot made by root).
+            let foreign_owner = snapshot.uid.unwrap_or(0) != current_uid();
+            let run = PreviewRun {
+                plan: &plan,
+                tree: &tree,
+                target: &check.resolved,
+                overwrite: params.overwrite,
+                foreign_owner,
+                limit_bytes,
+            };
+            execute_preview(access, &run, cancel)?
+        }
     } else {
         PreviewClassification::empty()
     };
@@ -310,6 +319,22 @@ pub(crate) fn execute_restore_preview(
         dry_run,
         backup: ctx.backup_of(&snapshot),
     })
+}
+
+/// Whether the restore would write into the repository of a local destination that lies below
+/// the target folder: only entries of the selection count, so a snapshot without the
+/// repository's folder or a selection outside it restores as usual.
+fn writes_into_repository(
+    tree: &SnapshotTree,
+    plan: &RestorePlan,
+    params: &RestoreParams,
+    check: &TargetCheck,
+    ctx: &RestoreContext,
+) -> bool {
+    let selected = selected_paths(plan, &params.selection);
+    repositories_below(&check.resolved, ctx.repositories())
+        .iter()
+        .any(|repo| tree.writes_below(selected.as_deref(), repo))
 }
 
 /// The parameters a preview or a restore stands for.

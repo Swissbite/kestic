@@ -61,6 +61,9 @@ struct RestoreSetup {
 struct PreviewFacts {
     /// The preview ran the dry runs (it was made for a target that needed them).
     dry_run: bool,
+    /// The target check of the preview; it may refuse a target the check without the snapshot
+    /// accepts (a repository below it that the selection reaches).
+    target_code: RestoreTargetCode,
     plan: RestorePlan,
     files_kept: u64,
     backup: Option<(BackupId, String)>,
@@ -133,6 +136,7 @@ fn matching_preview(
     let wanted = fingerprint(&setup.ctx, &setup.params, &setup.target, &setup.check);
     (fresh && preview.fingerprint == wanted).then(|| PreviewFacts {
         dry_run: preview.dry_run,
+        target_code: preview.check.code,
         plan: preview.plan.clone(),
         files_kept: preview.classification.counts.kept_files,
         backup: preview.backup.clone(),
@@ -184,6 +188,16 @@ fn prepare_setup(
         request.preview_id.as_deref(),
         &setup,
     );
+    if let Some(f) = facts
+        .as_ref()
+        .filter(|f| f.target_code == RestoreTargetCode::InsideRepository)
+    {
+        return Err(invalid(format!(
+            "{}: {}",
+            f.target_code.as_str(),
+            setup.check.resolved.display()
+        )));
+    }
     // Where a preview is required, only one that ran the dry runs counts: a preview of a folder
     // that was empty then lists nothing that would be overwritten now.
     if required && !facts.as_ref().is_some_and(|f| f.dry_run) {

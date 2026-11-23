@@ -202,6 +202,7 @@ pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
         BackupRunError::SourceUnavailable(_) => ErrorKind::SourceUnavailable,
         BackupRunError::Cancelled => ErrorKind::Cancelled,
         BackupRunError::PathNotInSnapshot(_) => ErrorKind::PathNotInSnapshot,
+        BackupRunError::InvalidTarget { .. } => ErrorKind::InvalidTarget,
         BackupRunError::Destination(DestinationError::Secret(_)) => ErrorKind::SecretStoreLocked,
         BackupRunError::Destination(dest_err) => {
             destination_failure(dest_err).map_or(ErrorKind::Unknown, |kind| kind.error_kind())

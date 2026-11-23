@@ -267,6 +267,23 @@ pub fn current_uid() -> u32 {
     rustix::process::getuid().as_raw()
 }
 
+/// The repositories of `repositories` that lie below the resolved target folder `target`, as
+/// paths relative to it starting with `/` (the form of the dry run and of [`SnapshotTree`]
+/// keys). A repository that holds the target is caught by [`check_target`] already.
+///
+/// [`SnapshotTree`]: crate::restore_preview::SnapshotTree
+pub fn repositories_below(target: &Path, repositories: &[PathBuf]) -> Vec<String> {
+    repositories
+        .iter()
+        .map(|repo| resolve_path(repo))
+        .filter_map(|repo| {
+            // restic shows bytes that are not UTF-8 as U+FFFD, like `to_string_lossy`.
+            let rest = repo.strip_prefix(target).ok()?.to_string_lossy();
+            (!rest.is_empty()).then(|| format!("/{rest}"))
+        })
+        .collect()
+}
+
 /// Whether `path` is an absolute path without `..` segments.
 pub fn is_clean_absolute(path: &str) -> bool {
     !path.is_empty()
@@ -309,6 +326,23 @@ mod tests {
         );
         assert!(name.len() <= MAX_NAME_BYTES, "{} bytes", name.len());
         assert!(name.ends_with(" 2026-11-15 12-00"), "{name}");
+    }
+
+    #[test]
+    fn repositories_below_the_target_are_named_relative_to_it() {
+        let dir = std::env::temp_dir().join(format!("kestic-repos-below-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("home/vault")).expect("mkdir");
+        let target = std::fs::canonicalize(dir.join("home")).expect("canonical");
+        let below = repositories_below(
+            &target,
+            &[
+                dir.join("home/vault"),
+                dir.join("home"),
+                dir.join("elsewhere"),
+            ],
+        );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+        assert_eq!(below, vec!["/vault".to_string()]);
     }
 
     #[test]

@@ -3629,6 +3629,12 @@ msgstr "Dateien wiederherstellen… (kein Ziel verbunden)"
 msgid "The chosen folder does not exist in the snapshot"
 msgstr "Der gewählte Ordner fehlt im Snapshot"
 
+msgid "This folder cannot be used for the restore"
+msgstr "Dieser Ordner lässt sich zum Wiederherstellen nicht verwenden"
+
+msgid "Cannot restore safely to %1; restore into a new folder instead."
+msgstr "Nach %1 lässt sich nicht sicher wiederherstellen; bitte in einen neuen Ordner wiederherstellen."
+
 msgid "Check the preview again before restoring; it is missing or outdated."
 msgstr "Vor dem Wiederherstellen die Vorschau erneut prüfen; sie fehlt oder ist veraltet."
 
@@ -3659,6 +3665,9 @@ msgstr "Nichts im Snapshot passt zur Auswahl."
 msgid "The target contains symbolic links where the snapshot has files or folders; restic may replace such a link, but it never writes through it."
 msgstr "Im Zielordner liegen symbolische Links, wo der Snapshot Dateien oder Ordner hat; restic ersetzt einen solchen Link unter Umständen, schreibt aber nie hindurch."
 
+msgid "Existing folders at the target get the permissions and modification time from the snapshot. This also happens when no file is overwritten."
+msgstr "Vorhandene Ordner am Ziel erhalten Zugriffsrechte und Änderungszeit aus dem Snapshot. Das gilt auch, wenn keine Datei überschrieben wird."
+
 msgid "%1 already contains files"
 msgstr "%1 enthält bereits Dateien"
 
@@ -3671,8 +3680,8 @@ msgstr "%1 ist nicht beschreibbar"
 msgid "%1 does not exist; choose a folder"
 msgstr "%1 existiert nicht; bitte einen Ordner wählen"
 
-msgid "%1 is inside the repository of the destination"
-msgstr "%1 liegt im Repository des Ziels"
+msgid "Restoring to %1 would write into the repository of a destination"
+msgstr "Wiederherstellen nach %1 würde in das Repository eines Ziels schreiben"
 
 msgid "Nothing restored"
 msgstr "Nichts wiederhergestellt"

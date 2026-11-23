@@ -4,7 +4,7 @@
 //! StatusNotifierItem tray integration via `ksni 0.3.7`
 //! (see `docs/spec/ui/tray-und-benachrichtigungen.md`).
 
-use crate::dbus_api::{ActiveRunProgressDto, OverallStatusKind};
+use crate::dbus_api::{ActiveRunProgressDto, OverallStatusKind, RunKindCode};
 use crate::i18n::{i18n, tr};
 use kestic_core::scheduler::PauseDuration;
 use kestic_i18n::messages::{Label, active_run_message, all_backed_up_message};
@@ -338,7 +338,14 @@ impl KesticTray {
     }
 
     fn build_cancel_item(&self) -> MenuItem<Self> {
-        let running_id = self.state.running_run.as_ref().map(|r| r.run_id.clone());
+        // A restore is cancelled in the window; the entry names backups only. The active run
+        // is a backup whenever one runs beside a restore.
+        let running_id = self
+            .state
+            .running_run
+            .as_ref()
+            .filter(|r| r.kind != RunKindCode::Restore)
+            .map(|r| r.run_id.clone());
         StandardItem {
             label: i18n("Cancel Running Backup").into(),
             icon_name: "process-stop".to_string(),

@@ -46,8 +46,9 @@ pub enum BackupRunError {
     Cancelled,
     #[error("path not found in the snapshot: {0}")]
     PathNotInSnapshot(String),
-    #[error("invalid restore target: {0}")]
-    InvalidTarget(String),
+    /// A restore target refused before anything is written; `path` is the folder concerned.
+    #[error("invalid restore target {path}: {reason}")]
+    InvalidTarget { path: String, reason: String },
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }

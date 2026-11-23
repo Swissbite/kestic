@@ -2229,3 +2229,221 @@ fn m4_s05_waiting_restore_starts_after_waking_up() {
         },
     );
 }
+
+/// Backs up the fixture's folder again after a second local destination was set up in its
+/// subfolder `vault`, and returns the ID of that snapshot (it holds the repository's files).
+fn snapshot_with_a_repository(fx: &RestoreFixture, variant: &ResticVariant) -> String {
+    common::m3::add_local_destination(
+        &fx.rig.daemon.client,
+        &variant.bin,
+        &fx.src.join("vault"),
+        "Vault",
+        |_| {},
+    );
+    common::m4::backup_dir(
+        &variant.bin,
+        &fx.repo,
+        &fx.password,
+        &fx.src,
+        &common::m4::RawSnapshot {
+            tag: &format!("kestic:{}", fx.backup.id),
+            time: "2026-11-15 13:00:00",
+            host: "laptop",
+        },
+    )
+}
+
+/// AC-M4-05-15: a target that holds the repository of a local destination below it is refused
+/// with `inside_repository` when (i) the selected entries reach that repository (no dry run, no
+/// restore, `StartRestore` refused); it restores as usual when (j) the selection lies outside
+/// the repository or (k) the snapshot has no entries there.
+#[test]
+fn ac_m4_05_15_target_holding_a_repository_reached_by_the_selection_is_refused() {
+    run_isolated_test(
+        "ac_m4_05_15_target_holding_a_repository_reached_by_the_selection_is_refused",
+        "KESTIC_AC_M4_05_15_REPO_BELOW_INNER",
+        |root| {
+            for variant in restic_variants() {
+                let mut fx = RestoreFixture::start(root, &variant, "M4RH", small_tree, |_| {});
+                let v = &variant;
+                let before = fx.snapshot_id.clone();
+                fx.snapshot_id = snapshot_with_a_repository(&fx, v);
+
+                let (id, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Always);
+                assert_eq!(
+                    p.target.check.code,
+                    RestoreTargetCode::InsideRepository,
+                    "(i) {}: {p:?}",
+                    v.label
+                );
+                let err = fx
+                    .start_restore(&[], fx.original(), RestoreOverwrite::Always, Some(&id))
+                    .expect_err("(i) StartRestore refused");
+                assert_eq!(
+                    err.code(),
+                    kestic_i18n::codes::ServiceErrorCode::InvalidInput,
+                    "(i) {}",
+                    v.label
+                );
+                assert_eq!(
+                    fx.restore_calls(),
+                    Vec::<String>::new(),
+                    "(i) {}: no dry run and no restore",
+                    v.label
+                );
+                let (_, p) = fx.preview(
+                    &["a.txt", "vault/config"],
+                    Some(new_folder(&fx.src)),
+                    RestoreOverwrite::Never,
+                );
+                assert_eq!(
+                    p.target.check.code,
+                    RestoreTargetCode::InsideRepository,
+                    "(i) {}: a selected entry inside the repository",
+                    v.label
+                );
+
+                let (_, p) = fx.preview(
+                    &["a.txt", "docs"],
+                    Some(fx.original()),
+                    RestoreOverwrite::Never,
+                );
+                assert_eq!(
+                    p.target.check.code,
+                    RestoreTargetCode::ExistsNotEmpty,
+                    "(j) {}: selection outside the repository",
+                    v.label
+                );
+                assert_eq!(p.identical_files, 3, "(j) {}: dry run ran", v.label);
+
+                fx.snapshot_id = before;
+                let (_, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+                assert_eq!(
+                    p.target.check.code,
+                    RestoreTargetCode::ExistsNotEmpty,
+                    "(k) {}: snapshot without the repository",
+                    v.label
+                );
+                fx.rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-16: a preview where (f) a folder of the snapshot already exists at the target has
+/// the note `folder_metadata_reset` (restic sets the folder's mode from the snapshot, even with
+/// `never`), and one where (g) no folder of the snapshot exists there has not.
+#[test]
+fn ac_m4_05_16_existing_folders_get_the_snapshot_metadata() {
+    run_isolated_test(
+        "ac_m4_05_16_existing_folders_get_the_snapshot_metadata",
+        "KESTIC_AC_M4_05_16_FOLDERS_INNER",
+        |root| {
+            use kestic_daemon::dbus_api::RestoreNoteCode;
+            use std::os::unix::fs::PermissionsExt;
+            for_each_variant(root, "M4RM", small_tree, |fx, v| {
+                let docs = fx.src.join("docs");
+                set_mode(&docs, 0o700);
+                let (_, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+                assert!(
+                    p.notes.contains(&RestoreNoteCode::FolderMetadataReset),
+                    "(f) {}: {:?}",
+                    v.label,
+                    p.notes
+                );
+                let (id, _) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+                let run_id = fx
+                    .start_restore(&[], fx.original(), RestoreOverwrite::Never, Some(&id))
+                    .expect("StartRestore");
+                fx.wait_run(&run_id);
+                assert_ne!(
+                    fs::metadata(&docs).expect("docs").permissions().mode() & 0o777,
+                    0o700,
+                    "(f) {}: restic set the folder's mode from the snapshot",
+                    v.label
+                );
+
+                let other = fx.new_dir("only-a-file");
+                fs::create_dir_all(&other).expect("mkdir");
+                fs::write(other.join("other.txt"), "x").expect("write other");
+                let (_, p) = fx.preview(&[], Some(new_folder(&other)), RestoreOverwrite::Never);
+                assert_eq!(
+                    p.target.check.code,
+                    RestoreTargetCode::ExistsNotEmpty,
+                    "(g) {}",
+                    v.label
+                );
+                assert!(
+                    !p.notes.contains(&RestoreNoteCode::FolderMetadataReset),
+                    "(g) {}: {:?}",
+                    v.label,
+                    p.notes
+                );
+            });
+        },
+    );
+}
+
+/// AC-M4-05-25: a preview that refuses its target ends with (a) `error_kind` `invalid_target`
+/// and (b) `error_detail` the folder concerned, for a file over a folder with content and for a
+/// target whose real path is not UTF-8; (c) its text is a translatable message naming that
+/// folder, never English raw text.
+#[test]
+fn ac_m4_05_25_refused_target_has_its_own_error_kind() {
+    run_isolated_test(
+        "ac_m4_05_25_refused_target_has_its_own_error_kind",
+        "KESTIC_AC_M4_05_25_INNER",
+        |root| {
+            use kestic_i18n::codes::ErrorKind;
+            use kestic_i18n::messages::UiText;
+            use std::os::unix::ffi::OsStrExt;
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RK", small_tree, |_| {});
+            fs::remove_file(fx.src.join("a.txt")).expect("remove a.txt");
+            fs::create_dir_all(fx.src.join("a.txt/inner")).expect("folder in its place");
+            fs::write(fx.src.join("a.txt/inner/f"), "keep").expect("content");
+            let id = fx.start_preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Never);
+            let st = fx.wait_query(&id, &big_page());
+            assert_eq!(
+                st.error_kind,
+                Some(ErrorKind::InvalidTarget),
+                "(a) file over a folder: {st:?}"
+            );
+            let blocked = fs::canonicalize(fx.src.join("a.txt")).expect("canonical");
+            assert_eq!(
+                st.error_detail.as_deref(),
+                Some(blocked.to_str().expect("utf-8")),
+                "(b) file over a folder"
+            );
+            match ErrorKind::InvalidTarget.text(st.error_detail.as_deref()) {
+                UiText::Message(m) => assert_eq!(
+                    m.args,
+                    vec![blocked.to_string_lossy().into_owned()],
+                    "(c) names the folder"
+                ),
+                UiText::Raw(raw) => panic!("(c) raw text: {raw}"),
+            }
+
+            let base = fx.new_dir("latin1");
+            fs::create_dir_all(&base).expect("mkdir base");
+            let real = base.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+            fs::create_dir(&real).expect("mkdir caf\\xe9");
+            let link = base.join("link");
+            std::os::unix::fs::symlink(&real, &link).expect("symlink");
+            let id = fx.start_preview(&["b.bin"], Some(new_folder(&link)), RestoreOverwrite::Never);
+            let st = fx.wait_query(&id, &big_page());
+            assert_eq!(
+                st.error_kind,
+                Some(ErrorKind::InvalidTarget),
+                "(a) target not UTF-8: {st:?}"
+            );
+            let real = fs::canonicalize(&real).expect("canonical");
+            assert_eq!(
+                st.error_detail.as_deref(),
+                Some(real.to_string_lossy().as_ref()),
+                "(b) target not UTF-8"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}

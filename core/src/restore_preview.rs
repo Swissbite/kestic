@@ -142,6 +142,21 @@ impl SnapshotTree {
         }
     }
 
+    /// Whether the restore of `selected` (paths relative to the restored folder, each starting
+    /// with `/`; `None` for the whole folder) writes an entry at `below` or under it. restic
+    /// restores a selected folder with everything in it.
+    pub fn writes_below(&self, selected: Option<&[String]>, below: &str) -> bool {
+        let under = |path: &str, top: &str| {
+            path == top
+                || path
+                    .strip_prefix(top)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        self.nodes.keys().any(|path| {
+            under(path, below) && selected.is_none_or(|sel| sel.iter().any(|s| under(path, s)))
+        })
+    }
+
     /// Inodes that more than one file of the folder shares (hard links within the snapshot).
     fn shared_inodes(&self) -> BTreeSet<u64> {
         let mut seen = BTreeSet::new();
@@ -291,6 +306,10 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             // link at the target (it does so even with `never`): that entry is overwritten.
             let replaces_file =
                 action == "restored" && existing.as_ref().is_some_and(|m| !m.is_dir());
+            // restic sets mode and mtime of a folder that exists, even with `never`.
+            if existing.as_ref().is_some_and(std::fs::Metadata::is_dir) {
+                note(RestoreNoteCode::FolderMetadataReset, &mut notes);
+            }
             if !replaces_file {
                 continue;
             }
@@ -518,17 +537,33 @@ fn below_replaced_files(res: &crate::restic::ResticExecutionResult) -> Option<Ve
     res.errors.iter().map(|e| e.item.clone()).collect()
 }
 
+/// What the dry runs of a preview need.
+pub struct PreviewRun<'a> {
+    pub plan: &'a RestorePlan,
+    /// The restored folder from [`walk_folder`].
+    pub tree: &'a SnapshotTree,
+    /// The checked target folder.
+    pub target: &'a Path,
+    pub overwrite: RestoreOverwrite,
+    /// Whether the snapshot belongs to another user than the one restoring.
+    pub foreign_owner: bool,
+    pub limit_bytes: u64,
+}
+
 /// Runs the dry runs of a preview and classifies them.
 pub fn execute_preview(
     access: &SnapshotListAccess<'_>,
-    plan: &RestorePlan,
-    target: &Path,
-    overwrite: RestoreOverwrite,
-    foreign_owner: bool,
+    run: &PreviewRun<'_>,
     cancel: Option<&CancelHandle>,
-    limit_bytes: u64,
 ) -> Result<PreviewClassification, BackupRunError> {
-    let tree = walk_folder(access, plan, cancel)?;
+    let PreviewRun {
+        plan,
+        tree,
+        target,
+        overwrite,
+        foreign_owner,
+        limit_bytes,
+    } = *run;
     let chosen = dry_run(access, plan, target, overwrite, cancel)?;
     let always = if overwrite == RestoreOverwrite::Always {
         None
@@ -542,7 +577,7 @@ pub fn execute_preview(
         )?)
     };
     let classification = classify_preview(&ClassifyInput {
-        tree: &tree,
+        tree,
         chosen: &chosen,
         always: always.as_ref(),
         overwrite,
@@ -552,9 +587,47 @@ pub fn execute_preview(
     });
     // Such a target would fail and lose its folder's mode: the restore is refused up front.
     if let Some(first) = classification.blocked.first() {
-        return Err(BackupRunError::InvalidTarget(format!(
-            "{first} is a folder with content where the snapshot has a file; restore into a new folder instead"
-        )));
+        return Err(BackupRunError::InvalidTarget {
+            path: first.clone(),
+            reason: "a folder with content where the snapshot has a file".to_string(),
+        });
     }
     Ok(classification)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree(paths: &[&str]) -> SnapshotTree {
+        let mut tree = SnapshotTree::default();
+        for p in paths {
+            tree.nodes
+                .entry((*p).to_string())
+                .or_default()
+                .push(TreeNode {
+                    is_dir: false,
+                    size: 0,
+                    inode: None,
+                });
+        }
+        tree
+    }
+
+    #[test]
+    fn only_selected_entries_below_a_folder_count() {
+        let t = tree(&["/a.txt", "/vault", "/vault/config", "/vaulty/x"]);
+        assert!(t.writes_below(None, "/vault"), "everything selected");
+        let outside = ["/a.txt".to_string(), "/vaulty".to_string()];
+        assert!(
+            !t.writes_below(Some(&outside), "/vault"),
+            "selection outside"
+        );
+        let inside = ["/vault/config".to_string()];
+        assert!(t.writes_below(Some(&inside), "/vault"), "entry inside");
+        assert!(
+            !tree(&["/a.txt"]).writes_below(None, "/vault"),
+            "no entries there"
+        );
+    }
 }

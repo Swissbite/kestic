@@ -115,6 +115,7 @@ impl ErrorKind {
             Self::PathNotInSnapshot => {
                 i18n_noop("The chosen folder does not exist in the snapshot")
             }
+            Self::InvalidTarget => i18n_noop("This folder cannot be used for the restore"),
             Self::Unknown if is_warning => i18n_noop("Backed up with warning"),
             Self::Unknown => {
                 return match exit_code {
@@ -131,12 +132,19 @@ impl ErrorKind {
 }
 
 impl ErrorKind {
-    /// Text of an error without run context: the message of the kind, or for `unknown` the
-    /// raw `detail` (English restic, system or daemon error text) when there is one.
+    /// Text of an error without run context: the message of the kind, for `unknown` the raw
+    /// `detail` (English restic, system or daemon error text) when there is one, and for
+    /// `invalid_target` the folder named in `detail`.
     pub fn text(self, detail: Option<&str>) -> UiText {
         match detail {
             Some(raw) if self == Self::Unknown && !raw.trim().is_empty() => {
                 UiText::Raw(raw.to_string())
+            }
+            Some(path) if self == Self::InvalidTarget && !path.trim().is_empty() => {
+                UiText::Message(Message::with_args(
+                    i18n_noop("Cannot restore safely to %1; restore into a new folder instead."),
+                    &[path],
+                ))
             }
             _ => UiText::Message(self.message(None, false)),
         }
@@ -693,6 +701,9 @@ impl RestoreNoteCode {
             Self::SymlinkInTarget => i18n_noop(
                 "The target contains symbolic links where the snapshot has files or folders; restic may replace such a link, but it never writes through it.",
             ),
+            Self::FolderMetadataReset => i18n_noop(
+                "Existing folders at the target get the permissions and modification time from the snapshot. This also happens when no file is overwritten.",
+            ),
         })
     }
 }
@@ -707,7 +718,9 @@ impl RestoreTargetCode {
             Self::NotADirectory => i18n_noop("%1 is not a folder"),
             Self::NotWritable => i18n_noop("%1 is not writable"),
             Self::MissingMappedDir => i18n_noop("%1 does not exist; choose a folder"),
-            Self::InsideRepository => i18n_noop("%1 is inside the repository of the destination"),
+            Self::InsideRepository => {
+                i18n_noop("Restoring to %1 would write into the repository of a destination")
+            }
         };
         Some(Message::with_args(msgid, &[detail]))
     }
