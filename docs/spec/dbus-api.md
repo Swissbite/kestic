@@ -66,7 +66,7 @@ Strukturierte DTOs werden als UTF-8-JSON übergeben (mit festem Schema in `kesti
 | `GetResticInstallStatus` | `(install_id: s) -> s` (`ResticInstallStatusDto`-JSON) | Status, Fortschritt, Ergebnis oder Fehler einer Installation | FR-33, M5-S06 |
 | `CancelResticInstall` | `(install_id: s) -> ()` | Bricht eine Installation vor dem `rename` ab; das alte Binary bleibt | FR-33, M5-S06 |
 | `RemoveAppManagedRestic` | `() -> ()` | Löscht das App-verwaltete Binary sofort; verweigert mit `InUse`, solange es die aktive restic-Quelle ist oder ein Lauf es benutzt (kein Warten im Aufruf) | FR-33, AC-M5-07-5 |
-| `SetResticReleaseCheck` | `(enabled: b) -> ()` | Schalter «Wöchentlich nach neuen Versionen suchen» in `config.toml` | FR-51, M5-S08 |
+| `SetResticReleaseCheck` | `(enabled: b) -> ()` | Schalter «Wöchentlich nach neuen Versionen suchen» in `config.toml`; nach dem MVP, nicht in M5 | FR-51 |
 | `SetExpertMode` | `(enabled: b) -> ()` | Speichert `expert_mode` in `config.toml` | E16, K2 |
 | `StartBackup` | `(backup_id: s) -> s` (`run_id`) | Führt Vorab-Verfügbarkeitscheck für Quelle & Ziel (`P32`) aus; bei Nichtverfügbarkeit **kein** restic-Prozess, Signal `ManualRunBlocked` + Notification (falls Fenster nicht aktiv) + Fehler `Error.ManualRunBlocked`; sonst asynchroner Backup-Lauf | FR-13b, FR-30, AC-M1-09-6/7 |
 | `StartAllBackups` | `() -> s` (`StartAllResultDto`-JSON) | Startet alle verfügbaren Backups und liefert Liste gestarteter sowie übersprungener Backups inkl. Grund | FR-13b, §7.1 |
@@ -153,7 +153,7 @@ Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_fo
 - `ResticStatusDto` beschreibt wie bisher das aktive Binary und trägt zusätzlich `source` (`ResticSourceCode`), `system` und `app_managed` (je `ResticBinaryDto`: `path`, `version`, `too_old`; `null`, wenn nicht vorhanden), `offer_switch_to_system` (AC-M5-07-5), `release_check_enabled`, `last_release_check_unix`, `latest_release_version`, `update_available` und `install_id` (laufende Installation oder `null`).
 - `ResticInstallStatusDto`: `state` (`"running"` \| `"done"` \| `"cancelled"` \| `"error"`), `phase` (`ResticInstallPhase`), `version`, `bytes_done`, `total_bytes`, `outcome` (`ResticInstallOutcome`, bei `done`), `error_kind` (`ResticInstallCode`) und `error_detail` (Rohtext). Fertige Installationen bleiben 10 Minuten abrufbar (über `Clock`).
 - `ResticProvider` (`provider_json`, `config.toml` unter `restic_provider`), getaggt mit `kind`: `automatic`, `system`, `app_managed` (ohne Pfad; fester Ort `~/.local/share/kestic/restic`), `custom` (`path`). `restic_release_check` (`bool`, Standard `true`) steht auf oberster Ebene von `config.toml`.
-- **Tray:** Ist die Benachrichtigung «restic-Updates» (`on_restic_update`, Standard an) an, zeigt der Daemon eine neuere Version aus der Release-Prüfung als Tray-Eintrag «restic <v> installieren» und als Benachrichtigung mit derselben Aktion; beide starten dieselbe Installation wie `StartResticInstall`. Ist sie aus, gibt es keinen Hinweis; die Einstellungen zeigen die neue Version trotzdem.
+- **Tray (nach dem MVP, mit FR-51):** Ist die Benachrichtigung «restic-Updates» (`on_restic_update`, Standard an) an, zeigt der Daemon eine neuere Version aus der Release-Prüfung als Tray-Eintrag «restic <v> installieren» und als Benachrichtigung mit derselben Aktion; beide starten dieselbe Installation wie `StartResticInstall`. Ist sie aus, gibt es keinen Hinweis; die Einstellungen zeigen die neue Version trotzdem.
 
 ## Texte und Übersetzungen
 

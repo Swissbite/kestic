@@ -18,6 +18,7 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | FR-40 | `check --read-data-subset` |
 | FR-41 | Key-Management im GUI |
 | FR-43 | Bandbreitenlimits |
+| FR-51 | Wöchentliche Prüfung auf neue restic-Releases mit Hinweis im Tray (früher M5-S08); im MVP aktualisiert `[Jetzt aktualisieren]` |
 | FR-44 | Fremde Snapshots einem Backup zuordnen |
 | FR-46 | Snapshot dauerhaft behalten |
 | FR-47 | Expertenoptionen für `prune` |
