@@ -80,6 +80,9 @@ pub struct PreviewClassification {
     pub counts: PreviewCounts,
     pub entries: QueryList<RestorePreviewEntry>,
     pub notes: Vec<RestoreNoteCode>,
+    /// Folders with content at the target where the snapshot has a file: restic cannot put the
+    /// file there, fails, and changes the folder's mode.
+    pub blocked: Vec<String>,
 }
 
 impl HeldResult for PreviewClassification {
@@ -95,6 +98,7 @@ impl PreviewClassification {
             counts: PreviewCounts::default(),
             entries: ListBuilder::new(0).finish(),
             notes: Vec::new(),
+            blocked: Vec::new(),
         }
     }
 
@@ -234,6 +238,7 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             notes.push(code);
         }
     };
+    let mut blocked: Vec<String> = Vec::new();
     let mut items: Vec<(&String, &String)> = input.chosen.iter().collect();
     items.sort();
     for (item, action) in items {
@@ -281,6 +286,12 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
                 _ => RestoreOutcome::Identical,
             },
         };
+        if existing.as_ref().is_some_and(|m| m.is_dir())
+            && std::fs::read_dir(&at_target).is_ok_and(|mut d| d.next().is_some())
+        {
+            blocked.push(at_target.to_string_lossy().into_owned());
+            continue;
+        }
         let size = node.map_or(0, |n| n.size);
         if outcome == RestoreOutcome::Overwritten {
             let linked_in_snapshot = node
@@ -310,6 +321,7 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
     PreviewClassification {
         counts,
         entries,
+        blocked,
         notes: RestoreNoteCode::ALL
             .into_iter()
             .filter(|c| notes.contains(c))
@@ -419,7 +431,7 @@ pub fn execute_preview(
             cancel,
         )?)
     };
-    Ok(classify_preview(&ClassifyInput {
+    let classification = classify_preview(&ClassifyInput {
         tree: &tree,
         chosen: &chosen,
         always: always.as_ref(),
@@ -427,5 +439,12 @@ pub fn execute_preview(
         target,
         foreign_owner,
         limit_bytes,
-    }))
+    });
+    // Such a target would fail and lose its folder's mode: the restore is refused up front.
+    if let Some(first) = classification.blocked.first() {
+        return Err(BackupRunError::InvalidTarget(format!(
+            "{first} is a folder with content where the snapshot has a file; restore into a new folder instead"
+        )));
+    }
+    Ok(classification)
 }

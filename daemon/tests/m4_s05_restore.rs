@@ -1900,3 +1900,49 @@ fn m4_s05_folder_with_content_over_a_file_previews() {
         },
     );
 }
+
+/// A folder with content at the target where the snapshot has a file cannot be restored over
+/// (restic fails and changes the folder's mode): the preview refuses it and the folder stays as
+/// it was.
+#[test]
+fn m4_s05_file_over_a_folder_with_content_is_refused() {
+    run_isolated_test(
+        "m4_s05_file_over_a_folder_with_content_is_refused",
+        "KESTIC_M4_S05_FILE_OVER_DIR_INNER",
+        |root| {
+            use std::os::unix::fs::PermissionsExt;
+            for_each_variant(root, "M4RB", small_tree, |fx, v| {
+                fs::remove_file(fx.src.join("a.txt")).expect("remove a.txt");
+                fs::create_dir_all(fx.src.join("a.txt/inner")).expect("folder in its place");
+                fs::write(fx.src.join("a.txt/inner/f"), "keep").expect("content");
+                let mode = fs::metadata(fx.src.join("a.txt"))
+                    .expect("folder")
+                    .permissions()
+                    .mode();
+                for overwrite in [RestoreOverwrite::Never, RestoreOverwrite::Always] {
+                    let id = fx.start_preview(&["a.txt"], Some(fx.original()), overwrite);
+                    let st = fx.wait_query(&id, &big_page());
+                    assert_eq!(
+                        st.state, "error",
+                        "{} {overwrite:?}: refused: {st:?}",
+                        v.label
+                    );
+                }
+                assert_eq!(
+                    fs::metadata(fx.src.join("a.txt"))
+                        .expect("folder")
+                        .permissions()
+                        .mode(),
+                    mode,
+                    "{}: the folder keeps its mode",
+                    v.label
+                );
+                assert!(
+                    fx.src.join("a.txt/inner/f").is_file(),
+                    "{}: content kept",
+                    v.label
+                );
+            });
+        },
+    );
+}
