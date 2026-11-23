@@ -7,8 +7,8 @@
 use super::error::{KesticServiceErr, backup_run_error_kind, map_provider_err, parse_backup_id};
 use super::state::DaemonCore;
 use crate::dbus_api::{
-    BackupSnapshotCountDto, BackupSnapshotsDto, DescribedBackupDto, DestinationSnapshotsDto,
-    OrphanedBackupDto, PreviousDestinationSnapshotsDto, SnapshotSummaryDto,
+    BackupSnapshotCountDto, BackupSnapshotsDto, DestinationSnapshotsDto, OrphanedBackupDto,
+    PreviousDestinationSnapshotsDto, SnapshotSummaryDto,
 };
 use kestic_core::backup::{
     SnapshotListAccess, list_destination_snapshots, list_snapshots_for_backup,
@@ -214,26 +214,13 @@ fn fill_destination_snapshots(
         })
         .collect();
     dto.unassigned = to_dtos(sorted.unassigned);
-    dto.orphaned = sorted
-        .orphaned
-        .into_iter()
-        .map(|(id, snaps)| OrphanedBackupDto {
-            backup_id: id,
-            count: snaps.len() as u64,
-            latest_time: snaps.first().map(|s| s.time.clone()),
-            latest_hostname: snaps.first().and_then(|s| s.hostname.clone()),
-            snapshots: to_dtos(snaps),
-        })
-        .collect();
-    dto.described = sorted
-        .described
-        .into_iter()
-        .map(|(id, snaps)| DescribedBackupDto {
-            backup_id: id,
-            count: snaps.len() as u64,
-            latest_time: snaps.first().map(|s| s.time.clone()),
-            latest_hostname: snaps.first().and_then(|s| s.hostname.clone()),
-            snapshots: to_dtos(snaps),
-        })
-        .collect();
+    let group = |(id, snaps): (String, Vec<ResticSnapshot>)| OrphanedBackupDto {
+        backup_id: id,
+        count: snaps.len() as u64,
+        latest_time: snaps.first().map(|s| s.time.clone()),
+        latest_hostname: snaps.first().and_then(|s| s.hostname.clone()),
+        snapshots: to_dtos(snaps),
+    };
+    dto.orphaned = sorted.orphaned.into_iter().map(group).collect();
+    dto.described = sorted.described.into_iter().map(group).collect();
 }
