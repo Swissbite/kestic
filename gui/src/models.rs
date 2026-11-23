@@ -65,6 +65,12 @@ pub mod qobject {
         #[qml_element]
         type RestoreSnapshotsModel = super::RestoreSnapshotsModelRust;
 
+        /// The further snapshots of the restore area: unassigned, orphaned, not configured here.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        type RestoreGroupsModel = super::RestoreGroupsModelRust;
+
         /// One folder of a snapshot, fetched page by page, with the selection to restore.
         #[qobject]
         #[base = QAbstractListModel]
@@ -280,6 +286,28 @@ pub mod qobject {
         #[inherit]
         fn data_changed_restore_backups(
             self: Pin<&mut RestoreBackupsModel>,
+            top_left: &QModelIndex,
+            bottom_right: &QModelIndex,
+        );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_restore_groups(self: Pin<&mut RestoreGroupsModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_restore_groups(self: Pin<&mut RestoreGroupsModel>);
+        #[cxx_name = "index"]
+        #[inherit]
+        fn index_restore_groups(
+            self: &RestoreGroupsModel,
+            row: i32,
+            column: i32,
+            parent: &QModelIndex,
+        ) -> QModelIndex;
+        #[cxx_name = "dataChanged"]
+        #[inherit]
+        fn data_changed_restore_groups(
+            self: Pin<&mut RestoreGroupsModel>,
             top_left: &QModelIndex,
             bottom_right: &QModelIndex,
         );
@@ -535,6 +563,21 @@ pub mod qobject {
         #[cxx_name = "idAt"]
         fn id_at(self: &RestoreBackupsModel, row: i32) -> QString;
 
+        // RestoreGroupsModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &RestoreGroupsModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &RestoreGroupsModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &RestoreGroupsModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        fn sync(self: Pin<&mut RestoreGroupsModel>);
+
         // RestoreSnapshotsModel
         #[qinvokable]
         #[cxx_override]
@@ -558,6 +601,15 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "rowMap"]
         fn row_map(self: &RestoreSnapshotsModel, snapshot_id: &QString) -> QVariant;
+        /// Lists the snapshot group `group` (`unassigned`, `orphaned`, `described`) of all
+        /// destinations instead of the loaded backup; empty: the backup again.
+        #[qinvokable]
+        #[cxx_name = "setGroup"]
+        fn set_group(self: Pin<&mut RestoreSnapshotsModel>, group: &QString);
+        /// Why destinations of the shown group could not be listed; empty without errors.
+        #[qinvokable]
+        #[cxx_name = "groupError"]
+        fn group_error(self: &RestoreSnapshotsModel) -> QString;
 
         // SnapshotBrowseModel
         #[qinvokable]
@@ -757,6 +809,7 @@ mod rows;
 mod backups_model;
 mod destinations_model;
 mod restore_backups_model;
+mod restore_groups_model;
 mod restore_preview_model;
 mod restore_snapshots_model;
 mod run_logs_model;
@@ -770,6 +823,7 @@ mod snapshots_model;
 pub use backups_model::BackupsModelRust;
 pub use destinations_model::DestinationsModelRust;
 pub use restore_backups_model::RestoreBackupsModelRust;
+pub use restore_groups_model::RestoreGroupsModelRust;
 pub use restore_preview_model::RestorePreviewModelRust;
 pub use restore_snapshots_model::RestoreSnapshotsModelRust;
 pub use run_logs_model::RunLogsModelRust;

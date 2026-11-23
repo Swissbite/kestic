@@ -7,7 +7,8 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-// Restore area, left column: «Which backup?» with the number of snapshots per backup.
+// Restore area, left column: «Which backup?» with the number of snapshots per backup, and below
+// «Other snapshots»: unassigned and orphaned snapshots and backups not configured here.
 Kirigami.ScrollablePage {
     id: page
     objectName: "restorePage"
@@ -16,21 +17,30 @@ Kirigami.ScrollablePage {
     required property var rootWindow
     required property var appBackend
     required property var restoreBackupsModel
+    required property var restoreGroupsModel
 
     property string selectedBackupId: ""
+    // The further group shown next to the list (`unassigned`, `orphaned`, `described`).
+    property string selectedGroup: ""
+    property int groupCount: 0
 
     // The list whose selected row gets the focus when the page is shown again.
     readonly property var primaryList: restoreBackupsListView
 
-    Component.onCompleted: {
+    function syncModels() {
         restoreBackupsModel.sync();
+        restoreGroupsModel.sync();
+    }
+
+    Component.onCompleted: {
+        syncModels();
         appBackend.loadRestoreOverview();
     }
 
     Connections {
         target: appBackend
-        function onRestoreOverviewUpdated() { restoreBackupsModel.sync(); }
-        function onModelsUpdated() { restoreBackupsModel.sync(); }
+        function onRestoreOverviewUpdated() { page.syncModels(); }
+        function onModelsUpdated() { page.syncModels(); }
     }
 
     header: Kirigami.InlineViewHeader {
@@ -64,7 +74,7 @@ Kirigami.ScrollablePage {
         Kirigami.PlaceholderMessage {
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: restoreBackupsListView.count === 0
+            visible: restoreBackupsListView.count === 0 && page.groupCount === 0
             icon.name: "document-revert"
             text: Texts.label("no_backups")
         }
@@ -86,6 +96,7 @@ Kirigami.ScrollablePage {
             onClicked: {
                 ListView.view.currentIndex = index;
                 page.selectedBackupId = backupId;
+                page.selectedGroup = "";
                 row.forceActiveFocus(Qt.TabFocusReason);
                 rootWindow.openRestoreSnapshots(backupId);
             }
@@ -126,6 +137,93 @@ Kirigami.ScrollablePage {
                     color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                     Layout.preferredWidth: Kirigami.Units.iconSizes.small
                     Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                }
+            }
+        }
+
+        footer: ColumnLayout {
+            width: restoreBackupsListView.width
+            spacing: Kirigami.Units.smallSpacing
+            visible: groupRepeater.count > 0
+
+            Kirigami.ListSectionHeader {
+                objectName: "restoreGroupsHeader"
+                Layout.fillWidth: true
+                Layout.topMargin: Kirigami.Units.largeSpacing
+                text: i18n("Other snapshots")
+            }
+
+            Repeater {
+                id: groupRepeater
+                model: page.restoreGroupsModel
+                onCountChanged: page.groupCount = count
+
+                delegate: Controls.ItemDelegate {
+                    id: groupRow
+                    objectName: "restoreGroupListItem"
+                    required property string group
+                    required property string name
+                    required property string subtitle
+                    required property string iconName
+
+                    Layout.fillWidth: true
+                    activeFocusOnTab: true
+                    highlighted: page.selectedGroup === group
+                    Accessible.name: name
+                    Accessible.description: subtitle
+
+                    onClicked: {
+                        page.selectedBackupId = "";
+                        page.selectedGroup = group;
+                        restoreBackupsListView.currentIndex = -1;
+                        groupRow.forceActiveFocus(Qt.TabFocusReason);
+                        rootWindow.openRestoreGroup(group, name);
+                    }
+
+                    FocusRing {
+                        target: groupRow
+                        anchors.margins: groupRow.highlighted ? 2 : 0
+                        ringColor: groupRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
+                    }
+
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.mediumSpacing
+
+                        Kirigami.Icon {
+                            source: groupRow.iconName
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Kirigami.Heading {
+                                level: 4
+                                text: groupRow.name
+                                color: groupRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            Controls.Label {
+                                objectName: "restoreGroupSubtitle"
+                                text: groupRow.subtitle
+                                color: groupRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                                opacity: 0.8
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        Kirigami.Icon {
+                            source: "go-next-symbolic"
+                            color: groupRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                            Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                        }
+                    }
                 }
             }
         }

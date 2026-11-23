@@ -57,6 +57,7 @@ Kirigami.ApplicationWindow {
     readonly property var runLogsModelRef: runLogsModel
     readonly property var restoreBackupsModelRef: restoreBackupsModel
     readonly property var restoreSnapshotsModelRef: restoreSnapshotsModel
+    readonly property var restoreGroupsModelRef: restoreGroupsModel
 
     function tabNameForIndex(idx) {
         switch (idx) {
@@ -496,21 +497,36 @@ Kirigami.ApplicationWindow {
 
     // Shows the snapshots of `backupId` next to the backup list of the restore area.
     function openRestoreSnapshots(backupId) {
+        showRestoreSnapshots(backupId, "", backupNameOf(backupId));
+    }
+
+    // Shows the further snapshot group `group` (unassigned, orphaned, not configured here),
+    // titled `name`, next to the backup list of the restore area.
+    function openRestoreGroup(group, name) {
+        showRestoreSnapshots("", group, name);
+    }
+
+    function showRestoreSnapshots(backupId, group, title) {
         if (activeTab !== 4) {
             performSwitchTab(4);
+        }
+        var list = pageStack.get(0);
+        if (list && list.objectName === "restorePage") {
+            list.selectedBackupId = backupId;
+            list.selectedGroup = group;
         }
         while (pageStack.depth > 2) {
             removeTopPageFromStack();
         }
         var existing = pageStack.depth === 2 ? pageStack.get(1) : null;
         if (existing && existing.objectName === "restoreSnapshotsPage") {
-            existing.backupName = backupNameOf(backupId);
-            existing.backupId = backupId;
+            existing.showSource(backupId, group, title);
         } else {
             while (pageStack.depth > 1) removeTopPageFromStack();
             pageStack.push(restoreSnapshotsComponent.createObject(pageStack, {
                 backupId: backupId,
-                backupName: backupNameOf(backupId)
+                group: group,
+                backupName: title
             }));
         }
         updatePageStackViewportAndFocusability();
@@ -726,6 +742,7 @@ Kirigami.ApplicationWindow {
     RunLogsModel { id: runLogsModel; objectName: "runLogsModel" }
     RestoreBackupsModel { id: restoreBackupsModel; objectName: "restoreBackupsModel" }
     RestoreSnapshotsModel { id: restoreSnapshotsModel; objectName: "restoreSnapshotsModel" }
+    RestoreGroupsModel { id: restoreGroupsModel; objectName: "restoreGroupsModel" }
     RestorePreviewModel { id: restorePreviewModel; objectName: "restorePreviewModel" }
 
     RestoreDialog {
@@ -1052,6 +1069,7 @@ Kirigami.ApplicationWindow {
             rootWindow: root
             appBackend: root.backendRef
             restoreBackupsModel: root.restoreBackupsModelRef
+            restoreGroupsModel: root.restoreGroupsModelRef
         }
     }
 
