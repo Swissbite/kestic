@@ -14,7 +14,7 @@ use super::error::{
     KesticServiceErr, localized_backup_run_error, localized_source_check_reason,
     manual_run_blocked_reason, service_error_kind,
 };
-use super::run_errors::run_blocks_schedule;
+use super::run_errors::{destination_transport, run_blocks_schedule};
 use super::state::{DaemonCore, ResticDeps, probe_before_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
@@ -729,7 +729,12 @@ fn collect_start_all_entries(shared: &Arc<Mutex<DaemonCore>>) -> Vec<StartAllEnt
                         r.backup_id() == Some(&s.backup.id)
                             && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
                     })
-                    .is_some_and(run_blocks_schedule);
+                    .is_some_and(|r| {
+                        run_blocks_schedule(
+                            r,
+                            destination_transport(&guard.config, &s.backup.destination_id),
+                        )
+                    });
                 StartAllCandidate {
                     backup: s.backup,
                     has_error,

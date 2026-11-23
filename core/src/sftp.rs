@@ -29,15 +29,17 @@ pub fn validate(host: &str, port: u16, user: &str, path: &str) -> Result<(), Mod
     if port == 0 {
         return invalid("SFTP port must be between 1 and 65535".to_string());
     }
+    // ssh hands the user name to the commands of the user's configuration (`%r`, `%u` in
+    // `Match exec`, `ProxyCommand`), which `ssh -G` already runs: no character a shell reads.
     let user = user.trim();
     if user.is_empty()
         || user.starts_with('-')
-        || user.chars().any(|c| {
-            c.is_control() || c.is_whitespace() || matches!(c, '@' | ':' | '/' | '\\' | '\'' | '"')
-        })
+        || !user
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-'))
     {
         return invalid(format!(
-            "invalid SFTP user '{}': not empty, no spaces, '@', ':', '/', quotes or a leading '-'",
+            "invalid SFTP user '{}': only letters, digits, '.', '_' and '-', not starting with '-'",
             user.escape_default()
         ));
     }
@@ -373,36 +375,127 @@ mod tests {
         );
     }
 
+    /// M5-S01: ssh puts the user name into the commands of the user's configuration (`%r`),
+    /// which `ssh -G` already runs: only letters, digits, `.`, `_` and `-` pass.
     #[test]
-    fn host_key_markers_in_file_names_are_no_host_key_failure() {
-        use crate::restic::{ResticFailureKind, classify_exit};
+    fn m5_01_user_names_with_shell_characters_are_refused() {
+        for user in [
+            "anna;id",
+            "a$(id)",
+            "a`id`",
+            "a|b",
+            "a&b",
+            "a>b",
+            "a<b",
+            "a*",
+            "a?",
+            "a%r",
+            "a'b",
+            "a\"b",
+            "a\\b",
+            "a b",
+            "a@b",
+            "a:b",
+            "a/b",
+            "a\tb",
+            "-oProxyCommand",
+            "a!b",
+            "a#b",
+            "a~b",
+            "a=b",
+            "a+b",
+            "a(b)",
+        ] {
+            assert!(
+                validate("nas.local", 22, user, "/srv/repo").is_err(),
+                "{user:?} accepted"
+            );
+        }
+        for user in [
+            "anna",
+            "anna.muster",
+            "backup_user",
+            "web-01",
+            "jörg",
+            "Anna2",
+        ] {
+            assert!(
+                validate("nas.local", 22, user, "/srv/repo").is_ok(),
+                "{user:?} refused"
+            );
+        }
+    }
+
+    /// M5-S01: host key markers and lines of ssh count only for an SFTP destination; Kestic's
+    /// own text only at the start of the message, a line of ssh only at the start of a line. A
+    /// file name or a server text with the same words is no host key or login failure.
+    #[test]
+    fn m5_01_host_key_markers_count_only_where_kestic_or_ssh_wrote_them() {
+        use crate::restic::{ResticFailureKind, Transport, classify_exit_for};
+        let kind =
+            |transport, text: &str| classify_exit_for(transport, 1, None, Vec::new(), text).kind;
+        let is_host_key = |kind: &ResticFailureKind| {
+            matches!(
+                kind,
+                ResticFailureKind::HostKeyUnknown | ResticFailureKind::HostKeyChanged
+            )
+        };
         for name in [
             "unknown ssh host key of x",
             "ssh host key changed; the old entry is in x",
-            "host key verification failed",
+            "subprocess ssh: host key verification failed",
+            "subprocess ssh: Host key for x has changed and you have requested strict checking",
         ] {
-            let stderr = format!(
-                "ignoring error for /home/u/Downloads/{name}: permission denied\nFatal: There were 1 errors"
-            );
-            let kind = classify_exit(1, None, Vec::new(), &stderr).kind;
-            assert!(
-                !matches!(
-                    kind,
-                    ResticFailureKind::HostKeyUnknown | ResticFailureKind::HostKeyChanged
+            for text in [
+                format!(
+                    "ignoring error for /home/u/Downloads/{name}: permission denied\nFatal: There were 1 errors"
                 ),
-                "{name}: {kind:?}"
-            );
+                format!("a: {name}"),
+                format!("Fatal: unable to open /srv/a: {name}"),
+            ] {
+                for transport in [Transport::Sftp, Transport::Other] {
+                    let found = kind(transport, &text);
+                    assert!(!is_host_key(&found), "{transport:?} {text:?}: {found:?}");
+                }
+            }
         }
-        let run = "Unbekannter Server: unknown SSH host key of [127.0.0.1]:2222";
+
+        let unknown = "unknown SSH host key of [127.0.0.1]:2222 (Unknown server)";
         assert_eq!(
-            classify_exit(1, None, Vec::new(), run).kind,
+            kind(Transport::Sftp, unknown),
             ResticFailureKind::HostKeyUnknown
         );
-        let changed = "Der Server meldet sich anders als bisher: SSH host key changed; the old \
-                       entry is in /home/u/.ssh/known_hosts";
+        assert!(!is_host_key(&kind(Transport::Other, unknown)));
+        let changed = "SSH host key changed; the old entry is in /home/u/.ssh/known_hosts \
+                       (The server identifies itself differently than before)";
         assert_eq!(
-            classify_exit(1, None, Vec::new(), changed).kind,
+            kind(Transport::Sftp, changed),
             ResticFailureKind::HostKeyChanged
+        );
+        assert!(!is_host_key(&kind(Transport::Other, changed)));
+
+        let refused = "subprocess ssh: No ED25519 host key is known for [127.0.0.1]:2222\n\
+                       subprocess ssh: Host key verification failed.";
+        assert_eq!(
+            kind(Transport::Sftp, refused),
+            ResticFailureKind::HostKeyUnknown
+        );
+        assert!(!is_host_key(&kind(Transport::Other, refused)));
+
+        // ssh's login error, from a server banner or a file name.
+        let rejected = "subprocess ssh: anna@h: Permission denied (publickey).";
+        assert_eq!(
+            kind(Transport::Sftp, rejected),
+            ResticFailureKind::BackendAuthFailed
+        );
+        assert_ne!(
+            kind(Transport::Other, rejected),
+            ResticFailureKind::BackendAuthFailed
+        );
+        let file = "error: open /home/u/Permission denied (publickey).txt: no such file";
+        assert_ne!(
+            kind(Transport::Other, file),
+            ResticFailureKind::BackendAuthFailed
         );
     }
 
@@ -487,18 +580,22 @@ mod tests {
             Some(SshFailure::HostKeyChanged(_))
         ));
         // A run's stored summary is read back the same way.
-        assert_eq!(
-            crate::restic::classify_exit(
+        let sftp = |msg: Option<&str>, stderr: &str| {
+            crate::restic::classify_exit_for(
+                crate::restic::Transport::Sftp,
                 1,
-                None,
+                msg,
                 Vec::new(),
-                "Login to the destination failed: subprocess ssh: u@h: Permission denied (publickey)."
+                stderr,
             )
-            .kind,
+            .kind
+        };
+        assert_eq!(
+            sftp(None, "subprocess ssh: u@h: Permission denied (publickey)."),
             crate::restic::ResticFailureKind::BackendAuthFailed
         );
         assert_eq!(
-            crate::restic::classify_exit(1, Some("unexpected EOF"), Vec::new(), changed).kind,
+            sftp(Some("unexpected EOF"), changed),
             crate::restic::ResticFailureKind::HostKeyChanged
         );
         // Without a line of ssh, a session that never started means the server was not reached.

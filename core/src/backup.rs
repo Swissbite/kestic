@@ -248,6 +248,7 @@ pub(crate) fn check_command_succeeded(res: &ResticExecutionResult) -> Result<(),
             DestinationError::CommandFailed {
                 exit_code: res.exit_code,
                 message: res.presentation.detail_or_summary(),
+                kind: res.presentation.kind.clone(),
             },
         ));
     }

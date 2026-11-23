@@ -14,12 +14,19 @@ fn retry_duration_is_not_read_as_http_status() {
     let signature = "Stat(<config/>) returned error, retrying after 1.2s: Stat: The request signature we calculated does not match the signature you provided.";
     assert!(conclusive_retry_error(missing).is_some());
     assert_eq!(
-        classify_probe(1, Some("Stat: The specified bucket does not exist"), "").kind,
+        classify_probe(
+            crate::restic::Transport::Other,
+            1,
+            Some("Stat: The specified bucket does not exist"),
+            ""
+        )
+        .kind,
         ResticFailureKind::RepositoryMissing
     );
     // A bucket called `nosuchbucket` in the repository address is no missing bucket.
     assert_eq!(
         classify_probe(
+            crate::restic::Transport::Other,
             10,
             Some("Fatal: repository does not exist: unable to open config file: Stat: The specified key does not exist.\nIs there a repository at the following location?\ns3:http://127.0.0.1:9000/nosuchbucket"),
             ""
@@ -45,7 +52,15 @@ fn retry_duration_is_not_read_as_http_status() {
     assert!(conclusive_retry_error(refused).is_some());
     assert!(conclusive_retry_error(signature).is_some());
     // The probe reports the error without the duration.
-    let reported = |line: &str| classify_probe(1, conclusive_retry_error(line), "").kind;
+    let reported = |line: &str| {
+        classify_probe(
+            crate::restic::Transport::Other,
+            1,
+            conclusive_retry_error(line),
+            "",
+        )
+        .kind
+    };
     assert_eq!(reported(refused), ResticFailureKind::DestinationUnreachable);
     assert_eq!(
         reported(

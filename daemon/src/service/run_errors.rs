@@ -9,10 +9,11 @@
 //! (keyword matching) and `ResticFailureKind::{is_permanent, error_kind}`; this module only
 //! maps a stored [`Run`] onto it.
 
-use kestic_core::model::{PendingReason, Run, RunStatus};
+use kestic_core::config::AppConfig;
+use kestic_core::model::{DestinationId, PendingReason, Run, RunStatus};
 use kestic_core::restic::{
-    ErrorPresentation, RecoveryAction, ResticFailureKind, ResticStreamEvent, classify_exit,
-    parse_json_line,
+    ErrorPresentation, RecoveryAction, ResticFailureKind, ResticStreamEvent, Transport,
+    classify_exit_for, parse_json_line,
 };
 use kestic_i18n::codes::ErrorKind;
 
@@ -29,10 +30,18 @@ pub(super) struct LastRunErrorInfo {
     pub(super) unreadable_files: Vec<String>,
 }
 
-/// Classifies the failure of `run`, which ended with `exit_code`, from its stored summary.
-fn classify_run(run: &Run, exit_code: i32) -> ErrorPresentation {
+/// How restic reaches the destination `id`; a removed destination is not read as SFTP.
+pub(super) fn destination_transport(config: &AppConfig, id: &DestinationId) -> Transport {
+    config
+        .destination(id)
+        .map_or(Transport::Other, |d| Transport::of(&d.kind))
+}
+
+/// Classifies the failure of `run`, which ended with `exit_code`, from its stored summary;
+/// `transport` is that of its destination.
+fn classify_run(run: &Run, exit_code: i32, transport: Transport) -> ErrorPresentation {
     let raw_detail = run.summary_message.as_deref().unwrap_or("");
-    classify_exit(exit_code, None, Vec::new(), raw_detail)
+    classify_exit_for(transport, exit_code, None, Vec::new(), raw_detail)
 }
 
 /// Whether `run` (the last finished backup run) ended with a **permanent** error that blocks
@@ -43,23 +52,23 @@ fn classify_run(run: &Run, exit_code: i32) -> ErrorPresentation {
 /// (e.g. disk full, unknown exit codes: the next regular slot runs again) and pre-start
 /// availability failures (source unavailable, destination unreachable — recorded without exit
 /// code) never block the schedule, also when they ended a manual run.
-pub(super) fn run_blocks_schedule(run: &Run) -> bool {
+pub(super) fn run_blocks_schedule(run: &Run, transport: Transport) -> bool {
     if run.status != RunStatus::Error {
         return false;
     }
     let Some(exit_code) = run.exit_code else {
         return false;
     };
-    classify_run(run, exit_code).kind.is_permanent()
+    classify_run(run, exit_code, transport).kind.is_permanent()
 }
 
 /// Error kind of an `Error` run (see [`ResticFailureKind::error_kind`]).
 ///
 /// Runs without exit code failed before restic started; their cause is recorded in
 /// `pending_reason` (source unavailable / destination unreachable), anything else is `unknown`.
-pub(crate) fn error_run_kind(run: &Run) -> ErrorKind {
+pub(crate) fn error_run_kind(run: &Run, transport: Transport) -> ErrorKind {
     match run.exit_code {
-        Some(code) => classify_run(run, code).kind.error_kind(),
+        Some(code) => classify_run(run, code, transport).kind.error_kind(),
         None => match run.pending_reason {
             Some(PendingReason::SourceUnavailable) => ErrorKind::SourceUnavailable,
             Some(PendingReason::DestinationUnreachable) => ErrorKind::DestinationUnreachable,
@@ -85,6 +94,7 @@ pub(crate) fn unreadable_items_from_lines<'a>(
 /// run (no file I/O here: this runs under the `DaemonCore` lock).
 pub(super) fn extract_last_run_error_info(
     last_run: Option<&Run>,
+    transport: Transport,
     pending_forget: bool,
     unreadable: Option<&Vec<String>>,
 ) -> LastRunErrorInfo {
@@ -104,11 +114,11 @@ pub(super) fn extract_last_run_error_info(
     match run.status {
         RunStatus::Error => {
             info.has_error = true;
-            info.blocks_schedule = run_blocks_schedule(run);
+            info.blocks_schedule = run_blocks_schedule(run, transport);
             let exit_code = run.exit_code.unwrap_or(1);
-            let pres = classify_run(run, exit_code);
+            let pres = classify_run(run, exit_code, transport);
             info.error_action = pres.action;
-            info.error_kind = Some(error_run_kind(run));
+            info.error_kind = Some(error_run_kind(run, transport));
             info.error_detail = run.summary_message.clone();
             info.error_exit_code = run.exit_code;
             info.wrong_password = matches!(pres.kind, ResticFailureKind::WrongPassword);

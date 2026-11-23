@@ -11,7 +11,9 @@ use crate::destination::{
 };
 use crate::model::{CheckSummary, Destination, RunStatus};
 use crate::provider::ResolvedRestic;
-use crate::restic::{CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticRuntime};
+use crate::restic::{
+    CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticFailureKind, ResticRuntime,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -462,6 +464,7 @@ where
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
+                kind: ResticFailureKind::RepositoryLocked,
             },
         ));
     }
@@ -470,6 +473,7 @@ where
             DestinationError::CommandFailed {
                 exit_code: 11,
                 message: "refusing unlock: active local process lock present".to_string(),
+                kind: ResticFailureKind::RepositoryLocked,
             },
         ));
     }
@@ -478,6 +482,7 @@ where
             DestinationError::CommandFailed {
                 exit_code: 11,
                 message: "no stale local lock found".to_string(),
+                kind: ResticFailureKind::RepositoryLocked,
             },
         ));
     }

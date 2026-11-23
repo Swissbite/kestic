@@ -277,8 +277,46 @@ pub fn parse_json_line(line: &str) -> Result<ResticStreamEvent, serde_json::Erro
     }
 }
 
-/// Maps restic exit code and error output into [`ErrorPresentation`].
+/// How restic reaches a destination, as far as it decides what its error output can mean: only
+/// an SFTP destination has lines of ssh and Kestic's own host key check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    Sftp,
+    Other,
+}
+
+impl Transport {
+    pub fn of(kind: &crate::model::DestinationKind) -> Self {
+        if matches!(kind, crate::model::DestinationKind::Sftp { .. }) {
+            Self::Sftp
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// Maps restic exit code and error output of a destination that is not SFTP into
+/// [`ErrorPresentation`].
 pub fn classify_exit(
+    exit_code: i32,
+    exit_error_msg: Option<&str>,
+    unreadable_items: Vec<String>,
+    raw_stderr: &str,
+) -> ErrorPresentation {
+    classify_exit_for(
+        Transport::Other,
+        exit_code,
+        exit_error_msg,
+        unreadable_items,
+        raw_stderr,
+    )
+}
+
+/// Maps restic exit code and error output into [`ErrorPresentation`]. Lines of ssh and Kestic's
+/// host key markers count only for [`Transport::Sftp`]: elsewhere they can only come from file
+/// names or server texts.
+pub fn classify_exit_for(
+    transport: Transport,
     exit_code: i32,
     exit_error_msg: Option<&str>,
     unreadable_items: Vec<String>,
@@ -294,7 +332,8 @@ pub fn classify_exit(
         });
 
     // restic only says the SFTP session ended; the reason is in the line of ssh.
-    let ssh_failure = crate::sftp::ssh_failure(raw_stderr).filter(|_| exit_code == 1);
+    let sftp_failure = exit_code == 1 && transport == Transport::Sftp;
+    let ssh_failure = crate::sftp::ssh_failure(raw_stderr).filter(|_| sftp_failure);
     let raw_detail = ssh_failure
         .as_ref()
         .map_or(raw_detail, |failure| Some(failure.line().to_string()));
@@ -305,7 +344,7 @@ pub fn classify_exit(
         crate::sftp::SshFailure::HostKeyChanged(_) => ResticFailureKind::HostKeyChanged,
     });
     if let Some(kind) = ssh_kind.or_else(|| {
-        (exit_code == 1)
+        sftp_failure
             .then(|| host_key_failure(&detail_lower))
             .flatten()
     }) {
@@ -360,7 +399,10 @@ pub fn classify_exit(
                     action: None,
                     raw_detail,
                 }
-            } else if is_backend_auth_failure(&detail_lower) {
+            } else if is_backend_auth_failure(&detail_lower)
+                || transport == Transport::Sftp
+                    && detail_lower.contains("permission denied (publickey")
+            {
                 ErrorPresentation {
                     status: RunStatus::Error,
                     kind: ResticFailureKind::BackendAuthFailed,
@@ -413,26 +455,26 @@ pub const HOST_KEY_UNKNOWN_MARKER: &str = "unknown ssh host key of ";
 /// See [`HOST_KEY_UNKNOWN_MARKER`].
 pub const HOST_KEY_CHANGED_MARKER: &str = "ssh host key changed; the old entry is in ";
 
-/// The host key failure a lowercase message names: Kestic's own check, or ssh refusing the key.
-/// A marker counts only at the start of a part after `: ` (Kestic's text, a line of ssh), not
-/// inside a file name that restic reports.
+/// The host key failure a lowercase message of an SFTP destination names: Kestic's own check,
+/// whose text starts the message, or a line of ssh (restic starts it with `subprocess ssh: `).
+/// A marker elsewhere is part of a file name or a server text.
 fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
-    let parts = || detail_lower.lines().flat_map(|line| line.split(": "));
-    let after_ssh = |marker: &str| {
-        detail_lower
-            .lines()
-            .flat_map(|line| {
-                line.match_indices("subprocess ssh: ")
-                    .map(move |(i, m)| &line[i + m.len()..])
-            })
-            .any(|rest| rest.starts_with(marker))
+    let detail = detail_lower.trim_start();
+    let ssh_line = |test: &dyn Fn(&str) -> bool| {
+        detail.lines().any(|line| {
+            line.trim_start()
+                .strip_prefix("subprocess ssh: ")
+                .is_some_and(test)
+        })
     };
-    if parts().any(|p| p.starts_with(HOST_KEY_CHANGED_MARKER))
-        || after_ssh("host key for") && detail_lower.contains("has changed and you have requested")
+    if detail.starts_with(HOST_KEY_CHANGED_MARKER)
+        || ssh_line(&|rest| {
+            rest.starts_with("host key for") && rest.contains("has changed and you have requested")
+        })
     {
         Some(ResticFailureKind::HostKeyChanged)
-    } else if parts().any(|p| p.starts_with(HOST_KEY_UNKNOWN_MARKER))
-        || after_ssh("host key verification failed")
+    } else if detail.starts_with(HOST_KEY_UNKNOWN_MARKER)
+        || ssh_line(&|rest| rest.starts_with("host key verification failed"))
     {
         Some(ResticFailureKind::HostKeyUnknown)
     } else {
@@ -462,8 +504,6 @@ fn is_backend_auth_failure(detail_lower: &str) -> bool {
             "signaturedoesnotmatch",
             "access key id you provided does not exist",
             "invalidaccesskeyid",
-            // ssh: the SFTP server rejected the key.
-            "permission denied (publickey",
         ]
         .iter()
         .any(|needle| text.contains(needle))
@@ -530,6 +570,8 @@ pub struct ResticCommandSpec {
     pub kestic_binary: PathBuf,
     pub destination_id: DestinationId,
     pub repository_uri: String,
+    /// How restic reaches the destination (which error output can name ssh or a host key).
+    pub transport: Transport,
     /// Backend options (`-o key=value`) after the repository: `sftp.args` for SFTP.
     pub backend_options: Vec<String>,
     pub subcommand_args: Vec<String>,
@@ -559,6 +601,7 @@ impl ResticCommandSpec {
             kestic_binary: kestic_binary.into(),
             destination_id: destination.id.clone(),
             repository_uri: destination.kind.repository_uri(),
+            transport: Transport::of(&destination.kind),
             backend_options: destination.kind.restic_backend_options(),
             subcommand_args,
             backend_env_cleared_prefixes: destination.kind.backend_env_cleared_prefixes(),
@@ -1067,7 +1110,8 @@ where
         .iter()
         .filter_map(|e| e.item.clone())
         .collect();
-    let mut presentation = classify_exit(
+    let mut presentation = classify_exit_for(
+        Transport::of(&destination.kind),
         exit_code,
         exit_error_msg.as_deref(),
         unreadable_items,

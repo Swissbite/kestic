@@ -51,8 +51,13 @@ pub enum DestinationError {
     Secret(#[from] SecretError),
     #[error("restic invocation failed: {0}")]
     Runner(#[from] ResticRunError),
+    /// restic ended with an error; `kind` is how its output was classified for the destination.
     #[error("restic failed (exit {exit_code}): {message}")]
-    CommandFailed { exit_code: i32, message: String },
+    CommandFailed {
+        exit_code: i32,
+        message: String,
+        kind: ResticFailureKind,
+    },
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     /// SFTP: no `known_hosts` file knows the server; the key the server shows.
@@ -271,7 +276,7 @@ fn probe_repository_with(
             Ok(RepositoryProbe::BucketMissing)
         }
         ResticFailureKind::RepositoryMissing => Ok(RepositoryProbe::Missing),
-        _ => Err(map_execution_failure(&res)),
+        _ => Err(map_execution_failure(dest, &res)),
     }
 }
 
@@ -298,7 +303,7 @@ pub fn setup_destination(
     )?;
 
     if res.exit_code != 0 {
-        return Err(map_execution_failure(&res));
+        return Err(map_execution_failure(dest, &res));
     }
 
     // Persist secrets only after restic succeeded.
@@ -333,7 +338,7 @@ pub fn check_existing_repository(
         ProbeRuntime::connection_test(runtime),
     )?;
     if res.exit_code != 0 {
-        return Err(map_execution_failure(&res));
+        return Err(map_execution_failure(dest, &res));
     }
     Ok(())
 }
@@ -395,7 +400,7 @@ pub fn verify_and_update_stored_password_with_cache(
     )?;
 
     if res.exit_code != 0 {
-        return Err(map_execution_failure(&res));
+        return Err(map_execution_failure(dest, &res));
     }
 
     secret_store.set_secret(dest.id.as_str(), SECRET_KIND_REPO, candidate_password)?;
@@ -424,13 +429,14 @@ fn mode_subcommand(mode: DestinationSetupMode) -> Vec<String> {
     }
 }
 
-fn map_execution_failure(res: &ResticExecutionResult) -> DestinationError {
+fn map_execution_failure(dest: &Destination, res: &ResticExecutionResult) -> DestinationError {
     let detail = res.presentation.detail_or_summary();
+    let sftp = crate::restic::Transport::of(&dest.kind) == crate::restic::Transport::Sftp;
     match res.presentation.kind {
         ResticFailureKind::WrongPassword => DestinationError::WrongPassword,
         ResticFailureKind::RepositoryMissing => DestinationError::RepositoryMissing(detail),
         ResticFailureKind::BackendAuthFailed
-            if crate::sftp::ssh_failure(&detail).is_some_and(|f| f.is_key_rejected()) =>
+            if sftp && crate::sftp::ssh_failure(&detail).is_some_and(|f| f.is_key_rejected()) =>
         {
             DestinationError::SshKeyRejected(detail)
         }
@@ -441,6 +447,7 @@ fn map_execution_failure(res: &ResticExecutionResult) -> DestinationError {
         _ => DestinationError::CommandFailed {
             exit_code: res.exit_code,
             message: detail,
+            kind: res.presentation.kind.clone(),
         },
     }
 }
@@ -765,7 +772,12 @@ fn execute_probe_command(
         }
     }
 
-    let presentation = classify_probe(exit_code, exit_error_msg.as_deref(), &stderr_raw);
+    let presentation = classify_probe(
+        spec.transport,
+        exit_code,
+        exit_error_msg.as_deref(),
+        &stderr_raw,
+    );
 
     let mut log_lines: Vec<String> = stdout_raw.lines().map(ToOwned::to_owned).collect();
     log_lines.extend(stderr_lines);
@@ -798,12 +810,18 @@ fn is_missing_bucket(message: &str) -> bool {
 /// How a probe sees restic's result: like a run, except that a missing S3 bucket means «no
 /// repository yet» (`init` creates the bucket).
 fn classify_probe(
+    transport: crate::restic::Transport,
     exit_code: i32,
     exit_error_msg: Option<&str>,
     raw_stderr: &str,
 ) -> crate::restic::ErrorPresentation {
-    let mut presentation =
-        crate::restic::classify_exit(exit_code, exit_error_msg, Vec::new(), raw_stderr);
+    let mut presentation = crate::restic::classify_exit_for(
+        transport,
+        exit_code,
+        exit_error_msg,
+        Vec::new(),
+        raw_stderr,
+    );
     if exit_code == 1 && is_missing_bucket(&presentation.detail_or_summary()) {
         presentation.kind = ResticFailureKind::RepositoryMissing;
     }
@@ -925,7 +943,7 @@ impl Watchdog {
 /// opposed to a refused login or a missing repository.
 fn is_connection_error(error: &str) -> bool {
     matches!(
-        classify_probe(1, Some(error), "").kind,
+        classify_probe(crate::restic::Transport::Other, 1, Some(error), "").kind,
         ResticFailureKind::DestinationUnreachable | ResticFailureKind::DnsResolutionFailed
     )
 }
@@ -938,7 +956,7 @@ fn conclusive_retry_error(line: &str) -> Option<&str> {
         .and_then(|(_, rest)| rest.split_once(": "))
         .map(|(_, error)| error)?;
     matches!(
-        classify_probe(1, Some(error), "").kind,
+        classify_probe(crate::restic::Transport::Other, 1, Some(error), "").kind,
         ResticFailureKind::BackendAuthFailed
             | ResticFailureKind::RepositoryMissing
             | ResticFailureKind::DestinationUnreachable

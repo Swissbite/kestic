@@ -82,6 +82,13 @@ pub enum HostKeyError {
     /// ssh reaches the server through another one (`ProxyJump`, `ProxyCommand`).
     #[error("the server '{0}' is reached through a jump host, which Kestic does not support yet")]
     JumpHost(String),
+    /// The ssh configuration gives the server a name (`HostName`, `HostKeyAlias`) that would be
+    /// a pattern or a broken line in `known_hosts`.
+    #[error(
+        "the ssh configuration names the server '{}', which cannot stand in a known_hosts line",
+        .0.escape_default()
+    )]
+    UnusableName(String),
     #[error(transparent)]
     Paths(#[from] crate::sftp::KnownHostsPathError),
     #[error("{program} failed: {detail}")]
@@ -200,11 +207,28 @@ pub fn resolve_target(host: &str, port: u16, user: &str) -> Result<SshTarget, Ho
     if value("proxyjump").is_some() || value("proxycommand").is_some() {
         return Err(HostKeyError::JumpHost(host));
     }
-    Ok(SshTarget {
+    let target = SshTarget {
         hostname: value("hostname").unwrap_or(host),
         port: value("port").and_then(|p| p.parse().ok()).unwrap_or(port),
         host_key_alias: value("hostkeyalias"),
-    })
+    };
+    for name in std::iter::once(&target.hostname).chain(&target.host_key_alias) {
+        if !is_plain_name(name) {
+            return Err(HostKeyError::UnusableName(name.clone()));
+        }
+    }
+    Ok(target)
+}
+
+/// Whether `name` stands for exactly one host in a `known_hosts` line: no space that splits
+/// the line, no pattern (`*`, `?`, `!`), list (`,`) or hash (`|`) character, and no start that
+/// makes the line a marker (`@`), a comment (`#`) or an option (`-`).
+fn is_plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['@', '#', '-'])
+        && !name.chars().any(|c| {
+            c.is_whitespace() || c.is_control() || matches!(c, '*' | '?' | '!' | ',' | '|')
+        })
 }
 
 /// The entries for `name` in `file` (`ssh-keygen -F`, which also finds hashed names). A missing
@@ -470,11 +494,18 @@ pub fn check_host_key(
 /// three files again first: a key of the same type written meanwhile is a changed key, and the
 /// key itself already there needs no line.
 pub fn trust(paths: &KnownHostsPaths, key: &ScannedHostKey) -> Result<HostKeyCheck, HostKeyError> {
+    if !is_plain_name(&key.name) {
+        return Err(HostKeyError::UnusableName(key.name.clone()));
+    }
     let _guard = WRITE_LOCK.lock_unpoisoned();
     let mut known = false;
     for file in paths.all() {
         for entry in lookup(&key.name, file)? {
             if entry.key_type != key.key_type {
+                continue;
+            }
+            // A revoked other key says nothing about this one; [`check_host_key`] reads it so too.
+            if entry.revoked && entry.key != key.key {
                 continue;
             }
             if entry.revoked || entry.key != key.key {
@@ -692,6 +723,108 @@ mod tests {
             "the other lines keep their bytes"
         );
         assert!(written.ends_with(b"new.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewNewNewNewNewNewNewNewNewNewNewNewNewNewNe\n"));
+    }
+
+    const KEY_A: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIDs3azM0A+L/eWx8w8fjCWEg9C28yO26W7PfAf94XvHq";
+    const KEY_B: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIKJIQrwuBBjZZ5pj4R9SRKB6ie3rmpih689TdvvKAeGQ";
+
+    fn temp_paths(dir: &Path) -> KnownHostsPaths {
+        fs::create_dir_all(dir.join("kestic")).expect("mkdir");
+        KnownHostsPaths {
+            kestic: dir.join("kestic").join("known_hosts"),
+            user: dir.join("known_hosts.user"),
+            system: dir.join("known_hosts.system"),
+        }
+    }
+
+    fn scanned(name: &str, key: &str) -> ScannedHostKey {
+        ScannedHostKey {
+            name: name.to_string(),
+            host: "h.example".to_string(),
+            port: 22,
+            key_type: "ssh-ed25519".to_string(),
+            key: key.to_string(),
+            fingerprint_sha256: String::new(),
+        }
+    }
+
+    /// M5-S01 (AC-M5-01-4): a name from `ssh -G` that would be a pattern, a marker or a broken
+    /// line in `known_hosts` is refused before any key is scanned or written; a plain alias and
+    /// an IPv6 address pass.
+    #[test]
+    fn m5_01_names_from_the_ssh_configuration_must_be_plain() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = dir.path().join("ssh_config");
+        fs::write(
+            &config,
+            "Host star\n  HostKeyAlias *\n\
+             Host question\n  HostKeyAlias nas?\n\
+             Host negated\n  HostKeyAlias !nas\n\
+             Host list\n  HostKeyAlias a,b\n\
+             Host hashed\n  HostKeyAlias |1|abc\n\
+             Host spaced\n  HostKeyAlias \"a b\"\n\
+             Host marker\n  HostKeyAlias @revoked\n\
+             Host dash\n  HostName -oProxyCommand=x\n\
+             Host pipe\n  HostName a|b\n\
+             Host alias\n  HostName 127.0.0.1\n  HostKeyAlias mynas\n\
+             Host six\n  HostName ::1\n",
+        )
+        .expect("write ssh_config");
+        crate::sftp::set_test_ssh_config(Some(config));
+        for host in [
+            "star", "question", "negated", "list", "hashed", "spaced", "marker", "dash", "pipe",
+        ] {
+            let resolved = resolve_target(host, 22, "anna");
+            assert!(
+                matches!(resolved, Err(HostKeyError::UnusableName(_))),
+                "{host}: {resolved:?}"
+            );
+        }
+        let alias = resolve_target("alias", 22, "anna").expect("plain alias");
+        assert_eq!(alias.known_hosts_name(), "mynas");
+        let six = resolve_target("six", 2222, "anna").expect("IPv6 address");
+        assert_eq!(six.known_hosts_name(), "[::1]:2222");
+        crate::sftp::set_test_ssh_config(None);
+
+        // Trust writes nothing for such a name either.
+        let paths = temp_paths(dir.path());
+        let refused = trust(&paths, &scanned("*", KEY_A));
+        assert!(
+            matches!(refused, Err(HostKeyError::UnusableName(_))),
+            "{refused:?}"
+        );
+        assert!(!paths.kestic.exists(), "nothing written");
+    }
+
+    /// M5-S01 (AC-M5-01-4, AC-M5-01-7): a revoked entry for another key of the server does not
+    /// stop trusting the key it shows, as in [`check_host_key`]; the revoked key itself stays a
+    /// changed key.
+    #[test]
+    fn m5_01_trust_reads_a_revoked_entry_like_the_check() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = temp_paths(dir.path());
+        let revoked = format!("@revoked h.example ssh-ed25519 {KEY_A}\n");
+        fs::write(&paths.user, &revoked).expect("write user known_hosts");
+
+        assert_eq!(
+            trust(&paths, &scanned("h.example", KEY_A)).expect("trust revoked"),
+            HostKeyCheck::Changed(paths.user.clone())
+        );
+        assert!(!paths.kestic.exists(), "the revoked key is not written");
+        assert_eq!(
+            trust(&paths, &scanned("h.example", KEY_B)).expect("trust"),
+            HostKeyCheck::Known
+        );
+        assert_eq!(
+            fs::read_to_string(&paths.kestic).expect("read"),
+            format!("h.example ssh-ed25519 {KEY_B}\n"),
+            "the shown key is written"
+        );
+        assert_eq!(
+            fs::read_to_string(&paths.user).expect("read user"),
+            revoked,
+            "the user's file stays as it is"
+        );
     }
 
     #[test]

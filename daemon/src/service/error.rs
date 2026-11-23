@@ -11,7 +11,7 @@ use kestic_core::destination::{DestinationError, DestinationSetupMode};
 use kestic_core::model::BackupId;
 use kestic_core::mount::SourceCheckResult;
 use kestic_core::provider::ResticProviderError;
-use kestic_core::restic::{ResticFailureKind, classify_exit};
+use kestic_core::restic::ResticFailureKind;
 use kestic_core::secrets::SecretError;
 use kestic_i18n::codes::{BlockedReason, ErrorKind, SourceStatus};
 
@@ -208,9 +208,7 @@ fn destination_failure(err: &DestinationError) -> Option<ResticFailureKind> {
         DestinationError::HostKeyUnknown(_) => Some(ResticFailureKind::HostKeyUnknown),
         DestinationError::HostKeyChanged(_) => Some(ResticFailureKind::HostKeyChanged),
         DestinationError::RepositoryMissing(_) => Some(ResticFailureKind::RepositoryMissing),
-        DestinationError::CommandFailed { exit_code, message } => {
-            Some(classify_exit(*exit_code, None, Vec::new(), message).kind)
-        }
+        DestinationError::CommandFailed { kind, .. } => Some(kind.clone()),
         _ => None,
     }
 }
@@ -233,12 +231,13 @@ pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
     match err {
         BackupRunError::SourceUnavailable(status) => localized_source_check_reason(status),
         // The raw text names the server or the file with the old entry, and the run's error
-        // kind is read back from it.
+        // kind is read back from it: it starts the message, where no file name or server text
+        // can stand.
         BackupRunError::Destination(
             dest_err @ (DestinationError::HostKeyUnknown(_) | DestinationError::HostKeyChanged(_)),
         ) => destination_failure(dest_err).map_or_else(
             || dest_err.to_string(),
-            |kind| format!("{}: {dest_err}", localized_failure_summary(&kind)),
+            |kind| format!("{dest_err} ({})", localized_failure_summary(&kind)),
         ),
         BackupRunError::Destination(dest_err) => destination_failure(dest_err).map_or_else(
             || dest_err.to_string(),

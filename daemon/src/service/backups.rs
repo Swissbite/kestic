@@ -19,7 +19,9 @@ use kestic_core::model::{
 };
 use kestic_core::mount::{current_home_dir, detect_source_with};
 use kestic_core::provider::resolve_and_check;
-use kestic_core::restic::{ResticCommandSpec, classify_exit, parse_recorded_invocation};
+use kestic_core::restic::{
+    ResticCommandSpec, Transport, classify_exit_for, parse_recorded_invocation,
+};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::ErrorKind;
 use kestic_i18n::messages::deleted_destination_message;
@@ -394,7 +396,12 @@ pub(crate) fn get_run_detail_unlocked(
             || run.exit_code == Some(3)
             || !unreadable_files.is_empty()
         {
-            let pres = classify_exit(
+            let transport = snap
+                .destination
+                .as_ref()
+                .map_or(Transport::Other, |d| Transport::of(&d.kind));
+            let pres = classify_exit_for(
+                transport,
                 run.exit_code.unwrap_or(1),
                 run.summary_message.as_deref(),
                 unreadable_files.clone(),
@@ -402,7 +409,7 @@ pub(crate) fn get_run_detail_unlocked(
             );
             error_action = pres.action;
             error_kind = Some(if run.status == RunStatus::Error {
-                error_run_kind(&run)
+                error_run_kind(&run, transport)
             } else {
                 ErrorKind::IncompleteSnapshot
             });

@@ -8,7 +8,7 @@ use super::backup_runner::{start_scheduled_backup_async, upsert_pending_run_entr
 use super::error::KesticServiceErr;
 use super::error::parse_backup_id;
 use super::maintenance::run_scheduled_maintenance_async;
-use super::run_errors::{error_run_kind, run_blocks_schedule};
+use super::run_errors::{destination_transport, error_run_kind, run_blocks_schedule};
 use super::state::DaemonCore;
 use crate::dbus_server::emit_status_changed;
 use crate::i18n::{i18n, i18np};
@@ -18,6 +18,7 @@ use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, NotificationSettings, RunKind, RunStatus,
     Schedule,
 };
+use kestic_core::restic::Transport;
 use kestic_core::scheduler::{
     BackupScheduleEvalInput, BackupScheduleEvaluation, DestinationMaintenanceEvalInput,
     DestinationMaintenanceNeed, DestinationTickAction, PauseDuration, backup_slots_between,
@@ -370,7 +371,12 @@ fn evaluate_single_backup_tick(
             r.backup_id() == Some(&backup.id)
                 && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
         })
-        .is_some_and(run_blocks_schedule);
+        .is_some_and(|r| {
+            run_blocks_schedule(
+                r,
+                destination_transport(&guard.config, &backup.destination_id),
+            )
+        });
     let source_ok = guard
         .source_availability
         .get(&backup.id)
@@ -498,7 +504,7 @@ fn evaluate_scheduled_maintenance_tick(
         .is_some_and(|r| {
             r.status == RunStatus::Error
                 && matches!(
-                    error_run_kind(r),
+                    error_run_kind(r, Transport::of(&dest.kind)),
                     ErrorKind::HostKeyUnknown | ErrorKind::HostKeyChanged
                 )
         });

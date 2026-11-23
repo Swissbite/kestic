@@ -41,7 +41,7 @@ use kestic_core::mount::{MountInspector, SourceCheckResult, current_home_dir};
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::{
     CancelHandle, ResticExecutionResult, ResticFailureKind, ResticRuntime, ResticStatusMessage,
-    ResticStreamEvent, SECRET_KIND_REPO, redact_secrets,
+    ResticStreamEvent, SECRET_KIND_REPO, Transport, redact_secrets,
 };
 use kestic_core::scheduler::{
     SystemEnvironment, UnmetPrecondition, evaluate_run_conditions, format_local_slot_hint,
@@ -953,7 +953,7 @@ fn finalize_backup_run_state(
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);
         } else if (outcome.final_status == RunStatus::Error
             && outcome.exit_code.is_some()
-            && !run_blocks_schedule(&run))
+            && !run_blocks_schedule(&run, Transport::of(&ctx.dest.kind)))
             || (outcome.final_status == RunStatus::Cancelled
                 && !guard.shutdown_flag.load(Ordering::SeqCst))
         {
