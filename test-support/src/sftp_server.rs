@@ -111,6 +111,8 @@ impl SftpServerGuard {
         guard
     }
 
+    /// Starts `sshd`. A test makes many connections from one address in a short time, some with
+    /// a refused key on purpose; `PerSourcePenalties` would then block the address for a while.
     fn spawn(&mut self) {
         let config = self.dir.join("sshd_config");
         fs::write(
@@ -119,7 +121,8 @@ impl SftpServerGuard {
                 "Port {port}\nListenAddress 127.0.0.1\nHostKey \"{dir}/host_key\"\n\
                  AuthorizedKeysFile \"{dir}/authorized_keys\"\nPidFile \"{dir}/sshd.pid\"\n\
                  UsePAM no\nStrictModes no\nPasswordAuthentication no\n\
-                 KbdInteractiveAuthentication no\nSubsystem sftp internal-sftp\n",
+                 KbdInteractiveAuthentication no\nSubsystem sftp internal-sftp\n\
+                 PerSourcePenalties no\n",
                 port = self.port,
                 dir = self.dir.display()
             ),
