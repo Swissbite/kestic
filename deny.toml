@@ -5,6 +5,9 @@
 all-features = true
 
 [advisories]
+# cargo-deny 0.22 checks unmaintained crates only in the workspace by default; keep
+# checking every dependency.
+unmaintained = "all"
 ignore = [
     # Temporär für ksni 0.3.7 (zieht zbus 5.19.0 transitiv); siehe docs/spec/questions.md (M0-S07 Option A).
     "RUSTSEC-2026-0370",
