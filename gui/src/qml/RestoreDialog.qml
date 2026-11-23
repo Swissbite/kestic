@@ -222,6 +222,15 @@ Kirigami.Dialog {
             type: Kirigami.MessageType.Error
             visible: dialog.model !== null && dialog.model.state === "error"
             text: dialog.model ? dialog.model.error_text : ""
+            actions: [
+                Kirigami.Action {
+                    objectName: "restoreFolderInsteadAction"
+                    icon.name: "folder"
+                    text: i18n("Restore Folder")
+                    visible: dialog.model !== null && dialog.model.folder_instead.length > 0
+                    onTriggered: dialog.model.restoreFolderInstead()
+                }
+            ]
         }
 
         Controls.Label {

@@ -18,8 +18,8 @@ use kestic_core::mount::current_home_dir;
 use kestic_core::query_list::PageRequest;
 use kestic_core::restic::CancelHandle;
 use kestic_core::restore::{
-    EntryKind, RestorePlan, RestoreTarget, normalize_selection, plan_restore, probe_path,
-    probe_snapshot_path,
+    EntryKind, RestorePlan, RestoreTarget, folder_instead_of_unmatchable, normalize_selection,
+    plan_restore, probe_path, probe_snapshot_path,
 };
 use kestic_core::restore_preview::{PreviewClassification, execute_preview};
 use kestic_core::restore_target::{
@@ -56,11 +56,13 @@ pub(crate) fn check_params(
     overwrite: RestoreOverwrite,
 ) -> Result<RestoreParams, KesticServiceErr> {
     validate_snapshot_id(snapshot_id).map_err(invalid)?;
-    // restic shows bytes of a name that are not UTF-8 as U+FFFD and cannot match such a name;
-    // its folder can be restored instead.
-    if let Some(path) = selection.iter().find(|p| p.contains('\u{FFFD}')) {
+    // restic cannot match a name that is not UTF-8; its folder can be restored instead.
+    if let Some((path, folder)) = selection
+        .iter()
+        .find_map(|p| folder_instead_of_unmatchable(p).map(|f| (p, f)))
+    {
         return Err(invalid(format!(
-            "{path}: the name is not valid UTF-8; restore its folder instead"
+            "{path}: the name is not valid UTF-8; restore its folder {folder} instead"
         )));
     }
     let selection = normalize_selection(selection).map_err(invalid)?;

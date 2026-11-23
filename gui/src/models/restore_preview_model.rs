@@ -8,6 +8,7 @@
 
 use super::qobject;
 use super::rows::{role_names, row_count, row_data};
+use super::snapshot_browse_model::last_name;
 use super::snapshot_query::{
     QueryRun, StartPoll, count_text, fetch_error_text, format_count, to_i32, too_large_text,
 };
@@ -19,6 +20,7 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
 use kestic_core::model::RunStatus;
 use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter};
+use kestic_core::restore::{folder_instead_of_unmatchable, selection_with_folders_instead};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
     KesticDbusError, RestoreOutcome, RestoreOverwrite, RestorePreviewEntryDto,
@@ -76,6 +78,7 @@ pub struct RestorePreviewModelRust {
     pub(crate) run_state: QString,
     pub(crate) run_text: QString,
     pub(crate) run_target: QString,
+    pub(crate) folder_instead: QString,
 
     destination_id: String,
     snapshot_id: String,
@@ -128,6 +131,12 @@ pub(crate) fn title_text(selected: usize) -> String {
     } else {
         i18np("Restore %1 Item", "Restore %1 Items", selected, &[])
     }
+}
+
+/// Why a selected name cannot be restored on its own, and which folder can.
+pub(crate) fn unmatchable_text(path: &str, folder: &str) -> String {
+    i18n("«%1» cannot be restored on its own: its name contains characters that are not valid UTF-8. Restore its folder «%2» instead.")
+        .subs(&[path, folder])
 }
 
 /// The counts of a preview in one line, e.g. «117 files new · 3 existing files will not be
@@ -262,6 +271,25 @@ impl qobject::RestorePreviewModel {
         self.as_mut().run_preview();
     }
 
+    /// restic cannot match a name that is not UTF-8: the dialog says so and offers the folder
+    /// above it instead of running a preview the daemon would refuse.
+    fn refuse_unmatchable(mut self: Pin<&mut Self>, path: &str, folder: &str) {
+        self.as_mut().set_can_restore(false);
+        self.as_mut()
+            .set_folder_instead(QString::from(&tilde(folder)));
+        self.as_mut()
+            .fail(&unmatchable_text(last_name(path), last_name(folder)));
+    }
+
+    /// Replaces every selected name restic cannot match by its folder and runs the preview.
+    pub fn restore_folder_instead(mut self: Pin<&mut Self>) {
+        let selection = selection_with_folders_instead(&self.selection);
+        self.as_mut()
+            .set_title(QString::from(&title_text(selection.len())));
+        self.as_mut().rust_mut().selection = selection;
+        self.as_mut().run_preview();
+    }
+
     /// Restores into the suggested new folder, or into `dir` when it is not empty.
     pub fn choose_folder(mut self: Pin<&mut Self>, dir: &QString) {
         let dir = dir.to_string();
@@ -324,6 +352,14 @@ impl qobject::RestorePreviewModel {
         if self.state.to_string() == "running" {
             self.as_mut().rust_mut().query.abandon();
         }
+        let unmatchable = self
+            .selection
+            .iter()
+            .find_map(|p| folder_instead_of_unmatchable(p).map(|f| (p.clone(), f)));
+        if let Some((path, folder)) = unmatchable {
+            return self.as_mut().refuse_unmatchable(&path, &folder);
+        }
+        self.as_mut().set_folder_instead(QString::from(""));
         let original = self.choice == Choice::Original;
         let target = self.target();
         let request = SnapshotQueryRequest::restore_preview(

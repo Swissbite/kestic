@@ -64,6 +64,30 @@ pub fn escape_glob(name: &str) -> String {
     out
 }
 
+/// restic shows the bytes of a name that are not UTF-8 as U+FFFD, and `--include` cannot match
+/// such a name. For a path with U+FFFD in it, the nearest folder above it without one (`/` at
+/// the top); `None` for a path restic can match.
+pub fn folder_instead_of_unmatchable(path: &str) -> Option<String> {
+    let cut = path.find('\u{FFFD}')?;
+    Some(match path[..cut].rfind('/') {
+        Some(i) if i > 0 => path[..i].to_string(),
+        _ => "/".to_string(),
+    })
+}
+
+/// `selection` with every path restic cannot match replaced by its folder
+/// ([`folder_instead_of_unmatchable`]), without duplicates, in the original order.
+pub fn selection_with_folders_instead(selection: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(selection.len());
+    for path in selection {
+        let entry = folder_instead_of_unmatchable(path).unwrap_or_else(|| path.clone());
+        if !out.contains(&entry) {
+            out.push(entry);
+        }
+    }
+    out
+}
+
 /// Normalises the selected snapshot paths, sorts them and drops duplicates and entries that lie
 /// below another selected entry. A selection containing `/` is the whole snapshot (empty).
 pub fn normalize_selection(selection: &[String]) -> Result<Vec<String>, SnapshotPathError> {

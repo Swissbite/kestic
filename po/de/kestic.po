@@ -3692,6 +3692,12 @@ msgstr "Wiederherstellen aus %1 beendet"
 msgid "Restore Snapshot"
 msgstr "Snapshot wiederherstellen"
 
+msgid "«%1» cannot be restored on its own: its name contains characters that are not valid UTF-8. Restore its folder «%2» instead."
+msgstr "«%1» lässt sich nicht einzeln wiederherstellen: Der Name enthält Zeichen, die kein gültiges UTF-8 sind. Stattdessen den Ordner «%2» wiederherstellen."
+
+msgid "Restore Folder"
+msgstr "Ordner wiederherstellen"
+
 msgid "Restoring files…"
 msgstr "Dateien werden wiederhergestellt…"
 

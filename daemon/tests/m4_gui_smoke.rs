@@ -580,6 +580,15 @@ fn ac_m4_02_3_identical_snapshots_show_no_differences() {
 /// snapshot of a small folder, whose `a.txt` differs locally afterwards. The wrapper holds
 /// `restore`; the smoke scene releases it by removing the returned marker file.
 fn restore_dialog_env(root: &Path, variant: &ResticVariant) -> (M3Rig, StdFakes, String) {
+    restore_dialog_env_with(root, variant, |_| {})
+}
+
+/// [`restore_dialog_env`] with `extra` run on the backed-up folder before the backup.
+fn restore_dialog_env_with(
+    root: &Path,
+    variant: &ResticVariant,
+    extra: impl FnOnce(&Path),
+) -> (M3Rig, StdFakes, String) {
     let fakes = StdFakes::start_with(FakeSetup {
         active_network: Some("HomeWifi"),
         ..FakeSetup::default()
@@ -597,6 +606,7 @@ fn restore_dialog_env(root: &Path, variant: &ResticVariant) -> (M3Rig, StdFakes,
         add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
     let backup = rig.add_backup_to(&dest, "Home", |_| {});
     let src = small_tree(&root.join("trees"));
+    extra(&src);
     backup_dir(
         &variant.bin,
         &repo,
@@ -640,6 +650,35 @@ fn ac_m4_05_1_4_11_15_restore_dialog() {
                     lang,
                     &smoke_artifact("restore-dialog", layout, lang),
                     &[("KESTIC_SMOKE_RELEASE_FILE", &release)],
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// A selected name that is not valid UTF-8 is refused in the dialog with its reason, and
+/// «Restore Folder» restores its folder instead (scene `m4-restore-unmatchable`).
+#[test]
+fn m4_s05_restore_dialog_offers_the_folder_of_an_unmatchable_name() {
+    run_isolated_test(
+        "m4_s05_restore_dialog_offers_the_folder_of_an_unmatchable_name",
+        "KESTIC_M4_S05_UNMATCHABLE_SMOKE_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                let (rig, _fakes, _) = restore_dialog_env_with(&sub, &latest_variant(), |src| {
+                    use std::os::unix::ffi::OsStrExt;
+                    let name = std::ffi::OsStr::from_bytes(b"bad\xffname.txt");
+                    std::fs::write(src.join(name), "x").expect("write a name that is not UTF-8");
+                });
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-unmatchable",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-unmatchable", "wide", lang),
                 );
                 rig.daemon.stop();
             }

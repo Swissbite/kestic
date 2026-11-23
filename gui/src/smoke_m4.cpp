@@ -1006,6 +1006,49 @@ int open_restore_dialog_for(const Ctx& c, const QString& name, int code) {
     return 0;
 }
 
+/// A selected name that is not valid UTF-8 (restic shows U+FFFD): the dialog (a) runs no preview
+/// and says why, (b) offers «Restore Folder», which (c) replaces the name by its folder and runs
+/// the preview for that folder.
+int scenario_restore_unmatchable(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 6301, 1)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 6306)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(6309, wait_for_dir(w, top), "the snapshot opens in its folder");
+    const QString name = QStringLiteral("bad") + QChar(0xFFFD) + QStringLiteral("name.txt");
+    if (int rc = open_restore_dialog_for(c, name, 6310)) {
+        return rc;
+    }
+    Restore r = restore_dialog(w);
+    QObject* error = object_named(w, "restorePreviewError");
+    QObject* instead = object_named(w, "restoreFolderInsteadAction");
+    QObject* restore_now = object_named(w, "restoreNowAction");
+    M4_CHECK(6315, error && instead && restore_now, "dialog controls exist");
+    M4_CHECK(6316, wait_until([&] { return r.model->property("state").toString() == QLatin1String("error"); }, 3000),
+        "(a) no preview runs");
+    M4_CHECK(6317, error->property("visible").toBool(), "(a) the reason is shown");
+    const QString folder = top.section(QLatin1Char('/'), -1);
+    M4_CHECK(6318, error->property("text").toString().contains(QStringLiteral("«%1»").arg(folder)),
+        "(a) the message names the folder to restore instead");
+    M4_CHECK(6319, !restore_now->property("enabled").toBool(), "«Restore Now» stays disabled");
+    M4_CHECK(6320, instead->property("visible").toBool(), "(b) «Restore Folder» offered");
+    repaint_fully(w);
+    M4_CHECK(6321, save_screenshot(w, c.out_path), "screenshot failed");
+
+    trigger(instead);
+    M4_CHECK(6322, wait_for_preview(r.model), "(c) the preview of the folder is done");
+    M4_CHECK(6323, !error->property("visible").toBool(), "(c) the message is gone");
+    M4_CHECK(6324, restore_now->property("enabled").toBool(), "(c) «Restore Now» enabled for the folder");
+    M4_CHECK_EQ(6325, r.dialog->property("title").toString(),
+        loc(c.lang, "Restore 1 Item", "1 Element wiederherstellen"), "(c) one folder selected");
+    return 0;
+}
+
 /// AC-M4-05-1, AC-M4-05-4 (smoke part), AC-M4-05-11, AC-M4-05-15 (c, e): the restore dialog
 /// (AC-M4-05-1) preselects (a) a new folder and (b) not the original location. At the original
 /// location (AC-M4-05-15) (c) «Never» is preselected and (e) «Restore Now» stays disabled until
@@ -1239,6 +1282,8 @@ void run_m4_smoke_scenario(
         rc = scenario_compare_identical(ctx);
     } else if (scen == QLatin1String("m4-restore-dialog")) {
         rc = scenario_restore_dialog(ctx);
+    } else if (scen == QLatin1String("m4-restore-unmatchable")) {
+        rc = scenario_restore_unmatchable(ctx);
     } else if (scen == QLatin1String("m4-restic-outdated")) {
         rc = scenario_restic_outdated(ctx);
     } else if (scen == QLatin1String("m4-show-restore")) {

@@ -142,6 +142,7 @@ pub mod qobject {
         #[qproperty(QString, run_state)]
         #[qproperty(QString, run_text)]
         #[qproperty(QString, run_target)]
+        #[qproperty(QString, folder_instead)]
         type RestorePreviewModel = super::RestorePreviewModelRust;
 
         /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
@@ -740,6 +741,9 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "dismissRun"]
         fn dismiss_run(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "restoreFolderInstead"]
+        fn restore_folder_instead(self: Pin<&mut RestorePreviewModel>);
     }
 }
 

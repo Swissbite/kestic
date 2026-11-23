@@ -90,8 +90,12 @@ fn icon_name(e: &LsEntryDto) -> &'static str {
     }
 }
 
-fn last_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
+/// The last segment of a snapshot path; `/` for the root.
+pub(super) fn last_name(path: &str) -> &str {
+    match path.rsplit('/').next() {
+        Some(name) if !name.is_empty() => name,
+        _ => "/",
+    }
 }
 
 /// Selection line: the number of selected entries, how many are in `dir`, and where the

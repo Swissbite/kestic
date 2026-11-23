@@ -10,8 +10,8 @@ use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
 use kestic_core::model::{BackupId, DestinationId, RestoreStats, Run, RunKind, RunStatus};
 use kestic_core::restore::{
-    EntryKind, ProbeCollector, RestoreCall, escape_glob, normalize_selection, plan_restore,
-    probe_path, restore_args,
+    EntryKind, ProbeCollector, RestoreCall, escape_glob, folder_instead_of_unmatchable,
+    normalize_selection, plan_restore, probe_path, restore_args, selection_with_folders_instead,
 };
 use kestic_core::restore_target::{
     FolderWords, SuggestionInput, new_folder_name, original_location, suggested_new_folder,
@@ -277,4 +277,36 @@ fn m4_s05_missing_folder_is_checked_at_its_parent() {
         RestoreTargetCode::MissingMappedDir,
         "only two levels are created"
     );
+}
+
+/// A name restic cannot match (not UTF-8, shown as U+FFFD) is replaced by the nearest folder
+/// above it without U+FFFD; names restic can match stay.
+#[test]
+fn m4_s05_unmatchable_name_gives_way_to_its_folder() {
+    assert_eq!(
+        folder_instead_of_unmatchable("/home/u/docs/bad\u{FFFD}.txt").as_deref(),
+        Some("/home/u/docs")
+    );
+    assert_eq!(
+        folder_instead_of_unmatchable("/home/u/b\u{FFFD}d/a.txt").as_deref(),
+        Some("/home/u"),
+        "a folder with U+FFFD gives way to its own folder"
+    );
+    assert_eq!(
+        folder_instead_of_unmatchable("/b\u{FFFD}d").as_deref(),
+        Some("/")
+    );
+    assert_eq!(folder_instead_of_unmatchable("/home/u/a.txt"), None);
+    assert_eq!(
+        selection_with_folders_instead(&strings(&[
+            "/home/u/docs/a.txt",
+            "/home/u/docs/x\u{FFFD}.txt",
+            "/home/u/docs/y\u{FFFD}.txt",
+        ])),
+        strings(&["/home/u/docs/a.txt", "/home/u/docs"])
+    );
+}
+
+fn strings(paths: &[&str]) -> Vec<String> {
+    paths.iter().map(ToString::to_string).collect()
 }
