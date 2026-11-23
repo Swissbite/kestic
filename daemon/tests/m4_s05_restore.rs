@@ -379,7 +379,7 @@ fn ac_m4_05_14_restore_without_fitting_fresh_preview_is_refused() {
                     fx.start_preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
                 fx.rig
                     .wrapper
-                    .wait_for('S', "restore", 2, std::time::Duration::from_secs(30));
+                    .wait_for('S', "restore", 3, std::time::Duration::from_secs(30));
                 let refused = |preview: Option<&str>, case: &str| {
                     let started = fx.rig.wrapper.started_repo_count();
                     let runs = restore_runs(fx);
