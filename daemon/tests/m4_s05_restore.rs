@@ -2944,15 +2944,16 @@ fn m4_s05_selection_across_folders_previews_its_folders_as_folders() {
     );
 }
 
-/// AC-M4-05-4 (b) for a selection across folders where the target has a symbolic link at the
-/// folder above a selected file: restic follows the link (it replaces only a link at a selected
-/// folder), so (a) the file behind the link counts as overwritten, (b) the link itself is not
-/// counted, and after the restore (c) the link is still there and (d) the file behind it has
-/// the snapshot's content.
+/// AC-M4-05-25 for a symbolic link at a folder above the selected entries: restic follows a
+/// link to a folder further up (and writes into another folder), replaces one at the folder
+/// holding a selected entry and fails at a link loop, so the preview refuses the target with
+/// (a) `invalid_target` and (b) the link as `error_detail`, for (1) a link at `docs` above
+/// `docs/deep/y.txt`, (2) a link at `docs/deep` and (3) a link loop at `docs`; (c) nothing
+/// behind the links changes.
 #[test]
-fn m4_s05_symlink_above_the_selection_is_followed() {
+fn m4_s05_symlink_above_the_selection_is_refused() {
     run_isolated_test(
-        "m4_s05_symlink_above_the_selection_is_followed",
+        "m4_s05_symlink_above_the_selection_is_refused",
         "KESTIC_M4_S05_LINK_ABOVE_INNER",
         |root| {
             for_each_variant(root, "M4RL", small_tree, |fx, v| {
@@ -2960,46 +2961,40 @@ fn m4_s05_symlink_above_the_selection_is_followed() {
                 fs::create_dir_all(out.join("deep")).expect("mkdir out/deep");
                 fs::write(out.join("deep/y.txt"), "different").expect("file behind the link");
                 fs::remove_dir_all(fx.src.join("docs")).expect("remove docs");
-                std::os::unix::fs::symlink(&out, fx.src.join("docs")).expect("docs -> out");
                 let selection = ["a.txt", "docs/deep/y.txt"];
-                let (id, p) = fx.preview(&selection, Some(fx.original()), RestoreOverwrite::Always);
-                let o = outcomes(&p);
-                assert_eq!(
-                    o.get("y.txt"),
-                    Some(&RestoreOutcome::Overwritten),
-                    "(a) {}: {:?}",
-                    v.label,
-                    p.entries.items
-                );
-                assert_eq!(
-                    o.get("docs"),
-                    None,
-                    "(b) {}: {:?}",
-                    v.label,
-                    p.entries.items
-                );
-                let run_id = fx
-                    .start_restore(
-                        &selection,
-                        fx.original(),
-                        RestoreOverwrite::Always,
-                        Some(&id),
-                    )
-                    .expect("StartRestore");
-                let detail = fx.wait_run(&run_id);
-                assert_eq!(detail.run.status, RunStatus::Ok, "{}: {detail:?}", v.label);
-                assert!(
-                    fs::symlink_metadata(fx.src.join("docs"))
-                        .expect("docs")
-                        .file_type()
-                        .is_symlink(),
-                    "(c) {}",
-                    v.label
-                );
+                let refused_at = |link: &str, case: &str| {
+                    for mode in [RestoreOverwrite::Never, RestoreOverwrite::Always] {
+                        let id = fx.start_preview(&selection, Some(fx.original()), mode);
+                        let st = fx.wait_query(&id, &big_page());
+                        assert_eq!(
+                            st.error_kind,
+                            Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
+                            "(a) {} {case} {mode:?}: {st:?}",
+                            v.label
+                        );
+                        let at = fs::canonicalize(&fx.src).expect("src").join(link);
+                        assert_eq!(
+                            st.error_detail.as_deref(),
+                            Some(at.to_str().expect("utf-8")),
+                            "(b) {} {case} {mode:?}",
+                            v.label
+                        );
+                    }
+                };
+                std::os::unix::fs::symlink(&out, fx.src.join("docs")).expect("docs -> out");
+                refused_at("docs", "(1)");
+                fs::remove_file(fx.src.join("docs")).expect("remove link");
+                fs::create_dir(fx.src.join("docs")).expect("real docs");
+                std::os::unix::fs::symlink(out.join("deep"), fx.src.join("docs/deep"))
+                    .expect("docs/deep -> out/deep");
+                refused_at("docs/deep", "(2)");
+                fs::remove_dir_all(fx.src.join("docs")).expect("remove docs");
+                std::os::unix::fs::symlink("docs", fx.src.join("docs")).expect("docs -> docs");
+                refused_at("docs", "(3)");
                 assert_eq!(
                     fs::read_to_string(out.join("deep/y.txt")).expect("y.txt"),
-                    "yy",
-                    "(d) {}",
+                    "different",
+                    "(c) {}",
                     v.label
                 );
             });
@@ -3007,9 +3002,10 @@ fn m4_s05_symlink_above_the_selection_is_followed() {
     );
 }
 
-/// A file at the target where a folder above the selected entries belongs: restic cannot
-/// create the folder there and the run fails, so (a) the preview refuses the target with
-/// `invalid_target` naming that file and (b) the file stays as it was.
+/// AC-M4-05-25 for a file at the target where a folder above the selected entries belongs:
+/// restic cannot create the folder there and the run fails, so the preview refuses the target
+/// with (a) `invalid_target`, (b) that file as `error_detail` and (c) the translated text naming
+/// it; (d) the file stays as it was.
 #[test]
 fn m4_s05_file_above_the_selection_is_refused() {
     run_isolated_test(
@@ -3032,16 +3028,19 @@ fn m4_s05_file_above_the_selection_is_refused() {
                     v.label
                 );
                 let blocked = fs::canonicalize(fx.src.join("docs")).expect("canonical");
-                assert_eq!(
-                    st.error_detail.as_deref(),
-                    Some(blocked.to_str().expect("utf-8")),
-                    "(a) {}",
-                    v.label
-                );
+                let blocked = blocked.to_str().expect("utf-8");
+                assert_eq!(st.error_detail.as_deref(), Some(blocked), "(b) {}", v.label);
+                match kestic_i18n::codes::ErrorKind::InvalidTarget.text(st.error_detail.as_deref())
+                {
+                    kestic_i18n::messages::UiText::Message(m) => {
+                        assert_eq!(m.args, vec![blocked.to_string()], "(c) {}", v.label);
+                    }
+                    other => panic!("(c) {}: translatable message expected: {other:?}", v.label),
+                }
                 assert_eq!(
                     fs::read_to_string(fx.src.join("docs")).expect("docs"),
                     "a file",
-                    "(b) {}",
+                    "(d) {}",
                     v.label
                 );
             });

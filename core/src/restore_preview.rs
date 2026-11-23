@@ -124,7 +124,8 @@ pub struct TreeNode {
     pub size: u64,
     pub inode: Option<u64>,
     /// A folder above the selected entries, not selected itself: restic creates it where it is
-    /// missing and follows a symbolic link to a folder there instead of replacing it.
+    /// missing; anything else than a real folder there is refused (see
+    /// [`blocked_folders_above`]).
     pub above: bool,
 }
 
@@ -313,7 +314,7 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             notes.push(code);
         }
     };
-    let mut blocked = blocked_folders_above(input.tree, input.target);
+    let mut blocked: Vec<String> = Vec::new();
     let mut items: Vec<(&String, usize, DryRunAction)> = input
         .chosen
         .iter()
@@ -322,9 +323,8 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
     items.sort();
     for (item, index, action) in items {
         // Below a symbolic link at the target, restic puts a real folder in place of the link
-        // and never writes through it: what lies behind the link does not count. A link at a
-        // folder above the selection is followed instead.
-        let found = find_at_target(input.target, item, input.tree);
+        // and never writes through it: what lies behind the link does not count.
+        let found = find_at_target(input.target, item);
         let behind_link = found.behind_link;
         let node = input
             .tree
@@ -332,13 +332,10 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             .get(item.as_str())
             .and_then(|nodes| nodes.get(index).or(nodes.first()));
         if node.is_some_and(|n| n.above) {
-            // Never counted: restic creates it, or keeps the folder (or the link to a folder)
-            // that is there and sets the snapshot's mode and time on it.
+            // Never counted: restic creates it, or keeps the real folder that is there and sets
+            // the snapshot's mode and time on it.
             let at = input.target.join(item.trim_start_matches('/'));
-            if std::fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
-                note(RestoreNoteCode::SymlinkInTarget, &mut notes);
-            }
-            if std::fs::metadata(&at).is_ok_and(|m| m.is_dir()) {
+            if std::fs::symlink_metadata(&at).is_ok_and(|m| m.is_dir()) {
                 note(RestoreNoteCode::FolderMetadataReset, &mut notes);
             }
             continue;
@@ -494,19 +491,18 @@ struct AtTarget {
     entries: Vec<(PathBuf, std::fs::Metadata)>,
 }
 
-/// The folders above the selection where the target has something that is not a folder (a
-/// file, or a link to anything but a folder): restic cannot create the folder there, and the
-/// run fails for everything below it.
-fn blocked_folders_above(tree: &SnapshotTree, target: &Path) -> Vec<String> {
+/// The folders above the selection where the target has something else than a real folder: a
+/// file, or a symbolic link of any kind. With `--include`, restic follows a link to a folder
+/// there and writes into another folder, replaces a link or a file at the folder holding a
+/// selected entry, and fails at a file, a dangling link or a link loop further up; the dry run
+/// tells none of this apart.
+pub fn blocked_folders_above(tree: &SnapshotTree, target: &Path) -> Vec<String> {
     let mut blocked: Vec<String> = tree
         .nodes
         .iter()
         .filter(|(_, nodes)| nodes.iter().any(|n| n.above))
         .map(|(path, _)| target.join(path.trim_start_matches('/')))
-        .filter(|at| {
-            std::fs::symlink_metadata(at).is_ok()
-                && !std::fs::metadata(at).is_ok_and(|m| m.is_dir())
-        })
+        .filter(|at| std::fs::symlink_metadata(at).is_ok_and(|m| !m.is_dir()))
         .map(|at| at.to_string_lossy().into_owned())
         .collect();
     blocked.sort();
@@ -515,8 +511,7 @@ fn blocked_folders_above(tree: &SnapshotTree, target: &Path) -> Vec<String> {
 
 /// Looks up `item` (relative to `target`, starting with `/`) at the target. A segment with
 /// U+FFFD is matched against the real names of its folder, shown the way restic shows them.
-/// A symbolic link at a folder above the selection (`tree`) is looked through, as restic does.
-fn find_at_target(target: &Path, item: &str, tree: &SnapshotTree) -> AtTarget {
+fn find_at_target(target: &Path, item: &str) -> AtTarget {
     let parts: Vec<&str> = item.split('/').filter(|s| !s.is_empty()).collect();
     let mut candidates = vec![target.to_path_buf()];
     for (i, part) in parts.iter().enumerate() {
@@ -541,13 +536,7 @@ fn find_at_target(target: &Path, item: &str, tree: &SnapshotTree) -> AtTarget {
             }
         }
         let last = i + 1 == parts.len();
-        let prefix = format!("/{}", parts[..=i].join("/"));
-        let followed = tree
-            .nodes
-            .get(&prefix)
-            .is_some_and(|nodes| nodes.iter().all(|n| n.above));
         if !last
-            && !followed
             && next
                 .iter()
                 .any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
@@ -687,6 +676,13 @@ pub fn execute_preview(
         foreign_owner,
         limit_bytes,
     } = *run;
+    // Checked before any dry run: a link loop there makes the dry run itself fail.
+    if let Some(first) = blocked_folders_above(tree, target).first() {
+        return Err(BackupRunError::InvalidTarget {
+            path: first.clone(),
+            reason: "not a real folder where restic needs one above the selection".to_string(),
+        });
+    }
     let chosen = dry_run(access, plan, target, overwrite, cancel)?;
     let always = if overwrite == RestoreOverwrite::Always {
         None

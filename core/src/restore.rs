@@ -582,6 +582,54 @@ pub fn execute_restore(
 mod tests {
     use super::*;
 
+    /// A restic call cancelled before it starts spawns no process: with a restic binary that
+    /// does not exist, it ends as cancelled, not with the error of a failed start.
+    #[test]
+    fn cancelled_call_starts_no_restic() {
+        use crate::clock::FakeClock;
+        use crate::model::{Destination, DestinationKind};
+        use crate::provider::ResolvedRestic;
+        use crate::secrets::InMemorySecretStore;
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let resolved = ResolvedRestic {
+            binary: tmp.path().join("no-such-restic"),
+            version: semver::Version::new(0, 18, 0),
+        };
+        let dest = Destination::new(
+            "NAS",
+            DestinationKind::Local {
+                path: tmp.path().join("repo"),
+            },
+        )
+        .expect("dest");
+        let store = InMemorySecretStore::default();
+        let clock = FakeClock::new(time::macros::datetime!(2026-11-15 14:32:00 UTC));
+        let kestic_bin = tmp.path().join("kestic");
+        let access = SnapshotListAccess {
+            destination: &dest,
+            resolved: &resolved,
+            kestic_binary: &kestic_bin,
+            secret_store: &store,
+            clock: &clock,
+            extra_env: &[],
+        };
+        let cancel = CancelHandle::new();
+        cancel.cancel();
+        let result = run_streaming_at(
+            &access,
+            vec!["version".to_string()],
+            Priority::Normal,
+            Some(&cancel),
+            &mut |_| {},
+        );
+        assert!(
+            matches!(result, Err(BackupRunError::Cancelled)),
+            "{:?}",
+            result.map(|r| r.exit_code)
+        );
+    }
+
     fn sel(paths: &[&str]) -> Vec<String> {
         paths.iter().map(|p| (*p).to_string()).collect()
     }
