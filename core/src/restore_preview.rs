@@ -193,11 +193,16 @@ impl SnapshotTree {
 
     /// Adds the folders between the restored folder and each selected entry (`selected`, paths
     /// relative to it): the walk lists only the selected entries, but restic creates the folders
-    /// above them, and the dry run reports them. Folders above an entry the snapshot lacks are
-    /// added too, so the preview checks them like the run does; they never count as written
-    /// below a repository, because only entries below a selected one do.
+    /// above them, and the dry run reports them. An entry the snapshot lacks matches nothing,
+    /// so restic creates no folder for it and none is added. They never count as written below
+    /// a repository, because only entries below a selected one do.
     pub fn add_folders_above(&mut self, selected: Option<&[String]>) {
-        for path in selected.unwrap_or_default() {
+        let present: Vec<&String> = selected
+            .unwrap_or_default()
+            .iter()
+            .filter(|p| self.nodes.contains_key(p.as_str()))
+            .collect();
+        for path in present {
             let mut end = path.len();
             while let Some(slash) = path[..end].rfind('/').filter(|&i| i > 0) {
                 end = slash;
@@ -866,19 +871,22 @@ mod tests {
         assert_eq!(t.nodes.len(), 4, "nothing else is added");
     }
 
+    /// restic creates no folder for a selected entry the snapshot lacks (checked with 0.18.0
+    /// and 0.20.0: `--include` of a missing path leaves a link at its parent alone), so the
+    /// preview does not check folders above it.
     #[test]
-    fn folders_above_a_missing_entry_write_nothing_below_it() {
+    fn folders_above_a_missing_entry_are_not_checked() {
         let selected = ["/docs/deep/y.txt".to_string(), "/docs/ghost/q".to_string()];
         let mut t = tree(&["/docs/deep/y.txt"]);
         t.add_folders_above(Some(&selected));
         assert!(t.nodes.contains_key("/docs/deep"), "above a found entry");
         assert!(
-            t.nodes.contains_key("/docs/ghost"),
-            "checked like in the run"
+            !t.nodes.contains_key("/docs/ghost"),
+            "nothing above the missing entry"
         );
         assert!(
             !t.writes_below(Some(&selected), "/docs/ghost"),
-            "a folder above the selection is no write below a repository there"
+            "no write below a repository there"
         );
     }
 
