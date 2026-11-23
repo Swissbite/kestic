@@ -106,7 +106,10 @@ and new visible texts that only name what the spec defines (a column header, an 
      after which only merges of `origin/m<n>` followed (steps 3 and 4);
    - the branch contains the current `origin/m<n>` (if not: merge it in, push, step 5);
    - the issue is not a maintainer-reviewed story (§5), and `gh pr diff <pr> --name-only`
-     lists no protected path (§5).
+     lists no protected path (§5);
+   - nothing is left for the maintainer: no open question, no choice beyond the spec and no
+     level-3 point in the pull request body, the issue or a review. Writing a question into
+     the body is not asking it; it needs `needs-maintainer` (§2).
 
    Otherwise add `needs-maintainer` to the issue, say what the maintainer has to review, and
    end the turn. The maintainer merges or comments; either continues the session.
