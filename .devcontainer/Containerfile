@@ -68,14 +68,16 @@ RUN useradd --system --no-create-home --home-dir / --shell /usr/sbin/nologin kes
 RUN mkdir -p /home/kesticci/.claude /home/kesticci/kestic \
     && chown -R kesticci:kesticci /home/kesticci
 
+# No CARGO_INCREMENTAL here: unlike CI, the agent keeps its target directory
+# between builds, so cargo's default (incremental for workspace crates in the
+# dev profile) makes each edit-and-rebuild loop several times faster.
 ENV KESTIC_CI_IMAGE=${CI_IMAGE} \
     CLAUDE_CONFIG_DIR=/home/kesticci/.claude \
     DISABLE_AUTOUPDATER=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1 \
     PATH=/home/kesticci/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    LANG=en_US.UTF-8 \
-    CARGO_INCREMENTAL=0
+    LANG=en_US.UTF-8
 
 # Starts as root only to set up the firewall, then runs the main command as
 # `kestic-infra` without any capabilities; the agent runs as `kesticci` through
