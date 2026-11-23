@@ -248,11 +248,10 @@ QtObject {
     function trustHostKey() {
         var id = hostKey ? hostKey.host_key_id : "";
         hostKey = null;
-        if (appBackend.trustHostKey(id)) {
-            return runConnectionTest();
-        }
-        showError(appBackend.last_action_error);
-        return false;
+        // Trusted or not (the shown key expired, the daemon restarted, a file got another key
+        // meanwhile): a new test shows where the server stands now.
+        appBackend.trustHostKey(id);
+        return runConnectionTest();
     }
 
     function showError(text) {

@@ -726,61 +726,63 @@ fn ac_m5_01_7_changed_host_key_stops_test_and_run_without_restic() {
 
 /// AC-M5-01-8 (FR-01, FR-56): two SFTP destinations on the same host and port; removing the
 /// first (a) keeps the server's line in Kestic's `known_hosts`, and (b) removing the second too
-/// removes it; the line in `~/.ssh/known_hosts` always stays.
+/// removes it; the line in `~/.ssh/known_hosts` always stays. Runs with restic 0.18.0 and the
+/// latest restic.
 #[test]
 fn ac_m5_01_8_host_line_goes_with_the_last_destination_on_the_server() {
     run_isolated_test(
         "ac_m5_01_8_host_line_goes_with_the_last_destination_on_the_server",
         "KESTIC_M5_01_8_INNER",
         |root| {
-            let variant = common::m3::latest_variant();
-            let rig = start_sftp_rig(root, &variant, "M5SftpG");
-            let p = paths();
-            let first = rig.destination("NAS", "first");
-            let second = rig.destination("NAS 2", "second");
-            rig.add_new(&first);
-            rig.daemon
-                .client
-                .add_destination(&second, "init", &strong_password(), &no_secrets())
-                .expect("AddDestination second");
-            fs::create_dir_all(p.user.parent().expect("~/.ssh")).expect("mkdir ~/.ssh");
-            fs::write(&p.user, format!("{}\n", rig.server.known_hosts_line()))
-                .expect("write ~/.ssh/known_hosts");
-            let user_before = read(&p.user);
-            let line = rig.server.known_hosts_line();
-            let kestic_lines = || {
-                fs::read_to_string(&p.kestic)
-                    .unwrap_or_default()
-                    .lines()
-                    .map(ToOwned::to_owned)
-                    .collect::<Vec<_>>()
-            };
-            assert_eq!(kestic_lines(), vec![line.clone()], "the trusted line");
+            for variant in restic_variants() {
+                let rig = start_sftp_rig(root, &variant, "M5SftpG");
+                let p = paths();
+                let first = rig.destination("NAS", "first");
+                let second = rig.destination("NAS 2", "second");
+                rig.add_new(&first);
+                rig.daemon
+                    .client
+                    .add_destination(&second, "init", &strong_password(), &no_secrets())
+                    .expect("AddDestination second");
+                fs::create_dir_all(p.user.parent().expect("~/.ssh")).expect("mkdir ~/.ssh");
+                fs::write(&p.user, format!("{}\n", rig.server.known_hosts_line()))
+                    .expect("write ~/.ssh/known_hosts");
+                let user_before = read(&p.user);
+                let line = rig.server.known_hosts_line();
+                let kestic_lines = || {
+                    fs::read_to_string(&p.kestic)
+                        .unwrap_or_default()
+                        .lines()
+                        .map(ToOwned::to_owned)
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(kestic_lines(), vec![line.clone()], "the trusted line");
 
-            rig.daemon
-                .client
-                .remove_destination(first.id.as_str())
-                .expect("RemoveDestination first");
-            // (a)
-            assert_eq!(
-                kestic_lines(),
-                vec![line.clone()],
-                "(a) line removed too early"
-            );
-            assert_eq!(read(&p.user), user_before, "(a) ~/.ssh/known_hosts changed");
+                rig.daemon
+                    .client
+                    .remove_destination(first.id.as_str())
+                    .expect("RemoveDestination first");
+                // (a)
+                assert_eq!(
+                    kestic_lines(),
+                    vec![line.clone()],
+                    "(a) line removed too early"
+                );
+                assert_eq!(read(&p.user), user_before, "(a) ~/.ssh/known_hosts changed");
 
-            rig.daemon
-                .client
-                .remove_destination(second.id.as_str())
-                .expect("RemoveDestination second");
-            // (b)
-            assert!(
-                kestic_lines().is_empty(),
-                "(b) line still there: {:?}",
-                kestic_lines()
-            );
-            assert_eq!(read(&p.user), user_before, "(b) ~/.ssh/known_hosts changed");
-            rig.daemon.stop();
+                rig.daemon
+                    .client
+                    .remove_destination(second.id.as_str())
+                    .expect("RemoveDestination second");
+                // (b)
+                assert!(
+                    kestic_lines().is_empty(),
+                    "(b) line still there: {:?}",
+                    kestic_lines()
+                );
+                assert_eq!(read(&p.user), user_before, "(b) ~/.ssh/known_hosts changed");
+                rig.daemon.stop();
+            }
         },
     );
 }

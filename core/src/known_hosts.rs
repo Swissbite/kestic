@@ -371,12 +371,19 @@ pub fn check_host_key(
         entries.extend(lookup(&name, file)?.into_iter().map(|e| (file, e)));
     }
     let types = scan_types(entries.iter().map(|(_, e)| e));
-    let (scanned, answered) = scan(&target, &types, timeout)?;
-    // A known server that answers but no longer shows any key of a known type has changed: a
-    // new type is not offered for trust, as ssh with strict checking would not accept it either.
+    let started = std::time::Instant::now();
+    let (mut scanned, answered) = scan(&target, &types, timeout)?;
+    // The server answered without a key of the known types: ask for all types in the time left,
+    // to tell a server that now shows another type from one that did not finish its answer.
+    let left = timeout.saturating_sub(started.elapsed());
+    if scanned.is_empty() && answered && types != SCAN_TYPES && left >= Duration::from_secs(1) {
+        scanned = scan(&target, SCAN_TYPES, left)?.0;
+    }
+    // A known server that shows keys, but none of a known type, has changed: a new type is not
+    // offered for trust, as ssh with strict checking would not accept it either.
     let known_entry = entries.iter().find(|(_, e)| !e.revoked);
     if let Some((file, _)) = known_entry
-        && (answered || !scanned.is_empty())
+        && !scanned.is_empty()
         && !scanned
             .iter()
             .any(|(t, _)| entries.iter().any(|(_, e)| !e.revoked && e.key_type == *t))
