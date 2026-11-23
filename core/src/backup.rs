@@ -817,8 +817,23 @@ pub(crate) fn run_streaming_at(
     cancel: Option<&CancelHandle>,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<ResticExecutionResult, BackupRunError> {
+    unless_cancelled(run_streaming_to_end(
+        access, args, priority, cancel, on_line,
+    )?)
+}
+
+/// [`run_streaming_at`], but a call cancelled while restic ran returns its result (with
+/// `cancelled` set), so the caller keeps what restic reported until then. A call cancelled
+/// before it starts is `Cancelled`.
+pub(crate) fn run_streaming_to_end(
+    access: &SnapshotListAccess<'_>,
+    args: Vec<String>,
+    priority: Priority,
+    cancel: Option<&CancelHandle>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<ResticExecutionResult, BackupRunError> {
     refuse_if_cancelled(cancel)?;
-    let res = run_restic_streaming(
+    Ok(run_restic_streaming(
         &spec_for(access, args, priority),
         access.destination,
         Some(access.secret_store),
@@ -826,8 +841,7 @@ pub(crate) fn run_streaming_at(
         cancel,
         access.extra_env,
         on_line,
-    )?;
-    unless_cancelled(res)
+    )?)
 }
 
 /// Runs restic with `args` at normal priority and hands its whole stdout to `read` as a stream;

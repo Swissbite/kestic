@@ -197,9 +197,11 @@ fn find_pattern(text: &str) -> Option<String> {
     if inner.iter().any(|s| matches!(*s, "" | "." | "..")) {
         return None;
     }
+    // A `restic find` pattern starting with `!` is negated: `!` is masked as well.
+    let literal = |t: &str| escape_glob(t).replace('!', "\\!");
     Some(match text.strip_prefix('/') {
-        Some(rest) => format!("{}*", escape_glob(rest)),
-        None => format!("*{}*", escape_glob(text)),
+        Some(rest) => format!("{}*", literal(rest)),
+        None => format!("*{}*", literal(text)),
     })
 }
 
@@ -539,6 +541,11 @@ mod tests {
         let pattern = |text| find_pattern(text).unwrap_or_default();
         assert_eq!(pattern("bericht.pdf"), "*bericht.pdf*");
         assert_eq!(pattern(r"a*b?c[d]\e"), r"*a\*b\?c\[d]\\e*");
+        assert_eq!(
+            pattern("/!x"),
+            r"\!x*",
+            "a leading «!» would negate the pattern"
+        );
         assert_eq!(pattern("Steuern/2026"), "*Steuern/2026*");
         assert_eq!(pattern("../x"), "*../x*");
         assert_eq!(pattern("x/.."), "*x/..*");

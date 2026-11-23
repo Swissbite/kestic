@@ -379,7 +379,7 @@ fn ac_m4_05_14_restore_without_fitting_fresh_preview_is_refused() {
                     fx.start_preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
                 fx.rig
                     .wrapper
-                    .wait_for('S', "restore", 3, std::time::Duration::from_secs(30));
+                    .wait_for('S', "restore", 2, std::time::Duration::from_secs(30));
                 let refused = |preview: Option<&str>, case: &str| {
                     let started = fx.rig.wrapper.started_repo_count();
                     let runs = restore_runs(fx);
@@ -3416,6 +3416,136 @@ fn m4_s05_preview_over_the_memory_limit_stops() {
                 matches!(refused, Err(KesticDbusError::PreviewRequired(_))),
                 "(c) {refused:?}"
             );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// A preview whose walk fits the memory limit of one query but whose dry run does not stops
+/// at the dry run: (a) its list is too large and nothing is counted, (b) the second dry run
+/// does not run, and (c) `StartRestore` with it is refused with `PreviewRequired`.
+#[test]
+fn m4_s05_preview_stops_when_the_dry_run_exceeds_the_memory_limit() {
+    run_isolated_test(
+        "m4_s05_preview_stops_when_the_dry_run_exceeds_the_memory_limit",
+        "KESTIC_M4_S05_DRY_RUN_LIMIT_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            // The walk of 1000 files holds about 74 000 bytes, each dry run about as much.
+            let fx = RestoreFixture::start(root, &variant, "M4RD", thousand_tree, |o| {
+                o.query_limits = kestic_core::query_list::QueryLimits {
+                    per_query_bytes: 100_000,
+                    total_bytes: 200_000,
+                };
+            });
+            let (preview_id, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+            assert!(p.entries.too_large, "(a) too large: {:?}", p.entries.total);
+            assert_eq!(
+                (
+                    p.new_files,
+                    p.overwritten_files,
+                    p.kept_files,
+                    p.identical_files
+                ),
+                (0, 0, 0, 0),
+                "(a) nothing counted"
+            );
+            assert_eq!(dry_runs(&fx).len(), 1, "(b) {:?}", dry_runs(&fx));
+            let refused = fx.start_restore(
+                &[],
+                fx.original(),
+                RestoreOverwrite::Never,
+                Some(&preview_id),
+            );
+            assert!(
+                matches!(refused, Err(KesticDbusError::PreviewRequired(_))),
+                "(c) {refused:?}"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// A restore of names that are not UTF-8 (restic reports them with U+FFFD) counts every file it
+/// wrote: (a) `files_new` is 3 and (b) the summary says so.
+#[test]
+fn m4_s05_restore_counts_names_that_are_not_utf8() {
+    run_isolated_test(
+        "m4_s05_restore_counts_names_that_are_not_utf8",
+        "KESTIC_M4_S05_COUNT_UNMATCHABLE_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RN", unmatchable_tree, |_| {});
+            let run_id = fx
+                .start_restore(
+                    &[],
+                    new_folder(&fx.new_dir("names")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            let detail = fx.wait_run(&run_id);
+            assert_eq!(detail.run.status, RunStatus::Ok, "{detail:?}");
+            let stats = detail.run.restore.as_ref().expect("restore stats");
+            assert_eq!(stats.files_new, 3, "(a) {stats:?}");
+            assert_eq!(
+                detail.run.summary_message.as_deref(),
+                Some("Restored 3 files"),
+                "(b)"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// A restore cancelled after restic reported a written file keeps that count: (a) it ends
+/// `abgebrochen` and (b) `files_new` is 1.
+#[test]
+fn m4_s05_cancelled_restore_keeps_its_counts() {
+    run_isolated_test(
+        "m4_s05_cancelled_restore_keeps_its_counts",
+        "KESTIC_M4_S05_CANCEL_COUNTS_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RC", small_tree, |_| {});
+            let (preview_id, _) =
+                fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
+            // The held run reports `a.txt`, which is at the original location, as written, then
+            // a progress line that shows once the daemon has read the line before it.
+            fx.rig.wrapper.hold_with_output(
+                "restore",
+                "{\"message_type\":\"verbose_status\",\"action\":\"restored\",\
+                 \"item\":\"/a.txt\",\"size\":5}\n\
+                 {\"message_type\":\"status\",\"percent_done\":0.5,\"total_bytes\":10}\n",
+            );
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    fx.original(),
+                    RestoreOverwrite::Always,
+                    Some(&preview_id),
+                )
+                .expect("StartRestore");
+            fx.rig
+                .wrapper
+                .wait_for('S', "restore", 2, std::time::Duration::from_secs(30));
+            common::m3::wait_for_state(
+                &fx.rig.daemon.client,
+                std::time::Duration::from_secs(10),
+                "the progress after the reported file",
+                |s| {
+                    s.overall
+                        .active_run_progress
+                        .as_ref()
+                        .is_some_and(|p| p.percent_done >= 50.0)
+                },
+            );
+            fx.rig.daemon.client.cancel_run(&run_id).expect("CancelRun");
+            let detail = fx.wait_run(&run_id);
+            fx.rig.wrapper.release("restore");
+            assert_eq!(detail.run.status, RunStatus::Cancelled, "(a) {detail:?}");
+            let stats = detail.run.restore.as_ref().expect("restore stats");
+            assert_eq!(stats.files_new, 1, "(b) {stats:?}");
             fx.rig.daemon.stop();
         },
     );

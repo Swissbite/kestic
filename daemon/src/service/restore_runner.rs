@@ -326,6 +326,14 @@ pub fn start_restore_async(
     };
 
     let mut guard = shared.lock_unpoisoned();
+    // The daemon stopped meanwhile: nothing would start or clean up this restore any more.
+    if guard.stopping() {
+        remove_created_if_empty(&setup);
+        guard.release_restore(&run.id);
+        return Err(KesticServiceErr::Internal(
+            "the daemon is stopping".to_string(),
+        ));
+    }
     // A preview shows what one restore would do; a second restore with it could overwrite
     // what the user changed after the first.
     if setup.from_preview.is_some()

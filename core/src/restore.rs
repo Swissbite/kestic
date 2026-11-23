@@ -10,7 +10,7 @@
 
 use crate::backup::{
     BackupRunError, Priority, SnapshotListAccess, check_command_succeeded, run_streaming,
-    run_streaming_at,
+    run_streaming_to_end,
 };
 use crate::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use crate::restic::{CancelHandle, ResticExecutionResult, ResticStatusMessage};
@@ -55,12 +55,11 @@ fn overwrite_arg(mode: RestoreOverwrite) -> &'static str {
 }
 
 /// Escapes the glob characters `\`, `*`, `?` and `[` of `name` with `\`, so a restic pattern
-/// (`--include`, `restic find`) matches the name literally. `!`, which negates a pattern that
-/// starts with it, is escaped as well; restic reads `\!` as a plain `!` anywhere in a pattern.
+/// (`--include`, `restic find`) matches the name literally.
 pub fn escape_glob(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
-        if matches!(c, '\\' | '*' | '?' | '[' | '!') {
+        if matches!(c, '\\' | '*' | '?' | '[') {
             out.push('\\');
         }
         out.push(c);
@@ -466,7 +465,7 @@ pub struct RestoreRun {
 
 /// Runs the restore of `plan` into `target` and reports progress lines to `on_status`. Folders
 /// are told apart from files on disk as restic reports them. `Err` only when restic did not
-/// run to its end (cancelled, not started).
+/// start; a cancelled run is a `failure` with what it wrote until then.
 pub fn execute_restore(
     access: &SnapshotListAccess<'_>,
     plan: &RestorePlan,
@@ -483,9 +482,11 @@ pub fn execute_restore(
     // of millions of files holds no list of them.
     let mut count = |item: &RestoreItem| {
         // restic reports a file it could not write as restored too: only files that are there
-        // count, folders never.
+        // count, folders never. restic shows the bytes of a name that are not UTF-8 as
+        // U+FFFD, so such a name cannot be looked up; it counts as written.
         let written = target.join(item.item.trim_start_matches('/'));
-        if !std::fs::symlink_metadata(&written).is_ok_and(|m| !m.is_dir()) {
+        let unmatchable = item.item.contains('\u{FFFD}');
+        if !unmatchable && !std::fs::symlink_metadata(&written).is_ok_and(|m| !m.is_dir()) {
             return;
         }
         match item.action.as_str() {
@@ -494,20 +495,20 @@ pub fn execute_restore(
             _ => {}
         }
     };
-    let res =
-        run_streaming_at(
-            access,
-            args,
-            Priority::Low,
-            cancel,
-            &mut |line| match parse_restore_line(line) {
-                RestoreLine::Item(item) => count(&item),
-                RestoreLine::Status(status) => on_status(&status),
-                RestoreLine::Summary(s) => summary = Some(s),
-                RestoreLine::Other => {}
-            },
-        )?;
-    let failure = check_restore_succeeded(&res, plan).err();
+    let res = run_streaming_to_end(access, args, Priority::Low, cancel, &mut |line| {
+        match parse_restore_line(line) {
+            RestoreLine::Item(item) => count(&item),
+            RestoreLine::Status(status) => on_status(&status),
+            RestoreLine::Summary(s) => summary = Some(s),
+            RestoreLine::Other => {}
+        }
+    })?;
+    // A cancelled restore keeps the counts of what it wrote until then.
+    let failure = if res.cancelled {
+        Some(BackupRunError::Cancelled)
+    } else {
+        check_restore_succeeded(&res, plan).err()
+    };
     result.nothing_matched = summary.as_ref().is_none_or(RestoreSummary::is_empty);
     result.bytes_restored = summary.as_ref().and_then(|s| s.bytes_restored).unwrap_or(0);
     Ok(RestoreRun {
@@ -526,10 +527,10 @@ mod tests {
     }
 
     #[test]
-    fn includes_mask_an_exclamation_mark() {
+    fn includes_keep_an_exclamation_mark() {
         let plan = plan_restore("id", &sel(&["/d/!x", "/d/a!b"]), EntryKind::Dir).expect("plan");
         assert_eq!(plan.folder, "/d");
-        assert_eq!(plan.includes, [r"--include=/\!x", r"--include=/a\!b"]);
+        assert_eq!(plan.includes, [r"--include=/!x", r"--include=/a!b"]);
     }
 
     #[test]

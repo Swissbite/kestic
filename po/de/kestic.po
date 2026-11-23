@@ -2248,8 +2248,8 @@ msgid "Loading snapshots…"
 msgstr "Snapshots werden geladen…"
 
 #: gui/src/ui_texts.rs
-msgid "No snapshots yet. The first backup is still pending."
-msgstr "Noch keine Snapshots. Das erste Backup steht noch aus."
+msgid "No snapshots yet – the first backup is still pending"
+msgstr "Noch keine Snapshots – das erste Backup steht noch aus"
 
 #: gui/src/qml/BackupSourceEditPage.qml:100
 msgid "Source saved"

@@ -743,6 +743,10 @@ pub fn dry_run(
         }
     })?;
     if too_large {
+        // A dry run that failed says why, not that its list grew too large.
+        if below_replaced_files(&res).is_none() {
+            check_restore_succeeded(&res, plan)?;
+        }
         return Ok(None);
     }
     // Where the target has a file and the snapshot a folder with content, the dry run cannot

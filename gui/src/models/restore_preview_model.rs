@@ -163,6 +163,13 @@ pub(crate) fn original_note(original: &RestoreOriginalDto) -> String {
 
 /// The counts of a preview in one line, e.g. «117 files new · 3 existing files will not be
 /// overwritten».
+/// Whether the preview stopped at the memory limit instead of classifying the files: its list
+/// is too large and nothing is counted (a list over the limit after a full classification
+/// keeps its counts). Where a preview is required, the daemon refuses a restore with it.
+pub(crate) fn preview_stopped(p: &RestorePreviewResultDto) -> bool {
+    p.entries.too_large && p.new_files + p.overwritten_files + p.kept_files + p.identical_files == 0
+}
+
 pub(crate) fn summary_text(p: &RestorePreviewResultDto) -> String {
     let mut parts = Vec::new();
     if p.new_files > 0 {
@@ -512,7 +519,8 @@ impl qobject::RestorePreviewModel {
         }
         self.as_mut().set_kind_codes(codes);
         self.as_mut().set_kind_texts(texts);
-        self.as_mut().set_can_restore(usable);
+        self.as_mut()
+            .set_can_restore(usable && !(required && preview_stopped(p)));
     }
 
     /// Starts the restore with the finished preview; `run_state` follows the run.
@@ -648,6 +656,19 @@ mod tests {
             },
             notes: Vec::new(),
         }
+    }
+
+    /// A preview that stopped at the memory limit counts nothing; one whose list is only too
+    /// large to show keeps its counts and allows the restore.
+    #[test]
+    fn preview_stopped_at_the_memory_limit_is_told_apart() {
+        let mut stopped = preview((0, 0, 0, 0));
+        stopped.entries.too_large = true;
+        assert!(preview_stopped(&stopped), "too large, nothing counted");
+        let mut long = preview((900, 100, 0, 0));
+        long.entries.too_large = true;
+        assert!(!preview_stopped(&long), "too large to show, counted");
+        assert!(!preview_stopped(&preview((0, 0, 0, 0))), "an empty preview");
     }
 
     #[test]

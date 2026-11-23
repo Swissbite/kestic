@@ -81,7 +81,7 @@ Eine Abbildung für Fenster, Tray, Benachrichtigung. Immer Icon **und** Text, Fa
 | --- | --- | --- | --- | --- |
 | Übersicht | Willkommen + «Erstes Backup anlegen» (§9.1) | `LoadingPlaceholder` beim ersten Abruf vom Daemon | Zustandsleiste #1 | Zustandsleiste |
 | Backups | `PlaceholderMessage` «Noch keine Backups» + `[Neues Backup…]` | – (lokale Daten) | – | – |
-| Snapshots | «Noch keine Snapshots. Das erste Backup steht noch aus.» + `[Jetzt sichern]` | `LoadingPlaceholder` «Snapshots werden geladen…» | «Ziel nicht erreichbar» bzw. **«Laufwerk ‹USB-Disk› einstecken, um die Snapshots zu sehen»** mit Icon; letzte bekannte Liste grau mit «Stand: …» | `InlineMessage` Error nach §9.4 + `[Erneut versuchen]` |
+| Snapshots | «Noch keine Snapshots – das erste Backup steht aus» + `[Jetzt sichern]` | `LoadingPlaceholder` «Snapshots werden geladen…» | «Ziel nicht erreichbar» bzw. **«Laufwerk ‹USB-Disk› einstecken, um die Snapshots zu sehen»** mit Icon; letzte bekannte Liste grau mit «Stand: …» | `InlineMessage` Error nach §9.4 + `[Erneut versuchen]` |
 | Durchsuchen | «Dieser Ordner ist im Snapshot leer» | `LoadingPlaceholder` pro Ordner (lazy) | wie Snapshots | wie Snapshots |
 | Suche | «Keine Treffer für ‹…›» | `BusyIndicator` + `[Abbrechen]` | wie Snapshots | wie Snapshots |
 | Ziele | `PlaceholderMessage` «Noch keine Ziele» + `[Ziel hinzufügen…]` | – | Ziel-Zustand (§6.4) | Ziel-Zustand |
