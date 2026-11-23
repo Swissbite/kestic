@@ -26,7 +26,7 @@ Regeln:
 - **Keine Doppelmeldung:** Fehler und Überfälligkeit eines Backups stehen nur auf seiner Karte (Statuszeile + Handlungsknopf), die Überschrift fasst zusammen. `InlineMessage`s nur für Themen ohne Karte: Kit fehlt, restic-Update verfügbar (Information, `[Aktualisieren…]`, F20); blockierende Zustände in der Zustandsleiste (§6.1).
 - **Dauerhafter Fehler** (z. B. Exit 12, F2): Der Handlungsknopf aus FR-37 ersetzt «Jetzt sichern» auf Karte und im Detail («Gespeichertes Passwort aktualisieren…»); «Trotzdem jetzt sichern» bleibt im `⋮`-Menü.
 - **«Alle jetzt sichern»** startet alle Backups, die laufen können, und überspringt die anderen mit einer Meldung (`showPassiveNotification`, auch im Verlauf): «2 Backups übersprungen: Fotos (Quelle nicht verfügbar), Projekte (gespeichertes Passwort passt nicht)». Gleiches im Tray.
-- Kit-Hinweis: «Später» und «×» blenden ihn für 7 Tage aus, danach wieder; im Ziel-Detail bleibt er dauerhaft sichtbar. Ausnahme: «Kit fehlt» nach einem umgezogenen Repository (§8.9, Fall 2) hat kein «Später» und kein «×».
+- Kit-Hinweis: «Später» und «×» blenden ihn für 7 Tage aus, danach wieder; im Ziel-Detail bleibt er dauerhaft sichtbar.
 - Leer: Willkommensseite (§9.1).
 
 ### 7.2 Backups: Liste und Detail

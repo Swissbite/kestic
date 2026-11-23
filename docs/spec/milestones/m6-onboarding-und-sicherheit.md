@@ -105,7 +105,6 @@ Test-Isolation gemäss [test-strategy.md](../test-strategy.md). Zusätzlich: Sec
 ### M6-S10 Kit für bestehendes Ziel
 - **AC-M6-10-1** (FR-35) – *Gegeben* ein Ziel ohne Recovery-Key-ID in der Konfiguration, *wenn* Kestic startet, *dann* (a) zeigen Status-Übersicht und Tray «Wiederherstellungs-Kit fehlt» mit Aktion «Kit erzeugen» · Test: GUI-Smoke, D-Bus (Fake)
 - **AC-M6-10-2** (FR-35) – *Gegeben* «Kit erzeugen» für dieses Ziel, *wenn* der Ablauf mit «sicher aufbewahrt» abschliesst, *dann* (a) existiert ein zusätzlicher Key (`key list`), (b) steht die Key-ID in der Konfiguration, und (c) verschwindet der Hinweis · Test: Integration
-- **AC-M6-10-3** (FR-35, P42) – *Gegeben* ein Ziel im Zustand «Kit fehlt» nach einem Umzug (AC-M5-05-6), *wenn* «Kit erzeugen…» mit «sicher aufbewahrt» abschliesst, *dann* (a) entsteht der Recovery-Key im neuen Repo, (b) steht die Key-ID in der Konfiguration, und (c) verschwindet der nicht ausblendbare Hinweis · Test: Integration
 - **AC-M6-10-4** (FR-35) – *Gegeben* das Ziel ist nicht erreichbar bzw. das gespeicherte Passwort passt nicht (Exit 12), *wenn* Übersicht oder Tray angezeigt werden, *dann* (a) ist «Kit erzeugen…»/«Kit erneuern…» deaktiviert, und (b) ist der Grund sichtbar · Test: GUI-Smoke + D-Bus
 
 ### M6-S11 Fehlerabbildung vollständig
