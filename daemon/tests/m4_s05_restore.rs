@@ -2447,3 +2447,45 @@ fn ac_m4_05_25_refused_target_has_its_own_error_kind() {
         },
     );
 }
+
+/// A restore that waited for maintenance and finds its target unusable when it would start ends
+/// with the target check's text in the run history, not with a code or English raw text.
+#[test]
+fn m4_s05_waiting_restore_names_why_its_target_is_unusable() {
+    run_isolated_test(
+        "m4_s05_waiting_restore_names_why_its_target_is_unusable",
+        "KESTIC_M4_S05_WAITING_UNUSABLE_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            let variant = common::m3::latest_variant();
+            let fx = scheduled_fixture(root, &variant, "M4RU");
+            fx.rig.wrapper.hold("prune");
+            fx.rig.clock.set(SUNDAY_PRUNE);
+            fx.rig
+                .wrapper
+                .wait_for('S', "prune", 1, std::time::Duration::from_secs(30));
+            let target = fx.new_dir("becomes-a-file");
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&target),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            let resolved = fs::canonicalize(&target).expect("created by StartRestore");
+            fs::remove_dir(&target).expect("remove the new folder");
+            fs::write(&target, "a file now").expect("file in its place");
+            fx.rig.wrapper.release("prune");
+            let detail = fx.wait_run(&run_id);
+            assert_eq!(detail.run.status, RunStatus::Error, "{detail:?}");
+            assert_eq!(
+                detail.run.summary_message.as_deref(),
+                Some(format!("{} is not a folder", resolved.display()).as_str()),
+                "the reason in words"
+            );
+            assert!(fx.restore_calls().is_empty(), "no restore ran");
+            fx.rig.daemon.stop();
+        },
+    );
+}

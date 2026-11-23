@@ -692,6 +692,37 @@ fn m4_s05_restore_dialog_offers_the_folder_of_an_unmatchable_name() {
     );
 }
 
+/// AC-M4-05-16 (f) and AC-M4-05-25 (c), smoke part: the dialog shows the note on the folders
+/// that exist at the original location, and the translated refusal of a target where the
+/// snapshot has a file and the target a folder with content (scene `m4-restore-target-texts`).
+#[test]
+fn ac_m4_05_16_25_restore_dialog_shows_folder_note_and_refusal() {
+    run_isolated_test(
+        "ac_m4_05_16_25_restore_dialog_shows_folder_note_and_refusal",
+        "KESTIC_AC_M4_05_16_25_SMOKE_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes, _) = restore_dialog_env(&sub, &latest_variant());
+                let src = sub.join("trees").join("src");
+                std::fs::remove_file(src.join("b.bin")).expect("remove b.bin");
+                std::fs::create_dir_all(src.join("b.bin")).expect("folder in its place");
+                std::fs::write(src.join("b.bin").join("keep.txt"), "keep").expect("content");
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-target-texts",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-target-texts", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
 /// AC-M4-05-22 (b, c): the setting «restic source» marks restic 0.18.0 «(outdated)» and the
 /// newest tested version not (scene `m4-restic-outdated`).
 #[test]

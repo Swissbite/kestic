@@ -1103,6 +1103,70 @@ int scenario_restore_unmatchable(const Ctx& c) {
     return 0;
 }
 
+/// AC-M4-05-16 (f) and AC-M4-05-25 (c), smoke part: at the original location of `docs` (its
+/// subfolder exists there) the dialog shows the note on folder permissions; for `b.bin`, which
+/// is a folder with content at the target, it shows the translated refusal naming that folder.
+int scenario_restore_target_texts(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 6401, 1)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 6406)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(6409, wait_for_dir(w, top), "the snapshot opens in its folder");
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("docs"), 6410)) {
+        return rc;
+    }
+    Restore r = restore_dialog(w);
+    QObject* original_radio = object_named(w, "restoreOriginalRadio");
+    QObject* notes = object_named(w, "restoreNotesMessage");
+    M4_CHECK(6415, original_radio && notes, "dialog controls exist");
+    M4_CHECK(6416, wait_for_preview(r.model), "the preview of the new folder is done");
+    M4_CHECK(6417, click_ui_item(w, qobject_cast<QQuickItem*>(original_radio), "original location"),
+        "the original location could not be chosen");
+    M4_CHECK(6418, wait_until([&] { return r.model->property("target_original").toBool(); }, 3000),
+        "the original location is chosen");
+    M4_CHECK(6419, wait_for_preview(r.model), "the preview at the original location is done");
+    M4_CHECK(6420, notes->property("visible").toBool(), "AC-M4-05-16 (f) the note is shown");
+    M4_CHECK(6421, notes->property("text").toString().contains(loc(c.lang,
+                       "Existing folders at the target get the permissions and modification time from the snapshot.",
+                       "Vorhandene Ordner am Ziel erhalten Zugriffsrechte und Änderungszeit aus dem Snapshot.")),
+        qPrintable(QStringLiteral("AC-M4-05-16 (f) the folder note: ") + notes->property("text").toString()));
+    repaint_fully(w);
+    M4_CHECK(6422, save_screenshot(w, c.out_path), "screenshot failed");
+
+    QMetaObject::invokeMethod(r.dialog, "reject");
+    M4_CHECK(6423, wait_until([&] { return is_closed(r.dialog); }, 3000), "the dialog closes");
+    QObject* clear = object_named(w, "clearSelectionButton");
+    M4_CHECK(6433, clear != nullptr, "clearSelectionButton missing");
+    M4_CHECK(6434, click_ui_item(w, qobject_cast<QQuickItem*>(clear), "clear selection"),
+        "the selection could not be cleared");
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("b.bin"), 6424)) {
+        return rc;
+    }
+    Restore refused = restore_dialog(w);
+    QObject* refused_original = object_named(w, "restoreOriginalRadio");
+    QObject* refusal = object_named(w, "restorePreviewError");
+    M4_CHECK(6432, refused_original && refusal, "dialog controls exist");
+    M4_CHECK(6425, wait_for_preview(refused.model), "the preview of the new folder is done");
+    M4_CHECK(6426, click_ui_item(w, qobject_cast<QQuickItem*>(refused_original), "original location"),
+        "the original location could not be chosen");
+    M4_CHECK(6427, wait_until([&] { return refused.model->property("state").toString() == QLatin1String("error"); },
+                       30000),
+        "AC-M4-05-25 the preview refuses the target");
+    M4_CHECK(6428, refusal->property("visible").toBool(), "AC-M4-05-25 (c) the refusal is shown");
+    const QString text = refusal->property("text").toString();
+    M4_CHECK(6429, text.contains(loc(c.lang, "Cannot restore safely to ", "Nach ")) && text.contains(QStringLiteral("b.bin")),
+        qPrintable(QStringLiteral("AC-M4-05-25 (c) translated text naming the folder: ") + text));
+    M4_CHECK(6430, !text.contains(QStringLiteral("invalid restore target")), "AC-M4-05-25 (c) no raw text");
+    repaint_fully(w);
+    M4_CHECK(6431, save_screenshot(w, screenshot_variant(c.out_path, "-refused")), "screenshot failed");
+    return 0;
+}
+
 /// AC-M4-05-1, AC-M4-05-4 (smoke part), AC-M4-05-11, AC-M4-05-15 (c, e): the restore dialog
 /// (AC-M4-05-1) preselects (a) a new folder and (b) not the original location. At the original
 /// location (AC-M4-05-15) (c) «Never» is preselected and (e) «Restore Now» stays disabled until
@@ -1348,6 +1412,8 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_dialog(ctx);
     } else if (scen == QLatin1String("m4-restore-unmatchable")) {
         rc = scenario_restore_unmatchable(ctx);
+    } else if (scen == QLatin1String("m4-restore-target-texts")) {
+        rc = scenario_restore_target_texts(ctx);
     } else if (scen == QLatin1String("m4-restic-outdated")) {
         rc = scenario_restic_outdated(ctx);
     } else if (scen == QLatin1String("m4-show-restore")) {

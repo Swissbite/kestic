@@ -17,7 +17,7 @@ use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
 use crate::dbus_api::RestoreRequest;
 use crate::dbus_server::{emit_run_progress, emit_run_updated, emit_status_changed};
-use crate::i18n::{i18n, i18np, tr};
+use crate::i18n::{i18n, i18np, tr, tr_text};
 use crate::notifications::{KesticEvent, send_event_notification};
 use crate::tray::TrayHandle;
 use kestic_core::backup::{BackupRunError, SnapshotListAccess};
@@ -348,7 +348,18 @@ impl DaemonCore {
 /// dry runs. Its age counted when the restore was accepted.
 fn recheck_waiting(setup: &mut RestoreSetup) -> Result<(), String> {
     setup.check = check_target(&setup.target, setup.ctx.repositories());
-    refuse_unusable(&setup.check).map_err(|e| e.to_string())?;
+    // The reason goes into the run history, so it is said in the daemon's language.
+    let path = setup.check.resolved.to_string_lossy().into_owned();
+    if setup.check.resolved.to_str().is_none() {
+        return Err(tr_text(&ErrorKind::InvalidTarget.text(Some(&path))));
+    }
+    if !setup.check.usable() {
+        return Err(setup
+            .check
+            .code
+            .message(&path)
+            .map_or_else(|| path.clone(), |m| tr(&m)));
+    }
     if preview_required(&setup.target, &setup.check)
         && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)
     {
