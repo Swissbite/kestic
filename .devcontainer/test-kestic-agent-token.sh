@@ -42,6 +42,7 @@ case "$1" in
             store-token) cat > "$FAKE_DIR/stored" ;;
             token-age) echo "$FAKE_AGE" ;;
             state) echo "idle 5 100" ;;
+            limit-reset) echo "${FAKE_RESET:-0}" ;;
             show-token) echo "$FAKE_TOKEN" ;;
         esac ;;
 esac
@@ -149,18 +150,20 @@ openssl dgst -sha256 -verify "$tmp/pub.pem" -signature "$tmp/sig" "$tmp/signed" 
 # --- renewal by agent-state ---------------------------------------------------
 reset
 export FAKE_AGE=100
-[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok" ]] || fail "agent-state, fresh token: state line"
+[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok 0" ]] || fail "agent-state, fresh token: state line"
 [[ ! -e "$tmp/curl.log" ]] || fail "agent-state, fresh token: renewed although not due"
+[[ "$(FAKE_RESET=1795407000 "$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok 1795407000" ]] ||
+    fail "agent-state: limit reset time missing from the state line"
 reset
 export FAKE_AGE=2401
-[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok" ]] || fail "agent-state, old token: state line"
+[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok 0" ]] || fail "agent-state, old token: state line"
 [[ "$(cat "$tmp/stored" 2>/dev/null)" == "$TOKEN" ]] || fail "agent-state, old token: not renewed"
 reset
-[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok" ]] || fail "agent-state, no token: state line"
+[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 ok 0" ]] || fail "agent-state, no token: state line"
 [[ "$(cat "$tmp/stored" 2>/dev/null)" == "$TOKEN" ]] || fail "agent-state, no token: not renewed"
 reset
 export FAKE_RUNNING=false
-[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "off 0 0 ok" ]] || fail "agent-state, container off: state line"
+[[ "$("$here/kestic-agent.sh" agent-state 2>/dev/null)" == "off 0 0 ok 0" ]] || fail "agent-state, container off: state line"
 [[ ! -e "$tmp/curl.log" ]] || fail "agent-state, container off: asked GitHub for a token"
 
 # --- failures store nothing -----------------------------------------------------
@@ -170,7 +173,7 @@ if KESTIC_AGENT_APP_ID=abc "$here/kestic-agent.sh" token 2>/dev/null; then fail 
 reset
 if FAKE_INSTALLATION= "$here/kestic-agent.sh" token 2>/dev/null; then fail "token, App not installed: succeeded"; fi
 [[ ! -e "$tmp/stored" ]] || fail "token, App not installed: stored something"
-[[ "$(FAKE_INSTALLATION= "$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 failed" ]] ||
+[[ "$(FAKE_INSTALLATION= "$here/kestic-agent.sh" agent-state 2>/dev/null)" == "idle 5 100 failed 0" ]] ||
     fail "agent-state, renewal fails: state line missing or not marked failed"
 reset
 if FAKE_ACCESS= "$here/kestic-agent.sh" token 2>/dev/null; then fail "token refused by GitHub: succeeded"; fi
@@ -207,8 +210,19 @@ export FAKE_RUNNING=false
 "$here/kestic-agent.sh" stop > /dev/null || fail "stop, container off: exit $?"
 [[ ! -e "$tmp/curl.log" ]] || fail "stop, container off: called GitHub"
 
-# --- kestic-agent-inner.sh: store-token and state -----------------------------------
+# --- kestic-agent-inner.sh: store-token, state and limit-reset ----------------------
 inner="$here/kestic-agent-inner.sh"
+# Fake tmux: no session unless FAKE_PANE names a file with the pane's text, so
+# the test never reads a real agent session (inside the agent's own container).
+cat > "$tmp/bin/tmux" <<'FAKE'
+#!/usr/bin/env bash
+case "$1" in
+    has-session) [[ -n "${FAKE_PANE:-}" ]] ;;
+    capture-pane) [[ -n "${FAKE_PANE:-}" ]] && cat "$FAKE_PANE" ;;
+    *) exit 1 ;;
+esac
+FAKE
+chmod +x "$tmp/bin/tmux"
 export HOME="$tmp/home" KESTIC_AGENT_TOKEN_FILE="$tmp/home/gh-token"
 mkdir -p "$HOME"
 printf '%s\n' "$TOKEN" | "$inner" store-token || fail "store-token: exit $?"
@@ -224,6 +238,29 @@ mkdir -p "$HOME/.kestic-agent"
 : > "$HOME/.kestic-agent/issue"
 printf '12x$(id)\n' > "$HOME/.kestic-agent/turn"
 [[ "$("$inner" state)" == "none 0 12" ]] || fail "state: empty or odd files not sanitised: '$("$inner" state)'"
+
+# limit-reset: the reset time of a usage limit at the end of the session, as the
+# next such time after the turn started; 0 without one, and 0 for a time more
+# than five hours ahead (an older message). The turn starts two hours ago, so the
+# reset times are relative to the real clock.
+turn=$(($(date +%s) - 7200))
+echo "$turn" > "$HOME/.kestic-agent/turn"
+pane="$tmp/pane"
+soon="$(LC_ALL=C date -u -d "@$((turn + 3 * 3600))" +%-l:%M%P)"
+printf '%s\n' "● Agent finished" "  ⎿  You've hit your 5-hour limit · resets $soon (UTC)" "" "❯ " > "$pane"
+expected="$(date -u -d "$(date -u -d "@$turn" +%F) $soon" +%s)"
+((expected >= turn)) || expected=$((expected + 86400))
+[[ "$(FAKE_PANE="$pane" "$inner" limit-reset)" == "$expected" ]] ||
+    fail "limit-reset: $soon: '$(FAKE_PANE="$pane" "$inner" limit-reset)', expected $expected"
+stale="$(LC_ALL=C date -u -d "@$((turn - 600))" +%-l:%M%P)"
+printf '%s\n' "  ⎿  You've hit your 5-hour limit · resets $stale (UTC)" "❯ " > "$pane"
+[[ "$(FAKE_PANE="$pane" "$inner" limit-reset)" == 0 ]] ||
+    fail "limit-reset: message older than the turn counted: '$(FAKE_PANE="$pane" "$inner" limit-reset)'"
+{ printf '%s\n' "  ⎿  You've hit your 5-hour limit · resets 4:10am (UTC)"; seq 20; } > "$pane"
+[[ "$(FAKE_PANE="$pane" "$inner" limit-reset)" == 0 ]] || fail "limit-reset: old message counted"
+printf '%s\n' "  ⎿  You've hit your limit · resets \$(id)am (UTC)" > "$pane"
+[[ "$(FAKE_PANE="$pane" "$inner" limit-reset)" == 0 ]] || fail "limit-reset: odd time accepted"
+[[ "$("$inner" limit-reset)" == 0 ]] || fail "limit-reset: no session"
 
 if ((failures > 0)); then
     echo "test-kestic-agent-token: $failures failure(s)" >&2
