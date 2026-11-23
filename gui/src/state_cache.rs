@@ -1285,7 +1285,7 @@ pub fn format_run_status(
         RunStatus::Running => (i18n("Running").to_string(), "state-sync", "highlight"),
         RunStatus::Pending => (i18n("Waiting").to_string(), "chronometer", "text"),
         RunStatus::Cancelled => (i18n("Cancelled").to_string(), "process-stop", "text"),
-        RunStatus::Interrupted => (i18n("Interrupted").to_string(), "state-offline", "text"),
+        RunStatus::Interrupted => (GuiText::Interrupted.text(), "state-offline", "text"),
     }
 }
 

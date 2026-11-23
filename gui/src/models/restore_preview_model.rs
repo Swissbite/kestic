@@ -28,9 +28,7 @@ use kestic_daemon::dbus_api::{
     SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use kestic_i18n::codes::ErrorKind;
-use kestic_i18n::messages::{
-    active_run_message, interrupted_by_sleep_message, nothing_restored_message,
-};
+use kestic_i18n::messages::{active_run_message, nothing_restored_message};
 use std::pin::Pin;
 
 model_row!(PreviewRow {
@@ -204,12 +202,12 @@ pub(crate) fn run_end_text(detail: &RunDetailDto) -> String {
         }
         RunStatus::Warning => tr(&nothing_restored_message()),
         RunStatus::Cancelled => tr(&ErrorKind::Cancelled.message(None, false)),
-        // Stopped by sleep, or ended at the next daemon start: the run says why.
+        // Stopped by sleep (the run says so) or ended at the next daemon start (no message).
         RunStatus::Interrupted => detail
             .run
             .summary_message
             .clone()
-            .unwrap_or_else(|| tr(&interrupted_by_sleep_message())),
+            .unwrap_or_else(|| GuiText::Interrupted.text()),
         // The generic text of an unrecognised error names a backup.
         _ => match detail.error_kind {
             Some(kind) if kind != ErrorKind::Unknown => {
@@ -533,6 +531,8 @@ impl qobject::RestorePreviewModel {
         });
         match started {
             Ok(run_id) => {
+                // One run per preview: a second click must not start another restore.
+                self.as_mut().set_can_restore(false);
                 self.as_mut().rust_mut().run_id = Some(run_id);
                 self.as_mut()
                     .set_run_target(QString::from(&result.target.check.detail));
@@ -736,6 +736,11 @@ mod tests {
                 Some("Interrupted by system sleep")
             )),
             "Interrupted by system sleep"
+        );
+        assert_eq!(
+            run_end_text(&ended_run(RunStatus::Interrupted, None)),
+            "Interrupted",
+            "ended at daemon start: no cause is named"
         );
         assert_eq!(
             run_end_text(&ended_run(RunStatus::Error, Some("restic failed"))),
