@@ -95,7 +95,11 @@ and new visible texts that only name what the spec defines (a column header, an 
    `must-fix` findings count like the others.
 4. **Fix rounds.** Fix every `must-fix`. Locally run the targeted checks of what you changed
    (step 2), not the full `just verify`: CI runs it on every push, in the same image. Push, then
-   run all reviews again on the new head while CI runs. Run the full `just verify` locally again
+   run the reviews again on the new head while CI runs. At most two review rounds per story:
+   the second round re-checks only the must-fix findings of the first and their fixes, with the
+   prompt plus the list of those findings; new should-fix findings of the second round go to the
+   milestone's clean-up issue, not into the story. A must-fix found in the second round is fixed
+   and only that fix is checked again. Run the full `just verify` locally again
    only when a fix touches `Cargo.toml`, `Cargo.lock`, a `build.rs`, the `justfile`,
    `.config/nextest.toml` or packaging. Merging `origin/m<n>` into the branch needs no new
    reviews and no local `just verify`; CI checks the pushed merge.
@@ -130,6 +134,9 @@ and new visible texts that only name what the spec defines (a column header, an 
   failure) → level 3. Each failed attempt gets an issue comment `Attempt <n>/3: <problem> –
   <hypothesis> – <result>`; a new session counts them before it tries again.
 - One story at a time; GUI, D-Bus, `Main.qml` and `po/` changes therefore never run in parallel.
+- **Story size:** a story with more than about 12 acceptance criteria, or one that touches
+  `core`, the daemon, D-Bus and the GUI with several independent parts, is split before it starts:
+  ask the maintainer with a proposed split (level 3). Smaller stories pass their reviews faster.
 - A flaky test is a defect: fix the cause. Retries, raised timeouts, ignored tests or loosened
   assertions are level 3. The maintainer may approve a re-run for a known infrastructure fault.
 
