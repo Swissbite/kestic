@@ -136,10 +136,20 @@ ColumnLayout {
     Kirigami.InlineMessage {
         objectName: form.namePrefix + "FeedbackBanner"
         Layout.fillWidth: true
-        type: form.draft.testFeedbackOk ? Kirigami.MessageType.Positive : Kirigami.MessageType.Error
+        // An unknown server is a question, not an error; a changed host key stays an error.
+        type: form.draft.testFeedbackOk ? Kirigami.MessageType.Positive
+            : form.draft.hostKey !== null ? Kirigami.MessageType.Information
+            : Kirigami.MessageType.Error
         visible: form.draft.testFeedback !== ""
         text: form.draft.testFeedback
         actions: [
+            Kirigami.Action {
+                objectName: form.namePrefix + "ShowHostKeyAction"
+                icon.name: "security-high"
+                text: i18n("Trust Server…")
+                visible: !form.draft.testFeedbackOk && form.draft.hostKey !== null
+                onTriggered: hostKeyDialog.open()
+            },
             Kirigami.Action {
                 objectName: form.namePrefix + "SwitchToInitAction"
                 icon.name: "folder-new"
@@ -402,6 +412,7 @@ ColumnLayout {
             objectName: form.namePrefix + "SshKeyHint"
             visible: form.draft.kindIsSftp
             Kirigami.FormData.label: i18n("Login:")
+            Kirigami.FormData.labelAlignment: Qt.AlignTop
             text: i18n("With your SSH key or the ssh-agent. Copy your public key to the server first, for example with ssh-copy-id.")
             wrapMode: Text.Wrap
             Layout.fillWidth: true

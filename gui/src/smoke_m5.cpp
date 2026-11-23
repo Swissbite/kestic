@@ -496,6 +496,13 @@ int scenario_sftp_form(const Ctx& c) {
     M3_CHECK_EQ(5619, type->property("text").toString(), QStringLiteral("ssh-ed25519"), "AC-M5-01-4 (a): key type");
     M3_CHECK_EQ(5620, print->property("text").toString(), fingerprint, "AC-M5-01-4 (a): SHA256 fingerprint");
     M3_CHECK(5621, !next->isEnabled(), "«Next» enabled before the server is trusted");
+    // Cancelling keeps the shown key; the result line offers the dialog again.
+    QMetaObject::invokeMethod(dialog, "close");
+    M3_CHECK(5628, wait_until([&] { return !dialog->property("opened").toBool(); }, 2000), "the dialog does not close");
+    QObject* reopen = object_named(w, "wizDestShowHostKeyAction");
+    M3_CHECK2(5629, reopen != nullptr, reopen->property("visible").toBool(), "«Trust Server…» missing after Cancel");
+    QMetaObject::invokeMethod(reopen, "trigger");
+    M3_CHECK(5630, wait_until([&] { return dialog->property("opened").toBool(); }, 2000), "«Trust Server…» does not open the dialog");
     wait_ms(600);
     if (!c.out_path.isEmpty()) {
         QString dialog_shot = c.out_path;
