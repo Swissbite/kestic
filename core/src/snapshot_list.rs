@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct DestinationSnapshots {
     /// Per configured backup (in the order given to [`sort_destination_snapshots`]).
     pub backups: Vec<(String, Vec<ResticSnapshot>)>,
-    /// Snapshots without a `kestic:` tag.
+    /// Snapshots without a unique `kestic:` tag.
     pub unassigned: Vec<ResticSnapshot>,
     /// Per backup ID that is neither configured nor described by a metadata snapshot of the
     /// destination, sorted by ID.
@@ -49,12 +49,9 @@ pub fn sort_destination_snapshots(
             by_backup.entry(id).or_default().push(snap);
             continue;
         }
-        // Tagged for several configured backups: it belongs to none of them.
-        if snap.has_several_backups(configured_backup_ids) {
-            unassigned.push(snap);
-            continue;
-        }
-        let Some(id) = snap.backup_ids().next().map(str::to_string) else {
+        // Without a backup ID, or tagged for several backups and assigned to none of them: no
+        // unique Kestic tag.
+        let Some(id) = snap.unique_backup_id().map(str::to_string) else {
             unassigned.push(snap);
             continue;
         };

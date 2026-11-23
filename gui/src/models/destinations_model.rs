@@ -48,25 +48,32 @@ pub struct DestinationsModelRust {
     rows: Vec<DestinationRow>,
 }
 
+/// Where the repository of a destination lies, as the user entered it: the folder or the URL.
+pub(crate) fn location_text(kind: &DestinationKind) -> String {
+    match kind {
+        DestinationKind::Local { path } => path.to_string_lossy().into_owned(),
+        DestinationKind::Rest { url, .. } => url.clone(),
+    }
+}
+
 fn build_destination_row(
     d: &DestinationSummaryDto,
     backups: &[BackupSummaryDto],
     now: OffsetDateTime,
 ) -> DestinationRow {
-    let (kind_name, kind_label, location, username) = match &d.destination.kind {
-        DestinationKind::Local { path } => (
+    let (kind_name, kind_label, username) = match &d.destination.kind {
+        DestinationKind::Local { .. } => (
             "local".to_string(),
             i18n("Local Folder").to_string(),
-            path.to_string_lossy().into_owned(),
             String::new(),
         ),
-        DestinationKind::Rest { url, username } => (
+        DestinationKind::Rest { username, .. } => (
             "rest".to_string(),
             GuiText::RestServer.text(),
-            url.clone(),
             username.clone().unwrap_or_default(),
         ),
     };
+    let location = location_text(&d.destination.kind);
     let (status_text, status_icon) = format_destination_status(d, now);
     let pending_forget_count = backups
         .iter()

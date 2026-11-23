@@ -275,8 +275,9 @@ fn check_new_folder(fx: &RestoreFixture, label: &str) -> RunDetailDto {
 }
 
 /// AC-M4-05-4 and -05-7: at the original location the restore needs a preview; the preview
-/// dry-runs first, sorts every file into the four outcomes with a second dry run with
-/// `--overwrite always`, and a preview without confirmation changes nothing.
+/// (a) dry-runs first, (b) sorts every file into the four outcomes, (c) changes nothing without
+/// confirmation, and (d) tells «not overwritten» from «unchanged» with a second dry run with
+/// `--overwrite always`, which an `always` preview does not need.
 fn check_preview_first(fx: &RestoreFixture, label: &str) {
     // `a.txt` older and different, `docs/deep/y.txt` newer and different, `b.bin` as backed up
     // and `docs/x.txt` gone.
@@ -306,22 +307,22 @@ fn check_preview_first(fx: &RestoreFixture, label: &str) {
     assert_eq!(
         o.get("x.txt"),
         Some(&RestoreOutcome::New),
-        "(a) AC-M4-05-4 {label}"
+        "(b) AC-M4-05-4 {label}"
     );
     assert_eq!(
         o.get("a.txt"),
         Some(&RestoreOutcome::Overwritten),
-        "(a) AC-M4-05-4 {label}"
+        "(b) AC-M4-05-4 {label}"
     );
     assert_eq!(
         o.get("y.txt"),
         Some(&RestoreOutcome::Kept),
-        "(a) AC-M4-05-4 {label}"
+        "(b) AC-M4-05-4 {label}"
     );
     assert_eq!(
         o.get("b.bin"),
         Some(&RestoreOutcome::Identical),
-        "(a) AC-M4-05-4 {label}"
+        "(b) AC-M4-05-4 {label}"
     );
     assert_eq!(
         (
@@ -331,16 +332,29 @@ fn check_preview_first(fx: &RestoreFixture, label: &str) {
             p.identical_files
         ),
         (1, 1, 1, 1),
-        "(a) AC-M4-05-4 {label}: counts"
-    );
-    assert!(
-        calls.iter().any(|c| c.contains("--overwrite always")),
-        "(a) AC-M4-05-4 {label}: second dry run with always: {calls:?}"
+        "(b) AC-M4-05-4 {label}: counts"
     );
     assert_eq!(
         tree_contents(&fx.src),
         before,
-        "(a) AC-M4-05-4/-05-7 {label}: nothing written without confirmation"
+        "(c) AC-M4-05-4/-05-7 {label}: nothing written without confirmation"
+    );
+    assert_eq!(
+        calls.len(),
+        2,
+        "(d) AC-M4-05-4 {label}: two dry runs: {calls:?}"
+    );
+    assert!(
+        calls[1].contains("--overwrite always"),
+        "(d) AC-M4-05-4 {label}: second dry run with always: {calls:?}"
+    );
+    let runs_before = fx.restore_calls().len();
+    fx.preview(&[], Some(fx.original()), RestoreOverwrite::Always);
+    let calls = &fx.restore_calls()[runs_before..];
+    assert_eq!(
+        calls.len(),
+        1,
+        "(d) AC-M4-05-4 {label}: one dry run in mode always: {calls:?}"
     );
 }
 
@@ -422,20 +436,23 @@ fn check_modes(fx: &RestoreFixture, label: &str) {
     }
 }
 
-/// AC-M4-05-6: every restore call names the mode and carries neither `--sparse` nor
+/// AC-M4-05-6: every restore call (a) has `--overwrite`, (b) with one of the four modes as
+/// its value, never restic's default left implicit, and (c) carries neither `--sparse` nor
 /// `--verify`.
 fn check_overwrite_args(fx: &RestoreFixture, label: &str) {
     let calls = fx.restore_calls();
     assert!(!calls.is_empty(), "{label}: restores ran");
     for call in calls {
+        let words: Vec<&str> = call.split_whitespace().collect();
+        let flag = words.iter().position(|w| *w == "--overwrite");
+        assert!(flag.is_some(), "(a) AC-M4-05-6 {label}: {call}");
+        let mode = flag.and_then(|i| words.get(i + 1)).copied();
         assert!(
-            call.contains("--overwrite"),
-            "(a) AC-M4-05-6 {label}: {call}"
+            matches!(mode, Some("never" | "if-newer" | "if-changed" | "always")),
+            "(b) AC-M4-05-6 {label}: explicit mode {mode:?}: {call}"
         );
-        assert!(
-            !call.contains("--sparse") && !call.contains("--verify"),
-            "(a) AC-M4-05-6 {label}: {call}"
-        );
+        assert!(!call.contains("--sparse"), "(c) AC-M4-05-6 {label}: {call}");
+        assert!(!call.contains("--verify"), "(c) AC-M4-05-6 {label}: {call}");
     }
 }
 

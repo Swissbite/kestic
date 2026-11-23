@@ -194,6 +194,29 @@ fn m4_s07_kestic_tags_without_id_leave_the_snapshot_unassigned() {
     );
 }
 
+/// A snapshot tagged for two backups, neither configured here, has no unique Kestic tag: it is
+/// unassigned, not sorted under the backup of its first tag; one tag repeated stays unique.
+#[test]
+fn m4_s07_two_unconfigured_backup_tags_leave_the_snapshot_unassigned() {
+    let snapshots = vec![
+        snap("two", "2026-11-15T12:00:00Z", &["kestic:x9", "kestic:y8"]),
+        snap("twice", "2026-11-14T12:00:00Z", &["kestic:x9", "kestic:x9"]),
+    ];
+    let sorted = sort_destination_snapshots(snapshots, &["b1"]);
+    let unassigned: Vec<&str> = sorted.unassigned.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(unassigned, ["two"], "two backup tags: unassigned");
+    let orphaned: Vec<(&str, Vec<&str>)> = sorted
+        .orphaned
+        .iter()
+        .map(|(id, s)| (id.as_str(), s.iter().map(|s| s.id.as_str()).collect()))
+        .collect();
+    assert_eq!(
+        orphaned,
+        [("x9", vec!["twice"])],
+        "one tag repeated: orphaned under it"
+    );
+}
+
 /// AC-M4-01-1: a repository password that also occurs inside the snapshot JSON (here the
 /// backup ID in every `kestic:<id>` tag, generated at runtime) does not change the listed
 /// snapshots: (a) both snapshots of the backup are listed, still under their backup.

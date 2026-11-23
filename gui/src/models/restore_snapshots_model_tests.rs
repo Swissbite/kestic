@@ -124,3 +124,59 @@ fn m4_s07_two_orphaned_backups_get_their_own_group() {
         "orphaned snapshots carry the hint"
     );
 }
+
+/// Two destinations with the same name get headings of their own: the shared name carries the
+/// location, a unique name stays as it is.
+#[test]
+fn m4_s07_destinations_with_the_same_name_get_their_own_heading() {
+    use kestic_core::model::DestinationKind;
+    let local = |name: &str, path: &str| {
+        Destination::new(
+            name,
+            DestinationKind::Local {
+                path: std::path::PathBuf::from(path),
+            },
+        )
+        .expect("destination")
+    };
+    let labels = destination_labels(&[
+        local("NAS", "/mnt/a"),
+        local("NAS", "/mnt/b"),
+        local("USB", "/media/usb"),
+    ]);
+    assert_eq!(labels[0].1, "NAS · /mnt/a", "first of the shared name");
+    assert_eq!(labels[1].1, "NAS · /mnt/b", "second of the shared name");
+    assert_eq!(labels[2].1, "USB", "a unique name stays");
+    let dto = |dest: &str| DestinationSnapshotsDto {
+        destination_id: dest.to_string(),
+        error_kind: None,
+        error_detail: None,
+        backups: Vec::new(),
+        unassigned: fixture_dtos(include_str!(
+            "../../../core/tests/fixtures/snapshot_pre_0_17_no_summary.json"
+        )),
+        orphaned: Vec::new(),
+        described: Vec::new(),
+    };
+    let now = OffsetDateTime::parse("2026-11-15T14:32:00Z", &Rfc3339).expect("time");
+    let mut rows = Vec::new();
+    push_group_rows(
+        &mut rows,
+        SnapshotGroup::Unassigned,
+        &dto(&labels[0].0),
+        &labels[0].1,
+        now,
+    );
+    push_group_rows(
+        &mut rows,
+        SnapshotGroup::Unassigned,
+        &dto(&labels[1].0),
+        &labels[1].1,
+        now,
+    );
+    assert_ne!(
+        rows.first().map(|r| &r.section_name),
+        rows.last().map(|r| &r.section_name),
+        "each destination has its own heading"
+    );
+}

@@ -115,10 +115,11 @@ impl ResticSnapshot {
         ids.all(|id| id == first).then_some(first)
     }
 
-    /// Whether the snapshot carries the tags of more than one configured backup.
-    pub fn has_several_backups(&self, configured: &[&str]) -> bool {
-        let mut ids = self.backup_ids().filter(|id| configured.contains(id));
-        ids.next().is_some_and(|first| ids.any(|id| id != first))
+    /// The one backup ID the `kestic:<id>` tags name; `None` without one or with several.
+    pub fn unique_backup_id(&self) -> Option<&str> {
+        let mut ids = self.backup_ids();
+        let first = ids.next()?;
+        ids.all(|id| id == first).then_some(first)
     }
 
     /// Whether this is a metadata snapshot (`kestic-meta:<id>`).
