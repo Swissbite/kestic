@@ -82,3 +82,45 @@ fn ac_m4_01_1_snapshots_are_grouped_by_day_with_their_time() {
         "(c) date of an older snapshot"
     );
 }
+
+/// Two orphaned backups of one destination with the same number of snapshots, newest time and
+/// host get different group headings, so the list never merges them under one heading.
+#[test]
+fn m4_s07_two_orphaned_backups_get_their_own_group() {
+    use kestic_daemon::dbus_api::OrphanedBackupDto;
+    let snap = |id: &str| {
+        let mut dtos = fixture_dtos(include_str!(
+            "../../../core/tests/fixtures/snapshot_pre_0_17_no_summary.json"
+        ));
+        dtos[0].id = id.to_string();
+        dtos.remove(0)
+    };
+    let group = |backup_id: &str, snap_id: &str| OrphanedBackupDto {
+        backup_id: backup_id.to_string(),
+        count: 1,
+        latest_time: Some("2026-10-02T18:00:00Z".to_string()),
+        latest_hostname: Some("notebook-alt".to_string()),
+        snapshots: vec![snap(snap_id)],
+    };
+    let dto = DestinationSnapshotsDto {
+        destination_id: "d1".to_string(),
+        error_kind: None,
+        error_detail: None,
+        backups: Vec::new(),
+        unassigned: Vec::new(),
+        orphaned: vec![group("x9", "s1"), group("y8", "s2")],
+        described: Vec::new(),
+    };
+    let now = OffsetDateTime::parse("2026-11-15T14:32:00Z", &Rfc3339).expect("time");
+    let mut rows = Vec::new();
+    push_group_rows(&mut rows, SnapshotGroup::Orphaned, &dto, "NAS", now);
+    assert_eq!(rows.len(), 2, "one row per snapshot");
+    assert_ne!(
+        rows[0].section_name, rows[1].section_name,
+        "each orphaned backup has its own group"
+    );
+    assert!(
+        rows.iter().all(|r| r.hint == "Not managed by Kestic"),
+        "orphaned snapshots carry the hint"
+    );
+}

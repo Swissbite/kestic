@@ -167,6 +167,125 @@ int scenario_restore_tab(const Ctx& c) {
     return 0;
 }
 
+// The snapshot list shows the further group `title` with `rows` snapshots.
+bool wait_for_group(QQuickWindow* w, QObject* backend, const QString& title, int rows) {
+    return wait_until([&] {
+        QQuickItem* p = visible_item(w, "restoreSnapshotsPage");
+        return p && p->property("title").toString() == title
+            && !backend->property("restore_overview_loading").toBool()
+            && model_rows(w, "restoreSnapshotsModel") == rows;
+    }, 20000);
+}
+
+// Checks that every row of the snapshot list carries `hint` and that the hint is drawn.
+int check_hints(QQuickWindow* w, const QString& hint, int code) {
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    M4_CHECK(code, snaps != nullptr && snaps->rowCount() > 0, "snapshot rows listed");
+    for (int row = 0; row < snaps->rowCount(); ++row) {
+        M4_CHECK_EQ(code + 1, role_value(snaps, row, "hint").toString(), hint, "(a) hint of every row");
+    }
+    finish_incubation(w);
+    int drawn = 0;
+    for (QObject* o : m3::objects_named(w, "restoreSnapshotHint")) {
+        auto* label = qobject_cast<QQuickItem*>(o);
+        if (label && label->isVisible() && label->property("text").toString() == hint) {
+            ++drawn;
+        }
+    }
+    M4_CHECK(code + 2, drawn == snaps->rowCount(), "(a) the hint is shown on every row");
+    return 0;
+}
+
+// Opens the further group `group` (titled `name`): in the wide layout with Tab and Return from
+// the group row that holds the focus, in the narrow one (the list is hidden) directly.
+bool open_next_group(const Ctx& c, const char* group, const QString& name) {
+    QQuickWindow* w = c.window;
+    if (w->property("narrowMode").toBool()) {
+        return QMetaObject::invokeMethod(w, "openRestoreGroup",
+            Q_ARG(QVariant, QString::fromLatin1(group)), Q_ARG(QVariant, name));
+    }
+    press_and_wait(w, Qt::Key_Tab, 80);
+    QQuickItem* row = nullptr;
+    for (QQuickItem* it = w->activeFocusItem(); it; it = it->parentItem()) {
+        if (it->objectName() == QLatin1String("restoreGroupListItem")) {
+            row = it;
+            break;
+        }
+    }
+    if (!row || row->property("group").toString() != QLatin1String(group)) {
+        return false;
+    }
+    send_key(w, Qt::Key_Return);
+    return true;
+}
+
+// `out_path` with the group name `group` instead of «unassigned».
+QString group_shot(const QString& out_path, const char* group) {
+    QString path = out_path;
+    return path.replace(QLatin1String("-unassigned-"), QStringLiteral("-%1-").arg(QLatin1String(group)));
+}
+
+/// AC-M4-07-8: foreign and orphaned snapshots in the list each carry the hint «Not managed by
+/// Kestic»; the snapshots of a backup not configured here say so. The groups open from «Other
+/// snapshots» of the restore area with the keyboard.
+int scenario_foreign(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    QObject* tab = object_named(w, "restoreTabAction");
+    M4_CHECK(5701, tab != nullptr, "restoreTabAction missing");
+    trigger(tab);
+    M4_CHECK(5702, wait_until([&] {
+        return w->property("activeTab").toInt() == 4
+            && !c.backend->property("restore_overview_loading").toBool()
+            && model_rows(w, "restoreGroupsModel") == 3;
+    }, 20000), "the restore area lists three further groups");
+    finish_incubation(w);
+    QAbstractItemModel* groups = model_named(w, "restoreGroupsModel");
+    M4_CHECK_EQ(5703, role_value(groups, 0, "name").toString(), loc(c.lang, "Unassigned", "Nicht zugeordnet"),
+        "first group");
+    M4_CHECK_EQ(5704, role_value(groups, 0, "subtitle").toString(),
+        loc(c.lang, "1 snapshot without a unique Kestic tag", "1 Snapshot ohne eindeutigen Kestic-Tag"), "unassigned count");
+    M4_CHECK_EQ(5705, role_value(groups, 1, "subtitle").toString(),
+        loc(c.lang, "1 backup without description", "1 Backup ohne Beschreibung"), "orphaned count");
+    M4_CHECK_EQ(5706, role_value(groups, 2, "group").toString(), QStringLiteral("described"),
+        "the backup not configured here is shown, not hidden");
+
+    QQuickItem* group_row = tab_to(w, "restoreGroupListItem", 40);
+    M4_CHECK(5707, group_row != nullptr, "Tab reaches the further groups");
+    send_key(w, Qt::Key_Return);
+    const QString unassigned = loc(c.lang, "Unassigned", "Nicht zugeordnet");
+    M4_CHECK(5708, wait_for_group(w, c.backend, unassigned, 1), "Return opens the unassigned snapshots");
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    M4_CHECK_EQ(5709, role_value(snaps, 0, "sectionName").toString(),
+        loc(c.lang, "Unassigned on 'NAS'\n1 snapshot", "Nicht zugeordnet auf «NAS»\n1 Snapshot"),
+        "grouped by destination, with the number of snapshots");
+    const QString not_managed = loc(c.lang, "Not managed by Kestic", "Von Kestic nicht verwaltet");
+    if (int rc = check_hints(w, not_managed, 5710)) {
+        return rc;
+    }
+    M4_CHECK(5713, save_screenshot(w, c.out_path), "screenshot failed");
+
+    const QString orphaned = loc(c.lang, "Orphaned", "Verwaist");
+    M4_CHECK(5714, open_next_group(c, "orphaned", orphaned), "open the orphaned group");
+    M4_CHECK(5715, wait_for_group(w, c.backend, orphaned, 1), "the orphaned snapshots are listed");
+    M4_CHECK(5716, role_value(snaps, 0, "sectionName").toString().startsWith(
+        loc(c.lang, "Backup without description on 'NAS'\n1 snapshot · latest ",
+            "Backup ohne Beschreibung auf «NAS»\n1 Snapshot · zuletzt ")),
+        "orphaned backup with its number of snapshots and newest snapshot");
+    if (int rc = check_hints(w, not_managed, 5717)) {
+        return rc;
+    }
+    M4_CHECK(5720, save_screenshot(w, group_shot(c.out_path, "orphaned")), "screenshot failed");
+
+    const QString described = loc(c.lang, "Backups not configured here", "Hier nicht angelegte Backups");
+    M4_CHECK(5721, open_next_group(c, "described", described), "open the group of backups not configured here");
+    M4_CHECK(5722, wait_for_group(w, c.backend, described, 1), "the backup not configured here is listed");
+    if (int rc = check_hints(w, loc(c.lang, "Backup not configured here", "Backup hier nicht angelegt"), 5723)) {
+        return rc;
+    }
+    M4_CHECK(5726, save_screenshot(w, group_shot(c.out_path, "described")), "screenshot failed");
+    return 0;
+}
+
 // The restore dialog's model and the dialog itself.
 struct Restore {
     QObject* dialog = nullptr;
@@ -1507,6 +1626,8 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_mapping(ctx);
     } else if (scen == QLatin1String("m4-restic-outdated")) {
         rc = scenario_restic_outdated(ctx);
+    } else if (scen == QLatin1String("m4-foreign")) {
+        rc = scenario_foreign(ctx);
     } else if (scen == QLatin1String("m4-show-restore")) {
         rc = scenario_show_restore(ctx);
     } else {

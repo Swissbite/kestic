@@ -3849,3 +3849,81 @@ msgstr "jährlich"
 #: gui/src/retention_texts.rs
 msgid "%1 (oldest)"
 msgstr "%1 (ältester)"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "Unassigned"
+msgstr "Nicht zugeordnet"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "Orphaned"
+msgstr "Verwaist"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "Backups not configured here"
+msgstr "Hier nicht angelegte Backups"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "%1 snapshot without a unique Kestic tag"
+msgid_plural "%1 snapshots without a unique Kestic tag"
+msgstr[0] "%1 Snapshot ohne eindeutigen Kestic-Tag"
+msgstr[1] "%1 Snapshots ohne eindeutigen Kestic-Tag"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "%1 backup without description"
+msgid_plural "%1 backups without description"
+msgstr[0] "%1 Backup ohne Beschreibung"
+msgstr[1] "%1 Backups ohne Beschreibung"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "%1 backup with description"
+msgid_plural "%1 backups with description"
+msgstr[0] "%1 Backup mit Beschreibung"
+msgstr[1] "%1 Backups mit Beschreibung"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "latest %1 from %2"
+msgstr "zuletzt %1 von %2"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "latest %1"
+msgstr "zuletzt %1"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Not managed by Kestic"
+msgstr "Von Kestic nicht verwaltet"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Unassigned on '%1'"
+msgstr "Nicht zugeordnet auf «%1»"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Backup without description on '%1'"
+msgstr "Backup ohne Beschreibung auf «%1»"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Backup on '%1'"
+msgstr "Backup auf «%1»"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Backup not configured here"
+msgstr "Backup hier nicht angelegt"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "'%1': %2"
+msgstr "«%1»: %2"
+
+#: gui/src/qml/RestorePage.qml
+msgid "Other snapshots"
+msgstr "Weitere Snapshots"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "No unassigned snapshots"
+msgstr "Keine nicht zugeordneten Snapshots"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "No orphaned backups"
+msgstr "Keine verwaisten Backups"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "ID %1"
+msgstr "ID %1"

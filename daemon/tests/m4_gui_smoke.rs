@@ -879,3 +879,73 @@ fn ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab() {
         },
     );
 }
+
+/// A daemon with one destination «NAS», the backup «Home» with one snapshot and, written with
+/// the restic CLI, a snapshot without a Kestic tag, one of the unknown backup `x9` (orphaned) and
+/// one of the backup `y7` that is not configured here but has a metadata snapshot.
+fn foreign_env(root: &Path) -> (M3Rig, StdFakes) {
+    let fakes = StdFakes::start_with(FakeSetup {
+        active_network: Some("HomeWifi"),
+        ..FakeSetup::default()
+    });
+    let variant = latest_variant();
+    let rig = M3Rig::start_on(
+        root,
+        &variant,
+        "",
+        KESTIC_BUS_NAME,
+        datetime!(2026-11-15 14:32:00 UTC),
+        |o| o.enable_scheduler = false,
+    );
+    let repo = root.join("repo-NAS");
+    let (dest, password) =
+        add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
+    let backup = rig.add_backup_to(&dest, "Home", |_| {});
+    let home_tag = format!("kestic:{}", backup.id);
+    for (tag, time, host) in [
+        (home_tag.as_str(), "2026-11-15 12:00:00", "laptop"),
+        ("", "2026-11-08 21:14:00", "notebook"),
+        ("kestic:x9", "2026-10-02 18:00:00", "notebook-alt"),
+        ("kestic:y7", "2026-09-12 09:30:00", "desktop-alt"),
+        ("kestic-meta:y7", "2026-09-12 09:31:00", "desktop-alt"),
+    ] {
+        let work = root.join(format!("work-{}", time.replace([' ', ':'], "-")));
+        std::fs::create_dir_all(&work).expect("mkdir work");
+        write_snapshot(
+            &variant.bin,
+            &repo,
+            &password,
+            &work,
+            &RawSnapshot { tag, time, host },
+        );
+    }
+    (rig, fakes)
+}
+
+/// AC-M4-07-8: foreign and orphaned snapshots in the list (a) each carry the hint «Not managed
+/// by Kestic»; snapshots of a backup not configured here say so instead.
+#[test]
+fn ac_m4_07_8_foreign_and_orphaned_snapshots_say_not_managed_by_kestic() {
+    run_isolated_test(
+        "ac_m4_07_8_foreign_and_orphaned_snapshots_say_not_managed_by_kestic",
+        "KESTIC_AC_M4_07_8_INNER",
+        |root| {
+            let (rig, _fakes) = foreign_env(root);
+            for (layout, lang) in [
+                ("wide", "en"),
+                ("wide", "de"),
+                ("narrow", "en"),
+                ("narrow", "de"),
+            ] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-foreign",
+                    layout,
+                    lang,
+                    &smoke_artifact("restore-unassigned", layout, lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}

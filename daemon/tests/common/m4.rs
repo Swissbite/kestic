@@ -7,11 +7,21 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-/// A snapshot to write with restic: tag, time (restic format «2026-11-15 12:00:00») and host.
+/// A snapshot to write with restic: tag (empty: none), time (restic format «2026-11-15
+/// 12:00:00») and host.
 pub struct RawSnapshot<'a> {
     pub tag: &'a str,
     pub time: &'a str,
     pub host: &'a str,
+}
+
+/// `--tag <tag>`, or nothing for a snapshot without tag.
+fn tag_args(tag: &str) -> Vec<&str> {
+    if tag.is_empty() {
+        Vec::new()
+    } else {
+        vec!["--tag", tag]
+    }
 }
 
 /// Writes `snap` into the local repository `repo` with `restic`; the source below `work` gets a
@@ -33,7 +43,8 @@ pub fn write_snapshot(
     let out = Command::new(restic)
         .arg("-r")
         .arg(repo)
-        .args(["backup", "--no-cache", "--json", "--tag", snap.tag])
+        .args(["backup", "--no-cache", "--json"])
+        .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
         .arg(&src)
         .env("RESTIC_PASSWORD", password)
@@ -59,7 +70,8 @@ pub fn backup_dir(
     let out = Command::new(restic)
         .arg("-r")
         .arg(repo)
-        .args(["backup", "--no-cache", "--json", "--tag", snap.tag])
+        .args(["backup", "--no-cache", "--json"])
+        .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
         .arg(src)
         .env("RESTIC_PASSWORD", password)
@@ -195,7 +207,8 @@ pub fn backup_stdin(
     let mut child = Command::new(restic)
         .arg("-r")
         .arg(repo)
-        .args(["backup", "--no-cache", "--json", "--tag", snap.tag])
+        .args(["backup", "--no-cache", "--json"])
+        .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
         .args(["--stdin", "--stdin-filename", path])
         .env("RESTIC_PASSWORD", password)

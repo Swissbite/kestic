@@ -7,7 +7,8 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
-// Restore area, right column: the snapshots of one backup, newest first, grouped by day.
+// Restore area, right column: the snapshots of one backup, newest first, grouped by day, or
+// those of one further group (unassigned, orphaned, not configured here) per destination.
 // Return opens a snapshot for browsing; the context menu (Menu key, Shift+F10 or right click)
 // also compares it with the previous one or restores it. The search field (Ctrl+F) searches
 // all snapshots of the backup. «Compare…» turns the list into a choice of exactly two snapshots
@@ -22,6 +23,14 @@ Kirigami.ScrollablePage {
     required property var restoreSnapshotsModel
     required property string backupId
     property string backupName: ""
+    // The further group listed instead of a backup; empty for a backup.
+    property string group: ""
+    // Why destinations of the group could not be listed.
+    property string groupError: ""
+
+    readonly property bool loading: group === ""
+        ? appBackend.restore_snapshots_loading : appBackend.restore_overview_loading
+    readonly property string errorText: group === "" ? appBackend.restore_snapshots_error : groupError
 
     // The list whose selected row gets the focus when the page is shown again.
     readonly property var primaryList: restoreSnapshotsListView
@@ -38,10 +47,30 @@ Kirigami.ScrollablePage {
     // The destination of the chosen snapshots; both must be on the same one.
     property string compareDestinationId: ""
 
+    function syncRows() {
+        restoreSnapshotsModel.sync();
+        groupError = restoreSnapshotsModel.groupError();
+    }
+
     function reload() {
         endCompare();
         restoreSnapshotsListView.currentIndex = -1;
-        appBackend.loadRestoreSnapshots(backupId);
+        restoreSnapshotsModel.setGroup(group);
+        if (group === "") {
+            appBackend.loadRestoreSnapshots(backupId);
+        } else {
+            syncRows();
+        }
+    }
+
+    // Lists the snapshots of backup `newBackupId`, or of the further group `newGroup`, under
+    // the title `title`.
+    function showSource(newBackupId, newGroup, title) {
+        backupName = title;
+        group = newGroup;
+        backupId = newBackupId;
+        searchField.text = "";
+        reload();
     }
 
     function startCompare() {
@@ -98,14 +127,15 @@ Kirigami.ScrollablePage {
     }
 
     Component.onCompleted: reload()
-    onBackupIdChanged: {
-        searchField.text = "";
-        reload();
-    }
 
     Connections {
         target: appBackend
-        function onRestoreSnapshotsUpdated() { restoreSnapshotsModel.sync(); }
+        function onRestoreSnapshotsUpdated() {
+            if (page.group === "") restoreSnapshotsModel.sync();
+        }
+        function onRestoreOverviewUpdated() {
+            if (page.group !== "") page.syncRows();
+        }
     }
 
     actions: [
@@ -120,8 +150,15 @@ Kirigami.ScrollablePage {
             objectName: "restoreSnapshotsRefreshAction"
             icon.name: "view-refresh"
             text: Texts.label("refresh")
-            enabled: !appBackend.restore_snapshots_loading
-            onTriggered: page.reload()
+            enabled: !page.loading
+            onTriggered: {
+                if (page.group === "") {
+                    page.reload();
+                } else {
+                    page.endCompare();
+                    appBackend.loadRestoreOverview();
+                }
+            }
         }
     ]
 
@@ -158,6 +195,7 @@ Kirigami.ScrollablePage {
             id: searchField
             objectName: "snapshotSearchField"
             Layout.fillWidth: true
+            visible: page.group === ""
             placeholderText: Texts.label("search_in_backup_snapshots")
             Accessible.name: Texts.label("search_in_backup_snapshots")
             // Ctrl+F (the field's default) focuses this field; the other search and filter
@@ -171,30 +209,33 @@ Kirigami.ScrollablePage {
 
         Kirigami.LoadingPlaceholder {
             Layout.fillWidth: true
-            visible: appBackend.restore_snapshots_loading
+            visible: page.loading
             text: Texts.label("loading_snapshots")
         }
 
         Kirigami.InlineMessage {
+            objectName: "restoreSnapshotsError"
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
-            visible: !appBackend.restore_snapshots_loading && appBackend.restore_snapshots_error !== ""
-            text: appBackend.restore_snapshots_error
+            visible: !page.loading && page.errorText !== ""
+            text: page.errorText
             actions: [
                 Kirigami.Action {
                     text: Texts.label("retry")
-                    onTriggered: page.reload()
+                    onTriggered: page.group === "" ? page.reload() : appBackend.loadRestoreOverview()
                 }
             ]
         }
 
         Kirigami.PlaceholderMessage {
+            objectName: "restoreSnapshotsEmpty"
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 2
-            visible: !appBackend.restore_snapshots_loading && restoreSnapshotsListView.count === 0
-                && appBackend.restore_snapshots_error === ""
+            visible: !page.loading && restoreSnapshotsListView.count === 0 && page.errorText === ""
             icon.name: "view-history"
-            text: Texts.label("no_snapshots_yet")
+            text: page.group === "unassigned" ? i18n("No unassigned snapshots")
+                : page.group === "orphaned" ? i18n("No orphaned backups")
+                : Texts.label("no_snapshots_yet")
         }
 
         ListView {
@@ -202,7 +243,7 @@ Kirigami.ScrollablePage {
             objectName: "restoreSnapshotsListView"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(contentHeight, Kirigami.Units.gridUnit * 12)
-            visible: !appBackend.restore_snapshots_loading && count > 0
+            visible: !page.loading && count > 0
             interactive: false
             keyNavigationEnabled: true
             model: restoreSnapshotsModel
@@ -215,11 +256,32 @@ Kirigami.ScrollablePage {
             }
 
             section.property: "sectionName"
-            section.delegate: Kirigami.ListSectionHeader {
+            // A section name may carry details after its first line (a backup not configured
+            // here: number of snapshots, newest one); they wrap below the heading.
+            section.delegate: ColumnLayout {
+                id: sectionItem
                 required property string section
-                objectName: "restoreSnapshotSectionHeader"
+                readonly property int lineBreak: section.indexOf("\n")
                 width: ListView.view.width
-                text: section
+                spacing: 0
+
+                Kirigami.ListSectionHeader {
+                    id: sectionHeader
+                    objectName: "restoreSnapshotSectionHeader"
+                    Layout.fillWidth: true
+                    text: sectionItem.lineBreak < 0 ? sectionItem.section
+                        : sectionItem.section.substring(0, sectionItem.lineBreak)
+                }
+                Controls.Label {
+                    objectName: "restoreSnapshotSectionDetail"
+                    visible: sectionItem.lineBreak >= 0
+                    text: visible ? sectionItem.section.substring(sectionItem.lineBreak + 1) : ""
+                    wrapMode: Text.Wrap
+                    opacity: 0.75
+                    leftPadding: sectionHeader.leftPadding
+                    rightPadding: sectionHeader.rightPadding
+                    Layout.fillWidth: true
+                }
             }
 
             delegate: Controls.ItemDelegate {
@@ -232,6 +294,8 @@ Kirigami.ScrollablePage {
                 required property string subtitle
                 required property string previousSnapshotId
                 required property string destinationId
+                required property string hint
+                required property string tags
 
                 readonly property bool chosen: page.compareIds.indexOf(snapshotId) >= 0
 
@@ -240,7 +304,8 @@ Kirigami.ScrollablePage {
                 highlighted: ListView.isCurrentItem
                 Accessible.name: title
                 Accessible.description: page.compareMode && chosen
-                    ? i18n("Chosen to compare") : subtitle
+                    ? i18n("Chosen to compare")
+                    : (hint === "" ? subtitle : Texts.labelArgs("two_parts", [subtitle, hint]))
 
                 onClicked: {
                     ListView.view.currentIndex = index;
@@ -315,6 +380,35 @@ Kirigami.ScrollablePage {
                             opacity: 0.75
                             elide: Text.ElideRight
                             Layout.fillWidth: true
+                        }
+                        Controls.Label {
+                            objectName: "restoreSnapshotTags"
+                            visible: appBackend.expert_mode && snapRow.tags !== ""
+                            text: snapRow.tags
+                            font: Kirigami.Theme.fixedWidthFont
+                            color: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                            opacity: 0.7
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        RowLayout {
+                            visible: snapRow.hint !== ""
+                            spacing: Kirigami.Units.smallSpacing
+                            Layout.fillWidth: true
+                            Kirigami.Icon {
+                                source: "dialog-information"
+                                color: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                                Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                                Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                            }
+                            Controls.Label {
+                                objectName: "restoreSnapshotHint"
+                                text: snapRow.hint
+                                color: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                                opacity: 0.75
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
                         }
                     }
 
