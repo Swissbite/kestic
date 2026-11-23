@@ -483,6 +483,12 @@ int scenario_sftp_form(const Ctx& c) {
             "Geben Sie den Benutzernamen auf dem Server ein: nur Buchstaben, Ziffern, «.», «_» und «-»."),
         "hint for the user name");
     M3_CHECK(5633, !item_named(w, "wizDestTestButton")->isEnabled(), "«Test Connection» enabled for «anna;id»");
+    // The hint wraps within the form's width (the German text is longer than a narrow window).
+    QQuickItem* user_field = item_named(w, "wizDestSftpUserField");
+    const double hint_right = user_error->mapToScene(QPointF(user_error->width(), 0)).x();
+    const double field_right = user_field->mapToScene(QPointF(user_field->width(), 0)).x();
+    M3_CHECK(5636, hint_right <= field_right + 1.0, "the user name hint is wider than the form");
+    M3_CHECK(5637, user_error->property("wrapMode").toInt() != 0, "the user name hint does not wrap");
     if (!c.out_path.isEmpty()) {
         scroll_into_view(w, user_error);
         wait_ms(600);

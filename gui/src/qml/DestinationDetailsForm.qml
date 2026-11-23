@@ -342,6 +342,8 @@ ColumnLayout {
             visible: form.draft.kindIsSftp && !form.draft.hostValid
             text: i18n("Enter a host name or an IP address.")
             color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
 
         Controls.TextField {
@@ -362,6 +364,8 @@ ColumnLayout {
             visible: form.draft.kindIsSftp && !form.draft.portValid
             text: i18n("Enter a port from 1 to 65535.")
             color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
 
         Controls.TextField {
@@ -382,6 +386,8 @@ ColumnLayout {
             visible: form.draft.kindIsSftp && !form.draft.sftpUserValid
             text: i18n("Enter the user name on the server: only letters, digits, '.', '_' and '-'.")
             color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
 
         Controls.TextField {
