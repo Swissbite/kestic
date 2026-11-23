@@ -419,7 +419,8 @@ mod tests {
 
     #[test]
     fn repositories_below_the_target_are_named_relative_to_it() {
-        let dir = std::env::temp_dir().join(format!("kestic-repos-below-{}", std::process::id()));
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let dir = tmp.path();
         std::fs::create_dir_all(dir.join("home/vault")).expect("mkdir");
         let target = std::fs::canonicalize(dir.join("home")).expect("canonical");
         let below = repositories_below(
@@ -430,7 +431,6 @@ mod tests {
                 dir.join("elsewhere"),
             ],
         );
-        std::fs::remove_dir_all(&dir).expect("cleanup");
         assert_eq!(below, vec!["/vault".to_string()]);
     }
 
