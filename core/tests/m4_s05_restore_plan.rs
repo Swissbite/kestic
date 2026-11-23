@@ -183,10 +183,10 @@ fn ac_m4_05_17_restore_runs_from_the_common_folder_never_into_root() {
     let across = sel(&["/etc/x", "/home/u/y"]);
     let plan = plan_restore(ID, &across, EntryKind::Dir).expect("plan");
     assert_eq!(plan.folder, "/", "(c) common folder of top-level entries");
-    let original = original_location(&plan.folder, &snapshot);
+    let original = original_location(&plan.folder, &snapshot, None);
     assert!(original.needs_user_choice, "(c) `/` needs a chosen folder");
     assert_eq!(original.mapped_dir, None, "(c) `/` is never a target");
-    let inside = original_location("/etc", &snapshot);
+    let inside = original_location("/etc", &snapshot, None);
     assert_eq!(
         inside.mapped_dir.as_deref(),
         Some("/etc"),

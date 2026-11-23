@@ -1184,6 +1184,56 @@ int scenario_restore_target_texts(const Ctx& c) {
     return 0;
 }
 
+/// AC-M4-06-1 (smoke part): the snapshot holds `/home/<user>/Dokumente/a.txt` and the home of
+/// the test has `Dokumente`. The restore dialog for `a.txt` (a) offers `~/Dokumente` as the
+/// original location and (b) shows the mapping «Original: /home/<user>/Dokumente (<user> →
+/// <home>)»; the preview at the mapped folder runs.
+int scenario_restore_mapping(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 6601, 1)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 6606)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    // A snapshot of one file opens at that file; its folder holds it.
+    const QString file = role_value(snaps, 0, "startDir").toString();
+    const QString folder = file.section(QLatin1Char('/'), 0, -2);
+    const QString user = folder.section(QLatin1Char('/'), 2, 2);
+    M4_CHECK(6609, folder == QStringLiteral("/home/") + user + QStringLiteral("/Dokumente"),
+        qPrintable(QStringLiteral("the snapshot holds /home/<user>/Dokumente: ") + file));
+    Browse b = browse_page(w);
+    M4_CHECK(6610, QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, folder)), "openDir failed");
+    M4_CHECK(6611, wait_for_dir(w, folder), "the folder Dokumente opens");
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 6612)) {
+        return rc;
+    }
+    Restore r = restore_dialog(w);
+    QObject* original_radio = object_named(w, "restoreOriginalRadio");
+    QObject* original_dir = object_named(w, "restoreOriginalDirLabel");
+    QObject* mapping = object_named(w, "restoreMappingLabel");
+    M4_CHECK(6617, original_radio && original_dir && mapping, "dialog controls exist");
+    M4_CHECK(6618, wait_for_preview(r.model), "the preview of the new folder is done");
+    M4_CHECK(6619, original_radio->property("enabled").toBool(), "(a) the original location can be chosen");
+    M4_CHECK_EQ(6620, original_dir->property("text").toString(), QStringLiteral("~/Dokumente"),
+        "(a) the original location is Dokumente in the user's home");
+    const QString home = QString::fromLocal8Bit(qgetenv("HOME")).section(QLatin1Char('/'), -1);
+    M4_CHECK(6621, mapping->property("visible").toBool(), "(b) the mapping is shown");
+    M4_CHECK_EQ(6622, mapping->property("text").toString(),
+        loc(c.lang, "Original: %1 (%2 → %3)", "Original: %1 (%2 → %3)").arg(folder, user, home),
+        "(b) the mapping names the original folder and old → new user");
+    M4_CHECK(6623, click_ui_item(w, qobject_cast<QQuickItem*>(original_radio), "original location"),
+        "the original location could not be chosen");
+    M4_CHECK(6624, wait_until([&] { return r.model->property("target_original").toBool(); }, 3000),
+        "the original location is chosen");
+    M4_CHECK(6625, wait_for_preview(r.model), "the preview at the mapped folder is done");
+    M4_CHECK(6626, r.model->property("can_restore").toBool(), "the mapped folder can be restored into");
+    repaint_fully(w);
+    M4_CHECK(6627, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 /// AC-M4-05-1, AC-M4-05-4 (smoke part), AC-M4-05-11, AC-M4-05-15 (c, e): the restore dialog
 /// (AC-M4-05-1) preselects (a) a new folder and (b) not the original location. At the original
 /// location (AC-M4-05-15) (c) «Never» is preselected and (e) «Restore Now» stays disabled until
@@ -1453,6 +1503,8 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_unmatchable(ctx);
     } else if (scen == QLatin1String("m4-restore-target-texts")) {
         rc = scenario_restore_target_texts(ctx);
+    } else if (scen == QLatin1String("m4-restore-mapping")) {
+        rc = scenario_restore_mapping(ctx);
     } else if (scen == QLatin1String("m4-restic-outdated")) {
         rc = scenario_restic_outdated(ctx);
     } else if (scen == QLatin1String("m4-show-restore")) {

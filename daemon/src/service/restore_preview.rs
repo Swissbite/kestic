@@ -263,7 +263,7 @@ pub(crate) fn execute_restore_preview(
     let new_folder = ctx.suggestion(&snapshot);
     let suggestion = RestoreSuggestionDto {
         new_folder: new_folder.to_string_lossy().into_owned(),
-        original: original_location(&plan.folder, &snapshot),
+        original: original_location(&plan.folder, &snapshot, current_home_dir().as_deref()),
     };
     let target = params
         .target

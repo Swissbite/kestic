@@ -115,26 +115,105 @@ pub fn suggested_new_folder(input: &SuggestionInput<'_>) -> PathBuf {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OriginalLocation {
     pub original_dir: String,
-    /// The folder restored into; `None` when the user has to choose one.
+    /// The folder restored into (mapped to the user's home where needed); `None` when there is
+    /// none, `Some` with `needs_user_choice` when it does not exist here.
     pub mapped_dir: Option<String>,
     /// `alt → neu` when the folder was mapped to the user's home.
     pub mapping: Option<(String, String)>,
     pub needs_user_choice: bool,
 }
 
+/// Where a folder of a snapshot lands at the original location on this computer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeMapping {
+    /// The folder lies outside `/home/<name>`, or in the user's own home: it stays.
+    Unchanged,
+    /// `/home/<from>/<rest>` becomes `<home>/<rest>`; `to` is the name of the user's home.
+    Mapped {
+        dir: String,
+        from: String,
+        to: String,
+    },
+    /// The folder lies in `/home/<name>`, but it cannot be mapped safely: the snapshot was not
+    /// made by `<name>`, the path has an empty, `.` or `..` segment, or the user's home is
+    /// unknown. The user chooses a folder instead.
+    Unmappable,
+}
+
+/// Maps `folder` from another user's home to the user's `home`: `/home/<name>/<rest>` becomes
+/// `<home>/<rest>` when the snapshot was made by `<name>` (`snapshot_user`). A folder outside
+/// `/home/<name>`, and one in the user's own home, stays where it is.
+pub fn map_to_home(folder: &str, snapshot_user: Option<&str>, home: Option<&Path>) -> HomeMapping {
+    let Some(rest) = folder.strip_prefix("/home/") else {
+        return HomeMapping::Unchanged;
+    };
+    let (name, sub) = rest.split_once('/').unwrap_or((rest, ""));
+    let clean = |segment: &str| !matches!(segment, "" | "." | "..");
+    if folder.contains('\0') || !clean(name) || (!sub.is_empty() && !sub.split('/').all(clean)) {
+        return HomeMapping::Unmappable;
+    }
+    let Some(home) = home.filter(|h| is_clean_absolute(&h.to_string_lossy())) else {
+        return HomeMapping::Unmappable;
+    };
+    let old_home = PathBuf::from(format!("/home/{name}"));
+    let same = old_home == home
+        || std::fs::canonicalize(&old_home)
+            .is_ok_and(|old| std::fs::canonicalize(home).is_ok_and(|own| old == own));
+    if same {
+        return HomeMapping::Unchanged;
+    }
+    let (Some(home_str), Some(to)) = (home.to_str(), home.file_name().and_then(|n| n.to_str()))
+    else {
+        return HomeMapping::Unmappable;
+    };
+    if snapshot_user != Some(name) {
+        return HomeMapping::Unmappable;
+    }
+    let home_str = home_str.trim_end_matches('/');
+    HomeMapping::Mapped {
+        dir: if sub.is_empty() {
+            home_str.to_string()
+        } else {
+            format!("{home_str}/{sub}")
+        },
+        from: name.to_string(),
+        to: to.to_string(),
+    }
+}
+
 /// The original location of `folder`: `/` is never a target, and a folder that lies outside
-/// the paths the snapshot names (e.g. a snapshot of relative paths) needs a chosen folder.
-pub fn original_location(folder: &str, snapshot: &ResticSnapshot) -> OriginalLocation {
+/// the paths the snapshot names (e.g. a snapshot of relative paths) needs a chosen folder. A
+/// folder in another user's home is mapped to the user's `home` ([`map_to_home`]). A folder
+/// that does not exist here is never created: the user chooses one instead.
+pub fn original_location(
+    folder: &str,
+    snapshot: &ResticSnapshot,
+    home: Option<&Path>,
+) -> OriginalLocation {
     let within_paths = snapshot.paths.iter().any(|p| {
         let p = p.trim_end_matches('/');
         folder == p || folder.starts_with(&format!("{p}/")) || p.starts_with(&format!("{folder}/"))
     });
-    let usable = folder != "/" && within_paths;
+    let choose = OriginalLocation {
+        original_dir: folder.to_string(),
+        mapped_dir: None,
+        mapping: None,
+        needs_user_choice: true,
+    };
+    if folder == "/" || !within_paths {
+        return choose;
+    }
+    let (dir, mapping) = match map_to_home(folder, snapshot.username.as_deref(), home) {
+        HomeMapping::Unchanged => (folder.to_string(), None),
+        HomeMapping::Mapped { dir, from, to } => (dir, Some((from, to))),
+        HomeMapping::Unmappable => return choose,
+    };
+    let exists = std::fs::metadata(&dir).is_ok();
     OriginalLocation {
         original_dir: folder.to_string(),
-        mapped_dir: usable.then(|| folder.to_string()),
-        mapping: None,
-        needs_user_choice: !usable,
+        mapped_dir: Some(dir),
+        mapping,
+        needs_user_choice: !exists,
     }
 }
 

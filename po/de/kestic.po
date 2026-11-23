@@ -3740,6 +3740,9 @@ msgstr "An ursprünglichen Ort"
 msgid "The original location cannot be used for this selection; choose a folder."
 msgstr "Der ursprüngliche Ort ist für diese Auswahl nicht möglich; bitte einen Ordner wählen."
 
+msgid "Original: %1 (%2 → %3)"
+msgstr "Original: %1 (%2 → %3)"
+
 msgid "Existing files:"
 msgstr "Vorhandene Dateien:"
 

@@ -178,3 +178,65 @@ pub fn write_file(dir: &Path, name: &str, content: &str) {
     fs::create_dir_all(dir).expect("mkdir");
     fs::write(dir.join(name), content).expect("write file");
 }
+
+/// Backs up `content` as the file `path` (absolute, without the leading `/`) with
+/// `restic backup --stdin --stdin-filename`, so the snapshot holds a path that does not exist
+/// here (e.g. `home/alt/Dokumente/a.txt`); returns the full snapshot ID. Folders in the file
+/// name need restic 0.20 or newer.
+pub fn backup_stdin(
+    restic: &Path,
+    repo: &Path,
+    password: &str,
+    path: &str,
+    content: &str,
+    snap: &RawSnapshot<'_>,
+) -> String {
+    use std::io::Write;
+    let mut child = Command::new(restic)
+        .arg("-r")
+        .arg(repo)
+        .args(["backup", "--no-cache", "--json", "--tag", snap.tag])
+        .args(["--time", snap.time, "--host", snap.host])
+        .args(["--stdin", "--stdin-filename", path])
+        .env("RESTIC_PASSWORD", password)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("run restic backup --stdin");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(content.as_bytes())
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("restic backup --stdin");
+    assert!(
+        out.status.success(),
+        "restic backup --stdin {path}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["message_type"] == "summary")
+        .and_then(|v| v["snapshot_id"].as_str().map(str::to_string))
+        .expect("snapshot_id in the backup summary")
+}
+
+/// The `username` restic recorded in snapshot `snapshot_id` (the user running the tests).
+pub fn snapshot_username(restic: &Path, repo: &Path, password: &str, snapshot_id: &str) -> String {
+    let out = Command::new(restic)
+        .arg("-r")
+        .arg(repo)
+        .args(["snapshots", "--no-cache", "--json", snapshot_id])
+        .env("RESTIC_PASSWORD", password)
+        .output()
+        .expect("run restic snapshots");
+    assert!(out.status.success(), "restic snapshots {snapshot_id}");
+    let list: serde_json::Value = serde_json::from_slice(&out.stdout).expect("snapshots JSON");
+    list[0]["username"]
+        .as_str()
+        .expect("username in the snapshot")
+        .to_string()
+}

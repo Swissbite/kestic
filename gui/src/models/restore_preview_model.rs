@@ -23,7 +23,7 @@ use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter};
 use kestic_core::restore::{folder_instead_of_unmatchable, selection_with_folders_instead};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
-    KesticDbusError, RestoreOutcome, RestoreOverwrite, RestorePreviewEntryDto,
+    KesticDbusError, RestoreOriginalDto, RestoreOutcome, RestoreOverwrite, RestorePreviewEntryDto,
     RestorePreviewResultDto, RestoreRequest, RestoreTarget, RestoreTargetCode, RunDetailDto,
     SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
@@ -59,6 +59,8 @@ pub struct RestorePreviewModelRust {
     pub(crate) new_folder: QString,
     pub(crate) original_dir: QString,
     pub(crate) original_available: bool,
+    pub(crate) mapping_text: QString,
+    pub(crate) original_note: QString,
     pub(crate) target_original: bool,
     pub(crate) target_dir: QString,
     pub(crate) overwrite: i32,
@@ -137,6 +139,29 @@ pub(crate) fn title_text(selected: usize) -> String {
 pub(crate) fn unmatchable_text(path: &str, folder: &str) -> String {
     i18n("'%1' cannot be restored on its own: its name contains characters that are not valid UTF-8. Restore its folder '%2' instead.")
         .subs(&[path, folder])
+}
+
+/// «Original: /home/alt/Dokumente (alt → neu)» when the original location was mapped to the
+/// user's home; empty otherwise.
+pub(crate) fn mapping_text(original: &RestoreOriginalDto) -> String {
+    original
+        .mapping
+        .as_ref()
+        .map_or_else(String::new, |(from, to)| {
+            i18n("Original: %1 (%2 → %3)").subs(&[&original.original_dir, from, to])
+        })
+}
+
+/// Why the original location cannot be chosen: its folder does not exist here, or the
+/// selection has no usable original location at all.
+pub(crate) fn original_note(original: &RestoreOriginalDto) -> String {
+    match original.mapped_dir.as_deref() {
+        Some(dir) if original.needs_user_choice => RestoreTargetCode::MissingMappedDir
+            .message(&tilde(dir))
+            .map_or_else(String::new, |m| tr(&m)),
+        _ => i18n("The original location cannot be used for this selection; choose a folder.")
+            .to_string(),
+    }
 }
 
 /// The counts of a preview in one line, e.g. «117 files new · 3 existing files will not be
@@ -271,6 +296,8 @@ impl qobject::RestorePreviewModel {
         self.as_mut().set_new_folder(QString::from(""));
         self.as_mut().set_original_dir(QString::from(""));
         self.as_mut().set_original_available(false);
+        self.as_mut().set_mapping_text(QString::from(""));
+        self.as_mut().set_original_note(QString::from(""));
         // The message of a running restore stays; an ended one gives way to the new dialog.
         if self.run_state.to_string() != "running" {
             self.as_mut().rust_mut().run_id = None;
@@ -472,6 +499,10 @@ impl qobject::RestorePreviewModel {
         )));
         self.as_mut()
             .set_original_available(!original.needs_user_choice && original.mapped_dir.is_some());
+        self.as_mut()
+            .set_mapping_text(QString::from(&mapping_text(original)));
+        self.as_mut()
+            .set_original_note(QString::from(&original_note(original)));
         self.as_mut()
             .set_target_dir(QString::from(&tilde(&p.target.check.detail)));
         let check = p
@@ -709,6 +740,74 @@ mod tests {
         );
         assert_eq!(title_text(3), "Restore 3 Items");
         assert_eq!(title_text(0), "Restore Snapshot");
+    }
+
+    fn mapped_preview() -> RestorePreviewResultDto {
+        let mut p = preview((0, 0, 0, 0));
+        p.suggestion.original = RestoreOriginalDto {
+            original_dir: "/home/alt/Dokumente".into(),
+            mapped_dir: Some("/home/neu/Dokumente".into()),
+            mapping: Some(("alt".into(), "neu".into())),
+            needs_user_choice: false,
+        };
+        p
+    }
+
+    /// AC-M4-06-1 (b), GUI part: the dialog names the original folder and the mapping
+    /// `alt → neu`; without a mapping it says nothing.
+    #[test]
+    fn ac_m4_06_1_dialog_names_the_mapping() {
+        let p = mapped_preview();
+        assert_eq!(
+            mapping_text(&p.suggestion.original),
+            "Original: /home/alt/Dokumente (alt → neu)",
+            "(b)"
+        );
+        assert_eq!(
+            mapping_text(&preview((0, 0, 0, 0)).suggestion.original),
+            "",
+            "(b) nothing mapped, nothing shown"
+        );
+    }
+
+    /// AC-M4-06-2: when the user changes the suggested original location to a folder of their
+    /// own, (a) the chosen folder is the target.
+    #[test]
+    fn ac_m4_06_2_chosen_folder_replaces_the_suggestion() {
+        let mut model = RestorePreviewModelRust {
+            result: Some(mapped_preview()),
+            choice: Choice::Original,
+            ..RestorePreviewModelRust::default()
+        };
+        assert_eq!(
+            model.target(),
+            Some(RestoreTarget::Original {
+                dir: "/home/neu/Dokumente".into()
+            }),
+            "the suggestion before the change"
+        );
+        model.choice = Choice::Folder("/home/neu/Elsewhere".into());
+        assert_eq!(
+            model.target(),
+            Some(RestoreTarget::NewFolder {
+                dir: "/home/neu/Elsewhere".into()
+            }),
+            "(a) the chosen folder"
+        );
+    }
+
+    /// AC-M4-06-4 (a), GUI part: a missing mapped folder is named with the request to choose a
+    /// folder.
+    #[test]
+    fn ac_m4_06_4_missing_mapped_folder_asks_for_a_folder() {
+        let mut original = mapped_preview().suggestion.original;
+        original.mapped_dir = Some("/nonexistent/neu/Projekte".into());
+        original.needs_user_choice = true;
+        assert_eq!(
+            original_note(&original),
+            "/nonexistent/neu/Projekte does not exist; choose a folder",
+            "(a)"
+        );
     }
 
     #[test]
