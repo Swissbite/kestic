@@ -727,6 +727,24 @@ fn ac_m4_05_16_notes_for_owner_hard_links_and_symlinks() {
                     v.label,
                     foreign.notes
                 );
+                // A snapshot made by root: restic leaves `uid` out.
+                fx.snapshot_id = kestic_test_support::repo_template::set_snapshot_owner(
+                    &v.bin,
+                    &fx.repo,
+                    &fx.password,
+                    &fx.snapshot_id,
+                    (0, "root"),
+                );
+                let (_, by_root) =
+                    fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Never);
+                assert!(
+                    by_root
+                        .notes
+                        .contains(&kestic_daemon::dbus_api::RestoreNoteCode::OwnershipNotRestored),
+                    "(a) {}: snapshot of root: {:?}",
+                    v.label,
+                    by_root.notes
+                );
                 let target = fx.new_dir("links");
                 let run_id = fx
                     .start_restore(
@@ -1817,6 +1835,34 @@ fn m4_s05_root_is_never_a_target() {
                 started,
                 "no restic call"
             );
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// A private folder stays private: the new folder Kestic creates for a restore has no
+/// permissions for group and others.
+#[test]
+fn m4_s05_new_folder_is_private() {
+    run_isolated_test(
+        "m4_s05_new_folder_is_private",
+        "KESTIC_M4_S05_PRIVATE_INNER",
+        |root| {
+            use std::os::unix::fs::PermissionsExt;
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RP", small_tree, |_| {});
+            let target = fx.new_dir("private");
+            let run_id = fx
+                .start_restore(
+                    &["docs"],
+                    new_folder(&target),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Ok);
+            let mode = fs::metadata(&target).expect("target").permissions().mode();
+            assert_eq!(mode & 0o077, 0, "the new folder is private: {mode:o}");
             fx.rig.daemon.stop();
         },
     );

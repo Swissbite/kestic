@@ -34,6 +34,7 @@ use kestic_core::restore_target::{PREVIEW_MAX_AGE, TargetCheck, check_target, pr
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ErrorKind, RestoreTargetCode, RunProgressPhase, ServiceErrorCode};
 use kestic_i18n::messages::nothing_restored_message;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -94,7 +95,9 @@ fn create_new_folder(target: &RestoreTarget, check: &TargetCheck) -> Result<(), 
         std::fs::create_dir(parent)
             .map_err(|e| invalid(format!("cannot create {}: {e}", parent.display())))?;
     }
-    match std::fs::create_dir(dir) {
+    // Private to the user: restic keeps the mode of an existing target folder, and the
+    // restored folder may be private (e.g. ~/.ssh).
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => Ok(()),
         // Someone created it meanwhile: the check below decides like for any existing folder.
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),

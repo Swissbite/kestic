@@ -75,7 +75,14 @@ pub fn set_snapshot_owner(
         .expect("run restic cat snapshot");
     assert!(out.status.success(), "restic cat snapshot {snapshot_id}");
     let mut snapshot: Value = serde_json::from_slice(&out.stdout).expect("snapshot json");
-    snapshot["uid"] = Value::from(owner.0);
+    // restic leaves `uid` out when it is 0 (root), so a root-made snapshot looks the same.
+    if owner.0 == 0 {
+        if let Some(map) = snapshot.as_object_mut() {
+            map.remove("uid");
+        }
+    } else {
+        snapshot["uid"] = Value::from(owner.0);
+    }
     snapshot["username"] = Value::from(owner.1);
     let (_, key_json) = read_single_key(repo);
     let keys = Keys::from_master_json(&open_key(&key_json, password));

@@ -268,7 +268,8 @@ pub(crate) fn execute_restore_preview(
     let check = check_target(&target, ctx.repository());
     let dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
-        let foreign_owner = snapshot.uid.is_some_and(|uid| uid != current_uid());
+        // restic leaves `uid` out of the snapshot when it is 0 (a snapshot made by root).
+        let foreign_owner = snapshot.uid.unwrap_or(0) != current_uid();
         execute_preview(
             access,
             &plan,
