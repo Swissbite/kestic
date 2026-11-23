@@ -5,7 +5,7 @@
 //! restic runs on a worker thread, the daemon holds the complete result and hands its list out
 //! page by page.
 
-use super::error::{KesticServiceErr, backup_run_error_kind};
+use super::error::{KesticServiceErr, backup_run_error_kind, invalid};
 use super::restore_preview::{
     HeldPreview, RestoreContext, RestoreParams, execute_restore_preview, parse_preview_request,
 };
@@ -89,10 +89,6 @@ enum QueryWork {
 struct ParsedQuery {
     destination_id: DestinationId,
     work: QueryWork,
-}
-
-fn invalid(message: impl std::fmt::Display) -> KesticServiceErr {
-    KesticServiceErr::InvalidInput(message.to_string())
 }
 
 fn parse_request(request_json: &str) -> Result<ParsedQuery, KesticServiceErr> {

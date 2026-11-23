@@ -8,7 +8,8 @@
 
 use super::backup_runner::{load_dest_secrets, secret_strs};
 use super::error::{
-    KesticServiceErr, backup_run_error_kind, localized_backup_run_error, service_error_kind,
+    KesticServiceErr, backup_run_error_kind, invalid, localized_backup_run_error,
+    service_error_kind,
 };
 use super::restore_preview::{
     RestoreContext, RestoreParams, check_params, fingerprint, resolve_plan,
@@ -82,15 +83,9 @@ struct PreviewFacts {
     backup: Option<(BackupId, String)>,
 }
 
-fn invalid(message: impl std::fmt::Display) -> KesticServiceErr {
-    KesticServiceErr::InvalidInput(message.to_string())
-}
-
 /// A target the restore cannot write to is refused before any restic process starts.
 fn refuse_unusable(check: &TargetCheck) -> Result<(), KesticServiceErr> {
-    // restic takes the target as text: a folder whose real path is not UTF-8 would become
-    // another folder.
-    if check.resolved.to_str().is_none() {
+    if !check.resolved_is_utf8() {
         return Err(invalid(format!(
             "{}: the real path of the target folder is not valid UTF-8",
             check.resolved.display()
@@ -491,7 +486,7 @@ fn recheck_target(setup: &mut RestoreSetup) -> Result<(), String> {
     let accepted = setup.check.resolved.clone();
     setup.check = check_target(&setup.target, setup.ctx.repositories());
     let path = setup.check.resolved.to_string_lossy().into_owned();
-    if setup.check.resolved.to_str().is_none() || setup.check.resolved != accepted {
+    if !setup.check.resolved_is_utf8() || setup.check.resolved != accepted {
         return Err(tr_text(&ErrorKind::InvalidTarget.text(Some(&path))));
     }
     // The folder was there (or created) when the restore was accepted; restic would create a

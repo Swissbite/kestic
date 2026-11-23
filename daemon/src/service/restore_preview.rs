@@ -5,7 +5,7 @@
 //! location or in a folder with content, the dry runs of `restic restore`. A finished preview
 //! keeps the parameters it was made for, so `StartRestore` can tell whether it fits.
 
-use super::error::KesticServiceErr;
+use super::error::{KesticServiceErr, invalid};
 use crate::dbus_api::{
     RestorePreviewResultDto, RestorePreviewTargetDto, RestoreSuggestionDto, RestoreTargetCheckDto,
     SnapshotQueryRequest,
@@ -43,10 +43,6 @@ pub(crate) struct RestoreParams {
     pub selection: Vec<String>,
     pub target: Option<RestoreTarget>,
     pub overwrite: RestoreOverwrite,
-}
-
-fn invalid(message: impl std::fmt::Display) -> KesticServiceErr {
-    KesticServiceErr::InvalidInput(message.to_string())
 }
 
 /// Checks the snapshot ID, the selection and the target folder of a restore or its preview;
@@ -280,9 +276,7 @@ pub(crate) fn execute_restore_preview(
         });
     }
     let mut check = check_target(&target, ctx.repositories());
-    // restic takes the target as text: a folder whose real path is not UTF-8 would become
-    // another folder.
-    if check.resolved.to_str().is_none() {
+    if !check.resolved_is_utf8() {
         return Err(BackupRunError::InvalidTarget {
             path: check.resolved.to_string_lossy().into_owned(),
             reason: "the real path of the target folder is not valid UTF-8".to_string(),

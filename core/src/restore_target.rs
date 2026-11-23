@@ -233,6 +233,12 @@ impl TargetCheck {
     pub fn usable(&self) -> bool {
         code_usable(self.code)
     }
+
+    /// Whether the real path of the folder is UTF-8; restic takes the target as text, so a
+    /// folder whose path is not would become another folder.
+    pub fn resolved_is_utf8(&self) -> bool {
+        self.resolved.to_str().is_some()
+    }
 }
 
 /// Whether a restore may write into a folder whose check gave `code`.
