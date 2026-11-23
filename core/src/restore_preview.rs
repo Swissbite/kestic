@@ -330,20 +330,51 @@ pub struct ClassifyInput<'a> {
     pub limit_bytes: u64,
 }
 
+/// What the classification has gathered so far.
+struct Classified {
+    counts: PreviewCounts,
+    builder: ListBuilder<RestorePreviewEntry>,
+    notes: Vec<RestoreNoteCode>,
+    blocked: Vec<String>,
+}
+
+impl Classified {
+    fn note(&mut self, code: RestoreNoteCode) {
+        if !self.notes.contains(&code) {
+            self.notes.push(code);
+        }
+    }
+
+    fn push(&mut self, at_target: &Path, outcome: RestoreOutcome, size: u64) {
+        self.counts.add(outcome, size);
+        self.builder.push(RestorePreviewEntry {
+            path: at_target.to_string_lossy().into_owned(),
+            outcome,
+            size,
+        });
+    }
+}
+
+/// One action of the dry run with the chosen mode: the `index`-th one restic reported for
+/// `item`.
+#[derive(Clone, Copy)]
+struct ItemAction<'a> {
+    item: &'a String,
+    index: usize,
+    action: DryRunAction,
+}
+
 /// Joins the dry runs with the tree into one outcome per file and the notes. Folders are not
 /// counted; an entry the dry run reports as `restored` where the target already has something
 /// replaces it and counts as overwritten.
 pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
     let shared_inodes = input.tree.shared_inodes();
-    let mut counts = PreviewCounts::default();
-    let mut builder = ListBuilder::new(input.limit_bytes);
-    let mut notes: Vec<RestoreNoteCode> = Vec::new();
-    let note = |code: RestoreNoteCode, notes: &mut Vec<RestoreNoteCode>| {
-        if !notes.contains(&code) {
-            notes.push(code);
-        }
+    let mut out = Classified {
+        counts: PreviewCounts::default(),
+        builder: ListBuilder::new(input.limit_bytes),
+        notes: Vec::new(),
+        blocked: Vec::new(),
     };
-    let mut blocked: Vec<String> = Vec::new();
     let mut items: Vec<(&String, usize, DryRunAction)> = input
         .chosen
         .iter()
@@ -351,141 +382,158 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
         .collect();
     items.sort();
     for (item, index, action) in items {
-        // Below a symbolic link at the target, restic puts a real folder in place of the link
-        // and never writes through it: what lies behind the link does not count.
-        let found = find_at_target(input.target, item);
-        let behind_link = found.behind_link;
-        let node = input
-            .tree
-            .nodes
-            .get(item.as_str())
-            .and_then(|nodes| nodes.get(index).or(nodes.first()));
-        if node.is_some_and(|n| n.above) {
-            // Never counted: restic creates it, or keeps the real folder that is there and sets
-            // the snapshot's mode and time on it.
-            let at = input.target.join(item.trim_start_matches('/'));
-            if std::fs::symlink_metadata(&at).is_ok_and(|m| m.is_dir()) {
-                note(RestoreNoteCode::FolderMetadataReset, &mut notes);
-            }
-            continue;
-        }
-        let restored = action == DryRunAction::Restored;
-        let rank = input.chosen[item][..index]
-            .iter()
-            .filter(|a| (**a == DryRunAction::Restored) == restored)
-            .count();
-        let picked = if behind_link {
-            None
-        } else {
-            pick_existing(
-                &found.entries,
-                item.contains('\u{FFFD}'),
-                node.is_some_and(|n| n.is_dir),
-                restored,
-                rank,
-            )
+        let one = ItemAction {
+            item,
+            index,
+            action,
         };
-        let at_target = picked.map_or_else(
-            || input.target.join(item.trim_start_matches('/')),
-            |(p, _)| p.clone(),
-        );
-        let existing = picked.map(|(_, m)| m.clone());
-        if found
-            .entries
-            .iter()
-            .any(|(_, m)| m.file_type().is_symlink())
-        {
-            note(RestoreNoteCode::SymlinkInTarget, &mut notes);
-        }
-        if node.is_some_and(|n| n.is_dir) {
-            // A folder is not counted, unless restic puts it in place of a file or a symbolic
-            // link at the target (it does so even with `never`): that entry is overwritten.
-            let replaces_file = restored && existing.as_ref().is_some_and(|m| !m.is_dir());
-            // restic sets mode and mtime of a folder that exists, even with `never`.
-            if existing.as_ref().is_some_and(std::fs::Metadata::is_dir) {
-                note(RestoreNoteCode::FolderMetadataReset, &mut notes);
-            }
-            if !replaces_file {
-                continue;
-            }
-            counts.add(RestoreOutcome::Overwritten, 0);
-            builder.push(RestorePreviewEntry {
-                path: at_target.to_string_lossy().into_owned(),
-                outcome: RestoreOutcome::Overwritten,
-                size: 0,
-            });
-            continue;
-        }
-        let outcome = match action {
-            // The dry run looks through the link; the run writes into a new, real folder.
-            _ if behind_link => RestoreOutcome::New,
-            DryRunAction::Restored if existing.is_some() => RestoreOutcome::Overwritten,
-            DryRunAction::Restored => RestoreOutcome::New,
-            DryRunAction::Updated => RestoreOutcome::Overwritten,
-            DryRunAction::Unchanged if input.overwrite == RestoreOverwrite::Always => {
-                RestoreOutcome::Identical
-            }
-            DryRunAction::Unchanged => match input
-                .always
-                .and_then(|a| a.get(item.as_str()))
-                .and_then(|actions| actions.get(index))
-            {
-                Some(a) if a.writes() => RestoreOutcome::Kept,
-                _ => RestoreOutcome::Identical,
-            },
-        };
-        let linked_in_snapshot = node
-            .and_then(|n| n.inode)
-            .is_some_and(|i| shared_inodes.contains(&i));
-        // restic cannot put a file where the target has a folder with content: the run fails
-        // and gives the folder the file's mode and time. It tries only where the dry run
-        // writes the file, or for a file hard-linked in the snapshot (another name links to
-        // it). Entries whose names restic shows alike cannot be told apart at the target: any
-        // of them that is such a folder counts.
-        let tried = action.writes() || linked_in_snapshot;
-        if let Some((dir, _)) = found.entries.iter().find(|(p, m)| {
-            tried
-                && !behind_link
-                && m.is_dir()
-                && std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_some())
-        }) {
-            blocked.push(dir.to_string_lossy().into_owned());
-            continue;
-        }
-        let size = node.map_or(0, |n| n.size);
-        if outcome == RestoreOutcome::Overwritten {
-            let linked_at_target = !behind_link
-                && found
-                    .entries
-                    .iter()
-                    .any(|(_, m)| m.is_file() && m.nlink() > 1);
-            if linked_in_snapshot || linked_at_target {
-                note(RestoreNoteCode::HardLinksAffected, &mut notes);
-            }
-        }
-        counts.add(outcome, size);
-        builder.push(RestorePreviewEntry {
-            path: at_target.to_string_lossy().into_owned(),
-            outcome,
-            size,
-        });
+        classify_item(input, &shared_inodes, &mut out, one);
     }
-    let entries = builder.finish();
     if input.foreign_owner {
-        note(RestoreNoteCode::OwnershipNotRestored, &mut notes);
+        out.note(RestoreNoteCode::OwnershipNotRestored);
     }
     // A selection of folders alone counts no file, but restic still creates the folders.
     if input.chosen.is_empty() {
-        note(RestoreNoteCode::NothingSelectedMatches, &mut notes);
+        out.note(RestoreNoteCode::NothingSelectedMatches);
     }
     PreviewClassification {
-        counts,
-        entries,
-        blocked,
+        counts: out.counts,
+        entries: out.builder.finish(),
+        blocked: out.blocked,
         notes: RestoreNoteCode::ALL
             .into_iter()
-            .filter(|c| notes.contains(c))
+            .filter(|c| out.notes.contains(c))
             .collect(),
+    }
+}
+
+/// Classifies one action of the dry run with the chosen mode into `out`.
+fn classify_item(
+    input: &ClassifyInput<'_>,
+    shared_inodes: &BTreeSet<u64>,
+    out: &mut Classified,
+    one: ItemAction<'_>,
+) {
+    let ItemAction {
+        item,
+        index,
+        action,
+    } = one;
+    // Below a symbolic link at the target, restic puts a real folder in place of the link
+    // and never writes through it: what lies behind the link does not count.
+    let found = find_at_target(input.target, item);
+    let behind_link = found.behind_link;
+    let node = input
+        .tree
+        .nodes
+        .get(item.as_str())
+        .and_then(|nodes| nodes.get(index).or(nodes.first()));
+    if node.is_some_and(|n| n.above) {
+        // Never counted: restic creates it, or keeps the real folder that is there and sets
+        // the snapshot's mode and time on it.
+        let at = input.target.join(item.trim_start_matches('/'));
+        if std::fs::symlink_metadata(&at).is_ok_and(|m| m.is_dir()) {
+            out.note(RestoreNoteCode::FolderMetadataReset);
+        }
+        return;
+    }
+    let restored = action == DryRunAction::Restored;
+    let rank = input.chosen[item][..index]
+        .iter()
+        .filter(|a| (**a == DryRunAction::Restored) == restored)
+        .count();
+    let picked = if behind_link {
+        None
+    } else {
+        pick_existing(
+            &found.entries,
+            item.contains('\u{FFFD}'),
+            node.is_some_and(|n| n.is_dir),
+            restored,
+            rank,
+        )
+    };
+    let at_target = picked.map_or_else(
+        || input.target.join(item.trim_start_matches('/')),
+        |(p, _)| p.clone(),
+    );
+    let existing = picked.map(|(_, m)| m.clone());
+    if found
+        .entries
+        .iter()
+        .any(|(_, m)| m.file_type().is_symlink())
+    {
+        out.note(RestoreNoteCode::SymlinkInTarget);
+    }
+    if node.is_some_and(|n| n.is_dir) {
+        // A folder is not counted, unless restic puts it in place of a file or a symbolic
+        // link at the target (it does so even with `never`): that entry is overwritten.
+        let replaces_file = restored && existing.as_ref().is_some_and(|m| !m.is_dir());
+        // restic sets mode and mtime of a folder that exists, even with `never`.
+        if existing.as_ref().is_some_and(std::fs::Metadata::is_dir) {
+            out.note(RestoreNoteCode::FolderMetadataReset);
+        }
+        if replaces_file {
+            out.push(&at_target, RestoreOutcome::Overwritten, 0);
+        }
+        return;
+    }
+    let outcome = file_outcome(input, one, behind_link, existing.is_some());
+    let linked_in_snapshot = node
+        .and_then(|n| n.inode)
+        .is_some_and(|i| shared_inodes.contains(&i));
+    // restic cannot put a file where the target has a folder with content: the run fails
+    // and gives the folder the file's mode and time. It tries only where the dry run
+    // writes the file, or for a file hard-linked in the snapshot (another name links to
+    // it). Entries whose names restic shows alike cannot be told apart at the target: any
+    // of them that is such a folder counts.
+    let tried = action.writes() || linked_in_snapshot;
+    if let Some((dir, _)) = found.entries.iter().find(|(p, m)| {
+        tried
+            && !behind_link
+            && m.is_dir()
+            && std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_some())
+    }) {
+        out.blocked.push(dir.to_string_lossy().into_owned());
+        return;
+    }
+    if outcome == RestoreOutcome::Overwritten {
+        let linked_at_target = !behind_link
+            && found
+                .entries
+                .iter()
+                .any(|(_, m)| m.is_file() && m.nlink() > 1);
+        if linked_in_snapshot || linked_at_target {
+            out.note(RestoreNoteCode::HardLinksAffected);
+        }
+    }
+    out.push(&at_target, outcome, node.map_or(0, |n| n.size));
+}
+
+/// The outcome of a file from the actions of both dry runs.
+fn file_outcome(
+    input: &ClassifyInput<'_>,
+    one: ItemAction<'_>,
+    behind_link: bool,
+    existing: bool,
+) -> RestoreOutcome {
+    match one.action {
+        // The dry run looks through the link; the run writes into a new, real folder.
+        _ if behind_link => RestoreOutcome::New,
+        DryRunAction::Restored if existing => RestoreOutcome::Overwritten,
+        DryRunAction::Restored => RestoreOutcome::New,
+        DryRunAction::Updated => RestoreOutcome::Overwritten,
+        DryRunAction::Unchanged if input.overwrite == RestoreOverwrite::Always => {
+            RestoreOutcome::Identical
+        }
+        DryRunAction::Unchanged => match input
+            .always
+            .and_then(|a| a.get(one.item.as_str()))
+            .and_then(|actions| actions.get(one.index))
+        {
+            Some(a) if a.writes() => RestoreOutcome::Kept,
+            _ => RestoreOutcome::Identical,
+        },
     }
 }
 
