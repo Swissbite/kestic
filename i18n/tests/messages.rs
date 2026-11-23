@@ -5,8 +5,8 @@
 
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
-    SkipReason, SourceStatus,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, RunKindCode, RunProgressPhase,
+    ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
@@ -136,13 +136,13 @@ fn counts(kind: OverallStatusKind) -> OverallCounts {
 fn overall_headline_follows_the_priority_order() {
     let run = ActiveRunInfo {
         name: "Z",
-        is_maintenance: false,
+        kind: RunKindCode::Backup,
         phase: RunProgressPhase::ScanFinished,
         percent_done: 45.6,
     };
     let maint = ActiveRunInfo {
         name: "NAS",
-        is_maintenance: true,
+        kind: RunKindCode::Maintenance,
         phase: RunProgressPhase::Scanning,
         percent_done: 0.0,
     };
@@ -256,11 +256,26 @@ fn every_error_kind_maps_to_its_msgid() {
             E::ResticUnavailable,
             Some("restic is unavailable or too old."),
         ),
+        (
+            E::PathNotInSnapshot,
+            Some("The chosen folder does not exist in the snapshot"),
+        ),
+        (
+            E::InvalidTarget,
+            Some("This folder cannot be used for the restore"),
+        ),
         (E::Unknown, Some("Backup command failed")),
     ];
     assert_table(&ErrorKind::ALL, &table, |k| msg(k.message(None, false)));
-    // `text`: only `unknown` with a detail shows the detail raw.
-    let raw_unknown = table.map(|(k, m)| (k, if k == E::Unknown { None } else { m }));
+    // `text`: `unknown` with a detail shows the detail raw, `invalid_target` names the folder.
+    let raw_unknown = table.map(|(k, m)| match k {
+        E::Unknown => (k, None),
+        E::InvalidTarget => (
+            k,
+            Some("Cannot restore safely to %1; restore into a new folder instead."),
+        ),
+        _ => (k, m),
+    });
     assert_table(&ErrorKind::ALL, &raw_unknown, |k| k.text(Some("raw")));
 }
 
@@ -465,6 +480,14 @@ fn every_service_error_code_maps_to_its_msgid() {
             Some("This location is already used by another destination."),
         ),
         (
+            S::PreviewRequired,
+            Some("Check the preview again before restoring; it is missing or outdated."),
+        ),
+        (
+            S::RestoreRunning,
+            Some("A restore from this destination is running or waiting."),
+        ),
+        (
             S::Internal,
             Some("Internal error in the background service."),
         ),
@@ -482,7 +505,7 @@ fn every_service_error_code_maps_to_its_msgid() {
 fn active_run_while_scanning_shows_no_percentage() {
     let scanning = ActiveRunInfo {
         name: "Z",
-        is_maintenance: false,
+        kind: RunKindCode::Backup,
         phase: RunProgressPhase::Scanning,
         percent_done: 99.0,
     };

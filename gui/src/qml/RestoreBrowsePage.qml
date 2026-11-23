@@ -116,69 +116,115 @@ Kirigami.ScrollablePage {
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.smallSpacing
 
-            Flow {
-                id: pathRow
-                objectName: "browsePathRow"
+            // One line, like Dolphin's location bar: a path longer than the page scrolls
+            // sideways and shows its end, the open folder, so the list keeps its height.
+            Flickable {
+                id: pathFlick
+                objectName: "browsePathFlick"
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
+                Layout.preferredHeight: pathRow.implicitHeight
+                contentWidth: pathRow.implicitWidth
+                contentHeight: pathRow.implicitHeight
+                flickableDirection: Flickable.HorizontalFlick
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
 
-                Repeater {
-                    model: snapshotBrowseModel.segmentPaths(snapshotBrowseModel.dir)
-                    delegate: Row {
-                        id: crumb
-                        required property int index
-                        required property string modelData
-                        readonly property string crumbName:
-                            snapshotBrowseModel.segmentNames(snapshotBrowseModel.dir)[index]
-                        readonly property bool isCurrent: modelData === snapshotBrowseModel.dir
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Controls.Label {
-                            visible: crumb.index > 0
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "›"
-                            opacity: 0.7
+                // Scrolls to the open folder and starts the row with a whole folder (its «›»
+                // first) rather than a cut one. The space this leaves after the open folder
+                // becomes a right margin, so the position stays within the bounds and the
+                // Flickable does not pull it back into a folder name.
+                function showEnd() {
+                    rightMargin = 0;
+                    const end = Math.max(0, contentWidth - width);
+                    let x = end;
+                    if (end > 0) {
+                        for (let i = 0; i < pathRow.children.length; ++i) {
+                            const crumb = pathRow.children[i];
+                            if (crumb.width > 0 && crumb.x >= end) {
+                                x = crumb.x;
+                                break;
+                            }
                         }
-                        Controls.ToolButton {
-                            id: crumbButton
-                            objectName: "browsePathButton_" + crumb.index
-                            readonly property string path: crumb.modelData
-                            readonly property string label: crumb.index === 0 ? i18n("Top folder") : crumb.crumbName
-                            // The button's own text and icon stay empty: the desktop style paints
-                            // them in its background, beneath the content item below, so every
-                            // folder would be drawn twice. The content item draws the folder.
-                            padding: Kirigami.Units.smallSpacing
-                            checkable: false
-                            font.bold: crumb.isCurrent
-                            activeFocusOnTab: true
-                            Accessible.name: label
-                            Controls.ToolTip.visible: crumb.index === 0 && hovered
-                            Controls.ToolTip.text: label
-                            // Folder names from the snapshot are shown literally, never as rich text.
-                            contentItem: RowLayout {
-                                spacing: 0
-                                Kirigami.Icon {
-                                    visible: crumb.index === 0
-                                    source: "drive-harddisk-root"
-                                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                                }
-                                Controls.Label {
-                                    visible: crumb.index > 0
-                                    Layout.fillWidth: true
-                                    // As tall as the top folder icon, so all folders share one line.
-                                    Layout.minimumHeight: Kirigami.Units.iconSizes.smallMedium
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                    text: crumbButton.label
-                                    textFormat: Text.PlainText
-                                    font: crumbButton.font
-                                }
+                    }
+                    rightMargin = x - end;
+                    contentX = x;
+                }
+                function ensureVisible(item) {
+                    const x = item.mapToItem(pathRow, 0, 0).x;
+                    if (x < contentX) {
+                        contentX = x;
+                    } else if (x + item.width > contentX + width) {
+                        contentX = Math.min(Math.max(0, contentWidth + rightMargin - width),
+                            x + item.width - width);
+                    }
+                }
+                onContentWidthChanged: showEnd()
+                onWidthChanged: showEnd()
+
+                Row {
+                    id: pathRow
+                    objectName: "browsePathRow"
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Repeater {
+                        model: snapshotBrowseModel.segmentPaths(snapshotBrowseModel.dir)
+                        delegate: Row {
+                            id: crumb
+                            required property int index
+                            required property string modelData
+                            readonly property string crumbName:
+                                snapshotBrowseModel.segmentNames(snapshotBrowseModel.dir)[index]
+                            readonly property bool isCurrent: modelData === snapshotBrowseModel.dir
+                            spacing: Kirigami.Units.smallSpacing
+
+                            Controls.Label {
+                                visible: crumb.index > 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "›"
+                                opacity: 0.7
                             }
-                            onClicked: {
-                                if (!crumb.isCurrent) page.openDir(crumb.modelData);
+                            Controls.ToolButton {
+                                id: crumbButton
+                                objectName: "browsePathButton_" + crumb.index
+                                readonly property string path: crumb.modelData
+                                readonly property string label: crumb.index === 0 ? i18n("Top folder") : crumb.crumbName
+                                // The button's own text and icon stay empty: the desktop style paints
+                                // them in its background, beneath the content item below, so every
+                                // folder would be drawn twice. The content item draws the folder.
+                                padding: Kirigami.Units.smallSpacing
+                                checkable: false
+                                font.bold: crumb.isCurrent
+                                activeFocusOnTab: true
+                                Accessible.name: label
+                                Controls.ToolTip.visible: crumb.index === 0 && hovered
+                                Controls.ToolTip.text: label
+                                // Folder names from the snapshot are shown literally, never as rich text.
+                                contentItem: RowLayout {
+                                    spacing: 0
+                                    Kirigami.Icon {
+                                        visible: crumb.index === 0
+                                        source: "drive-harddisk-root"
+                                        Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                                        Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                                    }
+                                    Controls.Label {
+                                        visible: crumb.index > 0
+                                        Layout.fillWidth: true
+                                        // As tall as the top folder icon, so all folders share one line.
+                                        Layout.minimumHeight: Kirigami.Units.iconSizes.smallMedium
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                        text: crumbButton.label
+                                        textFormat: Text.PlainText
+                                        font: crumbButton.font
+                                    }
+                                }
+                                onClicked: {
+                                    if (!crumb.isCurrent) page.openDir(crumb.modelData);
+                                }
+                                onActiveFocusChanged: if (activeFocus) pathFlick.ensureVisible(crumb)
+                                FocusRing { target: crumbButton }
                             }
-                            FocusRing { target: crumbButton }
                         }
                     }
                 }

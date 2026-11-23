@@ -11,7 +11,8 @@ use super::rows::{role_names, row_count, row_data};
 use super::snapshot_query::{
     QueryRun, StartPoll, count_text, fetch_error_text, to_i32, too_large_text,
 };
-use crate::state_cache::{format_bytes, i18np, to_local};
+use crate::state_cache::{format_bytes, i18np};
+use crate::time_texts::to_local;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
 use kestic_core::snapshot_find::parent_dir;
@@ -89,8 +90,12 @@ fn icon_name(e: &LsEntryDto) -> &'static str {
     }
 }
 
-fn last_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
+/// The last segment of a snapshot path; `/` for the root.
+pub(super) fn last_name(path: &str) -> &str {
+    match path.rsplit('/').next() {
+        Some(name) if !name.is_empty() => name,
+        _ => "/",
+    }
 }
 
 /// Selection line: the number of selected entries, how many are in `dir`, and where the

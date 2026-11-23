@@ -3,7 +3,8 @@
 
 //! Texts of retention rules and of the retention preview (`forget --dry-run`).
 
-use crate::state_cache::{format_datetime_display, i18n, i18np};
+use crate::state_cache::{i18n, i18np};
+use crate::time_texts::format_datetime_display;
 use crate::ui_texts::GuiText;
 use kestic_core::backup::ForgetPreviewResult;
 use kestic_core::model::{ForgetReason, RetentionPeriod};

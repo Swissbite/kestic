@@ -8,11 +8,12 @@ use super::{Finish, qobject};
 use crate::qt_bridge;
 use crate::run_texts::{run_detail_subtitle, run_detail_title, run_result_summary, run_status};
 use crate::state_cache::{
-    build_provider, cached_daemon_now, cached_destination_kind, cached_today_iso_date,
-    clone_updated_backup_conditions, clone_updated_backup_schedule, format_conditions_summary,
-    format_duration_ms, format_maintenance_summary, format_schedule_summary, i18n, json_or,
-    make_client, preview_next_schedule_slots, shared_state,
+    build_provider, cached_destination_kind, clone_updated_backup_conditions,
+    clone_updated_backup_schedule, format_conditions_summary, format_duration_ms,
+    format_maintenance_summary, format_schedule_summary, i18n, json_or, make_client,
+    preview_next_schedule_slots, shared_state,
 };
+use crate::time_texts::{cached_daemon_now, cached_today_iso_date};
 use crate::ui_texts::GuiText;
 use cxx_qt_lib::QString;
 use kestic_core::model::{

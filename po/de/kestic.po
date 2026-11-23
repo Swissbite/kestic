@@ -3149,10 +3149,6 @@ msgstr "restic"
 msgid "restic source:"
 msgstr "restic-Quelle:"
 
-#: gui/src/qml/SettingsDialog.qml:280
-msgid "%1 (%2 · %3)"
-msgstr "%1 (%2 · %3)"
-
 #: gui/src/qml/SettingsDialog.qml:288
 msgid "Kestic needs restic 0.18.0 or newer."
 msgstr "Kestic benötigt restic 0.18.0 oder neuer."
@@ -3623,6 +3619,205 @@ msgstr "%1 von 2 gewählt"
 #: gui/src/qml/RestoreSnapshotsPage.qml
 msgid "Show Differences"
 msgstr "Unterschiede anzeigen"
+
+msgid "Restore Files…"
+msgstr "Dateien wiederherstellen…"
+
+msgid "Restore Files… (no destination connected)"
+msgstr "Dateien wiederherstellen… (kein Ziel verbunden)"
+
+msgid "The chosen folder does not exist in the snapshot"
+msgstr "Der gewählte Ordner fehlt im Snapshot"
+
+msgid "This folder cannot be used for the restore"
+msgstr "Dieser Ordner lässt sich zum Wiederherstellen nicht verwenden"
+
+msgid "Cannot restore safely to %1; restore into a new folder instead."
+msgstr "Nach %1 lässt sich nicht sicher wiederherstellen; bitte in einen neuen Ordner wiederherstellen."
+
+msgid "Check the preview again before restoring; it is missing or outdated."
+msgstr "Vor dem Wiederherstellen die Vorschau erneut prüfen; sie fehlt oder ist veraltet."
+
+msgid "A restore from this destination is running or waiting."
+msgstr "Ein Restore von diesem Ziel läuft oder wartet."
+
+msgid "%1: restoring"
+msgstr "%1: stellt wieder her"
+
+msgid "%1: restoring · %2%"
+msgstr "%1: stellt wieder her · %2%"
+
+msgid "Overwritten"
+msgstr "Überschrieben"
+
+msgid "Not overwritten"
+msgstr "Nicht überschrieben"
+
+msgid "Unchanged"
+msgstr "Unverändert"
+
+msgid "Owners and groups are not restored; the files will belong to you."
+msgstr "Besitzer und Gruppen werden nicht übernommen, die Dateien gehören Ihnen."
+
+msgid "Some files that are overwritten have further hard links; restic replaces them, and the other names keep the old content."
+msgstr "Einige Dateien, die überschrieben werden, haben weitere Hardlinks; restic ersetzt sie, die anderen Namen behalten den alten Inhalt."
+
+msgid "Nothing in the snapshot matches the selection."
+msgstr "Nichts im Snapshot passt zur Auswahl."
+
+msgid "The target contains symbolic links where the snapshot has files or folders; restic may replace such a link, but it never writes through it."
+msgstr "Im Zielordner liegen symbolische Links, wo der Snapshot Dateien oder Ordner hat; restic ersetzt einen solchen Link unter Umständen, schreibt aber nie hindurch."
+
+msgid "Existing folders at the target get the permissions and modification time from the snapshot. This also happens when no file is overwritten."
+msgstr "Vorhandene Ordner am Ziel erhalten Zugriffsrechte und Änderungszeit aus dem Snapshot. Das gilt auch, wenn keine Datei überschrieben wird."
+
+msgid "%1 already contains files"
+msgstr "%1 enthält bereits Dateien"
+
+msgid "%1 is not a folder"
+msgstr "%1 ist kein Ordner"
+
+msgid "%1 is not writable"
+msgstr "%1 ist nicht beschreibbar"
+
+msgid "%1 does not exist; choose a folder"
+msgstr "%1 existiert nicht; bitte einen Ordner wählen"
+
+msgid "Restoring to %1 would write into the repository of a destination"
+msgstr "Wiederherstellen nach %1 würde in das Repository eines Ziels schreiben"
+
+msgid "Nothing restored"
+msgstr "Nichts wiederhergestellt"
+
+msgid "Restored"
+msgstr "Wiederhergestellt"
+
+msgid "not assigned"
+msgstr "nicht zugeordnet"
+
+msgid "Restoring from %1"
+msgstr "Wiederherstellen aus %1"
+
+msgid "Restore from %1 finished"
+msgstr "Wiederherstellen aus %1 beendet"
+
+msgid "Restore Snapshot"
+msgstr "Snapshot wiederherstellen"
+
+msgid "'%1' cannot be restored on its own: its name contains characters that are not valid UTF-8. Restore its folder '%2' instead."
+msgstr "«%1» lässt sich nicht einzeln wiederherstellen: Der Name enthält Zeichen, die kein gültiges UTF-8 sind. Stattdessen den Ordner «%2» wiederherstellen."
+
+msgid "Restore Folder"
+msgstr "Ordner wiederherstellen"
+
+msgid "Restore failed"
+msgstr "Wiederherstellen fehlgeschlagen"
+
+msgid "Restoring files…"
+msgstr "Dateien werden wiederhergestellt…"
+
+msgid "Open Folder"
+msgstr "Ordner öffnen"
+
+msgid "Overwrite and Restore"
+msgstr "Überschreiben und wiederherstellen"
+
+msgid "Restore Now"
+msgstr "Jetzt wiederherstellen"
+
+msgid "Choose Target Folder"
+msgstr "Zielordner wählen"
+
+msgid "Where to"
+msgstr "Wohin"
+
+msgid "Into a new folder"
+msgstr "In neuen Ordner"
+
+msgid "To the original location"
+msgstr "An ursprünglichen Ort"
+
+msgid "The original location cannot be used for this selection; choose a folder."
+msgstr "Der ursprüngliche Ort ist für diese Auswahl nicht möglich; bitte einen Ordner wählen."
+
+msgid "Existing files:"
+msgstr "Vorhandene Dateien:"
+
+msgid "Never overwrite"
+msgstr "Nie überschreiben"
+
+msgid "If older"
+msgstr "Wenn älter"
+
+msgid "If changed"
+msgstr "Wenn verändert"
+
+msgid "Always"
+msgstr "Immer"
+
+msgid "Checking what the restore would change…"
+msgstr "Prüfe, was das Wiederherstellen ändern würde…"
+
+msgid "Everything is restored into this folder; nothing is overwritten."
+msgstr "Alles wird in diesen Ordner wiederhergestellt; nichts wird überschrieben."
+
+msgid "List"
+msgstr "Liste"
+
+msgid "%1 (outdated)"
+msgstr "%1 (veraltet)"
+
+msgid "Restored %1 file"
+msgid_plural "Restored %1 files"
+msgstr[0] "%1 Datei wiederhergestellt"
+msgstr[1] "%1 Dateien wiederhergestellt"
+
+msgid "Restore %1 Item"
+msgid_plural "Restore %1 Items"
+msgstr[0] "%1 Element wiederherstellen"
+msgstr[1] "%1 Elemente wiederherstellen"
+
+msgid "%1 file new"
+msgid_plural "%1 files new"
+msgstr[0] "%1 Datei neu"
+msgstr[1] "%1 Dateien neu"
+
+msgid "%1 existing file will be overwritten"
+msgid_plural "%1 existing files will be overwritten"
+msgstr[0] "%1 vorhandene Datei wird überschrieben"
+msgstr[1] "%1 vorhandene Dateien werden überschrieben"
+
+msgid "%1 existing file will not be overwritten"
+msgid_plural "%1 existing files will not be overwritten"
+msgstr[0] "%1 vorhandene Datei wird nicht überschrieben"
+msgstr[1] "%1 vorhandene Dateien werden nicht überschrieben"
+
+msgid "%1 file unchanged"
+msgid_plural "%1 files unchanged"
+msgstr[0] "%1 Datei unverändert"
+msgstr[1] "%1 Dateien unverändert"
+
+msgid "%1 file will be overwritten. This cannot be undone."
+msgid_plural "%1 files will be overwritten. This cannot be undone."
+msgstr[0] "%1 Datei wird überschrieben. Das lässt sich nicht rückgängig machen."
+msgstr[1] "%1 Dateien werden überschrieben. Das lässt sich nicht rückgängig machen."
+
+msgid "%1 file restored"
+msgid_plural "%1 files restored"
+msgstr[0] "%1 Datei wiederhergestellt"
+msgstr[1] "%1 Dateien wiederhergestellt"
+
+
+
+
+msgid "Hide the list of files"
+msgstr "Liste der Dateien ausblenden"
+
+msgid "Show the list of files"
+msgstr "Liste der Dateien anzeigen"
+
+msgid "Managed by Kestic"
+msgstr "Von Kestic verwaltet"
 
 #: gui/src/retention_texts.rs
 msgid "latest snapshot"

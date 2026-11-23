@@ -3,7 +3,8 @@
 
 //! CXX-Qt `SnapshotsModel` implementation (`QAbstractListModel` for backup snapshots).
 
-use crate::state_cache::{format_bytes, format_datetime_display, i18n, i18np, shared_state};
+use crate::state_cache::{format_bytes, i18n, i18np, shared_state};
+use crate::time_texts::format_datetime_display;
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QVariant};

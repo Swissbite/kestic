@@ -22,6 +22,15 @@ Kirigami.ApplicationWindow {
     property string pendingProviderKind: "system"
     property string pendingCustomPath: ""
 
+    // The restic source as the user chose it (the provider code is no text).
+    function providerLabel(kind) {
+        switch (kind) {
+        case "system": return i18n("System restic (from PATH)");
+        case "app_managed": return i18n("Managed by Kestic");
+        default: return i18n("Custom program path");
+        }
+    }
+
     function saveSettingsFromUi() {
         appBackend.updateSettings(
             defaultOverdueSpinBox.value,
@@ -280,9 +289,13 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.Label {
+                objectName: "resticSourceLabel"
                 Kirigami.FormData.label: i18n("restic source:")
                 text: appBackend.restic_valid
-                    ? i18n("%1 (%2 · %3)", appBackend.restic_provider_kind, appBackend.restic_version, appBackend.restic_binary_path)
+                    ? Texts.labelArgs("two_parts", [settingsWindow.providerLabel(appBackend.restic_provider_kind),
+                        Texts.labelArgs("two_parts", [
+                            appBackend.restic_outdated ? i18n("%1 (outdated)", appBackend.restic_version) : appBackend.restic_version,
+                            appBackend.restic_binary_path])])
                     : appBackend.restic_message
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true

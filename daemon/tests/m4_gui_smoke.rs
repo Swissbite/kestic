@@ -8,10 +8,13 @@
 
 mod common;
 
-use common::m3::{FakeSetup, M3Rig, StdFakes, add_local_destination, latest_variant};
+use common::m3::{
+    FakeSetup, M3Rig, ResticVariant, StdFakes, add_local_destination, latest_variant,
+};
 use common::m4::{RawSnapshot, backup_dir, big_tree, small_tree, write_file, write_snapshot};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::query_list::QueryLimits;
+use kestic_core::scheduler::TimezoneSpec;
 use kestic_daemon::dbus_api::KESTIC_BUS_NAME;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -569,6 +572,219 @@ fn ac_m4_02_3_identical_snapshots_show_no_differences() {
                     &smoke_artifact("restore-compare-identical", "wide", lang),
                 );
             }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// A daemon on the real bus name with one destination «NAS» and the backup «Home» with one
+/// snapshot of a small folder, whose `a.txt` differs locally afterwards. The wrapper holds
+/// `restore`; the smoke scene releases it by removing the returned marker file.
+fn restore_dialog_env(root: &Path, variant: &ResticVariant) -> (M3Rig, StdFakes, String) {
+    restore_dialog_env_with(root, variant, |_| {})
+}
+
+/// [`restore_dialog_env`] with `extra` run on the backed-up folder before the backup.
+fn restore_dialog_env_with(
+    root: &Path,
+    variant: &ResticVariant,
+    extra: impl FnOnce(&Path),
+) -> (M3Rig, StdFakes, String) {
+    let fakes = StdFakes::start_with(FakeSetup {
+        active_network: Some("HomeWifi"),
+        ..FakeSetup::default()
+    });
+    let rig = M3Rig::start_on(
+        root,
+        variant,
+        "",
+        KESTIC_BUS_NAME,
+        datetime!(2026-11-15 14:32:00 UTC),
+        |o| {
+            o.enable_scheduler = false;
+            // The window shows times in the system time zone; the suggested folder name too.
+            o.timezone = TimezoneSpec::System;
+        },
+    );
+    let repo = root.join("repo-NAS");
+    let (dest, password) =
+        add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
+    let backup = rig.add_backup_to(&dest, "Home", |_| {});
+    let src = small_tree(&root.join("trees"));
+    extra(&src);
+    backup_dir(
+        &variant.bin,
+        &repo,
+        &password,
+        &src,
+        &RawSnapshot {
+            tag: &format!("kestic:{}", backup.id),
+            time: "2026-11-15 12:00:00",
+            host: "laptop",
+        },
+    );
+    std::fs::write(src.join("a.txt"), "changed locally").expect("change a.txt");
+    let release = format!("{}.restore", rig.wrapper.hold.display());
+    (rig, fakes, release)
+}
+
+/// AC-M4-05-1, AC-M4-05-4 (smoke part), AC-M4-05-11 and AC-M4-05-15 (c, e): the restore dialog
+/// preselects a new folder, names the outcomes and the consequence of overwriting, keeps «Restore
+/// Now» disabled until the preview is done, and starts with «Never» every time (scene
+/// `m4-restore-dialog` in `smoke_m4.cpp`).
+#[test]
+fn ac_m4_05_1_4_11_15_restore_dialog() {
+    run_isolated_test(
+        "ac_m4_05_1_4_11_15_restore_dialog",
+        "KESTIC_AC_M4_05_DIALOG_INNER",
+        |root| {
+            for (layout, lang) in [
+                ("wide", "en"),
+                ("wide", "de"),
+                ("narrow", "en"),
+                ("narrow", "de"),
+            ] {
+                let sub = root.join(format!("{layout}-{lang}"));
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes, release) = restore_dialog_env(&sub, &latest_variant());
+                rig.wrapper.hold("restore");
+                run_m4_gui_smoke_env(
+                    root,
+                    "m4-restore-dialog",
+                    layout,
+                    lang,
+                    &smoke_artifact("restore-dialog", layout, lang),
+                    &[("KESTIC_SMOKE_RELEASE_FILE", &release)],
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// A selected name that is not valid UTF-8 is refused in the dialog with its reason, and
+/// «Restore Folder» restores its folder instead (scene `m4-restore-unmatchable`).
+#[test]
+fn m4_s05_restore_dialog_offers_the_folder_of_an_unmatchable_name() {
+    run_isolated_test(
+        "m4_s05_restore_dialog_offers_the_folder_of_an_unmatchable_name",
+        "KESTIC_M4_S05_UNMATCHABLE_SMOKE_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                let (rig, _fakes, _) = restore_dialog_env_with(&sub, &latest_variant(), |src| {
+                    use std::os::unix::ffi::OsStrExt;
+                    let name = std::ffi::OsStr::from_bytes(b"<b>bad<b>\xffname.txt");
+                    std::fs::write(src.join(name), "x").expect("write a name that is not UTF-8");
+                });
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-unmatchable",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-unmatchable", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-16 (f) and AC-M4-05-25 (c), smoke part: the dialog shows the note on the folders
+/// that exist at the original location, and the translated refusal of a target where the
+/// snapshot has a file and the target a folder with content (scene `m4-restore-target-texts`).
+#[test]
+fn ac_m4_05_16_25_restore_dialog_shows_folder_note_and_refusal() {
+    run_isolated_test(
+        "ac_m4_05_16_25_restore_dialog_shows_folder_note_and_refusal",
+        "KESTIC_AC_M4_05_16_25_SMOKE_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes, _) = restore_dialog_env(&sub, &latest_variant());
+                let src = sub.join("trees").join("src");
+                std::fs::remove_file(src.join("b.bin")).expect("remove b.bin");
+                std::fs::create_dir_all(src.join("b.bin")).expect("folder in its place");
+                std::fs::write(src.join("b.bin").join("keep.txt"), "keep").expect("content");
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-target-texts",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-target-texts", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-22 (b, c): the setting «restic source» marks restic 0.18.0 «(outdated)» and the
+/// newest tested version not (scene `m4-restic-outdated`).
+#[test]
+fn ac_m4_05_22_settings_mark_outdated_restic() {
+    run_isolated_test(
+        "ac_m4_05_22_settings_mark_outdated_restic",
+        "KESTIC_AC_M4_05_22_SMOKE_INNER",
+        |root| {
+            for variant in common::m3::restic_variants() {
+                let outdated = if variant.label.contains("0.18.0") {
+                    "1"
+                } else {
+                    "0"
+                };
+                for lang in ["en", "de"] {
+                    let sub = root.join(format!("{}-{lang}", variant.index));
+                    std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                    let (rig, _fakes, _) = restore_dialog_env(&sub, &variant);
+                    run_m4_gui_smoke_env(
+                        root,
+                        "m4-restic-outdated",
+                        "wide",
+                        lang,
+                        &smoke_artifact(
+                            &format!("settings-restic-{}", variant.index),
+                            "wide",
+                            lang,
+                        ),
+                        &[("KESTIC_SMOKE_EXPECT_OUTDATED", outdated)],
+                    );
+                    rig.daemon.stop();
+                }
+            }
+        },
+    );
+}
+
+/// AC-M4-05-24 (c) in the GUI: the GUI started with `--show-restore` opens on the tab «Restore»
+/// (scene `m4-show-restore`).
+#[test]
+fn ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab() {
+    run_isolated_test(
+        "ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab",
+        "KESTIC_AC_M4_05_24_SMOKE_INNER",
+        |root| {
+            let (rig, _fakes) = restore_env(root);
+            let iso = kestic_test_support::gui::IsolatedEnv::adopt(root);
+            let dbus_addr =
+                std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
+            kestic_test_support::gui::SmokeContext {
+                kestic_bin: &find_kestic_binary(),
+                iso: &iso,
+                dbus_addr: &dbus_addr,
+            }
+            .run_with_env(
+                "m4-show-restore",
+                "wide",
+                "en",
+                &smoke_artifact("show-restore", "wide", "en"),
+                &["--show-restore"],
+                &[],
+            );
             rig.daemon.stop();
         },
     );

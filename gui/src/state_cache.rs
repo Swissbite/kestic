@@ -64,9 +64,9 @@ where
 
 use crate::overall_text::localized_availability_reason;
 use crate::retention_texts::within_text;
+use crate::time_texts::{format_datetime_display, format_time_short};
 use crate::ui_texts::GuiText;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
-use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeRules, KeepCount,
     MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPeriod,
@@ -115,6 +115,8 @@ pub struct GuiLaunchConfig {
     pub no_autostart_daemon: bool,
     pub show_quit_dialog_on_start: bool,
     pub show_about_on_start: bool,
+    /// Open the window on the tab «Restore» (`--show-restore`, tray «Restore Files…»).
+    pub show_restore_on_start: bool,
 }
 
 impl Default for GuiLaunchConfig {
@@ -125,6 +127,7 @@ impl Default for GuiLaunchConfig {
             no_autostart_daemon: false,
             show_quit_dialog_on_start: false,
             show_about_on_start: false,
+            show_restore_on_start: false,
         }
     }
 }
@@ -148,6 +151,7 @@ pub struct SharedGuiState {
     pub pending_blocked: Option<(String, BlockedReason)>,
     pub pending_show_window: bool,
     pub pending_show_about: bool,
+    pub pending_show_restore: bool,
     pub pending_quit: Option<(bool, String)>,
     pub maintenance_preview: Option<(String, Result<String, String>)>,
     pub signal_conn: Option<zbus::Connection>,
@@ -171,6 +175,7 @@ impl SharedGuiState {
             pending_blocked: None,
             pending_show_window: false,
             pending_show_about: false,
+            pending_show_restore: false,
             pending_quit: None,
             maintenance_preview: None,
             signal_conn: None,
@@ -425,6 +430,10 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                     Some("ShowAboutRequested") => {
                         let mut guard = shared_state().lock_unpoisoned();
                         guard.pending_show_about = true;
+                    }
+                    Some("ShowRestoreRequested") => {
+                        let mut guard = shared_state().lock_unpoisoned();
+                        guard.pending_show_restore = true;
                     }
                     Some("QuitConfirmationRequested") => {
                         if let Ok((has_running, name)) = msg.body().deserialize::<(bool, String)>()
@@ -1273,81 +1282,8 @@ pub fn format_run_status(
         RunStatus::Running => (i18n("Running").to_string(), "state-sync", "highlight"),
         RunStatus::Pending => (i18n("Waiting").to_string(), "chronometer", "text"),
         RunStatus::Cancelled => (i18n("Cancelled").to_string(), "process-stop", "text"),
-        RunStatus::Interrupted => (i18n("Interrupted").to_string(), "state-offline", "text"),
+        RunStatus::Interrupted => (GuiText::Interrupted.text(), "state-offline", "text"),
     }
-}
-
-/// `ts` in the local time zone; unchanged when the shifted time is out of range (a time at the
-/// very end of year 9999, as a foreign snapshot may carry).
-pub(crate) fn to_local(ts: OffsetDateTime) -> OffsetDateTime {
-    let offset_secs = crate::qt_bridge::ffi::local_offset_seconds(ts.unix_timestamp());
-    let offset = time::UtcOffset::from_whole_seconds(offset_secs).unwrap_or(ts.offset());
-    to_offset_or_keep(ts, offset)
-}
-
-/// `ts` at `offset`, or `ts` unchanged when that leaves the representable range.
-pub(crate) fn to_offset_or_keep(ts: OffsetDateTime, offset: time::UtcOffset) -> OffsetDateTime {
-    ts.checked_to_offset(offset).unwrap_or(ts)
-}
-
-pub fn format_day_group(ts: OffsetDateTime, now: OffsetDateTime) -> String {
-    let date = to_local(ts).date();
-    let today = to_local(now).date();
-    if date == today {
-        return i18n("Today").to_string();
-    }
-    if let Some(yesterday) = today.previous_day()
-        && date == yesterday
-    {
-        return i18n("Yesterday").to_string();
-    }
-    format!(
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
-}
-
-pub fn format_time_short(ts: OffsetDateTime) -> String {
-    let local = to_local(ts);
-    format!("{:02}:{:02}", local.hour(), local.minute())
-}
-
-pub fn format_datetime_display(ts: OffsetDateTime) -> String {
-    let local = to_local(ts);
-    let date = local.date();
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day(),
-        local.hour(),
-        local.minute()
-    )
-}
-
-pub fn current_now() -> OffsetDateTime {
-    SystemClock.now_utc()
-}
-
-pub fn daemon_now(state: &DaemonStateDto) -> OffsetDateTime {
-    OffsetDateTime::from_unix_timestamp(state.overall.now_unix).unwrap_or_else(|_| current_now())
-}
-
-pub fn cached_daemon_now() -> OffsetDateTime {
-    let guard = shared_state().lock_unpoisoned();
-    guard.state.as_ref().map_or_else(current_now, daemon_now)
-}
-
-pub fn cached_today_iso_date() -> String {
-    let date = to_local(cached_daemon_now()).date();
-    format!(
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
 }
 
 /// Title of a run in the history; a backup that no longer exists is named as deleted, never

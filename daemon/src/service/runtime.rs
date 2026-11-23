@@ -12,7 +12,8 @@ use crate::binary_watch::{BinaryIdentity, BinaryStatus};
 use crate::dbus_api::{DestinationAvailabilityDto, KESTIC_BUS_NAME};
 use crate::dbus_server::{
     close_after_pending_replies, emit_quit_confirmation_requested, emit_show_about_requested,
-    emit_show_window_requested, emit_status_changed, start_dbus_server,
+    emit_show_restore_requested, emit_show_window_requested, emit_status_changed,
+    start_dbus_server,
 };
 use crate::i18n::{i18n, tr_text};
 use crate::monitors::{SystemMonitorEvent, SystemMonitorHandle, read_system_environment};
@@ -508,6 +509,7 @@ fn handle_prepare_for_sleep(
             tray_bg.set_full_state(tray_state);
             emit_status_changed(&conn_bg, &state_dto);
             drain_queued_backups_async(&core_bg);
+            super::restore_runner::start_all_pending_restores(&core_bg);
             if enable_scheduler {
                 tick_scheduler_async(&core_bg);
             }
@@ -551,6 +553,7 @@ fn is_gui_live(core: &Arc<Mutex<DaemonCore>>, conn: &Connection) -> bool {
 #[derive(Debug, Clone, Copy)]
 enum GuiStart {
     Window,
+    Restore,
     About,
     ConfirmQuit,
 }
@@ -560,6 +563,7 @@ impl GuiStart {
     fn flag(self) -> Option<&'static str> {
         match self {
             Self::Window => None,
+            Self::Restore => Some("--show-restore"),
             Self::About => Some("--show-about"),
             Self::ConfirmQuit => Some("--confirm-quit"),
         }
@@ -648,7 +652,7 @@ fn handle_tray_action(
             });
         }
         TrayAction::CancelRun(run_id) => {
-            let guard = core.lock_unpoisoned();
+            let mut guard = core.lock_unpoisoned();
             let _ = guard.cancel_run(&run_id);
         }
         TrayAction::PauseGlobal(duration) => {
@@ -693,6 +697,13 @@ fn handle_tray_action(
             let gui_live = is_gui_live(core, conn);
             emit_show_window_requested(conn);
             spawn_gui_unless_live(core, config, gui_live, GuiStart::Window);
+        }
+        TrayAction::OpenRestore => {
+            let gui_live = is_gui_live(core, conn);
+            // A GUI that does not know `ShowRestoreRequested` yet still shows its window.
+            emit_show_window_requested(conn);
+            emit_show_restore_requested(conn);
+            spawn_gui_unless_live(core, config, gui_live, GuiStart::Restore);
         }
         TrayAction::OpenAbout => {
             let gui_live = is_gui_live(core, conn);

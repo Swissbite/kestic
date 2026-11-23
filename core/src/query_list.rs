@@ -329,6 +329,8 @@ pub struct HeldQuery<R> {
     /// Error code and raw detail while the state is `Error`.
     pub error: Option<(ErrorKind, String)>,
     pub cancel: CancelHandle,
+    /// When it ended (independent of later fetches); `None` while it runs.
+    pub finished_at: Option<OffsetDateTime>,
     /// When it was last fetched (or finished, before the first fetch).
     last_access: OffsetDateTime,
 }
@@ -372,6 +374,7 @@ impl<R: HeldResult> QueryStore<R> {
                 result: None,
                 error: None,
                 cancel,
+                finished_at: None,
                 last_access: now,
             },
         );
@@ -395,6 +398,7 @@ impl<R: HeldResult> QueryStore<R> {
             return;
         };
         query.last_access = now;
+        query.finished_at = Some(now);
         match outcome {
             QueryOutcome::Done(result) => {
                 query.state = QueryState::Done;
@@ -432,6 +436,11 @@ impl<R: HeldResult> QueryStore<R> {
         let query = self.queries.get_mut(id)?;
         query.last_access = now;
         Some(query)
+    }
+
+    /// Query `id` without counting as an access; `None` when it does not exist.
+    pub fn peek(&self, id: &str) -> Option<&HeldQuery<R>> {
+        self.queries.get(id)
     }
 
     /// The cancel handle of query `id`.

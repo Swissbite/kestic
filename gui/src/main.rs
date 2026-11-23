@@ -13,6 +13,7 @@ mod run_texts;
 #[cfg(feature = "test-harness")]
 mod smoke;
 mod state_cache;
+mod time_texts;
 mod ui_texts;
 
 use cxx_kde_frameworks::ki18n::{self, KLocalizedString};
@@ -107,6 +108,9 @@ fn parse_gui_launch_config(args: &[String]) -> state_cache::GuiLaunchConfig {
     }
     if args.iter().any(|a| a == "--show-about") {
         cfg.show_about_on_start = true;
+    }
+    if args.iter().any(|a| a == "--show-restore") {
+        cfg.show_restore_on_start = true;
     }
     if args.iter().any(|a| a == "--no-autostart") {
         cfg.no_autostart_daemon = true;

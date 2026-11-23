@@ -166,6 +166,7 @@ Stand recherchiert am 2026-11-15. Entscheid: [ADR 0001](adr/0001-tech-stack-rust
 | D-Bus allgemein (logind, UPower, NetworkManager, UDisks2, systemd, Portal) | `zbus` | 6.3.0 |
 | `.deb`-Paket | `cargo-deb` | 3.8.0 |
 | Qt-Brücke | `cxx-qt` | 0.10.0 |
+| Systemaufrufe ohne `unsafe` (`access(W_OK)`, uid des Benutzers beim Restore) | `rustix` (Features `fs`, `process`) | 1.1 |
 
 **Packaging-Fallstricke (`.deb`):** Gebaut wird gegen die Qt-/KF-Version des Build-Systems → das ist die Mindestanforderung; ein nicht erfüllbares `Recommends: paket (>= x)` überspringt apt ohne Fehler (geprüft mit `apt-get -s install`); App-ID im Reverse-DNS-Format einer eigenen Domain bzw. `io.github.<owner>.<App>`, `org.kde.*` ist offiziellen KDE-Projekten vorbehalten.
 

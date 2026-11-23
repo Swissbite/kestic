@@ -10,7 +10,8 @@ use super::rows::{role_names, row_count, row_data};
 use super::snapshot_query::{
     QueryRun, StartPoll, count_text, fetch_error_text, to_i32, too_large_text,
 };
-use crate::state_cache::{format_bytes, format_datetime_display, i18n, i18np};
+use crate::state_cache::{format_bytes, i18n, i18np};
+use crate::time_texts::format_datetime_display;
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};

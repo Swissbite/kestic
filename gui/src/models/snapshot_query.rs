@@ -72,6 +72,11 @@ impl QueryRun {
         });
     }
 
+    /// The daemon's ID of the started query.
+    pub(crate) fn id(&self) -> Option<&str> {
+        self.query_id.as_deref()
+    }
+
     /// Picks up the start of the query once it arrived.
     pub(crate) fn poll_start(&mut self) -> StartPoll {
         if self.query_id.is_some() {
