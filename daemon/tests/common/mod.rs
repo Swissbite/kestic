@@ -7,6 +7,7 @@ pub mod fakes;
 pub mod m3;
 pub mod m4;
 pub mod m4_restore;
+pub mod po_translator;
 
 pub use kestic_test_support::bus::PrivateDbusGuard;
 pub use kestic_test_support::workspace::find_kestic_binary;

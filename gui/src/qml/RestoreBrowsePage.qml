@@ -130,8 +130,11 @@ Kirigami.ScrollablePage {
                 clip: true
 
                 // Scrolls to the open folder and starts the row with a whole folder (its «›»
-                // first) rather than a cut one.
+                // first) rather than a cut one. The space this leaves after the open folder
+                // becomes a right margin, so the position stays within the bounds and the
+                // Flickable does not pull it back into a folder name.
                 function showEnd() {
+                    rightMargin = 0;
                     const end = Math.max(0, contentWidth - width);
                     let x = end;
                     if (end > 0) {
@@ -143,6 +146,7 @@ Kirigami.ScrollablePage {
                             }
                         }
                     }
+                    rightMargin = x - end;
                     contentX = x;
                 }
                 function ensureVisible(item) {
@@ -150,7 +154,8 @@ Kirigami.ScrollablePage {
                     if (x < contentX) {
                         contentX = x;
                     } else if (x + item.width > contentX + width) {
-                        contentX = Math.min(Math.max(0, contentWidth - width), x + item.width - width);
+                        contentX = Math.min(Math.max(0, contentWidth + rightMargin - width),
+                            x + item.width - width);
                     }
                 }
                 onContentWidthChanged: showEnd()

@@ -978,6 +978,26 @@ QString screenshot_variant(const QString& out_path, const char* suffix) {
     return path;
 }
 
+// Whether the one-line path row of the browse page starts with a whole folder: scrolled to
+// the start of one of its folders (or not scrolled at all), never into a folder name.
+bool path_row_starts_with_whole_folder(QQuickWindow* w) {
+    QObject* flick = object_named(w, "browsePathFlick");
+    QQuickItem* row = visible_item(w, "browsePathRow");
+    if (!flick || !row) {
+        return false;
+    }
+    const qreal x = flick->property("contentX").toReal();
+    if (x < 0.5) {
+        return true;
+    }
+    for (QQuickItem* crumb : row->childItems()) {
+        if (crumb->width() > 0 && qAbs(crumb->x() - x) < 0.5) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // The restore dialog's model and the dialog itself.
 struct Restore {
     QObject* dialog = nullptr;
@@ -1042,6 +1062,7 @@ int scenario_restore_unmatchable(const Ctx& c) {
     M4_CHECK(6318, error->property("text").toString().contains(QStringLiteral("«%1»").arg(folder)),
         "(a) the message names the folder to restore instead");
     M4_CHECK(6319, !restore_now->property("enabled").toBool(), "«Restore Now» stays disabled");
+    M4_CHECK(6327, path_row_starts_with_whole_folder(w), "the path row starts with a whole folder");
     M4_CHECK(6320, instead->property("visible").toBool(), "(b) «Restore Folder» offered");
     repaint_fully(w);
     M4_CHECK(6321, save_screenshot(w, c.out_path), "screenshot failed");
@@ -1161,6 +1182,7 @@ int scenario_restore_dialog(const Ctx& c) {
     auto* row = visible_item(w, "browseEntryRow");
     auto* list_header = list ? list->property("headerItem").value<QQuickItem*>() : nullptr;
     M4_CHECK(6273, list && row && list_header, "folder list, its header and an entry exist");
+    M4_CHECK(6275, path_row_starts_with_whole_folder(w), "the path row starts with a whole folder");
     M4_CHECK(6274, list->height() >= list_header->height() + row->height(),
         qPrintable(QStringLiteral("the folder list shows at least one entry (%1 px for %2 + %3)")
                        .arg(list->height()).arg(list_header->height()).arg(row->height())));

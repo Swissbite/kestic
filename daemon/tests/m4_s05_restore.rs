@@ -2036,3 +2036,69 @@ fn m4_s05_dry_run_error_is_not_mistaken_by_the_file_name() {
         },
     );
 }
+
+/// The restore run is a restic run with low CPU and IO priority (`nice` 10, IO class idle),
+/// like backups and maintenance.
+#[test]
+fn m4_s05_restore_run_has_low_priority() {
+    run_isolated_test(
+        "m4_s05_restore_run_has_low_priority",
+        "KESTIC_M4_S05_LOW_PRIORITY_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RP", small_tree, |_| {});
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&fx.new_dir("priority")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            let detail = fx.wait_run(&run_id);
+            let command = detail.run.commands.last().expect("restore command");
+            let invocation =
+                kestic_core::restic::parse_recorded_invocation(&command.executable, &command.args);
+            assert_eq!(
+                invocation.subcommand_args.first().map(String::as_str),
+                Some("restore"),
+                "the restore call: {invocation:?}"
+            );
+            assert!(invocation.low_priority, "low priority: {invocation:?}");
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// A target inside the repository of any local destination is refused, not only inside the one
+/// the snapshot comes from.
+#[test]
+fn m4_s05_target_inside_another_local_repository_is_refused() {
+    run_isolated_test(
+        "m4_s05_target_inside_another_local_repository_is_refused",
+        "KESTIC_M4_S05_OTHER_REPO_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RO", small_tree, |_| {});
+            let other = root.join("repo-other");
+            common::m3::add_local_destination(
+                &fx.rig.daemon.client,
+                &variant.bin,
+                &other,
+                "Other",
+                |_| {},
+            );
+            let (_, p) = fx.preview(
+                &["a.txt"],
+                Some(new_folder(&other.join("restored-here"))),
+                RestoreOverwrite::Never,
+            );
+            assert_eq!(
+                p.target.check.code,
+                RestoreTargetCode::InsideRepository,
+                "{p:?}"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}

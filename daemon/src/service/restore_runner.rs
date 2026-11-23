@@ -161,7 +161,7 @@ fn prepare_setup(
         )
     };
     // Checked again right before the start, so a folder that went missing meanwhile is caught.
-    let first_check = check_target(&target, ctx.repository());
+    let first_check = check_target(&target, ctx.repositories());
     refuse_unusable(&first_check)?;
     let mut setup = RestoreSetup {
         ctx,
@@ -186,7 +186,7 @@ fn prepare_setup(
     setup.from_preview = facts;
     create_new_folder(&setup.target, &setup.check)?;
     if setup.check.missing {
-        setup.check = check_target(&setup.target, setup.ctx.repository());
+        setup.check = check_target(&setup.target, setup.ctx.repositories());
         refuse_unusable(&setup.check)?;
         if setup.check.code == RestoreTargetCode::ExistsNotEmpty
             && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)
@@ -325,7 +325,7 @@ impl DaemonCore {
 /// meanwhile, so where it now needs a preview, the one it was accepted with must have run the
 /// dry runs. Its age counted when the restore was accepted.
 fn recheck_waiting(setup: &mut RestoreSetup) -> Result<(), String> {
-    setup.check = check_target(&setup.target, setup.ctx.repository());
+    setup.check = check_target(&setup.target, setup.ctx.repositories());
     refuse_unusable(&setup.check).map_err(|e| e.to_string())?;
     if preview_required(&setup.target, &setup.check)
         && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)

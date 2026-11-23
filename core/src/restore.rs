@@ -262,15 +262,30 @@ pub fn restore_args(
     args
 }
 
-fn spec_for(access: &SnapshotListAccess<'_>, args: Vec<String>) -> ResticCommandSpec {
+/// The restic call of `args`. Only the restore run itself is a run with low CPU and IO
+/// priority; the queries and dry runs of the preview answer the waiting dialog.
+fn spec_for(
+    access: &SnapshotListAccess<'_>,
+    args: Vec<String>,
+    priority: Priority,
+) -> ResticCommandSpec {
     let mut spec = ResticCommandSpec::for_destination(
         &access.resolved.binary,
         access.kestic_binary,
         access.destination,
         args,
     );
-    spec.low_priority = false;
+    spec.low_priority = priority == Priority::Low;
     spec
+}
+
+/// CPU and IO priority of a restic call of a restore.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Priority {
+    /// A query or a dry run the user waits for.
+    Normal,
+    /// The restore run.
+    Low,
 }
 
 /// The snapshot and the kind of the probed path, from `restic ls --json <id> <path>`: restic
@@ -359,7 +374,17 @@ pub(crate) fn run_streaming(
     cancel: Option<&CancelHandle>,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<ResticExecutionResult, BackupRunError> {
-    let spec = spec_for(access, args);
+    run_streaming_at(access, args, Priority::Normal, cancel, on_line)
+}
+
+fn run_streaming_at(
+    access: &SnapshotListAccess<'_>,
+    args: Vec<String>,
+    priority: Priority,
+    cancel: Option<&CancelHandle>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<ResticExecutionResult, BackupRunError> {
+    let spec = spec_for(access, args, priority);
     let res = run_restic_streaming(
         &spec,
         access.destination,
@@ -497,17 +522,19 @@ pub fn execute_restore(
     let args = restore_args(plan, target, overwrite, RestoreCall::Run);
     let mut items: Vec<RestoreItem> = Vec::new();
     let mut summary: Option<RestoreSummary> = None;
-    let res = run_streaming(
-        access,
-        args,
-        cancel,
-        &mut |line| match parse_restore_line(line) {
-            RestoreLine::Item(item) => items.push(item),
-            RestoreLine::Status(status) => on_status(&status),
-            RestoreLine::Summary(s) => summary = Some(s),
-            RestoreLine::Other => {}
-        },
-    )?;
+    let res =
+        run_streaming_at(
+            access,
+            args,
+            Priority::Low,
+            cancel,
+            &mut |line| match parse_restore_line(line) {
+                RestoreLine::Item(item) => items.push(item),
+                RestoreLine::Status(status) => on_status(&status),
+                RestoreLine::Summary(s) => summary = Some(s),
+                RestoreLine::Other => {}
+            },
+        )?;
     check_restore_succeeded(&res, plan)?;
     let mut result = RestoreRunResult {
         nothing_matched: summary.as_ref().is_none_or(RestoreSummary::is_empty),

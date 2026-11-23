@@ -30,7 +30,7 @@ use kestic_core::scheduler::{TimezoneSpec, to_local_offset};
 use kestic_core::snapshot::ResticSnapshot;
 use kestic_core::snapshot_ls::{normalize_snapshot_path, start_dir, validate_snapshot_id};
 use kestic_i18n::codes::RestoreOverwrite;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -108,6 +108,8 @@ pub(crate) struct RestoreContext {
     pub destination: Destination,
     /// `(id, name)` of every configured backup.
     pub backups: Vec<(String, String)>,
+    /// The repository folders of all local destinations; a restore never writes into them.
+    pub repositories: Vec<PathBuf>,
     pub timezone: TimezoneSpec,
 }
 
@@ -118,12 +120,21 @@ impl RestoreContext {
         timezone: TimezoneSpec,
     ) -> Self {
         Self {
-            destination,
             backups: config
                 .backups
                 .iter()
                 .map(|b| (b.id.as_str().to_string(), b.name.clone()))
                 .collect(),
+            repositories: config
+                .destinations
+                .iter()
+                .chain(std::iter::once(&destination))
+                .filter_map(|d| match &d.kind {
+                    DestinationKind::Local { path } => Some(path.clone()),
+                    DestinationKind::Rest { .. } => None,
+                })
+                .collect(),
+            destination,
             timezone,
         }
     }
@@ -140,12 +151,9 @@ impl RestoreContext {
         Some((BackupId::parse(id).ok()?, name))
     }
 
-    /// The repository folder of a local destination; a restore never writes into it.
-    pub(crate) fn repository(&self) -> Option<&Path> {
-        match &self.destination.kind {
-            DestinationKind::Local { path } => Some(path.as_path()),
-            DestinationKind::Rest { .. } => None,
-        }
+    /// The repository folders of all local destinations; a restore never writes into them.
+    pub(crate) fn repositories(&self) -> &[PathBuf] {
+        &self.repositories
     }
 
     /// The suggested new folder for a restore of `snapshot`.
@@ -267,7 +275,7 @@ pub(crate) fn execute_restore_preview(
             target.dir()
         )));
     }
-    let check = check_target(&target, ctx.repository());
+    let check = check_target(&target, ctx.repositories());
     let dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
         // restic leaves `uid` out of the snapshot when it is 0 (a snapshot made by root).

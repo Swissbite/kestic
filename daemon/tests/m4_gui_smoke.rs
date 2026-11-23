@@ -14,6 +14,7 @@ use common::m3::{
 use common::m4::{RawSnapshot, backup_dir, big_tree, small_tree, write_file, write_snapshot};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::query_list::QueryLimits;
+use kestic_core::scheduler::TimezoneSpec;
 use kestic_daemon::dbus_api::KESTIC_BUS_NAME;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -599,7 +600,11 @@ fn restore_dialog_env_with(
         "",
         KESTIC_BUS_NAME,
         datetime!(2026-11-15 14:32:00 UTC),
-        |o| o.enable_scheduler = false,
+        |o| {
+            o.enable_scheduler = false;
+            // The window shows times in the system time zone; the suggested folder name too.
+            o.timezone = TimezoneSpec::System;
+        },
     );
     let repo = root.join("repo-NAS");
     let (dest, password) =
@@ -641,6 +646,7 @@ fn ac_m4_05_1_4_11_15_restore_dialog() {
             ] {
                 let sub = root.join(format!("{layout}-{lang}"));
                 std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
                 let (rig, _fakes, release) = restore_dialog_env(&sub, &latest_variant());
                 rig.wrapper.hold("restore");
                 run_m4_gui_smoke_env(

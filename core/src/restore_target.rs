@@ -184,13 +184,14 @@ fn resolve_path(path: &Path) -> PathBuf {
 
 /// Checks the target folder of `target`: a missing original location is never created, a file
 /// is no folder, the folder must be writable, must not lie inside the repository of a local
-/// destination (`repository`) and needs a preview when it has content.
-pub fn check_target(target: &RestoreTarget, repository: Option<&Path>) -> TargetCheck {
+/// destination (`repositories`) and needs a preview when it has content.
+pub fn check_target(target: &RestoreTarget, repositories: &[PathBuf]) -> TargetCheck {
     let dir = Path::new(target.dir());
     let resolved = resolve_path(dir);
-    let inside_repo = repository
-        .map(resolve_path)
-        .is_some_and(|repo| resolved.starts_with(&repo));
+    let inside_repo = repositories
+        .iter()
+        .map(|repo| resolve_path(repo))
+        .any(|repo| resolved.starts_with(&repo));
     let check = |code| TargetCheck {
         code,
         resolved: resolved.clone(),

@@ -264,10 +264,10 @@ fn m4_s05_missing_folder_is_checked_at_its_parent() {
     let target = |p: std::path::PathBuf| RestoreTarget::NewFolder {
         dir: p.to_string_lossy().into_owned(),
     };
-    let below_file = check_target(&target(file.join("new")), None).code;
-    let below_locked = check_target(&target(locked.join("a")), None).code;
-    let too_deep = check_target(&target(dir.path().join("x/y/z")), None).code;
-    let fresh = check_target(&target(dir.path().join("new/x")), None).code;
+    let below_file = check_target(&target(file.join("new")), &[]).code;
+    let below_locked = check_target(&target(locked.join("a")), &[]).code;
+    let too_deep = check_target(&target(dir.path().join("x/y/z")), &[]).code;
+    let fresh = check_target(&target(dir.path().join("new/x")), &[]).code;
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     assert_eq!(below_file, RestoreTargetCode::NotADirectory);
     assert_eq!(below_locked, RestoreTargetCode::NotWritable);
@@ -324,7 +324,7 @@ fn m4_s05_dangling_symlink_is_no_target_folder() {
         dir: link.to_string_lossy().into_owned(),
     };
     assert_eq!(
-        check_target(&target, None).code,
+        check_target(&target, &[]).code,
         RestoreTargetCode::NotADirectory
     );
 }
