@@ -245,6 +245,49 @@ QtObject {
         }));
     }
 
+    // The entered connection without secrets and without the destination's ID, for adding it as
+    // a new destination.
+    function prefillData() {
+        return {
+            kind: kind,
+            typeCard: kind === "local" ? "folder"
+                : kind === "s3" ? "cloud"
+                : kind === "generic" ? (location.trim().indexOf("rclone:") === 0 ? "rclone" : "cloud")
+                : kind,
+            setupMode: setupMode,
+            name: name.trim(),
+            location: location.trim(),
+            username: username.trim(),
+            endpoint: endpoint.trim(),
+            bucket: bucket.trim(),
+            s3Path: s3Path.trim(),
+            region: region.trim(),
+            host: host.trim(),
+            port: port.trim(),
+            sftpPath: sftpPath.trim(),
+            env: envFields()
+        };
+    }
+
+    // Fills the fields from `prefillData()` of another draft.
+    function loadPrefill(data) {
+        kind = data.kind;
+        typeCard = data.typeCard;
+        setupMode = data.setupMode;
+        name = data.name;
+        location = data.location;
+        username = data.username;
+        endpoint = data.endpoint;
+        bucket = data.bucket;
+        s3Path = data.s3Path;
+        region = data.region;
+        host = data.host;
+        port = data.port;
+        sftpPath = data.sftpPath;
+        setEnvVars(data.env);
+        connectionVerified = false;
+    }
+
     // Trusts the host key of the last connection test and tests again.
     function trustHostKey() {
         var id = hostKey ? hostKey.host_key_id : "";

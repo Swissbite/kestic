@@ -419,3 +419,63 @@ fn m5_01_gui_sftp_form_asks_to_trust_an_unknown_server() {
         },
     );
 }
+
+/// AC-M5-05-7 (GUI smoke): a local destination whose path is changed in «Edit Connection» to a
+/// folder with a repository of its own `init` (the same password): the connection test shows (b)
+/// «There is another backup destination at this address.» and (a) «Save» stays disabled; (c)
+/// «Add as New Destination…» opens the wizard at its details with the entered type, path and
+/// name, without the edited destination's ID or any password. The C++ scenario checks each part;
+/// screenshots in English and German, wide and narrow.
+#[test]
+fn ac_m5_05_7_gui_other_repository_message_and_add_as_new() {
+    run_isolated_test(
+        "ac_m5_05_7_gui_other_repository_message_and_add_as_new",
+        "KESTIC_M5_GUI_EDIT_OTHER_INNER",
+        |root| {
+            let _fakes = StdFakes::start_with(FakeSetup::default());
+            let rig = M3Rig::start_on(
+                root,
+                &latest_variant(),
+                "",
+                KESTIC_BUS_NAME,
+                datetime!(2026-12-01 10:00:00 UTC),
+                |_| {},
+            );
+            let (dest, password) = common::m3::add_local_destination(
+                &rig.daemon.client,
+                &rig.variant.bin,
+                &root.join("repo"),
+                "Disk",
+                |_| {},
+            );
+            let other = root.join("other");
+            let out = std::process::Command::new(&rig.variant.bin)
+                .args(["-r", &other.to_string_lossy(), "--no-cache", "init"])
+                .env("RESTIC_PASSWORD", &password)
+                .output()
+                .expect("restic init");
+            assert!(out.status.success(), "restic init: {out:?}");
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                run_m5_gui_smoke(
+                    root,
+                    "m5-edit-other-repository",
+                    layout,
+                    lang,
+                    &smoke_artifact("edit-other-repository", layout, lang),
+                    &[
+                        ("KESTIC_SMOKE_DEST_ID", dest.id.as_str()),
+                        ("KESTIC_SMOKE_DEST_NAME", &dest.name),
+                        ("KESTIC_SMOKE_OTHER_PATH", &other.to_string_lossy()),
+                    ],
+                );
+            }
+            let config = common::load_config(&rig.daemon.config_path).expect("config");
+            assert_eq!(
+                config.destination(&dest.id).map(|d| &d.kind),
+                Some(&dest.kind),
+                "(a) the edited path was not saved"
+            );
+            rig.daemon.stop();
+        },
+    );
+}

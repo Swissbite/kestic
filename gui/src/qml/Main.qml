@@ -542,14 +542,16 @@ Kirigami.ApplicationWindow {
         }));
     }
 
-    function openAddDestinationWizard(callback, initialSetupMode) {
+    // `prefill`: `DestinationDraft.prefillData()` of an edited connection, opened at its details.
+    function openAddDestinationWizard(callback, initialSetupMode, prefill) {
         var topLayer = wizardPageStack.currentItem;
         if (topLayer && topLayer.objectName === "addDestinationWizard") {
             return;
         }
         wizardPageStack.push(addDestinationWizardComponent.createObject(wizardPageStack, {
             destinationCreatedCallback: callback || null,
-            setupMode: initialSetupMode || "init"
+            setupMode: initialSetupMode || "init",
+            prefill: prefill || null
         }));
     }
 

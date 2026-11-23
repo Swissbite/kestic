@@ -17,7 +17,9 @@ use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};
 use kestic_core::model::DestinationKind;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{BackendSecrets, KesticDbusError};
-use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode, ServiceErrorCode};
+use kestic_i18n::codes::{
+    ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome, ServiceErrorCode,
+};
 use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
 
@@ -215,7 +217,7 @@ impl qobject::KesticApp {
         let Ok(client) = make_client() else {
             return false;
         };
-        self.finish_action(
+        let Some(result) = self.as_mut().finish_action(
             client.update_destination(
                 &dest,
                 &mode.to_string(),
@@ -223,9 +225,23 @@ impl qobject::KesticApp {
                 &backend,
                 verify_connection,
             ),
-            Finish::Saved,
-        )
-        .is_some()
+            Finish::Plain,
+        ) else {
+            return false;
+        };
+        match update_refusal(result.outcome) {
+            None => {
+                self.as_mut().set_has_unsaved_changes(false);
+                true
+            }
+            Some(code) => {
+                // The edit page shows it like the connection test, with its action.
+                self.as_mut().show_action_error(&tr_text(&code.text("")));
+                self.as_mut()
+                    .set_connection_test_error_kind(QString::from(code.as_str()));
+                false
+            }
+        }
     }
 
     pub fn update_destination_password(
@@ -312,5 +328,30 @@ impl qobject::KesticApp {
                 false
             }
         }
+    }
+}
+
+/// The connection-test code under which the edit page shows a refused `UpdateDestination`, or
+/// `None` when it was saved.
+fn update_refusal(outcome: DestinationUpdateOutcome) -> Option<ConnectionTestCode> {
+    match outcome {
+        DestinationUpdateOutcome::Saved => None,
+        DestinationUpdateOutcome::OtherRepository => Some(ConnectionTestCode::OtherRepository),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AC-M5-05-7 (a), (b): an `UpdateDestination` that found another repository after a passed
+    /// test is not «saved» but shown as another backup destination.
+    #[test]
+    fn ac_m5_05_7_refused_update_is_shown_as_other_repository() {
+        assert_eq!(update_refusal(DestinationUpdateOutcome::Saved), None);
+        assert_eq!(
+            update_refusal(DestinationUpdateOutcome::OtherRepository),
+            Some(ConnectionTestCode::OtherRepository)
+        );
     }
 }

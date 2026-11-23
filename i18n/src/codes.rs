@@ -215,6 +215,23 @@ code_enum! {
         SshKeyRejected => "ssh_key_rejected",
         /// SFTP: ssh reaches the server through a jump host (`ProxyJump`, `ProxyCommand`).
         JumpHostUnsupported => "jump_host_unsupported",
+        /// Edited connection: the repository there has another ID than the destination's.
+        OtherRepository => "other_repository",
+        /// Edited connection: a credential is needed that is neither entered nor saved for this
+        /// server; `detail` = the variable restic reads it from.
+        CredentialsRequired => "credentials_required",
+        /// An `rclone:` URL with a secret parameter; `detail` = the parameter name.
+        SecretInUrl => "secret_in_url",
+    }
+}
+
+code_enum! {
+    /// Result of `UpdateDestination` (`DestinationUpdateResultDto.outcome`).
+    DestinationUpdateOutcome {
+        /// Saved: the same repository ID, or the connection did not change.
+        Saved => "saved",
+        /// Another repository ID at the edited connection: nothing saved.
+        OtherRepository => "other_repository",
     }
 }
 

@@ -73,6 +73,9 @@ EditorPage {
             return true;
         }
         destDraft.showError(appBackend.last_action_error);
+        if (appBackend.connection_test_error_kind === "other_repository") {
+            destDraft.connectionVerified = false;
+        }
         return false;
     }
 
@@ -112,5 +115,6 @@ EditorPage {
         namePrefix: "destEdit"
         editing: true
         setupModes: ["connect", "init"]
+        onAddAsNewRequested: rootWindow.openAddDestinationWizard(null, destDraft.setupMode, destDraft.prefillData())
     }
 }

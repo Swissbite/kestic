@@ -24,6 +24,10 @@ ColumnLayout {
 
     readonly property var appBackend: draft.appBackend
 
+    // Edit page: the edited connection leads to another repository and is to become a
+    // destination of its own.
+    signal addAsNewRequested()
+
     spacing: Kirigami.Units.mediumSpacing
 
     // The service of a generic destination, from the scheme of its repository URL.
@@ -161,6 +165,14 @@ ColumnLayout {
                     form.locationEdited();
                     form.draft.runConnectionTest();
                 }
+            },
+            Kirigami.Action {
+                objectName: form.namePrefix + "AddAsNewAction"
+                icon.name: "list-add"
+                text: i18n("Add as New Destination…")
+                visible: form.editing && !form.draft.testFeedbackOk
+                    && form.appBackend.connection_test_error_kind === "other_repository"
+                onTriggered: form.addAsNewRequested()
             },
             Kirigami.Action {
                 objectName: form.namePrefix + "CheckKeysAction"

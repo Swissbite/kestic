@@ -28,9 +28,10 @@ double scene_y(QQuickItem* item) {
     return item->mapToScene(QPointF(0, 0)).y();
 }
 
-// Scrolls the wizard page so that `item` is in view (the narrow window does not show all cards).
-void scroll_into_view(QQuickWindow* w, QQuickItem* item) {
-    QQuickItem* page = item_named(w, "addDestinationWizard");
+// Scrolls the page `page_name` so that `item` is in view (the narrow window does not show all of
+// it).
+void scroll_into_view_in(QQuickWindow* w, const char* page_name, QQuickItem* item) {
+    QQuickItem* page = item_named(w, page_name);
     auto* flick = page ? qvariant_cast<QQuickItem*>(page->property("flickable")) : nullptr;
     auto* content = flick ? qvariant_cast<QQuickItem*>(flick->property("contentItem")) : nullptr;
     if (!content) {
@@ -40,6 +41,11 @@ void scroll_into_view(QQuickWindow* w, QQuickItem* item) {
     const double max_y = std::max(0.0, flick->property("contentHeight").toDouble() - flick->height());
     flick->setProperty("contentY", std::clamp(top - 20.0, 0.0, max_y));
     wait_ms(100);
+}
+
+// Scrolls the wizard page so that `item` is in view.
+void scroll_into_view(QQuickWindow* w, QQuickItem* item) {
+    scroll_into_view_in(w, "addDestinationWizard", item);
 }
 
 // Opens «Add Destination» on its first step, the destination type.
@@ -688,6 +694,63 @@ int scenario_rclone_form(const Ctx& c) {
     return 0;
 }
 
+// M5-S09 (GUI parts of AC-M5-05-7): the edit page of a local destination whose path is changed
+// to a folder with another repository. The connection test says «There is another backup
+// destination at this address.», «Save» stays disabled (a, b), and «Add as New Destination…»
+// opens the wizard «Add Destination» at its details with the entered type, path and name, without
+// the edited destination's ID or any password (c). Screenshots of the message and of the wizard.
+int scenario_edit_other_repository(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString dest_id = qEnvironmentVariable("KESTIC_SMOKE_DEST_ID");
+    const QString dest_name = qEnvironmentVariable("KESTIC_SMOKE_DEST_NAME");
+    const QString other_path = qEnvironmentVariable("KESTIC_SMOKE_OTHER_PATH");
+    M3_CHECK(5700, !dest_id.isEmpty() && !dest_name.isEmpty() && !other_path.isEmpty(), "KESTIC_SMOKE_* not set");
+    QMetaObject::invokeMethod(w, "openDestinationEditPage", Q_ARG(QVariant, dest_id));
+    M3_CHECK(5701, wait_until([&] { return count_visible(w, "destEditLocationField") == 1; }, 3000), "edit page did not open");
+    wait_ms(150);
+    set_text(w, "destEditLocationField", other_path);
+    QQuickItem* test = item_named(w, "destEditTestButton");
+    M3_CHECK(5702, wait_until([&] { return test && test->isEnabled(); }, 2000), "«Test Connection» not enabled");
+    // The page knows its height only after a layout pass.
+    wait_ms(300);
+    scroll_into_view_in(w, "destinationEditPage", test);
+    M3_CHECK(5703, click_ui_item(w, test, "Test Connection"), "click on «Test Connection» failed");
+    QQuickItem* banner = item_named(w, "destEditFeedbackBanner");
+    const QString message = loc(c.lang, "There is another backup destination at this address.",
+        "Unter dieser Adresse liegt ein anderes Backup-Ziel.");
+    M3_CHECK(5704, wait_until([&] { return banner && banner->property("text").toString() == message; }, 15000),
+        "AC-M5-05-7 (b): no message «another backup destination»");
+    QObject* save = object_named(w, "saveDestinationAction");
+    M3_CHECK(5705, save != nullptr && !save->property("enabled").toBool(), "AC-M5-05-7 (a): «Save» enabled");
+    QObject* add_as_new = object_named(w, "destEditAddAsNewAction");
+    M3_CHECK2(5706, add_as_new != nullptr, add_as_new->property("visible").toBool(),
+        "AC-M5-05-7 (c): «Add as New Destination…» missing");
+    M3_CHECK_EQ(5707, add_as_new->property("text").toString(),
+        loc(c.lang, "Add as New Destination…", "Als neues Ziel hinzufügen…"), "action text");
+    scroll_into_view_in(w, "destinationEditPage", banner);
+    wait_ms(600);
+    M3_CHECK(5708, save_screenshot(w, c.out_path), "screenshot failed");
+
+    QMetaObject::invokeMethod(add_as_new, "trigger");
+    M3_CHECK(5709, wait_until([&] { return count_visible(w, "wizDestLocationField") == 1; }, 3000),
+        "AC-M5-05-7 (c): the wizard did not open at its details");
+    QQuickItem* wizard = item_named(w, "addDestinationWizard");
+    M3_CHECK(5710, wizard != nullptr, "wizard missing");
+    QObject* draft = qvariant_cast<QObject*>(wizard->property("draft"));
+    M3_CHECK(5711, draft != nullptr, "wizard draft missing");
+    M3_CHECK_EQ(5712, item_named(w, "wizDestLocationField")->property("text").toString(), other_path, "AC-M5-05-7 (c): entered path");
+    M3_CHECK_EQ(5713, item_named(w, "wizDestNameField")->property("text").toString(), dest_name, "AC-M5-05-7 (c): entered name");
+    M3_CHECK_EQ(5714, draft->property("kind").toString(), QStringLiteral("local"), "AC-M5-05-7 (c): destination type");
+    M3_CHECK_EQ(5715, draft->property("destinationId").toString(), QString(), "AC-M5-05-7 (c): no ID of the edited destination");
+    M3_CHECK_EQ(5716, draft->property("repoPassword").toString(), QString(), "AC-M5-05-7 (c): no password carried over");
+    M3_CHECK(5717, wizard->property("step").toInt() == 2, "AC-M5-05-7 (c): the wizard is not at its details");
+    wait_ms(600);
+    QString wizard_shot = c.out_path;
+    wizard_shot.replace(QStringLiteral("edit-other-repository"), QStringLiteral("edit-add-as-new"));
+    M3_CHECK(5718, save_screenshot(w, wizard_shot), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m5_smoke_scenario(
@@ -718,6 +781,8 @@ void run_m5_smoke_scenario(
         rc = scenario_rclone_form(ctx);
     } else if (scen == QLatin1String("m5-sftp-form")) {
         rc = scenario_sftp_form(ctx);
+    } else if (scen == QLatin1String("m5-edit-other-repository")) {
+        rc = scenario_edit_other_repository(ctx);
     } else {
         std::fprintf(stderr, "M5 smoke failed (599): unknown m5 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

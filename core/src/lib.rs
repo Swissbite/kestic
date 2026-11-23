@@ -23,6 +23,7 @@ pub mod migrations;
 pub mod model;
 pub mod mount;
 pub mod provider;
+pub mod repo_identity;
 pub mod restic;
 pub mod retention;
 pub mod s3;

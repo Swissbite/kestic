@@ -9,6 +9,7 @@ use crate::model::{
     BackupId, CommandRecord, DestinationId, MaintenanceStats, PendingReason, Run, RunId, RunKind,
     RunStats, RunStatus,
 };
+use crate::repo_identity::RepositoryId;
 use crate::restic::redact_secrets;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
@@ -546,6 +547,43 @@ impl RunHistory {
                 state.prune_schedule_set_at.map(|t| t.unix_timestamp()),
                 state.check_schedule_set_at.map(|t| t.unix_timestamp()),
             ],
+        )?;
+        Ok(())
+    }
+
+    /// The repository ID last read at the saved connection of `destination_id`, if any.
+    pub fn repository_id(
+        &self,
+        destination_id: &DestinationId,
+    ) -> Result<Option<RepositoryId>, HistoryError> {
+        let stored: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT repo_id FROM destination_state WHERE destination_id = ?1",
+                params![destination_id.as_str()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        stored
+            .flatten()
+            .map(|text| {
+                RepositoryId::parse(&text).map_err(|e| {
+                    HistoryError::Model(crate::model::ModelError::InvalidDestination(e.to_string()))
+                })
+            })
+            .transpose()
+    }
+
+    /// Stores the repository ID read at the saved connection of `destination_id`.
+    pub fn set_repository_id(
+        &self,
+        destination_id: &DestinationId,
+        id: &RepositoryId,
+    ) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "INSERT INTO destination_state (destination_id, repo_id) VALUES (?1, ?2)
+             ON CONFLICT(destination_id) DO UPDATE SET repo_id = excluded.repo_id",
+            params![destination_id.as_str(), id.as_str()],
         )?;
         Ok(())
     }

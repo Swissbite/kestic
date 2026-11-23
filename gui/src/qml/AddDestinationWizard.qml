@@ -33,9 +33,21 @@ WizardPage {
         return destDraft.detailsValid && destDraft.passwordsMatch && appBackend.blocking_kind === "";
     }
 
+    // Fields of an edited connection to add as a new destination (`DestinationDraft.prefillData()`).
+    property var prefill: null
+    // Read by the offscreen smoke.
+    readonly property alias draft: destDraft
+
     DestinationDraft {
         id: destDraft
         appBackend: page.appBackend
+    }
+
+    Component.onCompleted: {
+        if (prefill) {
+            destDraft.loadPrefill(prefill);
+            step = 2;
+        }
     }
 
     function finishWizard() {
