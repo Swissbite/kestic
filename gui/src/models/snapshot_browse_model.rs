@@ -7,18 +7,18 @@
 //! selection of entries to restore stays when the folder changes.
 
 use super::qobject;
-use super::rows::{role_names, row_count, row_data};
 use super::snapshot_query::{
-    QueryRun, StartPoll, count_text, fetch_error_text, to_i32, too_large_text,
+    QueryList, QueryListModel, QueryListView, count_text, to_i32, too_large_text,
 };
 use crate::state_cache::{format_bytes, i18np};
 use crate::time_texts::to_local;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
+use cxx_qt_lib::{QModelIndex, QString, QStringList};
+use kestic_core::query_list::QueryState;
 use kestic_core::snapshot_find::parent_dir;
 use kestic_core::snapshot_ls::path_segments;
 use kestic_daemon::dbus_api::{
-    KesticDbusError, LsEntryDto, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
+    LsEntryDto, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use std::collections::BTreeSet;
 use std::pin::Pin;
@@ -41,7 +41,8 @@ model_row!(BrowseRow {
 
 #[derive(Default)]
 pub struct SnapshotBrowseModelRust {
-    rows: Vec<BrowseRow>,
+    /// The entries of the current folder and the query that lists it.
+    list: QueryList<BrowseRow>,
     pub(crate) state: QString,
     pub(crate) error_text: QString,
     pub(crate) dir: QString,
@@ -56,9 +57,6 @@ pub struct SnapshotBrowseModelRust {
 
     destination_id: String,
     snapshot_id: String,
-    filter: String,
-    /// The query that lists the current folder.
-    query: QueryRun,
     /// Absolute snapshot paths marked for restore.
     selection: BTreeSet<String>,
 }
@@ -142,29 +140,69 @@ impl SnapshotBrowseModelRust {
             selected: self.selection.contains(&e.path),
         }
     }
+}
 
-    /// Fetches the page at `offset` of the current folder: `Ok(None)` while it is listed.
-    fn fetch(&mut self, offset: u64) -> Result<Option<LsResultDto>, KesticDbusError> {
-        let filter = self.filter.clone();
-        match self.query.fetch(offset, &filter)? {
-            Some(SnapshotQueryResultDto::Ls(ls)) => Ok(Some(ls)),
-            Some(_) => Err(KesticDbusError::Internal(
-                "unexpected snapshot query result".to_string(),
-            )),
-            None => Ok(None),
+query_list_model!(
+    SnapshotBrowseModel,
+    BrowseRow,
+    begin_reset: begin_reset_browse,
+    end_reset: end_reset_browse,
+    begin_insert: begin_insert_rows_browse,
+    end_insert: end_insert_rows_browse,
+);
+
+impl QueryListModel for qobject::SnapshotBrowseModel {
+    type Page = LsResultDto;
+
+    fn page_of(result: SnapshotQueryResultDto) -> Option<LsResultDto> {
+        match result {
+            SnapshotQueryResultDto::Ls(ls) => Some(ls),
+            _ => None,
         }
+    }
+
+    fn page_rows(&self, ls: &LsResultDto) -> Vec<BrowseRow> {
+        ls.entries.items.iter().map(|e| self.row_for(e)).collect()
+    }
+
+    fn show_first_page(mut self: Pin<&mut Self>, ls: LsResultDto) {
+        let rows = self.page_rows(&ls);
+        self.as_mut().reset_rows(rows);
+        self.as_mut().set_dir_exists(ls.dir_exists);
+        self.as_mut().set_too_large(ls.entries.too_large);
+        self.as_mut().set_total(to_i32(ls.entries.total));
+        self.as_mut().set_matched(to_i32(ls.entries.matched));
+        // A list too large to hold cannot be filtered: its count is the total.
+        let filtered = !self.list.filter.is_empty() && !ls.entries.too_large;
+        let count = count_text(ls.entries.total, ls.entries.matched, filtered);
+        self.as_mut().set_count_text(QString::from(&count));
+        let too_large = too_large_text(ls.entries.total);
+        self.as_mut().set_too_large_text(QString::from(&too_large));
+        self.as_mut().set_error_text(QString::from(""));
+        self.set_query_state(Some(QueryState::Done));
+    }
+
+    /// Lists the current folder again; the filter stays.
+    fn restart(mut self: Pin<&mut Self>) {
+        let dest = QString::from(&self.destination_id);
+        let snap = QString::from(&self.snapshot_id);
+        let dir = self.dir.clone();
+        let filter = self.list.filter.clone();
+        self.as_mut().open(&dest, &snap, &dir);
+        self.as_mut().list_mut().filter = filter;
     }
 }
 
 impl qobject::SnapshotBrowseModel {
-    /// Lists `dir` of `snapshot_id` in `destination_id`; the selection stays.
+    /// Lists `dir` of `snapshot_id` in `destination_id`; the selection stays. The query of the
+    /// folder being left is cancelled while it still runs, so restic stops.
     pub fn open(
         mut self: Pin<&mut Self>,
         destination_id: &QString,
         snapshot_id: &QString,
         dir: &QString,
     ) {
-        self.as_mut().abandon();
+        self.as_mut().abandon_query();
         let request = SnapshotQueryRequest::ls(
             &destination_id.to_string(),
             &snapshot_id.to_string(),
@@ -174,12 +212,8 @@ impl qobject::SnapshotBrowseModel {
             let mut rust = self.as_mut().rust_mut();
             rust.destination_id = request.destination_id.clone();
             rust.snapshot_id = snapshot_id.to_string();
-            rust.filter.clear();
-            rust.query.start(request);
         }
-        self.as_mut().begin_reset_browse();
-        self.as_mut().rust_mut().rows.clear();
-        self.as_mut().end_reset_browse();
+        self.as_mut().clear_list();
         self.as_mut().set_dir(dir.clone());
         self.as_mut().set_dir_exists(true);
         self.as_mut().set_too_large(false);
@@ -188,114 +222,7 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().set_count_text(QString::from(""));
         self.as_mut().set_error_text(QString::from(""));
         self.as_mut().update_selection_text();
-        self.as_mut().set_state(QString::from("running"));
-    }
-
-    /// Checks the running query (called by a timer while `state` is `running`).
-    pub fn poll(mut self: Pin<&mut Self>) {
-        match self.as_mut().rust_mut().query.poll_start() {
-            StartPoll::Waiting => {}
-            StartPoll::Failed(text) => self.as_mut().fail(&text),
-            StartPoll::Started => self.as_mut().load_first_page(),
-        }
-    }
-
-    /// Filters the current folder by `text` (any case, in the names); the daemon filters.
-    pub fn set_filter(mut self: Pin<&mut Self>, text: &QString) {
-        let text = text.to_string();
-        if text == self.filter {
-            return;
-        }
-        self.as_mut().rust_mut().filter = text;
-        if self.state.to_string() == "done" {
-            self.as_mut().load_first_page();
-        }
-    }
-
-    /// Stops listing the current folder (the page closes).
-    pub fn cancel(self: Pin<&mut Self>) {
-        self.abandon();
-    }
-
-    /// Cancels the query of the folder being left while it still runs, so restic stops.
-    fn abandon(mut self: Pin<&mut Self>) {
-        if self.state.to_string() != "running" {
-            return;
-        }
-        self.as_mut().rust_mut().query.abandon();
-        self.as_mut().set_state(QString::from("cancelled"));
-    }
-
-    fn fail(mut self: Pin<&mut Self>, text: &str) {
-        self.as_mut().set_error_text(QString::from(text));
-        self.as_mut().set_state(QString::from("error"));
-    }
-
-    fn load_first_page(mut self: Pin<&mut Self>) {
-        match self.as_mut().rust_mut().fetch(0) {
-            Ok(None) => {}
-            Ok(Some(ls)) => self.as_mut().apply_first_page(&ls),
-            Err(KesticDbusError::NotFound(_)) => self.as_mut().reopen(),
-            Err(err) => self.as_mut().fail(&fetch_error_text(err)),
-        }
-    }
-
-    /// Starts the query of the current folder again (the daemon freed the old result).
-    fn reopen(mut self: Pin<&mut Self>) {
-        let dest = QString::from(&self.destination_id);
-        let snap = QString::from(&self.snapshot_id);
-        let dir = self.dir.clone();
-        let filter = self.filter.clone();
-        self.as_mut().open(&dest, &snap, &dir);
-        self.as_mut().rust_mut().filter = filter;
-    }
-
-    fn apply_first_page(mut self: Pin<&mut Self>, ls: &LsResultDto) {
-        let rows: Vec<BrowseRow> = ls.entries.items.iter().map(|e| self.row_for(e)).collect();
-        self.as_mut().begin_reset_browse();
-        self.as_mut().rust_mut().rows = rows;
-        self.as_mut().end_reset_browse();
-        self.as_mut().set_dir_exists(ls.dir_exists);
-        self.as_mut().set_too_large(ls.entries.too_large);
-        self.as_mut().set_total(to_i32(ls.entries.total));
-        self.as_mut().set_matched(to_i32(ls.entries.matched));
-        // A list too large to hold cannot be filtered: its count is the total.
-        let filtered = !self.filter.is_empty() && !ls.entries.too_large;
-        let count = count_text(ls.entries.total, ls.entries.matched, filtered);
-        self.as_mut().set_count_text(QString::from(&count));
-        let too_large = too_large_text(ls.entries.total);
-        self.as_mut().set_too_large_text(QString::from(&too_large));
-        self.as_mut().set_error_text(QString::from(""));
-        self.as_mut().set_state(QString::from("done"));
-    }
-
-    pub fn can_fetch_more(&self, parent: &QModelIndex) -> bool {
-        !parent.is_valid()
-            && self.state.to_string() == "done"
-            && !self.too_large
-            && i32::try_from(self.rows.len()).unwrap_or(i32::MAX) < self.matched
-    }
-
-    /// Appends the next page (at most 200 entries) at the end of the list.
-    pub fn fetch_more(mut self: Pin<&mut Self>, parent: &QModelIndex) {
-        if !self.can_fetch_more(parent) {
-            return;
-        }
-        let offset = self.rows.len() as u64;
-        match self.as_mut().rust_mut().fetch(offset) {
-            Ok(Some(ls)) if !ls.entries.items.is_empty() => {
-                let rows: Vec<BrowseRow> =
-                    ls.entries.items.iter().map(|e| self.row_for(e)).collect();
-                let first = row_count(&self.rows);
-                let last = first + row_count(&rows) - 1;
-                self.as_mut().begin_insert_rows_browse(parent, first, last);
-                self.as_mut().rust_mut().rows.extend(rows);
-                self.as_mut().end_insert_rows_browse();
-            }
-            Ok(_) => {}
-            Err(KesticDbusError::NotFound(_)) => self.as_mut().reopen(),
-            Err(err) => self.as_mut().fail(&fetch_error_text(err)),
-        }
+        self.as_mut().start_query(request);
     }
 
     /// The row of the entry at `path`, fetching at most [`FIND_ROW_PAGES`] further pages while it
@@ -304,16 +231,17 @@ impl qobject::SnapshotBrowseModel {
         let path = path.to_string();
         let parent = QModelIndex::default();
         for _ in 0..FIND_ROW_PAGES {
-            if self.rows.iter().any(|r| r.path == path) || !self.can_fetch_more(&parent) {
+            if self.list.rows.iter().any(|r| r.path == path) || !self.can_fetch_more(&parent) {
                 break;
             }
-            let before = self.rows.len();
+            let before = self.list.rows.len();
             self.as_mut().fetch_more(&parent);
-            if self.rows.len() == before {
+            if self.list.rows.len() == before {
                 break;
             }
         }
-        self.rows
+        self.list
+            .rows
             .iter()
             .position(|r| r.path == path)
             .map_or(-1, |row| to_i32(row as u64))
@@ -321,17 +249,20 @@ impl qobject::SnapshotBrowseModel {
 
     /// Marks or unmarks the entry at `row` for restore.
     pub fn toggle_selected(mut self: Pin<&mut Self>, row: i32) {
-        let Some(index) = usize::try_from(row).ok().filter(|&i| i < self.rows.len()) else {
+        let Some(index) = usize::try_from(row)
+            .ok()
+            .filter(|&i| i < self.list.rows.len())
+        else {
             return;
         };
         {
             let mut rust = self.as_mut().rust_mut();
-            let path = rust.rows[index].path.clone();
+            let path = rust.list.rows[index].path.clone();
             let selected = !rust.selection.remove(&path);
             if selected {
                 rust.selection.insert(path);
             }
-            rust.rows[index].selected = selected;
+            rust.list.rows[index].selected = selected;
         }
         let model_index = self.as_ref().index_browse(row, 0, &QModelIndex::default());
         self.as_mut()
@@ -343,6 +274,7 @@ impl qobject::SnapshotBrowseModel {
     pub fn clear_selection(mut self: Pin<&mut Self>) {
         self.as_mut().rust_mut().selection.clear();
         let changed: Vec<usize> = self
+            .list
             .rows
             .iter()
             .enumerate()
@@ -350,7 +282,7 @@ impl qobject::SnapshotBrowseModel {
             .map(|(i, _)| i)
             .collect();
         for i in changed {
-            self.as_mut().rust_mut().rows[i].selected = false;
+            self.as_mut().rust_mut().list.rows[i].selected = false;
             let row = i32::try_from(i).unwrap_or(i32::MAX);
             let model_index = self.as_ref().index_browse(row, 0, &QModelIndex::default());
             self.as_mut()
@@ -391,18 +323,6 @@ impl qobject::SnapshotBrowseModel {
             list.append(QString::from(&path));
         }
         list
-    }
-
-    pub fn row_count(&self, _parent: &QModelIndex) -> i32 {
-        row_count(&self.rows)
-    }
-
-    pub fn role_names(&self) -> QHash<QHashPair_i32_QByteArray> {
-        role_names::<BrowseRow>()
-    }
-
-    pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
-        row_data(&self.rows, index, role)
     }
 }
 

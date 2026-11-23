@@ -151,6 +151,7 @@ pub mod qobject {
         #[qproperty(QString, run_text)]
         #[qproperty(QString, run_target)]
         #[qproperty(QString, folder_instead)]
+        #[qproperty(bool, target_refused)]
         type RestorePreviewModel = super::RestorePreviewModelRust;
 
         /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
@@ -805,6 +806,8 @@ pub mod qobject {
 
 #[macro_use]
 mod rows;
+#[macro_use]
+mod snapshot_query;
 
 mod backups_model;
 mod destinations_model;
@@ -816,7 +819,6 @@ mod run_logs_model;
 mod runs_model;
 mod snapshot_browse_model;
 mod snapshot_diff_model;
-mod snapshot_query;
 mod snapshot_search_model;
 mod snapshots_model;
 
