@@ -609,6 +609,23 @@ fn find_at_target(target: &Path, item: &str) -> AtTarget {
     }
 }
 
+/// Whether the restore of `selection` with `plan` into the resolved `target` would write into
+/// the repository of a local destination (`repositories`) that lies below it: only entries of
+/// the selection count, so a snapshot without the repository folder, or a selection outside it,
+/// restores as usual.
+pub fn writes_into_repository(
+    tree: &SnapshotTree,
+    plan: &RestorePlan,
+    selection: &[String],
+    target: &Path,
+    repositories: &[std::path::PathBuf],
+) -> bool {
+    let selected = crate::restore::selected_paths(plan, selection);
+    crate::restore_target::repositories_below(target, repositories)
+        .iter()
+        .any(|repo| tree.writes_below(selected.as_deref(), repo))
+}
+
 /// Walks what the restore of `plan` writes (`restic ls --json --recursive --no-lock`): the
 /// selected entries of `selection` with everything below them, or the restored folder when the
 /// whole folder is restored. Nothing else of the snapshot is read or held.

@@ -18,19 +18,18 @@ use kestic_core::mount::current_home_dir;
 use kestic_core::query_list::PageRequest;
 use kestic_core::restic::CancelHandle;
 use kestic_core::restore::{
-    EntryKind, RestorePlan, RestoreTarget, folder_instead_of_unmatchable, normalize_selection,
-    plan_restore, probe_path, probe_snapshot_path, selected_paths,
+    RestorePlan, RestoreTarget, folder_instead_of_unmatchable, normalize_selection, resolve_plan,
 };
 use kestic_core::restore_preview::{
-    PreviewClassification, PreviewRun, SnapshotTree, execute_preview, walk_folder,
+    PreviewClassification, PreviewRun, execute_preview, walk_folder, writes_into_repository,
 };
 use kestic_core::restore_target::{
     FolderWords, PreviewFingerprint, SuggestionInput, TargetCheck, check_target, current_uid,
-    original_location, preview_required, repositories_below, suggested_new_folder,
+    original_location, preview_required, suggested_new_folder,
 };
 use kestic_core::scheduler::{TimezoneSpec, to_local_offset};
 use kestic_core::snapshot::ResticSnapshot;
-use kestic_core::snapshot_ls::{normalize_snapshot_path, start_dir, validate_snapshot_id};
+use kestic_core::snapshot_ls::{normalize_snapshot_path, validate_snapshot_id};
 use kestic_i18n::codes::{RestoreOverwrite, RestoreTargetCode};
 use std::path::PathBuf;
 use time::OffsetDateTime;
@@ -225,29 +224,6 @@ impl HeldPreview {
     }
 }
 
-/// The plan of a restore: reads the snapshot and the kind of the probed path first.
-pub(crate) fn resolve_plan(
-    access: &SnapshotListAccess<'_>,
-    params: &RestoreParams,
-    cancel: Option<&CancelHandle>,
-) -> Result<(ResticSnapshot, RestorePlan), BackupRunError> {
-    let probe = probe_path(&params.selection);
-    let (snapshot, kind) = probe_snapshot_path(access, &params.snapshot_id, &probe, cancel)?;
-    let mut plan = plan_restore(&params.snapshot_id, &params.selection, kind)?;
-    if params.selection.is_empty() {
-        // The whole snapshot: its common folder from the tree, `/` when the tree does not hold
-        // the folder the snapshot names (a snapshot of relative paths).
-        let common = start_dir(&snapshot.paths);
-        if common != "/"
-            && probe_snapshot_path(access, &params.snapshot_id, &common, cancel)?.1
-                == EntryKind::Dir
-        {
-            plan.folder = common;
-        }
-    }
-    Ok((snapshot, plan))
-}
-
 /// Runs a preview: suggestion and check always, the dry runs only where a preview is required
 /// and the target can be written to.
 pub(crate) fn execute_restore_preview(
@@ -257,7 +233,7 @@ pub(crate) fn execute_restore_preview(
     cancel: Option<&CancelHandle>,
     limit_bytes: u64,
 ) -> Result<HeldPreview, BackupRunError> {
-    let (snapshot, plan) = resolve_plan(access, params, cancel)?;
+    let (snapshot, plan) = resolve_plan(access, &params.snapshot_id, &params.selection, cancel)?;
     let new_folder = ctx.suggestion(&snapshot);
     let suggestion = RestoreSuggestionDto {
         new_folder: new_folder.to_string_lossy().into_owned(),
@@ -285,7 +261,13 @@ pub(crate) fn execute_restore_preview(
     let mut dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
         let tree = walk_folder(access, &plan, &params.selection, cancel, limit_bytes)?;
-        if writes_into_repository(&tree, &plan, params, &check, ctx) {
+        if writes_into_repository(
+            &tree,
+            &plan,
+            &params.selection,
+            &check.resolved,
+            ctx.repositories(),
+        ) {
             check.code = RestoreTargetCode::InsideRepository;
             dry_run = false;
             PreviewClassification::empty()
@@ -322,22 +304,6 @@ pub(crate) fn execute_restore_preview(
         backup: ctx.backup_of(&snapshot),
         used: false,
     })
-}
-
-/// Whether the restore would write into the repository of a local destination that lies below
-/// the target folder: only entries of the selection count, so a snapshot without the
-/// repository's folder or a selection outside it restores as usual.
-fn writes_into_repository(
-    tree: &SnapshotTree,
-    plan: &RestorePlan,
-    params: &RestoreParams,
-    check: &TargetCheck,
-    ctx: &RestoreContext,
-) -> bool {
-    let selected = selected_paths(plan, &params.selection);
-    repositories_below(&check.resolved, ctx.repositories())
-        .iter()
-        .any(|repo| tree.writes_below(selected.as_deref(), repo))
 }
 
 /// The parameters a preview or a restore stands for.

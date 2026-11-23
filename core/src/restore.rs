@@ -17,6 +17,7 @@ use crate::restic::{CancelHandle, ResticExecutionResult, ResticStatusMessage};
 use crate::snapshot::ResticSnapshot;
 use crate::snapshot_ls::{
     RawLsNode, SnapshotPathError, common_dir, ls_args, normalize_snapshot_path, parent_dir,
+    start_dir,
 };
 use kestic_i18n::codes::RestoreOverwrite;
 use serde::{Deserialize, Serialize};
@@ -217,6 +218,30 @@ pub fn selected_paths(plan: &RestorePlan, selection: &[String]) -> Option<Vec<St
             .map(|p| relative_to(&plan.folder, p).to_string())
             .collect(),
     )
+}
+
+/// The plan of a restore of `selection` from snapshot `snapshot_id`: reads the snapshot and
+/// the kind of the probed path first. Without a selection the whole snapshot is restored from
+/// its common folder, or from `/` when the tree does not hold the folder the snapshot names (a
+/// snapshot of relative paths).
+pub fn resolve_plan(
+    access: &SnapshotListAccess<'_>,
+    snapshot_id: &str,
+    selection: &[String],
+    cancel: Option<&CancelHandle>,
+) -> Result<(ResticSnapshot, RestorePlan), BackupRunError> {
+    let probe = probe_path(selection);
+    let (snapshot, kind) = probe_snapshot_path(access, snapshot_id, &probe, cancel)?;
+    let mut plan = plan_restore(snapshot_id, selection, kind)?;
+    if selection.is_empty() {
+        let common = start_dir(&snapshot.paths);
+        if common != "/"
+            && probe_snapshot_path(access, snapshot_id, &common, cancel)?.1 == EntryKind::Dir
+        {
+            plan.folder = common;
+        }
+    }
+    Ok((snapshot, plan))
 }
 
 /// A dry run (preview: nothing is written, no lock) or the restore itself.

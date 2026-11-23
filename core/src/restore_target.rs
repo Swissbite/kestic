@@ -346,6 +346,42 @@ fn creatable_below(dir: &Path) -> RestoreTargetCode {
     }
 }
 
+/// Creates the new folder `dir` of a restore and, when missing, the folder holding it
+/// (`~/Restored`); a deeper missing path is never created. Returns the created folders,
+/// outermost first; on an error nothing created stays. The new folder is private to the user: restic keeps the mode of an existing
+/// target folder, and the restored folder may be private (e.g. `~/.ssh`). A folder someone
+/// created meanwhile is taken as it is.
+pub fn create_restore_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut created = Vec::new();
+    let with_path = |e: std::io::Error, p: &Path| {
+        std::io::Error::new(e.kind(), format!("cannot create {}: {e}", p.display()))
+    };
+    if let Some(parent) = dir.parent().filter(|p| !p.exists()) {
+        std::fs::create_dir(parent).map_err(|e| with_path(e, parent))?;
+        created.push(parent.to_path_buf());
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => created.push(dir.to_path_buf()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            remove_empty_folders(&created);
+            return Err(with_path(e, dir));
+        }
+    }
+    Ok(created)
+}
+
+/// Removes the folders `created` (outermost first) from the innermost on while they are empty,
+/// so a failed, cancelled or empty restore leaves no empty new folder behind.
+pub fn remove_empty_folders(created: &[PathBuf]) {
+    for dir in created.iter().rev() {
+        if std::fs::remove_dir(dir).is_err() {
+            break;
+        }
+    }
+}
+
 /// Whether a restore into `target` needs a finished, fresh preview: always at the original
 /// location, otherwise when the folder has content.
 pub fn preview_required(target: &RestoreTarget, check: &TargetCheck) -> bool {

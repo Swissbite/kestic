@@ -11,9 +11,7 @@ use super::error::{
     KesticServiceErr, backup_run_error_kind, invalid, localized_backup_run_error,
     service_error_kind,
 };
-use super::restore_preview::{
-    RestoreContext, RestoreParams, check_params, fingerprint, resolve_plan,
-};
+use super::restore_preview::{RestoreContext, RestoreParams, check_params, fingerprint};
 use super::snapshot_queries::QueryResult;
 use super::state::{DaemonCore, ResticDeps, probe_for_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
@@ -31,9 +29,12 @@ use kestic_core::model::{
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::query_list::QueryState;
 use kestic_core::restic::{CancelHandle, ResticStatusMessage, redact_secrets};
-use kestic_core::restore::{RestorePlan, RestoreRun, RestoreTarget, execute_restore};
+use kestic_core::restore::{RestorePlan, RestoreRun, RestoreTarget, execute_restore, resolve_plan};
 use kestic_core::restore_preview::blocked_above_selection;
-use kestic_core::restore_target::{PREVIEW_MAX_AGE, TargetCheck, check_target, preview_required};
+use kestic_core::restore_target::{
+    PREVIEW_MAX_AGE, TargetCheck, check_target, create_restore_folder, preview_required,
+    remove_empty_folders,
+};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{
     ErrorKind, RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode,
@@ -42,7 +43,6 @@ use kestic_i18n::messages::{
     ActiveRunInfo, active_run_message, interrupted_by_sleep_message, nothing_restored_message,
     rounded_percent,
 };
-use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -111,35 +111,15 @@ fn create_new_folder(setup: &mut RestoreSetup) -> Result<(), KesticServiceErr> {
     if !(setup.check.missing && matches!(setup.target, RestoreTarget::NewFolder { .. })) {
         return Ok(());
     }
-    // Only the folder holding the new folder (`~/Restored`) and the new folder itself are
-    // created; a deeper missing path is refused.
-    let dir = PathBuf::from(setup.target.dir());
-    if let Some(parent) = dir.parent().filter(|p| !p.exists()) {
-        std::fs::create_dir(parent)
-            .map_err(|e| invalid(format!("cannot create {}: {e}", parent.display())))?;
-        setup.created.push(parent.to_path_buf());
-    }
-    // Private to the user: restic keeps the mode of an existing target folder, and the
-    // restored folder may be private (e.g. ~/.ssh).
-    match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
-        Ok(()) => {
-            setup.created.push(dir);
-            Ok(())
-        }
-        // Someone created it meanwhile: the check below decides like for any existing folder.
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(invalid(format!("cannot create {}: {e}", dir.display()))),
-    }
+    let created = create_restore_folder(std::path::Path::new(setup.target.dir()))
+        .map_err(|e| invalid(e.to_string()))?;
+    setup.created.extend(created);
+    Ok(())
 }
 
-/// Removes the folders the restore created while they are empty, so a failed, cancelled or
-/// empty restore leaves no empty new folder behind; a folder with anything in it stays.
+/// Removes the folders the restore created while they are empty.
 fn remove_created_if_empty(setup: &RestoreSetup) {
-    for dir in setup.created.iter().rev() {
-        if std::fs::remove_dir(dir).is_err() {
-            break;
-        }
-    }
+    remove_empty_folders(&setup.created);
 }
 
 /// Creates a missing new folder and checks it again. It runs after the restic probe, so a
@@ -742,7 +722,12 @@ impl RestoreWorker {
                 self.set_backup(facts.backup);
                 facts.plan
             }
-            None => match resolve_plan(&access, &self.setup.params, Some(&self.cancel)) {
+            None => match resolve_plan(
+                &access,
+                &self.setup.params.snapshot_id,
+                &self.setup.params.selection,
+                Some(&self.cancel),
+            ) {
                 Ok((snapshot, plan)) => {
                     self.set_backup(self.setup.ctx.backup_of(&snapshot));
                     plan
