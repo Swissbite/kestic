@@ -398,7 +398,7 @@ impl ConnectionTestCode {
             )),
             Self::ReservedVariable => Message::with_args(
                 i18n_noop(
-                    "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY, LD_ or XDG_, and PATH, HOME, TMPDIR, GCONV_PATH and DBUS_SESSION_BUS_ADDRESS, are not allowed.",
+                    "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY, LD_ or XDG_ are not allowed. Neither are PATH, HOME, TMPDIR, GCONV_PATH and the address of the session bus.",
                 ),
                 &[detail],
             ),
