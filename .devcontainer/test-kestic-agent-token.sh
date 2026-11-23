@@ -252,6 +252,9 @@ expected="$(date -u -d "$(date -u -d "@$turn" +%F) $soon" +%s)"
 ((expected >= turn)) || expected=$((expected + 86400))
 [[ "$(FAKE_PANE="$pane" "$inner" limit-reset)" == "$expected" ]] ||
     fail "limit-reset: $soon: '$(FAKE_PANE="$pane" "$inner" limit-reset)', expected $expected"
+printf '%s\n' "● Agent failed: You've hit your      │ 233  assert" "5-hour limit · resets $soon (UTC) (error type rate_limit)" "❯ " > "$pane"
+[[ "$(FAKE_PANE="$pane" "$inner" limit-reset)" == "$expected" ]] ||
+    fail "limit-reset: message wrapped onto the next line: '$(FAKE_PANE="$pane" "$inner" limit-reset)'"
 stale="$(LC_ALL=C date -u -d "@$((turn - 600))" +%-l:%M%P)"
 printf '%s\n' "  ⎿  You've hit your 5-hour limit · resets $stale (UTC)" "❯ " > "$pane"
 [[ "$(FAKE_PANE="$pane" "$inner" limit-reset)" == 0 ]] ||

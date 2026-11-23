@@ -366,6 +366,16 @@ cache) was 9–11 GB. Bootstrap of toolchain and test tools in a new home volume
 1:35 min. Disk: image 2.4 GB (including the 2.0 GB CI image), home volume about
 6 GB after one build, login volume under 1 MB.
 
+Incremental compilation is on (cargo's default for the dev profile); CI turns
+it off because every run starts from a fresh target directory. Measured on the
+same laptop under load, 8 cores, building all test targets (2026-11-23): after
+a change in `core`, rebuilding the workspace took 12 s with incremental
+compilation and 74 s without (`core` alone: 10 s and 24 s). Not adopted, because
+they did not help here: `mold` instead of the default `rust-lld` (20 s for the
+same loop) and `sccache` (a second cold worktree with a filled cache was no
+faster, 270 s against 249 s, since the cache keys contain the worktree's
+absolute path, above all for the C++ part of CXX-Qt).
+
 `just verify` compiles with all host cores. The container
 runs with a low CPU weight (`--cpu-shares=256`), which keeps the desktop
 responsive without slowing the agent on an idle host. Optional limits:
