@@ -27,8 +27,14 @@ Kirigami.Dialog {
     property var checkedKinds: []
     property bool listShown: false
 
-    // Opens the dialog for `selection` (absolute snapshot paths, empty = the whole snapshot).
-    function openFor(destinationId, snapshotId, selection) {
+    // The list that gets the focus back when the dialog closes: the dialog may open from a
+    // context menu, whose item is gone by then.
+    property var returnFocusList: null
+
+    // Opens the dialog for `selection` (absolute snapshot paths, empty = the whole snapshot);
+    // `focusList` (optional) gets the focus back on its current row afterwards.
+    function openFor(destinationId, snapshotId, selection, focusList) {
+        returnFocusList = focusList || null;
         checkedKinds = [];
         listShown = false;
         previewFilter.text = "";
@@ -45,6 +51,14 @@ Kirigami.Dialog {
 
     onRejected: model.cancel()
     onOpened: (originalRadio.checked ? originalRadio : newFolderRadio).forceActiveFocus(Qt.TabFocusReason)
+    onClosed: {
+        var list = returnFocusList;
+        returnFocusList = null;
+        if (list) {
+            if (list.currentItem) list.currentItem.forceActiveFocus(Qt.PopupFocusReason);
+            else list.forceActiveFocus(Qt.PopupFocusReason);
+        }
+    }
 
     // When files would be overwritten, «Cancel» is the default: it holds the focus and the
     // default frame, so Return cancels.

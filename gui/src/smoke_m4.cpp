@@ -167,6 +167,16 @@ int scenario_restore_tab(const Ctx& c) {
     return 0;
 }
 
+// The restore dialog's model and the dialog itself.
+struct Restore {
+    QObject* dialog = nullptr;
+    QObject* model = nullptr;
+};
+
+Restore restore_dialog(QQuickWindow* w) {
+    return Restore { object_named(w, "restoreDialog"), object_named(w, "restorePreviewModel") };
+}
+
 /// AC-M4-01-4: with the keyboard alone (a) every snapshot can be selected and (b) browsing,
 /// comparing and restoring can be started.
 int scenario_restore_keyboard(const Ctx& c) {
@@ -252,6 +262,13 @@ int scenario_restore_keyboard(const Ctx& c) {
     M4_CHECK_EQ(5221, spy->property("last").toString(), QStringLiteral("restore:") + middle,
         "(b) the context menu starts restoring the snapshot");
     M4_CHECK(5222, spy->property("count").toInt() == 3, "one request per action");
+    // «Restore…» opens the restore dialog, which takes the focus; Esc closes it again.
+    Restore r = restore_dialog(w);
+    M4_CHECK(5231, r.dialog && wait_until([&] { return is_open(r.dialog); }, 3000),
+        "(b) «Restore…» opens the restore dialog");
+    finish_incubation(w);
+    send_key(w, Qt::Key_Escape);
+    M4_CHECK(5232, wait_until([&] { return is_closed(r.dialog); }, 3000), "Esc closes the restore dialog");
     M4_CHECK(5223, wait_until([&] { return focused_snapshot_row(w) != nullptr; }, 2000),
         "focus returns to the snapshot list");
     M4_CHECK(5224, save_screenshot(w, c.out_path), "screenshot failed");
@@ -996,16 +1013,6 @@ bool path_row_starts_with_whole_folder(QQuickWindow* w) {
         }
     }
     return false;
-}
-
-// The restore dialog's model and the dialog itself.
-struct Restore {
-    QObject* dialog = nullptr;
-    QObject* model = nullptr;
-};
-
-Restore restore_dialog(QQuickWindow* w) {
-    return Restore { object_named(w, "restoreDialog"), object_named(w, "restorePreviewModel") };
 }
 
 bool wait_for_preview(QObject* model) {

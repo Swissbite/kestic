@@ -318,6 +318,11 @@ Kirigami.ApplicationWindow {
                            conditionOverrideDialog]) {
             if (closeIfOpen(dlg)) return true;
         }
+        // Rejecting (not only closing) stops the restore dialog's running preview.
+        if (restoreDialog.opened || restoreDialog.visible) {
+            restoreDialog.reject();
+            return true;
+        }
         if (root.inWizardLayer) {
             var wiz = wizardPageStack.currentItem;
             if (wiz && typeof wiz.handleEscape === "function") {
@@ -1056,7 +1061,7 @@ Kirigami.ApplicationWindow {
                 root.openSnapshotCompare(destinationId, fromSnapshotId, toSnapshotId);
             }
             onRestoreRequested: function(destinationId, snapshotId) {
-                restoreDialog.openFor(destinationId, snapshotId, []);
+                restoreDialog.openFor(destinationId, snapshotId, [], primaryList);
             }
         }
     }
@@ -1086,7 +1091,7 @@ Kirigami.ApplicationWindow {
             rootWindow: root
             appBackend: root.backendRef
             onRestoreRequested: function(destinationId, snapshotId, selection) {
-                restoreDialog.openFor(destinationId, snapshotId, selection);
+                restoreDialog.openFor(destinationId, snapshotId, selection, primaryList);
             }
         }
     }
