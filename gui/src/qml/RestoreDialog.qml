@@ -273,7 +273,9 @@ Kirigami.Dialog {
                     objectName: "restoreRetryAction"
                     icon.name: "view-refresh"
                     text: Texts.label("retry")
+                    // A refused target is refused again: only the new folder helps then.
                     visible: dialog.model !== null && dialog.model.folder_instead.length === 0
+                        && !dialog.model.target_refused
                     onTriggered: dialog.model.retry()
                 }
             ]

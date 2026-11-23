@@ -1304,15 +1304,10 @@ int scenario_restore_target_texts(const Ctx& c) {
         qPrintable(QStringLiteral("AC-M4-05-25 (c) translated text naming the folder: ") + text));
     M4_CHECK(6530, !text.contains(QStringLiteral("invalid restore target")), "AC-M4-05-25 (c) no raw text");
     QObject* retry = object_named(w, "restoreRetryAction");
-    M4_CHECK(6535, retry && retry->property("visible").toBool(), "an error offers «Retry»");
+    M4_CHECK(6535, retry && !retry->property("visible").toBool(),
+        "a refused target offers no «Retry», which would be refused again");
     repaint_fully(w);
     M4_CHECK(6531, save_screenshot(w, screenshot_variant(c.out_path, "-refused")), "screenshot failed");
-    trigger(retry);
-    M4_CHECK(6536, refused.model->property("state").toString() == QLatin1String("running"),
-        "«Retry» runs the preview again");
-    M4_CHECK(6537, wait_until([&] { return refused.model->property("state").toString() == QLatin1String("error"); },
-                       30000),
-        "the target is refused again");
     // The refusal offers the new folder, which then previews without an error.
     QObject* new_folder = object_named(w, "restoreNewFolderInsteadAction");
     M4_CHECK(6539, new_folder && new_folder->property("visible").toBool(),
