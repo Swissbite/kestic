@@ -17,13 +17,13 @@ use kestic_core::model::{RunKind, RunStatus};
 use kestic_core::snapshot_find::FindScope;
 use kestic_daemon::dbus_api::{
     DestinationSnapshotsDto, RestoreOutcome, RestoreOverwrite, RestorePreviewResultDto,
-    RestoreTarget, RunDetailDto, SnapshotQueryRequest, SnapshotQueryResultDto,
+    RestoreRequest, RestoreTarget, RunDetailDto, SnapshotQueryRequest, SnapshotQueryResultDto,
     SnapshotQueryStatusDto,
 };
 use kestic_i18n::codes::ServiceErrorCode;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The restic subcommands Kestic may run on a foreign or orphaned snapshot.
 const READ_ONLY_COMMANDS: [&str; 5] = ["snapshots", "ls", "find", "diff", "restore"];
@@ -59,13 +59,17 @@ fn described_ids(dto: &DestinationSnapshotsDto, backup_id: &str) -> Vec<String> 
         .collect()
 }
 
-/// Writes a further snapshot of a small folder into the fixture's repository with `tag`.
-fn extra_snapshot(fx: &RestoreFixture, tag: &str, time: &str) -> String {
-    let src = fx
-        .rig
+/// The folder [`extra_snapshot`] backs up for the snapshot at `time`; it holds `note.txt`.
+fn extra_source(fx: &RestoreFixture, time: &str) -> PathBuf {
+    fx.rig
         .root
         .join(&fx.rig.sub)
-        .join(format!("extra-{}", time.replace([' ', ':'], "-")));
+        .join(format!("extra-{}", time.replace([' ', ':'], "-")))
+}
+
+/// Writes a further snapshot of a small folder into the fixture's repository with `tag`.
+fn extra_snapshot(fx: &RestoreFixture, tag: &str, time: &str) -> String {
+    let src = extra_source(fx, time);
     fs::create_dir_all(&src).expect("mkdir extra source");
     fs::write(src.join("note.txt"), format!("{tag} {time}")).expect("write extra source");
     backup_dir(
@@ -591,8 +595,8 @@ fn ac_m4_07_5_described_backup_is_not_orphaned_and_orphaned_ones_restore() {
 }
 
 /// AC-M4-07-6: showing, browsing, comparing, searching and restoring a foreign and an orphaned
-/// snapshot (a) runs only `snapshots`, `ls`, `find`, `diff` and `restore`, and (b) never `tag`,
-/// `forget` or `rewrite`.
+/// snapshot (both restores end `ok`) (a) runs only `snapshots`, `ls`, `find`, `diff` and
+/// `restore`, and (b) never `tag`, `forget` or `rewrite`.
 #[test]
 fn ac_m4_07_6_foreign_and_orphaned_snapshots_are_only_read() {
     run_isolated_test(
@@ -602,6 +606,7 @@ fn ac_m4_07_6_foreign_and_orphaned_snapshots_are_only_read() {
             for_each_tagged_variant(root, "M4F6", "", |fx, v| {
                 let label = v.label;
                 let orphaned = extra_snapshot(fx, "kestic:x9", "2026-11-14 12:00:00");
+                let orphaned_note = extra_source(fx, "2026-11-14 12:00:00").join("note.txt");
                 let older_foreign = extra_snapshot(fx, "", "2026-11-13 12:00:00");
                 let entries_before = fx.rig.wrapper.entries().len();
                 let dest = fx.dest.id.as_str();
@@ -612,6 +617,10 @@ fn ac_m4_07_6_foreign_and_orphaned_snapshots_are_only_read() {
                 run_query(
                     fx,
                     &SnapshotQueryRequest::diff(dest, &older_foreign, &fx.snapshot_id),
+                );
+                run_query(
+                    fx,
+                    &SnapshotQueryRequest::diff(dest, &orphaned, &fx.snapshot_id),
                 );
                 run_query(
                     fx,
@@ -628,7 +637,45 @@ fn ac_m4_07_6_foreign_and_orphaned_snapshots_are_only_read() {
                     ),
                 );
                 fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Never);
-                restore_into_new_folder(fx, "read-only");
+                let (_, foreign_run) = restore_into_new_folder(fx, "read-only");
+                assert_eq!(
+                    foreign_run.run.status,
+                    RunStatus::Ok,
+                    "{label}: the foreign snapshot is restored: {foreign_run:?}"
+                );
+                let orphaned_run_id = fx
+                    .rig
+                    .daemon
+                    .client
+                    .start_restore(&RestoreRequest {
+                        destination_id: dest.to_string(),
+                        snapshot_id: orphaned.clone(),
+                        selection: vec![orphaned_note.to_string_lossy().into_owned()],
+                        target: RestoreTarget::NewFolder {
+                            dir: fx
+                                .new_dir("read-only-orphaned")
+                                .to_string_lossy()
+                                .into_owned(),
+                        },
+                        overwrite: RestoreOverwrite::Never,
+                        preview_id: None,
+                    })
+                    .expect("StartRestore of the orphaned snapshot");
+                let orphaned_run = fx.wait_run(&orphaned_run_id);
+                assert_eq!(
+                    orphaned_run.run.status,
+                    RunStatus::Ok,
+                    "{label}: the orphaned snapshot is restored: {orphaned_run:?}"
+                );
+                let restores = fx.restore_calls();
+                for (id, which) in [(&fx.snapshot_id, "foreign"), (&orphaned, "orphaned")] {
+                    assert!(
+                        restores
+                            .iter()
+                            .any(|c| c.contains(&format!("{id}:")) && !c.contains("--dry-run")),
+                        "{label}: restic restore ran for the {which} snapshot: {restores:?}"
+                    );
+                }
 
                 let started: Vec<String> = fx.rig.wrapper.entries()[entries_before..]
                     .iter()
