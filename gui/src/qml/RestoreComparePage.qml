@@ -28,6 +28,9 @@ Kirigami.ScrollablePage {
     // The list whose selected row gets the focus when the page is shown again.
     readonly property var primaryList: diffListView
     readonly property alias diffModel: snapshotDiffModel
+    // Side padding of a row (that of the desktop style's list rows), also used by the headings.
+    readonly property int rowPadding: Kirigami.Units.mediumSpacing + Kirigami.Units.smallSpacing
+    readonly property int changeColumnWidth: Kirigami.Units.gridUnit * 9
 
     // The user cancelled the comparison; a hidden page that comes back does not start it again.
     property bool cancelledByUser: false
@@ -123,20 +126,30 @@ Kirigami.ScrollablePage {
             }
         }
 
-        header: RowLayout {
+        // The column headings with the paddings and column widths of the rows below.
+        header: Item {
             width: ListView.view.width
+            implicitHeight: headingRow.implicitHeight
             visible: diffListView.count > 0
-            spacing: Kirigami.Units.mediumSpacing
-            Controls.Label {
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 9
-                leftPadding: Kirigami.Units.largeSpacing
-                text: i18n("Change")
-                font.bold: true
-            }
-            Controls.Label {
-                Layout.fillWidth: true
-                text: i18n("Path")
-                font.bold: true
+
+            RowLayout {
+                id: headingRow
+                anchors.fill: parent
+                anchors.leftMargin: page.rowPadding
+                anchors.rightMargin: page.rowPadding
+                spacing: Kirigami.Units.mediumSpacing
+                Controls.Label {
+                    Layout.preferredWidth: page.changeColumnWidth
+                    Layout.minimumWidth: page.changeColumnWidth
+                    Layout.maximumWidth: page.changeColumnWidth
+                    text: i18n("Change")
+                    font.bold: true
+                }
+                Controls.Label {
+                    Layout.fillWidth: true
+                    text: i18n("Path")
+                    font.bold: true
+                }
             }
         }
 
@@ -173,6 +186,8 @@ Kirigami.ScrollablePage {
             required property string iconName
 
             width: ListView.view.width
+            leftPadding: page.rowPadding
+            rightPadding: page.rowPadding
             activeFocusOnTab: true
             highlighted: ListView.isCurrentItem
             Accessible.name: path
@@ -188,8 +203,9 @@ Kirigami.ScrollablePage {
                 spacing: Kirigami.Units.mediumSpacing
 
                 RowLayout {
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 9
-                    Layout.maximumWidth: Kirigami.Units.gridUnit * 9
+                    Layout.preferredWidth: page.changeColumnWidth
+                    Layout.minimumWidth: page.changeColumnWidth
+                    Layout.maximumWidth: page.changeColumnWidth
                     spacing: Kirigami.Units.smallSpacing
 
                     Kirigami.Icon {

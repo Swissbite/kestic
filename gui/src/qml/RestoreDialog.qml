@@ -399,9 +399,12 @@ Kirigami.Dialog {
                         textFormat: Text.PlainText
                         elide: Text.ElideMiddle
                     }
+                    // A column of its own, so the outcomes line up.
                     Controls.Label {
                         text: row.outcomeText
                         opacity: 0.75
+                        elide: Text.ElideRight
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
                     }
                     Controls.Label {
                         text: row.sizeText
