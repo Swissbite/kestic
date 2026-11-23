@@ -123,7 +123,8 @@ pub fn preflight_check_with_restic(
     let Ok(backend) = BackendCredentials::load_stored(dest, runtime.secret_store) else {
         return Ok(());
     };
-    let result = probe_repository(dest, &backend, runtime).map(|_| ());
+    let result =
+        probe_repository_with(dest, &backend, ProbeRuntime::preflight(runtime)).map(|_| ());
     match result {
         Err(err @ (DestinationError::Unreachable(_) | DestinationError::NotResponding(_))) => {
             Err(err)
@@ -176,6 +177,14 @@ pub fn probe_repository(
     backend: &BackendCredentials,
     runtime: &ResticRuntime<'_>,
 ) -> Result<RepositoryProbe, DestinationError> {
+    probe_repository_with(dest, backend, ProbeRuntime::connection_test(runtime))
+}
+
+fn probe_repository_with(
+    dest: &Destination,
+    backend: &BackendCredentials,
+    probe: ProbeRuntime<'_>,
+) -> Result<RepositoryProbe, DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
     let throwaway = SecretValue::from_str_secret(
         crate::model::RunId::generate()
@@ -187,7 +196,7 @@ pub fn probe_repository(
         mode_subcommand(DestinationSetupMode::ConnectExisting),
         &throwaway,
         backend,
-        ProbeRuntime::connection_test(runtime),
+        probe,
     )?;
     match res.presentation.kind {
         ResticFailureKind::None | ResticFailureKind::WrongPassword => Ok(RepositoryProbe::Exists),
@@ -315,6 +324,7 @@ pub fn verify_and_update_stored_password_with_cache(
             clock,
             cache_dir,
             timeout: Some(CONNECTION_TEST_TIMEOUT),
+            stop_on_unreachable: true,
         },
     )?;
 
@@ -371,6 +381,9 @@ struct ProbeRuntime<'a> {
     cache_dir: Option<&'a Path>,
     /// restic is stopped after this time and the server counts as not responding.
     timeout: Option<Duration>,
+    /// With a time limit: a connection error restic keeps retrying (refused, reset, DNS) also
+    /// stops restic at once. A refused login or a missing repository always does.
+    stop_on_unreachable: bool,
 }
 
 impl<'a> ProbeRuntime<'a> {
@@ -381,10 +394,22 @@ impl<'a> ProbeRuntime<'a> {
             clock: runtime.clock,
             cache_dir: runtime.cache_dir,
             timeout: None,
+            stop_on_unreachable: false,
         }
     }
 
+    /// A user waits for the answer: every error restic would keep retrying ends the test.
     fn connection_test(runtime: &ResticRuntime<'a>) -> Self {
+        Self {
+            timeout: Some(CONNECTION_TEST_TIMEOUT),
+            stop_on_unreachable: true,
+            ..Self::without_timeout(runtime)
+        }
+    }
+
+    /// The check before a run: a connection error may pass while restic retries, so only the
+    /// time limit decides that the destination cannot be reached.
+    fn preflight(runtime: &ResticRuntime<'a>) -> Self {
         Self {
             timeout: Some(CONNECTION_TEST_TIMEOUT),
             ..Self::without_timeout(runtime)
@@ -443,11 +468,27 @@ fn run_with_temp_repo_password_file(
         // The probe runs restic directly with `--password-file`: restic rejects an empty
         // `RESTIC_PASSWORD_COMMAND` next to a password file, so the runner is bypassed.
 
-        execute_probe_command(&spec, repo_password, backend, probe.clock, probe.timeout)
+        execute_probe_command(
+            &spec,
+            repo_password,
+            backend,
+            probe.clock,
+            ProbeLimits {
+                timeout: probe.timeout,
+                stop_on_unreachable: probe.stop_on_unreachable,
+            },
+        )
     })();
 
     let _ = fs::remove_dir_all(&tmp_dir);
     res
+}
+
+/// When a probe stops restic (see [`ProbeRuntime`]).
+#[derive(Clone, Copy)]
+struct ProbeLimits {
+    timeout: Option<Duration>,
+    stop_on_unreachable: bool,
 }
 
 fn execute_probe_command(
@@ -455,8 +496,9 @@ fn execute_probe_command(
     repo_password: &SecretValue,
     backend: &BackendCredentials,
     clock: &dyn Clock,
-    timeout: Option<Duration>,
+    limits: ProbeLimits,
 ) -> Result<ResticExecutionResult, DestinationError> {
+    let timeout = limits.timeout;
     let started_at = clock.now_utc();
     let mut cmd = Command::new(&spec.restic_binary);
     cmd.args(spec.restic_argv())
@@ -526,6 +568,7 @@ fn execute_probe_command(
             // Only a read with a time limit stops restic early; `init` runs to its end.
             let conclusive = timeout
                 .and_then(|_| conclusive_retry_error(&redacted))
+                .filter(|error| limits.stop_on_unreachable || !is_connection_error(error))
                 .map(ToOwned::to_owned);
             stderr_lines.push(redacted);
             if let Some(error) = conclusive {
@@ -706,6 +749,15 @@ impl Watchdog {
 /// The error of a restic line that announces a retry of an error that will not go away by
 /// waiting: the backend rejected the login, the bucket does not exist or the server cannot be
 /// reached.
+/// Whether `error` (from [`conclusive_retry_error`]) says the server could not be reached, as
+/// opposed to a refused login or a missing repository.
+fn is_connection_error(error: &str) -> bool {
+    matches!(
+        classify_probe(1, Some(error), "").kind,
+        ResticFailureKind::DestinationUnreachable | ResticFailureKind::DnsResolutionFailed
+    )
+}
+
 fn conclusive_retry_error(line: &str) -> Option<&str> {
     // `<op> returned error, retrying after 1.403627s: <error>`: only the error is classified and
     // reported, the random duration could look like an HTTP status.
@@ -881,6 +933,7 @@ mod tests {
                 clock: &clock,
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
+                stop_on_unreachable: true,
             },
         );
 
@@ -940,6 +993,7 @@ mod tests {
                 clock: &clock,
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
+                stop_on_unreachable: true,
             },
         );
 
@@ -999,6 +1053,7 @@ mod tests {
                 clock: &clock,
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
+                stop_on_unreachable: true,
             },
         );
 
@@ -1017,6 +1072,49 @@ mod tests {
             .arg(pid.trim())
             .status()
             .expect("stop the left-behind process");
+    }
+
+    /// The check before a run does not give up on a connection error restic retries: a backend
+    /// that answers within the time limit after one reset connection passes.
+    #[test]
+    fn restic_preflight_waits_out_a_passing_connection_error() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let script = dir.path().join("restic");
+        kestic_test_support::tools::write_executable(
+            &script,
+            "#!/bin/sh\n\
+             echo 'Load(<config/0000000000>, 0, 0) returned error, retrying after 552ms: read tcp 10.0.0.1:5000->192.0.2.4:443: read: connection reset by peer' >&2\n\
+             sleep 2\n\
+             echo '{}'\n\
+             exit 0\n",
+        );
+        let resolved = ResolvedRestic {
+            binary: script,
+            version: semver::Version::new(0, 18, 0),
+        };
+        let dest = Destination::new(
+            "Cloud",
+            DestinationKind::Generic {
+                url: "b2:bucket:laptop".to_string(),
+                env: Vec::new(),
+            },
+        )
+        .expect("destination");
+        let store = crate::secrets::InMemorySecretStore::new();
+        let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+        let helper = dir.path().join("kestic");
+        let runtime = ResticRuntime {
+            resolved: &resolved,
+            kestic_binary: &helper,
+            secret_store: &store,
+            clock: &clock,
+            cache_dir: None,
+        };
+
+        assert!(
+            preflight_check_with_restic(&dest, &runtime).is_ok(),
+            "a backend that answers after one reset connection is reachable"
+        );
     }
 
     /// A password store that cannot be read says nothing about the destination: the pre-check of
@@ -1118,6 +1216,7 @@ mod tests {
                 clock: &clock,
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
+                stop_on_unreachable: true,
             },
         );
 
@@ -1329,6 +1428,7 @@ mod tests {
                 clock: &clock,
                 cache_dir: None,
                 timeout: Some(Duration::from_secs(1)),
+                stop_on_unreachable: true,
             },
         );
 

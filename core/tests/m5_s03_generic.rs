@@ -414,7 +414,7 @@ fn m5_03_snapshot_list_and_prune_preview_check_a_generic_destination_first() {
     write_executable(
         &script,
         &format!(
-            "#!/bin/sh\ncase \" $* \" in\n  *\" cat \"*) echo 'Stat(<config/>) returned error, retrying after 1.2s: dial tcp 192.0.2.1:443: connect: connection refused' >&2; exec sleep 30;;\nesac\necho \"$*\" >> '{}'\nexit 1\n",
+            "#!/bin/sh\ncase \" $* \" in\n  *\" cat \"*) echo '{{\"message_type\":\"exit_error\",\"code\":1,\"message\":\"Fatal: unable to open repository at b2:bucket:laptop: dial tcp 192.0.2.1:443: connect: connection refused\"}}' >&2; exit 1;;\nesac\necho \"$*\" >> '{}'\nexit 1\n",
             others.display()
         ),
     );
