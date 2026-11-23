@@ -108,15 +108,17 @@ pub fn repository_uri(host: &str, port: u16, user: &str, path: &str) -> String {
 /// trailing slash.
 pub fn location_key(host: &str, port: u16, user: &str, path: &str) -> String {
     let path = path.trim();
-    let path = if path.len() > 1 {
-        path.trim_end_matches('/')
-    } else {
-        path
-    };
+    // `//` and `/./` name the same folder on the server.
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|seg| !seg.is_empty() && *seg != ".")
+        .collect();
+    let root = if path.starts_with('/') { "/" } else { "" };
     format!(
-        "sftp:{}@{}:{port}/{path}",
+        "sftp:{}@{}:{port}/{root}{}",
         user.trim(),
-        ssh_host(host).to_ascii_lowercase()
+        ssh_host(host).to_ascii_lowercase(),
+        segments.join("/")
     )
 }
 
@@ -352,6 +354,55 @@ mod tests {
         assert_eq!(
             repository_uri("::1", 22, "anna", "/srv/Backup Daten/#1"),
             "sftp://anna@[::1]:22//srv/Backup%20Daten/%231"
+        );
+    }
+
+    #[test]
+    fn the_same_folder_is_the_same_location() {
+        let key = |path| location_key("NAS.local", 22, "anna", path);
+        assert_eq!(key("/srv/repo"), key("/srv//repo/"));
+        assert_eq!(key("/srv/repo"), key("/srv/./repo"));
+        assert_ne!(
+            key("/srv/repo"),
+            key("srv/repo"),
+            "relative to the home folder"
+        );
+        assert_eq!(
+            key("/srv/repo"),
+            location_key("nas.local", 22, "anna", "/srv/repo")
+        );
+    }
+
+    #[test]
+    fn host_key_markers_in_file_names_are_no_host_key_failure() {
+        use crate::restic::{ResticFailureKind, classify_exit};
+        for name in [
+            "unknown ssh host key of x",
+            "ssh host key changed; the old entry is in x",
+            "host key verification failed",
+        ] {
+            let stderr = format!(
+                "ignoring error for /home/u/Downloads/{name}: permission denied\nFatal: There were 1 errors"
+            );
+            let kind = classify_exit(1, None, Vec::new(), &stderr).kind;
+            assert!(
+                !matches!(
+                    kind,
+                    ResticFailureKind::HostKeyUnknown | ResticFailureKind::HostKeyChanged
+                ),
+                "{name}: {kind:?}"
+            );
+        }
+        let run = "Unbekannter Server: unknown SSH host key of [127.0.0.1]:2222";
+        assert_eq!(
+            classify_exit(1, None, Vec::new(), run).kind,
+            ResticFailureKind::HostKeyUnknown
+        );
+        let changed = "Der Server meldet sich anders als bisher: SSH host key changed; the old \
+                       entry is in /home/u/.ssh/known_hosts";
+        assert_eq!(
+            classify_exit(1, None, Vec::new(), changed).kind,
+            ResticFailureKind::HostKeyChanged
         );
     }
 

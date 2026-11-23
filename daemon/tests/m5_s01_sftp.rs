@@ -785,13 +785,13 @@ fn ac_m5_01_8_host_line_goes_with_the_last_destination_on_the_server() {
     );
 }
 
-/// M5-S01 (AC-M5-01-4 (a)): a server that no longer offers the key type Kestic's file knows for
-/// it (an ecdsa line, the server shows only ed25519) is unknown, not changed: the test offers its
-/// ed25519 key, and once trusted the server is reachable.
+/// M5-S01 (AC-M5-01-7): a server that no longer shows the key type Kestic's file knows for it
+/// (an ecdsa line, the server shows only ed25519) is treated like a changed key: no key to trust
+/// is offered, the file stays as it is and restic does not start.
 #[test]
-fn m5_01_server_with_a_new_key_type_is_offered_for_trust() {
+fn m5_01_server_with_only_a_new_key_type_counts_as_changed() {
     run_isolated_test(
-        "m5_01_server_with_a_new_key_type_is_offered_for_trust",
+        "m5_01_server_with_only_a_new_key_type_counts_as_changed",
         "KESTIC_M5_01_NEWTYPE_INNER",
         |root| {
             let variant = common::m3::latest_variant();
@@ -811,34 +811,32 @@ fn m5_01_server_with_a_new_key_type_is_offered_for_trust() {
             );
             fs::create_dir_all(p.kestic.parent().expect("kestic data")).expect("mkdir");
             fs::write(&p.kestic, format!("{old_line}\n")).expect("write old ecdsa line");
+            let before = read(&p.kestic);
+            let restic_before = rig.wrapper.started_repo_count();
             let dest = rig.destination("NAS", "repo");
-            let client = &rig.daemon.client;
 
-            let tested = client
+            let tested = rig
+                .daemon
+                .client
                 .test_destination_connection(&dest, "init", "", &no_secrets())
                 .expect("TestDestinationConnection");
             assert_eq!(
                 tested.error_kind,
-                Some(ConnectionTestCode::UnknownHostKey),
-                "the new key type is offered: {tested:?}"
+                Some(ConnectionTestCode::HostKeyChanged),
+                "a new key type is a changed key: {tested:?}"
             );
-            let key = tested.host_key.expect("key to trust");
-            assert_eq!(key.key_type, "ssh-ed25519", "the key the server shows");
-            client
-                .trust_host_key(&key.host_key_id)
-                .expect("TrustHostKey");
             assert_eq!(
-                fs::read_to_string(&p.kestic)
-                    .expect("known_hosts")
-                    .lines()
-                    .collect::<Vec<_>>(),
-                vec![old_line.as_str(), rig.server.known_hosts_line().as_str()],
-                "the old line stays, the new key is added"
+                tested.detail,
+                p.kestic.to_string_lossy(),
+                "the file with the old entry"
             );
-            let again = client
-                .test_destination_connection(&dest, "init", "", &no_secrets())
-                .expect("TestDestinationConnection after trust");
-            assert!(again.ok, "reachable after trust: {again:?}");
+            assert_eq!(tested.host_key, None, "no key to trust");
+            assert_eq!(read(&p.kestic), before, "Kestic's file unchanged");
+            assert_eq!(
+                rig.wrapper.started_repo_count(),
+                restic_before,
+                "restic started"
+            );
             rig.daemon.stop();
         },
     );

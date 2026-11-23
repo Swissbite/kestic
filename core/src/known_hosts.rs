@@ -103,6 +103,16 @@ fn run_tool(
     args: &[String],
     stdin: Option<&str>,
 ) -> Result<std::process::Output, HostKeyError> {
+    run_tool_within(program, args, stdin, TOOL_TIMEOUT)
+}
+
+/// [`run_tool`] that stops the program after `limit`.
+fn run_tool_within(
+    program: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    limit: Duration,
+) -> Result<std::process::Output, HostKeyError> {
     let tool_error = |detail: String| HostKeyError::Tool {
         program: program.to_string(),
         detail,
@@ -134,7 +144,7 @@ fn run_tool(
     let stderr = read(child.stderr.take().map(|p| Box::new(p) as _));
     // ssh reads the user's configuration (`Match exec`) and resolves names; none of that may hold
     // up a connection test or the check before a run.
-    let deadline = std::time::Instant::now() + TOOL_TIMEOUT;
+    let deadline = std::time::Instant::now() + limit;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
@@ -144,7 +154,7 @@ fn run_tool(
             let _ = child.wait();
             return Err(tool_error(format!(
                 "no answer within {} s",
-                TOOL_TIMEOUT.as_secs()
+                limit.as_secs()
             )));
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -254,7 +264,8 @@ fn scan(
     timeout: Duration,
 ) -> Result<(Vec<(String, String)>, bool), HostKeyError> {
     let secs = timeout.min(SCAN_TIMEOUT).as_secs().max(1);
-    let out = run_tool(
+    // `-T` does not limit a server that stops after its banner.
+    let out = run_tool_within(
         "ssh-keyscan",
         &[
             "-T".to_string(),
@@ -267,10 +278,13 @@ fn scan(
             target.hostname.clone(),
         ],
         None,
+        Duration::from_secs(secs + 1),
     )?;
     let stdout = String::from_utf8_lossy(&out.stdout);
+    // OpenSSH prints the banner comment on stdout, older versions on stderr.
     let answered = stdout
         .lines()
+        .chain(String::from_utf8_lossy(&out.stderr).lines())
         .any(|line| line.starts_with('#') && line.contains(" SSH-"));
     let mut keys: Vec<(String, String)> = stdout
         .lines()
@@ -357,11 +371,17 @@ pub fn check_host_key(
         entries.extend(lookup(&name, file)?.into_iter().map(|e| (file, e)));
     }
     let types = scan_types(entries.iter().map(|(_, e)| e));
-    let (mut scanned, answered) = scan(&target, &types, timeout)?;
-    // The server answers but no longer offers the known types: its other keys are new to every
-    // file.
-    if scanned.is_empty() && answered && types != SCAN_TYPES {
-        scanned = scan(&target, SCAN_TYPES, timeout)?.0;
+    let (scanned, answered) = scan(&target, &types, timeout)?;
+    // A known server that answers but no longer shows any key of a known type has changed: a
+    // new type is not offered for trust, as ssh with strict checking would not accept it either.
+    let known_entry = entries.iter().find(|(_, e)| !e.revoked);
+    if let Some((file, _)) = known_entry
+        && (answered || !scanned.is_empty())
+        && !scanned
+            .iter()
+            .any(|(t, _)| entries.iter().any(|(_, e)| !e.revoked && e.key_type == *t))
+    {
+        return Ok(HostKeyCheck::Changed(file.to_path_buf()));
     }
     let Some((first_type, first_key)) = scanned.first().cloned() else {
         return Ok(HostKeyCheck::NoKey(format!(
@@ -413,10 +433,10 @@ pub fn trust(paths: &KnownHostsPaths, key: &ScannedHostKey) -> Result<HostKeyChe
         return Ok(HostKeyCheck::Known);
     }
     let mut content = read_existing(&paths.kestic)?;
-    if !content.is_empty() && !content.ends_with('\n') {
-        content.push('\n');
+    if !content.is_empty() && !content.ends_with(b"\n") {
+        content.push(b'\n');
     }
-    content.push_str(&format!("{} {} {}\n", key.name, key.key_type, key.key));
+    content.extend_from_slice(format!("{} {} {}\n", key.name, key.key_type, key.key).as_bytes());
     write_atomically(&paths.kestic, &content)?;
     Ok(HostKeyCheck::Known)
 }
@@ -425,17 +445,24 @@ pub fn trust(paths: &KnownHostsPaths, key: &ScannedHostKey) -> Result<HostKeyChe
 /// are. Returns whether a line was removed.
 pub fn forget(paths: &KnownHostsPaths, name: &str) -> Result<bool, HostKeyError> {
     let _guard = WRITE_LOCK.lock_unpoisoned();
+    // Lines are kept as bytes: a line that is no UTF-8 stays as it is.
     let content = read_existing(&paths.kestic)?;
-    let kept: Vec<&str> = content
-        .lines()
-        .filter(|line| !line_names(line).any(|n| n == name))
+    let lines: Vec<&[u8]> = content
+        .split(|&b| b == b'\n')
+        .filter(|line| !line.is_empty())
         .collect();
-    if kept.len() == content.lines().count() {
+    let kept: Vec<&[u8]> = lines
+        .iter()
+        .copied()
+        .filter(|line| !line_names(&String::from_utf8_lossy(line)).any(|n| n == name))
+        .collect();
+    if kept.len() == lines.len() {
         return Ok(false);
     }
-    let mut next = kept.join("\n");
-    if !next.is_empty() {
-        next.push('\n');
+    let mut next = Vec::new();
+    for line in kept {
+        next.extend_from_slice(line);
+        next.push(b'\n');
     }
     write_atomically(&paths.kestic, &next)?;
     Ok(true)
@@ -509,17 +536,17 @@ pub fn known_hosts_name(host: &str, port: u16, user: &str) -> String {
         .known_hosts_name()
 }
 
-fn read_existing(path: &Path) -> Result<String, HostKeyError> {
-    match fs::read_to_string(path) {
-        Ok(text) => Ok(text),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+fn read_existing(path: &Path) -> Result<Vec<u8>, HostKeyError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(err) => Err(err.into()),
     }
 }
 
 /// Replaces `path` with `content`: a new file only the owner can read (`0600`) in the same
 /// folder, synced, then renamed over the old one, and the folder synced.
-fn write_atomically(path: &Path, content: &str) -> Result<(), HostKeyError> {
+fn write_atomically(path: &Path, content: &[u8]) -> Result<(), HostKeyError> {
     let dir = path
         .parent()
         .ok_or_else(|| std::io::Error::other("known_hosts path has no folder"))?;
@@ -536,7 +563,7 @@ fn write_atomically(path: &Path, content: &str) -> Result<(), HostKeyError> {
             .create_new(true)
             .mode(0o600)
             .open(&temp)?;
-        file.write_all(content.as_bytes())?;
+        file.write_all(content)?;
         file.sync_all()?;
         fs::rename(&temp, path)?;
         fs::File::open(dir)?.sync_all()
@@ -576,6 +603,41 @@ mod tests {
         assert_eq!(entries[1].key, "AAAA2");
         assert!(entries[2].revoked);
         assert_eq!(entries[2].key, "AAAA4");
+    }
+
+    #[test]
+    fn a_line_that_is_no_utf8_neither_blocks_nor_changes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = KnownHostsPaths {
+            kestic: dir.path().join("kestic").join("known_hosts"),
+            user: dir.path().join("known_hosts.user"),
+            system: dir.path().join("known_hosts.system"),
+        };
+        fs::create_dir_all(dir.path().join("kestic")).expect("mkdir");
+        let keep = b"keep.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKeepKeepKeepKeepKeepKeepKeepKeepKeepKeepKe\n# caf\xe9\n";
+        let gone = b"gone.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGoneGoneGoneGoneGoneGoneGoneGoneGoneGoneGo\n";
+        fs::write(&paths.kestic, [&keep[..], &gone[..]].concat()).expect("write");
+        assert!(
+            forget(&paths, "gone.example").expect("forget"),
+            "line removed"
+        );
+        assert_eq!(fs::read(&paths.kestic).expect("read"), keep.to_vec());
+        let key = ScannedHostKey {
+            name: "new.example".to_string(),
+            host: "new.example".to_string(),
+            port: 22,
+            key_type: "ssh-ed25519".to_string(),
+            key: "AAAAC3NzaC1lZDI1NTE5AAAAINewNewNewNewNewNewNewNewNewNewNewNewNewNewNe"
+                .to_string(),
+            fingerprint_sha256: String::new(),
+        };
+        assert_eq!(trust(&paths, &key).expect("trust"), HostKeyCheck::Known);
+        let written = fs::read(&paths.kestic).expect("read");
+        assert!(
+            written.starts_with(keep),
+            "the other lines keep their bytes"
+        );
+        assert!(written.ends_with(b"new.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewNewNewNewNewNewNewNewNewNewNewNewNewNewNe\n"));
     }
 
     #[test]

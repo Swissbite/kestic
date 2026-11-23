@@ -409,16 +409,30 @@ pub fn classify_exit(
 
 /// Text Kestic records when its own host key check stops an SFTP run before restic starts
 /// (see `DestinationError`); a run's error kind is read back from it.
-pub const HOST_KEY_UNKNOWN_MARKER: &str = "unknown ssh host key";
+pub const HOST_KEY_UNKNOWN_MARKER: &str = "unknown ssh host key of ";
 /// See [`HOST_KEY_UNKNOWN_MARKER`].
-pub const HOST_KEY_CHANGED_MARKER: &str = "ssh host key changed";
+pub const HOST_KEY_CHANGED_MARKER: &str = "ssh host key changed; the old entry is in ";
 
 /// The host key failure a lowercase message names: Kestic's own check, or ssh refusing the key.
+/// A marker counts only at the start of a part after `: ` (Kestic's text, a line of ssh), not
+/// inside a file name that restic reports.
 fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
-    if detail_lower.contains(HOST_KEY_CHANGED_MARKER) {
+    let parts = || detail_lower.lines().flat_map(|line| line.split(": "));
+    let after_ssh = |marker: &str| {
+        detail_lower
+            .lines()
+            .flat_map(|line| {
+                line.match_indices("subprocess ssh: ")
+                    .map(move |(i, m)| &line[i + m.len()..])
+            })
+            .any(|rest| rest.starts_with(marker))
+    };
+    if parts().any(|p| p.starts_with(HOST_KEY_CHANGED_MARKER))
+        || after_ssh("host key for") && detail_lower.contains("has changed and you have requested")
+    {
         Some(ResticFailureKind::HostKeyChanged)
-    } else if detail_lower.contains(HOST_KEY_UNKNOWN_MARKER)
-        || detail_lower.contains("host key verification failed")
+    } else if parts().any(|p| p.starts_with(HOST_KEY_UNKNOWN_MARKER))
+        || after_ssh("host key verification failed")
     {
         Some(ResticFailureKind::HostKeyUnknown)
     } else {
