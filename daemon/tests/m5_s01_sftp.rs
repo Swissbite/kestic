@@ -697,8 +697,21 @@ fn ac_m5_01_7_changed_host_key_stops_test_and_run_without_restic() {
                     // (a) a maintenance run stops at the key too.
                     let maintenance = client
                         .run_destination_maintenance(dest.id.as_str())
-                        .expect_err("RunDestinationMaintenance with a changed key");
-                    assert_dbus_error_name(&maintenance, "net.daester.Kestic.Error.HostKeyChanged");
+                        .expect("RunDestinationMaintenance");
+                    wait_for_state(client, Duration::from_secs(30), "maintenance ended", |s| {
+                        dest_summary(s, &dest.id)
+                            .last_maintenance_run
+                            .as_ref()
+                            .is_some_and(|r| r.id.as_str() == maintenance)
+                            && !dest_summary(s, &dest.id).maintenance_running
+                    });
+                    let detail = client.get_run_detail(&maintenance).expect("GetRunDetail");
+                    assert_eq!(
+                        detail.error_kind,
+                        Some(ErrorKind::HostKeyChanged),
+                        "(a) maintenance run error: {:?}",
+                        detail.error_raw_detail
+                    );
                     let state = client.get_state().expect("GetState");
                     assert!(
                         dest_summary(&state, &dest.id).availability.reachable,
@@ -787,9 +800,10 @@ fn ac_m5_01_8_host_line_goes_with_the_last_destination_on_the_server() {
     );
 }
 
-/// M5-S01 (AC-M5-01-7): a server that no longer shows the key type Kestic's file knows for it
-/// (an ecdsa line, the server shows only ed25519) is treated like a changed key: no key to trust
-/// is offered, the file stays as it is and restic does not start.
+/// AC-M5-01-7 (a)–(d), second case: a server that no longer shows the key type Kestic's file
+/// knows for it (an ecdsa line, the server shows only ed25519) is treated like a changed key:
+/// (a) the test names the file, (b) no key to trust is offered, (c) the file stays as it is and
+/// (d) restic does not start.
 #[test]
 fn m5_01_server_with_only_a_new_key_type_counts_as_changed() {
     run_isolated_test(
@@ -822,22 +836,26 @@ fn m5_01_server_with_only_a_new_key_type_counts_as_changed() {
                 .client
                 .test_destination_connection(&dest, "init", "", &no_secrets())
                 .expect("TestDestinationConnection");
+            // (a)
             assert_eq!(
                 tested.error_kind,
                 Some(ConnectionTestCode::HostKeyChanged),
-                "a new key type is a changed key: {tested:?}"
+                "(a) a new key type is a changed key: {tested:?}"
             );
             assert_eq!(
                 tested.detail,
                 p.kestic.to_string_lossy(),
-                "the file with the old entry"
+                "(a) the file with the old entry"
             );
-            assert_eq!(tested.host_key, None, "no key to trust");
-            assert_eq!(read(&p.kestic), before, "Kestic's file unchanged");
+            // (b)
+            assert_eq!(tested.host_key, None, "(b) no key to trust");
+            // (c)
+            assert_eq!(read(&p.kestic), before, "(c) Kestic's file unchanged");
+            // (d)
             assert_eq!(
                 rig.wrapper.started_repo_count(),
                 restic_before,
-                "restic started"
+                "(d) restic started"
             );
             rig.daemon.stop();
         },
@@ -1009,6 +1027,124 @@ fn m5_01_rejected_key_in_a_run_is_a_login_error() {
             );
             set_test_ssh_config(Some(rig.server.ssh_config.clone()));
             rig.daemon.stop();
+        },
+    );
+}
+
+/// M5-S01 (AC-M5-01-7 with the permanent errors of `architecture.md` F2): scheduled maintenance
+/// on an SFTP destination whose host key changed ends with `host_key_changed` without restic,
+/// raises the alert «Maintenance failed», and is not retried: after the backoff times have
+/// passed, no second maintenance run starts. Runs with restic 0.18.0 and the latest restic.
+#[test]
+fn m5_01_scheduled_maintenance_with_a_changed_key_is_a_permanent_error() {
+    // Friday 2026-12-04 11:59:30 Europe/Zurich; prune (every Sunday) is due on Sunday 12:00.
+    const FRIDAY: time::OffsetDateTime = time::macros::datetime!(2026-12-04 10:59:30 UTC);
+    const SUNDAY_1200: time::OffsetDateTime = time::macros::datetime!(2026-12-06 11:00:05 UTC);
+    run_isolated_test(
+        "m5_01_scheduled_maintenance_with_a_changed_key_is_a_permanent_error",
+        "KESTIC_M5_01_SCHEDMAINT_INNER",
+        |root| {
+            let fakes = common::m3::StdFakes::start();
+            for variant in restic_variants() {
+                let sub = variant.sub("M5SftpK");
+                let server = SftpServerGuard::start(&root.join(&sub).join("sshd"));
+                set_test_ssh_config(Some(server.ssh_config.clone()));
+                let rig = common::m3::M3Rig::start(root, &variant, "M5SftpK", FRIDAY, |_| {});
+                let client = &rig.daemon.client;
+                let p = paths();
+                let dest = Destination::new(
+                    "NAS",
+                    DestinationKind::Sftp {
+                        host: "127.0.0.1".to_string(),
+                        port: server.port,
+                        user: server.user.clone(),
+                        path: root.join(&sub).join("repo").to_string_lossy().into_owned(),
+                    },
+                )
+                .expect("SFTP destination");
+                let tested = client
+                    .test_destination_connection(&dest, "init", "", &no_secrets())
+                    .expect("TestDestinationConnection");
+                let key = tested.host_key.expect("unknown server");
+                client
+                    .trust_host_key(&key.host_key_id)
+                    .expect("TrustHostKey");
+                client
+                    .add_destination(&dest, "init", &strong_password(), &no_secrets())
+                    .expect("AddDestination");
+                fs::write(&p.kestic, format!("{}\n", server.other_key_line()))
+                    .expect("write the other key");
+                fakes.notif.clear();
+                let restic_before = rig.wrapper.started_repo_count();
+
+                rig.clock.set(SUNDAY_1200);
+                let ended = wait_for_state(client, Duration::from_secs(40), "maintenance", |s| {
+                    let d = dest_summary(s, &dest.id);
+                    !d.maintenance_running && d.last_maintenance_run.is_some()
+                });
+                let run = dest_summary(&ended, &dest.id)
+                    .last_maintenance_run
+                    .clone()
+                    .expect("maintenance run");
+                let detail = client
+                    .get_run_detail(run.id.as_str())
+                    .expect("GetRunDetail");
+                assert_eq!(
+                    detail.error_kind,
+                    Some(ErrorKind::HostKeyChanged),
+                    "{}: scheduled maintenance error: {:?}",
+                    variant.label,
+                    detail.error_raw_detail
+                );
+                assert_eq!(
+                    rig.wrapper.started_repo_count(),
+                    restic_before,
+                    "{}: restic started: {:?}",
+                    variant.label,
+                    rig.wrapper.entries()
+                );
+                let alerted = Instant::now();
+                while !fakes
+                    .notif
+                    .snapshot()
+                    .iter()
+                    .any(|n| n.summary.contains("Maintenance failed"))
+                {
+                    assert!(
+                        alerted.elapsed() < Duration::from_secs(10),
+                        "{}: no alert: {:?}",
+                        variant.label,
+                        fakes.notif.snapshot()
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+
+                // The longest backoff is 60 minutes: two hours later it would have retried.
+                rig.clock.set(SUNDAY_1200 + time::Duration::hours(2));
+                common::m3::settle();
+                common::m3::settle();
+                let later = client.get_state().expect("GetState");
+                let maintenance_runs = later
+                    .recent_runs
+                    .iter()
+                    .filter(|r| {
+                        r.destination_id == dest.id
+                            && matches!(r.kind, kestic_core::model::RunKind::Maintenance)
+                    })
+                    .count();
+                assert_eq!(
+                    maintenance_runs, 1,
+                    "{}: maintenance was retried",
+                    variant.label
+                );
+                assert_eq!(
+                    rig.wrapper.started_repo_count(),
+                    restic_before,
+                    "{}: restic started later",
+                    variant.label
+                );
+                rig.daemon.stop();
+            }
         },
     );
 }
