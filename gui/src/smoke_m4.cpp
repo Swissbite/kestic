@@ -220,7 +220,7 @@ int scenario_foreign(const Ctx& c) {
     M4_CHECK_EQ(5703, role_value(groups, 0, "name").toString(), loc(c.lang, "Unassigned", "Nicht zugeordnet"),
         "first group");
     M4_CHECK_EQ(5704, role_value(groups, 0, "subtitle").toString(),
-        loc(c.lang, "1 snapshot without a Kestic backup", "1 Snapshot ohne Kestic-Backup"), "unassigned count");
+        loc(c.lang, "1 snapshot without a unique Kestic tag", "1 Snapshot ohne eindeutigen Kestic-Tag"), "unassigned count");
     M4_CHECK_EQ(5705, role_value(groups, 1, "subtitle").toString(),
         loc(c.lang, "1 backup without description", "1 Backup ohne Beschreibung"), "orphaned count");
     M4_CHECK_EQ(5706, role_value(groups, 2, "group").toString(), QStringLiteral("described"),

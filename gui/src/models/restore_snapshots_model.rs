@@ -164,10 +164,20 @@ fn push_rows(
     }
 }
 
+/// One backup that is not configured here, as its group in the list.
+struct BackupGroup<'a> {
+    backup_id: &'a str,
+    count: u64,
+    latest_time: Option<&'a str>,
+    latest_hostname: Option<&'a str>,
+}
+
 /// Group of the snapshots of one backup that is not configured here: `head`, and on a second
-/// line the number of snapshots and when and where the newest was taken.
-fn backup_section(head: &str, count: u64, latest_time: Option<&str>, host: Option<&str>) -> String {
-    let count_text = snapshot_count_text(count);
+/// line the number of snapshots, when and where the newest was taken and the backup ID, which
+/// keeps two such backups apart.
+fn backup_section(head: &str, backup: &BackupGroup<'_>) -> String {
+    let count_text = snapshot_count_text(backup.count);
+    let (latest_time, host) = (backup.latest_time, backup.latest_hostname);
     let latest = latest_time
         .and_then(|t| OffsetDateTime::parse(t, &Rfc3339).ok())
         .map(format_datetime_display);
@@ -180,7 +190,8 @@ fn backup_section(head: &str, count: u64, latest_time: Option<&str>, host: Optio
         }
         (None, _) => count_text,
     };
-    format!("{head}\n{details}")
+    let id = i18n("ID %1").subs(&[backup.backup_id]);
+    format!("{head}\n{}", GuiText::TwoParts.with_args(&[&details, &id]))
 }
 
 /// Rows of `group` in the destination `dto` called `dest_name`.
@@ -207,9 +218,12 @@ fn push_group_rows(
             for o in &dto.orphaned {
                 let section = backup_section(
                     &head,
-                    o.count,
-                    o.latest_time.as_deref(),
-                    o.latest_hostname.as_deref(),
+                    &BackupGroup {
+                        backup_id: &o.backup_id,
+                        count: o.count,
+                        latest_time: o.latest_time.as_deref(),
+                        latest_hostname: o.latest_hostname.as_deref(),
+                    },
                 );
                 let part = ListPart {
                     destination_id: &dto.destination_id,
@@ -225,9 +239,12 @@ fn push_group_rows(
             for d in &dto.described {
                 let section = backup_section(
                     &head,
-                    d.count,
-                    d.latest_time.as_deref(),
-                    d.latest_hostname.as_deref(),
+                    &BackupGroup {
+                        backup_id: &d.backup_id,
+                        count: d.count,
+                        latest_time: d.latest_time.as_deref(),
+                        latest_hostname: d.latest_hostname.as_deref(),
+                    },
                 );
                 let part = ListPart {
                     destination_id: &dto.destination_id,

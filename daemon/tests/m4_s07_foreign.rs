@@ -11,15 +11,17 @@ mod common;
 
 use common::m3::{ResticVariant, restic_variants};
 use common::m4::{RawSnapshot, backup_dir, restic_ls_nodes, small_tree};
-use common::m4_restore::{RestoreFixture, big_page};
+use common::m4_restore::{RestoreFixture, big_page, set_mtime, tree_contents};
 use common::run_isolated_test;
 use kestic_core::model::{RunKind, RunStatus};
 use kestic_core::snapshot_find::FindScope;
 use kestic_daemon::dbus_api::{
-    DestinationSnapshotsDto, RestoreOutcome, RestoreOverwrite, RestoreTarget, SnapshotQueryRequest,
-    SnapshotQueryResultDto, SnapshotQueryStatusDto,
+    DestinationSnapshotsDto, RestoreOutcome, RestoreOverwrite, RestorePreviewResultDto,
+    RestoreTarget, RunDetailDto, SnapshotQueryRequest, SnapshotQueryResultDto,
+    SnapshotQueryStatusDto,
 };
 use kestic_i18n::codes::ServiceErrorCode;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -163,10 +165,7 @@ fn listed_by_restic(fx: &RestoreFixture) -> Vec<EntryView> {
 }
 
 /// Restores `a.txt` of the fixture's snapshot into a new folder and returns the run's detail.
-fn restore_into_new_folder(
-    fx: &RestoreFixture,
-    name: &str,
-) -> (std::path::PathBuf, kestic_daemon::dbus_api::RunDetailDto) {
+fn restore_into_new_folder(fx: &RestoreFixture, name: &str) -> (std::path::PathBuf, RunDetailDto) {
     let target = fx.new_dir(name);
     let run_id = fx
         .start_restore(
@@ -222,6 +221,224 @@ fn ac_m4_07_1_snapshot_without_kestic_tag_is_unassigned() {
     );
 }
 
+fn read(path: &Path) -> String {
+    fs::read_to_string(path).expect("read file")
+}
+
+/// Outcome of every entry of a preview by its file name.
+fn outcomes(p: &RestorePreviewResultDto) -> BTreeMap<String, RestoreOutcome> {
+    p.entries
+        .items
+        .iter()
+        .map(|e| {
+            let name = Path::new(&e.path)
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            (name, e.outcome)
+        })
+        .collect()
+}
+
+/// AC-M4-03-1 for the fixture's snapshot: the folder list as `restic ls --json`, without
+/// `restic mount`.
+fn check_browse(fx: &RestoreFixture, label: &str) {
+    let theirs = listed_by_restic(fx);
+    assert!(!theirs.is_empty(), "{label}: the folder has entries");
+    assert_eq!(listed_by_kestic(fx), theirs, "(a) AC-M4-03-1 {label}");
+    assert!(
+        fx.rig.wrapper.of('S', "mount").is_empty(),
+        "(a) AC-M4-03-1 {label}: no restic mount"
+    );
+}
+
+/// AC-M4-05-1 and -05-2: a new folder is preselected, and restoring into it writes `a.txt`
+/// with identical content and ends `ok`. Returns the run's detail.
+fn check_new_folder(fx: &RestoreFixture, label: &str) -> RunDetailDto {
+    let (_, suggested) = fx.preview(&["a.txt"], None, RestoreOverwrite::Never);
+    assert!(
+        matches!(suggested.target.target, RestoreTarget::NewFolder { .. }),
+        "(a) AC-M4-05-1 {label}: new folder preselected: {:?}",
+        suggested.target.target
+    );
+    let (target, detail) = restore_into_new_folder(fx, "new");
+    assert_eq!(
+        read(&target.join("a.txt")),
+        "hello",
+        "(a) AC-M4-05-2 {label}: identical content"
+    );
+    assert_eq!(
+        detail.run.status,
+        RunStatus::Ok,
+        "(a) AC-M4-05-2 {label}: {detail:?}"
+    );
+    detail
+}
+
+/// AC-M4-05-4 and -05-7: at the original location the restore needs a preview; the preview
+/// dry-runs first, sorts every file into the four outcomes with a second dry run with
+/// `--overwrite always`, and a preview without confirmation changes nothing.
+fn check_preview_first(fx: &RestoreFixture, label: &str) {
+    // `a.txt` older and different, `docs/deep/y.txt` newer and different, `b.bin` as backed up
+    // and `docs/x.txt` gone.
+    fs::write(fx.src.join("a.txt"), "older local").expect("write a.txt");
+    set_mtime(&fx.src.join("a.txt"), 1_000_000);
+    fs::write(fx.src.join("docs/deep/y.txt"), "newer local").expect("write y.txt");
+    set_mtime(&fx.src.join("docs/deep/y.txt"), 4_000_000_000);
+    fs::remove_file(fx.src.join("docs/x.txt")).expect("remove x.txt");
+    let before = tree_contents(&fx.src);
+
+    let refused = fx
+        .start_restore(&[], fx.original(), RestoreOverwrite::IfNewer, None)
+        .expect_err("the original location needs a preview");
+    assert_eq!(
+        refused.code(),
+        ServiceErrorCode::PreviewRequired,
+        "(a) AC-M4-05-4 {label}: preview required"
+    );
+    let runs_before = fx.restore_calls().len();
+    let (_, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::IfNewer);
+    let calls = &fx.restore_calls()[runs_before..];
+    assert!(
+        !calls.is_empty() && calls.iter().all(|c| c.contains("--dry-run")),
+        "(a) AC-M4-05-4 {label}: only dry runs: {calls:?}"
+    );
+    let o = outcomes(&p);
+    assert_eq!(
+        o.get("x.txt"),
+        Some(&RestoreOutcome::New),
+        "(a) AC-M4-05-4 {label}"
+    );
+    assert_eq!(
+        o.get("a.txt"),
+        Some(&RestoreOutcome::Overwritten),
+        "(a) AC-M4-05-4 {label}"
+    );
+    assert_eq!(
+        o.get("y.txt"),
+        Some(&RestoreOutcome::Kept),
+        "(a) AC-M4-05-4 {label}"
+    );
+    assert_eq!(
+        o.get("b.bin"),
+        Some(&RestoreOutcome::Identical),
+        "(a) AC-M4-05-4 {label}"
+    );
+    assert_eq!(
+        (
+            p.new_files,
+            p.overwritten_files,
+            p.kept_files,
+            p.identical_files
+        ),
+        (1, 1, 1, 1),
+        "(a) AC-M4-05-4 {label}: counts"
+    );
+    assert!(
+        calls.iter().any(|c| c.contains("--overwrite always")),
+        "(a) AC-M4-05-4 {label}: second dry run with always: {calls:?}"
+    );
+    assert_eq!(
+        tree_contents(&fx.src),
+        before,
+        "(a) AC-M4-05-4/-05-7 {label}: nothing written without confirmation"
+    );
+}
+
+/// AC-M4-05-3: at the original location the mode stays `never`; a differing `a.txt` is «not
+/// overwritten» and stays as it is.
+fn check_kept_by_default(fx: &RestoreFixture, label: &str) {
+    fs::write(fx.src.join("a.txt"), "changed locally").expect("change a.txt");
+    let (preview_id, preview) =
+        fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::default());
+    assert_eq!(
+        outcomes(&preview).get("a.txt"),
+        Some(&RestoreOutcome::Kept),
+        "(a) AC-M4-05-3 {label}: «not overwritten»"
+    );
+    let run_id = fx
+        .start_restore(
+            &["a.txt"],
+            fx.original(),
+            RestoreOverwrite::default(),
+            Some(&preview_id),
+        )
+        .expect("StartRestore with preview");
+    let detail = fx.wait_run(&run_id);
+    assert_eq!(detail.run.status, RunStatus::Ok, "{label}: {detail:?}");
+    let args = &detail.run.commands.last().expect("restore command").args;
+    let mode = args
+        .iter()
+        .position(|a| a == "--overwrite")
+        .and_then(|i| args.get(i + 1));
+    assert_eq!(
+        mode.map(String::as_str),
+        Some("never"),
+        "(a) AC-M4-05-3 {label}: never: {args:?}"
+    );
+    assert_eq!(
+        read(&fx.src.join("a.txt")),
+        "changed locally",
+        "(a) AC-M4-05-3 {label}: kept"
+    );
+}
+
+/// AC-M4-05-5: `if-newer`, `if-changed` and `always` give the result of
+/// `restic restore --overwrite <mode>`.
+fn check_modes(fx: &RestoreFixture, label: &str) {
+    for (mode, arg, mtime) in [
+        (RestoreOverwrite::IfNewer, "if-newer", 1_000_000),
+        (RestoreOverwrite::IfNewer, "if-newer", 4_000_000_000),
+        (RestoreOverwrite::IfChanged, "if-changed", 4_000_000_000),
+        (RestoreOverwrite::Always, "always", 4_000_000_000),
+    ] {
+        let reference = fx.new_dir(&format!("ref-{arg}-{mtime}"));
+        fs::create_dir_all(&reference).expect("mkdir reference");
+        for dir in [&fx.src, &reference] {
+            fs::write(dir.join("a.txt"), "local").expect("write a.txt");
+            set_mtime(&dir.join("a.txt"), mtime);
+        }
+        let out = std::process::Command::new(&fx.rig.variant.bin)
+            .arg("-r")
+            .arg(&fx.repo)
+            .args(["restore", "--no-cache"])
+            .arg(format!("{}:{}", fx.snapshot_id, fx.path("")))
+            .arg("--target")
+            .arg(&reference)
+            .args(["--overwrite", arg, "--include=/a.txt"])
+            .env("RESTIC_PASSWORD", &fx.password)
+            .output()
+            .expect("run restic restore");
+        assert!(out.status.success(), "restic restore --overwrite {arg}");
+        let (id, _) = fx.preview(&["a.txt"], Some(fx.original()), mode);
+        let run_id = fx
+            .start_restore(&["a.txt"], fx.original(), mode, Some(&id))
+            .expect("StartRestore");
+        assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Ok);
+        assert_eq!(
+            read(&fx.src.join("a.txt")),
+            read(&reference.join("a.txt")),
+            "(a) AC-M4-05-5 {label}: {arg} with local mtime {mtime}"
+        );
+    }
+}
+
+/// AC-M4-05-6: every restore call names the mode and carries neither `--sparse` nor
+/// `--verify`.
+fn check_overwrite_args(fx: &RestoreFixture, label: &str) {
+    let calls = fx.restore_calls();
+    assert!(!calls.is_empty(), "{label}: restores ran");
+    for call in calls {
+        assert!(
+            call.contains("--overwrite"),
+            "(a) AC-M4-05-6 {label}: {call}"
+        );
+        assert!(
+            !call.contains("--sparse") && !call.contains("--verify"),
+            "(a) AC-M4-05-6 {label}: {call}"
+        );
+    }
+}
+
 /// AC-M4-07-2: a foreign snapshot (a) is browsed and restored under the rules of AC-M4-03-1 and
 /// AC-M4-05-1 to -05-7, and (b) its restore is a run of kind `Restore` of the destination
 /// without a backup.
@@ -233,118 +450,13 @@ fn ac_m4_07_2_foreign_snapshot_is_browsed_and_restored_like_any_other() {
         |root| {
             for_each_variant(root, "M4F2", "", |fx, v| {
                 let label = v.label;
-                // AC-M4-03-1: the folder list as `restic ls --json`, without `restic mount`.
-                let theirs = listed_by_restic(fx);
-                assert!(!theirs.is_empty(), "{label}: the folder has entries");
-                assert_eq!(listed_by_kestic(fx), theirs, "(a) AC-M4-03-1 {label}");
-                assert!(
-                    fx.rig.wrapper.of('S', "mount").is_empty(),
-                    "(a) AC-M4-03-1 {label}: no restic mount"
-                );
+                check_browse(fx, label);
+                let detail = check_new_folder(fx, label);
+                check_preview_first(fx, label);
+                check_kept_by_default(fx, label);
+                check_modes(fx, label);
+                check_overwrite_args(fx, label);
 
-                // AC-M4-05-1: the default target is a new folder, not the original location.
-                let (_, suggested) = fx.preview(&["a.txt"], None, RestoreOverwrite::Never);
-                assert!(
-                    matches!(suggested.target.target, RestoreTarget::NewFolder { .. }),
-                    "(a) AC-M4-05-1 {label}: new folder preselected: {:?}",
-                    suggested.target.target
-                );
-
-                // AC-M4-05-2: into a new, empty folder.
-                let (target, detail) = restore_into_new_folder(fx, "new");
-                assert_eq!(
-                    fs::read_to_string(target.join("a.txt")).expect("a.txt restored"),
-                    "hello",
-                    "(a) AC-M4-05-2 {label}: identical content"
-                );
-                assert_eq!(
-                    detail.run.status,
-                    RunStatus::Ok,
-                    "(a) AC-M4-05-2 {label}: {detail:?}"
-                );
-
-                // AC-M4-05-4: the original location needs a dry run first.
-                fs::write(fx.src.join("a.txt"), "changed locally").expect("change a.txt");
-                let refused = fx
-                    .start_restore(&["a.txt"], fx.original(), RestoreOverwrite::Never, None)
-                    .expect_err("the original location needs a preview");
-                assert_eq!(
-                    refused.code(),
-                    ServiceErrorCode::PreviewRequired,
-                    "(a) AC-M4-05-4 {label}"
-                );
-                let (preview_id, preview) =
-                    fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Never);
-                assert!(
-                    fx.restore_calls().iter().any(|c| c.contains("--dry-run")),
-                    "(a) AC-M4-05-4 {label}: restore --dry-run ran: {:?}",
-                    fx.restore_calls()
-                );
-
-                // AC-M4-05-7: a preview without confirmation changes nothing.
-                assert_eq!(
-                    fs::read_to_string(fx.src.join("a.txt")).expect("a.txt"),
-                    "changed locally",
-                    "(a) AC-M4-05-7 {label}: unchanged without confirmation"
-                );
-
-                // AC-M4-05-3: `never` keeps the differing file.
-                assert_eq!(
-                    preview
-                        .entries
-                        .items
-                        .iter()
-                        .find(|e| e.path.ends_with("/a.txt"))
-                        .map(|e| e.outcome),
-                    Some(RestoreOutcome::Kept),
-                    "(a) AC-M4-05-3 {label}: «not overwritten»"
-                );
-                let run_id = fx
-                    .start_restore(
-                        &["a.txt"],
-                        fx.original(),
-                        RestoreOverwrite::Never,
-                        Some(&preview_id),
-                    )
-                    .expect("StartRestore with preview");
-                assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Ok);
-                assert_eq!(
-                    fs::read_to_string(fx.src.join("a.txt")).expect("a.txt"),
-                    "changed locally",
-                    "(a) AC-M4-05-3 {label}: kept with never"
-                );
-
-                // AC-M4-05-5: `always` writes the snapshot's file as restic does.
-                let (always_id, _) =
-                    fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
-                let run_id = fx
-                    .start_restore(
-                        &["a.txt"],
-                        fx.original(),
-                        RestoreOverwrite::Always,
-                        Some(&always_id),
-                    )
-                    .expect("StartRestore always");
-                assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Ok);
-                assert_eq!(
-                    fs::read_to_string(fx.src.join("a.txt")).expect("a.txt"),
-                    "hello",
-                    "(a) AC-M4-05-5 {label}: overwritten with always"
-                );
-
-                // AC-M4-05-6: every restore call names the mode, never --sparse or --verify.
-                for call in fx.restore_calls() {
-                    assert!(
-                        call.contains("--overwrite"),
-                        "(a) AC-M4-05-6 {label}: {call}"
-                    );
-                    assert!(
-                        !call.contains("--sparse") && !call.contains("--verify"),
-                        "(a) AC-M4-05-6 {label}: {call}"
-                    );
-                }
-
-                // (b) The run belongs to the destination, without a backup.
                 assert!(
                     matches!(detail.run.kind, RunKind::Restore { .. }),
                     "(b) {label}: kind Restore: {:?}",

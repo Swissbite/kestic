@@ -86,18 +86,20 @@ impl ResticSnapshot {
         )
     }
 
-    /// Backup IDs named by `kestic:<id>` tags, in tag order.
+    /// Backup IDs named by `kestic:<id>` tags, in tag order. A tag without an ID names none.
     pub fn backup_ids(&self) -> impl Iterator<Item = &str> {
         self.tags
             .iter()
             .filter_map(|t| t.strip_prefix(BACKUP_TAG_PREFIX))
+            .filter(|id| !id.is_empty())
     }
 
-    /// Backup IDs named by `kestic-meta:<id>` tags.
+    /// Backup IDs named by `kestic-meta:<id>` tags. A tag without an ID names none.
     pub fn meta_backup_ids(&self) -> impl Iterator<Item = &str> {
         self.tags
             .iter()
             .filter_map(|t| t.strip_prefix(META_TAG_PREFIX))
+            .filter(|id| !id.is_empty())
     }
 
     /// The configured backup this snapshot belongs to: the only configured ID among its

@@ -172,6 +172,28 @@ fn ac_m4_07_7_destination_snapshots_are_sorted_meta_backup_orphaned_unassigned()
     );
 }
 
+/// A tag `kestic:` or `kestic-meta:` without an ID names no backup: such a snapshot is shown as
+/// unassigned, never hidden as a metadata snapshot or listed as an orphaned backup without ID.
+#[test]
+fn m4_s07_kestic_tags_without_id_leave_the_snapshot_unassigned() {
+    let snapshots = vec![
+        snap("empty-meta", "2026-11-15T12:00:00Z", &["kestic-meta:"]),
+        snap("empty-backup", "2026-11-14T12:00:00Z", &["kestic:"]),
+    ];
+    let sorted = sort_destination_snapshots(snapshots, &["b1"]);
+    let unassigned: Vec<&str> = sorted.unassigned.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(
+        unassigned,
+        ["empty-meta", "empty-backup"],
+        "both shown as unassigned"
+    );
+    assert!(sorted.orphaned.is_empty(), "no orphaned backup without ID");
+    assert!(
+        sorted.described.is_empty(),
+        "no described backup without ID"
+    );
+}
+
 /// AC-M4-01-1: a repository password that also occurs inside the snapshot JSON (here the
 /// backup ID in every `kestic:<id>` tag, generated at runtime) does not change the listed
 /// snapshots: (a) both snapshots of the backup are listed, still under their backup.

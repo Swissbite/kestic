@@ -5,6 +5,7 @@
 //! («Other snapshots»): unassigned snapshots, orphaned backups and backups that are not
 //! configured here, each over all destinations.
 
+use super::restore_backups_model::destination_error_text;
 use crate::backend::restore::restore_cache;
 use crate::state_cache::{i18n, i18np, shared_state};
 use crate::ui_texts::GuiText;
@@ -72,8 +73,8 @@ impl SnapshotGroup {
     fn count_text(self, count: usize) -> String {
         match self {
             Self::Unassigned => i18np(
-                "%1 snapshot without a Kestic backup",
-                "%1 snapshots without a Kestic backup",
+                "%1 snapshot without a unique Kestic tag",
+                "%1 snapshots without a unique Kestic tag",
                 count,
                 &[],
             ),
@@ -120,6 +121,10 @@ pub(crate) fn group_rows(
         .filter_map(|r| r.as_ref().ok())
         .filter(|dto| dto.error_kind.is_none())
         .collect();
+    // Without any listed destination a count of 0 would be wrong: say why instead.
+    let failure = (!loading && listed.is_empty())
+        .then(|| loaded.iter().flatten().find_map(|r| failure_text(r)))
+        .flatten();
     let count = |group: SnapshotGroup| listed.iter().map(|dto| group.count_in(dto)).sum();
     [
         SnapshotGroup::Unassigned,
@@ -134,12 +139,22 @@ pub(crate) fn group_rows(
         }
         let subtitle = if loading {
             GuiText::LoadingSnapshots.text()
+        } else if let Some(text) = &failure {
+            text.clone()
         } else {
             group.count_text(n)
         };
         Some((group, subtitle))
     })
     .collect()
+}
+
+/// Why a destination could not be listed; `None` when it was.
+fn failure_text(result: &Result<DestinationSnapshotsDto, String>) -> Option<String> {
+    match result {
+        Err(err) => Some(err.clone()),
+        Ok(dto) => destination_error_text(dto),
+    }
 }
 
 impl RestoreGroupsModelRust {
