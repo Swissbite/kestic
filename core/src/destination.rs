@@ -160,9 +160,11 @@ pub fn preflight_check_with_restic(
         return Ok(());
     };
     let probe = ProbeRuntime {
+        // The time left after the host key check, less the grace a stopped restic gets.
         timeout: Some(
             CONNECTION_TEST_TIMEOUT
                 .saturating_sub(started.elapsed())
+                .saturating_sub(KILL_GRACE)
                 .max(Duration::from_secs(1)),
         ),
         host_key_checked: true,

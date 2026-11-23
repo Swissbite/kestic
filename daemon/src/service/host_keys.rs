@@ -93,18 +93,27 @@ pub(super) fn forget_unused_host(removed: &Destination, remaining: &[Destination
         return;
     };
     let server = ssh_host(host).to_ascii_lowercase();
-    let still_used = remaining.iter().any(|d| {
-        matches!(&d.kind, DestinationKind::Sftp { host: h, port: p, .. }
-            if *p == *port && ssh_host(h).to_ascii_lowercase() == server)
+    let name = known_hosts_name(host, *port, user);
+    // Another destination on the same host and port, or one ssh resolves to the same
+    // `known_hosts` name (an alias of the server), still needs the line.
+    let still_used = remaining.iter().any(|d| match &d.kind {
+        DestinationKind::Sftp {
+            host: h,
+            port: p,
+            user: u,
+            ..
+        } => {
+            (*p == *port && ssh_host(h).to_ascii_lowercase() == server)
+                || known_hosts_name(h, *p, u) == name
+        }
+        _ => false,
     });
     if still_used {
         return;
     }
     let result = KnownHostsPaths::from_env()
         .map_err(|e| e.to_string())
-        .and_then(|paths| {
-            forget(&paths, &known_hosts_name(host, *port, user)).map_err(|e| e.to_string())
-        });
+        .and_then(|paths| forget(&paths, &name).map_err(|e| e.to_string()));
     if let Err(err) = result {
         eprintln!("kestic-daemon: could not remove the host key of {server}: {err}");
     }

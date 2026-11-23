@@ -43,7 +43,8 @@ use std::sync::{Arc, Mutex};
 use zbus::Connection;
 
 impl DaemonCore {
-    pub fn remove_destination(&mut self, dest_id: &str) -> Result<(), KesticServiceErr> {
+    /// Removes the destination from the configuration and its secrets; returns it.
+    pub fn remove_destination(&mut self, dest_id: &str) -> Result<Destination, KesticServiceErr> {
         let id = DestinationId::parse(dest_id)
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
         let mut next = self.config.clone();
@@ -58,12 +59,11 @@ impl DaemonCore {
         })?;
 
         self.persist_config(next)?;
-        super::host_keys::forget_unused_host(&removed, &self.config.destinations);
         remove_destination_secrets(&removed, self.secret_store.as_ref()).map_err(map_secret_err)?;
         self.dest_availability.remove(&id);
         self.dest_stale_locks.remove(&id);
         let _ = self.clear_destination_state_cached(&id);
-        Ok(())
+        Ok(removed)
     }
 
     pub fn update_destination_maintenance(
@@ -659,6 +659,24 @@ pub(crate) fn update_destination_unlocked(
     guard.persist_config(next)?;
     // A secret variable that was removed or renamed leaves nothing behind in the password store.
     let _ = BackendCredentials::delete_unused(&previous, &updated, guard.secret_store.as_ref());
+    let (state_dto, tray_state) = guard.build_state_and_tray();
+    Ok((guard.conn.clone(), state_dto, tray_state))
+}
+
+/// `RemoveDestination`: removes the destination, then, without holding the daemon state, the
+/// lines of its SFTP server from Kestic's `known_hosts` when no other destination uses it (asking
+/// ssh how it resolves the server may take a while).
+pub(crate) fn remove_destination_unlocked(
+    shared: &Arc<Mutex<DaemonCore>>,
+    dest_id: &str,
+) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
+    let (removed, remaining) = {
+        let mut guard = shared.lock_unpoisoned();
+        let removed = guard.remove_destination(dest_id)?;
+        (removed, guard.config.destinations.clone())
+    };
+    super::host_keys::forget_unused_host(&removed, &remaining);
+    let guard = shared.lock_unpoisoned();
     let (state_dto, tray_state) = guard.build_state_and_tray();
     Ok((guard.conn.clone(), state_dto, tray_state))
 }

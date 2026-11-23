@@ -208,13 +208,14 @@ fn parse_entries(text: &str) -> Vec<KnownEntry> {
         .collect()
 }
 
-/// The keys `target` shows (`ssh-keyscan`), in the order of [`SCAN_TYPES`]; `timeout` is cut to
-/// whole seconds, at least one.
+/// The keys of `types` that `target` shows (`ssh-keyscan`), in the order of [`SCAN_TYPES`], and
+/// whether an SSH server answered at all (its banner); `timeout` is cut to whole seconds, at
+/// least one.
 fn scan(
     target: &SshTarget,
     types: &str,
     timeout: Duration,
-) -> Result<Vec<(String, String)>, HostKeyError> {
+) -> Result<(Vec<(String, String)>, bool), HostKeyError> {
     let secs = timeout.min(SCAN_TIMEOUT).as_secs().max(1);
     let out = run_tool(
         "ssh-keyscan",
@@ -230,7 +231,11 @@ fn scan(
         ],
         None,
     )?;
-    let mut keys: Vec<(String, String)> = String::from_utf8_lossy(&out.stdout)
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let answered = stdout
+        .lines()
+        .any(|line| line.starts_with('#') && line.contains(" SSH-"));
+    let mut keys: Vec<(String, String)> = stdout
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
         .filter_map(|line| {
@@ -239,7 +244,7 @@ fn scan(
         })
         .collect();
     keys.sort_by_key(|(key_type, _)| type_rank(key_type));
-    Ok(keys)
+    Ok((keys, answered))
 }
 
 /// The `ssh-keyscan -t` list for a server with `entries`: only the types the files know, so a
@@ -314,11 +319,13 @@ pub fn check_host_key(
     for file in paths.all() {
         entries.extend(lookup(&name, file)?.into_iter().map(|e| (file, e)));
     }
-    let scanned = scan(
-        &target,
-        &scan_types(entries.iter().map(|(_, e)| e)),
-        timeout,
-    )?;
+    let types = scan_types(entries.iter().map(|(_, e)| e));
+    let (mut scanned, answered) = scan(&target, &types, timeout)?;
+    // The server answers but no longer offers the known types: its other keys are new to every
+    // file.
+    if scanned.is_empty() && answered && types != SCAN_TYPES {
+        scanned = scan(&target, SCAN_TYPES, timeout)?.0;
+    }
     let Some((first_type, first_key)) = scanned.first().cloned() else {
         return Ok(HostKeyCheck::NoKey(format!(
             "no SSH host key received from {name}"

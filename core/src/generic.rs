@@ -137,15 +137,17 @@ pub fn required_program(url: &str) -> Option<RequiredProgram> {
 }
 
 /// The program `kind` needs that is not in `search_path` (the `PATH` the daemon starts restic
-/// with): `rclone` for a generic destination with the scheme `rclone:`.
+/// with): `ssh` for SFTP, `rclone` for a generic destination with the scheme `rclone:`.
 pub fn missing_program(
     kind: &crate::model::DestinationKind,
     search_path: Option<&std::ffi::OsStr>,
 ) -> Option<RequiredProgram> {
-    let crate::model::DestinationKind::Generic { url, .. } = kind else {
-        return None;
+    let program = match kind {
+        crate::model::DestinationKind::Generic { url, .. } => required_program(url)?,
+        crate::model::DestinationKind::Sftp { .. } => RequiredProgram::Ssh,
+        _ => return None,
     };
-    required_program(url)
+    Some(program)
         .filter(|p| !crate::destination_types::program_in_path(p.executable(), search_path))
 }
 

@@ -11,12 +11,12 @@ use crate::removable_drives::list_removable_drives;
 use crate::service::{
     DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
     list_backup_snapshots_unlocked, preview_destination_maintenance_unlocked,
-    refresh_availability_unlocked, refresh_probe_unlocked, run_destination_maintenance_async,
-    set_restic_provider_unlocked, start_all_backups_async, start_backup_async,
-    start_backup_dry_run_async, start_backup_override_async, start_retention_preview_async,
-    test_destination_connection_unlocked, trigger_background_availability_probe,
-    trust_host_key_unlocked, unlock_destination_async, update_destination_password_unlocked,
-    update_destination_unlocked,
+    refresh_availability_unlocked, refresh_probe_unlocked, remove_destination_unlocked,
+    run_destination_maintenance_async, set_restic_provider_unlocked, start_all_backups_async,
+    start_backup_async, start_backup_dry_run_async, start_backup_override_async,
+    start_retention_preview_async, test_destination_connection_unlocked,
+    trigger_background_availability_probe, trust_host_key_unlocked, unlock_destination_async,
+    update_destination_password_unlocked, update_destination_unlocked,
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
@@ -246,8 +246,13 @@ impl KesticDbusV1Service {
 
     #[zbus(name = "RemoveDestination")]
     async fn remove_destination(&self, dest_id: &str) -> Result<(), KesticDbusError> {
-        self.mutate_unit(|core| core.remove_destination(dest_id))
-            .await
+        let id = dest_id.to_string();
+        let (conn_opt, state_dto, tray_state) = self
+            .blocking(move |core| remove_destination_unlocked(core, &id))
+            .await?;
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
+        Ok(())
     }
 
     #[zbus(name = "AddBackup")]

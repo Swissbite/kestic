@@ -555,6 +555,14 @@ fn ac_m5_01_5_stopped_sshd_blocks_manual_run_within_15_seconds() {
                     cats.last().is_some_and(|e| e.detail.trim() != "0"),
                     "(a) the pre-check passed: {cats:?}"
                 );
+                let precheck = rig.wrapper.of('S', "cat");
+                assert!(
+                    precheck
+                        .last()
+                        .is_some_and(|e| e.detail.contains("sftp.args=")
+                            && e.detail.contains("ConnectTimeout=10")),
+                    "(a) the pre-check without ConnectTimeout=10 in sftp.args: {precheck:?}"
+                );
                 // (b)
                 assert!(
                     rig.wrapper.of('S', "backup").is_empty(),
@@ -762,6 +770,134 @@ fn ac_m5_01_8_host_line_goes_with_the_last_destination_on_the_server() {
                 kestic_lines()
             );
             assert_eq!(read(&p.user), user_before, "(b) ~/.ssh/known_hosts changed");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// M5-S01 (AC-M5-01-4 (a)): a server that no longer offers the key type Kestic's file knows for
+/// it (an ecdsa line, the server shows only ed25519) is unknown, not changed: the test offers its
+/// ed25519 key, and once trusted the server is reachable.
+#[test]
+fn m5_01_server_with_a_new_key_type_is_offered_for_trust() {
+    run_isolated_test(
+        "m5_01_server_with_a_new_key_type_is_offered_for_trust",
+        "KESTIC_M5_01_NEWTYPE_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let rig = start_sftp_rig(root, &variant, "M5SftpH");
+            let p = paths();
+            let ecdsa = rig.dir.join("old_ecdsa_key");
+            let generated = Command::new("ssh-keygen")
+                .args(["-q", "-t", "ecdsa", "-N", "", "-f"])
+                .arg(&ecdsa)
+                .status()
+                .expect("ssh-keygen ecdsa");
+            assert!(generated.success(), "ecdsa key generated");
+            let old_line = format!(
+                "{} {}",
+                rig.server.known_hosts_name(),
+                kestic_test_support::sftp_server::public_key(&ecdsa)
+            );
+            fs::create_dir_all(p.kestic.parent().expect("kestic data")).expect("mkdir");
+            fs::write(&p.kestic, format!("{old_line}\n")).expect("write old ecdsa line");
+            let dest = rig.destination("NAS", "repo");
+            let client = &rig.daemon.client;
+
+            let tested = client
+                .test_destination_connection(&dest, "init", "", &no_secrets())
+                .expect("TestDestinationConnection");
+            assert_eq!(
+                tested.error_kind,
+                Some(ConnectionTestCode::UnknownHostKey),
+                "the new key type is offered: {tested:?}"
+            );
+            let key = tested.host_key.expect("key to trust");
+            assert_eq!(key.key_type, "ssh-ed25519", "the key the server shows");
+            client
+                .trust_host_key(&key.host_key_id)
+                .expect("TrustHostKey");
+            assert_eq!(
+                fs::read_to_string(&p.kestic)
+                    .expect("known_hosts")
+                    .lines()
+                    .collect::<Vec<_>>(),
+                vec![old_line.as_str(), rig.server.known_hosts_line().as_str()],
+                "the old line stays, the new key is added"
+            );
+            let again = client
+                .test_destination_connection(&dest, "init", "", &no_secrets())
+                .expect("TestDestinationConnection after trust");
+            assert!(again.ok, "reachable after trust: {again:?}");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// M5-S01, hosts from the ssh configuration (maintainer decision on #72, Q2): Kestic asks ssh how
+/// it reaches a host (`ssh -G`). An alias with `HostName` and `HostKeyAlias` is scanned at the
+/// real address and trusted under the alias, and the destination works; a host behind a jump
+/// host (`ProxyJump`) gets `jump_host_unsupported` and no destination.
+#[test]
+fn m5_01_hosts_resolve_through_the_ssh_configuration() {
+    run_isolated_test(
+        "m5_01_hosts_resolve_through_the_ssh_configuration",
+        "KESTIC_M5_01_SSHCONFIG_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let rig = start_sftp_rig(root, &variant, "M5SftpI");
+            let p = paths();
+            let config = rig.dir.join("ssh_config_aliases");
+            fs::write(
+                &config,
+                format!(
+                    "Host nas-alias\n  HostName 127.0.0.1\n  HostKeyAlias mynas\n\
+                     Host behind-gateway\n  ProxyJump gateway.invalid\n{}",
+                    fs::read_to_string(&rig.server.ssh_config).expect("read test ssh_config")
+                ),
+            )
+            .expect("write ssh_config");
+            set_test_ssh_config(Some(config));
+            let client = &rig.daemon.client;
+            let with_host = |name: &str, host: &str| {
+                let mut dest = rig.destination(name, "repo");
+                if let DestinationKind::Sftp { host: h, .. } = &mut dest.kind {
+                    *h = host.to_string();
+                }
+                dest
+            };
+
+            let alias = with_host("NAS", "nas-alias");
+            rig.add_new(&alias);
+            let written = fs::read_to_string(&p.kestic).expect("known_hosts");
+            assert_eq!(
+                written.lines().collect::<Vec<_>>(),
+                vec![format!("mynas {}", rig.server.host_key).as_str()],
+                "trusted under the HostKeyAlias"
+            );
+            assert!(
+                rig.repo_dir("repo").join("config").is_file(),
+                "the destination behind the alias was created"
+            );
+
+            let jumped = with_host("Behind", "behind-gateway");
+            let tested = client
+                .test_destination_connection(&jumped, "init", "", &no_secrets())
+                .expect("TestDestinationConnection");
+            assert_eq!(
+                tested.error_kind,
+                Some(ConnectionTestCode::JumpHostUnsupported),
+                "jump host: {tested:?}"
+            );
+            client
+                .add_destination(&jumped, "init", &strong_password(), &no_secrets())
+                .expect_err("AddDestination behind a jump host");
+            assert_eq!(
+                rig.configured_destinations(),
+                1,
+                "no destination behind the jump host"
+            );
+            set_test_ssh_config(Some(rig.server.ssh_config.clone()));
             rig.daemon.stop();
         },
     );

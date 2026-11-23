@@ -29,8 +29,9 @@ pub(crate) use availability::{
 pub use backup_runner::{start_backup_async, start_backup_override_async};
 pub(crate) use backups::get_run_detail_unlocked;
 pub(crate) use destinations::{
-    add_destination_unlocked, list_backup_snapshots_unlocked, test_destination_connection_unlocked,
-    update_destination_password_unlocked, update_destination_unlocked,
+    add_destination_unlocked, list_backup_snapshots_unlocked, remove_destination_unlocked,
+    test_destination_connection_unlocked, update_destination_password_unlocked,
+    update_destination_unlocked,
 };
 pub use error::KesticServiceErr;
 pub(crate) use host_keys::trust_host_key_unlocked;
