@@ -434,7 +434,8 @@ pub fn classify_exit_for(
                 || detail_lower.contains("context deadline exceeded")
                 // ssh ended before the SFTP session started and named no login or host key
                 // failure: the server was not reached.
-                || detail_lower.contains("unable to start the sftp session")
+                || transport == Transport::Sftp
+                    && detail_lower.contains(SFTP_SESSION_NOT_STARTED)
             {
                 ErrorPresentation {
                     status: RunStatus::Error,

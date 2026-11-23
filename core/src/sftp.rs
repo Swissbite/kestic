@@ -733,8 +733,19 @@ mod tests {
                       sftp session, error: error receiving version packet from server: read |0: \
                       file already closed";
         assert_eq!(
-            crate::restic::classify_exit(1, Some(closed), Vec::new(), "").kind,
+            sftp(Some(closed), ""),
             crate::restic::ResticFailureKind::DestinationUnreachable
+        );
+        // Elsewhere the words are part of a file name.
+        assert_eq!(
+            crate::restic::classify_exit(
+                1,
+                Some("Fatal: unable to save snapshot: lstat /home/u/unable to start the sftp session: input/output error"),
+                Vec::new(),
+                ""
+            )
+            .kind,
+            crate::restic::ResticFailureKind::GenericFailure
         );
     }
 }

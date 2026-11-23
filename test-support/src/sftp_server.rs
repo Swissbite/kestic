@@ -112,22 +112,32 @@ impl SftpServerGuard {
     }
 
     /// Starts `sshd`. A test makes many connections from one address in a short time, some with
-    /// a refused key on purpose; `PerSourcePenalties` would then block the address for a while.
+    /// a refused key on purpose; `PerSourcePenalties` (OpenSSH 9.8 and later) would then block
+    /// the address for a while. An older sshd refuses the option, so it is set only where the
+    /// configuration test accepts it.
     fn spawn(&mut self) {
         let config = self.dir.join("sshd_config");
-        fs::write(
-            &config,
-            format!(
-                "Port {port}\nListenAddress 127.0.0.1\nHostKey \"{dir}/host_key\"\n\
-                 AuthorizedKeysFile \"{dir}/authorized_keys\"\nPidFile \"{dir}/sshd.pid\"\n\
-                 UsePAM no\nStrictModes no\nPasswordAuthentication no\n\
-                 KbdInteractiveAuthentication no\nSubsystem sftp internal-sftp\n\
-                 PerSourcePenalties no\n",
-                port = self.port,
-                dir = self.dir.display()
-            ),
-        )
-        .expect("write sshd_config");
+        let base = format!(
+            "Port {port}\nListenAddress 127.0.0.1\nHostKey \"{dir}/host_key\"\n\
+             AuthorizedKeysFile \"{dir}/authorized_keys\"\nPidFile \"{dir}/sshd.pid\"\n\
+             UsePAM no\nStrictModes no\nPasswordAuthentication no\n\
+             KbdInteractiveAuthentication no\nSubsystem sftp internal-sftp\n",
+            port = self.port,
+            dir = self.dir.display()
+        );
+        let with_penalties = format!("{base}PerSourcePenalties no\n");
+        fs::write(&config, &with_penalties).expect("write sshd_config");
+        let accepted = Command::new(sshd_binary())
+            .args(["-t", "-f"])
+            .arg(&config)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !accepted {
+            fs::write(&config, &base).expect("write sshd_config");
+        }
         let log = fs::File::create(self.dir.join("sshd.log")).expect("create sshd log");
         let child = Command::new(sshd_binary())
             .args(["-D", "-e", "-f"])
