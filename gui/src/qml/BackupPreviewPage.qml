@@ -187,6 +187,8 @@ Kirigami.ScrollablePage {
                 }
 
                 Controls.ProgressBar {
+                    // Fusion leaves the bar 0 px high and draws nothing; 6 px is the bar of Breeze.
+                    Layout.minimumHeight: topInset + bottomInset + Math.round(Kirigami.Units.smallSpacing * 1.5)
                     indeterminate: true
                     Layout.fillWidth: true
                 }
@@ -327,6 +329,8 @@ Kirigami.ScrollablePage {
                 }
 
                 Controls.ProgressBar {
+                    // Fusion leaves the bar 0 px high and draws nothing; 6 px is the bar of Breeze.
+                    Layout.minimumHeight: topInset + bottomInset + Math.round(Kirigami.Units.smallSpacing * 1.5)
                     indeterminate: true
                     Layout.fillWidth: true
                 }
@@ -365,16 +369,7 @@ Kirigami.ScrollablePage {
                 type: page.retentionPreviewData && page.retentionPreviewData.remove_count > 0
                     ? Kirigami.MessageType.Warning
                     : Kirigami.MessageType.Information
-                text: {
-                    if (!page.retentionPreviewData) return "";
-                    if (page.retentionPreviewData.remove_count === 0) {
-                        return i18n("No snapshots would be removed (%1 kept).", page.retentionPreviewData.keep_count);
-                    }
-                    return i18np("%1 snapshot kept · %2", "%1 snapshots kept · %2",
-                                 page.retentionPreviewData.keep_count,
-                                 i18np("%1 snapshot would be removed.", "%1 snapshots would be removed.",
-                                       page.retentionPreviewData.remove_count));
-                }
+                text: page.retentionPreviewData ? page.retentionPreviewData.summary : ""
             }
 
             Kirigami.PlaceholderMessage {
@@ -419,15 +414,17 @@ Kirigami.ScrollablePage {
                             spacing: 2
 
                             Controls.Label {
-                                text: modelData.short_id + " · " + modelData.time
+                                objectName: "retentionPreviewSnapshotTime"
+                                text: modelData.short_id + " · " + modelData.time_text
                                 font: Kirigami.Theme.fixedWidthFont
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                             }
 
                             Controls.Label {
+                                objectName: "retentionPreviewSnapshotResult"
                                 text: (modelData.action === "remove" ? Texts.label("remove") : i18n("Keep"))
-                                    + (modelData.reasons && modelData.reasons.length > 0 ? " — " + modelData.reasons.join(", ") : "")
+                                    + (modelData.reasons_text !== "" ? " — " + modelData.reasons_text : "")
                                 opacity: 0.85
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true

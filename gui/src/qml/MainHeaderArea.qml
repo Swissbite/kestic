@@ -226,6 +226,9 @@ ColumnLayout {
                         : headerArea.rootWindow.defaultTitleForDepth(index, headerArea.rootWindow.breadcrumbRevision)
                     readonly property bool isCurrentCrumb: headerArea.rootWindow.breadcrumbRevision >= 0 && index === headerArea.pageStackRef.depth - 1
 
+                    // Only the current crumb may become narrower than its text (it elides then).
+                    Layout.fillWidth: isCurrentCrumb
+
                     Kirigami.Icon {
                         visible: crumbDelegate.index > 0
                         source: "go-next-symbolic"
@@ -252,12 +255,28 @@ ColumnLayout {
                     }
 
                     Controls.Label {
+                        id: currentCrumbLabel
                         objectName: "breadcrumbCurrentLabel"
                         visible: crumbDelegate.isCurrentCrumb
                         text: crumbDelegate.crumbTitle
                         font.bold: true
+                        // Elides only when the bar is too narrow for the whole trail. The width of
+                        // the whole text comes from TextMetrics: the label's implicit width
+                        // shrinks with the elided text.
+                        elide: Text.ElideRight
                         leftPadding: Kirigami.Units.smallSpacing
                         rightPadding: Kirigami.Units.smallSpacing
+                        readonly property real fullWidth: Math.ceil(currentCrumbText.advanceWidth) + leftPadding + rightPadding
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: Math.min(fullWidth, Kirigami.Units.gridUnit * 2)
+                        Layout.preferredWidth: fullWidth
+                        Layout.maximumWidth: fullWidth
+
+                        TextMetrics {
+                            id: currentCrumbText
+                            font: currentCrumbLabel.font
+                            text: currentCrumbLabel.text
+                        }
                     }
                 }
             }
