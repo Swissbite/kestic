@@ -268,6 +268,9 @@ fn destination_error_result(err: DestinationError, clock: &dyn Clock) -> Connect
         DestinationError::HostKeyCheck(HostKeyError::JumpHost(_)) => {
             ConnectionTestCode::JumpHostUnsupported
         }
+        DestinationError::HostKeyCheck(HostKeyError::NoAnswer { .. }) => {
+            ConnectionTestCode::NotResponding
+        }
         DestinationError::SshKeyRejected(_) => ConnectionTestCode::SshKeyRejected,
         DestinationError::WrongPassword => ConnectionTestCode::WrongPassword,
         DestinationError::AuthFailed(_) => ConnectionTestCode::AuthFailed,

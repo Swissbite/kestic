@@ -149,6 +149,9 @@ pub(super) fn map_destination_err(err: DestinationError) -> KesticServiceErr {
         DestinationError::Unreachable(m) | DestinationError::NotResponding(m) => {
             KesticServiceErr::DestinationUnreachable(m)
         }
+        err @ DestinationError::HostKeyCheck(kestic_core::known_hosts::HostKeyError::NoAnswer {
+            ..
+        }) => KesticServiceErr::DestinationUnreachable(err.to_string()),
         err @ DestinationError::HostKeyUnknown(_) => {
             KesticServiceErr::HostKeyUnknown(err.to_string())
         }

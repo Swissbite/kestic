@@ -922,6 +922,29 @@ fn m5_01_hosts_resolve_through_the_ssh_configuration() {
                 .expect("RemoveDestination address");
             assert!(!has_line(), "line kept after the last destination");
 
+            // `localhost` may resolve to `::1` first, where the test sshd does not listen: like
+            // ssh, the key scan tries the next address.
+            let mut local = rig.destination("Local", "repo-local");
+            if let DestinationKind::Sftp { host, .. } = &mut local.kind {
+                *host = "localhost".to_string();
+            }
+            let tested = client
+                .test_destination_connection(&local, "init", "", &no_secrets())
+                .expect("TestDestinationConnection localhost");
+            assert_eq!(
+                tested.error_kind,
+                Some(ConnectionTestCode::UnknownHostKey),
+                "localhost is offered for trust: {tested:?}"
+            );
+            let key = tested.host_key.expect("key of localhost");
+            client
+                .trust_host_key(&key.host_key_id)
+                .expect("TrustHostKey localhost");
+            let again = client
+                .test_destination_connection(&local, "init", "", &no_secrets())
+                .expect("TestDestinationConnection localhost after trust");
+            assert!(again.ok, "localhost reachable after trust: {again:?}");
+
             let jumped = with_host("Behind", "behind-gateway");
             let tested = client
                 .test_destination_connection(&jumped, "init", "", &no_secrets())

@@ -86,6 +86,9 @@ pub enum HostKeyError {
     Paths(#[from] crate::sftp::KnownHostsPathError),
     #[error("{program} failed: {detail}")]
     Tool { program: String, detail: String },
+    /// The program got no answer in time (a server that stops answering).
+    #[error("{program} got no answer within {secs} s")]
+    NoAnswer { program: String, secs: u64 },
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -152,10 +155,10 @@ fn run_tool_within(
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(tool_error(format!(
-                "no answer within {} s",
-                limit.as_secs()
-            )));
+            return Err(HostKeyError::NoAnswer {
+                program: program.to_string(),
+                secs: limit.as_secs(),
+            });
         }
         std::thread::sleep(Duration::from_millis(20));
     };
@@ -256,10 +259,54 @@ fn parse_entries(text: &str) -> Vec<KnownEntry> {
 }
 
 /// The keys of `types` that `target` shows (`ssh-keyscan`), in the order of [`SCAN_TYPES`], and
-/// whether an SSH server answered at all (its banner); `timeout` is cut to whole seconds, at
-/// least one.
+/// whether an SSH server answered at all (its banner). Like ssh, it tries the addresses of the
+/// host name one after the other until one answers, within `timeout`.
 fn scan(
     target: &SshTarget,
+    types: &str,
+    timeout: Duration,
+) -> Result<(Vec<(String, String)>, bool), HostKeyError> {
+    let started = std::time::Instant::now();
+    let mut result = (Vec::new(), false);
+    for address in scan_addresses(target) {
+        let left = timeout.saturating_sub(started.elapsed());
+        if left < Duration::from_secs(1) {
+            break;
+        }
+        result = scan_address(&address, target.port, types, left)?;
+        if result.1 || !result.0.is_empty() {
+            break;
+        }
+    }
+    Ok(result)
+}
+
+/// The addresses ssh would try for `target`: the IP address itself, else those the host name
+/// resolves to (the name itself when it does not resolve, so `ssh-keyscan` reports that).
+fn scan_addresses(target: &SshTarget) -> Vec<String> {
+    use std::net::ToSocketAddrs;
+    if target.hostname.parse::<std::net::IpAddr>().is_ok() {
+        return vec![target.hostname.clone()];
+    }
+    let mut addresses: Vec<String> = Vec::new();
+    if let Ok(resolved) = (target.hostname.as_str(), target.port).to_socket_addrs() {
+        for addr in resolved {
+            let ip = addr.ip().to_string();
+            if !addresses.contains(&ip) {
+                addresses.push(ip);
+            }
+        }
+    }
+    if addresses.is_empty() {
+        addresses.push(target.hostname.clone());
+    }
+    addresses
+}
+
+/// [`scan`] of one address; `timeout` is cut to whole seconds, at least one.
+fn scan_address(
+    address: &str,
+    port: u16,
     types: &str,
     timeout: Duration,
 ) -> Result<(Vec<(String, String)>, bool), HostKeyError> {
@@ -271,11 +318,11 @@ fn scan(
             "-T".to_string(),
             secs.to_string(),
             "-p".to_string(),
-            target.port.to_string(),
+            port.to_string(),
             "-t".to_string(),
             types.to_string(),
             "--".to_string(),
-            target.hostname.clone(),
+            address.to_string(),
         ],
         None,
         Duration::from_secs(secs + 1),
