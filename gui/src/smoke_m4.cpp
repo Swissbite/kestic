@@ -458,8 +458,8 @@ QQuickItem* text_item_showing(QQuickItem* root, const QString& text) {
 
 /// AC-M4-03-1 (a), breadcrumb: every folder of the path row is drawn exactly once. With its
 /// content hidden, a button that is neither hovered nor focused looks like no button at all: the
-/// style draws no second name or icon beneath the content. Folder names are plain text, and the
-/// top folder keeps its accessible name.
+/// style draws no second name or icon beneath the content. Folder names are shown literally as
+/// plain text (the path holds «R&D <b>x<b>»), and the top folder keeps its accessible name.
 int scenario_browse_path_row(const Ctx& c) {
     QQuickWindow* w = c.window;
     if (int rc = open_restore_snapshots(c, 6201)) {
@@ -473,10 +473,13 @@ int scenario_browse_path_row(const Ctx& c) {
         "the folder is listed");
     finish_incubation(w);
     const QString dir = b.model->property("dir").toString();
-    M4_CHECK(6210, dir.endsWith(QLatin1String("/trees/src")), "the snapshot opens in its folder");
+    const QString odd_name = QStringLiteral("R&D <b>x<b>");
+    M4_CHECK(6210, dir.endsWith(QLatin1Char('/') + odd_name + QStringLiteral("/src")),
+        "the snapshot opens in its folder");
     QStringList names;
     QMetaObject::invokeMethod(b.model, "segmentNames", Q_RETURN_ARG(QStringList, names), Q_ARG(QString, dir));
     M4_CHECK(6211, names.size() >= 4, "path row from the top down to «src»");
+    M4_CHECK(6226, names.contains(odd_name), "the path holds «R&D <b>x<b>»");
     QQuickItem* row = visible_item(w, "browsePathRow");
     M4_CHECK(6212, row != nullptr, "browsePathRow missing");
     // The page transition has ended once two grabs in a row are the same.

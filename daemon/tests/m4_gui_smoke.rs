@@ -141,6 +141,11 @@ fn ac_m4_01_4_snapshot_list_works_with_the_keyboard_alone() {
 /// snapshots: the newest of a small folder with sub-folders ([`small_tree`]), the one before of
 /// 1 000 folders with 100 files each ([`big_tree`]). `limits` bounds the query lists.
 fn browse_env(root: &Path, limits: QueryLimits) -> (M3Rig, StdFakes) {
+    browse_env_in(root, &root.join("trees"), limits)
+}
+
+/// [`browse_env`] with both trees below `trees` instead of `<root>/trees`.
+fn browse_env_in(root: &Path, trees: &Path, limits: QueryLimits) -> (M3Rig, StdFakes) {
     let fakes = StdFakes::start_with(FakeSetup {
         active_network: Some("HomeWifi"),
         ..FakeSetup::default()
@@ -162,10 +167,9 @@ fn browse_env(root: &Path, limits: QueryLimits) -> (M3Rig, StdFakes) {
         add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
     let backup = rig.add_backup_to(&dest, "Home", |_| {});
     let tag = format!("kestic:{}", backup.id);
-    let trees = root.join("trees");
     for (src, time) in [
-        (big_tree(&trees), "2026-11-14 12:00:00"),
-        (small_tree(&trees), "2026-11-15 12:00:00"),
+        (big_tree(trees), "2026-11-14 12:00:00"),
+        (small_tree(trees), "2026-11-15 12:00:00"),
     ] {
         backup_dir(
             &variant.bin,
@@ -317,15 +321,16 @@ fn m4_s03_leaving_a_loading_folder_stops_restic_ls() {
 }
 
 /// AC-M4-03-1 (a), breadcrumb: every folder of the path row is drawn once (no second name or
-/// icon from the style beneath the button content), folder names stay plain text and the top
-/// folder keeps its accessible name.
+/// icon from the style beneath the button content), folder names stay literal plain text (the
+/// path holds a folder «R&D <b>x<b>») and the top folder keeps its accessible name.
 #[test]
 fn ac_m4_03_1_breadcrumb_draws_each_folder_once() {
     run_isolated_test(
         "ac_m4_03_1_breadcrumb_draws_each_folder_once",
         "KESTIC_AC_M4_03_1_PATH_ROW_INNER",
         |root| {
-            let (rig, _fakes) = browse_env(root, QueryLimits::default());
+            let trees = root.join("R&D <b>x<b>");
+            let (rig, _fakes) = browse_env_in(root, &trees, QueryLimits::default());
             for lang in ["en", "de"] {
                 run_m4_gui_smoke(
                     root,

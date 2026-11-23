@@ -166,7 +166,10 @@ Kirigami.ScrollablePage {
                                 Controls.Label {
                                     visible: crumb.index > 0
                                     Layout.fillWidth: true
+                                    // As tall as the top folder icon, so all folders share one line.
+                                    Layout.minimumHeight: Kirigami.Units.iconSizes.smallMedium
                                     horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
                                     text: crumbButton.label
                                     textFormat: Text.PlainText
                                     font: crumbButton.font
