@@ -8,17 +8,19 @@ use common::m3::{
     LockableSecretStore, M3DaemonOpts, assert_dbus_error_name, connect_local_repo, spawn_m3_daemon,
 };
 use common::{
-    CapturedKesticSignal, KesticSignalCollector, find_kestic_binary, restic_test_binaries,
-    run_isolated_test, sandbox_run_config, start_fake_notifications,
+    CapturedKesticSignal, KesticSignalCollector, connect_default_client, find_kestic_binary,
+    isolated_secret_store, restic_test_binaries, run_isolated_test, sandbox_run_config,
+    start_fake_notifications,
 };
 use kestic_core::model::{
     Backup, Destination, DestinationKind, ResticProvider, Run, RunStatus, Source,
 };
-use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
 use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, OverallStatusDto,
 };
 use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
+use kestic_daemon::secrets::SecretServiceStore;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
 use kestic_test_support::password::{assert_no_secret, strong_password};
@@ -26,7 +28,8 @@ use kestic_test_support::tools::{free_loopback_port, install_marker_spy};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
 use std::time::Duration;
 
 #[test]
@@ -710,6 +713,95 @@ fn unlock_secret_store_over_dbus_clears_blocking_and_emits_status_changed() {
             );
 
             daemon.stop();
+        },
+    );
+}
+
+/// The test keyring, except that an interactive unlock waits until the test opens the gate, so
+/// an `UnlockSecretStore` call is still under way while the daemon stops.
+struct GatedUnlockStore {
+    inner: SecretServiceStore,
+    entered: Mutex<mpsc::Sender<()>>,
+    gate: Mutex<mpsc::Receiver<()>>,
+}
+
+impl SecretStore for GatedUnlockStore {
+    fn set_secret(
+        &self,
+        target_id: &str,
+        kind: &str,
+        value: &SecretValue,
+    ) -> Result<(), SecretError> {
+        self.inner.set_secret(target_id, kind, value)
+    }
+
+    fn get_secret(&self, target_id: &str, kind: &str) -> Result<Option<SecretValue>, SecretError> {
+        self.inner.get_secret(target_id, kind)
+    }
+
+    fn delete_secret(&self, target_id: &str, kind: &str) -> Result<(), SecretError> {
+        self.inner.delete_secret(target_id, kind)
+    }
+
+    fn unlock_interactive(&self) -> Result<(), SecretError> {
+        self.entered
+            .lock()
+            .expect("entered sender")
+            .send(())
+            .expect("the test waits for the unlock");
+        self.gate
+            .lock()
+            .expect("gate receiver")
+            .recv_timeout(Duration::from_secs(20))
+            .map_err(|_| SecretError::LockedOrPromptRequired("gate never opened".to_string()))
+    }
+}
+
+/// A method call still under way when `ConfirmQuit` stops the daemon gets its reply instead of
+/// `NoReply`: the daemon closes its D-Bus connection only once the replies under way have been
+/// written, as the reply to `ConfirmQuit` itself.
+#[test]
+fn reply_under_way_at_shutdown_reaches_its_caller() {
+    run_isolated_test(
+        "reply_under_way_at_shutdown_reaches_its_caller",
+        "KESTIC_M1_S09_SHUTDOWN_REPLY",
+        |root| {
+            let (_, restic_bin) = restic_test_binaries()
+                .into_iter()
+                .next()
+                .expect("restic binary");
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (gate_tx, gate_rx) = mpsc::channel();
+            let store = Arc::new(GatedUnlockStore {
+                inner: isolated_secret_store(),
+                entered: Mutex::new(entered_tx),
+                gate: Mutex::new(gate_rx),
+            });
+            let daemon = spawn_m3_daemon(
+                root,
+                M3DaemonOpts {
+                    secret_store: Some(store),
+                    ..M3DaemonOpts::on_request("", KESTIC_BUS_NAME, &restic_bin)
+                },
+            );
+
+            let unlocking = thread::spawn(|| {
+                connect_default_client()
+                    .expect("second client")
+                    .unlock_secret_store()
+            });
+            entered_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("UnlockSecretStore is under way");
+
+            daemon.stop();
+            gate_tx.send(()).expect("open the unlock gate");
+
+            let reply = unlocking.join().expect("unlocking thread");
+            assert!(
+                matches!(reply, Ok(true)),
+                "the call under way at shutdown must get its reply, not an error: {reply:?}"
+            );
         },
     );
 }

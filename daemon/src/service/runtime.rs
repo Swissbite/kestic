@@ -11,8 +11,8 @@ use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, DaemonOutcome, Daemo
 use crate::binary_watch::{BinaryIdentity, BinaryStatus};
 use crate::dbus_api::{DestinationAvailabilityDto, KESTIC_BUS_NAME};
 use crate::dbus_server::{
-    emit_quit_confirmation_requested, emit_show_about_requested, emit_show_window_requested,
-    emit_status_changed, start_dbus_server,
+    close_after_pending_replies, emit_quit_confirmation_requested, emit_show_about_requested,
+    emit_show_window_requested, emit_status_changed, start_dbus_server,
 };
 use crate::i18n::{i18n, tr_text};
 use crate::monitors::{SystemMonitorEvent, SystemMonitorHandle, read_system_environment};
@@ -34,6 +34,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use zbus::Connection;
+
+/// How long the shutdown waits for replies still under way before it leaves the connection.
+const PENDING_REPLY_LIMIT: Duration = Duration::from_secs(2);
 
 /// Runs the Kestic daemon service loop (`SingleInstanceLock` + `net.daester.Kestic1` + `TrayHandle`).
 pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
@@ -270,7 +273,12 @@ fn shutdown_daemon_and_maybe_reexec(
     }
     let _ = zbus::block_on(conn.release_name(config.bus_name.as_str()));
     drop(lock);
-    let _ = zbus::block_on(conn.close());
+    if !close_after_pending_replies(conn, PENDING_REPLY_LIMIT) {
+        eprintln!(
+            "kestic-daemon: D-Bus connection still in use after {}s; it closes with its last user",
+            PENDING_REPLY_LIMIT.as_secs()
+        );
+    }
 
     if let Some(exe_path) = pending_exec_path {
         use std::os::unix::process::CommandExt;
