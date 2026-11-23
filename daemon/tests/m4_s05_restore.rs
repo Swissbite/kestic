@@ -3048,9 +3048,9 @@ fn m4_s05_file_above_the_selection_is_refused() {
     );
 }
 
-/// AC-M4-05-25 right before the run: a folder above the selected entries that becomes a
-/// symbolic link after the preview is caught before restic writes: the run (a) ends with `Fehler` and (b) `invalid_target`, and
-/// (c) the folder behind the link is unchanged.
+/// The refusal of AC-M4-05-25, repeated right before the run: a folder above the selected
+/// entries that becomes a symbolic link after the preview is caught before restic writes; the
+/// run ends with `Fehler` and `invalid_target`, and the folder behind the link is unchanged.
 #[test]
 fn m4_s05_link_above_the_selection_after_the_preview_ends_the_run() {
     run_isolated_test(
@@ -3075,16 +3075,16 @@ fn m4_s05_link_above_the_selection_after_the_preview_ends_the_run() {
                 )
                 .expect("StartRestore");
             let detail = fx.wait_run(&run_id);
-            assert_eq!(detail.run.status, RunStatus::Error, "(a) {detail:?}");
+            assert_eq!(detail.run.status, RunStatus::Error, "Fehler: {detail:?}");
             assert_eq!(
                 detail.error_kind,
                 Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
-                "(b)"
+                "invalid_target"
             );
             assert_eq!(
                 fs::read_to_string(out.join("deep/y.txt")).expect("y.txt"),
                 "different",
-                "(c)"
+                "the folder behind the link is unchanged"
             );
             fx.rig.daemon.stop();
         },
