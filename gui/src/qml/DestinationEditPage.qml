@@ -115,6 +115,6 @@ EditorPage {
         namePrefix: "destEdit"
         editing: true
         setupModes: ["connect", "init"]
-        onAddAsNewRequested: rootWindow.openAddDestinationWizard(null, destDraft.setupMode, destDraft.prefillData())
+        onAddAsNewRequested: rootWindow.openAddDestinationWizardWith(destDraft.prefillData())
     }
 }
