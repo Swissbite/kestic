@@ -509,6 +509,29 @@ pub fn blocked_folders_above(tree: &SnapshotTree, target: &Path) -> Vec<String> 
     blocked
 }
 
+/// The folders above the selected entries of `plan` (`selection`) where the target has
+/// something else than a real folder; see [`blocked_folders_above`]. Used right before the
+/// run, without the walked tree: the selected entries are never below one another, so every
+/// folder above one of them is a folder restic creates, not a selected one.
+pub fn blocked_above_selection(
+    plan: &RestorePlan,
+    selection: &[String],
+    target: &Path,
+) -> Vec<String> {
+    let mut tree = SnapshotTree::default();
+    let selected = crate::restore::selected_paths(plan, selection);
+    for path in selected.as_deref().unwrap_or_default() {
+        tree.nodes.entry(path.clone()).or_default().push(TreeNode {
+            is_dir: false,
+            size: 0,
+            inode: None,
+            above: false,
+        });
+    }
+    tree.add_folders_above(selected.as_deref());
+    blocked_folders_above(&tree, target)
+}
+
 /// Looks up `item` (relative to `target`, starting with `/`) at the target. A segment with
 /// U+FFFD is matched against the real names of its folder, shown the way restic shows them.
 fn find_at_target(target: &Path, item: &str) -> AtTarget {

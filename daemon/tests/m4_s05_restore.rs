@@ -3047,3 +3047,46 @@ fn m4_s05_file_above_the_selection_is_refused() {
         },
     );
 }
+
+/// A folder above the selected entries that becomes a symbolic link after the preview is caught
+/// right before restic writes: the run (a) ends with `Fehler` and (b) `invalid_target`, and
+/// (c) the folder behind the link is unchanged.
+#[test]
+fn m4_s05_link_above_the_selection_after_the_preview_ends_the_run() {
+    run_isolated_test(
+        "m4_s05_link_above_the_selection_after_the_preview_ends_the_run",
+        "KESTIC_M4_S05_LINK_LATER_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RZ", small_tree, |_| {});
+            let selection = ["a.txt", "docs/deep/y.txt"];
+            let (id, _) = fx.preview(&selection, Some(fx.original()), RestoreOverwrite::Always);
+            let out = fx.new_dir("linked-later");
+            fs::create_dir_all(out.join("deep")).expect("mkdir out/deep");
+            fs::write(out.join("deep/y.txt"), "different").expect("file behind the link");
+            fs::remove_dir_all(fx.src.join("docs")).expect("remove docs");
+            std::os::unix::fs::symlink(&out, fx.src.join("docs")).expect("docs -> out");
+            let run_id = fx
+                .start_restore(
+                    &selection,
+                    fx.original(),
+                    RestoreOverwrite::Always,
+                    Some(&id),
+                )
+                .expect("StartRestore");
+            let detail = fx.wait_run(&run_id);
+            assert_eq!(detail.run.status, RunStatus::Error, "(a) {detail:?}");
+            assert_eq!(
+                detail.error_kind,
+                Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
+                "(b)"
+            );
+            assert_eq!(
+                fs::read_to_string(out.join("deep/y.txt")).expect("y.txt"),
+                "different",
+                "(c)"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}

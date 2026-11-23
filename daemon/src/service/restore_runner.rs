@@ -30,6 +30,7 @@ use kestic_core::restic::{
     CancelHandle, ResticExecutionResult, ResticStatusMessage, redact_secrets,
 };
 use kestic_core::restore::{RestorePlan, RestoreRunResult, RestoreTarget, execute_restore};
+use kestic_core::restore_preview::blocked_above_selection;
 use kestic_core::restore_target::{PREVIEW_MAX_AGE, TargetCheck, check_target, preview_required};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ErrorKind, RestoreTargetCode, RunProgressPhase, ServiceErrorCode};
@@ -673,6 +674,24 @@ impl RestoreWorker {
                 result: Err(BackupRunError::InvalidTarget {
                     path: self.setup.check.resolved.to_string_lossy().into_owned(),
                     reason,
+                }),
+            };
+        }
+        // A folder above the selection that became a link or a file after the preview would
+        // make restic write into another folder or fail midway.
+        if let Some(path) = blocked_above_selection(
+            &plan,
+            &self.setup.params.selection,
+            &self.setup.check.resolved,
+        )
+        .into_iter()
+        .next()
+        {
+            return RestoreOutcome {
+                plan: None,
+                result: Err(BackupRunError::InvalidTarget {
+                    reason: tr_text(&ErrorKind::InvalidTarget.text(Some(&path))),
+                    path,
                 }),
             };
         }
