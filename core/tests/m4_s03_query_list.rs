@@ -10,6 +10,11 @@ use kestic_core::query_list::{
     PageRequest, QueryLimits, QueryOutcome, QueryStore,
 };
 use kestic_core::restic::CancelHandle;
+use kestic_core::restore_preview::{
+    ClassifyInput, DryRunAction, DryRunActions, SnapshotTree, TreeNode, classify_preview,
+};
+use kestic_core::snapshot_diff::DiffCollector;
+use kestic_i18n::codes::{RestoreOutcome, RestoreOverwrite};
 use time::Duration;
 use time::macros::datetime;
 
@@ -146,5 +151,127 @@ fn ac_m4_03_7_d_freeing_room_keeps_records_without_a_list() {
     assert!(
         store.fetch("new", now).is_some(),
         "(d) the new list is held"
+    );
+}
+
+/// AC-M4-03-7 (b): the counts of a comparison stay exact when its list is too large to hold.
+#[test]
+fn ac_m4_03_7_b_diff_over_the_limit_keeps_exact_counts() {
+    let mut collector = DiffCollector::new(1);
+    for (prefix, modifier, n) in [("added", "+", 5), ("removed", "-", 3), ("changed", "M", 2)] {
+        for i in 0..n {
+            collector.push_line(&format!(
+                r#"{{"message_type":"change","path":"/{prefix}{i}","modifier":"{modifier}"}}"#
+            ));
+        }
+    }
+    collector.push_line(
+        r#"{"message_type":"statistics","changed_files":2,"added":{"files":5,"bytes":50},"removed":{"files":3,"bytes":30}}"#,
+    );
+    let mut diff = collector.finish();
+    let page = diff.page(&PageRequest::default());
+    assert!(page.too_large, "(a) too_large");
+    assert_eq!(page.total, 10, "(b) exact total");
+    assert_eq!(diff.counts.added_files, 5, "(b) exact added count");
+    assert_eq!(diff.counts.removed_files, 3, "(b) exact removed count");
+    assert_eq!(diff.counts.changed_files, 2, "(b) exact changed count");
+}
+
+/// AC-M4-03-7 (b): the counts of a restore preview, and the matches of a filter by kinds, stay
+/// exact when its list is too large to hold.
+#[test]
+fn ac_m4_03_7_b_restore_preview_over_the_limit_keeps_exact_counts() {
+    let target = tempfile::TempDir::new().expect("tempdir");
+    let mut tree = SnapshotTree::default();
+    let mut chosen = DryRunActions::new();
+    let mut always = DryRunActions::new();
+    // Name prefix, number of files, whether they exist at the target, and the action of the
+    // dry run with the chosen mode and of the one with `always`.
+    let groups = [
+        (
+            "new",
+            7,
+            false,
+            DryRunAction::Restored,
+            DryRunAction::Restored,
+        ),
+        (
+            "over",
+            3,
+            true,
+            DryRunAction::Updated,
+            DryRunAction::Updated,
+        ),
+        (
+            "kept",
+            2,
+            true,
+            DryRunAction::Unchanged,
+            DryRunAction::Updated,
+        ),
+        (
+            "same",
+            4,
+            true,
+            DryRunAction::Unchanged,
+            DryRunAction::Unchanged,
+        ),
+    ];
+    for (prefix, n, exists, chosen_action, always_action) in groups {
+        for i in 0..n {
+            let name = format!("{prefix}{i}");
+            if exists {
+                std::fs::write(target.path().join(&name), "old").expect("write existing file");
+            }
+            let path = format!("/{name}");
+            tree.nodes.insert(
+                path.clone(),
+                vec![TreeNode {
+                    is_dir: false,
+                    size: 10,
+                    inode: None,
+                    above: false,
+                }],
+            );
+            chosen.insert(path.clone(), vec![chosen_action]);
+            always.insert(path, vec![always_action]);
+        }
+    }
+    let mut preview = classify_preview(&ClassifyInput {
+        tree: &tree,
+        chosen: &chosen,
+        always: Some(&always),
+        overwrite: RestoreOverwrite::Never,
+        target: target.path(),
+        foreign_owner: false,
+        limit_bytes: 1,
+    });
+    let page = preview.page(&PageRequest::default());
+    assert!(page.too_large, "(a) too_large");
+    assert_eq!(page.total, 16, "(b) exact total");
+    assert_eq!(preview.counts.new_files, 7, "(b) exact new count");
+    assert_eq!(
+        preview.counts.overwritten_files, 3,
+        "(b) exact overwritten count"
+    );
+    assert_eq!(preview.counts.kept_files, 2, "(b) exact kept count");
+    assert_eq!(
+        preview.counts.identical_files, 4,
+        "(b) exact identical count"
+    );
+    let new_or_kept = preview.page(&PageRequest {
+        filter: PageFilter {
+            text: String::new(),
+            kinds: vec![
+                RestoreOutcome::New.as_str().to_string(),
+                RestoreOutcome::Kept.as_str().to_string(),
+            ],
+        },
+        ..PageRequest::default()
+    });
+    assert!(new_or_kept.too_large, "(a) too_large with a filter");
+    assert_eq!(
+        new_or_kept.matched, 9,
+        "(b) exact matches of a filter by kinds"
     );
 }
