@@ -844,7 +844,7 @@ fn m5_01_server_with_a_new_key_type_is_offered_for_trust() {
     );
 }
 
-/// M5-S01, hosts from the ssh configuration (maintainer decision on #72, Q2): Kestic asks ssh how
+/// M5-S01, hosts from the ssh configuration: Kestic asks ssh how
 /// it reaches a host (`ssh -G`). An alias with `HostName` and `HostKeyAlias` is scanned at the
 /// real address and trusted under the alias, and the destination works; a host behind a jump
 /// host (`ProxyJump`) gets `jump_host_unsupported` and no destination.
@@ -938,6 +938,51 @@ fn m5_01_hosts_resolve_through_the_ssh_configuration() {
                 rig.configured_destinations(),
                 1,
                 "no destination behind the jump host"
+            );
+            set_test_ssh_config(Some(rig.server.ssh_config.clone()));
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// M5-S01 (`restic-integration.md`, «Permission denied (publickey…)» is a permanent error): a
+/// backup run whose SSH key the server no longer accepts ends with «login failed», not with an
+/// unreachable destination that would be retried.
+#[test]
+fn m5_01_rejected_key_in_a_run_is_a_login_error() {
+    run_isolated_test(
+        "m5_01_rejected_key_in_a_run_is_a_login_error",
+        "KESTIC_M5_01_RUNKEY_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let rig = start_sftp_rig(root, &variant, "M5SftpJ");
+            let dest = rig.destination("NAS", "repo");
+            rig.add_new(&dest);
+            let src = rig.dir.join("src");
+            fs::create_dir_all(&src).expect("mkdir src");
+            fs::write(src.join("file.txt"), b"hello sftp").expect("write source");
+            let backup = Backup::new("Documents", Source::folder(&src), dest.id.clone())
+                .expect("valid backup");
+            let backup_id =
+                BackupId::parse(rig.daemon.client.add_backup(&backup).expect("AddBackup"))
+                    .expect("backup id");
+            set_test_ssh_config(Some(rig.server.ssh_config_unknown_key.clone()));
+            let client = &rig.daemon.client;
+
+            let run_id = client
+                .start_backup(backup_id.as_str())
+                .expect("StartBackup");
+            let state = wait_for_state(client, Duration::from_secs(30), "run ended", |s| {
+                let b = backup_summary(s, &backup_id);
+                b.active_run.is_none()
+                    && b.last_run.as_ref().is_some_and(|r| r.id.as_str() == run_id)
+            });
+            let summary = backup_summary(&state, &backup_id);
+            assert_eq!(
+                summary.error_kind,
+                Some(ErrorKind::AuthFailed),
+                "rejected key in a run: {:?}",
+                summary.error_detail
             );
             set_test_ssh_config(Some(rig.server.ssh_config.clone()));
             rig.daemon.stop();

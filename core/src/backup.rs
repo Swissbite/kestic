@@ -279,7 +279,7 @@ where
     )?
     .with_cache_dir(runtime.cache_dir);
     let res = runtime.run(&spec, destination, ctx.cancel, ctx.extra_env, on_event)?;
-    Ok(res)
+    Ok(crate::destination::explain_sftp_failure(destination, res))
 }
 
 /// Size estimate for one excluded folder reported alongside backup dry-run preview.

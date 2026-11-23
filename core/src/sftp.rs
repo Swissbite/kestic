@@ -435,6 +435,17 @@ mod tests {
             ssh_failure(changed),
             Some(SshFailure::HostKeyChanged(_))
         ));
+        // A run's stored summary is read back the same way.
+        assert_eq!(
+            crate::restic::classify_exit(
+                1,
+                None,
+                Vec::new(),
+                "Login to the destination failed: subprocess ssh: u@h: Permission denied (publickey)."
+            )
+            .kind,
+            crate::restic::ResticFailureKind::BackendAuthFailed
+        );
         assert_eq!(
             crate::restic::classify_exit(1, Some("unexpected EOF"), Vec::new(), changed).kind,
             crate::restic::ResticFailureKind::HostKeyChanged

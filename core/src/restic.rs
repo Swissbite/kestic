@@ -448,6 +448,8 @@ fn is_backend_auth_failure(detail_lower: &str) -> bool {
             "signaturedoesnotmatch",
             "access key id you provided does not exist",
             "invalidaccesskeyid",
+            // ssh: the SFTP server rejected the key.
+            "permission denied (publickey",
         ]
         .iter()
         .any(|needle| text.contains(needle))
