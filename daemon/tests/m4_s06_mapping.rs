@@ -19,6 +19,7 @@ use kestic_core::model::{RunKind, RunStatus};
 use kestic_daemon::dbus_api::{
     KesticDbusError, RestoreOverwrite, RestoreTarget, RestoreTargetCode,
 };
+use kestic_i18n::codes::ServiceErrorCode;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -222,12 +223,14 @@ fn ac_m4_06_4_missing_mapped_folder_is_never_created() {
                         preview_id,
                     )
                     .expect_err("StartRestore must be refused");
-                let KesticDbusError::InvalidInput(message) = &err else {
-                    panic!("(d) {case}: InvalidInput expected, got {err:?}");
-                };
+                assert_eq!(
+                    err.code(),
+                    ServiceErrorCode::InvalidInput,
+                    "(d) {case}: refused as invalid input"
+                );
                 assert!(
-                    message.contains("missing_mapped_dir"),
-                    "(d) {case}: {message}"
+                    matches!(&err, KesticDbusError::InvalidInput(m) if m.contains("missing_mapped_dir")),
+                    "(d) {case}: the refusal names missing_mapped_dir"
                 );
                 assert_eq!(
                     fx.rig.wrapper.started_repo_count(),

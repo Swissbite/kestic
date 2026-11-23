@@ -211,11 +211,7 @@ pub fn backup_stdin(
         .write_all(content.as_bytes())
         .expect("write stdin");
     let out = child.wait_with_output().expect("restic backup --stdin");
-    assert!(
-        out.status.success(),
-        "restic backup --stdin {path}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(out.status.success(), "restic backup --stdin failed");
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
