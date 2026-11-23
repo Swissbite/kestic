@@ -408,6 +408,10 @@ pub(crate) fn update_destination_unlocked(
         guard.restic_deps()
     };
 
+    // restic checks the passwords with a scratch store; the real store gets them only after
+    // the destination is checked again under the lock, so a restore that started meanwhile
+    // leaves the stored passwords unchanged.
+    let mut verified: Option<(SecretValue, Option<SecretValue>)> = None;
     if verify_connection || matches!(setup_mode, DestinationSetupMode::InitNew) {
         let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
         let effective_repo_pw = stored_secret(
@@ -432,14 +436,19 @@ pub(crate) fn update_destination_unlocked(
             )
             .map_err(map_secret_err)?
         };
+        let scratch = InMemorySecretStore::new();
         setup_destination(
             &updated,
             setup_mode,
             &effective_repo_pw,
             effective_rest_pw.as_ref(),
-            &deps.runtime(&resolved),
+            &ResticRuntime {
+                secret_store: &scratch,
+                ..deps.runtime(&resolved)
+            },
         )
         .map_err(map_destination_err)?;
+        verified = Some((effective_repo_pw, effective_rest_pw));
     }
 
     let mut guard = shared.lock_unpoisoned();
@@ -455,6 +464,17 @@ pub(crate) fn update_destination_unlocked(
         .find_duplicate_destination(&updated.kind, Some(&updated.id))
     {
         return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
+    }
+    if let Some((repo_pw, rest_pw)) = &verified {
+        let store = deps.secret_store.as_ref();
+        store
+            .set_secret(updated.id.as_str(), SECRET_KIND_REPO, repo_pw)
+            .map_err(map_secret_err)?;
+        if let Some(rest_pw) = rest_pw {
+            store
+                .set_secret(updated.id.as_str(), SECRET_KIND_REST, rest_pw)
+                .map_err(map_secret_err)?;
+        }
     }
     let mut next = guard.config.clone();
     next.destinations[existing_idx] = updated;

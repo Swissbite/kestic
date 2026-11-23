@@ -7,7 +7,9 @@
 //! maintenance of their destination, and maintenance waits for them.
 
 use super::backup_runner::{load_dest_secrets, secret_strs};
-use super::error::{KesticServiceErr, backup_run_error_kind, localized_backup_run_error};
+use super::error::{
+    KesticServiceErr, backup_run_error_kind, localized_backup_run_error, service_error_kind,
+};
 use super::restore_preview::{
     RestoreContext, RestoreParams, check_params, fingerprint, resolve_plan,
 };
@@ -160,8 +162,8 @@ fn make_target(setup: &mut RestoreSetup) -> Result<(), KesticServiceErr> {
     Ok(())
 }
 
-/// The facts of preview `preview_id` when it is done, at most ten minutes old (by the clock)
-/// and made for exactly these parameters; `None` otherwise.
+/// The facts of preview `preview_id` when it is done, at most ten minutes old (by the clock),
+/// made for exactly these parameters and not used by another restore yet; `None` otherwise.
 fn matching_preview(
     core: &DaemonCore,
     preview_id: Option<&str>,
@@ -178,7 +180,7 @@ fn matching_preview(
         return None;
     };
     let wanted = fingerprint(&setup.ctx, &setup.params, &setup.target, &setup.check);
-    (fresh && preview.fingerprint == wanted).then(|| PreviewFacts {
+    (fresh && !preview.used && preview.fingerprint == wanted).then(|| PreviewFacts {
         dry_run: preview.dry_run,
         target_code: preview.check.code,
         plan: preview.plan.clone(),
@@ -254,8 +256,9 @@ fn prepare_setup(
     Ok((setup, deps, supervision))
 }
 
-/// Accepts a checked restore: a second restore into the same target folder is refused while
-/// the first one starts, waits or runs. Returns the new run, not yet recorded.
+/// Accepts a checked restore: a second restore into the same target folder, a folder below it
+/// or one above it is refused while the first one starts, waits or runs. Returns the new run,
+/// not yet recorded.
 fn claim(shared: &Arc<Mutex<DaemonCore>>, setup: &RestoreSetup) -> Result<Run, KesticServiceErr> {
     let mut guard = shared.lock_unpoisoned();
     let dest_id = &setup.ctx.destination.id;
@@ -270,8 +273,14 @@ fn claim(shared: &Arc<Mutex<DaemonCore>>, setup: &RestoreSetup) -> Result<Run, K
         }
         Some(_) => {}
     }
+    // A target inside another restore's target, or holding it, would have the two runs write
+    // the same files.
     let target = &setup.check.resolved;
-    if guard.restore_claims.values().any(|c| &c.target == target) {
+    if guard
+        .restore_claims
+        .values()
+        .any(|c| c.target.starts_with(target) || target.starts_with(&c.target))
+    {
         return Err(KesticServiceErr::AlreadyRunning(format!(
             "a restore into {} already runs or waits",
             target.display()
@@ -337,6 +346,13 @@ pub fn start_restore_async(
     };
 
     let mut guard = shared.lock_unpoisoned();
+    // A preview shows what one restore would do; a second restore with it could overwrite
+    // what the user changed after the first.
+    if setup.from_preview.is_some()
+        && let Some(id) = request.preview_id.as_deref()
+    {
+        guard.mark_preview_used(id);
+    }
     let dest_id = setup.ctx.destination.id.clone();
     let run_id = run.id.as_str().to_string();
     if guard.has_exclusive_run(&dest_id) {
@@ -412,6 +428,16 @@ fn launch(
 }
 
 impl DaemonCore {
+    /// Marks preview `preview_id` as used by an accepted restore.
+    fn mark_preview_used(&mut self, preview_id: &str) {
+        let now = self.clock.now_utc();
+        if let Some(query) = self.snapshot_queries.fetch(preview_id, now)
+            && let Some(QueryResult::RestorePreview(preview)) = &mut query.result
+        {
+            preview.used = true;
+        }
+    }
+
     /// Ends the claim of restore `run_id` (its run has ended or never started).
     fn release_restore(&mut self, run_id: &RunId) {
         self.restore_claims.remove(run_id);
@@ -531,11 +557,15 @@ fn start_pending_restore(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationI
         };
         (pending.setup.clone(), guard.restic_deps())
     };
-    let ready = recheck_target(&mut setup).and_then(|()| {
-        probe_for_run(&deps.provider, deps.secret_store.as_ref())
-            .1
-            .map_err(|e| e.to_string())
-    });
+    // Like a run that fails, a restore that cannot start says why in the daemon's language and
+    // keeps its error code for the run detail.
+    let ready = recheck_target(&mut setup)
+        .map_err(|reason| (reason, ErrorKind::InvalidTarget))
+        .and_then(|()| {
+            probe_for_run(&deps.provider, deps.secret_store.as_ref())
+                .1
+                .map_err(|e| localized_start_failure(&e))
+        });
     let mut guard = shared.lock_unpoisoned();
     // Cancelled meanwhile, or started by another caller.
     let Some(pos) = guard
@@ -561,14 +591,39 @@ fn start_pending_restore(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationI
             supervision,
             resolved,
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| localized_start_failure(&e))
     });
-    if let Err(detail) = started {
+    if let Err((text, kind)) = started {
         let clock = Arc::clone(&guard.clock);
         run.finish(clock.as_ref(), RunStatus::Error, None);
-        run.summary_message = Some(detail);
+        run.summary_message = Some(text);
+        run.log_path = guard
+            .history
+            .write_redacted_log(&run.id, &[error_kind_line(kind)], &[])
+            .ok();
         guard.end_pending(&run, &setup);
+        let window_active = guard.window_active;
+        drop(guard);
+        if !window_active {
+            notify_restore_finished(&setup.ctx.destination.name, &run);
+        }
     }
+}
+
+/// The text and error code of a waiting restore that could not start.
+fn localized_start_failure(err: &KesticServiceErr) -> (String, ErrorKind) {
+    let kind = service_error_kind(err);
+    if kind == ErrorKind::Unknown {
+        eprintln!("kestic-daemon: waiting restore could not start: {err}");
+    }
+    (tr(&kind.message(None, false)), kind)
+}
+
+/// Tells the user that a restore from `destination_name` ended, with its summary.
+fn notify_restore_finished(destination_name: &str, run: &Run) {
+    let title = i18n("Restore from %1 finished").subs(&[destination_name]);
+    let body = run.summary_message.clone().unwrap_or_default();
+    let _ = send_event_notification(KesticEvent::RestoreFinished, &title, &body);
 }
 
 struct RestoreWorker {
@@ -877,8 +932,6 @@ fn finalize(worker: &RestoreWorker, run: &Run, secrets: &[&str]) {
         emit_status_changed(conn, &state_dto);
     }
     if !window_active {
-        let title = i18n("Restore from %1 finished").subs(&[&worker.setup.ctx.destination.name]);
-        let body = run.summary_message.clone().unwrap_or_default();
-        let _ = send_event_notification(KesticEvent::RestoreFinished, &title, &body);
+        notify_restore_finished(&worker.setup.ctx.destination.name, run);
     }
 }

@@ -198,6 +198,8 @@ pub(crate) struct HeldPreview {
     pub dry_run: bool,
     /// The configured backup of the snapshot, if any.
     pub backup: Option<(BackupId, String)>,
+    /// A restore was accepted with this preview; it does not count for another one.
+    pub used: bool,
 }
 
 impl HeldPreview {
@@ -318,6 +320,7 @@ pub(crate) fn execute_restore_preview(
         classification,
         dry_run,
         backup: ctx.backup_of(&snapshot),
+        used: false,
     })
 }
 
