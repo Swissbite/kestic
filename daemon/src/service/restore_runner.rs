@@ -18,9 +18,10 @@ use super::snapshot_queries::QueryResult;
 use super::state::{DaemonCore, ResticDeps, probe_for_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
-use crate::dbus_api::RestoreRequest;
+use crate::dbus_api::{ActiveRunProgressDto, RestoreRequest};
 use crate::dbus_server::{emit_run_progress, emit_run_updated, emit_status_changed};
 use crate::i18n::{i18n, i18np, tr, tr_text};
+use crate::job_view::{JobProgress, JobViewHandle};
 use crate::notifications::{KesticEvent, send_event_notification};
 use crate::tray::TrayHandle;
 use kestic_core::backup::{BackupRunError, SnapshotListAccess};
@@ -34,8 +35,13 @@ use kestic_core::restore::{RestorePlan, RestoreRun, RestoreTarget, execute_resto
 use kestic_core::restore_preview::blocked_above_selection;
 use kestic_core::restore_target::{PREVIEW_MAX_AGE, TargetCheck, check_target, preview_required};
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::{ErrorKind, RestoreTargetCode, RunProgressPhase, ServiceErrorCode};
-use kestic_i18n::messages::{interrupted_by_sleep_message, nothing_restored_message};
+use kestic_i18n::codes::{
+    ErrorKind, RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode,
+};
+use kestic_i18n::messages::{
+    ActiveRunInfo, active_run_message, interrupted_by_sleep_message, nothing_restored_message,
+    rounded_percent,
+};
 use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -671,7 +677,7 @@ impl RestoreWorker {
         }
     }
 
-    fn report(&self, status: &ResticStatusMessage) {
+    fn report(&self, status: &ResticStatusMessage, job_view: Option<&JobViewHandle>) {
         let mut guard = self.shared.lock_unpoisoned();
         let mut progress = None;
         if let Some(entry) = guard.active_runs.get_mut(&self.run.id) {
@@ -691,6 +697,9 @@ impl RestoreWorker {
         }
         let (_, tray_state) = guard.build_state_and_tray();
         drop(guard);
+        if let (Some(jv), Some(p)) = (job_view, &progress) {
+            update_job_view(jv, p, status);
+        }
         if let Some(tray) = &self.tray {
             tray.set_full_state(tray_state);
         }
@@ -699,7 +708,7 @@ impl RestoreWorker {
         }
     }
 
-    fn execute(&mut self) -> RestoreOutcome {
+    fn execute(&mut self, job_view: Option<&JobViewHandle>) -> RestoreOutcome {
         let kestic_binary = self.deps.kestic_binary.clone();
         let secret_store = Arc::clone(&self.deps.secret_store);
         let clock = Arc::clone(&self.deps.clock);
@@ -765,7 +774,7 @@ impl RestoreWorker {
             overwrite,
             Some(&cancel),
             &mut |st| {
-                self.report(st);
+                self.report(st, job_view);
             },
         );
         RestoreOutcome {
@@ -775,13 +784,35 @@ impl RestoreWorker {
     }
 }
 
+/// Shows the progress of a restore in its Plasma job; without a total (restic still reads the
+/// snapshot) only the text, so Plasma does not show «n B of 0 B».
+fn update_job_view(jv: &JobViewHandle, p: &ActiveRunProgressDto, status: &ResticStatusMessage) {
+    let processed_bytes = match p.phase {
+        RunProgressPhase::Scanning => 0,
+        RunProgressPhase::ScanFinished => p.bytes_done,
+    };
+    let _ = jv.update(&JobProgress {
+        percent: u32::from(rounded_percent(p.percent_done)),
+        processed_bytes,
+        total_bytes: p.total_bytes,
+        speed_bytes_per_sec: 0,
+        info_message: tr(&active_run_message(&ActiveRunInfo {
+            name: &p.backup_name,
+            kind: RunKindCode::Restore,
+            phase: p.phase,
+            percent_done: p.percent_done,
+        })),
+        elapsed_ms: status.seconds_elapsed.unwrap_or(0) * 1000,
+    });
+}
+
 fn restore_worker(mut worker: RestoreWorker) {
     let mut supervision = RunSupervision::start(
         &worker.supervision,
         &i18n("Restoring from %1").subs(&[&worker.setup.ctx.destination.name]),
         &worker.cancel,
     );
-    let outcome = worker.execute();
+    let outcome = worker.execute(supervision.job_view.as_ref());
     supervision.stop_cancel_watcher();
 
     let secrets_owned = load_dest_secrets(
