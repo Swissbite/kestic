@@ -302,6 +302,7 @@ pub fn classify_exit(
     let ssh_kind = ssh_failure.map(|failure| match failure {
         crate::sftp::SshFailure::KeyRejected(_) => ResticFailureKind::BackendAuthFailed,
         crate::sftp::SshFailure::HostKeyVerificationFailed(_) => ResticFailureKind::HostKeyUnknown,
+        crate::sftp::SshFailure::HostKeyChanged(_) => ResticFailureKind::HostKeyChanged,
     });
     if let Some(kind) = ssh_kind.or_else(|| {
         (exit_code == 1)

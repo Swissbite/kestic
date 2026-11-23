@@ -562,7 +562,10 @@ fn run_with_temp_repo_password_file(
     // ssh refused the host key although the check passed (it changed meanwhile): the check
     // again tells unknown from changed.
     if let Ok(result) = &res
-        && result.presentation.kind == ResticFailureKind::HostKeyUnknown
+        && matches!(
+            result.presentation.kind,
+            ResticFailureKind::HostKeyUnknown | ResticFailureKind::HostKeyChanged
+        )
     {
         verify_sftp_host_key(dest)?;
     }
@@ -573,7 +576,8 @@ fn run_with_temp_repo_password_file(
             crate::sftp::SshFailure::KeyRejected(line) => {
                 return Err(DestinationError::SshKeyRejected(line));
             }
-            crate::sftp::SshFailure::HostKeyVerificationFailed(_) => verify_sftp_host_key(dest)?,
+            crate::sftp::SshFailure::HostKeyVerificationFailed(_)
+            | crate::sftp::SshFailure::HostKeyChanged(_) => verify_sftp_host_key(dest)?,
         }
     }
     res

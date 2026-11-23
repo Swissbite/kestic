@@ -11,7 +11,8 @@ use super::backup_runner::{
     load_dest_secrets, secret_strs, start_backup_async, upsert_pending_run_entry,
 };
 use super::error::{
-    KesticServiceErr, localized_source_check_reason, manual_run_blocked_reason, service_error_kind,
+    KesticServiceErr, localized_source_check_reason, manual_run_blocked_reason,
+    map_destination_err, service_error_kind,
 };
 use super::run_errors::run_blocks_schedule;
 use super::state::{DaemonCore, ResticDeps, probe_before_run};
@@ -25,7 +26,7 @@ use crate::notifications::{KesticEvent, send_configured_notification};
 use crate::tray::TrayHandle;
 use kestic_core::backup::{execute_forget, is_forget_lock_failure, parse_forget_removed_count};
 use kestic_core::clock::Clock;
-use kestic_core::destination::preflight_check_with_restic;
+use kestic_core::destination::{DestinationError, preflight_check_with_restic};
 use kestic_core::maintenance::{
     detect_stale_locks, execute_check, execute_prune, parse_check_summary, parse_prune_freed_bytes,
 };
@@ -99,7 +100,7 @@ fn handle_maintenance_preflight_failure(
     d_id: &DestinationId,
     now: OffsetDateTime,
     is_scheduled: bool,
-    err_msg: String,
+    err: KesticServiceErr,
 ) -> KesticServiceErr {
     if is_scheduled {
         let mut ds = guard.load_destination_maintenance_state(d_id);
@@ -108,7 +109,7 @@ fn handle_maintenance_preflight_failure(
     }
     guard.release_claim(d_id, claim_guard);
     guard.push_state();
-    KesticServiceErr::DestinationUnreachable(err_msg)
+    err
 }
 
 struct LaunchedMaintenanceRun {
@@ -191,18 +192,27 @@ fn run_destination_maintenance_internal(
         }
         let now = guard.clock.now_utc();
         guard.availability_probe_count += 1;
-        let dto =
-            DestinationAvailabilityDto::from_probe(&d_id, &preflight_res, now.unix_timestamp());
+        // A server with an unknown or changed host key is reachable; maintenance stops at the key.
+        let reachable: Result<(), &DestinationError> = match &preflight_res {
+            Err(err) if !err.is_host_key_problem() => Err(err),
+            _ => Ok(()),
+        };
+        let dto = DestinationAvailabilityDto::from_probe(&d_id, &reachable, now.unix_timestamp());
         guard.dest_availability.insert(d_id.clone(), dto);
 
         if let Err(err) = preflight_res {
+            let service_err = if err.is_host_key_problem() {
+                map_destination_err(err)
+            } else {
+                KesticServiceErr::DestinationUnreachable(err.to_string())
+            };
             return Err(handle_maintenance_preflight_failure(
                 &mut guard,
                 &mut ctx.claim_guard,
                 &d_id,
                 now,
                 is_scheduled,
-                err.to_string(),
+                service_err,
             ));
         }
 

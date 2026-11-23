@@ -198,7 +198,7 @@ fn quotable(path: &Path) -> Result<&str, KnownHostsPathError> {
     if text.is_empty()
         || text
             .chars()
-            .any(|c| c.is_control() || matches!(c, '\'' | '"' | '\\'))
+            .any(|c| c.is_control() || matches!(c, '\'' | '"' | '\\' | '%' | '$'))
     {
         return Err(KnownHostsPathError::Unquotable(
             path.to_string_lossy().into_owned(),
@@ -288,15 +288,19 @@ fn option_args(args: &str) -> Vec<String> {
 pub enum SshFailure {
     /// The server rejected every key (`Permission denied (publickey…)`).
     KeyRejected(String),
-    /// ssh refused the server's host key (unknown or changed).
+    /// ssh refused the server's host key because no file knows it.
     HostKeyVerificationFailed(String),
+    /// ssh refused the server's host key because a file has another one.
+    HostKeyChanged(String),
 }
 
 impl SshFailure {
     /// The line of ssh.
     pub fn line(&self) -> &str {
         match self {
-            Self::KeyRejected(line) | Self::HostKeyVerificationFailed(line) => line,
+            Self::KeyRejected(line)
+            | Self::HostKeyVerificationFailed(line)
+            | Self::HostKeyChanged(line) => line,
         }
     }
 
@@ -314,11 +318,20 @@ pub fn ssh_failure(stderr: &str) -> Option<SshFailure> {
             .map(str::trim)
             .filter(|line| line.starts_with("subprocess ssh:"))
     };
-    if let Some(line) = lines().find(|l| l.contains("Host key verification failed")) {
+    if lines().any(|l| l.contains("Host key verification failed")) {
+        if let Some(line) =
+            lines().find(|l| l.contains("has changed and you have requested strict checking"))
+        {
+            return Some(SshFailure::HostKeyChanged(line.to_string()));
+        }
+        let line = lines().find(|l| l.contains("Host key verification failed"))?;
         return Some(SshFailure::HostKeyVerificationFailed(line.to_string()));
     }
+    // Many keys offered by the agent can use up the server's attempts before the right one.
     lines()
-        .find(|l| l.contains("Permission denied ("))
+        .find(|l| {
+            l.contains("Permission denied (") || l.contains("Too many authentication failures")
+        })
         .map(|line| SshFailure::KeyRejected(line.to_string()))
 }
 
@@ -383,6 +396,11 @@ mod tests {
             ..paths
         };
         assert!(sftp_args(&quoted).is_err());
+        let expanded = KnownHostsPaths {
+            kestic: PathBuf::from("/home/a%hb/.local/share/kestic/known_hosts"),
+            ..quoted.clone()
+        };
+        assert!(sftp_args(&expanded).is_err(), "ssh expands % in the path");
     }
 
     #[test]
@@ -402,6 +420,24 @@ mod tests {
         assert_eq!(
             ssh_failure("Fatal: Permission denied (publickey) in a path"),
             None
+        );
+        let too_many = "subprocess ssh: Received disconnect from 127.0.0.1 port 22:2: Too many \
+                        authentication failures\nsubprocess ssh: Disconnected from 127.0.0.1";
+        assert!(matches!(
+            ssh_failure(too_many),
+            Some(SshFailure::KeyRejected(_))
+        ));
+        let changed = "subprocess ssh: WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n\
+                       subprocess ssh: Host key for [127.0.0.1]:2222 has changed and you have \
+                       requested strict checking.\n\
+                       subprocess ssh: Host key verification failed.";
+        assert!(matches!(
+            ssh_failure(changed),
+            Some(SshFailure::HostKeyChanged(_))
+        ));
+        assert_eq!(
+            crate::restic::classify_exit(1, Some("unexpected EOF"), Vec::new(), changed).kind,
+            crate::restic::ResticFailureKind::HostKeyChanged
         );
         // Without a line of ssh, a session that never started means the server was not reached.
         let closed = "Fatal: unable to open repository at sftp://u@h:22//x: unable to start the \

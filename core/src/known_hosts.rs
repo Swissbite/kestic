@@ -21,6 +21,10 @@ const SCAN_TYPES: &str = "ed25519,ecdsa,rsa";
 /// Longest `ssh-keyscan` waits for a server.
 pub const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Longest Kestic waits for `ssh -G`, `ssh-keygen` or `ssh-keyscan` (whose own limit is
+/// [`SCAN_TIMEOUT`]).
+const TOOL_TIMEOUT: Duration = Duration::from_secs(12);
+
 /// Every write of Kestic's `known_hosts` file in this process, one after the other.
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -99,6 +103,10 @@ fn run_tool(
     args: &[String],
     stdin: Option<&str>,
 ) -> Result<std::process::Output, HostKeyError> {
+    let tool_error = |detail: String| HostKeyError::Tool {
+        program: program.to_string(),
+        detail,
+    };
     let mut child = Command::new(program)
         .args(args)
         .stdin(if stdin.is_some() {
@@ -109,14 +117,43 @@ fn run_tool(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|err| HostKeyError::Tool {
-            program: program.to_string(),
-            detail: err.to_string(),
-        })?;
+        .map_err(|err| tool_error(err.to_string()))?;
     if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
         pipe.write_all(text.as_bytes())?;
     }
-    Ok(child.wait_with_output()?)
+    let read = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let stdout = read(child.stdout.take().map(|p| Box::new(p) as _));
+    let stderr = read(child.stderr.take().map(|p| Box::new(p) as _));
+    // ssh reads the user's configuration (`Match exec`) and resolves names; none of that may hold
+    // up a connection test or the check before a run.
+    let deadline = std::time::Instant::now() + TOOL_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(tool_error(format!(
+                "no answer within {} s",
+                TOOL_TIMEOUT.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
 }
 
 /// Asks ssh how it would reach `host` (`ssh -G`, which only reads the configuration).

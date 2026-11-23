@@ -694,6 +694,16 @@ fn ac_m5_01_7_changed_host_key_stops_test_and_run_without_restic() {
                         "(a) the run names the file: {:?}",
                         summary.error_detail
                     );
+                    // (a) a maintenance run stops at the key too.
+                    let maintenance = client
+                        .run_destination_maintenance(dest.id.as_str())
+                        .expect_err("RunDestinationMaintenance with a changed key");
+                    assert_dbus_error_name(&maintenance, "net.daester.Kestic.Error.HostKeyChanged");
+                    let state = client.get_state().expect("GetState");
+                    assert!(
+                        dest_summary(&state, &dest.id).availability.reachable,
+                        "(a) a changed key does not make the server unreachable"
+                    );
                     // (c)
                     assert_eq!(
                         (read(&p.kestic), read(&p.user)),
@@ -852,6 +862,7 @@ fn m5_01_hosts_resolve_through_the_ssh_configuration() {
                 &config,
                 format!(
                     "Host nas-alias\n  HostName 127.0.0.1\n  HostKeyAlias mynas\n\
+                     Host nas-plain\n  HostName 127.0.0.1\n\
                      Host behind-gateway\n  ProxyJump gateway.invalid\n{}",
                     fs::read_to_string(&rig.server.ssh_config).expect("read test ssh_config")
                 ),
@@ -879,6 +890,37 @@ fn m5_01_hosts_resolve_through_the_ssh_configuration() {
                 rig.repo_dir("repo").join("config").is_file(),
                 "the destination behind the alias was created"
             );
+
+            // A destination on the same server under its address: the alias and the address
+            // resolve to the same `known_hosts` name, so the line stays until both are removed.
+            let mut plain = rig.destination("NAS plain", "repo-plain");
+            if let DestinationKind::Sftp { host, .. } = &mut plain.kind {
+                *host = "nas-plain".to_string();
+            }
+            let address = rig.destination("NAS address", "repo-address");
+            rig.add_new(&address);
+            client
+                .add_destination(&plain, "init", &strong_password(), &no_secrets())
+                .expect("AddDestination under the alias");
+            let line = rig.server.known_hosts_line();
+            let has_line = || {
+                fs::read_to_string(&p.kestic)
+                    .unwrap_or_default()
+                    .lines()
+                    .any(|l| l == line)
+            };
+            assert!(has_line(), "the address line was trusted");
+            client
+                .remove_destination(plain.id.as_str())
+                .expect("RemoveDestination alias");
+            assert!(
+                has_line(),
+                "line removed while the address destination needs it"
+            );
+            client
+                .remove_destination(address.id.as_str())
+                .expect("RemoveDestination address");
+            assert!(!has_line(), "line kept after the last destination");
 
             let jumped = with_host("Behind", "behind-gateway");
             let tested = client
