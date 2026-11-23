@@ -142,7 +142,7 @@ impl ErrorKind {
             }
             Some(path) if self == Self::InvalidTarget && !path.trim().is_empty() => {
                 UiText::Message(Message::with_args(
-                    i18n_noop("Cannot restore safely to %1; restore into a new folder instead."),
+                    i18n_noop("Cannot safely restore to %1. Choose 'Into a new folder' instead."),
                     &[path],
                 ))
             }

@@ -1284,8 +1284,8 @@ int scenario_restore_target_texts(const Ctx& c) {
     const QString text = refusal->property("text").toString();
     // The message wraps the text in a span, so markup in a path shows literally.
     const QString expected =
-        loc(c.lang, "Cannot restore safely to %1; restore into a new folder instead.",
-            "Nach %1 lässt sich nicht sicher wiederherstellen; bitte in einen neuen Ordner wiederherstellen.")
+        loc(c.lang, "Cannot safely restore to %1. Choose 'Into a new folder' instead.",
+            "Wiederherstellen nach %1 ist nicht sicher möglich. Stattdessen «In neuen Ordner» wählen.")
             .arg(top + QStringLiteral("/b.bin"));
     M4_CHECK(6529, text.contains(expected),
         qPrintable(QStringLiteral("AC-M4-05-25 (c) translated text naming the folder: ") + text));

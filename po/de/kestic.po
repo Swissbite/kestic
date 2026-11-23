@@ -2248,8 +2248,8 @@ msgid "Loading snapshots…"
 msgstr "Snapshots werden geladen…"
 
 #: gui/src/ui_texts.rs
-msgid "No snapshots yet – the first backup is still pending"
-msgstr "Noch keine Snapshots – das erste Backup steht noch aus"
+msgid "No snapshots yet. The first backup is still pending."
+msgstr "Noch keine Snapshots. Das erste Backup steht noch aus."
 
 #: gui/src/qml/BackupSourceEditPage.qml:100
 msgid "Source saved"
@@ -3632,8 +3632,8 @@ msgstr "Der gewählte Ordner fehlt im Snapshot"
 msgid "This folder cannot be used for the restore"
 msgstr "Dieser Ordner lässt sich zum Wiederherstellen nicht verwenden"
 
-msgid "Cannot restore safely to %1; restore into a new folder instead."
-msgstr "Nach %1 lässt sich nicht sicher wiederherstellen; bitte in einen neuen Ordner wiederherstellen."
+msgid "Cannot safely restore to %1. Choose 'Into a new folder' instead."
+msgstr "Wiederherstellen nach %1 ist nicht sicher möglich. Stattdessen «In neuen Ordner» wählen."
 
 msgid "Check the preview again before restoring; it is missing or outdated."
 msgstr "Vor dem Wiederherstellen die Vorschau erneut prüfen; sie fehlt oder ist veraltet."
