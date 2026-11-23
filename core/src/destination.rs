@@ -520,10 +520,10 @@ fn run_with_temp_repo_password_file(
             },
         ));
     }
-    // The check before a run only asks whether the server answers, within its time limit; a
-    // connection test or setup explains a refused key or login.
-    let explain_failure = !probe.host_key_checked;
-    if explain_failure {
+    // The check before a run checked the host key just before; a connection test or setup checks
+    // it here, and again when ssh refused it.
+    let check_host_key_here = !probe.host_key_checked;
+    if check_host_key_here {
         verify_sftp_host_key(dest)?;
     }
     let tmp_dir = create_private_temp_dir()?;
@@ -563,7 +563,7 @@ fn run_with_temp_repo_password_file(
     let _ = fs::remove_dir_all(&tmp_dir);
     // ssh refused the host key although the check passed (it changed meanwhile): the check
     // again tells unknown from changed.
-    if explain_failure
+    if check_host_key_here
         && let Ok(result) = &res
         && matches!(
             result.presentation.kind,
@@ -572,8 +572,8 @@ fn run_with_temp_repo_password_file(
     {
         verify_sftp_host_key(dest)?;
     }
-    if explain_failure
-        && let Ok(result) = &res
+    // A refused key is no unreachable server, also in the check before a run.
+    if let Ok(result) = &res
         && let Some(failure) = sftp_session_failure(dest, result)
     {
         match failure {
@@ -581,7 +581,12 @@ fn run_with_temp_repo_password_file(
                 return Err(DestinationError::SshKeyRejected(line));
             }
             crate::sftp::SshFailure::HostKeyVerificationFailed(_)
-            | crate::sftp::SshFailure::HostKeyChanged(_) => verify_sftp_host_key(dest)?,
+            | crate::sftp::SshFailure::HostKeyChanged(_)
+                if check_host_key_here =>
+            {
+                verify_sftp_host_key(dest)?;
+            }
+            _ => {}
         }
     }
     res
