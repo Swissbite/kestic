@@ -3,14 +3,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
 # Container entrypoint (as root): sets up the egress firewall, then runs the
-# command as `kesticci`.
+# container's main command as `kestic-infra`.
 #
-#   entrypoint.sh <command…>       firewall, then <command> as kesticci
+#   entrypoint.sh <command…>       firewall, then <command> as kestic-infra
 #   entrypoint.sh --drop <command…> only drop to kesticci (for `podman exec`)
 #
 # Dropping clears all capabilities including the bounding set and sets
 # no_new_privs, so neither the agent nor anything it starts can change the
-# firewall or become root again.
+# firewall or become root again. The main command keeps the container alive;
+# it runs under a user of its own so that the agent (kesticci) cannot signal
+# it, since its end would end the container and the agent's session with it.
 
 set -euo pipefail
 
@@ -25,10 +27,17 @@ fi
 
 if [[ "${1:-}" == --drop ]]; then
     shift
+    user=kesticci
 else
     /usr/local/lib/kestic-agent/init-firewall.sh
+    user=kestic-infra
 fi
 
+if [[ "$user" == kestic-infra ]]; then
+    exec setpriv --reuid=kestic-infra --regid=kestic-infra --init-groups \
+        --inh-caps=-all --bounding-set=-all --no-new-privs -- \
+        env HOME=/ USER=kestic-infra LOGNAME=kestic-infra PATH=/usr/bin:/bin "$@"
+fi
 # Optionally lower the priority of everything the agent runs (raising nice needs
 # no capability). Off by default: Kestic's tests check the niceness of restic.
 exec nice -n "${KESTIC_AGENT_NICE:-0}" setpriv --reuid=kesticci --regid=kesticci --init-groups \
