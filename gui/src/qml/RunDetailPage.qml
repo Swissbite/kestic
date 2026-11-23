@@ -210,8 +210,12 @@ Kirigami.ScrollablePage {
                 }
 
                 Kirigami.InlineMessage {
+                    objectName: "runDetailErrorMessage"
                     Layout.fillWidth: true
-                    type: Kirigami.MessageType.Error
+                    // A run that ended with a warning shows its cause as a warning, not as an error.
+                    type: appBackend.selected_run_status_color === "neutral"
+                        ? Kirigami.MessageType.Warning
+                        : Kirigami.MessageType.Error
                     visible: appBackend.selected_run_error_summary !== ""
                     text: appBackend.selected_run_error_summary
                     actions: [

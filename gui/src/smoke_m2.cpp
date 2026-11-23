@@ -378,6 +378,12 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     QMetaObject::invokeMethod(window, "openRunDetailById", Q_ARG(QVariant, rid));
     wait_ms(200);
 
+    // A run that ended with a warning (exit 3) shows its cause as a warning, not as an error
+    // (Kirigami.MessageType.Warning is 2).
+    QQuickItem* cause = find_visual_item(window, QStringLiteral("runDetailErrorMessage"));
+    SMOKE_CHECK_VISIBLE("M2", 275, cause, "cause of the run missing on the Exit 3 RunDetailPage");
+    SMOKE_CHECK("M2", 275, cause->property("type").toInt() == 2, "cause of a run with a warning must be shown as a warning");
+
     QQuickItem* add_btn = find_visual_item(window, QStringLiteral("addUnreadableExcludeButton"));
     SMOKE_CHECK_VISIBLE("M2", 271, add_btn, "addUnreadableExcludeButton missing or not visible on Exit 3 RunDetailPage");
     SMOKE_CHECK("M2", 272, click_ui_item(window, add_btn, "Add to Exclude Rules"), "failed to click addUnreadableExcludeButton");

@@ -269,6 +269,16 @@ int scenario_backup_progress(const Ctx& c, bool scanning) {
         M3_CHECK(3873, !bar->property("indeterminate").toBool(), "bar must have an end point after the scan");
         M3_CHECK(3874, !role_value(bm, 0, "activeScanning").toBool(), "activeScanning role");
     }
+    // The card's content keeps the card's padding at the top and the same space below.
+    QQuickItem* card = item_named(w, "overviewBackupCard");
+    auto* card_content = card ? card->property("contentItem").value<QQuickItem*>() : nullptr;
+    M3_CHECK(3881, card_content != nullptr, "backup card content missing");
+    const qreal card_top = card->mapToScene(QPointF(0, 0)).y();
+    const qreal content_top = card_content->mapToScene(QPointF(0, 0)).y();
+    const qreal space_above = content_top - card_top;
+    const qreal space_below = card_top + card->height() - (content_top + card_content->height());
+    M3_CHECK(3881, space_above + 0.5 >= card->property("topPadding").toReal(), "card content touches the top border");
+    M3_CHECK(3882, qAbs(space_below - space_above) <= 1.0, "card has more space below its content than above");
     QQuickItem* content = w->contentItem();
     M3_CHECK(3875, has_visible_text(content, status), "status not rendered on the card");
     M3_CHECK(3876, has_visible_text(content, line), "progress line not rendered on the card");

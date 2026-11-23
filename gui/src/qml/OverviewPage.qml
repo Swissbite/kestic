@@ -227,6 +227,11 @@ Kirigami.ScrollablePage {
                         required property string nextScheduledAtText
                         required property string pendingReasonsTooltip
 
+                        // Without banner and actions: Kirigami's empty banner has a negative height
+                        // and pulled the content onto the top border, its empty action bar added
+                        // space below.
+                        header: null
+                        footer: null
                         showClickFeedback: true
                         activeFocusOnTab: true
                         Accessible.name: card.name
