@@ -1107,17 +1107,42 @@ void repaint_fully(QQuickWindow* w) {
     wait_ms(300);
 }
 
-// Scrolls the nearest Flickable around `item` so that `item` shows near its top, for a
-// screenshot.
+// Scrolls the Flickables around `item` that have more content than they show, so that `item`
+// shows near the top of each, for a screenshot. The content may still grow while its parts are
+// laid out, so it scrolls again until the content height has settled.
 void scroll_into_view(QQuickItem* item) {
     for (QQuickItem* p = item ? item->parentItem() : nullptr; p; p = p->parentItem()) {
-        if (p->inherits("QQuickFlickable")) {
-            const QPointF at = item->mapToItem(p->property("contentItem").value<QQuickItem*>(), QPointF(0, 0));
-            const qreal end = qMax(0.0, p->property("contentHeight").toReal() - p->height());
+        if (!p->inherits("QQuickFlickable")) {
+            continue;
+        }
+        qreal settled = -1.0;
+        for (int i = 0; i < 20; ++i) {
+            const qreal height = p->property("contentHeight").toReal();
+            const auto* content = p->property("contentItem").value<QQuickItem*>();
+            const QPointF at = item->mapToItem(content, QPointF(0, 0));
+            const qreal end = qMax(0.0, height - p->height());
             p->setProperty("contentY", qMin(end, qMax(0.0, at.y() - 120.0)));
-            return;
+            if (qAbs(height - settled) < 0.5) {
+                break;
+            }
+            settled = height;
+            wait_ms(100);
         }
     }
+}
+
+// Whether `item` lies wholly inside the visible area of every Flickable around it.
+bool shown_in_its_flickables(QQuickItem* item) {
+    for (QQuickItem* p = item->parentItem(); p; p = p->parentItem()) {
+        if (!p->inherits("QQuickFlickable")) {
+            continue;
+        }
+        const QRectF r = item->mapRectToItem(p, QRectF(0, 0, item->width(), item->height()));
+        if (r.top() < -0.5 || r.bottom() > p->height() + 0.5) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // `out_path` with `suffix` before `.png`, for a second screenshot of one scene.
@@ -1593,6 +1618,7 @@ int scenario_restore_chips(const Ctx& c) {
     M4_CHECK(6574, ring_shown, "(b) the focused chip draws the focus ring");
     scroll_into_view(chips);
     wait_ms(400);
+    M4_CHECK(6576, shown_in_its_flickables(chips), "the chips are scrolled into view for the screenshot");
     repaint_fully(w);
     M4_CHECK(6575, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
@@ -1641,8 +1667,11 @@ int scenario_restic_outdated(const Ctx& c) {
         M4_CHECK(6306, !text.contains(note), "(c) no «(outdated)» with the newest version");
     }
     // Scroll the setting into view for the screenshot.
-    scroll_into_view(qobject_cast<QQuickItem*>(label));
+    auto* label_item = qobject_cast<QQuickItem*>(label);
+    scroll_into_view(label_item);
     wait_ms(400);
+    M4_CHECK(6330, label_item && shown_in_its_flickables(label_item),
+        "the restic source is scrolled into view for the screenshot");
     M4_CHECK(6307, save_screenshot(settings, c.out_path), "screenshot failed");
     settings->close();
     return 0;
