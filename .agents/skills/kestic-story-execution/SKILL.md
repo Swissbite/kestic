@@ -24,12 +24,13 @@ Use this skill when starting a story, a batch of stories, or a new milestone.
   - independent test suites or independent milestones (`M4` and `M5` only depend on `M1`).
 - **Writers share one checkout** (on different files). A sub-agent in a worktree of its own
   builds every dependency from scratch (minutes, about 5 GB); give one only for a large part in
-  a separate crate. Research and review sub-agents need none.
+  a separate crate. Research and review sub-agents need none. Only the main agent stages and
+  commits. Parallel `cargo` runs wait for the lock on `target/`; that is not a hang.
 - Keep the main context clean by offloading large searches, crate/spec surveys, and multi-file audits (like M6-S09 accessibility/destructive-action audits) to subagents.
 
 ## 3. Fast Inner Loop, Strict Outer Gate
 
-- **Tests first:** write the AC tests and see each fail before writing the code that makes
+- **Tests first:** for Rust code, write the AC tests and see each fail before writing the code that makes
   them pass.
 - **During implementation:** Run targeted checks first so iteration stays fast:
   - `cargo clippy --workspace --all-targets -- -D warnings`

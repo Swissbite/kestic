@@ -15,8 +15,10 @@ Before any code, post one comment titled `Story contract` on the issue:
   state × event → next state, with cancel, a second start, a daemon restart and a run on the
   same destination.
 - **Open questions** end the comment: only level-3 points (§2), each with options and a
-  recommendation; decide level 1 and 2 yourself. With open questions, add `needs-maintainer`
-  and end the turn; the next session reads the answer and goes on here. Without, go on.
+  recommendation; decide level 1 and 2 yourself. Ask them at once with `needs-maintainer`, not
+  collected. A question that touches only some ACs marks their rows `open`; keep working on the
+  others (unlike §2, which ends the turn). End the turn only when the whole contract depends on
+  the answer.
 
 ## 2. Contract review (maintainer-reviewed stories, §5)
 
@@ -27,10 +29,12 @@ request body.
 
 ## 3. Tests first
 
-Write the contract's tests against stubs with the final signatures and `todo!()` bodies. Run
+For Rust code, write the contract's tests against stubs with the final signatures and
+`todo!()` bodies. Run
 only those tests (`cargo test -p …`): each must fail on an assertion or a `todo!()`, never on a
 compile error. A test that passes before the feature exists does not check it: fix the test.
-Then replace the stubs with the real code; clippy and `just verify` run only after that.
+Then replace the stubs with the real code; clippy and `just verify` run only after that. A GUI
+smoke scene may follow the QML it needs; a story without code has no red step.
 
 ## 4. Prevention and numbers
 

@@ -6,7 +6,7 @@ description: Rules for running a whole Kestic milestone (M4–M6) largely on you
 # Kestic Milestone Autonomy
 
 A milestone agent implements a whole milestone with few check-ins of the maintainer: the
-kickoff (issues, this skill and spec changes approved), questions collected at most once a day,
+kickoff (issues, this skill and spec changes approved), questions on the story's issue as they arise,
 the halt before a risky write path (M4: before S05; M5: before S01, S09 and the restic download),
 reviews of the write-path stories and the closing pull request. Precedence: `AGENTS.md` > this skill > the issue > the start prompt of the
 agent container > the agent's own judgement. How a single story is done (research, inner loop,
@@ -188,7 +188,7 @@ are absolute; no secrets and no paths of real data in issues, comments or pull r
 | Moment | How |
 | --- | --- |
 | Kickoff | the maintainer approves the issues, this skill and the spec changes, sets the tag `m<n>-start` and removes `needs-maintainer` from the first story |
-| Questions | issues labelled `needs-maintainer`; the maintainer looks at most once a day |
+| Questions | issues labelled `needs-maintainer` |
 | Halt | the issue «M<n>: halt …» runs before the write path: auditor report (`prompts/auditor.md`), level-2 list and the design of the write path as comments on that issue, then `needs-maintainer`. The first write-path story starts labelled `needs-maintainer`; the maintainer approves by removing that label and closing the halt issue. |
 | Closing | the issue «M<n>: closing …»: the closing pull request `gh pr create --base main --head m<n>` with auditor report, the write-path diff for line-by-line review, level-2 and level-3 log, test deltas and manual acceptance cards (`kestic-manual-acceptance`), then `needs-maintainer`. The maintainer merges it as a merge commit. |
 
