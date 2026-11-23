@@ -10,7 +10,7 @@ Ablage gemäss [architecture.md](../architecture.md) §Code-Struktur.
 
 ## Anforderungen
 
-FR-01 (alle Ziel-Typen), FR-33 (Download, Umstellen), FR-51, FR-56 · NFR-05 · F20, P21–P24, P31, P32, P42, U18 · [architecture.md](../architecture.md) «Onboarding und Ziel-Typen» (Ziel-Typen)
+FR-01 (alle Ziel-Typen), FR-33 (Download, Umstellen), FR-56 · NFR-05 · F20, P21–P24, P31, P32, P42, U18 · [architecture.md](../architecture.md) «Onboarding und Ziel-Typen» (Ziel-Typen)
 
 ## Stories
 
@@ -23,7 +23,6 @@ FR-01 (alle Ziel-Typen), FR-33 (Download, Umstellen), FR-51, FR-56 · NFR-05 · 
 | M5-S05 | Externes Laufwerk / USB: Wechseldatenträger erkennen (UDisks2), Hinweis bei SMB/CIFS-Ordner |
 | M5-S06 | restic herunterladen: Architektur (amd64/arm64), `SHA256SUMS` + `.asc` prüfen (Fingerprint im Code), atomar ersetzen, nie während Lauf (FR-33) |
 | M5-S07 | Einstellung «restic-Quelle» (Automatisch / System / Von Kestic verwaltet / Eigener Pfad), Anzeige beider Versionen, Umstellen auf «Automatisch», App-Binary löschen, Migration der Config (FR-33) |
-| M5-S08 | Prüfung auf neue Releases, höchstens wöchentlich, abschaltbar, Installation nach Klick (FR-51, F20) |
 | M5-S09 | Verbindung bearbeiten: Repo-ID-Abgleich für alle Ziel-Typen (FR-56, P42, U18); ACs AC-M5-05-5 bis -7 und AC-M5-09-1 bis -9 |
 
 ## Akzeptanzkriterien
@@ -98,12 +97,8 @@ Test-Isolation gemäss [test-strategy.md](../test-strategy.md). Zusätzlich: kei
 - **AC-M5-07-9** (FR-33, P31) – *Gegeben* restic 0.18.0 bzw. aktuell, *wenn* Kestic die Version prüft, *dann* (a) nutzt es `version --json`, und (b) nicht den Text-Fallback · Test: Integration
 - **AC-M5-07-10** (FR-33, F13) – *Gegeben* eine Config mit `config_version = 3`, *wenn* sie geladen wird, *dann* (a) wird `restic_provider.kind = "system"` zu `"automatic"`, (b) bleibt `custom` mit seinem Pfad unverändert, und (c) schreibt Kestic die Datei erst beim nächsten Speichern mit Version 4 · Test: Unit
 
-### M5-S08 Prüfung auf neue Releases
-- **AC-M5-08-1** (FR-51, F20) – *Gegeben* App-verwaltet 0.19.0, Mock meldet 0.19.1, letzte Prüfung vor mehr als 7 Tagen, *wenn* der Daemon prüft, *dann* (a) erscheint im Tray ein Hinweis auf die neue Version, und (b) wird nichts installiert · Test: Integration (Release-Mock, simulierte Uhr)
-- **AC-M5-08-2** (FR-51, F20) – *Gegeben* letzte Prüfung vor weniger als 7 Tagen, *wenn* der Daemon startet, *dann* (a) erfolgt keine Anfrage an die Release-Quelle (Mock zählt 0 Zugriffe) · Test: Unit (simulierte Uhr)
-- **AC-M5-08-3** (FR-51, F20) – *Gegeben* Prüfung abgeschaltet, *wenn* eine Woche simuliert vergeht, *dann* (a) erfolgt kein einziger Netzzugriff (Mock zählt 0) · Test: Integration (Release-Mock, simulierte Uhr)
-- **AC-M5-08-4** (FR-51, F20) – *Gegeben* der Hinweis auf eine neue Version, *wenn* «Installieren» geklickt wird, *dann* (a) läuft der Download mit allen Prüfungen aus M5-S06 über denselben Weg wie die Erstinstallation, und (b) ruft Kestic nie `restic self-update` auf · Test: Integration (Release-Mock)
-- **AC-M5-08-5** (FR-51) – *Gegeben* «restic-Quelle» = System bzw. «Automatisch» mit System-restic ≥ 0.18.0, *wenn* eine Woche simuliert vergeht, *dann* (a) prüft Kestic bei System nicht auf neue Releases, und (b) bei «Automatisch», das zum System-restic führt, ebenfalls nicht · Test: Unit
+### M5-S08 (nach dem MVP)
+Die Prüfung auf neue Releases (FR-51) ist seit 2026-11-23 nicht mehr Teil des MVP ([nach-mvp.md](nach-mvp.md)). Ein Update des App-verwalteten restic gibt es im MVP nur über `[Jetzt aktualisieren]` (M5-S06).
 
 ### M5-S09 Verbindung bearbeiten: Repo-ID-Abgleich
 Fälle für lokale Ziele: AC-M5-05-5 bis -7.
