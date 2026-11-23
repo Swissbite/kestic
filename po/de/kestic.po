@@ -3638,6 +3638,9 @@ msgstr "Nach %1 lässt sich nicht sicher wiederherstellen; bitte in einen neuen 
 msgid "Check the preview again before restoring; it is missing or outdated."
 msgstr "Vor dem Wiederherstellen die Vorschau erneut prüfen; sie fehlt oder ist veraltet."
 
+msgid "A restore from this destination is running or waiting."
+msgstr "Ein Restore von diesem Ziel läuft oder wartet."
+
 msgid "%1: restoring"
 msgstr "%1: stellt wieder her"
 

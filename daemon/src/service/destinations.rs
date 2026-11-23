@@ -34,7 +34,7 @@ impl DaemonCore {
     /// restore has ended.
     fn refuse_while_restoring(&self, id: &DestinationId) -> Result<(), KesticServiceErr> {
         if self.has_restore_on(id) {
-            return Err(KesticServiceErr::InUse(format!(
+            return Err(KesticServiceErr::RestoreRunning(format!(
                 "a restore from destination {id} runs or waits"
             )));
         }

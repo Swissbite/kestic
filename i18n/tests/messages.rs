@@ -484,6 +484,10 @@ fn every_service_error_code_maps_to_its_msgid() {
             Some("Check the preview again before restoring; it is missing or outdated."),
         ),
         (
+            S::RestoreRunning,
+            Some("A restore from this destination is running or waiting."),
+        ),
+        (
             S::Internal,
             Some("Internal error in the background service."),
         ),

@@ -58,6 +58,8 @@ pub enum KesticServiceErr {
     DuplicateLocation(String),
     /// `StartRestore` without a matching, finished, fresh preview.
     PreviewRequired(String),
+    /// A destination changed or removed while a restore from it starts, waits or runs.
+    RestoreRunning(String),
     Internal(String),
 }
 
@@ -76,6 +78,7 @@ impl std::fmt::Display for KesticServiceErr {
             | Self::LockInUse(m)
             | Self::DuplicateLocation(m)
             | Self::PreviewRequired(m)
+            | Self::RestoreRunning(m)
             | Self::Internal(m) => f.write_str(m),
             Self::ManualRunBlocked(reason) => f.write_str(reason.as_str()),
             Self::SleepInProgress => f.write_str("sleep_in_progress"),
@@ -109,6 +112,7 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::LockInUse(m) => KesticDbusError::LockInUse(m),
             KesticServiceErr::DuplicateLocation(m) => KesticDbusError::DuplicateLocation(m),
             KesticServiceErr::PreviewRequired(m) => KesticDbusError::PreviewRequired(m),
+            KesticServiceErr::RestoreRunning(m) => KesticDbusError::RestoreRunning(m),
             KesticServiceErr::Internal(m) => KesticDbusError::Internal(m),
         }
     }

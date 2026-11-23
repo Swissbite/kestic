@@ -68,6 +68,7 @@ pub enum KesticDbusError {
     LockInUse(String),
     DuplicateLocation(String),
     PreviewRequired(String),
+    RestoreRunning(String),
     Internal(String),
 }
 
@@ -89,6 +90,7 @@ impl KesticDbusError {
             Self::LockInUse(_) => ServiceErrorCode::LockInUse,
             Self::DuplicateLocation(_) => ServiceErrorCode::DuplicateLocation,
             Self::PreviewRequired(_) => ServiceErrorCode::PreviewRequired,
+            Self::RestoreRunning(_) => ServiceErrorCode::RestoreRunning,
             Self::Internal(_) => ServiceErrorCode::Internal,
         }
     }

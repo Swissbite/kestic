@@ -220,6 +220,9 @@ code_enum! {
         /// A restore to the original location or into a folder with content needs a finished,
         /// fresh preview with the same parameters.
         PreviewRequired => "PreviewRequired",
+        /// A destination cannot be changed or removed while a restore from it starts, waits or
+        /// runs.
+        RestoreRunning => "RestoreRunning",
         Internal => "Internal",
         /// No D-Bus error name: the daemon could not be reached (transport error, set by the GUI).
         DaemonUnreachable => "DaemonUnreachable",

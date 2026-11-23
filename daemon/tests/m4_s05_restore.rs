@@ -2788,7 +2788,7 @@ fn m4_s05_new_folder_is_left_only_with_restored_files() {
 }
 
 /// While a restore runs from a destination, (a) `RemoveDestination` and (b)
-/// `UpdateDestination` are refused with `InUse`; (c) the restore ends `ok`.
+/// `UpdateDestination` are refused with `RestoreRunning`; (c) the restore ends `ok`.
 #[test]
 fn m4_s05_destination_of_a_running_restore_cannot_change() {
     run_isolated_test(
@@ -2821,7 +2821,7 @@ fn m4_s05_destination_of_a_running_restore_cannot_change() {
                 .client
                 .remove_destination(fx.dest.id.as_str())
                 .expect_err("(a) RemoveDestination refused");
-            common::m3::assert_dbus_error_name(&removed, "net.daester.Kestic.Error.InUse");
+            common::m3::assert_dbus_error_name(&removed, "net.daester.Kestic.Error.RestoreRunning");
             let mut renamed = fx.dest.clone();
             renamed.name = "NAS 2".to_string();
             let updated = fx
@@ -2830,7 +2830,7 @@ fn m4_s05_destination_of_a_running_restore_cannot_change() {
                 .client
                 .update_destination(&renamed, "connect", "", "", false)
                 .expect_err("(b) UpdateDestination refused");
-            common::m3::assert_dbus_error_name(&updated, "net.daester.Kestic.Error.InUse");
+            common::m3::assert_dbus_error_name(&updated, "net.daester.Kestic.Error.RestoreRunning");
             fx.rig.wrapper.release("restore");
             let detail = fx.wait_run(&run_id);
             assert_eq!(detail.run.status, RunStatus::Ok, "(c) {detail:?}");

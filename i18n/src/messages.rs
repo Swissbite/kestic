@@ -428,6 +428,9 @@ impl ServiceErrorCode {
             Self::PreviewRequired => {
                 i18n_noop("Check the preview again before restoring; it is missing or outdated.")
             }
+            Self::RestoreRunning => {
+                i18n_noop("A restore from this destination is running or waiting.")
+            }
             Self::Internal => i18n_noop("Internal error in the background service."),
             Self::DaemonUnreachable => i18n_noop("Background service unavailable."),
         };

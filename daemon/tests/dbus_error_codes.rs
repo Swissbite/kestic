@@ -43,6 +43,7 @@ fn every_named_variant() -> Vec<KesticDbusError> {
         KesticDbusError::LockInUse(d()),
         KesticDbusError::DuplicateLocation(d()),
         KesticDbusError::PreviewRequired(d()),
+        KesticDbusError::RestoreRunning(d()),
         KesticDbusError::Internal(d()),
     ]
 }
