@@ -56,14 +56,14 @@ pub fn validate(host: &str, port: u16, user: &str, path: &str) -> Result<(), Mod
 }
 
 /// Whether `user` (trimmed) is a user name Kestic hands to ssh: letters (also non-ASCII),
-/// digits, `.`, `_` and `-`, not starting with `-`.
+/// ASCII digits, `.`, `_` and `-`, not starting with `-`.
 pub fn is_valid_user(user: &str) -> bool {
     let user = user.trim();
     !user.is_empty()
         && !user.starts_with('-')
         && user
             .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            .all(|c| c.is_ascii_alphanumeric() || c.is_alphabetic() || matches!(c, '.' | '_' | '-'))
 }
 
 fn is_valid_host(host: &str) -> bool {
@@ -416,6 +416,10 @@ mod tests {
             "a!b",
             "a#b",
             "a~b",
+            "a½",
+            "a²",
+            "a①",
+            "a٣",
             "a=b",
             "a+b",
             "a(b)",
