@@ -205,7 +205,9 @@ fn push_group_rows(
     let not_managed = i18n("Not managed by Kestic").to_string();
     match group {
         SnapshotGroup::Unassigned => {
-            let section = i18n("Unassigned on '%1'").subs(&[dest_name]);
+            let head = i18n("Unassigned on '%1'").subs(&[dest_name]);
+            let count = u64::try_from(dto.unassigned.len()).unwrap_or(u64::MAX);
+            let section = format!("{head}\n{}", snapshot_count_text(count));
             let part = ListPart {
                 destination_id: &dto.destination_id,
                 section: Some(&section),

@@ -196,6 +196,29 @@ int check_hints(QQuickWindow* w, const QString& hint, int code) {
     return 0;
 }
 
+// Opens the further group `group` (titled `name`): in the wide layout with Tab and Return from
+// the group row that holds the focus, in the narrow one (the list is hidden) directly.
+bool open_next_group(const Ctx& c, const char* group, const QString& name) {
+    QQuickWindow* w = c.window;
+    if (w->property("narrowMode").toBool()) {
+        return QMetaObject::invokeMethod(w, "openRestoreGroup",
+            Q_ARG(QVariant, QString::fromLatin1(group)), Q_ARG(QVariant, name));
+    }
+    press_and_wait(w, Qt::Key_Tab, 80);
+    QQuickItem* row = nullptr;
+    for (QQuickItem* it = w->activeFocusItem(); it; it = it->parentItem()) {
+        if (it->objectName() == QLatin1String("restoreGroupListItem")) {
+            row = it;
+            break;
+        }
+    }
+    if (!row || row->property("group").toString() != QLatin1String(group)) {
+        return false;
+    }
+    send_key(w, Qt::Key_Return);
+    return true;
+}
+
 // `out_path` with the group name `group` instead of «unassigned».
 QString group_shot(const QString& out_path, const char* group) {
     QString path = out_path;
@@ -233,7 +256,8 @@ int scenario_foreign(const Ctx& c) {
     M4_CHECK(5708, wait_for_group(w, c.backend, unassigned, 1), "Return opens the unassigned snapshots");
     QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
     M4_CHECK_EQ(5709, role_value(snaps, 0, "sectionName").toString(),
-        loc(c.lang, "Unassigned on 'NAS'", "Nicht zugeordnet auf «NAS»"), "grouped by destination");
+        loc(c.lang, "Unassigned on 'NAS'\n1 snapshot", "Nicht zugeordnet auf «NAS»\n1 Snapshot"),
+        "grouped by destination, with the number of snapshots");
     const QString not_managed = loc(c.lang, "Not managed by Kestic", "Von Kestic nicht verwaltet");
     if (int rc = check_hints(w, not_managed, 5710)) {
         return rc;
@@ -241,8 +265,7 @@ int scenario_foreign(const Ctx& c) {
     M4_CHECK(5713, save_screenshot(w, c.out_path), "screenshot failed");
 
     const QString orphaned = loc(c.lang, "Orphaned", "Verwaist");
-    M4_CHECK(5714, QMetaObject::invokeMethod(w, "openRestoreGroup", Q_ARG(QVariant, QStringLiteral("orphaned")),
-        Q_ARG(QVariant, orphaned)), "openRestoreGroup(orphaned)");
+    M4_CHECK(5714, open_next_group(c, "orphaned", orphaned), "open the orphaned group");
     M4_CHECK(5715, wait_for_group(w, c.backend, orphaned, 1), "the orphaned snapshots are listed");
     M4_CHECK(5716, role_value(snaps, 0, "sectionName").toString().startsWith(
         loc(c.lang, "Backup without description on 'NAS'\n1 snapshot · latest ",
@@ -254,8 +277,7 @@ int scenario_foreign(const Ctx& c) {
     M4_CHECK(5720, save_screenshot(w, group_shot(c.out_path, "orphaned")), "screenshot failed");
 
     const QString described = loc(c.lang, "Backups not configured here", "Hier nicht angelegte Backups");
-    M4_CHECK(5721, QMetaObject::invokeMethod(w, "openRestoreGroup", Q_ARG(QVariant, QStringLiteral("described")),
-        Q_ARG(QVariant, described)), "openRestoreGroup(described)");
+    M4_CHECK(5721, open_next_group(c, "described", described), "open the group of backups not configured here");
     M4_CHECK(5722, wait_for_group(w, c.backend, described, 1), "the backup not configured here is listed");
     if (int rc = check_hints(w, loc(c.lang, "Backup not configured here", "Backup hier nicht angelegt"), 5723)) {
         return rc;

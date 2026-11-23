@@ -266,6 +266,7 @@ Kirigami.ScrollablePage {
                 spacing: 0
 
                 Kirigami.ListSectionHeader {
+                    id: sectionHeader
                     objectName: "restoreSnapshotSectionHeader"
                     Layout.fillWidth: true
                     text: sectionItem.lineBreak < 0 ? sectionItem.section
@@ -277,8 +278,8 @@ Kirigami.ScrollablePage {
                     text: visible ? sectionItem.section.substring(sectionItem.lineBreak + 1) : ""
                     wrapMode: Text.Wrap
                     opacity: 0.75
-                    leftPadding: Kirigami.Units.largeSpacing
-                    rightPadding: Kirigami.Units.largeSpacing
+                    leftPadding: sectionHeader.leftPadding
+                    rightPadding: sectionHeader.rightPadding
                     Layout.fillWidth: true
                 }
             }
