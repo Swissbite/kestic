@@ -560,12 +560,12 @@ fn pick_existing(
 }
 
 /// What lies at the target for one entry of a dry run.
-struct AtTarget {
+pub(crate) struct AtTarget {
     /// Whether a folder above the entry is a symbolic link at the target.
-    behind_link: bool,
+    pub(crate) behind_link: bool,
     /// The existing entries (`lstat`) with that name, sorted by their real name. A name with
     /// U+FFFD matches every real name that restic shows that way, so there can be several.
-    entries: Vec<(PathBuf, std::fs::Metadata)>,
+    pub(crate) entries: Vec<(PathBuf, std::fs::Metadata)>,
 }
 
 /// The folders above the selection where the target has something else than a real folder: a
@@ -611,7 +611,7 @@ pub fn blocked_above_selection(
 
 /// Looks up `item` (relative to `target`, starting with `/`) at the target. A segment with
 /// U+FFFD is matched against the real names of its folder, shown the way restic shows them.
-fn find_at_target(target: &Path, item: &str) -> AtTarget {
+pub(crate) fn find_at_target(target: &Path, item: &str) -> AtTarget {
     let parts: Vec<&str> = item.split('/').filter(|s| !s.is_empty()).collect();
     let mut candidates = vec![target.to_path_buf()];
     for (i, part) in parts.iter().enumerate() {

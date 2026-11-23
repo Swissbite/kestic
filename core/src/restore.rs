@@ -482,11 +482,10 @@ pub fn execute_restore(
     // of millions of files holds no list of them.
     let mut count = |item: &RestoreItem| {
         // restic reports a file it could not write as restored too: only files that are there
-        // count, folders never. restic shows the bytes of a name that are not UTF-8 as
-        // U+FFFD, so such a name cannot be looked up; it counts as written.
-        let written = target.join(item.item.trim_start_matches('/'));
-        let unmatchable = item.item.contains('\u{FFFD}');
-        if !unmatchable && !std::fs::symlink_metadata(&written).is_ok_and(|m| !m.is_dir()) {
+        // count, folders never. A name restic shows with U+FFFD (bytes that are not UTF-8) is
+        // looked up among the real names restic shows that way.
+        let found = crate::restore_preview::find_at_target(target, &item.item);
+        if !found.entries.iter().any(|(_, m)| !m.is_dir()) {
             return;
         }
         match item.action.as_str() {

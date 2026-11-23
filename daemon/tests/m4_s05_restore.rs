@@ -3466,8 +3466,19 @@ fn m4_s05_preview_stops_when_the_dry_run_exceeds_the_memory_limit() {
     );
 }
 
+/// [`unmatchable_tree`] plus a folder whose name is not UTF-8, with a file and an empty folder.
+fn unmatchable_folder_tree(work: &Path) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    let src = unmatchable_tree(work);
+    let folder = src.join(std::ffi::OsStr::from_bytes(b"d\xff"));
+    fs::create_dir_all(folder.join("sub")).expect("mkdir d/sub");
+    fs::write(folder.join("x"), "x").expect("write x");
+    src
+}
+
 /// A restore of names that are not UTF-8 (restic reports them with U+FFFD) counts every file it
-/// wrote: (a) `files_new` is 3 and (b) the summary says so.
+/// wrote and no folder: (a) `files_new` is 4 (three files and one in such a folder) and (b) the
+/// summary says so.
 #[test]
 fn m4_s05_restore_counts_names_that_are_not_utf8() {
     run_isolated_test(
@@ -3475,7 +3486,7 @@ fn m4_s05_restore_counts_names_that_are_not_utf8() {
         "KESTIC_M4_S05_COUNT_UNMATCHABLE_INNER",
         |root| {
             let variant = common::m3::latest_variant();
-            let fx = RestoreFixture::start(root, &variant, "M4RN", unmatchable_tree, |_| {});
+            let fx = RestoreFixture::start(root, &variant, "M4RN", unmatchable_folder_tree, |_| {});
             let run_id = fx
                 .start_restore(
                     &[],
@@ -3487,10 +3498,10 @@ fn m4_s05_restore_counts_names_that_are_not_utf8() {
             let detail = fx.wait_run(&run_id);
             assert_eq!(detail.run.status, RunStatus::Ok, "{detail:?}");
             let stats = detail.run.restore.as_ref().expect("restore stats");
-            assert_eq!(stats.files_new, 3, "(a) {stats:?}");
+            assert_eq!(stats.files_new, 4, "(a) {stats:?}");
             assert_eq!(
                 detail.run.summary_message.as_deref(),
-                Some("Restored 3 files"),
+                Some("Restored 4 files"),
                 "(b)"
             );
             fx.rig.daemon.stop();

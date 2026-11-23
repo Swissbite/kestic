@@ -161,15 +161,15 @@ pub(crate) fn original_note(original: &RestoreOriginalDto) -> String {
     }
 }
 
-/// The counts of a preview in one line, e.g. «117 files new · 3 existing files will not be
-/// overwritten».
 /// Whether the preview stopped at the memory limit instead of classifying the files: its list
-/// is too large and nothing is counted (a list over the limit after a full classification
-/// keeps its counts). Where a preview is required, the daemon refuses a restore with it.
+/// is too large and nothing is counted. Where a preview is required, the daemon refuses a
+/// restore with it.
 pub(crate) fn preview_stopped(p: &RestorePreviewResultDto) -> bool {
     p.entries.too_large && p.new_files + p.overwritten_files + p.kept_files + p.identical_files == 0
 }
 
+/// The counts of a preview in one line, e.g. «117 files new · 3 existing files will not be
+/// overwritten».
 pub(crate) fn summary_text(p: &RestorePreviewResultDto) -> String {
     let mut parts = Vec::new();
     if p.new_files > 0 {
