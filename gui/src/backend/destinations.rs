@@ -85,6 +85,11 @@ impl qobject::KesticApp {
         QString::from(&reply.to_string())
     }
 
+    /// Whether `user` is a user name of an SFTP destination as `core` checks it.
+    pub fn sftp_user_valid(&self, user: &QString) -> bool {
+        kestic_core::sftp::is_valid_user(&user.to_string())
+    }
+
     /// Whether «Geheim» starts switched on for a new variable named `name`.
     pub fn env_var_secret_by_default(&self, name: &QString) -> bool {
         kestic_core::generic::secret_by_default(&name.to_string())

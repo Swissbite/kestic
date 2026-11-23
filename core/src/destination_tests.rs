@@ -76,6 +76,11 @@ fn retry_duration_is_not_read_as_http_status() {
         .is_none()
     );
     assert!(conclusive_retry_error("Stat: The specified bucket does not exist").is_none());
+    // M5-S01: a server's banner, passed on as a line of ssh, stops no probe.
+    assert!(
+        conclusive_retry_error("subprocess ssh: Maintenance, retrying after 1s: 401 Unauthorized")
+            .is_none()
+    );
     let refused_on_port = "Stat(<config/>) returned error, retrying after 508.8ms: Stat: Get \"http://127.0.0.1:40312/bucket/?location=\": dial tcp 127.0.0.1:40312: connect: connection refused";
     assert_eq!(
         crate::restic::classify_exit(1, Some(refused_on_port), Vec::new(), "").kind,

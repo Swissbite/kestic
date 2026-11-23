@@ -949,6 +949,10 @@ fn is_connection_error(error: &str) -> bool {
 }
 
 fn conclusive_retry_error(line: &str) -> Option<&str> {
+    // A line of ssh, such as the server's banner, is no retry of restic.
+    if line.trim_start().starts_with("subprocess ") {
+        return None;
+    }
     // `<op> returned error, retrying after 1.403627s: <error>`: only the error is classified and
     // reported, the random duration could look like an HTTP status.
     let error = line

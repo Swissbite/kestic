@@ -500,6 +500,10 @@ int scenario_sftp_form(const Ctx& c) {
     M3_CHECK(5638, wait_until([&] { return user_error->isVisible(); }, 2000), "no hint for the user name «anna€»");
     set_text(w, "wizDestSftpUserField", QStringLiteral("jörg.müller"));
     M3_CHECK(5639, wait_until([&] { return !user_error->isVisible(); }, 2000), "hint for the user name «jörg.müller»");
+    set_text(w, "wizDestSftpUserField", QStringLiteral("a・b"));
+    M3_CHECK(5640, wait_until([&] { return user_error->isVisible(); }, 2000), "no hint for the user name «a・b»");
+    set_text(w, "wizDestSftpUserField", QStringLiteral("علي"));
+    M3_CHECK(5641, wait_until([&] { return !user_error->isVisible(); }, 2000), "hint for the user name «علي»");
     set_text(w, "wizDestSftpUserField", user);
     M3_CHECK(5634, wait_until([&] { return !user_error->isVisible(); }, 2000), "hint stays for a valid user name");
     const QString unnamed = first_unnamed(w, {

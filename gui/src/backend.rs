@@ -199,6 +199,10 @@ pub mod qobject {
         fn env_var_secret_by_default(self: &KesticApp, name: &QString) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "sftpUserValid"]
+        fn sftp_user_valid(self: &KesticApp, user: &QString) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "testDestination"]
         fn test_destination(
             self: Pin<&mut KesticApp>,

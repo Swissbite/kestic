@@ -10,6 +10,7 @@ use crate::sync::LockUnpoisoned;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -127,7 +128,10 @@ fn run_tool_within(
         program: program.to_string(),
         detail,
     };
+    // Its own process group: at the time limit the commands ssh started for the user's
+    // configuration (`Match exec`) end with it.
     let mut child = Command::new(program)
+        .process_group(0)
         .args(args)
         .stdin(if stdin.is_some() {
             Stdio::piped()
@@ -142,37 +146,49 @@ fn run_tool_within(
         pipe.write_all(text.as_bytes())?;
     }
     let read = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             if let Some(mut pipe) = pipe {
                 let _ = pipe.read_to_end(&mut buf);
             }
-            buf
-        })
+            tx.send(buf)
+        });
+        rx
     };
     let stdout = read(child.stdout.take().map(|p| Box::new(p) as _));
     let stderr = read(child.stderr.take().map(|p| Box::new(p) as _));
     // ssh reads the user's configuration (`Match exec`) and resolves names; none of that may hold
     // up a connection test or the check before a run.
     let deadline = std::time::Instant::now() + limit;
+    let no_answer = || HostKeyError::NoAnswer {
+        program: program.to_string(),
+        secs: limit.as_secs(),
+    };
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
         if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
+            crate::restic::send_sigkill_to_group(child.id());
             let _ = child.wait();
-            return Err(HostKeyError::NoAnswer {
-                program: program.to_string(),
-                secs: limit.as_secs(),
-            });
+            return Err(no_answer());
         }
         std::thread::sleep(Duration::from_millis(20));
     };
+    // A command the configuration started in the background may still hold the output open
+    // after the program ended; it gets the time that is left, then ends with its group.
+    let collect = |rx: std::sync::mpsc::Receiver<Vec<u8>>| {
+        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            .map_err(|_| {
+                crate::restic::send_sigkill_to_group(child.id());
+                no_answer()
+            })
+    };
     Ok(std::process::Output {
         status,
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
+        stdout: collect(stdout)?,
+        stderr: collect(stderr)?,
     })
 }
 
@@ -888,13 +904,18 @@ mod tests {
         );
     }
 
-    /// M5-S01 (AC-M5-01-5 (c)): `ssh -G`, which may run commands of the user's configuration
-    /// (`Match exec`), counts against the time of the host key check.
+    /// M5-S01 (AC-M5-01-5 (c)): a command of the user's configuration that ssh started in the
+    /// background and that holds ssh's output open does not hold up the check either.
     #[test]
-    fn m5_01_asking_ssh_counts_against_the_time_limit() {
+    fn m5_01_a_background_command_of_the_configuration_does_not_hold_up_the_check() {
         let dir = tempfile::tempdir().expect("tempdir");
         let config = dir.path().join("ssh_config");
-        fs::write(&config, "Match exec \"sleep 5\"\n  HostKeyAlias slow\n").expect("write");
+        let marker = format!("kestic-match-bg-{}", std::process::id());
+        fs::write(
+            &config,
+            format!("Match exec \"(sleep 30; : {marker}) >&2 & true\"\n  HostKeyAlias slow\n"),
+        )
+        .expect("write");
         crate::sftp::set_test_ssh_config(Some(config));
         let paths = temp_paths(dir.path());
         let started = std::time::Instant::now();
@@ -906,6 +927,40 @@ mod tests {
             "{checked:?}"
         );
         assert!(elapsed < Duration::from_secs(3), "waited {elapsed:?}");
+    }
+
+    /// M5-S01 (AC-M5-01-5 (c)): `ssh -G`, which may run commands of the user's configuration
+    /// (`Match exec`), counts against the time of the host key check.
+    #[test]
+    fn m5_01_asking_ssh_counts_against_the_time_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = dir.path().join("ssh_config");
+        let marker = format!("kestic-match-exec-{}", std::process::id());
+        fs::write(
+            &config,
+            format!("Match exec \"sleep 5; : {marker}\"\n  HostKeyAlias slow\n"),
+        )
+        .expect("write");
+        crate::sftp::set_test_ssh_config(Some(config));
+        let paths = temp_paths(dir.path());
+        let started = std::time::Instant::now();
+        let checked = check_host_key("nas.example", 22, "anna", &paths, Duration::from_secs(1));
+        let elapsed = started.elapsed();
+        crate::sftp::set_test_ssh_config(None);
+        assert!(
+            matches!(checked, Err(HostKeyError::NoAnswer { .. })),
+            "{checked:?}"
+        );
+        assert!(elapsed < Duration::from_secs(3), "waited {elapsed:?}");
+        // The command of the configuration ended with ssh.
+        std::thread::sleep(Duration::from_millis(300));
+        let left: Vec<String> = fs::read_dir("/proc")
+            .expect("/proc")
+            .filter_map(|entry| fs::read(entry.ok()?.path().join("cmdline")).ok())
+            .map(|cmdline| String::from_utf8_lossy(&cmdline).replace('\0', " "))
+            .filter(|cmdline| cmdline.contains(&marker))
+            .collect();
+        assert!(left.is_empty(), "left running: {left:?}");
     }
 
     #[test]

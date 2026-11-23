@@ -335,10 +335,15 @@ pub fn classify_exit_for(
     let sftp_failure = exit_code == 1 && transport == Transport::Sftp;
     // ssh's lines name a failure only when the SFTP session never started: after a login the
     // server's banner, shown with the same prefix, can say anything.
-    let session_not_started = exit_error_msg
-        .into_iter()
-        .chain([raw_stderr])
-        .any(|text| text.contains(SFTP_SESSION_NOT_STARTED));
+    // restic's own message, not its error lines, which carry file names.
+    let session_not_started = exit_error_msg.map_or_else(
+        || {
+            raw_stderr
+                .lines()
+                .any(|l| l.starts_with("Fatal: ") && l.contains(SFTP_SESSION_NOT_STARTED))
+        },
+        |msg| msg.contains(SFTP_SESSION_NOT_STARTED),
+    );
     let ssh_failure =
         crate::sftp::ssh_failure(raw_stderr).filter(|_| sftp_failure && session_not_started);
     let raw_detail = ssh_failure
@@ -496,9 +501,12 @@ fn ssh_lines(detail_lower: &str) -> impl Iterator<Item = &str> {
         .into_iter()
 }
 
-/// Whether a lowercase message has a line of ssh saying that the SFTP server rejected the key.
+/// Whether a lowercase message is a line of ssh saying that the SFTP server refused the login,
+/// as [`crate::sftp::ssh_failure`] reads it.
 fn ssh_rejected_key(detail_lower: &str) -> bool {
-    ssh_lines(detail_lower).any(|rest| rest.contains("permission denied (publickey"))
+    ssh_lines(detail_lower).any(|rest| {
+        rest.contains("permission denied (") || rest.contains("too many authentication failures")
+    })
 }
 
 /// Whether the lowercase restic message says the backend rejected the login: HTTP 401/403 or

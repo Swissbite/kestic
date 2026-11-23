@@ -32,12 +32,7 @@ pub fn validate(host: &str, port: u16, user: &str, path: &str) -> Result<(), Mod
     // ssh hands the user name to the commands of the user's configuration (`%r`, `%u` in
     // `Match exec`, `ProxyCommand`), which `ssh -G` already runs: no character a shell reads.
     let user = user.trim();
-    if user.is_empty()
-        || user.starts_with('-')
-        || !user
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-'))
-    {
+    if !is_valid_user(user) {
         return invalid(format!(
             "invalid SFTP user '{}': only letters, digits, '.', '_' and '-', not starting with '-'",
             user.escape_default()
@@ -58,6 +53,17 @@ pub fn validate(host: &str, port: u16, user: &str, path: &str) -> Result<(), Mod
         );
     }
     Ok(())
+}
+
+/// Whether `user` (trimmed) is a user name Kestic hands to ssh: letters (also non-ASCII),
+/// digits, `.`, `_` and `-`, not starting with `-`.
+pub fn is_valid_user(user: &str) -> bool {
+    let user = user.trim();
+    !user.is_empty()
+        && !user.starts_with('-')
+        && user
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 fn is_valid_host(host: &str) -> bool {
@@ -531,6 +537,53 @@ mod tests {
             ssh_failure(banner),
             Some(SshFailure::KeyRejected(_))
         ));
+        // A stored summary of any refused login reads back as one.
+        assert_eq!(
+            kind(
+                Transport::Sftp,
+                "subprocess ssh: u@h: Permission denied (password). (Login to the destination failed)"
+            ),
+            ResticFailureKind::BackendAuthFailed
+        );
+        // restic's JSON error lines carry file names, not restic's own message.
+        let named = classify_exit_for(
+            Transport::Sftp,
+            1,
+            Some("Fatal: unable to save snapshot: no space left on device"),
+            Vec::new(),
+            "subprocess ssh: Host key verification failed.\n\
+             {\"message_type\":\"error\",\"item\":\"/home/u/unable to start the sftp session\"}",
+        )
+        .kind;
+        assert!(!is_host_key(&named), "{named:?}");
+        // A banner that also names the session start is no ssh failure either.
+        for swap in [false, true] {
+            let (first, second) = if swap {
+                (
+                    "Host key verification failed.",
+                    "Permission denied (publickey).",
+                )
+            } else {
+                (
+                    "Permission denied (publickey).",
+                    "Host key verification failed.",
+                )
+            };
+            let stderr = format!(
+                "subprocess ssh: Welcome\nsubprocess ssh: {first}\nsubprocess ssh: {second}\n\
+                 subprocess ssh: Fatal: unable to start the sftp session"
+            );
+            for msg in [
+                Some(
+                    "Fatal: create repository at sftp://u@h:22//r failed: MkdirAll /r/index: file does not exist",
+                ),
+                None,
+            ] {
+                let found = classify_exit_for(Transport::Sftp, 1, msg, Vec::new(), &stderr).kind;
+                assert!(!is_host_key(&found), "{msg:?}: {found:?}");
+                assert_ne!(found, ResticFailureKind::BackendAuthFailed, "{msg:?}");
+            }
+        }
         // After a login, a banner names no failure, whatever restic fails at later.
         for fatal in [
             "Fatal: create repository at sftp://u@h:22//r failed: config file already exists",

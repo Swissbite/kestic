@@ -82,23 +82,8 @@ QtObject {
     // user starting with `-` would reach ssh as an option.
     readonly property bool hostValid: /^(\[[0-9a-fA-F:.]+\]|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*|[A-Za-z0-9_][A-Za-z0-9._-]*)$/.test(host.trim())
     readonly property bool portValid: /^[0-9]{1,5}$/.test(port.trim()) && Number(port) >= 1 && Number(port) <= 65535
-    // As core: letters (also non-ASCII), digits, '.', '_' and '-', not starting with '-'. Beyond
-    // ASCII a letter is a character with case, or one of the CJK and Hangul scripts.
-    readonly property bool sftpUserValid: {
-        const user = username.trim();
-        if (user.length === 0 || user[0] === "-")
-            return false;
-        for (const ch of user) {
-            const code = ch.codePointAt(0);
-            const ok = /[A-Za-z0-9._-]/.test(ch)
-                || (code > 0x7f && ch.toLowerCase() !== ch.toUpperCase())
-                || (code >= 0x3040 && code <= 0x30ff) || (code >= 0x3400 && code <= 0x9fff)
-                || (code >= 0xac00 && code <= 0xd7af);
-            if (!ok)
-                return false;
-        }
-        return true;
-    }
+    // As core checks it: letters (also non-ASCII), digits, '.', '_' and '-', not starting with '-'.
+    readonly property bool sftpUserValid: appBackend.sftpUserValid(username)
     readonly property bool sftpPathValid: sftpPath.trim().length > 0 && sftpPath.trim()[0] !== "~"
         && !/[\x00-\x1f\x7f]/.test(sftpPath)
     // A new S3 destination needs both keys; when editing, empty keys keep the saved ones.
