@@ -25,15 +25,25 @@ milestone's integration branch under that milestone's rules
 | GitHub credentials | only a one-hour installation token of the GitHub App `kestic-agent`, limited to this repository, in `/run/kestic-agent-token/gh-token` (tmpfs, owner `kesticci`, mode 0400; read per call by `gh` and git, never in argv, environment, image or volume). The App's private key stays on the host. |
 | Home directory, keyring, D-Bus, SSH agent | not mounted, no sockets, no environment variables passed |
 | Network | IPv4 HTTPS to the domains in [allowed-domains.txt](allowed-domains.txt) only; no host loopback, no LAN, no IPv6 |
-| User | the agent runs as `kesticci` (uid 1001 in the container, an unprivileged sub-uid on the host) without capabilities and with `no_new_privs`; `sudo` does not work |
+| User | the agent runs as `kesticci` (uid 1001 in the container, an unprivileged sub-uid on the host) without capabilities and with `no_new_privs`; `sudo` does not work. The container's main process runs as `kestic-infra`, out of the agent's reach. |
 | Claude Code login | the volume `kestic-agent-claude` (`CLAUDE_CONFIG_DIR`) |
 
 The entrypoint starts as container root with six capabilities
 (`NET_ADMIN` for nftables, `NET_BIND_SERVICE` for dnsmasq on port 53, `SETUID`
 and `SETGID` to change users, `SETPCAP` to empty the bounding set, `KILL` so
 that `podman stop` reaches the agent's processes), sets up the firewall and
-drops to `kesticci` with an empty bounding set. Container root is
-the host user only inside the user namespace; it has no capabilities on the host.
+runs the container's main command (`sleep infinity`) as `kestic-infra` with an
+empty bounding set. Commands from `podman exec` drop to `kesticci` the same way.
+dnsmasq runs as `nobody`. So the agent cannot signal any process that keeps
+the container alive: its main process ending would end the container and the
+agent's session with it. Container root is the host user only inside the user
+namespace; it has no capabilities on the host.
+
+The container runs with `--restart=on-failure:5`: if it ends by itself, Podman
+starts it again (firewall included, five times at most), and the watcher continues the agent's
+session. `kestic-agent.sh stop` ends it for good. The agent's settings also deny
+`pkill` and `killall`; that is a brake, not a boundary (deny rules match by
+prefix only).
 
 ### Firewall
 
@@ -211,8 +221,8 @@ pass per call:
 .devcontainer/kestic-agent-watch.sh "M4 Restore" m4
 ```
 
-- The container is off or the agent is busy: nothing. The watcher never starts
-  the container; stopping it pauses the milestone.
+- The container is off: the watcher reports it (once an hour) and starts
+  nothing; stopping it pauses the milestone. The agent is busy: nothing.
 - The agent's current issue is open and not labelled `needs-maintainer`: it
   stays the only one. Something the maintainer did after the agent's last turn
   started continues the idle session: a comment or review on the issue or on a
@@ -221,7 +231,10 @@ pass per call:
   outsiders: the repository is public, and a comment must not wake an agent
   that runs without permission prompts. A session that is gone (Claude Code
   exited, the container restarted) is resumed, at most twice until it reaches
-  a turn again.
+  a turn again. An idle session whose last lines say it hit a usage limit
+  («resets 4:10am (UTC)», `kestic-agent.sh agent-state` passes that time on) is
+  continued once that time has passed, once per turn; until then even news
+  from the maintainer waits.
 - Otherwise it starts the open issue of the milestone with the lowest number
   that is not labelled `needs-maintainer` and has no open «blocked by» issue.
   New issues therefore queue at the end; a «blocked by» link changes the order.
@@ -236,7 +249,8 @@ the state line from the container as untrusted input.
 The watcher logs what it does and, where `notify-send` exists, tells the
 desktop once: an issue that waits for the maintainer, a session that does not
 come back after two resumes, an agent idle for four hours without a result, and
-(once an hour) a failed renewal of the agent's GitHub token.
+(once an hour) a container that is not running and a failed renewal of the
+agent's GitHub token.
 [test-kestic-agent-watch.sh](test-kestic-agent-watch.sh) in `just verify` tests
 its decisions with a fake `gh`; after changing a `--jq` filter, run one pass
 with `KESTIC_AGENT_SH` pointing to a script that prints a state line, against
