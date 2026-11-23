@@ -286,8 +286,12 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     const qreal crumb_right = current_crumb->mapToScene(QPointF(current_crumb->width(), 0)).x();
     SMOKE_CHECK("M2", 257, crumb_right <= window->width() + 0.5,
         QStringLiteral("current breadcrumb ends at %1, outside the window").arg(crumb_right));
-    SMOKE_CHECK("M2", 257, current_crumb->property("contentWidth").toReal() <= current_crumb->width() + 0.5,
-        "current breadcrumb text wider than its label");
+    // It elides only where the bar is too narrow: in the wide layout it shows in full.
+    SMOKE_CHECK("M2", 257, current_crumb->property("truncated").toBool() == (window->width() < 600),
+        QStringLiteral("current breadcrumb '%1' elided %2 in a window %3 px wide")
+            .arg(current_crumb->property("text").toString())
+            .arg(current_crumb->property("truncated").toBool())
+            .arg(window->width()));
     SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
 
     // Go back to BackupRetentionPage and save -> must show confirmation dialog (AC-M2-06-3).

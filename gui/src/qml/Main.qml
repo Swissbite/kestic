@@ -877,7 +877,7 @@ Kirigami.ApplicationWindow {
             onActionChanged: action.checkable = true
             // All tabs are equally wide unless a label does not fit on one line: then it takes
             // the room from the tabs with shorter labels («Wiederherstellen» in German).
-            Layout.minimumWidth: Math.ceil(bottomNavTabText.advanceWidth) + leftPadding + rightPadding
+            Layout.minimumWidth: Math.ceil(bottomNavTabText.advanceWidth) + leftPadding + rightPadding + Kirigami.Units.smallSpacing * 2
             Layout.preferredWidth: bottomNavBar.buttonWidth
             Layout.fillWidth: true
             Layout.fillHeight: true
