@@ -147,8 +147,11 @@ ensure_running() {
             --env CARGO_BUILD_JOBS="$KESTIC_AGENT_CPUS" --env NEXTEST_TEST_THREADS="$KESTIC_AGENT_CPUS")
     fi
     # Capabilities are only for the root entrypoint (firewall, dnsmasq, dropping
-    # to kesticci); the agent itself runs without any.
-    podman run -d --name "$NAME" --hostname "$NAME" --init \
+    # to kestic-infra and kesticci); the agent itself runs without any.
+    # on-failure: a container that ends by itself (a crash, a killed main
+    # process) comes back, five times at most; `stop` ends it for good. The
+    # watcher then continues the agent's session.
+    podman run -d --name "$NAME" --hostname "$NAME" --init --restart=on-failure:5 \
         --network=slirp4netns:allow_host_loopback=false,enable_ipv6=false \
         --cap-drop=all --cap-add=NET_ADMIN,NET_BIND_SERVICE,SETUID,SETGID,SETPCAP,KILL \
         --security-opt=no-new-privileges \
@@ -217,9 +220,10 @@ case "$cmd" in
             # A failed renewal must not hide the state line (die exits only the subshell).
             token_status=ok
             (ensure_token) >&2 || token_status=failed
-            echo "$(podman exec "$NAME" "${DROP[@]}" kestic-agent state) $token_status"
+            reset="$(podman exec "$NAME" "${DROP[@]}" kestic-agent limit-reset 2>/dev/null || echo 0)"
+            echo "$(podman exec "$NAME" "${DROP[@]}" kestic-agent state) $token_status ${reset:-0}"
         else
-            echo "off 0 0 ok"
+            echo "off 0 0 ok 0"
         fi
         ;;
     token)

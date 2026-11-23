@@ -17,14 +17,16 @@
 #   turn started (a comment or review on the issue or on a pull request from its
 #   branch, merging that pull request, removing needs-maintainer) continues the
 #   idle session; a session that is gone is resumed, twice at most until it
-#   reaches a turn again.
+#   reaches a turn again. An idle session that stopped at a usage limit is
+#   continued once the limit has reset.
 # - Otherwise the open issue of the milestone with the lowest number that is not
 #   labelled needs-maintainer and has no open "blocked by" issue starts in a
 #   fresh session. Issue numbers give the order, so new issues queue at the end.
 #
 # The maintainer hears about it in the log and, where notify-send exists, on the
 # desktop: an issue waiting for them, a session that does not come back, an
-# agent idle for hours without a result, and a failed token renewal.
+# agent idle for hours without a result, a container that is not running, and
+# a failed token renewal.
 #
 # Everything the agent reports (state line, issue) is treated as untrusted.
 
@@ -46,6 +48,7 @@ suffix=""
 [[ "$instance" == kestic-agent ]] || suffix="-$instance"
 NOTE_FILE="$STATE_DIR/watch-notes$suffix"
 RESUME_FILE="$STATE_DIR/watch-resume$suffix"
+LIMIT_FILE="$STATE_DIR/watch-limit$suffix"
 mkdir -p "$STATE_DIR"
 touch "$NOTE_FILE"
 
@@ -92,12 +95,17 @@ latest_event() {
         sort -n | tail -n 1
 }
 
-read -r state issue turn token _ < <("$AGENT" agent-state) || true
+read -r state issue turn token reset _ < <("$AGENT" agent-state) || true
 if [[ "${token:-}" == failed ]]; then
     notify "token-$(date +%Y%m%d%H)" "renewing the agent's GitHub token failed (see kestic-agent.sh token)"
 fi
 case "$state" in
-    off) exit 0 ;;
+    off)
+        # The container restarts by itself after a failure (--restart=on-failure);
+        # off means it was stopped on purpose, the host rebooted, or it failed again.
+        notify "off-$(date +%Y%m%d%H)" "the container is not running; continue with: kestic-agent.sh resume <issue>"
+        exit 0
+        ;;
     busy)
         rm -f "$RESUME_FILE"
         exit 0
@@ -110,6 +118,8 @@ case "$state" in
 esac
 [[ "$issue" =~ ^[0-9]{1,9}$ ]] || issue=0
 [[ "$turn" =~ ^[0-9]{1,12}$ ]] || turn=0
+[[ "${reset:-}" =~ ^[0-9]{1,12}$ ]] || reset=0
+reset=$((10#$reset))
 issue=$((10#$issue))
 turn=$((10#$turn))
 
@@ -140,9 +150,18 @@ if ((issue > 0)); then
                 exit 0
             fi
             now="$(date +%s)"
-            if [[ -n "$latest" ]] && ((latest > turn)); then
+            # A session stopped at a usage limit waits until the limit has
+            # reset, also for the maintainer's news (a nudge would only meet the
+            # limit again); then it is continued once per turn.
+            if ((reset > 0 && now < reset + 60)); then
+                log "#$issue waits for the usage limit to reset at $(date -d "@$reset" +%H:%M)"
+            elif [[ -n "$latest" ]] && ((latest > turn)); then
                 log "the maintainer acted on #$issue, continuing the session"
                 "$AGENT" nudge "There is something new from the maintainer on issue #$issue or its pull request (a comment, a review, a merge or a removed label). Read it and continue."
+            elif ((reset > 0)) && [[ "$(cat "$LIMIT_FILE" 2>/dev/null || true)" != "$turn" ]]; then
+                echo "$turn" > "$LIMIT_FILE"
+                log "the usage limit has reset, continuing #$issue"
+                "$AGENT" nudge "The usage limit has reset. Continue where you stopped; read your state comment on the issue first."
             elif ((turn > 0 && now - turn > IDLE_ALERT)); then
                 notify "idle-$issue-$turn" "the agent is idle on #$issue for $(((now - turn) / 3600)) h without a result"
             fi
