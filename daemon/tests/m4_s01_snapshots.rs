@@ -9,7 +9,9 @@
 mod common;
 
 use common::m3::{M3Rig, ResticVariant};
-use common::m4::{RawSnapshot, VariantFixture, for_each_variant_with, write_snapshot};
+use common::m4::{
+    RawSnapshot, VariantFixture, for_each_variant_with, restic_data_added, write_snapshot,
+};
 use common::run_isolated_test;
 use kestic_core::model::{Backup, Destination, DestinationKind};
 use kestic_daemon::dbus_api::{BackupSnapshotsDto, DestinationSnapshotsDto};
@@ -137,10 +139,21 @@ fn ac_m4_01_1_lists_three_snapshots_newest_first_with_time_size_and_host() {
                     ["laptop", "laptop", "desktop"],
                     "[{label}] (c) host per entry"
                 );
+                let by_restic = restic_data_added(&fx.rig.variant.bin, fx.repo(), &fx.password);
                 for s in snaps {
                     assert!(
                         s.data_added.is_some_and(|b| b > 0),
-                        "[{label}] (c)(d) size is the new data (data_added): {s:?}"
+                        "[{label}] (c) size per entry: {s:?}"
+                    );
+                    let expected = by_restic.get(&s.id).copied().flatten();
+                    assert!(
+                        expected.is_some(),
+                        "[{label}] restic reports data_added for {}: {by_restic:?}",
+                        s.id
+                    );
+                    assert_eq!(
+                        s.data_added, expected,
+                        "[{label}] (d) size is summary.data_added of restic snapshots: {s:?}"
                     );
                 }
                 assert!(

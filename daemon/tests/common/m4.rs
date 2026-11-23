@@ -282,3 +282,26 @@ pub fn snapshot_username(restic: &Path, repo: &Path, password: &str, snapshot_id
         .expect("username in the snapshot")
         .to_string()
 }
+
+/// Full snapshot ID → `summary.data_added` of every snapshot `restic snapshots --json` lists
+/// (`None` for a snapshot without it).
+pub fn restic_data_added(
+    restic: &Path,
+    repo: &Path,
+    password: &str,
+) -> std::collections::HashMap<String, Option<u64>> {
+    let out = restic_cmd(restic, repo, password)
+        .args(["snapshots", "--no-cache", "--json"])
+        .output()
+        .expect("run restic snapshots");
+    assert!(out.status.success(), "restic snapshots");
+    let list: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("snapshots JSON");
+    list.iter()
+        .map(|s| {
+            (
+                s["id"].as_str().expect("snapshot id").to_string(),
+                s["summary"]["data_added"].as_u64(),
+            )
+        })
+        .collect()
+}
