@@ -165,6 +165,8 @@ Kirigami.ScrollablePage {
                                 }
                                 Controls.Label {
                                     visible: crumb.index > 0
+                                    Layout.fillWidth: true
+                                    horizontalAlignment: Text.AlignHCenter
                                     text: crumbButton.label
                                     textFormat: Text.PlainText
                                     font: crumbButton.font

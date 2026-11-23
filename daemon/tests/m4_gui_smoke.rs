@@ -316,14 +316,14 @@ fn m4_s03_leaving_a_loading_folder_stops_restic_ls() {
     );
 }
 
-/// M4-S03, path row: every folder above the list is drawn once (no second name or icon from the
-/// style beneath the button content), folder names stay plain text and the top folder keeps its
-/// accessible name.
+/// AC-M4-03-1 (a), breadcrumb: every folder of the path row is drawn once (no second name or
+/// icon from the style beneath the button content), folder names stay plain text and the top
+/// folder keeps its accessible name.
 #[test]
-fn m4_s03_path_row_draws_each_folder_once() {
+fn ac_m4_03_1_breadcrumb_draws_each_folder_once() {
     run_isolated_test(
-        "m4_s03_path_row_draws_each_folder_once",
-        "KESTIC_M4_S03_PATH_ROW_INNER",
+        "ac_m4_03_1_breadcrumb_draws_each_folder_once",
+        "KESTIC_AC_M4_03_1_PATH_ROW_INNER",
         |root| {
             let (rig, _fakes) = browse_env(root, QueryLimits::default());
             for lang in ["en", "de"] {

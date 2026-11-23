@@ -456,36 +456,45 @@ QQuickItem* text_item_showing(QQuickItem* root, const QString& text) {
     return nullptr;
 }
 
-/// M4-S03, path row: every folder of the path row is drawn exactly once. With its content
-/// hidden, a button that is neither hovered nor focused looks like no button at all: the style
-/// draws no second name or icon beneath the content. Folder names are plain text, and the top
-/// folder keeps its accessible name.
+/// AC-M4-03-1 (a), breadcrumb: every folder of the path row is drawn exactly once. With its
+/// content hidden, a button that is neither hovered nor focused looks like no button at all: the
+/// style draws no second name or icon beneath the content. Folder names are plain text, and the
+/// top folder keeps its accessible name.
 int scenario_browse_path_row(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 5701)) {
+    if (int rc = open_restore_snapshots(c, 6201)) {
         return rc;
     }
-    if (int rc = open_browser_at(c, 0, 5706)) {
+    if (int rc = open_browser_at(c, 0, 6206)) {
         return rc;
     }
     Browse b = browse_page(w);
-    M4_CHECK(5709, wait_until([&] { return b.model->property("state").toString() == QLatin1String("done"); }, 30000),
+    M4_CHECK(6209, wait_until([&] { return b.model->property("state").toString() == QLatin1String("done"); }, 30000),
         "the folder is listed");
     finish_incubation(w);
     const QString dir = b.model->property("dir").toString();
-    M4_CHECK(5710, dir.endsWith(QLatin1String("/trees/src")), "the snapshot opens in its folder");
+    M4_CHECK(6210, dir.endsWith(QLatin1String("/trees/src")), "the snapshot opens in its folder");
     QStringList names;
     QMetaObject::invokeMethod(b.model, "segmentNames", Q_RETURN_ARG(QStringList, names), Q_ARG(QString, dir));
-    M4_CHECK(5711, names.size() >= 4, "path row from the top down to «src»");
-    wait_ms(600); // let the page transition end before comparing pixels
+    M4_CHECK(6211, names.size() >= 4, "path row from the top down to «src»");
+    QQuickItem* row = visible_item(w, "browsePathRow");
+    M4_CHECK(6212, row != nullptr, "browsePathRow missing");
+    // The page transition has ended once two grabs in a row are the same.
+    QImage last;
+    M4_CHECK(6213, wait_until([&] {
+        const QImage now = drawn_under(w, row);
+        const bool still = !last.isNull() && now == last;
+        last = now;
+        return still;
+    }, 5000), "the path row stops moving");
     for (int i = 0; i < names.size(); ++i) {
         const QByteArray name = QStringLiteral("browsePathButton_%1").arg(i).toUtf8();
         QQuickItem* button = visible_item(w, name.constData());
-        M4_CHECK(5712, button != nullptr, "path row button missing");
-        M4_CHECK(5713, !button->property("hovered").toBool(), "button not hovered");
-        M4_CHECK(5714, !button->hasActiveFocus(), "button without focus");
+        M4_CHECK(6214, button != nullptr, "path row button missing");
+        M4_CHECK(6215, !button->property("hovered").toBool(), "button not hovered");
+        M4_CHECK(6216, !button->hasActiveFocus(), "button without focus");
         auto* content = button->property("contentItem").value<QQuickItem*>();
-        M4_CHECK(5715, content != nullptr, "button without content");
+        M4_CHECK(6217, content != nullptr, "button without content");
 
         const QImage drawn = drawn_under(w, button);
         button->setOpacity(0.0);
@@ -494,21 +503,22 @@ int scenario_browse_path_row(const Ctx& c) {
         content->setOpacity(0.0);
         const QImage without_content = drawn_under(w, button);
         content->setOpacity(1.0);
-        M4_CHECK(5716, drawn != without_button, "the button shows its folder");
-        M4_CHECK(5717, without_content == without_button,
+        M4_CHECK(6218, drawn != without_button, "the button shows its folder");
+        M4_CHECK(6219, drawn != without_content, "hiding the content changes the picture");
+        M4_CHECK(6220, without_content == without_button,
             qPrintable(QStringLiteral("path row button %1 is drawn a second time beneath its content").arg(i)));
 
         if (i == 0) {
-            M4_CHECK_EQ(5718, accessible_name(button), loc(c.lang, "Top folder", "Oberster Ordner"),
+            M4_CHECK_EQ(6221, accessible_name(button), loc(c.lang, "Top folder", "Oberster Ordner"),
                 "accessible name of the top folder");
         } else {
-            M4_CHECK_EQ(5719, accessible_name(button), names.at(i), "accessible name of a folder");
+            M4_CHECK_EQ(6222, accessible_name(button), names.at(i), "accessible name of a folder");
             QQuickItem* label = text_item_showing(button, names.at(i));
-            M4_CHECK(5720, label != nullptr, "the folder name is shown");
-            M4_CHECK(5721, label->property("textFormat").toInt() == 0, "the folder name is plain text");
+            M4_CHECK(6223, label != nullptr, "the folder name is shown");
+            M4_CHECK(6224, label->property("textFormat").toInt() == 0, "the folder name is plain text");
         }
     }
-    M4_CHECK(5722, save_screenshot(w, c.out_path), "screenshot failed");
+    M4_CHECK(6225, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
 
