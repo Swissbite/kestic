@@ -74,7 +74,8 @@ code_enum! {
         /// A folder chosen for a restore does not exist in the snapshot.
         PathNotInSnapshot => "path_not_in_snapshot",
         /// A restore preview refused its target (`error_detail` is the folder concerned): restic
-        /// would fail there or write into another folder.
+        /// would fail there or write into another folder. A restore run ends with it when its
+        /// target is missing, another folder or needs a preview right before restic writes.
         InvalidTarget => "invalid_target",
         /// Anything not recognised (never a transient code).
         Unknown => "unknown",

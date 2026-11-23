@@ -157,6 +157,27 @@ impl SnapshotTree {
         })
     }
 
+    /// Adds the folders between the restored folder and each selected entry (`selected`, paths
+    /// relative to it): the walk lists only the selected entries, but restic creates the folders
+    /// above them, and the dry run reports them.
+    pub fn add_folders_above(&mut self, selected: Option<&[String]>) {
+        for path in selected.unwrap_or_default() {
+            let mut end = path.len();
+            while let Some(slash) = path[..end].rfind('/').filter(|&i| i > 0) {
+                end = slash;
+                self.nodes
+                    .entry(path[..end].to_string())
+                    .or_insert_with(|| {
+                        vec![TreeNode {
+                            is_dir: true,
+                            size: 0,
+                            inode: None,
+                        }]
+                    });
+            }
+        }
+    }
+
     /// Inodes that more than one file of the folder shares (hard links within the snapshot).
     fn shared_inodes(&self) -> BTreeSet<u64> {
         let mut seen = BTreeSet::new();
@@ -517,7 +538,9 @@ pub fn walk_folder(
     let mut collector = SnapshotTree::collector(&plan.folder);
     let res = run_streaming(access, args, cancel, &mut |line| collector.push_line(line))?;
     check_command_succeeded(&res)?;
-    Ok(collector.finish())
+    let mut tree = collector.finish();
+    tree.add_folders_above(crate::restore::selected_paths(plan, selection).as_deref());
+    Ok(tree)
 }
 
 /// The paths `restic ls` lists for the walk of `plan`: the selected entries when the plan
@@ -691,6 +714,29 @@ mod tests {
             vec!["/h/u".to_string()],
             "nothing selected: the whole folder"
         );
+    }
+
+    #[test]
+    fn folders_above_selected_entries_are_folders() {
+        let mut t = tree(&["/a.txt", "/docs/deep/y.txt"]);
+        t.add_folders_above(Some(&[
+            "/a.txt".to_string(),
+            "/docs/deep/y.txt".to_string(),
+        ]));
+        let is_dir = |p: &str| t.nodes.get(p).map(|n| n[0].is_dir);
+        assert_eq!(is_dir("/docs"), Some(true), "the folder in between");
+        assert_eq!(
+            is_dir("/docs/deep"),
+            Some(true),
+            "the folder holding the file"
+        );
+        assert_eq!(
+            is_dir("/docs/deep/y.txt"),
+            Some(false),
+            "the file stays a file"
+        );
+        assert_eq!(is_dir("/a.txt"), Some(false), "a file at the top");
+        assert_eq!(t.nodes.len(), 4, "nothing else is added");
     }
 
     #[test]

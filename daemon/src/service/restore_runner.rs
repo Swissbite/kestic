@@ -676,6 +676,13 @@ impl RestoreWorker {
                 }),
             };
         }
+        // Cancelled while the target was checked: restic does not start at all.
+        if self.cancel.is_cancelled() {
+            return RestoreOutcome {
+                plan: None,
+                result: Err(BackupRunError::Cancelled),
+            };
+        }
         let target = self.setup.check.resolved.clone();
         let overwrite = self.setup.params.overwrite;
         let cancel = self.cancel.clone();

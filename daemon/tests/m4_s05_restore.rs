@@ -2897,3 +2897,48 @@ fn m4_s05_selection_of_folders_only_is_restored() {
         },
     );
 }
+
+/// A selection that spans folders (`a.txt` and `docs/deep/y.txt`): restic creates the folders
+/// in between, and the preview treats them as folders: at the original location (a) the
+/// preview ends without refusing its target, (b) counts the two files only and (c) notes that
+/// the existing folders get the snapshot's metadata; into a folder with content (d) both files
+/// are new and nothing else is counted.
+#[test]
+fn m4_s05_selection_across_folders_previews_its_folders_as_folders() {
+    run_isolated_test(
+        "m4_s05_selection_across_folders_previews_its_folders_as_folders",
+        "KESTIC_M4_S05_ACROSS_FOLDERS_INNER",
+        |root| {
+            for_each_variant(root, "M4RA", small_tree, |fx, v| {
+                let selection = ["a.txt", "docs/deep/y.txt"];
+                let id = fx.start_preview(&selection, Some(fx.original()), RestoreOverwrite::Never);
+                let st = fx.wait_query(&id, &big_page());
+                assert_eq!(st.state, "done", "(a) {}: {st:?}", v.label);
+                let (_, p) = fx.preview(&selection, Some(fx.original()), RestoreOverwrite::Never);
+                assert_eq!(p.entries.total, 2, "(b) {}: {:?}", v.label, p.entries.items);
+                assert_eq!(p.identical_files, 2, "(b) {}", v.label);
+                assert!(
+                    p.notes
+                        .contains(&kestic_daemon::dbus_api::RestoreNoteCode::FolderMetadataReset),
+                    "(c) {}: {:?}",
+                    v.label,
+                    p.notes
+                );
+                let target = fx.new_dir("with-content");
+                fs::create_dir_all(&target).expect("mkdir target");
+                fs::write(target.join("other.txt"), "other").expect("content");
+                let (_, into) = fx.preview(
+                    &selection,
+                    Some(new_folder(&target)),
+                    RestoreOverwrite::Never,
+                );
+                assert_eq!(
+                    into.new_files, 2,
+                    "(d) {}: {:?}",
+                    v.label, into.entries.items
+                );
+                assert_eq!(into.entries.total, 2, "(d) {}", v.label);
+            });
+        },
+    );
+}
