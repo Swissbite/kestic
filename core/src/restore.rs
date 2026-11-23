@@ -403,6 +403,10 @@ fn run_streaming_at(
     cancel: Option<&CancelHandle>,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<ResticExecutionResult, BackupRunError> {
+    // Cancelled before restic started (e.g. while the destination was checked): no process.
+    if cancel.is_some_and(CancelHandle::is_cancelled) {
+        return Err(BackupRunError::Cancelled);
+    }
     let spec = spec_for(access, args, priority);
     let res = run_restic_streaming(
         &spec,

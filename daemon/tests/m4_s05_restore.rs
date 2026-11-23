@@ -2943,3 +2943,108 @@ fn m4_s05_selection_across_folders_previews_its_folders_as_folders() {
         },
     );
 }
+
+/// AC-M4-05-4 (b) for a selection across folders where the target has a symbolic link at the
+/// folder above a selected file: restic follows the link (it replaces only a link at a selected
+/// folder), so (a) the file behind the link counts as overwritten, (b) the link itself is not
+/// counted, and after the restore (c) the link is still there and (d) the file behind it has
+/// the snapshot's content.
+#[test]
+fn m4_s05_symlink_above_the_selection_is_followed() {
+    run_isolated_test(
+        "m4_s05_symlink_above_the_selection_is_followed",
+        "KESTIC_M4_S05_LINK_ABOVE_INNER",
+        |root| {
+            for_each_variant(root, "M4RL", small_tree, |fx, v| {
+                let out = fx.new_dir("linked-docs");
+                fs::create_dir_all(out.join("deep")).expect("mkdir out/deep");
+                fs::write(out.join("deep/y.txt"), "different").expect("file behind the link");
+                fs::remove_dir_all(fx.src.join("docs")).expect("remove docs");
+                std::os::unix::fs::symlink(&out, fx.src.join("docs")).expect("docs -> out");
+                let selection = ["a.txt", "docs/deep/y.txt"];
+                let (id, p) = fx.preview(&selection, Some(fx.original()), RestoreOverwrite::Always);
+                let o = outcomes(&p);
+                assert_eq!(
+                    o.get("y.txt"),
+                    Some(&RestoreOutcome::Overwritten),
+                    "(a) {}: {:?}",
+                    v.label,
+                    p.entries.items
+                );
+                assert_eq!(
+                    o.get("docs"),
+                    None,
+                    "(b) {}: {:?}",
+                    v.label,
+                    p.entries.items
+                );
+                let run_id = fx
+                    .start_restore(
+                        &selection,
+                        fx.original(),
+                        RestoreOverwrite::Always,
+                        Some(&id),
+                    )
+                    .expect("StartRestore");
+                let detail = fx.wait_run(&run_id);
+                assert_eq!(detail.run.status, RunStatus::Ok, "{}: {detail:?}", v.label);
+                assert!(
+                    fs::symlink_metadata(fx.src.join("docs"))
+                        .expect("docs")
+                        .file_type()
+                        .is_symlink(),
+                    "(c) {}",
+                    v.label
+                );
+                assert_eq!(
+                    fs::read_to_string(out.join("deep/y.txt")).expect("y.txt"),
+                    "yy",
+                    "(d) {}",
+                    v.label
+                );
+            });
+        },
+    );
+}
+
+/// A file at the target where a folder above the selected entries belongs: restic cannot
+/// create the folder there and the run fails, so (a) the preview refuses the target with
+/// `invalid_target` naming that file and (b) the file stays as it was.
+#[test]
+fn m4_s05_file_above_the_selection_is_refused() {
+    run_isolated_test(
+        "m4_s05_file_above_the_selection_is_refused",
+        "KESTIC_M4_S05_FILE_ABOVE_INNER",
+        |root| {
+            for_each_variant(root, "M4RG", small_tree, |fx, v| {
+                fs::remove_dir_all(fx.src.join("docs")).expect("remove docs");
+                fs::write(fx.src.join("docs"), "a file").expect("file in its place");
+                let id = fx.start_preview(
+                    &["a.txt", "docs/deep/y.txt"],
+                    Some(fx.original()),
+                    RestoreOverwrite::Never,
+                );
+                let st = fx.wait_query(&id, &big_page());
+                assert_eq!(
+                    st.error_kind,
+                    Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
+                    "(a) {}: {st:?}",
+                    v.label
+                );
+                let blocked = fs::canonicalize(fx.src.join("docs")).expect("canonical");
+                assert_eq!(
+                    st.error_detail.as_deref(),
+                    Some(blocked.to_str().expect("utf-8")),
+                    "(a) {}",
+                    v.label
+                );
+                assert_eq!(
+                    fs::read_to_string(fx.src.join("docs")).expect("docs"),
+                    "a file",
+                    "(b) {}",
+                    v.label
+                );
+            });
+        },
+    );
+}
