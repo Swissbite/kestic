@@ -175,7 +175,8 @@ fn matching_preview(
     let fresh = query
         .finished_at
         .is_some_and(|t| core.clock.now_utc() - t <= PREVIEW_MAX_AGE);
-    let Some(QueryResult::RestorePreview(preview)) = &query.result else {
+    let result = query.result.as_ref()?.lock();
+    let QueryResult::RestorePreview(preview) = &*result else {
         return None;
     };
     let wanted = fingerprint(&setup.ctx, &setup.params, &setup.target, &setup.check);
@@ -430,8 +431,11 @@ impl DaemonCore {
     /// Marks preview `preview_id` as used by an accepted restore.
     fn mark_preview_used(&mut self, preview_id: &str) {
         let now = self.clock.now_utc();
-        if let Some(query) = self.snapshot_queries.fetch(preview_id, now)
-            && let Some(QueryResult::RestorePreview(preview)) = &mut query.result
+        if let Some(result) = self
+            .snapshot_queries
+            .fetch(preview_id, now)
+            .and_then(|q| q.result.as_ref())
+            && let QueryResult::RestorePreview(preview) = &mut *result.lock()
         {
             preview.used = true;
         }
