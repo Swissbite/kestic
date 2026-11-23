@@ -1050,7 +1050,6 @@ fn ac_m2_06_2_every_reason_of_restic_is_read() {
             keep_within_weekly: within("6m"),
             keep_within_monthly: within("1y"),
             keep_within_yearly: within("2y"),
-            ..RetentionPolicy::empty()
         };
 
         for time in [
