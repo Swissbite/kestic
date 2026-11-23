@@ -29,10 +29,8 @@ use kestic_core::model::{
 };
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::query_list::QueryState;
-use kestic_core::restic::{
-    CancelHandle, ResticExecutionResult, ResticStatusMessage, redact_secrets,
-};
-use kestic_core::restore::{RestorePlan, RestoreRunResult, RestoreTarget, execute_restore};
+use kestic_core::restic::{CancelHandle, ResticStatusMessage, redact_secrets};
+use kestic_core::restore::{RestorePlan, RestoreRun, RestoreTarget, execute_restore};
 use kestic_core::restore_preview::blocked_above_selection;
 use kestic_core::restore_target::{PREVIEW_MAX_AGE, TargetCheck, check_target, preview_required};
 use kestic_core::sync::LockUnpoisoned;
@@ -636,7 +634,17 @@ struct RestoreWorker {
 /// What the restic part of a restore ended with.
 struct RestoreOutcome {
     plan: Option<RestorePlan>,
-    result: Result<(RestoreRunResult, ResticExecutionResult), BackupRunError>,
+    result: Result<RestoreRun, BackupRunError>,
+}
+
+impl RestoreOutcome {
+    /// A restore that ended before restic restored anything.
+    fn failed(err: BackupRunError) -> Self {
+        Self {
+            plan: None,
+            result: Err(err),
+        }
+    }
 }
 
 impl RestoreWorker {
@@ -716,23 +724,17 @@ impl RestoreWorker {
                     plan
                 }
                 Err(err) => {
-                    return RestoreOutcome {
-                        plan: None,
-                        result: Err(err),
-                    };
+                    return RestoreOutcome::failed(err);
                 }
             },
         };
         // The probe and the plan may have taken a while (the password store, restic reading
         // the snapshot): the folder is checked once more right before restic writes into it.
         if let Err(reason) = recheck_target(&mut self.setup) {
-            return RestoreOutcome {
-                plan: None,
-                result: Err(BackupRunError::InvalidTarget {
-                    path: self.setup.check.resolved.to_string_lossy().into_owned(),
-                    reason,
-                }),
-            };
+            return RestoreOutcome::failed(BackupRunError::InvalidTarget {
+                path: self.setup.check.resolved.to_string_lossy().into_owned(),
+                reason,
+            });
         }
         // A folder above the selection that became a link or a file after the preview would
         // make restic write into another folder or fail midway.
@@ -744,20 +746,14 @@ impl RestoreWorker {
         .into_iter()
         .next()
         {
-            return RestoreOutcome {
-                plan: None,
-                result: Err(BackupRunError::InvalidTarget {
-                    reason: tr_text(&ErrorKind::InvalidTarget.text(Some(&path))),
-                    path,
-                }),
-            };
+            return RestoreOutcome::failed(BackupRunError::InvalidTarget {
+                reason: tr_text(&ErrorKind::InvalidTarget.text(Some(&path))),
+                path,
+            });
         }
         // Cancelled while the target was checked: restic does not start at all.
         if self.cancel.is_cancelled() {
-            return RestoreOutcome {
-                plan: None,
-                result: Err(BackupRunError::Cancelled),
-            };
+            return RestoreOutcome::failed(BackupRunError::Cancelled);
         }
         let target = self.setup.check.resolved.clone();
         let overwrite = self.setup.params.overwrite;
@@ -806,7 +802,8 @@ fn restore_worker(mut worker: RestoreWorker) {
     finalize(&worker, &run, &secrets);
 }
 
-/// Fills the result of `run` from the restic outcome and returns its status.
+/// Fills the result of `run` from the restic outcome and returns its status. A restore that
+/// failed midway keeps its counts, its restic call and restic's output.
 fn record_outcome(
     run: &mut Run,
     setup: &RestoreSetup,
@@ -821,40 +818,48 @@ fn record_outcome(
         files_kept: setup.from_preview.as_ref().map_or(0, |f| f.files_kept),
         ..RestoreStats::default()
     };
-    let status = match outcome.result {
-        Ok((result, res)) => {
+    let (failure, restic_lines) = match outcome.result {
+        Ok(RestoreRun {
+            result,
+            execution,
+            failure,
+        }) => {
             stats.files_new = result.files_new;
             stats.files_overwritten = result.files_overwritten;
             stats.bytes_restored = result.bytes_restored;
-            run.exit_code = Some(res.exit_code);
-            run.commands = vec![res.command_record];
-            run.log_path = shared
-                .lock_unpoisoned()
-                .history
-                .write_redacted_log(&run.id, &res.log_lines, secrets)
-                .ok();
-            if result.nothing_matched {
-                run.summary_message = Some(tr(&nothing_restored_message()));
-                RunStatus::Warning
-            } else {
-                let files = result.files_new + result.files_overwritten;
-                run.summary_message =
-                    Some(i18np("Restored %1 file", "Restored %1 files", files, &[]));
-                RunStatus::Ok
-            }
+            run.exit_code = Some(execution.exit_code);
+            run.commands = vec![execution.command_record];
+            let Some(err) = failure else {
+                run.log_path = write_log(shared, &run.id, &execution.log_lines, secrets);
+                run.restore = Some(stats);
+                return if result.nothing_matched {
+                    run.summary_message = Some(tr(&nothing_restored_message()));
+                    RunStatus::Warning
+                } else {
+                    let files = result.files_new + result.files_overwritten;
+                    run.summary_message =
+                        Some(i18np("Restored %1 file", "Restored %1 files", files, &[]));
+                    RunStatus::Ok
+                };
+            };
+            (err, execution.log_lines)
         }
+        Err(err) => (err, Vec::new()),
+    };
+    if outcome.plan.is_some() {
+        run.restore = Some(stats);
+    }
+    match failure {
         // Stopped because the system goes to sleep: interrupted, not cancelled by the user.
-        Err(BackupRunError::Cancelled)
-            if shared.lock_unpoisoned().run_sleep_interrupted(&run.id) =>
-        {
+        BackupRunError::Cancelled if shared.lock_unpoisoned().run_sleep_interrupted(&run.id) => {
             run.summary_message = Some(tr(&interrupted_by_sleep_message()));
             RunStatus::Interrupted
         }
-        Err(BackupRunError::Cancelled) => {
+        BackupRunError::Cancelled => {
             run.summary_message = Some(tr(&ErrorKind::Cancelled.message(None, false)));
             RunStatus::Cancelled
         }
-        Err(err) => {
+        err => {
             let text = match &err {
                 BackupRunError::PathNotInSnapshot(_) => {
                     tr(&backup_run_error_kind(&err).message(None, false))
@@ -863,27 +868,37 @@ fn record_outcome(
                 BackupRunError::InvalidTarget { reason, .. } => reason.clone(),
                 other => localized_backup_run_error(other),
             };
-            let detail = redact_secrets(&err.to_string(), secrets);
             let kind = backup_run_error_kind(&err);
             run.summary_message = Some(redact_secrets(&text, secrets));
-            run.exit_code = match err {
-                BackupRunError::Destination(
-                    kestic_core::destination::DestinationError::CommandFailed { exit_code, .. },
-                ) => Some(exit_code),
-                _ => run.exit_code,
-            };
-            run.log_path = shared
-                .lock_unpoisoned()
-                .history
-                .write_redacted_log(&run.id, &[error_kind_line(kind), detail], secrets)
-                .ok();
+            let mut lines = vec![
+                error_kind_line(kind),
+                redact_secrets(&err.to_string(), secrets),
+            ];
+            lines.extend(restic_lines);
+            if let BackupRunError::Destination(
+                kestic_core::destination::DestinationError::CommandFailed { exit_code, .. },
+            ) = err
+            {
+                run.exit_code = Some(exit_code);
+            }
+            run.log_path = write_log(shared, &run.id, &lines, secrets);
             RunStatus::Error
         }
-    };
-    if outcome.plan.is_some() || status == RunStatus::Ok {
-        run.restore = Some(stats);
     }
-    status
+}
+
+/// Writes the log of restore `run_id` with `secrets` redacted; its path, when it was written.
+fn write_log(
+    shared: &Arc<Mutex<DaemonCore>>,
+    run_id: &RunId,
+    lines: &[String],
+    secrets: &[&str],
+) -> Option<PathBuf> {
+    shared
+        .lock_unpoisoned()
+        .history
+        .write_redacted_log(run_id, lines, secrets)
+        .ok()
 }
 
 const ERROR_KIND_LINE: &str = "error_kind: ";

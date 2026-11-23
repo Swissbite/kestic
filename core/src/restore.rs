@@ -531,8 +531,18 @@ pub struct RestoreRunResult {
     pub nothing_matched: bool,
 }
 
+/// A restore restic ran: what it wrote, its call and output, and why it failed, if it did. A
+/// restore that fails midway has still written files, so its counts stay.
+#[derive(Debug)]
+pub struct RestoreRun {
+    pub result: RestoreRunResult,
+    pub execution: ResticExecutionResult,
+    pub failure: Option<BackupRunError>,
+}
+
 /// Runs the restore of `plan` into `target` and reports progress lines to `on_status`. Folders
-/// are told apart from files on disk after restic wrote them.
+/// are told apart from files on disk after restic wrote them. `Err` only when restic did not
+/// run to its end (cancelled, not started).
 pub fn execute_restore(
     access: &SnapshotListAccess<'_>,
     plan: &RestorePlan,
@@ -540,7 +550,7 @@ pub fn execute_restore(
     overwrite: RestoreOverwrite,
     cancel: Option<&CancelHandle>,
     on_status: &mut dyn FnMut(&ResticStatusMessage),
-) -> Result<(RestoreRunResult, ResticExecutionResult), BackupRunError> {
+) -> Result<RestoreRun, BackupRunError> {
     preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
     let args = restore_args(plan, target, overwrite, RestoreCall::Run);
     let mut items: Vec<RestoreItem> = Vec::new();
@@ -558,15 +568,17 @@ pub fn execute_restore(
                 RestoreLine::Other => {}
             },
         )?;
-    check_restore_succeeded(&res, plan)?;
+    let failure = check_restore_succeeded(&res, plan).err();
     let mut result = RestoreRunResult {
         nothing_matched: summary.as_ref().is_none_or(RestoreSummary::is_empty),
         bytes_restored: summary.as_ref().and_then(|s| s.bytes_restored).unwrap_or(0),
         ..RestoreRunResult::default()
     };
     for item in items {
+        // restic reports a file it could not write as restored too: only files that are there
+        // count, folders never.
         let written = target.join(item.item.trim_start_matches('/'));
-        if std::fs::symlink_metadata(&written).is_ok_and(|m| m.is_dir()) {
+        if !std::fs::symlink_metadata(&written).is_ok_and(|m| !m.is_dir()) {
             continue;
         }
         match item.action.as_str() {
@@ -575,7 +587,11 @@ pub fn execute_restore(
             _ => {}
         }
     }
-    Ok((result, res))
+    Ok(RestoreRun {
+        result,
+        execution: res,
+        failure,
+    })
 }
 
 #[cfg(test)]

@@ -3290,3 +3290,52 @@ fn m4_s05_preview_counts_for_one_restore() {
         },
     );
 }
+
+/// A restore that fails midway (restic cannot write into a read-only folder, but restores the
+/// other files) ends `Fehler` and still (a) counts the files it restored, (b) records its restic
+/// call, and (c) keeps restic's output with the file that failed in its log.
+#[test]
+fn m4_s05_restore_failing_midway_keeps_what_it_did() {
+    run_isolated_test(
+        "m4_s05_restore_failing_midway_keeps_what_it_did",
+        "KESTIC_M4_S05_PARTIAL_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RP", small_tree, |_| {});
+            fs::remove_file(fx.src.join("a.txt")).expect("remove a.txt");
+            fs::remove_file(fx.src.join("docs/x.txt")).expect("remove x.txt");
+            set_mode(&fx.src.join("docs"), 0o555);
+            let (preview_id, _) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+            let run_id = fx
+                .start_restore(
+                    &[],
+                    fx.original(),
+                    RestoreOverwrite::Never,
+                    Some(&preview_id),
+                )
+                .expect("StartRestore");
+            let detail = fx.wait_run(&run_id);
+            set_mode(&fx.src.join("docs"), 0o755);
+            assert_eq!(detail.run.status, RunStatus::Error, "{detail:?}");
+            assert_eq!(
+                fs::read_to_string(fx.src.join("a.txt")).ok().as_deref(),
+                Some("hello"),
+                "restic restored a.txt"
+            );
+            let stats = detail.run.restore.as_ref().expect("restore stats");
+            assert_eq!(stats.files_new, 1, "(a) {stats:?}");
+            assert_eq!(
+                detail.run.commands.len(),
+                1,
+                "(b) {:?}",
+                detail.run.commands
+            );
+            assert!(
+                detail.log_lines.iter().any(|l| l.contains("x.txt")),
+                "(c) {:?}",
+                detail.log_lines
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
