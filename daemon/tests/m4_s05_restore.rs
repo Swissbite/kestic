@@ -1867,3 +1867,36 @@ fn m4_s05_new_folder_is_private() {
         },
     );
 }
+
+/// A folder with content in the snapshot where the target has a file: the dry run of «Never»
+/// cannot look below the file, but the preview still ends and counts the file as overwritten
+/// and the entries below as new.
+#[test]
+fn m4_s05_folder_with_content_over_a_file_previews() {
+    run_isolated_test(
+        "m4_s05_folder_with_content_over_a_file_previews",
+        "KESTIC_M4_S05_DIR_OVER_FILE_INNER",
+        |root| {
+            for_each_variant(root, "M4RD", small_tree, |fx, v| {
+                fs::remove_dir_all(fx.src.join("docs")).expect("remove docs");
+                fs::write(fx.src.join("docs"), "a file now").expect("file in its place");
+                for mode in [RestoreOverwrite::Never, RestoreOverwrite::IfNewer] {
+                    let (_, p) = fx.preview(&[], Some(fx.original()), mode);
+                    let o = outcomes(&p);
+                    assert_eq!(
+                        o.get("docs"),
+                        Some(&RestoreOutcome::Overwritten),
+                        "{} {mode:?}",
+                        v.label
+                    );
+                    assert_eq!(
+                        o.get("x.txt"),
+                        Some(&RestoreOutcome::New),
+                        "{} {mode:?}",
+                        v.label
+                    );
+                }
+            });
+        },
+    );
+}

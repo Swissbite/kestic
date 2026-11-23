@@ -365,8 +365,35 @@ pub fn dry_run(
             actions.insert(item.item, item.action);
         }
     })?;
+    // Where the target has a file and the snapshot a folder with content, the dry run cannot
+    // look below the file and fails («not a directory»); the run itself puts the folder in
+    // place of the file, so the entries below it are new.
+    if let Some(items) = below_replaced_files(&res) {
+        for item in items {
+            actions.insert(item, "restored".to_string());
+        }
+        return Ok(actions);
+    }
     check_restore_succeeded(&res, plan)?;
     Ok(actions)
+}
+
+/// The items of a dry run that failed only because entries lie below a file at the target.
+fn below_replaced_files(res: &crate::restic::ResticExecutionResult) -> Option<Vec<String>> {
+    if res.exit_code != 1 || res.errors.is_empty() {
+        return None;
+    }
+    let error_lines: Vec<&String> = res
+        .log_lines
+        .iter()
+        .filter(|l| l.contains("\"message_type\":\"error\""))
+        .collect();
+    let only_these = error_lines.len() == res.errors.len()
+        && error_lines.iter().all(|l| l.contains("not a directory"));
+    if !only_these {
+        return None;
+    }
+    res.errors.iter().map(|e| e.item.clone()).collect()
 }
 
 /// Runs the dry runs of a preview and classifies them.
