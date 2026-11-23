@@ -316,6 +316,30 @@ fn m4_s03_leaving_a_loading_folder_stops_restic_ls() {
     );
 }
 
+/// M4-S03, path row: every folder above the list is drawn once (no second name or icon from the
+/// style beneath the button content), folder names stay plain text and the top folder keeps its
+/// accessible name.
+#[test]
+fn m4_s03_path_row_draws_each_folder_once() {
+    run_isolated_test(
+        "m4_s03_path_row_draws_each_folder_once",
+        "KESTIC_M4_S03_PATH_ROW_INNER",
+        |root| {
+            let (rig, _fakes) = browse_env(root, QueryLimits::default());
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-browse-path-row",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-browse-path-row", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// A daemon on the real bus name with one destination «NAS» and the backup «Home» with three
 /// snapshots of three folders: `bericht.pdf` is in the two older ones under different paths
 /// (`t1/src/Dokumente`, `t2/src/Archiv/2026`), the newest has none.
