@@ -39,6 +39,20 @@ impl RestoreFixture {
         make_tree: impl FnOnce(&Path) -> PathBuf,
         configure: impl FnOnce(&mut M3DaemonOpts<'_>),
     ) -> Self {
+        Self::start_tagged(root, variant, base, make_tree, configure, |backup| {
+            format!("kestic:{}", backup.id)
+        })
+    }
+
+    /// Like [`Self::start`], with the snapshot's tag from `tag_of` (empty: no tag).
+    pub fn start_tagged(
+        root: &Path,
+        variant: &ResticVariant,
+        base: &str,
+        make_tree: impl FnOnce(&Path) -> PathBuf,
+        configure: impl FnOnce(&mut M3DaemonOpts<'_>),
+        tag_of: impl FnOnce(&Backup) -> String,
+    ) -> Self {
         let rig = M3Rig::start(
             root,
             variant,
@@ -55,7 +69,7 @@ impl RestoreFixture {
             add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
         let backup = rig.add_backup_to(&dest, "Home", |b| b.schedule = Schedule::ManualOnly);
         let src = make_tree(&work);
-        let tag = format!("kestic:{}", backup.id);
+        let tag = tag_of(&backup);
         let snapshot_id = backup_dir(
             &variant.bin,
             &repo,

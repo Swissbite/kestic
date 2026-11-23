@@ -7,8 +7,8 @@
 use super::error::{KesticServiceErr, backup_run_error_kind, map_provider_err, parse_backup_id};
 use super::state::DaemonCore;
 use crate::dbus_api::{
-    BackupSnapshotCountDto, BackupSnapshotsDto, DestinationSnapshotsDto, OrphanedBackupDto,
-    PreviousDestinationSnapshotsDto, SnapshotSummaryDto,
+    BackupSnapshotCountDto, BackupSnapshotsDto, DescribedBackupDto, DestinationSnapshotsDto,
+    OrphanedBackupDto, PreviousDestinationSnapshotsDto, SnapshotSummaryDto,
 };
 use kestic_core::backup::{
     SnapshotListAccess, list_destination_snapshots, list_snapshots_for_backup,
@@ -182,6 +182,7 @@ pub(crate) fn list_destination_snapshots_unlocked(
         backups: Vec::new(),
         unassigned: Vec::new(),
         orphaned: Vec::new(),
+        described: Vec::new(),
     };
     match list_destination_snapshots(&list_deps.access(&dest)) {
         Ok(snaps) => fill_destination_snapshots(&mut dto, snaps, &backups),
@@ -217,6 +218,17 @@ fn fill_destination_snapshots(
         .orphaned
         .into_iter()
         .map(|(id, snaps)| OrphanedBackupDto {
+            backup_id: id,
+            count: snaps.len() as u64,
+            latest_time: snaps.first().map(|s| s.time.clone()),
+            latest_hostname: snaps.first().and_then(|s| s.hostname.clone()),
+            snapshots: to_dtos(snaps),
+        })
+        .collect();
+    dto.described = sorted
+        .described
+        .into_iter()
+        .map(|(id, snaps)| DescribedBackupDto {
             backup_id: id,
             count: snaps.len() as u64,
             latest_time: snaps.first().map(|s| s.time.clone()),
