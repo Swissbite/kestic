@@ -3097,3 +3097,47 @@ fn m4_s05_link_above_the_selection_after_the_preview_ends_the_run() {
         },
     );
 }
+
+/// While a restore waits for maintenance of its destination, (a) `RemoveDestination` and (b)
+/// `UpdateDestination` are refused with `RestoreRunning`; (c) after it is cancelled the
+/// destination is free again.
+#[test]
+fn m4_s05_destination_of_a_waiting_restore_cannot_change() {
+    run_isolated_test(
+        "m4_s05_destination_of_a_waiting_restore_cannot_change",
+        "KESTIC_M4_S05_DEST_WAITING_INNER",
+        |root| {
+            let _fakes = common::m3::StdFakes::start();
+            let variant = common::m3::latest_variant();
+            let fx = scheduled_fixture(root, &variant, "M4RQ");
+            fx.rig.wrapper.hold("prune");
+            fx.rig.clock.set(SUNDAY_PRUNE);
+            fx.rig
+                .wrapper
+                .wait_for('S', "prune", 1, std::time::Duration::from_secs(30));
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    new_folder(&fx.new_dir("waiting")),
+                    RestoreOverwrite::Never,
+                    None,
+                )
+                .expect("StartRestore");
+            let client = &fx.rig.daemon.client;
+            let removed = client
+                .remove_destination(fx.dest.id.as_str())
+                .expect_err("(a) RemoveDestination refused");
+            common::m3::assert_dbus_error_name(&removed, "net.daester.Kestic.Error.RestoreRunning");
+            let updated = client
+                .update_destination(&fx.dest, "connect", "", "", false)
+                .expect_err("(b) UpdateDestination refused");
+            common::m3::assert_dbus_error_name(&updated, "net.daester.Kestic.Error.RestoreRunning");
+            client.cancel_run(&run_id).expect("CancelRun");
+            assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Cancelled);
+            let renamed = client.update_destination(&fx.dest, "connect", "", "", false);
+            assert!(renamed.is_ok(), "(c) {renamed:?}");
+            fx.rig.wrapper.release("prune");
+            fx.rig.daemon.stop();
+        },
+    );
+}
