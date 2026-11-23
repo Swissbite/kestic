@@ -227,16 +227,20 @@ pub fn check_target(target: &RestoreTarget, repository: Option<&Path>) -> Target
     }
 }
 
-/// Whether the missing folder `dir` can be created: its deepest existing ancestor must be a
-/// writable folder.
+/// Whether the missing folder `dir` can be created: a restore creates it and at most the
+/// folder holding it (`~/Restored`), so its parent or grandparent must be a writable folder.
 fn creatable_below(dir: &Path) -> RestoreTargetCode {
-    let Some(existing) = dir
+    let Some((depth, existing)) = dir
         .ancestors()
+        .enumerate()
         .skip(1)
-        .find(|a| std::fs::metadata(a).is_ok())
+        .find(|(_, a)| std::fs::metadata(a).is_ok())
     else {
         return RestoreTargetCode::NotWritable;
     };
+    if depth > 2 {
+        return RestoreTargetCode::MissingMappedDir;
+    }
     if !existing.is_dir() {
         RestoreTargetCode::NotADirectory
     } else if access(existing, Access::WRITE_OK | Access::EXEC_OK).is_err() {
