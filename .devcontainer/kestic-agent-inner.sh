@@ -203,6 +203,26 @@ case "${1:-}" in
         turn="$(tr -dc 0-9 2>/dev/null < "$STATE_DIR/turn" || true)"
         echo "$(session_state) ${issue:-0} ${turn:-0}"
         ;;
+    limit-reset)
+        # When Claude Code stopped at a usage limit, its last lines say
+        # «… hit your … limit · resets 4:10am (UTC)». Prints that time as epoch
+        # (the next one after the turn started), or 0. A limit resets within
+        # five hours, so a time further ahead comes from an older message.
+        turn="$(tr -dc 0-9 2>/dev/null < "$STATE_DIR/turn" || true)"
+        at="$(tmux capture-pane -p -t "$SESSION" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 15 |
+            grep 'hit your' | grep -o 'resets [0-9][0-9:]*[ap]m (UTC)' | tail -n 1 || true)"
+        at="${at#resets }"
+        at="${at% (UTC)}"
+        if [[ -z "$at" || -z "$turn" ]]; then
+            echo 0
+        elif reset="$(date -u -d "$(date -u -d "@$turn" +%F) $at" +%s 2>/dev/null)"; then
+            ((reset >= turn)) || reset=$((reset + 86400))
+            if ((reset - $(date +%s) > 5 * 3600 + 900)); then reset=0; fi
+            echo "$reset"
+        else
+            echo 0
+        fi
+        ;;
     store-token)
         IFS= read -r token || true
         [[ "$token" =~ ^gh[a-z]_[A-Za-z0-9_.-]+$ ]] || die "store-token: no GitHub token on stdin"
