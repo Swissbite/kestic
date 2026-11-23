@@ -190,6 +190,14 @@ pub mod qobject {
         fn local_folder_from_url(self: &KesticApp, url: &QString) -> QString;
 
         #[qinvokable]
+        #[cxx_name = "genericFieldsErrors"]
+        fn generic_fields_errors(self: &KesticApp, url: &QString, env_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "envVarSecretByDefault"]
+        fn env_var_secret_by_default(self: &KesticApp, name: &QString) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "testDestination"]
         fn test_destination(
             self: Pin<&mut KesticApp>,

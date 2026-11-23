@@ -26,7 +26,16 @@ ColumnLayout {
     property string openedCard: ""
     property bool commandCopied: false
     // Cards whose details form exists; the other ready cards can not be chosen yet.
-    readonly property var cardsWithForm: ["drive", "folder", "rest", "cloud"]
+    readonly property var cardsWithForm: ["drive", "folder", "rest", "cloud", "rclone"]
+    // Choices under «Cloud Storage»: S3 has its own form, the others the generic form with the
+    // scheme filled in.
+    readonly property var cloudServices: [
+        { service: "s3", label: Texts.label("s3_compatible") },
+        { service: "b2", label: Texts.label("backblaze_b2") },
+        { service: "azure", label: Texts.label("azure") },
+        { service: "gs", label: Texts.label("google_cloud") },
+        { service: "swift", label: Texts.label("swift") }
+    ]
     readonly property var readyCards: cards.filter(function(c) { return c.ready; })
     readonly property var cardsNeedingInstallation: cards.filter(function(c) { return !c.ready; })
     // The chosen card is shown, ready and has a form.
@@ -56,8 +65,30 @@ ColumnLayout {
 
     function choose(card) {
         chooser.draft.typeCard = card;
-        chooser.draft.kind = card === "rest" ? "rest" : card === "cloud" ? "s3" : "local";
+        if (card === "rclone") {
+            chooseGeneric("rclone");
+        } else {
+            chooser.draft.kind = card === "rest" ? "rest" : card === "cloud" ? "s3" : "local";
+        }
         chooser.draft.connectionVerified = false;
+    }
+
+    // The generic form with `scheme` filled into the repository URL (kept if it already has it).
+    function chooseGeneric(scheme) {
+        chooser.draft.kind = "generic";
+        if (chooser.draft.location.indexOf(scheme + ":") !== 0) {
+            chooser.draft.location = scheme + ":";
+        }
+        chooser.draft.connectionVerified = false;
+    }
+
+    // The chosen service under «Cloud Storage».
+    function cloudService() {
+        if (chooser.draft.kind !== "generic") {
+            return "s3";
+        }
+        var colon = chooser.draft.location.indexOf(":");
+        return colon > 0 ? chooser.draft.location.substring(0, colon) : "";
     }
 
     function cardTitle(card) {
@@ -153,12 +184,25 @@ ColumnLayout {
         Layout.leftMargin: Kirigami.Units.gridUnit * 2
         spacing: Kirigami.Units.smallSpacing
 
-        Controls.RadioButton {
-            objectName: chooser.namePrefix + "CloudService_s3"
-            text: Texts.label("s3_compatible")
-            checked: chooser.draft.kind === "s3"
-            Accessible.name: text
-            onClicked: chooser.draft.kind = "s3"
+        Repeater {
+            model: chooser.cloudServices
+
+            delegate: Controls.RadioButton {
+                required property var modelData
+
+                objectName: chooser.namePrefix + "CloudService_" + modelData.service
+                text: modelData.label
+                checked: chooser.cloudService() === modelData.service
+                Accessible.name: text
+                onClicked: {
+                    if (modelData.service === "s3") {
+                        chooser.draft.kind = "s3";
+                        chooser.draft.connectionVerified = false;
+                    } else {
+                        chooser.chooseGeneric(modelData.service);
+                    }
+                }
+            }
         }
     }
 

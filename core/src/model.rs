@@ -35,6 +35,9 @@ pub enum ModelError {
     NotALocalPath(#[from] crate::local_path::NotALocalPath),
     #[error("invalid backup configuration: {0}")]
     InvalidBackup(String),
+    /// The repository URL or a variable of a generic destination is refused.
+    #[error("invalid destination configuration: {0}")]
+    Generic(#[from] crate::generic::GenericInputError),
 }
 
 fn is_valid_base32_id(raw: &str) -> bool {
@@ -167,6 +170,13 @@ pub enum DestinationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         region: Option<String>,
     },
+    /// A backend of the generic form (B2, Azure, Google Cloud, Swift, rclone): repository URL and
+    /// the environment variables it reads; secret values are only in the password store.
+    Generic {
+        url: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        env: Vec<crate::generic::EnvVar>,
+    },
 }
 
 impl DestinationKind {
@@ -193,13 +203,20 @@ impl DestinationKind {
                 path,
                 ..
             } => crate::s3::repository_uri(endpoint, bucket, path.as_deref()),
+            Self::Generic { url, .. } => url.trim().to_string(),
         }
     }
 
     /// Whether the connection test of a new repository checks the login with restic first: a
-    /// wrong S3 key would otherwise only show when the repository is created.
+    /// wrong S3 key or backend variable would otherwise only show when the repository is created.
     pub fn probes_login_before_init(&self) -> bool {
-        matches!(self, Self::S3 { .. })
+        matches!(self, Self::S3 { .. } | Self::Generic { .. })
+    }
+
+    /// Whether only restic itself can tell if the destination is reachable: the generic backends
+    /// have no address Kestic could check on its own.
+    pub fn needs_restic_preflight(&self) -> bool {
+        matches!(self, Self::Generic { .. })
     }
 
     /// Whether this destination uses separate REST backend credentials.
@@ -221,6 +238,7 @@ impl DestinationKind {
                 path,
                 ..
             } => crate::s3::location_key(endpoint, bucket, path.as_deref()),
+            Self::Generic { url, .. } => format!("generic:{}", url.trim()),
         }
     }
 
@@ -381,6 +399,9 @@ pub struct DestinationSecretRefs {
     /// Reference key for the S3 secret access key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3_secret_key_ref: Option<String>,
+    /// Reference keys of the secret variables of a generic destination, by variable name.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env_refs: std::collections::BTreeMap<String, String>,
 }
 
 impl DestinationSecretRefs {
@@ -397,6 +418,17 @@ impl DestinationSecretRefs {
             rest_password_ref: slot_ref(crate::backend_credentials::SECRET_KIND_REST),
             s3_access_key_ref: slot_ref(crate::backend_credentials::SECRET_KIND_S3_ACCESS_KEY),
             s3_secret_key_ref: slot_ref(crate::backend_credentials::SECRET_KIND_S3_SECRET_KEY),
+            env_refs: match kind {
+                DestinationKind::Generic { env, .. } => env
+                    .iter()
+                    .filter(|v| v.secret)
+                    .map(|v| {
+                        let kind = crate::generic::secret_kind(&v.name);
+                        (v.name.clone(), format!("kestic:dest:{id}:{kind}"))
+                    })
+                    .collect(),
+                _ => std::collections::BTreeMap::new(),
+            },
         }
     }
 }
@@ -641,6 +673,10 @@ impl Destination {
             } => {
                 crate::s3::validate(endpoint, bucket, path.as_deref())?;
                 crate::s3::validate_region(region.as_deref())?;
+            }
+            DestinationKind::Generic { url, env } => {
+                crate::generic::validate_url(url)?;
+                crate::generic::validate_env(env)?;
             }
         }
         if self.secrets.repo_password_ref.trim().is_empty() {

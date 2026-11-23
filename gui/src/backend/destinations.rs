@@ -5,7 +5,9 @@
 //! for [`super::qobject::KesticApp`].
 
 use super::{Finish, dbus_error_text, qobject};
-use crate::destination_input::{build_destination, test_destination_connection};
+use crate::destination_input::{
+    build_destination, generic_env_error, generic_url_error, test_destination_connection,
+};
 use crate::state_cache::{
     daemon_unavailable_text, i18n, i18np, make_client, refresh_state_now, shared_state, tr, tr_text,
 };
@@ -68,6 +70,24 @@ impl qobject::KesticApp {
             }),
         };
         QString::from(&reply.to_string())
+    }
+
+    /// Why the repository URL and the variables of the generic form are refused, in the GUI
+    /// language, as `{"url": "<text or empty>", "env": "<text or empty>"}`.
+    pub fn generic_fields_errors(&self, url: &QString, env_json: &QString) -> QString {
+        let text = |err: Option<crate::destination_input::DestinationInputError>| {
+            err.map_or_else(String::new, |e| e.text())
+        };
+        let reply = serde_json::json!({
+            "url": text(generic_url_error(&url.to_string())),
+            "env": text(generic_env_error(&env_json.to_string())),
+        });
+        QString::from(&reply.to_string())
+    }
+
+    /// Whether «Geheim» starts switched on for a new variable named `name`.
+    pub fn env_var_secret_by_default(&self, name: &QString) -> bool {
+        kestic_core::generic::secret_by_default(&name.to_string())
     }
 
     pub fn test_destination(

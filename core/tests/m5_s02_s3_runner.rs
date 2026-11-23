@@ -223,11 +223,8 @@ fn ac_m5_02_2_runner_refuses_to_start_without_stored_s3_keys() {
 
     assert!(
         matches!(
-            err,
-            ResticRunError::MissingBackendSecret {
-                kind: SECRET_KIND_S3_SECRET_KEY,
-                ..
-            }
+            &err,
+            ResticRunError::MissingBackendSecret { kind, .. } if kind == SECRET_KIND_S3_SECRET_KEY
         ),
         "{err}"
     );
@@ -275,12 +272,8 @@ fn ac_m5_02_2_password_update_and_setup_refuse_without_s3_keys() {
     assert!(
         matches!(
             update,
-            Err(DestinationError::Runner(
-                ResticRunError::MissingBackendSecret {
-                    kind: SECRET_KIND_S3_SECRET_KEY,
-                    ..
-                }
-            ))
+            Err(DestinationError::Runner(ResticRunError::MissingBackendSecret { kind, .. }))
+                if kind == SECRET_KIND_S3_SECRET_KEY
         ),
         "password update without the secret key is refused"
     );

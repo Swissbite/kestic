@@ -5,7 +5,10 @@
 //! dry-run previews, and retention (`forget`) execution.
 
 use crate::clock::Clock;
-use crate::destination::{DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination};
+use crate::destination::{
+    DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
+    preflight_check_with_restic,
+};
 use crate::model::{
     Backup, BackupId, Destination, ModelError, RunId, RunStatus, evaluate_exclude_path,
 };
@@ -392,7 +395,7 @@ where
     F: FnMut(&ResticStreamEvent) + Send,
 {
     check_source_available_with(backup, ctx.home_dir, ctx.inspector)?;
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    preflight_check_with_restic(destination, runtime)?;
     backup.excludes.validate()?;
 
     let preview_nonce = RunId::generate().map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -666,7 +669,7 @@ pub fn execute_forget_dry_run_with(
     cancel: Option<&CancelHandle>,
     extra_env: &[(&str, &str)],
 ) -> Result<ForgetPreviewResult, BackupRunError> {
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    preflight_check_with_restic(destination, runtime)?;
     let spec = build_forget_command_spec(
         backup,
         destination,
@@ -726,7 +729,16 @@ pub fn list_snapshots_for_backup(
     clock: &dyn Clock,
     extra_env: &[(&str, &str)],
 ) -> Result<Vec<ResticSnapshot>, BackupRunError> {
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    preflight_check_with_restic(
+        destination,
+        &ResticRuntime {
+            resolved,
+            kestic_binary,
+            secret_store,
+            clock,
+            cache_dir: None,
+        },
+    )?;
 
     let mut spec = ResticCommandSpec::for_destination(
         &resolved.binary,

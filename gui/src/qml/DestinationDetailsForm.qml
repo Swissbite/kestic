@@ -26,6 +26,17 @@ ColumnLayout {
 
     spacing: Kirigami.Units.mediumSpacing
 
+    // The service of a generic destination, from the scheme of its repository URL.
+    function serviceLabel() {
+        switch (form.draft.location.split(":")[0]) {
+        case "b2": return Texts.label("backblaze_b2");
+        case "azure": return Texts.label("azure");
+        case "gs": return Texts.label("google_cloud");
+        case "swift": return Texts.label("swift");
+        }
+        return Texts.label("rclone");
+    }
+
     function locationEdited() {
         form.draft.connectionVerified = false;
     }
@@ -54,6 +65,8 @@ ColumnLayout {
         level: 2
         text: form.draft.kindIsS3
             ? i18n("Which S3-compatible storage should be used?")
+            : form.draft.asksRcloneRemote ? i18n("Which rclone remote should be used?")
+            : form.draft.kindIsGeneric ? i18n("Where on %1 is the repository?", form.serviceLabel())
             : form.draft.kindIsRest ? i18n("Where is the REST server located?") : i18n("Where should the local repository be stored?")
     }
 
@@ -187,7 +200,7 @@ ColumnLayout {
             objectName: form.namePrefix + "NameField"
             Kirigami.FormData.label: form.editing ? Texts.label("name_label") : Texts.label("required_name_label")
             text: form.draft.name
-            placeholderText: form.editing ? "" : (form.draft.kindIsS3 ? i18n("Cloud Backup") : form.draft.kindIsRest ? i18n("NAS") : i18n("Local Backup"))
+            placeholderText: form.editing ? "" : ((form.draft.kindIsS3 || form.draft.kindIsGeneric) ? i18n("Cloud Backup") : form.draft.kindIsRest ? i18n("NAS") : i18n("Local Backup"))
             onTextChanged: form.draft.name = text
             Accessible.name: i18n("Destination name")
         }
@@ -200,7 +213,7 @@ ColumnLayout {
         }
 
         RowLayout {
-            visible: !form.draft.kindIsS3
+            visible: !form.draft.kindIsS3 && !form.draft.kindIsGeneric
             Kirigami.FormData.label: form.draft.kindIsRest
                 ? (form.editing ? i18n("Address:") : i18n("Address*:"))
                 : (form.editing ? i18n("Path:") : i18n("Path*:"))
@@ -228,10 +241,178 @@ ColumnLayout {
 
         Controls.Label {
             objectName: form.namePrefix + "LocationError"
-            visible: !form.draft.kindIsS3 && !form.draft.locationValid
+            visible: !form.draft.kindIsS3 && !form.draft.kindIsGeneric && !form.draft.locationValid
             text: form.draft.kindIsRest
                 ? i18n("Enter a valid http:// or https:// address.")
                 : i18n("Path is required.")
+            color: Kirigami.Theme.negativeTextColor
+        }
+
+        // Generic form: the repository URL, or for the rclone card only the remote after `rclone:`.
+        Controls.TextField {
+            objectName: form.namePrefix + "UrlField"
+            visible: form.draft.kindIsGeneric
+            Kirigami.FormData.label: form.draft.asksRcloneRemote
+                ? (form.editing ? i18n("rclone remote:") : i18n("rclone remote*:"))
+                : (form.editing ? i18n("Repository URL:") : i18n("Repository URL*:"))
+            text: form.draft.asksRcloneRemote ? form.draft.location.replace(/^rclone:/, "") : form.draft.location
+            placeholderText: form.draft.asksRcloneRemote ? "myremote:backups/laptop" : "b2:bucket-name:backups/laptop"
+            onTextChanged: {
+                var url = form.draft.asksRcloneRemote ? "rclone:" + text.replace(/^rclone:/, "") : text;
+                if (url !== form.draft.location) {
+                    form.draft.location = url;
+                    form.locationEdited();
+                }
+            }
+            Accessible.name: form.draft.asksRcloneRemote ? i18n("rclone remote") : i18n("Repository URL")
+            Layout.fillWidth: true
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "GenericError"
+            visible: form.draft.kindIsGeneric && form.draft.genericErrors.url !== ""
+            text: form.draft.genericErrors.url
+            color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+        }
+
+        Kirigami.Separator {
+            visible: form.draft.kindIsGeneric
+            Kirigami.FormData.isSection: true
+            Kirigami.FormData.label: i18n("Environment Variables")
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "EnvHint"
+            visible: form.draft.kindIsGeneric
+            text: i18n("Settings the storage service reads, for example its account ID and key. Secret values are kept only in the password store.")
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+        }
+
+        // The rows in one layout: the form layout keeps one item while rows come and go.
+        ColumnLayout {
+            visible: form.draft.kindIsGeneric && form.draft.envModel.count > 0
+            Layout.fillWidth: true
+
+            // Column labels; the switch and the button stand in invisibly so the labels sit over
+            // their fields.
+            RowLayout {
+                Controls.Label {
+                    text: i18n("Name")
+                    font: Kirigami.Theme.smallFont
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                    Layout.fillWidth: true
+                }
+
+                Controls.Label {
+                    text: i18n("Value")
+                    font: Kirigami.Theme.smallFont
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                    Layout.fillWidth: true
+                }
+
+                Controls.Switch {
+                    text: i18n("Secret")
+                    opacity: 0
+                    enabled: false
+                    activeFocusOnTab: false
+                    Accessible.ignored: true
+                }
+
+                Controls.ToolButton {
+                    icon.name: "list-remove"
+                    display: Controls.AbstractButton.IconOnly
+                    opacity: 0
+                    enabled: false
+                    activeFocusOnTab: false
+                    Accessible.ignored: true
+                }
+            }
+
+            Repeater {
+                model: form.draft.envModel
+
+                delegate: RowLayout {
+                    id: envRow
+
+                    required property int index
+                    required property string name
+                    required property bool secret
+                    required property string value
+
+                    objectName: form.namePrefix + "EnvRow_" + index
+                    Layout.fillWidth: true
+
+                    Controls.TextField {
+                        objectName: form.namePrefix + "EnvName_" + envRow.index
+                        text: envRow.name
+                        placeholderText: i18n("NAME")
+                        Accessible.name: i18n("Variable name")
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                        Layout.fillWidth: true
+                        onTextChanged: if (text !== envRow.name) form.draft.editEnvVar(envRow.index, "name", text)
+                    }
+
+                    Controls.TextField {
+                        objectName: form.namePrefix + "EnvValue_" + envRow.index
+                        text: envRow.value
+                        echoMode: envRow.secret ? TextInput.Password : TextInput.Normal
+                        placeholderText: form.editing && envRow.secret ? i18n("Leave empty to keep the saved value") : i18n("Value")
+                        Accessible.name: i18n("Variable value")
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                        Layout.fillWidth: true
+                        onTextChanged: if (text !== envRow.value) form.draft.editEnvVar(envRow.index, "value", text)
+                    }
+
+                    Controls.Switch {
+                        objectName: form.namePrefix + "EnvSecret_" + envRow.index
+                        text: i18n("Secret")
+                        checked: envRow.secret
+                        Accessible.name: i18n("Secret: keep the value only in the password store")
+                        onToggled: form.draft.editEnvVar(envRow.index, "secret", checked)
+                    }
+
+                    Controls.ToolButton {
+                        objectName: form.namePrefix + "EnvRemove_" + envRow.index
+                        icon.name: "list-remove"
+                        text: i18n("Remove Variable")
+                        display: Controls.AbstractButton.IconOnly
+                        Accessible.name: text
+                        Controls.ToolTip.text: text
+                        Controls.ToolTip.visible: hovered
+                        onClicked: form.draft.removeEnvVar(envRow.index)
+                    }
+                }
+            }
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "EnvError"
+            visible: form.draft.kindIsGeneric && form.draft.genericErrors.env !== ""
+            text: form.draft.genericErrors.env
+            color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+        }
+
+        Controls.Button {
+            objectName: form.namePrefix + "EnvAdd"
+            visible: form.draft.kindIsGeneric
+            icon.name: "list-add"
+            text: i18n("Add Variable")
+            Accessible.name: text
+            onClicked: form.draft.addEnvVar()
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "EnvSecretsError"
+            visible: form.draft.kindIsGeneric && !form.draft.keysValid
+            text: i18n("Enter a value for every secret variable.")
             color: Kirigami.Theme.negativeTextColor
         }
 
@@ -344,6 +525,12 @@ ColumnLayout {
             visible: form.draft.kindIsS3 && !form.draft.keysValid
             text: i18n("Enter the access key and the secret key.")
             color: Kirigami.Theme.negativeTextColor
+        }
+
+        // Ends the variables section of the generic form, so the repository rows stand apart.
+        Kirigami.Separator {
+            visible: form.draft.kindIsGeneric
+            Kirigami.FormData.isSection: true
         }
 
         Controls.ComboBox {

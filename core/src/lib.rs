@@ -14,6 +14,7 @@ pub mod config;
 pub mod destination;
 pub mod destination_types;
 pub mod excludes;
+pub mod generic;
 pub mod history;
 pub mod local_path;
 pub mod maintenance;
