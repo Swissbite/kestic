@@ -1226,8 +1226,15 @@ fn scheduled_fixture(root: &Path, variant: &ResticVariant, base: &str) -> Restor
     let fx = RestoreFixture::start(root, variant, base, small_tree, |o| {
         o.enable_scheduler = true
     });
-    // One scheduler tick records the maintenance baseline of the new destination.
-    std::thread::sleep(std::time::Duration::from_millis(1300));
+    // Maintenance becomes due only for slots after the baseline of the new destination.
+    common::m3::wait_until("maintenance baseline recorded", || {
+        kestic_core::history::RunHistory::open(&fx.rig.daemon.state_dir)
+            .expect("open history")
+            .get_destination_maintenance_state(&fx.dest.id)
+            .expect("maintenance state")
+            .baseline_at
+            .is_some()
+    });
     fx
 }
 
