@@ -317,6 +317,8 @@ Kirigami.ScrollablePage {
                             }
 
                             Controls.ProgressBar {
+                                // Fusion leaves the bar 0 px high and draws nothing; 6 px is the bar of Breeze.
+                                Layout.minimumHeight: topInset + bottomInset + Math.round(Kirigami.Units.smallSpacing * 1.5)
                                 objectName: "backupCardProgressBar"
                                 visible: card.isRunning
                                 from: 0

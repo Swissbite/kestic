@@ -666,27 +666,27 @@ msgstr "monatliche"
 msgid "yearly"
 msgstr "jährliche"
 
-#: gui/src/state_cache.rs:628
+#: gui/src/retention_texts.rs
 msgid "all within %1"
 msgstr "alle innerhalb von %1"
 
-#: gui/src/state_cache.rs:631
+#: gui/src/retention_texts.rs
 msgid "hourly within %1"
 msgstr "stündliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:634
+#: gui/src/retention_texts.rs
 msgid "daily within %1"
 msgstr "tägliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:637
+#: gui/src/retention_texts.rs
 msgid "weekly within %1"
 msgstr "wöchentliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:640
+#: gui/src/retention_texts.rs
 msgid "monthly within %1"
 msgstr "monatliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:643
+#: gui/src/retention_texts.rs
 msgid "yearly within %1"
 msgstr "jährliche innerhalb von %1"
 
@@ -1910,7 +1910,7 @@ msgstr "Aufbewahrungsvorschau wird berechnet…"
 msgid "Cancel retention preview"
 msgstr "Aufbewahrungsvorschau abbrechen"
 
-#: gui/src/qml/BackupPreviewPage.qml:381
+#: gui/src/retention_texts.rs
 msgid "No snapshots would be removed (%1 kept)."
 msgstr "Es würden keine Snapshots entfernt (%1 behalten)."
 
@@ -3297,15 +3297,17 @@ msgid_plural "%1 more rules in restic syntax. Enable Expert Mode to edit them."
 msgstr[0] "%1 weitere Regel in restic-Syntax. Aktivieren Sie den Expertenmodus, um sie zu bearbeiten."
 msgstr[1] "%1 weitere Regeln in restic-Syntax. Aktivieren Sie den Expertenmodus, um sie zu bearbeiten."
 
-msgid "%1 snapshot kept · %2"
-msgid_plural "%1 snapshots kept · %2"
-msgstr[0] "%1 Snapshot behalten · %2"
-msgstr[1] "%1 Snapshots behalten · %2"
+#: gui/src/retention_texts.rs
+msgid "%1 snapshot kept"
+msgid_plural "%1 snapshots kept"
+msgstr[0] "%1 Snapshot behalten"
+msgstr[1] "%1 Snapshots behalten"
 
-msgid "%1 snapshot would be removed."
-msgid_plural "%1 snapshots would be removed."
-msgstr[0] "%1 Snapshot würde entfernt."
-msgstr[1] "%1 Snapshots würden entfernt."
+#: gui/src/retention_texts.rs
+msgid "%1 snapshot would be removed"
+msgid_plural "%1 snapshots would be removed"
+msgstr[0] "%1 Snapshot würde entfernt"
+msgstr[1] "%1 Snapshots würden entfernt"
 
 msgid "day"
 msgid_plural "days"
@@ -3621,3 +3623,31 @@ msgstr "%1 von 2 gewählt"
 #: gui/src/qml/RestoreSnapshotsPage.qml
 msgid "Show Differences"
 msgstr "Unterschiede anzeigen"
+
+#: gui/src/retention_texts.rs
+msgid "latest snapshot"
+msgstr "jüngster"
+
+#: gui/src/retention_texts.rs
+msgid "hourly snapshot"
+msgstr "stündlich"
+
+#: gui/src/retention_texts.rs
+msgid "daily snapshot"
+msgstr "täglich"
+
+#: gui/src/retention_texts.rs
+msgid "weekly snapshot"
+msgstr "wöchentlich"
+
+#: gui/src/retention_texts.rs
+msgid "monthly snapshot"
+msgstr "monatlich"
+
+#: gui/src/retention_texts.rs
+msgid "yearly snapshot"
+msgstr "jährlich"
+
+#: gui/src/retention_texts.rs
+msgid "%1 (oldest)"
+msgstr "%1 (ältester)"

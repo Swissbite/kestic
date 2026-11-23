@@ -414,6 +414,10 @@ EditorPage {
 
         Controls.SpinBox {
             objectName: countRow.rowObjectPrefix + "Spin"
+            // The digits are centred in the whole box: Fusion makes the box lower than the
+            // padding of the style allows and would cut them.
+            topPadding: 0
+            bottomPadding: 0
             from: 1
             to: 9999
             editable: true
@@ -469,6 +473,10 @@ EditorPage {
 
         Controls.SpinBox {
             objectName: withinRow.rowObjectPrefix + "Spin"
+            // The digits are centred in the whole box: Fusion makes the box lower than the
+            // padding of the style allows and would cut them.
+            topPadding: 0
+            bottomPadding: 0
             from: 1
             to: 9999
             editable: true
@@ -499,6 +507,8 @@ EditorPage {
         spacing: Kirigami.Units.mediumSpacing
 
         Controls.ProgressBar {
+            // Fusion leaves the bar 0 px high and draws nothing; 6 px is the bar of Breeze.
+            Layout.minimumHeight: topInset + bottomInset + Math.round(Kirigami.Units.smallSpacing * 1.5)
             id: retentionSaveProgress
             objectName: "retentionSaveProgress"
             Layout.fillWidth: true

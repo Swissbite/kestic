@@ -249,6 +249,9 @@ int scenario_backup_progress(const Ctx& c, bool scanning) {
     QQuickItem* bar = item_named(w, "backupCardProgressBar");
     M3_CHECK(3862, bar != nullptr, "card progress bar missing");
     M3_CHECK(3879, bar->isVisible(), "card progress bar must be visible");
+    // The bar is drawn: its background has a height (a 0 px background draws neither groove nor fill).
+    auto* bar_background = bar->property("background").value<QQuickItem*>();
+    M3_CHECK2(3880, bar_background != nullptr, bar_background->height() > 0.0, "card progress bar has no visible height");
 
     if (scanning) {
         // (a) status line, (b) amount looked through, (c) headline, (d) bar without end point

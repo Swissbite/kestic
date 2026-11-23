@@ -870,13 +870,23 @@ Kirigami.ApplicationWindow {
         position: Controls.ToolBar.Footer
         actions: root.navActions
         delegate: Kirigami.NavigationTabButton {
+            id: bottomNavTab
             required property Controls.Action modelData
             parent: bottomNavBar.contentItem
             action: modelData
             onActionChanged: action.checkable = true
-            Layout.minimumWidth: bottomNavBar.buttonWidth
-            Layout.maximumWidth: bottomNavBar.buttonWidth
+            // All tabs are equally wide unless a label does not fit on one line: then it takes
+            // the room from the tabs with shorter labels («Wiederherstellen» in German).
+            Layout.minimumWidth: Math.ceil(bottomNavTabText.advanceWidth) + leftPadding + rightPadding
+            Layout.preferredWidth: bottomNavBar.buttonWidth
+            Layout.fillWidth: true
             Layout.fillHeight: true
+
+            TextMetrics {
+                id: bottomNavTabText
+                font: bottomNavTab.font
+                text: bottomNavTab.text
+            }
 
             Kirigami.Icon {
                 source: "emblem-important"

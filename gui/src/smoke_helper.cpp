@@ -126,6 +126,16 @@ bool verify_tab_bar_labels(
             );
             return false;
         }
+        if (item->property("lineCount").toInt() > 1) {
+            std::fprintf(
+                stderr,
+                "QML smoke failed: tab label %s breaks onto %d lines at width=%f\n",
+                qPrintable(text),
+                item->property("lineCount").toInt(),
+                item->width()
+            );
+            return false;
+        }
     }
     if (checked_labels < expected_tabs) {
         std::fprintf(
@@ -150,12 +160,47 @@ bool verify_tab_bar_labels(
     return true;
 }
 
+namespace {
+
+// Kirigami's page row moves and crossfades pages in the narrow layout; a screenshot taken
+// meanwhile shows the page below shining through the new one.
+bool page_rows_moving(QQuickWindow* window) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(window->contentItem(), items);
+    for (QQuickItem* it : items) {
+        const QVariant moving = it->property("moving");
+        if (moving.isValid() && moving.toBool()
+            && QString::fromLatin1(it->metaObject()->className()).contains(QLatin1String("ColumnView"))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The offscreen platform renders with the software scene graph, which repaints only the
+// regions that changed. Pixels an earlier frame left outside a clip stay (the background of a
+// Kirigami card below the visible part of a page, over the tab bar). A frame at another window
+// size makes the next frame repaint the whole window, as the desktop shows it.
+void repaint_whole_window(QQuickWindow* window) {
+    const QSize size = window->size();
+    window->resize(size.width(), size.height() + 1);
+    (void)window->grabWindow();
+    window->resize(size);
+    wait_ms(40);
+}
+
+} // namespace
+
 bool save_screenshot(QQuickWindow* window, const QString& out_path) {
     if (out_path.isEmpty()) {
         return true;
     }
     const QFileInfo fi(out_path);
     QDir().mkpath(fi.absolutePath());
+    if (window) {
+        wait_until([&] { return !page_rows_moving(window); }, 3000);
+        repaint_whole_window(window);
+    }
     QImage img;
     for (int attempt = 0; attempt < 5; ++attempt) {
         if (window) {

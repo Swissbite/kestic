@@ -3,6 +3,8 @@
 
 #include "src/smoke_common.h"
 
+#include <QRegularExpression>
+
 namespace kestic::smoke {
 
 namespace {
@@ -256,6 +258,24 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     QQuickItem* ret_banner = child_item(window, "retentionPreviewSummaryBanner");
     SMOKE_CHECK3("M2", 247, prev_page->property("retentionPreviewState").toString() == QLatin1String("done"), ret_banner, ret_banner->isVisible(),
         "retention preview summary banner missing or preview did not complete");
+    // AC-M2-06-2: (a) the summary counts kept and removed snapshots, (b) a kept snapshot names
+    // its reason in the GUI language, (c) each snapshot shows its local date and time.
+    const bool de = s.lang == QLatin1String("de");
+    const QString summary = ret_banner->property("text").toString();
+    SMOKE_CHECK("M2", 253, summary == (de ? QStringLiteral("1 Snapshot behalten · 2 Snapshots würden entfernt")
+                                         : QStringLiteral("1 snapshot kept · 2 snapshots would be removed")),
+        QStringLiteral("(a) unexpected retention preview summary '%1'").arg(summary));
+    QQuickItem* kept_result = find_visual_item(window, QStringLiteral("retentionPreviewSnapshotResult"));
+    SMOKE_CHECK("M2", 254, kept_result, "(b) retention preview rows missing");
+    const QString kept_text = kept_result->property("text").toString();
+    SMOKE_CHECK("M2", 254, kept_text == (de ? QStringLiteral("Behalten — jüngster") : QStringLiteral("Keep — latest snapshot")),
+        QStringLiteral("(b) unexpected result of the kept snapshot '%1'").arg(kept_text));
+    QQuickItem* kept_time = find_visual_item(window, QStringLiteral("retentionPreviewSnapshotTime"));
+    SMOKE_CHECK("M2", 255, kept_time, "(c) retention preview time missing");
+    const QString time_text = kept_time->property("text").toString();
+    static const QRegularExpression local_time(QStringLiteral("^[0-9a-f]{8} · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$"));
+    SMOKE_CHECK("M2", 255, local_time.match(time_text).hasMatch(),
+        QStringLiteral("(c) snapshot time is not local date and time: '%1'").arg(time_text));
     SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
 
     // Go back to BackupRetentionPage and save -> must show confirmation dialog (AC-M2-06-3).

@@ -13,6 +13,21 @@ Kirigami.AboutPage {
 
     required property var appBackend
 
+    // Kirigami centres the text of its link buttons. The homepage and licence links fill their
+    // rows under «Copyright», so they stood apart from the text around them; all links start
+    // on the left instead.
+    function alignLinksLeft(item) {
+        for (let i = 0; i < item.children.length; ++i) {
+            const child = item.children[i];
+            if (child.normalColor !== undefined && child.horizontalAlignment !== undefined) {
+                child.horizontalAlignment = Text.AlignLeft;
+            }
+            page.alignLinksLeft(child);
+        }
+    }
+
+    Component.onCompleted: alignLinksLeft(page)
+
     // Version and build commit of one process; the commit links to GitHub when it is clean.
     component BuildRow: RowLayout {
         id: buildRow
