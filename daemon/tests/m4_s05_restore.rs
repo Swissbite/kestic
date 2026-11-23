@@ -1735,3 +1735,89 @@ fn m4_s05_failed_restore_leaves_the_backup_status_alone() {
         },
     );
 }
+
+/// A symbolic link at the target where the snapshot has a folder is replaced by a real folder,
+/// also with `never`: the preview counts it as overwritten, adds the note `symlink_in_target`,
+/// and does not judge the files behind the link.
+#[test]
+fn m4_s05_symlink_replaced_by_folder_counts_as_overwritten() {
+    run_isolated_test(
+        "m4_s05_symlink_replaced_by_folder_counts_as_overwritten",
+        "KESTIC_M4_S05_SYMLINK_DIR_INNER",
+        |root| {
+            for_each_variant(root, "M4RL", small_tree, |fx, v| {
+                let elsewhere = fx.new_dir("elsewhere");
+                fs::create_dir_all(&elsewhere).expect("mkdir elsewhere");
+                fs::write(elsewhere.join("x.txt"), "x").expect("same content behind the link");
+                fs::remove_dir_all(fx.src.join("docs")).expect("remove docs");
+                std::os::unix::fs::symlink(&elsewhere, fx.src.join("docs")).expect("symlink");
+                let (_, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+                let o = outcomes(&p);
+                assert_eq!(
+                    o.get("docs"),
+                    Some(&RestoreOutcome::Overwritten),
+                    "{}: {p:?}",
+                    v.label
+                );
+                assert_eq!(
+                    o.get("x.txt"),
+                    Some(&RestoreOutcome::New),
+                    "{}: not judged through the link",
+                    v.label
+                );
+                assert!(
+                    p.notes
+                        .contains(&kestic_daemon::dbus_api::RestoreNoteCode::SymlinkInTarget),
+                    "{}: note",
+                    v.label
+                );
+            });
+        },
+    );
+}
+
+/// `/` is never a restore target, neither as new folder nor as original location; it is
+/// refused before restic runs.
+#[test]
+fn m4_s05_root_is_never_a_target() {
+    run_isolated_test(
+        "m4_s05_root_is_never_a_target",
+        "KESTIC_M4_S05_ROOT_TARGET_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RR", small_tree, |_| {});
+            let started = fx.rig.wrapper.started_repo_count();
+            for target in [
+                RestoreTarget::NewFolder { dir: "/".into() },
+                RestoreTarget::Original { dir: "/".into() },
+            ] {
+                let err = fx
+                    .start_restore(&["a.txt"], target.clone(), RestoreOverwrite::Never, None)
+                    .expect_err("refused");
+                assert_eq!(
+                    err.code(),
+                    kestic_i18n::codes::ServiceErrorCode::InvalidInput
+                );
+                let query = fx.rig.daemon.client.start_snapshot_query(
+                    &kestic_daemon::dbus_api::SnapshotQueryRequest::restore_preview(
+                        fx.dest.id.as_str(),
+                        &fx.snapshot_id,
+                        &[fx.path("a.txt")],
+                        Some(target),
+                        RestoreOverwrite::Never,
+                    ),
+                );
+                assert_eq!(
+                    query.err().map(|e| e.code()),
+                    Some(kestic_i18n::codes::ServiceErrorCode::InvalidInput)
+                );
+            }
+            assert_eq!(
+                fx.rig.wrapper.started_repo_count(),
+                started,
+                "no restic call"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}

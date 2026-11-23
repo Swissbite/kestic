@@ -238,7 +238,14 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
     items.sort();
     for (item, action) in items {
         let at_target = input.target.join(item.trim_start_matches('/'));
-        let existing = std::fs::symlink_metadata(&at_target).ok();
+        // Below a symbolic link at the target, restic puts a real folder in place of the link
+        // and never writes through it: what lies behind the link does not count.
+        let behind_link = below_symlink(input.target, item);
+        let existing = if behind_link {
+            None
+        } else {
+            std::fs::symlink_metadata(&at_target).ok()
+        };
         if existing
             .as_ref()
             .is_some_and(|m| m.file_type().is_symlink())
@@ -247,12 +254,10 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
         }
         let node = input.tree.nodes.get(item.as_str());
         if node.is_some_and(|n| n.is_dir) {
-            // A folder is not counted, unless restic puts it in place of a file at the target
-            // (it does so even with `never`): that file is overwritten.
-            let replaces_file = action == "restored"
-                && existing
-                    .as_ref()
-                    .is_some_and(|m| !m.is_dir() && !m.file_type().is_symlink());
+            // A folder is not counted, unless restic puts it in place of a file or a symbolic
+            // link at the target (it does so even with `never`): that entry is overwritten.
+            let replaces_file =
+                action == "restored" && existing.as_ref().is_some_and(|m| !m.is_dir());
             if !replaces_file {
                 continue;
             }
@@ -265,6 +270,8 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             continue;
         }
         let outcome = match action.as_str() {
+            // The dry run looks through the link; the run writes into a new, real folder.
+            _ if behind_link => RestoreOutcome::New,
             "restored" if existing.is_some() => RestoreOutcome::Overwritten,
             "restored" => RestoreOutcome::New,
             "updated" => RestoreOutcome::Overwritten,
@@ -308,6 +315,20 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             .filter(|c| notes.contains(c))
             .collect(),
     }
+}
+
+/// Whether a folder above `item` (relative to `target`, below it) is a symbolic link at the
+/// target.
+fn below_symlink(target: &Path, item: &str) -> bool {
+    let mut path = target.to_path_buf();
+    let parts: Vec<&str> = item.split('/').filter(|s| !s.is_empty()).collect();
+    for part in parts.iter().take(parts.len().saturating_sub(1)) {
+        path.push(part);
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Walks the restored folder of `plan` (`restic ls --json --recursive --no-lock`).
