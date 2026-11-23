@@ -483,6 +483,13 @@ int scenario_sftp_form(const Ctx& c) {
             "Geben Sie den Benutzernamen auf dem Server ein: nur Buchstaben, Ziffern, «.», «_» und «-»."),
         "hint for the user name");
     M3_CHECK(5633, !item_named(w, "wizDestTestButton")->isEnabled(), "«Test Connection» enabled for «anna;id»");
+    if (!c.out_path.isEmpty()) {
+        scroll_into_view(w, user_error);
+        wait_ms(600);
+        QString hint_shot = c.out_path;
+        hint_shot.replace(QStringLiteral("sftp-form"), QStringLiteral("sftp-user-hint"));
+        M3_CHECK(5635, save_screenshot(w, hint_shot), "screenshot failed");
+    }
     set_text(w, "wizDestSftpUserField", user);
     M3_CHECK(5634, wait_until([&] { return !user_error->isVisible(); }, 2000), "hint stays for a valid user name");
     const QString unnamed = first_unnamed(w, {
