@@ -90,11 +90,13 @@ Kirigami.Dialog {
     }
 
     ColumnLayout {
-        implicitWidth: Math.min(Kirigami.Units.gridUnit * 30,
-            dialog.absoluteMaximumWidth - dialog.leftPadding - dialog.rightPadding - Kirigami.Units.gridUnit)
         spacing: Kirigami.Units.mediumSpacing
 
+        // The width of the dialog: a layout computes its own implicit width from its children,
+        // so the heading carries it, also when only a short message follows.
         Kirigami.Heading {
+            Layout.preferredWidth: Math.min(Kirigami.Units.gridUnit * 30,
+                dialog.absoluteMaximumWidth - dialog.leftPadding - dialog.rightPadding - Kirigami.Units.gridUnit)
             level: 4
             text: i18n("Where to")
         }
@@ -117,6 +119,8 @@ Kirigami.Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.gridUnit
             spacing: Kirigami.Units.smallSpacing
+            // Without a preview there is no folder to show: the selection has to change first.
+            visible: dialog.model !== null && dialog.model.folder_instead.length === 0
 
             Controls.Label {
                 objectName: "restoreTargetDirLabel"

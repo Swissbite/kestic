@@ -140,7 +140,7 @@ pub(crate) fn unmatchable_text(path: &str, folder: &str) -> String {
 }
 
 /// The counts of a preview in one line, e.g. «117 files new · 3 existing files will not be
-/// overwritten»; the wording of the kept files follows the mode.
+/// overwritten».
 pub(crate) fn summary_text(p: &RestorePreviewResultDto) -> String {
     let mut parts = Vec::new();
     if p.new_files > 0 {

@@ -1946,3 +1946,93 @@ fn m4_s05_file_over_a_folder_with_content_is_refused() {
         },
     );
 }
+
+/// Files `a\xff`, `a\xfe` and `b\xff`: names that are not UTF-8, which restic shows alike.
+fn unmatchable_tree(work: &Path) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    let src = work.join("src");
+    fs::create_dir_all(&src).expect("mkdir src");
+    for (name, content) in [
+        (&b"a\xff"[..], "one"),
+        (&b"a\xfe"[..], "two"),
+        (&b"b\xff"[..], "file"),
+    ] {
+        fs::write(src.join(std::ffi::OsStr::from_bytes(name)), content).expect("write");
+    }
+    src
+}
+
+/// Names that restic shows alike (bytes that are not UTF-8 become U+FFFD) are still counted one
+/// by one and found at the target, so a folder with content where the snapshot has such a file
+/// is refused like any other.
+#[test]
+fn m4_s05_names_shown_alike_are_counted_and_checked_at_the_target() {
+    run_isolated_test(
+        "m4_s05_names_shown_alike_are_counted_and_checked_at_the_target",
+        "KESTIC_M4_S05_SHOWN_ALIKE_INNER",
+        |root| {
+            use std::os::unix::ffi::OsStrExt;
+            use std::os::unix::fs::PermissionsExt;
+            let real =
+                |fx: &RestoreFixture, name: &[u8]| fx.src.join(std::ffi::OsStr::from_bytes(name));
+            for_each_variant(root, "M4RX", unmatchable_tree, |fx, v| {
+                fs::write(real(fx, b"a\xff"), "local").expect("change a\\xff");
+                fs::remove_file(real(fx, b"a\xfe")).expect("remove a\\xfe");
+                let (_, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Always);
+                assert_eq!(p.new_files, 1, "{}: a\\xfe is new", v.label);
+                assert_eq!(p.overwritten_files, 1, "{}: a\\xff is overwritten", v.label);
+                assert_eq!(p.identical_files, 1, "{}: b\\xff is unchanged", v.label);
+                assert_eq!(p.entries.total, 3, "{}: three files listed", v.label);
+
+                let folder = real(fx, b"b\xff");
+                fs::remove_file(&folder).expect("remove b\\xff");
+                fs::create_dir_all(folder.join("inner")).expect("folder in its place");
+                fs::write(folder.join("inner/f"), "keep").expect("content");
+                let mode = fs::metadata(&folder).expect("folder").permissions().mode();
+                let id = fx.start_preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+                let st = fx.wait_query(&id, &big_page());
+                assert_eq!(st.state, "error", "{}: refused: {st:?}", v.label);
+                assert_eq!(
+                    fs::metadata(&folder).expect("folder").permissions().mode(),
+                    mode,
+                    "{}: the folder keeps its mode",
+                    v.label
+                );
+                assert!(
+                    folder.join("inner/f").is_file(),
+                    "{}: content kept",
+                    v.label
+                );
+            });
+        },
+    );
+}
+
+/// A folder with a file named «not a directory».
+fn not_a_directory_tree(work: &Path) -> std::path::PathBuf {
+    let src = work.join("src");
+    fs::create_dir_all(src.join("locked")).expect("mkdir locked");
+    fs::write(src.join("locked/not a directory"), "x").expect("write");
+    src
+}
+
+/// A dry run that fails for another reason is an error, also when the name of the file reads
+/// like the failure the preview tolerates («not a directory»).
+#[test]
+fn m4_s05_dry_run_error_is_not_mistaken_by_the_file_name() {
+    run_isolated_test(
+        "m4_s05_dry_run_error_is_not_mistaken_by_the_file_name",
+        "KESTIC_M4_S05_NOT_A_DIR_NAME_INNER",
+        |root| {
+            use std::os::unix::fs::PermissionsExt;
+            for_each_variant(root, "M4RN", not_a_directory_tree, |fx, v| {
+                let locked = fx.src.join("locked");
+                fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
+                let id = fx.start_preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+                let st = fx.wait_query(&id, &big_page());
+                fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod");
+                assert_eq!(st.state, "error", "{}: not hidden: {st:?}", v.label);
+            });
+        },
+    );
+}

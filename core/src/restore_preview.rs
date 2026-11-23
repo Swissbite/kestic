@@ -19,7 +19,7 @@ use kestic_i18n::codes::{RestoreNoteCode, RestoreOutcome, RestoreOverwrite};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// One file of a preview (`RestorePreviewEntryDto`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,10 +126,11 @@ pub struct TreeNode {
 }
 
 /// The entries of the restored folder by their path relative to it (starting with `/`, as the
-/// dry run names them).
+/// dry run names them). restic shows the bytes of a name that are not UTF-8 as U+FFFD, so
+/// several entries can share one path; they are kept in the order restic lists them.
 #[derive(Debug, Default)]
 pub struct SnapshotTree {
-    pub nodes: HashMap<String, TreeNode>,
+    pub nodes: HashMap<String, Vec<TreeNode>>,
 }
 
 impl SnapshotTree {
@@ -145,7 +146,7 @@ impl SnapshotTree {
     fn shared_inodes(&self) -> BTreeSet<u64> {
         let mut seen = BTreeSet::new();
         let mut shared = BTreeSet::new();
-        for node in self.nodes.values().filter(|n| !n.is_dir) {
+        for node in self.nodes.values().flatten().filter(|n| !n.is_dir) {
             if let Some(inode) = node.inode
                 && !seen.insert(inode)
             {
@@ -192,14 +193,15 @@ impl TreeCollector {
                 _ => return,
             }
         };
-        self.tree.nodes.insert(
-            relative.to_string(),
-            TreeNode {
+        self.tree
+            .nodes
+            .entry(relative.to_string())
+            .or_default()
+            .push(TreeNode {
                 is_dir: node.node_type == "dir",
                 size: node.size.unwrap_or(0),
                 inode: node.inode,
-            },
-        );
+            });
     }
 
     pub fn finish(self) -> SnapshotTree {
@@ -207,8 +209,9 @@ impl TreeCollector {
     }
 }
 
-/// The action of each entry of one dry run, by its path relative to the target.
-pub type DryRunActions = HashMap<String, String>;
+/// The actions of one dry run by the path of the entry relative to the target; entries whose
+/// names restic shows alike (U+FFFD) share a path and keep the order of the dry run.
+pub type DryRunActions = HashMap<String, Vec<String>>;
 
 /// What the preview needs besides the dry runs.
 pub struct ClassifyInput<'a> {
@@ -239,25 +242,50 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
         }
     };
     let mut blocked: Vec<String> = Vec::new();
-    let mut items: Vec<(&String, &String)> = input.chosen.iter().collect();
+    let mut items: Vec<(&String, usize, &String)> = input
+        .chosen
+        .iter()
+        .flat_map(|(item, actions)| actions.iter().enumerate().map(move |(i, a)| (item, i, a)))
+        .collect();
     items.sort();
-    for (item, action) in items {
-        let at_target = input.target.join(item.trim_start_matches('/'));
+    for (item, index, action) in items {
         // Below a symbolic link at the target, restic puts a real folder in place of the link
         // and never writes through it: what lies behind the link does not count.
-        let behind_link = below_symlink(input.target, item);
-        let existing = if behind_link {
+        let found = find_at_target(input.target, item);
+        let behind_link = found.behind_link;
+        let node = input
+            .tree
+            .nodes
+            .get(item.as_str())
+            .and_then(|nodes| nodes.get(index).or(nodes.first()));
+        let restored = action == "restored";
+        let rank = input.chosen[item][..index]
+            .iter()
+            .filter(|a| (*a == "restored") == restored)
+            .count();
+        let picked = if behind_link {
             None
         } else {
-            std::fs::symlink_metadata(&at_target).ok()
+            pick_existing(
+                &found.entries,
+                item.contains('\u{FFFD}'),
+                node.is_some_and(|n| n.is_dir),
+                restored,
+                rank,
+            )
         };
-        if existing
-            .as_ref()
-            .is_some_and(|m| m.file_type().is_symlink())
+        let at_target = picked.map_or_else(
+            || input.target.join(item.trim_start_matches('/')),
+            |(p, _)| p.clone(),
+        );
+        let existing = picked.map(|(_, m)| m.clone());
+        if found
+            .entries
+            .iter()
+            .any(|(_, m)| m.file_type().is_symlink())
         {
             note(RestoreNoteCode::SymlinkInTarget, &mut notes);
         }
-        let node = input.tree.nodes.get(item.as_str());
         if node.is_some_and(|n| n.is_dir) {
             // A folder is not counted, unless restic puts it in place of a file or a symbolic
             // link at the target (it does so even with `never`): that entry is overwritten.
@@ -281,15 +309,21 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             "restored" => RestoreOutcome::New,
             "updated" => RestoreOutcome::Overwritten,
             _ if input.overwrite == RestoreOverwrite::Always => RestoreOutcome::Identical,
-            _ => match input.always.and_then(|a| a.get(item.as_str())) {
+            _ => match input
+                .always
+                .and_then(|a| a.get(item.as_str()))
+                .and_then(|actions| actions.get(index))
+            {
                 Some(a) if a == "updated" || a == "restored" => RestoreOutcome::Kept,
                 _ => RestoreOutcome::Identical,
             },
         };
-        if existing.as_ref().is_some_and(|m| m.is_dir())
-            && std::fs::read_dir(&at_target).is_ok_and(|mut d| d.next().is_some())
-        {
-            blocked.push(at_target.to_string_lossy().into_owned());
+        // Entries whose names restic shows alike cannot be told apart at the target: any of
+        // them that is a folder with content blocks the file.
+        if let Some((dir, _)) = found.entries.iter().find(|(p, m)| {
+            !behind_link && m.is_dir() && std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_some())
+        }) {
+            blocked.push(dir.to_string_lossy().into_owned());
             continue;
         }
         let size = node.map_or(0, |n| n.size);
@@ -297,9 +331,11 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
             let linked_in_snapshot = node
                 .and_then(|n| n.inode)
                 .is_some_and(|i| shared_inodes.contains(&i));
-            let linked_at_target = existing
-                .as_ref()
-                .is_some_and(|m| m.is_file() && m.nlink() > 1);
+            let linked_at_target = !behind_link
+                && found
+                    .entries
+                    .iter()
+                    .any(|(_, m)| m.is_file() && m.nlink() > 1);
             if linked_in_snapshot || linked_at_target {
                 note(RestoreNoteCode::HardLinksAffected, &mut notes);
             }
@@ -329,18 +365,83 @@ pub fn classify_preview(input: &ClassifyInput<'_>) -> PreviewClassification {
     }
 }
 
-/// Whether a folder above `item` (relative to `target`, below it) is a symbolic link at the
-/// target.
-fn below_symlink(target: &Path, item: &str) -> bool {
-    let mut path = target.to_path_buf();
-    let parts: Vec<&str> = item.split('/').filter(|s| !s.is_empty()).collect();
-    for part in parts.iter().take(parts.len().saturating_sub(1)) {
-        path.push(part);
-        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
-            return true;
-        }
+/// The existing entry at the target that belongs to the `rank`-th action of its kind
+/// (`restored` or not) for one path. For a plain name that is the one entry. Names restic shows
+/// alike (`shown_alike`, U+FFFD) cannot be paired by name: an entry of another type (or a
+/// symbolic link) is what a `restored` action replaces, an entry of the same type is what the
+/// other actions look at.
+fn pick_existing(
+    entries: &[(PathBuf, std::fs::Metadata)],
+    shown_alike: bool,
+    node_is_dir: bool,
+    restored: bool,
+    rank: usize,
+) -> Option<&(PathBuf, std::fs::Metadata)> {
+    if !shown_alike {
+        return entries.first();
     }
-    false
+    let replaced = |m: &std::fs::Metadata| m.file_type().is_symlink() || m.is_dir() != node_is_dir;
+    entries
+        .iter()
+        .filter(|(_, m)| replaced(m) == restored)
+        .nth(rank)
+}
+
+/// What lies at the target for one entry of a dry run.
+struct AtTarget {
+    /// Whether a folder above the entry is a symbolic link at the target.
+    behind_link: bool,
+    /// The existing entries (`lstat`) with that name, sorted by their real name. A name with
+    /// U+FFFD matches every real name that restic shows that way, so there can be several.
+    entries: Vec<(PathBuf, std::fs::Metadata)>,
+}
+
+/// Looks up `item` (relative to `target`, starting with `/`) at the target. A segment with
+/// U+FFFD is matched against the real names of its folder, shown the way restic shows them.
+fn find_at_target(target: &Path, item: &str) -> AtTarget {
+    let parts: Vec<&str> = item.split('/').filter(|s| !s.is_empty()).collect();
+    let mut candidates = vec![target.to_path_buf()];
+    for (i, part) in parts.iter().enumerate() {
+        let mut next = Vec::new();
+        for dir in &candidates {
+            if part.contains('\u{FFFD}') {
+                let Ok(read) = std::fs::read_dir(dir) else {
+                    continue;
+                };
+                let mut found: Vec<PathBuf> = read
+                    .flatten()
+                    .filter(|e| e.file_name().to_string_lossy() == *part)
+                    .map(|e| e.path())
+                    .collect();
+                found.sort();
+                next.extend(found);
+            } else {
+                let path = dir.join(part);
+                if std::fs::symlink_metadata(&path).is_ok() {
+                    next.push(path);
+                }
+            }
+        }
+        let last = i + 1 == parts.len();
+        if !last
+            && next
+                .iter()
+                .any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
+        {
+            return AtTarget {
+                behind_link: true,
+                entries: Vec::new(),
+            };
+        }
+        candidates = next;
+    }
+    AtTarget {
+        behind_link: false,
+        entries: candidates
+            .into_iter()
+            .filter_map(|p| std::fs::symlink_metadata(&p).ok().map(|m| (p, m)))
+            .collect(),
+    }
 }
 
 /// Walks the restored folder of `plan` (`restic ls --json --recursive --no-lock`).
@@ -374,7 +475,7 @@ pub fn dry_run(
     let mut actions = DryRunActions::new();
     let res = run_streaming(access, args, cancel, &mut |line| {
         if let RestoreLine::Item(item) = parse_restore_line(line) {
-            actions.insert(item.item, item.action);
+            actions.entry(item.item).or_default().push(item.action);
         }
     })?;
     // Where the target has a file and the snapshot a folder with content, the dry run cannot
@@ -382,7 +483,7 @@ pub fn dry_run(
     // place of the file, so the entries below it are new.
     if let Some(items) = below_replaced_files(&res) {
         for item in items {
-            actions.insert(item, "restored".to_string());
+            actions.insert(item, vec!["restored".to_string()]);
         }
         return Ok(actions);
     }
@@ -400,8 +501,17 @@ fn below_replaced_files(res: &crate::restic::ResticExecutionResult) -> Option<Ve
         .iter()
         .filter(|l| l.contains("\"message_type\":\"error\""))
         .collect();
+    // The error text (`error.message`) ends with the cause; the path in front of it and the
+    // item may contain anything.
+    let cause_is_not_a_directory = |line: &str| {
+        serde_json::from_str::<serde_json::Value>(line).is_ok_and(|v| {
+            v["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.trim_end().ends_with(": not a directory"))
+        })
+    };
     let only_these = error_lines.len() == res.errors.len()
-        && error_lines.iter().all(|l| l.contains("not a directory"));
+        && error_lines.iter().all(|l| cause_is_not_a_directory(l));
     if !only_these {
         return None;
     }

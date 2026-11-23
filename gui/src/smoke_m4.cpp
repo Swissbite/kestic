@@ -490,10 +490,15 @@ int scenario_browse_path_row(const Ctx& c) {
         last = now;
         return still;
     }, 5000), "the path row stops moving");
+    QObject* flick = object_named(w, "browsePathFlick");
+    M4_CHECK(6227, flick != nullptr, "browsePathFlick missing");
     for (int i = 0; i < names.size(); ++i) {
         const QByteArray name = QStringLiteral("browsePathButton_%1").arg(i).toUtf8();
         QQuickItem* button = visible_item(w, name.constData());
         M4_CHECK(6214, button != nullptr, "path row button missing");
+        // A path longer than the row scrolls sideways: bring the folder into view first.
+        QMetaObject::invokeMethod(flick, "ensureVisible",
+            Q_ARG(QVariant, QVariant::fromValue(button->parentItem())));
         M4_CHECK(6215, !button->property("hovered").toBool(), "button not hovered");
         M4_CHECK(6216, !button->hasActiveFocus(), "button without focus");
         auto* content = button->property("contentItem").value<QQuickItem*>();
@@ -521,6 +526,7 @@ int scenario_browse_path_row(const Ctx& c) {
             M4_CHECK(6224, label->property("textFormat").toInt() == 0, "the folder name is plain text");
         }
     }
+    QMetaObject::invokeMethod(flick, "showEnd");
     M4_CHECK(6225, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
@@ -1040,8 +1046,11 @@ int scenario_restore_unmatchable(const Ctx& c) {
     repaint_fully(w);
     M4_CHECK(6321, save_screenshot(w, c.out_path), "screenshot failed");
 
+    const qreal width_with_message = r.dialog->property("width").toReal();
     trigger(instead);
     M4_CHECK(6322, wait_for_preview(r.model), "(c) the preview of the folder is done");
+    M4_CHECK(6326, qAbs(r.dialog->property("width").toReal() - width_with_message) < 1.0,
+        "the dialog keeps its width for the message");
     M4_CHECK(6323, !error->property("visible").toBool(), "(c) the message is gone");
     M4_CHECK(6324, restore_now->property("enabled").toBool(), "(c) «Restore Now» enabled for the folder");
     M4_CHECK_EQ(6325, r.dialog->property("title").toString(),
@@ -1146,6 +1155,15 @@ int scenario_restore_dialog(const Ctx& c) {
     M4_CHECK(6243, banner && banner->property("visible").toBool(), "the result of the restore is shown");
     M4_CHECK_EQ(6244, banner->property("text").toString(),
         loc(c.lang, "1 file restored", "1 Datei wiederhergestellt"), "result line");
+    // The result message must not squeeze the folder list below one entry, also in the
+    // narrow window at its minimum height.
+    auto* list = item_named(w, "browseListView");
+    auto* row = visible_item(w, "browseEntryRow");
+    auto* list_header = list ? list->property("headerItem").value<QQuickItem*>() : nullptr;
+    M4_CHECK(6273, list && row && list_header, "folder list, its header and an entry exist");
+    M4_CHECK(6274, list->height() >= list_header->height() + row->height(),
+        qPrintable(QStringLiteral("the folder list shows at least one entry (%1 px for %2 + %3)")
+                       .arg(list->height()).arg(list_header->height()).arg(row->height())));
     repaint_fully(w);
     M4_CHECK(6245, save_screenshot(w, screenshot_variant(c.out_path, "-done")), "screenshot failed");
 

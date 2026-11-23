@@ -197,7 +197,12 @@ pub fn check_target(target: &RestoreTarget, repository: Option<&Path>) -> Target
         missing: false,
     };
     let Ok(meta) = std::fs::metadata(dir) else {
-        let code = if inside_repo {
+        // A symbolic link to nothing cannot become the folder: restic fails to create it.
+        let dangling_link =
+            std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink());
+        let code = if dangling_link {
+            RestoreTargetCode::NotADirectory
+        } else if inside_repo {
             RestoreTargetCode::InsideRepository
         } else if target.is_original() {
             RestoreTargetCode::MissingMappedDir

@@ -310,3 +310,21 @@ fn m4_s05_unmatchable_name_gives_way_to_its_folder() {
 fn strings(paths: &[&str]) -> Vec<String> {
     paths.iter().map(ToString::to_string).collect()
 }
+
+/// A symbolic link to nothing is no target folder: restic could not create the folder there.
+#[test]
+fn m4_s05_dangling_symlink_is_no_target_folder() {
+    use kestic_core::restore::RestoreTarget;
+    use kestic_core::restore_target::check_target;
+    use kestic_i18n::codes::RestoreTargetCode;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(dir.path().join("gone"), &link).expect("symlink");
+    let target = RestoreTarget::NewFolder {
+        dir: link.to_string_lossy().into_owned(),
+    };
+    assert_eq!(
+        check_target(&target, None).code,
+        RestoreTargetCode::NotADirectory
+    );
+}
