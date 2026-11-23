@@ -276,6 +276,14 @@ pub(crate) fn execute_restore_preview(
         )));
     }
     let check = check_target(&target, ctx.repositories());
+    // restic takes the target as text: a folder whose real path is not UTF-8 would become
+    // another folder.
+    if check.resolved.to_str().is_none() {
+        return Err(BackupRunError::InvalidTarget(format!(
+            "{}: the real path of the target folder is not valid UTF-8",
+            check.resolved.display()
+        )));
+    }
     let dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
         // restic leaves `uid` out of the snapshot when it is 0 (a snapshot made by root).

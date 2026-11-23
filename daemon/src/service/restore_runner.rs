@@ -72,6 +72,14 @@ fn invalid(message: impl std::fmt::Display) -> KesticServiceErr {
 
 /// A target the restore cannot write to is refused before any restic process starts.
 fn refuse_unusable(check: &TargetCheck) -> Result<(), KesticServiceErr> {
+    // restic takes the target as text: a folder whose real path is not UTF-8 would become
+    // another folder.
+    if check.resolved.to_str().is_none() {
+        return Err(invalid(format!(
+            "{}: the real path of the target folder is not valid UTF-8",
+            check.resolved.display()
+        )));
+    }
     if check.usable() {
         return Ok(());
     }

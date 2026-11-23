@@ -2136,3 +2136,80 @@ fn m4_s05_restore_stopped_by_sleep_is_interrupted() {
         },
     );
 }
+
+/// A symbolic link and a hard-linked file that are the same at the target as in the snapshot
+/// count as unchanged in every mode, although restic reports them `restored` with `always`
+/// and `if-changed`.
+#[test]
+fn m4_s05_identical_links_are_unchanged() {
+    run_isolated_test(
+        "m4_s05_identical_links_are_unchanged",
+        "KESTIC_M4_S05_SAME_LINKS_INNER",
+        |root| {
+            for_each_variant(root, "M4RL", linked_tree, |fx, v| {
+                for mode in [
+                    RestoreOverwrite::Never,
+                    RestoreOverwrite::IfChanged,
+                    RestoreOverwrite::Always,
+                ] {
+                    let (_, p) = fx.preview(&[], Some(fx.original()), mode);
+                    let o = outcomes(&p);
+                    assert_eq!(
+                        o.get("link"),
+                        Some(&RestoreOutcome::Identical),
+                        "{} {mode:?}: symlink",
+                        v.label
+                    );
+                    assert_eq!(
+                        o.get("hard.txt"),
+                        Some(&RestoreOutcome::Identical),
+                        "{} {mode:?}: hard link",
+                        v.label
+                    );
+                    assert_eq!(p.kept_files, 0, "{} {mode:?}: nothing kept", v.label);
+                    assert_eq!(
+                        p.overwritten_files, 0,
+                        "{} {mode:?}: nothing overwritten",
+                        v.label
+                    );
+                }
+            });
+        },
+    );
+}
+
+/// A target folder whose real path (behind a symbolic link) is not UTF-8 is refused: restic
+/// takes the target as text and would write into another folder.
+#[test]
+fn m4_s05_target_with_a_real_path_that_is_not_utf8_is_refused() {
+    run_isolated_test(
+        "m4_s05_target_with_a_real_path_that_is_not_utf8_is_refused",
+        "KESTIC_M4_S05_TARGET_NON_UTF8_INNER",
+        |root| {
+            use std::os::unix::ffi::OsStrExt;
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RT", small_tree, |_| {});
+            let base = fx.new_dir("latin1");
+            fs::create_dir_all(&base).expect("mkdir base");
+            let real = base.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+            fs::create_dir(&real).expect("mkdir caf\\xe9");
+            let link = base.join("link");
+            std::os::unix::fs::symlink(&real, &link).expect("symlink");
+            let id = fx.start_preview(&["a.txt"], Some(new_folder(&link)), RestoreOverwrite::Never);
+            let st = fx.wait_query(&id, &big_page());
+            assert_eq!(st.state, "error", "preview refused: {st:?}");
+            let err = fx
+                .start_restore(&["a.txt"], new_folder(&link), RestoreOverwrite::Never, None)
+                .expect_err("StartRestore refused");
+            assert_eq!(
+                err.code(),
+                kestic_i18n::codes::ServiceErrorCode::InvalidInput
+            );
+            assert!(
+                !base.join("caf\u{FFFD}").exists(),
+                "no other folder was written"
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}
