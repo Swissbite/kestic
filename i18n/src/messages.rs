@@ -418,7 +418,7 @@ impl ConnectionTestCode {
                 &[detail],
             ),
             Self::SshKeyRejected => Message::new(i18n_noop(
-                "The server rejected the login with your SSH key. Copy your public key to the server (ssh-copy-id) or load the key into the ssh-agent, then test again.",
+                "The server rejected the login with your SSH key. Copy your public key to the server with ssh-copy-id, or load the key into the ssh-agent. Then test again.",
             )),
             Self::JumpHostUnsupported => Message::new(i18n_noop(
                 "Servers behind a jump host are not supported yet.",

@@ -17,6 +17,7 @@ use kestic_core::mount::{FakeMountInspector, FakeMountState, MountInspector};
 use kestic_daemon::dbus_api::{DestinationTypeDto, KESTIC_BUS_NAME};
 use kestic_i18n::codes::DestinationTypeCode;
 use kestic_test_support::s3_server::S3ServerGuard;
+use kestic_test_support::sftp_server::SftpServerGuard;
 use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -351,6 +352,67 @@ fn m5_03_gui_rclone_form() {
                     lang,
                     &smoke_artifact("rclone-form", layout, lang),
                     &[],
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// M5-S01 (GUI parts of AC-M5-01-1 and AC-M5-01-4 (a)): the SFTP form with host, port, user,
+/// path and the hint on the SSH key and the ssh-agent; the connection test against an unknown
+/// server asks with key type and SHA256 fingerprint, and «Trust Server» lets the test pass. The
+/// C++ scenario checks each part; Kestic's `known_hosts` is removed before every run, so each
+/// language meets an unknown server.
+#[test]
+fn m5_01_gui_sftp_form_asks_to_trust_an_unknown_server() {
+    run_isolated_test(
+        "m5_01_gui_sftp_form_asks_to_trust_an_unknown_server",
+        "KESTIC_M5_GUI_SFTP_INNER",
+        |root| {
+            let _fakes = StdFakes::start_with(FakeSetup::default());
+            let rig = M3Rig::start_on(
+                root,
+                &latest_variant(),
+                "",
+                KESTIC_BUS_NAME,
+                datetime!(2026-12-01 10:00:00 UTC),
+                |_| {},
+            );
+            let server = SftpServerGuard::start(&root.join("sshd"));
+            kestic_core::sftp::set_test_ssh_config(Some(server.ssh_config.clone()));
+            let paths = kestic_core::sftp::KnownHostsPaths::from_env().expect("known_hosts paths");
+            let listed = std::process::Command::new("ssh-keygen")
+                .args(["-l", "-E", "sha256", "-f"])
+                .arg(root.join("sshd").join("host_key.pub"))
+                .output()
+                .expect("ssh-keygen -l");
+            let fingerprint = String::from_utf8_lossy(&listed.stdout)
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_string();
+            let port = server.port.to_string();
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                let _ = fs::remove_file(&paths.kestic);
+                let repo = root.join(format!("sftp-repo-{layout}-{lang}"));
+                run_m5_gui_smoke(
+                    root,
+                    "m5-sftp-form",
+                    layout,
+                    lang,
+                    &smoke_artifact("sftp-form", layout, lang),
+                    &[
+                        ("KESTIC_SMOKE_SFTP_PORT", &port),
+                        ("KESTIC_SMOKE_SFTP_USER", &server.user),
+                        ("KESTIC_SMOKE_SFTP_PATH", &repo.to_string_lossy()),
+                        ("KESTIC_SMOKE_SFTP_FINGERPRINT", &fingerprint),
+                    ],
+                );
+                assert_eq!(
+                    fs::read_to_string(&paths.kestic).expect("trusted key written"),
+                    format!("{}\n", server.known_hosts_line()),
+                    "{layout}/{lang}: the trusted key"
                 );
             }
             rig.daemon.stop();

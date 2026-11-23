@@ -314,7 +314,11 @@ pub fn check_host_key(
     for file in paths.all() {
         entries.extend(lookup(&name, file)?.into_iter().map(|e| (file, e)));
     }
-    let scanned = scan(&target, &scan_types(entries.iter().map(|(_, e)| e)), timeout)?;
+    let scanned = scan(
+        &target,
+        &scan_types(entries.iter().map(|(_, e)| e)),
+        timeout,
+    )?;
     let Some((first_type, first_key)) = scanned.first().cloned() else {
         return Ok(HostKeyCheck::NoKey(format!(
             "no SSH host key received from {name}"

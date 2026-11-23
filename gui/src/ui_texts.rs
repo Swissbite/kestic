@@ -95,6 +95,7 @@ gui_texts! {
     Drive = "drive" => i18n_noop("Drive"),
     DriveWithLabel = "drive_with_label" => i18n_noop("Drive (%1)"),
     RestServer = "rest_server" => i18n_noop("REST Server"),
+    Sftp = "sftp" => i18n_noop("SFTP"),
     S3Compatible = "s3_compatible" => i18n_noop("S3-Compatible Storage"),
     BackblazeB2 = "backblaze_b2" => i18n_noop("Backblaze B2"),
     Azure = "azure" => i18n_noop("Azure"),

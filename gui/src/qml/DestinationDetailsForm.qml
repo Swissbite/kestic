@@ -318,7 +318,7 @@ ColumnLayout {
             visible: form.draft.kindIsSftp
             Kirigami.FormData.label: form.editing ? i18n("Host:") : i18n("Host*:")
             text: form.draft.host
-            placeholderText: "backup.example.org"
+            placeholderText: "192.168.1.10"
             onTextChanged: {
                 form.draft.host = text;
                 form.locationEdited();

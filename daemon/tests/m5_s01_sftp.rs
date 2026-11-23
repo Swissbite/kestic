@@ -539,7 +539,8 @@ fn ac_m5_01_5_stopped_sshd_blocks_manual_run_within_15_seconds() {
                         "StartBackup on a stopped server started run {run}; restic calls: {:?}; \
                          sshd log: {}",
                         rig.wrapper.entries(),
-                        fs::read_to_string(rig.dir.join("sshd").join("sshd.log")).unwrap_or_default()
+                        fs::read_to_string(rig.dir.join("sshd").join("sshd.log"))
+                            .unwrap_or_default()
                     ),
                 };
                 assert_dbus_error_name(&err, "net.daester.Kestic.Error.ManualRunBlocked");

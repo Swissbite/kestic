@@ -403,5 +403,13 @@ mod tests {
             ssh_failure("Fatal: Permission denied (publickey) in a path"),
             None
         );
+        // Without a line of ssh, a session that never started means the server was not reached.
+        let closed = "Fatal: unable to open repository at sftp://u@h:22//x: unable to start the \
+                      sftp session, error: error receiving version packet from server: read |0: \
+                      file already closed";
+        assert_eq!(
+            crate::restic::classify_exit(1, Some(closed), Vec::new(), "").kind,
+            crate::restic::ResticFailureKind::DestinationUnreachable
+        );
     }
 }

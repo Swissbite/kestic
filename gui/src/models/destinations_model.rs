@@ -84,7 +84,7 @@ fn build_destination_row(
             path,
         } => (
             "sftp".to_string(),
-            i18n("SFTP").to_string(),
+            GuiText::Sftp.text(),
             kestic_core::sftp::display_location(host, *port, user, path),
             user.clone(),
         ),

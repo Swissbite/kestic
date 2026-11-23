@@ -107,7 +107,7 @@ ColumnLayout {
         switch (card) {
         case "drive": return i18n("A drive you plug in");
         case "folder": return i18n("Local folder, for example on a second hard disk");
-        case "sftp": return i18n("SFTP");
+        case "sftp": return Texts.label("sftp");
         case "rest": return i18n("For example on the NAS");
         case "cloud": return i18n("S3-compatible, Backblaze B2, Azure, Google Cloud, Swift");
         case "rclone": return i18n("Google Drive, OneDrive, Dropbox …");
