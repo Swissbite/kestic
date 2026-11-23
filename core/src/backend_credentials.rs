@@ -65,7 +65,18 @@ impl DestinationKind {
                 .filter(|v| v.secret)
                 .map(|v| BackendSecretSlot::new(&v.name, &crate::generic::secret_kind(&v.name)))
                 .collect(),
-            Self::Local { .. } | Self::Rest { .. } => Vec::new(),
+            Self::Local { .. } | Self::Rest { .. } | Self::Sftp { .. } => Vec::new(),
+        }
+    }
+
+    /// restic options after the repository: the ssh options of an SFTP destination
+    /// ([`crate::sftp::restic_options`]).
+    pub fn restic_backend_options(&self) -> Vec<String> {
+        match self {
+            Self::Sftp { .. } => crate::sftp::restic_options(),
+            Self::Local { .. } | Self::Rest { .. } | Self::S3 { .. } | Self::Generic { .. } => {
+                Vec::new()
+            }
         }
     }
 
@@ -75,7 +86,9 @@ impl DestinationKind {
     pub fn backend_env_cleared_prefixes(&self) -> Vec<&'static str> {
         match self {
             Self::S3 { .. } => INHERITED_AWS_PREFIXES.to_vec(),
-            Self::Local { .. } | Self::Rest { .. } | Self::Generic { .. } => Vec::new(),
+            Self::Local { .. } | Self::Rest { .. } | Self::Sftp { .. } | Self::Generic { .. } => {
+                Vec::new()
+            }
         }
     }
 
@@ -97,7 +110,9 @@ impl DestinationKind {
                 .filter(|v| !v.secret)
                 .map(|v| (v.name.clone(), v.value.clone().unwrap_or_default()))
                 .collect(),
-            Self::Local { .. } | Self::Rest { .. } | Self::S3 { .. } => Vec::new(),
+            Self::Local { .. } | Self::Rest { .. } | Self::Sftp { .. } | Self::S3 { .. } => {
+                Vec::new()
+            }
         }
     }
 }

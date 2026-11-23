@@ -77,6 +77,17 @@ fn build_destination_row(
             url.clone(),
             username.clone().unwrap_or_default(),
         ),
+        DestinationKind::Sftp {
+            host,
+            port,
+            user,
+            path,
+        } => (
+            "sftp".to_string(),
+            GuiText::Sftp.text(),
+            kestic_core::sftp::display_location(host, *port, user, path),
+            user.clone(),
+        ),
         DestinationKind::S3 {
             endpoint,
             bucket,

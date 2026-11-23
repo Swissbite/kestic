@@ -24,6 +24,7 @@ use kestic_core::destination::{
     remove_destination_secrets, setup_destination, verify_and_update_stored_password,
 };
 use kestic_core::generic::{GenericInputError, missing_program};
+use kestic_core::known_hosts::HostKeyError;
 use kestic_core::local_path::{NotALocalPath, connection_notes};
 use kestic_core::model::{
     BackupId, Destination, DestinationId, DestinationKind, MaintenanceSchedule, ModelError,
@@ -42,7 +43,8 @@ use std::sync::{Arc, Mutex};
 use zbus::Connection;
 
 impl DaemonCore {
-    pub fn remove_destination(&mut self, dest_id: &str) -> Result<(), KesticServiceErr> {
+    /// Removes the destination from the configuration and its secrets; returns it.
+    pub fn remove_destination(&mut self, dest_id: &str) -> Result<Destination, KesticServiceErr> {
         let id = DestinationId::parse(dest_id)
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
         let mut next = self.config.clone();
@@ -61,7 +63,7 @@ impl DaemonCore {
         self.dest_availability.remove(&id);
         self.dest_stale_locks.remove(&id);
         let _ = self.clear_destination_state_cached(&id);
-        Ok(())
+        Ok(removed)
     }
 
     pub fn update_destination_maintenance(
@@ -110,6 +112,7 @@ fn test_failure(code: ConnectionTestCode, detail: String) -> ConnectionTestResul
         detail,
         notes: Vec::new(),
         program: None,
+        host_key: None,
     }
 }
 
@@ -120,6 +123,7 @@ fn test_ok() -> ConnectionTestResultDto {
         detail: String::new(),
         notes: Vec::new(),
         program: None,
+        host_key: None,
     }
 }
 
@@ -228,7 +232,7 @@ fn check_login_before_init(inputs: &DestinationTestInputs<'_>) -> ConnectionTest
         Ok(RepositoryProbe::Exists) => {
             test_failure(ConnectionTestCode::RepositoryExists, String::new())
         }
-        Err(err) => destination_error_result(err),
+        Err(err) => destination_error_result(err, inputs.clock),
     }
 }
 
@@ -245,9 +249,29 @@ fn missing_login(creds: &BackendCredentials, kind: &DestinationKind) -> Option<S
     }
 }
 
-/// The connection test result of a failed restic probe.
-fn destination_error_result(err: DestinationError) -> ConnectionTestResultDto {
+/// The connection test result of a failed restic probe; an unknown SFTP host key is kept for
+/// `TrustHostKey`.
+fn destination_error_result(err: DestinationError, clock: &dyn Clock) -> ConnectionTestResultDto {
     let kind = match err {
+        DestinationError::HostKeyUnknown(key) => {
+            return ConnectionTestResultDto {
+                host_key: Some(Box::new(super::host_keys::offer_host_key(&key, clock))),
+                ..test_failure(ConnectionTestCode::UnknownHostKey, key.name.clone())
+            };
+        }
+        DestinationError::HostKeyChanged(file) => {
+            return test_failure(
+                ConnectionTestCode::HostKeyChanged,
+                file.to_string_lossy().into_owned(),
+            );
+        }
+        DestinationError::HostKeyCheck(HostKeyError::JumpHost(_)) => {
+            ConnectionTestCode::JumpHostUnsupported
+        }
+        DestinationError::HostKeyCheck(HostKeyError::NoAnswer { .. }) => {
+            ConnectionTestCode::NotResponding
+        }
+        DestinationError::SshKeyRejected(_) => ConnectionTestCode::SshKeyRejected,
         DestinationError::WrongPassword => ConnectionTestCode::WrongPassword,
         DestinationError::AuthFailed(_) => ConnectionTestCode::AuthFailed,
         DestinationError::RepositoryMissing(_) => ConnectionTestCode::RepositoryMissing,
@@ -352,7 +376,7 @@ fn check_connect_existing_destination(
     match effective_repo_pw {
         Some(repo_pw) => {
             if let Err(err) = check_existing_repository(inputs.dest, &repo_pw, &backend, &runtime) {
-                return destination_error_result(err);
+                return destination_error_result(err, inputs.clock);
             }
         }
         None => match probe_repository(inputs.dest, &backend, &runtime) {
@@ -360,7 +384,7 @@ fn check_connect_existing_destination(
             Ok(RepositoryProbe::Missing | RepositoryProbe::BucketMissing) => {
                 return test_failure(ConnectionTestCode::RepositoryMissing, String::new());
             }
-            Err(err) => return destination_error_result(err),
+            Err(err) => return destination_error_result(err, inputs.clock),
         },
     }
 
@@ -642,6 +666,24 @@ pub(crate) fn update_destination_unlocked(
     Ok((guard.conn.clone(), state_dto, tray_state))
 }
 
+/// `RemoveDestination`: removes the destination, then, without holding the daemon state, the
+/// lines of its SFTP server from Kestic's `known_hosts` when no other destination uses it (asking
+/// ssh how it resolves the server may take a while).
+pub(crate) fn remove_destination_unlocked(
+    shared: &Arc<Mutex<DaemonCore>>,
+    dest_id: &str,
+) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
+    let (removed, remaining) = {
+        let mut guard = shared.lock_unpoisoned();
+        let removed = guard.remove_destination(dest_id)?;
+        (removed, guard.config.destinations.clone())
+    };
+    super::host_keys::forget_unused_host(&removed, &remaining);
+    let guard = shared.lock_unpoisoned();
+    let (state_dto, tray_state) = guard.build_state_and_tray();
+    Ok((guard.conn.clone(), state_dto, tray_state))
+}
+
 pub(crate) fn update_destination_password_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     dest_id: &str,
@@ -773,9 +815,10 @@ mod tests {
     /// not respond», the code the GUI shows with its action.
     #[test]
     fn restic_that_does_not_answer_is_reported_as_not_responding() {
-        let result = destination_error_result(DestinationError::NotResponding(
-            "restic did not finish within 15 s".to_string(),
-        ));
+        let result = destination_error_result(
+            DestinationError::NotResponding("restic did not finish within 15 s".to_string()),
+            &kestic_core::clock::SystemClock,
+        );
         assert!(!result.ok, "the test failed");
         assert_eq!(result.error_kind, Some(ConnectionTestCode::NotResponding));
     }

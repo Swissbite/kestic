@@ -1129,7 +1129,7 @@ msgstr "Ein Laufwerk, das Sie einstecken"
 msgid "Local folder, for example on a second hard disk"
 msgstr "Lokaler Ordner, z. B. auf einer zweiten Festplatte"
 
-#: gui/src/qml/DestinationTypeChooser.qml
+#: gui/src/ui_texts.rs
 msgid "SFTP"
 msgstr "SFTP"
 
@@ -3710,3 +3710,129 @@ msgid ""
 "Bucket '%1' does not exist yet. Kestic creates it when the destination is "
 "added."
 msgstr "Bucket «%1» gibt es noch nicht; Kestic legt ihn beim Anlegen des Ziels an."
+
+#: i18n/src/messages.rs
+msgid "Unknown server"
+msgstr "Unbekannter Server"
+
+#: i18n/src/messages.rs
+msgid "The server identifies itself differently than before"
+msgstr "Der Server meldet sich anders als bisher"
+
+#: i18n/src/messages.rs
+msgid "Unknown server. Compare its fingerprint and trust it to continue."
+msgstr "Unbekannter Server. Vergleichen Sie seinen Fingerprint und vertrauen Sie ihm, um fortzufahren."
+
+#: i18n/src/messages.rs
+msgid "The server identifies itself differently than before. This can be an attack. Ask the operator of the server. Old entry: %1"
+msgstr "Der Server meldet sich anders als bisher. Das kann ein Angriff sein. Fragen Sie den Betreiber des Servers. Alter Eintrag: %1"
+
+#: i18n/src/messages.rs
+msgid "The server rejected the login with your SSH key. Copy your public key to the server with ssh-copy-id, or load the key into the ssh-agent. Then test again."
+msgstr "Der Server hat die Anmeldung mit Ihrem SSH-Schlüssel abgelehnt. Kopieren Sie Ihren öffentlichen Schlüssel mit ssh-copy-id auf den Server oder laden Sie den Schlüssel in den ssh-agent. Testen Sie danach erneut."
+
+#: i18n/src/messages.rs
+msgid "Servers behind a jump host are not supported yet."
+msgstr "Server über Sprungserver werden noch nicht unterstützt."
+
+#: i18n/src/messages.rs
+msgid "Unknown server: test the connection and trust the server first."
+msgstr "Unbekannter Server: Testen Sie zuerst die Verbindung und vertrauen Sie dem Server."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Which SSH server should be used?"
+msgstr "Welcher SSH-Server soll verwendet werden?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Host:"
+msgstr "Host:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Host*:"
+msgstr "Host*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "SSH server"
+msgstr "SSH-Server"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter a host name or an IP address."
+msgstr "Geben Sie einen Hostnamen oder eine IP-Adresse ein."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Port:"
+msgstr "Port:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "SSH port"
+msgstr "SSH-Port"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter a port from 1 to 65535."
+msgstr "Geben Sie einen Port von 1 bis 65535 ein."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "User:"
+msgstr "Benutzer:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "User*:"
+msgstr "Benutzer*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "SSH user"
+msgstr "SSH-Benutzer"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter the user name on the server: only letters, digits, '.', '_' and '-'."
+msgstr "Geben Sie den Benutzernamen auf dem Server ein: nur Buchstaben, Ziffern, «.», «_» und «-»."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Repository path on the server"
+msgstr "Repository-Pfad auf dem Server"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid ""
+"Enter an absolute path or one relative to the home folder, not starting with "
+"'~'."
+msgstr "Geben Sie einen absoluten Pfad oder einen Pfad relativ zum persönlichen Ordner ein, nicht mit «~» am Anfang."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Login:"
+msgstr "Anmeldung:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid ""
+"With your SSH key or the ssh-agent. Copy your public key to the server first, "
+"for example with ssh-copy-id."
+msgstr "Mit Ihrem SSH-Schlüssel oder dem ssh-agent. Kopieren Sie Ihren öffentlichen Schlüssel zuerst auf den Server, zum Beispiel mit ssh-copy-id."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Trust This Server?"
+msgstr "Diesem Server vertrauen?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Trust Server"
+msgstr "Server vertrauen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Server:"
+msgstr "Server:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Key type:"
+msgstr "Schlüsseltyp:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Fingerprint:"
+msgstr "Fingerprint:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid ""
+"Compare the fingerprint with the one of the server. Kestic then remembers the "
+"server."
+msgstr "Vergleichen Sie den Fingerprint mit dem des Servers. Danach merkt sich Kestic den Server."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Trust Server…"
+msgstr "Server vertrauen…"

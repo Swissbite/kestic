@@ -60,11 +60,74 @@ ColumnLayout {
         }
     }
 
+    Kirigami.PromptDialog {
+        id: hostKeyDialog
+        objectName: form.namePrefix + "HostKeyDialog"
+        title: i18n("Trust This Server?")
+        standardButtons: Kirigami.Dialog.Cancel
+        customFooterActions: [
+            Kirigami.Action {
+                objectName: form.namePrefix + "TrustHostKeyAction"
+                icon.name: "security-high"
+                text: i18n("Trust Server")
+                onTriggered: {
+                    hostKeyDialog.close();
+                    form.draft.trustHostKey();
+                }
+            }
+        ]
+
+        ColumnLayout {
+            implicitWidth: Kirigami.Units.gridUnit * 24
+            spacing: Kirigami.Units.mediumSpacing
+
+            Kirigami.FormLayout {
+                Layout.fillWidth: true
+
+                Controls.Label {
+                    objectName: form.namePrefix + "HostKeyServer"
+                    Kirigami.FormData.label: i18n("Server:")
+                    text: form.draft.hostKey ? form.draft.hostKey.host + (form.draft.hostKey.port === 22 ? "" : ":" + form.draft.hostKey.port) : ""
+                }
+
+                Controls.Label {
+                    objectName: form.namePrefix + "HostKeyType"
+                    Kirigami.FormData.label: i18n("Key type:")
+                    text: form.draft.hostKey ? form.draft.hostKey.key_type : ""
+                }
+
+                Controls.Label {
+                    objectName: form.namePrefix + "HostKeyFingerprint"
+                    Kirigami.FormData.label: i18n("Fingerprint:")
+                    text: form.draft.hostKey ? form.draft.hostKey.fingerprint_sha256 : ""
+                    font: Kirigami.Theme.fixedWidthFont
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    Layout.fillWidth: true
+                }
+            }
+
+            Controls.Label {
+                text: i18n("Compare the fingerprint with the one of the server. Kestic then remembers the server.")
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+        }
+    }
+
+    Connections {
+        target: form.draft
+        function onHostKeyOffered() {
+            hostKeyDialog.open();
+        }
+    }
+
     Kirigami.Heading {
         visible: !form.editing
         level: 2
         text: form.draft.kindIsS3
             ? i18n("Which S3-compatible storage should be used?")
+            : form.draft.kindIsSftp ? i18n("Which SSH server should be used?")
             : form.draft.asksRcloneRemote ? i18n("Which rclone remote should be used?")
             : form.draft.kindIsGeneric ? i18n("Where on %1 is the repository?", form.serviceLabel())
             : form.draft.kindIsRest ? i18n("Where is the REST server located?") : i18n("Where should the local repository be stored?")
@@ -73,10 +136,20 @@ ColumnLayout {
     Kirigami.InlineMessage {
         objectName: form.namePrefix + "FeedbackBanner"
         Layout.fillWidth: true
-        type: form.draft.testFeedbackOk ? Kirigami.MessageType.Positive : Kirigami.MessageType.Error
+        // An unknown server is a question, not an error; a changed host key stays an error.
+        type: form.draft.testFeedbackOk ? Kirigami.MessageType.Positive
+            : form.draft.hostKey !== null ? Kirigami.MessageType.Information
+            : Kirigami.MessageType.Error
         visible: form.draft.testFeedback !== ""
         text: form.draft.testFeedback
         actions: [
+            Kirigami.Action {
+                objectName: form.namePrefix + "ShowHostKeyAction"
+                icon.name: "security-high"
+                text: i18n("Trust Server…")
+                visible: !form.draft.testFeedbackOk && form.draft.hostKey !== null
+                onTriggered: hostKeyDialog.open()
+            },
             Kirigami.Action {
                 objectName: form.namePrefix + "SwitchToInitAction"
                 icon.name: "folder-new"
@@ -200,7 +273,7 @@ ColumnLayout {
             objectName: form.namePrefix + "NameField"
             Kirigami.FormData.label: form.editing ? Texts.label("name_label") : Texts.label("required_name_label")
             text: form.draft.name
-            placeholderText: form.editing ? "" : ((form.draft.kindIsS3 || form.draft.kindIsGeneric) ? i18n("Cloud Backup") : form.draft.kindIsRest ? i18n("NAS") : i18n("Local Backup"))
+            placeholderText: form.editing ? "" : ((form.draft.kindIsS3 || form.draft.kindIsGeneric) ? i18n("Cloud Backup") : (form.draft.kindIsRest || form.draft.kindIsSftp) ? i18n("NAS") : i18n("Local Backup"))
             onTextChanged: form.draft.name = text
             Accessible.name: i18n("Destination name")
         }
@@ -213,7 +286,7 @@ ColumnLayout {
         }
 
         RowLayout {
-            visible: !form.draft.kindIsS3 && !form.draft.kindIsGeneric
+            visible: !form.draft.kindIsS3 && !form.draft.kindIsGeneric && !form.draft.kindIsSftp
             Kirigami.FormData.label: form.draft.kindIsRest
                 ? (form.editing ? i18n("Address:") : i18n("Address*:"))
                 : (form.editing ? i18n("Path:") : i18n("Path*:"))
@@ -241,11 +314,115 @@ ColumnLayout {
 
         Controls.Label {
             objectName: form.namePrefix + "LocationError"
-            visible: !form.draft.kindIsS3 && !form.draft.kindIsGeneric && !form.draft.locationValid
+            visible: !form.draft.kindIsS3 && !form.draft.kindIsGeneric && !form.draft.kindIsSftp
+                && !form.draft.locationValid
             text: form.draft.kindIsRest
                 ? i18n("Enter a valid http:// or https:// address.")
                 : i18n("Path is required.")
             color: Kirigami.Theme.negativeTextColor
+        }
+
+        // SFTP: server, port, user and path; the login uses an SSH key or the ssh-agent.
+        Controls.TextField {
+            objectName: form.namePrefix + "HostField"
+            visible: form.draft.kindIsSftp
+            Kirigami.FormData.label: form.editing ? i18n("Host:") : i18n("Host*:")
+            text: form.draft.host
+            placeholderText: "192.168.1.10"
+            onTextChanged: {
+                form.draft.host = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("SSH server")
+            Layout.fillWidth: true
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "HostError"
+            visible: form.draft.kindIsSftp && !form.draft.hostValid
+            text: i18n("Enter a host name or an IP address.")
+            color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+        }
+
+        Controls.TextField {
+            objectName: form.namePrefix + "PortField"
+            visible: form.draft.kindIsSftp
+            Kirigami.FormData.label: i18n("Port:")
+            text: form.draft.port
+            inputMethodHints: Qt.ImhDigitsOnly
+            onTextChanged: {
+                form.draft.port = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("SSH port")
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "PortError"
+            visible: form.draft.kindIsSftp && !form.draft.portValid
+            text: i18n("Enter a port from 1 to 65535.")
+            color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+        }
+
+        Controls.TextField {
+            objectName: form.namePrefix + "SftpUserField"
+            visible: form.draft.kindIsSftp
+            Kirigami.FormData.label: form.editing ? i18n("User:") : i18n("User*:")
+            text: form.draft.username
+            onTextChanged: {
+                form.draft.username = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("SSH user")
+            Layout.fillWidth: true
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "SftpUserError"
+            visible: form.draft.kindIsSftp && !form.draft.sftpUserValid
+            text: i18n("Enter the user name on the server: only letters, digits, '.', '_' and '-'.")
+            color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+        }
+
+        Controls.TextField {
+            objectName: form.namePrefix + "SftpPathField"
+            visible: form.draft.kindIsSftp
+            Kirigami.FormData.label: form.editing ? i18n("Path:") : i18n("Path*:")
+            text: form.draft.sftpPath
+            placeholderText: "/srv/backup"
+            onTextChanged: {
+                form.draft.sftpPath = text;
+                form.locationEdited();
+            }
+            Accessible.name: i18n("Repository path on the server")
+            Layout.fillWidth: true
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "SftpPathError"
+            visible: form.draft.kindIsSftp && !form.draft.sftpPathValid
+            text: i18n("Enter an absolute path or one relative to the home folder, not starting with '~'.")
+            color: Kirigami.Theme.negativeTextColor
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+        }
+
+        Controls.Label {
+            objectName: form.namePrefix + "SshKeyHint"
+            visible: form.draft.kindIsSftp
+            Kirigami.FormData.label: i18n("Login:")
+            Kirigami.FormData.labelAlignment: Qt.AlignTop
+            text: i18n("With your SSH key or the ssh-agent. Copy your public key to the server first, for example with ssh-copy-id.")
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
         }
 
         // Generic form: the repository URL, or for the rclone card only the remote after `rclone:`.

@@ -31,7 +31,7 @@ use kestic_core::backup::{
 };
 use kestic_core::backup_progress::BackupProgressTracker;
 use kestic_core::clock::Clock;
-use kestic_core::destination::{DestinationError, preflight_check_with_restic};
+use kestic_core::destination::{DestinationError, preflight_check_with_restic, reachability};
 use kestic_core::history::BackoffKind;
 use kestic_core::maintenance::detect_stale_locks;
 use kestic_core::model::{
@@ -41,7 +41,7 @@ use kestic_core::mount::{MountInspector, SourceCheckResult, current_home_dir};
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::{
     CancelHandle, ResticExecutionResult, ResticFailureKind, ResticRuntime, ResticStatusMessage,
-    ResticStreamEvent, SECRET_KIND_REPO, redact_secrets,
+    ResticStreamEvent, SECRET_KIND_REPO, Transport, redact_secrets,
 };
 use kestic_core::scheduler::{
     SystemEnvironment, UnmetPrecondition, evaluate_run_conditions, format_local_slot_hint,
@@ -326,7 +326,10 @@ fn start_backup_internal(
     );
     let source_ok = source_status.is_ok();
     let dest_res = if source_ok {
-        preflight_check_with_restic(&ctx.dest, &ctx.deps.runtime(&resolved))
+        reachability(preflight_check_with_restic(
+            &ctx.dest,
+            &ctx.deps.runtime(&resolved),
+        ))
     } else {
         Ok(())
     };
@@ -678,6 +681,17 @@ fn process_backup_success_result(
             .map_or_default(|d| redact_secrets(d, secret_strs));
         Some(if raw.is_empty() {
             base
+        } else if raw.starts_with("subprocess ssh: ")
+            && matches!(
+                res.presentation.kind,
+                ResticFailureKind::BackendAuthFailed
+                    | ResticFailureKind::HostKeyUnknown
+                    | ResticFailureKind::HostKeyChanged
+            )
+        {
+            // ssh's line starts the summary: the run's error kind is read back only from a
+            // summary that starts with it, never from a file name or banner after other text.
+            format!("{raw} ({base})")
         } else {
             format!("{base}: {raw}")
         })
@@ -950,7 +964,7 @@ fn finalize_backup_run_state(
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);
         } else if (outcome.final_status == RunStatus::Error
             && outcome.exit_code.is_some()
-            && !run_blocks_schedule(&run))
+            && !run_blocks_schedule(&run, Transport::of(&ctx.dest.kind)))
             || (outcome.final_status == RunStatus::Cancelled
                 && !guard.shutdown_flag.load(Ordering::SeqCst))
         {

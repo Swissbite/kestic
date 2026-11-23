@@ -294,6 +294,7 @@ impl DaemonCore {
         let pending_forget = self.is_pending_forget_cached(&backup.id);
         let err_info = extract_last_run_error_info(
             last_run.as_ref(),
+            super::run_errors::destination_transport(&self.config, &backup.destination_id),
             pending_forget,
             last_run
                 .as_ref()

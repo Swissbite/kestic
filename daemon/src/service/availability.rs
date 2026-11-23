@@ -10,7 +10,7 @@ use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, Destinatio
 use crate::dbus_server::emit_status_changed;
 use kestic_core::backup::BackupRunError;
 use kestic_core::destination::{
-    DEFAULT_CONNECT_TIMEOUT, preflight_check_destination, preflight_check_with_restic,
+    DEFAULT_CONNECT_TIMEOUT, preflight_check_destination, preflight_check_with_restic, reachability,
 };
 use kestic_core::maintenance::{LockClassification, detect_stale_locks, execute_unlock};
 use kestic_core::model::{Backup, Destination, DestinationId};
@@ -286,7 +286,7 @@ fn spawn_restic_availability_checks(
         let mut updates = Vec::new();
         if let Some(restic) = resolved.as_ref() {
             for dest in &destinations {
-                let res = preflight_check_with_restic(dest, &deps.runtime(restic));
+                let res = reachability(preflight_check_with_restic(dest, &deps.runtime(restic)));
                 let checked_at = deps.clock.now_utc().unix_timestamp();
                 updates.push(DestinationAvailabilityDto::from_probe(
                     &dest.id, &res, checked_at,

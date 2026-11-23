@@ -11,7 +11,7 @@ use kestic_core::destination::{DestinationError, DestinationSetupMode};
 use kestic_core::model::BackupId;
 use kestic_core::mount::SourceCheckResult;
 use kestic_core::provider::ResticProviderError;
-use kestic_core::restic::{ResticFailureKind, classify_exit};
+use kestic_core::restic::ResticFailureKind;
 use kestic_core::secrets::SecretError;
 use kestic_i18n::codes::{BlockedReason, ErrorKind, SourceStatus};
 
@@ -56,6 +56,10 @@ pub enum KesticServiceErr {
     LockInUse(String),
     /// Location already used; the message is the name of that destination (raw detail).
     DuplicateLocation(String),
+    /// SFTP: the server's host key is not known yet.
+    HostKeyUnknown(String),
+    /// SFTP: the server shows another host key; the message is the file with the old entry.
+    HostKeyChanged(String),
     Internal(String),
 }
 
@@ -73,6 +77,8 @@ impl std::fmt::Display for KesticServiceErr {
             | Self::AlreadyRunning(m)
             | Self::LockInUse(m)
             | Self::DuplicateLocation(m)
+            | Self::HostKeyUnknown(m)
+            | Self::HostKeyChanged(m)
             | Self::Internal(m) => f.write_str(m),
             Self::ManualRunBlocked(reason) => f.write_str(reason.as_str()),
             Self::SleepInProgress => f.write_str("sleep_in_progress"),
@@ -105,6 +111,8 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::AlreadyRunning(m) => KesticDbusError::AlreadyRunning(m),
             KesticServiceErr::LockInUse(m) => KesticDbusError::LockInUse(m),
             KesticServiceErr::DuplicateLocation(m) => KesticDbusError::DuplicateLocation(m),
+            KesticServiceErr::HostKeyUnknown(m) => KesticDbusError::HostKeyUnknown(m),
+            KesticServiceErr::HostKeyChanged(m) => KesticDbusError::HostKeyChanged(m),
             KesticServiceErr::Internal(m) => KesticDbusError::Internal(m),
         }
     }
@@ -135,9 +143,20 @@ pub(super) fn map_secret_err(err: SecretError) -> KesticServiceErr {
 pub(super) fn map_destination_err(err: DestinationError) -> KesticServiceErr {
     match err {
         err @ DestinationError::WrongPassword => KesticServiceErr::WrongPassword(err.to_string()),
-        DestinationError::AuthFailed(m) => KesticServiceErr::AuthFailed(m),
+        DestinationError::AuthFailed(m) | DestinationError::SshKeyRejected(m) => {
+            KesticServiceErr::AuthFailed(m)
+        }
         DestinationError::Unreachable(m) | DestinationError::NotResponding(m) => {
             KesticServiceErr::DestinationUnreachable(m)
+        }
+        err @ DestinationError::HostKeyCheck(kestic_core::known_hosts::HostKeyError::NoAnswer {
+            ..
+        }) => KesticServiceErr::DestinationUnreachable(err.to_string()),
+        err @ DestinationError::HostKeyUnknown(_) => {
+            KesticServiceErr::HostKeyUnknown(err.to_string())
+        }
+        DestinationError::HostKeyChanged(file) => {
+            KesticServiceErr::HostKeyChanged(file.to_string_lossy().into_owned())
         }
         DestinationError::Secret(e) => map_secret_err(e),
         other => KesticServiceErr::InvalidInput(other.to_string()),
@@ -185,10 +204,11 @@ fn destination_failure(err: &DestinationError) -> Option<ResticFailureKind> {
         DestinationError::Unreachable(_) => Some(ResticFailureKind::DestinationUnreachable),
         DestinationError::AuthFailed(_) => Some(ResticFailureKind::BackendAuthFailed),
         DestinationError::WrongPassword => Some(ResticFailureKind::WrongPassword),
+        DestinationError::SshKeyRejected(_) => Some(ResticFailureKind::BackendAuthFailed),
+        DestinationError::HostKeyUnknown(_) => Some(ResticFailureKind::HostKeyUnknown),
+        DestinationError::HostKeyChanged(_) => Some(ResticFailureKind::HostKeyChanged),
         DestinationError::RepositoryMissing(_) => Some(ResticFailureKind::RepositoryMissing),
-        DestinationError::CommandFailed { exit_code, message } => {
-            Some(classify_exit(*exit_code, None, Vec::new(), message).kind)
-        }
+        DestinationError::CommandFailed { kind, .. } => Some(kind.clone()),
         _ => None,
     }
 }
@@ -210,6 +230,15 @@ pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
 pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
     match err {
         BackupRunError::SourceUnavailable(status) => localized_source_check_reason(status),
+        // The raw text names the server or the file with the old entry, and the run's error
+        // kind is read back from it: it starts the message, where no file name or server text
+        // can stand.
+        BackupRunError::Destination(
+            dest_err @ (DestinationError::HostKeyUnknown(_) | DestinationError::HostKeyChanged(_)),
+        ) => destination_failure(dest_err).map_or_else(
+            || dest_err.to_string(),
+            |kind| format!("{dest_err} ({})", localized_failure_summary(&kind)),
+        ),
         BackupRunError::Destination(dest_err) => destination_failure(dest_err).map_or_else(
             || dest_err.to_string(),
             |kind| localized_failure_summary(&kind),

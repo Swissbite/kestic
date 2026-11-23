@@ -434,6 +434,125 @@ QQuickItem* add_variable(QQuickWindow* w, int row, const QString& name, const QS
     return item_named(w, env_name("Secret", row).constData());
 }
 
+// M5-S01 (GUI parts of AC-M5-01-1 and AC-M5-01-4 a): the card «NAS / Server via SSH» opens the
+// SFTP form (host, port, user, path and the hint on the SSH key and ssh-agent). The connection
+// test against an unknown server asks «Trust This Server?» with key type and SHA256 fingerprint;
+// «Trust Server» tests again, the server answers and «Next» is enabled. Screenshots of the form
+// with the dialog and of the passed test.
+int scenario_sftp_form(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const QString port = qEnvironmentVariable("KESTIC_SMOKE_SFTP_PORT");
+    const QString user = qEnvironmentVariable("KESTIC_SMOKE_SFTP_USER");
+    const QString path = qEnvironmentVariable("KESTIC_SMOKE_SFTP_PATH");
+    const QString fingerprint = qEnvironmentVariable("KESTIC_SMOKE_SFTP_FINGERPRINT");
+    M3_CHECK(5600, !port.isEmpty() && !user.isEmpty() && !path.isEmpty() && !fingerprint.isEmpty(), "KESTIC_SMOKE_SFTP_* not set");
+    if (const int rc = open_destination_types(w)) {
+        return rc;
+    }
+    QQuickItem* sftp = card_item(w, "sftp");
+    M3_CHECK2(5601, sftp != nullptr, sftp->isVisible(), "sftp card missing");
+    scroll_into_view(w, sftp);
+    M3_CHECK(5602, click_ui_item(w, sftp, "sftp"), "click on the sftp card failed");
+    QQuickItem* next = item_named(w, "wizDestNextButton");
+    M3_CHECK(5603, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing SFTP");
+    M3_CHECK(5604, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    M3_CHECK(5605, wait_until([&] { return count_visible(w, "wizDestHostField") == 1; }, 2000), "SFTP form did not open");
+    wait_ms(150);
+    int code = 5606;
+    for (const char* field : {"wizDestPortField", "wizDestSftpUserField", "wizDestSftpPathField", "wizDestSshKeyHint"}) {
+        M3_CHECK(code, count_visible(w, field) == 1, field);
+        ++code;
+    }
+    M3_CHECK(5610, count_visible(w, "wizDestLocationField") == 0, "the local path field is shown for SFTP");
+    M3_CHECK_EQ(5611, item_named(w, "wizDestPortField")->property("text").toString(), QStringLiteral("22"), "default port");
+    M3_CHECK_EQ(5612, item_named(w, "wizDestSshKeyHint")->property("text").toString(),
+        loc(c.lang,
+            "With your SSH key or the ssh-agent. Copy your public key to the server first, for example with ssh-copy-id.",
+            "Mit Ihrem SSH-Schlüssel oder dem ssh-agent. Kopieren Sie Ihren öffentlichen Schlüssel zuerst auf den Server, zum Beispiel mit ssh-copy-id."),
+        "hint on the SSH key and ssh-agent");
+    set_text(w, "wizDestNameField", QStringLiteral("NAS"));
+    set_text(w, "wizDestHostField", QStringLiteral("127.0.0.1"));
+    set_text(w, "wizDestPortField", port);
+    set_text(w, "wizDestSftpPathField", path);
+    // A user name with a character a shell reads is refused in the form, as in core.
+    set_text(w, "wizDestSftpUserField", QStringLiteral("anna;id"));
+    QQuickItem* user_error = item_named(w, "wizDestSftpUserError");
+    M3_CHECK(5631, wait_until([&] { return user_error && user_error->isVisible(); }, 2000), "no hint for the user name «anna;id»");
+    M3_CHECK_EQ(5632, user_error->property("text").toString(),
+        loc(c.lang, "Enter the user name on the server: only letters, digits, '.', '_' and '-'.",
+            "Geben Sie den Benutzernamen auf dem Server ein: nur Buchstaben, Ziffern, «.», «_» und «-»."),
+        "hint for the user name");
+    M3_CHECK(5633, !item_named(w, "wizDestTestButton")->isEnabled(), "«Test Connection» enabled for «anna;id»");
+    // The hint wraps within the form's width (the German text is longer than a narrow window).
+    QQuickItem* user_field = item_named(w, "wizDestSftpUserField");
+    const double hint_right = user_error->mapToScene(QPointF(user_error->width(), 0)).x();
+    const double field_right = user_field->mapToScene(QPointF(user_field->width(), 0)).x();
+    M3_CHECK(5636, hint_right <= field_right + 1.0, "the user name hint is wider than the form");
+    M3_CHECK(5637, user_error->property("wrapMode").toInt() != 0, "the user name hint does not wrap");
+    if (!c.out_path.isEmpty()) {
+        scroll_into_view(w, user_error);
+        wait_ms(600);
+        QString hint_shot = c.out_path;
+        hint_shot.replace(QStringLiteral("sftp-form"), QStringLiteral("sftp-user-hint"));
+        M3_CHECK(5635, save_screenshot(w, hint_shot), "screenshot failed");
+    }
+    set_text(w, "wizDestSftpUserField", QStringLiteral("anna€"));
+    M3_CHECK(5638, wait_until([&] { return user_error->isVisible(); }, 2000), "no hint for the user name «anna€»");
+    set_text(w, "wizDestSftpUserField", QStringLiteral("jörg.müller"));
+    M3_CHECK(5639, wait_until([&] { return !user_error->isVisible(); }, 2000), "hint for the user name «jörg.müller»");
+    set_text(w, "wizDestSftpUserField", QStringLiteral("a・b"));
+    M3_CHECK(5640, wait_until([&] { return user_error->isVisible(); }, 2000), "no hint for the user name «a・b»");
+    set_text(w, "wizDestSftpUserField", QStringLiteral("علي"));
+    M3_CHECK(5641, wait_until([&] { return !user_error->isVisible(); }, 2000), "hint for the user name «علي»");
+    set_text(w, "wizDestSftpUserField", user);
+    M3_CHECK(5634, wait_until([&] { return !user_error->isVisible(); }, 2000), "hint stays for a valid user name");
+    const QString unnamed = first_unnamed(w, {
+        QStringLiteral("wizDestHostField"),
+        QStringLiteral("wizDestPortField"),
+        QStringLiteral("wizDestSftpUserField"),
+        QStringLiteral("wizDestSftpPathField"),
+    });
+    M3_CHECK_EQ(5613, unnamed, QString(), "control without accessible name");
+
+    QQuickItem* test = item_named(w, "wizDestTestButton");
+    M3_CHECK(5614, wait_until([&] { return test && test->isEnabled(); }, 2000), "«Test Connection» not enabled");
+    scroll_into_view(w, test);
+    M3_CHECK(5615, click_ui_item(w, test, "Test Connection"), "click on «Test Connection» failed");
+    QObject* dialog = object_named(w, "wizDestHostKeyDialog");
+    M3_CHECK(5616, wait_until([&] { return dialog && dialog->property("opened").toBool(); }, 15000), "AC-M5-01-4 (a): «Trust This Server?» did not open");
+    M3_CHECK_EQ(5617, dialog->property("title").toString(), loc(c.lang, "Trust This Server?", "Diesem Server vertrauen?"), "dialog title");
+    QObject* type = object_named(w, "wizDestHostKeyType");
+    QObject* print = object_named(w, "wizDestHostKeyFingerprint");
+    M3_CHECK2(5618, type != nullptr, print != nullptr, "key type or fingerprint missing");
+    M3_CHECK_EQ(5619, type->property("text").toString(), QStringLiteral("ssh-ed25519"), "AC-M5-01-4 (a): key type");
+    M3_CHECK_EQ(5620, print->property("text").toString(), fingerprint, "AC-M5-01-4 (a): SHA256 fingerprint");
+    M3_CHECK(5621, !next->isEnabled(), "«Next» enabled before the server is trusted");
+    // Cancelling keeps the shown key; the result line offers the dialog again.
+    QMetaObject::invokeMethod(dialog, "close");
+    M3_CHECK(5628, wait_until([&] { return !dialog->property("opened").toBool(); }, 2000), "the dialog does not close");
+    QObject* reopen = object_named(w, "wizDestShowHostKeyAction");
+    M3_CHECK2(5629, reopen != nullptr, reopen->property("visible").toBool(), "«Trust Server…» missing after Cancel");
+    QMetaObject::invokeMethod(reopen, "trigger");
+    M3_CHECK(5630, wait_until([&] { return dialog->property("opened").toBool(); }, 2000), "«Trust Server…» does not open the dialog");
+    wait_ms(600);
+    if (!c.out_path.isEmpty()) {
+        QString dialog_shot = c.out_path;
+        dialog_shot.replace(QStringLiteral("sftp-form"), QStringLiteral("sftp-trust-dialog"));
+        M3_CHECK(5622, save_screenshot(w, dialog_shot), "screenshot failed");
+    }
+    QObject* trust = object_named(w, "wizDestTrustHostKeyAction");
+    M3_CHECK(5623, trust != nullptr, "«Trust Server» missing");
+    QMetaObject::invokeMethod(trust, "trigger");
+    QQuickItem* banner = item_named(w, "wizDestFeedbackBanner");
+    M3_CHECK(5624, wait_until([&] { return next->isEnabled(); }, 15000), "«Next» not enabled after trusting the server");
+    M3_CHECK_EQ(5625, banner->property("text").toString(), loc(c.lang, "Reachable", "Erreichbar"), "result after trusting the server");
+    M3_CHECK(5626, !dialog->property("opened").toBool(), "the dialog stays open");
+    scroll_into_view(w, banner);
+    wait_ms(600);
+    M3_CHECK(5627, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 // M5-S03 (GUI): «Cloud Storage» offers Backblaze B2, Azure, Google Cloud and Swift beside S3;
 // B2 opens the generic form with `b2:` filled in. An unknown scheme (AC-M5-03-1 c) and a reserved
 // variable (AC-M5-03-7 b) show `core`'s message and keep «Test Connection», and so adding the
@@ -597,6 +716,8 @@ void run_m5_smoke_scenario(
         rc = scenario_generic_form(ctx);
     } else if (scen == QLatin1String("m5-rclone-form")) {
         rc = scenario_rclone_form(ctx);
+    } else if (scen == QLatin1String("m5-sftp-form")) {
+        rc = scenario_sftp_form(ctx);
     } else {
         std::fprintf(stderr, "M5 smoke failed (599): unknown m5 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

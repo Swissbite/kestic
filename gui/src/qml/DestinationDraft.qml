@@ -24,6 +24,12 @@ QtObject {
     property string region: ""
     property string accessKeyId: ""
     property string secretAccessKey: ""
+    // SFTP server: host, port and path; the user is `username`.
+    property string host: ""
+    property string port: "22"
+    property string sftpPath: ""
+    // `HostKeyDto` of the last connection test that met an unknown server, else null.
+    property var hostKey: null
     // Generic form (B2, Azure, Google Cloud, Swift, rclone): the repository URL is `location`;
     // the variables as rows `{name, secret, value, secretTouched}`. A row is changed in place, so
     // the field being typed in keeps its focus; `envRevision` counts the changes for bindings.
@@ -40,8 +46,12 @@ QtObject {
     property string testNote: ""
     property bool testNoteConfirmed: false
 
+    // The last connection test met a server whose host key no `known_hosts` file has.
+    signal hostKeyOffered()
+
     readonly property bool kindIsRest: kind === "rest"
     readonly property bool kindIsS3: kind === "s3"
+    readonly property bool kindIsSftp: kind === "sftp"
     readonly property bool kindIsGeneric: kind === "generic"
     // The rclone card asks for the remote only; the URL is `rclone:` and the remote.
     readonly property bool asksRcloneRemote: kindIsGeneric && typeCard === "rclone"
@@ -53,6 +63,7 @@ QtObject {
     readonly property bool nameValid: name.trim().length > 0
     readonly property bool locationValid: kindIsS3
         ? endpointValid && bucketValid && s3PathValid
+        : kindIsSftp ? hostValid && portValid && sftpUserValid && sftpPathValid
         : kindIsGeneric
             ? genericErrors.url === "" && genericErrors.env === ""
             : kindIsRest
@@ -67,6 +78,14 @@ QtObject {
     // restic reads the S3 address as URL (`#` and `?` cut it, `%` decodes) and repeats it unquoted
     // in the messages Kestic reads, so the path has no such characters, spaces or quotes.
     readonly property bool s3PathValid: !/[\s"#?%\x00-\x1f\x7f]/.test(s3Path.trim())
+    // SFTP: a host name or IP address, a port, a user and a path as `core` checks them; a host or
+    // user starting with `-` would reach ssh as an option.
+    readonly property bool hostValid: /^(\[[0-9a-fA-F:.]+\]|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*|[A-Za-z0-9_][A-Za-z0-9._-]*)$/.test(host.trim())
+    readonly property bool portValid: /^[0-9]{1,5}$/.test(port.trim()) && Number(port) >= 1 && Number(port) <= 65535
+    // As core checks it: letters (also non-ASCII), digits, '.', '_' and '-', not starting with '-'.
+    readonly property bool sftpUserValid: appBackend.sftpUserValid(username)
+    readonly property bool sftpPathValid: sftpPath.trim().length > 0 && sftpPath.trim()[0] !== "~"
+        && !/[\x00-\x1f\x7f]/.test(sftpPath)
     // A new S3 destination needs both keys; when editing, empty keys keep the saved ones.
     readonly property bool keysValid: kindIsGeneric
         ? destinationId !== "" || envList().every(function(v) { return !v.secret || v.value.length > 0; })
@@ -78,7 +97,7 @@ QtObject {
     readonly property bool passwordsMatch: repoPassword.length > 0 && (setupMode === "connect" || repoPassword === repoPasswordConfirm)
     readonly property bool hasAnyInput: name.trim().length > 0 || location.trim().length > 0 || repoPassword.length > 0
         || endpoint.trim().length > 0 || bucket.trim().length > 0 || accessKeyId.length > 0 || secretAccessKey.length > 0
-        || envModel.count > 0
+        || envModel.count > 0 || host.trim().length > 0 || sftpPath.trim().length > 0
 
     // The rows of `envModel` as plain objects; reading `envRevision` makes bindings that call it
     // follow every change of a row.
@@ -149,8 +168,10 @@ QtObject {
             username: username.trim(),
             endpoint: endpoint.trim(),
             bucket: bucket.trim(),
-            path: s3Path.trim(),
+            path: kindIsSftp ? sftpPath.trim() : s3Path.trim(),
             region: region.trim(),
+            host: host.trim(),
+            port: portValid ? Number(port) : 22,
             env: kindIsGeneric ? envFields() : []
         };
         if (destinationId !== "") {
@@ -186,7 +207,7 @@ QtObject {
     // Fields that change where and how the repository is reached, to see whether they changed.
     function connectionKey() {
         return JSON.stringify([kind, location.trim(), username.trim(), endpoint.trim(), bucket.trim(),
-            s3Path.trim(), region.trim(), envFields()]);
+            s3Path.trim(), region.trim(), host.trim(), port.trim(), sftpPath.trim(), envFields()]);
     }
 
     // Clears the entered passwords and keys after saving.
@@ -204,7 +225,7 @@ QtObject {
     function loadFromRow(data) {
         kind = data.kindName;
         name = data.name;
-        location = data.kindName === "s3" ? "" : data.location;
+        location = data.kindName === "s3" || data.kindName === "sftp" ? "" : data.location;
         username = data.username;
         var detail = {};
         try {
@@ -214,11 +235,24 @@ QtObject {
         }
         endpoint = detail.endpoint || "";
         bucket = detail.bucket || "";
-        s3Path = detail.path || "";
+        s3Path = data.kindName === "s3" ? (detail.path || "") : "";
+        sftpPath = data.kindName === "sftp" ? (detail.path || "") : "";
+        host = detail.host || "";
+        port = String(detail.port || 22);
         region = detail.region || "";
         setEnvVars((detail.env || []).map(function(v) {
             return { name: v.name, secret: !!v.secret, value: v.secret ? "" : (v.value || "") };
         }));
+    }
+
+    // Trusts the host key of the last connection test and tests again.
+    function trustHostKey() {
+        var id = hostKey ? hostKey.host_key_id : "";
+        hostKey = null;
+        // Trusted or not (the shown key expired, the daemon restarted, a file got another key
+        // meanwhile): a new test shows where the server stands now.
+        appBackend.trustHostKey(id);
+        return runConnectionTest();
     }
 
     function showError(text) {
@@ -229,6 +263,7 @@ QtObject {
     function runConnectionTest() {
         testNote = "";
         testNoteConfirmed = false;
+        hostKey = null;
         if (!detailsValid) {
             showError(Texts.label("fill_required_fields"));
             return false;
@@ -238,6 +273,10 @@ QtObject {
         connectionVerified = ok;
         testFeedbackOk = ok;
         testFeedback = appBackend.connection_test_message;
+        if (appBackend.connection_test_host_key !== "") {
+            hostKey = JSON.parse(appBackend.connection_test_host_key);
+            hostKeyOffered();
+        }
         return ok;
     }
 }

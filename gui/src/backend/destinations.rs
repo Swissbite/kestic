@@ -85,6 +85,11 @@ impl qobject::KesticApp {
         QString::from(&reply.to_string())
     }
 
+    /// Whether `user` is a user name of an SFTP destination as `core` checks it.
+    pub fn sftp_user_valid(&self, user: &QString) -> bool {
+        kestic_core::sftp::is_valid_user(&user.to_string())
+    }
+
     /// Whether «Geheim» starts switched on for a new variable named `name`.
     pub fn env_var_secret_by_default(&self, name: &QString) -> bool {
         kestic_core::generic::secret_by_default(&name.to_string())
@@ -128,7 +133,26 @@ impl qobject::KesticApp {
             .collect::<Vec<_>>()
             .join("\n");
         self.as_mut().set_connection_test_note(QString::from(&note));
+        let host_key = res
+            .host_key
+            .as_ref()
+            .and_then(|key| serde_json::to_string(key).ok())
+            .unwrap_or_default();
+        self.as_mut()
+            .set_connection_test_host_key(QString::from(&host_key));
         res.ok
+    }
+
+    /// Trusts the SFTP host key the last connection test showed (`TrustHostKey`).
+    pub fn trust_host_key(self: Pin<&mut Self>, host_key_id: &QString) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        self.finish_action(
+            client.trust_host_key(&host_key_id.to_string()),
+            Finish::Plain,
+        )
+        .is_some()
     }
 
     pub fn add_destination(

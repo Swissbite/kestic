@@ -68,7 +68,9 @@ pub use kestic_i18n::codes::RecoveryAction;
 pub enum ResticFailureKind {
     None,
     Cancelled,
-    IncompleteSnapshot { unreadable_items: Vec<String> },
+    IncompleteSnapshot {
+        unreadable_items: Vec<String>,
+    },
     DestinationUnreachable,
     DnsResolutionFailed,
     BackendAuthFailed,
@@ -76,7 +78,13 @@ pub enum ResticFailureKind {
     RepositoryMissing,
     RepositoryLocked,
     WrongPassword,
-    Unknown { exit_code: i32 },
+    /// SFTP: the server's host key is not in any `known_hosts` file.
+    HostKeyUnknown,
+    /// SFTP: a `known_hosts` file has another host key of the same type for the server.
+    HostKeyChanged,
+    Unknown {
+        exit_code: i32,
+    },
 }
 
 impl ResticFailureKind {
@@ -87,7 +95,11 @@ impl ResticFailureKind {
     pub fn is_permanent(&self) -> bool {
         matches!(
             self,
-            Self::WrongPassword | Self::RepositoryMissing | Self::BackendAuthFailed
+            Self::WrongPassword
+                | Self::RepositoryMissing
+                | Self::BackendAuthFailed
+                | Self::HostKeyUnknown
+                | Self::HostKeyChanged
         )
     }
 
@@ -104,6 +116,8 @@ impl ResticFailureKind {
                 ErrorKind::DestinationUnreachable
             }
             Self::BackendAuthFailed => ErrorKind::AuthFailed,
+            Self::HostKeyUnknown => ErrorKind::HostKeyUnknown,
+            Self::HostKeyChanged => ErrorKind::HostKeyChanged,
             Self::IncompleteSnapshot { .. } => ErrorKind::IncompleteSnapshot,
             Self::Cancelled => ErrorKind::Cancelled,
             Self::None | Self::GenericFailure | Self::Unknown { .. } => ErrorKind::Unknown,
@@ -263,8 +277,46 @@ pub fn parse_json_line(line: &str) -> Result<ResticStreamEvent, serde_json::Erro
     }
 }
 
-/// Maps restic exit code and error output into [`ErrorPresentation`].
+/// How restic reaches a destination, as far as it decides what its error output can mean: only
+/// an SFTP destination has lines of ssh and Kestic's own host key check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    Sftp,
+    Other,
+}
+
+impl Transport {
+    pub fn of(kind: &crate::model::DestinationKind) -> Self {
+        if matches!(kind, crate::model::DestinationKind::Sftp { .. }) {
+            Self::Sftp
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// Maps restic exit code and error output of a destination that is not SFTP into
+/// [`ErrorPresentation`].
 pub fn classify_exit(
+    exit_code: i32,
+    exit_error_msg: Option<&str>,
+    unreadable_items: Vec<String>,
+    raw_stderr: &str,
+) -> ErrorPresentation {
+    classify_exit_for(
+        Transport::Other,
+        exit_code,
+        exit_error_msg,
+        unreadable_items,
+        raw_stderr,
+    )
+}
+
+/// Maps restic exit code and error output into [`ErrorPresentation`]. Lines of ssh and Kestic's
+/// host key markers count only for [`Transport::Sftp`]: elsewhere they can only come from file
+/// names or server texts.
+pub fn classify_exit_for(
+    transport: Transport,
     exit_code: i32,
     exit_error_msg: Option<&str>,
     unreadable_items: Vec<String>,
@@ -279,7 +331,42 @@ pub fn classify_exit(
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         });
 
+    // restic only says the SFTP session ended; the reason is in the line of ssh.
+    let sftp_failure = exit_code == 1 && transport == Transport::Sftp;
+    // ssh's lines name a failure only when the SFTP session never started: after a login the
+    // server's banner, shown with the same prefix, can say anything.
+    // restic's own message, not its error lines, which carry file names.
+    let session_not_started = exit_error_msg.map_or_else(
+        || {
+            raw_stderr
+                .lines()
+                .any(|l| l.starts_with("Fatal: ") && l.contains(SFTP_SESSION_NOT_STARTED))
+        },
+        |msg| msg.contains(SFTP_SESSION_NOT_STARTED),
+    );
+    let ssh_failure =
+        crate::sftp::ssh_failure(raw_stderr).filter(|_| sftp_failure && session_not_started);
+    let raw_detail = ssh_failure
+        .as_ref()
+        .map_or(raw_detail, |failure| Some(failure.line().to_string()));
     let detail_lower = raw_detail.as_deref().unwrap_or_default().to_lowercase();
+    let ssh_kind = ssh_failure.map(|failure| match failure {
+        crate::sftp::SshFailure::KeyRejected(_) => ResticFailureKind::BackendAuthFailed,
+        crate::sftp::SshFailure::HostKeyVerificationFailed(_) => ResticFailureKind::HostKeyUnknown,
+        crate::sftp::SshFailure::HostKeyChanged(_) => ResticFailureKind::HostKeyChanged,
+    });
+    if let Some(kind) = ssh_kind.or_else(|| {
+        sftp_failure
+            .then(|| host_key_failure(&detail_lower))
+            .flatten()
+    }) {
+        return ErrorPresentation {
+            status: RunStatus::Error,
+            kind,
+            action: None,
+            raw_detail,
+        };
+    }
 
     match exit_code {
         0 => ErrorPresentation {
@@ -324,7 +411,9 @@ pub fn classify_exit(
                     action: None,
                     raw_detail,
                 }
-            } else if is_backend_auth_failure(&detail_lower) {
+            } else if is_backend_auth_failure(&detail_lower)
+                || transport == Transport::Sftp && ssh_rejected_key(&detail_lower)
+            {
                 ErrorPresentation {
                     status: RunStatus::Error,
                     kind: ResticFailureKind::BackendAuthFailed,
@@ -343,6 +432,10 @@ pub fn classify_exit(
                 || detail_lower.contains("timed out")
                 || detail_lower.contains("handshake timeout")
                 || detail_lower.contains("context deadline exceeded")
+                // ssh ended before the SFTP session started and named no login or host key
+                // failure: the server was not reached.
+                || transport == Transport::Sftp
+                    && detail_lower.contains(SFTP_SESSION_NOT_STARTED)
             {
                 ErrorPresentation {
                     status: RunStatus::Error,
@@ -366,6 +459,55 @@ pub fn classify_exit(
             raw_detail,
         },
     }
+}
+
+/// Text Kestic records when its own host key check stops an SFTP run before restic starts
+/// (see `DestinationError`); a run's error kind is read back from it.
+pub const HOST_KEY_UNKNOWN_MARKER: &str = "unknown ssh host key of ";
+/// See [`HOST_KEY_UNKNOWN_MARKER`].
+pub const HOST_KEY_CHANGED_MARKER: &str = "ssh host key changed; the old entry is in ";
+
+/// The host key failure a lowercase message of an SFTP destination names: Kestic's own check,
+/// whose text starts the message, or a line of ssh (see [`ssh_lines`]). A marker elsewhere is
+/// part of a file name or a server text.
+fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
+    let detail = detail_lower.trim_start();
+    let ssh_line = |test: &dyn Fn(&str) -> bool| ssh_lines(detail).any(test);
+    if detail.starts_with(HOST_KEY_CHANGED_MARKER)
+        || ssh_line(&|rest| {
+            rest.starts_with("host key for") && rest.contains("has changed and you have requested")
+        })
+    {
+        Some(ResticFailureKind::HostKeyChanged)
+    } else if detail.starts_with(HOST_KEY_UNKNOWN_MARKER)
+        || ssh_line(&|rest| rest.starts_with("host key verification failed"))
+    {
+        Some(ResticFailureKind::HostKeyUnknown)
+    } else {
+        None
+    }
+}
+
+/// What restic says when ssh ended before the SFTP session started.
+pub(crate) const SFTP_SESSION_NOT_STARTED: &str = "unable to start the sftp session";
+
+/// The line of ssh that a lowercase message is: the detail of an ssh failure, and a run's
+/// stored summary of one, is ssh's single line (restic starts it with `subprocess ssh: `).
+/// restic's own output around a banner has more lines.
+fn ssh_lines(detail_lower: &str) -> impl Iterator<Item = &str> {
+    let detail = detail_lower.trim();
+    (!detail.contains('\n'))
+        .then(|| detail.strip_prefix("subprocess ssh: "))
+        .flatten()
+        .into_iter()
+}
+
+/// Whether a lowercase message is a line of ssh saying that the SFTP server refused the login,
+/// as [`crate::sftp::ssh_failure`] reads it.
+fn ssh_rejected_key(detail_lower: &str) -> bool {
+    ssh_lines(detail_lower).any(|rest| {
+        rest.contains("permission denied (") || rest.contains("too many authentication failures")
+    })
 }
 
 /// Whether the lowercase restic message says the backend rejected the login: HTTP 401/403 or
@@ -456,6 +598,10 @@ pub struct ResticCommandSpec {
     pub kestic_binary: PathBuf,
     pub destination_id: DestinationId,
     pub repository_uri: String,
+    /// How restic reaches the destination (which error output can name ssh or a host key).
+    pub transport: Transport,
+    /// Backend options (`-o key=value`) after the repository: `sftp.args` for SFTP.
+    pub backend_options: Vec<String>,
     pub subcommand_args: Vec<String>,
     /// Name prefixes of variables in the caller's environment restic must not see (inherited
     /// AWS credentials and settings).
@@ -483,6 +629,8 @@ impl ResticCommandSpec {
             kestic_binary: kestic_binary.into(),
             destination_id: destination.id.clone(),
             repository_uri: destination.kind.repository_uri(),
+            transport: Transport::of(&destination.kind),
+            backend_options: destination.kind.restic_backend_options(),
             subcommand_args,
             backend_env_cleared_prefixes: destination.kind.backend_env_cleared_prefixes(),
             backend_env: destination.kind.backend_plain_env(),
@@ -556,6 +704,7 @@ impl ResticCommandSpec {
     /// Returns the argument vector passed directly to `restic`.
     pub fn restic_argv(&self) -> Vec<String> {
         let mut args = vec!["-r".to_string(), self.repository_uri.clone()];
+        args.extend(self.backend_options.iter().cloned());
         if self.json_output && !self.subcommand_args.iter().any(|a| a == "--json") {
             args.push("--json".to_string());
         }
@@ -610,7 +759,7 @@ impl ResticCommandSpec {
 
 /// A recorded restic invocation split back into its parts: the inverse of the low-priority
 /// wrapper `ionice -c 3 [nice -n 10] <restic>` / `nice -n 10 <restic>` that
-/// [`ResticCommandSpec`] adds when it runs restic, and of `-r <repo> [--json]`.
+/// [`ResticCommandSpec`] adds when it runs restic, and of `-r <repo> [-o <option>…] [--json]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedInvocation {
     pub restic_binary: String,
@@ -644,6 +793,9 @@ pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedI
     let restic_binary = tokens.get(i).copied().unwrap_or(executable).to_string();
     let mut rest = tokens.get(i + 1..).unwrap_or(&[]);
     if rest.first() == Some(&"-r") && rest.len() >= 2 {
+        rest = &rest[2..];
+    }
+    while rest.first() == Some(&"-o") && rest.len() >= 2 {
         rest = &rest[2..];
     }
     let json_output = rest.first() == Some(&"--json");
@@ -986,7 +1138,8 @@ where
         .iter()
         .filter_map(|e| e.item.clone())
         .collect();
-    let mut presentation = classify_exit(
+    let mut presentation = classify_exit_for(
+        Transport::of(&destination.kind),
         exit_code,
         exit_error_msg.as_deref(),
         unreadable_items,

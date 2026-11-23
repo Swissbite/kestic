@@ -11,9 +11,10 @@ use super::backup_runner::{
     load_dest_secrets, secret_strs, start_backup_async, upsert_pending_run_entry,
 };
 use super::error::{
-    KesticServiceErr, localized_source_check_reason, manual_run_blocked_reason, service_error_kind,
+    KesticServiceErr, localized_backup_run_error, localized_source_check_reason,
+    manual_run_blocked_reason, service_error_kind,
 };
-use super::run_errors::run_blocks_schedule;
+use super::run_errors::{destination_transport, run_blocks_schedule};
 use super::state::{DaemonCore, ResticDeps, probe_before_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
@@ -23,9 +24,11 @@ use crate::i18n::{i18n, tr, tr_text};
 use crate::monitors::LogindSleepInhibitor;
 use crate::notifications::{KesticEvent, send_configured_notification};
 use crate::tray::TrayHandle;
-use kestic_core::backup::{execute_forget, is_forget_lock_failure, parse_forget_removed_count};
+use kestic_core::backup::{
+    BackupRunError, execute_forget, is_forget_lock_failure, parse_forget_removed_count,
+};
 use kestic_core::clock::Clock;
-use kestic_core::destination::preflight_check_with_restic;
+use kestic_core::destination::{DestinationError, preflight_check_with_restic};
 use kestic_core::maintenance::{
     detect_stale_locks, execute_check, execute_prune, parse_check_summary, parse_prune_freed_bytes,
 };
@@ -191,23 +194,36 @@ fn run_destination_maintenance_internal(
         }
         let now = guard.clock.now_utc();
         guard.availability_probe_count += 1;
-        let dto =
-            DestinationAvailabilityDto::from_probe(&d_id, &preflight_res, now.unix_timestamp());
+        // A server with an unknown or changed host key is reachable; maintenance stops at the key.
+        let reachable: Result<(), &DestinationError> = match &preflight_res {
+            Err(err) if !err.is_host_key_problem() => Err(err),
+            _ => Ok(()),
+        };
+        let dto = DestinationAvailabilityDto::from_probe(&d_id, &reachable, now.unix_timestamp());
         guard.dest_availability.insert(d_id.clone(), dto);
 
-        if let Err(err) = preflight_res {
-            return Err(handle_maintenance_preflight_failure(
-                &mut guard,
-                &mut ctx.claim_guard,
-                &d_id,
-                now,
-                is_scheduled,
-                err.to_string(),
-            ));
-        }
+        let host_key_failure = match preflight_res {
+            Err(err) if err.is_host_key_problem() => Some(localized_backup_run_error(
+                &BackupRunError::Destination(err),
+            )),
+            Err(err) => {
+                return Err(handle_maintenance_preflight_failure(
+                    &mut guard,
+                    &mut ctx.claim_guard,
+                    &d_id,
+                    now,
+                    is_scheduled,
+                    err.to_string(),
+                ));
+            }
+            Ok(()) => None,
+        };
 
-        launch_maintenance_run_record(&mut guard, &mut ctx.claim_guard, &d_id, &ctx.dest)?
+        let launched =
+            launch_maintenance_run_record(&mut guard, &mut ctx.claim_guard, &d_id, &ctx.dest)?;
+        (launched, host_key_failure)
     };
+    let (launched, host_key_failure) = launched;
 
     let run_id_str = launched.run.id.as_str().to_string();
     let shared_worker = Arc::clone(shared);
@@ -222,6 +238,7 @@ fn run_destination_maintenance_internal(
             run_prune,
             run_check,
             is_scheduled,
+            host_key_failure,
             conn_opt: launched.conn_opt,
             tray_opt: launched.tray_opt,
         });
@@ -240,6 +257,9 @@ struct MaintenanceWorkerArgs {
     run_prune: bool,
     run_check: bool,
     is_scheduled: bool,
+    /// The run text when the SFTP host key is unknown or changed: the run ends at once, without
+    /// restic.
+    host_key_failure: Option<String>,
     conn_opt: Option<Connection>,
     tray_opt: Option<Arc<TrayHandle>>,
 }
@@ -255,6 +275,26 @@ struct MaintenanceOpOutcome {
     combined_logs: Vec<String>,
     failure_detail: Option<String>,
     stats: MaintenanceStats,
+    /// Stopped at an unknown or changed SFTP host key: a permanent error, no retry.
+    host_key_failure: bool,
+}
+
+impl MaintenanceOpOutcome {
+    fn empty() -> Self {
+        Self {
+            cleared_ids: Vec::new(),
+            forget_failed: false,
+            prune_or_check_failed: false,
+            prune_succeeded_at: None,
+            check_succeeded_at: None,
+            detected_stale_locks: None,
+            last_exit: 0,
+            combined_logs: Vec::new(),
+            failure_detail: None,
+            stats: MaintenanceStats::default(),
+            host_key_failure: false,
+        }
+    }
 }
 
 fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
@@ -268,6 +308,7 @@ fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
         run_prune,
         run_check,
         is_scheduled,
+        host_key_failure,
         conn_opt,
         tray_opt,
     } = args;
@@ -284,19 +325,28 @@ fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
     let secrets_owned = load_dest_secrets(&ctx.dest, ctx.deps.secret_store.as_ref());
     let secret_strs = secret_strs(&secrets_owned);
 
-    let mut ops = run_maintenance_operations(
-        MaintenanceOpsInput {
-            dest: &ctx.dest,
-            runtime: &runtime,
-            pending_backups: &pending_backups,
-            cancel: &cancel,
-            clock: ctx.deps.clock.as_ref(),
-            secret_strs: &secret_strs,
-            run_prune,
-            run_check,
+    let mut ops = match host_key_failure {
+        Some(text) => MaintenanceOpOutcome {
+            prune_or_check_failed: true,
+            last_exit: 1,
+            failure_detail: Some(text),
+            host_key_failure: true,
+            ..MaintenanceOpOutcome::empty()
         },
-        &mut run,
-    );
+        None => run_maintenance_operations(
+            MaintenanceOpsInput {
+                dest: &ctx.dest,
+                runtime: &runtime,
+                pending_backups: &pending_backups,
+                cancel: &cancel,
+                clock: ctx.deps.clock.as_ref(),
+                secret_strs: &secret_strs,
+                run_prune,
+                run_check,
+            },
+            &mut run,
+        ),
+    };
     supervision.stop_cancel_watcher();
 
     let sleep_interrupted = shared_worker
@@ -378,18 +428,7 @@ fn run_maintenance_operations(
         run_prune,
         run_check,
     } = input;
-    let mut out = MaintenanceOpOutcome {
-        cleared_ids: Vec::new(),
-        forget_failed: false,
-        prune_or_check_failed: false,
-        prune_succeeded_at: None,
-        check_succeeded_at: None,
-        detected_stale_locks: None,
-        last_exit: 0,
-        combined_logs: Vec::new(),
-        failure_detail: None,
-        stats: MaintenanceStats::default(),
-    };
+    let mut out = MaintenanceOpOutcome::empty();
 
     for b in pending_backups {
         if cancel.is_cancelled() {
@@ -587,7 +626,8 @@ fn finalize_maintenance_run_state(input: MaintenanceFinalizeInput<'_>) {
 ///
 /// A failed `forget` counts as a failed attempt even though the run ends `Warning`:
 /// `pending_forget` stays set, so without backoff the scheduler would re-run it every tick.
-/// A user cancel marks the due work as handled until the next regular prune/check slot.
+/// A user cancel marks the due work as handled until the next regular prune/check slot. An
+/// unknown or changed SFTP host key records no backoff: it is a permanent error.
 fn update_maintenance_state_after_run(
     guard: &mut DaemonCore,
     ctx: &MaintenanceClaimContext,
@@ -605,7 +645,10 @@ fn update_maintenance_state_after_run(
     let mut recorded_attempt = 0u32;
     let failed_attempt =
         status == RunStatus::Error || (status == RunStatus::Warning && ops.forget_failed);
-    if failed_attempt {
+    if ops.host_key_failure {
+        // No retry: the scheduler waits for a run without this error; the alert comes once.
+        recorded_attempt = 1;
+    } else if failed_attempt {
         record_maintenance_backoff_failure(&mut ds, finish_now);
         recorded_attempt = ds.maintenance_backoff_attempt;
     } else if matches!(status, RunStatus::Ok | RunStatus::Warning) {
@@ -686,7 +729,12 @@ fn collect_start_all_entries(shared: &Arc<Mutex<DaemonCore>>) -> Vec<StartAllEnt
                         r.backup_id() == Some(&s.backup.id)
                             && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
                     })
-                    .is_some_and(run_blocks_schedule);
+                    .is_some_and(|r| {
+                        run_blocks_schedule(
+                            r,
+                            destination_transport(&guard.config, &s.backup.destination_id),
+                        )
+                    });
                 StartAllCandidate {
                     backup: s.backup,
                     has_error,

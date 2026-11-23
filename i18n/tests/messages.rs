@@ -256,6 +256,11 @@ fn every_error_kind_maps_to_its_msgid() {
             E::ResticUnavailable,
             Some("restic is unavailable or too old."),
         ),
+        (E::HostKeyUnknown, Some("Unknown server")),
+        (
+            E::HostKeyChanged,
+            Some("The server identifies itself differently than before"),
+        ),
         (E::Unknown, Some("Backup command failed")),
     ];
     assert_table(&ErrorKind::ALL, &table, |k| msg(k.message(None, false)));
@@ -443,6 +448,26 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
                 "This destination needs the program '%1', which is not installed. Install it with 'sudo apt install %1' and test again.",
             ),
         ),
+        (
+            C::UnknownHostKey,
+            Some("Unknown server. Compare its fingerprint and trust it to continue."),
+        ),
+        (
+            C::HostKeyChanged,
+            Some(
+                "The server identifies itself differently than before. This can be an attack. Ask the operator of the server. Old entry: %1",
+            ),
+        ),
+        (
+            C::SshKeyRejected,
+            Some(
+                "The server rejected the login with your SSH key. Copy your public key to the server with ssh-copy-id, or load the key into the ssh-agent. Then test again.",
+            ),
+        ),
+        (
+            C::JumpHostUnsupported,
+            Some("Servers behind a jump host are not supported yet."),
+        ),
     ];
     assert_table(&C::ALL, &connection, |c| c.text("x"));
 
@@ -510,6 +535,14 @@ fn every_service_error_code_maps_to_its_msgid() {
         (
             S::DuplicateLocation,
             Some("This location is already used by another destination."),
+        ),
+        (
+            S::HostKeyUnknown,
+            Some("Unknown server: test the connection and trust the server first."),
+        ),
+        (
+            S::HostKeyChanged,
+            Some("The server identifies itself differently than before"),
         ),
         (
             S::Internal,

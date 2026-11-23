@@ -7,7 +7,7 @@
 use crate::clock::Clock;
 use crate::destination::{
     DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
-    preflight_check_with_restic,
+    preflight_check_with_restic, verify_sftp_host_key,
 };
 use crate::model::{
     Backup, BackupId, Destination, ModelError, RunId, RunStatus, evaluate_exclude_path,
@@ -248,6 +248,7 @@ pub(crate) fn check_command_succeeded(res: &ResticExecutionResult) -> Result<(),
             DestinationError::CommandFailed {
                 exit_code: res.exit_code,
                 message: res.presentation.detail_or_summary(),
+                kind: res.presentation.kind.clone(),
             },
         ));
     }
@@ -267,6 +268,7 @@ where
 {
     check_source_available_with(backup, ctx.home_dir, ctx.inspector)?;
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    verify_sftp_host_key(destination)?;
 
     let spec = build_backup_command_spec_with_home(
         backup,
@@ -278,7 +280,7 @@ where
     )?
     .with_cache_dir(runtime.cache_dir);
     let res = runtime.run(&spec, destination, ctx.cancel, ctx.extra_env, on_event)?;
-    Ok(res)
+    Ok(crate::destination::explain_sftp_failure(destination, res))
 }
 
 /// Size estimate for one excluded folder reported alongside backup dry-run preview.
