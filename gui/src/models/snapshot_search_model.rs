@@ -6,18 +6,17 @@
 //! the model fetches them page by page while the view scrolls and filters them in the daemon.
 
 use super::qobject;
-use super::rows::{role_names, row_count, row_data};
 use super::snapshot_query::{
-    QueryRun, StartPoll, count_text, fetch_error_text, to_i32, too_large_text,
+    QueryList, QueryListModel, QueryListView, count_text, to_i32, too_large_text,
 };
 use crate::state_cache::{format_bytes, i18n, i18np};
 use crate::time_texts::format_datetime_display;
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use cxx_qt_lib::QString;
+use kestic_core::query_list::QueryState;
 use kestic_daemon::dbus_api::{
-    FindHitDto, FindResultDto, FindScope, KesticDbusError, SnapshotQueryRequest,
-    SnapshotQueryResultDto,
+    FindHitDto, FindResultDto, FindScope, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use std::pin::Pin;
 use time::OffsetDateTime;
@@ -37,7 +36,7 @@ model_row!(SearchRow {
 
 #[derive(Default)]
 pub struct SnapshotSearchModelRust {
-    rows: Vec<SearchRow>,
+    list: QueryList<SearchRow>,
     pub(crate) state: QString,
     pub(crate) error_text: QString,
     pub(crate) search_text: QString,
@@ -50,8 +49,6 @@ pub struct SnapshotSearchModelRust {
 
     destination_id: String,
     backup_id: String,
-    filter: String,
-    query: QueryRun,
 }
 
 /// Date and time of the snapshot of `hit`, as restic reports it when it does not parse.
@@ -99,129 +96,38 @@ pub(crate) fn hits_text(total: u64, snapshots: u64, text: &str) -> String {
     format!("{hits} {within}")
 }
 
-impl SnapshotSearchModelRust {
-    /// Fetches the page at `offset` of the hits: `Ok(None)` while the search runs.
-    fn fetch(&mut self, offset: u64) -> Result<Option<FindResultDto>, KesticDbusError> {
-        let filter = self.filter.clone();
-        match self.query.fetch(offset, &filter)? {
-            Some(SnapshotQueryResultDto::Find(found)) => Ok(Some(found)),
-            Some(_) => Err(KesticDbusError::Internal(
-                "unexpected snapshot query result".to_string(),
-            )),
-            None => Ok(None),
-        }
-    }
-}
+query_list_model!(
+    SnapshotSearchModel,
+    SearchRow,
+    begin_reset: begin_reset_search,
+    end_reset: end_reset_search,
+    begin_insert: begin_insert_rows_search,
+    end_insert: end_insert_rows_search,
+);
 
-impl qobject::SnapshotSearchModel {
-    /// Searches the snapshots of `backup_id` in `destination_id` for paths that contain
-    /// `text` (taken literally, any case). An empty text clears the hits.
-    pub fn search(
-        mut self: Pin<&mut Self>,
-        destination_id: &QString,
-        backup_id: &QString,
-        text: &QString,
-    ) {
-        self.as_mut().abandon();
-        let text = text.to_string().trim().to_string();
-        {
-            let mut rust = self.as_mut().rust_mut();
-            rust.destination_id = destination_id.to_string();
-            rust.backup_id = backup_id.to_string();
-            rust.filter.clear();
-        }
-        self.as_mut().begin_reset_search();
-        self.as_mut().rust_mut().rows.clear();
-        self.as_mut().end_reset_search();
-        self.as_mut().set_search_text(QString::from(&text));
-        self.as_mut().set_too_large(false);
-        self.as_mut().set_total(0);
-        self.as_mut().set_matched(0);
-        self.as_mut().set_count_text(QString::from(""));
-        self.as_mut().set_error_text(QString::from(""));
-        let no_hits = i18n("No hits for ‹%1›").subs(&[&text]);
-        self.as_mut().set_no_hits_text(QString::from(&no_hits));
-        if text.is_empty() {
-            self.as_mut().set_state(QString::from(""));
-            return;
-        }
-        let scope = FindScope::Backup {
-            backup_id: backup_id.to_string(),
-        };
-        let request = SnapshotQueryRequest::find(&destination_id.to_string(), scope, &text);
-        self.as_mut().rust_mut().query.start(request);
-        self.as_mut().set_state(QString::from("running"));
-    }
+impl QueryListModel for qobject::SnapshotSearchModel {
+    type Page = FindResultDto;
 
-    /// Checks the running search (called by a timer while `state` is `running`).
-    pub fn poll(mut self: Pin<&mut Self>) {
-        match self.as_mut().rust_mut().query.poll_start() {
-            StartPoll::Waiting => {}
-            StartPoll::Failed(text) => self.as_mut().fail(&text),
-            StartPoll::Started => self.as_mut().load_first_page(),
+    fn page_of(result: SnapshotQueryResultDto) -> Option<FindResultDto> {
+        match result {
+            SnapshotQueryResultDto::Find(found) => Some(found),
+            _ => None,
         }
     }
 
-    /// Filters the hits by `text` (any case, in the paths); the daemon filters.
-    pub fn set_filter(mut self: Pin<&mut Self>, text: &QString) {
-        let text = text.to_string();
-        if text == self.filter {
-            return;
-        }
-        self.as_mut().rust_mut().filter = text;
-        if self.state.to_string() == "done" {
-            self.as_mut().load_first_page();
-        }
+    fn page_rows(&self, found: &FindResultDto) -> Vec<SearchRow> {
+        found.hits.items.iter().map(row_for).collect()
     }
 
-    /// Stops the running search (the user cancels it or the page closes).
-    pub fn cancel(self: Pin<&mut Self>) {
-        self.abandon();
-    }
-
-    fn abandon(mut self: Pin<&mut Self>) {
-        if self.state.to_string() != "running" {
-            return;
-        }
-        self.as_mut().rust_mut().query.abandon();
-        self.as_mut().set_state(QString::from("cancelled"));
-    }
-
-    fn fail(mut self: Pin<&mut Self>, text: &str) {
-        self.as_mut().set_error_text(QString::from(text));
-        self.as_mut().set_state(QString::from("error"));
-    }
-
-    fn load_first_page(mut self: Pin<&mut Self>) {
-        match self.as_mut().rust_mut().fetch(0) {
-            Ok(None) => {}
-            Ok(Some(found)) => self.as_mut().apply_first_page(&found),
-            Err(KesticDbusError::NotFound(_)) => self.as_mut().search_again(),
-            Err(err) => self.as_mut().fail(&fetch_error_text(err)),
-        }
-    }
-
-    /// Starts the search again (the daemon freed the old result).
-    fn search_again(mut self: Pin<&mut Self>) {
-        let dest = QString::from(&self.destination_id);
-        let backup = QString::from(&self.backup_id);
-        let text = self.search_text.clone();
-        let filter = self.filter.clone();
-        self.as_mut().search(&dest, &backup, &text);
-        self.as_mut().rust_mut().filter = filter;
-    }
-
-    fn apply_first_page(mut self: Pin<&mut Self>, found: &FindResultDto) {
+    fn show_first_page(mut self: Pin<&mut Self>, found: FindResultDto) {
         let hits = &found.hits;
-        let rows: Vec<SearchRow> = hits.items.iter().map(row_for).collect();
-        self.as_mut().begin_reset_search();
-        self.as_mut().rust_mut().rows = rows;
-        self.as_mut().end_reset_search();
+        let rows = self.page_rows(&found);
+        self.as_mut().reset_rows(rows);
         self.as_mut().set_too_large(hits.too_large);
         self.as_mut().set_total(to_i32(hits.total));
         self.as_mut().set_matched(to_i32(hits.matched));
         // A list too large to hold cannot be filtered: its count is the total.
-        let count = if !self.filter.is_empty() && !hits.too_large {
+        let count = if !self.list.filter.is_empty() && !hits.too_large {
             count_text(hits.total, hits.matched, true)
         } else {
             hits_text(
@@ -234,47 +140,54 @@ impl qobject::SnapshotSearchModel {
         self.as_mut()
             .set_too_large_text(QString::from(&too_large_text(hits.total)));
         self.as_mut().set_error_text(QString::from(""));
-        self.as_mut().set_state(QString::from("done"));
+        self.set_query_state(Some(QueryState::Done));
     }
 
-    pub fn can_fetch_more(&self, parent: &QModelIndex) -> bool {
-        !parent.is_valid()
-            && self.state.to_string() == "done"
-            && !self.too_large
-            && i32::try_from(self.rows.len()).unwrap_or(i32::MAX) < self.matched
+    /// Searches again; the filter stays.
+    fn restart(mut self: Pin<&mut Self>) {
+        let dest = QString::from(&self.destination_id);
+        let backup = QString::from(&self.backup_id);
+        let text = self.search_text.clone();
+        let filter = self.list.filter.clone();
+        self.as_mut().search(&dest, &backup, &text);
+        self.as_mut().list_mut().filter = filter;
     }
+}
 
-    /// Appends the next page (at most 200 hits) at the end of the list.
-    pub fn fetch_more(mut self: Pin<&mut Self>, parent: &QModelIndex) {
-        if !self.can_fetch_more(parent) {
+impl qobject::SnapshotSearchModel {
+    /// Searches the snapshots of `backup_id` in `destination_id` for paths that contain
+    /// `text` (taken literally, any case). An empty text clears the hits.
+    pub fn search(
+        mut self: Pin<&mut Self>,
+        destination_id: &QString,
+        backup_id: &QString,
+        text: &QString,
+    ) {
+        self.as_mut().abandon_query();
+        let text = text.to_string().trim().to_string();
+        {
+            let mut rust = self.as_mut().rust_mut();
+            rust.destination_id = destination_id.to_string();
+            rust.backup_id = backup_id.to_string();
+        }
+        self.as_mut().clear_list();
+        self.as_mut().set_search_text(QString::from(&text));
+        self.as_mut().set_too_large(false);
+        self.as_mut().set_total(0);
+        self.as_mut().set_matched(0);
+        self.as_mut().set_count_text(QString::from(""));
+        self.as_mut().set_error_text(QString::from(""));
+        let no_hits = i18n("No hits for ‹%1›").subs(&[&text]);
+        self.as_mut().set_no_hits_text(QString::from(&no_hits));
+        if text.is_empty() {
+            self.as_mut().set_query_state(None);
             return;
         }
-        let offset = self.rows.len() as u64;
-        match self.as_mut().rust_mut().fetch(offset) {
-            Ok(Some(found)) if !found.hits.items.is_empty() => {
-                let rows: Vec<SearchRow> = found.hits.items.iter().map(row_for).collect();
-                let first = row_count(&self.rows);
-                let last = first + row_count(&rows) - 1;
-                self.as_mut().begin_insert_rows_search(parent, first, last);
-                self.as_mut().rust_mut().rows.extend(rows);
-                self.as_mut().end_insert_rows_search();
-            }
-            Ok(_) => {}
-            Err(KesticDbusError::NotFound(_)) => self.as_mut().search_again(),
-            Err(err) => self.as_mut().fail(&fetch_error_text(err)),
-        }
-    }
-
-    pub fn row_count(&self, _parent: &QModelIndex) -> i32 {
-        row_count(&self.rows)
-    }
-
-    pub fn role_names(&self) -> QHash<QHashPair_i32_QByteArray> {
-        role_names::<SearchRow>()
-    }
-
-    pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
-        row_data(&self.rows, index, role)
+        let scope = FindScope::Backup {
+            backup_id: backup_id.to_string(),
+        };
+        let request = SnapshotQueryRequest::find(&destination_id.to_string(), scope, &text);
+        self.as_mut().start_query(request);
     }
 }
 

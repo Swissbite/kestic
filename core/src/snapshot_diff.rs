@@ -133,21 +133,21 @@ struct RawLine {
 
 /// Turns the output lines of `restic diff --json` into the changes and the counts. Unknown
 /// lines, message types, modifiers and fields are ignored.
-struct DiffCollector {
+pub struct DiffCollector {
     builder: ListBuilder<DiffChange>,
     counts: DiffCounts,
 }
 
 impl DiffCollector {
     /// Collects the changes; the list is dropped once it exceeds `limit_bytes`.
-    fn new(limit_bytes: u64) -> Self {
+    pub fn new(limit_bytes: u64) -> Self {
         Self {
             builder: ListBuilder::new(limit_bytes),
             counts: DiffCounts::default(),
         }
     }
 
-    fn push_line(&mut self, line: &str) {
+    pub fn push_line(&mut self, line: &str) {
         let Ok(raw) = serde_json::from_str::<RawLine>(line.trim()) else {
             return;
         };
@@ -177,7 +177,7 @@ impl DiffCollector {
         }
     }
 
-    fn finish(self) -> DiffResult {
+    pub fn finish(self) -> DiffResult {
         DiffResult {
             changes: self.builder.finish(),
             counts: self.counts,

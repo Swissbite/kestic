@@ -97,7 +97,7 @@ pub fn daemon_unavailable_text() -> String {
 pub fn not_found_text() -> String {
     tr(&ServiceErrorCode::NotFound.message())
 }
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -297,6 +297,33 @@ pub fn ensure_daemon_and_refresh() {
     refresh_state_now();
 }
 
+/// Drops the progress of runs that ended. Still active are the run of each backup and every run
+/// the state lists as running: a restore or a maintenance also runs beside a backup, and only
+/// one run is the overall progress. That one is added when its progress has not arrived yet.
+fn retain_active_progress(
+    progress: &mut HashMap<String, ActiveRunProgressDto>,
+    backups: &[BackupSummaryDto],
+    recent_runs: &[Run],
+    overall: Option<&ActiveRunProgressDto>,
+) {
+    let active_ids: HashSet<&str> = backups
+        .iter()
+        .filter_map(|b| b.active_run.as_ref())
+        .chain(
+            recent_runs
+                .iter()
+                .filter(|r| r.status == RunStatus::Running),
+        )
+        .map(|r| r.id.as_str())
+        .collect();
+    progress.retain(|id, _| active_ids.contains(id.as_str()));
+    if let Some(p) = overall {
+        progress
+            .entry(p.run_id.clone())
+            .or_insert_with(|| p.clone());
+    }
+}
+
 pub fn refresh_state_now() {
     shared_state().lock_unpoisoned().last_state_fetch = Some(Instant::now());
     let client = match make_client() {
@@ -317,18 +344,12 @@ pub fn refresh_state_now() {
                 let was_reachable = guard.daemon_reachable;
                 guard.daemon_reachable = true;
                 guard.daemon_error = None;
-                let active_ids: Vec<String> = state
-                    .backups
-                    .iter()
-                    .filter_map(|b| b.active_run.as_ref().map(|r| r.id.as_str().to_string()))
-                    .collect();
-                guard.active_progress.retain(|k, _| active_ids.contains(k));
-                if let Some(p) = &state.overall.active_run_progress {
-                    guard
-                        .active_progress
-                        .entry(p.run_id.clone())
-                        .or_insert_with(|| p.clone());
-                }
+                retain_active_progress(
+                    &mut guard.active_progress,
+                    &state.backups,
+                    &state.recent_runs,
+                    state.overall.active_run_progress.as_ref(),
+                );
                 guard.state = Some(state);
                 guard.state_fetched = true;
                 (
