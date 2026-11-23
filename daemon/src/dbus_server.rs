@@ -26,6 +26,7 @@ use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
+use std::time::Duration;
 use zbus::object_server::SignalEmitter;
 use zbus::{Connection, interface};
 
@@ -669,6 +670,21 @@ impl KesticDbusV1Service {
         has_running_run: bool,
         running_backup_name: &str,
     ) -> zbus::Result<()>;
+}
+
+/// Closes `conn` once every other handle of it is gone, waiting at most `limit`; returns whether
+/// it closed in time. A method call holds a handle until its reply has been written, so the reply
+/// to the call that stopped the daemon, such as `ConfirmQuit`, still reaches its caller instead of
+/// `NoReply`. After `limit` the connection closes as its last handle goes, at the latest when the
+/// process ends.
+pub fn close_after_pending_replies(conn: Connection, limit: Duration) -> bool {
+    let (closed_tx, closed_rx) = mpsc::channel();
+    thread::spawn(move || {
+        zbus::block_on(conn.graceful_shutdown());
+        // The receiver is gone when the wait timed out; nobody is left to tell.
+        closed_tx.send(()).ok();
+    });
+    closed_rx.recv_timeout(limit).is_ok()
 }
 
 pub(crate) fn start_dbus_server(
