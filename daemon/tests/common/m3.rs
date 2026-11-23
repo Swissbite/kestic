@@ -965,7 +965,6 @@ exit $code
             .collect()
     }
 
-    /// Number of restic processes started so far (all subcommands).
     /// Number of started restic processes that touch the repository (everything except the
     /// repository-independent `restic version` probe).
     pub fn started_repo_count(&self) -> usize {
