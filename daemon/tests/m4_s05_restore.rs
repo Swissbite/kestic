@@ -3663,7 +3663,8 @@ fn m4_s05_cancelled_restore_keeps_its_counts() {
 /// AC-M4-05-25 (FIFO, socket): a preview at the original location where the target has a FIFO
 /// or a socket in place of a file of the snapshot (a) ends with `invalid_target`, (b) names it
 /// as `error_detail` and (c) in its English and German text; it runs no dry run, where restic
-/// would hang. Device files need root to create; they share the check with FIFOs and sockets.
+/// would hang. A device in place of a file shares the check with FIFOs and sockets; that case is
+/// checked in core with `/dev/null`.
 #[test]
 fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
     run_isolated_test(
@@ -3969,8 +3970,8 @@ fn refused_at_run(fx: &RestoreFixture, selection: &[&str], preview_id: &str, cas
 /// would hang, (2) the repository of a local destination set up at a selected folder,
 /// (3) Kestic's data folder that now lies at a selected folder, and (4) the target folder that
 /// comes to lie inside Kestic's data folder while `StartRestore` probes restic. The FIFO case is
-/// `m4_s05_fifo_after_the_preview_ends_the_run`. Device files need root to create, so no test
-/// makes one; the run checks them in the same step as FIFOs and sockets.
+/// `m4_s05_fifo_after_the_preview_ends_the_run`. A device in place of a selected file is checked
+/// in the same step as FIFOs and sockets; that case is checked in core with `/dev/null`.
 #[test]
 fn ac_m4_05_25_target_changed_after_the_preview_is_refused_right_before_restic() {
     run_isolated_test(
@@ -4049,6 +4050,46 @@ fn ac_m4_05_25_target_changed_after_the_preview_is_refused_right_before_restic()
                 );
                 assert_eq!(real_restores(fx), real, "(b) {case}: no restic restore");
                 fs::remove_file(&kestic_data).expect("remove the link");
+            });
+        },
+    );
+}
+
+/// AC-M4-05-25, checked again right before restic, for the folder above the selected entries
+/// (`docs` above `docs/deep/y.txt`): after a preview that passed, `docs` at the target becomes
+/// (1) a file, (2) a symbolic link to nothing or (3) a symbolic link loop. The run (a) ends
+/// `Fehler` with `invalid_target` and (b) starts no restic `restore`.
+#[test]
+fn ac_m4_05_25_folder_above_the_selection_changed_after_the_preview_is_refused() {
+    run_isolated_test(
+        "ac_m4_05_25_folder_above_the_selection_changed_after_the_preview_is_refused",
+        "KESTIC_AC_M4_05_25_ABOVE_LATER_INNER",
+        |root| {
+            for_each_variant(root, "M4RV", small_tree, |fx, v| {
+                let selection = ["a.txt", "docs/deep/y.txt"];
+                let docs = fx.src.join("docs");
+                let nowhere = fx.new_dir("nowhere");
+                let cases: [(&str, &dyn Fn()); 3] = [
+                    ("(1) a file at docs", &|| {
+                        fs::write(&docs, "a file").expect("file in its place");
+                    }),
+                    ("(2) a link to nothing at docs", &|| {
+                        std::os::unix::fs::symlink(&nowhere, &docs).expect("docs -> nothing");
+                    }),
+                    ("(3) a link loop at docs", &|| {
+                        std::os::unix::fs::symlink("docs", &docs).expect("docs -> docs");
+                    }),
+                ];
+                for (name, replace) in cases {
+                    let case = format!("AC-M4-05-25 {} {name}", v.label);
+                    fs::create_dir_all(docs.join("deep")).expect("real docs/deep");
+                    fs::write(docs.join("deep/y.txt"), "yy").expect("write y.txt");
+                    let id = passing_preview(fx, &selection, &case);
+                    fs::remove_dir_all(&docs).expect("remove docs");
+                    replace();
+                    refused_at_run(fx, &selection, &id, &case);
+                    fs::remove_file(&docs).expect("remove what replaced docs");
+                }
             });
         },
     );
