@@ -9,8 +9,9 @@
 
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
-    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase,
-    ServiceErrorCode, SkipReason, SourceStatus,
+    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticInstallCode, ResticInstallOutcome,
+    ResticInstallPhase, ResticStatusCode, RunProgressPhase, ServiceErrorCode, SkipReason,
+    SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
@@ -60,6 +61,15 @@ fn all_messages() -> Vec<(String, Message)> {
         }
     }
     push("completed".into(), completed_message());
+    for phase in ResticInstallPhase::ALL {
+        push(format!("{phase:?}"), phase.message());
+    }
+    for outcome in ResticInstallOutcome::ALL {
+        push(format!("{outcome:?}"), outcome.message("0.20.0"));
+    }
+    for code in ResticInstallCode::ALL {
+        push(format!("install/{code:?}"), code.message());
+    }
     push("dns".into(), dns_failed_message());
     for action in RecoveryAction::ALL {
         push(format!("{action:?}"), action.label_message());

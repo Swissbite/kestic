@@ -315,6 +315,27 @@ code_enum! {
 }
 
 code_enum! {
+    /// Step of a running installation of the app-managed restic (`ResticInstallStatusDto.phase`).
+    ResticInstallPhase {
+        FetchingRelease => "fetching_release",
+        Downloading => "downloading",
+        Verifying => "verifying",
+        /// Downloaded and checked; the binary is replaced once no restic runs.
+        WaitingForRuns => "waiting_for_runs",
+        Replacing => "replacing",
+    }
+}
+
+code_enum! {
+    /// Result of a finished installation (`ResticInstallStatusDto.outcome`).
+    ResticInstallOutcome {
+        Installed => "installed",
+        /// The app-managed restic already was the latest release; nothing was downloaded.
+        AlreadyCurrent => "already_current",
+    }
+}
+
+code_enum! {
     /// Aggregated overall status precedence (see `docs/spec/ui/zustaende.md`).
     OverallStatusKind {
         Blocked => "blocked",

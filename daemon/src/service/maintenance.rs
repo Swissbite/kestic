@@ -39,6 +39,7 @@ use kestic_core::model::{
 use kestic_core::mount::{MountInspector, SourceCheckResult, current_home_dir};
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::{CancelHandle, ResticRuntime, redact_secrets};
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::scheduler::{
     evaluate_run_conditions, mark_maintenance_slot_handled, record_maintenance_backoff_failure,
 };
@@ -174,6 +175,9 @@ fn run_destination_maintenance_internal(
     let d_id = DestinationId::parse(destination_id)
         .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
 
+    // Held until the run has ended, so the app-managed restic is not replaced between its
+    // restic processes.
+    let run_lease = ResticBinaryGate::global().read();
     let mut ctx = claim_maintenance_destination(shared, &d_id, destination_id, is_scheduled)?;
 
     let (probe, resolved) = probe_before_run(
@@ -228,6 +232,7 @@ fn run_destination_maintenance_internal(
     let run_id_str = launched.run.id.as_str().to_string();
     let shared_worker = Arc::clone(shared);
     thread::spawn(move || {
+        let _run_lease = run_lease;
         execute_maintenance_worker(MaintenanceWorkerArgs {
             shared_worker,
             ctx,

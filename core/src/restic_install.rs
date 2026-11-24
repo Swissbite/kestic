@@ -7,11 +7,13 @@
 //! is never touched, and every error removes the temporary file.
 
 use crate::provider::MIN_RESTIC_VERSION;
+use crate::restic_gate::ResticBinaryGate;
 use crate::restic_release::{
-    ARCHIVE_LIMIT, Arch, DownloadPlan, InstallError, RELEASE_INFO_LIMIT, SIGNATURE_LIMIT,
-    Transport, TrustAnchor, check_sha256, expected_sha256, fetch_asset, fetch_release, find_gpgv,
-    output_within, verify_signature,
+    ARCHIVE_LIMIT, Arch, DownloadPlan, HttpAnswer, InstallError, RELEASE_INFO_LIMIT,
+    SIGNATURE_LIMIT, Transport, TrustAnchor, UreqTransport, check_sha256, expected_sha256,
+    fetch_asset, fetch_release, find_gpgv, output_within, verify_signature,
 };
+use kestic_i18n::codes::ResticInstallPhase;
 use semver::Version;
 use std::ffi::OsStr;
 use std::fs::{self, File};
@@ -20,6 +22,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+use url::Url;
 
 /// File name of the app-managed restic in Kestic's data folder.
 pub const BINARY_NAME: &str = "restic";
@@ -151,10 +154,7 @@ pub fn install_latest(request: &InstallRequest<'_>) -> Result<InstallOutcome, In
 }
 
 fn finish(preparation: Preparation) -> Result<InstallOutcome, InstallError> {
-    match preparation {
-        Preparation::AlreadyCurrent(version) => Ok(InstallOutcome::AlreadyCurrent(version)),
-        Preparation::Ready(prepared) => prepared.commit().map(InstallOutcome::Installed),
-    }
+    replace_when_idle(preparation, ResticBinaryGate::global(), &Unobserved)
 }
 
 /// [`prepare_install`] with an anchor of the test build.
@@ -179,18 +179,138 @@ pub fn install_latest_with_anchor(
     finish(prepare_install_with_anchor(request, anchor)?)
 }
 
+/// What a running installation reports, and whether it should stop. It is called while restic
+/// processes may wait for the installation, so it must never wait for anything that runs restic.
+pub trait InstallObserver: Sync {
+    fn phase(&self, phase: ResticInstallPhase);
+    /// The release version, once it is known.
+    fn version(&self, version: &str);
+    /// Bytes of the file being downloaded so far, and its size if the server says.
+    fn bytes(&self, done: u64, total: Option<u64>);
+    /// True once the installation should stop; it then ends before the `rename`.
+    fn cancelled(&self) -> bool;
+    /// Called under the replace lease right before the `rename`: true moves to the phase
+    /// `replacing`, after which a cancel comes too late; false (cancelled meanwhile) stops the
+    /// installation. Deciding both in one step keeps a cancel and the `rename` apart.
+    fn begin_replace(&self) -> bool;
+}
+
+struct Unobserved;
+
+impl InstallObserver for Unobserved {
+    fn phase(&self, _phase: ResticInstallPhase) {}
+    fn version(&self, _version: &str) {}
+    fn bytes(&self, _done: u64, _total: Option<u64>) {}
+    fn cancelled(&self) -> bool {
+        false
+    }
+    fn begin_replace(&self) -> bool {
+        true
+    }
+}
+
+/// [`UreqTransport`] that reports each download to an [`InstallObserver`] and stops it once
+/// the observer is cancelled.
+struct ObservedTransport<'a> {
+    inner: UreqTransport,
+    observer: &'a dyn InstallObserver,
+}
+
+impl Transport for ObservedTransport<'_> {
+    fn get(&self, url: &Url, limit: u64) -> Result<HttpAnswer, InstallError> {
+        self.inner.get_observed(url, limit, &|done, total| {
+            self.observer.bytes(done, total);
+            !self.observer.cancelled()
+        })
+    }
+}
+
+/// Downloads, checks and installs the latest restic release with this build's trust anchor:
+/// download and checks run at once, the `rename` only under `gate`'s replace lease, so never
+/// while restic runs. Reports its progress to `observer` and stops before the `rename` once
+/// the observer is cancelled ([`InstallError::Cancelled`]).
+pub fn install_latest_observed(
+    request: &InstallRequest<'_>,
+    gate: &ResticBinaryGate,
+    observer: &dyn InstallObserver,
+) -> Result<InstallOutcome, InstallError> {
+    let anchor = TrustAnchor::for_this_build()?;
+    let transport = ObservedTransport {
+        inner: UreqTransport::new(),
+        observer,
+    };
+    let preparation = prepare_observed(request, &anchor, &transport, observer)?;
+    replace_when_idle(preparation, gate, observer)
+}
+
+/// Moves a prepared binary into place under `gate`'s replace lease.
+pub(crate) fn replace_when_idle(
+    preparation: Preparation,
+    gate: &ResticBinaryGate,
+    observer: &dyn InstallObserver,
+) -> Result<InstallOutcome, InstallError> {
+    let prepared = match preparation {
+        Preparation::AlreadyCurrent(version) => {
+            return Ok(InstallOutcome::AlreadyCurrent(version));
+        }
+        Preparation::Ready(prepared) => prepared,
+    };
+    observer.phase(ResticInstallPhase::WaitingForRuns);
+    let lease = gate
+        .replace_when_idle(&|| observer.cancelled())
+        .ok_or(InstallError::Cancelled)?;
+    if !observer.begin_replace() {
+        return Err(InstallError::Cancelled);
+    }
+    let version = prepared.commit()?;
+    drop(lease);
+    Ok(InstallOutcome::Installed(version))
+}
+
 pub(crate) fn prepare_with(
     request: &InstallRequest<'_>,
     anchor: &TrustAnchor,
     transport: &dyn Transport,
 ) -> Result<Preparation, InstallError> {
+    prepare_observed(request, anchor, transport, &Unobserved)
+}
+
+fn stop_if_cancelled(observer: &dyn InstallObserver) -> Result<(), InstallError> {
+    if observer.cancelled() {
+        Err(InstallError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn prepare_observed(
+    request: &InstallRequest<'_>,
+    anchor: &TrustAnchor,
+    transport: &dyn Transport,
+    observer: &dyn InstallObserver,
+) -> Result<Preparation, InstallError> {
     let gpgv = find_gpgv(request.search_path).ok_or(InstallError::GpgvMissing)?;
+    observer.phase(ResticInstallPhase::FetchingRelease);
     let version = fetch_release(transport, anchor)?;
+    observer.version(&version.to_string());
+    stop_if_cancelled(observer)?;
     let target = app_managed_binary(request.data_dir);
-    if installed_version(&target).as_ref() == Some(&version) {
-        return Ok(Preparation::AlreadyCurrent(version));
+    match installed_version(&target) {
+        Some(installed) if installed == version => {
+            return Ok(Preparation::AlreadyCurrent(version));
+        }
+        // The release information is not signed; an older release is never installed over a
+        // newer one.
+        Some(installed) if installed > version => {
+            return Err(InstallError::OlderThanInstalled {
+                release: version.to_string(),
+                installed: installed.to_string(),
+            });
+        }
+        _ => {}
     }
     let plan = DownloadPlan::new(anchor, &version, request.arch);
+    observer.phase(ResticInstallPhase::Downloading);
     let sums = fetch_asset(
         transport,
         anchor,
@@ -206,8 +326,11 @@ pub(crate) fn prepare_with(
         "SHA256SUMS.asc",
     )?;
     prepare_data_dir(request.data_dir)?;
+    observer.phase(ResticInstallPhase::Verifying);
     verify_signature(&gpgv, anchor, request.data_dir, &sums, &signature)?;
     let expected = expected_sha256(&String::from_utf8_lossy(&sums), &plan.archive_name)?;
+    stop_if_cancelled(observer)?;
+    observer.phase(ResticInstallPhase::Downloading);
     let archive = fetch_asset(
         transport,
         anchor,
@@ -215,7 +338,9 @@ pub(crate) fn prepare_with(
         ARCHIVE_LIMIT,
         &plan.archive_name,
     )?;
+    observer.phase(ResticInstallPhase::Verifying);
     check_sha256(&archive, &expected, &plan.archive_name)?;
+    stop_if_cancelled(observer)?;
 
     let temp = request.data_dir.join(temp_name());
     let mut file = create_exclusive(&temp).map_err(write_failed)?;
@@ -231,6 +356,7 @@ pub(crate) fn prepare_with(
     // The file must be closed before it runs (Linux refuses to run a file open for writing).
     drop(file);
     prepared.version = check_binary_version(&prepared.temp, &version, VERSION_TIMEOUT)?;
+    stop_if_cancelled(observer)?;
     Ok(Preparation::Ready(prepared))
 }
 
@@ -239,7 +365,8 @@ fn write_failed(err: std::io::Error) -> InstallError {
 }
 
 /// Creates Kestic's data folder (0700) if needed; an existing one loses any access for group
-/// and others, and is never widened.
+/// and others, and is never widened. A symbolic link in its place is refused, so the
+/// permissions of its target stay as they are.
 fn prepare_data_dir(dir: &Path) -> Result<(), InstallError> {
     if let Some(parent) = dir.parent() {
         fs::create_dir_all(parent).map_err(write_failed)?;
@@ -249,16 +376,70 @@ fn prepare_data_dir(dir: &Path) -> Result<(), InstallError> {
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(err) => return Err(write_failed(err)),
     }
-    let mode = fs::metadata(dir)
-        .map_err(write_failed)?
-        .permissions()
-        .mode()
-        & 0o7777;
+    let meta = fs::symlink_metadata(dir).map_err(write_failed)?;
+    if !meta.is_dir() {
+        return Err(InstallError::WriteFailed(format!(
+            "{} is not a folder",
+            dir.display()
+        )));
+    }
+    let mode = meta.permissions().mode() & 0o7777;
     if mode & 0o077 != 0 {
         fs::set_permissions(dir, fs::Permissions::from_mode(mode & !0o077))
             .map_err(write_failed)?;
     }
     Ok(())
+}
+
+/// What [`remove_leftovers`] did.
+#[derive(Debug, Default)]
+pub struct LeftoverCleanup {
+    pub removed: usize,
+    /// Entries that could not be removed, or the folder that could not be read.
+    pub failed: Vec<(PathBuf, std::io::Error)>,
+}
+
+/// Removes what an interrupted installation left in `data_dir`: temporary files and `gpgv`
+/// folders whose names start with [`TEMP_PREFIX`]. Symbolic links are removed, never followed;
+/// an entry that cannot be removed does not stop the others.
+pub fn remove_leftovers(data_dir: &Path) -> LeftoverCleanup {
+    let mut cleanup = LeftoverCleanup::default();
+    match fs::symlink_metadata(data_dir) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return cleanup,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return cleanup,
+        Err(err) => {
+            cleanup.failed.push((data_dir.to_path_buf(), err));
+            return cleanup;
+        }
+    }
+    let entries = match fs::read_dir(data_dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            cleanup.failed.push((data_dir.to_path_buf(), err));
+            return cleanup;
+        }
+    };
+    for entry in entries.flatten() {
+        if !entry
+            .file_name()
+            .as_encoded_bytes()
+            .starts_with(TEMP_PREFIX.as_bytes())
+        {
+            continue;
+        }
+        let path = entry.path();
+        let removed = match entry.file_type() {
+            Ok(kind) if kind.is_dir() => fs::remove_dir_all(&path),
+            Ok(_) => fs::remove_file(&path),
+            Err(err) => Err(err),
+        };
+        match removed {
+            Ok(()) => cleanup.removed += 1,
+            Err(err) => cleanup.failed.push((path, err)),
+        }
+    }
+    cleanup
 }
 
 /// Version the installed app-managed binary reports, if it runs and says.

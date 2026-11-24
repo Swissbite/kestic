@@ -708,6 +708,8 @@ fn execute_probe_command(
     // Its own process group, so stopping it also reaches processes the backend started below
     // restic that could keep its output open.
     cmd.process_group(0);
+    // Held until restic has ended, so the app-managed binary is not replaced meanwhile.
+    let _lease = crate::restic_gate::ResticBinaryGate::global().read();
     let mut child = cmd.spawn()?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();

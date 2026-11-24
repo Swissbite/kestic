@@ -25,6 +25,7 @@ kestic-build-stamp = { path = "../build-stamp" }
 
 [dev-dependencies]
 kestic-build-stamp = { path = "../build-stamp" }
+kestic-core = { path = "../core", features = ["test-trust-anchor"] }
 tempfile = "3.27"
 kestic-test-support = { path = "../test-support" }
 

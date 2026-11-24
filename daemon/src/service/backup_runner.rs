@@ -43,6 +43,7 @@ use kestic_core::restic::{
     CancelHandle, ResticExecutionResult, ResticFailureKind, ResticRuntime, ResticStatusMessage,
     ResticStreamEvent, SECRET_KIND_REPO, Transport, redact_secrets,
 };
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::scheduler::{
     SystemEnvironment, UnmetPrecondition, evaluate_run_conditions, format_local_slot_hint,
     mark_backup_slot_handled, record_backup_backoff_failure,
@@ -309,6 +310,9 @@ fn start_backup_internal(
     is_scheduled: bool,
 ) -> Result<String, KesticServiceErr> {
     let b_id = parse_backup_id(backup_id)?;
+    // Held until the run has ended, so the app-managed restic is not replaced between its
+    // restic processes.
+    let run_lease = ResticBinaryGate::global().read();
 
     let mut ctx = claim_backup_destination(shared, &b_id, is_scheduled)?;
 
@@ -389,6 +393,7 @@ fn start_backup_internal(
     let run_id_str = launched.run.id.as_str().to_string();
     let shared_worker = Arc::clone(shared);
     thread::spawn(move || {
+        let _run_lease = run_lease;
         execute_backup_worker(BackupWorkerArgs {
             shared_worker,
             ctx,

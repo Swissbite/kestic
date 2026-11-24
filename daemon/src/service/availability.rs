@@ -18,6 +18,7 @@ use kestic_core::mount::{
     MountInspector, SourceCheckResult, check_source_status_with, current_home_dir,
 };
 use kestic_core::provider::resolve_and_check;
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::path::Path;
@@ -281,6 +282,7 @@ fn spawn_restic_availability_checks(
     deps: ResticDeps,
 ) {
     thread::spawn(move || {
+        let _run_lease = ResticBinaryGate::global().read();
         // Without a usable restic the destinations keep their last status.
         let resolved = resolve_and_check(&deps.provider).ok();
         let mut updates = Vec::new();
@@ -536,6 +538,9 @@ pub fn unlock_destination_async(
         )
     };
 
+    // Held for the whole call, so the app-managed restic is not replaced between its restic
+    // processes.
+    let _run_lease = ResticBinaryGate::global().read();
     let resolved_bin = probe_for_run(&deps.provider, deps.secret_store.as_ref()).1?;
     let runtime = deps.runtime(&resolved_bin);
 

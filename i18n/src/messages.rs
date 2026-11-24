@@ -11,8 +11,9 @@
 
 use crate::codes::{
     BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
-    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase,
-    ServiceErrorCode, SkipReason, SourceStatus, code_enum,
+    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticInstallCode, ResticInstallOutcome,
+    ResticInstallPhase, ResticStatusCode, RunProgressPhase, ServiceErrorCode, SkipReason,
+    SourceStatus, code_enum,
 };
 
 /// Marks `msgid` for extraction (`xgettext --keyword=i18n_noop:1`) without translating it.
@@ -502,6 +503,71 @@ impl ServiceErrorCode {
             Self::HostKeyChanged => return ErrorKind::HostKeyChanged.message(None, false),
             Self::Internal => i18n_noop("Internal error in the background service."),
             Self::DaemonUnreachable => i18n_noop("Background service unavailable."),
+        };
+        Message::new(msgid)
+    }
+}
+
+impl ResticInstallPhase {
+    /// Progress line of a running installation of the restic managed by Kestic.
+    pub fn message(self) -> Message {
+        let msgid = match self {
+            Self::FetchingRelease => i18n_noop("Looking for the latest restic release…"),
+            Self::Downloading => i18n_noop("Downloading restic…"),
+            Self::Verifying => i18n_noop("Checking the signature and checksum of restic…"),
+            Self::WaitingForRuns => {
+                i18n_noop("Waiting until no run or preview uses restic any more…")
+            }
+            Self::Replacing => i18n_noop("Installing restic…"),
+        };
+        Message::new(msgid)
+    }
+}
+
+impl ResticInstallOutcome {
+    /// Result line of a finished installation; `version` is the installed restic version.
+    pub fn message(self, version: &str) -> Message {
+        let msgid = match self {
+            Self::Installed => i18n_noop("restic %1 is installed."),
+            Self::AlreadyCurrent => i18n_noop("restic %1 is already the latest version."),
+        };
+        Message::with_args(msgid, &[version])
+    }
+}
+
+impl ResticInstallCode {
+    /// Why an installation of the restic managed by Kestic failed; the installed restic stays
+    /// as it was.
+    pub fn message(self) -> Message {
+        let msgid = match self {
+            Self::Network => {
+                i18n_noop("Could not download restic. Check the internet connection and try again.")
+            }
+            Self::HostNotAllowed => i18n_noop(
+                "The download was redirected to a server that does not belong to restic's releases. Nothing was installed.",
+            ),
+            Self::AssetMissing => i18n_noop(
+                "The restic release is incomplete or not in the expected form. Nothing was installed.",
+            ),
+            Self::UnsupportedArchitecture => {
+                i18n_noop("restic offers no Linux build for this processor.")
+            }
+            Self::GpgvMissing => i18n_noop(
+                "gpgv is missing. Kestic needs it to check the signature of restic. Install the package gpgv.",
+            ),
+            Self::SignatureInvalid => i18n_noop(
+                "The signature of the restic release is not valid. Nothing was installed.",
+            ),
+            Self::ChecksumMismatch => i18n_noop(
+                "The downloaded restic does not match its checksum. Nothing was installed.",
+            ),
+            Self::VersionMismatch => i18n_noop(
+                "The downloaded restic reports another version than its release. Nothing was installed.",
+            ),
+            Self::TooOld => i18n_noop(
+                "The restic release is older than the version Kestic needs or already has. Nothing was installed.",
+            ),
+            Self::WriteFailed => i18n_noop("Could not save restic in the data folder of Kestic."),
         };
         Message::new(msgid)
     }

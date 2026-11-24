@@ -216,6 +216,8 @@ pub struct DaemonCore {
     pub(super) sleep_in_progress: bool,
     pub(super) dry_runs: HashMap<String, PreviewEntry<BackupDryRunResult>>,
     pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
+    /// Installations of the restic managed by Kestic by `install_id`.
+    pub(super) restic_installs: super::restic_install::InstallMap,
     pub(super) window_active: bool,
     pub(super) window_page: String,
     pub(crate) registered_gui_sender: Option<String>,
@@ -330,6 +332,7 @@ impl DaemonCore {
             sleep_in_progress: false,
             dry_runs: HashMap::new(),
             retention_previews: HashMap::new(),
+            restic_installs: HashMap::new(),
             window_active: false,
             window_page: String::new(),
             registered_gui_sender: None,

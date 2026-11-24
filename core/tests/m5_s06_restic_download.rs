@@ -213,7 +213,7 @@ fn ac_m5_06_4_foreign_signature_aborts_and_keeps_binary() {
     for anchor in [setup.anchor(), setup.anchor_with_keyring(&both)] {
         let error = prepare(&setup, &anchor).expect_err("a foreign signature must fail");
         // (a) aborted with a message
-        assert_eq!(error.code(), ResticInstallCode::SignatureInvalid);
+        assert_eq!(error.code(), Some(ResticInstallCode::SignatureInvalid));
         assert!(error.to_string().contains("signature"), "{error}");
         // (b) no new binary, no temporary file, the archive was never fetched
         assert_eq!(setup.entries(), vec!["restic".to_string()]);
@@ -411,7 +411,7 @@ fn ac_m5_06_7_foreign_target_and_failed_rename() {
     let error = prepared
         .commit()
         .expect_err("rename over a directory must fail");
-    assert_eq!(error.code(), ResticInstallCode::WriteFailed);
+    assert_eq!(error.code(), Some(ResticInstallCode::WriteFailed));
     assert_eq!(setup.entries(), vec!["restic".to_string()]);
     assert!(binary.join("inside").exists());
     fs::remove_dir_all(&binary).expect("remove dir");
@@ -421,7 +421,7 @@ fn ac_m5_06_7_foreign_target_and_failed_rename() {
     fs::set_permissions(&setup.data_dir, fs::Permissions::from_mode(0o500)).expect("chmod");
     let error = prepare(&setup, &setup.anchor()).expect_err("read-only folder must fail");
     fs::set_permissions(&setup.data_dir, fs::Permissions::from_mode(0o700)).expect("chmod");
-    assert_eq!(error.code(), ResticInstallCode::WriteFailed);
+    assert_eq!(error.code(), Some(ResticInstallCode::WriteFailed));
     assert_eq!(setup.entries(), vec!["restic".to_string()]);
     assert_old_binary_kept(&setup, &old);
 }
@@ -451,6 +451,43 @@ fn ac_m5_06_7_same_version_is_already_current() {
     assert_eq!(setup.entries(), vec!["restic".to_string()]);
 }
 
+/// AC-M5-06-7: a release older than the installed app-managed restic is refused before any
+/// download, and the installed binary stays.
+#[test]
+fn ac_m5_06_7_older_release_than_installed_is_refused() {
+    let setup = Setup::new(None);
+    fs::create_dir_all(&setup.data_dir).expect("data dir");
+    let binary = app_managed_binary(&setup.data_dir);
+    write_executable(
+        &binary,
+        "#!/bin/sh\necho '{\"message_type\":\"version\",\"version\":\"0.20.0\"}'\n",
+    );
+    let inode = fs::metadata(&binary).expect("binary").ino();
+    let path = path_env();
+    let outcome = install_latest_with_anchor(&setup.request(&path), &setup.anchor());
+    // (a) refused with the release and the installed version
+    assert_eq!(
+        outcome,
+        Err(InstallError::OlderThanInstalled {
+            release: RELEASE.to_string(),
+            installed: "0.20.0".to_string(),
+        })
+    );
+    assert_eq!(
+        InstallError::OlderThanInstalled {
+            release: RELEASE.to_string(),
+            installed: "0.20.0".to_string(),
+        }
+        .code(),
+        Some(ResticInstallCode::TooOld)
+    );
+    // (b) nothing but the release information was fetched
+    assert_eq!(setup.mock.requests(), vec![LATEST_PATH.to_string()]);
+    // (c) the installed binary stays
+    assert_eq!(fs::metadata(&binary).expect("binary").ino(), inode);
+    assert_eq!(setup.entries(), vec!["restic".to_string()]);
+}
+
 /// AC-M5-06-11: the real transport does not follow a redirect itself; one to another host is
 /// refused before that host gets a request.
 #[test]
@@ -468,7 +505,7 @@ fn ac_m5_06_11_real_transport_refuses_foreign_redirect() {
         )],
     );
     let error = prepare(&setup, &setup.anchor()).expect_err("foreign redirect must fail");
-    assert_eq!(error.code(), ResticInstallCode::HostNotAllowed);
+    assert_eq!(error.code(), Some(ResticInstallCode::HostNotAllowed));
     assert_eq!(other.requests(), Vec::<String>::new());
     assert_eq!(setup.mock.requests(), vec![LATEST_PATH.to_string(), sums]);
     assert_eq!(setup.entries(), Vec::<String>::new());

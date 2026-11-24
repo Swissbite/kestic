@@ -99,6 +99,9 @@ pub struct M3DaemonOpts<'a> {
     pub assume_sni_available: bool,
     /// `PATH` the daemon searches for `ssh` and `rclone`; `None` uses the test's own.
     pub program_search_path: Option<std::ffi::OsString>,
+    /// Sets `restic_bin` as the custom restic source after the start (default); off keeps the
+    /// source of an existing `config.toml`.
+    pub set_restic_provider: bool,
 }
 
 impl<'a> M3DaemonOpts<'a> {
@@ -123,6 +126,7 @@ impl<'a> M3DaemonOpts<'a> {
             enable_portal_inhibit: false,
             assume_sni_available: true,
             program_search_path: None,
+            set_restic_provider: true,
         }
     }
 
@@ -203,12 +207,14 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
 
     let client =
         KesticClient::connect(opts.bus_name, KESTIC_OBJECT_PATH).expect("connect KesticClient");
-    let prov = client
-        .set_restic_provider(&ResticProvider::Custom {
-            path: opts.restic_bin.to_path_buf(),
-        })
-        .expect("set restic provider");
-    assert!(prov.valid, "restic provider must be valid: {prov:?}");
+    if opts.set_restic_provider {
+        let prov = client
+            .set_restic_provider(&ResticProvider::Custom {
+                path: opts.restic_bin.to_path_buf(),
+            })
+            .expect("set restic provider");
+        assert!(prov.valid, "restic provider must be valid: {prov:?}");
+    }
     M3Daemon {
         client,
         state_dir,

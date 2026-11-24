@@ -240,6 +240,92 @@ fn ac_m5_06_4_status_lines() {
     assert!(check_gpgv_status(&bad_first, true, FPR).is_err());
 }
 
+/// AC-M5-06-4: the right subkey under a wrong primary key, two signatures, and `GOODSIG`
+/// without `VALIDSIG` are each refused.
+#[test]
+fn ac_m5_06_4_status_lines_subkey_two_signatures_goodsig_only() {
+    let subkey = "07C478580126F4E4006FABA1D5FC2ACF4043FDF1";
+    let wrong_primary = format!(
+        "[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG D5FC2ACF4043FDF1 x\n\
+         [GNUPG:] VALIDSIG {subkey} 2026-11-19 1 0 4 0 1 10 00 1111111111111111111111111111111111111111\n"
+    );
+    assert!(check_gpgv_status(&wrong_primary, true, FPR).is_err());
+
+    let one = format!(
+        "[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG 91A6868BD3F7A907 x\n\
+         [GNUPG:] VALIDSIG {FPR} 2026-11-19 1 0 4 0 1 10 00 {FPR}\n"
+    );
+    assert_eq!(check_gpgv_status(&one, true, FPR), Ok(()));
+    let two = format!("{one}{one}");
+    assert!(check_gpgv_status(&two, true, FPR).is_err());
+    let two_validsig = format!(
+        "[GNUPG:] VALIDSIG {FPR} 2026-11-19 1 0 4 0 1 10 00 {FPR}\n\
+         [GNUPG:] VALIDSIG {FPR} 2026-11-19 1 0 4 0 1 10 00 {FPR}\n"
+    );
+    assert!(check_gpgv_status(&two_validsig, true, FPR).is_err());
+
+    let goodsig_only = "[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG 91A6868BD3F7A907 x\n";
+    assert!(check_gpgv_status(goodsig_only, true, FPR).is_err());
+}
+
+/// The release build trusts only a `gpgv` that root owns and only root can change.
+#[test]
+fn ac_m5_06_13_only_a_root_owned_gpgv_is_trusted() {
+    // (a) the system's gpgv, also through a symbolic link that resolves to it
+    assert_eq!(
+        trusted_gpgv(Path::new(SYSTEM_GPGV)),
+        Some(PathBuf::from(SYSTEM_GPGV))
+    );
+    let dir = tempfile::tempdir().expect("dir");
+    let link = dir.path().join("gpgv");
+    std::os::unix::fs::symlink(SYSTEM_GPGV, &link).expect("symlink");
+    assert_eq!(trusted_gpgv(&link), Some(PathBuf::from(SYSTEM_GPGV)));
+    // (b) a gpgv of this user (tests never run as root) is refused
+    let own = dir.path().join("own");
+    std::fs::create_dir(&own).expect("own dir");
+    let fake = own.join("gpgv");
+    std::fs::copy(SYSTEM_GPGV, &fake).expect("copy gpgv");
+    assert_eq!(trusted_gpgv(&fake), None);
+    assert_eq!(trusted_gpgv(&dir.path().join("missing")), None);
+    // (c) only absolute PATH entries count
+    let search = std::env::join_paths([Path::new("relative"), own.as_path()]).expect("PATH");
+    assert_eq!(gpgv_in_path(Some(&search)), Some(fake.clone()));
+    assert_eq!(gpgv_in_path(Some(OsStr::new("relative"))), None);
+}
+
+/// Text from the network or from `gpgv` reaches an error detail only cut to its limit.
+#[test]
+fn attacker_text_is_clipped_in_error_details() {
+    assert_eq!(clip("short"), "short");
+    assert_eq!(clip("a\nb\u{1b}[31mc"), "a b [31mc");
+    let long = "ä".repeat(DETAIL_LIMIT + 50);
+    let clipped = clip(&long);
+    assert_eq!(clipped.chars().count(), DETAIL_LIMIT + 1);
+    assert!(clipped.ends_with('…'));
+
+    let location = format!("https://evil.example/{}", "x".repeat(5000));
+    let transport = RecordingTransport::default().redirect(SUMS_0_19_1, &location);
+    let Err(InstallError::HostNotAllowed(detail)) = fetch_asset(
+        &transport,
+        &TrustAnchor::production(),
+        SUMS_0_19_1,
+        RELEASE_INFO_LIMIT,
+        "SHA256SUMS",
+    ) else {
+        panic!("a foreign redirect must be refused");
+    };
+    assert!(detail.chars().count() <= DETAIL_LIMIT + 1, "{detail}");
+
+    let tag = format!("v{}", "9".repeat(5000));
+    let transport = RecordingTransport::default().ok(LATEST, &latest_json(&tag));
+    let Err(InstallError::AssetMissing(detail)) =
+        fetch_release(&transport, &TrustAnchor::production())
+    else {
+        panic!("an unusable tag must be refused");
+    };
+    assert!(detail.chars().count() < DETAIL_LIMIT + 50, "{detail}");
+}
+
 /// AC-M5-06-5: the checksum comes from exactly one line naming exactly the asset.
 #[test]
 fn ac_m5_06_5_sums_line_lookup() {
@@ -622,11 +708,19 @@ fn install_errors_map_to_their_codes() {
             },
             C::TooOld,
         ),
+        (
+            InstallError::OlderThanInstalled {
+                release: String::new(),
+                installed: String::new(),
+            },
+            C::TooOld,
+        ),
         (InstallError::WriteFailed(String::new()), C::WriteFailed),
     ];
     for (error, code) in cases {
-        assert_eq!(error.code(), code, "{error:?}");
+        assert_eq!(error.code(), Some(code), "{error:?}");
     }
+    assert_eq!(InstallError::Cancelled.code(), None);
 }
 
 /// The test anchor replaces URL, key and fingerprint; plain HTTP only to 127.0.0.1.
@@ -640,7 +734,7 @@ fn test_anchor_from_variables() {
         move |name: &str| match name {
             "KESTIC_TEST_RELEASE_URL" => Some(url.to_string()),
             "KESTIC_TEST_SIGNING_KEY" => Some(key_path.clone()),
-            "KESTIC_TEST_SIGNING_FPR" => Some("ABCD".to_string()),
+            "KESTIC_TEST_SIGNING_FPR" => Some("ab cd".to_string()),
             _ => None,
         }
     };
