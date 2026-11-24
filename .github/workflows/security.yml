@@ -37,7 +37,9 @@ jobs:
         with:
           fail-on-severity: moderate
           comment-summary-in-pr: on-failure
-          allow-licenses: 0BSD, Apache-2.0, BlueOak-1.0.0, BSD-2-Clause, BSD-3-Clause, CC0-1.0, GPL-3.0-or-later, ISC, MIT, MPL-2.0, OFL-1.0, OFL-1.0-no-RFN, OFL-1.0-RFN, OFL-1.1, OFL-1.1-no-RFN, OFL-1.1-RFN, Unicode-3.0, Unlicense, Zlib
+          allow-licenses: 0BSD, Apache-2.0, BlueOak-1.0.0, BSD-2-Clause, BSD-3-Clause, bzip2-1.0.6, CC0-1.0, GPL-3.0-or-later, ISC, MIT, MPL-2.0, OFL-1.0, OFL-1.0-no-RFN, OFL-1.0-RFN, OFL-1.1, OFL-1.1-no-RFN, OFL-1.1-RFN, Unicode-3.0, Unlicense, Zlib
+          # bzip2-1.0.6: the libbzip2 licence (BSD-style) of libbz2-rs-sys, the pure-Rust
+          # bzip2 backend that unpacks the downloaded restic binary (M5-S06a, #128).
           # Microsoft's CSS/HTML language services (used only by the site's
           # typecheck, @astrojs/check) are MIT; GitHub also reports CC-BY-4.0 and
           # CC-BY-SA-2.5 for the bundled MDN reference texts. Never shipped.
