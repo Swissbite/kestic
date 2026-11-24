@@ -21,8 +21,9 @@ use common::{
 };
 use kestic_core::query_list::QueryLimits;
 use kestic_core::scheduler::TimezoneSpec;
-use kestic_daemon::dbus_api::KESTIC_BUS_NAME;
+use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, KESTIC_INTERFACE_V1};
 use std::path::Path;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use time::macros::datetime;
 
@@ -887,11 +888,64 @@ fn ac_m4_05_22_settings_mark_outdated_restic() {
     );
 }
 
-/// Clicks «Restore Files…» in the tray menu of the daemon at `sni` once the smoke scene wrote the
-/// marker file `marker` (its window shows another tab); returns whether it clicked (false when
-/// no marker came within 60 s).
-fn click_restore_files_when_marked(sni: &str, marker: &Path) -> bool {
+/// Watches the test bus for the GUI's `RegisterGui` call to the daemon; the receiver gets one
+/// message once the call passed the bus. The GUI makes that call only after the bus confirmed its
+/// match rule for the daemon's signals, so every signal the daemon sends afterwards reaches the
+/// GUI. Returns once the bus monitor is active.
+fn watch_gui_registration() -> mpsc::Receiver<()> {
+    use zbus::export::ordered_stream::OrderedStreamExt;
+
+    let (tx_ready, rx_ready) = mpsc::channel::<()>();
+    let (tx_registered, rx_registered) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        zbus::block_on(async move {
+            let conn = zbus::Connection::session()
+                .await
+                .expect("monitor session conn");
+            let mut stream = zbus::MessageStream::from(&conn);
+            let rule = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::MethodCall)
+                .interface(KESTIC_INTERFACE_V1)
+                .member("RegisterGui")
+                .build()
+                .expect("match rule for RegisterGui");
+            zbus::fdo::MonitoringProxy::new(&conn)
+                .await
+                .expect("monitoring proxy")
+                .become_monitor(&[rule], 0)
+                .await
+                .expect("BecomeMonitor");
+            tx_ready.send(()).expect("monitor ready");
+            while let Some(msg) = stream.next().await {
+                let Ok(msg) = msg else {
+                    continue;
+                };
+                if msg.header().member().map(|m| m.as_str()) == Some("RegisterGui") {
+                    tx_registered.send(()).expect("report RegisterGui");
+                    return;
+                }
+            }
+        });
+    });
+    rx_ready
+        .recv_timeout(Duration::from_secs(10))
+        .expect("bus monitor active");
+    rx_registered
+}
+
+/// Clicks «Restore Files…» in the tray menu of the daemon at `sni` once the GUI is subscribed to
+/// the daemon's signals (`registered`, see [`watch_gui_registration`]) and the smoke scene wrote
+/// the marker file `marker` (its window shows another tab); returns whether it clicked (false
+/// when either did not happen within 60 s).
+fn click_restore_files_when_marked(
+    sni: &str,
+    registered: &mpsc::Receiver<()>,
+    marker: &Path,
+) -> bool {
     let deadline = Instant::now() + Duration::from_secs(60);
+    if registered.recv_timeout(Duration::from_secs(60)).is_err() {
+        return false;
+    }
     while !marker.exists() {
         if Instant::now() > deadline {
             return false;
@@ -919,9 +973,12 @@ fn ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab() {
             let (rig, fakes) = restore_env(root);
             let sni = wait_for_sni_service(&fakes.sni_conn, Duration::from_secs(5));
             let marker = root.join("tray-click-marker");
+            let registered = watch_gui_registration();
             let click = {
                 let marker = marker.clone();
-                std::thread::spawn(move || click_restore_files_when_marked(&sni, &marker))
+                std::thread::spawn(move || {
+                    click_restore_files_when_marked(&sni, &registered, &marker)
+                })
             };
             let iso = kestic_test_support::gui::IsolatedEnv::adopt(root);
             let dbus_addr =

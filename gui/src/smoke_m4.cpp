@@ -579,21 +579,52 @@ QObject* tree_view_part(QQuickItem* root) {
     return nullptr;
 }
 
-// The name of a property of `o` that would make it a node to expand or collapse (empty when it
-// has none).
+// The name of a property of `o` that would make it a node to expand or collapse: one of the
+// properties of a tree view delegate, or any whose name contains «expand» or «collapse» in any
+// case (empty when it has none).
 QString expand_property(const QObject* o) {
-    static const char* const names[] = { "expanded", "hasChildren", "isTreeNode", "depth", "treeView" };
-    for (const char* name : names) {
-        if (o->metaObject()->indexOfProperty(name) >= 0) {
-            return QString::fromLatin1(name);
+    static const char* const names[] = { "hasChildren", "isTreeNode", "depth", "treeView" };
+    const QMetaObject* meta = o->metaObject();
+    for (int i = 0; i < meta->propertyCount(); ++i) {
+        const QString name = QString::fromLatin1(meta->property(i).name());
+        if (name.contains(QLatin1String("expand"), Qt::CaseInsensitive)
+            || name.contains(QLatin1String("collapse"), Qt::CaseInsensitive)) {
+            return name;
+        }
+        for (const char* tree_name : names) {
+            if (name == QLatin1String(tree_name)) {
+                return name;
+            }
+        }
+    }
+    return QString();
+}
+
+// The list, repeater or table/tree view nested inside the delegate `row` (its class name), or an
+// empty string: a delegate that holds one could show child entries below itself.
+QString nested_view(QQuickItem* row) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(row, items);
+    QList<QObject*> objects;
+    collect_all_qobjects(row, objects);
+    for (QQuickItem* it : items) {
+        objects << it;
+    }
+    for (QObject* o : objects) {
+        if (o == row) {
+            continue;
+        }
+        if (o->inherits("QQuickItemView") || o->inherits("QQuickRepeater") || o->inherits("QQuickTableView")) {
+            return QString::fromLatin1(o->metaObject()->className());
         }
     }
     return QString();
 }
 
 /// AC-M4-03-3 (b), «no tree view to expand and collapse»: the browse page holds no TreeView
-/// (nor any part of one), no entry of its folder list can be expanded, and its model is a flat
-/// list without child rows.
+/// (nor any part of one), no entry of its folder list can be expanded (no property to expand or
+/// collapse it, no list, repeater or tree view inside it), and its model is a flat list without
+/// child rows.
 int check_no_tree(const Browse& b) {
     QObject* tree = tree_view_part(b.page);
     M4_CHECK(5334, tree == nullptr,
@@ -611,6 +642,9 @@ int check_no_tree(const Browse& b) {
         const QString prop = expand_property(it);
         M4_CHECK(5335, prop.isEmpty(),
             qPrintable(QStringLiteral("AC-M4-03-3 (b) no folder list entry can be expanded: ") + prop));
+        const QString view = nested_view(it);
+        M4_CHECK(5338, view.isEmpty(),
+            qPrintable(QStringLiteral("AC-M4-03-3 (b) no folder list entry holds a list of its own: ") + view));
     }
     M4_CHECK(5336, rows > 0, "AC-M4-03-3 (b) folder list entries checked");
     for (int r = 0; r < b.model->rowCount(); ++r) {
@@ -1846,8 +1880,9 @@ int scenario_foreign_restore(const Ctx& c) {
 /// AC-M4-05-24 (c) in the GUI: started with `--show-restore` (the tray's «Restore Files…»
 /// without a running GUI), the window opens on the tab «Restore». Running on another tab, the
 /// GUI follows a click on the tray's «Restore Files…»: the scene writes the marker file
-/// `KESTIC_SMOKE_TRAY_MARKER`, the test then clicks the entry in the daemon's tray menu, and the
-/// daemon's signal switches the window to the tab «Restore».
+/// `KESTIC_SMOKE_TRAY_MARKER`; once the GUI is also subscribed to the daemon's signals (its
+/// `RegisterGui` call passed the bus), the test clicks the entry in the daemon's tray menu, and
+/// the daemon's signal switches the window to the tab «Restore».
 int scenario_show_restore(const Ctx& c) {
     QQuickWindow* w = c.window;
     M4_CHECK(6401, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 5000),
