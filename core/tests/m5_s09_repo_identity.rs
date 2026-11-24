@@ -229,6 +229,17 @@ fn m5_09_same_server_rules_per_destination_kind() {
         ),
         "S3 default port written out"
     );
+    // Another kind is never the same server.
+    assert!(!same_server(
+        &s3("https://nas.local:8000", "one"),
+        &rest("https://nas.local:8000/one")
+    ));
+}
+
+/// REST: saved credentials go only to the same scheme and host; the port may change. A host
+/// spelled otherwise (a trailing dot) counts as another one.
+#[test]
+fn m5_09_same_server_rules_for_rest() {
     // REST
     assert!(same_server(
         &rest("https://nas.local:8000/laptop"),
@@ -280,6 +291,12 @@ fn m5_09_same_server_rules_per_destination_kind() {
         ),
         "REST with the same IPv6 address written otherwise"
     );
+}
+
+/// Generic form: the bucket, container, rclone remote or backend decides; an address that holds
+/// a URL or parameters counts only as a whole.
+#[test]
+fn m5_09_same_server_rules_for_generic_destinations() {
     // Generic form: an address with `scheme://` inside never counts by its text before a `:`.
     for (a, b, what) in [
         (
@@ -376,11 +393,6 @@ fn m5_09_same_server_rules_per_destination_kind() {
         !same_server(&swift("https://keystone/v3"), &swift("https://evil/v3")),
         "a variable that is not secret can name the server"
     );
-    // Another kind is never the same server.
-    assert!(!same_server(
-        &s3("https://nas.local:8000", "one"),
-        &rest("https://nas.local:8000/one")
-    ));
 }
 
 /// The repository ID is kept per destination in `history.db`, survives reopening and
