@@ -221,6 +221,20 @@ pub fn backup_toml_snippet(backup: &crate::model::Backup) -> String {
     toml::to_string_pretty(backup).unwrap_or_default()
 }
 
+/// Kestic's data folder (`$XDG_DATA_HOME/kestic`, by default `~/.local/share/kestic`), where
+/// it keeps a restic it manages; `None` without `XDG_DATA_HOME` and `HOME`.
+pub fn default_data_dir() -> Option<PathBuf> {
+    let base = env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME")
+                .filter(|v| !v.is_empty())
+                .map(|home| PathBuf::from(home).join(".local").join("share"))
+        })?;
+    Some(base.join("kestic"))
+}
+
 /// Resolves the canonical configuration file path (`$XDG_CONFIG_HOME/kestic/config.toml`).
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
     let base = if let Some(xdg) = env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {

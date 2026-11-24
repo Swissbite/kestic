@@ -3388,7 +3388,8 @@ fn m4_s05_waiting_restore_leaves_no_folder_when_the_daemon_stops() {
 
 /// A preview whose walk of the snapshot would hold more than the memory limit of one query stops
 /// there: (a) its list is too large and empty, (b) no dry run runs, and (c) `StartRestore` with
-/// it is refused with `PreviewRequired`, since it classified nothing.
+/// it is refused with `PreviewRequired`, since it classified nothing; (d) the same holds for a
+/// new folder that already has content.
 #[test]
 fn m4_s05_preview_over_the_memory_limit_stops() {
     run_isolated_test(
@@ -3415,6 +3416,22 @@ fn m4_s05_preview_over_the_memory_limit_stops() {
             assert!(
                 matches!(refused, Err(KesticDbusError::PreviewRequired(_))),
                 "(c) {refused:?}"
+            );
+            let full = fx.new_dir("with-content");
+            fs::create_dir_all(&full).expect("mkdir");
+            fs::write(full.join("keep.txt"), "keep").expect("content");
+            let (full_id, full_preview) =
+                fx.preview(&[], Some(new_folder(&full)), RestoreOverwrite::Never);
+            assert!(full_preview.entries.too_large, "(d) too large");
+            let refused = fx.start_restore(
+                &[],
+                new_folder(&full),
+                RestoreOverwrite::Never,
+                Some(&full_id),
+            );
+            assert!(
+                matches!(refused, Err(KesticDbusError::PreviewRequired(_))),
+                "(d) {refused:?}"
             );
             fx.rig.daemon.stop();
         },
@@ -3629,7 +3646,7 @@ fn config_tree(work: &Path) -> std::path::PathBuf {
 /// is refused; (d) a selection beside that folder previews as usual. A target that is Kestic's
 /// folder itself or lies inside one is refused too: (e) a file of the configuration folder at
 /// its original location, (f) a new folder in the state folder in the preview, and (g) in
-/// `StartRestore`.
+/// `StartRestore`, (h) a new folder in the data folder (`$XDG_DATA_HOME/kestic`).
 #[test]
 fn m4_s05_selection_reaching_kestics_own_folder_is_refused() {
     run_isolated_test(
@@ -3697,6 +3714,21 @@ fn m4_s05_selection_reaching_kestics_own_folder_is_refused() {
                 "(g) {started:?}"
             );
             assert!(!state_dir.join("restored").exists(), "(g) nothing created");
+            let data_dir =
+                std::path::PathBuf::from(std::env::var_os("XDG_DATA_HOME").expect("isolated"))
+                    .join("kestic");
+            fs::create_dir_all(&data_dir).expect("mkdir data folder");
+            let (_, data) = fx.preview(
+                &["other.txt"],
+                Some(new_folder(&data_dir.join("restored"))),
+                RestoreOverwrite::Never,
+            );
+            assert_eq!(
+                data.target.check.code,
+                RestoreTargetCode::KesticData,
+                "(h) {:?}",
+                data.target.check
+            );
             fx.rig.daemon.stop();
         },
     );
@@ -3743,6 +3775,47 @@ fn m4_s05_selection_over_the_argument_limit_is_refused() {
                 "(b) {restore:?}"
             );
             assert_eq!(fx.rig.wrapper.started_repo_count(), started, "(c)");
+            fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// A FIFO that replaced a selected file after the preview is caught right before restic starts:
+/// the run (a) ends `Fehler` with `invalid_target` and (b) starts no restic restore, where restic
+/// would hang.
+#[test]
+fn m4_s05_fifo_after_the_preview_ends_the_run() {
+    run_isolated_test(
+        "m4_s05_fifo_after_the_preview_ends_the_run",
+        "KESTIC_M4_S05_FIFO_LATE_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RG", small_tree, |_| {});
+            let (preview_id, _) =
+                fx.preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
+            let fifo = fx.src.join("a.txt");
+            fs::remove_file(&fifo).expect("remove a.txt");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .expect("mkfifo");
+            assert!(made.success(), "mkfifo");
+            let run_id = fx
+                .start_restore(
+                    &["a.txt"],
+                    fx.original(),
+                    RestoreOverwrite::Always,
+                    Some(&preview_id),
+                )
+                .expect("StartRestore");
+            let detail = fx.wait_run(&run_id);
+            assert_eq!(detail.run.status, RunStatus::Error, "(a) {detail:?}");
+            assert_eq!(
+                detail.error_kind,
+                Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
+                "(a)"
+            );
+            assert_eq!(real_restores(&fx), 0, "(b) no restic restore");
             fx.rig.daemon.stop();
         },
     );

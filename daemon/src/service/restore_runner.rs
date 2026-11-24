@@ -30,7 +30,9 @@ use kestic_core::provider::ResolvedRestic;
 use kestic_core::query_list::QueryState;
 use kestic_core::restic::{CancelHandle, ResticStatusMessage, redact_secrets};
 use kestic_core::restore::{RestorePlan, RestoreRun, RestoreTarget, execute_restore, resolve_plan};
-use kestic_core::restore_preview::blocked_above_selection;
+use kestic_core::restore_preview::{
+    blocked_above_selection, selection_reaches_folder, special_file_in_selection,
+};
 use kestic_core::restore_target::{
     PREVIEW_MAX_AGE, TargetCheck, check_target, create_restore_folder, lies_inside,
     preview_required, remove_empty_folders,
@@ -518,12 +520,57 @@ fn recheck_target(setup: &mut RestoreSetup) -> Result<(), String> {
     ) {
         return Err(code.message(&path).map_or_else(|| path.clone(), |m| tr(&m)));
     }
+    // Kestic's own folders, which may have moved under the target since it was accepted.
+    if lies_inside(&setup.check.resolved, &setup.ctx.kestic_dirs) {
+        return Err(RestoreTargetCode::KesticData
+            .message(&path)
+            .map_or_else(|| path.clone(), |m| tr(&m)));
+    }
     if preview_required(&setup.target, &setup.check)
         && !setup.from_preview.as_ref().is_some_and(|f| f.dry_run)
     {
         return Err(tr(&ServiceErrorCode::PreviewRequired.message()));
     }
     Ok(())
+}
+
+/// What changed at the target since the preview and makes restic write elsewhere, fail midway,
+/// hang, or write into a repository or Kestic's own folders; checked without the walked tree,
+/// for the selected entries. `None` when restic may start.
+fn refused_right_before_run(plan: &RestorePlan, setup: &RestoreSetup) -> Option<BackupRunError> {
+    let selection = &setup.params.selection;
+    let target = &setup.check.resolved;
+    let invalid_target = |path: String| BackupRunError::InvalidTarget {
+        reason: tr_text(&ErrorKind::InvalidTarget.text(Some(&path))),
+        path,
+    };
+    // A folder above the selection that became a link or a file; a FIFO, socket or device in
+    // place of a selected entry, where restic would hang.
+    if let Some(path) = blocked_above_selection(plan, selection, target)
+        .into_iter()
+        .next()
+        .or_else(|| special_file_in_selection(plan, selection, target))
+    {
+        return Some(invalid_target(path));
+    }
+    let folders = [
+        (
+            setup.ctx.repositories(),
+            RestoreTargetCode::InsideRepository,
+        ),
+        (&setup.ctx.kestic_dirs[..], RestoreTargetCode::KesticData),
+    ];
+    folders.into_iter().find_map(|(dirs, code)| {
+        selection_reaches_folder(plan, selection, target, dirs).map(|path| {
+            let shown = target.to_string_lossy().into_owned();
+            BackupRunError::InvalidTarget {
+                reason: code
+                    .message(&shown)
+                    .map_or_else(|| shown.clone(), |m| tr(&m)),
+                path,
+            }
+        })
+    })
 }
 
 /// Starts the waiting restores of every destination (after waking up).
@@ -763,20 +810,8 @@ impl RestoreWorker {
                 reason,
             });
         }
-        // A folder above the selection that became a link or a file after the preview would
-        // make restic write into another folder or fail midway.
-        if let Some(path) = blocked_above_selection(
-            &plan,
-            &self.setup.params.selection,
-            &self.setup.check.resolved,
-        )
-        .into_iter()
-        .next()
-        {
-            return RestoreOutcome::failed(BackupRunError::InvalidTarget {
-                reason: tr_text(&ErrorKind::InvalidTarget.text(Some(&path))),
-                path,
-            });
+        if let Some(err) = refused_right_before_run(&plan, &self.setup) {
+            return RestoreOutcome::failed(err);
         }
         // Cancelled while the target was checked: restic does not start at all.
         if self.cancel.is_cancelled() {

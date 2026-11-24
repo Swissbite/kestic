@@ -145,13 +145,14 @@ impl RestoreContext {
         }
     }
 
-    /// With Kestic's own folders: the folder of `config_path` and `state_dir`.
+    /// With Kestic's own folders: the folder of `config_path`, `state_dir` and the data folder.
     pub(crate) fn with_kestic_dirs(mut self, config_path: &Path, state_dir: &Path) -> Self {
         self.kestic_dirs = config_path
             .parent()
-            .into_iter()
-            .chain(std::iter::once(state_dir))
             .map(Path::to_path_buf)
+            .into_iter()
+            .chain(std::iter::once(state_dir.to_path_buf()))
+            .chain(kestic_core::config::default_data_dir())
             .collect();
         self
     }

@@ -609,6 +609,60 @@ pub fn blocked_above_selection(
     blocked_folders_above(&tree, target)
 }
 
+/// For the run, without the walked tree: the first selected entry of `selection` that is a
+/// FIFO, a socket or a device at `target` (restic would hang opening it). Entries below a
+/// selected folder, and a restore of the whole folder, are only checked by the preview.
+pub fn special_file_in_selection(
+    plan: &RestorePlan,
+    selection: &[String],
+    target: &Path,
+) -> Option<String> {
+    use std::os::unix::fs::FileTypeExt;
+    crate::restore::selected_paths(plan, selection)?
+        .iter()
+        .find_map(|path| {
+            find_at_target(target, path)
+                .entries
+                .into_iter()
+                .find(|(_, m)| {
+                    let t = m.file_type();
+                    t.is_fifo() || t.is_socket() || t.is_block_device() || t.is_char_device()
+                })
+                .map(|(p, _)| p.to_string_lossy().into_owned())
+        })
+}
+
+/// For the run, without the walked tree: the first of `folders` below `target` that a selected
+/// entry of `selection` holds or lies in. A restore of the whole folder is only checked by the
+/// preview, which knows what the snapshot has there.
+pub fn selection_reaches_folder(
+    plan: &RestorePlan,
+    selection: &[String],
+    target: &Path,
+    folders: &[std::path::PathBuf],
+) -> Option<String> {
+    let selected = crate::restore::selected_paths(plan, selection)?;
+    let under = |path: &str, top: &str| {
+        path == top
+            || path
+                .strip_prefix(top)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    crate::restore_target::repositories_below(target, folders)
+        .into_iter()
+        .find(|folder| {
+            selected
+                .iter()
+                .any(|s| under(folder, s) || under(s, folder))
+        })
+        .map(|folder| {
+            target
+                .join(folder.trim_start_matches('/'))
+                .to_string_lossy()
+                .into_owned()
+        })
+}
+
 /// Looks up `item` (relative to `target`, starting with `/`) at the target. A segment with
 /// U+FFFD is matched against the real names of its folder, shown the way restic shows them.
 pub(crate) fn find_at_target(target: &Path, item: &str) -> AtTarget {
@@ -987,6 +1041,42 @@ mod tests {
         assert!(
             !t.writes_below(Some(&selected), "/docs/ghost"),
             "no write below a repository there"
+        );
+    }
+
+    /// Right before the run: a protected folder below the target counts when a selected entry
+    /// holds it or lies in it; one beside the selection and a restore of the whole folder do not.
+    #[test]
+    fn selection_reaching_a_folder_below_the_target() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let t = std::fs::canonicalize(tmp.path()).expect("canonical");
+        std::fs::create_dir_all(t.join("a/repo")).expect("mkdir");
+        let folders = [t.join("a/repo")];
+        let plan = |includes: &[&str]| RestorePlan {
+            snapshot_id: "abc".to_string(),
+            folder: "/s".to_string(),
+            includes: includes.iter().map(|i| format!("--include={i}")).collect(),
+        };
+        let reaches = |sel: &[&str]| {
+            let selection: Vec<String> = sel.iter().map(|e| format!("/s{e}")).collect();
+            selection_reaches_folder(&plan(sel), &selection, &t, &folders)
+        };
+        let repo = t.join("a/repo").to_string_lossy().into_owned();
+        assert_eq!(
+            reaches(&["/a"]),
+            Some(repo.clone()),
+            "a selected folder holds it"
+        );
+        assert_eq!(
+            reaches(&["/a/repo/x"]),
+            Some(repo),
+            "a selected entry lies in it"
+        );
+        assert_eq!(reaches(&["/b"]), None, "beside the selection");
+        assert_eq!(
+            selection_reaches_folder(&plan(&[]), &[], &t, &folders),
+            None,
+            "the whole folder is left to the preview"
         );
     }
 
