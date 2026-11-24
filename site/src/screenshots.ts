@@ -36,6 +36,34 @@ export const heroShot: Screenshot = {
 
 export const galleryShots: readonly Screenshot[] = [
   {
+    file: "m4-restore-snapshot-list-wide-en.png",
+    crop: { x: 0, y: 62, width: 870, height: 580 },
+    caption: "Restore: every backup with its snapshots, newest first.",
+    alt: "Restore tab listing the backups Home and Photos, the unassigned and orphaned snapshots, and the three snapshots of Home with time, data added, and host.",
+    ...wide,
+  },
+  {
+    file: "m4-restore-browse-wide-en.png",
+    crop: { x: 580, y: 110, width: 600, height: 400 },
+    caption: "Browse a snapshot and mark what to restore.",
+    alt: "Folder list of a snapshot with a breadcrumb, showing files and folders with size and modification date, each with a checkbox.",
+    ...wide,
+  },
+  {
+    file: "m4-restore-dialog-wide-en-overwrite.png",
+    crop: { x: 290, y: 171, width: 600, height: 400 },
+    caption: "Restore to the original location only after a preview.",
+    alt: "Restore dialog set to the original location with the overwrite mode Always, warning that one file will be overwritten and that this cannot be undone, and listing that file.",
+    ...wide,
+  },
+  {
+    file: "m4-restore-compare-wide-en.png",
+    crop: { x: 580, y: 110, width: 600, height: 400 },
+    caption: "Compare two snapshots: new, removed, and changed files.",
+    alt: "Comparison of two snapshots with nine changes, filter chips for new, removed, and changed files, and a list of the changed paths.",
+    ...wide,
+  },
+  {
     file: "m3-schedule-defaults-wide-en.png",
     crop: { x: 580, y: 110, width: 600, height: 400 },
     caption: "Schedule with the next three runs.",
