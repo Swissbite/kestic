@@ -668,6 +668,9 @@ pub mod qobject {
         #[cxx_name = "restoreSelection"]
         fn restore_selection(self: &SnapshotBrowseModel) -> QStringList;
         #[qinvokable]
+        #[cxx_name = "sizeSample"]
+        fn size_sample(self: &SnapshotBrowseModel) -> QString;
+        #[qinvokable]
         #[cxx_name = "segmentNames"]
         fn segment_names(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
         #[qinvokable]

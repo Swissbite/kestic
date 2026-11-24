@@ -431,6 +431,11 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().set_whole_snapshot(whole);
     }
 
+    /// The widest text the size column shows for a file below 1 GB, to size the column.
+    pub fn size_sample(&self) -> QString {
+        QString::from(&format_bytes(999_900_000))
+    }
+
     /// The selection to restore: none (the whole snapshot) when it covers every entry of the
     /// top folder, otherwise the marked entries.
     pub fn restore_selection(&self) -> QStringList {

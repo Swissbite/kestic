@@ -40,7 +40,7 @@ Kirigami.ScrollablePage {
     TextMetrics {
         id: sizeMetrics
         font: Kirigami.Theme.defaultFont
-        text: "999.9 MB"
+        text: snapshotBrowseModel.sizeSample()
     }
     TextMetrics {
         id: dateMetrics
