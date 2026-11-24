@@ -8,6 +8,7 @@ use crate::clock::Clock;
 use crate::known_hosts::{HostKeyCheck, HostKeyError, ScannedHostKey, check_host_key};
 use crate::model::{Destination, DestinationKind, normalize_rest_url_to_ascii};
 use crate::provider::ResolvedRestic;
+use crate::repo_identity::RepositoryId;
 use crate::restic::{
     ResticCommandSpec, ResticExecutionResult, ResticFailureKind, ResticRunError, ResticRuntime,
     SECRET_KIND_REPO,
@@ -60,6 +61,9 @@ pub enum DestinationError {
     },
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// `restic cat config` succeeded but printed no repository ID; its first output line.
+    #[error("restic printed no repository ID: {0}")]
+    NoRepositoryId(String),
     /// SFTP: no `known_hosts` file knows the server; the key the server shows.
     #[error("unknown SSH host key of {}", .0.name)]
     HostKeyUnknown(Box<ScannedHostKey>),
@@ -267,7 +271,8 @@ fn probe_repository_with(
         &throwaway,
         backend,
         probe,
-    )?;
+    )?
+    .result;
     match res.presentation.kind {
         ResticFailureKind::None | ResticFailureKind::WrongPassword => Ok(RepositoryProbe::Exists),
         ResticFailureKind::RepositoryMissing
@@ -280,21 +285,29 @@ fn probe_repository_with(
     }
 }
 
-/// Sets up a destination (either `init` or `connect`) and persists secrets ONLY on success.
+/// A repository that `init` created or `cat config` opened.
+#[derive(Debug)]
+pub struct PreparedRepository {
+    pub execution: ResticExecutionResult,
+    /// The repository ID restic printed (`init --json`, `cat config`); `None` when its output
+    /// held none.
+    pub repository_id: Option<RepositoryId>,
+}
+
+/// Runs `init` or `cat config` for `dest` without saving anything.
 ///
-/// Uses `--password-file` inside a private `0700` temp directory during the initial probe/init so
-/// `SecretStore` is never polluted if verification fails,
-/// and no password ever appears in `/proc/<pid>/cmdline`.
-pub fn setup_destination(
+/// Uses `--password-file` inside a private `0700` temp directory, so no password ever appears in
+/// `/proc/<pid>/cmdline`.
+pub fn prepare_repository(
     dest: &Destination,
     mode: DestinationSetupMode,
     repo_password: &SecretValue,
     backend: &BackendCredentials,
     runtime: &ResticRuntime<'_>,
-) -> Result<ResticExecutionResult, DestinationError> {
+) -> Result<PreparedRepository, DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
 
-    let res = run_with_temp_repo_password_file(
+    let out = run_with_temp_repo_password_file(
         dest,
         mode_subcommand(mode),
         repo_password,
@@ -302,49 +315,64 @@ pub fn setup_destination(
         ProbeRuntime::setup(mode, runtime),
     )?;
 
-    if res.exit_code != 0 {
-        return Err(map_execution_failure(dest, &res));
+    if out.result.exit_code != 0 {
+        return Err(map_execution_failure(dest, &out.result));
     }
+    Ok(PreparedRepository {
+        execution: out.result,
+        repository_id: out.repository_id,
+    })
+}
 
-    // Persist secrets only after restic succeeded.
-    runtime
-        .secret_store
-        .set_secret(dest.id.as_str(), SECRET_KIND_REPO, repo_password)?;
-    if let Err(err) = backend.persist(dest, runtime.secret_store) {
-        let _ = runtime
-            .secret_store
-            .delete_secret(dest.id.as_str(), SECRET_KIND_REPO);
-        return Err(err.into());
+/// Sets up a destination (either `init` or `connect`) and persists secrets ONLY on success; when
+/// a password store write fails, the entries written before get their previous values back.
+pub fn setup_destination(
+    dest: &Destination,
+    mode: DestinationSetupMode,
+    repo_password: &SecretValue,
+    backend: &BackendCredentials,
+    runtime: &ResticRuntime<'_>,
+) -> Result<PreparedRepository, DestinationError> {
+    let prepared = prepare_repository(dest, mode, repo_password, backend, runtime)?;
+    let mut previous = crate::backend_credentials::PreviousSecrets::new(dest);
+    previous.replace(runtime.secret_store, SECRET_KIND_REPO, repo_password)?;
+    match backend.persist(dest, runtime.secret_store) {
+        Ok(_) => Ok(prepared),
+        Err(err) => {
+            previous.restore(runtime.secret_store);
+            Err(err.into())
+        }
     }
-
-    Ok(res)
 }
 
 /// Connection test of an existing repository: checks reachability, the backend login and
-/// `repo_password` with `restic cat --no-lock config`, within [`CONNECTION_TEST_TIMEOUT`].
-/// Saves nothing.
+/// `repo_password` with `restic cat --no-lock config`, within [`CONNECTION_TEST_TIMEOUT`], and
+/// returns the repository ID. Saves nothing.
 pub fn check_existing_repository(
     dest: &Destination,
     repo_password: &SecretValue,
     backend: &BackendCredentials,
     runtime: &ResticRuntime<'_>,
-) -> Result<(), DestinationError> {
+) -> Result<RepositoryId, DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
-    let res = run_with_temp_repo_password_file(
+    let out = run_with_temp_repo_password_file(
         dest,
         mode_subcommand(DestinationSetupMode::ConnectExisting),
         repo_password,
         backend,
         ProbeRuntime::connection_test(runtime),
     )?;
-    if res.exit_code != 0 {
-        return Err(map_execution_failure(dest, &res));
+    if out.result.exit_code != 0 {
+        return Err(map_execution_failure(dest, &out.result));
     }
-    Ok(())
+    out.repository_id.ok_or_else(|| {
+        DestinationError::NoRepositoryId(out.result.log_lines.first().cloned().unwrap_or_default())
+    })
 }
 
 /// Verifies `candidate_password` against an existing repository without running `restic key`,
-/// and updates the stored secret only if verification succeeds.
+/// and updates the stored secret only if verification succeeds; returns the repository ID
+/// restic printed.
 pub fn verify_and_update_stored_password(
     dest: &Destination,
     candidate_password: &SecretValue,
@@ -352,7 +380,7 @@ pub fn verify_and_update_stored_password(
     resolved: &ResolvedRestic,
     kestic_binary: &Path,
     clock: &dyn Clock,
-) -> Result<(), DestinationError> {
+) -> Result<Option<RepositoryId>, DestinationError> {
     verify_and_update_stored_password_with_cache(
         dest,
         candidate_password,
@@ -373,7 +401,7 @@ pub fn verify_and_update_stored_password_with_cache(
     kestic_binary: &Path,
     clock: &dyn Clock,
     cache_dir: Option<&Path>,
-) -> Result<(), DestinationError> {
+) -> Result<Option<RepositoryId>, DestinationError> {
     preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT)?;
 
     let backend = BackendCredentials::load_stored(dest, secret_store)?;
@@ -399,12 +427,12 @@ pub fn verify_and_update_stored_password_with_cache(
         },
     )?;
 
-    if res.exit_code != 0 {
-        return Err(map_execution_failure(dest, &res));
+    if res.result.exit_code != 0 {
+        return Err(map_execution_failure(dest, &res.result));
     }
 
     secret_store.set_secret(dest.id.as_str(), SECRET_KIND_REPO, candidate_password)?;
-    Ok(())
+    Ok(res.repository_id)
 }
 
 /// Removes all Secret Service entries belonging to `dest`.
@@ -508,13 +536,20 @@ impl<'a> ProbeRuntime<'a> {
     }
 }
 
+/// The result of one probe and the repository ID in restic's output, if any.
+#[derive(Debug)]
+struct ProbeOutput {
+    result: ResticExecutionResult,
+    repository_id: Option<RepositoryId>,
+}
+
 fn run_with_temp_repo_password_file(
     dest: &Destination,
     subcommand_args: Vec<String>,
     repo_password: &SecretValue,
     backend: &BackendCredentials,
     probe: ProbeRuntime<'_>,
-) -> Result<ResticExecutionResult, DestinationError> {
+) -> Result<ProbeOutput, DestinationError> {
     // Where inherited credentials are removed, restic without Kestic's own would fall back to
     // the user's credential files and send their keys to this endpoint.
     if !dest.kind.backend_env_cleared_prefixes().is_empty()
@@ -534,7 +569,7 @@ fn run_with_temp_repo_password_file(
         verify_sftp_host_key(dest)?;
     }
     let tmp_dir = create_private_temp_dir()?;
-    let res = (|| -> Result<ResticExecutionResult, DestinationError> {
+    let res = (|| -> Result<ProbeOutput, DestinationError> {
         let pw_file = write_private_password_file(&tmp_dir, repo_password)?;
 
         let mut args = subcommand_args;
@@ -571,7 +606,7 @@ fn run_with_temp_repo_password_file(
     // ssh refused the host key although the check passed (it changed meanwhile): the check
     // again tells unknown from changed.
     if check_host_key_here
-        && let Ok(result) = &res
+        && let Ok(ProbeOutput { result, .. }) = &res
         && matches!(
             result.presentation.kind,
             ResticFailureKind::HostKeyUnknown | ResticFailureKind::HostKeyChanged
@@ -580,7 +615,7 @@ fn run_with_temp_repo_password_file(
         verify_sftp_host_key(dest)?;
     }
     // A refused key is no unreachable server, also in the check before a run.
-    if let Ok(result) = &res
+    if let Ok(ProbeOutput { result, .. }) = &res
         && let Some(failure) = sftp_session_failure(dest, result)
     {
         match failure {
@@ -652,7 +687,7 @@ fn execute_probe_command(
     backend: &BackendCredentials,
     clock: &dyn Clock,
     limits: ProbeLimits,
-) -> Result<ResticExecutionResult, DestinationError> {
+) -> Result<ProbeOutput, DestinationError> {
     let timeout = limits.timeout;
     let started_at = clock.now_utc();
     let mut cmd = Command::new(&spec.restic_binary);
@@ -779,10 +814,14 @@ fn execute_probe_command(
         &stderr_raw,
     );
 
+    // Read before redaction: a short password could be part of the ID.
+    let repository_id = (exit_code == 0)
+        .then(|| RepositoryId::from_cat_config(&String::from_utf8_lossy(&stdout_bytes)).ok())
+        .flatten();
     let mut log_lines: Vec<String> = stdout_raw.lines().map(ToOwned::to_owned).collect();
     log_lines.extend(stderr_lines);
 
-    Ok(ResticExecutionResult {
+    let result = ResticExecutionResult {
         exit_code,
         cancelled: false,
         presentation,
@@ -797,6 +836,10 @@ fn execute_probe_command(
         },
         log_lines,
         errors: Vec::new(),
+    };
+    Ok(ProbeOutput {
+        result,
+        repository_id,
     })
 }
 

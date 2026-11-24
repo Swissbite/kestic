@@ -24,6 +24,10 @@ ColumnLayout {
 
     readonly property var appBackend: draft.appBackend
 
+    // Edit page: the edited connection leads to another repository and is to become a
+    // destination of its own.
+    signal addAsNewRequested()
+
     spacing: Kirigami.Units.mediumSpacing
 
     // The service of a generic destination, from the scheme of its repository URL.
@@ -174,6 +178,18 @@ ColumnLayout {
                 }
             }
         ]
+    }
+
+    // Below the message rather than inside it: next to the message the long label leaves the text
+    // no room.
+    Controls.Button {
+        objectName: form.namePrefix + "AddAsNewButton"
+        icon.name: "list-add"
+        text: i18n("Add as New Destination…")
+        visible: form.editing && form.draft.testFeedback !== "" && !form.draft.testFeedbackOk
+            && form.appBackend.connection_test_error_kind === "other_repository"
+        Accessible.name: text
+        onClicked: form.addAsNewRequested()
     }
 
     Kirigami.InlineMessage {

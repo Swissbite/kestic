@@ -398,7 +398,7 @@ impl ConnectionTestCode {
             )),
             Self::ReservedVariable => Message::with_args(
                 i18n_noop(
-                    "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY or LD_, and PATH and HOME, are not allowed.",
+                    "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY, LD_ or XDG_ are not allowed. Neither are PATH, HOME, TMPDIR, GCONV_PATH and the address of the session bus.",
                 ),
                 &[detail],
             ),
@@ -423,6 +423,18 @@ impl ConnectionTestCode {
             Self::JumpHostUnsupported => Message::new(i18n_noop(
                 "Servers behind a jump host are not supported yet.",
             )),
+            Self::OtherRepository => Message::new(i18n_noop(
+                "There is another backup destination at this address.",
+            )),
+            Self::CredentialsRequired => Message::new(i18n_noop(
+                "Enter the access data again. Kestic uses saved access data only for the server they were entered for.",
+            )),
+            Self::SecretInUrl => Message::with_args(
+                i18n_noop(
+                    "The repository URL contains the secret parameter '%1'. Enter it as a secret variable instead.",
+                ),
+                &[detail],
+            ),
             Self::InvalidInput | Self::Internal | Self::CommandFailed | Self::DaemonUnreachable => {
                 return UiText::Raw(detail.to_string());
             }

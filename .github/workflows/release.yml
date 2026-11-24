@@ -378,7 +378,7 @@ jobs:
       - name: Token of the release app
         id: app-token
         if: needs.prepare.outputs.dry-run != 'true'
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}

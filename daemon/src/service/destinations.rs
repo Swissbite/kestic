@@ -31,6 +31,7 @@ use kestic_core::model::{
     ResticProvider, RunId,
 };
 use kestic_core::provider::resolve_and_check;
+use kestic_core::repo_identity::connection_changed;
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO};
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
 use kestic_core::snapshot::ResticSnapshot;
@@ -105,7 +106,7 @@ impl DaemonCore {
 }
 
 /// Failed connection test; `detail` is raw error text or the parameter of the code's text.
-fn test_failure(code: ConnectionTestCode, detail: String) -> ConnectionTestResultDto {
+pub(super) fn test_failure(code: ConnectionTestCode, detail: String) -> ConnectionTestResultDto {
     ConnectionTestResultDto {
         ok: false,
         error_kind: Some(code),
@@ -116,7 +117,7 @@ fn test_failure(code: ConnectionTestCode, detail: String) -> ConnectionTestResul
     }
 }
 
-fn test_ok() -> ConnectionTestResultDto {
+pub(super) fn test_ok() -> ConnectionTestResultDto {
     ConnectionTestResultDto {
         ok: true,
         error_kind: None,
@@ -140,6 +141,9 @@ fn parse_and_validate_dest(dest_json: &str) -> Result<Destination, ConnectionTes
         ModelError::Generic(GenericInputError::ReservedVariable(name)) => {
             test_failure(ConnectionTestCode::ReservedVariable, name)
         }
+        ModelError::Generic(GenericInputError::SecretInUrl(param)) => {
+            test_failure(ConnectionTestCode::SecretInUrl, param)
+        }
         other => test_failure(ConnectionTestCode::InvalidInput, other.to_string()),
     })?;
     Ok(dest)
@@ -158,6 +162,15 @@ struct DestinationTestInputs<'a> {
     clock: &'a dyn Clock,
     /// The `PATH` the daemon starts restic with, for programs a backend needs (`rclone`).
     search_path: Option<&'a OsStr>,
+    /// The test of an edit of a saved destination.
+    edit: Option<EditedDestination<'a>>,
+}
+
+/// A saved destination whose edited connection is tested.
+struct EditedDestination<'a> {
+    shared: &'a Arc<Mutex<DaemonCore>>,
+    saved: &'a Destination,
+    deps: &'a super::state::ResticDeps,
 }
 
 fn test_destination_connection_impl(inputs: DestinationTestInputs<'_>) -> ConnectionTestResultDto {
@@ -187,6 +200,24 @@ fn test_destination_connection_impl(inputs: DestinationTestInputs<'_>) -> Connec
             return test_failure(ConnectionTestCode::InvalidInput, e.to_string());
         }
     };
+
+    if let Some(edit) = &inputs.edit {
+        // A new repository has a new ID: at another address it is another destination.
+        if setup_mode == DestinationSetupMode::InitNew
+            && connection_changed(&edit.saved.kind, &inputs.dest.kind)
+        {
+            return test_failure(ConnectionTestCode::OtherRepository, String::new());
+        }
+        if setup_mode == DestinationSetupMode::ConnectExisting {
+            return super::destination_update::test_edited_connection(
+                edit.shared,
+                edit.saved,
+                inputs.dest,
+                inputs.backend,
+                edit.deps,
+            );
+        }
+    }
 
     if matches!(setup_mode, DestinationSetupMode::InitNew) {
         let local_result = check_init_new_destination(
@@ -251,7 +282,10 @@ fn missing_login(creds: &BackendCredentials, kind: &DestinationKind) -> Option<S
 
 /// The connection test result of a failed restic probe; an unknown SFTP host key is kept for
 /// `TrustHostKey`.
-fn destination_error_result(err: DestinationError, clock: &dyn Clock) -> ConnectionTestResultDto {
+pub(super) fn destination_error_result(
+    err: DestinationError,
+    clock: &dyn Clock,
+) -> ConnectionTestResultDto {
     let kind = match err {
         DestinationError::HostKeyUnknown(key) => {
             return ConnectionTestResultDto {
@@ -404,7 +438,7 @@ fn stored_secret(
     secret_store.get_secret(dest.id.as_str(), kind)
 }
 
-fn secret_error_result(err: SecretError) -> ConnectionTestResultDto {
+pub(super) fn secret_error_result(err: SecretError) -> ConnectionTestResultDto {
     match err {
         SecretError::LockedOrPromptRequired(msg) => {
             test_failure(ConnectionTestCode::SecretStoreLocked, msg)
@@ -503,7 +537,7 @@ fn snapshot_to_dto(s: ResticSnapshot) -> SnapshotSummaryDto {
 
 /// Refuses a destination whose backend needs a program that is not in the daemon's `PATH`
 /// (`rclone`): restic would fail with its own unclear error.
-fn refuse_missing_program(
+pub(super) fn refuse_missing_program(
     kind: &DestinationKind,
     core: &DaemonCore,
 ) -> Result<(), KesticServiceErr> {
@@ -560,7 +594,7 @@ pub(crate) fn add_destination_unlocked(
 
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
     let repo_pw = SecretValue::from_str_secret(repo_password);
-    setup_destination(
+    let prepared = setup_destination(
         &dest,
         setup_mode,
         &repo_pw,
@@ -570,100 +604,26 @@ pub(crate) fn add_destination_unlocked(
     .map_err(map_destination_err)?;
 
     let mut guard = shared.lock_unpoisoned();
-    if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
-        return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
+    let saved = match guard.config.find_duplicate_destination(&dest.kind, None) {
+        Some(existing) => Err(KesticServiceErr::DuplicateLocation(existing.name.clone())),
+        None => {
+            let mut next = guard.config.clone();
+            next.destinations.push(dest.clone());
+            guard.persist_config(next)
+        }
+    };
+    if let Err(err) = saved {
+        // The secrets were written for this new destination only.
+        let _ = remove_destination_secrets(&dest, deps.secret_store.as_ref());
+        return Err(err);
+    }
+    if let Some(id) = &prepared.repository_id {
+        let _ = guard.history.set_repository_id(&dest.id, id);
     }
     let new_id = dest.id.as_str().to_string();
-    let mut next = guard.config.clone();
-    next.destinations.push(dest);
-    guard.persist_config(next)?;
     guard.ensure_baselines();
     let (state_dto, tray_state) = guard.build_state_and_tray();
     Ok((new_id, guard.conn.clone(), state_dto, tray_state))
-}
-
-pub(crate) fn update_destination_unlocked(
-    shared: &Arc<Mutex<DaemonCore>>,
-    dest_json: &str,
-    mode: &str,
-    repo_password: &str,
-    backend_secrets_json: &str,
-    verify_connection: bool,
-) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
-    let updated: Destination = serde_json::from_str(dest_json)
-        .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid destination JSON: {e}")))?;
-    let entered_backend = BackendSecrets::parse(backend_secrets_json)
-        .map_err(KesticServiceErr::InvalidInput)?
-        .credentials();
-    updated
-        .validate()
-        .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
-    let setup_mode = parse_setup_mode(mode)?;
-
-    let deps = {
-        let guard = shared.lock_unpoisoned();
-        if guard.config.destination(&updated.id).is_none() {
-            return Err(KesticServiceErr::NotFound(updated.id.as_str().to_string()));
-        }
-        if let Some(existing) = guard
-            .config
-            .find_duplicate_destination(&updated.kind, Some(&updated.id))
-        {
-            return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
-        }
-        guard.restic_deps()
-    };
-
-    if verify_connection || matches!(setup_mode, DestinationSetupMode::InitNew) {
-        let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
-        let effective_repo_pw = stored_secret(
-            deps.secret_store.as_ref(),
-            &updated,
-            SECRET_KIND_REPO,
-            repo_password,
-        )
-        .map_err(map_secret_err)?
-        .ok_or_else(|| {
-            KesticServiceErr::InvalidInput("missing stored repository password".to_string())
-        })?;
-        let backend = entered_backend
-            .or_stored(&updated, deps.secret_store.as_ref())
-            .map_err(map_secret_err)?;
-        if let Some(kind) = missing_login(&backend, &updated.kind) {
-            return Err(KesticServiceErr::InvalidInput(format!(
-                "missing backend credential `{kind}`"
-            )));
-        }
-        setup_destination(
-            &updated,
-            setup_mode,
-            &effective_repo_pw,
-            &backend,
-            &deps.runtime(&resolved),
-        )
-        .map_err(map_destination_err)?;
-    }
-
-    let mut guard = shared.lock_unpoisoned();
-    let existing_idx = guard
-        .config
-        .destinations
-        .iter()
-        .position(|d| d.id == updated.id)
-        .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
-    if let Some(existing) = guard
-        .config
-        .find_duplicate_destination(&updated.kind, Some(&updated.id))
-    {
-        return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
-    }
-    let mut next = guard.config.clone();
-    let previous = std::mem::replace(&mut next.destinations[existing_idx], updated.clone());
-    guard.persist_config(next)?;
-    // A secret variable that was removed or renamed leaves nothing behind in the password store.
-    let _ = BackendCredentials::delete_unused(&previous, &updated, guard.secret_store.as_ref());
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    Ok((guard.conn.clone(), state_dto, tray_state))
 }
 
 /// `RemoveDestination`: removes the destination, then, without holding the daemon state, the
@@ -707,7 +667,7 @@ pub(crate) fn update_destination_password_unlocked(
     };
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
     let candidate = SecretValue::from_str_secret(new_password);
-    verify_and_update_stored_password(
+    let repository_id = verify_and_update_stored_password(
         &dest,
         &candidate,
         deps.secret_store.as_ref(),
@@ -716,6 +676,9 @@ pub(crate) fn update_destination_password_unlocked(
         deps.clock.as_ref(),
     )
     .map_err(map_destination_err)?;
+    if let Some(id) = &repository_id {
+        super::destination_update::remember_repository_id(shared, &dest, id);
+    }
 
     let guard = shared.lock_unpoisoned();
     let (state_dto, tray_state) = guard.build_state_and_tray();
@@ -738,16 +701,17 @@ pub(crate) fn test_destination_connection_unlocked(
         Err(e) => return test_failure(ConnectionTestCode::InvalidInput, e),
     };
 
-    let (is_existing, dup_name, deps, mount_inspector, search_path) = {
+    let (saved, dup_name, deps, mount_inspector, search_path) = {
         let guard = shared.lock_unpoisoned();
-        let is_existing = guard.config.destination(&dest.id).is_some();
+        let saved = guard.config.destination(&dest.id).cloned();
+        let is_existing = saved.is_some();
         let exclude_id = is_existing.then_some(&dest.id);
         let dup_name = guard
             .config
             .find_duplicate_destination(&dest.kind, exclude_id)
             .map(|d| d.name.clone());
         (
-            is_existing,
+            saved,
             dup_name,
             guard.restic_deps(),
             Arc::clone(&guard.mount_inspector),
@@ -760,13 +724,18 @@ pub(crate) fn test_destination_connection_unlocked(
         mode,
         repo_password,
         backend: &backend,
-        is_existing,
+        is_existing: saved.is_some(),
         dup_name: dup_name.as_deref(),
         provider: &deps.provider,
         kestic_binary: &deps.kestic_binary,
         secret_store: deps.secret_store.as_ref(),
         clock: deps.clock.as_ref(),
         search_path: search_path.as_deref(),
+        edit: saved.as_ref().map(|saved| EditedDestination {
+            shared,
+            saved,
+            deps: &deps,
+        }),
     });
     if result.ok {
         result

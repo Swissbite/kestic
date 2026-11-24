@@ -38,6 +38,10 @@ impl BackendSecretSlot {
 /// own values count.
 const INHERITED_AWS_PREFIXES: [&str; 2] = ["AWS_", "RESTIC_AWS_"];
 
+/// Prefixes of the variables in the caller's environment that the backends of the generic form
+/// read (B2, Azure, Swift, rclone); a destination gets only the variables configured for it.
+const INHERITED_GENERIC_PREFIXES: [&str; 4] = ["B2_", "AZURE_", "OS_", "RCLONE_"];
+
 /// The kinds of the fixed credentials, for removing a destination's credentials whatever its
 /// kind was.
 const FIXED_KINDS: [&str; 3] = [
@@ -82,13 +86,13 @@ impl DestinationKind {
 
     /// Name prefixes of the variables in the caller's environment that are removed before
     /// restic starts, so the backend gets credentials only from Kestic: `AWS_` and
-    /// `RESTIC_AWS_` for S3.
+    /// `RESTIC_AWS_` for S3; `B2_`, `AZURE_`, `OS_` and `RCLONE_` for the generic form, whose
+    /// own variables are set afterwards.
     pub fn backend_env_cleared_prefixes(&self) -> Vec<&'static str> {
         match self {
             Self::S3 { .. } => INHERITED_AWS_PREFIXES.to_vec(),
-            Self::Local { .. } | Self::Rest { .. } | Self::Sftp { .. } | Self::Generic { .. } => {
-                Vec::new()
-            }
+            Self::Generic { .. } => INHERITED_GENERIC_PREFIXES.to_vec(),
+            Self::Local { .. } | Self::Rest { .. } | Self::Sftp { .. } => Vec::new(),
         }
     }
 
@@ -148,6 +152,11 @@ impl BackendCredentials {
         }
     }
 
+    /// Whether no credential is set.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
     /// The value of `kind`, if set.
     pub fn get(&self, kind: &str) -> Option<&SecretValue> {
         self.values.get(kind)
@@ -185,23 +194,24 @@ impl BackendCredentials {
             .find(|k| !self.values.contains_key(k))
     }
 
-    /// Saves the credentials `dest` needs in the password store; on failure removes what was
-    /// saved by this call.
-    pub fn persist(&self, dest: &Destination, store: &dyn SecretStore) -> Result<(), SecretError> {
-        let mut saved: Vec<String> = Vec::new();
+    /// Saves the credentials `dest` needs in the password store and returns the values they
+    /// replaced; on failure writes back what this call replaced.
+    pub fn persist(
+        &self,
+        dest: &Destination,
+        store: &dyn SecretStore,
+    ) -> Result<PreviousSecrets, SecretError> {
+        let mut previous = PreviousSecrets::new(dest);
         for slot in dest.kind.backend_secret_slots() {
             let Some(value) = self.values.get(&slot.kind) else {
                 continue;
             };
-            if let Err(err) = store.set_secret(dest.id.as_str(), &slot.kind, value) {
-                for kind in &saved {
-                    let _ = store.delete_secret(dest.id.as_str(), kind);
-                }
+            if let Err(err) = previous.replace(store, &slot.kind, value) {
+                previous.restore(store);
                 return Err(err);
             }
-            saved.push(slot.kind);
         }
-        Ok(())
+        Ok(previous)
     }
 
     /// Removes every backend credential of `dest` from the password store.
@@ -258,5 +268,52 @@ impl BackendCredentials {
             .values()
             .filter_map(|v| v.as_str().ok())
             .collect()
+    }
+}
+
+/// The password store entries of one destination as they were before a save, to write them back
+/// when a later step fails: a value is restored, an entry that did not exist is removed.
+#[derive(Debug)]
+pub struct PreviousSecrets {
+    target: String,
+    entries: Vec<(String, Option<SecretValue>)>,
+}
+
+impl PreviousSecrets {
+    /// Nothing replaced yet for `dest`.
+    pub fn new(dest: &Destination) -> Self {
+        Self {
+            target: dest.id.as_str().to_string(),
+            entries: Vec::new(),
+        }
+    }
+
+    /// Writes `value` under `kind` and remembers the value it replaces.
+    pub fn replace(
+        &mut self,
+        store: &dyn SecretStore,
+        kind: &str,
+        value: &SecretValue,
+    ) -> Result<(), SecretError> {
+        let before = store.get_secret(&self.target, kind)?;
+        store.set_secret(&self.target, kind, value)?;
+        self.entries.push((kind.to_string(), before));
+        Ok(())
+    }
+
+    /// Adds the entries replaced by `other` (a later save of the same destination).
+    pub fn extend(&mut self, other: Self) {
+        self.entries.extend(other.entries);
+    }
+
+    /// Writes the remembered values back, the last replaced first; errors are ignored because
+    /// the caller is already reporting the failure that made it undo the save.
+    pub fn restore(self, store: &dyn SecretStore) {
+        for (kind, before) in self.entries.into_iter().rev() {
+            let _ = match before {
+                Some(value) => store.set_secret(&self.target, &kind, &value),
+                None => store.delete_secret(&self.target, &kind),
+            };
+        }
     }
 }

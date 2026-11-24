@@ -39,7 +39,8 @@ pub enum GenericInputError {
     /// The variable name would override Kestic's own environment or is no valid name.
     #[error(
         "environment variable '{0}' is not allowed: names are A-Z, 0-9 and _, and must not \
-         override RESTIC_PASSWORD*, RESTIC_REPOSITORY*, PATH, HOME or LD_*"
+         override RESTIC_PASSWORD*, RESTIC_REPOSITORY*, PATH, HOME, LD_*, XDG_*, \
+         DBUS_SESSION_BUS_ADDRESS, GCONV_PATH or TMPDIR"
     )]
     ReservedVariable(String),
     /// The variable name is given more than once.
@@ -48,6 +49,13 @@ pub enum GenericInputError {
     /// A value is stored for a secret variable; it belongs in the password store only.
     #[error("the value of the secret variable '{0}' belongs in the password store")]
     SecretValueStored(String),
+    /// An `rclone:` URL carries a secret parameter (`pass=`, `token=`, …); carries the parameter
+    /// name. Secrets belong in a secret variable, which stays in the password store.
+    #[error(
+        "the rclone URL contains the secret parameter '{0}': enter it as a secret environment \
+         variable instead"
+    )]
+    SecretInUrl(String),
     /// The value contains a NUL byte, which no process environment can hold.
     #[error("the value of the environment variable '{0}' contains a NUL byte")]
     NulInValue(String),
@@ -74,12 +82,17 @@ pub fn validate_url(url: &str) -> Result<(), GenericInputError> {
     if address.starts_with('-') {
         return Err(GenericInputError::OptionLikeAddress(trimmed.to_string()));
     }
+    // The URL is saved in the configuration and shown in restic's command line.
+    if let Some(param) = secret_parameter(trimmed) {
+        return Err(GenericInputError::SecretInUrl(param));
+    }
     Ok(())
 }
 
 /// Checks a variable name: `[A-Z_][A-Z0-9_]*` and none of the names Kestic sets itself
-/// (`RESTIC_PASSWORD*`, `RESTIC_REPOSITORY*`) or that redirect the process (`PATH`, `HOME`,
-/// `LD_*`).
+/// (`RESTIC_PASSWORD*`, `RESTIC_REPOSITORY*`) or that redirect the process or the password
+/// command it starts (`PATH`, `HOME`, `LD_*`, `XDG_*`, `DBUS_SESSION_BUS_ADDRESS`, `GCONV_PATH`,
+/// `TMPDIR`).
 pub fn validate_variable_name(name: &str) -> Result<(), GenericInputError> {
     let mut chars = name.chars();
     let well_formed = chars
@@ -88,9 +101,16 @@ pub fn validate_variable_name(name: &str) -> Result<(), GenericInputError> {
         && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
     let reserved = name.starts_with("RESTIC_PASSWORD")
         || name.starts_with("RESTIC_REPOSITORY")
-        || name == "PATH"
-        || name == "HOME"
-        || name.starts_with("LD_");
+        || name.starts_with("LD_")
+        || name.starts_with("XDG_")
+        || [
+            "PATH",
+            "HOME",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "GCONV_PATH",
+            "TMPDIR",
+        ]
+        .contains(&name);
     if !well_formed || reserved {
         return Err(GenericInputError::ReservedVariable(name.to_string()));
     }
@@ -117,13 +137,29 @@ pub fn validate_env(vars: &[EnvVar]) -> Result<(), GenericInputError> {
     Ok(())
 }
 
+/// Words in a variable or parameter name that mark it as a secret.
+const SECRET_WORDS: [&str; 6] = ["KEY", "SECRET", "TOKEN", "PASS", "SAS", "CREDENTIAL"];
+
 /// Whether «Geheim» is switched on for a new variable: its name contains `KEY`, `SECRET`,
-/// `TOKEN` or `PASSWORD`.
+/// `TOKEN`, `PASS` (also `PASSWORD`), `SAS` or `CREDENTIAL`.
 pub fn secret_by_default(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
-    ["KEY", "SECRET", "TOKEN", "PASSWORD"]
-        .iter()
-        .any(|word| upper.contains(word))
+    SECRET_WORDS.iter().any(|word| upper.contains(word))
+}
+
+/// The first parameter of an `rclone:` connection string (`rclone:remote,param=value:path` or
+/// `rclone::backend,param=value:path`) whose name marks a secret, like [`secret_by_default`].
+fn secret_parameter(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("rclone:")?;
+    let remote = rest.rsplit_once(':').map_or(rest, |(remote, _)| remote);
+    remote
+        .split(',')
+        .skip(1)
+        .filter_map(|param| param.split_once('=').map(|(name, _)| name.trim()))
+        // A parameter naming a file (`key_file`, `service_account_file`) holds a path.
+        .filter(|name| !name.to_ascii_lowercase().ends_with("_file"))
+        .find(|name| secret_by_default(name))
+        .map(ToOwned::to_owned)
 }
 
 /// Password store kind of the secret variable `name`.
