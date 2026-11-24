@@ -61,23 +61,76 @@ fn ac_m4_05_6_every_restore_call_names_the_overwrite_mode() {
     );
 }
 
+/// The restore run the daemon creates for `snapshot` on `destination`: the backup reference is
+/// the configured backup the snapshot's `kestic:` tag names, the run is then created with it.
+fn restore_run_for(
+    clock: &FakeClock,
+    destination: &DestinationId,
+    snapshot: &ResticSnapshot,
+    configured: &[&str],
+) -> Run {
+    let backup = snapshot
+        .assigned_backup(configured)
+        .map(|id| BackupId::parse(id).expect("backup ID from the tag"));
+    Run::new_restore(clock, destination.clone(), backup).expect("run")
+}
+
+fn tagged_snapshot(tags: &[&str]) -> ResticSnapshot {
+    serde_json::from_value(serde_json::json!({
+        "id": ID,
+        "time": "2026-11-15T12:00:00Z",
+        "tags": tags,
+        "paths": ["/home/u"],
+        "hostname": "laptop",
+    }))
+    .expect("snapshot JSON")
+}
+
 /// AC-M4-05-12: a restore of a snapshot with `kestic:b1` (a) is a run of the kind `Restore`,
 /// (b) belongs to the destination, (c) carries the backup `b1` and (d) appears in the history
-/// of `b1` and of the destination.
+/// of `b1` and of the destination. The run is derived from the snapshot's tags with the core
+/// functions the daemon uses (`ResticSnapshot::assigned_backup`, `Run::new_restore`).
 #[test]
 fn ac_m4_05_12_restore_run_belongs_to_destination_and_backup() {
     let clock = FakeClock::new(datetime!(2026-11-15 12:00 UTC));
     let dest = DestinationId::generate().expect("destination id");
     let b1 = BackupId::generate().expect("backup id");
-    let mut run = Run::new_restore(&clock, dest.clone(), Some(b1.clone())).expect("run");
+    let configured = [b1.as_str()];
+    let tag = format!("kestic:{b1}");
+    let snapshot = tagged_snapshot(&["daily", &tag]);
+
+    let mut run = restore_run_for(&clock, &dest, &snapshot, &configured);
+    assert!(
+        matches!(run.kind, RunKind::Restore { .. }),
+        "AC-M4-05-12 (a): kind Restore, got {:?}",
+        run.kind
+    );
+    assert_eq!(
+        run.destination_id, dest,
+        "AC-M4-05-12 (b): the run belongs to the destination"
+    );
+    assert_eq!(
+        run.backup_id(),
+        Some(&b1),
+        "AC-M4-05-12 (c): the backup reference is b1 from the snapshot's tag"
+    );
+    let untagged = restore_run_for(&clock, &dest, &tagged_snapshot(&["daily"]), &configured);
+    assert!(
+        matches!(untagged.kind, RunKind::Restore { backup_id: None }),
+        "AC-M4-05-12 (c): a snapshot without Kestic tag gives a restore without backup \
+         reference, got {:?}",
+        untagged.kind
+    );
+    assert_eq!(
+        untagged.destination_id, dest,
+        "AC-M4-05-12 (b): a restore without backup reference still belongs to the destination"
+    );
+
     run.status = RunStatus::Ok;
     run.restore = Some(RestoreStats {
         files_new: 2,
         ..RestoreStats::default()
     });
-    assert!(matches!(run.kind, RunKind::Restore { .. }), "(a)");
-    assert_eq!(run.destination_id, dest, "(b)");
-    assert_eq!(run.backup_id(), Some(&b1), "(c)");
     let dir = tempfile::tempdir().expect("tempdir");
     let mut history = RunHistory::open(dir.path()).expect("history");
     history.upsert_run(&run, &[]).expect("store run");

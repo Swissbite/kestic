@@ -197,7 +197,17 @@ fn real_restic_backup_progress_follows_seconds_remaining_and_never_falls() {
                 .output()
                 .expect("run restic")
         };
-        let out = restic(&["backup", "--json", src.to_str().expect("utf-8 path")]);
+        // restic prints a status line only on its progress tick (every 1/60 s in 0.18, every
+        // 1/10 s from 0.19 on) and none when the backup ends, so a backup that finishes within
+        // one tick prints none. The upload limit of 8 MiB/s (after a burst of one second's
+        // worth) makes the 24 MB take at least two seconds on any machine.
+        let out = restic(&[
+            "backup",
+            "--json",
+            "--limit-upload",
+            "8192",
+            src.to_str().expect("utf-8 path"),
+        ]);
         assert!(
             out.status.success(),
             "{label}: backup failed: {}",
