@@ -3647,3 +3647,49 @@ fn m4_s05_selection_reaching_kestics_own_folder_is_refused() {
         },
     );
 }
+
+/// A selection whose `--include` arguments would exceed 512 KiB is refused with `InvalidInput`
+/// before restic runs, (a) by the preview and (b) by `StartRestore`, and (c) no restic process
+/// starts.
+#[test]
+fn m4_s05_selection_over_the_argument_limit_is_refused() {
+    run_isolated_test(
+        "m4_s05_selection_over_the_argument_limit_is_refused",
+        "KESTIC_M4_S05_LARGE_SELECTION_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RA", small_tree, |_| {});
+            let selection: Vec<String> = (0..40_000)
+                .map(|i| fx.path(&format!("docs/f{i:05}")))
+                .collect();
+            let started = fx.rig.wrapper.started_repo_count();
+            let preview = fx.rig.daemon.client.start_snapshot_query(
+                &kestic_daemon::dbus_api::SnapshotQueryRequest::restore_preview(
+                    fx.dest.id.as_str(),
+                    &fx.snapshot_id,
+                    &selection,
+                    None,
+                    RestoreOverwrite::Never,
+                ),
+            );
+            assert!(
+                matches!(preview, Err(KesticDbusError::InvalidInput(_))),
+                "(a) {preview:?}"
+            );
+            let restore = fx.rig.daemon.client.start_restore(&RestoreRequest {
+                destination_id: fx.dest.id.as_str().to_string(),
+                snapshot_id: fx.snapshot_id.clone(),
+                selection,
+                target: new_folder(&fx.new_dir("large")),
+                overwrite: RestoreOverwrite::Never,
+                preview_id: None,
+            });
+            assert!(
+                matches!(restore, Err(KesticDbusError::InvalidInput(_))),
+                "(b) {restore:?}"
+            );
+            assert_eq!(fx.rig.wrapper.started_repo_count(), started, "(c)");
+            fx.rig.daemon.stop();
+        },
+    );
+}

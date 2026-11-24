@@ -21,7 +21,9 @@ use cxx_qt_lib::{QString, QStringList};
 use kestic_core::model::RunStatus;
 use kestic_core::mount::current_home_dir;
 use kestic_core::query_list::QueryState;
-use kestic_core::restore::{folder_instead_of_unmatchable, selection_with_folders_instead};
+use kestic_core::restore::{
+    folder_instead_of_large, folder_instead_of_unmatchable, selection_with_folders_instead,
+};
 use kestic_core::restore_target::{code_usable, preview_needed};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
@@ -130,6 +132,12 @@ pub(crate) fn title_text(selected: usize) -> String {
     } else {
         i18np("Restore %1 Item", "Restore %1 Items", selected, &[])
     }
+}
+
+/// Why the selection is too large for one restore, and which folder can be restored instead.
+pub(crate) fn too_many_text(folder: &str) -> String {
+    i18n("Too many entries are selected for one restore. Restore their folder '%1' instead.")
+        .subs(&[folder])
 }
 
 /// Why a selected name cannot be restored on its own, and which folder can.
@@ -366,9 +374,23 @@ impl qobject::RestorePreviewModel {
         self.as_mut().fail_query(&QueryFailure::from_text(text));
     }
 
-    /// Replaces every selected name restic cannot match by its folder and runs the preview.
+    /// The selection is too large for one restore: the dialog says so and offers the folder
+    /// holding it.
+    fn refuse_too_many(mut self: Pin<&mut Self>, folder: &str) {
+        self.as_mut().set_can_restore(false);
+        self.as_mut()
+            .set_folder_instead(QString::from(&tilde(folder)));
+        let text = too_many_text(&tilde(folder));
+        self.as_mut().fail_query(&QueryFailure::from_text(text));
+    }
+
+    /// Restores the folder instead: of a selection too large for one restore, or of every
+    /// selected name restic cannot match; then runs the preview.
     pub fn restore_folder_instead(mut self: Pin<&mut Self>) {
-        let selection = selection_with_folders_instead(&self.selection);
+        let selection = folder_instead_of_large(&self.selection).map_or_else(
+            || selection_with_folders_instead(&self.selection),
+            |folder| vec![folder],
+        );
         self.as_mut()
             .set_title(QString::from(&title_text(selection.len())));
         self.as_mut().rust_mut().selection = selection;
@@ -420,6 +442,9 @@ impl qobject::RestorePreviewModel {
             self.as_mut().list_mut().run.abandon();
         }
         self.as_mut().set_target_refused(false);
+        if let Some(folder) = folder_instead_of_large(&self.selection) {
+            return self.as_mut().refuse_too_many(&folder);
+        }
         let unmatchable = self
             .selection
             .iter()

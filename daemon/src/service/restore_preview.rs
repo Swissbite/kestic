@@ -18,7 +18,8 @@ use kestic_core::mount::current_home_dir;
 use kestic_core::query_list::PageRequest;
 use kestic_core::restic::CancelHandle;
 use kestic_core::restore::{
-    RestorePlan, RestoreTarget, folder_instead_of_unmatchable, normalize_selection, resolve_plan,
+    RestorePlan, RestoreTarget, folder_instead_of_large, folder_instead_of_unmatchable,
+    normalize_selection, resolve_plan,
 };
 use kestic_core::restore_preview::{
     PreviewClassification, PreviewRun, execute_preview, walk_folder, writes_into_folders,
@@ -63,6 +64,11 @@ pub(crate) fn check_params(
         )));
     }
     let selection = normalize_selection(selection).map_err(invalid)?;
+    if let Some(folder) = folder_instead_of_large(&selection) {
+        return Err(invalid(format!(
+            "the selection is too large for one restore; restore its folder {folder} instead"
+        )));
+    }
     let target = target
         .map(|t| {
             let dir = normalize_snapshot_path(t.dir()).map_err(invalid)?;

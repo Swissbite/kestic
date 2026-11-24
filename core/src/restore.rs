@@ -127,6 +127,21 @@ fn common_folder(paths: &[String]) -> String {
     common_dir(std::iter::once(parent_dir(first)).chain(rest.iter().map(String::as_str)))
 }
 
+/// Most bytes the `--include` arguments of one restore may take together, so the call stays
+/// well below the system's limit for arguments.
+pub const MAX_INCLUDE_BYTES: usize = 512 * 1024;
+
+/// For a selection whose `--include` arguments could exceed [`MAX_INCLUDE_BYTES`], the folder
+/// to restore instead (the folder holding all of it); `None` for a selection that fits. Counted
+/// with the absolute paths, which are never shorter than the arguments restic gets.
+pub fn folder_instead_of_large(selection: &[String]) -> Option<String> {
+    let bytes: usize = selection
+        .iter()
+        .map(|p| "--include=".len() + escape_glob(p).len())
+        .sum();
+    (bytes > MAX_INCLUDE_BYTES).then(|| common_folder(selection))
+}
+
 /// The path restic needs to know first: the type of a single selected entry decides whether it
 /// is its own folder; for several entries (or none) their common folder.
 pub fn probe_path(selection: &[String]) -> String {
@@ -530,6 +545,22 @@ mod tests {
         let plan = plan_restore("id", &sel(&["/d/!x", "/d/a!b"]), EntryKind::Dir).expect("plan");
         assert_eq!(plan.folder, "/d");
         assert_eq!(plan.includes, [r"--include=/!x", r"--include=/a!b"]);
+    }
+
+    #[test]
+    fn a_selection_over_the_argument_limit_offers_its_folder() {
+        let fits: Vec<String> = (0..1000).map(|i| format!("/home/u/d/f{i:04}")).collect();
+        assert_eq!(
+            folder_instead_of_large(&fits),
+            None,
+            "a thousand short paths fit"
+        );
+        let long: Vec<String> = (0..40_000).map(|i| format!("/home/u/d/f{i:05}")).collect();
+        assert_eq!(
+            folder_instead_of_large(&long).as_deref(),
+            Some("/home/u/d"),
+            "beyond the limit: their folder"
+        );
     }
 
     #[test]
