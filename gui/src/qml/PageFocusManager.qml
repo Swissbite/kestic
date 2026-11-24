@@ -23,15 +23,18 @@ QtObject {
         property int remainingTicks: 0
         property Item targetItem: null
         property Item targetPage: null
-        // The highlighted row of the page's primary list takes the focus once its list has
-        // created it.
+        // The page's primary list takes the focus, on its highlighted row, once the list has
+        // created that row.
         property bool preferSelection: false
         onTriggered: {
             manager.updatePageStackViewportAndFocusability();
             if (preferSelection && targetPage) {
-                var selectedRow = manager.selectPrimaryListRow(targetPage);
-                if (selectedRow) {
-                    targetItem = selectedRow;
+                // Once the focus is in the list, its row stays: the user may have moved on.
+                var list = manager.focusInPrimaryList(targetPage)
+                    ? targetPage.primaryList
+                    : manager.selectPrimaryList(targetPage);
+                if (list) {
+                    targetItem = list;
                     preferSelection = false;
                 }
             }
@@ -143,6 +146,24 @@ QtObject {
             }
         }
         return "";
+    }
+
+    // Whether the keyboard focus is in the primary list of `listPage`.
+    function focusInPrimaryList(listPage) {
+        var list = listPage ? listPage.primaryList : null;
+        for (var item = rootWindow.activeFocusItem; item && list; item = item.parent) {
+            if (item === list) return true;
+        }
+        return false;
+    }
+
+    // The primary list of `listPage` with its highlighted row made the current row, once; null
+    // while the list has not created that row. Later ticks focus the list, not a row: the list
+    // passes the focus to its current row, so a row the user moved to with the arrow keys keeps
+    // it.
+    function selectPrimaryList(listPage) {
+        var list = listPage ? listPage.primaryList : null;
+        return list && selectPrimaryListRow(listPage) ? list : null;
     }
 
     // The highlighted row of the primary list of `listPage`, made the list's current row; null
@@ -368,12 +389,10 @@ QtObject {
         Qt.callLater(function() {
             if (!pageItem) return;
             updatePageStackViewportAndFocusability();
-            var selected = preferSelection ? selectPrimaryListRow(pageItem) : null;
+            var selected = preferSelection ? selectPrimaryList(pageItem) : null;
             if (selected && focusRestoreTimer.targetPage === pageItem) {
-                // Found: later ticks only keep the focus there and never select the row again,
-                // so a key the user pressed meanwhile is not undone.
+                // Selected once: the ticks after it only focus the list.
                 focusRestoreTimer.preferSelection = false;
-                focusRestoreTimer.targetItem = selected;
             }
             var first = selected || findFirstTabFocusable(pageItem);
             if (first) {

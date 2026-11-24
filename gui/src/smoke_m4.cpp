@@ -317,6 +317,19 @@ int scenario_restore_keyboard(const Ctx& c) {
     send_key(w, Qt::Key_Return);
     M4_CHECK(5202, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 3000),
         "Return on the Restore tab did not open the area");
+    // The tab switch puts the focus on the selected backup; Down right after it moves on, and
+    // nothing of the switch that runs later takes the row back.
+    M4_CHECK(5229, wait_until([&] {
+        QQuickItem* f = w->activeFocusItem();
+        return f && f->objectName() == QLatin1String("restoreBackupListItem");
+    }, 3000), qPrintable(QStringLiteral("the switch focuses the selected backup: ")
+        + restore_focus_state(w)));
+    send_key(w, Qt::Key_Down);
+    wait_ms(400);
+    M4_CHECK(5230, w->activeFocusItem() && w->activeFocusItem()->property("index").toInt() == 1,
+        qPrintable(QStringLiteral("Down right after the switch stays on the second backup: ")
+            + restore_focus_state(w)));
+    press_and_wait(w, Qt::Key_Up, 80);
     M4_CHECK(5203, wait_for_snapshots(w, c.backend, 3), "snapshots loaded");
     finish_incubation(w);
 
