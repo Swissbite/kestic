@@ -22,6 +22,8 @@
 #   publish      GitHub's generated notes (pull requests since the previous tag, grouped by
 #                .github/release.yml), job summary, tag and release; for a branch, removes older
 #                pre-releases with their tags
+#   site         release only: starts the Pages workflow on main, so the showcase site names the
+#                new release and offers its .deb
 
 name: Release
 
@@ -449,3 +451,20 @@ jobs:
                 gh release delete "$old" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
               fi
             done
+
+  # The site picks the newest release at build time (pages.yml). A workflow_dispatch from
+  # GITHUB_TOKEN starts a run, other events from it would not; the deploy stays on main.
+  site:
+    needs: [prepare, publish]
+    if: >-
+      !cancelled() && needs.publish.result == 'success' &&
+      needs.prepare.outputs.kind == 'release' && needs.prepare.outputs.dry-run != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Rebuild the showcase site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

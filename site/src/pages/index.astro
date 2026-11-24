@@ -9,7 +9,7 @@ import ThemeToggle from "../components/ThemeToggle.astro";
 import WindowFrame from "../components/WindowFrame.astro";
 import appIcon from "../../../packaging/icons/hicolor/scalable/apps/kestic.svg";
 import { heroShot, galleryShots } from "../screenshots.ts";
-import { buildShaShort, commitUrl, repoUrl } from "../build-info.ts";
+import { buildShaShort, commitUrl, release, repoUrl } from "../build-info.ts";
 
 const features = [
   {
@@ -122,9 +122,15 @@ const buildFromSource = `${repoUrl}#building--testing`;
 >
   <div class="preview-bar mono">
     <div class="wrap">
-      Development preview · main @ <a href={commitUrl}>{buildShaShort}</a><span class="no-release">
-        · no release yet</span
-      >
+      Development preview · main @ <a href={commitUrl}>{buildShaShort}</a>{
+        release ? (
+          <span class="release-note">
+            · latest release <a href={release.url}>{release.tag}</a>
+          </span>
+        ) : (
+          <span class="release-note">· no release yet</span>
+        )
+      }
     </div>
   </div>
 
@@ -160,7 +166,16 @@ const buildFromSource = `${repoUrl}#building--testing`;
           run.
         </p>
         <div class="actions">
-          <a class="button primary" href="#try">Try it</a>
+          {
+            release ? (
+              <>
+                <a class="button primary" href={release.debUrl}>Download {release.tag}</a>
+                <a class="button" href="#try">Try it</a>
+              </>
+            ) : (
+              <a class="button primary" href="#try">Try it</a>
+            )
+          }
           <a class="button" href={repoUrl}>View on GitHub</a>
         </div>
         <dl class="mono facts">
@@ -304,21 +319,44 @@ RESTIC_PASSWORD_COMMAND='kestic secret get k3n8x2qd' \
       </section>
 
       <section id="try" class="section wrap">
-        <div class="section-head">
-          <h2>Try it</h2>
-          <p>
-            There is no release yet, so you build the package yourself. The bootstrap script installs
-            the Rust toolchain, the Qt and KDE development packages, and cargo-deb.
-          </p>
-        </div>
-        <pre class="command mono" aria-label="Commands to build and install Kestic"><code>git clone {repoUrl}.git && cd kestic
+        {
+          release ? (
+            <>
+              <div class="section-head">
+                <h2>Try it</h2>
+                <p>
+                  Download the package of <a href={release.url}>{release.tag}</a> for amd64 and
+                  install it with apt. Kestic needs restic 0.18.0 or newer.
+                </p>
+              </div>
+              <pre class="command mono" aria-label="Commands to download and install Kestic"><code>wget {release.debUrl}
+sudo apt install ./{release.debFile}</code></pre>
+              <p class="note">
+                Then open Kestic from the application menu. From now on its background service
+                starts with your Plasma session. To build the package yourself instead, see{" "}
+                <a href={buildFromSource}>Building and testing</a>.
+              </p>
+            </>
+          ) : (
+            <>
+              <div class="section-head">
+                <h2>Try it</h2>
+                <p>
+                  There is no release yet, so you build the package yourself. The bootstrap script
+                  installs the Rust toolchain, the Qt and KDE development packages, and cargo-deb.
+                </p>
+              </div>
+              <pre class="command mono" aria-label="Commands to build and install Kestic"><code>git clone {repoUrl}.git && cd kestic
 ./scripts/bootstrap.sh
 just deb
 sudo apt install ./target/debian/kestic_*.deb</code></pre>
-        <p class="note">
-          Then open Kestic from the application menu. From now on its background service starts
-          with your Plasma session. <a href={buildFromSource}>Building and testing in detail</a>
-        </p>
+              <p class="note">
+                Then open Kestic from the application menu. From now on its background service
+                starts with your Plasma session. <a href={buildFromSource}>Building and testing in detail</a>
+              </p>
+            </>
+          )
+        }
       </section>
     </main>
   </Lightbox>
@@ -625,7 +663,7 @@ sudo apt install ./target/debian/kestic_*.deb</code></pre>
   }
   @media (max-width: 480px) {
     .site-header nav a:last-child,
-    .preview-bar .no-release {
+    .preview-bar .release-note {
       display: none;
     }
     .facts {
