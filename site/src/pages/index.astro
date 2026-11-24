@@ -45,8 +45,24 @@ const features = [
     text: "Hold all schedules for an hour, until tomorrow, or until you resume. Manual backups still run.",
   },
   {
+    term: "Restore",
+    text: "Browse a snapshot folder by folder, or search all snapshots of a backup for a file name, and mark what you want back. It goes into a new folder by default, so nothing is overwritten. At the original location, a home folder saved under another user name maps to yours.",
+  },
+  {
+    term: "Restore preview",
+    text: "Restoring to the original location or into a folder with files in it needs a preview first. It lists which files would be new, overwritten, not overwritten, or unchanged. Existing files stay as they are unless you pick an overwrite mode.",
+  },
+  {
+    term: "Compare",
+    text: "See what changed between two snapshots: new, changed, and removed files, filtered by kind.",
+  },
+  {
+    term: "Unassigned snapshots",
+    text: "Snapshots made with plain restic show up as unassigned, those of backups no longer known as orphaned. You can browse and restore them; Kestic only reads them.",
+  },
+  {
     term: "Native on Plasma",
-    text: "A tray entry, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store.",
+    text: "A tray entry with Restore Files…, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store.",
   },
 ] as const;
 
@@ -78,8 +94,8 @@ const milestones = [
   {
     id: "M4",
     name: "Restore",
-    scope: "Browse and compare snapshots, restore files without overwriting existing ones.",
-    done: false,
+    scope: "Browse and compare snapshots, restore files, by default without overwriting existing ones.",
+    done: true,
   },
   {
     id: "M5",
@@ -149,12 +165,9 @@ const buildFromSource = `${repoUrl}#building--testing`;
         </div>
         <dl class="mono facts">
           <dt>Today</dt>
-          <dd>Back up to a local folder or drive, or a REST server.</dd>
+          <dd>Back up to a local folder or drive, or a REST server, and restore from your snapshots.</dd>
           <dt>Not yet</dt>
-          <dd>
-            Restoring in the app (restic restores your snapshots meanwhile), SFTP, S3 and other
-            backends, guided first-run setup.
-          </dd>
+          <dd>SFTP, S3 and other backends, guided first-run setup.</dd>
           <dt>Runs on</dt>
           <dd>
             Plasma 6.6 with KDE Frameworks 6.24 or newer: TUXEDO OS 24.04 (tested), Kubuntu 26.04,
@@ -183,8 +196,8 @@ const buildFromSource = `${repoUrl}#building--testing`;
         <div class="section-head">
           <h2>What it does</h2>
           <p>
-            All of this works today. Still missing: restoring in the app, backends beyond local and
-            REST, and a guided first-run setup.
+            All of this works today. Still missing: backends beyond local and REST, and a guided
+            first-run setup.
           </p>
         </div>
         <ol class="features">
@@ -250,8 +263,8 @@ const buildFromSource = `${repoUrl}#building--testing`;
         <div class="section-head">
           <h2>Plain restic underneath</h2>
           <p>
-            Every backup and maintenance run is an ordinary restic command. Kestic shows it next to
-            each backup and in the history of every run.
+            Every backup, maintenance run, and restore is an ordinary restic command. Kestic shows
+            it in the history of every run, and next to each backup.
           </p>
         </div>
         <pre class="command mono" aria-label="Example restic command run by Kestic"><code><span class="comment"># What "Back Up Now" runs, as "Show Command" shows it (wrapped here)</span>
@@ -270,7 +283,7 @@ RESTIC_PASSWORD_COMMAND='kestic secret get k3n8x2qd' \
           <li>
             <span class="mono accent">App</span>
             <strong>Kestic</strong>
-            <span>Kirigami window for setup, status, and history.</span>
+            <span>Kirigami window for setup, status, history, and restore.</span>
           </li>
           <li>
             <span class="mono accent">D-Bus</span>
