@@ -16,10 +16,10 @@ use common::{load_config, run_isolated_test};
 use kestic_core::model::ResticProvider;
 use kestic_core::restic_install::{TEMP_PREFIX, app_managed_binary, kestic_data_dir};
 use kestic_core::restic_release::{TrustAnchor, set_test_anchor};
-use kestic_daemon::dbus_api::{
-    KESTIC_OBJECT_PATH, KesticClient, KesticDbusError, ResticInstallStatusDto,
+use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient, ResticInstallStatusDto};
+use kestic_i18n::codes::{
+    ResticInstallCode, ResticInstallOutcome, ResticInstallPhase, ServiceErrorCode,
 };
-use kestic_i18n::codes::{ResticInstallCode, ResticInstallOutcome, ResticInstallPhase};
 use kestic_test_support::release_mock::{
     LATEST_PATH, ReleaseFiles, ReleaseMock, Route, TestSigningKey, asset_path,
     restic_stand_in_archive,
@@ -441,10 +441,8 @@ fn restic_install_cancel_already_running_and_expiry() {
             let not_found = client
                 .get_restic_install_status("unknown")
                 .expect_err("unknown id");
-            assert!(
-                matches!(not_found, KesticDbusError::NotFound(_)),
-                "{not_found:?}"
-            );
+            // Only the code is compared and printed: an error may carry secret details.
+            assert_eq!(not_found.code(), ServiceErrorCode::NotFound);
             let err = client
                 .cancel_restic_install("unknown")
                 .expect_err("unknown id");
@@ -480,7 +478,7 @@ fn restic_install_cancel_already_running_and_expiry() {
             let gone = client
                 .get_restic_install_status(&first)
                 .expect_err("expired");
-            assert!(matches!(gone, KesticDbusError::NotFound(_)), "{gone:?}");
+            assert_eq!(gone.code(), ServiceErrorCode::NotFound);
             rig.daemon.stop();
         },
     );
