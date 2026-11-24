@@ -259,6 +259,10 @@ fn ac_m4_06_4_missing_mapped_folder_is_never_created() {
             fs::remove_dir(&projekte).expect("remove Projekte");
             refused(Some(&preview_id), "missing right before the start");
             assert!(
+                !fx.restore_calls().is_empty(),
+                "(c) the preview of the existing folder ran its dry run"
+            );
+            assert!(
                 fx.restore_calls().iter().all(|c| c.contains("--dry-run")),
                 "(c) only dry runs: {:?}",
                 fx.restore_calls()
