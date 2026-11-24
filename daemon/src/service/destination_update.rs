@@ -474,8 +474,8 @@ fn init_in_place(
 }
 
 /// Saves an accepted edit under the daemon lock: checks again that the destination exists with
-/// the connection that was checked and that its location is free, writes the secrets, then `config.toml`; when the config cannot be
-/// written the secrets get their previous values back.
+/// the connection that was checked and that its location is free, writes the secrets, then
+/// `config.toml`; when the config cannot be written the secrets get their previous values back.
 fn save_update(
     guard: &mut DaemonCore,
     saved: &Destination,
