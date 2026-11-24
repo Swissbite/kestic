@@ -197,9 +197,8 @@ fn m5_09_connection_changed_by_every_field() {
     }
 }
 
-/// Saved credentials go only to the server they were entered for.
-/// S3: the same endpoint (another bucket is fine); REST: the same host, the port may change;
-/// generic form: the same URL up to the path.
+/// Saved credentials go only to the server they were entered for. S3: the same endpoint
+/// (scheme, host, port; another bucket is fine); another kind is never the same server.
 #[test]
 fn m5_09_same_server_rules_per_destination_kind() {
     // S3
