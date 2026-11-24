@@ -296,6 +296,18 @@ Restore restore_dialog(QQuickWindow* w) {
     return Restore { object_named(w, "restoreDialog"), object_named(w, "restorePreviewModel") };
 }
 
+// Where the keyboard focus and the restore area stand, for a failed check.
+QString restore_focus_state(QQuickWindow* w) {
+    QQuickItem* f = w->activeFocusItem();
+    QQuickItem* p = visible_item(w, "restoreSnapshotsPage");
+    QQuickItem* list = item_named(w, "restoreBackupsListView");
+    return QStringLiteral("focus=%1#%2 currentIndex=%3 title=%4")
+        .arg(f ? f->objectName() : QStringLiteral("-"))
+        .arg(f ? f->property("index").toInt() : -1)
+        .arg(list ? list->property("currentIndex").toInt() : -1)
+        .arg(p ? p->property("title").toString() : QStringLiteral("-"));
+}
+
 /// AC-M4-01-4: with the keyboard alone (a) every snapshot can be selected and (b) browsing,
 /// comparing and restoring can be started.
 int scenario_restore_keyboard(const Ctx& c) {
@@ -311,12 +323,19 @@ int scenario_restore_keyboard(const Ctx& c) {
     QQuickItem* backup_row = tab_to(w, "restoreBackupListItem", 30);
     M4_CHECK(5204, backup_row != nullptr, "Tab did not reach the backup row");
     press_and_wait(w, Qt::Key_Down, 80);
+    M4_CHECK(5228, wait_until([&] {
+        QQuickItem* f = w->activeFocusItem();
+        return f && f->objectName() == QLatin1String("restoreBackupListItem")
+            && f->property("index").toInt() == 1;
+    }, 3000), qPrintable(QStringLiteral("Down moves the focus to the second backup: ")
+        + restore_focus_state(w)));
     send_key(w, Qt::Key_Return);
     M4_CHECK(5205, wait_until([&] {
         QQuickItem* p = visible_item(w, "restoreSnapshotsPage");
         return p && p->property("title").toString() == QLatin1String("Photos")
             && !c.backend->property("restore_snapshots_loading").toBool();
-    }, 20000), "Down and Return on the second backup list its snapshots");
+    }, 20000), qPrintable(QStringLiteral("Down and Return on the second backup list its snapshots: ")
+        + restore_focus_state(w)));
     M4_CHECK(5225, model_rows(w, "restoreSnapshotsModel") == 0, "the second backup has no snapshots");
     QQuickItem* photos_row = tab_to(w, "restoreBackupListItem", 30);
     M4_CHECK(5226, photos_row != nullptr, "Tab did not return to the backup list");
