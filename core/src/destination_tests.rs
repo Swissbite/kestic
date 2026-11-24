@@ -282,7 +282,7 @@ fn connection_test_does_not_wait_for_output_held_after_restic_ended() {
     );
 
     assert!(
-        res.is_ok_and(|r| r.exit_code == 0),
+        res.is_ok_and(|r| r.result.exit_code == 0),
         "restic's own result counts"
     );
     assert!(

@@ -19,8 +19,8 @@ use kestic_core::restic::RecoveryAction;
 use kestic_core::scheduler::PauseDuration;
 use kestic_core::secrets::SecretValue;
 use kestic_i18n::codes::{
-    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
-    PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome,
+    ErrorKind, PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
 pub use kestic_i18n::codes::{OverallStatusKind, RunProgressPhase};
 use kestic_i18n::messages::{
@@ -395,6 +395,12 @@ pub struct ConnectionTestResultDto {
     pub host_key: Option<Box<HostKeyDto>>,
 }
 
+/// Result of `UpdateDestination`: saved, or another repository at the edited connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DestinationUpdateResultDto {
+    pub outcome: DestinationUpdateOutcome,
+}
+
 /// Host key of an SFTP server that no `known_hosts` file knows yet (`unknown_host_key`);
 /// `TrustHostKey(host_key_id)` adds exactly this key to Kestic's `known_hosts`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -739,10 +745,10 @@ impl KesticClient {
         repo_password: &str,
         backend: &BackendSecrets,
         verify_connection: bool,
-    ) -> zbus::Result<()> {
+    ) -> zbus::Result<DestinationUpdateResultDto> {
         let json = to_failure_arg("dest", dest)?;
         let secrets = to_failure_arg("backend secrets", backend)?;
-        self.call(
+        let raw: String = self.call(
             "UpdateDestination",
             &(
                 json.as_str(),
@@ -751,7 +757,9 @@ impl KesticClient {
                 secrets.as_str(),
                 verify_connection,
             ),
-        )
+        )?;
+        serde_json::from_str(&raw)
+            .map_err(|e| zbus::Error::Failure(format!("UpdateDestination reply: {e}")))
     }
 
     pub fn update_destination_password(

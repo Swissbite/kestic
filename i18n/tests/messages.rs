@@ -351,7 +351,7 @@ fn every_source_blocked_and_skip_code_maps_to_its_msgid() {
 }
 
 #[test]
-fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
+fn every_restic_blocking_and_action_code_maps_to_its_msgid() {
     use ResticStatusCode as R;
     let restic = [
         (R::NotFound, Some("restic not found; at least %1 required")),
@@ -386,6 +386,18 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
     ];
     assert_table(&BlockingKind::ALL, &blocking, |k| msg(k.message(None)));
 
+    use RecoveryAction as A;
+    let actions = [
+        (A::UpdateStoredPassword, Some("Update Saved Password…")),
+        (A::AddToExcludes, Some("Add to Exclude Rules…")),
+        (A::CheckResticSource, Some("Configure restic Source…")),
+        (A::UnlockRepository, Some("Release Lock…")),
+    ];
+    assert_table(&A::ALL, &actions, |a| msg(a.label_message()));
+}
+
+#[test]
+fn every_connection_test_and_note_code_maps_to_its_msgid() {
     use ConnectionTestCode as C;
     let connection = [
         (C::InvalidInput, None),
@@ -439,7 +451,7 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
         (
             C::ReservedVariable,
             Some(
-                "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY or LD_, and PATH and HOME, are not allowed.",
+                "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY, LD_ or XDG_ are not allowed. Neither are PATH, HOME, TMPDIR, GCONV_PATH and the address of the session bus.",
             ),
         ),
         (
@@ -468,6 +480,22 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
             C::JumpHostUnsupported,
             Some("Servers behind a jump host are not supported yet."),
         ),
+        (
+            C::OtherRepository,
+            Some("There is another backup destination at this address."),
+        ),
+        (
+            C::CredentialsRequired,
+            Some(
+                "Enter the access data again. Kestic uses saved access data only for the server they were entered for.",
+            ),
+        ),
+        (
+            C::SecretInUrl,
+            Some(
+                "The repository URL contains the secret parameter '%1'. Enter it as a secret variable instead.",
+            ),
+        ),
     ];
     assert_table(&C::ALL, &connection, |c| c.text("x"));
 
@@ -488,15 +516,6 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
     assert_table(&ConnectionNoteCode::ALL, &notes, |n| {
         UiText::Message(n.message("x"))
     });
-
-    use RecoveryAction as A;
-    let actions = [
-        (A::UpdateStoredPassword, Some("Update Saved Password…")),
-        (A::AddToExcludes, Some("Add to Exclude Rules…")),
-        (A::CheckResticSource, Some("Configure restic Source…")),
-        (A::UnlockRepository, Some("Release Lock…")),
-    ];
-    assert_table(&A::ALL, &actions, |a| msg(a.label_message()));
 }
 
 #[test]

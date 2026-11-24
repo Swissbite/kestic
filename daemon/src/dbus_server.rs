@@ -201,9 +201,9 @@ impl KesticDbusV1Service {
         repo_password: &str,
         backend_secrets_json: &str,
         verify_connection: bool,
-    ) -> Result<(), KesticDbusError> {
+    ) -> Result<String, KesticDbusError> {
         let form = DestinationForm::new(dest_json, mode, repo_password, backend_secrets_json);
-        let (conn_opt, state_dto, tray_state) = self
+        let (result, conn_opt, state_dto, tray_state) = self
             .blocking(move |core| {
                 update_destination_unlocked(
                     core,
@@ -217,7 +217,7 @@ impl KesticDbusV1Service {
             .await?;
         self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
             .await;
-        Ok(())
+        serde_json::to_string(&result).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     #[zbus(name = "UpdateDestinationPassword")]

@@ -125,6 +125,11 @@ const HISTORY_MIGRATIONS: &[Migration] = &[
         name: "maintenance_schedule_anchors",
         apply: apply_v4_maintenance_schedule_anchors,
     },
+    Migration {
+        version: 5,
+        name: "destination_repository_id",
+        apply: apply_v5_destination_repository_id,
+    },
 ];
 
 fn apply_v1_base_schema(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
@@ -239,6 +244,10 @@ fn apply_v4_maintenance_schedule_anchors(tx: &Transaction<'_>) -> Result<(), rus
         "INTEGER",
     )?;
     Ok(())
+}
+
+fn apply_v5_destination_repository_id(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
+    add_column_if_missing(tx, "destination_state", "repo_id", "TEXT")
 }
 
 /// Guard for upgrading pre-versioned databases that still had `user_version = 0`.
