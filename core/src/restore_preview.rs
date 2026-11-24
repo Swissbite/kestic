@@ -789,6 +789,29 @@ fn below_replaced_files(res: &crate::restic::ResticExecutionResult) -> Option<Ve
     res.errors.iter().map(|e| e.item.clone()).collect()
 }
 
+/// The first entry at `target` that is a FIFO, a socket or a device where the snapshot tree
+/// has a file.
+fn special_file_at_target(tree: &SnapshotTree, target: &Path) -> Option<String> {
+    use std::os::unix::fs::FileTypeExt;
+    let mut files: Vec<&String> = tree
+        .nodes
+        .iter()
+        .filter(|(_, nodes)| nodes.iter().any(|n| !n.is_dir && !n.above))
+        .map(|(path, _)| path)
+        .collect();
+    files.sort();
+    files.into_iter().find_map(|path| {
+        find_at_target(target, path)
+            .entries
+            .into_iter()
+            .find(|(_, m)| {
+                let t = m.file_type();
+                t.is_fifo() || t.is_socket() || t.is_block_device() || t.is_char_device()
+            })
+            .map(|(p, _)| p.to_string_lossy().into_owned())
+    })
+}
+
 /// What the dry runs of a preview need.
 pub struct PreviewRun<'a> {
     pub plan: &'a RestorePlan,
@@ -821,6 +844,14 @@ pub fn execute_preview(
         return Err(BackupRunError::InvalidTarget {
             path: first.clone(),
             reason: "not a real folder where restic needs one above the selection".to_string(),
+        });
+    }
+    // restic hangs opening a FIFO, socket or device where it writes a file, and SIGTERM does
+    // not stop it there: such a target is refused before any dry run.
+    if let Some(path) = special_file_at_target(tree, target) {
+        return Err(BackupRunError::InvalidTarget {
+            path,
+            reason: "a FIFO, socket or device where the snapshot has a file".to_string(),
         });
     }
     // The walk and both dry runs together hold at most the limit of one query; beyond it the

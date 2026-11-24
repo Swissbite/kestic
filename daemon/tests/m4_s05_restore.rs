@@ -3561,3 +3561,40 @@ fn m4_s05_cancelled_restore_keeps_its_counts() {
         },
     );
 }
+
+/// AC-M4-05-25 (FIFO): a preview at the original location where the target has a FIFO in
+/// place of a file of the snapshot (a) ends with `invalid_target`, (b) names the FIFO, and
+/// (c) runs no dry run, where restic would hang.
+#[test]
+fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
+    run_isolated_test(
+        "ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run",
+        "KESTIC_AC_M4_05_25_FIFO_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RF", small_tree, |_| {});
+            let fifo = fx.src.join("a.txt");
+            fs::remove_file(&fifo).expect("remove a.txt");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .expect("mkfifo");
+            assert!(made.success(), "mkfifo");
+            let id = fx.start_preview(&["a.txt"], Some(fx.original()), RestoreOverwrite::Always);
+            let st = fx.wait_query(&id, &big_page());
+            assert_eq!(
+                st.error_kind,
+                Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
+                "(a) {st:?}"
+            );
+            let resolved = fs::canonicalize(&fx.src).expect("canonical").join("a.txt");
+            assert_eq!(
+                st.error_detail.as_deref(),
+                Some(resolved.to_str().expect("utf-8")),
+                "(b)"
+            );
+            assert!(dry_runs(&fx).is_empty(), "(c) {:?}", dry_runs(&fx));
+            fx.rig.daemon.stop();
+        },
+    );
+}
