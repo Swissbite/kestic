@@ -179,7 +179,7 @@ Verbindliche Ablage neuer und aufgeteilter Module über alle Meilensteine:
 | D-Bus-Methode | `daemon/src/service/<bereich>.rs` + `daemon/src/dbus_server.rs` + `daemon/src/dbus_api.rs` | `service.rs` nur als dünner Einstieg bzw. Modul-Verteiler |
 | Fachlogik | `core/src/<bereich>.rs` | in der GUI nur Aufrufe, keine Geschäftslogik |
 | Gemeinsame Texte und Codes | `i18n/src/` (Crate `kestic-i18n`) | nur was Daemon und GUI beide brauchen; Regel in [dbus-api.md](dbus-api.md) §Texte und Übersetzungen |
-| GUI-Modell | `gui/src/models/<modell>.rs` | pro Modell eine Datei statt monolithischem `models.rs` |
+| GUI-Modell | `gui/src/models/<modell>.rs` | pro Modell eine Datei statt monolithischem `models.rs`; Ausnahme: die CXX-Qt-Brücken (`#[cxx_qt::bridge]`) aller Modelle stehen in `gui/src/models.rs`, weil cxx-qt-build 0.10 die Rust-Dateien eines QML-Moduls nur aus einem Ordner nimmt (QTBUG-93443); mit einer neueren cxx-qt erneut prüfen |
 | Dialog / Seite | eigene QML-Datei unter `gui/src/qml/` | nicht inline in `Main.qml` |
 | Gemeinsame Test-Fixture | `test-support/src/<bereich>.rs` (Crate `kestic-test-support`, `publish = false`) | nur als `dev-dependency`; privater Session-Bus, Headless-Keyring, GUI-Smoke-Harness, Testwerkzeuge, erzeugte Testpasswörter (`password.rs`), Vorlage-Repos (`repo_template.rs`). Keine Test-Hooks im Produktivcode: Tests ersetzen Abhängigkeiten über Konstruktoren und Konfiguration (z. B. `DaemonRunConfig.secret_store`) oder über echte Dienste auf dem isolierten Bus. Test-Harness im GUI-Binary (Smoke-Szenen, synthetische Eingaben, `--simulate-status`) nur mit dem Cargo-Feature `test-harness`, nie im `.deb` |
 
