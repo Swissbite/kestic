@@ -26,6 +26,16 @@ pub mod qobject {
         #[qproperty(QString, restic_binary_path)]
         #[qproperty(QString, restic_provider_kind)]
         #[qproperty(QString, restic_message)]
+        #[qproperty(bool, restic_offer_download)]
+        #[qproperty(bool, restic_offer_update)]
+        #[qproperty(bool, restic_offer_enabled)]
+        #[qproperty(QString, restic_install_state)]
+        #[qproperty(QString, restic_install_phase_text)]
+        #[qproperty(f64, restic_install_progress)]
+        #[qproperty(bool, restic_install_cancellable)]
+        #[qproperty(QString, restic_install_result)]
+        #[qproperty(QString, restic_install_error)]
+        #[qproperty(QString, restic_install_error_detail)]
         #[qproperty(QString, blocking_kind)]
         #[qproperty(QString, blocking_message)]
         #[qproperty(QString, overall_headline)]
@@ -430,6 +440,18 @@ pub mod qobject {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "startResticInstall"]
+        fn start_restic_install(self: Pin<&mut KesticApp>) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "pollResticInstall"]
+        fn poll_restic_install(self: Pin<&mut KesticApp>);
+
+        #[qinvokable]
+        #[cxx_name = "cancelResticInstall"]
+        fn cancel_restic_install(self: Pin<&mut KesticApp>);
+
+        #[qinvokable]
         #[cxx_name = "updateExpertMode"]
         fn update_expert_mode(self: Pin<&mut KesticApp>, enabled: bool) -> bool;
 
@@ -560,6 +582,7 @@ pub mod qobject {
 mod backups;
 mod destinations;
 mod previews;
+mod restic_install;
 mod schedules;
 mod state;
 
@@ -585,6 +608,19 @@ pub struct KesticAppRust {
     restic_binary_path: QString,
     restic_provider_kind: QString,
     restic_message: QString,
+    restic_offer_download: bool,
+    restic_offer_update: bool,
+    restic_offer_enabled: bool,
+    /// `""` before the first installation of this session, else the state of the last one.
+    restic_install_state: QString,
+    restic_install_phase_text: QString,
+    restic_install_progress: f64,
+    restic_install_cancellable: bool,
+    restic_install_result: QString,
+    restic_install_error: QString,
+    restic_install_error_detail: QString,
+    /// `install_id` of the last installation started from this GUI.
+    restic_install_id: String,
     blocking_kind: QString,
     blocking_message: QString,
     overall_headline: QString,

@@ -38,12 +38,41 @@ Kirigami.ApplicationWindow {
         visible = false;
     }
 
-    function openWindow() {
+    // Opens the window; with `section` "restic" it scrolls to the restic section.
+    function openWindow(section) {
         visible = true;
         if (Qt.platform.pluginName !== "offscreen") {
             raise();
         }
         requestActivate();
+        if (section === "restic") {
+            Qt.callLater(showResticSection);
+        }
+    }
+
+    // The restic section is the last one: scrolling to the end shows it.
+    function showResticSection() {
+        var page = pageStack.initialPage;
+        var flick = page ? page.flickable : null;
+        if (!flick) return;
+        flick.contentY = Math.max(0, flick.contentHeight - flick.height);
+    }
+
+    // Opens the restic section and starts the download offered there.
+    function downloadRestic() {
+        openWindow("restic");
+        if (appBackend.restic_offer_download && appBackend.restic_offer_enabled) {
+            appBackend.startResticInstall();
+        }
+    }
+
+    // Polls the installation while it runs, also while this window is hidden.
+    Timer {
+        objectName: "resticInstallPollTimer"
+        interval: 250
+        repeat: true
+        running: appBackend.restic_install_state === "running"
+        onTriggered: appBackend.pollResticInstall()
     }
 
     function canActivateFocusedControlWithReturn() {
@@ -309,13 +338,113 @@ Kirigami.ApplicationWindow {
                 }
 
                 Controls.Button {
+                    id: downloadResticButton
+                    objectName: "downloadResticButton"
+                    visible: appBackend.restic_offer_download
+                    enabled: appBackend.restic_offer_enabled
+                    icon.name: "download"
+                    text: i18n("Download restic")
+                    Accessible.name: text
+                    onClicked: appBackend.startResticInstall()
+                }
+
+                Controls.Button {
                     id: updateResticButton
                     objectName: "updateResticButton"
+                    visible: appBackend.restic_offer_update
+                    enabled: appBackend.restic_offer_enabled
+                    icon.name: "update-none"
                     text: i18n("Update Now")
-                    enabled: false
                     Accessible.name: i18n("Update restic now")
-                    Controls.ToolTip.visible: hovered
-                    Controls.ToolTip.text: i18n("Kestic will update restic itself in a future version.")
+                    onClicked: appBackend.startResticInstall()
+                }
+            }
+
+            // Progress, result or error of the last installation of the restic managed by Kestic.
+            ColumnLayout {
+                id: resticInstallPanel
+                objectName: "resticInstallPanel"
+                spacing: Kirigami.Units.smallSpacing
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+
+                readonly property string installState: appBackend.restic_install_state
+                readonly property bool running: installState === "running"
+                property bool detailsExpanded: false
+
+                visible: installState === "running" || installState === "done" || installState === "error"
+
+                onInstallStateChanged: detailsExpanded = false
+
+                Controls.Label {
+                    objectName: "resticInstallPhaseLabel"
+                    visible: resticInstallPanel.running
+                    text: appBackend.restic_install_phase_text
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                RowLayout {
+                    visible: resticInstallPanel.running
+                    spacing: Kirigami.Units.smallSpacing
+                    Layout.fillWidth: true
+
+                    Controls.ProgressBar {
+                        objectName: "resticInstallProgressBar"
+                        from: 0
+                        to: 1
+                        indeterminate: appBackend.restic_install_progress < 0
+                        value: Math.max(0, appBackend.restic_install_progress)
+                        Accessible.name: appBackend.restic_install_phase_text
+                        Layout.fillWidth: true
+                    }
+
+                    Controls.Button {
+                        objectName: "cancelResticInstallButton"
+                        icon.name: "dialog-cancel"
+                        text: Texts.label("cancel")
+                        enabled: appBackend.restic_install_cancellable
+                        Accessible.name: text
+                        onClicked: appBackend.cancelResticInstall()
+                    }
+                }
+
+                Kirigami.InlineMessage {
+                    objectName: "resticInstallResultMessage"
+                    type: Kirigami.MessageType.Positive
+                    visible: resticInstallPanel.installState === "done"
+                    text: appBackend.restic_install_result
+                    Layout.fillWidth: true
+                }
+
+                Kirigami.InlineMessage {
+                    objectName: "resticInstallErrorMessage"
+                    type: Kirigami.MessageType.Error
+                    visible: resticInstallPanel.installState === "error"
+                    text: appBackend.restic_install_error
+                    Layout.fillWidth: true
+                    actions: [
+                        Kirigami.Action {
+                            objectName: "resticInstallDetailsAction"
+                            visible: appBackend.restic_install_error_detail !== ""
+                            icon.name: resticInstallPanel.detailsExpanded ? "go-up" : "go-down"
+                            text: resticInstallPanel.detailsExpanded ? Texts.label("hide_details") : Texts.label("details")
+                            onTriggered: resticInstallPanel.detailsExpanded = !resticInstallPanel.detailsExpanded
+                        }
+                    ]
+                }
+
+                // Raw text from the network or from gpgv: shown as plain text, never as markup.
+                Controls.Label {
+                    objectName: "resticInstallErrorDetail"
+                    visible: resticInstallPanel.installState === "error" && resticInstallPanel.detailsExpanded
+                        && appBackend.restic_install_error_detail !== ""
+                    text: appBackend.restic_install_error_detail
+                    textFormat: Text.PlainText
+                    font.family: "monospace"
+                    wrapMode: Text.WrapAnywhere
+                    Layout.fillWidth: true
                 }
             }
         }

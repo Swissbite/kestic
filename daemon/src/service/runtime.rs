@@ -52,7 +52,7 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     };
     // Only the daemon that holds the bus name installs restic, so what an earlier one left
     // behind can go; a daemon that lost the name must not touch a running installation.
-    super::remove_install_leftovers();
+    super::remove_install_leftovers(&core);
 
     eprintln!(
         "{}",

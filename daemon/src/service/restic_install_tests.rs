@@ -92,3 +92,24 @@ fn worker_without_result_ends_as_error() {
     assert_eq!(dto.state, "error");
     assert_eq!(dto.error_kind, Some(ResticInstallCode::WriteFailed));
 }
+
+/// The sweep removes what an interrupted installation left, but only once. The start of the
+/// daemon and the first `StartResticInstall` both call it under the `DaemonCore` lock, in either
+/// order: the first call removes the leftover, and the temp file the installation writes after
+/// its call survives the second one.
+#[test]
+fn leftover_sweep_runs_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let old = dir.path().join(".restic-download-0a1b");
+    std::fs::write(&old, b"partial").expect("old temp file");
+    let mut sweep = LeftoverSweep::default();
+    sweep.run_once(Some(dir.path()));
+    // (a) the leftover is gone
+    assert!(!old.exists());
+
+    let running = dir.path().join(".restic-download-2c3d");
+    std::fs::write(&running, b"downloading").expect("temp file of a running installation");
+    sweep.run_once(Some(dir.path()));
+    // (b) the second call leaves the running installation alone
+    assert!(running.exists());
+}

@@ -45,6 +45,8 @@ gui_texts! {
     Choose = "choose" => i18n_noop("Choose…"),
     Close = "close" => i18n_noop("Close"),
     Copy = "copy" => i18n_noop("Copy"),
+    Details = "details" => i18n_noop("Details"),
+    HideDetails = "hide_details" => i18n_noop("Hide Details"),
     Next = "next" => i18n_noop("Next"),
     PreviewEllipsis = "preview_ellipsis" => i18n_noop("Preview…"),
     Remove = "remove" => i18n_noop("Remove"),

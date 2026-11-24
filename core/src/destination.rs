@@ -4,6 +4,7 @@
 //! Destination initialization, connection verification, password updates, and preflight reachability checks.
 
 use crate::backend_credentials::BackendCredentials;
+use crate::child_guard::ChildGuard;
 use crate::clock::Clock;
 use crate::known_hosts::{HostKeyCheck, HostKeyError, ScannedHostKey, check_host_key};
 use crate::model::{Destination, DestinationKind, normalize_rest_url_to_ascii};
@@ -708,12 +709,15 @@ fn execute_probe_command(
     // Its own process group, so stopping it also reaches processes the backend started below
     // restic that could keep its output open.
     cmd.process_group(0);
-    // Held until restic has ended, so the app-managed binary is not replaced meanwhile.
+    // Held until restic has ended, so the app-managed binary is not replaced meanwhile; an
+    // early return stops restic before the lease ends.
     let _lease = crate::restic_gate::ResticBinaryGate::global().read();
-    let mut child = cmd.spawn()?;
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let child: SharedChild = Arc::new(Mutex::new(child));
+    let mut guard = ChildGuard::new(cmd.spawn()?);
+    let (stdout, stderr) = {
+        let mut started = guard.lock();
+        (started.stdout.take(), started.stderr.take())
+    };
+    let child: SharedChild = guard.shared();
     let watchdog = timeout.map(|limit| Watchdog::start(Arc::clone(&child), limit));
     let stdout_reader = stdout.map(|mut out| {
         thread::spawn(move || {
@@ -774,6 +778,7 @@ fn execute_probe_command(
     // An early stop that restic ignores ends with the watchdog's time limit; the conclusive
     // error found before stays the answer.
     let status = wait_shared(&child)?;
+    guard.mark_waited();
     let timed_out = watchdog.is_some_and(Watchdog::stop);
     if timed_out && abort_line.is_none() {
         return Err(DestinationError::NotResponding(format!(

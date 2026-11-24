@@ -7,8 +7,9 @@
 //! ([`ResticBinaryGate`]).
 
 use super::error::KesticServiceErr;
-use super::state::DaemonCore;
+use super::state::{DaemonCore, refresh_probe_unlocked};
 use crate::dbus_api::ResticInstallStatusDto;
+use crate::dbus_server::emit_status_changed;
 use kestic_core::clock::Clock;
 use kestic_core::model::RunId;
 use kestic_core::restic_gate::ResticBinaryGate;
@@ -49,8 +50,9 @@ impl InstallState {
     }
 }
 
-/// What an installation reported so far. The worker locks only this, never `DaemonCore`, so
-/// it can report while it holds the replace lease and restic processes wait for it.
+/// What an installation reported so far. While it installs, the worker locks only this, never
+/// `DaemonCore`, so it can report while it holds the replace lease and restic processes wait
+/// for it.
 #[derive(Debug)]
 pub(crate) struct InstallProgress {
     state: InstallState,
@@ -204,17 +206,41 @@ fn data_dir() -> Option<PathBuf> {
     )
 }
 
-/// Removes leftovers of an installation that was interrupted when the daemon ended.
-pub(crate) fn remove_install_leftovers() {
-    let Some(dir) = data_dir() else {
-        return;
-    };
-    let cleanup = remove_leftovers(&dir);
-    for (path, err) in cleanup.failed {
-        eprintln!(
-            "kestic: could not remove {} from an interrupted restic installation: {err}",
-            path.display()
-        );
+/// Removes the leftovers of an installation that was interrupted when an earlier daemon ended,
+/// once: at the start or before this daemon's first installation, whichever comes first. Both
+/// run under the `DaemonCore` lock, so the sweep never meets the temp file of a running
+/// installation.
+#[derive(Debug, Default)]
+pub(crate) struct LeftoverSweep {
+    done: bool,
+}
+
+/// Removes the leftovers of an earlier daemon's interrupted installation unless this daemon did
+/// already.
+pub(crate) fn remove_install_leftovers(shared: &Arc<Mutex<DaemonCore>>) {
+    shared
+        .lock_unpoisoned()
+        .install_leftovers
+        .run_once(data_dir().as_deref());
+}
+
+impl LeftoverSweep {
+    /// Removes the leftovers in `dir` unless that happened already.
+    pub(crate) fn run_once(&mut self, dir: Option<&std::path::Path>) {
+        if self.done {
+            return;
+        }
+        self.done = true;
+        let Some(dir) = dir else {
+            return;
+        };
+        let cleanup = remove_leftovers(dir);
+        for (path, err) in cleanup.failed {
+            eprintln!(
+                "kestic: could not remove {} from an interrupted restic installation: {err}",
+                path.display()
+            );
+        }
     }
 }
 
@@ -253,6 +279,7 @@ impl DaemonCore {
 
 /// What the worker needs.
 struct InstallJob {
+    shared: Arc<Mutex<DaemonCore>>,
     progress: Arc<Mutex<InstallProgress>>,
     clock: Arc<dyn Clock>,
     search_path: Option<OsString>,
@@ -266,6 +293,9 @@ pub fn start_restic_install_async(
     let (install_id, job) = {
         let mut guard = shared.lock_unpoisoned();
         guard.forget_expired_installs();
+        // A call that arrives right after the bus name was taken may come before the sweep at
+        // the start; then it sweeps here, before its worker writes a temp file.
+        guard.install_leftovers.run_once(data_dir().as_deref());
         let running = guard
             .restic_installs
             .values()
@@ -283,6 +313,7 @@ pub fn start_restic_install_async(
             .restic_installs
             .insert(install_id.clone(), Arc::clone(&progress));
         let job = InstallJob {
+            shared: Arc::clone(shared),
             progress,
             clock: Arc::clone(&guard.clock),
             search_path: guard.program_search_path(),
@@ -315,9 +346,35 @@ fn run_install(job: InstallJob) {
     if let Err(err) = &result {
         eprintln!("kestic: restic installation: {err}");
     }
+    let installed = matches!(result, Ok(InstallOutcome::Installed(_)));
     job.progress
         .lock_unpoisoned()
         .finish(result, job.clock.now_utc());
+    if installed {
+        // The restic in use may be the one just installed: check it again and tell the GUI.
+        refresh_probe_unlocked(&job.shared);
+        publish_state(&job.shared);
+    }
+}
+
+/// Sends the current state to the tray and as `StatusChanged`.
+fn publish_state(shared: &Arc<Mutex<DaemonCore>>) {
+    let (conn, state_dto, tray, tray_state) = {
+        let guard = shared.lock_unpoisoned();
+        let (state_dto, tray_state) = guard.build_state_and_tray();
+        (
+            guard.conn.clone(),
+            state_dto,
+            guard.tray.clone(),
+            tray_state,
+        )
+    };
+    if let Some(tray) = tray {
+        tray.set_full_state(tray_state);
+    }
+    if let Some(conn) = &conn {
+        emit_status_changed(conn, &state_dto);
+    }
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 //! Restic command construction, tolerant `--json` stream parsing, execution, and error mapping.
 
 use crate::backend_credentials::{BackendCredentials, BackendSecretSlot};
+use crate::child_guard::ChildGuard;
 use crate::clock::Clock;
 use crate::model::{CommandRecord, Destination, DestinationId, RunStats, RunStatus};
 use crate::provider::ResolvedRestic;
@@ -14,7 +15,7 @@ use kestic_i18n::messages::{Message, completed_message, dns_failed_message};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -825,6 +826,17 @@ pub struct CancelHandle {
     child_pid: Arc<Mutex<Option<u32>>>,
 }
 
+/// Clears the child pid of a [`CancelHandle`] when dropped, also on an early return or a panic.
+struct PidRegistration<'a>(Option<&'a CancelHandle>);
+
+impl Drop for PidRegistration<'_> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0 {
+            handle.set_pid(None);
+        }
+    }
+}
+
 impl CancelHandle {
     pub fn new() -> Self {
         Self::default()
@@ -1061,24 +1073,29 @@ where
     let secrets = resolve_restic_secrets(destination, secret_store)?;
     let mut prepared = build_restic_command(spec, &secrets.backend, extra_env)?;
 
-    // Held until restic has ended, so the app-managed binary is not replaced meanwhile.
-    let _lease = crate::restic_gate::ResticBinaryGate::global().read();
-    let mut child: Child = prepared.cmd.spawn()?;
-    if let Some(handle) = cancel {
-        handle.set_pid(Some(child.id()));
-        if handle.is_cancelled() {
-            handle.cancel();
-        }
-    }
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-
     let mut secrets_to_redact: Vec<&str> = Vec::new();
     if let Some(s) = secrets.repo_password_for_redaction.as_ref() {
         secrets_to_redact.push(s.as_str()?);
     }
     secrets_to_redact.extend(secrets.backend.redaction_values());
+
+    // Held until restic has ended, so the app-managed binary is not replaced meanwhile; an
+    // early return stops restic before the lease ends.
+    let _lease = crate::restic_gate::ResticBinaryGate::global().read();
+    let mut child = ChildGuard::new(prepared.cmd.spawn()?);
+    // Dropped before `child`, so the pid is forgotten before the process is reaped and its pid
+    // can be reused.
+    let registration = PidRegistration(cancel);
+    let (stdout, stderr) = {
+        let mut started = child.lock();
+        if let Some(handle) = cancel {
+            handle.set_pid(Some(started.id()));
+            if handle.is_cancelled() {
+                handle.cancel();
+            }
+        }
+        (started.stdout.take(), started.stderr.take())
+    };
 
     let stderr_handle = thread::spawn(move || -> Vec<String> {
         let mut lines = Vec::new();
@@ -1125,10 +1142,9 @@ where
         log_lines.push(redacted);
     }
 
-    let status = child.wait()?;
-    if let Some(handle) = cancel {
-        handle.set_pid(None);
-    }
+    let status = child.wait();
+    drop(registration);
+    let status = status?;
 
     let finished_at = clock.now_utc();
     let duration_ms = crate::clock::elapsed_ms(started_at, finished_at);

@@ -443,6 +443,10 @@ pub fn remove_leftovers(data_dir: &Path) -> LeftoverCleanup {
 }
 
 /// Version the installed app-managed binary reports, if it runs and says.
+///
+/// Runs without a read lease of the run gate: only the worker of the one running installation
+/// replaces this binary, and it calls this before it replaces anything (a cancelled worker
+/// never reaches the replacement).
 fn installed_version(binary: &Path) -> Option<Version> {
     if !binary.is_file() {
         return None;
@@ -450,7 +454,9 @@ fn installed_version(binary: &Path) -> Option<Version> {
     reported_version(binary, VERSION_TIMEOUT).ok()
 }
 
-/// The version `binary version --json` reports, or why there is none.
+/// The version `binary version --json` reports, or why there is none. Without a read lease of
+/// the run gate: it runs the new binary in its temp file, which no restic process uses, or the
+/// installed one before this worker replaces it (see [`installed_version`]).
 fn reported_version(binary: &Path, limit: Duration) -> Result<Version, String> {
     let mut attempts = 0;
     let out = loop {
