@@ -248,6 +248,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
+name = "bzip2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
+dependencies = [
+ "libbz2-rs-sys",
+]
+
+[[package]]
 name = "cc"
 version = "1.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1150,14 +1159,17 @@ version = "0.0.0"
 name = "kestic-core"
 version = "0.0.0"
 dependencies = [
+ "bzip2",
  "getrandom",
  "jiff",
+ "kestic-core",
  "kestic-i18n",
  "kestic-test-support",
  "rusqlite",
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "shlex",
  "tempfile",
  "thiserror 2.0.21",
@@ -1219,6 +1231,7 @@ version = "0.0.0"
 dependencies = [
  "aes",
  "base64",
+ "bzip2",
  "ctr",
  "poly1305",
  "scrypt",
@@ -1247,6 +1260,12 @@ dependencies = [
  "task-local",
  "zbus 5.19.0",
 ]
+
+[[package]]
+name = "libbz2-rs-sys"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5314d1d545fce0307c770d791adf20d997e0b63b64e1ffeed8a920e290eabe4"
 
 [[package]]
 name = "libc"

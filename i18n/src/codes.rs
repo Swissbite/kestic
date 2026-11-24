@@ -294,6 +294,27 @@ code_enum! {
 }
 
 code_enum! {
+    /// Why installing the app-managed restic failed (`ResticInstallStatusDto.error_kind`).
+    ResticInstallCode {
+        /// No answer, a failed transfer, or an answer larger than its limit.
+        Network => "network",
+        /// A request or redirect left the allowed restic release hosts.
+        HostNotAllowed => "host_not_allowed",
+        /// The release or one of its files is missing or not in the expected form.
+        AssetMissing => "asset_missing",
+        UnsupportedArchitecture => "unsupported_architecture",
+        GpgvMissing => "gpgv_missing",
+        SignatureInvalid => "signature_invalid",
+        ChecksumMismatch => "checksum_mismatch",
+        /// The new binary reports another version than the release.
+        VersionMismatch => "version_mismatch",
+        /// The release or the new binary is older than the minimum restic version.
+        TooOld => "too_old",
+        WriteFailed => "write_failed",
+    }
+}
+
+code_enum! {
     /// Aggregated overall status precedence (see `docs/spec/ui/zustaende.md`).
     OverallStatusKind {
         Blocked => "blocked",
