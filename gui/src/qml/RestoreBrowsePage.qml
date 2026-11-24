@@ -361,6 +361,12 @@ Kirigami.ScrollablePage {
             Kirigami.Theme.inherit: false
             color: Kirigami.Theme.backgroundColor
 
+            // Takes the clicks on the headings, so none reaches a row scrolled beneath them.
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.AllButtons
+            }
+
             RowLayout {
                 id: headingRow
                 anchors.fill: parent
@@ -389,6 +395,7 @@ Kirigami.ScrollablePage {
                     Layout.preferredWidth: Kirigami.Units.iconSizes.small
                 }
                 Controls.Label {
+                    objectName: "browseNameHeading"
                     Layout.fillWidth: true
                     text: i18n("Name")
                     font.bold: true

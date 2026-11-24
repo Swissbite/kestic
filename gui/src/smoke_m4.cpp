@@ -2097,6 +2097,14 @@ int scenario_list_tab_stop(const Ctx& c) {
     M4_CHECK(7051, list->property("currentIndex").toInt() == 999 && focused_row_of(w, list) == 999,
         qPrintable(QStringLiteral("(b) one End press moves to the last of 1 000 entries (%1 loaded): %2")
             .arg(b.model->rowCount()).arg(focus_name(w))));
+    // Up from the first visible row keeps the new current row below the column headings.
+    press_and_wait(w, Qt::Key_PageUp, 120);
+    press_and_wait(w, Qt::Key_Up, 80);
+    QQuickItem* heading = list->property("headerItem").value<QQuickItem*>();
+    QQuickItem* up_row = list->property("currentItem").value<QQuickItem*>();
+    M4_CHECK(7064, heading && up_row && up_row->mapToItem(list, QPointF(0, 0)).y() >= heading->height() - 1,
+        qPrintable(QStringLiteral("(b) Up keeps the current row in view below the headings: row y=%1, headings %2")
+            .arg(up_row ? up_row->mapToItem(list, QPointF(0, 0)).y() : -1).arg(heading ? heading->height() : -1)));
     press_and_wait(w, Qt::Key_Home, 120);
     M4_CHECK(7052, focused_row_of(w, list) == 0, qPrintable(QStringLiteral("(b) Home moves to the first row: ") + focus_name(w)));
     press_and_wait(w, Qt::Key_PageDown, 120);
@@ -2270,6 +2278,12 @@ int scenario_browse_select_all(const Ctx& c) {
     M4_CHECK(7256, check->isVisible() && at.y() >= 0 && at.y() < check->height(),
         qPrintable(QStringLiteral("the header check box stays at the top of the scrolled list: y=%1").arg(at.y())));
     M4_CHECK(7221, save_screenshot(w, screenshot_variant(c.out_path, "-all")), "screenshot failed");
+    // A click on a heading reaches no row scrolled beneath it.
+    QQuickItem* name_heading = visible_item(w, "browseNameHeading");
+    M4_CHECK(7257, name_heading && click_ui_item(w, name_heading, "Name heading"), "the «Name» heading could not be clicked");
+    wait_ms(200);
+    M4_CHECK(7258, b.model->property("dir").toString() == top && b.model->property("selection_count").toInt() == 1000,
+        "a click on the headings opens and marks nothing");
 
     M4_CHECK(7222, click_ui_item(w, check, "clear all"), "the header check box could not be clicked while scrolled");
     M4_CHECK(7223, wait_until([&] { return b.model->property("selection_count").toInt() == 0; }, 10000),

@@ -442,7 +442,7 @@ Kirigami.ScrollablePage {
                     text: i18n("No commands recorded for this run")
                 }
 
-                // Not a list: one card per command, each with its text to read.
+                // Not a list: one card per command, each with its text to read and copy.
                 Repeater {
                     model: page.commandsList
 

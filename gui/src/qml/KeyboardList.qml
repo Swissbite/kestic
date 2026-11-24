@@ -68,7 +68,18 @@ ListView {
 
     Keys.onPressed: function(event) {
         if (event.modifiers !== Qt.NoModifier && event.modifiers !== Qt.KeypadModifier) return;
-        if (event.key === Qt.Key_Home) {
+        // Up and Down move here rather than by the view's own key navigation, which does not
+        // keep the row clear of a header that stays above the rows; at the first or last row
+        // the key passes on.
+        if (event.key === Qt.Key_Up && list.currentIndex > 0) {
+            list.moveCurrentTo(list.currentIndex - 1, -1);
+        } else if (event.key === Qt.Key_Down && list.currentIndex < 0 && list.count > 0) {
+            list.moveCurrentTo(0, 1);
+        } else if (event.key === Qt.Key_Down && list.currentIndex >= 0) {
+            list.loadRowsUpTo(list.currentIndex + 1);
+            if (list.currentIndex + 1 >= list.count) return;
+            list.moveCurrentTo(list.currentIndex + 1, 1);
+        } else if (event.key === Qt.Key_Home) {
             list.moveCurrentTo(0, 1);
         } else if (event.key === Qt.Key_End) {
             list.loadRowsUpTo(Number.MAX_SAFE_INTEGER);

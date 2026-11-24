@@ -51,7 +51,16 @@ Kirigami.ScrollablePage {
     header: Kirigami.InlineViewHeader {
         objectName: "restoreBackupsHeader"
         width: parent.width
+        // As high as with its «Refresh» button, also while the button is hidden.
+        implicitHeight: Math.max(implicitContentHeight, refreshButtonSize.implicitHeight) + topPadding + bottomPadding
         text: i18n("Which backup?")
+
+        Controls.ToolButton {
+            id: refreshButtonSize
+            visible: false
+            icon.name: "view-refresh"
+            text: Texts.label("refresh")
+        }
         actions: [
             Kirigami.Action {
                 objectName: "restoreRefreshAction"
