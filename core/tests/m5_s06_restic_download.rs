@@ -451,10 +451,10 @@ fn ac_m5_06_7_same_version_is_already_current() {
     assert_eq!(setup.entries(), vec!["restic".to_string()]);
 }
 
-/// AC-M5-06-7: a release older than the installed app-managed restic is refused before any
-/// download, and the installed binary stays.
+/// A release older than the installed app-managed restic is refused before any download, and
+/// the installed binary stays.
 #[test]
-fn ac_m5_06_7_older_release_than_installed_is_refused() {
+fn older_release_than_installed_is_refused() {
     let setup = Setup::new(None);
     fs::create_dir_all(&setup.data_dir).expect("data dir");
     let binary = app_managed_binary(&setup.data_dir);

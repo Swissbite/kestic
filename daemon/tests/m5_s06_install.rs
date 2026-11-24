@@ -418,8 +418,9 @@ fn ac_m5_06_12_no_release_access_before_start() {
     );
 }
 
-/// One installation at a time; a cancel stops even a stalled download; finished installations
-/// stay readable for ten minutes after their end; unknown ids are `NotFound`.
+/// One installation at a time; a cancel during a stalled download ends the installation at once
+/// (its worker can no longer replace the binary); finished installations stay readable for ten
+/// minutes after their end; unknown ids are `NotFound`.
 #[test]
 fn restic_install_cancel_already_running_and_expiry() {
     run_isolated_test(

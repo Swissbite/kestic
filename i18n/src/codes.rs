@@ -308,7 +308,8 @@ code_enum! {
         ChecksumMismatch => "checksum_mismatch",
         /// The new binary reports another version than the release.
         VersionMismatch => "version_mismatch",
-        /// The release or the new binary is older than the minimum restic version.
+        /// The release or the new binary is older than the minimum restic version, or the
+        /// release is older than the installed restic managed by Kestic.
         TooOld => "too_old",
         WriteFailed => "write_failed",
     }

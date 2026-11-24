@@ -270,7 +270,7 @@ fn ac_m5_06_4_status_lines_subkey_two_signatures_goodsig_only() {
 
 /// The release build trusts only a `gpgv` that root owns and only root can change.
 #[test]
-fn ac_m5_06_13_only_a_root_owned_gpgv_is_trusted() {
+fn only_a_root_owned_gpgv_is_trusted() {
     // (a) the system's gpgv, also through a symbolic link that resolves to it
     assert_eq!(
         trusted_gpgv(Path::new(SYSTEM_GPGV)),
@@ -291,6 +291,18 @@ fn ac_m5_06_13_only_a_root_owned_gpgv_is_trusted() {
     let search = std::env::join_paths([Path::new("relative"), own.as_path()]).expect("PATH");
     assert_eq!(gpgv_in_path(Some(&search)), Some(fake.clone()));
     assert_eq!(gpgv_in_path(Some(OsStr::new("relative"))), None);
+    // (d) the release build's choice: the system gpgv first, then only a trusted one from PATH
+    let missing = dir.path().join("no-system-gpgv");
+    assert_eq!(
+        select_trusted_gpgv(Path::new(SYSTEM_GPGV), Some(&search)),
+        Some(PathBuf::from(SYSTEM_GPGV))
+    );
+    assert_eq!(select_trusted_gpgv(&missing, Some(&search)), None);
+    let system_dir = std::env::join_paths([Path::new("/usr/bin")]).expect("PATH");
+    assert_eq!(
+        select_trusted_gpgv(&missing, Some(&system_dir)),
+        Some(PathBuf::from(SYSTEM_GPGV))
+    );
 }
 
 /// Text from the network or from `gpgv` reaches an error detail only cut to its limit.

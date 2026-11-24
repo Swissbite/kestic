@@ -114,7 +114,7 @@ fn ac_m5_06_7_exclusive_temp_file() {
 
 /// A data folder that is a symbolic link is refused; the permissions of its target stay.
 #[test]
-fn ac_m5_06_7_symlinked_data_dir_is_refused() {
+fn symlinked_data_dir_is_refused() {
     let root = tempfile::tempdir().expect("dir");
     let target = root.path().join("elsewhere");
     std::fs::create_dir(&target).expect("target");

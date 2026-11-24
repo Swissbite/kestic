@@ -530,9 +530,13 @@ pub fn find_gpgv(search_path: Option<&OsStr>) -> Option<PathBuf> {
     }
     #[cfg(not(feature = "test-trust-anchor"))]
     {
-        trusted_gpgv(Path::new(SYSTEM_GPGV))
-            .or_else(|| gpgv_in_path(search_path).and_then(|path| trusted_gpgv(&path)))
+        select_trusted_gpgv(Path::new(SYSTEM_GPGV), search_path)
     }
+}
+
+/// `system` if [`trusted_gpgv`] accepts it, else a `gpgv` from `search_path` it accepts.
+pub fn select_trusted_gpgv(system: &Path, search_path: Option<&OsStr>) -> Option<PathBuf> {
+    trusted_gpgv(system).or_else(|| gpgv_in_path(search_path).and_then(|path| trusted_gpgv(&path)))
 }
 
 /// `gpgv` from `search_path` (absolute entries only), if there is one.
