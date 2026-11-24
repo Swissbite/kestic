@@ -11,7 +11,7 @@ use kestic_core::restic_install::{
     install_latest_with_anchor, kestic_data_dir, prepare_install_with_anchor,
 };
 use kestic_core::restic_release::{
-    Arch, InstallError, RELEASE_INFO_LIMIT, Transport, TrustAnchor, UreqTransport,
+    Arch, InstallError, RELEASE_INFO_LIMIT, SIGNATURE_LIMIT, Transport, TrustAnchor, UreqTransport,
 };
 use kestic_i18n::codes::ResticInstallCode;
 use kestic_test_support::release_mock::{
@@ -229,11 +229,9 @@ fn ac_m5_06_5_checksum_mismatch_aborts_and_keeps_binary() {
     let trusted = TestSigningKey::generate("kestic-test-release");
     let mut files = ReleaseFiles::signed(RELEASE, &trusted);
     let archive = files.archive_name("amd64");
-    files
-        .assets
-        .get_mut(&archive)
-        .expect("archive")
-        .extend_from_slice(b"tampered");
+    // Not bzip2 at all: had it been unpacked before the checksum check, the error would name
+    // an unusable archive instead of the checksum.
+    *files.assets.get_mut(&archive).expect("archive") = b"tampered, not bzip2".to_vec();
     let setup = Setup::serve(trusted, files);
     let old = setup.existing_binary();
     let error = prepare(&setup, &setup.anchor()).expect_err("a tampered archive must fail");
@@ -519,5 +517,45 @@ fn ac_m5_06_11_stalled_body_times_out() {
         started.elapsed() < Duration::from_secs(5),
         "{:?}",
         started.elapsed()
+    );
+}
+
+/// AC-M5-06-11 (size caps): the real transport stops reading a body above its limit, with and
+/// without `Content-Length`, and still reads a body of exactly the limit.
+#[test]
+fn ac_m5_06_11_real_transport_stops_at_size_limit() {
+    let limit = usize::try_from(SIGNATURE_LIMIT).expect("limit fits");
+    let mock = ReleaseMock::start_with(
+        &ReleaseFiles {
+            version: RELEASE.to_string(),
+            assets: Default::default(),
+            latest_json: String::new(),
+        },
+        vec![
+            ("/exact".to_string(), Route::Body(vec![b'x'; limit])),
+            ("/over".to_string(), Route::Body(vec![b'x'; limit + 1])),
+            (
+                "/over-until-close".to_string(),
+                Route::BodyUntilClose(vec![b'x'; limit + 1]),
+            ),
+        ],
+    );
+    let transport = UreqTransport::new();
+    let get = |path: &str| {
+        let url = url::Url::parse(&format!("{}{path}", mock.base_url())).expect("url");
+        transport.get(&url, SIGNATURE_LIMIT)
+    };
+
+    let exact = get("/exact");
+    assert!(
+        matches!(&exact, Ok(answer) if answer.body.len() == limit),
+        "{exact:?}"
+    );
+    let over = get("/over");
+    assert!(matches!(over, Err(InstallError::Network(_))), "{over:?}");
+    let over_until_close = get("/over-until-close");
+    assert!(
+        matches!(over_until_close, Err(InstallError::Network(_))),
+        "{over_until_close:?}"
     );
 }

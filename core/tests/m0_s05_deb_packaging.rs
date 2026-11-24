@@ -424,10 +424,33 @@ fn ac_m5_06_10_trust_anchor_only_with_test_feature() {
         ]
     );
 
-    // (a) the shipped binary cannot read the variables: their names are not in it; this test
-    // binary, built with the feature, reads them through `for_this_build`
-    let this_build = TrustAnchor::for_this_build().expect("anchor of this build");
-    assert_eq!(this_build, TrustAnchor::production());
+    // (a) a build of kestic-core without the feature ignores the variables: with all three set,
+    // its `for_this_build` is the production anchor; this test binary, built with the feature,
+    // takes the release URL from them
+    let probe = FeaturelessProbe::new();
+    let mock_url = "http://127.0.0.1:9/";
+    assert_eq!(
+        probe.run_anchor_bin(&[
+            (TrustAnchor::RELEASE_URL_VAR, mock_url),
+            (TrustAnchor::SIGNING_KEY_VAR, &probe.manifest_path()),
+            (
+                TrustAnchor::SIGNING_FPR_VAR,
+                "0000000000000000000000000000000000000000"
+            ),
+        ]),
+        "production",
+        "a build without {FEATURE} took the anchor from the variables"
+    );
+    let with_feature = TrustAnchor::from_lookup(|name| {
+        (name == TrustAnchor::RELEASE_URL_VAR).then(|| mock_url.to_string())
+    })
+    .expect("anchor from the variables");
+    assert_ne!(
+        with_feature,
+        TrustAnchor::production(),
+        "the feature build ignores the variables, so the probe proves nothing"
+    );
+    // the shipped binary does not carry the variable names either
     let (_extracted, shipped) = extract_shipped_binary("kestic-m5-s06-anchor");
     let test_binary = std::env::current_exe().expect("test binary");
     for name in names {
@@ -441,7 +464,17 @@ fn ac_m5_06_10_trust_anchor_only_with_test_feature() {
         );
     }
 
-    // (b) the feature is declared by kestic-core, off by default, and only kestic-core's own
+    // (b) without the feature the anchor has no constructor that takes a URL, key or fingerprint
+    let refused = probe.build_lookup_bin();
+    assert!(
+        refused.contains("error[E0599]"),
+        "the probe without {FEATURE} failed for another reason than a missing item:\n{refused}"
+    );
+    assert!(
+        refused.contains("from_lookup"),
+        "the probe without {FEATURE} failed on something else than from_lookup:\n{refused}"
+    );
+    // the feature is declared by kestic-core, off by default, and only kestic-core's own
     // dev-dependency (the integration tests) switches it on
     let core = manifest("core");
     let features = core.get("features").and_then(toml::Value::as_table);
@@ -507,5 +540,98 @@ fn ac_m5_06_10_trust_anchor_only_with_test_feature() {
             "`cargo deb` in the justfile passes {flag}: {}",
             deb_builds[0]
         );
+    }
+}
+
+/// A crate outside the workspace that depends on `kestic-core` without any feature, as the `.deb`
+/// build does. Its target folder lies below the workspace's, so later runs reuse the build.
+struct FeaturelessProbe {
+    dir: tempfile::TempDir,
+}
+
+impl FeaturelessProbe {
+    const ANCHOR_BIN: &str = r#"
+use kestic_core::restic_release::TrustAnchor;
+fn main() {
+    let anchor = TrustAnchor::for_this_build().expect("anchor of this build");
+    print!("{}", if anchor == TrustAnchor::production() { "production" } else { "replaced" });
+}
+"#;
+    const LOOKUP_BIN: &str = r#"
+use kestic_core::restic_release::TrustAnchor;
+fn main() {
+    let anchor = TrustAnchor::from_lookup(|_| None);
+    print!("{anchor:?}");
+}
+"#;
+
+    fn new() -> Self {
+        let dir = tempfile::tempdir().expect("probe dir");
+        let core = workspace_root().join("core");
+        let manifest = format!(
+            "[package]\nname = \"featureless-core-probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+             publish = false\n\n[dependencies]\nkestic-core = {{ path = {core:?} }}\n\n[workspace]\n",
+            core = core.to_string_lossy()
+        );
+        fs::write(dir.path().join("Cargo.toml"), manifest).expect("write probe manifest");
+        fs::copy(
+            workspace_root().join("Cargo.lock"),
+            dir.path().join("Cargo.lock"),
+        )
+        .expect("copy Cargo.lock");
+        let bin = dir.path().join("src/bin");
+        fs::create_dir_all(&bin).expect("probe src/bin");
+        fs::write(bin.join("anchor.rs"), Self::ANCHOR_BIN).expect("write anchor probe");
+        fs::write(bin.join("lookup.rs"), Self::LOOKUP_BIN).expect("write lookup probe");
+        Self { dir }
+    }
+
+    fn manifest_path(&self) -> String {
+        self.dir
+            .path()
+            .join("Cargo.toml")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// `cargo build` of one probe binary, run from the workspace so that its toolchain applies.
+    fn cargo_build(&self, bin: &str) -> std::process::Output {
+        Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+            .current_dir(workspace_root())
+            .env("CARGO_HOME", tool_home("CARGO_HOME", ".cargo"))
+            .args(["build", "--quiet", "--bin", bin, "--manifest-path"])
+            .arg(self.manifest_path())
+            .arg("--target-dir")
+            .arg(find_target_dir().join("featureless-core-probe"))
+            .output()
+            .expect("run cargo build for the probe")
+    }
+
+    /// Output of the anchor probe, run with `vars` set.
+    fn run_anchor_bin(&self, vars: &[(&str, &str)]) -> String {
+        let built = self.cargo_build("anchor");
+        assert!(
+            built.status.success(),
+            "probe build failed:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let exe = find_target_dir().join("featureless-core-probe/debug/anchor");
+        let out = Command::new(exe)
+            .env_clear()
+            .envs(vars.iter().copied())
+            .output()
+            .expect("run anchor probe");
+        assert!(out.status.success(), "anchor probe failed: {out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// Compiler output of the probe that calls `TrustAnchor::from_lookup`; the build must fail.
+    fn build_lookup_bin(&self) -> String {
+        let built = self.cargo_build("lookup");
+        assert!(
+            !built.status.success(),
+            "a build without the feature compiled TrustAnchor::from_lookup"
+        );
+        String::from_utf8_lossy(&built.stderr).into_owned()
     }
 }

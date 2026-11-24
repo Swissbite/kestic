@@ -34,6 +34,8 @@ pub const ARCHIVE_LIMIT: u64 = 64 << 20;
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_REDIRECTS: usize = 5;
 const GPGV_TIMEOUT: Duration = Duration::from_secs(30);
+/// Most bytes kept of a helper's stdout or stderr (`gpgv`, `restic version --json`).
+const OUTPUT_LIMIT: u64 = 1 << 20;
 
 /// Why a restic release could not be installed; [`InstallError::code`] is the code the daemon
 /// reports, the text is the raw detail.
@@ -193,7 +195,15 @@ impl TrustAnchor {
             && url.password().is_none()
             && host
                 .strip_suffix(DOWNLOAD_REDIRECT_DOMAIN)
-                .is_some_and(|sub| sub.len() > 1 && sub.ends_with('.'))
+                .and_then(|sub| sub.strip_suffix('.'))
+                .is_some_and(|labels| {
+                    labels.split('.').all(|label| {
+                        !label.is_empty()
+                            && label
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    })
+                })
     }
 }
 
@@ -594,15 +604,21 @@ pub(crate) fn output_within(mut cmd: Command, limit: Duration) -> std::io::Resul
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    // Each pipe is read on its own thread, at most OUTPUT_LIMIT bytes. A process the child left
+    // in the background may keep a pipe open; the reader then never finishes, so the result is
+    // awaited only until the deadline.
     let read = |pipe: Option<Box<dyn Read + Send>>| {
+        let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
-            if let Some(mut pipe) = pipe {
+            if let Some(pipe) = pipe {
                 // Whatever arrived before an error is all there is.
-                let _ = pipe.read_to_end(&mut buf);
+                let _ = pipe.take(OUTPUT_LIMIT).read_to_end(&mut buf);
             }
-            buf
-        })
+            // The receiver is gone once the deadline has passed.
+            let _ = sender.send(buf);
+        });
+        receiver
     };
     let stdout = read(child.stdout.take().map(|p| Box::new(p) as _));
     let stderr = read(child.stderr.take().map(|p| Box::new(p) as _));
@@ -621,11 +637,20 @@ pub(crate) fn output_within(mut cmd: Command, limit: Duration) -> std::io::Resul
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    let joined = |handle: std::thread::JoinHandle<Vec<u8>>| handle.join().unwrap_or_default();
+    let collected = |receiver: std::sync::mpsc::Receiver<Vec<u8>>| {
+        receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("output not closed within {} s", limit.as_secs_f32()),
+                )
+            })
+    };
     Ok(Output {
         status,
-        stdout: joined(stdout),
-        stderr: joined(stderr),
+        stdout: collected(stdout)?,
+        stderr: collected(stderr)?,
     })
 }
 

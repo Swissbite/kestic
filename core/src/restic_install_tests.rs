@@ -135,3 +135,25 @@ fn data_dir_from_xdg_data_home() {
     assert_eq!(kestic_data_dir(None, None), None);
     assert_eq!(kestic_data_dir(Some(OsStr::new("relative")), None), None);
 }
+
+/// Unpacking stops after [`UNPACKED_LIMIT`] bytes, so a small archive cannot fill the disk.
+#[test]
+fn unpack_stops_at_the_size_limit() {
+    let mut zeros = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+    let chunk = vec![0_u8; 1 << 20];
+    for _ in 0..=(UNPACKED_LIMIT >> 20) {
+        std::io::Write::write_all(&mut zeros, &chunk).expect("compress");
+    }
+    let archive = zeros.finish().expect("finish");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("unpacked");
+    let mut file = create_exclusive(&target).expect("temp file");
+
+    let result = unpack(&archive, &mut file, "restic.bz2");
+    assert!(
+        matches!(&result, Err(InstallError::WriteFailed(detail)) if detail.contains("more than")),
+        "{result:?}"
+    );
+    let size = std::fs::metadata(&target).expect("metadata").len();
+    assert!(size <= UNPACKED_LIMIT + (64 << 10), "{size}");
+}

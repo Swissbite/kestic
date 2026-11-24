@@ -403,6 +403,9 @@ fn ac_m5_06_11_release_hosts_and_redirect_allowlist() {
         "https://evil.example\\@objects.githubusercontent.com/x",
         "https://objects.githubusercontent.com./x",
         "https://githubusercontent.com/x",
+        "https://a..githubusercontent.com/x",
+        "https://..githubusercontent.com/x",
+        "https://a_b.githubusercontent.com/x",
     ] {
         let transport = RecordingTransport::default()
             .redirect(SUMS_0_19_1, target)
@@ -661,5 +664,23 @@ fn test_anchor_from_variables() {
     assert_eq!(
         TrustAnchor::from_lookup(|_| None),
         Ok(TrustAnchor::production())
+    );
+}
+
+/// A helper that leaves a process holding its output pipes still ends at the time limit.
+#[test]
+fn output_within_ends_while_a_background_process_holds_the_pipes() {
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "sleep 30 & echo done"]);
+    let started = Instant::now();
+    let result = output_within(cmd, Duration::from_millis(500));
+    assert!(
+        matches!(&result, Err(err) if err.kind() == std::io::ErrorKind::TimedOut),
+        "{result:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
     );
 }
