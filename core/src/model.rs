@@ -1002,6 +1002,9 @@ pub struct RestoreStats {
     pub overwrite: kestic_i18n::codes::RestoreOverwrite,
     /// Number of selected entries (0 = the whole snapshot).
     pub selection_count: u64,
+    /// Why a failed restore failed; `None` otherwise and in rows stored before it existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<kestic_i18n::codes::ErrorKind>,
 }
 
 /// Single execution record (glossary: `Run`).

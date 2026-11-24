@@ -599,10 +599,10 @@ fn start_pending_restore(shared: &Arc<Mutex<DaemonCore>>, dest_id: &DestinationI
         let clock = Arc::clone(&guard.clock);
         run.finish(clock.as_ref(), RunStatus::Error, None);
         run.summary_message = Some(text);
-        run.log_path = guard
-            .history
-            .write_redacted_log(&run.id, &[error_kind_line(kind)], &[])
-            .ok();
+        run.restore = Some(RestoreStats {
+            error_kind: Some(kind),
+            ..base_stats(&setup)
+        });
         guard.end_pending(&run, &setup);
         let window_active = guard.window_active;
         drop(guard);
@@ -841,6 +841,17 @@ fn restore_worker(mut worker: RestoreWorker) {
     finalize(&worker, &run, &secrets);
 }
 
+/// The restore stats of `setup` before restic reported anything.
+fn base_stats(setup: &RestoreSetup) -> RestoreStats {
+    RestoreStats {
+        target_dir: setup.check.resolved.to_string_lossy().into_owned(),
+        overwrite: setup.params.overwrite,
+        selection_count: setup.params.selection.len() as u64,
+        files_kept: setup.from_preview.as_ref().map_or(0, |f| f.files_kept),
+        ..RestoreStats::default()
+    }
+}
+
 /// Fills the result of `run` from the restic outcome and returns its status. A restore that
 /// failed midway keeps its counts, its restic call and restic's output.
 fn record_outcome(
@@ -850,13 +861,7 @@ fn record_outcome(
     secrets: &[&str],
     shared: &Arc<Mutex<DaemonCore>>,
 ) -> RunStatus {
-    let mut stats = RestoreStats {
-        target_dir: setup.check.resolved.to_string_lossy().into_owned(),
-        overwrite: setup.params.overwrite,
-        selection_count: setup.params.selection.len() as u64,
-        files_kept: setup.from_preview.as_ref().map_or(0, |f| f.files_kept),
-        ..RestoreStats::default()
-    };
+    let mut stats = base_stats(setup);
     let (failure, restic_lines) = match outcome.result {
         Ok(RestoreRun {
             result,
@@ -885,17 +890,17 @@ fn record_outcome(
         }
         Err(err) => (err, Vec::new()),
     };
-    if outcome.plan.is_some() {
-        run.restore = Some(stats);
-    }
+    let had_plan = outcome.plan.is_some();
     match failure {
         // Stopped because the system goes to sleep: interrupted, not cancelled by the user.
         BackupRunError::Cancelled if shared.lock_unpoisoned().run_sleep_interrupted(&run.id) => {
             run.summary_message = Some(tr(&interrupted_by_sleep_message()));
+            run.restore = had_plan.then_some(stats);
             RunStatus::Interrupted
         }
         BackupRunError::Cancelled => {
             run.summary_message = Some(tr(&ErrorKind::Cancelled.message(None, false)));
+            run.restore = had_plan.then_some(stats);
             RunStatus::Cancelled
         }
         err => {
@@ -907,12 +912,12 @@ fn record_outcome(
                 BackupRunError::InvalidTarget { reason, .. } => reason.clone(),
                 other => localized_backup_run_error(other),
             };
-            let kind = backup_run_error_kind(&err);
+            // The stats keep the error code for the run detail, also of a restore that never
+            // reached restic.
+            stats.error_kind = Some(backup_run_error_kind(&err));
+            run.restore = Some(stats);
             run.summary_message = Some(redact_secrets(&text, secrets));
-            let mut lines = vec![
-                error_kind_line(kind),
-                redact_secrets(&err.to_string(), secrets),
-            ];
+            let mut lines = vec![redact_secrets(&err.to_string(), secrets)];
             lines.extend(restic_lines);
             if let BackupRunError::Destination(
                 kestic_core::destination::DestinationError::CommandFailed { exit_code, .. },
@@ -940,23 +945,22 @@ fn write_log(
         .ok()
 }
 
+/// The first log line by which restores before `RestoreStats::error_kind` named their error
+/// code.
 const ERROR_KIND_LINE: &str = "error_kind: ";
 
-/// The first log line of a failed restore names its error code, so the run detail can show it
-/// after a restart.
-fn error_kind_line(kind: ErrorKind) -> String {
-    format!("{ERROR_KIND_LINE}{}", kind.as_str())
-}
-
-/// The error code of a restore run from its log; `None` for a restore that did not fail.
+/// The error code of a restore run: from its stats, for a run stored before they carried it
+/// from the first line of its log; `None` for a restore that did not fail.
 pub(crate) fn restore_error_kind(run: &Run, log_lines: &[String]) -> Option<ErrorKind> {
     if run.status != RunStatus::Error {
         return None;
     }
-    let kind = log_lines
-        .iter()
-        .find_map(|l| l.strip_prefix(ERROR_KIND_LINE))
-        .and_then(ErrorKind::parse);
+    let kind = run.restore.as_ref().and_then(|s| s.error_kind).or_else(|| {
+        log_lines
+            .iter()
+            .find_map(|l| l.strip_prefix(ERROR_KIND_LINE))
+            .and_then(ErrorKind::parse)
+    });
     Some(kind.unwrap_or(ErrorKind::Unknown))
 }
 
@@ -982,5 +986,48 @@ fn finalize(worker: &RestoreWorker, run: &Run, secrets: &[&str]) {
     }
     if !window_active {
         notify_restore_finished(&worker.setup.ctx.destination.name, run);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kestic_core::clock::FakeClock;
+
+    fn failed_restore(stats_json: &str) -> Run {
+        let clock = FakeClock::new(time::macros::datetime!(2026-11-24 10:00 UTC));
+        let dest = DestinationId::generate().expect("id");
+        let mut run = Run::new_restore(&clock, dest, None).expect("run");
+        run.status = RunStatus::Error;
+        run.restore = serde_json::from_str(stats_json).expect("stats");
+        run
+    }
+
+    /// The error code of a failed restore comes from its stats; a row stored before the stats
+    /// carried it reads it as `None` and falls back to the first line of its log.
+    #[test]
+    fn restore_error_kind_from_stats_or_old_log() {
+        let new = failed_restore(r#"{"error_kind":"invalid_target"}"#);
+        assert_eq!(
+            restore_error_kind(&new, &[]),
+            Some(ErrorKind::InvalidTarget),
+            "from the stats"
+        );
+        let old = failed_restore(r#"{"files_new":0,"target_dir":"/t"}"#);
+        assert_eq!(
+            old.restore.as_ref().and_then(|s| s.error_kind),
+            None,
+            "old row"
+        );
+        assert_eq!(
+            restore_error_kind(&old, &["error_kind: path_not_in_snapshot".to_string()]),
+            Some(ErrorKind::PathNotInSnapshot),
+            "from the old log line"
+        );
+        assert_eq!(
+            restore_error_kind(&old, &[]),
+            Some(ErrorKind::Unknown),
+            "neither"
+        );
     }
 }
