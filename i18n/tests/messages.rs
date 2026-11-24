@@ -272,7 +272,7 @@ fn every_error_kind_maps_to_its_msgid() {
         E::Unknown => (k, None),
         E::InvalidTarget => (
             k,
-            Some("Cannot restore safely to %1; restore into a new folder instead."),
+            Some("Cannot safely restore to %1. Choose 'Into a new folder' instead."),
         ),
         _ => (k, m),
     });

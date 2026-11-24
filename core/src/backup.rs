@@ -13,15 +13,15 @@ use crate::mount::{MountInspector, SourceCheckResult, check_source_status_with, 
 use crate::provider::ResolvedRestic;
 use crate::restic::{
     CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticFailureKind, ResticRunError,
-    ResticRuntime, ResticStreamEvent, run_restic,
+    ResticRuntime, ResticStreamEvent, run_restic, run_restic_reading, run_restic_streaming,
 };
 use crate::secrets::SecretStore;
-use crate::snapshot::{ResticSnapshot, deserialize_null_default};
+use crate::snapshot::{BACKUP_TAG_PREFIX, ResticSnapshot, deserialize_null_default};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -731,7 +731,10 @@ pub fn list_snapshots_for_backup(
     clock: &dyn Clock,
     extra_env: &[(&str, &str)],
 ) -> Result<Vec<ResticSnapshot>, BackupRunError> {
-    let filter = ["--tag".to_string(), format!("kestic:{backup_id}")];
+    let filter = [
+        "--tag".to_string(),
+        format!("{BACKUP_TAG_PREFIX}{backup_id}"),
+    ];
     let access = SnapshotListAccess {
         destination,
         resolved,
@@ -753,6 +756,115 @@ pub struct SnapshotListAccess<'a> {
     pub extra_env: &'a [(&'a str, &'a str)],
 }
 
+/// CPU and IO priority of a restic call that reads or restores snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Priority {
+    /// A query or a dry run the user waits for.
+    Normal,
+    /// A restore run.
+    Low,
+}
+
+/// The restic call of `args` in the destination of `access`.
+fn spec_for(
+    access: &SnapshotListAccess<'_>,
+    args: Vec<String>,
+    priority: Priority,
+) -> ResticCommandSpec {
+    let mut spec = ResticCommandSpec::for_destination(
+        &access.resolved.binary,
+        access.kestic_binary,
+        access.destination,
+        args,
+    );
+    spec.low_priority = priority == Priority::Low;
+    spec
+}
+
+/// A call cancelled before restic started (e.g. while the destination was checked) starts no
+/// process.
+fn refuse_if_cancelled(cancel: Option<&CancelHandle>) -> Result<(), BackupRunError> {
+    if cancel.is_some_and(CancelHandle::is_cancelled) {
+        return Err(BackupRunError::Cancelled);
+    }
+    Ok(())
+}
+
+/// A restic call that was cancelled while it ran is `Cancelled`.
+fn unless_cancelled(res: ResticExecutionResult) -> Result<ResticExecutionResult, BackupRunError> {
+    if res.cancelled {
+        return Err(BackupRunError::Cancelled);
+    }
+    Ok(res)
+}
+
+/// Runs restic with `args` at normal priority, handing every stdout line unredacted to
+/// `on_line`; a cancelled call is `Cancelled`. Whether restic succeeded is left to the caller.
+pub(crate) fn run_streaming(
+    access: &SnapshotListAccess<'_>,
+    args: Vec<String>,
+    cancel: Option<&CancelHandle>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<ResticExecutionResult, BackupRunError> {
+    run_streaming_at(access, args, Priority::Normal, cancel, on_line)
+}
+
+/// [`run_streaming`] at `priority`.
+pub(crate) fn run_streaming_at(
+    access: &SnapshotListAccess<'_>,
+    args: Vec<String>,
+    priority: Priority,
+    cancel: Option<&CancelHandle>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<ResticExecutionResult, BackupRunError> {
+    unless_cancelled(run_streaming_to_end(
+        access, args, priority, cancel, on_line,
+    )?)
+}
+
+/// [`run_streaming_at`], but a call cancelled while restic ran returns its result (with
+/// `cancelled` set), so the caller keeps what restic reported until then. A call cancelled
+/// before it starts is `Cancelled`.
+pub(crate) fn run_streaming_to_end(
+    access: &SnapshotListAccess<'_>,
+    args: Vec<String>,
+    priority: Priority,
+    cancel: Option<&CancelHandle>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<ResticExecutionResult, BackupRunError> {
+    refuse_if_cancelled(cancel)?;
+    Ok(run_restic_streaming(
+        &spec_for(access, args, priority),
+        access.destination,
+        Some(access.secret_store),
+        access.clock,
+        cancel,
+        access.extra_env,
+        on_line,
+    )?)
+}
+
+/// Runs restic with `args` at normal priority and hands its whole stdout to `read` as a stream;
+/// a cancelled call is `Cancelled`. Whether restic succeeded is left to the caller.
+pub(crate) fn run_reading(
+    access: &SnapshotListAccess<'_>,
+    args: Vec<String>,
+    cancel: Option<&CancelHandle>,
+    read: &mut dyn FnMut(&mut dyn BufRead),
+) -> Result<ResticExecutionResult, BackupRunError> {
+    refuse_if_cancelled(cancel)?;
+    let res = run_restic_reading(
+        &spec_for(access, args, Priority::Normal),
+        access.destination,
+        Some(access.secret_store),
+        access.clock,
+        cancel,
+        access.extra_env,
+        read,
+    )?;
+    unless_cancelled(res)
+}
+
 /// Lists every snapshot in a destination with one `restic snapshots` call, without any tag
 /// filter (backup, metadata and foreign snapshots alike).
 pub fn list_destination_snapshots(
@@ -769,13 +881,7 @@ fn run_snapshots_listing(
 
     let mut args = vec!["snapshots".to_string(), "--no-lock".to_string()];
     args.extend(filter.iter().cloned());
-    let mut spec = ResticCommandSpec::for_destination(
-        &access.resolved.binary,
-        access.kestic_binary,
-        access.destination,
-        args,
-    );
-    spec.low_priority = false;
+    let spec = spec_for(access, args, Priority::Normal);
 
     let res = run_restic(
         &spec,
@@ -793,5 +899,68 @@ fn run_snapshots_listing(
     match &res.stdout_json_array {
         Some(line) => Ok(serde_json::from_str(line.0.trim())?),
         None => Ok(Vec::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A restic call cancelled before it starts spawns no process: with a restic binary that
+    /// does not exist, it ends as cancelled, not with the error of a failed start.
+    #[test]
+    fn cancelled_call_starts_no_restic() {
+        use crate::clock::FakeClock;
+        use crate::model::DestinationKind;
+        use crate::secrets::InMemorySecretStore;
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let resolved = ResolvedRestic {
+            binary: tmp.path().join("no-such-restic"),
+            version: semver::Version::new(0, 18, 0),
+        };
+        let dest = Destination::new(
+            "NAS",
+            DestinationKind::Local {
+                path: tmp.path().join("repo"),
+            },
+        )
+        .expect("dest");
+        let store = InMemorySecretStore::default();
+        let clock = FakeClock::new(time::macros::datetime!(2026-11-15 14:32:00 UTC));
+        let kestic_bin = tmp.path().join("kestic");
+        let access = SnapshotListAccess {
+            destination: &dest,
+            resolved: &resolved,
+            kestic_binary: &kestic_bin,
+            secret_store: &store,
+            clock: &clock,
+            extra_env: &[],
+        };
+        let cancel = CancelHandle::new();
+        cancel.cancel();
+        let streamed = run_streaming_at(
+            &access,
+            vec!["version".to_string()],
+            Priority::Low,
+            Some(&cancel),
+            &mut |_| {},
+        );
+        assert!(
+            matches!(streamed, Err(BackupRunError::Cancelled)),
+            "streaming: {:?}",
+            streamed.map(|r| r.exit_code)
+        );
+        let read = run_reading(
+            &access,
+            vec!["version".to_string()],
+            Some(&cancel),
+            &mut |_| {},
+        );
+        assert!(
+            matches!(read, Err(BackupRunError::Cancelled)),
+            "reading: {:?}",
+            read.map(|r| r.exit_code)
+        );
     }
 }

@@ -242,7 +242,7 @@ Kirigami.ScrollablePage {
             id: restoreSnapshotsListView
             objectName: "restoreSnapshotsListView"
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(contentHeight, Kirigami.Units.gridUnit * 12)
+            Layout.preferredHeight: contentHeight
             visible: !page.loading && count > 0
             interactive: false
             keyNavigationEnabled: true
@@ -337,8 +337,6 @@ Kirigami.ScrollablePage {
 
                 FocusRing {
                     target: snapRow
-                    anchors.margins: snapRow.highlighted ? 2 : 0
-                    ringColor: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                 }
 
                 contentItem: RowLayout {
@@ -395,11 +393,9 @@ Kirigami.ScrollablePage {
                             visible: snapRow.hint !== ""
                             spacing: Kirigami.Units.smallSpacing
                             Layout.fillWidth: true
-                            Kirigami.Icon {
+                            RowIcon {
                                 source: "dialog-information"
-                                color: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
-                                Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                                onSelection: snapRow.highlighted
                             }
                             Controls.Label {
                                 objectName: "restoreSnapshotHint"
@@ -415,7 +411,7 @@ Kirigami.ScrollablePage {
                     Kirigami.Icon {
                         visible: !page.compareMode
                         source: "go-next-symbolic"
-                        color: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                        selected: snapRow.highlighted
                         Layout.preferredWidth: Kirigami.Units.iconSizes.small
                         Layout.preferredHeight: Kirigami.Units.iconSizes.small
                     }

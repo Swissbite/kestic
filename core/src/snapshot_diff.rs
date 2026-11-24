@@ -6,10 +6,10 @@
 //! Comparing two snapshots with `restic diff --json <from> <to>`: the changed paths with the
 //! kind of their change, and the counts of the statistics line.
 
-use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded};
+use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded, run_streaming};
 use crate::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
 use crate::query_list::{HeldResult, ListBuilder, ListEntry, ListPage, PageRequest, QueryList};
-use crate::restic::{CancelHandle, ResticCommandSpec, run_restic_streaming};
+use crate::restic::CancelHandle;
 use kestic_i18n::codes::SnapshotChange;
 use serde::{Deserialize, Serialize};
 
@@ -78,8 +78,9 @@ impl HeldResult for DiffResult {
 /// The kind of change of a `restic diff` modifier; `None` for a modifier without a letter
 /// Kestic knows. restic combines letters for one path (`M?` is content changed with the same
 /// metadata, `TU` a type change with metadata); the most telling letter decides: `?` before
-/// `T` before `M` before `U`.
-pub fn change_of_modifier(modifier: &str) -> Option<SnapshotChange> {
+/// `T` before `M`. `U` alone (only the metadata changed) appears only with `--metadata`, which
+/// Kestic does not pass, and is ignored.
+fn change_of_modifier(modifier: &str) -> Option<SnapshotChange> {
     match modifier {
         "+" => return Some(SnapshotChange::Added),
         "-" => return Some(SnapshotChange::Removed),
@@ -89,7 +90,6 @@ pub fn change_of_modifier(modifier: &str) -> Option<SnapshotChange> {
         ('?', SnapshotChange::Bitrot),
         ('T', SnapshotChange::TypeChanged),
         ('M', SnapshotChange::Modified),
-        ('U', SnapshotChange::Metadata),
     ]
     .into_iter()
     .find(|(letter, _)| modifier.contains(*letter))
@@ -195,26 +195,10 @@ pub fn execute_diff(
     limit_bytes: u64,
 ) -> Result<DiffResult, BackupRunError> {
     preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
-    let mut spec = ResticCommandSpec::for_destination(
-        &access.resolved.binary,
-        access.kestic_binary,
-        access.destination,
-        diff_args(from, to),
-    );
-    spec.low_priority = false;
     let mut collector = DiffCollector::new(limit_bytes);
-    let res = run_restic_streaming(
-        &spec,
-        access.destination,
-        Some(access.secret_store),
-        access.clock,
-        cancel,
-        access.extra_env,
-        &mut |line| collector.push_line(line),
-    )?;
-    if res.cancelled {
-        return Err(BackupRunError::Cancelled);
-    }
+    let res = run_streaming(access, diff_args(from, to), cancel, &mut |line| {
+        collector.push_line(line)
+    })?;
     check_command_succeeded(&res)?;
     Ok(collector.finish())
 }
@@ -229,7 +213,7 @@ mod tests {
         assert_eq!(change_of_modifier("+"), Some(SnapshotChange::Added));
         assert_eq!(change_of_modifier("-"), Some(SnapshotChange::Removed));
         assert_eq!(change_of_modifier("M"), Some(SnapshotChange::Modified));
-        assert_eq!(change_of_modifier("U"), Some(SnapshotChange::Metadata));
+        assert_eq!(change_of_modifier("U"), None);
         assert_eq!(change_of_modifier("T"), Some(SnapshotChange::TypeChanged));
         assert_eq!(change_of_modifier("?"), Some(SnapshotChange::Bitrot));
         assert_eq!(change_of_modifier("M?"), Some(SnapshotChange::Bitrot));

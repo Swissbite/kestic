@@ -231,11 +231,22 @@ pub struct TargetCheck {
 impl TargetCheck {
     /// Whether a restore may write into the folder (with a preview where one is required).
     pub fn usable(&self) -> bool {
-        matches!(
-            self.code,
-            RestoreTargetCode::Ok | RestoreTargetCode::ExistsNotEmpty
-        )
+        code_usable(self.code)
     }
+
+    /// Whether the real path of the folder is UTF-8; restic takes the target as text, so a
+    /// folder whose path is not would become another folder.
+    pub fn resolved_is_utf8(&self) -> bool {
+        self.resolved.to_str().is_some()
+    }
+}
+
+/// Whether a restore may write into a folder whose check gave `code`.
+pub fn code_usable(code: RestoreTargetCode) -> bool {
+    matches!(
+        code,
+        RestoreTargetCode::Ok | RestoreTargetCode::ExistsNotEmpty
+    )
 }
 
 /// `path` with symbolic links resolved; for a path that does not exist yet, its deepest
@@ -335,10 +346,51 @@ fn creatable_below(dir: &Path) -> RestoreTargetCode {
     }
 }
 
+/// Creates the new folder `dir` of a restore and, when missing, the folder holding it
+/// (`~/Restored`); a deeper missing path is never created. Returns the created folders,
+/// outermost first; on an error nothing created stays. The new folder is private to the user: restic keeps the mode of an existing
+/// target folder, and the restored folder may be private (e.g. `~/.ssh`). A folder someone
+/// created meanwhile is taken as it is.
+pub fn create_restore_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut created = Vec::new();
+    let with_path = |e: std::io::Error, p: &Path| {
+        std::io::Error::new(e.kind(), format!("cannot create {}: {e}", p.display()))
+    };
+    if let Some(parent) = dir.parent().filter(|p| !p.exists()) {
+        std::fs::create_dir(parent).map_err(|e| with_path(e, parent))?;
+        created.push(parent.to_path_buf());
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => created.push(dir.to_path_buf()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            remove_empty_folders(&created);
+            return Err(with_path(e, dir));
+        }
+    }
+    Ok(created)
+}
+
+/// Removes the folders `created` (outermost first) from the innermost on while they are empty,
+/// so a failed, cancelled or empty restore leaves no empty new folder behind.
+pub fn remove_empty_folders(created: &[PathBuf]) {
+    for dir in created.iter().rev() {
+        if std::fs::remove_dir(dir).is_err() {
+            break;
+        }
+    }
+}
+
 /// Whether a restore into `target` needs a finished, fresh preview: always at the original
 /// location, otherwise when the folder has content.
 pub fn preview_required(target: &RestoreTarget, check: &TargetCheck) -> bool {
-    target.is_original() || check.code == RestoreTargetCode::ExistsNotEmpty
+    preview_needed(target, check.code)
+}
+
+/// [`preview_required`] for a folder whose check gave `code`.
+pub fn preview_needed(target: &RestoreTarget, code: RestoreTargetCode) -> bool {
+    target.is_original() || code == RestoreTargetCode::ExistsNotEmpty
 }
 
 /// The user ID of the running process (the user a restore writes as).
@@ -361,6 +413,14 @@ pub fn repositories_below(target: &Path, repositories: &[PathBuf]) -> Vec<String
             (!rest.is_empty()).then(|| format!("/{rest}"))
         })
         .collect()
+}
+
+/// Whether the resolved target folder `target` is one of `folders` or lies inside one.
+pub fn lies_inside(target: &Path, folders: &[PathBuf]) -> bool {
+    folders
+        .iter()
+        .map(|f| resolve_path(f))
+        .any(|f| target.starts_with(&f))
 }
 
 /// Whether `path` is an absolute path without `..` segments.
@@ -409,7 +469,8 @@ mod tests {
 
     #[test]
     fn repositories_below_the_target_are_named_relative_to_it() {
-        let dir = std::env::temp_dir().join(format!("kestic-repos-below-{}", std::process::id()));
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let dir = tmp.path();
         std::fs::create_dir_all(dir.join("home/vault")).expect("mkdir");
         let target = std::fs::canonicalize(dir.join("home")).expect("canonical");
         let below = repositories_below(
@@ -420,7 +481,6 @@ mod tests {
                 dir.join("elsewhere"),
             ],
         );
-        std::fs::remove_dir_all(&dir).expect("cleanup");
         assert_eq!(below, vec!["/vault".to_string()]);
     }
 

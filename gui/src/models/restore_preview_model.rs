@@ -7,28 +7,33 @@
 //! preview's ID and follows the run until it ends.
 
 use super::qobject;
-use super::rows::{role_names, row_count, row_data};
 use super::snapshot_browse_model::last_name;
 use super::snapshot_query::{
-    QueryRun, StartPoll, count_text, fetch_error_text, format_count, to_i32, too_large_text,
+    QueryFailure, QueryList, QueryListModel, QueryListView, count_text, format_count, to_i32,
+    too_large_text,
 };
 use crate::state_cache::{
     dbus_error_text, format_bytes, i18n, i18np, make_client, shared_state, tr,
 };
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
+use cxx_qt_lib::{QString, QStringList};
 use kestic_core::model::RunStatus;
-use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter};
-use kestic_core::restore::{folder_instead_of_unmatchable, selection_with_folders_instead};
+use kestic_core::mount::current_home_dir;
+use kestic_core::query_list::QueryState;
+use kestic_core::restore::{
+    folder_instead_of_large, folder_instead_of_unmatchable, selection_with_folders_instead,
+};
+use kestic_core::restore_target::{code_usable, preview_needed};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
-    KesticDbusError, RestoreOriginalDto, RestoreOutcome, RestoreOverwrite, RestorePreviewEntryDto,
+    RestoreOriginalDto, RestoreOutcome, RestoreOverwrite, RestorePreviewEntryDto,
     RestorePreviewResultDto, RestoreRequest, RestoreTarget, RestoreTargetCode, RunDetailDto,
-    SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
+    SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use kestic_i18n::codes::ErrorKind;
 use kestic_i18n::messages::{active_run_message, nothing_restored_message};
+use std::path::Path;
 use std::pin::Pin;
 
 model_row!(PreviewRow {
@@ -52,7 +57,8 @@ enum Choice {
 
 #[derive(Default)]
 pub struct RestorePreviewModelRust {
-    rows: Vec<PreviewRow>,
+    /// The files of the preview and its query.
+    list: QueryList<PreviewRow>,
     pub(crate) state: QString,
     pub(crate) error_text: QString,
     pub(crate) title: QString,
@@ -81,38 +87,31 @@ pub struct RestorePreviewModelRust {
     pub(crate) run_text: QString,
     pub(crate) run_target: QString,
     pub(crate) folder_instead: QString,
+    /// The preview failed because the daemon refuses the target: trying again does not help.
+    pub(crate) target_refused: bool,
 
     destination_id: String,
     snapshot_id: String,
     selection: Vec<String>,
     choice: Choice,
-    filter: PageFilter,
     result: Option<RestorePreviewResultDto>,
-    query: QueryRun,
     run_id: Option<String>,
 }
 
-/// The overwrite modes in the order of the dialog's list (index 0 = «Never»).
-const MODES: [RestoreOverwrite; 4] = [
-    RestoreOverwrite::Never,
-    RestoreOverwrite::IfNewer,
-    RestoreOverwrite::IfChanged,
-    RestoreOverwrite::Always,
-];
-
+/// The overwrite mode at `index` of the dialog's list, which lists the modes in the order of
+/// [`RestoreOverwrite::ALL`] (index 0 = «Never»).
 fn mode_of(index: i32) -> RestoreOverwrite {
     usize::try_from(index)
         .ok()
-        .and_then(|i| MODES.get(i).copied())
+        .and_then(|i| RestoreOverwrite::ALL.get(i).copied())
         .unwrap_or_default()
 }
 
 /// `path` with the home folder shown as `~`.
 fn tilde(path: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && path.starts_with(&format!("{home}/")) => {
-            format!("~{}", &path[home.len()..])
-        }
+    let home = current_home_dir();
+    match home.as_deref().and_then(Path::to_str) {
+        Some(home) if path.starts_with(&format!("{home}/")) => format!("~{}", &path[home.len()..]),
         _ => path.to_string(),
     }
 }
@@ -133,6 +132,12 @@ pub(crate) fn title_text(selected: usize) -> String {
     } else {
         i18np("Restore %1 Item", "Restore %1 Items", selected, &[])
     }
+}
+
+/// Why the selection is too large for one restore, and which folder can be restored instead.
+pub(crate) fn too_many_text(folder: &str) -> String {
+    i18n("Too many entries are selected for one restore. Restore their folder '%1' instead.")
+        .subs(&[folder])
 }
 
 /// Why a selected name cannot be restored on its own, and which folder can.
@@ -162,6 +167,13 @@ pub(crate) fn original_note(original: &RestoreOriginalDto) -> String {
         _ => i18n("The original location cannot be used for this selection; choose a folder.")
             .to_string(),
     }
+}
+
+/// Whether the preview stopped at the memory limit instead of classifying the files: its list
+/// is too large and nothing is counted. Where a preview is required, the daemon refuses a
+/// restore with it.
+pub(crate) fn preview_stopped(p: &RestorePreviewResultDto) -> bool {
+    p.entries.too_large && p.new_files + p.overwritten_files + p.kept_files + p.identical_files == 0
 }
 
 /// The counts of a preview in one line, e.g. «117 files new · 3 existing files will not be
@@ -243,6 +255,11 @@ pub(crate) fn run_end_text(detail: &RunDetailDto) -> String {
     }
 }
 
+/// Whether a preview failed because the daemon refuses its target; trying again does not help.
+pub(crate) fn refuses_target(kind: Option<ErrorKind>) -> bool {
+    kind == Some(ErrorKind::InvalidTarget)
+}
+
 impl RestorePreviewModelRust {
     fn target(&self) -> Option<RestoreTarget> {
         match &self.choice {
@@ -255,20 +272,60 @@ impl RestorePreviewModelRust {
                 .map(|dir| RestoreTarget::Original { dir }),
         }
     }
+}
 
-    fn fetch(&mut self, offset: u64) -> Result<Option<RestorePreviewResultDto>, KesticDbusError> {
-        let page = SnapshotQueryPage {
-            offset,
-            limit: DEFAULT_PAGE_LIMIT,
-            filter: self.filter.clone(),
-        };
-        match self.query.fetch_page(&page)? {
-            Some(SnapshotQueryResultDto::RestorePreview(p)) => Ok(Some(*p)),
-            Some(_) => Err(KesticDbusError::Internal(
-                "unexpected snapshot query result".to_string(),
-            )),
-            None => Ok(None),
+query_list_model!(
+    RestorePreviewModel,
+    PreviewRow,
+    begin_reset: begin_reset_preview,
+    end_reset: end_reset_preview,
+    begin_insert: begin_insert_rows_preview,
+    end_insert: end_insert_rows_preview,
+);
+
+impl QueryListModel for qobject::RestorePreviewModel {
+    type Page = RestorePreviewResultDto;
+
+    fn page_of(result: SnapshotQueryResultDto) -> Option<RestorePreviewResultDto> {
+        match result {
+            SnapshotQueryResultDto::RestorePreview(p) => Some(*p),
+            _ => None,
         }
+    }
+
+    fn page_rows(&self, p: &RestorePreviewResultDto) -> Vec<PreviewRow> {
+        p.entries.items.iter().map(row_for).collect()
+    }
+
+    /// Shows the first page; when the preview just ended, also its target, counts and notes.
+    fn show_first_page(mut self: Pin<&mut Self>, p: RestorePreviewResultDto) {
+        let first_load = self.query_state() != Some(QueryState::Done);
+        let rows = self.page_rows(&p);
+        self.as_mut().reset_rows(rows);
+        self.as_mut().set_matched(to_i32(p.entries.matched));
+        self.as_mut().set_too_large(p.entries.too_large);
+        self.as_mut()
+            .set_too_large_text(QString::from(&too_large_text(p.entries.total)));
+        let filtered = !self.list.filter.is_empty() && !p.entries.too_large;
+        self.as_mut().set_count_text(QString::from(&count_text(
+            p.entries.total,
+            p.entries.matched,
+            filtered,
+        )));
+        if first_load {
+            self.as_mut().apply_result(&p);
+        }
+        self.as_mut().rust_mut().result = Some(p);
+        self.set_query_state(Some(QueryState::Done));
+    }
+
+    /// Runs the preview again; the filter starts empty.
+    fn restart(self: Pin<&mut Self>) {
+        self.run_preview();
+    }
+
+    fn note_failure(self: Pin<&mut Self>, kind: Option<ErrorKind>) {
+        self.set_target_refused(refuses_target(kind));
     }
 }
 
@@ -313,13 +370,27 @@ impl qobject::RestorePreviewModel {
         self.as_mut().set_can_restore(false);
         self.as_mut()
             .set_folder_instead(QString::from(&tilde(folder)));
-        self.as_mut()
-            .fail(&unmatchable_text(last_name(path), last_name(folder)));
+        let text = unmatchable_text(last_name(path), last_name(folder));
+        self.as_mut().fail_query(&QueryFailure::from_text(text));
     }
 
-    /// Replaces every selected name restic cannot match by its folder and runs the preview.
+    /// The selection is too large for one restore: the dialog says so and offers the folder
+    /// holding it.
+    fn refuse_too_many(mut self: Pin<&mut Self>, folder: &str) {
+        self.as_mut().set_can_restore(false);
+        self.as_mut()
+            .set_folder_instead(QString::from(&tilde(folder)));
+        let text = too_many_text(&tilde(folder));
+        self.as_mut().fail_query(&QueryFailure::from_text(text));
+    }
+
+    /// Restores the folder instead: of a selection too large for one restore, or of every
+    /// selected name restic cannot match; then runs the preview.
     pub fn restore_folder_instead(mut self: Pin<&mut Self>) {
-        let selection = selection_with_folders_instead(&self.selection);
+        let selection = folder_instead_of_large(&self.selection).map_or_else(
+            || selection_with_folders_instead(&self.selection),
+            |folder| vec![folder],
+        );
         self.as_mut()
             .set_title(QString::from(&title_text(selection.len())));
         self.as_mut().rust_mut().selection = selection;
@@ -357,36 +428,22 @@ impl qobject::RestorePreviewModel {
     }
 
     /// Shows only the files with the outcomes `codes`; none shows all.
-    pub fn set_kinds(mut self: Pin<&mut Self>, codes: &QStringList) {
+    pub fn set_kinds(self: Pin<&mut Self>, codes: &QStringList) {
         let kinds: Vec<String> = codes
             .iter()
             .map(ToString::to_string)
             .filter(|c| RestoreOutcome::parse(c).is_some())
             .collect();
-        if kinds == self.filter.kinds {
-            return;
-        }
-        self.as_mut().rust_mut().filter.kinds = kinds;
-        if self.state.to_string() == "done" {
-            self.as_mut().load_first_page();
-        }
-    }
-
-    /// Filters the listed files by `text` (any case, in the path); the daemon filters.
-    pub fn set_filter(mut self: Pin<&mut Self>, text: &QString) {
-        let text = text.to_string();
-        if text == self.filter.text {
-            return;
-        }
-        self.as_mut().rust_mut().filter.text = text;
-        if self.state.to_string() == "done" {
-            self.as_mut().load_first_page();
-        }
+        self.set_filter_kinds(kinds);
     }
 
     fn run_preview(mut self: Pin<&mut Self>) {
-        if self.state.to_string() == "running" {
-            self.as_mut().rust_mut().query.abandon();
+        if self.query_state() == Some(QueryState::Running) {
+            self.as_mut().list_mut().run.abandon();
+        }
+        self.as_mut().set_target_refused(false);
+        if let Some(folder) = folder_instead_of_large(&self.selection) {
+            return self.as_mut().refuse_too_many(&folder);
         }
         let unmatchable = self
             .selection
@@ -405,10 +462,7 @@ impl qobject::RestorePreviewModel {
             target,
             mode_of(self.overwrite),
         );
-        self.as_mut().rust_mut().filter = PageFilter::default();
-        self.as_mut().begin_reset_preview();
-        self.as_mut().rust_mut().rows.clear();
-        self.as_mut().end_reset_preview();
+        self.as_mut().clear_list();
         self.as_mut().set_target_original(original);
         self.as_mut().set_can_restore(false);
         self.as_mut().set_summary_text(QString::from(""));
@@ -420,71 +474,18 @@ impl qobject::RestorePreviewModel {
         self.as_mut().set_kind_codes(QStringList::default());
         self.as_mut().set_kind_texts(QStringList::default());
         self.as_mut().set_matched(0);
-        self.as_mut().rust_mut().query.start(request);
-        self.as_mut().set_state(QString::from("running"));
-    }
-
-    /// Checks the running preview (called by a timer while `state` is `running`).
-    pub fn poll(mut self: Pin<&mut Self>) {
-        match self.as_mut().rust_mut().query.poll_start() {
-            StartPoll::Waiting => {}
-            StartPoll::Failed(text) => self.as_mut().fail(&text),
-            StartPoll::Started => self.as_mut().load_first_page(),
-        }
+        self.as_mut().start_query(request);
     }
 
     /// Tries again after an error (the preview failed, or a page or a filter could not be
     /// fetched): runs the preview again, with the same filter.
     pub fn retry(mut self: Pin<&mut Self>) {
-        if self.state.to_string() != "error" || !self.folder_instead.is_empty() {
+        if self.query_state() != Some(QueryState::Error) || !self.folder_instead.is_empty() {
             return;
         }
-        let filter = self.filter.clone();
+        let filter = self.list.filter.clone();
         self.as_mut().run_preview();
-        self.as_mut().rust_mut().filter = filter;
-    }
-
-    /// Stops a running preview; nothing is written (the dialog was closed).
-    pub fn cancel(mut self: Pin<&mut Self>) {
-        if self.state.to_string() == "running" {
-            self.as_mut().rust_mut().query.abandon();
-            self.as_mut().set_state(QString::from("cancelled"));
-        }
-    }
-
-    fn fail(mut self: Pin<&mut Self>, text: &str) {
-        self.as_mut().set_error_text(QString::from(text));
-        self.as_mut().set_state(QString::from("error"));
-    }
-
-    fn load_first_page(mut self: Pin<&mut Self>) {
-        let first_load = self.state.to_string() != "done";
-        let p = match self.as_mut().rust_mut().fetch(0) {
-            Ok(None) => return,
-            Ok(Some(p)) => p,
-            // The daemon freed the preview: run it again.
-            Err(KesticDbusError::NotFound(_)) => return self.as_mut().run_preview(),
-            Err(err) => return self.as_mut().fail(&fetch_error_text(err)),
-        };
-        let rows: Vec<PreviewRow> = p.entries.items.iter().map(row_for).collect();
-        self.as_mut().begin_reset_preview();
-        self.as_mut().rust_mut().rows = rows;
-        self.as_mut().end_reset_preview();
-        self.as_mut().set_matched(to_i32(p.entries.matched));
-        self.as_mut().set_too_large(p.entries.too_large);
-        self.as_mut()
-            .set_too_large_text(QString::from(&too_large_text(p.entries.total)));
-        let filtered = !self.filter.is_empty() && !p.entries.too_large;
-        self.as_mut().set_count_text(QString::from(&count_text(
-            p.entries.total,
-            p.entries.matched,
-            filtered,
-        )));
-        if first_load {
-            self.as_mut().apply_result(&p);
-        }
-        self.as_mut().rust_mut().result = Some(p);
-        self.as_mut().set_state(QString::from("done"));
+        self.as_mut().list_mut().filter = filter;
     }
 
     fn apply_result(mut self: Pin<&mut Self>, p: &RestorePreviewResultDto) {
@@ -513,12 +514,8 @@ impl qobject::RestorePreviewModel {
             .filter(|_| p.target.check.code != RestoreTargetCode::ExistsNotEmpty)
             .map_or_else(String::new, |m| tr(&m));
         self.as_mut().set_check_text(QString::from(&check));
-        let usable = matches!(
-            p.target.check.code,
-            RestoreTargetCode::Ok | RestoreTargetCode::ExistsNotEmpty
-        );
-        let required = p.target.target.is_original()
-            || p.target.check.code == RestoreTargetCode::ExistsNotEmpty;
+        let usable = code_usable(p.target.check.code);
+        let required = preview_needed(&p.target.target, p.target.check.code);
         self.as_mut().set_preview_required(required);
         self.as_mut()
             .set_summary_text(QString::from(&summary_text(p)));
@@ -547,7 +544,8 @@ impl qobject::RestorePreviewModel {
         }
         self.as_mut().set_kind_codes(codes);
         self.as_mut().set_kind_texts(texts);
-        self.as_mut().set_can_restore(usable);
+        self.as_mut()
+            .set_can_restore(usable && !(required && preview_stopped(p)));
     }
 
     /// Starts the restore with the finished preview; `run_state` follows the run.
@@ -555,7 +553,7 @@ impl qobject::RestorePreviewModel {
         let Some(result) = self.result.clone() else {
             return;
         };
-        if !self.can_restore || self.state.to_string() != "done" {
+        if !self.can_restore || self.query_state() != Some(QueryState::Done) {
             return;
         }
         let request = RestoreRequest {
@@ -564,7 +562,7 @@ impl qobject::RestorePreviewModel {
             selection: self.selection.clone(),
             target: result.target.target.clone(),
             overwrite: mode_of(self.overwrite),
-            preview_id: self.query.id().map(str::to_string),
+            preview_id: self.list.run.id().map(str::to_string),
         };
         let started = make_client().and_then(|client| {
             client
@@ -638,54 +636,15 @@ impl qobject::RestorePreviewModel {
         self.as_mut().rust_mut().run_id = None;
         self.as_mut().set_run_state(QString::from(""));
     }
-
-    pub fn can_fetch_more(&self, parent: &QModelIndex) -> bool {
-        !parent.is_valid()
-            && self.state.to_string() == "done"
-            && !self.too_large
-            && i32::try_from(self.rows.len()).unwrap_or(i32::MAX) < self.matched
-    }
-
-    /// Appends the next page (at most 200 files).
-    pub fn fetch_more(mut self: Pin<&mut Self>, parent: &QModelIndex) {
-        if !self.can_fetch_more(parent) {
-            return;
-        }
-        let offset = self.rows.len() as u64;
-        match self.as_mut().rust_mut().fetch(offset) {
-            Ok(Some(p)) if !p.entries.items.is_empty() => {
-                let rows: Vec<PreviewRow> = p.entries.items.iter().map(row_for).collect();
-                let first = row_count(&self.rows);
-                let last = first + row_count(&rows) - 1;
-                self.as_mut().begin_insert_rows_preview(parent, first, last);
-                self.as_mut().rust_mut().rows.extend(rows);
-                self.as_mut().end_insert_rows_preview();
-            }
-            Ok(_) => {}
-            Err(KesticDbusError::NotFound(_)) => self.as_mut().run_preview(),
-            Err(err) => self.as_mut().fail(&fetch_error_text(err)),
-        }
-    }
-
-    pub fn row_count(&self, _parent: &QModelIndex) -> i32 {
-        row_count(&self.rows)
-    }
-
-    pub fn role_names(&self) -> QHash<QHashPair_i32_QByteArray> {
-        role_names::<PreviewRow>()
-    }
-
-    pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
-        row_data(&self.rows, index, role)
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::snapshot_query::{Fetched, status_outcome};
     use super::*;
     use kestic_daemon::dbus_api::{
         ListPageDto, RestoreOriginalDto, RestorePreviewTargetDto, RestoreSuggestionDto,
-        RestoreTargetCheckDto,
+        RestoreTargetCheckDto, SnapshotQueryStatusDto,
     };
 
     fn preview(counts: (u64, u64, u64, u64)) -> RestorePreviewResultDto {
@@ -722,6 +681,19 @@ mod tests {
             },
             notes: Vec::new(),
         }
+    }
+
+    /// A preview that stopped at the memory limit counts nothing; one whose list is only too
+    /// large to show keeps its counts and allows the restore.
+    #[test]
+    fn preview_stopped_at_the_memory_limit_is_told_apart() {
+        let mut stopped = preview((0, 0, 0, 0));
+        stopped.entries.too_large = true;
+        assert!(preview_stopped(&stopped), "too large, nothing counted");
+        let mut long = preview((900, 100, 0, 0));
+        long.entries.too_large = true;
+        assert!(!preview_stopped(&long), "too large to show, counted");
+        assert!(!preview_stopped(&preview((0, 0, 0, 0))), "an empty preview");
     }
 
     #[test]
@@ -808,6 +780,34 @@ mod tests {
             "/nonexistent/neu/Projekte does not exist; choose a folder",
             "(a)"
         );
+    }
+
+    /// A preview the daemon refuses for its target cannot succeed on «Retry»: (a) a failed
+    /// query with `invalid_target` is a refusal, (b) one with another error code is not, and
+    /// (c) neither is one without an error code.
+    #[test]
+    fn failed_preview_tells_a_refused_target_from_other_errors() {
+        let failed_kind = |kind| {
+            let status = SnapshotQueryStatusDto {
+                state: "error".to_string(),
+                error_kind: kind,
+                error_detail: Some("/home/u".to_string()),
+                result: None,
+            };
+            match status_outcome(status) {
+                Fetched::Failed(failure) => failure.kind,
+                _ => panic!("a failed preview is a failure"),
+            }
+        };
+        assert!(
+            refuses_target(failed_kind(Some(ErrorKind::InvalidTarget))),
+            "(a)"
+        );
+        assert!(
+            !refuses_target(failed_kind(Some(ErrorKind::Unknown))),
+            "(b)"
+        );
+        assert!(!refuses_target(failed_kind(None)), "(c)");
     }
 
     #[test]

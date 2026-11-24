@@ -8,14 +8,17 @@
 //! every call names `--overwrite` explicitly. This module is the only place that builds the
 //! arguments of `restic restore`.
 
-use crate::backup::{BackupRunError, SnapshotListAccess, check_command_succeeded};
-use crate::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
-use crate::restic::{
-    CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticStatusMessage,
-    run_restic_streaming,
+use crate::backup::{
+    BackupRunError, Priority, SnapshotListAccess, check_command_succeeded, run_streaming,
+    run_streaming_to_end,
 };
+use crate::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
+use crate::restic::{CancelHandle, ResticExecutionResult, ResticStatusMessage};
 use crate::snapshot::ResticSnapshot;
-use crate::snapshot_ls::{SnapshotPathError, normalize_snapshot_path};
+use crate::snapshot_ls::{
+    RawLsNode, SnapshotPathError, common_dir, ls_args, normalize_snapshot_path, parent_dir,
+    start_dir,
+};
 use kestic_i18n::codes::RestoreOverwrite;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -42,7 +45,7 @@ impl RestoreTarget {
 }
 
 /// The value restic expects for `--overwrite`.
-pub fn overwrite_arg(mode: RestoreOverwrite) -> &'static str {
+fn overwrite_arg(mode: RestoreOverwrite) -> &'static str {
     match mode {
         RestoreOverwrite::Never => "never",
         RestoreOverwrite::IfNewer => "if-newer",
@@ -51,8 +54,8 @@ pub fn overwrite_arg(mode: RestoreOverwrite) -> &'static str {
     }
 }
 
-/// Escapes the glob characters `\`, `*`, `?` and `[` of `name` with `\`, so restic's
-/// `--include` matches the name literally.
+/// Escapes the glob characters `\`, `*`, `?` and `[` of `name` with `\`, so a restic pattern
+/// (`--include`, `restic find`) matches the name literally.
 pub fn escape_glob(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
@@ -69,10 +72,7 @@ pub fn escape_glob(name: &str) -> String {
 /// the top); `None` for a path restic can match.
 pub fn folder_instead_of_unmatchable(path: &str) -> Option<String> {
     let cut = path.find('\u{FFFD}')?;
-    Some(match path[..cut].rfind('/') {
-        Some(i) if i > 0 => path[..i].to_string(),
-        _ => "/".to_string(),
-    })
+    Some(parent_dir(&path[..cut]).to_string())
 }
 
 /// `selection` with every path restic cannot match replaced by its folder
@@ -118,41 +118,28 @@ pub fn normalize_selection(selection: &[String]) -> Result<Vec<String>, Snapshot
         .collect())
 }
 
-fn segments(path: &str) -> Vec<&str> {
-    path.split('/').filter(|s| !s.is_empty()).collect()
-}
-
-fn join_segments(segments: &[&str]) -> String {
-    if segments.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{}", segments.join("/"))
-    }
-}
-
-/// The parent folder of an absolute, normalised path (`/` for a top-level entry).
-pub fn parent_folder(path: &str) -> String {
-    let segs = segments(path);
-    join_segments(&segs[..segs.len().saturating_sub(1)])
-}
-
 /// The deepest folder that contains every path of `paths` (normalised, none below another);
 /// for several paths that is always a folder above each of them.
-pub fn common_folder(paths: &[String]) -> String {
-    let mut common: Option<Vec<&str>> = None;
-    for path in paths {
-        let segs = segments(path);
-        common = Some(match common {
-            None => segs[..segs.len().saturating_sub(1)].to_vec(),
-            Some(prev) => prev
-                .iter()
-                .zip(&segs)
-                .take_while(|(a, b)| a == b)
-                .map(|(a, _)| *a)
-                .collect(),
-        });
-    }
-    join_segments(&common.unwrap_or_default())
+fn common_folder(paths: &[String]) -> String {
+    let Some((first, rest)) = paths.split_first() else {
+        return "/".to_string();
+    };
+    common_dir(std::iter::once(parent_dir(first)).chain(rest.iter().map(String::as_str)))
+}
+
+/// Most bytes the `--include` arguments of one restore may take together, so the call stays
+/// well below the system's limit for arguments.
+pub const MAX_INCLUDE_BYTES: usize = 512 * 1024;
+
+/// For a selection whose `--include` arguments could exceed [`MAX_INCLUDE_BYTES`], the folder
+/// to restore instead (the folder holding all of it); `None` for a selection that fits. Counted
+/// with the absolute paths, which are never shorter than the arguments restic gets.
+pub fn folder_instead_of_large(selection: &[String]) -> Option<String> {
+    let bytes: usize = selection
+        .iter()
+        .map(|p| "--include=".len() + escape_glob(p).len())
+        .sum();
+    (bytes > MAX_INCLUDE_BYTES).then(|| common_folder(selection))
 }
 
 /// The path restic needs to know first: the type of a single selected entry decides whether it
@@ -199,7 +186,7 @@ pub fn plan_restore(
         [] => ("/".to_string(), Vec::new()),
         [single] if probed == EntryKind::Dir => (single.clone(), Vec::new()),
         [single] => {
-            let folder = parent_folder(single);
+            let folder = parent_dir(single).to_string();
             let include = include_pattern(&folder, single);
             (folder, vec![include])
         }
@@ -247,6 +234,30 @@ pub fn selected_paths(plan: &RestorePlan, selection: &[String]) -> Option<Vec<St
     )
 }
 
+/// The plan of a restore of `selection` from snapshot `snapshot_id`: reads the snapshot and
+/// the kind of the probed path first. Without a selection the whole snapshot is restored from
+/// its common folder, or from `/` when the tree does not hold the folder the snapshot names (a
+/// snapshot of relative paths).
+pub fn resolve_plan(
+    access: &SnapshotListAccess<'_>,
+    snapshot_id: &str,
+    selection: &[String],
+    cancel: Option<&CancelHandle>,
+) -> Result<(ResticSnapshot, RestorePlan), BackupRunError> {
+    let probe = probe_path(selection);
+    let (snapshot, kind) = probe_snapshot_path(access, snapshot_id, &probe, cancel)?;
+    let mut plan = plan_restore(snapshot_id, selection, kind)?;
+    if selection.is_empty() {
+        let common = start_dir(&snapshot.paths);
+        if common != "/"
+            && probe_snapshot_path(access, snapshot_id, &common, cancel)?.1 == EntryKind::Dir
+        {
+            plan.folder = common;
+        }
+    }
+    Ok((snapshot, plan))
+}
+
 /// A dry run (preview: nothing is written, no lock) or the restore itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestoreCall {
@@ -281,32 +292,6 @@ pub fn restore_args(
     args
 }
 
-/// The restic call of `args`. Only the restore run itself is a run with low CPU and IO
-/// priority; the queries and dry runs of the preview answer the waiting dialog.
-fn spec_for(
-    access: &SnapshotListAccess<'_>,
-    args: Vec<String>,
-    priority: Priority,
-) -> ResticCommandSpec {
-    let mut spec = ResticCommandSpec::for_destination(
-        &access.resolved.binary,
-        access.kestic_binary,
-        access.destination,
-        args,
-    );
-    spec.low_priority = priority == Priority::Low;
-    spec
-}
-
-/// CPU and IO priority of a restic call of a restore.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Priority {
-    /// A query or a dry run the user waits for.
-    Normal,
-    /// The restore run.
-    Low,
-}
-
 /// The snapshot and the kind of the probed path, from `restic ls --json <id> <path>`: restic
 /// prints the snapshot first, then the path itself as the first node (except for `/`).
 #[derive(Default)]
@@ -325,27 +310,22 @@ impl ProbeCollector {
     }
 
     pub fn push_line(&mut self, line: &str) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+        let line = line.trim();
+        let Some(node) = RawLsNode::parse(line) else {
             return;
         };
-        match value.get("message_type").and_then(|v| v.as_str()) {
-            Some("snapshot") if self.snapshot.is_none() => {
-                self.snapshot = serde_json::from_value(value).ok();
-            }
-            Some("node") if self.kind.is_none() => {
-                let path = value.get("path").and_then(|v| v.as_str());
-                if path == Some(self.path.as_str()) {
-                    let is_dir = value.get("type").and_then(|v| v.as_str()) == Some("dir");
-                    self.kind = Some(if is_dir {
-                        EntryKind::Dir
-                    } else {
-                        EntryKind::Other
-                    });
+        if node.is_node() {
+            if self.kind.is_none() {
+                self.kind = Some(if node.path != self.path {
+                    EntryKind::Missing
+                } else if node.is_dir() {
+                    EntryKind::Dir
                 } else {
-                    self.kind = Some(EntryKind::Missing);
-                }
+                    EntryKind::Other
+                });
             }
-            _ => {}
+        } else if node.message_type.as_deref() == Some("snapshot") && self.snapshot.is_none() {
+            self.snapshot = serde_json::from_str(line).ok();
         }
     }
 
@@ -369,14 +349,10 @@ pub fn probe_snapshot_path(
     cancel: Option<&CancelHandle>,
 ) -> Result<(ResticSnapshot, EntryKind), BackupRunError> {
     preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
-    let args = vec![
-        "ls".to_string(),
-        "--no-lock".to_string(),
-        snapshot_id.to_string(),
-        path.to_string(),
-    ];
     let mut collector = ProbeCollector::new(path);
-    let res = run_streaming(access, args, cancel, &mut |line| collector.push_line(line))?;
+    let res = run_streaming(access, ls_args(snapshot_id, path), cancel, &mut |line| {
+        collector.push_line(line)
+    })?;
     check_command_succeeded(&res)?;
     let (snapshot, kind) = collector.finish();
     let snapshot = snapshot.ok_or_else(|| {
@@ -385,47 +361,9 @@ pub fn probe_snapshot_path(
     Ok((snapshot, kind))
 }
 
-/// Runs restic with `args`, handing every stdout line unredacted to `on_line`; a cancelled call
-/// is `Cancelled`.
-pub(crate) fn run_streaming(
-    access: &SnapshotListAccess<'_>,
-    args: Vec<String>,
-    cancel: Option<&CancelHandle>,
-    on_line: &mut dyn FnMut(&str),
-) -> Result<ResticExecutionResult, BackupRunError> {
-    run_streaming_at(access, args, Priority::Normal, cancel, on_line)
-}
-
-fn run_streaming_at(
-    access: &SnapshotListAccess<'_>,
-    args: Vec<String>,
-    priority: Priority,
-    cancel: Option<&CancelHandle>,
-    on_line: &mut dyn FnMut(&str),
-) -> Result<ResticExecutionResult, BackupRunError> {
-    // Cancelled before restic started (e.g. while the destination was checked): no process.
-    if cancel.is_some_and(CancelHandle::is_cancelled) {
-        return Err(BackupRunError::Cancelled);
-    }
-    let spec = spec_for(access, args, priority);
-    let res = run_restic_streaming(
-        &spec,
-        access.destination,
-        Some(access.secret_store),
-        access.clock,
-        cancel,
-        access.extra_env,
-        on_line,
-    )?;
-    if res.cancelled {
-        return Err(BackupRunError::Cancelled);
-    }
-    Ok(res)
-}
-
 /// restic's error for a folder of `<snapshot>:<folder>` that the snapshot lacks
 /// («path … not found»).
-pub fn is_path_not_found(res: &ResticExecutionResult) -> bool {
+fn is_path_not_found(res: &ResticExecutionResult) -> bool {
     res.exit_code == 1
         && res
             .presentation
@@ -531,8 +469,18 @@ pub struct RestoreRunResult {
     pub nothing_matched: bool,
 }
 
+/// A restore restic ran: what it wrote, its call and output, and why it failed, if it did. A
+/// restore that fails midway has still written files, so its counts stay.
+#[derive(Debug)]
+pub struct RestoreRun {
+    pub result: RestoreRunResult,
+    pub execution: ResticExecutionResult,
+    pub failure: Option<BackupRunError>,
+}
+
 /// Runs the restore of `plan` into `target` and reports progress lines to `on_status`. Folders
-/// are told apart from files on disk after restic wrote them.
+/// are told apart from files on disk as restic reports them. `Err` only when restic did not
+/// start; a cancelled run is a `failure` with what it wrote until then.
 pub fn execute_restore(
     access: &SnapshotListAccess<'_>,
     plan: &RestorePlan,
@@ -540,98 +488,88 @@ pub fn execute_restore(
     overwrite: RestoreOverwrite,
     cancel: Option<&CancelHandle>,
     on_status: &mut dyn FnMut(&ResticStatusMessage),
-) -> Result<(RestoreRunResult, ResticExecutionResult), BackupRunError> {
+) -> Result<RestoreRun, BackupRunError> {
     preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
     let args = restore_args(plan, target, overwrite, RestoreCall::Run);
-    let mut items: Vec<RestoreItem> = Vec::new();
+    let mut result = RestoreRunResult::default();
     let mut summary: Option<RestoreSummary> = None;
-    let res =
-        run_streaming_at(
-            access,
-            args,
-            Priority::Low,
-            cancel,
-            &mut |line| match parse_restore_line(line) {
-                RestoreLine::Item(item) => items.push(item),
-                RestoreLine::Status(status) => on_status(&status),
-                RestoreLine::Summary(s) => summary = Some(s),
-                RestoreLine::Other => {}
-            },
-        )?;
-    check_restore_succeeded(&res, plan)?;
-    let mut result = RestoreRunResult {
-        nothing_matched: summary.as_ref().is_none_or(RestoreSummary::is_empty),
-        bytes_restored: summary.as_ref().and_then(|s| s.bytes_restored).unwrap_or(0),
-        ..RestoreRunResult::default()
-    };
-    for item in items {
-        let written = target.join(item.item.trim_start_matches('/'));
-        if std::fs::symlink_metadata(&written).is_ok_and(|m| m.is_dir()) {
-            continue;
+    // Each item is counted when restic reports it (the file is written by then), so a restore
+    // of millions of files holds no list of them.
+    let mut count = |item: &RestoreItem| {
+        // restic reports a file it could not write as restored too: only files that are there
+        // count, folders never. A name restic shows with U+FFFD (bytes that are not UTF-8) is
+        // looked up among the real names restic shows that way.
+        let found = crate::restore_preview::find_at_target(target, &item.item);
+        if !found.entries.iter().any(|(_, m)| !m.is_dir()) {
+            return;
         }
         match item.action.as_str() {
             "restored" => result.files_new += 1,
             "updated" => result.files_overwritten += 1,
             _ => {}
         }
-    }
-    Ok((result, res))
+    };
+    let res = run_streaming_to_end(access, args, Priority::Low, cancel, &mut |line| {
+        match parse_restore_line(line) {
+            RestoreLine::Item(item) => count(&item),
+            RestoreLine::Status(status) => on_status(&status),
+            RestoreLine::Summary(s) => summary = Some(s),
+            RestoreLine::Other => {}
+        }
+    })?;
+    // A cancelled restore keeps the counts of what it wrote until then.
+    let failure = if res.cancelled {
+        Some(BackupRunError::Cancelled)
+    } else {
+        check_restore_succeeded(&res, plan).err()
+    };
+    result.nothing_matched = summary.as_ref().is_none_or(RestoreSummary::is_empty);
+    result.bytes_restored = summary.as_ref().and_then(|s| s.bytes_restored).unwrap_or(0);
+    Ok(RestoreRun {
+        result,
+        execution: res,
+        failure,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A restic call cancelled before it starts spawns no process: with a restic binary that
-    /// does not exist, it ends as cancelled, not with the error of a failed start.
-    #[test]
-    fn cancelled_call_starts_no_restic() {
-        use crate::clock::FakeClock;
-        use crate::model::{Destination, DestinationKind};
-        use crate::provider::ResolvedRestic;
-        use crate::secrets::InMemorySecretStore;
+    fn sel(paths: &[&str]) -> Vec<String> {
+        paths.iter().map(|p| (*p).to_string()).collect()
+    }
 
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        let resolved = ResolvedRestic {
-            binary: tmp.path().join("no-such-restic"),
-            version: semver::Version::new(0, 18, 0),
-        };
-        let dest = Destination::new(
-            "NAS",
-            DestinationKind::Local {
-                path: tmp.path().join("repo"),
-            },
-        )
-        .expect("dest");
-        let store = InMemorySecretStore::default();
-        let clock = FakeClock::new(time::macros::datetime!(2026-11-15 14:32:00 UTC));
-        let kestic_bin = tmp.path().join("kestic");
-        let access = SnapshotListAccess {
-            destination: &dest,
-            resolved: &resolved,
-            kestic_binary: &kestic_bin,
-            secret_store: &store,
-            clock: &clock,
-            extra_env: &[],
-        };
-        let cancel = CancelHandle::new();
-        cancel.cancel();
-        let result = run_streaming_at(
-            &access,
-            vec!["version".to_string()],
-            Priority::Normal,
-            Some(&cancel),
-            &mut |_| {},
+    #[test]
+    fn includes_keep_an_exclamation_mark() {
+        let plan = plan_restore("id", &sel(&["/d/!x", "/d/a!b"]), EntryKind::Dir).expect("plan");
+        assert_eq!(plan.folder, "/d");
+        assert_eq!(plan.includes, [r"--include=/!x", r"--include=/a!b"]);
+    }
+
+    #[test]
+    fn a_selection_over_the_argument_limit_offers_its_folder() {
+        let fits: Vec<String> = (0..1000).map(|i| format!("/home/u/d/f{i:04}")).collect();
+        assert_eq!(
+            folder_instead_of_large(&fits),
+            None,
+            "a thousand short paths fit"
         );
-        assert!(
-            matches!(result, Err(BackupRunError::Cancelled)),
-            "{:?}",
-            result.map(|r| r.exit_code)
+        let long: Vec<String> = (0..40_000).map(|i| format!("/home/u/d/f{i:05}")).collect();
+        assert_eq!(
+            folder_instead_of_large(&long).as_deref(),
+            Some("/home/u/d"),
+            "beyond the limit: their folder"
         );
     }
 
-    fn sel(paths: &[&str]) -> Vec<String> {
-        paths.iter().map(|p| (*p).to_string()).collect()
+    #[test]
+    fn common_folder_lies_above_the_first_path() {
+        assert_eq!(common_folder(&sel(&["/a/b"])), "/a");
+        assert_eq!(common_folder(&sel(&["/a/b/c", "/a/b/d"])), "/a/b");
+        assert_eq!(common_folder(&sel(&["/a/b", "/x"])), "/");
+        assert_eq!(common_folder(&sel(&["/a"])), "/");
+        assert_eq!(common_folder(&[]), "/");
     }
 
     #[test]

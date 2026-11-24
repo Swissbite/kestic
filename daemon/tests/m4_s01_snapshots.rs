@@ -8,8 +8,10 @@
 
 mod common;
 
-use common::m3::{M3Rig, ResticVariant, restic_variants};
-use common::m4::{RawSnapshot, write_snapshot};
+use common::m3::{M3Rig, ResticVariant};
+use common::m4::{
+    RawSnapshot, VariantFixture, for_each_variant_with, restic_data_added, write_snapshot,
+};
 use common::run_isolated_test;
 use kestic_core::model::{Backup, Destination, DestinationKind};
 use kestic_daemon::dbus_api::{BackupSnapshotsDto, DestinationSnapshotsDto};
@@ -101,11 +103,9 @@ impl Fixture {
     }
 }
 
-fn for_each_variant(root: &Path, body: impl Fn(&Fixture, &str)) {
-    for variant in restic_variants() {
-        let fixture = Fixture::start(root, &variant);
-        body(&fixture, variant.label);
-        fixture.rig.daemon.stop();
+impl VariantFixture for Fixture {
+    fn stop(self) {
+        self.rig.daemon.stop();
     }
 }
 
@@ -117,7 +117,8 @@ fn ac_m4_01_1_lists_three_snapshots_newest_first_with_time_size_and_host() {
         "ac_m4_01_1_lists_three_snapshots_newest_first_with_time_size_and_host",
         "KESTIC_AC_M4_01_1_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 fx.three_b1_snapshots();
                 let list = fx.list_b1();
                 let snaps = &list.current_snapshots;
@@ -138,10 +139,21 @@ fn ac_m4_01_1_lists_three_snapshots_newest_first_with_time_size_and_host() {
                     ["laptop", "laptop", "desktop"],
                     "[{label}] (c) host per entry"
                 );
+                let by_restic = restic_data_added(&fx.rig.variant.bin, fx.repo(), &fx.password);
                 for s in snaps {
                     assert!(
                         s.data_added.is_some_and(|b| b > 0),
-                        "[{label}] (c)(d) size is the new data (data_added): {s:?}"
+                        "[{label}] (c) size per entry: {s:?}"
+                    );
+                    let expected = by_restic.get(&s.id).copied().flatten();
+                    assert!(
+                        expected.is_some(),
+                        "[{label}] restic reports data_added for {}: {by_restic:?}",
+                        s.id
+                    );
+                    assert_eq!(
+                        s.data_added, expected,
+                        "[{label}] (d) size is summary.data_added of restic snapshots: {s:?}"
                     );
                 }
                 assert!(
@@ -161,7 +173,8 @@ fn ac_m4_01_2_metadata_snapshots_are_hidden_and_not_counted() {
         "ac_m4_01_2_metadata_snapshots_are_hidden_and_not_counted",
         "KESTIC_AC_M4_01_2_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 fx.three_b1_snapshots();
                 let meta_tag = format!("kestic-meta:{}", fx.b1.id);
                 fx.snapshot(&meta_tag, "2026-11-15 12:05:00", "laptop");
@@ -214,7 +227,8 @@ fn ac_m4_01_3_list_of_b1_has_no_snapshot_of_b2() {
         "ac_m4_01_3_list_of_b1_has_no_snapshot_of_b2",
         "KESTIC_AC_M4_01_3_INNER",
         |root| {
-            for_each_variant(root, |fx, label| {
+            for_each_variant_with(root, Fixture::start, |fx, v| {
+                let label = v.label;
                 fx.three_b1_snapshots();
                 let b2_tag = format!("kestic:{}", fx.b2.id);
                 fx.snapshot(&b2_tag, "2026-11-15 13:00:00", "laptop");
@@ -235,6 +249,34 @@ fn ac_m4_01_3_list_of_b1_has_no_snapshot_of_b2() {
                 );
                 assert_eq!(list.current_snapshots.len(), 3, "[{label}] (a)");
             });
+        },
+    );
+}
+
+/// When the snapshot list of a backup fails, it carries its own error code: (a) the list has a
+/// raw error and (b) an error code that names the cause, (c) the same the destination's list
+/// gives for that failure.
+#[test]
+fn m4_s01_failed_backup_list_carries_its_error_code() {
+    run_isolated_test(
+        "m4_s01_failed_backup_list_carries_its_error_code",
+        "KESTIC_M4_S01_LIST_ERROR_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = Fixture::start(root, &variant);
+            fx.three_b1_snapshots();
+            let moved = fx.repo().with_extension("moved");
+            std::fs::rename(fx.repo(), &moved).expect("move the repository away");
+            let list = fx.list_b1();
+            assert!(list.current_error.is_some(), "(a) {list:?}");
+            let kind = list.current_error_kind;
+            assert!(
+                kind.is_some_and(|k| k != kestic_i18n::codes::ErrorKind::Unknown),
+                "(b) {kind:?}"
+            );
+            assert_eq!(kind, fx.list_destination().error_kind, "(c)");
+            std::fs::rename(&moved, fx.repo()).expect("move it back");
+            fx.stop();
         },
     );
 }

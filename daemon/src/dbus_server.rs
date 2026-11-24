@@ -179,9 +179,12 @@ impl KesticDbusV1Service {
         query_id: &str,
         page_json: &str,
     ) -> Result<String, KesticDbusError> {
-        let mut guard = self.core.lock_unpoisoned();
-        let st = guard.get_snapshot_query_status(query_id, page_json)?;
-        to_json_arg(&st)
+        // The page is cut without the daemon's lock: filtering a long list takes a while.
+        let status = self
+            .core
+            .lock_unpoisoned()
+            .snapshot_query_status(query_id, page_json)?;
+        to_json_arg(&status.page()?)
     }
 
     #[zbus(name = "CancelSnapshotQuery")]

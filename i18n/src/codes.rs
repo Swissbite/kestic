@@ -271,8 +271,6 @@ code_enum! {
         Removed => "removed",
         /// Content modified (`M`).
         Modified => "modified",
-        /// Only the metadata changed (`U`).
-        Metadata => "metadata",
         /// The type changed, e.g. a file became a link (`T`).
         TypeChanged => "type_changed",
         /// The content changed while all metadata stayed the same (`?`).
@@ -343,6 +341,9 @@ code_enum! {
         /// The target lies inside the repository of a local destination, or the selection
         /// would write into such a repository below the target.
         InsideRepository => "inside_repository",
+        /// The selection would write into Kestic's own configuration or data folder below
+        /// the target.
+        KesticData => "kestic_data",
     }
 }
 

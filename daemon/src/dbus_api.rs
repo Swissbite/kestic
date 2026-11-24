@@ -412,15 +412,9 @@ pub struct OrphanedBackupDto {
 }
 
 /// Snapshots of a backup ID that is not configured here but described by a metadata snapshot of
-/// the destination: the backup can still be taken over, so they are not orphaned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DescribedBackupDto {
-    pub backup_id: String,
-    pub count: u64,
-    pub latest_time: Option<String>,
-    pub latest_hostname: Option<String>,
-    pub snapshots: Vec<SnapshotSummaryDto>,
-}
+/// the destination: the backup can still be taken over, so they are not orphaned. Same fields
+/// as an orphaned backup.
+pub type DescribedBackupDto = OrphanedBackupDto;
 
 /// Result of `ListDestinationSnapshots`: all snapshots of a destination, sorted, newest first,
 /// without metadata snapshots.
@@ -452,6 +446,9 @@ pub struct BackupSnapshotsDto {
     pub current_destination_name: String,
     pub current_snapshots: Vec<SnapshotSummaryDto>,
     pub current_error: Option<String>,
+    /// Error code of `current_error`.
+    #[serde(default)]
+    pub current_error_kind: Option<ErrorKind>,
     pub previous_destinations: Vec<PreviousDestinationSnapshotsDto>,
 }
 

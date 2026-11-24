@@ -666,6 +666,40 @@ fn ac_m4_05_1_4_11_15_restore_dialog() {
     );
 }
 
+/// The list of files of a preview at the original location with new, overwritten and unchanged
+/// files shows a filter chip per outcome, and a focused chip its focus ring (scene
+/// `m4-restore-chips`).
+#[test]
+fn m4_s05_restore_dialog_shows_outcome_chips() {
+    run_isolated_test(
+        "m4_s05_restore_dialog_shows_outcome_chips",
+        "KESTIC_M4_S05_CHIPS_SMOKE_INNER",
+        |root| {
+            for (layout, lang) in [
+                ("wide", "en"),
+                ("wide", "de"),
+                ("narrow", "en"),
+                ("narrow", "de"),
+            ] {
+                let sub = root.join(format!("{layout}-{lang}"));
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes, _) = restore_dialog_env(&sub, &latest_variant());
+                let src = sub.join("trees").join("src");
+                std::fs::remove_file(src.join("docs").join("x.txt")).expect("remove docs/x.txt");
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-chips",
+                    layout,
+                    lang,
+                    &smoke_artifact("restore-chips", layout, lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
 /// A selected name that is not valid UTF-8 is refused in the dialog with its reason, and
 /// «Restore Folder» restores its folder instead (scene `m4-restore-unmatchable`).
 #[test]

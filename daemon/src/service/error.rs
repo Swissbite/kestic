@@ -118,6 +118,11 @@ impl From<KesticServiceErr> for KesticDbusError {
     }
 }
 
+/// An `InvalidInput` error with `message`.
+pub(super) fn invalid(message: impl std::fmt::Display) -> KesticServiceErr {
+    KesticServiceErr::InvalidInput(message.to_string())
+}
+
 pub(super) fn map_config_err(err: ConfigError) -> KesticServiceErr {
     match err {
         ConfigError::Validation(_)

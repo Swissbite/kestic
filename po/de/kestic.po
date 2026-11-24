@@ -2248,8 +2248,8 @@ msgid "Loading snapshots…"
 msgstr "Snapshots werden geladen…"
 
 #: gui/src/ui_texts.rs
-msgid "No snapshots yet – the first backup is still pending"
-msgstr "Noch keine Snapshots – das erste Backup steht noch aus"
+msgid "No snapshots yet. The first backup is still pending."
+msgstr "Noch keine Snapshots. Das erste Backup steht noch aus."
 
 #: gui/src/qml/BackupSourceEditPage.qml:100
 msgid "Source saved"
@@ -3632,8 +3632,8 @@ msgstr "Der gewählte Ordner fehlt im Snapshot"
 msgid "This folder cannot be used for the restore"
 msgstr "Dieser Ordner lässt sich zum Wiederherstellen nicht verwenden"
 
-msgid "Cannot restore safely to %1; restore into a new folder instead."
-msgstr "Nach %1 lässt sich nicht sicher wiederherstellen; bitte in einen neuen Ordner wiederherstellen."
+msgid "Cannot safely restore to %1. Choose 'Into a new folder' instead."
+msgstr "Wiederherstellen nach %1 ist nicht sicher möglich. Stattdessen «In neuen Ordner» wählen."
 
 msgid "Check the preview again before restoring; it is missing or outdated."
 msgstr "Vor dem Wiederherstellen die Vorschau erneut prüfen; sie fehlt oder ist veraltet."
@@ -3686,6 +3686,14 @@ msgstr "%1 existiert nicht; bitte einen Ordner wählen"
 msgid "Restoring to %1 would write into the repository of a destination"
 msgstr "Wiederherstellen nach %1 würde in das Repository eines Ziels schreiben"
 
+msgid ""
+"Restoring to %1 would overwrite Kestic's own settings and history. Deselect "
+"Kestic's folder or restore into a new folder."
+msgstr ""
+"Wiederherstellen nach %1 würde die Einstellungen und den Verlauf von Kestic "
+"überschreiben. Den Ordner von Kestic abwählen oder in einen neuen Ordner "
+"wiederherstellen."
+
 msgid "Nothing restored"
 msgstr "Nichts wiederhergestellt"
 
@@ -3710,6 +3718,9 @@ msgstr "«%1» lässt sich nicht einzeln wiederherstellen: Der Name enthält Zei
 msgid "Restore Folder"
 msgstr "Ordner wiederherstellen"
 
+msgid "Too many entries are selected for one restore. Restore their folder '%1' instead."
+msgstr "Für eine Wiederherstellung sind zu viele Einträge gewählt. Stattdessen den Ordner «%1» wiederherstellen."
+
 msgid "Restore failed"
 msgstr "Wiederherstellen fehlgeschlagen"
 
@@ -3732,6 +3743,9 @@ msgid "Where to"
 msgstr "Wohin"
 
 msgid "Into a new folder"
+msgstr "In neuen Ordner"
+
+msgid "Into a New Folder"
 msgstr "In neuen Ordner"
 
 msgid "To the original location"

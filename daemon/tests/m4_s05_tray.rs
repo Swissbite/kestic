@@ -239,3 +239,51 @@ fn gui_starts(log: &Path) -> Vec<String> {
         thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// A running restore shows its progress in its Plasma job, not only at the end: (a) an update
+/// with restic's percentage and (b) the restore's text with that percentage.
+#[test]
+fn m4_s05_restore_shows_its_progress_in_plasma() {
+    run_isolated_test(
+        "m4_s05_restore_shows_its_progress_in_plasma",
+        "KESTIC_M4_S05_JOB_PROGRESS_INNER",
+        |root| {
+            let job_view = common::fakes::FakeJobViewHandle::start("org.kde.JobViewServer");
+            let _fakes = StdFakes::start();
+            let rec = &job_view.recorder;
+            let variant = latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RJ", small_tree, |o| {
+                o.enable_job_view = true;
+            });
+            fx.rig.wrapper.hold_with_output(
+                "restore",
+                "{\"message_type\":\"status\",\"percent_done\":0.25,\"files_done\":1,\
+                 \"bytes_done\":10,\"total_bytes\":40,\"seconds_elapsed\":1}\n",
+            );
+            let target = RestoreTarget::NewFolder {
+                dir: fx.new_dir("progress").to_string_lossy().into_owned(),
+            };
+            let run_id = fx
+                .start_restore(&["a.txt"], target, RestoreOverwrite::Never, None)
+                .expect("StartRestore");
+            common::m3::wait_until("progress update", || {
+                rec.updates
+                    .lock()
+                    .expect("lock")
+                    .iter()
+                    .any(|(pct, _)| *pct == 25)
+            });
+            let updates = rec.updates.lock().expect("lock").clone();
+            assert!(updates.iter().any(|(pct, _)| *pct == 25), "(a) {updates:?}");
+            assert!(
+                updates.iter().any(|(pct, msg)| *pct == 25
+                    && msg.contains("restoring")
+                    && msg.contains("25%")),
+                "(b) {updates:?}"
+            );
+            fx.rig.wrapper.release("restore");
+            fx.wait_run(&run_id);
+            fx.rig.daemon.stop();
+        },
+    );
+}

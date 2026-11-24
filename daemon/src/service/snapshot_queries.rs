@@ -5,7 +5,7 @@
 //! restic runs on a worker thread, the daemon holds the complete result and hands its list out
 //! page by page.
 
-use super::error::{KesticServiceErr, backup_run_error_kind};
+use super::error::{KesticServiceErr, backup_run_error_kind, invalid};
 use super::restore_preview::{
     HeldPreview, RestoreContext, RestoreParams, execute_restore_preview, parse_preview_request,
 };
@@ -49,6 +49,89 @@ impl HeldResult for QueryResult {
     }
 }
 
+/// A finished result as the daemon holds it: shared, so a page is cut without holding the lock
+/// of the whole daemon; its memory is counted once, when it is stored.
+#[derive(Clone)]
+pub(crate) struct SharedResult {
+    held: u64,
+    inner: Arc<Mutex<QueryResult>>,
+}
+
+impl SharedResult {
+    fn new(result: QueryResult) -> Self {
+        Self {
+            held: result.held_bytes(),
+            inner: Arc::new(Mutex::new(result)),
+        }
+    }
+
+    /// The result, locked.
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, QueryResult> {
+        self.inner.lock_unpoisoned()
+    }
+}
+
+impl HeldResult for SharedResult {
+    fn held_bytes(&self) -> u64 {
+        self.held
+    }
+}
+
+/// The state of a query taken under the daemon's lock; [`QueryStatus::page`] cuts the page
+/// afterwards.
+pub(crate) struct QueryStatus {
+    page: PageRequest,
+    state: &'static str,
+    error: Option<(ErrorKind, String)>,
+    result: Option<SharedResult>,
+}
+
+impl QueryStatus {
+    /// The status DTO with the requested page of a finished query.
+    pub(crate) fn page(self) -> Result<SnapshotQueryStatusDto, KesticServiceErr> {
+        let mut result = self.result.as_ref().map(SharedResult::lock);
+        if let Some(r) = result.as_deref() {
+            check_kinds(r, &self.page)?;
+        }
+        Ok(SnapshotQueryStatusDto {
+            state: self.state.to_string(),
+            error_kind: self.error.as_ref().map(|(kind, _)| *kind),
+            error_detail: self.error.map(|(_, detail)| detail),
+            result: result.as_deref_mut().map(|r| r.page(&self.page)),
+        })
+    }
+}
+
+/// Refuses a filter by kinds the result does not have.
+fn check_kinds(result: &QueryResult, page: &PageRequest) -> Result<(), KesticServiceErr> {
+    if page.filter.kinds.is_empty() {
+        return Ok(());
+    }
+    match result {
+        QueryResult::Ls(_) | QueryResult::Find(_) => Err(invalid(
+            "folder lists and search hits have no kinds to filter by",
+        )),
+        QueryResult::Diff(_) => match page
+            .filter
+            .kinds
+            .iter()
+            .find(|k| SnapshotChange::parse(k).is_none())
+        {
+            Some(unknown) => Err(invalid(format!("unknown kind of change: {unknown}"))),
+            None => Ok(()),
+        },
+        QueryResult::RestorePreview(_) => match page
+            .filter
+            .kinds
+            .iter()
+            .find(|k| RestoreOutcome::parse(k).is_none())
+        {
+            Some(unknown) => Err(invalid(format!("unknown restore outcome: {unknown}"))),
+            None => Ok(()),
+        },
+    }
+}
+
 impl QueryResult {
     fn page(&mut self, page: &PageRequest) -> SnapshotQueryResultDto {
         match self {
@@ -89,10 +172,6 @@ enum QueryWork {
 struct ParsedQuery {
     destination_id: DestinationId,
     work: QueryWork,
-}
-
-fn invalid(message: impl std::fmt::Display) -> KesticServiceErr {
-    KesticServiceErr::InvalidInput(message.to_string())
 }
 
 fn parse_request(request_json: &str) -> Result<ParsedQuery, KesticServiceErr> {
@@ -140,7 +219,7 @@ fn parse_request(request_json: &str) -> Result<ParsedQuery, KesticServiceErr> {
     })
 }
 
-fn outcome_of(res: Result<QueryResult, BackupRunError>) -> QueryOutcome<QueryResult> {
+fn outcome_of(res: Result<SharedResult, BackupRunError>) -> QueryOutcome<SharedResult> {
     match res {
         Ok(result) => QueryOutcome::Done(result),
         Err(BackupRunError::Cancelled) => QueryOutcome::Cancelled,
@@ -179,7 +258,8 @@ pub fn start_snapshot_query_async(
         let now = guard.clock.now_utc();
         let limit_bytes = guard.snapshot_queries.limits().per_query_bytes;
         let restore_ctx =
-            RestoreContext::from_config(&guard.config, dest.clone(), guard.timezone.clone());
+            RestoreContext::from_config(&guard.config, dest.clone(), guard.timezone.clone())
+                .with_kestic_dirs(&guard.config_path, &guard.state_dir);
         guard
             .snapshot_queries
             .register(query_id.clone(), cancel.clone(), now);
@@ -232,7 +312,7 @@ pub fn start_snapshot_query_async(
                     .map(|p| QueryResult::RestorePreview(Box::new(p)))
             }
         };
-        let outcome = outcome_of(res);
+        let outcome = outcome_of(res.map(SharedResult::new));
         let now = deps.clock.now_utc();
         shared_worker
             .lock_unpoisoned()
@@ -243,52 +323,24 @@ pub fn start_snapshot_query_async(
 }
 
 impl DaemonCore {
-    /// State of query `query_id` and, once done, the page `page_json` asks for (empty = the
-    /// first page without filter).
-    pub fn get_snapshot_query_status(
+    /// State of query `query_id`, to cut the page `page_json` asks for (empty = the first page
+    /// without filter) once the daemon's lock is released.
+    pub(crate) fn snapshot_query_status(
         &mut self,
         query_id: &str,
         page_json: &str,
-    ) -> Result<SnapshotQueryStatusDto, KesticServiceErr> {
+    ) -> Result<QueryStatus, KesticServiceErr> {
         let page = PageRequest::parse(page_json).map_err(invalid)?;
         let now = self.clock.now_utc();
         let query = self
             .snapshot_queries
             .fetch(query_id, now)
             .ok_or_else(|| KesticServiceErr::NotFound(query_id.to_string()))?;
-        match (&query.result, page.filter.kinds.is_empty()) {
-            (Some(QueryResult::Ls(_) | QueryResult::Find(_)), false) => {
-                return Err(invalid(
-                    "folder lists and search hits have no kinds to filter by",
-                ));
-            }
-            (Some(QueryResult::Diff(_)), false) => {
-                if let Some(unknown) = page
-                    .filter
-                    .kinds
-                    .iter()
-                    .find(|k| SnapshotChange::parse(k).is_none())
-                {
-                    return Err(invalid(format!("unknown kind of change: {unknown}")));
-                }
-            }
-            (Some(QueryResult::RestorePreview(_)), false) => {
-                if let Some(unknown) = page
-                    .filter
-                    .kinds
-                    .iter()
-                    .find(|k| RestoreOutcome::parse(k).is_none())
-                {
-                    return Err(invalid(format!("unknown restore outcome: {unknown}")));
-                }
-            }
-            _ => {}
-        }
-        Ok(SnapshotQueryStatusDto {
-            state: query.state.wire_name().to_string(),
-            error_kind: query.error.as_ref().map(|(kind, _)| *kind),
-            error_detail: query.error.as_ref().map(|(_, detail)| detail.clone()),
-            result: query.result.as_mut().map(|r| r.page(&page)),
+        Ok(QueryStatus {
+            page,
+            state: query.state.wire_name(),
+            error: query.error.clone(),
+            result: query.result.clone(),
         })
     }
 

@@ -7,6 +7,7 @@ use crate::clock::Clock;
 pub use crate::excludes::*;
 use crate::mount::normalize_lexical_path;
 pub use crate::retention::*;
+use crate::snapshot::{BACKUP_TAG_PREFIX, META_TAG_PREFIX};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -687,12 +688,12 @@ impl Backup {
 
     /// Returns the restic snapshot tag identifying this backup (`kestic:<backup-id>`).
     pub fn tag(&self) -> String {
-        format!("kestic:{}", self.id)
+        format!("{BACKUP_TAG_PREFIX}{}", self.id)
     }
 
     /// Returns the restic metadata snapshot tag (`kestic-meta:<backup-id>`).
     pub fn meta_tag(&self) -> String {
-        format!("kestic-meta:{}", self.id)
+        format!("{META_TAG_PREFIX}{}", self.id)
     }
 
     /// Validates invariants on this backup definition.
@@ -1001,6 +1002,8 @@ pub struct RestoreStats {
     pub overwrite: kestic_i18n::codes::RestoreOverwrite,
     /// Number of selected entries (0 = the whole snapshot).
     pub selection_count: u64,
+    /// Why a failed restore failed; `None` otherwise and in rows stored before it existed.
+    pub error_kind: Option<kestic_i18n::codes::ErrorKind>,
 }
 
 /// Single execution record (glossary: `Run`).

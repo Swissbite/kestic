@@ -28,13 +28,16 @@ Kirigami.ScrollablePage {
     // The list whose selected row gets the focus when the page is shown again.
     readonly property var primaryList: browseListView
     readonly property alias browseModel: snapshotBrowseModel
+    // Side padding of a row (that of the desktop style's list rows), also used by the headings.
+    readonly property int rowPadding: Kirigami.Units.mediumSpacing + Kirigami.Units.smallSpacing
+    readonly property int sizeColumnWidth: Kirigami.Units.gridUnit * 5
+    readonly property int modifiedColumnWidth: Kirigami.Units.gridUnit * 6
 
     signal restoreRequested(var destinationId, var snapshotId, var selection)
 
     // Lists `dir`; the filter starts empty in every folder, the selection stays.
     function openDir(dir) {
-        filterDelay.stop();
-        filterField.text = "";
+        filterField.resetFilter();
         browseListView.currentIndex = -1;
         snapshotBrowseModel.open(destinationId, snapshotId, dir);
     }
@@ -87,19 +90,6 @@ Kirigami.ScrollablePage {
         objectName: "snapshotBrowseModel"
     }
 
-    Timer {
-        interval: 150
-        repeat: true
-        running: snapshotBrowseModel.state === "running"
-        onTriggered: snapshotBrowseModel.poll()
-    }
-
-    Timer {
-        id: filterDelay
-        interval: 300
-        onTriggered: snapshotBrowseModel.setFilter(filterField.text)
-    }
-
     actions: [
         Kirigami.Action {
             objectName: "restoreSelectionAction"
@@ -113,6 +103,8 @@ Kirigami.ScrollablePage {
     ]
 
     header: Controls.ToolBar {
+        leftPadding: Kirigami.Units.largeSpacing
+        rightPadding: Kirigami.Units.largeSpacing
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.smallSpacing
 
@@ -234,15 +226,11 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.mediumSpacing
 
-                Kirigami.SearchField {
+                FilterField {
                     id: filterField
                     objectName: "browseFilterField"
                     Layout.fillWidth: true
-                    placeholderText: Texts.label("filter")
-                    Accessible.name: Texts.label("filter")
-                    // Ctrl+F belongs to the search field of the snapshot list.
-                    focusSequences: []
-                    onTextChanged: filterDelay.restart()
+                    onFilterRequested: function(text) { snapshotBrowseModel.setFilter(text); }
                 }
                 Controls.Label {
                     objectName: "browseCountLabel"
@@ -291,55 +279,50 @@ Kirigami.ScrollablePage {
             }
         }
 
-        header: RowLayout {
+        // The column headings with the paddings and column widths of the rows below.
+        header: Item {
             width: ListView.view.width
-            spacing: Kirigami.Units.mediumSpacing
-            Item { Layout.preferredWidth: Kirigami.Units.gridUnit * 3 }
-            Controls.Label {
-                Layout.fillWidth: true
-                text: i18n("Name")
-                font.bold: true
-            }
-            Controls.Label {
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 5
-                horizontalAlignment: Text.AlignRight
-                text: i18n("Size")
-                font.bold: true
-            }
-            Controls.Label {
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 6
-                text: i18n("Modified")
-                font.bold: true
-            }
-        }
+            implicitHeight: headingRow.implicitHeight
 
-        Kirigami.LoadingPlaceholder {
-            anchors.centerIn: parent
-            visible: snapshotBrowseModel.state === "running"
-        }
+            // Only measures the check box of a row.
+            Controls.CheckBox {
+                id: checkMeasure
+                visible: false
+            }
 
-        Kirigami.InlineMessage {
-            objectName: "browseErrorMessage"
-            anchors.top: parent.top
-            width: parent.width
-            type: Kirigami.MessageType.Error
-            visible: snapshotBrowseModel.state === "error"
-            text: snapshotBrowseModel.error_text
-            actions: [
-                Kirigami.Action {
-                    text: Texts.label("retry")
-                    onTriggered: page.openDir(snapshotBrowseModel.dir)
+            RowLayout {
+                id: headingRow
+                anchors.fill: parent
+                anchors.leftMargin: page.rowPadding
+                anchors.rightMargin: page.rowPadding
+                spacing: Kirigami.Units.mediumSpacing
+                Item {
+                    Layout.preferredWidth: checkMeasure.implicitWidth + Kirigami.Units.mediumSpacing
+                        + Kirigami.Units.iconSizes.small
                 }
-            ]
+                Controls.Label {
+                    Layout.fillWidth: true
+                    text: i18n("Name")
+                    font.bold: true
+                }
+                Controls.Label {
+                    Layout.preferredWidth: page.sizeColumnWidth
+                    horizontalAlignment: Text.AlignRight
+                    text: i18n("Size")
+                    font.bold: true
+                }
+                Controls.Label {
+                    Layout.preferredWidth: page.modifiedColumnWidth
+                    text: i18n("Modified")
+                    font.bold: true
+                }
+            }
         }
 
-        Kirigami.PlaceholderMessage {
-            objectName: "browseTooLargeMessage"
-            anchors.centerIn: parent
-            width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: snapshotBrowseModel.state === "done" && snapshotBrowseModel.too_large
-            icon.name: "dialog-information"
-            text: snapshotBrowseModel.too_large_text
+        QueryStatus {
+            queryModel: snapshotBrowseModel
+            namePrefix: "browse"
+            onRetryRequested: page.openDir(snapshotBrowseModel.dir)
         }
 
         Kirigami.PlaceholderMessage {
@@ -367,6 +350,8 @@ Kirigami.ScrollablePage {
             required property bool selected
 
             width: ListView.view.width
+            leftPadding: page.rowPadding
+            rightPadding: page.rowPadding
             activeFocusOnTab: true
             highlighted: ListView.isCurrentItem
             Accessible.name: name
@@ -389,8 +374,6 @@ Kirigami.ScrollablePage {
 
             FocusRing {
                 target: entryRow
-                anchors.margins: entryRow.highlighted ? 2 : 0
-                ringColor: entryRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {
@@ -416,13 +399,13 @@ Kirigami.ScrollablePage {
                     color: entryRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                 }
                 Controls.Label {
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                    Layout.preferredWidth: page.sizeColumnWidth
                     horizontalAlignment: Text.AlignRight
                     text: entryRow.sizeText
                     color: entryRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                 }
                 Controls.Label {
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                    Layout.preferredWidth: page.modifiedColumnWidth
                     text: entryRow.modifiedText
                     color: entryRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                 }

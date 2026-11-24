@@ -8,10 +8,10 @@
 
 mod common;
 
-use common::m3::{M3Rig, ResticVariant, add_local_destination, restic_variants};
+use common::m3::{M3Rig, ResticVariant, add_local_destination};
 use common::m4::{
-    BIG_TREE_MATCHES, BIG_TREE_OTHER_CASE, RawSnapshot, backup_dir, big_tree, restic_ls_nodes,
-    small_tree,
+    BIG_TREE_MATCHES, BIG_TREE_OTHER_CASE, RawSnapshot, VariantFixture, backup_dir, big_page,
+    big_tree, for_each_variant_with, restic_ls_nodes, small_tree, wait_query,
 };
 use common::run_isolated_test;
 use kestic_core::model::Destination;
@@ -73,6 +73,16 @@ impl Fixture {
         }
     }
 
+    /// A fixture whose snapshot holds the folder of [`small_tree`].
+    fn start_small(root: &Path, variant: &ResticVariant) -> Self {
+        Self::start(root, variant, small_tree)
+    }
+
+    /// A fixture whose snapshot holds the folder of [`big_tree`].
+    fn start_big(root: &Path, variant: &ResticVariant) -> Self {
+        Self::start(root, variant, big_tree)
+    }
+
     fn src_dir(&self) -> String {
         self.src.to_string_lossy().into_owned()
     }
@@ -99,31 +109,18 @@ impl Fixture {
 
     /// Waits until query `query_id` is done and returns the `ls` result of `page`.
     fn wait_ls(&self, query_id: &str, page: &SnapshotQueryPage) -> LsResultDto {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            let st = self.status(query_id, page);
-            if st.state != "running" {
-                assert_eq!(st.state, "done", "query ended with {st:?}");
-                let Some(SnapshotQueryResultDto::Ls(ls)) = st.result else {
-                    panic!("ls result expected: {st:?}");
-                };
-                return ls;
-            }
-            assert!(Instant::now() < deadline, "query still running");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        let st = wait_query(&self.rig.daemon.client, query_id, page);
+        assert_eq!(st.state, "done", "query ended with {st:?}");
+        let Some(SnapshotQueryResultDto::Ls(ls)) = st.result else {
+            panic!("ls result expected: {st:?}");
+        };
+        ls
     }
 
     /// Lists `dir` and returns its first page of up to 1000 entries.
     fn list(&self, dir: &str) -> LsResultDto {
         let id = self.start_ls(dir);
-        self.wait_ls(
-            &id,
-            &SnapshotQueryPage {
-                limit: 1000,
-                ..SnapshotQueryPage::default()
-            },
-        )
+        self.wait_ls(&id, &big_page())
     }
 
     /// Arguments of every `restic ls` call so far, split at spaces.
@@ -137,11 +134,9 @@ impl Fixture {
     }
 }
 
-fn for_each_variant(root: &Path, make_tree: fn(&Path) -> PathBuf, body: impl Fn(&Fixture, &str)) {
-    for variant in restic_variants() {
-        let fixture = Fixture::start(root, &variant, make_tree);
-        body(&fixture, variant.label);
-        fixture.rig.daemon.stop();
+impl VariantFixture for Fixture {
+    fn stop(self) {
+        self.rig.daemon.stop();
     }
 }
 
@@ -173,7 +168,8 @@ fn ac_m4_03_1_folder_list_matches_restic_ls_without_mount() {
         "ac_m4_03_1_folder_list_matches_restic_ls_without_mount",
         "KESTIC_AC_M4_03_1_INNER",
         |root| {
-            for_each_variant(root, small_tree, |fx, label| {
+            for_each_variant_with(root, Fixture::start_small, |fx, v| {
+                let label = v.label;
                 let top = fx.src_dir();
                 for dir in [
                     top.clone(),
@@ -229,7 +225,8 @@ fn ac_m4_03_2_top_folder_lists_one_level_with_one_folder_argument() {
         "ac_m4_03_2_top_folder_lists_one_level_with_one_folder_argument",
         "KESTIC_AC_M4_03_2_INNER",
         |root| {
-            for_each_variant(root, big_tree, |fx, label| {
+            for_each_variant_with(root, Fixture::start_big, |fx, v| {
+                let label = v.label;
                 let top = fx.src_dir();
                 let ls = fx.list(&top);
                 let calls = fx.ls_calls();
@@ -278,7 +275,8 @@ fn ac_m4_03_5_pages_of_200_reach_every_entry_exactly_once() {
         "ac_m4_03_5_pages_of_200_reach_every_entry_exactly_once",
         "KESTIC_AC_M4_03_5_INNER",
         |root| {
-            for_each_variant(root, big_tree, |fx, label| {
+            for_each_variant_with(root, Fixture::start_big, |fx, v| {
+                let label = v.label;
                 let id = fx.start_ls(&fx.src_dir());
                 let first = fx.wait_ls(&id, &SnapshotQueryPage::default());
                 assert_eq!(
@@ -328,7 +326,8 @@ fn ac_m4_03_6_filter_finds_37_names_in_any_case() {
         "ac_m4_03_6_filter_finds_37_names_in_any_case",
         "KESTIC_AC_M4_03_6_INNER",
         |root| {
-            for_each_variant(root, big_tree, |fx, label| {
+            for_each_variant_with(root, Fixture::start_big, |fx, v| {
+                let label = v.label;
                 let id = fx.start_ls(&fx.src_dir());
                 let page = SnapshotQueryPage {
                     offset: 0,
@@ -365,7 +364,8 @@ fn m4_s03_cancel_snapshot_query_stops_restic_ls() {
         "m4_s03_cancel_snapshot_query_stops_restic_ls",
         "KESTIC_M4_S03_CANCEL_INNER",
         |root| {
-            for_each_variant(root, small_tree, |fx, label| {
+            for_each_variant_with(root, Fixture::start_small, |fx, v| {
+                let label = v.label;
                 fx.rig.wrapper.hold("ls");
                 let id = fx.start_ls(&fx.src_dir());
                 let deadline = Instant::now() + Duration::from_secs(30);

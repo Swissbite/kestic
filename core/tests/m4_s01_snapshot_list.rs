@@ -194,6 +194,34 @@ fn m4_s07_kestic_tags_without_id_leave_the_snapshot_unassigned() {
     );
 }
 
+/// A snapshot with more than one `kestic:` ID has no unique Kestic tag: it is unassigned, (a)
+/// for two backups not configured here, not sorted under the backup of its first tag, and (b)
+/// for a configured and an unconfigured backup, not listed under the configured one; (c) one
+/// tag repeated stays unique.
+#[test]
+fn m4_s07_two_backup_tags_leave_the_snapshot_unassigned() {
+    let snapshots = vec![
+        snap("two", "2026-11-15T12:00:00Z", &["kestic:x9", "kestic:y8"]),
+        snap("twice", "2026-11-14T12:00:00Z", &["kestic:x9", "kestic:x9"]),
+        snap("mixed", "2026-11-13T12:00:00Z", &["kestic:b1", "kestic:x9"]),
+    ];
+    let sorted = sort_destination_snapshots(snapshots, &["b1"]);
+    let unassigned: Vec<&str> = sorted.unassigned.iter().map(|s| s.id.as_str()).collect();
+    assert!(unassigned.contains(&"two"), "(a) {unassigned:?}");
+    assert!(unassigned.contains(&"mixed"), "(b) {unassigned:?}");
+    assert!(sorted.backups[0].1.is_empty(), "(b) b1 lists none");
+    let orphaned: Vec<(&str, Vec<&str>)> = sorted
+        .orphaned
+        .iter()
+        .map(|(id, s)| (id.as_str(), s.iter().map(|s| s.id.as_str()).collect()))
+        .collect();
+    assert_eq!(
+        orphaned,
+        [("x9", vec!["twice"])],
+        "(c) one tag repeated: orphaned under it"
+    );
+}
+
 /// AC-M4-01-1: a repository password that also occurs inside the snapshot JSON (here the
 /// backup ID in every `kestic:<id>` tag, generated at runtime) does not change the listed
 /// snapshots: (a) both snapshots of the backup are listed, still under their backup.

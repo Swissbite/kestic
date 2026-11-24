@@ -7,8 +7,8 @@
 use super::error::{KesticServiceErr, backup_run_error_kind, map_provider_err, parse_backup_id};
 use super::state::DaemonCore;
 use crate::dbus_api::{
-    BackupSnapshotCountDto, BackupSnapshotsDto, DescribedBackupDto, DestinationSnapshotsDto,
-    OrphanedBackupDto, PreviousDestinationSnapshotsDto, SnapshotSummaryDto,
+    BackupSnapshotCountDto, BackupSnapshotsDto, DestinationSnapshotsDto, OrphanedBackupDto,
+    PreviousDestinationSnapshotsDto, SnapshotSummaryDto,
 };
 use kestic_core::backup::{
     SnapshotListAccess, list_destination_snapshots, list_snapshots_for_backup,
@@ -59,8 +59,8 @@ impl ListDeps<'_> {
             self.clock,
             &[],
         )?;
-        // Like the destination list: neither a metadata snapshot nor one tagged for several
-        // configured backups belongs to it.
+        // Like the destination list: neither a metadata snapshot nor one tagged with more than
+        // one backup ID belongs to it.
         snaps.retain(|s| s.assigned_backup(self.configured) == Some(b_id.as_str()));
         sort_newest_first(&mut snaps);
         Ok(to_dtos(snaps))
@@ -77,10 +77,15 @@ fn collect_backup_snapshots(
     other_dests: &[Destination],
     deps: &ListDeps<'_>,
 ) -> BackupSnapshotsDto {
-    let (current_snapshots, current_error) = match deps.backup_snapshots(b_id, current_dest) {
-        Ok(snaps) => (snaps, None),
-        Err(err) => (Vec::new(), Some(err.to_string())),
-    };
+    let (current_snapshots, current_error, current_error_kind) =
+        match deps.backup_snapshots(b_id, current_dest) {
+            Ok(snaps) => (snaps, None, None),
+            Err(err) => (
+                Vec::new(),
+                Some(err.to_string()),
+                Some(backup_run_error_kind(&err)),
+            ),
+        };
 
     // Earlier `kestic:<backup-id>` snapshots on the other configured destinations.
     let previous_destinations = other_dests
@@ -100,6 +105,7 @@ fn collect_backup_snapshots(
         current_destination_name: current_dest.name.clone(),
         current_snapshots,
         current_error,
+        current_error_kind,
         previous_destinations,
     }
 }
@@ -214,26 +220,13 @@ fn fill_destination_snapshots(
         })
         .collect();
     dto.unassigned = to_dtos(sorted.unassigned);
-    dto.orphaned = sorted
-        .orphaned
-        .into_iter()
-        .map(|(id, snaps)| OrphanedBackupDto {
-            backup_id: id,
-            count: snaps.len() as u64,
-            latest_time: snaps.first().map(|s| s.time.clone()),
-            latest_hostname: snaps.first().and_then(|s| s.hostname.clone()),
-            snapshots: to_dtos(snaps),
-        })
-        .collect();
-    dto.described = sorted
-        .described
-        .into_iter()
-        .map(|(id, snaps)| DescribedBackupDto {
-            backup_id: id,
-            count: snaps.len() as u64,
-            latest_time: snaps.first().map(|s| s.time.clone()),
-            latest_hostname: snaps.first().and_then(|s| s.hostname.clone()),
-            snapshots: to_dtos(snaps),
-        })
-        .collect();
+    let group = |(id, snaps): (String, Vec<ResticSnapshot>)| OrphanedBackupDto {
+        backup_id: id,
+        count: snaps.len() as u64,
+        latest_time: snaps.first().map(|s| s.time.clone()),
+        latest_hostname: snaps.first().and_then(|s| s.hostname.clone()),
+        snapshots: to_dtos(snaps),
+    };
+    dto.orphaned = sorted.orphaned.into_iter().map(group).collect();
+    dto.described = sorted.described.into_iter().map(group).collect();
 }

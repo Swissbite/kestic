@@ -7,18 +7,18 @@
 //! by kind of change.
 
 use super::qobject;
-use super::rows::{role_names, row_count, row_data};
 use super::snapshot_query::{
-    QueryRun, StartPoll, count_text, fetch_error_text, format_count, to_i32, too_large_text,
+    Fetched, QueryList, QueryListModel, QueryListView, count_text, format_count, to_i32,
+    too_large_text,
 };
 use crate::state_cache::{i18n, i18np, tr};
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant};
-use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter};
+use cxx_qt_lib::{QString, QStringList};
+use kestic_core::query_list::{PageFilter, QueryState};
 use kestic_daemon::dbus_api::{
-    DiffChangeDto, DiffResultDto, KesticDbusError, RestoreOutcome, SnapshotChange,
-    SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
+    DiffChangeDto, DiffResultDto, RestoreOutcome, SnapshotChange, SnapshotQueryPage,
+    SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use std::pin::Pin;
 
@@ -33,7 +33,7 @@ model_row!(DiffRow {
 
 #[derive(Default)]
 pub struct SnapshotDiffModelRust {
-    rows: Vec<DiffRow>,
+    list: QueryList<DiffRow>,
     pub(crate) state: QString,
     pub(crate) error_text: QString,
     pub(crate) identical: bool,
@@ -48,8 +48,6 @@ pub struct SnapshotDiffModelRust {
     destination_id: String,
     from_snapshot_id: String,
     to_snapshot_id: String,
-    filter: PageFilter,
-    query: QueryRun,
 }
 
 /// Text of a kind of change, as the «Change» column and the filter chips show it.
@@ -60,7 +58,7 @@ pub(crate) fn change_text(change: SnapshotChange) -> String {
         SnapshotChange::Removed => i18n("Removed").subs(&[]),
         // restic reports metadata changes only with `--metadata`, which Kestic does not pass;
         // one that comes anyway reads as changed.
-        SnapshotChange::Modified | SnapshotChange::Metadata => i18n("Changed").subs(&[]),
+        SnapshotChange::Modified => i18n("Changed").subs(&[]),
         SnapshotChange::TypeChanged => i18n("Type changed").subs(&[]),
         SnapshotChange::Bitrot => i18n("Content changed, metadata unchanged").subs(&[]),
     }
@@ -71,7 +69,7 @@ pub(crate) fn change_icon(change: SnapshotChange) -> &'static str {
     match change {
         SnapshotChange::Added => "list-add",
         SnapshotChange::Removed => "list-remove",
-        SnapshotChange::Modified | SnapshotChange::Metadata => "document-edit",
+        SnapshotChange::Modified => "document-edit",
         SnapshotChange::TypeChanged => "document-swap",
         SnapshotChange::Bitrot => "dialog-warning",
     }
@@ -102,45 +100,65 @@ pub(crate) fn chip_text(change: SnapshotChange, count: u64) -> String {
     GuiText::TwoParts.with_args(&[&change_text(change), &format_count(count)])
 }
 
-impl SnapshotDiffModelRust {
-    /// Fetches the page at `offset` of the changes matching `filter`: `Ok(None)` while the
-    /// comparison runs.
-    fn fetch(
-        &mut self,
-        offset: u64,
-        limit: u32,
-        filter: PageFilter,
-    ) -> Result<Option<DiffResultDto>, KesticDbusError> {
-        let page = SnapshotQueryPage {
-            offset,
-            limit,
-            filter,
-        };
-        match self.query.fetch_page(&page)? {
-            Some(SnapshotQueryResultDto::Diff(diff)) => Ok(Some(diff)),
-            Some(_) => Err(KesticDbusError::Internal(
-                "unexpected snapshot query result".to_string(),
-            )),
-            None => Ok(None),
+query_list_model!(
+    SnapshotDiffModel,
+    DiffRow,
+    begin_reset: begin_reset_diff,
+    end_reset: end_reset_diff,
+    begin_insert: begin_insert_rows_diff,
+    end_insert: end_insert_rows_diff,
+);
+
+impl QueryListModel for qobject::SnapshotDiffModel {
+    type Page = DiffResultDto;
+
+    fn page_of(result: SnapshotQueryResultDto) -> Option<DiffResultDto> {
+        match result {
+            SnapshotQueryResultDto::Diff(diff) => Some(diff),
+            _ => None,
         }
     }
 
-    /// The kinds of change present in the comparison with their number, in the order of
-    /// [`SnapshotChange::ALL`].
-    fn kind_counts(&mut self) -> Result<Vec<(SnapshotChange, u64)>, KesticDbusError> {
-        let mut out = Vec::new();
-        for change in SnapshotChange::ALL {
-            let filter = PageFilter {
-                text: String::new(),
-                kinds: vec![change.as_str().to_string()],
-            };
-            if let Some(diff) = self.fetch(0, 1, filter)?
-                && diff.changes.matched > 0
-            {
-                out.push((change, diff.changes.matched));
+    fn page_rows(&self, diff: &DiffResultDto) -> Vec<DiffRow> {
+        diff.changes.items.iter().map(row_for).collect()
+    }
+
+    /// Shows the first page; when the comparison just ended, also the kinds of change present.
+    fn show_first_page(mut self: Pin<&mut Self>, diff: DiffResultDto) {
+        let first_load = self.query_state() != Some(QueryState::Done);
+        let changes = &diff.changes;
+        if first_load && !changes.too_large && changes.total > 0 {
+            match self.as_mut().kind_counts() {
+                Fetched::Page(counts) => self.as_mut().apply_kind_counts(&counts),
+                Fetched::Running => {}
+                Fetched::Gone => return self.restart(),
+                Fetched::Failed(failure) => return self.fail_query(&failure),
             }
         }
-        Ok(out)
+        let rows = self.page_rows(&diff);
+        self.as_mut().reset_rows(rows);
+        self.as_mut().set_identical(diff.identical);
+        self.as_mut().set_too_large(changes.too_large);
+        self.as_mut().set_total(to_i32(changes.total));
+        self.as_mut().set_matched(to_i32(changes.matched));
+        // A list too large to hold cannot be filtered: its count is the total.
+        let filtered = !self.list.filter.is_empty() && !changes.too_large;
+        let count = changes_count_text(changes.total, changes.matched, filtered);
+        self.as_mut().set_count_text(QString::from(&count));
+        self.as_mut()
+            .set_too_large_text(QString::from(&too_large_text(changes.total)));
+        self.as_mut().set_error_text(QString::from(""));
+        self.set_query_state(Some(QueryState::Done));
+    }
+
+    /// Compares again; the filter stays.
+    fn restart(mut self: Pin<&mut Self>) {
+        let dest = QString::from(&self.destination_id);
+        let from = QString::from(&self.from_snapshot_id);
+        let to = QString::from(&self.to_snapshot_id);
+        let filter = self.list.filter.clone();
+        self.as_mut().compare(&dest, &from, &to);
+        self.as_mut().list_mut().filter = filter;
     }
 }
 
@@ -152,17 +170,14 @@ impl qobject::SnapshotDiffModel {
         from_snapshot_id: &QString,
         to_snapshot_id: &QString,
     ) {
-        self.as_mut().abandon();
+        self.as_mut().abandon_query();
         {
             let mut rust = self.as_mut().rust_mut();
             rust.destination_id = destination_id.to_string();
             rust.from_snapshot_id = from_snapshot_id.to_string();
             rust.to_snapshot_id = to_snapshot_id.to_string();
-            rust.filter = PageFilter::default();
         }
-        self.as_mut().begin_reset_diff();
-        self.as_mut().rust_mut().rows.clear();
-        self.as_mut().end_reset_diff();
+        self.as_mut().clear_list();
         self.as_mut().set_identical(false);
         self.as_mut().set_too_large(false);
         self.as_mut().set_total(0);
@@ -176,98 +191,42 @@ impl qobject::SnapshotDiffModel {
             &from_snapshot_id.to_string(),
             &to_snapshot_id.to_string(),
         );
-        self.as_mut().rust_mut().query.start(request);
-        self.as_mut().set_state(QString::from("running"));
-    }
-
-    /// Checks the running comparison (called by a timer while `state` is `running`).
-    pub fn poll(mut self: Pin<&mut Self>) {
-        match self.as_mut().rust_mut().query.poll_start() {
-            StartPoll::Waiting => {}
-            StartPoll::Failed(text) => self.as_mut().fail(&text),
-            StartPoll::Started => self.as_mut().load_first_page(),
-        }
-    }
-
-    /// Filters the changes by `text` (any case, in the paths); the daemon filters.
-    pub fn set_filter(mut self: Pin<&mut Self>, text: &QString) {
-        let text = text.to_string();
-        if text == self.filter.text {
-            return;
-        }
-        self.as_mut().rust_mut().filter.text = text;
-        self.as_mut().reload_if_done();
+        self.as_mut().start_query(request);
     }
 
     /// Shows only the changes of the kinds `codes` (`SnapshotChange` codes); none shows all.
-    pub fn set_kinds(mut self: Pin<&mut Self>, codes: &QStringList) {
+    pub fn set_kinds(self: Pin<&mut Self>, codes: &QStringList) {
         let kinds: Vec<String> = codes
             .iter()
             .map(ToString::to_string)
             .filter(|code| SnapshotChange::parse(code).is_some())
             .collect();
-        if kinds == self.filter.kinds {
-            return;
-        }
-        self.as_mut().rust_mut().filter.kinds = kinds;
-        self.as_mut().reload_if_done();
+        self.set_filter_kinds(kinds);
     }
 
-    /// Stops the running comparison (the user cancels it or the page closes).
-    pub fn cancel(self: Pin<&mut Self>) {
-        self.abandon();
-    }
-
-    fn reload_if_done(mut self: Pin<&mut Self>) {
-        if self.state.to_string() == "done" {
-            self.as_mut().load_first_page();
-        }
-    }
-
-    fn abandon(mut self: Pin<&mut Self>) {
-        if self.state.to_string() != "running" {
-            return;
-        }
-        self.as_mut().rust_mut().query.abandon();
-        self.as_mut().set_state(QString::from("cancelled"));
-    }
-
-    fn fail(mut self: Pin<&mut Self>, text: &str) {
-        self.as_mut().set_error_text(QString::from(text));
-        self.as_mut().set_state(QString::from("error"));
-    }
-
-    fn load_first_page(mut self: Pin<&mut Self>) {
-        let first_load = self.state.to_string() != "done";
-        let filter = self.filter.clone();
-        let res = self
-            .as_mut()
-            .rust_mut()
-            .fetch(0, DEFAULT_PAGE_LIMIT, filter);
-        let diff = match res {
-            Ok(None) => return,
-            Ok(Some(diff)) => diff,
-            Err(KesticDbusError::NotFound(_)) => return self.as_mut().compare_again(),
-            Err(err) => return self.as_mut().fail(&fetch_error_text(err)),
-        };
-        if first_load && !diff.changes.too_large && diff.changes.total > 0 {
-            match self.as_mut().rust_mut().kind_counts() {
-                Ok(counts) => self.as_mut().apply_kind_counts(&counts),
-                Err(KesticDbusError::NotFound(_)) => return self.as_mut().compare_again(),
-                Err(err) => return self.as_mut().fail(&fetch_error_text(err)),
+    /// The kinds of change present in the comparison with their number, in the order of
+    /// [`SnapshotChange::ALL`].
+    fn kind_counts(mut self: Pin<&mut Self>) -> Fetched<Vec<(SnapshotChange, u64)>> {
+        let mut out = Vec::new();
+        for change in SnapshotChange::ALL {
+            let page = SnapshotQueryPage {
+                offset: 0,
+                limit: 1,
+                filter: PageFilter {
+                    text: String::new(),
+                    kinds: vec![change.as_str().to_string()],
+                },
+            };
+            match self.as_mut().fetch(&page) {
+                Fetched::Page(diff) if diff.changes.matched > 0 => {
+                    out.push((change, diff.changes.matched));
+                }
+                Fetched::Page(_) | Fetched::Running => {}
+                Fetched::Gone => return Fetched::Gone,
+                Fetched::Failed(failure) => return Fetched::Failed(failure),
             }
         }
-        self.as_mut().apply_first_page(&diff);
-    }
-
-    /// Compares again (the daemon freed the old result); the filter stays.
-    fn compare_again(mut self: Pin<&mut Self>) {
-        let dest = QString::from(&self.destination_id);
-        let from = QString::from(&self.from_snapshot_id);
-        let to = QString::from(&self.to_snapshot_id);
-        let filter = self.filter.clone();
-        self.as_mut().compare(&dest, &from, &to);
-        self.as_mut().rust_mut().filter = filter;
+        Fetched::Page(out)
     }
 
     fn apply_kind_counts(mut self: Pin<&mut Self>, counts: &[(SnapshotChange, u64)]) {
@@ -279,71 +238,6 @@ impl qobject::SnapshotDiffModel {
         }
         self.as_mut().set_kind_codes(codes);
         self.as_mut().set_kind_texts(texts);
-    }
-
-    fn apply_first_page(mut self: Pin<&mut Self>, diff: &DiffResultDto) {
-        let changes = &diff.changes;
-        let rows: Vec<DiffRow> = changes.items.iter().map(row_for).collect();
-        self.as_mut().begin_reset_diff();
-        self.as_mut().rust_mut().rows = rows;
-        self.as_mut().end_reset_diff();
-        self.as_mut().set_identical(diff.identical);
-        self.as_mut().set_too_large(changes.too_large);
-        self.as_mut().set_total(to_i32(changes.total));
-        self.as_mut().set_matched(to_i32(changes.matched));
-        // A list too large to hold cannot be filtered: its count is the total.
-        let filtered = !self.filter.is_empty() && !changes.too_large;
-        let count = changes_count_text(changes.total, changes.matched, filtered);
-        self.as_mut().set_count_text(QString::from(&count));
-        self.as_mut()
-            .set_too_large_text(QString::from(&too_large_text(changes.total)));
-        self.as_mut().set_error_text(QString::from(""));
-        self.as_mut().set_state(QString::from("done"));
-    }
-
-    pub fn can_fetch_more(&self, parent: &QModelIndex) -> bool {
-        !parent.is_valid()
-            && self.state.to_string() == "done"
-            && !self.too_large
-            && i32::try_from(self.rows.len()).unwrap_or(i32::MAX) < self.matched
-    }
-
-    /// Appends the next page (at most 200 changes) at the end of the list.
-    pub fn fetch_more(mut self: Pin<&mut Self>, parent: &QModelIndex) {
-        if !self.can_fetch_more(parent) {
-            return;
-        }
-        let offset = self.rows.len() as u64;
-        let filter = self.filter.clone();
-        let res = self
-            .as_mut()
-            .rust_mut()
-            .fetch(offset, DEFAULT_PAGE_LIMIT, filter);
-        match res {
-            Ok(Some(diff)) if !diff.changes.items.is_empty() => {
-                let rows: Vec<DiffRow> = diff.changes.items.iter().map(row_for).collect();
-                let first = row_count(&self.rows);
-                let last = first + row_count(&rows) - 1;
-                self.as_mut().begin_insert_rows_diff(parent, first, last);
-                self.as_mut().rust_mut().rows.extend(rows);
-                self.as_mut().end_insert_rows_diff();
-            }
-            Ok(_) => {}
-            Err(KesticDbusError::NotFound(_)) => self.as_mut().compare_again(),
-            Err(err) => self.as_mut().fail(&fetch_error_text(err)),
-        }
-    }
-
-    pub fn row_count(&self, _parent: &QModelIndex) -> i32 {
-        row_count(&self.rows)
-    }
-
-    pub fn role_names(&self) -> QHash<QHashPair_i32_QByteArray> {
-        role_names::<DiffRow>()
-    }
-
-    pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
-        row_data(&self.rows, index, role)
     }
 }
 
@@ -367,12 +261,6 @@ mod tests {
         });
         assert_eq!(dir.change_text, "New");
         assert!(dir.is_dir);
-        let metadata = row_for(&DiffChangeDto {
-            path: "/home/u/docs/b.txt".to_string(),
-            change: SnapshotChange::Metadata,
-        });
-        assert_eq!(metadata.change, "metadata");
-        assert_eq!(metadata.change_text, "Changed");
     }
 
     #[test]

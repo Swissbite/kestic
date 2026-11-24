@@ -116,7 +116,6 @@ Kirigami.ScrollablePage {
 
                 FocusRing {
                     target: snapRow
-                    ringColor: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                 }
 
                 contentItem: ColumnLayout {

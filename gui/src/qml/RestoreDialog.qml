@@ -23,8 +23,6 @@ Kirigami.Dialog {
     y: parent ? Math.max(0, Math.round((parent.height - implicitHeight) / 2)) : 0
 
     required property var model
-    // The kinds of outcome whose chip is checked; none shows all files.
-    property var checkedKinds: []
     property bool listShown: false
 
     // The list that gets the focus back when the dialog closes: the dialog may open from a
@@ -35,25 +33,11 @@ Kirigami.Dialog {
     // `focusList` (optional) gets the focus back on its current row afterwards.
     function openFor(destinationId, snapshotId, selection, focusList) {
         returnFocusList = focusList || null;
-        checkedKinds = [];
+        kindChips.uncheckAll();
         listShown = false;
-        previewFilter.text = "";
+        previewFilter.resetFilter();
         model.open(destinationId, snapshotId, selection);
         open();
-    }
-
-    // `text` for a Kirigami.InlineMessage, whose label shows rich text: escaped and marked as
-    // rich text, so names from a snapshot or the disk are always shown literally.
-    function literal(text) {
-        return "<span>" + text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-            + "</span>";
-    }
-
-    function toggleKind(code, checked) {
-        var kinds = checkedKinds.filter(function(k) { return k !== code; });
-        if (checked) kinds.push(code);
-        checkedKinds = kinds;
-        model.setKinds(kinds);
     }
 
     onOpened: (originalRadio.checked ? originalRadio : newFolderRadio).forceActiveFocus(Qt.TabFocusReason)
@@ -235,12 +219,12 @@ Kirigami.Dialog {
             }
         }
 
-        Kirigami.InlineMessage {
+        LiteralMessage {
             objectName: "restoreCheckMessage"
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
             visible: dialog.model !== null && dialog.model.check_text.length > 0
-            text: dialog.model ? dialog.literal(dialog.model.check_text) : ""
+            plainText: dialog.model ? dialog.model.check_text : ""
         }
 
         Kirigami.Separator {
@@ -262,12 +246,13 @@ Kirigami.Dialog {
             }
         }
 
-        Kirigami.InlineMessage {
+        // A refused original location stays refused: the error offers the new folder instead.
+        LiteralMessage {
             objectName: "restorePreviewError"
             Layout.fillWidth: true
             type: Kirigami.MessageType.Error
             visible: dialog.model !== null && dialog.model.state === "error"
-            text: dialog.model ? dialog.literal(dialog.model.error_text) : ""
+            plainText: dialog.model ? dialog.model.error_text : ""
             actions: [
                 Kirigami.Action {
                     objectName: "restoreFolderInsteadAction"
@@ -277,10 +262,20 @@ Kirigami.Dialog {
                     onTriggered: dialog.model.restoreFolderInstead()
                 },
                 Kirigami.Action {
+                    objectName: "restoreNewFolderInsteadAction"
+                    icon.name: "folder-new"
+                    text: i18n("Into a New Folder")
+                    visible: dialog.model !== null && dialog.model.target_original
+                        && dialog.model.folder_instead.length === 0
+                    onTriggered: dialog.model.chooseFolder("")
+                },
+                Kirigami.Action {
                     objectName: "restoreRetryAction"
                     icon.name: "view-refresh"
                     text: Texts.label("retry")
+                    // A refused target is refused again: only the new folder helps then.
                     visible: dialog.model !== null && dialog.model.folder_instead.length === 0
+                        && !dialog.model.target_refused
                     onTriggered: dialog.model.retry()
                 }
             ]
@@ -348,22 +343,13 @@ Kirigami.Dialog {
                 elide: Text.ElideRight
                 opacity: 0.8
             }
-            Kirigami.SearchField {
+            FilterField {
                 id: previewFilter
                 objectName: "restorePreviewFilter"
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 10
                 visible: dialog.model !== null && !dialog.model.too_large
-                placeholderText: Texts.label("filter")
-                Accessible.name: Texts.label("filter")
-                focusSequences: []
-                onTextChanged: previewFilterDelay.restart()
+                onFilterRequested: function(text) { dialog.model.setFilter(text); }
             }
-        }
-
-        Timer {
-            id: previewFilterDelay
-            interval: 300
-            onTriggered: dialog.model.setFilter(previewFilter.text)
         }
 
         Controls.Label {
@@ -375,28 +361,15 @@ Kirigami.Dialog {
             wrapMode: Text.WordWrap
         }
 
-        Flow {
+        KindChips {
+            id: kindChips
             objectName: "restoreKindChips"
             Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
             // One kind alone filters nothing.
             visible: dialog.listShown && restoreListView.visible
                 && dialog.model !== null && dialog.model.kind_codes.length > 1
-
-            Repeater {
-                model: dialog.model ? dialog.model.kind_codes : []
-                delegate: Kirigami.Chip {
-                    required property int index
-                    required property string modelData
-                    objectName: "restoreKindChip_" + modelData
-                    text: dialog.model.kind_texts[index]
-                    checkable: true
-                    closable: false
-                    checked: dialog.checkedKinds.indexOf(modelData) >= 0
-                    Accessible.name: text
-                    onToggled: dialog.toggleKind(modelData, checked)
-                }
-            }
+            listModel: dialog.model
+            namePrefix: "restoreKindChip_"
         }
 
         ListView {
@@ -426,9 +399,12 @@ Kirigami.Dialog {
                         textFormat: Text.PlainText
                         elide: Text.ElideMiddle
                     }
+                    // A column of its own, so the outcomes line up.
                     Controls.Label {
                         text: row.outcomeText
                         opacity: 0.75
+                        elide: Text.ElideRight
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
                     }
                     Controls.Label {
                         text: row.sizeText
@@ -439,7 +415,5 @@ Kirigami.Dialog {
                 }
             }
         }
-
-
     }
 }

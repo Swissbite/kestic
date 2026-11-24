@@ -7,7 +7,7 @@ use super::error::{KesticServiceErr, map_provider_err};
 use super::previews::PreviewEntry;
 use super::restore_runner::{PendingRestore, RestoreClaim};
 use super::run_errors::unreadable_items_from_lines;
-use super::snapshot_queries::QueryResult;
+use super::snapshot_queries::SharedResult;
 use super::supervision::SupervisionConfig;
 use crate::dbus_api::{
     ActiveRunProgressDto, BlockingStateDto, DaemonStateDto, DestinationAvailabilityDto,
@@ -228,7 +228,7 @@ pub struct DaemonCore {
     pub(super) sleep_in_progress: bool,
     pub(super) dry_runs: HashMap<String, PreviewEntry<BackupDryRunResult>>,
     pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
-    pub(super) snapshot_queries: QueryStore<QueryResult>,
+    pub(super) snapshot_queries: QueryStore<SharedResult>,
     pub(super) window_active: bool,
     pub(super) window_page: String,
     pub(crate) registered_gui_sender: Option<String>,
@@ -646,6 +646,11 @@ impl DaemonCore {
             any = true;
         }
         any
+    }
+
+    /// Whether the daemon is stopping: nothing new starts.
+    pub(super) fn stopping(&self) -> bool {
+        self.shutdown_flag.load(Ordering::SeqCst)
     }
 
     pub fn request_shutdown(&self) {

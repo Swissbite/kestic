@@ -23,11 +23,12 @@ pub const MAX_PAGE_LIMIT: u32 = 1000;
 /// Bytes counted per entry on top of the length of its path.
 pub const ENTRY_OVERHEAD_BYTES: u64 = 64;
 /// How long a finished query stays available after it was last fetched.
-pub const QUERY_RETENTION: Duration = Duration::minutes(10);
+const QUERY_RETENTION: Duration = Duration::minutes(10);
 
 const MIB: u64 = 1024 * 1024;
 
-/// Memory limits for the lists of all held queries, counted with [`entry_cost`].
+/// Memory limits for the lists of all held queries, counted as the length of each entry's
+/// path plus [`ENTRY_OVERHEAD_BYTES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueryLimits {
     /// Limit for the list of one query.
@@ -63,7 +64,7 @@ pub trait ListEntry {
 }
 
 /// Memory counted for `entry`: the length of its path plus [`ENTRY_OVERHEAD_BYTES`].
-pub fn entry_cost(entry: &impl ListEntry) -> u64 {
+fn entry_cost(entry: &impl ListEntry) -> u64 {
     entry.path().len() as u64 + ENTRY_OVERHEAD_BYTES
 }
 
@@ -335,8 +336,8 @@ pub struct HeldQuery<R> {
     last_access: OffsetDateTime,
 }
 
-/// The queries of the daemon by ID. Finished queries stay [`QUERY_RETENTION`] after their last
-/// fetch; when the lists of all queries would exceed the total limit, the finished queries
+/// The queries of the daemon by ID. Finished queries are kept for a fixed time after their
+/// last fetch; when the lists of all queries would exceed the total limit, the finished queries
 /// fetched longest ago are freed first.
 pub struct QueryStore<R> {
     queries: HashMap<String, HeldQuery<R>>,

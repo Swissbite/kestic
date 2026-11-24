@@ -5,6 +5,7 @@
 //! area, newest first, grouped by day, each with time, size and host; or the snapshots of one
 //! further group (unassigned, orphaned, not configured here) of all destinations.
 
+use super::destinations_model::location_text;
 use super::qobject;
 use super::restore_backups_model::snapshot_count_text;
 use super::restore_groups_model::SnapshotGroup;
@@ -17,6 +18,7 @@ use crate::time_texts::{
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use kestic_core::model::Destination;
 use kestic_core::snapshot::SnapshotSize;
 use kestic_core::snapshot_ls::start_dir;
 use kestic_core::sync::LockUnpoisoned;
@@ -259,19 +261,31 @@ fn push_group_rows(
     }
 }
 
-/// The configured destinations as (ID, name), in the order of the configuration.
+/// The configured destinations as (ID, name), in the order of the configuration. Destination
+/// names need not be unique: a name two destinations share gets the location added, so their
+/// groups get headings of their own.
 fn configured_destinations() -> Vec<(String, String)> {
     shared_state()
         .lock_unpoisoned()
         .state
         .as_ref()
-        .map_or_else(Vec::new, |s| {
-            s.config
-                .destinations
-                .iter()
-                .map(|d| (d.id.as_str().to_string(), d.name.clone()))
-                .collect()
+        .map_or_else(Vec::new, |s| destination_labels(&s.config.destinations))
+}
+
+/// (ID, name) of `destinations`, with the location added to a name more than one carries.
+pub(crate) fn destination_labels(destinations: &[Destination]) -> Vec<(String, String)> {
+    destinations
+        .iter()
+        .map(|d| {
+            let shared = destinations.iter().filter(|o| o.name == d.name).count() > 1;
+            let label = if shared {
+                GuiText::TwoParts.with_args(&[&d.name, &location_text(&d.kind)])
+            } else {
+                d.name.clone()
+            };
+            (d.id.as_str().to_string(), label)
         })
+        .collect()
 }
 
 /// Rows of `group` over all destinations whose snapshots are loaded.

@@ -142,7 +142,7 @@ impl ErrorKind {
             }
             Some(path) if self == Self::InvalidTarget && !path.trim().is_empty() => {
                 UiText::Message(Message::with_args(
-                    i18n_noop("Cannot restore safely to %1; restore into a new folder instead."),
+                    i18n_noop("Cannot safely restore to %1. Choose 'Into a new folder' instead."),
                     &[path],
                 ))
             }
@@ -724,6 +724,9 @@ impl RestoreTargetCode {
             Self::InsideRepository => {
                 i18n_noop("Restoring to %1 would write into the repository of a destination")
             }
+            Self::KesticData => i18n_noop(
+                "Restoring to %1 would overwrite Kestic's own settings and history. Deselect Kestic's folder or restore into a new folder.",
+            ),
         };
         Some(Message::with_args(msgid, &[detail]))
     }

@@ -23,8 +23,21 @@ QtObject {
         property int remainingTicks: 0
         property Item targetItem: null
         property Item targetPage: null
+        // The page's primary list takes the focus, on its highlighted row, once the list has
+        // created that row.
+        property bool preferSelection: false
         onTriggered: {
             manager.updatePageStackViewportAndFocusability();
+            if (preferSelection && targetPage) {
+                // Once the focus is in the list, its row stays: the user may have moved on.
+                var list = manager.focusInPrimaryList(targetPage)
+                    ? targetPage.primaryList
+                    : manager.selectPrimaryList(targetPage);
+                if (list) {
+                    targetItem = list;
+                    preferSelection = false;
+                }
+            }
             if (!targetItem && targetPage) {
                 targetItem = manager.findFirstTabFocusable(targetPage);
             }
@@ -135,20 +148,47 @@ QtObject {
         return "";
     }
 
+    // Whether the keyboard focus is in the primary list of `listPage`.
+    function focusInPrimaryList(listPage) {
+        var list = listPage ? listPage.primaryList : null;
+        for (var item = rootWindow.activeFocusItem; item && list; item = item.parent) {
+            if (item === list) return true;
+        }
+        return false;
+    }
+
+    // The primary list of `listPage` with its highlighted row made the current row, once; null
+    // while the list has not created that row. Later ticks focus the list, not a row: the list
+    // passes the focus to its current row, so a row the user moved to with the arrow keys keeps
+    // it.
+    function selectPrimaryList(listPage) {
+        var list = listPage ? listPage.primaryList : null;
+        return list && selectPrimaryListRow(listPage) ? list : null;
+    }
+
+    // The highlighted row of the primary list of `listPage`, made the list's current row; null
+    // without one.
+    function selectPrimaryListRow(listPage) {
+        var list = listPage ? listPage.primaryList : null;
+        if (!list) return null;
+        for (var i = 0; i < list.count; ++i) {
+            var item = list.itemAtIndex(i);
+            if (item && item.highlighted) {
+                list.currentIndex = i;
+                return item;
+            }
+        }
+        return null;
+    }
+
     function focusPrimaryListSelection() {
         if (pageStack.depth <= 0) return;
         var listPage = pageStack.get(0);
         if (!listPage) return;
-        var list = listPage.primaryList;
-        if (list) {
-            for (var i = 0; i < list.count; ++i) {
-                var item = list.itemAtIndex(i);
-                if (item && item.highlighted) {
-                    list.currentIndex = i;
-                    focusItemInPageStack(item);
-                    return;
-                }
-            }
+        var item = selectPrimaryListRow(listPage);
+        if (item) {
+            focusItemInPageStack(item);
+            return;
         }
         focusPageContent(listPage);
     }
@@ -268,6 +308,7 @@ QtObject {
         focusRestoreTimer.stop();
         focusRestoreTimer.targetItem = null;
         focusRestoreTimer.targetPage = null;
+        focusRestoreTimer.preferSelection = false;
         pendingRestoreFocusItem = null;
     }
 
@@ -326,7 +367,9 @@ QtObject {
         return null;
     }
 
-    function focusPageContent(pageItem) {
+    // Focuses the first control of `pageItem`; with `preferSelection` the highlighted row of its
+    // primary list instead, when it has one (a list page may hold other rows above or below it).
+    function focusPageContent(pageItem, preferSelection) {
         if (!pageItem) return;
         updatePageStackViewportAndFocusability();
         for (var i = 0; i < pageStack.depth; ++i) {
@@ -340,12 +383,18 @@ QtObject {
         updatePageStackViewportAndFocusability();
         focusRestoreTimer.targetPage = pageItem;
         focusRestoreTimer.targetItem = null;
+        focusRestoreTimer.preferSelection = Boolean(preferSelection);
         focusRestoreTimer.remainingTicks = 4;
         focusRestoreTimer.restart();
         Qt.callLater(function() {
             if (!pageItem) return;
             updatePageStackViewportAndFocusability();
-            var first = findFirstTabFocusable(pageItem);
+            var selected = preferSelection ? selectPrimaryList(pageItem) : null;
+            if (selected && focusRestoreTimer.targetPage === pageItem) {
+                // Selected once: the ticks after it only focus the list.
+                focusRestoreTimer.preferSelection = false;
+            }
+            var first = selected || findFirstTabFocusable(pageItem);
             if (first) {
                 focusItemInPageStack(first);
             } else {

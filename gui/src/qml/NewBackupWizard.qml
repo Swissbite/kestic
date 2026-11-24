@@ -309,7 +309,6 @@ WizardPage {
 
                         FocusRing {
                             target: destRow
-                            ringColor: destRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                         }
 
                         contentItem: RowLayout {

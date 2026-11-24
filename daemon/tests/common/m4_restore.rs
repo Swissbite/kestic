@@ -5,7 +5,10 @@
 //! destination, one backup «Home» and one snapshot of a folder, written directly with restic.
 
 use super::m3::{M3DaemonOpts, M3Rig, ResticVariant, add_local_destination};
-use super::m4::{RawSnapshot, backup_dir};
+use super::m4::{
+    RawSnapshot, VariantFixture, backup_dir, big_page, for_each_variant_with, small_tree,
+    wait_query,
+};
 use kestic_core::model::{Backup, Destination, RunStatus, Schedule};
 use kestic_daemon::dbus_api::{
     KesticDbusError, RestoreOverwrite, RestorePreviewResultDto, RestoreRequest, RestoreTarget,
@@ -135,15 +138,7 @@ impl RestoreFixture {
 
     /// Waits until query `query_id` has ended and returns its status with `page`.
     pub fn wait_query(&self, query_id: &str, page: &SnapshotQueryPage) -> SnapshotQueryStatusDto {
-        let deadline = Instant::now() + Duration::from_secs(90);
-        loop {
-            let st = self.status(query_id, page);
-            if st.state != "running" {
-                return st;
-            }
-            assert!(Instant::now() < deadline, "preview still running");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        wait_query(&self.rig.daemon.client, query_id, page)
     }
 
     /// The result of the finished preview `query_id` for `page`.
@@ -226,12 +221,49 @@ impl RestoreFixture {
     }
 }
 
-/// A page of up to 1000 entries without filter.
-pub fn big_page() -> SnapshotQueryPage {
-    SnapshotQueryPage {
-        limit: 1000,
-        ..SnapshotQueryPage::default()
+impl VariantFixture for RestoreFixture {
+    fn stop(self) {
+        self.rig.daemon.stop();
     }
+}
+
+/// Runs `body` once per restic version with a [`RestoreFixture`] (scheduler off) whose snapshot
+/// of the folder `make_tree` creates carries the tag of the backup «Home».
+pub fn for_each_variant(
+    root: &Path,
+    base: &str,
+    make_tree: fn(&Path) -> PathBuf,
+    body: impl Fn(&RestoreFixture, &ResticVariant),
+) {
+    for_each_variant_with(
+        root,
+        |root, variant| RestoreFixture::start(root, variant, base, make_tree, |_| {}),
+        body,
+    );
+}
+
+/// Like [`for_each_variant`] with the folder of [`small_tree`], but its snapshot carries `tag`
+/// (empty: none) instead of the tag of the backup «Home».
+pub fn for_each_tagged_variant(
+    root: &Path,
+    base: &str,
+    tag: &str,
+    body: impl Fn(&RestoreFixture, &ResticVariant),
+) {
+    for_each_variant_with(
+        root,
+        |root, variant| {
+            RestoreFixture::start_tagged(
+                root,
+                variant,
+                base,
+                small_tree,
+                |_| {},
+                |_| tag.to_string(),
+            )
+        },
+        body,
+    );
 }
 
 /// Relative path → content of every file below `dir` (symlinks as `-> target`).
