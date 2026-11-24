@@ -193,7 +193,8 @@ fn prepare_setup(
             .cloned()
             .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
         (
-            RestoreContext::from_config(&guard.config, dest, guard.timezone.clone()),
+            RestoreContext::from_config(&guard.config, dest, guard.timezone.clone())
+                .with_kestic_dirs(&guard.config_path, &guard.state_dir),
             guard.restic_deps(),
             guard.supervision_config(),
         )
@@ -215,10 +216,12 @@ fn prepare_setup(
         request.preview_id.as_deref(),
         &setup,
     );
-    if let Some(f) = facts
-        .as_ref()
-        .filter(|f| f.target_code == RestoreTargetCode::InsideRepository)
-    {
+    if let Some(f) = facts.as_ref().filter(|f| {
+        matches!(
+            f.target_code,
+            RestoreTargetCode::InsideRepository | RestoreTargetCode::KesticData
+        )
+    }) {
         return Err(invalid(format!(
             "{}: {}",
             f.target_code.as_str(),

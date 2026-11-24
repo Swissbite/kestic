@@ -3686,6 +3686,14 @@ msgstr "%1 existiert nicht; bitte einen Ordner wählen"
 msgid "Restoring to %1 would write into the repository of a destination"
 msgstr "Wiederherstellen nach %1 würde in das Repository eines Ziels schreiben"
 
+msgid ""
+"Restoring to %1 would overwrite Kestic's own settings and history. Deselect "
+"Kestic's folder or restore into a new folder."
+msgstr ""
+"Wiederherstellen nach %1 würde die Einstellungen und den Verlauf von Kestic "
+"überschreiben. Den Ordner von Kestic abwählen oder in einen neuen Ordner "
+"wiederherstellen."
+
 msgid "Nothing restored"
 msgstr "Nichts wiederhergestellt"
 

@@ -724,6 +724,9 @@ impl RestoreTargetCode {
             Self::InsideRepository => {
                 i18n_noop("Restoring to %1 would write into the repository of a destination")
             }
+            Self::KesticData => i18n_noop(
+                "Restoring to %1 would overwrite Kestic's own settings and history. Deselect Kestic's folder or restore into a new folder.",
+            ),
         };
         Some(Message::with_args(msgid, &[detail]))
     }

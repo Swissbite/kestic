@@ -3598,3 +3598,52 @@ fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
         },
     );
 }
+
+/// The daemon's configuration folder and a file beside it.
+fn config_tree(work: &Path) -> std::path::PathBuf {
+    let cfg = work.join("cfg");
+    fs::write(cfg.join("other.txt"), "other").expect("write other.txt");
+    cfg
+}
+
+/// A preview at the original location whose selection reaches Kestic's own configuration
+/// folder (a) is refused with `kestic_data`, (b) runs no dry run, and (c) `StartRestore` with it
+/// is refused; (d) a selection beside that folder previews as usual.
+#[test]
+fn m4_s05_selection_reaching_kestics_own_folder_is_refused() {
+    run_isolated_test(
+        "m4_s05_selection_reaching_kestics_own_folder_is_refused",
+        "KESTIC_M4_S05_KESTIC_DATA_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RX", config_tree, |_| {});
+            let (preview_id, p) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Never);
+            assert_eq!(
+                p.target.check.code,
+                RestoreTargetCode::KesticData,
+                "(a) {:?}",
+                p.target.check
+            );
+            assert!(dry_runs(&fx).is_empty(), "(b) {:?}", dry_runs(&fx));
+            let refused = fx.start_restore(
+                &[],
+                fx.original(),
+                RestoreOverwrite::Never,
+                Some(&preview_id),
+            );
+            assert!(
+                matches!(refused, Err(KesticDbusError::InvalidInput(_))),
+                "(c) {refused:?}"
+            );
+            let (_, beside) =
+                fx.preview(&["other.txt"], Some(fx.original()), RestoreOverwrite::Never);
+            assert_eq!(
+                beside.target.check.code,
+                RestoreTargetCode::ExistsNotEmpty,
+                "(d) {:?}",
+                beside.target.check
+            );
+            fx.rig.daemon.stop();
+        },
+    );
+}

@@ -21,7 +21,7 @@ use kestic_core::restore::{
     RestorePlan, RestoreTarget, folder_instead_of_unmatchable, normalize_selection, resolve_plan,
 };
 use kestic_core::restore_preview::{
-    PreviewClassification, PreviewRun, execute_preview, walk_folder, writes_into_repository,
+    PreviewClassification, PreviewRun, execute_preview, walk_folder, writes_into_folders,
 };
 use kestic_core::restore_target::{
     FolderWords, PreviewFingerprint, SuggestionInput, TargetCheck, check_target, current_uid,
@@ -31,7 +31,7 @@ use kestic_core::scheduler::{TimezoneSpec, to_local_offset};
 use kestic_core::snapshot::ResticSnapshot;
 use kestic_core::snapshot_ls::{normalize_snapshot_path, validate_snapshot_id};
 use kestic_i18n::codes::{RestoreOverwrite, RestoreTargetCode};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -107,6 +107,8 @@ pub(crate) struct RestoreContext {
     pub backups: Vec<(String, String)>,
     /// The repository folders of all local destinations; a restore never writes into them.
     pub repositories: Vec<PathBuf>,
+    /// Kestic's own configuration and data folders; a restore never writes into them.
+    pub kestic_dirs: Vec<PathBuf>,
     pub timezone: TimezoneSpec,
 }
 
@@ -132,8 +134,20 @@ impl RestoreContext {
                 })
                 .collect(),
             destination,
+            kestic_dirs: Vec::new(),
             timezone,
         }
+    }
+
+    /// With Kestic's own folders: the folder of `config_path` and `state_dir`.
+    pub(crate) fn with_kestic_dirs(mut self, config_path: &Path, state_dir: &Path) -> Self {
+        self.kestic_dirs = config_path
+            .parent()
+            .into_iter()
+            .chain(std::iter::once(state_dir))
+            .map(Path::to_path_buf)
+            .collect();
+        self
     }
 
     /// The configured backup the snapshot belongs to (its only configured `kestic:` tag).
@@ -261,14 +275,20 @@ pub(crate) fn execute_restore_preview(
     let mut dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
         let tree = walk_folder(access, &plan, &params.selection, cancel, limit_bytes)?;
-        if writes_into_repository(
-            &tree,
-            &plan,
-            &params.selection,
-            &check.resolved,
-            ctx.repositories(),
-        ) {
-            check.code = RestoreTargetCode::InsideRepository;
+        let reaches = |folders: &[PathBuf]| {
+            writes_into_folders(&tree, &plan, &params.selection, &check.resolved, folders)
+        };
+        // The selection would write into a repository, or into the folders the daemon itself
+        // runs on: refused without a dry run.
+        let refused = if reaches(ctx.repositories()) {
+            Some(RestoreTargetCode::InsideRepository)
+        } else if reaches(&ctx.kestic_dirs) {
+            Some(RestoreTargetCode::KesticData)
+        } else {
+            None
+        };
+        if let Some(code) = refused {
+            check.code = code;
             dry_run = false;
             PreviewClassification::empty()
         } else {

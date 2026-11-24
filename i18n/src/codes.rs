@@ -341,6 +341,9 @@ code_enum! {
         /// The target lies inside the repository of a local destination, or the selection
         /// would write into such a repository below the target.
         InsideRepository => "inside_repository",
+        /// The selection would write into Kestic's own configuration or data folder below
+        /// the target.
+        KesticData => "kestic_data",
     }
 }
 

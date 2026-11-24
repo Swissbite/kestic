@@ -658,18 +658,18 @@ pub(crate) fn find_at_target(target: &Path, item: &str) -> AtTarget {
 }
 
 /// Whether the restore of `selection` with `plan` into the resolved `target` would write into
-/// the repository of a local destination (`repositories`) that lies below it: only entries of
-/// the selection count, so a snapshot without the repository folder, or a selection outside it,
-/// restores as usual.
-pub fn writes_into_repository(
+/// one of `folders` below it (the repository of a local destination, Kestic's own folders):
+/// only entries of the selection count, so a snapshot without such a folder, or a selection
+/// outside it, restores as usual.
+pub fn writes_into_folders(
     tree: &SnapshotTree,
     plan: &RestorePlan,
     selection: &[String],
     target: &Path,
-    repositories: &[std::path::PathBuf],
+    folders: &[std::path::PathBuf],
 ) -> bool {
     let selected = crate::restore::selected_paths(plan, selection);
-    crate::restore_target::repositories_below(target, repositories)
+    crate::restore_target::repositories_below(target, folders)
         .iter()
         .any(|repo| tree.writes_below(selected.as_deref(), repo))
 }

@@ -258,7 +258,8 @@ pub fn start_snapshot_query_async(
         let now = guard.clock.now_utc();
         let limit_bytes = guard.snapshot_queries.limits().per_query_bytes;
         let restore_ctx =
-            RestoreContext::from_config(&guard.config, dest.clone(), guard.timezone.clone());
+            RestoreContext::from_config(&guard.config, dest.clone(), guard.timezone.clone())
+                .with_kestic_dirs(&guard.config_path, &guard.state_dir);
         guard
             .snapshot_queries
             .register(query_id.clone(), cancel.clone(), now);
