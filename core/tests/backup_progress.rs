@@ -161,9 +161,12 @@ fn fast_run_whose_search_never_ends_before_the_end_shows_no_percentage() {
     );
 }
 
+/// Lines with `seconds_remaining` the real run must send at least, so that the checks of the
+/// finished scan compare real values. restic 0.20.0 sends 50 to 70, 0.18.0 more than 300.
+const MIN_LINES_WITH_SECONDS_REMAINING: usize = 10;
+
 /// Real restic output of 0.18.0 and the current version: the phase only changes with
-/// `seconds_remaining`, and the shown percentage never falls. Whether a run this small ever gets
-/// `seconds_remaining` depends on the machine, so both outcomes are accepted.
+/// `seconds_remaining`, and the shown percentage never falls.
 #[test]
 fn real_restic_backup_progress_follows_seconds_remaining_and_never_falls() {
     for (label, restic_bin) in common::restic_test_binaries() {
@@ -172,42 +175,48 @@ fn real_restic_backup_progress_follows_seconds_remaining_and_never_falls() {
         let src = tmp.path().join("src");
         let cache = tmp.path().join("cache");
         fs::create_dir_all(&src).expect("src dir");
-        // Incompressible data, large enough that restic sends status lines before it ends.
+        // 48 MB of incompressible data.
         let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
-        for i in 0..6 {
-            let data: Vec<u8> = (0..4_000_000)
-                .map(|_| {
+        for i in 0..12 {
+            let data: Vec<u8> = (0..500_000)
+                .flat_map(|_| {
                     seed ^= seed << 13;
                     seed ^= seed >> 7;
                     seed ^= seed << 17;
-                    seed.to_le_bytes()[3]
+                    seed.to_le_bytes()
                 })
                 .collect();
             fs::write(src.join(format!("file-{i}.bin")), data).expect("write source file");
         }
         // The repository is only the object of the backup: a prepared copy, not a fresh init.
         let test_repo = copy_template_repo(&restic_bin, &repo);
-        let restic = |args: &[&str]| {
-            Command::new(&restic_bin)
-                .arg("-r")
-                .arg(&repo)
-                .args(args)
-                .env("RESTIC_PASSWORD", &test_repo.password)
-                .env("RESTIC_CACHE_DIR", &cache)
-                .output()
-                .expect("run restic")
-        };
-        // restic prints a status line only on its progress tick (every 1/60 s in 0.18, every
-        // 1/10 s from 0.19 on) and none when the backup ends, so a backup that finishes within
-        // one tick prints none. The upload limit of 8 MiB/s (after a burst of one second's
-        // worth) makes the 24 MB take at least two seconds on any machine.
-        let out = restic(&[
-            "backup",
-            "--json",
-            "--limit-upload",
-            "8192",
-            src.to_str().expect("utf-8 path"),
-        ]);
+        // restic counts data as processed once it waits for the upload, and sends
+        // `seconds_remaining` only while more than a second of work is left. The upload limit
+        // makes the backup slower than any machine reads, and one Go thread, one file read at a
+        // time, one upload at a time and the smallest packs keep little data waiting (about
+        // 12 MB): so restic reads the rest at the upload rate and sends `seconds_remaining` for
+        // several seconds, with a percentage below 100. The run takes about ten seconds.
+        let out = Command::new(&restic_bin)
+            .arg("-r")
+            .arg(&repo)
+            .args([
+                "backup",
+                "--json",
+                "--pack-size",
+                "4",
+                "--read-concurrency",
+                "1",
+                "-o",
+                "local.connections=1",
+                "--limit-upload",
+                "4096",
+            ])
+            .arg(&src)
+            .env("RESTIC_PASSWORD", &test_repo.password)
+            .env("RESTIC_CACHE_DIR", &cache)
+            .env("GOMAXPROCS", "1")
+            .output()
+            .expect("run restic");
         assert!(
             out.status.success(),
             "{label}: backup failed: {}",
@@ -220,23 +229,52 @@ fn real_restic_backup_progress_follows_seconds_remaining_and_never_falls() {
             .iter()
             .position(|st| st.seconds_remaining.is_some_and(|s| s > 0))
             .unwrap_or(lines.len());
+        let with_remaining = lines
+            .iter()
+            .filter(|st| st.seconds_remaining.is_some_and(|s| s > 0))
+            .count();
 
         // (a) restic sends status lines we can parse.
         assert!(!lines.is_empty(), "{label}: no status lines");
+        // The run reaches the finished scan and stays in it for a while: the checks below
+        // compare real values.
+        assert!(
+            with_remaining >= MIN_LINES_WITH_SECONDS_REMAINING,
+            "{label}: {with_remaining} of {} lines carry seconds_remaining",
+            lines.len()
+        );
+        assert!(
+            lines[first_remaining..]
+                .iter()
+                .any(|st| st.percent_done > 0.0 && st.percent_done < 1.0),
+            "{label}: restic sends no percentage between 0 and 100 after the scan"
+        );
         // (b) Before seconds_remaining: scanning without percentage.
         for p in &shown[..first_remaining] {
             assert_eq!(p.phase, RunProgressPhase::Scanning, "{label}: phase");
             assert_eq!(p.percent_done, 0.0, "{label}: percent while scanning");
         }
-        // (c) From seconds_remaining on: scan finished.
-        for p in &shown[first_remaining..] {
+        // (c) From seconds_remaining on: scan finished, with restic's percentage and time left.
+        for (p, st) in shown[first_remaining..]
+            .iter()
+            .zip(&lines[first_remaining..])
+        {
             assert_eq!(p.phase, RunProgressPhase::ScanFinished, "{label}: phase");
+            assert_eq!(
+                p.seconds_remaining,
+                st.seconds_remaining.filter(|s| *s > 0),
+                "{label}: time left follows restic"
+            );
         }
-        // (d) The shown percentage never falls.
+        // (d) The shown percentage never falls, and it grows after the scan.
         assert_eq!(
             largest_drop(shown.iter().map(|p| p.percent_done)),
             0.0,
             "{label}: shown percentage fell"
+        );
+        assert!(
+            shown.last().map(|p| p.percent_done) > Some(shown[first_remaining].percent_done),
+            "{label}: the percentage grows after the scan"
         );
         // (e) The amount looked through is visible.
         assert!(
