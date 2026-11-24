@@ -162,14 +162,75 @@ fn ac_m4_07_7_destination_snapshots_are_sorted_meta_backup_orphaned_unassigned()
     assert_eq!(sorted.orphaned.len(), 1, "(c) one orphaned backup");
     assert_eq!(sorted.orphaned[0].0, "x9", "(c) x9 is orphaned");
     assert_eq!(ids(&sorted.orphaned[0].1), ["x9"], "(c)");
-    assert!(
-        ids(&sorted.unassigned).contains(&"foreign".to_string()),
-        "(d) without Kestic tag unassigned"
+    assert_eq!(
+        ids(&sorted.unassigned),
+        ["foreign", "own-tags"],
+        "AC-M4-07-7 (d)(e): the unassigned list holds exactly the two snapshots without \
+         Kestic tag, newest first"
+    );
+
+    // Every shown snapshot lands in exactly one category, the expected one.
+    let placements = placements(&sorted);
+    for (sub, id, expected) in [
+        ("(b)", "b1-new", "backup b1"),
+        ("(b)", "b1-old", "backup b1"),
+        ("(c)", "x9", "orphaned x9"),
+    ] {
+        assert_eq!(
+            placements.get(id).map(Vec::as_slice),
+            Some([expected.to_string()].as_slice()),
+            "AC-M4-07-7 {sub}: {id} is only in {expected}"
+        );
+    }
+    assert_eq!(
+        placements.get("foreign").map(Vec::as_slice),
+        Some(["unassigned".to_string()].as_slice()),
+        "AC-M4-07-7 (d): the snapshot without Kestic tag is only unassigned"
+    );
+    assert_eq!(
+        placements.get("own-tags").map(Vec::as_slice),
+        Some(["unassigned".to_string()].as_slice()),
+        "AC-M4-07-7 (e): the snapshot with own tags is only unassigned"
+    );
+    assert_eq!(
+        placements.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["b1-new", "b1-old", "foreign", "own-tags", "x9"],
+        "AC-M4-07-7: the categories hold exactly the five non-metadata snapshots"
     );
     assert!(
-        ids(&sorted.unassigned).contains(&"own-tags".to_string()),
-        "(e) own tags stay unassigned"
+        sorted.described.is_empty(),
+        "AC-M4-07-7: no described backup without a metadata snapshot of an unconfigured backup"
     );
+}
+
+/// For each snapshot ID, every category it was sorted into («backup b1», «orphaned x9»,
+/// «described x9», «unassigned»).
+fn placements(
+    sorted: &kestic_core::snapshot_list::DestinationSnapshots,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut placements: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let groups = [
+        ("backup", &sorted.backups),
+        ("orphaned", &sorted.orphaned),
+        ("described", &sorted.described),
+    ];
+    for (kind, list) in groups {
+        for (backup, snaps) in list {
+            for s in snaps {
+                placements
+                    .entry(s.id.clone())
+                    .or_default()
+                    .push(format!("{kind} {backup}"));
+            }
+        }
+    }
+    for s in &sorted.unassigned {
+        placements
+            .entry(s.id.clone())
+            .or_default()
+            .push("unassigned".to_string());
+    }
+    placements
 }
 
 /// A tag `kestic:` or `kestic-meta:` without an ID names no backup: such a snapshot is shown as

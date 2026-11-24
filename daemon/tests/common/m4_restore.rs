@@ -219,6 +219,46 @@ impl RestoreFixture {
     pub fn new_dir(&self, name: &str) -> PathBuf {
         self.rig.root.join(&self.rig.sub).join("targets").join(name)
     }
+
+    /// AC-M4-05-7: a preview of the whole snapshot at the original location with `always`
+    /// whose confirmation is cancelled (`CancelSnapshotQuery`, no `StartRestore`) leaves the
+    /// target as it was: (a) no entry is added or removed anywhere below it, and every entry,
+    /// the target folder included, keeps its type, content, permissions and mtime. `docs` and
+    /// `b.bin` first get other permissions than in the snapshot, so a restore would reset them.
+    pub fn cancelled_confirmation_leaves_the_target_as_it_was(&self, label: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        for (rel, mode) in [("docs", 0o700), ("b.bin", 0o600)] {
+            fs::set_permissions(self.src.join(rel), fs::Permissions::from_mode(mode))
+                .expect("chmod");
+        }
+        let before = tree_state(&self.src);
+        let calls = self.restore_calls().len();
+        let (id, _) = self.preview(&[], Some(self.original()), RestoreOverwrite::Always);
+        assert!(
+            self.restore_calls().len() > calls,
+            "AC-M4-05-7 {label}: the preview ran its dry run: {:?}",
+            self.restore_calls()
+        );
+        self.rig
+            .daemon
+            .client
+            .cancel_snapshot_query(&id)
+            .expect("CancelSnapshotQuery");
+        super::m3::settle();
+        let after = tree_state(&self.src);
+        assert_eq!(
+            after.keys().collect::<Vec<_>>(),
+            before.keys().collect::<Vec<_>>(),
+            "(a) AC-M4-05-7 {label}: no file or folder added or removed below the target"
+        );
+        for (rel, was) in &before {
+            assert_eq!(
+                after.get(rel),
+                Some(was),
+                "(a) AC-M4-05-7 {label}: `{rel}` keeps type, content, permissions and mtime"
+            );
+        }
+    }
 }
 
 impl VariantFixture for RestoreFixture {
@@ -295,6 +335,67 @@ fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
                 rel,
                 String::from_utf8_lossy(&fs::read(&path).expect("read file")).into_owned(),
             );
+        }
+    }
+}
+
+/// What [`tree_state`] records of one entry: its type, permission bits, modification time, and
+/// the length and hash of its content (the file's bytes, a link's target, nothing for a folder).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryState {
+    pub kind: &'static str,
+    pub mode: u32,
+    pub mtime: std::time::SystemTime,
+    pub content_len: usize,
+    pub content_hash: u64,
+}
+
+/// Relative path → [`EntryState`] of `dir` itself (as `""`) and of every entry below it, folders
+/// included, without following symbolic links.
+pub fn tree_state(dir: &Path) -> BTreeMap<String, EntryState> {
+    let mut out = BTreeMap::new();
+    record_state(dir, dir, &mut out);
+    out
+}
+
+fn record_state(root: &Path, path: &Path, out: &mut BTreeMap<String, EntryState>) {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    let meta = fs::symlink_metadata(path).expect("metadata");
+    let t = meta.file_type();
+    let (kind, content) = if t.is_symlink() {
+        let target = fs::read_link(path).expect("read link");
+        ("symlink", target.into_os_string().into_encoded_bytes())
+    } else if t.is_dir() {
+        ("dir", Vec::new())
+    } else if t.is_file() {
+        ("file", fs::read(path).expect("read file"))
+    } else if t.is_fifo() {
+        ("fifo", Vec::new())
+    } else if t.is_socket() {
+        ("socket", Vec::new())
+    } else {
+        ("other", Vec::new())
+    };
+    let rel = path
+        .strip_prefix(root)
+        .expect("below root")
+        .to_string_lossy()
+        .into_owned();
+    let mut hasher = std::hash::DefaultHasher::new();
+    std::hash::Hash::hash(&content, &mut hasher);
+    out.insert(
+        rel,
+        EntryState {
+            kind,
+            mode: meta.permissions().mode(),
+            mtime: meta.modified().expect("mtime"),
+            content_len: content.len(),
+            content_hash: std::hash::Hasher::finish(&hasher),
+        },
+    );
+    if kind == "dir" {
+        for entry in fs::read_dir(path).expect("read dir") {
+            record_state(root, &entry.expect("dir entry").path(), out);
         }
     }
 }

@@ -296,6 +296,29 @@ Restore restore_dialog(QQuickWindow* w) {
     return Restore { object_named(w, "restoreDialog"), object_named(w, "restorePreviewModel") };
 }
 
+// The compare page and its model.
+struct Compare {
+    QQuickItem* page = nullptr;
+    QAbstractItemModel* model = nullptr;
+};
+
+Compare compare_page(QQuickWindow* w) {
+    Compare cmp;
+    cmp.page = visible_item(w, "restoreComparePage");
+    cmp.model = cmp.page ? qobject_cast<QAbstractItemModel*>(
+                               cmp.page->findChild<QObject*>(QStringLiteral("snapshotDiffModel")))
+                         : nullptr;
+    return cmp;
+}
+
+// Waits until the compare page shows the finished comparison.
+bool wait_for_compare(QQuickWindow* w) {
+    return wait_until([&] {
+        Compare cmp = compare_page(w);
+        return cmp.model && cmp.model->property("state").toString() == QLatin1String("done");
+    }, 30000);
+}
+
 // Where the keyboard focus and the restore area stand, for a failed check.
 QString restore_focus_state(QQuickWindow* w) {
     QQuickItem* f = w->activeFocusItem();
@@ -405,6 +428,18 @@ int scenario_restore_keyboard(const Ctx& c) {
         QStringLiteral("compare:") + oldest + QStringLiteral(">") + middle,
         "(b) the context menu compares the snapshot with the previous one");
     M4_CHECK(5218, wait_until([&] { return is_closed(menu); }, 2000), "menu closes after the choice");
+    // The comparison opens next to the list and compares exactly these two snapshots.
+    M4_CHECK(5243, wait_for_compare(w), "(b) «Compare with Previous» shows the finished comparison");
+    Compare cmp = compare_page(w);
+    M4_CHECK_EQ(5244, cmp.page->property("fromSnapshotId").toString(), oldest,
+        "(b) the comparison starts at the older snapshot");
+    M4_CHECK_EQ(5245, cmp.page->property("toSnapshotId").toString(), middle,
+        "(b) the comparison ends at the newer snapshot");
+    QObject* between = cmp.page->findChild<QObject*>(QStringLiteral("compareSnapshotsLabel"));
+    M4_CHECK(5246, between != nullptr, "compareSnapshotsLabel missing");
+    M4_CHECK_EQ(5247, between->property("text").toString(),
+        loc(c.lang, "From 2026-11-10 12:00 to 2026-11-14 12:00", "Von 2026-11-10 12:00 bis 2026-11-14 12:00"),
+        "(b) the comparison names the older and the newer snapshot");
 
     send_key(w, Qt::Key_F10, Qt::ShiftModifier);
     M4_CHECK(5219, wait_until([&] { return is_open(menu); }, 2000), "(b) Shift+F10 opens the context menu");
@@ -526,6 +561,99 @@ int open_browser_at(const Ctx& c, int row, int code) {
     return 0;
 }
 
+// The item or object below `root` that belongs to a tree view (a TreeView or one of its
+// delegates), or nullptr.
+QObject* tree_view_part(QQuickItem* root) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(root, items);
+    QList<QObject*> objects;
+    collect_all_qobjects(root, objects);
+    for (QQuickItem* it : items) {
+        objects << it;
+    }
+    for (QObject* o : objects) {
+        if (o->inherits("QQuickTreeView") || QByteArray(o->metaObject()->className()).contains("TreeView")) {
+            return o;
+        }
+    }
+    return nullptr;
+}
+
+// The name of a property of `o` that would make it a node to expand or collapse: one of the
+// properties of a tree view delegate, or any whose name contains «expand» or «collapse» in any
+// case (empty when it has none).
+QString expand_property(const QObject* o) {
+    static const char* const names[] = { "hasChildren", "isTreeNode", "depth", "treeView" };
+    const QMetaObject* meta = o->metaObject();
+    for (int i = 0; i < meta->propertyCount(); ++i) {
+        const QString name = QString::fromLatin1(meta->property(i).name());
+        if (name.contains(QLatin1String("expand"), Qt::CaseInsensitive)
+            || name.contains(QLatin1String("collapse"), Qt::CaseInsensitive)) {
+            return name;
+        }
+        for (const char* tree_name : names) {
+            if (name == QLatin1String(tree_name)) {
+                return name;
+            }
+        }
+    }
+    return QString();
+}
+
+// The list, repeater or table/tree view nested inside the delegate `row` (its class name), or an
+// empty string: a delegate that holds one could show child entries below itself.
+QString nested_view(QQuickItem* row) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(row, items);
+    QList<QObject*> objects;
+    collect_all_qobjects(row, objects);
+    for (QQuickItem* it : items) {
+        objects << it;
+    }
+    for (QObject* o : objects) {
+        if (o == row) {
+            continue;
+        }
+        if (o->inherits("QQuickItemView") || o->inherits("QQuickRepeater") || o->inherits("QQuickTableView")) {
+            return QString::fromLatin1(o->metaObject()->className());
+        }
+    }
+    return QString();
+}
+
+/// AC-M4-03-3 (b), «no tree view to expand and collapse»: the browse page holds no TreeView
+/// (nor any part of one), no entry of its folder list can be expanded (no property to expand or
+/// collapse it, no list, repeater or tree view inside it), and its model is a flat list without
+/// child rows.
+int check_no_tree(const Browse& b) {
+    QObject* tree = tree_view_part(b.page);
+    M4_CHECK(5334, tree == nullptr,
+        qPrintable(QStringLiteral("AC-M4-03-3 (b) the browse page holds no tree view: ")
+            + QLatin1String(tree ? tree->metaObject()->className() : "-")));
+    finish_incubation(b.page->window());
+    QList<QQuickItem*> items;
+    collect_visual_descendants(b.page, items);
+    int rows = 0;
+    for (QQuickItem* it : items) {
+        if (it->objectName() != QLatin1String("browseEntryRow")) {
+            continue;
+        }
+        ++rows;
+        const QString prop = expand_property(it);
+        M4_CHECK(5335, prop.isEmpty(),
+            qPrintable(QStringLiteral("AC-M4-03-3 (b) no folder list entry can be expanded: ") + prop));
+        const QString view = nested_view(it);
+        M4_CHECK(5338, view.isEmpty(),
+            qPrintable(QStringLiteral("AC-M4-03-3 (b) no folder list entry holds a list of its own: ") + view));
+    }
+    M4_CHECK(5336, rows > 0, "AC-M4-03-3 (b) folder list entries checked");
+    for (int r = 0; r < b.model->rowCount(); ++r) {
+        M4_CHECK(5337, !b.model->hasChildren(b.model->index(r, 0)),
+            "AC-M4-03-3 (b) the folder list has no rows below its entries");
+    }
+    return 0;
+}
+
 /// AC-M4-03-3 (smoke part) and AC-M4-03-1 (a) on screen: with the keyboard alone (a) Return
 /// opens sub-folders, (b) the path row leads back to every folder above, and (c) Space marks
 /// entries for restore; the selection stays when the folder changes.
@@ -601,7 +729,7 @@ int scenario_browse_keyboard(const Ctx& c) {
         }
     }
     M4_CHECK(5333, item_named(w, "browseListView") != nullptr, "folder list, no tree");
-    return 0;
+    return check_no_tree(b);
 }
 
 // The part of the window that `item` covers, as drawn right now.
@@ -624,30 +752,12 @@ QQuickItem* text_item_showing(QQuickItem* root, const QString& text) {
     return nullptr;
 }
 
-/// AC-M4-03-1 (a), breadcrumb: every folder of the path row is drawn exactly once. With its
-/// content hidden, a button that is neither hovered nor focused looks like no button at all: the
-/// style draws no second name or icon beneath the content. Folder names are shown literally as
-/// plain text (the path holds «R&D <b>x<b>»), and the top folder keeps its accessible name.
-int scenario_browse_path_row(const Ctx& c) {
+// Checks that every folder `names` of the path row of the open browse page is drawn exactly
+// once (AC-M4-03-1 (a), breadcrumb): with its content hidden, a button that is neither hovered
+// nor focused looks like no button at all, so the style draws no second name or icon beneath the
+// content. Folder names are plain text, and the top folder keeps its accessible name.
+int check_path_row_drawn_once(const Ctx& c, const QStringList& names) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 6201)) {
-        return rc;
-    }
-    if (int rc = open_browser_at(c, 0, 6206)) {
-        return rc;
-    }
-    Browse b = browse_page(w);
-    M4_CHECK(6209, wait_until([&] { return b.model->property("state").toString() == QLatin1String("done"); }, 30000),
-        "the folder is listed");
-    finish_incubation(w);
-    const QString dir = b.model->property("dir").toString();
-    const QString odd_name = QStringLiteral("R&D <b>x<b>");
-    M4_CHECK(6210, dir.endsWith(QLatin1Char('/') + odd_name + QStringLiteral("/src")),
-        "the snapshot opens in its folder");
-    QStringList names;
-    QMetaObject::invokeMethod(b.model, "segmentNames", Q_RETURN_ARG(QStringList, names), Q_ARG(QString, dir));
-    M4_CHECK(6211, names.size() >= 4, "path row from the top down to «src»");
-    M4_CHECK(6226, names.contains(odd_name), "the path holds «R&D <b>x<b>»");
     QQuickItem* row = visible_item(w, "browsePathRow");
     M4_CHECK(6212, row != nullptr, "browsePathRow missing");
     // The page transition has ended once two grabs in a row are the same.
@@ -694,7 +804,37 @@ int scenario_browse_path_row(const Ctx& c) {
             M4_CHECK(6224, label->property("textFormat").toInt() == 0, "the folder name is plain text");
         }
     }
-    QMetaObject::invokeMethod(flick, "showEnd");
+    return 0;
+}
+
+/// AC-M4-03-1 (a), breadcrumb: every folder of the path row is drawn exactly once. With its
+/// content hidden, a button that is neither hovered nor focused looks like no button at all: the
+/// style draws no second name or icon beneath the content. Folder names are shown literally as
+/// plain text (the path holds «R&D <b>x<b>»), and the top folder keeps its accessible name.
+int scenario_browse_path_row(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 6201)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 6206)) {
+        return rc;
+    }
+    Browse b = browse_page(w);
+    M4_CHECK(6209, wait_until([&] { return b.model->property("state").toString() == QLatin1String("done"); }, 30000),
+        "the folder is listed");
+    finish_incubation(w);
+    const QString dir = b.model->property("dir").toString();
+    const QString odd_name = QStringLiteral("R&D <b>x<b>");
+    M4_CHECK(6210, dir.endsWith(QLatin1Char('/') + odd_name + QStringLiteral("/src")),
+        "the snapshot opens in its folder");
+    QStringList names;
+    QMetaObject::invokeMethod(b.model, "segmentNames", Q_RETURN_ARG(QStringList, names), Q_ARG(QString, dir));
+    M4_CHECK(6211, names.size() >= 4, "path row from the top down to «src»");
+    M4_CHECK(6226, names.contains(odd_name), "the path holds «R&D <b>x<b>»");
+    if (int rc = check_path_row_drawn_once(c, names)) {
+        return rc;
+    }
+    QMetaObject::invokeMethod(object_named(w, "browsePathFlick"), "showEnd");
     M4_CHECK(6225, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
@@ -967,29 +1107,6 @@ int scenario_search_cancel(const Ctx& c) {
     wait_ms(600); // let the page transition end before the screenshot
     M4_CHECK(5912, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
-}
-
-// The compare page and its model.
-struct Compare {
-    QQuickItem* page = nullptr;
-    QAbstractItemModel* model = nullptr;
-};
-
-Compare compare_page(QQuickWindow* w) {
-    Compare cmp;
-    cmp.page = visible_item(w, "restoreComparePage");
-    cmp.model = cmp.page ? qobject_cast<QAbstractItemModel*>(
-                               cmp.page->findChild<QObject*>(QStringLiteral("snapshotDiffModel")))
-                         : nullptr;
-    return cmp;
-}
-
-// Waits until the compare page shows the finished comparison.
-bool wait_for_compare(QQuickWindow* w) {
-    return wait_until([&] {
-        Compare cmp = compare_page(w);
-        return cmp.model && cmp.model->property("state").toString() == QLatin1String("done");
-    }, 30000);
 }
 
 // Row of the change whose path ends with `suffix`, or -1.
@@ -1656,18 +1773,132 @@ int scenario_restore_chips(const Ctx& c) {
     return 0;
 }
 
+// The content of the file at `path` (empty when it cannot be read).
+QString file_text(const QString& path) {
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+}
+
+/// AC-M4-07-2 (a), GUI part: a snapshot without a Kestic tag («Unassigned») of a small folder
+/// whose `a.txt` changed locally afterwards. Browsing it shows (AC-M4-03-1 (a)) the folder list
+/// with its folders and files and a path row that draws each folder once. Its restore dialog
+/// (AC-M4-05-1) preselects (a) a new folder and (b) not the original location. At the original
+/// location with «Always» (AC-M4-05-4 (c)) it names the consequence «1 file will be overwritten.
+/// This cannot be undone.» and writes nothing before «Overwrite and Restore».
+int scenario_foreign_restore(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    QObject* tab = object_named(w, "restoreTabAction");
+    M4_CHECK(6701, tab != nullptr, "restoreTabAction missing");
+    trigger(tab);
+    M4_CHECK(6702, wait_until([&] {
+        return w->property("activeTab").toInt() == 4
+            && !c.backend->property("restore_overview_loading").toBool()
+            && model_rows(w, "restoreGroupsModel") == 2;
+    }, 20000), "the restore area lists the unassigned and the orphaned snapshots");
+    finish_incubation(w);
+    QAbstractItemModel* groups = model_named(w, "restoreGroupsModel");
+    M4_CHECK_EQ(6703, role_value(groups, 0, "group").toString(), QStringLiteral("unassigned"), "first group");
+    M4_CHECK_EQ(6737, role_value(groups, 0, "subtitle").toString(),
+        loc(c.lang, "1 snapshot without a unique Kestic tag", "1 Snapshot ohne eindeutigen Kestic-Tag"),
+        "the snapshot without a Kestic tag is unassigned");
+    QQuickItem* group_row = tab_to(w, "restoreGroupListItem", 40);
+    M4_CHECK(6704, group_row != nullptr, "Tab reaches the further groups");
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(6705, wait_for_group(w, c.backend, loc(c.lang, "Unassigned", "Nicht zugeordnet"), 1),
+        "Return opens the unassigned snapshot");
+    finish_incubation(w);
+    if (int rc = open_browser_at(c, 0, 6706)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(6709, top.endsWith(QLatin1String("/trees/src")), "the snapshot is of the folder src");
+    M4_CHECK(6710, wait_for_dir(w, top), "the snapshot opens in its folder");
+    finish_incubation(w);
+    Browse b = browse_page(w);
+    M4_CHECK_EQ(6711, browse_names(b.model).join(QLatin1Char(',')), QStringLiteral("a.txt,b.bin,docs,empty"),
+        "AC-M4-07-2 (a) / AC-M4-03-1 (a) the folder list shows the folders and files");
+    QStringList names;
+    QMetaObject::invokeMethod(b.model, "segmentNames", Q_RETURN_ARG(QStringList, names), Q_ARG(QString, top));
+    M4_CHECK(6712, names.size() >= 4, "AC-M4-07-2 (a) / AC-M4-03-1 (a) path row from the top down to «src»");
+    if (int rc = check_path_row_drawn_once(c, names)) {
+        return rc;
+    }
+    QMetaObject::invokeMethod(object_named(w, "browsePathFlick"), "showEnd");
+    M4_CHECK(6713, save_screenshot(w, c.out_path), "screenshot failed");
+
+    const QString changed = top + QStringLiteral("/a.txt");
+    M4_CHECK_EQ(6714, file_text(changed), QStringLiteral("changed locally"), "a.txt differs locally");
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 6715)) {
+        return rc;
+    }
+    Restore r = restore_dialog(w);
+    QObject* new_radio = object_named(w, "restoreNewFolderRadio");
+    QObject* original_radio = object_named(w, "restoreOriginalRadio");
+    QObject* restore_now = object_named(w, "restoreNowAction");
+    M4_CHECK(6720, new_radio && original_radio && restore_now, "dialog controls exist");
+    M4_CHECK(6721, new_radio->property("checked").toBool(),
+        "AC-M4-07-2 (a) / AC-M4-05-1 (a) a new folder is preselected");
+    M4_CHECK(6722, !original_radio->property("checked").toBool(),
+        "AC-M4-07-2 (a) / AC-M4-05-1 (b) not the original location");
+    M4_CHECK(6723, wait_for_preview(r.model), "the preview of the new folder is done");
+    M4_CHECK(6724, click_ui_item(w, qobject_cast<QQuickItem*>(original_radio), "original location"),
+        "the original location could not be chosen");
+    M4_CHECK(6725, wait_until([&] { return r.model->property("target_original").toBool(); }, 3000),
+        "the original location is chosen");
+    M4_CHECK(6726, wait_for_preview(r.model), "the preview with «Never» is done");
+    QMetaObject::invokeMethod(r.model, "chooseOverwrite", Q_ARG(int, 3));
+    M4_CHECK(6727, wait_until([&] { return r.model->property("overwrite").toInt() == 3; }, 2000), "«Always» chosen");
+    M4_CHECK(6728, wait_for_preview(r.model), "the preview with «Always» is done");
+    QObject* consequence = object_named(w, "restoreConsequenceMessage");
+    M4_CHECK(6729, consequence && consequence->property("visible").toBool(),
+        "AC-M4-07-2 (a) / AC-M4-05-4 (c) the consequence is shown");
+    M4_CHECK_EQ(6730, consequence->property("text").toString(),
+        loc(c.lang, "1 file will be overwritten. This cannot be undone.",
+            "1 Datei wird überschrieben. Das lässt sich nicht rückgängig machen."),
+        "AC-M4-07-2 (a) / AC-M4-05-4 (c) the consequence before writing");
+    M4_CHECK_EQ(6731, restore_now->property("text").toString(),
+        loc(c.lang, "Overwrite and Restore", "Überschreiben und wiederherstellen"),
+        "AC-M4-05-4 (c) the confirmation names overwriting");
+    M4_CHECK_EQ(6738, r.model->property("run_state").toString(), QString(),
+        "AC-M4-07-2 (a) / AC-M4-05-4 (c) no restore runs before the confirmation");
+    M4_CHECK_EQ(6732, file_text(changed), QStringLiteral("changed locally"),
+        "AC-M4-07-2 (a) / AC-M4-05-4 (c) nothing is written before the confirmation");
+    repaint_fully(w);
+    M4_CHECK(6733, save_screenshot(w, screenshot_variant(c.out_path, "-overwrite")), "screenshot failed");
+
+    trigger(restore_now);
+    M4_CHECK(6734, wait_until([&] { return is_closed(r.dialog); }, 3000),
+        "the dialog closes on «Overwrite and Restore»");
+    M4_CHECK(6735, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("ok"); }, 30000),
+        "the restore ends");
+    M4_CHECK_EQ(6736, file_text(changed), QStringLiteral("hello"),
+        "AC-M4-05-4 (c) the confirmation writes the file from the snapshot");
+    return 0;
+}
+
 /// AC-M4-05-24 (c) in the GUI: started with `--show-restore` (the tray's «Restore Files…»
-/// without a running GUI), the window opens on the tab «Restore».
+/// without a running GUI), the window opens on the tab «Restore». Running on another tab, the
+/// GUI follows a click on the tray's «Restore Files…»: the scene writes the marker file
+/// `KESTIC_SMOKE_TRAY_MARKER`; once the GUI is also subscribed to the daemon's signals (its
+/// `RegisterGui` call passed the bus), the test clicks the entry in the daemon's tray menu, and
+/// the daemon's signal switches the window to the tab «Restore».
 int scenario_show_restore(const Ctx& c) {
     QQuickWindow* w = c.window;
     M4_CHECK(6401, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 5000),
         "(c) the tab «Restore» is active");
-    // A running GUI on another tab follows the tray's request (signal ShowRestoreRequested).
     QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 0));
     M4_CHECK(6403, wait_until([&] { return w->property("activeTab").toInt() == 0; }, 3000), "the overview is shown");
-    M4_CHECK(6404, QMetaObject::invokeMethod(c.backend, "restoreTabRequested"), "restoreTabRequested could not be emitted");
-    M4_CHECK(6405, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 3000),
-        "(c) a running GUI switches to the tab «Restore»");
+    // Nothing of the start on the tab «Restore» takes the window back there by itself.
+    wait_ms(400);
+    M4_CHECK(6406, w->property("activeTab").toInt() == 0, "the overview stays shown");
+    QFile marker(qEnvironmentVariable("KESTIC_SMOKE_TRAY_MARKER"));
+    M4_CHECK(6404, marker.open(QIODevice::WriteOnly), "tray marker could not be written");
+    marker.close();
+    M4_CHECK(6405, wait_until([&] { return w->property("activeTab").toInt() == 4; }, 5000),
+        "(c) a running GUI switches to the tab «Restore» on a click on the tray's «Restore Files…»");
+    M4_CHECK(6407, wait_until([&] { return visible_item(w, "restorePage") != nullptr; }, 3000),
+        "(c) the main window shows the restore area");
     finish_incubation(w);
     wait_ms(400);
     M4_CHECK(6402, save_screenshot(w, c.out_path), "screenshot failed");
@@ -1761,6 +1992,8 @@ void run_m4_smoke_scenario(
         rc = scenario_restic_outdated(ctx);
     } else if (scen == QLatin1String("m4-foreign")) {
         rc = scenario_foreign(ctx);
+    } else if (scen == QLatin1String("m4-foreign-restore")) {
+        rc = scenario_foreign_restore(ctx);
     } else if (scen == QLatin1String("m4-show-restore")) {
         rc = scenario_show_restore(ctx);
     } else {

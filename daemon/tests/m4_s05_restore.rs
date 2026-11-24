@@ -182,6 +182,36 @@ fn dry_runs(fx: &RestoreFixture) -> Vec<String> {
         .collect()
 }
 
+/// AC-M4-05-25 (c): the text of a preview refused with `invalid_target` and `detail` is a
+/// translatable message naming `folder`, never raw text: the English msgid and its German
+/// translation from `po/de/kestic.po`, rendered by the daemon's translator.
+fn assert_refusal_text(detail: Option<&str>, folder: &str, case: &str) {
+    use kestic_i18n::codes::ErrorKind;
+    use kestic_i18n::messages::UiText;
+    let text = ErrorKind::InvalidTarget.text(detail);
+    assert!(
+        matches!(text, UiText::Message(_)),
+        "(c) {case}: a translatable message, not raw text: {text:?}"
+    );
+    common::po_translator::set_daemon_language("de");
+    let german = kestic_daemon::i18n::tr_text(&text);
+    common::po_translator::set_daemon_language("en");
+    let english = kestic_daemon::i18n::tr_text(&text);
+    assert_eq!(
+        german,
+        format!(
+            "Wiederherstellen nach {folder} ist nicht sicher möglich. Stattdessen «In neuen \
+             Ordner» wählen."
+        ),
+        "(c) {case}: German"
+    );
+    assert_eq!(
+        english,
+        format!("Cannot safely restore to {folder}. Choose 'Into a new folder' instead."),
+        "(c) {case}: English"
+    );
+}
+
 /// The local tree for AC-M4-05-4: in the snapshot `a.txt`, `b.bin`, `docs/x.txt` and
 /// `docs/deep/y.txt`; afterwards locally `a.txt` older and different (overwritten with
 /// `if-newer`), `docs/deep/y.txt` newer and different (kept), `b.bin` as backed up (unchanged)
@@ -338,7 +368,8 @@ fn ac_m4_05_5_modes_match_restic_overwrite() {
 }
 
 /// AC-M4-05-7: when the user cancels at the confirmation (the preview ran, no `StartRestore`),
-/// (a) no file at the target is changed.
+/// (a) nothing at the target changes: no file or folder below it is added or removed, and every
+/// entry, the target folder included, keeps its type, content, permissions and mtime.
 #[test]
 fn ac_m4_05_7_cancelled_confirmation_changes_nothing() {
     run_isolated_test(
@@ -347,14 +378,7 @@ fn ac_m4_05_7_cancelled_confirmation_changes_nothing() {
         |root| {
             for_each_variant(root, "M4R7", small_tree, |fx, v| {
                 four_outcomes(fx);
-                let before = tree_contents(&fx.src);
-                let (id, _) = fx.preview(&[], Some(fx.original()), RestoreOverwrite::Always);
-                fx.rig
-                    .daemon
-                    .client
-                    .cancel_snapshot_query(&id)
-                    .expect("CancelSnapshotQuery");
-                assert_eq!(tree_contents(&fx.src), before, "(a) {}", v.label);
+                fx.cancelled_confirmation_leaves_the_target_as_it_was(v.label);
             });
         },
     );
@@ -1156,8 +1180,10 @@ fn ac_m4_05_23_large_preview_filters_page_by_page_with_exact_counts() {
     );
 }
 
-/// AC-M4-05-9: with a backup running on the destination, a restore (a) runs right away beside it
-/// (non-exclusive lock) and (b) is a run of the kind `Restore`.
+/// AC-M4-05-9: with a backup running on the destination, held right after its real restic took
+/// its repository lock, a restore (a) runs right away beside it (non-exclusive lock): it is
+/// `Running` as soon as `StartRestore` returns, its restic runs and ends `ok` while the backup
+/// still holds its lock, and (b) it is a run of the kind `Restore`.
 #[test]
 fn ac_m4_05_9_restore_runs_beside_a_running_backup() {
     run_isolated_test(
@@ -1166,13 +1192,20 @@ fn ac_m4_05_9_restore_runs_beside_a_running_backup() {
         |root| {
             for_each_variant(root, "M4R9", small_tree, |fx, v| {
                 let client = &fx.rig.daemon.client;
-                fx.rig.wrapper.hold("backup");
+                let locks = fx.repo.join("locks");
+                fx.rig.wrapper.hold_with_lock("backup", &locks);
                 client
                     .start_backup(fx.backup.id.as_str())
                     .expect("StartBackup");
                 fx.rig
                     .wrapper
-                    .wait_for('S', "backup", 1, std::time::Duration::from_secs(30));
+                    .wait_for('L', "backup", 1, std::time::Duration::from_secs(30));
+                let backup_lock = find_lock_file(&locks);
+                assert!(
+                    backup_lock.is_some(),
+                    "{}: the backup holds its repository lock",
+                    v.label
+                );
                 let run_id = fx
                     .start_restore(
                         &["a.txt"],
@@ -1181,6 +1214,13 @@ fn ac_m4_05_9_restore_runs_beside_a_running_backup() {
                         None,
                     )
                     .expect("StartRestore");
+                let started = client.get_run_detail(&run_id).expect("GetRunDetail");
+                assert_ne!(
+                    started.run.status,
+                    RunStatus::Pending,
+                    "(a) {}: the restore does not wait: {started:?}",
+                    v.label
+                );
                 let detail = fx.wait_run(&run_id);
                 assert_eq!(
                     detail.run.status,
@@ -1188,9 +1228,21 @@ fn ac_m4_05_9_restore_runs_beside_a_running_backup() {
                     "(a) {}: {detail:?}",
                     v.label
                 );
+                let restores = fx.rig.wrapper.of('E', "restore");
+                assert_eq!(
+                    restores.iter().map(|e| e.detail.trim()).collect::<Vec<_>>(),
+                    vec!["0"],
+                    "(a) {}: one restic restore, ended with exit 0 despite the backup's lock",
+                    v.label
+                );
                 assert!(
                     fx.rig.wrapper.of('E', "backup").is_empty(),
                     "(a) {}: the backup still runs while the restore ended",
+                    v.label
+                );
+                assert!(
+                    backup_lock.as_ref().is_some_and(|l| l.exists()),
+                    "(a) {}: the backup's lock is still there after the restore",
                     v.label
                 );
                 assert!(
@@ -1200,6 +1252,9 @@ fn ac_m4_05_9_restore_runs_beside_a_running_backup() {
                     detail.run.kind
                 );
                 fx.rig.wrapper.release("backup");
+                fx.rig
+                    .wrapper
+                    .wait_for('E', "backup", 1, std::time::Duration::from_secs(30));
             });
         },
     );
@@ -2417,7 +2472,8 @@ fn ac_m4_05_16_existing_folders_get_the_snapshot_metadata() {
 /// AC-M4-05-25: a preview that refuses its target ends with (a) `error_kind` `invalid_target`
 /// and (b) `error_detail` the folder concerned, for a file over a folder with content and for a
 /// target whose real path is not UTF-8; (c) its text is a translatable message naming that
-/// folder, never English raw text.
+/// folder, in English and German, never English raw text. A target whose real path is not
+/// UTF-8 is refused before any dry run; a file over a folder shows only in the dry run.
 #[test]
 fn ac_m4_05_25_refused_target_has_its_own_error_kind() {
     run_isolated_test(
@@ -2425,7 +2481,6 @@ fn ac_m4_05_25_refused_target_has_its_own_error_kind() {
         "KESTIC_AC_M4_05_25_INNER",
         |root| {
             use kestic_i18n::codes::ErrorKind;
-            use kestic_i18n::messages::UiText;
             use std::os::unix::ffi::OsStrExt;
             let variant = common::m3::latest_variant();
             let fx = RestoreFixture::start(root, &variant, "M4RK", small_tree, |_| {});
@@ -2445,19 +2500,19 @@ fn ac_m4_05_25_refused_target_has_its_own_error_kind() {
                 Some(blocked.to_str().expect("utf-8")),
                 "(b) file over a folder"
             );
-            match ErrorKind::InvalidTarget.text(st.error_detail.as_deref()) {
-                UiText::Message(m) => assert_eq!(
-                    m.args,
-                    vec![blocked.to_string_lossy().into_owned()],
-                    "(c) names the folder"
-                ),
-                UiText::Raw(raw) => panic!("(c) raw text: {raw}"),
-            }
+            assert_refusal_text(
+                st.error_detail.as_deref(),
+                blocked.to_str().expect("utf-8"),
+                "file over a folder",
+            );
 
+            let dry_runs_before = dry_runs(&fx).len();
             let base = fx.new_dir("latin1");
             fs::create_dir_all(&base).expect("mkdir base");
             let real = base.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
             fs::create_dir(&real).expect("mkdir caf\\xe9");
+            // With content, the folder would need a dry run if it were not refused.
+            fs::write(real.join("other.txt"), "other").expect("content");
             let link = base.join("link");
             std::os::unix::fs::symlink(&real, &link).expect("symlink");
             let id = fx.start_preview(&["b.bin"], Some(new_folder(&link)), RestoreOverwrite::Never);
@@ -2472,6 +2527,17 @@ fn ac_m4_05_25_refused_target_has_its_own_error_kind() {
                 st.error_detail.as_deref(),
                 Some(real.to_string_lossy().as_ref()),
                 "(b) target not UTF-8"
+            );
+            assert_refusal_text(
+                st.error_detail.as_deref(),
+                &real.to_string_lossy(),
+                "target not UTF-8",
+            );
+            assert_eq!(
+                dry_runs(&fx).len(),
+                dry_runs_before,
+                "target not UTF-8: refused before any dry run: {:?}",
+                dry_runs(&fx)
             );
             fx.rig.daemon.stop();
         },
@@ -2991,10 +3057,11 @@ fn m4_s05_selection_across_folders_previews_its_folders_as_folders() {
 
 /// AC-M4-05-25 for a symbolic link at a folder above the selected entries: restic follows a
 /// link to a folder further up (and writes into another folder), replaces one at the folder
-/// holding a selected entry and fails at a link loop, so the preview refuses the target with
-/// (a) `invalid_target` and (b) the link as `error_detail`, for (1) a link at `docs` above
-/// `docs/deep/y.txt`, (2) a link at `docs/deep`, (3) a link loop at `docs` and (4) a link to
-/// nothing at `docs`; (c) nothing behind the links changes.
+/// holding a selected entry and fails at a link loop, so the preview refuses the target before
+/// any dry run with (a) `invalid_target`, (b) the link as `error_detail` and (c) the English
+/// and German text naming it, for (1) a link at `docs` above `docs/deep/y.txt`, (2) a link at
+/// `docs/deep`, (3) a link loop at `docs` and (4) a link to nothing at `docs`; nothing behind
+/// the links changes.
 #[test]
 fn m4_s05_symlink_above_the_selection_is_refused() {
     run_isolated_test(
@@ -3009,6 +3076,7 @@ fn m4_s05_symlink_above_the_selection_is_refused() {
                 let selection = ["a.txt", "docs/deep/y.txt"];
                 let refused_at = |link: &str, case: &str| {
                     for mode in [RestoreOverwrite::Never, RestoreOverwrite::Always] {
+                        let dry_runs_before = dry_runs(fx).len();
                         let id = fx.start_preview(&selection, Some(fx.original()), mode);
                         let st = fx.wait_query(&id, &big_page());
                         assert_eq!(
@@ -3018,11 +3086,24 @@ fn m4_s05_symlink_above_the_selection_is_refused() {
                             v.label
                         );
                         let at = fs::canonicalize(&fx.src).expect("src").join(link);
+                        let at = at.to_str().expect("utf-8");
                         assert_eq!(
                             st.error_detail.as_deref(),
-                            Some(at.to_str().expect("utf-8")),
+                            Some(at),
                             "(b) {} {case} {mode:?}",
                             v.label
+                        );
+                        assert_refusal_text(
+                            st.error_detail.as_deref(),
+                            at,
+                            &format!("{} {case} {mode:?}", v.label),
+                        );
+                        assert_eq!(
+                            dry_runs(fx).len(),
+                            dry_runs_before,
+                            "{} {case} {mode:?}: refused before any dry run: {:?}",
+                            v.label,
+                            dry_runs(fx)
                         );
                     }
                 };
@@ -3043,7 +3124,7 @@ fn m4_s05_symlink_above_the_selection_is_refused() {
                 assert_eq!(
                     fs::read_to_string(out.join("deep/y.txt")).expect("y.txt"),
                     "different",
-                    "(c) {}",
+                    "{}: nothing behind the links changes",
                     v.label
                 );
             });
@@ -3053,8 +3134,8 @@ fn m4_s05_symlink_above_the_selection_is_refused() {
 
 /// AC-M4-05-25 for a file at the target where a folder above the selected entries belongs:
 /// restic cannot create the folder there and the run fails, so the preview refuses the target
-/// with (a) `invalid_target`, (b) that file as `error_detail` and (c) the translated text naming
-/// it; (d) the file stays as it was.
+/// before any dry run with (a) `invalid_target`, (b) that file as `error_detail` and (c) the
+/// English and German text naming it; (d) the file stays as it was.
 #[test]
 fn m4_s05_file_above_the_selection_is_refused() {
     run_isolated_test(
@@ -3079,13 +3160,13 @@ fn m4_s05_file_above_the_selection_is_refused() {
                 let blocked = fs::canonicalize(fx.src.join("docs")).expect("canonical");
                 let blocked = blocked.to_str().expect("utf-8");
                 assert_eq!(st.error_detail.as_deref(), Some(blocked), "(b) {}", v.label);
-                match kestic_i18n::codes::ErrorKind::InvalidTarget.text(st.error_detail.as_deref())
-                {
-                    kestic_i18n::messages::UiText::Message(m) => {
-                        assert_eq!(m.args, vec![blocked.to_string()], "(c) {}", v.label);
-                    }
-                    other => panic!("(c) {}: translatable message expected: {other:?}", v.label),
-                }
+                assert_refusal_text(st.error_detail.as_deref(), blocked, v.label);
+                assert!(
+                    dry_runs(fx).is_empty(),
+                    "{}: refused before any dry run: {:?}",
+                    v.label,
+                    dry_runs(fx)
+                );
                 assert_eq!(
                     fs::read_to_string(fx.src.join("docs")).expect("docs"),
                     "a file",
@@ -3580,8 +3661,10 @@ fn m4_s05_cancelled_restore_keeps_its_counts() {
 }
 
 /// AC-M4-05-25 (FIFO, socket): a preview at the original location where the target has a FIFO
-/// or a socket in place of a file of the snapshot (a) ends with `invalid_target`, (b) names it,
-/// and (c) runs no dry run, where restic would hang.
+/// or a socket in place of a file of the snapshot (a) ends with `invalid_target`, (b) names it
+/// as `error_detail` and (c) in its English and German text; it runs no dry run, where restic
+/// would hang. A device in place of a file shares the check with FIFOs and sockets; that case is
+/// checked in core with `/dev/null` (`core/tests/m4_s05_special_files.rs`).
 #[test]
 fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
     run_isolated_test(
@@ -3610,7 +3693,16 @@ fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
                 Some(resolved.to_str().expect("utf-8")),
                 "(b)"
             );
-            assert!(dry_runs(&fx).is_empty(), "(c) {:?}", dry_runs(&fx));
+            assert_refusal_text(
+                st.error_detail.as_deref(),
+                resolved.to_str().expect("utf-8"),
+                "FIFO",
+            );
+            assert!(
+                dry_runs(&fx).is_empty(),
+                "FIFO: refused before any dry run: {:?}",
+                dry_runs(&fx)
+            );
             // The same for a socket in place of `b.bin`.
             let socket = fx.src.join("b.bin");
             fs::remove_file(&socket).expect("remove b.bin");
@@ -3622,13 +3714,15 @@ fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
                 Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
                 "(a) socket: {st:?}"
             );
+            let resolved = fs::canonicalize(&fx.src).expect("canonical").join("b.bin");
+            let resolved = resolved.to_str().expect("utf-8");
+            assert_eq!(st.error_detail.as_deref(), Some(resolved), "(b) socket");
+            assert_refusal_text(st.error_detail.as_deref(), resolved, "socket");
             assert!(
-                st.error_detail
-                    .as_deref()
-                    .is_some_and(|d| d.ends_with("/b.bin")),
-                "(b) socket: {st:?}"
+                dry_runs(&fx).is_empty(),
+                "socket: refused before any dry run: {:?}",
+                dry_runs(&fx)
             );
-            assert!(dry_runs(&fx).is_empty(), "(c) socket: {:?}", dry_runs(&fx));
             fx.rig.daemon.stop();
         },
     );
@@ -3817,6 +3911,187 @@ fn m4_s05_fifo_after_the_preview_ends_the_run() {
             );
             assert_eq!(real_restores(&fx), 0, "(b) no restic restore");
             fx.rig.daemon.stop();
+        },
+    );
+}
+
+/// The folder of [`small_tree`] with a plain folder `vault` holding a file `config`.
+fn vault_tree(work: &Path) -> std::path::PathBuf {
+    let src = small_tree(work);
+    fs::create_dir_all(src.join("vault")).expect("mkdir vault");
+    fs::write(src.join("vault/config"), "plain").expect("write vault/config");
+    src
+}
+
+/// Runs a preview of `selection` at the original location with `always` and checks that it
+/// passes: no refusal, the target can be written to.
+fn passing_preview(fx: &RestoreFixture, selection: &[&str], case: &str) -> String {
+    let id = fx.start_preview(selection, Some(fx.original()), RestoreOverwrite::Always);
+    let st = fx.wait_query(&id, &big_page());
+    assert_eq!(st.state, "done", "{case}: the preview passes: {st:?}");
+    let p = fx.preview_page(&id, &big_page());
+    assert_eq!(
+        p.target.check.code,
+        RestoreTargetCode::ExistsNotEmpty,
+        "{case}: the preview passes"
+    );
+    id
+}
+
+/// The run of a restore accepted with preview `preview_id` for a target that changed since
+/// ends (a) `Fehler` with `invalid_target` and (b) starts no restic `restore`.
+fn refused_at_run(fx: &RestoreFixture, selection: &[&str], preview_id: &str, case: &str) {
+    let real = real_restores(fx);
+    let run_id = fx
+        .start_restore(
+            selection,
+            fx.original(),
+            RestoreOverwrite::Always,
+            Some(preview_id),
+        )
+        .expect("StartRestore accepted");
+    let detail = fx.wait_run(&run_id);
+    assert_eq!(
+        detail.run.status,
+        RunStatus::Error,
+        "(a) {case}: {detail:?}"
+    );
+    assert_eq!(
+        detail.error_kind,
+        Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
+        "(a) {case}"
+    );
+    assert_eq!(real_restores(fx), real, "(b) {case}: no restic restore");
+}
+
+/// AC-M4-05-25, checked again right before restic: after a preview that passed, a target that
+/// changed is caught before restic writes. The run (a) ends `Fehler` with `invalid_target` and
+/// (b) starts no restic `restore`, for (1) a socket in place of a selected file, where restic
+/// would hang, (2) the repository of a local destination set up at a selected folder,
+/// (3) Kestic's data folder that now lies at a selected folder, and (4) the target folder that
+/// comes to lie inside Kestic's data folder while `StartRestore` probes restic. The FIFO case is
+/// `m4_s05_fifo_after_the_preview_ends_the_run`. A device in place of a selected file is checked
+/// in the same step as FIFOs and sockets; that case is checked in core with `/dev/null`
+/// (`core/tests/m4_s05_special_files.rs`).
+#[test]
+fn ac_m4_05_25_target_changed_after_the_preview_is_refused_right_before_restic() {
+    run_isolated_test(
+        "ac_m4_05_25_target_changed_after_the_preview_is_refused_right_before_restic",
+        "KESTIC_AC_M4_05_25_RECHECK_INNER",
+        |root| {
+            let data_home =
+                std::path::PathBuf::from(std::env::var_os("XDG_DATA_HOME").expect("isolated"));
+            let kestic_data = data_home.join("kestic");
+            fs::create_dir_all(&data_home).expect("mkdir XDG_DATA_HOME");
+            for_each_variant(root, "M4RB", vault_tree, |fx, v| {
+                let label = v.label;
+                assert!(
+                    fs::symlink_metadata(&kestic_data).is_err(),
+                    "{label}: no Kestic data folder yet"
+                );
+
+                let case = format!("{label} (1) socket");
+                let id = passing_preview(fx, &["b.bin"], &case);
+                fs::remove_file(fx.src.join("b.bin")).expect("remove b.bin");
+                let _listener =
+                    std::os::unix::net::UnixListener::bind(fx.src.join("b.bin")).expect("socket");
+                refused_at_run(fx, &["b.bin"], &id, &case);
+
+                let case = format!("{label} (2) repository");
+                let id = passing_preview(fx, &["a.txt", "vault"], &case);
+                fs::remove_dir_all(fx.src.join("vault")).expect("remove vault");
+                common::m3::add_local_destination(
+                    &fx.rig.daemon.client,
+                    &v.bin,
+                    &fx.src.join("vault"),
+                    "Vault",
+                    |_| {},
+                );
+                refused_at_run(fx, &["a.txt", "vault"], &id, &case);
+
+                let case = format!("{label} (3) Kestic's folder at a selected folder");
+                let id = passing_preview(fx, &["a.txt", "docs"], &case);
+                std::os::unix::fs::symlink(fx.src.join("docs"), &kestic_data)
+                    .expect("Kestic's data folder -> docs");
+                refused_at_run(fx, &["a.txt", "docs"], &id, &case);
+                fs::remove_file(&kestic_data).expect("remove the link");
+
+                let case = format!("{label} (4) target inside Kestic's folder");
+                let id = passing_preview(fx, &["a.txt"], &case);
+                let real = real_restores(fx);
+                let ended = fx.rig.wrapper.of('E', "version").len();
+                fx.rig.wrapper.hold("version");
+                let request = RestoreRequest {
+                    destination_id: fx.dest.id.as_str().to_string(),
+                    snapshot_id: fx.snapshot_id.clone(),
+                    selection: vec![fx.path("a.txt")],
+                    target: fx.original(),
+                    overwrite: RestoreOverwrite::Always,
+                    preview_id: Some(id),
+                };
+                let started = std::thread::scope(|s| {
+                    let call = s.spawn(|| fx.rig.daemon.client.start_restore(&request));
+                    wait_for_held_version(fx, ended);
+                    std::os::unix::fs::symlink(&fx.src, &kestic_data)
+                        .expect("Kestic's data folder -> the target");
+                    fx.rig.wrapper.release("version");
+                    call.join().expect("StartRestore thread")
+                });
+                let run_id = started.expect("StartRestore accepted");
+                let detail = fx.wait_run(&run_id);
+                assert_eq!(
+                    detail.run.status,
+                    RunStatus::Error,
+                    "(a) {case}: {detail:?}"
+                );
+                assert_eq!(
+                    detail.error_kind,
+                    Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
+                    "(a) {case}"
+                );
+                assert_eq!(real_restores(fx), real, "(b) {case}: no restic restore");
+                fs::remove_file(&kestic_data).expect("remove the link");
+            });
+        },
+    );
+}
+
+/// AC-M4-05-25, checked again right before restic, for the folder above the selected entries
+/// (`docs` above `docs/deep/y.txt`): after a preview that passed, `docs` at the target becomes
+/// (1) a file, (2) a symbolic link to nothing or (3) a symbolic link loop. The run (a) ends
+/// `Fehler` with `invalid_target` and (b) starts no restic `restore`.
+#[test]
+fn ac_m4_05_25_folder_above_the_selection_changed_after_the_preview_is_refused() {
+    run_isolated_test(
+        "ac_m4_05_25_folder_above_the_selection_changed_after_the_preview_is_refused",
+        "KESTIC_AC_M4_05_25_ABOVE_LATER_INNER",
+        |root| {
+            for_each_variant(root, "M4RV", small_tree, |fx, v| {
+                let selection = ["a.txt", "docs/deep/y.txt"];
+                let docs = fx.src.join("docs");
+                let nowhere = fx.new_dir("nowhere");
+                let cases: [(&str, &dyn Fn()); 3] = [
+                    ("(1) a file at docs", &|| {
+                        fs::write(&docs, "a file").expect("file in its place");
+                    }),
+                    ("(2) a link to nothing at docs", &|| {
+                        std::os::unix::fs::symlink(&nowhere, &docs).expect("docs -> nothing");
+                    }),
+                    ("(3) a link loop at docs", &|| {
+                        std::os::unix::fs::symlink("docs", &docs).expect("docs -> docs");
+                    }),
+                ];
+                for (name, replace) in cases {
+                    let case = format!("AC-M4-05-25 {} {name}", v.label);
+                    fs::create_dir_all(docs.join("deep")).expect("real docs/deep");
+                    fs::write(docs.join("deep/y.txt"), "yy").expect("write y.txt");
+                    let id = passing_preview(fx, &selection, &case);
+                    fs::remove_dir_all(&docs).expect("remove docs");
+                    replace();
+                    refused_at_run(fx, &selection, &id, &case);
+                    fs::remove_file(&docs).expect("remove what replaced docs");
+                }
+            });
         },
     );
 }

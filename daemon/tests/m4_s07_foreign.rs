@@ -436,8 +436,9 @@ fn check_overwrite_args(fx: &RestoreFixture, label: &str) {
 }
 
 /// AC-M4-07-2: a foreign snapshot (a) is browsed and restored under the rules of AC-M4-03-1 and
-/// AC-M4-05-1 to -05-7, and (b) its restore is a run of kind `Restore` of the destination
-/// without a backup.
+/// AC-M4-05-1 to -05-7 (AC-M4-05-7: a cancelled confirmation leaves the target unchanged in
+/// entries, content, permissions and mtime), and (b) its restore is a run of kind `Restore` of
+/// the destination without a backup.
 #[test]
 fn ac_m4_07_2_foreign_snapshot_is_browsed_and_restored_like_any_other() {
     run_isolated_test(
@@ -449,6 +450,7 @@ fn ac_m4_07_2_foreign_snapshot_is_browsed_and_restored_like_any_other() {
                 check_browse(fx, label);
                 let detail = check_new_folder(fx, label);
                 check_preview_first(fx, label);
+                fx.cancelled_confirmation_leaves_the_target_as_it_was(label);
                 check_kept_by_default(fx, label);
                 check_modes(fx, label);
                 check_overwrite_args(fx, label);
