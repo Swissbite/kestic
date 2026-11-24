@@ -25,6 +25,7 @@ use kestic_test_support::release_mock::{
 use kestic_test_support::s3_server::S3ServerGuard;
 use kestic_test_support::sftp_server::SftpServerGuard;
 use kestic_test_support::tools::{free_loopback_port, write_executable};
+use kestic_test_support::workspace::workspace_root;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -596,8 +597,16 @@ fn ac_m5_06_12_b_gui_offers_download() {
             let mock = serve(&ReleaseFiles::signed(RELEASE, &key), &key, Vec::new());
             let rig = start_with_old_system_restic(root);
             for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                // The GUI runs in this crate's folder: the path must be absolute.
                 let settings_shot = if layout == "wide" {
-                    smoke_artifact("restic-download-offer-settings", layout, lang)
+                    workspace_root()
+                        .join(smoke_artifact(
+                            "restic-download-offer-settings",
+                            layout,
+                            lang,
+                        ))
+                        .to_string_lossy()
+                        .into_owned()
                 } else {
                     String::new()
                 };
