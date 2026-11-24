@@ -3562,9 +3562,9 @@ fn m4_s05_cancelled_restore_keeps_its_counts() {
     );
 }
 
-/// AC-M4-05-25 (FIFO): a preview at the original location where the target has a FIFO in
-/// place of a file of the snapshot (a) ends with `invalid_target`, (b) names the FIFO, and
-/// (c) runs no dry run, where restic would hang.
+/// AC-M4-05-25 (FIFO, socket): a preview at the original location where the target has a FIFO
+/// or a socket in place of a file of the snapshot (a) ends with `invalid_target`, (b) names it,
+/// and (c) runs no dry run, where restic would hang.
 #[test]
 fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
     run_isolated_test(
@@ -3594,6 +3594,24 @@ fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
                 "(b)"
             );
             assert!(dry_runs(&fx).is_empty(), "(c) {:?}", dry_runs(&fx));
+            // The same for a socket in place of `b.bin`.
+            let socket = fx.src.join("b.bin");
+            fs::remove_file(&socket).expect("remove b.bin");
+            let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("socket");
+            let id = fx.start_preview(&["b.bin"], Some(fx.original()), RestoreOverwrite::Always);
+            let st = fx.wait_query(&id, &big_page());
+            assert_eq!(
+                st.error_kind,
+                Some(kestic_i18n::codes::ErrorKind::InvalidTarget),
+                "(a) socket: {st:?}"
+            );
+            assert!(
+                st.error_detail
+                    .as_deref()
+                    .is_some_and(|d| d.ends_with("/b.bin")),
+                "(b) socket: {st:?}"
+            );
+            assert!(dry_runs(&fx).is_empty(), "(c) socket: {:?}", dry_runs(&fx));
             fx.rig.daemon.stop();
         },
     );
@@ -3608,7 +3626,10 @@ fn config_tree(work: &Path) -> std::path::PathBuf {
 
 /// A preview at the original location whose selection reaches Kestic's own configuration
 /// folder (a) is refused with `kestic_data`, (b) runs no dry run, and (c) `StartRestore` with it
-/// is refused; (d) a selection beside that folder previews as usual.
+/// is refused; (d) a selection beside that folder previews as usual. A target that is Kestic's
+/// folder itself or lies inside one is refused too: (e) a file of the configuration folder at
+/// its original location, (f) a new folder in the state folder in the preview, and (g) in
+/// `StartRestore`.
 #[test]
 fn m4_s05_selection_reaching_kestics_own_folder_is_refused() {
     run_isolated_test(
@@ -3643,6 +3664,39 @@ fn m4_s05_selection_reaching_kestics_own_folder_is_refused() {
                 "(d) {:?}",
                 beside.target.check
             );
+            let config_dir = RestoreTarget::Original {
+                dir: fx.path("kestic"),
+            };
+            let (_, inside) = fx.preview(
+                &["kestic/config.toml"],
+                Some(config_dir),
+                RestoreOverwrite::Never,
+            );
+            assert_eq!(
+                inside.target.check.code,
+                RestoreTargetCode::KesticData,
+                "(e) {:?}",
+                inside.target.check
+            );
+            let (_, state_dir) = common::m3::daemon_paths(root, &fx.rig.sub);
+            let in_state = new_folder(&state_dir.join("restored"));
+            let (_, state) = fx.preview(
+                &["other.txt"],
+                Some(in_state.clone()),
+                RestoreOverwrite::Never,
+            );
+            assert_eq!(
+                state.target.check.code,
+                RestoreTargetCode::KesticData,
+                "(f) {:?}",
+                state.target.check
+            );
+            let started = fx.start_restore(&["other.txt"], in_state, RestoreOverwrite::Never, None);
+            assert!(
+                matches!(started, Err(KesticDbusError::InvalidInput(_))),
+                "(g) {started:?}"
+            );
+            assert!(!state_dir.join("restored").exists(), "(g) nothing created");
             fx.rig.daemon.stop();
         },
     );

@@ -3719,7 +3719,7 @@ msgid "Restore Folder"
 msgstr "Ordner wiederherstellen"
 
 msgid "Too many entries are selected for one restore. Restore their folder '%1' instead."
-msgstr "Für einen Restore sind zu viele Einträge gewählt. Stattdessen den Ordner «%1» wiederherstellen."
+msgstr "Für eine Wiederherstellung sind zu viele Einträge gewählt. Stattdessen den Ordner «%1» wiederherstellen."
 
 msgid "Restore failed"
 msgstr "Wiederherstellen fehlgeschlagen"

@@ -415,6 +415,14 @@ pub fn repositories_below(target: &Path, repositories: &[PathBuf]) -> Vec<String
         .collect()
 }
 
+/// Whether the resolved target folder `target` is one of `folders` or lies inside one.
+pub fn lies_inside(target: &Path, folders: &[PathBuf]) -> bool {
+    folders
+        .iter()
+        .map(|f| resolve_path(f))
+        .any(|f| target.starts_with(&f))
+}
+
 /// Whether `path` is an absolute path without `..` segments.
 pub fn is_clean_absolute(path: &str) -> bool {
     !path.is_empty()

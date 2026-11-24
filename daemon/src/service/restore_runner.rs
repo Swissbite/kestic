@@ -32,8 +32,8 @@ use kestic_core::restic::{CancelHandle, ResticStatusMessage, redact_secrets};
 use kestic_core::restore::{RestorePlan, RestoreRun, RestoreTarget, execute_restore, resolve_plan};
 use kestic_core::restore_preview::blocked_above_selection;
 use kestic_core::restore_target::{
-    PREVIEW_MAX_AGE, TargetCheck, check_target, create_restore_folder, preview_required,
-    remove_empty_folders,
+    PREVIEW_MAX_AGE, TargetCheck, check_target, create_restore_folder, lies_inside,
+    preview_required, remove_empty_folders,
 };
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{
@@ -202,6 +202,13 @@ fn prepare_setup(
     // Checked again right before the start, so a folder that went missing meanwhile is caught.
     let first_check = check_target(&target, ctx.repositories());
     refuse_unusable(&first_check)?;
+    if lies_inside(&first_check.resolved, &ctx.kestic_dirs) {
+        return Err(invalid(format!(
+            "{}: {}",
+            RestoreTargetCode::KesticData.as_str(),
+            first_check.resolved.display()
+        )));
+    }
     let mut setup = RestoreSetup {
         ctx,
         params,

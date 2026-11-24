@@ -26,7 +26,7 @@ use kestic_core::restore_preview::{
 };
 use kestic_core::restore_target::{
     FolderWords, PreviewFingerprint, SuggestionInput, TargetCheck, check_target, current_uid,
-    original_location, preview_required, suggested_new_folder,
+    lies_inside, original_location, preview_required, suggested_new_folder,
 };
 use kestic_core::scheduler::{TimezoneSpec, to_local_offset};
 use kestic_core::snapshot::ResticSnapshot;
@@ -277,6 +277,10 @@ pub(crate) fn execute_restore_preview(
             path: check.resolved.to_string_lossy().into_owned(),
             reason: "the real path of the target folder is not valid UTF-8".to_string(),
         });
+    }
+    // A target in Kestic's own folders would overwrite the daemon's settings and history.
+    if check.usable() && lies_inside(&check.resolved, &ctx.kestic_dirs) {
+        check.code = RestoreTargetCode::KesticData;
     }
     let mut dry_run = preview_required(&target, &check) && check.usable();
     let classification = if dry_run {
