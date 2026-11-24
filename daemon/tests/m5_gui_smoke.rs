@@ -11,14 +11,21 @@ mod common;
 
 use common::fakes::{FakeUDisks2Filesystem, FakeUDisks2Handle};
 use common::m3::{FakeSetup, M3DaemonOpts, M3Rig, StdFakes, latest_variant};
-use common::run_isolated_test;
-use kestic_core::model::DestinationKind;
+use common::{SYSTEM_PROGRAMS_DIR, run_isolated_test, run_isolated_test_with_system_programs};
+use kestic_core::config::{AppConfig, save_config};
+use kestic_core::model::{DestinationKind, ResticProvider};
 use kestic_core::mount::{FakeMountInspector, FakeMountState, MountInspector};
+use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
+use kestic_core::restic_release::{TrustAnchor, set_test_anchor};
 use kestic_daemon::dbus_api::{DestinationTypeDto, KESTIC_BUS_NAME};
 use kestic_i18n::codes::DestinationTypeCode;
+use kestic_test_support::release_mock::{
+    ReleaseFiles, ReleaseMock, Route, TestSigningKey, asset_path,
+};
 use kestic_test_support::s3_server::S3ServerGuard;
 use kestic_test_support::sftp_server::SftpServerGuard;
-use kestic_test_support::tools::write_executable;
+use kestic_test_support::tools::{free_loopback_port, write_executable};
+use kestic_test_support::workspace::workspace_root;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -475,6 +482,325 @@ fn ac_m5_05_7_gui_other_repository_message_and_add_as_new() {
                 Some(&dest.kind),
                 "(a) the edited path was not saved"
             );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// Newer than every real restic the tests run.
+const RELEASE: &str = "0.99.0";
+
+/// Like the real restic 0.16.4: no `version --json`, only the text of `restic version`.
+const RESTIC_0_16_4: &str = "#!/bin/sh\nif [ \"$1\" = version ] && [ -z \"$2\" ]; then\n  \
+     echo 'restic 0.16.4 compiled with go1.22.2 on linux/amd64'\n  exit 0\nfi\nexit 1\n";
+
+/// Makes the daemon of this process trust `key` and download from `base_url`.
+fn trust(base_url: &str, key: &TestSigningKey) {
+    let key_path = key.public_key_file().to_string_lossy().into_owned();
+    let fpr = key.fingerprint().to_string();
+    let anchor = TrustAnchor::from_lookup(|name| match name {
+        "KESTIC_TEST_RELEASE_URL" => Some(base_url.to_string()),
+        "KESTIC_TEST_SIGNING_KEY" => Some(key_path.clone()),
+        "KESTIC_TEST_SIGNING_FPR" => Some(fpr.clone()),
+        _ => None,
+    })
+    .expect("test anchor");
+    set_test_anchor(Some(anchor));
+}
+
+/// A release mock for `files`, trusted by the daemon of this process.
+fn serve(files: &ReleaseFiles, key: &TestSigningKey, routes: Vec<(String, Route)>) -> ReleaseMock {
+    let mock = ReleaseMock::start_with(files, routes);
+    trust(&mock.base_url(), key);
+    mock
+}
+
+/// The app-managed restic of this isolated test (`$XDG_DATA_HOME/kestic/restic`).
+fn managed_restic() -> PathBuf {
+    app_managed_binary(
+        &kestic_data_dir(
+            std::env::var_os("HOME").as_deref(),
+            std::env::var_os("XDG_DATA_HOME").as_deref(),
+        )
+        .expect("data dir"),
+    )
+}
+
+/// A daemon on the GUI's bus name with the restic source `source`; `None` keeps the default
+/// configuration (system restic from `PATH`).
+fn start_with_source(root: &Path, source: Option<ResticProvider>) -> M3Rig {
+    if let Some(restic_provider) = source {
+        let (config_path, _) = common::m3::daemon_paths(root, "");
+        fs::create_dir_all(config_path.parent().expect("cfg dir")).expect("cfg dir");
+        let config = AppConfig {
+            restic_provider,
+            ..Default::default()
+        };
+        save_config(&config_path, &config).expect("save config");
+    }
+    M3Rig::start_on(
+        root,
+        &latest_variant(),
+        "",
+        KESTIC_BUS_NAME,
+        datetime!(2026-12-01 10:00:00 UTC),
+        |o| {
+            o.enable_monitors = false;
+            o.enable_scheduler = false;
+            o.set_restic_provider = false;
+        },
+    )
+}
+
+/// System restic 0.16.4 first in `PATH`, no app-managed restic, the default source.
+fn start_with_old_system_restic(root: &Path) -> M3Rig {
+    write_executable(
+        &root.join(SYSTEM_PROGRAMS_DIR).join("restic"),
+        RESTIC_0_16_4,
+    );
+    let rig = start_with_source(root, None);
+    let status = rig.daemon.client.get_state().expect("state").restic_status;
+    assert!(!status.valid, "precondition: {status:?}");
+    assert_eq!(status.found_version.as_deref(), Some("0.16.4"));
+    rig
+}
+
+/// Runs `m5-restic-install-error` with a click on `button`, in English and German; each run
+/// expects the text of its language.
+fn run_install_error(root: &Path, name: &str, button: &str, texts: [(&str, &str); 2]) {
+    for (lang, expected) in texts {
+        run_m5_gui_smoke(
+            root,
+            "m5-restic-install-error",
+            "wide",
+            lang,
+            &smoke_artifact(name, "wide", lang),
+            &[
+                ("KESTIC_SMOKE_RESTIC_BUTTON", button),
+                ("KESTIC_SMOKE_EXPECT_ERROR", expected),
+            ],
+        );
+    }
+}
+
+/// AC-M5-06-12 (b): system restic 0.16.4 and no app-managed restic; the window offers (b1)
+/// «Download restic…» in the blocking bar and (b2) «Download restic» in the restic section of
+/// the settings (the C++ scenario checks each); the release server was not asked (precondition
+/// (a) holds while the GUI shows the offer). Screenshots in English and German, wide and narrow.
+#[test]
+fn ac_m5_06_12_b_gui_offers_download() {
+    run_isolated_test_with_system_programs(
+        "ac_m5_06_12_b_gui_offers_download",
+        "KESTIC_M5_GUI_RESTIC_OFFER_INNER",
+        |root| {
+            let key = TestSigningKey::generate("kestic-test-release");
+            let mock = serve(&ReleaseFiles::signed(RELEASE, &key), &key, Vec::new());
+            let rig = start_with_old_system_restic(root);
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                // The GUI runs in this crate's folder: the path must be absolute.
+                let settings_shot = if layout == "wide" {
+                    workspace_root()
+                        .join(smoke_artifact(
+                            "restic-download-offer-settings",
+                            layout,
+                            lang,
+                        ))
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    String::new()
+                };
+                run_m5_gui_smoke(
+                    root,
+                    "m5-restic-download-offer",
+                    layout,
+                    lang,
+                    &smoke_artifact("restic-download-offer", layout, lang),
+                    &[("KESTIC_SMOKE_SETTINGS_SHOT", &settings_shot)],
+                );
+            }
+            assert_eq!(
+                mock.requests(),
+                Vec::<String>::new(),
+                "(a) no release access"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M5-06-4 (a), GUI: `SHA256SUMS.asc` signed with another key; after «Download restic» the
+/// settings show the message for an invalid signature (English and German) with the raw detail
+/// under «Details»; no binary is placed.
+#[test]
+fn ac_m5_06_4_gui_signature_message() {
+    run_isolated_test_with_system_programs(
+        "ac_m5_06_4_gui_signature_message",
+        "KESTIC_M5_GUI_RESTIC_SIGNATURE_INNER",
+        |root| {
+            let trusted = TestSigningKey::generate("kestic-test-release");
+            let other = TestSigningKey::generate("kestic-other-key");
+            let _mock = serve(&ReleaseFiles::signed(RELEASE, &other), &trusted, Vec::new());
+            let rig = start_with_old_system_restic(root);
+            run_install_error(
+                root,
+                "restic-signature-error",
+                "downloadResticButton",
+                [
+                    (
+                        "en",
+                        "The signature of the restic release is not valid. Nothing was installed.",
+                    ),
+                    (
+                        "de",
+                        "Die Signatur des restic-Release ist nicht gültig. Es wurde nichts installiert.",
+                    ),
+                ],
+            );
+            assert!(!managed_restic().exists(), "no binary placed");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M5-06-5 (a), GUI: the app-managed restic 0.18.0 is the source and the archive does not
+/// match `SHA256SUMS`; after «Update Now» the settings show the checksum message (English and
+/// German); the binary and the source stay as they were.
+#[test]
+fn ac_m5_06_5_gui_checksum_message() {
+    run_isolated_test(
+        "ac_m5_06_5_gui_checksum_message",
+        "KESTIC_M5_GUI_RESTIC_CHECKSUM_INNER",
+        |root| {
+            let binary = managed_restic();
+            fs::create_dir_all(binary.parent().expect("data dir")).expect("data dir");
+            write_executable(
+                &binary,
+                "#!/bin/sh\necho '{\"message_type\":\"version\",\"version\":\"0.18.0\"}'\n",
+            );
+            let before = fs::read(&binary).expect("binary");
+            let key = TestSigningKey::generate("kestic-test-release");
+            let mut files = ReleaseFiles::signed(RELEASE, &key);
+            for arch in ["amd64", "arm64"] {
+                *files
+                    .assets
+                    .get_mut(&files.archive_name(arch))
+                    .expect("archive") = b"tampered".to_vec();
+            }
+            let _mock = serve(&files, &key, Vec::new());
+            let source = ResticProvider::AppManaged {
+                path: binary.clone(),
+            };
+            let rig = start_with_source(root, Some(source.clone()));
+            run_install_error(
+                root,
+                "restic-checksum-error",
+                "updateResticButton",
+                [
+                    (
+                        "en",
+                        "The downloaded restic does not match its checksum. Nothing was installed.",
+                    ),
+                    (
+                        "de",
+                        "Das heruntergeladene restic passt nicht zu seiner Prüfsumme. Es wurde nichts installiert.",
+                    ),
+                ],
+            );
+            assert_eq!(
+                fs::read(&binary).expect("binary"),
+                before,
+                "binary unchanged"
+            );
+            let state = rig.daemon.client.get_state().expect("state");
+            assert_eq!(state.config.restic_provider, source, "source unchanged");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M5-06-6 (a), (b), GUI: the release server cannot be reached; after «Download restic»
+/// the settings show (a) the network message (English and German), and (b) the restic source
+/// is the same as before.
+#[test]
+fn ac_m5_06_6_gui_network_message() {
+    run_isolated_test_with_system_programs(
+        "ac_m5_06_6_gui_network_message",
+        "KESTIC_M5_GUI_RESTIC_NETWORK_INNER",
+        |root| {
+            let key = TestSigningKey::generate("kestic-test-release");
+            trust(&format!("http://127.0.0.1:{}", free_loopback_port()), &key);
+            let rig = start_with_old_system_restic(root);
+            let before = rig.daemon.client.get_state().expect("state").config;
+            run_install_error(
+                root,
+                "restic-network-error",
+                "downloadResticButton",
+                [
+                    (
+                        "en",
+                        "Could not download restic. Check the internet connection and try again.",
+                    ),
+                    (
+                        "de",
+                        "restic konnte nicht heruntergeladen werden. Prüfen Sie die Internetverbindung und versuchen Sie es erneut.",
+                    ),
+                ],
+            );
+            let after = rig.daemon.client.get_state().expect("state").config;
+            // (b)
+            assert_eq!(after.restic_provider, before.restic_provider);
+            assert!(!managed_restic().exists(), "no binary placed");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// Progress, cancel and result in the settings: the app-managed restic is the source but
+/// missing. A stalled download shows its step, a progress bar and «Cancel»; the cancel ends it
+/// without a binary (English and German). Then «Download restic…» in the blocking bar opens
+/// the settings at «Download restic» without starting anything; after the click there the
+/// release is installed while the settings are closed: the bar disappears and the settings
+/// show the installed version.
+#[test]
+fn restic_install_gui_progress_cancel_and_result() {
+    run_isolated_test(
+        "restic_install_gui_progress_cancel_and_result",
+        "KESTIC_M5_GUI_RESTIC_PROGRESS_INNER",
+        |root| {
+            let key = TestSigningKey::generate("kestic-test-release");
+            let files = ReleaseFiles::signed(RELEASE, &key);
+            let archive = asset_path(RELEASE, &files.archive_name("amd64"));
+            let stalled = serve(&files, &key, vec![(archive, Route::StallAfterHeaders)]);
+            let rig = start_with_source(
+                root,
+                Some(ResticProvider::AppManaged {
+                    path: managed_restic(),
+                }),
+            );
+            for lang in ["en", "de"] {
+                run_m5_gui_smoke(
+                    root,
+                    "m5-restic-install-cancel",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restic-install-progress", "wide", lang),
+                    &[],
+                );
+            }
+            assert!(!managed_restic().exists(), "no binary after the cancel");
+            drop(stalled);
+
+            let _mock = serve(&files, &key, Vec::new());
+            run_m5_gui_smoke(
+                root,
+                "m5-restic-install-result",
+                "wide",
+                "en",
+                &smoke_artifact("restic-install-result", "wide", "en"),
+                &[("KESTIC_SMOKE_RELEASE", RELEASE)],
+            );
+            assert!(managed_restic().exists(), "the binary is installed");
             rig.daemon.stop();
         },
     );

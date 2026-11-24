@@ -218,6 +218,8 @@ pub struct DaemonCore {
     pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
     /// Installations of the restic managed by Kestic by `install_id`.
     pub(super) restic_installs: super::restic_install::InstallMap,
+    /// Removal of what an interrupted installation of an earlier daemon left behind.
+    pub(super) install_leftovers: super::restic_install::LeftoverSweep,
     pub(super) window_active: bool,
     pub(super) window_page: String,
     pub(crate) registered_gui_sender: Option<String>,
@@ -333,6 +335,7 @@ impl DaemonCore {
             dry_runs: HashMap::new(),
             retention_previews: HashMap::new(),
             restic_installs: HashMap::new(),
+            install_leftovers: super::restic_install::LeftoverSweep::default(),
             window_active: false,
             window_page: String::new(),
             registered_gui_sender: None,

@@ -13,13 +13,21 @@ use kestic_core::model::{Destination, DestinationKind};
 use kestic_core::provider::{ResolvedRestic, check_binary_version};
 use kestic_core::restic::{ResticCommandSpec, ResticRuntime, run_restic};
 use kestic_core::restic_gate::ResticBinaryGate;
-use kestic_core::secrets::InMemorySecretStore;
+use kestic_core::secrets::{InMemorySecretStore, SecretStore, SecretValue};
 use kestic_test_support::tools::write_executable;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use time::macros::datetime;
+
+/// The tests share the gate of the process (`ResticBinaryGate::global`); under `cargo test`
+/// they run on threads of one process, so they take turns.
+static SHARED_GATE: Mutex<()> = Mutex::new(());
+
+fn take_turn() -> MutexGuard<'static, ()> {
+    SHARED_GATE.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 const BLOCKED: Duration = Duration::from_millis(400);
 const DONE: Duration = Duration::from_secs(10);
@@ -99,6 +107,7 @@ fn probe(restic: &Path, dir: &Path) {
 /// the binary is being replaced wait until the replacement is done.
 #[test]
 fn ac_m5_06_8_restic_waits_during_replacement() {
+    let _turn = take_turn();
     let dir = tempfile::tempdir().expect("dir");
     let (restic, marker, _hold) = stand_in(dir.path());
     let lease = ResticBinaryGate::global()
@@ -146,6 +155,7 @@ fn ac_m5_06_8_restic_waits_during_replacement() {
 /// AC-M5-06-8 (b): the replacement waits while a restic process of a run is still running.
 #[test]
 fn ac_m5_06_8_replacement_waits_for_running_restic() {
+    let _turn = take_turn();
     let dir = tempfile::tempdir().expect("dir");
     let (restic, marker, hold) = stand_in(dir.path());
     std::fs::write(&hold, b"").expect("hold");
@@ -167,4 +177,73 @@ fn ac_m5_06_8_replacement_waits_for_running_restic() {
     run.join().expect("run");
     assert_eq!(replaced_rx.recv_timeout(DONE), Ok(true));
     replacer.join().expect("replacer");
+}
+
+/// A repository password that is no UTF-8 cannot be redacted from restic's output: the run
+/// fails before restic starts, so no restic is left running without its read lease.
+#[test]
+fn run_restic_with_unusable_secret_starts_nothing() {
+    let _turn = take_turn();
+    let dir = tempfile::tempdir().expect("dir");
+    let (restic, marker, _hold) = stand_in(dir.path());
+    let dest = local_destination(dir.path());
+    let store = InMemorySecretStore::default();
+    store
+        .set_secret(
+            dest.id.as_str(),
+            "repo",
+            &SecretValue::from_bytes(vec![0xff, 0xfe]),
+        )
+        .expect("store secret");
+    let mut spec =
+        ResticCommandSpec::for_destination(&restic, "kestic", &dest, vec!["snapshots".to_string()]);
+    spec.low_priority = false;
+    let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
+    let result = run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {});
+    // (a) the run fails
+    assert!(result.is_err(), "a password that is no UTF-8 is refused");
+    thread::sleep(BLOCKED);
+    // (b) restic never started
+    assert_eq!(starts(&marker), 0);
+    // (c) no read lease is left
+    assert_eq!(ResticBinaryGate::global().readers(), 0);
+}
+
+/// A panic while restic's output is handled (in `on_event`) still stops restic: (a) the process
+/// is gone afterwards and (b) no read lease of the gate is left.
+#[test]
+fn run_restic_stops_restic_when_the_output_handler_panics() {
+    let _turn = take_turn();
+    let dir = tempfile::tempdir().expect("dir");
+    let pid_file = dir.path().join("pid");
+    let restic = dir.path().join("restic");
+    write_executable(
+        &restic,
+        &format!(
+            "#!/bin/sh\necho $$ > '{pid}'\n\
+             echo '{{\"message_type\":\"status\",\"percent_done\":0.1}}'\nexec sleep 30\n",
+            pid = pid_file.display(),
+        ),
+    );
+    let dest = local_destination(dir.path());
+    let mut spec =
+        ResticCommandSpec::for_destination(&restic, "kestic", &dest, vec!["backup".to_string()]);
+    spec.low_priority = false;
+    spec.password_command_override = Some("echo password".to_string());
+    let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_restic(&spec, &dest, None, &clock, None, &[], |_| {
+            panic!("output handler fails")
+        })
+    }));
+    assert!(outcome.is_err(), "precondition: the handler panicked");
+    let pid = std::fs::read_to_string(&pid_file).expect("pid of restic");
+    // (a)
+    assert!(
+        !Path::new(&format!("/proc/{}", pid.trim())).exists(),
+        "restic {} still runs",
+        pid.trim()
+    );
+    // (b)
+    assert_eq!(ResticBinaryGate::global().readers(), 0);
 }

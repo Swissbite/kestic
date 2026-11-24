@@ -305,6 +305,76 @@ fn only_a_root_owned_gpgv_is_trusted() {
     );
 }
 
+/// Invisible format and direction characters from the network cannot reorder or hide parts of
+/// an error detail: they become spaces like control characters.
+#[test]
+fn clip_replaces_format_and_bidi_characters() {
+    for c in [
+        '\u{200B}',
+        '\u{200C}',
+        '\u{200D}',
+        '\u{200E}',
+        '\u{200F}',
+        '\u{202A}',
+        '\u{202B}',
+        '\u{202C}',
+        '\u{202D}',
+        '\u{202E}',
+        '\u{2066}',
+        '\u{2067}',
+        '\u{2068}',
+        '\u{2069}',
+        '\u{2028}',
+        '\u{2029}',
+        '\u{FEFF}',
+        '\u{061C}',
+        '\u{00AD}',
+        '\u{034F}',
+        '\u{115F}',
+        '\u{1160}',
+        '\u{180E}',
+        '\u{2060}',
+        '\u{2064}',
+        '\u{3164}',
+        '\u{FE00}',
+        '\u{FE0F}',
+        '\u{FFA0}',
+        '\u{FFF9}',
+        '\u{FFFB}',
+        '\u{E0001}',
+        '\u{E007F}',
+        '\u{2800}',
+        '\u{0600}',
+        '\u{0605}',
+        '\u{06DD}',
+        '\u{070F}',
+        '\u{0890}',
+        '\u{08E2}',
+        '\u{180B}',
+        '\u{180F}',
+        '\u{206A}',
+        '\u{206F}',
+        '\u{110BD}',
+        '\u{110CD}',
+        '\u{13430}',
+        '\u{1BCA0}',
+        '\u{1D173}',
+        '\u{1D17A}',
+    ] {
+        assert_eq!(
+            clip(&format!("a{c}b")),
+            "a b",
+            "U+{:04X} is replaced",
+            u32::from(c)
+        );
+    }
+    assert_eq!(
+        clip("Prüfsumme ä ß €"),
+        "Prüfsumme ä ß €",
+        "visible text stays"
+    );
+}
+
 /// Text from the network or from `gpgv` reaches an error detail only cut to its limit.
 #[test]
 fn attacker_text_is_clipped_in_error_details() {

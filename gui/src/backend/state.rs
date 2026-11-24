@@ -190,6 +190,7 @@ impl qobject::KesticApp {
         self.as_mut().set_notif_on_overdue(true);
         self.as_mut().set_notif_on_maintenance_failed(true);
         self.as_mut().set_notif_on_restic_update(false);
+        self.as_mut().update_restic_offer();
         self.as_mut().models_updated();
     }
 
@@ -250,6 +251,7 @@ impl qobject::KesticApp {
             .set_restic_provider_kind(QString::from(provider_kind));
         self.as_mut()
             .set_restic_message(QString::from(&tr_text(&state.restic_status.status_text())));
+        self.as_mut().update_restic_offer();
 
         // Blocking order: Daemon -> SecretStore -> restic (Daemon checked above)
         if let Some(b) = &state.blocking {

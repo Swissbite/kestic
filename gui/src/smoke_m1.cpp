@@ -646,8 +646,8 @@ void install_m1_smoke_check(
                 SMOKE_CHECK("M1", 22, actual_kind == expected_kind,
                     QStringLiteral("expected blocking_kind='%1', got '%2'").arg(expected_kind, actual_kind));
                 if (expected_kind == QLatin1String("restic_unavailable")) {
-                    QObject* dl_action = child_object(window, "downloadResticDisabledAction");
-                    SMOKE_CHECK_DISABLED("M1", 23, dl_action, "Download restic action must be present and disabled in M1");
+                    QObject* dl_action = child_object(window, "downloadResticAction");
+                    SMOKE_CHECK_ENABLED("M1", 23, dl_action, "Download restic action must be offered while restic is unusable");
                 }
             } else if (scen == QLatin1String("backups-detail-show-cmd")) {
                 QObject* show_cmd = child_object(window, "backupDetailShowCommandAction");
@@ -707,8 +707,9 @@ void install_m1_smoke_check(
             } else if (scen == QLatin1String("settings")) {
                 auto* sw = window->findChild<QQuickWindow*>(QStringLiteral("settingsWindow"));
                 SMOKE_CHECK_VISIBLE("M1", 34, sw, "settingsWindow not visible");
-                QObject* upd_btn = child_object(sw, "updateResticButton");
-                SMOKE_CHECK_DISABLED("M1", 35, upd_btn, "Update Now button must be disabled in M1");
+                QObject* dl_btn = child_object(sw, "downloadResticButton");
+                SMOKE_CHECK_VISIBLE("M1", 35, dl_btn, "Download restic button must be offered while restic is unusable");
+                SMOKE_CHECK_ENABLED("M1", 157, dl_btn, "Download restic button must be enabled while restic is unusable");
                 screenshot_target = sw;
             } else if (scen == QLatin1String("destinations-empty")) {
                 scene_destinations_empty({window, backend, top_nav, warnings, out_path});

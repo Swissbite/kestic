@@ -9,6 +9,7 @@ pub mod backend_credentials;
 pub mod backup;
 pub mod backup_progress;
 pub mod build_info;
+mod child_guard;
 pub mod clock;
 pub mod config;
 pub mod destination;

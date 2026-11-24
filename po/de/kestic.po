@@ -2739,10 +2739,6 @@ msgstr "Verschlüsselte Backup-Verwaltung für Plasma auf Basis von restic (%1)"
 msgid "Download restic…"
 msgstr "restic herunterladen…"
 
-#: gui/src/qml/MainHeaderArea.qml:58
-msgid "Automatic restic download will be added in a future release."
-msgstr "Kestic kann restic später selbst herunterladen."
-
 #: gui/src/qml/Main.qml:533 gui/src/qml/OverviewPage.qml:124
 #: gui/src/qml/OverviewPage.qml:128
 msgid "Set Up First Backup"
@@ -3233,9 +3229,13 @@ msgstr "Jetzt aktualisieren"
 msgid "Update restic now"
 msgstr "restic jetzt aktualisieren"
 
-#: gui/src/qml/SettingsDialog.qml:317
-msgid "Kestic will update restic itself in a future version."
-msgstr "Kestic wird restic in einer zukünftigen Version selbst aktualisieren."
+#: gui/src/qml/SettingsDialog.qml
+msgid "Download restic"
+msgstr "restic herunterladen"
+
+#: gui/src/restic_install_view.rs
+msgid "A restic installation is already running."
+msgstr "Eine Installation von restic läuft bereits."
 
 #: gui/src/qml/ShowCommandDialog.qml:12
 msgid "Command · %1"

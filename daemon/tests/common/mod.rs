@@ -53,6 +53,29 @@ pub fn restic_test_binaries() -> Vec<(&'static str, PathBuf)> {
 ///
 /// This guarantees zero process-global environment races across parallel Cargo test threads (`AC-M1-Q-1`).
 pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Path)) {
+    run_isolated(test_name, inner_env, false, body);
+}
+
+/// Name of the folder below the test root that [`run_isolated_test_with_system_programs`]
+/// puts first in `PATH`.
+pub const SYSTEM_PROGRAMS_DIR: &str = "system-programs";
+
+/// [`run_isolated_test`] with `<root>/system-programs` first in the child's `PATH`, so programs
+/// written there (a system restic of another version) are the ones the daemon finds.
+pub fn run_isolated_test_with_system_programs(
+    test_name: &str,
+    inner_env: &str,
+    body: impl FnOnce(&Path),
+) {
+    run_isolated(test_name, inner_env, true, body);
+}
+
+fn run_isolated(
+    test_name: &str,
+    inner_env: &str,
+    system_programs_first: bool,
+    body: impl FnOnce(&Path),
+) {
     if env::var_os(inner_env).as_deref() == Some("1".as_ref()) {
         let root = PathBuf::from(env::var_os("KESTIC_TEST_ROOT").expect("KESTIC_TEST_ROOT set"));
         body(&root);
@@ -98,6 +121,13 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         .env("LC_ALL", "C.UTF-8")
         .env("LANG", "C.UTF-8")
         .env("LANGUAGE", "en");
+    if system_programs_first {
+        let programs = dirs.root.join(SYSTEM_PROGRAMS_DIR);
+        std::fs::create_dir_all(&programs).expect("mkdir system programs");
+        let mut path = vec![programs];
+        path.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+        cmd.env("PATH", env::join_paths(path).expect("PATH"));
+    }
 
     let out = cmd.output().expect("run isolated test child");
     let stdout = String::from_utf8_lossy(&out.stdout);

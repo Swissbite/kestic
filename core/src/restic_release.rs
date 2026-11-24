@@ -710,18 +710,59 @@ pub fn check_sha256(data: &[u8], expected: &[u8; 32], name: &str) -> Result<(), 
 }
 
 /// `text` cut to at most [`DETAIL_LIMIT`] characters (an ellipsis marks a cut) and with control
-/// characters (line breaks, escape sequences) as spaces, for error details that come from the
-/// network or from `gpgv`.
+/// characters (line breaks, escape sequences) and invisible format and direction characters as
+/// spaces, for error details that come from the network or from `gpgv`.
 pub fn clip(text: &str) -> String {
     let mut clipped: String = text
         .chars()
         .take(DETAIL_LIMIT)
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| if is_hidden(c) { ' ' } else { c })
         .collect();
     if text.chars().nth(DETAIL_LIMIT).is_some() {
         clipped.push('…');
     }
     clipped
+}
+
+/// Control characters and the invisible characters that change how the text around them is
+/// shown or hide text: zero-width and direction marks, direction embeddings, overrides and
+/// isolates, line and paragraph separators, invisible operators, the byte order mark, the soft
+/// hyphen, the grapheme joiner, variation selectors, interlinear annotation and tag
+/// characters, the other format characters (Arabic, Syriac, Egyptian, shorthand, musical), and
+/// the blank fillers (Hangul, Braille).
+fn is_hidden(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{034F}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061C}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
+                | '\u{115F}'
+                | '\u{1160}'
+                | '\u{180B}'..='\u{180F}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206F}'
+                | '\u{2800}'
+                | '\u{3164}'
+                | '\u{FE00}'..='\u{FE0F}'
+                | '\u{FEFF}'
+                | '\u{FFA0}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{1343F}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+                | '\u{1D173}'..='\u{1D17A}'
+                | '\u{E0000}'..='\u{E007F}'
+                | '\u{E0100}'..='\u{E01EF}'
+        )
 }
 
 /// Runs `cmd` with stdout and stderr captured and kills it after `limit`.

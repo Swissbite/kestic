@@ -623,3 +623,59 @@ fn ac_m5_06_8_install_waits_for_running_preview() {
         },
     );
 }
+
+/// After an installation the daemon checks restic again: with the app-managed restic as the
+/// source and its binary missing, (a) the state first reports restic unusable and (b) after the
+/// installation reports the installed version, without a run or another call in between.
+#[test]
+fn restic_install_refreshes_the_restic_status() {
+    run_isolated_test(
+        "restic_install_refreshes_the_restic_status",
+        "KESTIC_M5_06C_REPROBE_INNER",
+        |root| {
+            let key = TestSigningKey::generate("kestic-test-release");
+            let _mock = serve(&ReleaseFiles::signed(RELEASE, &key), &key, Vec::new());
+            let variant = latest_variant();
+            let sub = variant.sub("S06CR");
+            let (config_path, _) = common::m3::daemon_paths(root, &sub);
+            let config = kestic_core::config::AppConfig {
+                restic_provider: ResticProvider::AppManaged {
+                    path: app_managed_binary(&data_dir()),
+                },
+                ..Default::default()
+            };
+            fs::create_dir_all(config_path.parent().expect("cfg dir")).expect("cfg dir");
+            kestic_core::config::save_config(&config_path, &config).expect("save config");
+            let rig = M3Rig::start_on(
+                root,
+                &variant,
+                &sub,
+                &variant.bus_name("S06CR"),
+                START,
+                |o| {
+                    o.enable_monitors = false;
+                    o.enable_scheduler = false;
+                    o.set_restic_provider = false;
+                },
+            );
+            let client = &rig.daemon.client;
+            // (a)
+            assert!(!client.get_state().expect("state").restic_status.valid);
+
+            let id = client.start_restic_install().expect("StartResticInstall");
+            let end = wait_finished(client, &id);
+            assert_eq!(
+                end.outcome,
+                Some(ResticInstallOutcome::Installed),
+                "{end:?}"
+            );
+            // (b)
+            let status = wait_for_state(client, Duration::from_secs(10), "restic valid", |state| {
+                state.restic_status.valid
+            })
+            .restic_status;
+            assert_eq!(status.version.as_deref(), Some(RELEASE));
+            rig.daemon.stop();
+        },
+    );
+}

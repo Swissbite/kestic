@@ -600,6 +600,10 @@ Kirigami.ApplicationWindow {
         settingsWindow.openWindow();
     }
 
+    function showResticDownload() {
+        settingsWindow.showResticDownload();
+    }
+
     function resizeToMinWidthForSmoke() {
         width = Math.round(Kirigami.Units.gridUnit * 26);
         height = Math.round(Kirigami.Units.gridUnit * 24);

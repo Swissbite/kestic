@@ -9,6 +9,7 @@ mod destination_input;
 mod models;
 mod overall_text;
 mod qt_bridge;
+mod restic_install_view;
 mod run_texts;
 #[cfg(feature = "test-harness")]
 mod smoke;
