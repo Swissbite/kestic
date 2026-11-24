@@ -77,10 +77,15 @@ fn collect_backup_snapshots(
     other_dests: &[Destination],
     deps: &ListDeps<'_>,
 ) -> BackupSnapshotsDto {
-    let (current_snapshots, current_error) = match deps.backup_snapshots(b_id, current_dest) {
-        Ok(snaps) => (snaps, None),
-        Err(err) => (Vec::new(), Some(err.to_string())),
-    };
+    let (current_snapshots, current_error, current_error_kind) =
+        match deps.backup_snapshots(b_id, current_dest) {
+            Ok(snaps) => (snaps, None, None),
+            Err(err) => (
+                Vec::new(),
+                Some(err.to_string()),
+                Some(backup_run_error_kind(&err)),
+            ),
+        };
 
     // Earlier `kestic:<backup-id>` snapshots on the other configured destinations.
     let previous_destinations = other_dests
@@ -100,6 +105,7 @@ fn collect_backup_snapshots(
         current_destination_name: current_dest.name.clone(),
         current_snapshots,
         current_error,
+        current_error_kind,
         previous_destinations,
     }
 }

@@ -135,8 +135,7 @@ impl qobject::KesticApp {
         if snapshots_done {
             self.as_mut().set_restore_snapshots_loading(false);
         }
-        // The destination's error code may arrive after the snapshot list: refresh the text.
-        if snapshots_done || overview_changed {
+        if snapshots_done {
             let error = snapshots_error_text();
             self.as_mut()
                 .set_restore_snapshots_error(cxx_qt_lib::QString::from(&error));
@@ -147,36 +146,18 @@ impl qobject::KesticApp {
     }
 }
 
-/// Error line of the snapshot list: the text of the destination's error code when the
-/// destination list names one, otherwise the raw detail.
+/// Error line of the snapshot list: the text of its error code, or the raw detail when the code
+/// names no known cause.
 fn snapshots_error_text() -> String {
-    let (backup_id, raw) = match &restore_cache().lock_unpoisoned().backup_snapshots {
-        Some((id, Ok(dto))) => match &dto.current_error {
-            Some(raw) => (id.clone(), raw.clone()),
-            None => return String::new(),
-        },
-        Some((_, Err(err))) => return err.clone(),
-        None => return String::new(),
-    };
-    let dest_id = {
-        let guard = shared_state().lock_unpoisoned();
-        guard.state.as_ref().and_then(|s| {
-            s.backups
-                .iter()
-                .find(|b| b.backup.id.as_str() == backup_id)
-                .map(|b| b.backup.destination_id.as_str().to_string())
-        })
-    };
-    let kind = dest_id.and_then(|id| {
-        restore_cache()
-            .lock_unpoisoned()
-            .destinations
-            .get(&id)
-            .and_then(|r| r.as_ref().ok())
-            .and_then(|d| d.error_kind)
-    });
-    match kind {
-        Some(kind) if kind != ErrorKind::Unknown => tr(&kind.message(None, false)),
-        _ => raw,
+    match &restore_cache().lock_unpoisoned().backup_snapshots {
+        Some((_, Ok(dto))) => dto
+            .current_error
+            .as_ref()
+            .map_or_else(String::new, |raw| match dto.current_error_kind {
+                Some(kind) if kind != ErrorKind::Unknown => tr(&kind.message(None, false)),
+                _ => raw.clone(),
+            }),
+        Some((_, Err(err))) => err.clone(),
+        None => String::new(),
     }
 }

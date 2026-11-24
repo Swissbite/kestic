@@ -252,3 +252,31 @@ fn ac_m4_01_3_list_of_b1_has_no_snapshot_of_b2() {
         },
     );
 }
+
+/// When the snapshot list of a backup fails, it carries its own error code: (a) the list has a
+/// raw error and (b) an error code that names the cause, (c) the same the destination's list
+/// gives for that failure.
+#[test]
+fn m4_s01_failed_backup_list_carries_its_error_code() {
+    run_isolated_test(
+        "m4_s01_failed_backup_list_carries_its_error_code",
+        "KESTIC_M4_S01_LIST_ERROR_INNER",
+        |root| {
+            let variant = common::m3::latest_variant();
+            let fx = Fixture::start(root, &variant);
+            fx.three_b1_snapshots();
+            let moved = fx.repo().with_extension("moved");
+            std::fs::rename(fx.repo(), &moved).expect("move the repository away");
+            let list = fx.list_b1();
+            assert!(list.current_error.is_some(), "(a) {list:?}");
+            let kind = list.current_error_kind;
+            assert!(
+                kind.is_some_and(|k| k != kestic_i18n::codes::ErrorKind::Unknown),
+                "(b) {kind:?}"
+            );
+            assert_eq!(kind, fx.list_destination().error_kind, "(c)");
+            std::fs::rename(&moved, fx.repo()).expect("move it back");
+            fx.stop();
+        },
+    );
+}

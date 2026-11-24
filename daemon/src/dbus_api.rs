@@ -446,6 +446,9 @@ pub struct BackupSnapshotsDto {
     pub current_destination_name: String,
     pub current_snapshots: Vec<SnapshotSummaryDto>,
     pub current_error: Option<String>,
+    /// Error code of `current_error`.
+    #[serde(default)]
+    pub current_error_kind: Option<ErrorKind>,
     pub previous_destinations: Vec<PreviousDestinationSnapshotsDto>,
 }
 
