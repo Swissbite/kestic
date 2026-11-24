@@ -485,10 +485,11 @@ impl qobject::SnapshotBrowseModel {
     }
 
     /// The folder a restore of the whole snapshot runs from, judged from `top` (the common
-    /// folder of the snapshot's paths) and one entry of the snapshot (a search hit).
+    /// folder of the snapshot's paths) and one entry of the snapshot (a search hit); empty when
+    /// only a listing of `top` tells.
     pub fn top_dir_seen_from(&self, top: &QString, entry: &QString, entry_is_dir: bool) -> QString {
         let top = top.to_string();
-        QString::from(top_folder_seen_from(&top, &entry.to_string(), entry_is_dir))
+        QString::from(top_folder_seen_from(&top, &entry.to_string(), entry_is_dir).unwrap_or(""))
     }
 
     /// The selection to restore: none (the whole snapshot) when it covers every entry of the

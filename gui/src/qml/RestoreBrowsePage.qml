@@ -84,11 +84,21 @@ Kirigami.ScrollablePage {
         }
     }
 
+    // Opened from a search hit that is a folder above `topDir`: `topDir` is listed first, to
+    // learn whether the snapshot's tree holds it as a folder.
+    property bool probingTop: false
+
     Component.onCompleted: {
-        // Opened from a search hit, the hit tells whether the snapshot's tree holds `topDir`.
-        snapshotBrowseModel.top_dir = focusPath !== ""
-            ? snapshotBrowseModel.topDirSeenFrom(topDir, focusPath, focusIsDir) : topDir;
-        openDir(startDir);
+        var top = topDir;
+        if (focusPath !== "") {
+            // A search hit tells whether the snapshot's tree holds `topDir`, unless it is a folder
+            // above it.
+            top = snapshotBrowseModel.topDirSeenFrom(topDir, focusPath, focusIsDir);
+            probingTop = top === "" && topDir !== "";
+            if (probingTop) top = topDir;
+        }
+        snapshotBrowseModel.top_dir = top;
+        openDir(probingTop ? topDir : startDir);
     }
 
     // A snapshot whose backed-up folder is not in its tree (made with a relative path or of a
@@ -96,6 +106,15 @@ Kirigami.ScrollablePage {
     Connections {
         target: snapshotBrowseModel
         function onStateChanged() {
+            if (page.probingTop) {
+                var state = snapshotBrowseModel.state;
+                if ((state === "done" || state === "error") && snapshotBrowseModel.dir === page.topDir) {
+                    page.probingTop = false;
+                    if (state === "done" && !snapshotBrowseModel.dir_exists) snapshotBrowseModel.top_dir = "/";
+                    page.openDir(page.startDir);
+                }
+                return;
+            }
             if (snapshotBrowseModel.state !== "done" || snapshotBrowseModel.dir !== page.startDir) {
                 return;
             }

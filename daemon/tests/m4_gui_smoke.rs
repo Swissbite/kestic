@@ -1298,8 +1298,9 @@ fn ac_m4_05_26_restore_all_restores_the_whole_snapshot() {
 }
 
 /// AC-M4-05-26 (a), browser opened from a search hit: a snapshot of one file is restored from
-/// `/`, and every entry of `/` selected reads «Restore All…» with an empty selection (scene
-/// `m4-restore-all-from-search`).
+/// `/`, and every entry of `/` selected reads «Restore All…» with an empty selection, opened
+/// from the hit of the file (scene `m4-restore-all-from-search`) and from a folder hit above it
+/// (scene `m4-restore-all-from-folder-hit`).
 #[test]
 fn ac_m4_05_26_restore_all_from_a_search_hit() {
     run_isolated_test(
@@ -1317,6 +1318,13 @@ fn ac_m4_05_26_restore_all_from_a_search_hit() {
                     "wide",
                     lang,
                     &smoke_artifact("restore-all-from-search", "wide", lang),
+                );
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-all-from-folder-hit",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-all-from-folder-hit", "wide", lang),
                 );
                 rig.daemon.stop();
             }
@@ -1375,19 +1383,33 @@ fn ac_m4_05_29_restore_banner_shows_running_and_cancelled() {
                 rig.wrapper.hold_with_repeated_output("restore", &line(MIB));
                 std::thread::scope(|scope| {
                     // AC-M4-05-30 (d): once restic runs, 4 MiB more after 1 s on the daemon's clock.
+                    // The new line comes first at the same moment, which changes no speed; the
+                    // clock moves once the daemon has read it, so no older line follows it.
                     scope.spawn(|| {
                         let deadline = Instant::now() + Duration::from_secs(90);
                         while rig.wrapper.of('S', "restore").is_empty() && Instant::now() < deadline
                         {
                             std::thread::sleep(Duration::from_millis(100));
                         }
-                        std::thread::sleep(Duration::from_millis(1500));
-                        rig.clock.advance(Duration::from_secs(1));
                         std::fs::write(
                             format!("{}.restore.repeat", rig.wrapper.hold.display()),
                             line(5 * MIB),
                         )
                         .expect("write the next status line");
+                        while Instant::now() < deadline {
+                            let done = rig
+                                .daemon
+                                .client
+                                .get_state()
+                                .ok()
+                                .and_then(|state| state.overall.active_run_progress)
+                                .is_some_and(|p| p.bytes_done == 5 * MIB);
+                            if done {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                        rig.clock.advance(Duration::from_secs(1));
                     });
                     run_m4_gui_smoke(
                         root,

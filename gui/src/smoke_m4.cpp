@@ -2377,45 +2377,65 @@ int scenario_restore_all(const Ctx& c) {
     return 0;
 }
 
-/// AC-M4-05-26 (a), browser opened from a search hit: for a snapshot of one file, whose tree
-/// does not hold its common folder as a folder, the whole snapshot is restored from `/`; with
-/// every entry of `/` selected the action reads «Restore All…» and restores the whole snapshot.
-int scenario_restore_all_from_search(const Ctx& c) {
+// AC-M4-05-26 (a), browser opened from the search hit for `text` (a folder hit when `is_dir`) in
+// a snapshot of one file, whose tree does not hold its common folder as a folder: the whole
+// snapshot is restored from `/`; with every entry of `/` selected the action reads «Restore
+// All…» and restores the whole snapshot.
+int restore_all_from_hit(const Ctx& c, const QString& text, bool is_dir, int code) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 7801, 1)) {
+    if (int rc = open_restore_snapshots(c, code, 1)) {
         return rc;
     }
-    if (int rc = search_with_keyboard(c, QStringLiteral("a.txt"), 7806)) {
+    if (int rc = search_with_keyboard(c, text, code + 5)) {
         return rc;
     }
     Search s = search_page(w);
-    M4_CHECK(7810, s.model->rowCount() == 1, "one hit");
-    const QString path = role_value(s.model, 0, "path").toString();
-    const QString folder = role_value(s.model, 0, "folder").toString();
-    M4_CHECK(7811, path.endsWith(QLatin1String("/Dokumente/a.txt")), qPrintable(QStringLiteral("the hit: ") + path));
-    QMetaObject::invokeMethod(s.page, "showHit", Q_ARG(QVariant, 0));
-    M4_CHECK(7812, wait_for_dir(w, folder), "the folder of the hit opens");
+    int hit = -1;
+    for (int r = 0; r < s.model->rowCount(); ++r) {
+        if (role_value(s.model, r, "path").toString().endsWith(QLatin1Char('/') + text)
+            && role_value(s.model, r, "isDir").toBool() == is_dir) {
+            hit = r;
+        }
+    }
+    M4_CHECK(code + 10, hit >= 0, is_dir ? "the folder is a hit" : "the file is a hit");
+    const QString path = role_value(s.model, hit, "path").toString();
+    const QString folder = role_value(s.model, hit, "folder").toString();
+    M4_CHECK(code + 11, path.startsWith(QLatin1String("/home/")), qPrintable(QStringLiteral("the hit below /home: ") + path));
+    M4_CHECK(code + 12, folder == path.section(QLatin1Char('/'), 0, -2), "the folder of the hit holds it");
+    QMetaObject::invokeMethod(s.page, "showHit", Q_ARG(QVariant, hit));
+    M4_CHECK(code + 13, wait_for_dir(w, folder), "the folder of the hit opens");
     finish_incubation(w);
     Browse b = browse_page(w);
-    M4_CHECK_EQ(7813, b.model->property("top_dir").toString(), QStringLiteral("/"),
+    M4_CHECK_EQ(code + 14, b.model->property("top_dir").toString(), QStringLiteral("/"),
         "(a) a snapshot of one file is restored from `/`");
     QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, QStringLiteral("/")));
-    M4_CHECK(7814, wait_for_dir(w, QStringLiteral("/")), "`/` opens");
+    M4_CHECK(code + 15, wait_for_dir(w, QStringLiteral("/")), "`/` opens");
     QMetaObject::invokeMethod(b.model, "selectAll");
-    M4_CHECK(7815, b.model->property("selection_count").toInt() == b.model->property("total").toInt()
+    M4_CHECK(code + 16, b.model->property("selection_count").toInt() == b.model->property("total").toInt()
             && b.model->property("selection_count").toInt() > 0,
         "every entry of `/` selected");
     QObject* action = object_named(w, "restoreSelectionAction");
-    M4_CHECK(7816, action != nullptr, "restoreSelectionAction missing");
-    M4_CHECK_EQ(7817, action->property("text").toString(), loc(c.lang, "Restore All…", "Alles wiederherstellen…"),
+    M4_CHECK(code + 17, action != nullptr, "restoreSelectionAction missing");
+    M4_CHECK_EQ(code + 18, action->property("text").toString(), loc(c.lang, "Restore All…", "Alles wiederherstellen…"),
         "(a) every entry of `/`: «Restore All…»");
-    M4_CHECK(7818, b.model->property("whole_snapshot").toBool(), "(a) the selection is the whole snapshot");
+    M4_CHECK(code + 19, b.model->property("whole_snapshot").toBool(), "(a) the selection is the whole snapshot");
     QStringList selection;
     QMetaObject::invokeMethod(b.model, "restoreSelection", Q_RETURN_ARG(QStringList, selection));
-    M4_CHECK(7819, selection.isEmpty(), "(a) the restore request has an empty selection");
+    M4_CHECK(code + 20, selection.isEmpty(), "(a) the restore request has an empty selection");
     finish_incubation(w);
-    M4_CHECK(7820, save_screenshot(w, c.out_path), "screenshot failed");
+    M4_CHECK(code + 21, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
+}
+
+/// AC-M4-05-26 (a): «Restore All…» in a snapshot of one file opened from the hit of that file.
+int scenario_restore_all_from_search(const Ctx& c) {
+    return restore_all_from_hit(c, QStringLiteral("a.txt"), false, 7801);
+}
+
+/// AC-M4-05-26 (a): «Restore All…» in a snapshot of one file opened from a folder hit above the
+/// file; the browser lists the snapshot's common folder first to learn that it is none.
+int scenario_restore_all_from_folder_hit(const Ctx& c) {
+    return restore_all_from_hit(c, QStringLiteral("Dokumente"), true, 7841);
 }
 
 // The name of the control that holds the keyboard focus in the restore dialog: the object name
@@ -2819,6 +2839,8 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_all(ctx);
     } else if (scen == QLatin1String("m4-restore-all-from-search")) {
         rc = scenario_restore_all_from_search(ctx);
+    } else if (scen == QLatin1String("m4-restore-all-from-folder-hit")) {
+        rc = scenario_restore_all_from_folder_hit(ctx);
     } else if (scen == QLatin1String("m4-restore-dialog-tab")) {
         rc = scenario_restore_dialog_tab(ctx);
     } else if (scen == QLatin1String("m4-breakpoint")) {

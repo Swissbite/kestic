@@ -147,24 +147,25 @@ where
 
 /// The folder a restore of the whole snapshot runs from ([`resolve_plan`]), as far as one entry
 /// `entry` of the snapshot's tree tells it: `top`, the common folder of the snapshot's paths,
-/// while `entry` lies inside it, is a folder above it or is `top` as a folder; otherwise `/`,
-/// because a tree that holds `top` as a folder holds nothing beside it but the folders above.
-/// An empty `top` (not known) stays empty.
-pub fn top_folder_seen_from<'a>(top: &'a str, entry: &str, entry_is_dir: bool) -> &'a str {
+/// when `entry` lies inside it or is `top` as a folder; `/` when `entry` is `top` as a file or
+/// lies beside it, because a tree that holds `top` as a folder holds nothing beside it but the
+/// folders above. `None` for a folder above `top`: the tree holds those either way, so only a
+/// listing of `top` tells. An empty `top` (not known) stays empty.
+pub fn top_folder_seen_from<'a>(top: &'a str, entry: &str, entry_is_dir: bool) -> Option<&'a str> {
     let below = |inner: &str, outer: &str| {
         outer == "/"
             || inner
                 .strip_prefix(outer)
                 .is_some_and(|rest| rest.starts_with('/'))
     };
-    if top.is_empty()
-        || top == "/"
-        || (entry != top && (below(entry, top) || below(top, entry)))
-        || (entry == top && entry_is_dir)
-    {
-        top
+    if top.is_empty() || top == "/" || (entry != top && below(entry, top)) {
+        Some(top)
+    } else if entry == top {
+        Some(if entry_is_dir { top } else { "/" })
+    } else if below(top, entry) {
+        None
     } else {
-        "/"
+        Some("/")
     }
 }
 
