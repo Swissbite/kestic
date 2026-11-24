@@ -654,9 +654,8 @@ impl DaemonCore {
     }
 
     pub fn request_shutdown(&self) {
-        // Set first: a run ending on the cancel must already see that nothing starts any more.
-        self.shutdown_flag.store(true, Ordering::SeqCst);
         self.cancel_any_active_run();
+        self.shutdown_flag.store(true, Ordering::SeqCst);
         if let Some(tx) = &self.quit_tx {
             let _ = tx.send(());
         }
