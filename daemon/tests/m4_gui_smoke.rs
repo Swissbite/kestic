@@ -15,7 +15,10 @@ use common::m4::{
     RawSnapshot, backup_dir, backup_stdin, big_tree, small_tree, snapshot_username, write_file,
     write_snapshot,
 };
-use common::{find_kestic_binary, run_isolated_test};
+use common::{
+    click_dbusmenu_item, fetch_dbusmenu_items, find_kestic_binary, run_isolated_test,
+    wait_for_sni_service,
+};
 use kestic_core::query_list::QueryLimits;
 use kestic_core::scheduler::TimezoneSpec;
 use kestic_daemon::dbus_api::KESTIC_BUS_NAME;
@@ -884,15 +887,42 @@ fn ac_m4_05_22_settings_mark_outdated_restic() {
     );
 }
 
-/// AC-M4-05-24 (c) in the GUI: the GUI started with `--show-restore` opens on the tab «Restore»
-/// (scene `m4-show-restore`).
+/// Clicks «Restore Files…» in the tray menu of the daemon at `sni` once the smoke scene wrote the
+/// marker file `marker` (its window shows another tab); returns whether it clicked (false when
+/// no marker came within 60 s).
+fn click_restore_files_when_marked(sni: &str, marker: &Path) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !marker.exists() {
+        if Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let conn = zbus::block_on(zbus::Connection::session()).expect("session conn");
+    let entry = fetch_dbusmenu_items(&conn, sni)
+        .into_iter()
+        .find(|i| i.label == "Restore Files…" && i.enabled)
+        .expect("an enabled «Restore Files…» in the tray menu");
+    click_dbusmenu_item(&conn, sni, entry.id);
+    true
+}
+
+/// AC-M4-05-24 (c) in the GUI: the GUI started with `--show-restore` opens on the tab «Restore»,
+/// and a running GUI on another tab switches to it when «Restore Files…» is clicked in the
+/// daemon's tray menu (scene `m4-show-restore`).
 #[test]
 fn ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab() {
     run_isolated_test(
         "ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab",
         "KESTIC_AC_M4_05_24_SMOKE_INNER",
         |root| {
-            let (rig, _fakes) = restore_env(root);
+            let (rig, fakes) = restore_env(root);
+            let sni = wait_for_sni_service(&fakes.sni_conn, Duration::from_secs(5));
+            let marker = root.join("tray-click-marker");
+            let click = {
+                let marker = marker.clone();
+                std::thread::spawn(move || click_restore_files_when_marked(&sni, &marker))
+            };
             let iso = kestic_test_support::gui::IsolatedEnv::adopt(root);
             let dbus_addr =
                 std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
@@ -907,7 +937,11 @@ fn ac_m4_05_24_gui_started_from_the_tray_opens_the_restore_tab() {
                 "en",
                 &smoke_artifact("show-restore", "wide", "en"),
                 &["--show-restore"],
-                &[],
+                &[("KESTIC_SMOKE_TRAY_MARKER", &marker.to_string_lossy())],
+            );
+            assert!(
+                click.join().expect("tray click thread"),
+                "AC-M4-05-24 (c): «Restore Files…» was clicked in the tray menu"
             );
             rig.daemon.stop();
         },
@@ -980,6 +1014,76 @@ fn ac_m4_07_8_foreign_and_orphaned_snapshots_say_not_managed_by_kestic() {
                 );
             }
             rig.daemon.stop();
+        },
+    );
+}
+
+/// A daemon with one destination «NAS», the backup «Home» without snapshots and, written with the
+/// restic CLI, a snapshot without a Kestic tag of a small folder ([`small_tree`]) whose `a.txt`
+/// differs locally afterwards.
+fn unassigned_restore_env(root: &Path) -> (M3Rig, StdFakes) {
+    let fakes = StdFakes::start_with(FakeSetup {
+        active_network: Some("HomeWifi"),
+        ..FakeSetup::default()
+    });
+    let variant = latest_variant();
+    let rig = M3Rig::start_on(
+        root,
+        &variant,
+        "",
+        KESTIC_BUS_NAME,
+        datetime!(2026-11-15 14:32:00 UTC),
+        |o| {
+            o.enable_scheduler = false;
+            // The suggested folder name of the restore dialog uses the system time zone.
+            o.timezone = TimezoneSpec::System;
+        },
+    );
+    let repo = root.join("repo-NAS");
+    let (dest, password) =
+        add_local_destination(&rig.daemon.client, &variant.bin, &repo, "NAS", |_| {});
+    rig.add_backup_to(&dest, "Home", |_| {});
+    let src = small_tree(&root.join("trees"));
+    backup_dir(
+        &variant.bin,
+        &repo,
+        &password,
+        &src,
+        &RawSnapshot {
+            tag: "",
+            time: "2026-11-08 21:14:00",
+            host: "notebook",
+        },
+    );
+    std::fs::write(src.join("a.txt"), "changed locally").expect("change a.txt");
+    (rig, fakes)
+}
+
+/// AC-M4-07-2 (a), GUI part, for a snapshot without a Kestic tag: browsing it shows the folder
+/// list whose path row draws each folder once (AC-M4-03-1 (a)); its restore dialog preselects a
+/// new folder, not the original location (AC-M4-05-1); at the original location with «Always» it
+/// names the consequence of overwriting and writes nothing before the confirmation
+/// (AC-M4-05-4 (c)) (scene `m4-foreign-restore`).
+#[test]
+fn ac_m4_07_2_unassigned_snapshot_browses_and_restores_like_a_kestic_one() {
+    run_isolated_test(
+        "ac_m4_07_2_unassigned_snapshot_browses_and_restores_like_a_kestic_one",
+        "KESTIC_AC_M4_07_2_SMOKE_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes) = unassigned_restore_env(&sub);
+                run_m4_gui_smoke(
+                    root,
+                    "m4-foreign-restore",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-unassigned-browse", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
         },
     );
 }
