@@ -49,7 +49,7 @@ const features = [
     text: "Browse a snapshot folder by folder, or search all snapshots of a backup for a file name, and mark what you want back. It goes into a new folder by default, so nothing is overwritten. At the original location, a home folder saved under another user name maps to yours.",
   },
   {
-    term: "Preview",
+    term: "Restore preview",
     text: "Restoring to the original location or into a folder with files in it needs a preview first. It lists which files would be new, overwritten, not overwritten, or unchanged. Existing files stay as they are unless you pick an overwrite mode.",
   },
   {
@@ -94,7 +94,7 @@ const milestones = [
   {
     id: "M4",
     name: "Restore",
-    scope: "Browse and compare snapshots, restore files without overwriting existing ones.",
+    scope: "Browse and compare snapshots, restore files, by default without overwriting existing ones.",
     done: true,
   },
   {
@@ -165,7 +165,7 @@ const buildFromSource = `${repoUrl}#building--testing`;
         </div>
         <dl class="mono facts">
           <dt>Today</dt>
-          <dd>Back up to a local folder or drive, or a REST server, and restore from there.</dd>
+          <dd>Back up to a local folder or drive, or a REST server, and restore from your snapshots.</dd>
           <dt>Not yet</dt>
           <dd>SFTP, S3 and other backends, guided first-run setup.</dd>
           <dt>Runs on</dt>

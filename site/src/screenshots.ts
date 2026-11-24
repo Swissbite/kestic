@@ -39,7 +39,7 @@ export const galleryShots: readonly Screenshot[] = [
     file: "m4-restore-snapshot-list-wide-en.png",
     crop: { x: 0, y: 62, width: 870, height: 580 },
     caption: "Restore: every backup with its snapshots, newest first.",
-    alt: "Restore tab listing the backups Home and Photos, the unassigned and orphaned snapshots, and the three snapshots of Home with time, data added, and host.",
+    alt: "Restore tab listing the backups Home and Photos, the groups Unassigned and Orphaned, both empty here, and the three snapshots of Home with time, data added, and host.",
     ...wide,
   },
   {
