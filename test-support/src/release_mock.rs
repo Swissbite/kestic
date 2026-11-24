@@ -32,6 +32,7 @@ impl TestSigningKey {
         let uid = format!("{name} <{name}@kestic.invalid>");
         run_gpg(
             home.path(),
+            "generate key",
             &[
                 "--passphrase",
                 "",
@@ -42,7 +43,11 @@ impl TestSigningKey {
                 "never",
             ],
         );
-        let listing = run_gpg(home.path(), &["--with-colons", "--fingerprint", &uid]);
+        let listing = run_gpg(
+            home.path(),
+            "list fingerprint",
+            &["--with-colons", "--fingerprint", &uid],
+        );
         let fingerprint = String::from_utf8_lossy(&listing)
             .lines()
             .find_map(|line| {
@@ -53,6 +58,7 @@ impl TestSigningKey {
             .expect("fingerprint of the generated key");
         run_gpg(
             home.path(),
+            "add signing subkey",
             &[
                 "--passphrase",
                 "",
@@ -67,6 +73,7 @@ impl TestSigningKey {
         let export_arg = export.to_string_lossy().into_owned();
         run_gpg(
             home.path(),
+            "export public key",
             &["--export", "--output", &export_arg, &fingerprint],
         );
         Self {
@@ -93,6 +100,7 @@ impl TestSigningKey {
         let input = input.to_string_lossy().into_owned();
         run_gpg(
             self.home.path(),
+            "sign",
             &[
                 "--armor",
                 "--detach-sign",
@@ -126,19 +134,16 @@ impl Drop for TestSigningKey {
     }
 }
 
-/// Runs `gpg` in batch mode with `home` as `GNUPGHOME`; returns its stdout.
-fn run_gpg(home: &Path, args: &[&str]) -> Vec<u8> {
+/// Runs `gpg` in batch mode with `home` as `GNUPGHOME`; returns its stdout. A failure names only
+/// `event`, never the arguments or gpg's output (they carry the key's user ID).
+fn run_gpg(home: &Path, event: &'static str, args: &[&str]) -> Vec<u8> {
     let out = Command::new("gpg")
         .env("GNUPGHOME", home)
         .args(["--batch", "--quiet", "--pinentry-mode", "loopback"])
         .args(args)
         .output()
         .expect("run gpg");
-    assert!(
-        out.status.success(),
-        "gpg {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(out.status.success(), "gpg {event} failed: {}", out.status);
     out.stdout
 }
 
