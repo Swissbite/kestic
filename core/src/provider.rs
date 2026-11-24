@@ -4,6 +4,7 @@
 //! Restic binary discovery and version checking (`ResticProvider`).
 
 use crate::model::ResticProvider;
+use crate::restic_gate::ResticBinaryGate;
 use semver::Version;
 use serde::Deserialize;
 use std::os::unix::fs::PermissionsExt;
@@ -113,6 +114,7 @@ pub fn check_binary_version(binary: &Path) -> Result<ResolvedRestic, ResticProvi
 }
 
 fn probe_version_json(binary: &Path) -> Result<Version, String> {
+    let _lease = ResticBinaryGate::global().read();
     let out = Command::new(binary)
         .args(["version", "--json"])
         .output()
@@ -132,6 +134,7 @@ fn probe_version_json(binary: &Path) -> Result<Version, String> {
 }
 
 fn probe_version_text(binary: &Path) -> Result<Version, String> {
+    let _lease = ResticBinaryGate::global().read();
     let out = Command::new(binary)
         .arg("version")
         .output()

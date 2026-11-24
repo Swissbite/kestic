@@ -3852,3 +3852,98 @@ msgstr "Server vertrauen…"
 #: gui/src/qml/DestinationDetailsForm.qml
 msgid "Add as New Destination…"
 msgstr "Als neues Ziel hinzufügen…"
+
+#: i18n/src/messages.rs:515
+msgid "Looking for the latest restic release…"
+msgstr "Neuestes restic-Release wird gesucht…"
+
+#: i18n/src/messages.rs:516
+msgid "Downloading restic…"
+msgstr "restic wird heruntergeladen…"
+
+#: i18n/src/messages.rs:517
+msgid "Checking the signature and checksum of restic…"
+msgstr "Signatur und Prüfsumme von restic werden geprüft…"
+
+#: i18n/src/messages.rs:519
+msgid "Waiting until no run or preview uses restic any more…"
+msgstr "Warten, bis kein Lauf und keine Vorschau restic mehr nutzt…"
+
+#: i18n/src/messages.rs:521
+msgid "Installing restic…"
+msgstr "restic wird installiert…"
+
+#: i18n/src/messages.rs:531
+msgid "restic %1 is installed."
+msgstr "restic %1 ist installiert."
+
+#: i18n/src/messages.rs:532
+msgid "restic %1 is already the latest version."
+msgstr "restic %1 ist bereits die neueste Version."
+
+#: i18n/src/messages.rs:544
+msgid "Could not download restic. Check the internet connection and try again."
+msgstr ""
+"restic konnte nicht heruntergeladen werden. Prüfen Sie die "
+"Internetverbindung und versuchen Sie es erneut."
+
+#: i18n/src/messages.rs:547
+msgid ""
+"The download was redirected to a server that does not belong to restic's "
+"releases. Nothing was installed."
+msgstr ""
+"Der Download wurde auf einen Server umgeleitet, der nicht zu den Releases von "
+"restic gehört. Es wurde nichts installiert."
+
+#: i18n/src/messages.rs:550
+msgid ""
+"The restic release is incomplete or not in the expected form. Nothing was "
+"installed."
+msgstr ""
+"Das restic-Release ist unvollständig oder nicht in der erwarteten Form. Es "
+"wurde nichts installiert."
+
+#: i18n/src/messages.rs:553
+msgid "restic offers no Linux build for this processor."
+msgstr "restic bietet für diesen Prozessor kein Linux-Programm an."
+
+#: i18n/src/messages.rs:556
+msgid ""
+"gpgv is missing. Kestic needs it to check the signature of restic. Install "
+"the package gpgv."
+msgstr ""
+"gpgv fehlt. Kestic braucht es, um die Signatur von restic zu prüfen. "
+"Installieren Sie das Paket gpgv."
+
+#: i18n/src/messages.rs:559
+msgid ""
+"The signature of the restic release is not valid. Nothing was installed."
+msgstr ""
+"Die Signatur des restic-Release ist nicht gültig. Es wurde nichts installiert."
+
+#: i18n/src/messages.rs:562
+msgid ""
+"The downloaded restic does not match its checksum. Nothing was installed."
+msgstr ""
+"Das heruntergeladene restic passt nicht zu seiner Prüfsumme. Es wurde nichts "
+"installiert."
+
+#: i18n/src/messages.rs:565
+msgid ""
+"The downloaded restic reports another version than its release. Nothing was "
+"installed."
+msgstr ""
+"Das heruntergeladene restic meldet eine andere Version als sein Release. Es "
+"wurde nichts installiert."
+
+#: i18n/src/messages.rs:568
+msgid ""
+"The restic release is older than the version Kestic needs or already has. "
+"Nothing was installed."
+msgstr ""
+"Das restic-Release ist älter als die Version, die Kestic braucht oder schon "
+"hat. Es wurde nichts installiert."
+
+#: i18n/src/messages.rs:570
+msgid "Could not save restic in the data folder of Kestic."
+msgstr "restic konnte nicht im Datenordner von Kestic gespeichert werden."

@@ -308,9 +308,31 @@ code_enum! {
         ChecksumMismatch => "checksum_mismatch",
         /// The new binary reports another version than the release.
         VersionMismatch => "version_mismatch",
-        /// The release or the new binary is older than the minimum restic version.
+        /// The release or the new binary is older than the minimum restic version, or the
+        /// release is older than the installed restic managed by Kestic.
         TooOld => "too_old",
         WriteFailed => "write_failed",
+    }
+}
+
+code_enum! {
+    /// Step of a running installation of the app-managed restic (`ResticInstallStatusDto.phase`).
+    ResticInstallPhase {
+        FetchingRelease => "fetching_release",
+        Downloading => "downloading",
+        Verifying => "verifying",
+        /// Downloaded and checked; the binary is replaced once no restic runs.
+        WaitingForRuns => "waiting_for_runs",
+        Replacing => "replacing",
+    }
+}
+
+code_enum! {
+    /// Result of a finished installation (`ResticInstallStatusDto.outcome`).
+    ResticInstallOutcome {
+        Installed => "installed",
+        /// The app-managed restic already was the latest release; nothing was downloaded.
+        AlreadyCurrent => "already_current",
     }
 }
 

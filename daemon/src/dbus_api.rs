@@ -20,7 +20,8 @@ use kestic_core::scheduler::PauseDuration;
 use kestic_core::secrets::SecretValue;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome,
-    ErrorKind, PendingReasonCode, ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+    ErrorKind, PendingReasonCode, ResticInstallCode, ResticInstallOutcome, ResticInstallPhase,
+    ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
 pub use kestic_i18n::codes::{OverallStatusKind, RunProgressPhase};
 use kestic_i18n::messages::{
@@ -924,6 +925,21 @@ impl KesticClient {
         self.call_json("GetBackupDryRunStatus", &(preview_id,))
     }
 
+    pub fn start_restic_install(&self) -> zbus::Result<String> {
+        self.call("StartResticInstall", &())
+    }
+
+    pub fn get_restic_install_status(
+        &self,
+        install_id: &str,
+    ) -> Result<ResticInstallStatusDto, KesticDbusError> {
+        self.call_json("GetResticInstallStatus", &(install_id,))
+    }
+
+    pub fn cancel_restic_install(&self, install_id: &str) -> zbus::Result<()> {
+        self.call("CancelResticInstall", &(install_id,))
+    }
+
     pub fn format_exclude_rule_for_item(
         &self,
         item_path: &str,
@@ -1034,6 +1050,27 @@ pub struct PreviewStatusDto<T> {
     /// Cause while `state == "error"`.
     pub error_kind: Option<ErrorKind>,
     /// Raw error text (shown for `unknown`).
+    pub error_detail: Option<String>,
+}
+
+/// Status of an installation of the restic managed by Kestic (`GetResticInstallStatus`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResticInstallStatusDto {
+    /// `"running"` | `"done"` | `"cancelled"` | `"error"`
+    pub state: String,
+    /// The last step reached (also after the end).
+    pub phase: ResticInstallPhase,
+    /// Release version, once known.
+    pub version: Option<String>,
+    /// Bytes of the file being downloaded so far.
+    pub bytes_done: u64,
+    /// Size of that file, if the server says.
+    pub total_bytes: Option<u64>,
+    /// Set while `state == "done"`.
+    pub outcome: Option<ResticInstallOutcome>,
+    /// Cause while `state == "error"`.
+    pub error_kind: Option<ResticInstallCode>,
+    /// Raw error text (English).
     pub error_detail: Option<String>,
 }
 

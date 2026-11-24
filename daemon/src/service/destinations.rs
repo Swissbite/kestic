@@ -33,6 +33,7 @@ use kestic_core::model::{
 use kestic_core::provider::resolve_and_check;
 use kestic_core::repo_identity::connection_changed;
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO};
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
 use kestic_core::snapshot::ResticSnapshot;
 use kestic_core::sync::LockUnpoisoned;
@@ -174,6 +175,9 @@ struct EditedDestination<'a> {
 }
 
 fn test_destination_connection_impl(inputs: DestinationTestInputs<'_>) -> ConnectionTestResultDto {
+    // Held for the whole call, so the app-managed restic is not replaced between its restic
+    // processes.
+    let _run_lease = ResticBinaryGate::global().read();
     if let Some(existing_name) = inputs.dup_name {
         return test_failure(
             ConnectionTestCode::DuplicateLocation,
@@ -557,6 +561,9 @@ pub(crate) fn add_destination_unlocked(
     repo_password: &str,
     backend_secrets_json: &str,
 ) -> Result<(String, Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
+    // Held for the whole call, so the app-managed restic is not replaced between its restic
+    // processes.
+    let _run_lease = ResticBinaryGate::global().read();
     let mut dest: Destination = serde_json::from_str(dest_json)
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid destination JSON: {e}")))?;
     let setup_mode = parse_setup_mode(mode)?;
@@ -649,6 +656,9 @@ pub(crate) fn update_destination_password_unlocked(
     dest_id: &str,
     new_password: &str,
 ) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
+    // Held for the whole call, so the app-managed restic is not replaced between its restic
+    // processes.
+    let _run_lease = ResticBinaryGate::global().read();
     let id =
         DestinationId::parse(dest_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
     if new_password.is_empty() {
@@ -749,6 +759,9 @@ pub(crate) fn list_backup_snapshots_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     backup_id: &str,
 ) -> Result<BackupSnapshotsDto, KesticServiceErr> {
+    // Held for the whole call, so the app-managed restic is not replaced between its restic
+    // processes.
+    let _run_lease = ResticBinaryGate::global().read();
     let b_id = parse_backup_id(backup_id)?;
     let (current_dest, other_dests, deps) = {
         let guard = shared.lock_unpoisoned();

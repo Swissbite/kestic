@@ -1061,6 +1061,8 @@ where
     let secrets = resolve_restic_secrets(destination, secret_store)?;
     let mut prepared = build_restic_command(spec, &secrets.backend, extra_env)?;
 
+    // Held until restic has ended, so the app-managed binary is not replaced meanwhile.
+    let _lease = crate::restic_gate::ResticBinaryGate::global().read();
     let mut child: Child = prepared.cmd.spawn()?;
     if let Some(handle) = cancel {
         handle.set_pid(Some(child.id()));

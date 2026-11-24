@@ -14,9 +14,10 @@ use crate::service::{
     refresh_availability_unlocked, refresh_probe_unlocked, remove_destination_unlocked,
     run_destination_maintenance_async, set_restic_provider_unlocked, start_all_backups_async,
     start_backup_async, start_backup_dry_run_async, start_backup_override_async,
-    start_retention_preview_async, test_destination_connection_unlocked,
-    trigger_background_availability_probe, trust_host_key_unlocked, unlock_destination_async,
-    update_destination_password_unlocked, update_destination_unlocked,
+    start_restic_install_async, start_retention_preview_async,
+    test_destination_connection_unlocked, trigger_background_availability_probe,
+    trust_host_key_unlocked, unlock_destination_async, update_destination_password_unlocked,
+    update_destination_unlocked,
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
@@ -479,6 +480,26 @@ impl KesticDbusV1Service {
         let guard = self.core.lock_unpoisoned();
         let st = guard.get_backup_dry_run_status(preview_id)?;
         to_json_arg(&st)
+    }
+
+    #[zbus(name = "StartResticInstall")]
+    async fn start_restic_install(&self) -> Result<String, KesticDbusError> {
+        self.blocking(start_restic_install_async)
+            .await
+            .map_err(KesticDbusError::from)
+    }
+
+    #[zbus(name = "GetResticInstallStatus")]
+    fn get_restic_install_status(&self, install_id: &str) -> Result<String, KesticDbusError> {
+        let mut guard = self.core.lock_unpoisoned();
+        let status = guard.get_restic_install_status(install_id)?;
+        to_json_arg(&status)
+    }
+
+    #[zbus(name = "CancelResticInstall")]
+    fn cancel_restic_install(&self, install_id: &str) -> Result<(), KesticDbusError> {
+        let mut guard = self.core.lock_unpoisoned();
+        Ok(guard.cancel_restic_install(install_id)?)
     }
 
     #[zbus(name = "FormatExcludeRuleForItem")]

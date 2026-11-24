@@ -25,6 +25,7 @@ pub mod mount;
 pub mod provider;
 pub mod repo_identity;
 pub mod restic;
+pub mod restic_gate;
 pub mod restic_install;
 pub mod restic_release;
 pub mod retention;

@@ -25,6 +25,7 @@ use kestic_core::repo_identity::{
     RepositoryId, RepositoryMatch, connection_changed, decide, same_server,
 };
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO};
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretValue};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ConnectionTestCode, DestinationUpdateOutcome};
@@ -342,6 +343,9 @@ pub(crate) fn update_destination_unlocked(
     backend_secrets_json: &str,
     verify_connection: bool,
 ) -> Result<UpdateReply, KesticServiceErr> {
+    // Held for the whole call, so the app-managed restic is not replaced between its restic
+    // processes.
+    let _run_lease = ResticBinaryGate::global().read();
     let updated: Destination = serde_json::from_str(dest_json)
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid destination JSON: {e}")))?;
     let entered = BackendSecrets::parse(backend_secrets_json)

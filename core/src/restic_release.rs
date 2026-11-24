@@ -36,6 +36,10 @@ pub const MAX_REDIRECTS: usize = 5;
 const GPGV_TIMEOUT: Duration = Duration::from_secs(30);
 /// Most bytes kept of a helper's stdout or stderr (`gpgv`, `restic version --json`).
 const OUTPUT_LIMIT: u64 = 1 << 20;
+/// The `gpgv` of the system, which the .deb depends on.
+pub const SYSTEM_GPGV: &str = "/usr/bin/gpgv";
+/// Most characters of text from the network or from `gpgv` kept in an error detail.
+pub const DETAIL_LIMIT: usize = 200;
 
 /// Why a restic release could not be installed; [`InstallError::code`] is the code the daemon
 /// reports, the text is the raw detail.
@@ -59,14 +63,18 @@ pub enum InstallError {
     VersionMismatch { expected: String, found: String },
     #[error("restic {found} is too old; Kestic needs at least {min}")]
     TooOld { found: String, min: String },
+    #[error("the latest restic release {release} is older than the installed restic {installed}")]
+    OlderThanInstalled { release: String, installed: String },
     #[error("could not write the new restic: {0}")]
     WriteFailed(String),
+    #[error("the installation was cancelled")]
+    Cancelled,
 }
 
 impl InstallError {
-    /// Language-independent code of this error.
-    pub fn code(&self) -> ResticInstallCode {
-        match self {
+    /// Language-independent code of this error; a cancelled installation has none.
+    pub fn code(&self) -> Option<ResticInstallCode> {
+        Some(match self {
             Self::Network(_) => ResticInstallCode::Network,
             Self::HostNotAllowed(_) => ResticInstallCode::HostNotAllowed,
             Self::AssetMissing(_) => ResticInstallCode::AssetMissing,
@@ -75,9 +83,10 @@ impl InstallError {
             Self::SignatureInvalid(_) => ResticInstallCode::SignatureInvalid,
             Self::ChecksumMismatch(_) => ResticInstallCode::ChecksumMismatch,
             Self::VersionMismatch { .. } => ResticInstallCode::VersionMismatch,
-            Self::TooOld { .. } => ResticInstallCode::TooOld,
+            Self::TooOld { .. } | Self::OlderThanInstalled { .. } => ResticInstallCode::TooOld,
             Self::WriteFailed(_) => ResticInstallCode::WriteFailed,
-        }
+            Self::Cancelled => return None,
+        })
     }
 }
 
@@ -141,7 +150,11 @@ impl TrustAnchor {
     pub fn for_this_build() -> Result<Self, InstallError> {
         #[cfg(feature = "test-trust-anchor")]
         {
-            Self::from_env()
+            let set = TEST_ANCHOR
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            set.map_or_else(Self::from_env, Ok)
         }
         #[cfg(not(feature = "test-trust-anchor"))]
         {
@@ -207,6 +220,19 @@ impl TrustAnchor {
     }
 }
 
+/// Anchor that [`TrustAnchor::for_this_build`] returns in a test build, if set.
+#[cfg(feature = "test-trust-anchor")]
+static TEST_ANCHOR: std::sync::Mutex<Option<TrustAnchor>> = std::sync::Mutex::new(None);
+
+/// Makes [`TrustAnchor::for_this_build`] return `anchor` (`None`: the anchor of the test
+/// variables again), for tests that run the installation inside the daemon.
+#[cfg(feature = "test-trust-anchor")]
+pub fn set_test_anchor(anchor: Option<TrustAnchor>) {
+    *TEST_ANCHOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = anchor;
+}
+
 #[cfg(feature = "test-trust-anchor")]
 impl TrustAnchor {
     /// Variable with the base URL of a release mock (`http://127.0.0.1:<port>`).
@@ -245,7 +271,12 @@ impl TrustAnchor {
             anchor.key = Cow::Owned(key);
         }
         if let Some(fingerprint) = lookup(Self::SIGNING_FPR_VAR) {
-            anchor.fingerprint = fingerprint;
+            // gpgv reports fingerprints in upper case and without spaces.
+            anchor.fingerprint = fingerprint
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .map(|c| c.to_ascii_uppercase())
+                .collect();
         }
         Ok(anchor)
     }
@@ -331,13 +362,33 @@ impl UreqTransport {
 
 impl Transport for UreqTransport {
     fn get(&self, url: &Url, limit: u64) -> Result<HttpAnswer, InstallError> {
-        let network = |err: ureq::Error| InstallError::Network(format!("{url}: {err}"));
+        self.get_observed(url, limit, &|_, _| true)
+    }
+}
+
+/// Reports the bytes of a body read so far and its announced size; `false` stops the download.
+pub type BodyProgress<'a> = &'a dyn Fn(u64, Option<u64>) -> bool;
+
+/// How many bytes are read between two progress reports.
+const PROGRESS_CHUNK: usize = 64 << 10;
+
+impl UreqTransport {
+    /// [`Transport::get`] that reports the body's progress; a `false` from `progress` ends the
+    /// download with [`InstallError::Cancelled`].
+    pub fn get_observed(
+        &self,
+        url: &Url,
+        limit: u64,
+        progress: BodyProgress<'_>,
+    ) -> Result<HttpAnswer, InstallError> {
+        let network =
+            |err: &dyn std::fmt::Display| InstallError::Network(clip(&format!("{url}: {err}")));
         let mut response = self
             .agent
             .get(url.as_str())
             .header("Accept", "application/vnd.github+json")
             .call()
-            .map_err(network)?;
+            .map_err(|err| network(&err))?;
         let status = response.status().as_u16();
         let location = response
             .headers()
@@ -351,12 +402,24 @@ impl Transport for UreqTransport {
                 body: Vec::new(),
             });
         }
-        let body = response
-            .body_mut()
-            .with_config()
-            .limit(limit)
-            .read_to_vec()
-            .map_err(network)?;
+        let total = response
+            .headers()
+            .get("content-length")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        let mut reader = response.body_mut().with_config().limit(limit).reader();
+        let mut body = Vec::new();
+        let mut chunk = vec![0_u8; PROGRESS_CHUNK];
+        loop {
+            if !progress(body.len() as u64, total) {
+                return Err(InstallError::Cancelled);
+            }
+            let n = reader.read(&mut chunk).map_err(|err| network(&err))?;
+            if n == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..n]);
+        }
         Ok(HttpAnswer {
             status,
             location,
@@ -390,7 +453,7 @@ pub fn fetch_release(
         .get("tag_name")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| missing("no tag_name"))?;
-    let version = release_version(tag).ok_or_else(|| missing(&format!("tag {tag:?}")))?;
+    let version = release_version(tag).ok_or_else(|| missing(&format!("tag {:?}", clip(tag))))?;
     if version < MIN_RESTIC_VERSION {
         return Err(InstallError::TooOld {
             found: version.to_string(),
@@ -434,18 +497,19 @@ pub fn fetch_asset(
                 let location = answer.location.ok_or_else(|| {
                     InstallError::Network(format!("{url}: redirect without a target"))
                 })?;
-                let next = url
-                    .join(&location)
-                    .map_err(|err| InstallError::HostNotAllowed(format!("{location}: {err}")))?;
+                let next = url.join(&location).map_err(|err| {
+                    InstallError::HostNotAllowed(format!("{}: {err}", clip(&location)))
+                })?;
                 if !anchor.redirect_allowed(&next) {
-                    return Err(InstallError::HostNotAllowed(next.to_string()));
+                    return Err(InstallError::HostNotAllowed(clip(next.as_str())));
                 }
                 url = next;
             }
             404 | 410 => return Err(InstallError::AssetMissing(what.to_string())),
             status => {
                 return Err(InstallError::Network(format!(
-                    "{url}: HTTP status {status}"
+                    "{}: HTTP status {status}",
+                    clip(url.as_str())
                 )));
             }
         }
@@ -455,13 +519,51 @@ pub fn fetch_asset(
     )))
 }
 
-/// `gpgv` from `search_path` (absolute entries only), if there is one.
+/// The `gpgv` that checks restic's signature. The release build takes [`SYSTEM_GPGV`] (the
+/// .deb depends on it) and otherwise a `gpgv` from `search_path` only if [`trusted_gpgv`]
+/// accepts it: a `gpgv` that this user could change could fake a valid signature. A build with
+/// `test-trust-anchor` takes any `gpgv` from `search_path`, so tests can replace it.
 pub fn find_gpgv(search_path: Option<&OsStr>) -> Option<PathBuf> {
+    #[cfg(feature = "test-trust-anchor")]
+    {
+        gpgv_in_path(search_path)
+    }
+    #[cfg(not(feature = "test-trust-anchor"))]
+    {
+        select_trusted_gpgv(Path::new(SYSTEM_GPGV), search_path)
+    }
+}
+
+/// `system` if [`trusted_gpgv`] accepts it, else a `gpgv` from `search_path` it accepts.
+pub fn select_trusted_gpgv(system: &Path, search_path: Option<&OsStr>) -> Option<PathBuf> {
+    trusted_gpgv(system).or_else(|| gpgv_in_path(search_path).and_then(|path| trusted_gpgv(&path)))
+}
+
+/// `gpgv` from `search_path` (absolute entries only), if there is one.
+pub fn gpgv_in_path(search_path: Option<&OsStr>) -> Option<PathBuf> {
     let absolute: Vec<PathBuf> = std::env::split_paths(search_path?)
         .filter(|dir| dir.is_absolute())
         .collect();
     let absolute = std::env::join_paths(absolute).ok()?;
     which::which_in("gpgv", Some(absolute), "/").ok()
+}
+
+/// The resolved path of `path` if it is a file that only root can change: the file and every
+/// folder above it belong to root and are not writable by group or others.
+pub fn trusted_gpgv(path: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let resolved = std::fs::canonicalize(path).ok()?;
+    let only_root_writes = |meta: &std::fs::Metadata| meta.uid() == 0 && meta.mode() & 0o022 == 0;
+    let file = std::fs::metadata(&resolved).ok()?;
+    if !file.is_file() || !only_root_writes(&file) {
+        return None;
+    }
+    for dir in resolved.ancestors().skip(1) {
+        if !only_root_writes(&std::fs::metadata(dir).ok()?) {
+            return None;
+        }
+    }
+    Some(resolved)
 }
 
 /// Checks that `signature` is a valid signature of `sums` by the anchor's key, with `gpgv`
@@ -496,7 +598,7 @@ pub fn verify_signature(
     let status = String::from_utf8_lossy(&out.stdout);
     check_gpgv_status(&status, out.status.success(), anchor.fingerprint()).map_err(|reason| {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        InstallError::SignatureInvalid(format!("{reason}; gpgv: {}", stderr.trim()))
+        InstallError::SignatureInvalid(format!("{reason}; gpgv: {}", clip(stderr.trim())))
     })
 }
 
@@ -520,12 +622,14 @@ impl Drop for PrivateDir {
     }
 }
 
-/// Reads `gpgv --status-fd 1` output: valid only if `gpgv` succeeded, a `VALIDSIG` line names
-/// `fingerprint` as the primary key, and no line reports a bad, expired-key, revoked-key or
-/// unverifiable signature. The error is the reason.
+/// Reads `gpgv --status-fd 1` output: valid only if `gpgv` succeeded, the file holds exactly
+/// one signature, its `VALIDSIG` line names `fingerprint` as the primary key, and no line reports
+/// a bad, expired-key, revoked-key or unverifiable signature. The error is the reason.
 pub fn check_gpgv_status(status: &str, success: bool, fingerprint: &str) -> Result<(), String> {
     const REFUSING: [&str; 5] = ["BADSIG", "EXPSIG", "EXPKEYSIG", "REVKEYSIG", "ERRSIG"];
     let mut valid = false;
+    let mut signatures = 0;
+    let mut valid_lines = 0;
     for line in status.lines() {
         let mut fields = line.split_whitespace();
         if fields.next() != Some("[GNUPG:]") {
@@ -536,6 +640,11 @@ pub fn check_gpgv_status(status: &str, success: bool, fingerprint: &str) -> Resu
         if REFUSING.contains(&keyword) {
             return Err(format!("gpgv reports {keyword}"));
         }
+        match keyword {
+            "NEWSIG" => signatures += 1,
+            "VALIDSIG" => valid_lines += 1,
+            _ => {}
+        }
         // VALIDSIG <fpr> <date> <timestamp> <expire> <version> <reserved> <pubkey-algo>
         // <hash-algo> <sig-class> <primary-key-fpr>
         if keyword == "VALIDSIG" && rest.len() >= 10 && rest.last() == Some(&fingerprint) {
@@ -544,6 +653,9 @@ pub fn check_gpgv_status(status: &str, success: bool, fingerprint: &str) -> Resu
     }
     if !success {
         return Err("gpgv did not accept the signature".to_string());
+    }
+    if signatures > 1 || valid_lines > 1 {
+        return Err("SHA256SUMS.asc holds more than one signature".to_string());
     }
     if !valid {
         return Err(format!("no valid signature by the key {fingerprint}"));
@@ -595,6 +707,21 @@ pub fn check_sha256(data: &[u8], expected: &[u8; 32], name: &str) -> Result<(), 
     } else {
         Err(InstallError::ChecksumMismatch(name.to_string()))
     }
+}
+
+/// `text` cut to at most [`DETAIL_LIMIT`] characters (an ellipsis marks a cut) and with control
+/// characters (line breaks, escape sequences) as spaces, for error details that come from the
+/// network or from `gpgv`.
+pub fn clip(text: &str) -> String {
+    let mut clipped: String = text
+        .chars()
+        .take(DETAIL_LIMIT)
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if text.chars().nth(DETAIL_LIMIT).is_some() {
+        clipped.push('…');
+    }
+    clipped
 }
 
 /// Runs `cmd` with stdout and stderr captured and kills it after `limit`.
