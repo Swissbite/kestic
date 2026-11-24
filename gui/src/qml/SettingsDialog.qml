@@ -46,7 +46,7 @@ Kirigami.ApplicationWindow {
         }
         requestActivate();
         if (section === "restic") {
-            Qt.callLater(showResticSection);
+            resticScrollTimer.restart();
         }
     }
 
@@ -58,12 +58,20 @@ Kirigami.ApplicationWindow {
         flick.contentY = Math.max(0, flick.contentHeight - flick.height);
     }
 
-    // Opens the restic section and starts the download offered there.
-    function downloadRestic() {
+    // Opens the restic section with the focus on the download offered there; the download
+    // starts only with a click on it.
+    function showResticDownload() {
         openWindow("restic");
-        if (appBackend.restic_offer_download && appBackend.restic_offer_enabled) {
-            appBackend.startResticInstall();
+        if (downloadResticButton.visible) {
+            downloadResticButton.forceActiveFocus();
         }
+    }
+
+    // A window that was hidden knows its page height only after its first layout pass.
+    Timer {
+        id: resticScrollTimer
+        interval: 100
+        onTriggered: settingsWindow.showResticSection()
     }
 
     // Polls the installation while it runs, also while this window is hidden.
@@ -353,7 +361,7 @@ Kirigami.ApplicationWindow {
                     objectName: "updateResticButton"
                     visible: appBackend.restic_offer_update
                     enabled: appBackend.restic_offer_enabled
-                    icon.name: "update-none"
+                    icon.name: "system-software-update"
                     text: i18n("Update Now")
                     Accessible.name: i18n("Update restic now")
                     onClicked: appBackend.startResticInstall()
@@ -402,7 +410,7 @@ Kirigami.ApplicationWindow {
 
                     Controls.Button {
                         objectName: "cancelResticInstallButton"
-                        icon.name: "dialog-cancel"
+                        icon.name: "process-stop"
                         text: Texts.label("cancel")
                         enabled: appBackend.restic_install_cancellable
                         Accessible.name: text
@@ -442,8 +450,8 @@ Kirigami.ApplicationWindow {
                         && appBackend.restic_install_error_detail !== ""
                     text: appBackend.restic_install_error_detail
                     textFormat: Text.PlainText
-                    font.family: "monospace"
-                    wrapMode: Text.WrapAnywhere
+                    font: Kirigami.Theme.fixedWidthFont
+                    wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                     Layout.fillWidth: true
                 }
             }

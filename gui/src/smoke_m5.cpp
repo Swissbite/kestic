@@ -806,9 +806,11 @@ int scenario_restic_download_offer(const Ctx& c) {
     M3_CHECK(5811, update != nullptr && !update->isVisible(), "«Update Now» shown for a restic Kestic does not manage");
     M3_CHECK_EQ(5812, restic_install_state(c), QString(), "an installation started before the click");
     M3_CHECK(5813, count_visible(sw, "resticInstallPanel") == 0, "installation panel shown before the click");
-    QString settings_shot = c.out_path;
-    settings_shot.replace(QStringLiteral("restic-download-offer"), QStringLiteral("restic-download-offer-settings"));
-    M3_CHECK(5814, save_settings_screenshot(sw, settings_shot), "screenshot failed");
+    // The settings window has one size; only the wide run saves it.
+    const QString settings_shot = qEnvironmentVariable("KESTIC_SMOKE_SETTINGS_SHOT");
+    if (!settings_shot.isEmpty()) {
+        M3_CHECK(5814, save_settings_screenshot(sw, settings_shot), "screenshot failed");
+    }
     return 0;
 }
 
@@ -867,9 +869,10 @@ int scenario_restic_install_cancel(const Ctx& c) {
     return 0;
 }
 
-// The blocking bar's «Download restic…» opens the settings and starts the installation; the
-// settings window is hidden at once and the installation still finishes: the blocking bar
-// disappears, and the reopened settings show «restic <KESTIC_SMOKE_RELEASE> is installed.».
+// The blocking bar's «Download restic…» opens the settings at «Download restic» without
+// starting anything; a click there starts the installation. The settings window is hidden at
+// once and the installation still finishes: the blocking bar disappears, and the reopened
+// settings show «restic <KESTIC_SMOKE_RELEASE> is installed.».
 int scenario_restic_install_result(const Ctx& c) {
     QQuickWindow* w = c.window;
     const QString release = qEnvironmentVariable("KESTIC_SMOKE_RELEASE");
@@ -881,6 +884,14 @@ int scenario_restic_install_result(const Ctx& c) {
     trigger(action);
     auto* sw = w->findChild<QQuickWindow*>(QStringLiteral("settingsWindow"));
     M3_CHECK(5863, sw != nullptr && wait_until([&] { return sw->isVisible(); }, 3000), "settings window did not open");
+    QQuickItem* download = item_named(sw, "downloadResticButton");
+    M3_CHECK(5873, download != nullptr && wait_until([&] { return download->hasActiveFocus(); }, 2000),
+        "«Download restic» has no focus");
+    M3_CHECK(5876, wait_until([&] { return download->mapToScene(QPointF(0, download->height())).y() <= sw->height(); }, 2000),
+        "the settings did not scroll to «Download restic»");
+    wait_ms(300);
+    M3_CHECK_EQ(5874, restic_install_state(c), QString(), "the installation started before the click in the settings");
+    M3_CHECK(5875, click_ui_item(sw, download, "Download restic"), "click on «Download restic» failed");
     M3_CHECK(5864, !restic_install_state(c).isEmpty(), "the installation did not start");
     sw->setVisible(false);
     M3_CHECK(5865, wait_until([&] { return restic_install_state(c) == QLatin1String("done"); }, 60000),

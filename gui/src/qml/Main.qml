@@ -600,8 +600,8 @@ Kirigami.ApplicationWindow {
         settingsWindow.openWindow();
     }
 
-    function downloadRestic() {
-        settingsWindow.downloadRestic();
+    function showResticDownload() {
+        settingsWindow.showResticDownload();
     }
 
     function resizeToMinWidthForSmoke() {

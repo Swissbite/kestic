@@ -596,13 +596,18 @@ fn ac_m5_06_12_b_gui_offers_download() {
             let mock = serve(&ReleaseFiles::signed(RELEASE, &key), &key, Vec::new());
             let rig = start_with_old_system_restic(root);
             for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                let settings_shot = if layout == "wide" {
+                    smoke_artifact("restic-download-offer-settings", layout, lang)
+                } else {
+                    String::new()
+                };
                 run_m5_gui_smoke(
                     root,
                     "m5-restic-download-offer",
                     layout,
                     lang,
                     &smoke_artifact("restic-download-offer", layout, lang),
-                    &[],
+                    &[("KESTIC_SMOKE_SETTINGS_SHOT", &settings_shot)],
                 );
             }
             assert_eq!(
@@ -744,9 +749,10 @@ fn ac_m5_06_6_gui_network_message() {
 
 /// Progress, cancel and result in the settings: the app-managed restic is the source but
 /// missing. A stalled download shows its step, a progress bar and «Cancel»; the cancel ends it
-/// without a binary (English and German). Then «Download restic…» in the blocking bar installs
-/// the release while the settings are closed: the bar disappears and the settings show the
-/// installed version.
+/// without a binary (English and German). Then «Download restic…» in the blocking bar opens
+/// the settings at «Download restic» without starting anything; after the click there the
+/// release is installed while the settings are closed: the bar disappears and the settings
+/// show the installed version.
 #[test]
 fn restic_install_gui_progress_cancel_and_result() {
     run_isolated_test(

@@ -57,7 +57,7 @@ ColumnLayout {
                 icon.name: "download"
                 text: i18n("Download restic…")
                 enabled: headerArea.appBackend.restic_offer_download && headerArea.appBackend.restic_offer_enabled
-                onTriggered: headerArea.rootWindow.downloadRestic()
+                onTriggered: headerArea.rootWindow.showResticDownload()
             },
             Kirigami.Action {
                 id: openResticSettingsAction
