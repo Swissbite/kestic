@@ -423,6 +423,26 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     trigger(confirm_act);
     wait_until([&] { return is_closed(dlg); }, 600);
     SMOKE_CHECK_CLOSED("M2", 274, dlg, "addExcludePromptDialog did not close after confirmAddExcludeAction");
+
+    // AC-M4-01-7 (d): the unreadable files are one list and one Tab stop; neither a row nor its
+    // button is a Tab stop, and Enter on a row asks to add its file like the button.
+    QQuickItem* list = find_visual_item(window, QStringLiteral("unreadableFilesList"));
+    SMOKE_CHECK_VISIBLE("M2", 276, list, "unreadableFilesList missing");
+    SMOKE_CHECK("M2", 277, list->property("activeFocusOnTab").toBool(), "the list of unreadable files is a Tab stop");
+    SMOKE_CHECK("M2", 278, add_btn->property("focusPolicy").toInt() == Qt::NoFocus,
+        "the button of a row is no Tab stop of its own");
+    window->requestActivate();
+    QCoreApplication::processEvents();
+    list->forceActiveFocus(Qt::TabFocusReason);
+    wait_until([&] { return list->property("currentIndex").toInt() == 0; }, 1000);
+    QQuickItem* row = list->property("currentItem").value<QQuickItem*>();
+    SMOKE_CHECK2("M2", 279, row, row && row->property("focusPolicy").toInt() == Qt::ClickFocus,
+        "a row of the list takes the focus by click only");
+    send_key(window, Qt::Key_Return);
+    SMOKE_CHECK("M2", 269, wait_until([&] { return dlg->property("visible").toBool(); }, 1000),
+        "Enter on an unreadable file asks to add it to the exclude rules");
+    QMetaObject::invokeMethod(dlg, "reject");
+    wait_until([&] { return is_closed(dlg); }, 600);
     smoke_finish("M2", warnings.get());
 }
 

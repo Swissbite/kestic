@@ -15,6 +15,7 @@
 #include <QMetaMethod>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QQmlProperty>
 #include <QSet>
 #include <QUrl>
 
@@ -126,6 +127,20 @@ bool menu_to(QQuickWindow* w, QObject* menu, int index) {
     return menu->property("currentIndex").toInt() == index;
 }
 
+// The visible buttons of the window labelled `text` (mnemonic marks removed).
+int visible_buttons_labelled(QQuickWindow* w, const QString& text) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(w->contentItem(), items);
+    int n = 0;
+    for (QQuickItem* it : items) {
+        if (it->isVisible() && it->inherits("QQuickAbstractButton")
+            && it->property("text").toString().remove(QLatin1Char('&')) == text) {
+            ++n;
+        }
+    }
+    return n;
+}
+
 /// AC-M4-01-6: the tab bar shows «Restore» between «Overview» and «Backups» (checked for every
 /// scene in `smoke_m1.cpp`), and (b) the area opens the snapshot selection: the backups with
 /// their number of snapshots and, next to it, the snapshots of the first backup.
@@ -149,8 +164,10 @@ int scenario_restore_tab(const Ctx& c) {
         loc(c.lang, "3 snapshots", "3 Snapshots"), "(b) number of snapshots of the first backup");
     M4_CHECK_EQ(5115, role_value(backups, 1, "subtitle").toString(),
         loc(c.lang, "0 snapshots", "0 Snapshots"), "(b) number of snapshots of the second backup");
+    const QString refresh = loc(c.lang, "Refresh", "Aktualisieren");
     if (w->property("narrowMode").toBool()) {
         // One column: the snapshot list opens from the backup row.
+        M4_CHECK(5116, visible_buttons_labelled(w, refresh) == 1, "the backup list can be refreshed");
         M4_CHECK(5114, save_screenshot(w, c.out_path), "screenshot failed");
         return 0;
     }
@@ -165,6 +182,9 @@ int scenario_restore_tab(const Ctx& c) {
         "newest snapshot first, grouped under today");
     M4_CHECK(5112, role_value(snaps, 0, "subtitle").toString().contains(loc(c.lang, " new · laptop", " neu · laptop")),
         "size and host of the newest snapshot");
+    // stil-und-texte.md §13.3: no label twice in a window; the snapshot list refreshes both.
+    M4_CHECK(5117, wait_until([&] { return visible_buttons_labelled(w, refresh) == 1; }, 2000),
+        qPrintable(QStringLiteral("one «Refresh» beside the snapshot list: %1").arg(visible_buttons_labelled(w, refresh))));
     M4_CHECK(5113, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
@@ -2072,10 +2092,11 @@ int scenario_list_tab_stop(const Ctx& c) {
 
     // (b) Home/End and Page Up/Page Down with the focus in the list.
     M4_CHECK(7050, tab_into(w, list, 80), "Tab reaches the folder list again");
+    M4_CHECK(7059, b.model->rowCount() < 1000, "not every entry is loaded yet");
     press_and_wait(w, Qt::Key_End, 120);
-    const int loaded = b.model->rowCount();
-    M4_CHECK(7051, list->property("currentIndex").toInt() >= 199 && focused_row_of(w, list) == list->property("currentIndex").toInt(),
-        qPrintable(QStringLiteral("(b) End moves to the last loaded row (%1 loaded): %2").arg(loaded).arg(focus_name(w))));
+    M4_CHECK(7051, list->property("currentIndex").toInt() == 999 && focused_row_of(w, list) == 999,
+        qPrintable(QStringLiteral("(b) one End press moves to the last of 1 000 entries (%1 loaded): %2")
+            .arg(b.model->rowCount()).arg(focus_name(w))));
     press_and_wait(w, Qt::Key_Home, 120);
     M4_CHECK(7052, focused_row_of(w, list) == 0, qPrintable(QStringLiteral("(b) Home moves to the first row: ") + focus_name(w)));
     press_and_wait(w, Qt::Key_PageDown, 120);
@@ -2240,14 +2261,22 @@ int scenario_browse_select_all(const Ctx& c) {
     QMetaObject::invokeMethod(object_named(w, "browseListView"), "positionViewAtEnd");
     M4_CHECK(7219, wait_until([&] { return b.model->rowCount() > 200; }, 5000), "scrolling loads the next page");
     M4_CHECK(7220, role_value(b.model, 200, "selected").toBool(), "(a) a row loaded later shows its mark");
-    M4_CHECK(7221, save_screenshot(w, screenshot_variant(c.out_path, "-all")), "screenshot failed");
-    QMetaObject::invokeMethod(object_named(w, "browseListView"), "positionViewAtBeginning");
+    // The headings stay above the rows while the list scrolls: at row 180 the check box is at the
+    // top of the list and can be clicked.
+    QQuickItem* list = visible_item(w, "browseListView");
+    QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, 180), Q_ARG(int, 0));
     wait_ms(200);
+    const QPointF at = check->mapToItem(list, QPointF(0, 0));
+    M4_CHECK(7256, check->isVisible() && at.y() >= 0 && at.y() < check->height(),
+        qPrintable(QStringLiteral("the header check box stays at the top of the scrolled list: y=%1").arg(at.y())));
+    M4_CHECK(7221, save_screenshot(w, screenshot_variant(c.out_path, "-all")), "screenshot failed");
 
-    M4_CHECK(7222, click_ui_item(w, check, "clear all"), "the header check box could not be clicked again");
+    M4_CHECK(7222, click_ui_item(w, check, "clear all"), "the header check box could not be clicked while scrolled");
     M4_CHECK(7223, wait_until([&] { return b.model->property("selection_count").toInt() == 0; }, 10000),
         "(c) clicked with all selected, it clears the folder");
     M4_CHECK(7224, header_state(check) == Qt::Unchecked, "(b) unchecked again");
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
+    wait_ms(200);
     QMetaObject::invokeMethod(b.model, "toggleSelected", Q_ARG(int, 1));
     M4_CHECK(7225, header_state(check) == Qt::PartiallyChecked, "(b) one selected: partially checked");
     repaint_fully(w);
@@ -2439,13 +2468,17 @@ int scenario_restore_all_from_folder_hit(const Ctx& c) {
 }
 
 // The name of the control that holds the keyboard focus in the restore dialog: the object name
-// of the nearest named restore control, otherwise the text of the button.
+// of the nearest named restore control, «close» for the close button of the dialog's header,
+// otherwise the text of the button.
 QString dialog_focus_id(QQuickWindow* w) {
     QQuickItem* f = w->activeFocusItem();
     for (QQuickItem* it = f; it; it = it->parentItem()) {
         if (it->objectName().startsWith(QLatin1String("restore"))) {
             return it->objectName();
         }
+    }
+    if (f && QQmlProperty::read(f, QStringLiteral("icon.name")).toString().startsWith(QLatin1String("window-close"))) {
+        return QStringLiteral("close");
     }
     return f ? f->property("text").toString().remove(QLatin1Char('&')) : QStringLiteral("-");
 }
@@ -2467,8 +2500,9 @@ QStringList dialog_tab_order(QQuickWindow* w, int n, bool forward) {
 
 /// AC-M4-05-27: the Tab order of the restore dialog is «Into a new folder», «Choose…»,
 /// «To the original location», «Existing files» (when enabled), the preview list with its
-/// controls (when shown), «Cancel», «Restore Now»; (a) forward and (b) backward, (c) Tab never
-/// leaves the dialog, and (d) Esc closes it and the focus returns to the folder list.
+/// controls (when shown), «Cancel», «Restore Now», the close button; (a) forward and (b)
+/// backward, (c) Tab never leaves the dialog, and (d) Esc closes it and the focus returns to the
+/// folder list.
 int scenario_restore_dialog_tab(const Ctx& c) {
     QQuickWindow* w = c.window;
     if (int rc = open_restore_snapshots(c, 7401, 1)) {
@@ -2490,16 +2524,17 @@ int scenario_restore_dialog_tab(const Ctx& c) {
     wait_ms(300);
     const QString cancel = loc(c.lang, "Cancel", "Abbrechen");
     const QString now = loc(c.lang, "Restore Now", "Jetzt wiederherstellen");
+    const QString close = QStringLiteral("close");
     M4_CHECK_EQ(7421, dialog_focus_id(w), QStringLiteral("restoreNewFolderRadio"), "the dialog opens on «Into a new folder»");
     const QStringList new_folder = {QStringLiteral("restoreChooseFolderButton"), QStringLiteral("restoreOriginalRadio"),
-        cancel, now, QStringLiteral("restoreNewFolderRadio")};
-    M4_CHECK_EQ(7422, dialog_tab_order(w, 5, true).join(QLatin1String(" > ")), new_folder.join(QLatin1String(" > ")),
+        cancel, now, close, QStringLiteral("restoreNewFolderRadio")};
+    M4_CHECK_EQ(7422, dialog_tab_order(w, 6, true).join(QLatin1String(" > ")), new_folder.join(QLatin1String(" > ")),
         "(a, c) Tab order into a new folder");
     QStringList back = new_folder;
     std::reverse(back.begin(), back.end());
     back.removeFirst();
     back << QStringLiteral("restoreNewFolderRadio");
-    M4_CHECK_EQ(7423, dialog_tab_order(w, 5, false).join(QLatin1String(" > ")), back.join(QLatin1String(" > ")),
+    M4_CHECK_EQ(7423, dialog_tab_order(w, 6, false).join(QLatin1String(" > ")), back.join(QLatin1String(" > ")),
         "(b, c) Shift+Tab order into a new folder");
 
     QObject* original = object_named(w, "restoreOriginalRadio");
@@ -2519,7 +2554,7 @@ int scenario_restore_dialog_tab(const Ctx& c) {
     preview << QStringLiteral("restorePreviewList") << cancel;
     const QString restore_text = r.model->property("overwrites").toBool()
         ? loc(c.lang, "Overwrite and Restore", "Überschreiben und wiederherstellen") : now;
-    preview << restore_text << QStringLiteral("restoreNewFolderRadio") << QStringLiteral("restoreChooseFolderButton")
+    preview << restore_text << close << QStringLiteral("restoreNewFolderRadio") << QStringLiteral("restoreChooseFolderButton")
             << QStringLiteral("restoreOriginalRadio");
     M4_CHECK_EQ(7429, dialog_tab_order(w, preview.size(), true).join(QLatin1String(" > ")), preview.join(QLatin1String(" > ")),
         "(a, c) Tab order at the original location with the list shown");

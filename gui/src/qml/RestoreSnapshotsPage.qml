@@ -157,8 +157,10 @@ Kirigami.ScrollablePage {
             text: Texts.label("refresh")
             enabled: !page.loading
             onTriggered: {
+                // The list of backups beside it refreshes too: this is the only «Refresh» then.
                 if (page.group === "") {
                     page.reload();
+                    appBackend.loadRestoreOverview();
                 } else {
                     page.endCompare();
                     appBackend.loadRestoreOverview();

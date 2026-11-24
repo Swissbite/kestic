@@ -17,9 +17,8 @@ Kirigami.Dialog {
     objectName: "restoreDialog"
     title: dialog.model ? dialog.model.title : ""
     // «Cancel» is a footer action like «Restore Now», before it, so both stand in the order they
-    // show, also for Tab. Cancel and Esc close the dialog, so it has no close button of its own.
+    // show, also for Tab; the close button of the header follows «Restore Now» in the Tab cycle.
     standardButtons: Kirigami.Dialog.NoButton
-    showCloseButton: false
     padding: Kirigami.Units.largeSpacing
     // Centred by its content height: positioning the popup may adjust `height`, which the
     // default binding of `y` reads.
@@ -27,6 +26,23 @@ Kirigami.Dialog {
 
     required property var model
     property bool listShown: false
+    // The width of the longest outcome text of the preview list.
+    property int outcomeColumnWidth: 0
+
+    TextMetrics {
+        id: outcomeMetrics
+        font: Kirigami.Theme.defaultFont
+    }
+
+    Component.onCompleted: {
+        var texts = dialog.model.outcomeTexts();
+        var widest = 0;
+        for (var i = 0; i < texts.length; ++i) {
+            outcomeMetrics.text = texts[i];
+            widest = Math.max(widest, outcomeMetrics.advanceWidth);
+        }
+        outcomeColumnWidth = Math.ceil(widest);
+    }
     // The folder chooser returned a network folder (smb://, sftp://…), which is no target.
     property bool networkFolderRefused: false
 
@@ -449,12 +465,12 @@ Kirigami.Dialog {
                         textFormat: Text.PlainText
                         elide: Text.ElideMiddle
                     }
-                    // A column of its own, so the outcomes line up.
+                    // A column of its own as wide as the longest outcome, so the outcomes line
+                    // up; the path gives up the space.
                     Controls.Label {
                         text: row.outcomeText
                         opacity: 0.75
-                        elide: Text.ElideRight
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                        Layout.preferredWidth: dialog.outcomeColumnWidth
                     }
                     Controls.Label {
                         text: row.sizeText

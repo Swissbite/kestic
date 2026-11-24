@@ -303,6 +303,7 @@ EditorPage {
             Layout.fillWidth: true
         }
 
+        // Not a list: form rows, one exclude rule each with its own controls.
         Repeater {
             model: page.folders
 

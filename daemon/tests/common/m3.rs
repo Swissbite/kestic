@@ -840,7 +840,7 @@ fi
 if [ -n "$sub" ] && [ -f "$HOLD.$sub" ] && [ ! -f "$HOLD.$sub.locked" ]; then
   trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"; echo "E $(now) $sub 143" >> "$LOG"; exit 143' TERM INT
   if [ -f "$HOLD.$sub.repeat" ]; then
-    while [ -f "$HOLD.$sub" ] && cat "$HOLD.$sub.repeat" 2>/dev/null; do :; done
+    while [ -f "$HOLD.$sub" ] && cat "$HOLD.$sub.repeat" 2>/dev/null; do sleep 0.05; done
   elif [ -f "$HOLD.$sub.status" ]; then
     cat "$HOLD.$sub.status"
   elif [ "$sub" = "backup" ]; then
@@ -935,8 +935,9 @@ exit $code
     }
 
     /// Like [`Self::hold`], but a held call prints `ndjson` over and over until
-    /// [`Self::release`]. The pipe paces the output to the reader, so progress keeps coming for
-    /// as long as the call is held and none is left to read once it is released.
+    /// [`Self::release`], about 20 times a second like a real restic: progress keeps coming for
+    /// as long as the call is held, without a flood of lines and progress signals that a busy
+    /// test machine works off only seconds later.
     pub fn hold_with_repeated_output(&self, sub: &str, ndjson: &str) {
         fs::write(
             PathBuf::from(format!("{}.{sub}.repeat", self.hold.display())),

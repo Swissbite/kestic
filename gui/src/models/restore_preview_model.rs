@@ -498,6 +498,15 @@ impl qobject::RestorePreviewModel {
         self.as_mut().start_query(request);
     }
 
+    /// The texts of every outcome the preview list can show, to size its outcome column.
+    pub fn outcome_texts(&self) -> QStringList {
+        let mut list = QStringList::default();
+        for outcome in RestoreOutcome::ALL {
+            list.append(QString::from(&tr(&outcome.message())));
+        }
+        list
+    }
+
     /// Tries again after an error (the preview failed, or a page or a filter could not be
     /// fetched): runs the preview again, with the same filter.
     pub fn retry(mut self: Pin<&mut Self>) {

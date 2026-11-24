@@ -44,6 +44,81 @@ fn direct_lines(lines: &[&str], start: usize) -> Vec<String> {
     out
 }
 
+/// The lines of the block that opens on the line `start`, nested blocks included.
+fn block_lines<'a>(lines: &[&'a str], start: usize) -> Vec<&'a str> {
+    let mut depth = 0i32;
+    let mut out = Vec::new();
+    for line in &lines[start..] {
+        depth += i32::try_from(line.matches('{').count()).expect("count");
+        depth -= i32::try_from(line.matches('}').count()).expect("count");
+        out.push(*line);
+        if depth <= 0 {
+            break;
+        }
+    }
+    out
+}
+
+/// Controls that are Tab stops unless they say otherwise.
+const TAB_STOP_CONTROLS: [&str; 11] = [
+    "Button {",
+    "ToolButton {",
+    "CheckBox {",
+    "RadioButton {",
+    "Switch {",
+    "TextField {",
+    "TextArea {",
+    "ComboBox {",
+    "SpinBox {",
+    "ItemDelegate {",
+    "Card {",
+];
+
+/// Whether the block of a `Repeater` holds a row that is a Tab stop: a control of
+/// [`TAB_STOP_CONTROLS`] that does not take the focus by click only, or `activeFocusOnTab: true`.
+fn repeats_tab_stops(lines: &[&str], start: usize) -> bool {
+    let block = block_lines(lines, start);
+    block.iter().enumerate().any(|(i, line)| {
+        let code = line.trim();
+        if code.starts_with("activeFocusOnTab: true") {
+            return true;
+        }
+        let is_control = TAB_STOP_CONTROLS
+            .iter()
+            .any(|c| code.ends_with(c) && !code.starts_with("//"));
+        is_control
+            && !direct_lines(&block, i).iter().any(|l| {
+                l == "focusPolicy: Qt.NoFocus"
+                    || l == "focusPolicy: Qt.ClickFocus"
+                    || l.starts_with("activeFocusOnTab: false")
+            })
+    })
+}
+
+/// AC-M4-01-7 (d): a `Repeater` whose rows are Tab stops is no list of entries: the comment
+/// line right above it says so (`// Not a list: <why>`, e.g. a row of buttons, form rows, the
+/// backup cards of «Übersicht»). A list of entries is a `KeyboardList`.
+#[test]
+fn ac_m4_01_7_no_repeater_lists_tab_stop_rows() {
+    let mut exempt = 0;
+    for (name, text) in qml_files() {
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if !line.trim().starts_with("Repeater {") || !repeats_tab_stops(&lines, i) {
+                continue;
+            }
+            let above = i.checked_sub(1).map_or("", |j| lines[j].trim());
+            assert!(
+                above.starts_with("// Not a list:"),
+                "{name}:{}: a Repeater with Tab-stop rows; a list is a KeyboardList",
+                i + 1
+            );
+            exempt += 1;
+        }
+    }
+    assert!(exempt >= 5, "Repeaters with Tab-stop rows found: {exempt}");
+}
+
 /// AC-M4-01-7 (d): (a) no QML file declares a plain `ListView` (lists are `KeyboardList`),
 /// (b) every row delegate takes the focus by click only, and (c) none is a Tab stop.
 #[test]

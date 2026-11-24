@@ -57,6 +57,9 @@ Kirigami.ScrollablePage {
                 objectName: "restoreRefreshAction"
                 icon.name: "view-refresh"
                 text: Texts.label("refresh")
+                // A page beside this one (the snapshot list) refreshes both; one «Refresh» is
+                // shown in the window.
+                visible: rootWindow.pageStack.lastItem === page
                 enabled: !appBackend.restore_overview_loading
                 onTriggered: appBackend.loadRestoreOverview()
             }

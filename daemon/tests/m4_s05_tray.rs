@@ -332,12 +332,21 @@ fn ac_m4_05_30_restore_job_shows_the_speed_of_the_bytes_restored() {
                     .all(|(_, _, speed)| *speed == 0),
                 "(a) no speed from lines at one moment"
             );
-            fx.rig.clock.advance(Duration::from_secs(1));
+            // The 5 MiB line comes at the same moment first, which changes no speed; the clock
+            // moves once the job view shows it, so no older line follows the move.
             std::fs::write(
                 format!("{}.restore.repeat", fx.rig.wrapper.hold.display()),
                 line(5 * MIB),
             )
             .expect("write the next status line");
+            common::m3::wait_until("progress of the 5 MiB line", || {
+                rec.sizes
+                    .lock()
+                    .expect("lock")
+                    .iter()
+                    .any(|(bytes, _, _)| *bytes == 5 * MIB)
+            });
+            fx.rig.clock.advance(Duration::from_secs(1));
             common::m3::wait_until("progress with a speed", || {
                 rec.sizes
                     .lock()

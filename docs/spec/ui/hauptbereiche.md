@@ -140,7 +140,7 @@ Aufbau, Breadcrumb «Backups › Persönlicher Ordner › Aufbewahrung», Aktion
 **Dialog «3 Elemente wiederherstellen»** (`Kirigami.Dialog`, eine Ebene; Vorschau inline, kein weiterer Dialog):
 - «Wohin»: `(•)` In neuen Ordner `[~/Wiederhergestellt/Persönlicher Ordner 2026-11-15 12-00]` `[Wählen…]` · `( )` An ursprünglichen Ort (`/home/user/…`) mit «Vorhandene Dateien: `[Nie überschreiben ▾]`» (Nie · Wenn älter · Wenn verändert · Immer).
 - Vorschau (läuft automatisch, Pflicht bei Originalort oder nicht leerem Ordner): z. B. «117 Dateien neu · 3 vorhandene Dateien werden nicht überschrieben» `[Liste ▾]`.
-- Fuss: `[Abbrechen]` `[Jetzt wiederherstellen]`; kein eigener Schliessen-Knopf (Abbrechen und Esc schliessen). Tab-Reihenfolge wie auf dem Bildschirm (AC-M4-05-27).
+- Fuss: `[Abbrechen]` `[Jetzt wiederherstellen]`; im Kopf der Schliessen-Knopf ✕ des Dialogs (Kirigami-Standard; Abbrechen, ✕ und Esc schliessen). Tab-Reihenfolge wie auf dem Bildschirm, der Schliessen-Knopf zuletzt nach «Jetzt wiederherstellen» (AC-M4-05-27).
 
 Regeln:
 - Default neuer Ordner (F5); dort kein Probelauf, weil nichts überschrieben wird (die Vorschau liefert nur Zielvorschlag und Prüfung). Bei «An ursprünglichen Ort» oder einem nicht leeren gewählten Ordner läuft die Vorschau (`--dry-run`) **immer** (AC-M4-05-4); der Daemon erzwingt sie (AC-M4-05-14); der Knopf ist erst nach der Vorschau aktiv. Vorschautext passt zum Modus: «werden nicht überschrieben» bei «Nie» (Begriff wie AC-M4-05-3), «werden überschrieben» sonst; bei Überschreiben heisst der Knopf «Überschreiben und wiederherstellen» (negativer Stil, Abbrechen ist Default, Hinweis «nicht rückgängig»).

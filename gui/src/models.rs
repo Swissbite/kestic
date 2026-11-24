@@ -824,6 +824,9 @@ pub mod qobject {
         fn restore_folder_instead(self: Pin<&mut RestorePreviewModel>);
         #[qinvokable]
         fn retry(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "outcomeTexts"]
+        fn outcome_texts(self: &RestorePreviewModel) -> QStringList;
     }
 }
 

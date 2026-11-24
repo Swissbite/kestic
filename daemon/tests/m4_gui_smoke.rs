@@ -1373,12 +1373,9 @@ fn ac_m4_05_29_restore_banner_shows_running_and_cancelled() {
                 common::po_translator::set_daemon_language(lang);
                 let (rig, _fakes, _release) = restore_dialog_env(&sub, &latest_variant());
                 const MIB: u64 = 1024 * 1024;
-                // Each line is padded with JSON whitespace to 8 KiB, so the pipe holds only a few
-                // of them and the daemon reads a new line soon after it is written.
-                let pad = " ".repeat(8192);
                 let line = |bytes: u64| {
                     format!(
-                        "{{{pad}\"message_type\":\"status\",\"percent_done\":0.25,\
+                        "{{\"message_type\":\"status\",\"percent_done\":0.25,\
                          \"files_restored\":1,\"bytes_restored\":{bytes},\"total_bytes\":{}}}\n",
                         40 * MIB
                     )
@@ -1386,32 +1383,32 @@ fn ac_m4_05_29_restore_banner_shows_running_and_cancelled() {
                 rig.wrapper.hold_with_repeated_output("restore", &line(MIB));
                 std::thread::scope(|scope| {
                     // AC-M4-05-30 (d): once restic runs, 4 MiB more after 1 s on the daemon's clock.
-                    // The new line comes first at the same moment, which changes no speed; the
-                    // clock moves once the daemon has read it, so no older line follows it.
+                    // The daemon reads a 1 MiB line first; the 5 MiB line then comes at the same
+                    // moment, which changes no speed, and the clock moves once it has been read.
                     scope.spawn(|| {
                         let deadline = Instant::now() + Duration::from_secs(90);
-                        while rig.wrapper.of('S', "restore").is_empty() && Instant::now() < deadline
-                        {
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
+                        let wait_for_bytes = |bytes: u64| {
+                            while Instant::now() < deadline {
+                                let read = rig
+                                    .daemon
+                                    .client
+                                    .get_state()
+                                    .ok()
+                                    .and_then(|state| state.overall.active_run_progress)
+                                    .is_some_and(|p| p.bytes_done == bytes);
+                                if read {
+                                    return;
+                                }
+                                std::thread::sleep(Duration::from_millis(100));
+                            }
+                        };
+                        wait_for_bytes(MIB);
                         std::fs::write(
                             format!("{}.restore.repeat", rig.wrapper.hold.display()),
                             line(5 * MIB),
                         )
                         .expect("write the next status line");
-                        while Instant::now() < deadline {
-                            let done = rig
-                                .daemon
-                                .client
-                                .get_state()
-                                .ok()
-                                .and_then(|state| state.overall.active_run_progress)
-                                .is_some_and(|p| p.bytes_done == 5 * MIB);
-                            if done {
-                                break;
-                            }
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
+                        wait_for_bytes(5 * MIB);
                         rig.clock.advance(Duration::from_secs(1));
                     });
                     run_m4_gui_smoke(

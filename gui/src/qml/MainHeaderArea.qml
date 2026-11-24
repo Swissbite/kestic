@@ -274,6 +274,7 @@ ColumnLayout {
                 visible: breadcrumbBackButton.visible
             }
 
+            // Not a list: the breadcrumb, a row of buttons.
             Repeater {
                 model: headerArea.rootWindow.breadcrumbRevision >= 0 ? headerArea.pageStackRef.depth : 0
 

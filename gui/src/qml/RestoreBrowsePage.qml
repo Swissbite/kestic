@@ -34,6 +34,9 @@ Kirigami.ScrollablePage {
     readonly property alias browseModel: snapshotBrowseModel
     // Side padding of a row (that of the desktop style's list rows), also used by the headings.
     readonly property int rowPadding: Kirigami.Units.mediumSpacing + Kirigami.Units.smallSpacing
+    // Space between the size and the date column on top of the row spacing, so the two do not
+    // read as one phrase.
+    readonly property int columnGap: Kirigami.Units.largeSpacing
     // The size and date columns are as wide as their longest text, so the name keeps the rest
     // of a narrow pane.
     readonly property int sizeColumnWidth: Math.ceil(Math.max(sizeMetrics.advanceWidth, sizeHeadingMetrics.advanceWidth))
@@ -223,6 +226,7 @@ Kirigami.ScrollablePage {
                     objectName: "browsePathRow"
                     spacing: Kirigami.Units.smallSpacing
 
+                    // Not a list: the path row, a row of buttons.
                     Repeater {
                         model: snapshotBrowseModel.segmentPaths(snapshotBrowseModel.dir)
                         delegate: Row {
@@ -309,6 +313,8 @@ Kirigami.ScrollablePage {
 
     footer: Controls.ToolBar {
         visible: snapshotBrowseModel.selection_count > 0
+        leftPadding: Kirigami.Units.largeSpacing
+        rightPadding: Kirigami.Units.largeSpacing
         contentItem: RowLayout {
             spacing: Kirigami.Units.mediumSpacing
             Controls.Label {
@@ -344,10 +350,16 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // The column headings with the paddings and column widths of the rows below.
-        header: Item {
+        // The column headings with the paddings and column widths of the rows below; they stay
+        // above the rows while the list scrolls.
+        headerPositioning: ListView.OverlayHeader
+        header: Rectangle {
             width: ListView.view.width
             implicitHeight: headingRow.implicitHeight
+            z: 2
+            Kirigami.Theme.colorSet: Kirigami.Theme.View
+            Kirigami.Theme.inherit: false
+            color: Kirigami.Theme.backgroundColor
 
             RowLayout {
                 id: headingRow
@@ -389,6 +401,7 @@ Kirigami.ScrollablePage {
                 }
                 Controls.Label {
                     Layout.preferredWidth: page.modifiedColumnWidth
+                    Layout.leftMargin: page.columnGap
                     text: i18n("Modified")
                     font.bold: true
                 }
@@ -483,6 +496,7 @@ Kirigami.ScrollablePage {
                 }
                 Controls.Label {
                     Layout.preferredWidth: page.modifiedColumnWidth
+                    Layout.leftMargin: page.columnGap
                     text: entryRow.modifiedText
                     color: entryRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                 }

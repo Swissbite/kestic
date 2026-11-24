@@ -4,7 +4,8 @@
 import QtQuick
 
 // A list that is one Tab stop: Tab enters it on its current row, Up/Down, Home/End and
-// Page Up/Page Down move within it, and the next Tab or Shift+Tab leaves it. Its rows take
+// Page Up/Page Down move within it (End and Page Down load the rows of a paged model they need),
+// and the next Tab or Shift+Tab leaves it. Its rows take
 // the focus only by a click (`focusPolicy: Qt.ClickFocus`), so they are no Tab stops of their
 // own; the list gives the focus to its current row.
 ListView {
@@ -46,6 +47,19 @@ ListView {
         positionViewAtIndex(currentIndex, ListView.Contain);
     }
 
+    // Loads further rows of a model that holds them in pages, until row `index` is loaded or the
+    // model has none left.
+    function loadRowsUpTo(index) {
+        var m = list.model;
+        if (!m || typeof m.canFetchMore !== "function") return;
+        var root = m.index(-1, 0);
+        while (index >= list.count && m.canFetchMore(root)) {
+            var before = list.count;
+            m.fetchMore(root);
+            if (list.count === before) return;
+        }
+    }
+
     // How many rows of the current row's height fit into the list's height, at least one.
     function rowsPerPage() {
         var row = currentItem ? currentItem.height : 0;
@@ -57,11 +71,14 @@ ListView {
         if (event.key === Qt.Key_Home) {
             list.moveCurrentTo(0, 1);
         } else if (event.key === Qt.Key_End) {
+            list.loadRowsUpTo(Number.MAX_SAFE_INTEGER);
             list.moveCurrentTo(list.count - 1, -1);
         } else if (event.key === Qt.Key_PageUp) {
             list.moveCurrentTo(list.currentIndex - list.rowsPerPage(), -1);
         } else if (event.key === Qt.Key_PageDown) {
-            list.moveCurrentTo(list.currentIndex + list.rowsPerPage(), 1);
+            var target = list.currentIndex + list.rowsPerPage();
+            list.loadRowsUpTo(target);
+            list.moveCurrentTo(target, 1);
         } else {
             return;
         }
