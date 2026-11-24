@@ -1373,9 +1373,12 @@ fn ac_m4_05_29_restore_banner_shows_running_and_cancelled() {
                 common::po_translator::set_daemon_language(lang);
                 let (rig, _fakes, _release) = restore_dialog_env(&sub, &latest_variant());
                 const MIB: u64 = 1024 * 1024;
+                // Each line is padded with JSON whitespace to 8 KiB, so the pipe holds only a few
+                // of them and the daemon reads a new line soon after it is written.
+                let pad = " ".repeat(8192);
                 let line = |bytes: u64| {
                     format!(
-                        "{{\"message_type\":\"status\",\"percent_done\":0.25,\
+                        "{{{pad}\"message_type\":\"status\",\"percent_done\":0.25,\
                          \"files_restored\":1,\"bytes_restored\":{bytes},\"total_bytes\":{}}}\n",
                         40 * MIB
                     )
