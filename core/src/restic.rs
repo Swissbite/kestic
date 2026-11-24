@@ -1083,8 +1083,8 @@ where
     // early return stops restic before the lease ends.
     let _lease = crate::restic_gate::ResticBinaryGate::global().read();
     let mut child = ChildGuard::new(prepared.cmd.spawn()?);
-    // Dropped before `child`, so the pid is forgotten before the process is reaped and its pid
-    // can be reused.
+    // On an early return or a panic it is dropped before `child`, so the pid is forgotten
+    // before the process is reaped and its pid can be reused.
     let registration = PidRegistration(cancel);
     let (stdout, stderr) = {
         let mut started = child.lock();

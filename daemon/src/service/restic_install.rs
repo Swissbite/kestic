@@ -347,12 +347,15 @@ fn run_install(job: InstallJob) {
         eprintln!("kestic: restic installation: {err}");
     }
     let installed = matches!(result, Ok(InstallOutcome::Installed(_)));
+    if installed {
+        // The restic in use may be the one just installed: check it again before the
+        // installation reports its end, so a GUI that reads the state then sees the new one.
+        refresh_probe_unlocked(&job.shared);
+    }
     job.progress
         .lock_unpoisoned()
         .finish(result, job.clock.now_utc());
     if installed {
-        // The restic in use may be the one just installed: check it again and tell the GUI.
-        refresh_probe_unlocked(&job.shared);
         publish_state(&job.shared);
     }
 }

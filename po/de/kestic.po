@@ -3233,6 +3233,10 @@ msgstr "restic jetzt aktualisieren"
 msgid "Download restic"
 msgstr "restic herunterladen"
 
+#: gui/src/restic_install_view.rs
+msgid "A restic installation is already running."
+msgstr "Eine Installation von restic läuft bereits."
+
 #: gui/src/qml/ShowCommandDialog.qml:12
 msgid "Command · %1"
 msgstr "Befehl · %1"

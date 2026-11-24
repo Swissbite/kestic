@@ -4,7 +4,10 @@
 //! Unit tests of `restic_install_view`.
 
 use super::*;
-use kestic_i18n::codes::{ResticInstallCode, ResticInstallOutcome, ResticInstallPhase};
+use crate::state_cache::tr;
+use kestic_i18n::codes::{
+    ResticInstallCode, ResticInstallOutcome, ResticInstallPhase, ServiceErrorCode,
+};
 
 fn running(phase: ResticInstallPhase) -> ResticInstallStatusDto {
     ResticInstallStatusDto {
@@ -232,5 +235,19 @@ fn restic_offer_matrix() {
             enabled: false,
             ..update
         }
+    );
+}
+
+/// A second installation is refused with a text about the installation, not about a run on a
+/// destination; other refusals keep the daemon's text.
+#[test]
+fn start_failure_names_the_running_installation() {
+    assert_eq!(
+        start_failure_text(ServiceErrorCode::AlreadyRunning),
+        "A restic installation is already running."
+    );
+    assert_eq!(
+        start_failure_text(ServiceErrorCode::NotFound),
+        tr(&ServiceErrorCode::NotFound.message())
     );
 }

@@ -69,7 +69,7 @@ Kirigami.ApplicationWindow {
     // Polls the installation while it runs, also while this window is hidden.
     Timer {
         objectName: "resticInstallPollTimer"
-        interval: 250
+        interval: 500
         repeat: true
         running: appBackend.restic_install_state === "running"
         onTriggered: appBackend.pollResticInstall()

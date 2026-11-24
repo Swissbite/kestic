@@ -444,9 +444,10 @@ pub fn remove_leftovers(data_dir: &Path) -> LeftoverCleanup {
 
 /// Version the installed app-managed binary reports, if it runs and says.
 ///
-/// Runs without a read lease of the run gate: only the worker of the one running installation
-/// replaces this binary, and it calls this before it replaces anything (a cancelled worker
-/// never reaches the replacement).
+/// Runs without a read lease of the run gate: only the worker of an installation that still
+/// runs can replace this binary (`begin_replace` refuses a cancelled one, which may still be
+/// downloading), at most one installation runs, and its worker calls this before it replaces
+/// anything.
 fn installed_version(binary: &Path) -> Option<Version> {
     if !binary.is_file() {
         return None;

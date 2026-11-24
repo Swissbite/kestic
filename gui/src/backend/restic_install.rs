@@ -6,11 +6,12 @@
 
 use super::{dbus_error_text, qobject};
 use crate::restic_install_view::{
-    InstallView, OfferInput, failed_poll_view, install_view, restic_offer,
+    InstallView, OfferInput, failed_poll_view, install_view, restic_offer, start_failure_text,
 };
 use crate::state_cache::{daemon_unavailable_text, make_client, refresh_state_now};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
+use kestic_daemon::dbus_api::KesticDbusError;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
@@ -55,7 +56,7 @@ impl qobject::KesticApp {
             .and_then(|client| {
                 client
                     .start_restic_install()
-                    .map_err(|err| dbus_error_text(&err))
+                    .map_err(|err| start_failure_text(KesticDbusError::from(err).code()))
             });
         match started {
             Ok(install_id) => {

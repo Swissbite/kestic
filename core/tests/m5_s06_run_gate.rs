@@ -208,3 +208,42 @@ fn run_restic_with_unusable_secret_starts_nothing() {
     // (c) no read lease is left
     assert_eq!(ResticBinaryGate::global().readers(), 0);
 }
+
+/// A panic while restic's output is handled (in `on_event`) still stops restic: (a) the process
+/// is gone afterwards and (b) no read lease of the gate is left.
+#[test]
+fn run_restic_stops_restic_when_the_output_handler_panics() {
+    let _turn = take_turn();
+    let dir = tempfile::tempdir().expect("dir");
+    let pid_file = dir.path().join("pid");
+    let restic = dir.path().join("restic");
+    write_executable(
+        &restic,
+        &format!(
+            "#!/bin/sh\necho $$ > '{pid}'\n\
+             echo '{{\"message_type\":\"status\",\"percent_done\":0.1}}'\nexec sleep 30\n",
+            pid = pid_file.display(),
+        ),
+    );
+    let dest = local_destination(dir.path());
+    let mut spec =
+        ResticCommandSpec::for_destination(&restic, "kestic", &dest, vec!["backup".to_string()]);
+    spec.low_priority = false;
+    spec.password_command_override = Some("echo password".to_string());
+    let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_restic(&spec, &dest, None, &clock, None, &[], |_| {
+            panic!("output handler fails")
+        })
+    }));
+    assert!(outcome.is_err(), "precondition: the handler panicked");
+    let pid = std::fs::read_to_string(&pid_file).expect("pid of restic");
+    // (a)
+    assert!(
+        !Path::new(&format!("/proc/{}", pid.trim())).exists(),
+        "restic {} still runs",
+        pid.trim()
+    );
+    // (b)
+    assert_eq!(ResticBinaryGate::global().readers(), 0);
+}

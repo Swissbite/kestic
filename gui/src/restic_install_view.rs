@@ -4,9 +4,9 @@
 //! What the restic section of the settings shows for an installation of the restic managed by
 //! Kestic (`ResticInstallStatusDto`).
 
-use crate::state_cache::tr;
+use crate::state_cache::{i18n, tr};
 use kestic_daemon::dbus_api::ResticInstallStatusDto;
-use kestic_i18n::codes::ResticInstallPhase;
+use kestic_i18n::codes::{ResticInstallPhase, ServiceErrorCode};
 
 /// Shown value of the progress bar while its end is unknown.
 pub const INDETERMINATE: f64 = -1.0;
@@ -85,6 +85,17 @@ pub fn failed_poll_view(text: &str) -> InstallView {
         result_text: String::new(),
         error_text: text.to_string(),
         error_detail: String::new(),
+    }
+}
+
+/// Why `StartResticInstall` failed: the daemon's text for `code`, except for an installation
+/// that already runs (its general text names a destination).
+pub fn start_failure_text(code: ServiceErrorCode) -> String {
+    match code {
+        ServiceErrorCode::AlreadyRunning => {
+            i18n("A restic installation is already running.").to_string()
+        }
+        other => tr(&other.message()),
     }
 }
 
