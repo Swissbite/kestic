@@ -49,8 +49,7 @@ pub fn sort_destination_snapshots(
             by_backup.entry(id).or_default().push(snap);
             continue;
         }
-        // Without a backup ID, or tagged for several backups and assigned to none of them: no
-        // unique Kestic tag.
+        // Without a backup ID, or tagged with several: no unique Kestic tag.
         let Some(id) = snap.unique_backup_id().map(str::to_string) else {
             unassigned.push(snap);
             continue;

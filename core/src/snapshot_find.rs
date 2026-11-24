@@ -33,8 +33,7 @@ use thiserror::Error;
 pub enum FindScope {
     /// The snapshots of a configured backup.
     Backup { backup_id: String },
-    /// The unassigned snapshots: without a Kestic tag, or tagged for several configured
-    /// backups.
+    /// The unassigned snapshots: without a Kestic tag, or tagged with more than one backup ID.
     Unassigned,
     /// The snapshots of a backup that is neither configured nor described in the destination.
     Orphaned { backup_id: String },

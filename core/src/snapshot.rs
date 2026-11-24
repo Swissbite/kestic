@@ -102,17 +102,14 @@ impl ResticSnapshot {
             .filter(|id| !id.is_empty())
     }
 
-    /// The configured backup this snapshot belongs to: the only configured ID among its
-    /// `kestic:<id>` tags. A metadata snapshot, and one tagged for several configured backups,
-    /// belongs to none, so it never shows in the list of a backup whose tag it does not carry
-    /// alone.
+    /// The configured backup this snapshot belongs to: its one `kestic:<id>` ID, when that
+    /// backup is configured. A metadata snapshot, and one tagged with more than one backup ID,
+    /// belongs to none.
     pub fn assigned_backup(&self, configured: &[&str]) -> Option<&str> {
         if self.is_meta() {
             return None;
         }
-        let mut ids = self.backup_ids().filter(|id| configured.contains(id));
-        let first = ids.next()?;
-        ids.all(|id| id == first).then_some(first)
+        self.unique_backup_id().filter(|id| configured.contains(id))
     }
 
     /// The one backup ID the `kestic:<id>` tags name; `None` without one or with several.

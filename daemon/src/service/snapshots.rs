@@ -59,8 +59,8 @@ impl ListDeps<'_> {
             self.clock,
             &[],
         )?;
-        // Like the destination list: neither a metadata snapshot nor one tagged for several
-        // configured backups belongs to it.
+        // Like the destination list: neither a metadata snapshot nor one tagged with more than
+        // one backup ID belongs to it.
         snaps.retain(|s| s.assigned_backup(self.configured) == Some(b_id.as_str()));
         sort_newest_first(&mut snaps);
         Ok(to_dtos(snaps))
