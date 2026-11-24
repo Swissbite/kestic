@@ -64,30 +64,35 @@ Vorbereitung für alle Punkte: `.deb` aus dem Abschluss-PR installieren (`just d
 - [ ] **AC-M4-01-4** – wenn nur die Tastatur benutzt wird, dann lassen sich alle Snapshots wählen und Unterschiede, Durchsuchen, Wiederherstellen auslösen
   1. Kestic öffnen, mit Tab zur Tab-Leiste, mit den Pfeiltasten «Wiederherstellen» wählen, Enter.
   2. Mit Tab in «Aus welchem Backup?», mit den Pfeiltasten das Test-Backup wählen, Enter: rechts erscheinen seine Snapshots, neueste zuerst.
-  3. Mit Tab in die Snapshot-Liste, mit Hoch/Runter jeden Snapshot einmal erreichen (Fokusrahmen sichtbar).
-  4. Auf einem Snapshot die Menütaste (oder Umschalt+F10) drücken, «Mit vorherigem vergleichen» wählen, Enter: die Unterschiede erscheinen.
-  5. Zurück in die Snapshot-Liste, Enter auf einem Snapshot: die Ordnerliste öffnet sich (Durchsuchen).
-  6. Umschalt+F10 auf einem Snapshot, «Wiederherstellen…», Enter: der Dialog öffnet mit «In neuen Ordner» vorausgewählt; Esc schliesst ihn, der Fokus steht wieder in der Liste.
-  7. Erwartet: jeder Schritt ohne Maus, jedes Bedienelement mit sichtbarem Fokus. Rückmeldung: «geht» oder der Schritt, an dem es hängt.
+  3. Mit Tab in die Snapshot-Liste, mit Hoch/Runter jeden Snapshot einmal erreichen (Fokusrahmen sichtbar). Ein einziger Tab verlässt die Liste zum nächsten Bedienelement, Umschalt+Tab führt zurück auf denselben Snapshot (AC-M4-01-7).
+  4. Rechtsklick auf einen Snapshot, die Taste dabei eine Sekunde halten: das Menü öffnet beim Drücken an der Zeigerposition; Esc schliesst es, auch mit dem Zeiger auf «Durchsuchen». Fünfmal auf verschiedenen Snapshots: das Menü öffnet jedes Mal (AC-M4-01-8).
+  5. Auf einem Snapshot die Menütaste (oder Umschalt+F10) drücken, «Mit vorherigem vergleichen» wählen, Enter: die Unterschiede erscheinen.
+  6. Zurück in die Snapshot-Liste, Enter auf einem Snapshot: die Ordnerliste öffnet sich (Durchsuchen).
+  7. Umschalt+F10 auf einem Snapshot, «Wiederherstellen…», Enter: der Dialog öffnet mit «In neuen Ordner» vorausgewählt. Tab führt der Reihe nach über «In neuen Ordner» → «Wählen…» → «An ursprünglichen Ort» → «Abbrechen» → «Jetzt wiederherstellen» und wieder zum Anfang, ohne den Dialog zu verlassen; Umschalt+Tab umgekehrt. Esc schliesst ihn, der Fokus steht wieder in der Liste (AC-M4-05-27).
+  8. Erwartet: jeder Schritt ohne Maus, jedes Bedienelement mit sichtbarem Fokus. Rückmeldung: «geht» oder der Schritt, an dem es hängt.
 - [ ] **AC-M4-03-3** – wenn nur die Tastatur benutzt wird, dann geht es per Ordnerliste in Unterordner und per Breadcrumb in jede übergeordnete Ebene zurück (keine Baumansicht zum Auf- und Zuklappen), und Einträge lassen sich zum Wiederherstellen markieren
   1. Einen Snapshot wie oben mit Enter zum Durchsuchen öffnen.
-  2. Mit Tab in die Ordnerliste, mit Hoch/Runter einen Ordner wählen, Enter: er öffnet sich, der Breadcrumb wächst um ein Segment. Zwei Ebenen tief gehen, dort einen Eintrag wählen, Leertaste: das Kästchen wird gesetzt, unten steht «1 Element ausgewählt», «Auswahl wiederherstellen…» ist aktiv.
+  2. Mit Tab in die Ordnerliste, mit Hoch/Runter einen Ordner wählen, Enter: er öffnet sich, der Breadcrumb wächst um ein Segment. Zwei Ebenen tief gehen, dort einen Eintrag wählen, Leertaste: das Kästchen wird gesetzt, unten steht «1 Element ausgewählt», «Auswahl wiederherstellen…» ist aktiv. In einem Ordner mit vielen Einträgen verlässt ein einziger Tab die Liste (AC-M4-01-7).
   3. Mit Tab bzw. Umschalt+Tab auf ein übergeordnetes Segment des Breadcrumbs, Enter: diese Ebene öffnet sich, die Markierung bleibt. So bis zur obersten Ebene. Es gibt keinen aufklappbaren Baum.
-  4. Breeze hell und dunkel (Systemeinstellungen → Farben & Designs → Globales Design): Breadcrumb-Segmente einmal gezeichnet, Hover und gedrückter Zustand gut lesbar.
-  5. Rückmeldung: «geht» oder Schritt und Bildschirmfoto.
+  4. «Auswahl aufheben», zurück auf die oberste Ebene des Snapshots, Ctrl+A (oder Klick auf das Kästchen im Tabellenkopf links von «Name»): alle Einträge sind markiert, das Kopf-Kästchen zeigt «alle», die Aktion heisst «Alles wiederherstellen…». Sie öffnet den Dialog «Snapshot wiederherstellen» wie «Wiederherstellen…» im Kontextmenü; Abbrechen. In einem Unterordner Ctrl+A: die Aktion heisst «Auswahl wiederherstellen…» (AC-M4-03-8, AC-M4-05-26).
+  5. Breeze hell und dunkel (Systemeinstellungen → Farben & Designs → Globales Design): Breadcrumb-Segmente einmal gezeichnet, Hover und gedrückter Zustand gut lesbar.
+  6. Rückmeldung: «geht» oder Schritt und Bildschirmfoto.
 - [ ] **Darstellung unter Breeze** – wenn das Hauptfenster auf dem Plasma-Desktop schmal gezogen wird (unter etwa 600 px), dann scheint keine andere Seite durch und kein weisser Kasten liegt über der Tab-Leiste unten; Fortschrittsbalken (Karte eines laufenden Backups) und Drehfelder (z. B. Aufbewahrung, Zeitplan) sehen aus wie vor M4, Ziffern nicht abgeschnitten
   1. Kestic öffnen, Fenster schmal ziehen, durch alle Tabs gehen, auch «Wiederherstellen».
   2. Fenster wieder breit ziehen; ein Backup starten und die Karte mit Fortschrittsbalken ansehen.
   3. Backup bearbeiten → Aufbewahrung und Zeitplan: Drehfelder mit zweistelligen Werten ansehen.
-  4. Rückmeldung: «sieht aus wie vorher» oder Bildschirmfoto der Abweichung.
+  4. Das Fenster langsam von breit nach schmal ziehen: Tab-Leiste und Spalten wechseln an derselben Breite; nie Tab-Leiste unten mit zwei Spalten. Knapp über dieser Breite einen Snapshot durchsuchen: kurze Namen (z. B. «david») stehen ungekürzt in der Ordnerliste (AC-M4-01-9).
+  5. Rückmeldung: «sieht aus wie vorher» oder Bildschirmfoto der Abweichung.
 - [ ] **Exit-Kriterium** – Manuelle Abnahme: Restore aus einem echten Netzwerk-Ziel (z. B. NAS).
   1. Ein REST-Ziel auf dem NAS mit einem eigenen Test-Repository einrichten (nie das produktive Repository), ein kleines Test-Backup (z. B. ein Ordner `~/kestic-restore-test` mit einigen Dateien und einem Unterordner) zweimal sichern, dazwischen eine Datei ändern.
   2. Neuer Ordner: eine Datei und einen Ordner aus dem neueren Snapshot wählen, «Auswahl wiederherstellen…», «In neuen Ordner» lassen, «Jetzt wiederherstellen». Erwartet: alles unter `~/Wiederhergestellt/<Backup> <Datum> <Uhrzeit>`, Lauf in «Verlauf» mit Art «Wiederherstellen» und ohne Fehler oder Warnung, der restic-Befehl unter «Befehle» enthält `--overwrite never`.
   3. Originalort: in `~/kestic-restore-test` eine Datei ändern, sie aus dem älteren Snapshot wählen, «An ursprünglichen Ort», «Vorhandene Dateien: Nie überschreiben»: die Vorschau nennt die Datei «nicht überschrieben»; «Jetzt wiederherstellen», die Datei bleibt unverändert.
   4. Dasselbe mit «Immer»: die Vorschau warnt «1 Datei wird überschrieben. Das lässt sich nicht rückgängig machen.»; erst «Überschreiben und wiederherstellen» schreibt, danach hat die Datei den Inhalt aus dem Snapshot.
-  5. Während einer Wiederherstellung (eine grössere Auswahl, damit sie lange genug läuft) «Jetzt sichern» auf demselben Ziel: beide laufen gleichzeitig.
-  6. Danach `~/kestic-restore-test`, `~/Wiederhergestellt` und das Test-Repository auf dem NAS von Hand löschen.
-  7. Rückmeldung: «geht» je Schritt oder der Schritt, an dem es hängt.
+  5. Während einer Wiederherstellung (eine grössere Auswahl, damit sie lange genug läuft) «Jetzt sichern» auf demselben Ziel: beide laufen gleichzeitig. Die Meldung im Fenster zeigt das Icon zum Wiederherstellen (kein weisser Kasten, auch unter Breeze Dark) und eine Geschwindigkeit; der Plasma-Job zeigt eine Geschwindigkeit über 0 (AC-M4-05-29, AC-M4-05-30).
+  6. Eine weitere Wiederherstellung starten und in der Meldung «Abbrechen»: sie zeigt neutral «Wiederherstellen abgebrochen» mit dem Stopp-Icon, nicht rot (AC-M4-05-29).
+  5b. Im Restore-Dialog «Wählen…» und im Dateidialog einen Netzwerkordner (z. B. `smb://…` unter «Netzwerk») wählen: das Ziel bleibt, der Dialog sagt «Netzwerkordner wie smb:// lassen sich nicht direkt wählen. Den Ordner zuerst einbinden oder einen lokalen Ordner wählen.» (AC-M4-05-28).
+  7. Danach `~/kestic-restore-test`, `~/Wiederhergestellt` und das Test-Repository auf dem NAS von Hand löschen.
+  8. Rückmeldung: «geht» je Schritt oder der Schritt, an dem es hängt.
 
 ## M5 Ziele und restic-Bereitstellung
 

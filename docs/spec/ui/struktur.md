@@ -67,7 +67,7 @@ Tiefe Seiten zeigen den Breadcrumb anstelle des Titels in der Kopfleiste (`pageS
 ![narrow dark](assets/kestic-narrow-dark.png)
 
 - Standardgrösse ca. 65 × 41 `gridUnit` (≈ 1180 × 740 px), so dass deutsche Beschriftungen und zweispaltige Ansichten grosszügig Platz haben und keine Beschriftung abgeschnitten wird (HIG). Mindestgrösse ca. 26 × 24 `gridUnit`; Tab-Labels dürfen auch dort nicht abgeschnitten werden (Spike, §15).
-- **Breit** (`wideScreen`): Liste + Detail nebeneinander. **Schmal:** eine Spalte, Tab-Bar unten, «Zurück» in der Kopfleiste.
+- **Breit:** Liste + Detail nebeneinander. **Schmal:** eine Spalte, Tab-Bar unten, «Zurück» in der Kopfleiste. Ein Umbruchpunkt (35 Rastereinheiten) schaltet beides zugleich: Tab-Leiste und Spalten (AC-M4-01-9).
 - Fenstergrösse, Position und aktives Ziel werden gemerkt (`~/.local/state/kestic/`, F13).
 
 ## 5. Bausteine

@@ -24,14 +24,43 @@ Kirigami.ScrollablePage {
     property string snapshotTitle: ""
     // An entry of `startDir` to show selected once it is listed (a search hit).
     property string focusPath: ""
+    // The folder a restore of the whole snapshot runs from: the common folder of its paths.
+    property string topDir: ""
 
     // The list whose selected row gets the focus when the page is shown again.
     readonly property var primaryList: browseListView
     readonly property alias browseModel: snapshotBrowseModel
     // Side padding of a row (that of the desktop style's list rows), also used by the headings.
     readonly property int rowPadding: Kirigami.Units.mediumSpacing + Kirigami.Units.smallSpacing
-    readonly property int sizeColumnWidth: Kirigami.Units.gridUnit * 5
-    readonly property int modifiedColumnWidth: Kirigami.Units.gridUnit * 6
+    // The size and date columns are as wide as their longest text, so the name keeps the rest
+    // of a narrow pane.
+    readonly property int sizeColumnWidth: Math.ceil(Math.max(sizeMetrics.advanceWidth, sizeHeadingMetrics.advanceWidth))
+    readonly property int modifiedColumnWidth: Math.ceil(Math.max(dateMetrics.advanceWidth, modifiedHeadingMetrics.advanceWidth))
+
+    TextMetrics {
+        id: sizeMetrics
+        font: Kirigami.Theme.defaultFont
+        text: "999.9 MB"
+    }
+    TextMetrics {
+        id: dateMetrics
+        font: Kirigami.Theme.defaultFont
+        text: "0000-00-00"
+    }
+    TextMetrics {
+        id: sizeHeadingMetrics
+        font.family: Kirigami.Theme.defaultFont.family
+        font.pointSize: Kirigami.Theme.defaultFont.pointSize
+        font.bold: true
+        text: i18n("Size")
+    }
+    TextMetrics {
+        id: modifiedHeadingMetrics
+        font.family: Kirigami.Theme.defaultFont.family
+        font.pointSize: Kirigami.Theme.defaultFont.pointSize
+        font.bold: true
+        text: i18n("Modified")
+    }
 
     signal restoreRequested(var destinationId, var snapshotId, var selection)
 
@@ -53,7 +82,10 @@ Kirigami.ScrollablePage {
         }
     }
 
-    Component.onCompleted: openDir(startDir)
+    Component.onCompleted: {
+        snapshotBrowseModel.top_dir = topDir;
+        openDir(startDir);
+    }
 
     // A snapshot whose backed-up folder is not in its tree (made with a relative path or of a
     // single file) opens at the top instead.
@@ -64,6 +96,8 @@ Kirigami.ScrollablePage {
                 return;
             }
             if (!snapshotBrowseModel.dir_exists && page.startDir !== "/") {
+                // A restore of the whole snapshot then runs from the top of its tree, too.
+                if (snapshotBrowseModel.top_dir === page.startDir) snapshotBrowseModel.top_dir = "/";
                 page.openDir("/");
             } else if (page.focusPath !== "") {
                 var row = snapshotBrowseModel.rowOfPath(page.focusPath);
@@ -94,13 +128,21 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             objectName: "restoreSelectionAction"
             icon.name: "document-revert"
-            text: i18n("Restore Selection…")
+            // With every entry of the top folder selected, the whole snapshot is restored.
+            text: snapshotBrowseModel.whole_snapshot ? i18n("Restore All…") : i18n("Restore Selection…")
             enabled: snapshotBrowseModel.selection_count > 0
             tooltip: enabled ? "" : i18n("Select files or folders first")
             onTriggered: page.restoreRequested(page.destinationId, page.snapshotId,
-                snapshotBrowseModel.selectedPaths())
+                snapshotBrowseModel.restoreSelection())
         }
     ]
+
+    // Selects every entry of the folder shown; a text field keeps Ctrl+A for its text.
+    Shortcut {
+        sequences: [StandardKey.SelectAll]
+        enabled: page.visible
+        onActivated: snapshotBrowseModel.selectAll()
+    }
 
     header: Controls.ToolBar {
         leftPadding: Kirigami.Units.largeSpacing
@@ -266,7 +308,7 @@ Kirigami.ScrollablePage {
         }
     }
 
-    ListView {
+    KeyboardList {
         id: browseListView
         objectName: "browseListView"
         model: snapshotBrowseModel
@@ -284,21 +326,32 @@ Kirigami.ScrollablePage {
             width: ListView.view.width
             implicitHeight: headingRow.implicitHeight
 
-            // Only measures the check box of a row.
-            Controls.CheckBox {
-                id: checkMeasure
-                visible: false
-            }
-
             RowLayout {
                 id: headingRow
                 anchors.fill: parent
                 anchors.leftMargin: page.rowPadding
                 anchors.rightMargin: page.rowPadding
                 spacing: Kirigami.Units.mediumSpacing
+                // Selects or clears every entry of the folder shown, also those not loaded yet. Not a
+                // Tab stop of its own: Ctrl+A selects all from the keyboard.
+                Controls.CheckBox {
+                    id: selectAllCheck
+                    objectName: "browseSelectAllCheck"
+                    tristate: true
+                    focusPolicy: Qt.NoFocus
+                    enabled: snapshotBrowseModel.state === "done" && !snapshotBrowseModel.too_large
+                        && browseListView.count > 0
+                    checkState: snapshotBrowseModel.header_check_state
+                    Accessible.name: i18n("Select All")
+                    Controls.ToolTip.visible: hovered
+                    Controls.ToolTip.text: i18n("Select All")
+                    onClicked: {
+                        snapshotBrowseModel.toggleAll();
+                        checkState = Qt.binding(function() { return snapshotBrowseModel.header_check_state; });
+                    }
+                }
                 Item {
-                    Layout.preferredWidth: checkMeasure.implicitWidth + Kirigami.Units.mediumSpacing
-                        + Kirigami.Units.iconSizes.small
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
                 }
                 Controls.Label {
                     Layout.fillWidth: true
@@ -352,7 +405,7 @@ Kirigami.ScrollablePage {
             width: ListView.view.width
             leftPadding: page.rowPadding
             rightPadding: page.rowPadding
-            activeFocusOnTab: true
+            focusPolicy: Qt.ClickFocus
             highlighted: ListView.isCurrentItem
             Accessible.name: name
             Accessible.description: selected ? i18n("Marked for restore") : ""
@@ -392,6 +445,7 @@ Kirigami.ScrollablePage {
                     Layout.preferredHeight: Kirigami.Units.iconSizes.small
                 }
                 Controls.Label {
+                    objectName: "browseEntryName"
                     Layout.fillWidth: true
                     text: entryRow.name
                     textFormat: Text.PlainText
@@ -420,7 +474,9 @@ Kirigami.ScrollablePage {
         standardButtons: Kirigami.Dialog.Close
         preferredWidth: Kirigami.Units.gridUnit * 28
 
-        ListView {
+        // Its rows are plain text; the arrow keys scroll it.
+        KeyboardList {
+            objectName: "selectionListView"
             implicitHeight: Math.min(contentHeight, Kirigami.Units.gridUnit * 16)
             clip: true
             model: selectionDialog.visible ? snapshotBrowseModel.selectedPaths() : []

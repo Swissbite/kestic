@@ -69,7 +69,7 @@ Kirigami.ScrollablePage {
         width: parent.width
         spacing: 0
 
-        ListView {
+        KeyboardList {
             id: restoreBackupsListView
             objectName: "restoreBackupsListView"
             Layout.fillWidth: true
@@ -94,7 +94,7 @@ Kirigami.ScrollablePage {
                 required property string subtitle
 
                 width: ListView.view.width
-                activeFocusOnTab: true
+                focusPolicy: Qt.ClickFocus
                 highlighted: page.selectedBackupId === backupId
                 Accessible.name: name
                 Accessible.description: subtitle
@@ -158,26 +158,32 @@ Kirigami.ScrollablePage {
                 text: i18n("Other snapshots")
             }
 
-            Repeater {
+            KeyboardList {
                 id: groupRepeater
+                objectName: "restoreGroupsListView"
+                Layout.fillWidth: true
+                implicitHeight: contentHeight
+                interactive: false
                 model: page.restoreGroupsModel
                 onCountChanged: page.groupCount = count
 
                 delegate: Controls.ItemDelegate {
                     id: groupRow
                     objectName: "restoreGroupListItem"
+                    required property int index
                     required property string group
                     required property string name
                     required property string subtitle
                     required property string iconName
 
-                    Layout.fillWidth: true
-                    activeFocusOnTab: true
+                    width: ListView.view.width
+                    focusPolicy: Qt.ClickFocus
                     highlighted: page.selectedGroup === group
                     Accessible.name: name
                     Accessible.description: subtitle
 
                     onClicked: {
+                        ListView.view.currentIndex = index;
                         page.selectedBackupId = "";
                         page.selectedGroup = group;
                         restoreBackupsListView.currentIndex = -1;

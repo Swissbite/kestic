@@ -11,7 +11,8 @@ use kestic_core::history::RunHistory;
 use kestic_core::model::{BackupId, DestinationId, RestoreStats, Run, RunKind, RunStatus};
 use kestic_core::restore::{
     EntryKind, ProbeCollector, RestoreCall, escape_glob, folder_instead_of_unmatchable,
-    normalize_selection, plan_restore, probe_path, restore_args, selection_with_folders_instead,
+    normalize_selection, plan_restore, probe_path, restore_args, selection_is_whole_folder,
+    selection_with_folders_instead,
 };
 use kestic_core::restore_target::{
     FolderWords, SuggestionInput, new_folder_name, original_location, suggested_new_folder,
@@ -379,5 +380,63 @@ fn m4_s05_dangling_symlink_is_no_target_folder() {
     assert_eq!(
         check_target(&target, &[]).code,
         RestoreTargetCode::NotADirectory
+    );
+}
+
+fn paths(list: &[&str]) -> Vec<String> {
+    list.iter().map(|p| (*p).to_string()).collect()
+}
+
+/// AC-M4-05-26 (unit part): a selection restores the whole snapshot when (a) every entry of
+/// the top folder is selected and nothing outside it; entries below a selected one change
+/// nothing. (b) With an entry of the top folder missing, an entry outside the top folder, the
+/// top folder itself or a folder without entries it is a selection, and (c) so are all entries
+/// of a subfolder.
+#[test]
+fn ac_m4_05_26_selection_of_every_top_entry_is_the_whole_snapshot() {
+    let top = "/home/u";
+    let all = paths(&["/home/u/a.txt", "/home/u/docs", "/home/u/empty"]);
+    assert!(
+        selection_is_whole_folder(&all, top, 3),
+        "(a) every entry of the top folder"
+    );
+    let mut nested = all.clone();
+    nested.push("/home/u/docs/x.txt".to_string());
+    assert!(
+        selection_is_whole_folder(&nested, top, 3),
+        "(a) an entry below a selected one"
+    );
+    assert!(
+        selection_is_whole_folder(&paths(&["/a", "/home"]), "/", 2),
+        "(a) every entry of `/`"
+    );
+
+    assert!(
+        !selection_is_whole_folder(&all[..2], top, 3),
+        "(b) one entry of the top folder missing"
+    );
+    let mut outside = all.clone();
+    outside.push("/home/other".to_string());
+    assert!(
+        !selection_is_whole_folder(&outside, top, 3),
+        "(b) an entry outside the top folder"
+    );
+    let mut sibling = all.clone();
+    sibling.push("/home/u2/f".to_string());
+    assert!(
+        !selection_is_whole_folder(&sibling, top, 3),
+        "(b) a folder whose name starts like the top folder is outside it"
+    );
+    assert!(
+        !selection_is_whole_folder(&paths(&["/home/u"]), top, 1),
+        "(b) the top folder itself, selected from the folder above"
+    );
+    assert!(
+        !selection_is_whole_folder(&[], top, 0),
+        "(b) a top folder without entries"
+    );
+    assert!(
+        !selection_is_whole_folder(&paths(&["/home/u/docs/x.txt", "/home/u/docs/deep"]), top, 2),
+        "(c) every entry of a subfolder, as many as the top folder has"
     );
 }

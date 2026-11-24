@@ -226,6 +226,15 @@ fn chip_text(outcome: RestoreOutcome, count: u64) -> String {
     GuiText::TwoParts.with_args(&[&tr(&outcome.message()), &format_count(count)])
 }
 
+/// The line of a running restore: its progress, and the speed once it is known.
+pub(crate) fn restore_progress_text(progress: &str, speed_bps: u64) -> String {
+    if speed_bps == 0 {
+        return progress.to_string();
+    }
+    let speed = i18n("%1/s").subs(&[&format_bytes(speed_bps)]).to_string();
+    GuiText::TwoParts.with_args(&[progress, &speed])
+}
+
 /// The line shown when a restore run ended.
 pub(crate) fn run_end_text(detail: &RunDetailDto) -> String {
     match detail.run.status {
@@ -238,7 +247,7 @@ pub(crate) fn run_end_text(detail: &RunDetailDto) -> String {
             i18np("%1 file restored", "%1 files restored", files, &[])
         }
         RunStatus::Warning => tr(&nothing_restored_message()),
-        RunStatus::Cancelled => tr(&ErrorKind::Cancelled.message(None, false)),
+        RunStatus::Cancelled => i18n("Restore cancelled").to_string(),
         // Stopped by sleep (the run says so) or ended at the next daemon start (no message).
         RunStatus::Interrupted => detail
             .run
@@ -608,7 +617,9 @@ impl qobject::RestorePreviewModel {
                     .lock_unpoisoned()
                     .active_progress
                     .get(&run_id)
-                    .map(|p| tr(&active_run_message(&p.info())));
+                    .map(|p| {
+                        restore_progress_text(&tr(&active_run_message(&p.info())), p.speed_bps)
+                    });
                 if let Some(text) = progress {
                     self.as_mut().set_run_text(QString::from(&text));
                 }
@@ -616,6 +627,8 @@ impl qobject::RestorePreviewModel {
             }
             RunStatus::Ok => "ok",
             RunStatus::Warning => "warning",
+            // Cancelling is the user's choice, no failure: the banner stays neutral.
+            RunStatus::Cancelled => "cancelled",
             _ => "error",
         };
         self.as_mut()
@@ -855,6 +868,22 @@ mod tests {
         assert_eq!(
             run_end_text(&ended_run(RunStatus::Error, Some("restic failed"))),
             "Restore failed"
+        );
+    }
+
+    /// AC-M4-05-30 (banner part): the line of a running restore names (a) no speed before one
+    /// is known and (b) the speed once it is.
+    #[test]
+    fn ac_m4_05_30_running_restore_line_names_the_speed() {
+        assert_eq!(
+            restore_progress_text("Home: restoring · 1%", 0),
+            "Home: restoring · 1%",
+            "(a) no speed yet"
+        );
+        assert_eq!(
+            restore_progress_text("Home: restoring · 1%", 4_000_000),
+            format!("Home: restoring · 1% · {}/s", format_bytes(4_000_000)),
+            "(b) with the speed"
         );
     }
 }

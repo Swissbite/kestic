@@ -271,13 +271,12 @@ WizardPage {
                     text: i18n("Where should the backup be stored?")
                 }
 
-                ListView {
+                KeyboardList {
                     objectName: "wizBackupDestList"
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.max(contentHeight, Kirigami.Units.gridUnit * 8)
                     model: destinationsModel
                     spacing: Kirigami.Units.smallSpacing
-                    activeFocusOnTab: visible && count > 0
                     keyNavigationEnabled: true
 
                     onActiveFocusChanged: {
@@ -288,6 +287,7 @@ WizardPage {
 
                     delegate: Controls.ItemDelegate {
                         id: destRow
+                        focusPolicy: Qt.ClickFocus
                         objectName: "wizBackupDestItem"
                         required property int index
                         required property string destinationId

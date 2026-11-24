@@ -32,3 +32,4 @@ pub mod snapshot_find;
 pub mod snapshot_list;
 pub mod snapshot_ls;
 pub mod sync;
+pub mod transfer_speed;

@@ -7,6 +7,8 @@
 
 #include "src/smoke_m3_util.h"
 
+#include <algorithm>
+
 #include <QFile>
 #include <QImage>
 #include <QLocale>
@@ -204,7 +206,8 @@ bool open_next_group(const Ctx& c, const char* group, const QString& name) {
         return QMetaObject::invokeMethod(w, "openRestoreGroup",
             Q_ARG(QVariant, QString::fromLatin1(group)), Q_ARG(QVariant, name));
     }
-    press_and_wait(w, Qt::Key_Tab, 80);
+    // The groups are one list: Down moves to the next one.
+    press_and_wait(w, Qt::Key_Down, 80);
     QQuickItem* row = nullptr;
     for (QQuickItem* it = w->activeFocusItem(); it; it = it->parentItem()) {
         if (it->objectName() == QLatin1String("restoreGroupListItem")) {
@@ -1940,6 +1943,702 @@ int scenario_restic_outdated(const Ctx& c) {
     return 0;
 }
 
+// Whether `item` is `ancestor` or lies below it.
+bool lies_in(QQuickItem* item, QQuickItem* ancestor) {
+    for (QQuickItem* it = item; it; it = it->parentItem()) {
+        if (it == ancestor) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The index of the row of `list` that holds the keyboard focus; -1 when the focus is elsewhere.
+int focused_row_of(QQuickWindow* w, QQuickItem* list) {
+    auto* content = list->property("contentItem").value<QQuickItem*>();
+    for (QQuickItem* it = w->activeFocusItem(); it; it = it->parentItem()) {
+        if (it->parentItem() == content) {
+            return it->property("index").toInt();
+        }
+    }
+    return -1;
+}
+
+// Presses Tab until the keyboard focus is in `list` (at most `max_steps` times).
+bool tab_into(QQuickWindow* w, QQuickItem* list, int max_steps) {
+    for (int i = 0; i < max_steps; ++i) {
+        if (lies_in(w->activeFocusItem(), list)) {
+            return true;
+        }
+        send_key(w, Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    }
+    return lies_in(w->activeFocusItem(), list);
+}
+
+QString focus_name(QQuickWindow* w) {
+    return describe_focus_item(w->activeFocusItem());
+}
+
+// AC-M4-01-7 (d) for `list`: no visible item in the list's content (rows, headings) is a Tab
+// stop of its own.
+int check_no_row_tab_stop(QQuickItem* list, int code) {
+    auto* content = list->property("contentItem").value<QQuickItem*>();
+    QList<QQuickItem*> items;
+    collect_visual_descendants(content, items);
+    for (QQuickItem* it : items) {
+        M4_CHECK(code, !(it->isVisible() && it->activeFocusOnTab()),
+            qPrintable(QStringLiteral("(d) a row of %1 is a Tab stop: %2")
+                .arg(list->objectName(), describe_focus_item(it))));
+    }
+    return 0;
+}
+
+// AC-M4-01-7 (a, c, d) for the visible list `name` with its current row at `row`: Tab enters the
+// list on that row, the next Tab leaves it, Shift+Tab comes back to the row and the next
+// Shift+Tab leaves it to the control before it, from where Tab enters it again.
+int check_one_tab_stop(QQuickWindow* w, const char* name, int row, int code) {
+    QQuickItem* list = visible_item(w, name);
+    M4_CHECK(code, list != nullptr, name);
+    list->setProperty("currentIndex", row);
+    M4_CHECK(code + 1, tab_into(w, list, 80), qPrintable(QStringLiteral("Tab reaches %1").arg(name)));
+    M4_CHECK(code + 2, focused_row_of(w, list) == row,
+        qPrintable(QStringLiteral("(a) Tab enters %1 on its current row %2: %3").arg(name).arg(row).arg(focus_name(w))));
+    send_key(w, Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    QQuickItem* next = w->activeFocusItem();
+    M4_CHECK(code + 3, next && !lies_in(next, list),
+        qPrintable(QStringLiteral("(c) the next Tab leaves %1: %2").arg(name, focus_name(w))));
+    send_key(w, Qt::Key_Backtab, Qt::ShiftModifier);
+    M4_CHECK(code + 4, focused_row_of(w, list) == row,
+        qPrintable(QStringLiteral("(c) Shift+Tab returns to row %1 of %2: %3").arg(row).arg(name, focus_name(w))));
+    send_key(w, Qt::Key_Backtab, Qt::ShiftModifier);
+    QQuickItem* before = w->activeFocusItem();
+    M4_CHECK(code + 5, before && !lies_in(before, list) && before != next,
+        qPrintable(QStringLiteral("(c) the next Shift+Tab leaves %1 to the control before it: %2").arg(name, focus_name(w))));
+    send_key(w, Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    M4_CHECK(code + 6, focused_row_of(w, list) == row,
+        qPrintable(QStringLiteral("(c) from the control before %1, Tab enters it again: %2").arg(name, focus_name(w))));
+    return check_no_row_tab_stop(list, code + 7);
+}
+
+// AC-M4-01-7 (d) for every list of the window built so far; the number of lists checked.
+int check_all_lists(QQuickWindow* w, int code, int* checked) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(w->contentItem(), items);
+    for (QQuickItem* it : items) {
+        if (QByteArray(it->metaObject()->className()).startsWith("KeyboardList")) {
+            if (int rc = check_no_row_tab_stop(it, code)) {
+                return rc;
+            }
+            *checked += 1;
+        }
+    }
+    return 0;
+}
+
+/// AC-M4-01-7: every list is one Tab stop. (a) Tab enters it on its current row, the first one
+/// at first; (b) Up/Down, Home/End and Page Up/Page Down move within it; (c) the next Tab or
+/// Shift+Tab leaves it, also with 1 000 rows; (d) no row of a list is a Tab stop of its own.
+int scenario_list_tab_stop(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7001)) {
+        return rc;
+    }
+    if (int rc = check_one_tab_stop(w, "restoreBackupsListView", 0, 7010)) {
+        return rc;
+    }
+    if (int rc = check_one_tab_stop(w, "restoreSnapshotsListView", 1, 7020)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 1, 7030)) {
+        return rc;
+    }
+    Browse b = browse_page(w);
+    const QString top = b.model->property("dir").toString();
+    M4_CHECK(7033, wait_for_dir(w, top), "the folder with 1 000 entries is listed");
+    finish_incubation(w);
+    QQuickItem* list = visible_item(w, "browseListView");
+    M4_CHECK(7034, list != nullptr, "browseListView missing");
+    M4_CHECK(7035, tab_into(w, list, 80), "Tab reaches the folder list");
+    M4_CHECK(7036, wait_until([&] { return focused_row_of(w, list) == 0; }, 2000),
+        qPrintable(QStringLiteral("(a) the first time on the first row: %1 current=%2 item=%3")
+            .arg(focus_name(w)).arg(list->property("currentIndex").toInt())
+            .arg(describe_focus_item(list->property("currentItem").value<QQuickItem*>()))));
+    send_key(w, Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    M4_CHECK(7037, !lies_in(w->activeFocusItem(), list),
+        qPrintable(QStringLiteral("(c) one Tab leaves a list of 1 000 entries: ") + focus_name(w)));
+    if (int rc = check_one_tab_stop(w, "browseListView", 150, 7040)) {
+        return rc;
+    }
+
+    // (b) Home/End and Page Up/Page Down with the focus in the list.
+    M4_CHECK(7050, tab_into(w, list, 80), "Tab reaches the folder list again");
+    press_and_wait(w, Qt::Key_End, 120);
+    const int loaded = b.model->rowCount();
+    M4_CHECK(7051, list->property("currentIndex").toInt() >= 199 && focused_row_of(w, list) == list->property("currentIndex").toInt(),
+        qPrintable(QStringLiteral("(b) End moves to the last loaded row (%1 loaded): %2").arg(loaded).arg(focus_name(w))));
+    press_and_wait(w, Qt::Key_Home, 120);
+    M4_CHECK(7052, focused_row_of(w, list) == 0, qPrintable(QStringLiteral("(b) Home moves to the first row: ") + focus_name(w)));
+    press_and_wait(w, Qt::Key_PageDown, 120);
+    const int page = focused_row_of(w, list);
+    M4_CHECK(7053, page >= 2, qPrintable(QStringLiteral("(b) Page Down moves a page down: ") + focus_name(w)));
+    press_and_wait(w, Qt::Key_Down, 80);
+    M4_CHECK(7054, focused_row_of(w, list) == page + 1, "(b) Down moves one row");
+    press_and_wait(w, Qt::Key_PageUp, 120);
+    M4_CHECK(7055, focused_row_of(w, list) < page + 1, "(b) Page Up moves a page up");
+    press_and_wait(w, Qt::Key_Up, 80);
+    press_and_wait(w, Qt::Key_Home, 120);
+    M4_CHECK(7056, focused_row_of(w, list) == 0, "(b) Home again on the first row");
+    M4_CHECK(7057, save_screenshot(w, c.out_path), "screenshot failed");
+
+    // (d) every list of every tab.
+    int checked = 0;
+    for (int tab = 0; tab <= 4; ++tab) {
+        QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, tab));
+        M4_CHECK(7060, wait_until([&] { return w->property("activeTab").toInt() == tab; }, 3000), "tab switched");
+        wait_ms(600);
+        finish_incubation(w);
+        if (int rc = check_all_lists(w, 7061, &checked)) {
+            return rc;
+        }
+    }
+    M4_CHECK(7062, checked >= 5, qPrintable(QStringLiteral("(d) lists checked on the tabs: %1").arg(checked)));
+    return 0;
+}
+
+// The visible row of the snapshot list at `index` (nullptr when it is not created).
+QQuickItem* row_at(QQuickWindow* w, int index) {
+    for (QObject* o : m3::objects_named(w, "restoreSnapshotListItem")) {
+        auto* it = qobject_cast<QQuickItem*>(o);
+        if (it && it->isVisible() && it->property("index").toInt() == index) {
+            return it;
+        }
+    }
+    return nullptr;
+}
+
+// Where the open popup `menu` stands in the window.
+QPointF popup_scene_pos(QObject* menu) {
+    auto* parent = menu->property("parent").value<QQuickItem*>();
+    const QPointF local(menu->property("x").toReal(), menu->property("y").toReal());
+    return parent ? parent->mapToScene(local) : local;
+}
+
+/// AC-M4-01-8: a right click on a snapshot opens its context menu (a) on the press, also when
+/// the button is held long or the pointer moves before the release, (b) at the pointer, and
+/// (c) on every row, every time; (d) Esc closes it, also while the pointer rests on an entry.
+int scenario_snapshot_right_click(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7101, 3)) {
+        return rc;
+    }
+    // The tab switch moves the focus to the selected backup a moment later; let it settle.
+    wait_ms(1000);
+    QQuickItem* list = visible_item(w, "restoreSnapshotsListView");
+    QObject* menu = object_named(w, "snapshotContextMenu");
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    M4_CHECK(7106, list && menu && snaps, "snapshot list and menu exist");
+    auto snapshot_of_menu = [&] { return menu->property("snapshotId").toString(); };
+
+    // (a) Held for a second before the release.
+    QQuickItem* first = row_at(w, 0);
+    M4_CHECK(7107, first != nullptr, "first row created");
+    const QPointF at = first->mapToScene(QPointF(first->width() * 0.4, first->height() * 0.5));
+    send_mouse(w, at, Qt::NoButton, Qt::NoButton, QEvent::MouseMove, 20);
+    send_mouse(w, at, Qt::RightButton, Qt::RightButton, QEvent::MouseButtonPress, 20);
+    M4_CHECK(7108, wait_until([&] { return is_open(menu); }, 2000),
+        "(a) the menu opens on the press, while the button is still down");
+    wait_ms(1000);
+    send_mouse(w, at, Qt::NoButton, Qt::RightButton, QEvent::MouseButtonRelease, 1200);
+    wait_ms(200);
+    M4_CHECK(7109, is_open(menu), "(a) the menu stays open after a long press");
+    M4_CHECK_EQ(7110, snapshot_of_menu(), role_value(snaps, 0, "snapshotId").toString(),
+        "(a) the menu belongs to the row clicked");
+    const QPointF pos = popup_scene_pos(menu);
+    M4_CHECK(7111, qAbs(pos.x() - at.x()) <= 2.0 && qAbs(pos.y() - at.y()) <= 2.0,
+        qPrintable(QStringLiteral("(b) the menu opens at the pointer (%1,%2), not at (%3,%4)")
+            .arg(at.x()).arg(at.y()).arg(pos.x()).arg(pos.y())));
+    M4_CHECK(7112, save_screenshot(w, c.out_path), "screenshot failed");
+    send_key(w, Qt::Key_Escape);
+    M4_CHECK(7113, wait_until([&] { return is_closed(menu); }, 2000),
+        qPrintable(QStringLiteral("(d) Esc closes the menu, also with the pointer on its first entry: opened=%1 focus=%2")
+            .arg(menu->property("opened").toBool()).arg(focus_name(w))));
+
+    // (a) The pointer moves while the button is down.
+    QQuickItem* second = row_at(w, 1);
+    M4_CHECK(7114, second != nullptr, "second row created");
+    const QPointF from = second->mapToScene(QPointF(second->width() * 0.3, second->height() * 0.3));
+    const QPointF to = from + QPointF(14.0, 12.0);
+    send_mouse(w, from, Qt::NoButton, Qt::NoButton, QEvent::MouseMove, 20);
+    send_mouse(w, from, Qt::RightButton, Qt::RightButton, QEvent::MouseButtonPress, 20);
+    send_mouse(w, to, Qt::RightButton, Qt::NoButton, QEvent::MouseMove, 40);
+    send_mouse(w, to, Qt::NoButton, Qt::RightButton, QEvent::MouseButtonRelease, 40);
+    M4_CHECK(7115, wait_until([&] { return is_open(menu); }, 2000), "(a) the menu opens when the pointer moves");
+    M4_CHECK_EQ(7116, snapshot_of_menu(), role_value(snaps, 1, "snapshotId").toString(),
+        "(a) the menu belongs to the second row");
+    send_key(w, Qt::Key_Escape);
+    M4_CHECK(7117, wait_until([&] { return is_closed(menu); }, 2000), "Esc closes the menu");
+
+    // (c) Short clicks on every row, twice each.
+    for (int round = 0; round < 2; ++round) {
+        for (int r = 0; r < 3; ++r) {
+            QQuickItem* row = row_at(w, r);
+            M4_CHECK(7118, row != nullptr, "row created");
+            const QPointF p = row->mapToScene(QPointF(row->width() * 0.6, row->height() * 0.5));
+            send_mouse(w, p, Qt::NoButton, Qt::NoButton, QEvent::MouseMove, 300);
+            send_mouse(w, p, Qt::RightButton, Qt::RightButton, QEvent::MouseButtonPress, 20);
+            send_mouse(w, p, Qt::NoButton, Qt::RightButton, QEvent::MouseButtonRelease, 60);
+            M4_CHECK(7119, wait_until([&] { return is_open(menu); }, 2000),
+                qPrintable(QStringLiteral("(c) the menu opens on row %1, round %2").arg(r).arg(round)));
+            M4_CHECK_EQ(7120, snapshot_of_menu(), role_value(snaps, r, "snapshotId").toString(),
+                "(c) the menu belongs to the row clicked");
+            send_key(w, Qt::Key_Escape);
+            M4_CHECK(7121, wait_until([&] { return is_closed(menu); }, 2000), "Esc closes the menu");
+        }
+    }
+    return 0;
+}
+
+// The selection state of the header check box of the folder list (0, 1 or 2).
+int header_state(QObject* check) {
+    return check->property("checkState").toInt();
+}
+
+/// AC-M4-03-8: «Select All» in the folder list. (a) The header check box selects every entry
+/// of the folder shown, also those not loaded yet, and adds none to the view; (b) it shows none,
+/// some or all selected; (c) clicked with all selected it clears the folder shown; (d) Ctrl+A
+/// selects all, while a text field keeps Ctrl+A for its text; (e) with a filter it selects the
+/// matching entries.
+int scenario_browse_select_all(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7201)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 1, 7206)) {
+        return rc;
+    }
+    Browse b = browse_page(w);
+    const QString top = b.model->property("dir").toString();
+    M4_CHECK(7209, wait_for_dir(w, top), "the folder with 1 000 entries is listed");
+    finish_incubation(w);
+    QQuickItem* check = visible_item(w, "browseSelectAllCheck");
+    M4_CHECK(7210, check != nullptr, "the header check box is shown");
+    M4_CHECK(7211, b.model->rowCount() == 200, "200 of 1 000 entries loaded");
+    M4_CHECK(7212, header_state(check) == Qt::Unchecked, "(b) none selected: unchecked");
+    M4_CHECK_EQ(7213, accessible_name(check), loc(c.lang, "Select All", "Alles auswählen"),
+        "the header check box is named «Select All»");
+
+    M4_CHECK(7214, click_ui_item(w, check, "select all"), "the header check box could not be clicked");
+    M4_CHECK(7215, wait_until([&] { return b.model->property("selection_count").toInt() == 1000; }, 10000),
+        qPrintable(QStringLiteral("(a) all 1 000 entries selected, also those not loaded: %1")
+            .arg(b.model->property("selection_count").toInt())));
+    M4_CHECK(7216, b.model->rowCount() == 200, "(a) selecting adds no rows to the view");
+    M4_CHECK(7217, role_value(b.model, 0, "selected").toBool() && role_value(b.model, 199, "selected").toBool(),
+        "(a) the loaded rows show their marks");
+    M4_CHECK(7218, header_state(check) == Qt::Checked, "(b) all selected: checked");
+    QMetaObject::invokeMethod(object_named(w, "browseListView"), "positionViewAtEnd");
+    M4_CHECK(7219, wait_until([&] { return b.model->rowCount() > 200; }, 5000), "scrolling loads the next page");
+    M4_CHECK(7220, role_value(b.model, 200, "selected").toBool(), "(a) a row loaded later shows its mark");
+    M4_CHECK(7221, save_screenshot(w, screenshot_variant(c.out_path, "-all")), "screenshot failed");
+    QMetaObject::invokeMethod(object_named(w, "browseListView"), "positionViewAtBeginning");
+    wait_ms(200);
+
+    M4_CHECK(7222, click_ui_item(w, check, "clear all"), "the header check box could not be clicked again");
+    M4_CHECK(7223, wait_until([&] { return b.model->property("selection_count").toInt() == 0; }, 10000),
+        "(c) clicked with all selected, it clears the folder");
+    M4_CHECK(7224, header_state(check) == Qt::Unchecked, "(b) unchecked again");
+    QMetaObject::invokeMethod(b.model, "toggleSelected", Q_ARG(int, 1));
+    M4_CHECK(7225, header_state(check) == Qt::PartiallyChecked, "(b) one selected: partially checked");
+    repaint_fully(w);
+    M4_CHECK(7226, save_screenshot(w, c.out_path), "screenshot failed");
+    M4_CHECK(7227, click_ui_item(w, check, "select all from partial"), "the header check box could not be clicked");
+    M4_CHECK(7228, wait_until([&] { return b.model->property("selection_count").toInt() == 1000; }, 10000),
+        "(b) clicked when partially checked, it selects all");
+    QMetaObject::invokeMethod(b.model, "clearSelection");
+
+    // (d) Ctrl+A in the list, and in the filter field.
+    M4_CHECK(7229, tab_into(w, visible_item(w, "browseListView"), 80), "Tab reaches the folder list");
+    send_key(w, Qt::Key_A, Qt::ControlModifier);
+    M4_CHECK(7230, wait_until([&] { return b.model->property("selection_count").toInt() == 1000; }, 10000),
+        "(d) Ctrl+A selects every entry");
+    M4_CHECK(7231, header_state(check) == Qt::Checked, "(d) the header follows Ctrl+A");
+    QMetaObject::invokeMethod(b.model, "clearSelection");
+    QQuickItem* filter = tab_to(w, "browseFilterField", 40);
+    M4_CHECK(7232, filter != nullptr, "Tab reaches the filter field");
+    for (const QChar ch : QStringLiteral("bericht")) {
+        send_key(w, Qt::Key_A + (ch.toUpper().unicode() - QLatin1Char('A').unicode()), Qt::NoModifier, QString(ch));
+    }
+    M4_CHECK(7233, wait_until([&] {
+        return b.model->property("matched").toInt() == 37 && b.model->property("state").toString() == QLatin1String("done");
+    }, 10000), "the filter leaves the 37 matching entries");
+    send_key(w, Qt::Key_A, Qt::ControlModifier);
+    wait_ms(200);
+    M4_CHECK(7234, b.model->property("selection_count").toInt() == 0, "(d) Ctrl+A in the filter field selects its text, no entry");
+    M4_CHECK(7235, filter->property("selectedText").toString() == QLatin1String("bericht"), "(d) the filter text is selected");
+
+    // (e) Select All with the filter.
+    M4_CHECK(7236, click_ui_item(w, check, "select matching"), "the header check box could not be clicked");
+    M4_CHECK(7237, wait_until([&] { return b.model->property("selection_count").toInt() == 37; }, 10000),
+        qPrintable(QStringLiteral("(e) the 37 matching entries selected: %1").arg(b.model->property("selection_count").toInt())));
+    M4_CHECK(7238, header_state(check) == Qt::Checked, "(e) all matching selected: checked");
+    return 0;
+}
+
+/// AC-M4-05-26: with every entry of the snapshot's top folder selected, (a) the action reads
+/// «Restore All…» and restores the whole snapshot (empty selection, the dialog «Restore
+/// Snapshot»), also while a subfolder is shown; (b) an entry outside the top folder keeps
+/// «Restore Selection…»; (c) so do all entries of a subfolder. The test checks the restic call.
+int scenario_restore_all(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7301, 1)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 7306)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(7309, wait_for_dir(w, top), "the snapshot opens in its folder");
+    finish_incubation(w);
+    Browse b = browse_page(w);
+    QObject* action = object_named(w, "restoreSelectionAction");
+    M4_CHECK(7310, action != nullptr, "restoreSelectionAction missing");
+    const QString selection_text = loc(c.lang, "Restore Selection…", "Auswahl wiederherstellen…");
+    const QString all_text = loc(c.lang, "Restore All…", "Alles wiederherstellen…");
+    M4_CHECK_EQ(7311, browse_names(b.model).join(QLatin1Char(',')), QStringLiteral("a.txt,b.bin,docs,empty"),
+        "four entries in the top folder");
+    for (int r = 0; r < 3; ++r) {
+        QMetaObject::invokeMethod(b.model, "toggleSelected", Q_ARG(int, r));
+    }
+    M4_CHECK_EQ(7312, action->property("text").toString(), selection_text, "three of four: «Restore Selection…»");
+    QMetaObject::invokeMethod(b.model, "toggleSelected", Q_ARG(int, 3));
+    M4_CHECK_EQ(7313, action->property("text").toString(), all_text, "(a) all four: «Restore All…»");
+    M4_CHECK(7314, b.model->property("whole_snapshot").toBool(), "(a) the selection is the whole snapshot");
+
+    QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, top + QStringLiteral("/docs")));
+    M4_CHECK(7315, wait_for_dir(w, top + QStringLiteral("/docs")), "«docs» opens");
+    M4_CHECK_EQ(7316, action->property("text").toString(), all_text, "(a) also while a subfolder is shown");
+    QMetaObject::invokeMethod(b.model, "clearSelection");
+    QMetaObject::invokeMethod(b.model, "selectAll");
+    M4_CHECK(7317, b.model->property("selection_count").toInt() == 2, "both entries of «docs» selected");
+    M4_CHECK_EQ(7318, action->property("text").toString(), selection_text, "(c) all of a subfolder: «Restore Selection…»");
+
+    const int cut = top.lastIndexOf(QLatin1Char('/'));
+    const QString above = top.left(cut);
+    QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, above));
+    M4_CHECK(7319, wait_for_dir(w, above), "the folder above the top folder opens");
+    QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, top));
+    M4_CHECK(7320, wait_for_dir(w, top), "the top folder opens again");
+    QMetaObject::invokeMethod(b.model, "selectAll");
+    M4_CHECK(7321, b.model->property("selection_count").toInt() == 6, "the top folder and «docs» selected");
+    M4_CHECK_EQ(7322, action->property("text").toString(), all_text,
+        "(a) entries below a selected one change nothing");
+    QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, above));
+    M4_CHECK(7323, wait_for_dir(w, above), "the folder above opens again");
+    const int src_row = browse_names(b.model).indexOf(top.mid(cut + 1));
+    M4_CHECK(7324, src_row >= 0, "the top folder is listed in the folder above");
+    QMetaObject::invokeMethod(b.model, "toggleSelected", Q_ARG(int, src_row));
+    M4_CHECK_EQ(7325, action->property("text").toString(), selection_text,
+        "(b) the top folder itself selected from above: «Restore Selection…»");
+    QMetaObject::invokeMethod(b.model, "toggleSelected", Q_ARG(int, src_row));
+    M4_CHECK_EQ(7326, action->property("text").toString(), all_text, "back to every entry of the top folder");
+
+    QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, top));
+    M4_CHECK(7327, wait_for_dir(w, top), "the top folder opens for the screenshot");
+    finish_incubation(w);
+    M4_CHECK(7328, save_screenshot(w, c.out_path), "screenshot failed");
+    trigger(action);
+    Restore r = restore_dialog(w);
+    M4_CHECK(7329, r.dialog && wait_until([&] { return is_open(r.dialog); }, 3000), "«Restore All…» opens the dialog");
+    M4_CHECK_EQ(7330, r.dialog->property("title").toString(),
+        loc(c.lang, "Restore Snapshot", "Snapshot wiederherstellen"),
+        "(a) the dialog restores the whole snapshot, like «Restore…» in the context menu");
+    M4_CHECK(7331, wait_for_preview(r.model), "the check of the new folder is done");
+    QObject* restore_now = object_named(w, "restoreNowAction");
+    M4_CHECK(7332, restore_now && restore_now->property("enabled").toBool(), "«Restore Now» enabled");
+    trigger(restore_now);
+    M4_CHECK(7333, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("ok"); }, 60000),
+        qPrintable(QStringLiteral("the restore ends ok: ") + r.model->property("run_state").toString()));
+    return 0;
+}
+
+// The name of the control that holds the keyboard focus in the restore dialog: the object name
+// of the nearest named restore control, otherwise the text of the button.
+QString dialog_focus_id(QQuickWindow* w) {
+    QQuickItem* f = w->activeFocusItem();
+    for (QQuickItem* it = f; it; it = it->parentItem()) {
+        if (it->objectName().startsWith(QLatin1String("restore"))) {
+            return it->objectName();
+        }
+    }
+    return f ? f->property("text").toString().remove(QLatin1Char('&')) : QStringLiteral("-");
+}
+
+// The Tab order of the restore dialog from the control in focus, `n` steps forward (or with
+// Shift+Tab backward), as names.
+QStringList dialog_tab_order(QQuickWindow* w, int n, bool forward) {
+    QStringList out;
+    for (int i = 0; i < n; ++i) {
+        if (forward) {
+            send_key(w, Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+        } else {
+            send_key(w, Qt::Key_Backtab, Qt::ShiftModifier);
+        }
+        out << dialog_focus_id(w);
+    }
+    return out;
+}
+
+/// AC-M4-05-27: the Tab order of the restore dialog is «Into a new folder», «Choose…»,
+/// «To the original location», «Existing files» (when enabled), the preview list with its
+/// controls (when shown), «Cancel», «Restore Now»; (a) forward and (b) backward, (c) Tab never
+/// leaves the dialog, and (d) Esc closes it and the focus returns to the folder list.
+int scenario_restore_dialog_tab(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7401, 1)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 7406)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(7409, wait_for_dir(w, top), "the snapshot opens in its folder");
+    finish_incubation(w);
+    M4_CHECK(7410, tab_into(w, visible_item(w, "browseListView"), 60), "Tab reaches the folder list");
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 7411)) {
+        return rc;
+    }
+    Restore r = restore_dialog(w);
+    M4_CHECK(7420, wait_for_preview(r.model), "the check of the new folder is done");
+    wait_ms(300);
+    const QString cancel = loc(c.lang, "Cancel", "Abbrechen");
+    const QString now = loc(c.lang, "Restore Now", "Jetzt wiederherstellen");
+    M4_CHECK_EQ(7421, dialog_focus_id(w), QStringLiteral("restoreNewFolderRadio"), "the dialog opens on «Into a new folder»");
+    const QStringList new_folder = {QStringLiteral("restoreChooseFolderButton"), QStringLiteral("restoreOriginalRadio"),
+        cancel, now, QStringLiteral("restoreNewFolderRadio")};
+    M4_CHECK_EQ(7422, dialog_tab_order(w, 5, true).join(QLatin1String(" > ")), new_folder.join(QLatin1String(" > ")),
+        "(a, c) Tab order into a new folder");
+    QStringList back = new_folder;
+    std::reverse(back.begin(), back.end());
+    back.removeFirst();
+    back << QStringLiteral("restoreNewFolderRadio");
+    M4_CHECK_EQ(7423, dialog_tab_order(w, 5, false).join(QLatin1String(" > ")), back.join(QLatin1String(" > ")),
+        "(b, c) Shift+Tab order into a new folder");
+
+    QObject* original = object_named(w, "restoreOriginalRadio");
+    M4_CHECK(7424, click_ui_item(w, qobject_cast<QQuickItem*>(original), "original location"), "original location");
+    M4_CHECK(7425, wait_until([&] { return r.model->property("target_original").toBool(); }, 3000), "original chosen");
+    M4_CHECK(7426, wait_for_preview(r.model), "the preview at the original location is done");
+    QObject* list_button = object_named(w, "restoreListButton");
+    M4_CHECK(7427, list_button && click_ui_item(w, qobject_cast<QQuickItem*>(list_button), "list"), "the list opens");
+    M4_CHECK(7428, wait_until([&] { return visible_item(w, "restorePreviewList") != nullptr; }, 3000), "the preview list is shown");
+    finish_incubation(w);
+    qobject_cast<QQuickItem*>(original)->forceActiveFocus(Qt::TabFocusReason);
+    QStringList preview;
+    preview << QStringLiteral("restoreOverwriteBox") << QStringLiteral("restoreListButton");
+    if (visible_item(w, "restorePreviewFilter")) {
+        preview << QStringLiteral("restorePreviewFilter");
+    }
+    preview << QStringLiteral("restorePreviewList") << cancel;
+    const QString restore_text = r.model->property("overwrites").toBool()
+        ? loc(c.lang, "Overwrite and Restore", "Überschreiben und wiederherstellen") : now;
+    preview << restore_text << QStringLiteral("restoreNewFolderRadio") << QStringLiteral("restoreChooseFolderButton")
+            << QStringLiteral("restoreOriginalRadio");
+    M4_CHECK_EQ(7429, dialog_tab_order(w, preview.size(), true).join(QLatin1String(" > ")), preview.join(QLatin1String(" > ")),
+        "(a, c) Tab order at the original location with the list shown");
+    QStringList preview_back = preview;
+    std::reverse(preview_back.begin(), preview_back.end());
+    preview_back.removeFirst();
+    preview_back << QStringLiteral("restoreOriginalRadio");
+    M4_CHECK_EQ(7430, dialog_tab_order(w, preview_back.size(), false).join(QLatin1String(" > ")),
+        preview_back.join(QLatin1String(" > ")), "(b, c) Shift+Tab order at the original location");
+    repaint_fully(w);
+    M4_CHECK(7431, save_screenshot(w, c.out_path), "screenshot failed");
+
+    send_key(w, Qt::Key_Escape);
+    M4_CHECK(7432, wait_until([&] { return is_closed(r.dialog); }, 3000), "(d) Esc closes the dialog");
+    M4_CHECK(7433, wait_until([&] { return focused_entry_row(w) != nullptr; }, 2000),
+        qPrintable(QStringLiteral("(d) the focus returns to the folder list: ") + focus_name(w)));
+    return 0;
+}
+
+// The narrowest width of the window that is not narrow, found by halving between `lo` (narrow)
+// and `hi` (wide).
+int first_wide_width(QQuickWindow* w, int lo, int hi) {
+    while (hi - lo > 1) {
+        const int mid = (lo + hi) / 2;
+        w->resize(mid, w->height());
+        QCoreApplication::processEvents();
+        if (w->property("narrowMode").toBool()) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return hi;
+}
+
+/// AC-M4-01-9: one breakpoint. (a) Just below it the window shows one column with the tab bar
+/// at the bottom, at it two columns and the tab bar at the top; (b) at that width the folder
+/// list shows short names in full.
+int scenario_breakpoint(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7501)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 7506)) {
+        return rc;
+    }
+    auto* stack = w->property("pageStack").value<QObject*>();
+    QObject* bottom = object_named(w, "bottomNavBar");
+    M4_CHECK(7509, stack && bottom, "page stack and bottom tab bar exist");
+    w->resize(1400, w->height());
+    QCoreApplication::processEvents();
+    M4_CHECK(7510, !w->property("narrowMode").toBool(), "1400 px is wide");
+    const int wide = first_wide_width(w, 300, 1400);
+    w->resize(wide - 1, w->height());
+    wait_ms(300);
+    M4_CHECK(7511, w->property("narrowMode").toBool(), "one pixel less is narrow");
+    M4_CHECK(7512, bottom->property("visible").toBool(), "(a) narrow: the tab bar is at the bottom");
+    M4_CHECK(7513, !stack->property("wideMode").toBool(),
+        qPrintable(QStringLiteral("(a) narrow at %1 px: one column").arg(wide - 1)));
+    w->resize(wide, w->height());
+    wait_ms(300);
+    M4_CHECK(7514, !bottom->property("visible").toBool(), "(a) wide: the tab bar is at the top");
+    M4_CHECK(7515, stack->property("wideMode").toBool(),
+        qPrintable(QStringLiteral("(a) wide at %1 px: two columns").arg(wide)));
+
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(7516, wait_for_dir(w, top), "the folder is listed");
+    finish_incubation(w);
+    wait_ms(300);
+    QQuickItem* page = visible_item(w, "restoreBrowsePage");
+    M4_CHECK(7517, page && page->width() < wide * 0.6, "the folder list is one of two columns");
+    QList<QQuickItem*> items;
+    collect_visual_descendants(page, items);
+    int names = 0;
+    for (QQuickItem* it : items) {
+        if (it->objectName() == QLatin1String("browseEntryName") && it->isVisible()) {
+            names += 1;
+            M4_CHECK(7518, !it->property("truncated").toBool(),
+                qPrintable(QStringLiteral("(b) «%1» is shown in full in a column of %2 px")
+                    .arg(it->property("text").toString()).arg(page->width())));
+        }
+    }
+    M4_CHECK(7519, names == 4, "(b) the four names of the folder checked");
+    M4_CHECK(7520, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
+// The icon `message` (an InlineMessage) shows: its visible Kirigami icon, or nullptr.
+QQuickItem* message_icon(QObject* message) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(qobject_cast<QQuickItem*>(message), items);
+    for (QQuickItem* it : items) {
+        if (it->isVisible() && it->property("valid").isValid() && it->property("source").isValid()
+            && it->width() > 0) {
+            return it;
+        }
+    }
+    return nullptr;
+}
+
+/// AC-M4-05-29: the restore banner (a) shows a cancelled restore as neutral information with
+/// the icon `process-stop` and «Restore cancelled», and (b) a running restore with the icon
+/// `document-revert`, which the icon theme has.
+int scenario_restore_banner(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7601, 1)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 7606)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    M4_CHECK(7609, wait_for_dir(w, role_value(snaps, 0, "startDir").toString()), "the snapshot opens");
+    finish_incubation(w);
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 7610)) {
+        return rc;
+    }
+    Restore r = restore_dialog(w);
+    M4_CHECK(7620, wait_for_preview(r.model), "the check of the new folder is done");
+    trigger(object_named(w, "restoreNowAction"));
+    M4_CHECK(7621, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("running"); }, 10000),
+        "the restore runs (restic held)");
+    QObject* banner = object_named(w, "restoreRunBanner");
+    M4_CHECK(7622, banner && banner->property("visible").toBool(), "the banner shows the running restore");
+    wait_ms(400);
+    QQuickItem* running_icon = message_icon(banner);
+    M4_CHECK(7623, running_icon != nullptr, "the banner shows an icon");
+    M4_CHECK_EQ(7624, running_icon->property("source").toString(), QStringLiteral("document-revert"),
+        "(b) the running restore shows the restore icon");
+    M4_CHECK(7625, running_icon->property("valid").toBool(), "(b) the icon theme has the icon");
+    repaint_fully(w);
+    M4_CHECK(7626, save_screenshot(w, screenshot_variant(c.out_path, "-running")), "screenshot failed");
+
+    trigger(object_named(w, "restoreRunCancelAction"));
+    M4_CHECK(7627, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("cancelled"); }, 30000),
+        qPrintable(QStringLiteral("(a) the run ends as cancelled: ") + r.model->property("run_state").toString()));
+    M4_CHECK(7628, banner->property("type").toInt() == 0, "(a) neutral information, no error");
+    M4_CHECK_EQ(7629, r.model->property("run_text").toString(),
+        loc(c.lang, "Restore cancelled", "Wiederherstellen abgebrochen"), "(a) the text names the run kind");
+    wait_ms(300);
+    QQuickItem* cancelled_icon = message_icon(banner);
+    M4_CHECK(7630, cancelled_icon != nullptr, "the banner shows an icon");
+    M4_CHECK_EQ(7631, cancelled_icon->property("source").toString(), QStringLiteral("process-stop"),
+        "(a) the icon of «cancelled»");
+    M4_CHECK(7632, cancelled_icon->property("valid").toBool(), "(a) the icon theme has the icon");
+    repaint_fully(w);
+    M4_CHECK(7633, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
+/// AC-M4-05-28: a network folder (`smb://`, `sftp://`) from the folder chooser (a) leaves the
+/// target unchanged, (b) shows that only local folders can be chosen, and (c) asks the daemon
+/// nothing; a local folder after it is taken.
+int scenario_restore_network_folder(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7701, 1)) {
+        return rc;
+    }
+    if (int rc = open_browser_at(c, 0, 7706)) {
+        return rc;
+    }
+    QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
+    const QString top = role_value(snaps, 0, "startDir").toString();
+    M4_CHECK(7709, wait_for_dir(w, top), "the snapshot opens");
+    finish_incubation(w);
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 7710)) {
+        return rc;
+    }
+    Restore r = restore_dialog(w);
+    M4_CHECK(7720, wait_for_preview(r.model), "the check of the new folder is done");
+    QObject* message = object_named(w, "restoreNetworkFolderMessage");
+    M4_CHECK(7721, message && !message->property("visible").toBool(), "no message before a network folder");
+    const QString target = r.model->property("target_dir").toString();
+    const QString text = loc(c.lang,
+        "Network folders such as smb:// cannot be chosen directly. Mount the folder first or choose a local folder.",
+        "Netzwerkordner wie smb:// lassen sich nicht direkt wählen. Den Ordner zuerst einbinden oder einen lokalen Ordner wählen.");
+    for (const char* url : {"smb://ds1525.local/home/upload/restore", "sftp://nas.local/srv/restore"}) {
+        QMetaObject::invokeMethod(r.dialog, "chooseFolderUrl", Q_ARG(QVariant, QUrl(QString::fromLatin1(url))));
+        wait_ms(500);
+        M4_CHECK_EQ(7722, r.model->property("target_dir").toString(), target, "(a) the target stays");
+        M4_CHECK_EQ(7723, r.model->property("state").toString(), QStringLiteral("done"),
+            "(c) no new check: the daemon is not asked");
+        M4_CHECK(7724, message->property("visible").toBool(), "(b) the message is shown");
+        M4_CHECK(7725, message->property("text").toString().contains(text.toHtmlEscaped()),
+            qPrintable(QStringLiteral("(b) the message: ") + message->property("text").toString()));
+    }
+    repaint_fully(w);
+    M4_CHECK(7726, save_screenshot(w, c.out_path), "screenshot failed");
+    QMetaObject::invokeMethod(r.dialog, "chooseFolderUrl", Q_ARG(QVariant, QUrl::fromLocalFile(top)));
+    M4_CHECK(7727, wait_until([&] { return r.model->property("target_dir").toString() == top; }, 5000),
+        "a local folder is taken");
+    M4_CHECK(7728, !message->property("visible").toBool(), "the message goes with a local folder");
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -1996,6 +2695,22 @@ void run_m4_smoke_scenario(
         rc = scenario_foreign_restore(ctx);
     } else if (scen == QLatin1String("m4-show-restore")) {
         rc = scenario_show_restore(ctx);
+    } else if (scen == QLatin1String("m4-list-tab-stop")) {
+        rc = scenario_list_tab_stop(ctx);
+    } else if (scen == QLatin1String("m4-snapshot-right-click")) {
+        rc = scenario_snapshot_right_click(ctx);
+    } else if (scen == QLatin1String("m4-browse-select-all")) {
+        rc = scenario_browse_select_all(ctx);
+    } else if (scen == QLatin1String("m4-restore-all")) {
+        rc = scenario_restore_all(ctx);
+    } else if (scen == QLatin1String("m4-restore-dialog-tab")) {
+        rc = scenario_restore_dialog_tab(ctx);
+    } else if (scen == QLatin1String("m4-breakpoint")) {
+        rc = scenario_breakpoint(ctx);
+    } else if (scen == QLatin1String("m4-restore-banner")) {
+        rc = scenario_restore_banner(ctx);
+    } else if (scen == QLatin1String("m4-restore-network-folder")) {
+        rc = scenario_restore_network_folder(ctx);
     } else {
         std::fprintf(stderr, "M4 smoke failed (599): unknown m4 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

@@ -93,6 +93,15 @@ ColumnLayout {
             default: return Kirigami.MessageType.Information;
             }
         }
+        // Information keeps Kirigami's emblem; the running and cancelled restore show the icons
+        // of their state, which exist in Breeze and Breeze Dark.
+        icon.name: {
+            switch (headerArea.restoreModel.run_state) {
+            case "running": return "document-revert";
+            case "cancelled": return "process-stop";
+            default: return "";
+            }
+        }
         visible: headerArea.restoreModel.run_state !== ""
         showCloseButton: headerArea.restoreModel.run_state !== "running"
         plainText: headerArea.restoreModel.run_text

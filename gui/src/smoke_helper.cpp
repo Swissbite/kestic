@@ -492,6 +492,13 @@ void wait_ms(int ms) {
     loop.exec();
 }
 
+void send_mouse(QWindow* window, const QPointF& scene, Qt::MouseButtons state, Qt::MouseButton button,
+    QEvent::Type type, int delta_ms) {
+    qt_handleMouseEvent(window, scene, window->mapToGlobal(scene), state, button, type, Qt::NoModifier,
+        next_mouse_timestamp(delta_ms));
+    QCoreApplication::processEvents();
+}
+
 void send_key(QWindow* window, int key, Qt::KeyboardModifiers mods, const QString& text) {
     qt_handleKeyEvent(window, QEvent::KeyPress, key, mods, text);
     qt_handleKeyEvent(window, QEvent::KeyRelease, key, mods, text);

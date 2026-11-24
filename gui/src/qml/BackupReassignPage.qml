@@ -95,7 +95,7 @@ Kirigami.ScrollablePage {
             text: i18n("Choose Another Destination")
         }
 
-        ListView {
+        KeyboardList {
             objectName: "reassignDestinationsList"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(contentHeight, Kirigami.Units.gridUnit * 8)
@@ -155,6 +155,7 @@ Kirigami.ScrollablePage {
 
             delegate: Controls.ItemDelegate {
                 id: row
+                focusPolicy: Qt.ClickFocus
                 objectName: "reassignDestItem"
                 required property int index
                 required property string destinationId

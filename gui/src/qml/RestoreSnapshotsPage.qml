@@ -118,12 +118,18 @@ Kirigami.ScrollablePage {
     }
 
     // Opens the context menu of the snapshot in `row` below that row.
-    function openSnapshotMenu(row) {
+    // Opens the context menu of snapshot `row`: at the point `x`, `y` of the row (a click), or
+    // below the row without a point (the keyboard).
+    function openSnapshotMenu(row, x, y) {
         restoreSnapshotsListView.currentIndex = row.index;
         snapshotMenu.destinationId = row.destinationId;
         snapshotMenu.snapshotId = row.snapshotId;
         snapshotMenu.previousSnapshotId = row.previousSnapshotId;
-        snapshotMenu.popup(row, 0, row.height);
+        if (x === undefined) {
+            snapshotMenu.popup(row, 0, row.height);
+        } else {
+            snapshotMenu.popup(row, x, y);
+        }
     }
 
     Component.onCompleted: reload()
@@ -238,7 +244,7 @@ Kirigami.ScrollablePage {
                 : Texts.label("no_snapshots_yet")
         }
 
-        ListView {
+        KeyboardList {
             id: restoreSnapshotsListView
             objectName: "restoreSnapshotsListView"
             Layout.fillWidth: true
@@ -300,7 +306,7 @@ Kirigami.ScrollablePage {
                 readonly property bool chosen: page.compareIds.indexOf(snapshotId) >= 0
 
                 width: ListView.view.width
-                activeFocusOnTab: true
+                focusPolicy: Qt.ClickFocus
                 highlighted: ListView.isCurrentItem
                 Accessible.name: title
                 Accessible.description: page.compareMode && chosen
@@ -330,9 +336,14 @@ Kirigami.ScrollablePage {
                     }
                 }
 
-                TapHandler {
+                // The menu opens on the press of the right button, at the pointer, like KDE's
+                // context menus; a hold or a small move before the release changes nothing.
+                MouseArea {
+                    anchors.fill: parent
                     acceptedButtons: Qt.RightButton
-                    onTapped: page.openSnapshotMenu(snapRow)
+                    onPressed: function(mouse) {
+                        page.openSnapshotMenu(snapRow, mouse.x, mouse.y);
+                    }
                 }
 
                 FocusRing {

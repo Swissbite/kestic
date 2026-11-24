@@ -539,6 +539,7 @@ Kirigami.ApplicationWindow {
             destinationId: destinationId,
             snapshotId: snapshotId,
             startDir: snap ? snap.startDir : "/",
+            topDir: snap ? snap.startDir : "",
             snapshotTitle: snap ? snap.dateTime : ""
         }), 2);
     }
@@ -570,10 +571,13 @@ Kirigami.ApplicationWindow {
     // Opens the folder `folder` of snapshot `snapshotId` with the search hit `path` selected,
     // next to the hits.
     function openSearchHit(destinationId, snapshotId, folder, path, snapshotText) {
+        // The hits are snapshots of the backup whose snapshot list is shown.
+        var snap = restoreSnapshotsModel.rowMap(snapshotId);
         pushSubPageAtDepth(restoreBrowseComponent.createObject(pageStack, {
             destinationId: destinationId,
             snapshotId: snapshotId,
             startDir: folder,
+            topDir: snap ? snap.startDir : "",
             focusPath: path,
             snapshotTitle: snapshotText
         }), 3);
@@ -796,6 +800,11 @@ Kirigami.ApplicationWindow {
             if (("" + p).indexOf("QQuickMenu") !== -1) {
                 return true;
             }
+            // The item of an open Menu popup (Qt names it after the popup type); a menu item
+            // with the focus (the pointer rests on it) lies below it.
+            if (("" + p).indexOf("QQuickPopupItem") !== -1 && p.objectName === "Menu") {
+                return true;
+            }
             p = p.parent;
         }
         return false;
@@ -933,7 +942,9 @@ Kirigami.ApplicationWindow {
     }
 
     pageStack.visible: !root.inWizardLayer
-    pageStack.defaultColumnWidth: Math.max(Kirigami.Units.gridUnit * 17, Math.floor((pageStack.width - 2) / 2))
+    // One breakpoint for the whole window: narrow shows one column and the tab bar at the
+    // bottom, wide two columns side by side and the tab bar at the top.
+    pageStack.defaultColumnWidth: root.narrowMode ? pageStack.width : Math.floor((pageStack.width - 2) / 2)
     pageStack.columnView.interactive: false
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.Breadcrumb
     pageStack.globalToolBar.showNavigationButtons: Kirigami.ApplicationHeaderStyle.NoNavigationButtons

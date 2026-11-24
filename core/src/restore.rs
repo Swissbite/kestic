@@ -118,6 +118,29 @@ pub fn normalize_selection(selection: &[String]) -> Result<Vec<String>, Snapshot
         .collect())
 }
 
+/// Whether `selection` (absolute snapshot paths) restores the same files as the whole snapshot,
+/// whose restore runs from its top folder `top` ([`resolve_plan`]): each of the `entries`
+/// entries of `top` is selected and nothing outside `top`. Entries below a selected one change
+/// nothing; `top` itself selected from the folder above is not counted as its entries.
+pub fn selection_is_whole_folder(selection: &[String], top: &str, entries: u64) -> bool {
+    let inside = |path: &str| {
+        path != top
+            && (top == "/"
+                || path
+                    .strip_prefix(top)
+                    .is_some_and(|rest| rest.starts_with('/')))
+    };
+    if entries == 0 || !selection.iter().all(|p| inside(p)) {
+        return false;
+    }
+    let direct: std::collections::HashSet<&str> = selection
+        .iter()
+        .map(String::as_str)
+        .filter(|p| parent_dir(p) == top)
+        .collect();
+    direct.len() as u64 == entries
+}
+
 /// The deepest folder that contains every path of `paths` (normalised, none below another);
 /// for several paths that is always a folder above each of them.
 fn common_folder(paths: &[String]) -> String {

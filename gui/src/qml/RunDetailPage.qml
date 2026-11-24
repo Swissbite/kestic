@@ -348,13 +348,12 @@ Kirigami.ScrollablePage {
                     text: i18n("No log available for this run")
                 }
 
-                ListView {
+                KeyboardList {
                     id: runLogsListView
                     objectName: "runLogsListView"
                     Layout.fillWidth: true
                     Layout.preferredHeight: Kirigami.Units.gridUnit * 16
                     visible: count > 0
-                    activeFocusOnTab: visible && count > 0
                     keyNavigationEnabled: true
                     clip: true
                     model: runLogsModel
@@ -367,6 +366,7 @@ Kirigami.ScrollablePage {
 
                     delegate: Controls.ItemDelegate {
                         id: logRow
+                        focusPolicy: Qt.ClickFocus
                         required property int index
                         required property string lineText
                         required property string level

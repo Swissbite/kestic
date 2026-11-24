@@ -57,3 +57,15 @@ fn the_last_representable_time_shifted_east_stays_in_utc() {
     let east = time::UtcOffset::from_hms(1, 0, 0).expect("offset");
     assert_eq!(crate::time_texts::to_offset_or_keep(far, east), far);
 }
+
+/// AC-M4-03-8 (unit part): the header check box is (a) unchecked without a selected entry of
+/// the list shown, (b) partially checked with some, and (c) checked with all; (d) a list not
+/// listed yet or empty is unchecked.
+#[test]
+fn ac_m4_03_8_header_check_box_follows_the_selection_of_the_list_shown() {
+    assert_eq!(header_check_state(0, 1000), 0, "(a) none selected");
+    assert_eq!(header_check_state(1, 1000), 1, "(b) one selected");
+    assert_eq!(header_check_state(999, 1000), 1, "(b) all but one selected");
+    assert_eq!(header_check_state(1000, 1000), 2, "(c) all selected");
+    assert_eq!(header_check_state(3, 0), 0, "(d) a list not listed yet");
+}

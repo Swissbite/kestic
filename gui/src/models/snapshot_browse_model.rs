@@ -8,16 +8,17 @@
 
 use super::qobject;
 use super::snapshot_query::{
-    QueryList, QueryListModel, QueryListView, count_text, to_i32, too_large_text,
+    Fetched, QueryList, QueryListModel, QueryListView, count_text, to_i32, too_large_text,
 };
 use crate::state_cache::{format_bytes, i18np};
 use crate::time_texts::{iso_date, to_local};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QModelIndex, QString, QStringList};
-use kestic_core::query_list::QueryState;
+use kestic_core::query_list::{MAX_PAGE_LIMIT, QueryState};
+use kestic_core::restore::selection_is_whole_folder;
 use kestic_core::snapshot_ls::{parent_dir, path_segments};
 use kestic_daemon::dbus_api::{
-    LsEntryDto, LsResultDto, SnapshotQueryRequest, SnapshotQueryResultDto,
+    LsEntryDto, LsResultDto, SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
 use std::collections::BTreeSet;
 use std::pin::Pin;
@@ -53,11 +54,19 @@ pub struct SnapshotBrowseModelRust {
     pub(crate) too_large_text: QString,
     pub(crate) selection_count: i32,
     pub(crate) selection_text: QString,
+    /// The folder a restore of the whole snapshot runs from (set by the view).
+    pub(crate) top_dir: QString,
+    /// Whether the selection restores the same files as the whole snapshot.
+    pub(crate) whole_snapshot: bool,
+    /// The header check box: 0 none, 1 some, 2 all entries of the list shown selected.
+    pub(crate) header_check_state: i32,
 
     destination_id: String,
     snapshot_id: String,
     /// Absolute snapshot paths marked for restore.
     selection: BTreeSet<String>,
+    /// Number of entries of `top_dir`, once it was listed.
+    top_entries: Option<u64>,
 }
 
 /// Size column: «–» for folders and links, the size for files.
@@ -94,6 +103,18 @@ pub(super) fn last_name(path: &str) -> &str {
 
 /// Selection line: the number of selected entries, how many are in `dir`, and where the
 /// others are («3 items selected (2 here, 1 in ‹Pictures›)»).
+/// The state of the header check box for `selected` of the `shown` entries of the list:
+/// `Qt.Unchecked` (0) for none, `Qt.PartiallyChecked` (1) for some, `Qt.Checked` (2) for all.
+/// An empty list, or one not listed yet, is unchecked.
+pub(crate) fn header_check_state(selected: u64, shown: u64) -> i32 {
+    match selected {
+        _ if shown == 0 => 0,
+        0 => 0,
+        n if n >= shown => 2,
+        _ => 1,
+    }
+}
+
 pub(crate) fn selection_text(selection: &BTreeSet<String>, dir: &str) -> String {
     let n = selection.len();
     let here = selection.iter().filter(|p| parent_dir(p) == dir).count();
@@ -175,7 +196,11 @@ impl QueryListModel for qobject::SnapshotBrowseModel {
         let too_large = too_large_text(ls.entries.total);
         self.as_mut().set_too_large_text(QString::from(&too_large));
         self.as_mut().set_error_text(QString::from(""));
-        self.set_query_state(Some(QueryState::Done));
+        if ls.dir_exists && ls.dir == self.top_dir.to_string() {
+            self.as_mut().rust_mut().top_entries = Some(ls.entries.total);
+        }
+        self.as_mut().set_query_state(Some(QueryState::Done));
+        self.update_selection_text();
     }
 
     /// Lists the current folder again; the filter stays.
@@ -206,6 +231,9 @@ impl qobject::SnapshotBrowseModel {
         );
         {
             let mut rust = self.as_mut().rust_mut();
+            if rust.snapshot_id != snapshot_id.to_string() {
+                rust.top_entries = None;
+            }
             rust.destination_id = request.destination_id.clone();
             rust.snapshot_id = snapshot_id.to_string();
         }
@@ -287,11 +315,130 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().update_selection_text();
     }
 
+    /// Marks every entry of the list shown, also those not loaded yet (all pages, with the
+    /// filter).
+    pub fn select_all(mut self: Pin<&mut Self>) {
+        let Some(paths) = self.as_mut().shown_paths() else {
+            return;
+        };
+        self.as_mut().rust_mut().selection.extend(paths);
+        self.as_mut().show_selection_in_rows();
+    }
+
+    /// The header check box: unmarks the entries of the list shown when all are marked,
+    /// otherwise marks them all.
+    pub fn toggle_all(mut self: Pin<&mut Self>) {
+        if self.header_check_state != 2 {
+            self.select_all();
+            return;
+        }
+        let Some(paths) = self.as_mut().shown_paths() else {
+            return;
+        };
+        {
+            let mut rust = self.as_mut().rust_mut();
+            for path in &paths {
+                rust.selection.remove(path);
+            }
+        }
+        self.as_mut().show_selection_in_rows();
+    }
+
+    /// The paths of every entry of the list shown, fetched from the daemon in pages without
+    /// adding them to the view; `None` while the list is not listed, when it is too large to
+    /// hold, or when a page cannot be fetched.
+    fn shown_paths(mut self: Pin<&mut Self>) -> Option<Vec<String>> {
+        if self.list.state != Some(QueryState::Done) || self.too_large {
+            return None;
+        }
+        let matched = usize::try_from(self.matched).unwrap_or(0);
+        let mut paths = Vec::with_capacity(matched);
+        while paths.len() < matched {
+            let page = SnapshotQueryPage {
+                offset: paths.len() as u64,
+                limit: MAX_PAGE_LIMIT,
+                filter: self.list.filter.clone(),
+            };
+            match self.as_mut().fetch(&page) {
+                Fetched::Page(ls) if !ls.entries.items.is_empty() => {
+                    paths.extend(ls.entries.items.into_iter().map(|e| e.path));
+                }
+                Fetched::Page(_) | Fetched::Running => return None,
+                Fetched::Gone => {
+                    self.restart();
+                    return None;
+                }
+                Fetched::Failed(failure) => {
+                    self.fail_query(&failure);
+                    return None;
+                }
+            }
+        }
+        Some(paths)
+    }
+
+    /// Shows the selection in the check boxes of the loaded rows and in the selection line.
+    fn show_selection_in_rows(mut self: Pin<&mut Self>) {
+        let changed: Vec<usize> = self
+            .list
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.selected != self.selection.contains(&r.path))
+            .map(|(i, _)| i)
+            .collect();
+        for i in changed {
+            let selected = !self.list.rows[i].selected;
+            self.as_mut().rust_mut().list.rows[i].selected = selected;
+            let row = i32::try_from(i).unwrap_or(i32::MAX);
+            let model_index = self.as_ref().index_browse(row, 0, &QModelIndex::default());
+            self.as_mut()
+                .data_changed_browse(&model_index, &model_index);
+        }
+        self.as_mut().update_selection_text();
+    }
+
+    /// How many entries of the list shown are selected, of how many: without a filter the
+    /// selected entries of the folder of all its entries, with a filter the selected loaded rows
+    /// of all matching entries.
+    fn shown_selected(&self) -> (u64, u64) {
+        if self.list.filter.is_empty() {
+            let dir = self.dir.to_string();
+            let here = self
+                .selection
+                .iter()
+                .filter(|p| parent_dir(p) == dir)
+                .count();
+            (here as u64, u64::try_from(self.total).unwrap_or(0))
+        } else {
+            let marked = self.list.rows.iter().filter(|r| r.selected).count();
+            (marked as u64, u64::try_from(self.matched).unwrap_or(0))
+        }
+    }
+
     fn update_selection_text(mut self: Pin<&mut Self>) {
         let count = i32::try_from(self.selection.len()).unwrap_or(i32::MAX);
         let text = selection_text(&self.selection, &self.dir.to_string());
+        let (selected, shown) = self.shown_selected();
+        let whole = self.top_entries.is_some_and(|entries| {
+            let selection: Vec<String> = self.selection.iter().cloned().collect();
+            selection_is_whole_folder(&selection, &self.top_dir.to_string(), entries)
+        });
         self.as_mut().set_selection_count(count);
         self.as_mut().set_selection_text(QString::from(&text));
+        self.as_mut()
+            .set_header_check_state(header_check_state(selected, shown));
+        self.as_mut().set_whole_snapshot(whole);
+    }
+
+    /// The selection to restore: none (the whole snapshot) when it covers every entry of the
+    /// top folder, otherwise the marked entries.
+    pub fn restore_selection(&self) -> QStringList {
+        if self.whole_snapshot {
+            QStringList::default()
+        } else {
+            self.selected_paths()
+        }
     }
 
     /// The marked entries (absolute snapshot paths), sorted.

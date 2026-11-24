@@ -37,7 +37,7 @@ Kirigami.ScrollablePage {
         ]
     }
 
-    ListView {
+    KeyboardList {
         id: backupsListView
         objectName: "backupsListView"
         model: backupsModel
@@ -83,7 +83,7 @@ Kirigami.ScrollablePage {
             required property bool isRunning
 
             width: ListView.view.width
-            activeFocusOnTab: true
+            focusPolicy: Qt.ClickFocus
             highlighted: page.selectedBackupId === backupId
             Accessible.name: name
 

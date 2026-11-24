@@ -16,7 +16,10 @@ Kirigami.Dialog {
     id: dialog
     objectName: "restoreDialog"
     title: dialog.model ? dialog.model.title : ""
-    standardButtons: Kirigami.Dialog.Cancel
+    // «Cancel» is a footer action like «Restore Now», before it, so both stand in the order they
+    // show, also for Tab. Cancel and Esc close the dialog, so it has no close button of its own.
+    standardButtons: Kirigami.Dialog.NoButton
+    showCloseButton: false
     padding: Kirigami.Units.largeSpacing
     // Centred by its content height: positioning the popup may adjust `height`, which the
     // default binding of `y` reads.
@@ -24,6 +27,22 @@ Kirigami.Dialog {
 
     required property var model
     property bool listShown: false
+    // The folder chooser returned a network folder (smb://, sftp://…), which is no target.
+    property bool networkFolderRefused: false
+
+    // Takes the folder the chooser returned. A local folder (also one mounted from the network
+    // through fstab or systemd) becomes the target; restic writes only to local paths, so for a
+    // network URL the dialog says so and keeps its target, without asking the daemon.
+    function chooseFolderUrl(url) {
+        var text = url.toString();
+        if (!text.startsWith("file://")) {
+            networkFolderRefused = true;
+            return;
+        }
+        networkFolderRefused = false;
+        var local = decodeURIComponent(text.replace(/^file:\/\//, ""));
+        if (local.length > 0) dialog.model.chooseFolder(local);
+    }
 
     // The list that gets the focus back when the dialog closes: the dialog may open from a
     // context menu, whose item is gone by then.
@@ -35,6 +54,7 @@ Kirigami.Dialog {
         returnFocusList = focusList || null;
         kindChips.uncheckAll();
         listShown = false;
+        networkFolderRefused = false;
         previewFilter.resetFilter();
         model.open(destinationId, snapshotId, selection);
         open();
@@ -57,7 +77,7 @@ Kirigami.Dialog {
     // steps through it.
     readonly property bool overwrites: dialog.model !== null && dialog.model.overwrites
     onOverwritesChanged: {
-        var cancel = dialog.standardButton(Kirigami.Dialog.Cancel);
+        var cancel = dialog.customFooterButton(cancelAction);
         if (cancel) {
             cancel.Accessible.defaultButton = overwrites;
             if (overwrites && !overwriteBox.activeFocus) cancel.forceActiveFocus(Qt.TabFocusReason);
@@ -65,6 +85,13 @@ Kirigami.Dialog {
     }
 
     customFooterActions: [
+        Kirigami.Action {
+            id: cancelAction
+            objectName: "restoreCancelAction"
+            icon.name: "dialog-cancel"
+            text: i18n("Cancel")
+            onTriggered: dialog.reject()
+        },
         Kirigami.Action {
             id: restoreNowAction
             objectName: "restoreNowAction"
@@ -90,10 +117,7 @@ Kirigami.Dialog {
     FolderDialog {
         id: folderDialog
         title: i18n("Choose Target Folder")
-        onAccepted: {
-            var local = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, ""));
-            if (local.length > 0) dialog.model.chooseFolder(local);
-        }
+        onAccepted: dialog.chooseFolderUrl(selectedFolder)
     }
 
     ColumnLayout {
@@ -217,6 +241,14 @@ Kirigami.Dialog {
                 property: "currentIndex"
                 value: dialog.model ? dialog.model.overwrite : 0
             }
+        }
+
+        LiteralMessage {
+            objectName: "restoreNetworkFolderMessage"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Warning
+            visible: dialog.networkFolderRefused
+            plainText: i18n("Network folders such as smb:// cannot be chosen directly. Mount the folder first or choose a local folder.")
         }
 
         LiteralMessage {
@@ -372,7 +404,7 @@ Kirigami.Dialog {
             namePrefix: "restoreKindChip_"
         }
 
-        ListView {
+        KeyboardList {
             id: restoreListView
             objectName: "restorePreviewList"
             Layout.fillWidth: true
@@ -380,12 +412,12 @@ Kirigami.Dialog {
             visible: dialog.listShown && dialog.model !== null && dialog.model.state === "done"
                 && dialog.model.preview_required && !dialog.model.too_large
             clip: true
-            activeFocusOnTab: true
             keyNavigationEnabled: true
             model: dialog.model
             Controls.ScrollBar.vertical: Controls.ScrollBar {}
             delegate: Controls.ItemDelegate {
                 id: row
+                focusPolicy: Qt.ClickFocus
                 required property string path
                 required property string outcomeText
                 required property string sizeText

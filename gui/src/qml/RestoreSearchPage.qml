@@ -115,7 +115,7 @@ Kirigami.ScrollablePage {
         }
     }
 
-    ListView {
+    KeyboardList {
         id: searchListView
         objectName: "searchListView"
         model: snapshotSearchModel
@@ -179,7 +179,7 @@ Kirigami.ScrollablePage {
             required property string subtitle
 
             width: ListView.view.width
-            activeFocusOnTab: true
+            focusPolicy: Qt.ClickFocus
             highlighted: ListView.isCurrentItem
             Accessible.name: path
             Accessible.description: subtitle

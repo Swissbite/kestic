@@ -113,7 +113,7 @@ Kirigami.ScrollablePage {
         }
     }
 
-    ListView {
+    KeyboardList {
         id: diffListView
         objectName: "diffListView"
         model: snapshotDiffModel
@@ -188,7 +188,7 @@ Kirigami.ScrollablePage {
             width: ListView.view.width
             leftPadding: page.rowPadding
             rightPadding: page.rowPadding
-            activeFocusOnTab: true
+            focusPolicy: Qt.ClickFocus
             highlighted: ListView.isCurrentItem
             Accessible.name: path
             Accessible.description: changeText
