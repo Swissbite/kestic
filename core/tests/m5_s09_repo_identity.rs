@@ -259,7 +259,83 @@ fn m5_09_same_server_rules_per_destination_kind() {
         ),
         "REST look-alike host"
     );
-    // Generic form
+    assert!(
+        !same_server(
+            &rest("https://nas.local:8000/laptop"),
+            &rest("https://nas.local.:8000/laptop")
+        ),
+        "REST host with a trailing dot"
+    );
+    assert!(
+        !same_server(
+            &rest("https://[fe80::1]:8000/laptop"),
+            &rest("https://[fe80::2]:8000/laptop")
+        ),
+        "REST with another IPv6 address"
+    );
+    assert!(
+        same_server(
+            &rest("https://[fe80::1]:8000/laptop"),
+            &rest("https://[FE80:0::1]:8001/laptop")
+        ),
+        "REST with the same IPv6 address written otherwise"
+    );
+    // Generic form: an address with `scheme://` inside never counts by its text before a `:`.
+    for (a, b, what) in [
+        (
+            "s3:https://s3.real.example/bkt",
+            "s3:https://evil.example/bkt",
+            "another host",
+        ),
+        (
+            "s3:https://s3.real.example:9000/bkt",
+            "s3:https://s3.real.example:9001/bkt",
+            "another port",
+        ),
+        (
+            "s3:https://s3.real.example/bkt",
+            "s3:https://s3.real.example@evil.example/bkt",
+            "user info before another host",
+        ),
+        (
+            "rest:https://a.example/x",
+            "rest:https://evil.example/x",
+            "REST address with another host",
+        ),
+        (
+            "rclone::webdav,url=https://a.example/dav:backup",
+            "rclone::webdav,url=https://evil.example/dav:backup",
+            "rclone parameter with another URL",
+        ),
+        (
+            "rclone::webdav,url=https://a.example/dav:backup",
+            "rclone::webdav,url=https://a.example/dav:other",
+            "rclone connection string: only the whole URL counts",
+        ),
+    ] {
+        assert!(!same_server(&generic(a), &generic(b)), "generic: {what}");
+    }
+    assert!(
+        same_server(
+            &generic("rclone:nas:backup/laptop"),
+            &generic("rclone:nas:other")
+        ),
+        "rclone remote with another path"
+    );
+    assert!(
+        same_server(
+            &generic("rclone::local:/srv/a"),
+            &generic("rclone::local:/srv/b")
+        ),
+        "rclone backend without parameters, another path"
+    );
+    assert!(
+        same_server(
+            &generic("swift:container:/laptop"),
+            &generic("swift:container:/desktop")
+        ),
+        "swift container with another path"
+    );
     assert!(same_server(
         &generic("b2:bucket:laptop"),
         &generic("b2:bucket:desktop")

@@ -722,16 +722,18 @@ int scenario_edit_other_repository(const Ctx& c) {
         "AC-M5-05-7 (b): no message «another backup destination»");
     QObject* save = object_named(w, "saveDestinationAction");
     M3_CHECK(5705, save != nullptr && !save->property("enabled").toBool(), "AC-M5-05-7 (a): «Save» enabled");
-    QObject* add_as_new = object_named(w, "destEditAddAsNewAction");
-    M3_CHECK2(5706, add_as_new != nullptr, add_as_new->property("visible").toBool(),
+    QQuickItem* add_as_new = item_named(w, "destEditAddAsNewButton");
+    M3_CHECK2(5706, add_as_new != nullptr, add_as_new->isVisible(),
         "AC-M5-05-7 (c): «Add as New Destination…» missing");
     M3_CHECK_EQ(5707, add_as_new->property("text").toString(),
         loc(c.lang, "Add as New Destination…", "Als neues Ziel hinzufügen…"), "action text");
+    // The action has its own row below the message, which keeps its whole width for the text.
+    M3_CHECK(5719, scene_y(add_as_new) >= scene_y(banner) + banner->height(), "the action is not below the message");
     scroll_into_view_in(w, "destinationEditPage", banner);
     wait_ms(600);
     M3_CHECK(5708, save_screenshot(w, c.out_path), "screenshot failed");
 
-    QMetaObject::invokeMethod(add_as_new, "trigger");
+    M3_CHECK(5720, click_ui_item(w, add_as_new, "Add as New Destination"), "click on «Add as New Destination…» failed");
     M3_CHECK(5709, wait_until([&] { return count_visible(w, "wizDestLocationField") == 1; }, 3000),
         "AC-M5-05-7 (c): the wizard did not open at its details");
     QQuickItem* wizard = item_named(w, "addDestinationWizard");

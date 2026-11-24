@@ -1326,3 +1326,56 @@ fn m5_09_failed_config_write_after_add_removes_new_secrets() {
         },
     );
 }
+
+/// A repository swapped at the saved address (another `init` with the same password) is not the
+/// destination's own: the test and `UpdateDestination` report another backup destination and
+/// keep the known ID, so a copy of the original repository is still accepted afterwards.
+#[test]
+fn m5_09_swapped_repository_at_the_saved_address_is_refused() {
+    run_isolated_test(
+        "m5_09_swapped_repository_at_the_saved_address_is_refused",
+        "KESTIC_M5_09_SWAP_INNER",
+        |root| {
+            let variant = latest_variant();
+            let (daemon, _wrapper, sub) = spawn(root, &variant, "M5ESWAP");
+            let dir = root.join(&sub);
+            let client = &daemon.client;
+            let (dest, password) =
+                add_local_destination(client, &variant.bin, &dir.join("repo"), "Disk", |_| {});
+            copy_dir(&dir.join("repo"), &dir.join("original"));
+            fs::remove_dir_all(dir.join("repo")).expect("remove repository");
+            init_repo(&variant.bin, &dir.join("repo"), &password);
+            let before = config_bytes(&daemon);
+
+            let tested = client
+                .test_destination_connection(&dest, "connect", "", &none())
+                .expect("TestDestinationConnection");
+            assert_eq!(
+                tested.error_kind,
+                Some(ConnectionTestCode::OtherRepository),
+                "the swapped repository: {tested:?}"
+            );
+            let result = client
+                .update_destination(&dest, "connect", "", &none(), true)
+                .expect("UpdateDestination");
+            assert_eq!(result.outcome, DestinationUpdateOutcome::OtherRepository);
+            assert_eq!(config_bytes(&daemon), before, "nothing saved");
+
+            let result = client
+                .update_destination(
+                    &local(&dest, &dir.join("original")),
+                    "connect",
+                    "",
+                    &none(),
+                    true,
+                )
+                .expect("UpdateDestination");
+            assert_eq!(
+                result.outcome,
+                DestinationUpdateOutcome::Saved,
+                "the known ID stayed: the original repository is accepted"
+            );
+            daemon.stop();
+        },
+    );
+}

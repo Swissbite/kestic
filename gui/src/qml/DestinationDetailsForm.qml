@@ -167,14 +167,6 @@ ColumnLayout {
                 }
             },
             Kirigami.Action {
-                objectName: form.namePrefix + "AddAsNewAction"
-                icon.name: "list-add"
-                text: i18n("Add as New Destination…")
-                visible: form.editing && !form.draft.testFeedbackOk
-                    && form.appBackend.connection_test_error_kind === "other_repository"
-                onTriggered: form.addAsNewRequested()
-            },
-            Kirigami.Action {
                 objectName: form.namePrefix + "CheckKeysAction"
                 icon.name: "dialog-password"
                 text: i18n("Check Keys")
@@ -186,6 +178,18 @@ ColumnLayout {
                 }
             }
         ]
+    }
+
+    // Below the message rather than inside it: next to the message the long label leaves the text
+    // no room.
+    Controls.Button {
+        objectName: form.namePrefix + "AddAsNewButton"
+        icon.name: "list-add"
+        text: i18n("Add as New Destination…")
+        visible: form.editing && form.draft.testFeedback !== "" && !form.draft.testFeedbackOk
+            && form.appBackend.connection_test_error_kind === "other_repository"
+        Accessible.name: text
+        onClicked: form.addAsNewRequested()
     }
 
     Kirigami.InlineMessage {

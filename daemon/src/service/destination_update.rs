@@ -194,10 +194,15 @@ pub(super) fn check_edited_connection(check: &EditCheck<'_>) -> Result<EditVerdi
     };
     let read_edited = || check_existing_repository(check.edited, &password, &credentials, &runtime);
     if !changed {
+        // Another repository at the saved address (the folder was swapped) is not the
+        // destination's own; only creating a new repository in place replaces the known ID.
         let repository_id = read_edited()?;
-        return Ok(EditVerdict::Same {
-            credentials,
-            repository_id,
+        return Ok(match &check.stored_id {
+            Some(stored) if *stored != repository_id => EditVerdict::Other,
+            _ => EditVerdict::Same {
+                credentials,
+                repository_id,
+            },
         });
     }
     let (found, known) = match &check.stored_id {
@@ -261,8 +266,8 @@ pub(super) fn test_edited_connection(
     };
     match check_edited_connection(&check) {
         Ok(EditVerdict::Same { repository_id, .. }) => {
-            let unchanged = !connection_changed(&saved.kind, &edited.kind);
-            if unchanged || stored_id.is_none() {
+            // Same means: equal to the stored ID, or none was stored yet.
+            if stored_id.is_none() {
                 remember_repository_id(shared, saved, &repository_id);
             }
             test_ok()
@@ -272,19 +277,32 @@ pub(super) fn test_edited_connection(
     }
 }
 
-/// Stores the repository ID of `dest` when it is still configured with that connection.
+/// Stores the repository ID of `dest` when it is still configured with that connection and no
+/// ID is known yet; a known ID is replaced only by creating a new repository in place.
 pub(super) fn remember_repository_id(
     shared: &Arc<Mutex<DaemonCore>>,
     dest: &Destination,
     id: &RepositoryId,
 ) {
     let guard = shared.lock_unpoisoned();
-    if guard
+    let configured = guard
         .config
         .destination(&dest.id)
-        .is_some_and(|current| current.kind == dest.kind)
-    {
-        let _ = guard.history.set_repository_id(&dest.id, id);
+        .is_some_and(|current| current.kind == dest.kind);
+    if configured && matches!(guard.history.repository_id(&dest.id), Ok(None)) {
+        store_repository_id(&guard, dest, id);
+    }
+}
+
+/// Writes the repository ID of `dest`. A failure is logged and does not undo the save it follows:
+/// the configuration is already written, and without a stored ID the next edit reads the ID at
+/// the saved address.
+fn store_repository_id(guard: &DaemonCore, dest: &Destination, id: &RepositoryId) {
+    if let Err(err) = guard.history.set_repository_id(&dest.id, id) {
+        eprintln!(
+            "kestic-daemon: failed to store the repository ID of destination {}: {err}",
+            dest.id
+        );
     }
 }
 
@@ -507,14 +525,25 @@ fn save_update(
         return Err(err);
     }
     // A secret variable that was removed or renamed leaves nothing behind in the password store.
-    let _ = BackendCredentials::delete_unused(saved, &updated, store.as_ref());
+    // A failure leaves an unused entry behind; the saved destination works without it, so the
+    // save stands.
+    if let Err(err) = BackendCredentials::delete_unused(saved, &updated, store.as_ref()) {
+        eprintln!(
+            "kestic-daemon: failed to remove unused credentials of destination {}: {err}",
+            updated.id
+        );
+    }
     match accepted.repository_id {
-        Some(id) => {
-            let _ = guard.history.set_repository_id(&updated.id, &id);
-        }
+        // The ID of the checked repository: the stored one, or the first one known.
+        Some(id) => store_repository_id(guard, &updated, &id),
         // A repository created in place whose ID restic did not print: the old ID is void.
         None if accepted.new_repository => {
-            let _ = guard.history.forget_repository_id(&updated.id);
+            if let Err(err) = guard.history.forget_repository_id(&updated.id) {
+                eprintln!(
+                    "kestic-daemon: failed to forget the repository ID of destination {}: {err}",
+                    updated.id
+                );
+            }
         }
         None => {}
     }

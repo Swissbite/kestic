@@ -132,16 +132,34 @@ fn plain_vars(env: &[crate::generic::EnvVar]) -> Vec<(&str, Option<&str>)> {
     vars
 }
 
-/// The part of a generic repository URL before its path: everything up to the last `:` when
-/// there are at least two (`b2:bucket:path` → `b2:bucket`), else the whole URL (`b2:bucket`).
+/// The part of a generic repository URL that names the server, compared as text; anything the
+/// rule cannot split safely counts as a whole, so a change of it needs the credentials again.
+///
+/// - `b2:`, `azure:`, `gs:`, `swift:`: the scheme and the bucket or container (`b2:bucket:path` →
+///   `b2:bucket`).
+/// - `rclone:` with a plain remote (`rclone:remote:path`) or a backend without parameters
+///   (`rclone::local:/srv`): up to the remote or backend name.
+/// - Everything else, in particular an `rclone:` connection string with parameters (their values
+///   may hold URLs with `:`) and any address with `://`: the whole URL.
 fn generic_server(url: &str) -> &str {
     let trimmed = url.trim();
-    if trimmed.matches(':').count() >= 2 {
-        trimmed
-            .rsplit_once(':')
-            .map_or(trimmed, |(server, _)| server)
-    } else {
-        trimmed
+    let Some((scheme, address)) = trimmed.split_once(':') else {
+        return trimmed;
+    };
+    if address.contains("://") || address.contains(['"', '\'', ',']) {
+        return trimmed;
+    }
+    // `rclone::backend:path` names a backend instead of a configured remote.
+    let (lead, rest) = match (scheme, address.strip_prefix(':')) {
+        ("rclone", Some(rest)) => (1, rest),
+        _ => (0, address),
+    };
+    let named = matches!(scheme, "b2" | "azure" | "gs" | "swift" | "rclone");
+    match rest.split_once(':') {
+        Some((name, _)) if named && !name.is_empty() && !name.contains('/') => {
+            &trimmed[..scheme.len() + 1 + lead + name.len()]
+        }
+        _ => trimmed,
     }
 }
 
