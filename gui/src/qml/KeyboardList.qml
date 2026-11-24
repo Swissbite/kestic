@@ -20,13 +20,29 @@ ListView {
     onCountChanged: if (activeFocus) Qt.callLater(list.enterFirstRowIfNone)
 
     function enterFirstRowIfNone() {
-        if (activeFocus && count > 0 && currentIndex < 0) currentIndex = 0;
+        if (activeFocus && count > 0 && currentIndex < 0) moveCurrentTo(0, 1);
     }
 
-    // Makes row `index` (kept within the list) the current one and scrolls to it.
-    function moveCurrentTo(index) {
+    // Whether row `i` can be the current one; a list whose rows are not all selectable
+    // defines its own `selectable(i)`.
+    function canBeCurrent(i) {
+        return typeof list.selectable !== "function" || list.selectable(i);
+    }
+
+    // Makes row `index` (kept within the list) the current one and scrolls to it; a row that
+    // cannot be current is passed over in the direction `step` (+1 or -1), or the other way at
+    // the end of the list.
+    function moveCurrentTo(index, step) {
         if (count === 0) return;
-        currentIndex = Math.max(0, Math.min(count - 1, index));
+        var i = Math.max(0, Math.min(count - 1, index));
+        var dir = step < 0 ? -1 : 1;
+        while (i >= 0 && i < count && !canBeCurrent(i)) i += dir;
+        if (i < 0 || i >= count) {
+            i = Math.max(0, Math.min(count - 1, index));
+            while (i >= 0 && i < count && !canBeCurrent(i)) i -= dir;
+        }
+        if (i < 0 || i >= count) return;
+        currentIndex = i;
         positionViewAtIndex(currentIndex, ListView.Contain);
     }
 
@@ -39,13 +55,13 @@ ListView {
     Keys.onPressed: function(event) {
         if (event.modifiers !== Qt.NoModifier && event.modifiers !== Qt.KeypadModifier) return;
         if (event.key === Qt.Key_Home) {
-            list.moveCurrentTo(0);
+            list.moveCurrentTo(0, 1);
         } else if (event.key === Qt.Key_End) {
-            list.moveCurrentTo(list.count - 1);
+            list.moveCurrentTo(list.count - 1, -1);
         } else if (event.key === Qt.Key_PageUp) {
-            list.moveCurrentTo(list.currentIndex - list.rowsPerPage());
+            list.moveCurrentTo(list.currentIndex - list.rowsPerPage(), -1);
         } else if (event.key === Qt.Key_PageDown) {
-            list.moveCurrentTo(list.currentIndex + list.rowsPerPage());
+            list.moveCurrentTo(list.currentIndex + list.rowsPerPage(), 1);
         } else {
             return;
         }

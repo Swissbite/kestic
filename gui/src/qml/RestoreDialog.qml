@@ -39,9 +39,18 @@ Kirigami.Dialog {
             networkFolderRefused = true;
             return;
         }
+        // file:///path, or file://localhost/path; another host is a folder in the network.
+        var rest = text.substring("file://".length);
+        if (!rest.startsWith("/")) {
+            var slash = rest.indexOf("/");
+            if (slash < 0 || rest.substring(0, slash) !== "localhost") {
+                networkFolderRefused = true;
+                return;
+            }
+            rest = rest.substring(slash);
+        }
         networkFolderRefused = false;
-        var local = decodeURIComponent(text.replace(/^file:\/\//, ""));
-        if (local.length > 0) dialog.model.chooseFolder(local);
+        dialog.model.chooseFolder(decodeURIComponent(rest));
     }
 
     // The list that gets the focus back when the dialog closes: the dialog may open from a
@@ -89,7 +98,7 @@ Kirigami.Dialog {
             id: cancelAction
             objectName: "restoreCancelAction"
             icon.name: "dialog-cancel"
-            text: i18n("Cancel")
+            text: Texts.label("cancel")
             onTriggered: dialog.reject()
         },
         Kirigami.Action {
@@ -137,7 +146,10 @@ Kirigami.Dialog {
             objectName: "restoreNewFolderRadio"
             Layout.fillWidth: true
             text: i18n("Into a new folder")
-            onClicked: dialog.model.chooseFolder("")
+            onClicked: {
+                dialog.networkFolderRefused = false;
+                dialog.model.chooseFolder("");
+            }
         }
         // A click must not break the link to the model: the dialog opens again with its state.
         Binding {
@@ -177,7 +189,10 @@ Kirigami.Dialog {
             Layout.fillWidth: true
             enabled: dialog.model !== null && dialog.model.original_available
             text: i18n("To the original location")
-            onClicked: dialog.model.chooseOriginal()
+            onClicked: {
+                dialog.networkFolderRefused = false;
+                dialog.model.chooseOriginal();
+            }
         }
         Binding {
             target: originalRadio

@@ -67,6 +67,8 @@ pub struct SnapshotBrowseModelRust {
     selection: BTreeSet<String>,
     /// Number of entries of `top_dir`, once it was listed.
     top_entries: Option<u64>,
+    /// Every entry the list shows with the filter, once fetched, with that filter text.
+    shown: Option<(String, Vec<String>)>,
 }
 
 /// Size column: «–» for folders and links, the size for files.
@@ -101,8 +103,6 @@ pub(super) fn last_name(path: &str) -> &str {
     }
 }
 
-/// Selection line: the number of selected entries, how many are in `dir`, and where the
-/// others are («3 items selected (2 here, 1 in ‹Pictures›)»).
 /// The state of the header check box for `selected` of the `shown` entries of the list:
 /// `Qt.Unchecked` (0) for none, `Qt.PartiallyChecked` (1) for some, `Qt.Checked` (2) for all.
 /// An empty list, or one not listed yet, is unchecked.
@@ -115,6 +115,8 @@ pub(crate) fn header_check_state(selected: u64, shown: u64) -> i32 {
     }
 }
 
+/// Selection line: the number of selected entries, how many are in `dir`, and where the
+/// others are («3 items selected (2 here, 1 in ‹Pictures›)»).
 pub(crate) fn selection_text(selection: &BTreeSet<String>, dir: &str) -> String {
     let n = selection.len();
     let here = selection.iter().filter(|p| parent_dir(p) == dir).count();
@@ -238,6 +240,7 @@ impl qobject::SnapshotBrowseModel {
             rust.snapshot_id = snapshot_id.to_string();
         }
         self.as_mut().clear_list();
+        self.as_mut().rust_mut().shown = None;
         self.as_mut().set_dir(dir.clone());
         self.as_mut().set_dir_exists(true);
         self.as_mut().set_too_large(false);
@@ -318,6 +321,10 @@ impl qobject::SnapshotBrowseModel {
     /// Marks every entry of the list shown, also those not loaded yet (all pages, with the
     /// filter).
     pub fn select_all(mut self: Pin<&mut Self>) {
+        // Everything shown is selected already: nothing to fetch (Ctrl+A held down).
+        if self.header_check_state == 2 {
+            return;
+        }
         let Some(paths) = self.as_mut().shown_paths() else {
             return;
         };
@@ -374,6 +381,8 @@ impl qobject::SnapshotBrowseModel {
                 }
             }
         }
+        let filter = self.list.filter.text.clone();
+        self.as_mut().rust_mut().shown = Some((filter, paths.clone()));
         Some(paths)
     }
 
@@ -410,6 +419,14 @@ impl qobject::SnapshotBrowseModel {
                 .filter(|p| parent_dir(p) == dir)
                 .count();
             (here as u64, u64::try_from(self.total).unwrap_or(0))
+        } else if let Some((_, paths)) = self
+            .shown
+            .as_ref()
+            .filter(|(filter, _)| *filter == self.list.filter.text)
+        {
+            // Every matching entry is known (fetched by «Select All»), also those not loaded.
+            let marked = paths.iter().filter(|p| self.selection.contains(*p)).count();
+            (marked as u64, paths.len() as u64)
         } else {
             let marked = self.list.rows.iter().filter(|r| r.selected).count();
             (marked as u64, u64::try_from(self.matched).unwrap_or(0))
@@ -421,8 +438,7 @@ impl qobject::SnapshotBrowseModel {
         let text = selection_text(&self.selection, &self.dir.to_string());
         let (selected, shown) = self.shown_selected();
         let whole = self.top_entries.is_some_and(|entries| {
-            let selection: Vec<String> = self.selection.iter().cloned().collect();
-            selection_is_whole_folder(&selection, &self.top_dir.to_string(), entries)
+            selection_is_whole_folder(&self.selection, &self.top_dir.to_string(), entries)
         });
         self.as_mut().set_selection_count(count);
         self.as_mut().set_selection_text(QString::from(&text));
@@ -431,9 +447,9 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().set_whole_snapshot(whole);
     }
 
-    /// The widest text the size column shows for a file below 1 GB, to size the column.
+    /// The widest text the size column shows (a file below 10 TB), to size the column.
     pub fn size_sample(&self) -> QString {
-        QString::from(&format_bytes(999_900_000))
+        QString::from(&format_bytes(9_999_900_000_000))
     }
 
     /// The selection to restore: none (the whole snapshot) when it covers every entry of the

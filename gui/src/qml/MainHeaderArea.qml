@@ -99,13 +99,21 @@ ColumnLayout {
             switch (headerArea.restoreModel.run_state) {
             case "running": return "document-revert";
             case "cancelled": return "process-stop";
+            case "interrupted": return "state-offline";
             default: return "";
             }
         }
         visible: headerArea.restoreModel.run_state !== ""
         showCloseButton: headerArea.restoreModel.run_state !== "running"
         plainText: headerArea.restoreModel.run_text
-        onVisibleChanged: if (!visible && headerArea.restoreModel.run_state !== "") headerArea.restoreModel.dismissRun()
+        // The close button hides the message by setting `visible`, which ends the binding above;
+        // it is bound again, so the next restore shows its message.
+        onVisibleChanged: {
+            if (!visible && headerArea.restoreModel.run_state !== "") {
+                headerArea.restoreModel.dismissRun();
+                visible = Qt.binding(function() { return headerArea.restoreModel.run_state !== ""; });
+            }
+        }
         actions: [
             Kirigami.Action {
                 objectName: "restoreRunCancelAction"

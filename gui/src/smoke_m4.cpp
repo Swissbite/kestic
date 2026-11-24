@@ -2085,7 +2085,9 @@ int scenario_list_tab_stop(const Ctx& c) {
     M4_CHECK(7054, focused_row_of(w, list) == page + 1, "(b) Down moves one row");
     press_and_wait(w, Qt::Key_PageUp, 120);
     M4_CHECK(7055, focused_row_of(w, list) < page + 1, "(b) Page Up moves a page up");
+    const int before_up = focused_row_of(w, list);
     press_and_wait(w, Qt::Key_Up, 80);
+    M4_CHECK(7058, focused_row_of(w, list) == before_up - 1, "(b) Up moves one row");
     press_and_wait(w, Qt::Key_Home, 120);
     M4_CHECK(7056, focused_row_of(w, list) == 0, "(b) Home again on the first row");
     M4_CHECK(7057, save_screenshot(w, c.out_path), "screenshot failed");
@@ -2280,6 +2282,20 @@ int scenario_browse_select_all(const Ctx& c) {
     M4_CHECK(7237, wait_until([&] { return b.model->property("selection_count").toInt() == 37; }, 10000),
         qPrintable(QStringLiteral("(e) the 37 matching entries selected: %1").arg(b.model->property("selection_count").toInt())));
     M4_CHECK(7238, header_state(check) == Qt::Checked, "(e) all matching selected: checked");
+    QMetaObject::invokeMethod(b.model, "clearSelection");
+    // (e) More matches than one page: the names with a «1» (271 of 1 000).
+    QMetaObject::invokeMethod(b.model, "setFilter", Q_ARG(QString, QStringLiteral("1")));
+    M4_CHECK(7239, wait_until([&] {
+        return b.model->property("matched").toInt() == 271 && b.model->property("state").toString() == QLatin1String("done");
+    }, 10000), qPrintable(QStringLiteral("the filter «1» leaves 271 entries: %1").arg(b.model->property("matched").toInt())));
+    M4_CHECK(7240, b.model->rowCount() == 200, "one page of them is loaded");
+    M4_CHECK(7241, click_ui_item(w, check, "select 271"), "the header check box could not be clicked");
+    M4_CHECK(7242, wait_until([&] { return b.model->property("selection_count").toInt() == 271; }, 10000),
+        "(e) all 271 matching entries selected, also those not loaded");
+    M4_CHECK(7243, header_state(check) == Qt::Checked, "(b, e) all matching selected: checked");
+    M4_CHECK(7244, click_ui_item(w, check, "clear 271"), "the header check box could not be clicked");
+    M4_CHECK(7245, wait_until([&] { return b.model->property("selection_count").toInt() == 0; }, 10000),
+        "(c, e) clicked with all matching selected, it clears them");
     return 0;
 }
 
@@ -2572,25 +2588,59 @@ int scenario_restore_banner(const Ctx& c) {
     QQuickItem* running_icon = message_icon(banner);
     M4_CHECK(7623, running_icon != nullptr, "the banner shows an icon");
     M4_CHECK_EQ(7624, running_icon->property("source").toString(), QStringLiteral("document-revert"),
-        "(b) the running restore shows the restore icon");
-    M4_CHECK(7625, running_icon->property("valid").toBool(), "(b) the icon theme has the icon");
+        "(a) the running restore shows the restore icon");
+    M4_CHECK(7625, running_icon->property("valid").toBool(), "(a) the icon theme has the icon");
+    // AC-M4-05-30 (d): the test advances the daemon's clock and the bytes restored.
+    M4_CHECK(7634, wait_until([&] {
+        return r.model->property("run_text").toString().contains(QStringLiteral("/s"));
+    }, 20000), qPrintable(QStringLiteral("AC-M4-05-30 (d) the message names the speed: ")
+        + r.model->property("run_text").toString()));
     repaint_fully(w);
     M4_CHECK(7626, save_screenshot(w, screenshot_variant(c.out_path, "-running")), "screenshot failed");
 
     trigger(object_named(w, "restoreRunCancelAction"));
     M4_CHECK(7627, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("cancelled"); }, 30000),
-        qPrintable(QStringLiteral("(a) the run ends as cancelled: ") + r.model->property("run_state").toString()));
-    M4_CHECK(7628, banner->property("type").toInt() == 0, "(a) neutral information, no error");
+        qPrintable(QStringLiteral("(b) the run ends as cancelled: ") + r.model->property("run_state").toString()));
+    M4_CHECK(7628, banner->property("type").toInt() == 0, "(b) neutral information, no error");
     M4_CHECK_EQ(7629, r.model->property("run_text").toString(),
-        loc(c.lang, "Restore cancelled", "Wiederherstellen abgebrochen"), "(a) the text names the run kind");
+        loc(c.lang, "Restore cancelled", "Wiederherstellen abgebrochen"), "(b) the text names the run kind");
     wait_ms(300);
     QQuickItem* cancelled_icon = message_icon(banner);
     M4_CHECK(7630, cancelled_icon != nullptr, "the banner shows an icon");
     M4_CHECK_EQ(7631, cancelled_icon->property("source").toString(), QStringLiteral("process-stop"),
-        "(a) the icon of «cancelled»");
-    M4_CHECK(7632, cancelled_icon->property("valid").toBool(), "(a) the icon theme has the icon");
+        "(b) the icon of «cancelled»");
+    M4_CHECK(7632, cancelled_icon->property("valid").toBool(), "(b) the icon theme has the icon");
     repaint_fully(w);
     M4_CHECK(7633, save_screenshot(w, c.out_path), "screenshot failed");
+
+    // (c) Closed with its close button, the message comes back for the next restore.
+    QQuickItem* close = nullptr;
+    QList<QQuickItem*> items;
+    collect_visual_descendants(qobject_cast<QQuickItem*>(banner), items);
+    for (QQuickItem* it : items) {
+        // A cancelled restore offers no action: the only button is the close button.
+        if (it->isVisible() && it->inherits("QQuickAbstractButton")) {
+            M4_CHECK(7647, close == nullptr, "one button in the message of a cancelled restore");
+            close = it;
+        }
+    }
+    M4_CHECK(7635, close != nullptr, "the message has a close button");
+    M4_CHECK(7636, click_ui_item(w, close, "close message"), "the close button could not be clicked");
+    M4_CHECK(7637, wait_until([&] { return !banner->property("visible").toBool(); }, 3000), "the message is closed");
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 7638)) {
+        return rc;
+    }
+    M4_CHECK(7642, wait_for_preview(r.model), "the check of the new folder is done");
+    trigger(object_named(w, "restoreNowAction"));
+    M4_CHECK(7643, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("running"); }, 10000),
+        "the second restore runs");
+    M4_CHECK(7644, wait_until([&] { return banner->property("visible").toBool(); }, 3000),
+        "(c) the message shows the second restore");
+    QObject* cancel_action = object_named(w, "restoreRunCancelAction");
+    M4_CHECK(7645, cancel_action && cancel_action->property("visible").toBool(), "(c) with «Cancel»");
+    trigger(cancel_action);
+    M4_CHECK(7646, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("cancelled"); }, 30000),
+        "the second restore ends");
     return 0;
 }
 
@@ -2620,7 +2670,8 @@ int scenario_restore_network_folder(const Ctx& c) {
     const QString text = loc(c.lang,
         "Network folders such as smb:// cannot be chosen directly. Mount the folder first or choose a local folder.",
         "Netzwerkordner wie smb:// lassen sich nicht direkt wählen. Den Ordner zuerst einbinden oder einen lokalen Ordner wählen.");
-    for (const char* url : {"smb://ds1525.local/home/upload/restore", "sftp://nas.local/srv/restore"}) {
+    for (const char* url : {"smb://ds1525.local/home/upload/restore", "sftp://nas.local/srv/restore",
+             "file://nas.local/srv/restore"}) {
         QMetaObject::invokeMethod(r.dialog, "chooseFolderUrl", Q_ARG(QVariant, QUrl(QString::fromLatin1(url))));
         wait_ms(500);
         M4_CHECK_EQ(7722, r.model->property("target_dir").toString(), target, "(a) the target stays");
@@ -2632,10 +2683,15 @@ int scenario_restore_network_folder(const Ctx& c) {
     }
     repaint_fully(w);
     M4_CHECK(7726, save_screenshot(w, c.out_path), "screenshot failed");
-    QMetaObject::invokeMethod(r.dialog, "chooseFolderUrl", Q_ARG(QVariant, QUrl::fromLocalFile(top)));
+    QObject* new_radio = object_named(w, "restoreNewFolderRadio");
+    M4_CHECK(7729, click_ui_item(w, qobject_cast<QQuickItem*>(new_radio), "new folder"), "the new folder is chosen");
+    M4_CHECK(7730, wait_until([&] { return !message->property("visible").toBool(); }, 3000),
+        "the message goes with another target");
+    QMetaObject::invokeMethod(r.dialog, "chooseFolderUrl",
+        Q_ARG(QVariant, QUrl(QStringLiteral("file://localhost") + top)));
     M4_CHECK(7727, wait_until([&] { return r.model->property("target_dir").toString() == top; }, 5000),
-        "a local folder is taken");
-    M4_CHECK(7728, !message->property("visible").toBool(), "the message goes with a local folder");
+        "a local folder written with the host «localhost» is taken");
+    M4_CHECK(7728, !message->property("visible").toBool(), "no message with a local folder");
     return 0;
 }
 

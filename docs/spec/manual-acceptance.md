@@ -89,10 +89,10 @@ Vorbereitung für alle Punkte: `.deb` aus dem Abschluss-PR installieren (`just d
   3. Originalort: in `~/kestic-restore-test` eine Datei ändern, sie aus dem älteren Snapshot wählen, «An ursprünglichen Ort», «Vorhandene Dateien: Nie überschreiben»: die Vorschau nennt die Datei «nicht überschrieben»; «Jetzt wiederherstellen», die Datei bleibt unverändert.
   4. Dasselbe mit «Immer»: die Vorschau warnt «1 Datei wird überschrieben. Das lässt sich nicht rückgängig machen.»; erst «Überschreiben und wiederherstellen» schreibt, danach hat die Datei den Inhalt aus dem Snapshot.
   5. Während einer Wiederherstellung (eine grössere Auswahl, damit sie lange genug läuft) «Jetzt sichern» auf demselben Ziel: beide laufen gleichzeitig. Die Meldung im Fenster zeigt das Icon zum Wiederherstellen (kein weisser Kasten, auch unter Breeze Dark) und eine Geschwindigkeit; der Plasma-Job zeigt eine Geschwindigkeit über 0 (AC-M4-05-29, AC-M4-05-30).
-  6. Eine weitere Wiederherstellung starten und in der Meldung «Abbrechen»: sie zeigt neutral «Wiederherstellen abgebrochen» mit dem Stopp-Icon, nicht rot (AC-M4-05-29).
-  5b. Im Restore-Dialog «Wählen…» und im Dateidialog einen Netzwerkordner (z. B. `smb://…` unter «Netzwerk») wählen: das Ziel bleibt, der Dialog sagt «Netzwerkordner wie smb:// lassen sich nicht direkt wählen. Den Ordner zuerst einbinden oder einen lokalen Ordner wählen.» (AC-M4-05-28).
-  7. Danach `~/kestic-restore-test`, `~/Wiederhergestellt` und das Test-Repository auf dem NAS von Hand löschen.
-  8. Rückmeldung: «geht» je Schritt oder der Schritt, an dem es hängt.
+  6. Eine weitere Wiederherstellung starten und in der Meldung «Abbrechen»: sie zeigt neutral «Wiederherstellen abgebrochen» mit dem Stopp-Icon, nicht rot. Die Meldung mit ✕ schliessen und noch eine Wiederherstellung starten: die Meldung «stellt wieder her» mit «Abbrechen» erscheint wieder (AC-M4-05-29).
+  7. Im Restore-Dialog «Wählen…» und im Dateidialog einen Netzwerkordner (z. B. `smb://…` unter «Netzwerk») wählen: das Ziel bleibt, der Dialog sagt «Netzwerkordner wie smb:// lassen sich nicht direkt wählen. Den Ordner zuerst einbinden oder einen lokalen Ordner wählen.» (AC-M4-05-28).
+  8. Danach `~/kestic-restore-test`, `~/Wiederhergestellt` und das Test-Repository auf dem NAS von Hand löschen.
+  9. Rückmeldung: «geht» je Schritt oder der Schritt, an dem es hängt.
 
 ## M5 Ziele und restic-Bereitstellung
 

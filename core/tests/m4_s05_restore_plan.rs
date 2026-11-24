@@ -410,6 +410,13 @@ fn ac_m4_05_26_selection_of_every_top_entry_is_the_whole_snapshot() {
         selection_is_whole_folder(&paths(&["/a", "/home"]), "/", 2),
         "(a) every entry of `/`"
     );
+    // A single folder in the top folder is the whole snapshot too: like «Restore…» in the
+    // context menu, the restore runs from the top folder, so the folder lands below the target
+    // with its name (target/x/…), not its content directly in the target.
+    assert!(
+        selection_is_whole_folder(&paths(&["/home/u/x"]), top, 1),
+        "(a) the only entry of the top folder, a folder"
+    );
 
     assert!(
         !selection_is_whole_folder(&all[..2], top, 3),
@@ -432,7 +439,7 @@ fn ac_m4_05_26_selection_of_every_top_entry_is_the_whole_snapshot() {
         "(b) the top folder itself, selected from the folder above"
     );
     assert!(
-        !selection_is_whole_folder(&[], top, 0),
+        !selection_is_whole_folder(&Vec::new(), top, 0),
         "(b) a top folder without entries"
     );
     assert!(

@@ -122,7 +122,12 @@ pub fn normalize_selection(selection: &[String]) -> Result<Vec<String>, Snapshot
 /// whose restore runs from its top folder `top` ([`resolve_plan`]): each of the `entries`
 /// entries of `top` is selected and nothing outside `top`. Entries below a selected one change
 /// nothing; `top` itself selected from the folder above is not counted as its entries.
-pub fn selection_is_whole_folder(selection: &[String], top: &str, entries: u64) -> bool {
+pub fn selection_is_whole_folder<'a, I>(selection: I, top: &str, entries: u64) -> bool
+where
+    I: IntoIterator<Item = &'a String>,
+    I::IntoIter: Clone,
+{
+    let selection = selection.into_iter();
     let inside = |path: &str| {
         path != top
             && (top == "/"
@@ -130,11 +135,10 @@ pub fn selection_is_whole_folder(selection: &[String], top: &str, entries: u64) 
                     .strip_prefix(top)
                     .is_some_and(|rest| rest.starts_with('/')))
     };
-    if entries == 0 || !selection.iter().all(|p| inside(p)) {
+    if entries == 0 || !selection.clone().all(|p| inside(p)) {
         return false;
     }
     let direct: std::collections::HashSet<&str> = selection
-        .iter()
         .map(String::as_str)
         .filter(|p| parent_dir(p) == top)
         .collect();

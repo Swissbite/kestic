@@ -1323,8 +1323,9 @@ fn ac_m4_05_27_restore_dialog_tab_order() {
     );
 }
 
-/// AC-M4-05-29: the restore banner shows a running restore with an icon of the theme and a
-/// cancelled one as neutral information (scene `m4-restore-banner`).
+/// AC-M4-05-29: the restore banner shows a running restore with an icon of the theme, a
+/// cancelled one as neutral information, and again the next restore after it was closed;
+/// AC-M4-05-30 (d): the running message names the speed (scene `m4-restore-banner`).
 #[test]
 fn ac_m4_05_29_restore_banner_shows_running_and_cancelled() {
     run_isolated_test(
@@ -1336,14 +1337,39 @@ fn ac_m4_05_29_restore_banner_shows_running_and_cancelled() {
                 std::fs::create_dir_all(&sub).expect("mkdir scene root");
                 common::po_translator::set_daemon_language(lang);
                 let (rig, _fakes, _release) = restore_dialog_env(&sub, &latest_variant());
-                rig.wrapper.hold("restore");
-                run_m4_gui_smoke(
-                    root,
-                    "m4-restore-banner",
-                    "wide",
-                    lang,
-                    &smoke_artifact("restore-banner", "wide", lang),
-                );
+                const MIB: u64 = 1024 * 1024;
+                let line = |bytes: u64| {
+                    format!(
+                        "{{\"message_type\":\"status\",\"percent_done\":0.25,\
+                         \"files_restored\":1,\"bytes_restored\":{bytes},\"total_bytes\":{}}}\n",
+                        40 * MIB
+                    )
+                };
+                rig.wrapper.hold_with_repeated_output("restore", &line(MIB));
+                std::thread::scope(|scope| {
+                    // AC-M4-05-30 (d): once restic runs, 4 MiB more after 1 s on the daemon's clock.
+                    scope.spawn(|| {
+                        let deadline = Instant::now() + Duration::from_secs(90);
+                        while rig.wrapper.of('S', "restore").is_empty() && Instant::now() < deadline
+                        {
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                        std::thread::sleep(Duration::from_millis(1500));
+                        rig.clock.advance(Duration::from_secs(1));
+                        std::fs::write(
+                            format!("{}.restore.repeat", rig.wrapper.hold.display()),
+                            line(5 * MIB),
+                        )
+                        .expect("write the next status line");
+                    });
+                    run_m4_gui_smoke(
+                        root,
+                        "m4-restore-banner",
+                        "wide",
+                        lang,
+                        &smoke_artifact("restore-banner", "wide", lang),
+                    );
+                });
                 rig.wrapper.release("restore");
                 rig.daemon.stop();
             }

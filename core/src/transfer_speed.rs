@@ -27,11 +27,17 @@ impl TransferSpeed {
 
     /// Records `bytes` done at `now` and returns the smoothed speed in bytes per second;
     /// `None` after the first sample, which has nothing to compare with. A sample at the same
-    /// moment as the one before, or before it, changes nothing.
+    /// moment as the one before changes nothing; one before it (the clock went back) keeps the
+    /// speed and becomes the sample the next one compares with.
     pub fn update(&mut self, now: OffsetDateTime, bytes: u64) -> Option<u64> {
         if let Some((then, before)) = self.last {
             let nanos = (now - then).whole_nanoseconds();
-            if nanos <= 0 {
+            if nanos < 0 {
+                // The clock went back: later samples compare with this one.
+                self.last = Some((now, bytes));
+                return self.bytes_per_sec;
+            }
+            if nanos == 0 {
                 return self.bytes_per_sec;
             }
             let sample = i128::from(bytes.saturating_sub(before)) * NANOS_PER_SEC / nanos;

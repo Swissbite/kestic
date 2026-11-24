@@ -235,6 +235,18 @@ pub(crate) fn restore_progress_text(progress: &str, speed_bps: u64) -> String {
     GuiText::TwoParts.with_args(&[progress, &speed])
 }
 
+/// The state the restore message shows for an ended run. A cancelled run (the user's choice)
+/// and an interrupted one (sleep, daemon start) are no failures: their message stays neutral.
+pub(crate) fn run_state_of(status: RunStatus) -> &'static str {
+    match status {
+        RunStatus::Ok => "ok",
+        RunStatus::Warning => "warning",
+        RunStatus::Cancelled => "cancelled",
+        RunStatus::Interrupted => "interrupted",
+        _ => "error",
+    }
+}
+
 /// The line shown when a restore run ended.
 pub(crate) fn run_end_text(detail: &RunDetailDto) -> String {
     match detail.run.status {
@@ -625,11 +637,7 @@ impl qobject::RestorePreviewModel {
                 }
                 return;
             }
-            RunStatus::Ok => "ok",
-            RunStatus::Warning => "warning",
-            // Cancelling is the user's choice, no failure: the banner stays neutral.
-            RunStatus::Cancelled => "cancelled",
-            _ => "error",
+            status => run_state_of(status),
         };
         self.as_mut()
             .set_run_text(QString::from(&run_end_text(&detail)));
@@ -885,5 +893,27 @@ mod tests {
             format!("Home: restoring · 1% · {}/s", format_bytes(4_000_000)),
             "(b) with the speed"
         );
+    }
+
+    /// AC-M4-05-29 (b, unit part): a cancelled and an interrupted restore end in neutral states
+    /// of their own, a failed one in «error».
+    #[test]
+    fn ac_m4_05_29_cancelled_and_interrupted_restores_are_no_errors() {
+        assert_eq!(
+            run_state_of(RunStatus::Cancelled),
+            "cancelled",
+            "(b) cancelled"
+        );
+        assert_eq!(
+            run_state_of(RunStatus::Interrupted),
+            "interrupted",
+            "(b) interrupted"
+        );
+        assert_eq!(
+            run_state_of(RunStatus::Error),
+            "error",
+            "a failure stays an error"
+        );
+        assert_eq!(run_state_of(RunStatus::Ok), "ok", "ok");
     }
 }

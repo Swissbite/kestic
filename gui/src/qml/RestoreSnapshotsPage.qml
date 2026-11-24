@@ -117,7 +117,6 @@ Kirigami.ScrollablePage {
         page.compareRequested(destinationId, older, newer);
     }
 
-    // Opens the context menu of the snapshot in `row` below that row.
     // Opens the context menu of snapshot `row`: at the point `x`, `y` of the row (a click), or
     // below the row without a point (the keyboard).
     function openSnapshotMenu(row, x, y) {
