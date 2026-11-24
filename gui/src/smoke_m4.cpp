@@ -2377,6 +2377,47 @@ int scenario_restore_all(const Ctx& c) {
     return 0;
 }
 
+/// AC-M4-05-26 (a), browser opened from a search hit: for a snapshot of one file, whose tree
+/// does not hold its common folder as a folder, the whole snapshot is restored from `/`; with
+/// every entry of `/` selected the action reads «Restore All…» and restores the whole snapshot.
+int scenario_restore_all_from_search(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7801, 1)) {
+        return rc;
+    }
+    if (int rc = search_with_keyboard(c, QStringLiteral("a.txt"), 7806)) {
+        return rc;
+    }
+    Search s = search_page(w);
+    M4_CHECK(7810, s.model->rowCount() == 1, "one hit");
+    const QString path = role_value(s.model, 0, "path").toString();
+    const QString folder = role_value(s.model, 0, "folder").toString();
+    M4_CHECK(7811, path.endsWith(QLatin1String("/Dokumente/a.txt")), qPrintable(QStringLiteral("the hit: ") + path));
+    QMetaObject::invokeMethod(s.page, "showHit", Q_ARG(QVariant, 0));
+    M4_CHECK(7812, wait_for_dir(w, folder), "the folder of the hit opens");
+    finish_incubation(w);
+    Browse b = browse_page(w);
+    M4_CHECK_EQ(7813, b.model->property("top_dir").toString(), QStringLiteral("/"),
+        "(a) a snapshot of one file is restored from `/`");
+    QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, QStringLiteral("/")));
+    M4_CHECK(7814, wait_for_dir(w, QStringLiteral("/")), "`/` opens");
+    QMetaObject::invokeMethod(b.model, "selectAll");
+    M4_CHECK(7815, b.model->property("selection_count").toInt() == b.model->property("total").toInt()
+            && b.model->property("selection_count").toInt() > 0,
+        "every entry of `/` selected");
+    QObject* action = object_named(w, "restoreSelectionAction");
+    M4_CHECK(7816, action != nullptr, "restoreSelectionAction missing");
+    M4_CHECK_EQ(7817, action->property("text").toString(), loc(c.lang, "Restore All…", "Alles wiederherstellen…"),
+        "(a) every entry of `/`: «Restore All…»");
+    M4_CHECK(7818, b.model->property("whole_snapshot").toBool(), "(a) the selection is the whole snapshot");
+    QStringList selection;
+    QMetaObject::invokeMethod(b.model, "restoreSelection", Q_RETURN_ARG(QStringList, selection));
+    M4_CHECK(7819, selection.isEmpty(), "(a) the restore request has an empty selection");
+    finish_incubation(w);
+    M4_CHECK(7820, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 // The name of the control that holds the keyboard focus in the restore dialog: the object name
 // of the nearest named restore control, otherwise the text of the button.
 QString dialog_focus_id(QQuickWindow* w) {
@@ -2560,9 +2601,10 @@ QQuickItem* message_icon(QObject* message) {
     return nullptr;
 }
 
-/// AC-M4-05-29: the restore banner (a) shows a cancelled restore as neutral information with
-/// the icon `process-stop` and «Restore cancelled», and (b) a running restore with the icon
-/// `document-revert`, which the icon theme has.
+/// AC-M4-05-29: the restore banner (a) shows a running restore with the icon `document-revert`,
+/// which the icon theme has, (b) a cancelled restore as neutral information with the icon
+/// `process-stop` and «Restore cancelled», and an interrupted one as neutral information with
+/// the icon `state-offline`, and (c) comes back for the next restore after its close button.
 int scenario_restore_banner(const Ctx& c) {
     QQuickWindow* w = c.window;
     if (int rc = open_restore_snapshots(c, 7601, 1)) {
@@ -2641,6 +2683,18 @@ int scenario_restore_banner(const Ctx& c) {
     trigger(cancel_action);
     M4_CHECK(7646, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("cancelled"); }, 30000),
         "the second restore ends");
+
+    // (b) An interrupted restore (sleep, daemon start): the model maps the run status to the state
+    // «interrupted» (unit test); here the banner shows that state.
+    r.model->setProperty("run_state", QStringLiteral("interrupted"));
+    M4_CHECK(7648, banner->property("visible").toBool(), "(b) the banner shows the interrupted restore");
+    M4_CHECK(7649, banner->property("type").toInt() == 0, "(b) interrupted: neutral information, no error");
+    wait_ms(300);
+    QQuickItem* interrupted_icon = message_icon(banner);
+    M4_CHECK(7650, interrupted_icon != nullptr, "the banner shows an icon");
+    M4_CHECK_EQ(7651, interrupted_icon->property("source").toString(), QStringLiteral("state-offline"),
+        "(b) the icon of «interrupted»");
+    M4_CHECK(7652, interrupted_icon->property("valid").toBool(), "(b) the icon theme has the icon");
     return 0;
 }
 
@@ -2667,6 +2721,10 @@ int scenario_restore_network_folder(const Ctx& c) {
     QObject* message = object_named(w, "restoreNetworkFolderMessage");
     M4_CHECK(7721, message && !message->property("visible").toBool(), "no message before a network folder");
     const QString target = r.model->property("target_dir").toString();
+    // A chooser closed without a folder changes nothing and is no network folder.
+    QMetaObject::invokeMethod(r.dialog, "chooseFolderUrl", Q_ARG(QVariant, QUrl()));
+    M4_CHECK(7731, !message->property("visible").toBool(), "no message for an empty choice");
+    M4_CHECK_EQ(7732, r.model->property("target_dir").toString(), target, "an empty choice keeps the target");
     const QString text = loc(c.lang,
         "Network folders such as smb:// cannot be chosen directly. Mount the folder first or choose a local folder.",
         "Netzwerkordner wie smb:// lassen sich nicht direkt wählen. Den Ordner zuerst einbinden oder einen lokalen Ordner wählen.");
@@ -2759,6 +2817,8 @@ void run_m4_smoke_scenario(
         rc = scenario_browse_select_all(ctx);
     } else if (scen == QLatin1String("m4-restore-all")) {
         rc = scenario_restore_all(ctx);
+    } else if (scen == QLatin1String("m4-restore-all-from-search")) {
+        rc = scenario_restore_all_from_search(ctx);
     } else if (scen == QLatin1String("m4-restore-dialog-tab")) {
         rc = scenario_restore_dialog_tab(ctx);
     } else if (scen == QLatin1String("m4-breakpoint")) {

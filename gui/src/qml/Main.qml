@@ -568,9 +568,9 @@ Kirigami.ApplicationWindow {
         }), 2);
     }
 
-    // Opens the folder `folder` of snapshot `snapshotId` with the search hit `path` selected,
-    // next to the hits.
-    function openSearchHit(destinationId, snapshotId, folder, path, snapshotText) {
+    // Opens the folder `folder` of snapshot `snapshotId` with the search hit `path` (a folder when
+    // `isDir`) selected, next to the hits.
+    function openSearchHit(destinationId, snapshotId, folder, path, isDir, snapshotText) {
         // The hits are snapshots of the backup whose snapshot list is shown.
         var snap = restoreSnapshotsModel.rowMap(snapshotId);
         pushSubPageAtDepth(restoreBrowseComponent.createObject(pageStack, {
@@ -579,6 +579,7 @@ Kirigami.ApplicationWindow {
             startDir: folder,
             topDir: snap ? snap.startDir : "",
             focusPath: path,
+            focusIsDir: isDir,
             snapshotTitle: snapshotText
         }), 3);
     }
@@ -1118,8 +1119,8 @@ Kirigami.ApplicationWindow {
         RestoreSearchPage {
             rootWindow: root
             appBackend: root.backendRef
-            onShowRequested: function(destinationId, snapshotId, folder, path, snapshotText) {
-                root.openSearchHit(destinationId, snapshotId, folder, path, snapshotText);
+            onShowRequested: function(destinationId, snapshotId, folder, path, isDir, snapshotText) {
+                root.openSearchHit(destinationId, snapshotId, folder, path, isDir, snapshotText);
             }
         }
     }

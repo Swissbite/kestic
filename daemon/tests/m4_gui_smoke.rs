@@ -1297,6 +1297,33 @@ fn ac_m4_05_26_restore_all_restores_the_whole_snapshot() {
     );
 }
 
+/// AC-M4-05-26 (a), browser opened from a search hit: a snapshot of one file is restored from
+/// `/`, and every entry of `/` selected reads «Restore All…» with an empty selection (scene
+/// `m4-restore-all-from-search`).
+#[test]
+fn ac_m4_05_26_restore_all_from_a_search_hit() {
+    run_isolated_test(
+        "ac_m4_05_26_restore_all_from_a_search_hit",
+        "KESTIC_AC_M4_05_26_SEARCH_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes) = restore_mapping_env(&sub);
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-all-from-search",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-all-from-search", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
 /// AC-M4-05-27: the Tab order of the restore dialog, forward and backward, stays in the dialog,
 /// and Esc returns the focus to the folder list (scene `m4-restore-dialog-tab`).
 #[test]

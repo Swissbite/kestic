@@ -24,6 +24,8 @@ Kirigami.ScrollablePage {
     property string snapshotTitle: ""
     // An entry of `startDir` to show selected once it is listed (a search hit).
     property string focusPath: ""
+    // Whether `focusPath` is a folder.
+    property bool focusIsDir: false
     // The folder a restore of the whole snapshot runs from: the common folder of its paths.
     property string topDir: ""
 
@@ -83,7 +85,9 @@ Kirigami.ScrollablePage {
     }
 
     Component.onCompleted: {
-        snapshotBrowseModel.top_dir = topDir;
+        // Opened from a search hit, the hit tells whether the snapshot's tree holds `topDir`.
+        snapshotBrowseModel.top_dir = focusPath !== ""
+            ? snapshotBrowseModel.topDirSeenFrom(topDir, focusPath, focusIsDir) : topDir;
         openDir(startDir);
     }
 

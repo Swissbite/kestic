@@ -69,3 +69,61 @@ fn ac_m4_03_8_header_check_box_follows_the_selection_of_the_list_shown() {
     assert_eq!(header_check_state(1000, 1000), 2, "(c) all selected");
     assert_eq!(header_check_state(3, 0), 0, "(d) a list not listed yet");
 }
+
+/// AC-M4-03-8 (b, c, e, unit part): with a filter the header check box counts the matching
+/// entries: (a) all of them when the whole folder is selected, also those not loaded; (b) none
+/// when nothing of the folder is selected; (c) the selected ones of every match once all are
+/// known; (d) else the selected loaded rows; (e) without a
+/// filter the selected entries of the folder.
+#[test]
+fn ac_m4_03_8_header_check_box_counts_the_matches_of_a_filter() {
+    let all: BTreeSet<String> = (0..1000).map(|i| format!("/d/f{i}")).collect();
+    let matches: Vec<String> = all.iter().filter(|p| p.contains('1')).cloned().collect();
+    fn filtered(known: Option<&[String]>, loaded_selected: u64) -> ShownList<'_> {
+        ShownList {
+            dir: "/d",
+            total: 1000,
+            filter: Some(ShownMatches {
+                matched: 271,
+                known,
+                loaded_selected,
+            }),
+        }
+    }
+    assert_eq!(
+        shown_selected(&all, &filtered(None, 200)),
+        (271, 271),
+        "(a) the whole folder selected: every match, also those not loaded"
+    );
+    assert_eq!(
+        header_check_state(271, 271),
+        2,
+        "(a) the header is checked, so one click clears the matches"
+    );
+    assert_eq!(
+        shown_selected(&BTreeSet::new(), &filtered(None, 0)),
+        (0, 271),
+        "(b) nothing selected"
+    );
+    let only_matches: BTreeSet<String> = matches.iter().cloned().collect();
+    assert_eq!(
+        shown_selected(&only_matches, &filtered(Some(&matches), 200)),
+        (271, 271),
+        "(c) every match selected, known from an earlier «Select All» with this filter"
+    );
+    assert_eq!(
+        shown_selected(&set(&["/d/f1", "/d/f10"]), &filtered(None, 2)),
+        (2, 271),
+        "(d) matches not fetched: the selected loaded rows"
+    );
+    let unfiltered = ShownList {
+        dir: "/d",
+        total: 1000,
+        filter: None,
+    };
+    assert_eq!(
+        shown_selected(&set(&["/d/f1", "/d/sub/x", "/e/y"]), &unfiltered),
+        (1, 1000),
+        "(e) the selected entries of the folder"
+    );
+}

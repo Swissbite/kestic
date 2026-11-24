@@ -145,6 +145,29 @@ where
     direct.len() as u64 == entries
 }
 
+/// The folder a restore of the whole snapshot runs from ([`resolve_plan`]), as far as one entry
+/// `entry` of the snapshot's tree tells it: `top`, the common folder of the snapshot's paths,
+/// while `entry` lies inside it, is a folder above it or is `top` as a folder; otherwise `/`,
+/// because a tree that holds `top` as a folder holds nothing beside it but the folders above.
+/// An empty `top` (not known) stays empty.
+pub fn top_folder_seen_from<'a>(top: &'a str, entry: &str, entry_is_dir: bool) -> &'a str {
+    let below = |inner: &str, outer: &str| {
+        outer == "/"
+            || inner
+                .strip_prefix(outer)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    if top.is_empty()
+        || top == "/"
+        || (entry != top && (below(entry, top) || below(top, entry)))
+        || (entry == top && entry_is_dir)
+    {
+        top
+    } else {
+        "/"
+    }
+}
+
 /// The deepest folder that contains every path of `paths` (normalised, none below another);
 /// for several paths that is always a folder above each of them.
 fn common_folder(paths: &[String]) -> String {

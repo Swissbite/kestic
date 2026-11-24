@@ -132,13 +132,13 @@ QQuickItem* tab_until_object(QQuickWindow* window, const QString& obj_name, int 
 
 QQuickItem* tab_until_text(QQuickWindow* window, const QString& text_needle, int max_steps);
 
-// Ends the smoke run with a failure: prints `<tag> smoke failed (<code>): <msg>` and quits the event
-// loop with `code`.
 // Sends one mouse event at `scene` (window coordinates) whose timestamp is `delta_ms` after the
 // previous one: `state` holds the buttons down after the event, `button` the one that changed.
 void send_mouse(QWindow* window, const QPointF& scene, Qt::MouseButtons state, Qt::MouseButton button,
     QEvent::Type type, int delta_ms);
 
+// Ends the smoke run with a failure: prints `<tag> smoke failed (<code>): <msg>` and quits the event
+// loop with `code`.
 void smoke_fail(const char* tag, int code, const QString& msg);
 
 // Ends the smoke run successfully. Prints and fails with exit code 3 when `warnings` (optional)

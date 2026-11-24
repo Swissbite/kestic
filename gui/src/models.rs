@@ -671,6 +671,14 @@ pub mod qobject {
         #[cxx_name = "sizeSample"]
         fn size_sample(self: &SnapshotBrowseModel) -> QString;
         #[qinvokable]
+        #[cxx_name = "topDirSeenFrom"]
+        fn top_dir_seen_from(
+            self: &SnapshotBrowseModel,
+            top: &QString,
+            entry: &QString,
+            entry_is_dir: bool,
+        ) -> QString;
+        #[qinvokable]
         #[cxx_name = "segmentNames"]
         fn segment_names(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
         #[qinvokable]

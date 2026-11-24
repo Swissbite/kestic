@@ -15,12 +15,12 @@ use crate::time_texts::{iso_date, to_local};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QModelIndex, QString, QStringList};
 use kestic_core::query_list::{MAX_PAGE_LIMIT, QueryState};
-use kestic_core::restore::selection_is_whole_folder;
+use kestic_core::restore::{selection_is_whole_folder, top_folder_seen_from};
 use kestic_core::snapshot_ls::{parent_dir, path_segments};
 use kestic_daemon::dbus_api::{
     LsEntryDto, LsResultDto, SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::pin::Pin;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -65,10 +65,10 @@ pub struct SnapshotBrowseModelRust {
     snapshot_id: String,
     /// Absolute snapshot paths marked for restore.
     selection: BTreeSet<String>,
-    /// Number of entries of `top_dir`, once it was listed.
-    top_entries: Option<u64>,
-    /// Every entry the list shows with the filter, once fetched, with that filter text.
-    shown: Option<(String, Vec<String>)>,
+    /// The folder last listed as `top_dir` and its number of entries.
+    top_entries: Option<(String, u64)>,
+    /// Every entry the list shows with a filter, by filter text, once fetched in this folder.
+    shown: HashMap<String, Vec<String>>,
 }
 
 /// Size column: «–» for folders and links, the size for files.
@@ -112,6 +112,46 @@ pub(crate) fn header_check_state(selected: u64, shown: u64) -> i32 {
         0 => 0,
         n if n >= shown => 2,
         _ => 1,
+    }
+}
+
+/// The list the header check box stands for: a folder with `total` entries, and with a filter
+/// its matching entries.
+pub(crate) struct ShownList<'a> {
+    pub dir: &'a str,
+    pub total: u64,
+    pub filter: Option<ShownMatches<'a>>,
+}
+
+/// The entries that match the filter: `matched` of them, every one of them once fetched
+/// (`known`), and `loaded_selected` of the loaded rows selected.
+pub(crate) struct ShownMatches<'a> {
+    pub matched: u64,
+    pub known: Option<&'a [String]>,
+    pub loaded_selected: u64,
+}
+
+/// How many entries of the list shown are selected, of how many: without a filter the selected
+/// entries of the folder of all its entries; with a filter all or none of the matching entries
+/// when all or none of the folder are selected, otherwise the selected matching entries once they
+/// are all known, or else the selected loaded rows.
+pub(crate) fn shown_selected(selection: &BTreeSet<String>, list: &ShownList<'_>) -> (u64, u64) {
+    let here = selection
+        .iter()
+        .filter(|p| parent_dir(p) == list.dir)
+        .count() as u64;
+    let Some(m) = &list.filter else {
+        return (here, list.total);
+    };
+    if list.total > 0 && here >= list.total {
+        (m.matched, m.matched)
+    } else if here == 0 {
+        (0, m.matched)
+    } else if let Some(paths) = m.known {
+        let marked = paths.iter().filter(|p| selection.contains(*p)).count();
+        (marked as u64, paths.len() as u64)
+    } else {
+        (m.loaded_selected, m.matched)
     }
 }
 
@@ -199,7 +239,7 @@ impl QueryListModel for qobject::SnapshotBrowseModel {
         self.as_mut().set_too_large_text(QString::from(&too_large));
         self.as_mut().set_error_text(QString::from(""));
         if ls.dir_exists && ls.dir == self.top_dir.to_string() {
-            self.as_mut().rust_mut().top_entries = Some(ls.entries.total);
+            self.as_mut().rust_mut().top_entries = Some((ls.dir.clone(), ls.entries.total));
         }
         self.as_mut().set_query_state(Some(QueryState::Done));
         self.update_selection_text();
@@ -240,7 +280,7 @@ impl qobject::SnapshotBrowseModel {
             rust.snapshot_id = snapshot_id.to_string();
         }
         self.as_mut().clear_list();
-        self.as_mut().rust_mut().shown = None;
+        self.as_mut().rust_mut().shown.clear();
         self.as_mut().set_dir(dir.clone());
         self.as_mut().set_dir_exists(true);
         self.as_mut().set_too_large(false);
@@ -382,7 +422,7 @@ impl qobject::SnapshotBrowseModel {
             }
         }
         let filter = self.list.filter.text.clone();
-        self.as_mut().rust_mut().shown = Some((filter, paths.clone()));
+        self.as_mut().rust_mut().shown.insert(filter, paths.clone());
         Some(paths)
     }
 
@@ -407,39 +447,31 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().update_selection_text();
     }
 
-    /// How many entries of the list shown are selected, of how many: without a filter the
-    /// selected entries of the folder of all its entries, with a filter the selected loaded rows
-    /// of all matching entries.
     fn shown_selected(&self) -> (u64, u64) {
-        if self.list.filter.is_empty() {
-            let dir = self.dir.to_string();
-            let here = self
-                .selection
-                .iter()
-                .filter(|p| parent_dir(p) == dir)
-                .count();
-            (here as u64, u64::try_from(self.total).unwrap_or(0))
-        } else if let Some((_, paths)) = self
-            .shown
-            .as_ref()
-            .filter(|(filter, _)| *filter == self.list.filter.text)
-        {
-            // Every matching entry is known (fetched by «Select All»), also those not loaded.
-            let marked = paths.iter().filter(|p| self.selection.contains(*p)).count();
-            (marked as u64, paths.len() as u64)
-        } else {
-            let marked = self.list.rows.iter().filter(|r| r.selected).count();
-            (marked as u64, u64::try_from(self.matched).unwrap_or(0))
-        }
+        let filtered = !self.list.filter.is_empty();
+        let shown = ShownList {
+            dir: &self.dir.to_string(),
+            total: u64::try_from(self.total).unwrap_or(0),
+            filter: filtered.then(|| ShownMatches {
+                matched: u64::try_from(self.matched).unwrap_or(0),
+                known: self.shown.get(&self.list.filter.text).map(Vec::as_slice),
+                loaded_selected: self.list.rows.iter().filter(|r| r.selected).count() as u64,
+            }),
+        };
+        shown_selected(&self.selection, &shown)
     }
 
     fn update_selection_text(mut self: Pin<&mut Self>) {
         let count = i32::try_from(self.selection.len()).unwrap_or(i32::MAX);
         let text = selection_text(&self.selection, &self.dir.to_string());
         let (selected, shown) = self.shown_selected();
-        let whole = self.top_entries.is_some_and(|entries| {
-            selection_is_whole_folder(&self.selection, &self.top_dir.to_string(), entries)
-        });
+        let top = self.top_dir.to_string();
+        // A count of another folder than the top folder tells nothing about it.
+        let whole = self
+            .top_entries
+            .as_ref()
+            .filter(|(dir, _)| *dir == top)
+            .is_some_and(|(_, entries)| selection_is_whole_folder(&self.selection, &top, *entries));
         self.as_mut().set_selection_count(count);
         self.as_mut().set_selection_text(QString::from(&text));
         self.as_mut()
@@ -450,6 +482,13 @@ impl qobject::SnapshotBrowseModel {
     /// The widest text the size column shows (a file below 10 TB), to size the column.
     pub fn size_sample(&self) -> QString {
         QString::from(&format_bytes(9_999_900_000_000))
+    }
+
+    /// The folder a restore of the whole snapshot runs from, judged from `top` (the common
+    /// folder of the snapshot's paths) and one entry of the snapshot (a search hit).
+    pub fn top_dir_seen_from(&self, top: &QString, entry: &QString, entry_is_dir: bool) -> QString {
+        let top = top.to_string();
+        QString::from(top_folder_seen_from(&top, &entry.to_string(), entry_is_dir))
     }
 
     /// The selection to restore: none (the whole snapshot) when it covers every entry of the

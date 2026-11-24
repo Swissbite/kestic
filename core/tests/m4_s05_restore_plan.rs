@@ -12,7 +12,7 @@ use kestic_core::model::{BackupId, DestinationId, RestoreStats, Run, RunKind, Ru
 use kestic_core::restore::{
     EntryKind, ProbeCollector, RestoreCall, escape_glob, folder_instead_of_unmatchable,
     normalize_selection, plan_restore, probe_path, restore_args, selection_is_whole_folder,
-    selection_with_folders_instead,
+    selection_with_folders_instead, top_folder_seen_from,
 };
 use kestic_core::restore_target::{
     FolderWords, SuggestionInput, new_folder_name, original_location, suggested_new_folder,
@@ -445,5 +445,61 @@ fn ac_m4_05_26_selection_of_every_top_entry_is_the_whole_snapshot() {
     assert!(
         !selection_is_whole_folder(&paths(&["/home/u/docs/x.txt", "/home/u/docs/deep"]), top, 2),
         "(c) every entry of a subfolder, as many as the top folder has"
+    );
+}
+
+/// AC-M4-05-26 (unit part, browser opened from a search hit): the top folder of a whole-snapshot
+/// restore, judged from the hit. (a) It stays the common folder while the hit lies inside it,
+/// is a folder above it or is it as a folder; (b) a file at the common folder (a snapshot of a
+/// single file) or a hit beside it (a snapshot of relative paths) makes it `/`; (c) an unknown
+/// top folder stays unknown.
+#[test]
+fn ac_m4_05_26_top_folder_seen_from_a_search_hit() {
+    let top = "/home/u";
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u/docs/x.txt", false),
+        top,
+        "(a) a file inside"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u/docs", true),
+        top,
+        "(a) a folder inside"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home", true),
+        top,
+        "(a) a folder above"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/", true),
+        top,
+        "(a) the root above"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, top, true),
+        top,
+        "(a) the top folder itself"
+    );
+    assert_eq!(
+        top_folder_seen_from("/home/u/f.txt", "/home/u/f.txt", false),
+        "/",
+        "(b) a snapshot of a single file"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/rel/x.txt", false),
+        "/",
+        "(b) a hit beside it"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u2/x.txt", false),
+        "/",
+        "(b) a name that starts like the top folder is beside it"
+    );
+    assert_eq!(top_folder_seen_from("/", "/a", false), "/", "(a) `/` stays");
+    assert_eq!(
+        top_folder_seen_from("", "/a", false),
+        "",
+        "(c) unknown stays unknown"
     );
 }

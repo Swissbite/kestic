@@ -35,6 +35,9 @@ Kirigami.Dialog {
     // network URL the dialog says so and keeps its target, without asking the daemon.
     function chooseFolderUrl(url) {
         var text = url.toString();
+        if (text === "") {
+            return;
+        }
         if (!text.startsWith("file://")) {
             networkFolderRefused = true;
             return;
