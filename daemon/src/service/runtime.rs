@@ -68,15 +68,20 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     };
 
     let core_for_about = Arc::clone(&core);
-    let conn_for_about = conn.clone();
+    // The hook takes the connection from the core when it runs and holds none itself: the tray
+    // service keeps the hook until its own executor has wound down, after the tray's shutdown,
+    // and a handle in it would make the shutdown wait for the D-Bus connection until its limit.
     let about_to_show_hook: Arc<dyn Fn() -> Option<KesticTrayState> + Send + Sync> =
         Arc::new(move || {
             let _ = refresh_availability_unlocked(&core_for_about, false);
-            let (state_dto, tray_state) = {
+            let (state_dto, tray_state, conn) = {
                 let guard = core_for_about.lock_unpoisoned();
-                guard.build_state_and_tray()
+                let (state_dto, tray_state) = guard.build_state_and_tray();
+                (state_dto, tray_state, guard.conn.clone())
             };
-            emit_status_changed(&conn_for_about, &state_dto);
+            if let Some(conn) = conn {
+                emit_status_changed(&conn, &state_dto);
+            }
             Some(tray_state)
         });
 
