@@ -3664,7 +3664,7 @@ fn m4_s05_cancelled_restore_keeps_its_counts() {
 /// or a socket in place of a file of the snapshot (a) ends with `invalid_target`, (b) names it
 /// as `error_detail` and (c) in its English and German text; it runs no dry run, where restic
 /// would hang. A device in place of a file shares the check with FIFOs and sockets; that case is
-/// checked in core with `/dev/null`.
+/// checked in core with `/dev/null` (`core/tests/m4_s05_special_files.rs`).
 #[test]
 fn ac_m4_05_25_fifo_at_a_file_is_refused_before_any_dry_run() {
     run_isolated_test(
@@ -3971,7 +3971,8 @@ fn refused_at_run(fx: &RestoreFixture, selection: &[&str], preview_id: &str, cas
 /// (3) Kestic's data folder that now lies at a selected folder, and (4) the target folder that
 /// comes to lie inside Kestic's data folder while `StartRestore` probes restic. The FIFO case is
 /// `m4_s05_fifo_after_the_preview_ends_the_run`. A device in place of a selected file is checked
-/// in the same step as FIFOs and sockets; that case is checked in core with `/dev/null`.
+/// in the same step as FIFOs and sockets; that case is checked in core with `/dev/null`
+/// (`core/tests/m4_s05_special_files.rs`).
 #[test]
 fn ac_m4_05_25_target_changed_after_the_preview_is_refused_right_before_restic() {
     run_isolated_test(
