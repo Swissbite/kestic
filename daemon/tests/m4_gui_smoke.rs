@@ -57,6 +57,18 @@ fn smoke_artifact(name: &str, layout: &str, lang: &str) -> String {
 /// snapshots: today, yesterday, five days ago) and «Photos» (none). Keep the fakes alive with
 /// the rig.
 fn restore_env(root: &Path) -> (M3Rig, StdFakes) {
+    restore_env_with(
+        root,
+        &[
+            ("2026-11-10 12:00:00", "desktop"),
+            ("2026-11-14 12:00:00", "laptop"),
+            ("2026-11-15 12:00:00", "laptop"),
+        ],
+    )
+}
+
+/// Like [`restore_env`], with the snapshots `(time, host)` of «Home».
+fn restore_env_with(root: &Path, snapshots: &[(&str, &str)]) -> (M3Rig, StdFakes) {
     let fakes = StdFakes::start_with(FakeSetup {
         active_network: Some("HomeWifi"),
         ..FakeSetup::default()
@@ -76,11 +88,7 @@ fn restore_env(root: &Path) -> (M3Rig, StdFakes) {
     let backup = rig.add_backup_to(&dest, "Home", |_| {});
     rig.add_backup_to(&dest, "Photos", |_| {});
     let tag = format!("kestic:{}", backup.id);
-    for (time, host) in [
-        ("2026-11-10 12:00:00", "desktop"),
-        ("2026-11-14 12:00:00", "laptop"),
-        ("2026-11-15 12:00:00", "laptop"),
-    ] {
+    for &(time, host) in snapshots {
         write_snapshot(
             &variant.bin,
             &repo,
@@ -1162,6 +1170,59 @@ fn ac_m4_01_7_every_list_is_one_tab_stop() {
                     "wide",
                     lang,
                     &smoke_artifact("list-tab-stop", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-01-4 (b): the Tab order follows the visible order: navigation, the content, the action
+/// bar at the bottom of the page, then the navigation again (scene `m4-tab-order`, «Restore»
+/// and «Backups»).
+#[test]
+fn ac_m4_01_4_b_tab_order_follows_the_visible_order() {
+    run_isolated_test(
+        "ac_m4_01_4_b_tab_order_follows_the_visible_order",
+        "KESTIC_AC_M4_01_4_B_INNER",
+        |root| {
+            let (rig, _fakes) = restore_env(root);
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-tab-order",
+                    "wide",
+                    lang,
+                    &smoke_artifact("tab-order", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-01-7 (b): in a snapshot list with more rows than fit, the current row stays in view
+/// after Down to the last row, and Page Down moves by about one visible page (scene
+/// `m4-list-page-keys`, 30 snapshots).
+#[test]
+fn ac_m4_01_7_b_snapshot_list_keeps_the_current_row_in_view() {
+    run_isolated_test(
+        "ac_m4_01_7_b_snapshot_list_keeps_the_current_row_in_view",
+        "KESTIC_AC_M4_01_7_B_INNER",
+        |root| {
+            let times: Vec<String> = (1..=30)
+                .map(|day| format!("2026-10-{day:02} 12:00:00"))
+                .collect();
+            let snapshots: Vec<(&str, &str)> =
+                times.iter().map(|t| (t.as_str(), "laptop")).collect();
+            let (rig, _fakes) = restore_env_with(root, &snapshots);
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-list-page-keys",
+                    "wide",
+                    lang,
+                    &smoke_artifact("list-page-keys", "wide", lang),
                 );
             }
             rig.daemon.stop();

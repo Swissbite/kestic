@@ -895,6 +895,7 @@ Kirigami.ApplicationWindow {
     ]
 
     header: MainHeaderArea {
+        objectName: "mainHeaderArea"
         width: parent ? parent.width : 0
         rootWindow: root
         appBackend: root.backendRef

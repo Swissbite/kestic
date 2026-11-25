@@ -45,6 +45,31 @@ ListView {
         if (i < 0 || i >= count) return;
         currentIndex = i;
         positionViewAtIndex(currentIndex, ListView.Contain);
+        keepCurrentRowInOuterView();
+    }
+
+    // The nearest flickable around a list that does not scroll itself (one as tall as its rows,
+    // in a scrollable page); null when the list scrolls itself or nothing around it scrolls.
+    function outerFlickable() {
+        if (interactive) return null;
+        for (var p = parent; p; p = p.parent) {
+            if (p instanceof Flickable) return p;
+        }
+        return null;
+    }
+
+    // Scrolls the flickable around the list just so far that the current row is in view.
+    function keepCurrentRowInOuterView() {
+        var flick = outerFlickable();
+        if (!flick || !currentItem) return;
+        var top = currentItem.mapToItem(flick.contentItem, 0, 0).y;
+        var bottom = top + currentItem.height;
+        var y = flick.contentY;
+        if (bottom > y + flick.height) y = bottom - flick.height;
+        if (top < y) y = top;
+        var minY = flick.originY - flick.topMargin;
+        var maxY = Math.max(minY, flick.originY + flick.contentHeight + flick.bottomMargin - flick.height);
+        flick.contentY = Math.max(minY, Math.min(maxY, y));
     }
 
     // Loads further rows of a model that holds them in pages, until row `index` is loaded or the
@@ -60,10 +85,13 @@ ListView {
         }
     }
 
-    // How many rows of the current row's height fit into the list's height, at least one.
+    // How many rows of the current row's height fit into the part of the list that can be seen
+    // at once (the list, or the flickable around it when the list does not scroll), at least one.
     function rowsPerPage() {
         var row = currentItem ? currentItem.height : 0;
-        return row > 0 ? Math.max(1, Math.floor(height / row)) : 1;
+        var flick = outerFlickable();
+        var seen = flick ? Math.min(height, flick.height) : height;
+        return row > 0 ? Math.max(1, Math.floor(seen / row)) : 1;
     }
 
     Keys.onPressed: function(event) {

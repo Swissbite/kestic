@@ -20,6 +20,66 @@
 
 namespace kestic::bridge {
 
+namespace {
+
+// The action bar of a page in a Kirigami column view: the `globalFooter` of the page's
+// `ColumnView` attached object.
+QQuickItem* column_footer(QQuickItem* column) {
+    for (QObject* child : column->children()) {
+        const QVariant footer = child->property("globalFooter");
+        if (footer.isValid()) {
+            return footer.value<QQuickItem*>();
+        }
+    }
+    return nullptr;
+}
+
+// A column view keeps the action bars of its pages in an item it created before the pages, so
+// the Tab chain ran from the pages to the window header, then to the action bars at the bottom.
+// Stacking that item after the last page makes the chain follow the visible order: header,
+// pages, action bars.
+void stack_footers_after_columns(QQuickItem* view) {
+    auto* content = view->property("contentItem").value<QQuickItem*>();
+    if (!content) {
+        return;
+    }
+    const QList<QQuickItem*> children = content->childItems();
+    QQuickItem* last_column = nullptr;
+    for (QQuickItem* child : children) {
+        bool contains = false;
+        QMetaObject::invokeMethod(view, "containsItem", Qt::DirectConnection,
+            Q_RETURN_ARG(bool, contains), Q_ARG(QQuickItem*, child));
+        if (contains) {
+            last_column = child;
+        }
+    }
+    if (!last_column) {
+        return;
+    }
+    for (QQuickItem* child : children) {
+        QQuickItem* footer = column_footer(child);
+        QQuickItem* holder = footer ? footer->parentItem() : nullptr;
+        if (holder && holder != child && holder->parentItem() == content
+            && children.indexOf(holder) < children.indexOf(last_column)) {
+            holder->stackAfter(last_column);
+            return;
+        }
+    }
+}
+
+void stack_page_footers_after_pages(QQuickItem* item) {
+    if (item->inherits("ColumnView")) {
+        stack_footers_after_columns(item);
+        return;
+    }
+    const QList<QQuickItem*> children = item->childItems();
+    for (QQuickItem* child : children) {
+        stack_page_footers_after_pages(child);
+    }
+}
+
+} // namespace
+
 class KesticKeyNavFilter : public QObject {
 public:
     explicit KesticKeyNavFilter(QObject* parent = nullptr) : QObject(parent) {}
@@ -31,6 +91,11 @@ public:
         }
 
         auto* ke = static_cast<QKeyEvent*>(event);
+        if (et == QEvent::KeyPress && (ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab)) {
+            if (auto* win = qobject_cast<QQuickWindow*>(watched)) {
+                stack_page_footers_after_pages(win->contentItem());
+            }
+        }
         const Qt::KeyboardModifiers mods = ke->modifiers() & ~Qt::KeypadModifier;
         if (mods != Qt::NoModifier) {
             return QObject::eventFilter(watched, event);
