@@ -323,10 +323,7 @@ fn paths_are_shown_literally() {
 #[test]
 fn ac_m5_07_5_no_remove_offer_for_a_linked_system_restic() {
     let dir = std::env::temp_dir().join(format!("kestic-gui-linked-restic-{}", std::process::id()));
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).expect("old temp dir");
-    }
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::create_dir(&dir).expect("fresh temp dir");
     let app = dir.join("restic");
     std::fs::write(&app, "#!/bin/sh\n").expect("app-managed stand-in");
     let link = dir.join("system-restic");

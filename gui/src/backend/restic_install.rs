@@ -90,15 +90,20 @@ impl qobject::KesticApp {
                 .show_action_error(&start_failure_text(ServiceErrorCode::AlreadyRunning));
             return false;
         }
-        if !self.as_mut().start_restic_install() {
-            return false;
+        match request_restic_install() {
+            Ok(install_id) => {
+                self.as_mut()
+                    .rust_mut()
+                    .restic_switch_after_install
+                    .start(&install_id);
+                self.follow_restic_install(install_id);
+                true
+            }
+            Err(text) => {
+                self.as_mut().show_action_error(&text);
+                false
+            }
         }
-        let install_id = self.restic_install_id.clone();
-        self.as_mut()
-            .rust_mut()
-            .restic_switch_after_install
-            .start(&install_id);
-        true
     }
 
     /// Switches to the source «Automatic» from the hint of the restic section.
@@ -143,21 +148,13 @@ impl qobject::KesticApp {
         result.is_ok()
     }
 
-    pub fn start_restic_install(mut self: Pin<&mut Self>) -> bool {
+    pub fn start_restic_install(self: Pin<&mut Self>) -> bool {
         if self.restic_install_state().to_string() == "running" {
             return false;
         }
-        let started = make_client()
-            .map_err(|_| daemon_unavailable_text())
-            .and_then(|client| {
-                client
-                    .start_restic_install()
-                    .map_err(|err| start_failure_text(KesticDbusError::from(err).code()))
-            });
-        match started {
+        match request_restic_install() {
             Ok(install_id) => {
-                self.as_mut().rust_mut().restic_install_id = install_id;
-                self.as_mut().poll_restic_install();
+                self.follow_restic_install(install_id);
                 true
             }
             Err(text) => {
@@ -165,6 +162,12 @@ impl qobject::KesticApp {
                 false
             }
         }
+    }
+
+    /// Follows the installation `install_id` that the daemon started.
+    fn follow_restic_install(mut self: Pin<&mut Self>, install_id: String) {
+        self.as_mut().rust_mut().restic_install_id = install_id;
+        self.poll_restic_install();
     }
 
     pub fn poll_restic_install(mut self: Pin<&mut Self>) {
@@ -218,4 +221,16 @@ impl qobject::KesticApp {
         }
         self.poll_restic_install();
     }
+}
+
+/// Asks the daemon to install the restic managed by Kestic; the id of the installation, or why
+/// it did not start.
+fn request_restic_install() -> Result<String, String> {
+    make_client()
+        .map_err(|_| daemon_unavailable_text())
+        .and_then(|client| {
+            client
+                .start_restic_install()
+                .map_err(|err| start_failure_text(KesticDbusError::from(err).code()))
+        })
 }
