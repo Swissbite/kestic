@@ -115,7 +115,8 @@ fn leftover_sweep_runs_once() {
 }
 
 /// AC-M5-07-5 (c): the app-managed restic is in use while it is the source, the fallback of
-/// «Automatic», the system restic through a link, or a custom path to it.
+/// «Automatic», the system restic through a link (also with the source «System»), or a custom
+/// path to it.
 #[test]
 fn ac_m5_07_5_app_managed_in_use_as_active_source() {
     use std::os::unix::fs::{PermissionsExt, symlink};
@@ -171,4 +172,10 @@ fn ac_m5_07_5_app_managed_in_use_as_active_source() {
         &app,
         &at(Some(&own_system))
     ));
+    assert!(is_active_source(
+        &ResticProvider::System,
+        &app,
+        &at(Some(&linked_system))
+    ));
 }
+
