@@ -3535,6 +3535,10 @@ msgid "Search"
 msgstr "Suche"
 
 #: gui/src/qml/RestoreSearchPage.qml
+msgid "Search for ‹%1›"
+msgstr "Suche nach ‹%1›"
+
+#: gui/src/qml/RestoreSearchPage.qml
 msgid "Searching…"
 msgstr "Suche läuft…"
 

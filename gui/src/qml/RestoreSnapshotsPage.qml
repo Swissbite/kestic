@@ -169,22 +169,27 @@ Kirigami.ScrollablePage {
         }
     ]
 
-    // The search field stays in the page's header while the snapshots scroll below it.
+    // The search field stays in the page's header while the snapshots scroll below it; the
+    // header is as high as that of the search results beside it.
     header: Controls.ToolBar {
+        objectName: "snapshotSearchHeader"
         visible: page.group === ""
         leftPadding: Kirigami.Units.largeSpacing
         rightPadding: Kirigami.Units.largeSpacing
-        contentItem: Kirigami.SearchField {
-            id: searchField
-            objectName: "snapshotSearchField"
-            placeholderText: Texts.label("search_in_backup_snapshots")
-            Accessible.name: Texts.label("search_in_backup_snapshots")
-            // Ctrl+F (the field's default) focuses this field; the other search and filter
-            // fields of the restore area have none, so the shortcut is never ambiguous.
-            // Searching runs restic over every snapshot, so it starts on Return only.
-            autoAccept: false
-            onAccepted: {
-                if (text.trim() !== "") page.searchRequested(page.backupId, text);
+        contentItem: RowLayout {
+            Kirigami.SearchField {
+                id: searchField
+                objectName: "snapshotSearchField"
+                Layout.fillWidth: true
+                placeholderText: Texts.label("search_in_backup_snapshots")
+                Accessible.name: Texts.label("search_in_backup_snapshots")
+                // Ctrl+F (the field's default) focuses this field; the other search and filter
+                // fields of the restore area have none, so the shortcut is never ambiguous.
+                // Searching runs restic over every snapshot, so it starts on Return only.
+                autoAccept: false
+                onAccepted: {
+                    if (text.trim() !== "") page.searchRequested(page.backupId, text);
+                }
             }
         }
     }
