@@ -8,8 +8,10 @@
 #   tag.sh          tag for the working tree
 #   tag.sh <rev>    tag for a git revision (used by ci-image-cleanup.yml)
 #
-# Used by ci-image.yml (build/push) and ci-image-cleanup.yml (which tags are
-# still in use), so both always agree on the tag of a given revision.
+# Used by ci-image-cleanup.yml (which tags are still in use) and
+# .devcontainer/kestic-agent.sh. ci-image.yml computes the same hash inline,
+# because it must not run scripts from an unreviewed checkout; a change to the
+# formula here has to be made there too.
 
 set -euo pipefail
 
