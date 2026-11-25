@@ -269,26 +269,17 @@ impl RestServerGuard {
     }
 
     fn wait_ready(&mut self) {
-        let addr = format!("127.0.0.1:{}", self.port);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if let Some(ref mut child) = self.child
-                && let Some(status) = child.try_wait().expect("try_wait rest-server")
-            {
-                panic!("rest-server exited prematurely: {status}");
-            }
-            if let Ok(mut stream) = TcpStream::connect_timeout(
-                &addr.parse().expect("socket addr"),
-                Duration::from_millis(100),
-            ) {
-                let mut buf = [0u8; 1];
-                let _ = stream.set_read_timeout(Some(Duration::from_millis(20)));
-                let _ = stream.read(&mut buf);
-                return;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-        panic!("rest-server did not start listening on {addr} in time");
+        // rest-server accepts and closes the first connection: read it, so its log stays quiet.
+        let stream = wait_listening(
+            self.child.as_mut(),
+            self.port,
+            Duration::from_secs(5),
+            "rest-server",
+            String::new,
+        );
+        let mut buf = [0u8; 1];
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(20)));
+        let _ = (&stream).read(&mut buf);
     }
 
     /// `(username, password)` of the server, `None` for `--no-auth`.
@@ -382,4 +373,30 @@ fn build_htpasswd_entry(user: &str, pass: &str) -> String {
     );
     let hash = String::from_utf8_lossy(&b64).trim().to_string();
     format!("{user}:{{SHA}}{hash}\n")
+}
+
+/// Waits until a server started as `child` listens on `127.0.0.1:<port>` and returns the test
+/// connection; panics with `what`, its exit status and `log()` when it ends first, and after
+/// `limit`.
+pub fn wait_listening(
+    mut child: Option<&mut std::process::Child>,
+    port: u16,
+    limit: Duration,
+    what: &str,
+    log: impl Fn() -> String,
+) -> TcpStream {
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().expect("socket addr");
+    let deadline = Instant::now() + limit;
+    while Instant::now() < deadline {
+        if let Some(child) = child.as_deref_mut()
+            && let Some(status) = child.try_wait().expect("try_wait")
+        {
+            panic!("{what} exited prematurely: {status}\n{}", log());
+        }
+        if let Ok(stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
+            return stream;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    panic!("{what} did not start listening on {addr} in time");
 }

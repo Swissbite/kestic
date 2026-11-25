@@ -11,17 +11,15 @@ mod common;
 
 use common::fakes::{FakeUDisks2Filesystem, FakeUDisks2Handle};
 use common::m3::{FakeSetup, M3DaemonOpts, M3Rig, StdFakes, latest_variant};
+use common::release::{serve, trust};
 use common::{SYSTEM_PROGRAMS_DIR, run_isolated_test, run_isolated_test_with_system_programs};
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{DestinationKind, ResticProvider};
 use kestic_core::mount::{FakeMountInspector, FakeMountState, MountInspector};
 use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
-use kestic_core::restic_release::{TrustAnchor, set_test_anchor};
 use kestic_daemon::dbus_api::{DestinationTypeDto, KESTIC_BUS_NAME};
 use kestic_i18n::codes::DestinationTypeCode;
-use kestic_test_support::release_mock::{
-    ReleaseFiles, ReleaseMock, Route, TestSigningKey, asset_path,
-};
+use kestic_test_support::release_mock::{ReleaseFiles, Route, TestSigningKey, asset_path};
 use kestic_test_support::s3_server::S3ServerGuard;
 use kestic_test_support::sftp_server::SftpServerGuard;
 use kestic_test_support::tools::{free_loopback_port, write_executable};
@@ -533,27 +531,6 @@ const RELEASE: &str = "0.99.0";
 /// Like the real restic 0.16.4: no `version --json`, only the text of `restic version`.
 const RESTIC_0_16_4: &str = "#!/bin/sh\nif [ \"$1\" = version ] && [ -z \"$2\" ]; then\n  \
      echo 'restic 0.16.4 compiled with go1.22.2 on linux/amd64'\n  exit 0\nfi\nexit 1\n";
-
-/// Makes the daemon of this process trust `key` and download from `base_url`.
-fn trust(base_url: &str, key: &TestSigningKey) {
-    let key_path = key.public_key_file().to_string_lossy().into_owned();
-    let fpr = key.fingerprint().to_string();
-    let anchor = TrustAnchor::from_lookup(|name| match name {
-        "KESTIC_TEST_RELEASE_URL" => Some(base_url.to_string()),
-        "KESTIC_TEST_SIGNING_KEY" => Some(key_path.clone()),
-        "KESTIC_TEST_SIGNING_FPR" => Some(fpr.clone()),
-        _ => None,
-    })
-    .expect("test anchor");
-    set_test_anchor(Some(anchor));
-}
-
-/// A release mock for `files`, trusted by the daemon of this process.
-fn serve(files: &ReleaseFiles, key: &TestSigningKey, routes: Vec<(String, Route)>) -> ReleaseMock {
-    let mock = ReleaseMock::start_with(files, routes);
-    trust(&mock.base_url(), key);
-    mock
-}
 
 /// The app-managed restic of this isolated test (`$XDG_DATA_HOME/kestic/restic`).
 fn managed_restic() -> PathBuf {

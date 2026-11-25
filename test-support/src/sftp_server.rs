@@ -8,11 +8,9 @@
 use crate::tools::free_loopback_port;
 use std::env;
 use std::fs;
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// The `sshd` binary (`KESTIC_SSHD` overrides `/usr/sbin/sshd`); sshd needs an absolute path.
 fn sshd_binary() -> PathBuf {
@@ -152,28 +150,14 @@ impl SftpServerGuard {
     }
 
     fn wait_ready(&mut self) {
-        let addr = format!("127.0.0.1:{}", self.port);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            if let Some(ref mut child) = self.child
-                && let Some(status) = child.try_wait().expect("try_wait sshd")
-            {
-                panic!(
-                    "sshd exited prematurely: {status}\n{}",
-                    fs::read_to_string(self.dir.join("sshd.log")).unwrap_or_default()
-                );
-            }
-            if TcpStream::connect_timeout(
-                &addr.parse().expect("socket addr"),
-                Duration::from_millis(100),
-            )
-            .is_ok()
-            {
-                return;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-        panic!("sshd did not start listening on {addr} in time");
+        let log = self.dir.join("sshd.log");
+        crate::tools::wait_listening(
+            self.child.as_mut(),
+            self.port,
+            Duration::from_secs(10),
+            "sshd",
+            || fs::read_to_string(&log).unwrap_or_default(),
+        );
     }
 
     /// The name of the server in `known_hosts`: `[127.0.0.1]:<port>`.
