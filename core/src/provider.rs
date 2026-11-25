@@ -18,8 +18,8 @@ use thiserror::Error;
 pub const MIN_RESTIC_VERSION: Version = Version::new(0, 18, 0);
 
 /// The newest restic version the tests run against (`RESTIC_LATEST_VERSION` in
-/// `scripts/bootstrap.sh`). An older version still works fully; settings only mark it as
-/// outdated.
+/// `scripts/bootstrap.sh`). An older version still works fully; settings only name this
+/// version as the recommended one.
 pub const TESTED_RESTIC_VERSION: Version = Version::new(0, 20, 0);
 
 /// Whether `version` is older than the newest tested version.

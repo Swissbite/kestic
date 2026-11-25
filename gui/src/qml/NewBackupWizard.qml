@@ -417,7 +417,7 @@ WizardPage {
                     }
 
                     Controls.Label {
-                        Kirigami.FormData.label: i18n("Source:")
+                        Kirigami.FormData.label: Texts.label("source_label")
                         text: page.sourcePath
                         wrapMode: Text.WordWrap
                     }
