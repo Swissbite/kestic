@@ -697,3 +697,32 @@ fn probe_password_file_is_private() {
         "password file content differs"
     );
 }
+
+/// A run stopped by Kestic's own host key check records the error's text; its kind is read back
+/// through the markers, so each text starts with its marker.
+#[test]
+fn host_key_error_texts_start_with_their_markers() {
+    let unknown = DestinationError::HostKeyUnknown(Box::new(crate::known_hosts::ScannedHostKey {
+        name: "[nas.local]:2222".to_string(),
+        host: "nas.local".to_string(),
+        port: 2222,
+        key_type: "ssh-ed25519".to_string(),
+        key: "AAAA".to_string(),
+        fingerprint_sha256: "SHA256:x".to_string(),
+    }));
+    assert!(
+        unknown
+            .to_string()
+            .to_lowercase()
+            .starts_with(crate::restic::HOST_KEY_UNKNOWN_MARKER),
+        "{unknown}"
+    );
+    let changed = DestinationError::HostKeyChanged(PathBuf::from("/home/u/.ssh/known_hosts"));
+    assert!(
+        changed
+            .to_string()
+            .to_lowercase()
+            .starts_with(crate::restic::HOST_KEY_CHANGED_MARKER),
+        "{changed}"
+    );
+}

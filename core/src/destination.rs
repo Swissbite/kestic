@@ -577,19 +577,16 @@ fn run_with_temp_repo_password_file(
         args.push("--password-file".to_string());
         args.push(pw_file.to_string_lossy().into_owned());
 
-        let mut spec = ResticCommandSpec::for_destination(
+        let spec = ResticCommandSpec::for_destination(
             &probe.resolved.binary,
             probe.kestic_binary,
             dest,
             args,
         )
         .with_cache_dir(probe.cache_dir);
-        spec.low_priority = false;
-        // Override password command to empty/unused since `--password-file` is passed for pre-save probe.
-        spec.password_command_override = Some(String::new());
 
-        // The probe runs restic directly with `--password-file`: restic rejects an empty
-        // `RESTIC_PASSWORD_COMMAND` next to a password file, so the runner is bypassed.
+        // The probe runs restic directly with `--password-file`, without the runner's
+        // `RESTIC_PASSWORD_COMMAND` (restic refuses both together) and without `nice`.
 
         execute_probe_command(
             &spec,
@@ -696,10 +693,8 @@ fn execute_probe_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env_remove("RESTIC_PASSWORD")
-        .env_remove("RESTIC_PASSWORD_COMMAND")
-        .env_remove("RESTIC_PASSWORD_FILE")
-        .env_remove("RESTIC_REPOSITORY_FILE");
+        .env_remove("RESTIC_PASSWORD_COMMAND");
+    crate::restic::remove_inherited_restic_access(&mut cmd);
 
     let env_keys = crate::restic::apply_backend_env(&mut cmd, spec, backend)?;
 
@@ -987,9 +982,6 @@ impl Watchdog {
     }
 }
 
-/// The error of a restic line that announces a retry of an error that will not go away by
-/// waiting: the backend rejected the login, the bucket does not exist or the server cannot be
-/// reached.
 /// Whether `error` (from [`conclusive_retry_error`]) says the server could not be reached, as
 /// opposed to a refused login or a missing repository.
 fn is_connection_error(error: &str) -> bool {
@@ -999,6 +991,9 @@ fn is_connection_error(error: &str) -> bool {
     )
 }
 
+/// The error of a restic line that announces a retry of an error that will not go away by
+/// waiting: the backend rejected the login, the bucket does not exist or the server cannot be
+/// reached.
 fn conclusive_retry_error(line: &str) -> Option<&str> {
     // A line of ssh, such as the server's banner, is no retry of restic.
     if line.trim_start().starts_with("subprocess ") {
