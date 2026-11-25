@@ -251,8 +251,10 @@ int focused_row_of(QQuickWindow* w, QQuickItem* list) {
 
 // AC-M4-01-7 for the removable drives of «External Drive / USB» (two drives from the UDisks2
 // fake): the list is one Tab stop. (a) Tab enters it on the first drive, (b) Down moves to the
-// second, which Space chooses, (c) the next Tab leaves the list to «Check Again» and Shift+Tab
-// comes back to the second drive, and (d) no drive is a Tab stop of its own.
+// second, which Space chooses (a second Space keeps it chosen), Home and End move to the first
+// and the last drive, (c) the next Tab leaves the list to «Check Again», Shift+Tab comes back to
+// the second drive and the next Shift+Tab leaves the list to the control before it, and (d) no
+// drive is a Tab stop of its own.
 int scenario_drive_list_keys(const Ctx& c) {
     QQuickWindow* w = c.window;
     if (const int rc = open_details_of(w, "drive")) {
@@ -271,14 +273,28 @@ int scenario_drive_list_keys(const Ctx& c) {
         qPrintable(QStringLiteral("(b) Down moves to the second drive: ") + describe_focus_item(w->activeFocusItem())));
     send_key(w, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
     QQuickItem* location = item_named(w, "wizDestLocationField");
+    QQuickItem* second = item_named(w, "wizDestDrive_1");
     M3_CHECK(5234, wait_until([&] { return location && location->property("text").toString() == QLatin1String("/media/user/USB-Disk"); }, 2000),
         "(b) Space on the second drive does not choose it");
+    send_key(w, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+    wait_ms(80);
+    M3_CHECK_EQ(5240, location->property("text").toString(), QStringLiteral("/media/user/USB-Disk"), "(b) a second Space keeps the path");
+    M3_CHECK(5241, second->property("checked").toBool(), "(b) a second Space unchecks the chosen drive");
+    press_and_wait(w, Qt::Key_Home, 80);
+    M3_CHECK(5242, focused_row_of(w, list) == 0, qPrintable(QStringLiteral("(b) Home moves to the first drive: ") + describe_focus_item(w->activeFocusItem())));
+    press_and_wait(w, Qt::Key_End, 80);
+    M3_CHECK(5243, focused_row_of(w, list) == 1, qPrintable(QStringLiteral("(b) End moves to the last drive: ") + describe_focus_item(w->activeFocusItem())));
     press_tab(w);
     M3_CHECK_EQ(5235, w->activeFocusItem() ? w->activeFocusItem()->objectName() : QString(),
         QStringLiteral("wizDestDrivesCheckAgainButton"), "(c) the next Tab leaves the drives to «Check Again»");
+    QQuickItem* check_again = w->activeFocusItem();
     send_key(w, Qt::Key_Backtab, Qt::ShiftModifier);
     M3_CHECK(5236, focused_row_of(w, list) == 1,
         qPrintable(QStringLiteral("(c) Shift+Tab comes back to the second drive: ") + describe_focus_item(w->activeFocusItem())));
+    send_key(w, Qt::Key_Backtab, Qt::ShiftModifier);
+    QQuickItem* before = w->activeFocusItem();
+    M3_CHECK(5244, before && !lies_in(before, list) && before != check_again,
+        qPrintable(QStringLiteral("(c) the next Shift+Tab leaves the drives to the control before them: ") + describe_focus_item(before)));
     auto* content = list->property("contentItem").value<QQuickItem*>();
     QList<QQuickItem*> items;
     collect_visual_descendants(content, items);

@@ -246,8 +246,6 @@ ColumnLayout {
             Layout.fillWidth: true
             implicitHeight: contentHeight
             interactive: false
-            // No drive is marked until the list gets the focus.
-            currentIndex: -1
             model: drivePicker.drives
 
             delegate: KD.SubtitleDelegate {
@@ -272,6 +270,9 @@ ColumnLayout {
                     ListView.view.currentIndex = index;
                     form.draft.location = modelData.mount_point;
                     form.locationEdited();
+                    // A click or Space on the chosen drive unchecks the row, but the drive
+                    // stays chosen: the row follows the path again.
+                    checked = Qt.binding(() => form.draft.location.trim() === driveRow.modelData.mount_point);
                 }
 
                 FocusRing {
