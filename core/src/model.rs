@@ -272,7 +272,10 @@ impl DestinationKind {
                 path,
                 ..
             } => crate::s3::location_key(endpoint, bucket, path.as_deref()),
-            Self::Generic { url, .. } => format!("generic:{}", url.trim()),
+            // A trailing slash names the same folder.
+            Self::Generic { url, .. } => {
+                format!("generic:{}", url.trim().trim_end_matches('/'))
+            }
         }
     }
 
@@ -682,10 +685,16 @@ impl Destination {
                         "local destination path must not be empty".to_string(),
                     ));
                 }
-                let text = path.to_string_lossy();
-                if crate::local_path::kio_address_scheme(&text).is_some() {
+                // restic gets the path as text: another path would be written to.
+                let Some(text) = path.to_str().filter(|t| !t.contains('\0')) else {
+                    return Err(ModelError::InvalidDestination(format!(
+                        "local destination path must be valid UTF-8 without NUL characters: '{}'",
+                        path.display()
+                    )));
+                };
+                if crate::local_path::kio_address_scheme(text).is_some() {
                     return Err(crate::local_path::NotALocalPath(
-                        crate::local_path::address_for_display(&text),
+                        crate::local_path::address_for_display(text),
                     )
                     .into());
                 }

@@ -135,3 +135,28 @@ fn ac_m5_05_3_kio_address_is_rejected_with_hint() {
         "(a) address"
     );
 }
+
+/// M5-S05: restic gets a local path as text, so a path that is not valid UTF-8 or holds a NUL
+/// character (possible from the folder dialog's URL) is refused instead of becoming another
+/// path.
+#[test]
+fn m5_05_local_path_that_is_no_text_is_refused() {
+    use std::os::unix::ffi::OsStringExt;
+    for bytes in [b"/tmp/\xff".to_vec(), b"/tmp/a\0b".to_vec()] {
+        let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+        let result = Destination::new("Disk", DestinationKind::Local { path: path.clone() });
+        assert!(
+            matches!(result, Err(ModelError::InvalidDestination(_))),
+            "{path:?}: {result:?}"
+        );
+    }
+    assert!(
+        Destination::new(
+            "Disk",
+            DestinationKind::Local {
+                path: PathBuf::from("/media/anna/Sicherung ü")
+            }
+        )
+        .is_ok()
+    );
+}

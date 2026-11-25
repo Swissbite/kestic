@@ -648,4 +648,9 @@ fn m5_09_q6_reserved_names_cleared_prefixes_secret_default_and_rclone_url_secret
         Err(GenericInputError::SecretInUrl("PASS".to_string())),
         "(d) upper case and a quoted value"
     );
+    assert_eq!(
+        validate_url("rclone::sftp,host=nas,pass=hunter2"),
+        Err(GenericInputError::SecretInUrl("pass".to_string())),
+        "(d) a remote without a path after it"
+    );
 }
