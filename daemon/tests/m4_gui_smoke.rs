@@ -1230,6 +1230,87 @@ fn ac_m4_01_7_b_snapshot_list_keeps_the_current_row_in_view() {
     );
 }
 
+/// AC-M4-01-4 (b), search field of the snapshot list: with 30 snapshots, after End in the list
+/// (a) Shift+Tab focuses the search field and it is in the visible area, (b) the field is not
+/// part of the page's scrolling content (scene `m4-search-field-fixed`).
+#[test]
+fn ac_m4_01_4_b_snapshot_search_field_stays_in_view() {
+    run_isolated_test(
+        "ac_m4_01_4_b_snapshot_search_field_stays_in_view",
+        "KESTIC_AC_M4_01_4_B_SEARCH_FIELD_INNER",
+        |root| {
+            let times: Vec<String> = (1..=30)
+                .map(|day| format!("2026-10-{day:02} 12:00:00"))
+                .collect();
+            let snapshots: Vec<(&str, &str)> =
+                times.iter().map(|t| (t.as_str(), "laptop")).collect();
+            let (rig, _fakes) = restore_env_with(root, &snapshots);
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-search-field-fixed",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-search-field", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-01-4 (b), results of a search: (c) the window shows exactly one search field, (d) while
+/// a new search runs no hit shows under the loading placeholder, (e) the searched text and the
+/// number of hits are one line beside «Filter», wide and narrow (scene `m4-search-header`).
+#[test]
+fn ac_m4_01_4_b_search_results_have_one_field_and_a_one_line_header() {
+    run_isolated_test(
+        "ac_m4_01_4_b_search_results_have_one_field_and_a_one_line_header",
+        "KESTIC_AC_M4_01_4_B_SEARCH_HEADER_INNER",
+        |root| {
+            let (rig, _fakes) = search_env(root);
+            let hold_find = format!("{}.find", rig.wrapper.hold.display());
+            for layout in ["wide", "narrow"] {
+                for lang in ["en", "de"] {
+                    run_m4_gui_smoke_env(
+                        root,
+                        "m4-search-header",
+                        layout,
+                        lang,
+                        &smoke_artifact("restore-search-header", layout, lang),
+                        &[("KESTIC_SMOKE_HOLD_FIND", &hold_find)],
+                    );
+                    rig.wrapper.release("find");
+                }
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-01-4 (b), any page: a control out of view that gets the focus by Tab is scrolled into
+/// the visible area (scene `m4-focus-in-view`, the backup detail page in a short window).
+#[test]
+fn ac_m4_01_4_b_focused_control_scrolls_into_view() {
+    run_isolated_test(
+        "ac_m4_01_4_b_focused_control_scrolls_into_view",
+        "KESTIC_AC_M4_01_4_B_FOCUS_IN_VIEW_INNER",
+        |root| {
+            let (rig, _fakes) = restore_env(root);
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-focus-in-view",
+                    "wide",
+                    lang,
+                    &smoke_artifact("focus-in-view", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// AC-M4-01-8: a right click opens the context menu of a snapshot on the press, at the
 /// pointer, also after a long press or a move, on every row every time (scene
 /// `m4-snapshot-right-click`).

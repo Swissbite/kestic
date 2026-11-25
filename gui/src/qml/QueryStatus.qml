@@ -8,9 +8,9 @@ import org.kde.kirigami as Kirigami
 import net.daester.kestic 1.0
 
 // The states of a snapshot query over its list (declare it as a child of the ListView): while
-// it runs, a busy indicator with «Cancel» (or a loading placeholder when it cannot be
-// cancelled), after a cancel «… cancelled» with «Retry», after an error the error with «Retry»,
-// and «Too many entries» instead of a list too large to hold. It polls the running query.
+// it runs, a loading placeholder with «Cancel» (without «Cancel» when it cannot be cancelled),
+// after a cancel «… cancelled» with «Retry», after an error the error with «Retry», and «Too
+// many entries» instead of a list too large to hold. It polls the running query.
 // The object names of its parts start with `namePrefix` («search» gives «searchBusy»,
 // «searchCancelButton», «searchCancelledMessage», «searchErrorMessage»,
 // «searchTooLargeMessage»).
@@ -42,13 +42,13 @@ Item {
     ColumnLayout {
         objectName: status.namePrefix + "Busy"
         anchors.centerIn: parent
+        width: parent.width - Kirigami.Units.largeSpacing * 4
         visible: status.busyText !== "" && status.queryModel.state === "running"
         spacing: Kirigami.Units.largeSpacing
 
-        Controls.BusyIndicator {
-            Layout.alignment: Qt.AlignHCenter
-            running: parent.visible
-            Accessible.name: status.busyText
+        Kirigami.LoadingPlaceholder {
+            Layout.fillWidth: true
+            text: status.busyText
         }
         Controls.Button {
             objectName: status.namePrefix + "CancelButton"

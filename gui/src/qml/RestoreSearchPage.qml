@@ -47,10 +47,7 @@ Kirigami.ScrollablePage {
             snapshotSearchModel.data(hit, 2));
     }
 
-    Component.onCompleted: {
-        searchField.text = searchText;
-        runSearch(searchText);
-    }
+    Component.onCompleted: runSearch(searchText)
     Component.onDestruction: snapshotSearchModel.cancel()
     // A page taken off the stack is hidden, not destroyed: stop searching there, too.
     onVisibleChanged: {
@@ -66,52 +63,37 @@ Kirigami.ScrollablePage {
         objectName: "snapshotSearchModel"
     }
 
+    // The searched text and, once known, the number of hits in one line, next to the filter. The
+    // search field is the one above the snapshot list; this page has none of its own. The header
+    // is as high as that of the snapshot list beside it.
     header: Controls.ToolBar {
+        objectName: "searchResultsHeader"
+        visible: snapshotSearchModel.search_text !== ""
         leftPadding: Kirigami.Units.largeSpacing
         rightPadding: Kirigami.Units.largeSpacing
-        contentItem: ColumnLayout {
-            spacing: Kirigami.Units.smallSpacing
+        contentItem: RowLayout {
+            spacing: Kirigami.Units.mediumSpacing
 
-            Kirigami.SearchField {
-                id: searchField
-                objectName: "searchPageField"
+            Controls.Label {
+                objectName: "searchCountLabel"
                 Layout.fillWidth: true
-                placeholderText: i18n("Search text")
-                Accessible.name: i18n("Search text")
-                // Ctrl+F belongs to the search field of the snapshot list.
-                focusSequences: []
-                autoAccept: false
-                onAccepted: {
-                    if (text.trim() !== "") page.runSearch(text);
-                }
+                // The number of hits once there are some, until then the searched text alone.
+                text: snapshotSearchModel.state === "done" && snapshotSearchModel.total > 0
+                    ? snapshotSearchModel.count_text
+                    : i18n("Search for ‹%1›", snapshotSearchModel.search_text)
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                maximumLineCount: 1
+                font.bold: true
+                opacity: 0.8
             }
-
-            // On a narrow page the filter gets a line of its own below the number of hits.
-            GridLayout {
-                id: countRow
-                Layout.fillWidth: true
-                columns: page.width < Kirigami.Units.gridUnit * 30 ? 1 : 2
-                columnSpacing: Kirigami.Units.mediumSpacing
-                rowSpacing: Kirigami.Units.smallSpacing
-                visible: snapshotSearchModel.state === "done" && snapshotSearchModel.total > 0
-
-                Controls.Label {
-                    objectName: "searchCountLabel"
-                    Layout.fillWidth: true
-                    text: snapshotSearchModel.count_text
-                    textFormat: Text.PlainText
-                    wrapMode: Text.Wrap
-                    font.bold: true
-                    opacity: 0.8
-                }
-                FilterField {
-                    id: filterField
-                    objectName: "searchFilterField"
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 12
-                    Layout.fillWidth: countRow.columns === 1
-                    visible: !snapshotSearchModel.too_large
-                    onFilterRequested: function(text) { snapshotSearchModel.setFilter(text); }
-                }
+            FilterField {
+                id: filterField
+                objectName: "searchFilterField"
+                Layout.preferredWidth: Math.min(Kirigami.Units.gridUnit * 12, page.width / 2)
+                visible: !snapshotSearchModel.too_large
+                enabled: snapshotSearchModel.state === "done" && snapshotSearchModel.total > 0
+                onFilterRequested: function(text) { snapshotSearchModel.setFilter(text); }
             }
         }
     }
