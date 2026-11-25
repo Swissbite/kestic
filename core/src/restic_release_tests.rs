@@ -842,21 +842,3 @@ fn test_anchor_from_variables() {
         Ok(TrustAnchor::production())
     );
 }
-
-/// A helper that leaves a process holding its output pipes still ends at the time limit.
-#[test]
-fn output_within_ends_while_a_background_process_holds_the_pipes() {
-    let mut cmd = Command::new("sh");
-    cmd.args(["-c", "sleep 4 & echo done"]);
-    let started = Instant::now();
-    let result = output_within(cmd, Duration::from_millis(300));
-    assert!(
-        matches!(&result, Err(err) if err.kind() == std::io::ErrorKind::TimedOut),
-        "{result:?}"
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        started.elapsed()
-    );
-}

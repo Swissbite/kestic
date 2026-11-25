@@ -6,12 +6,13 @@
 //! version it reports, then `rename` it over the old binary. Until that `rename` the old binary
 //! is never touched, and every error removes the temporary file.
 
+use crate::bounded_command::output_within;
 use crate::provider::{MIN_RESTIC_VERSION, parse_version_json};
 use crate::restic_gate::ResticBinaryGate;
 use crate::restic_release::{
     ARCHIVE_LIMIT, Arch, DownloadPlan, HttpAnswer, InstallError, RELEASE_INFO_LIMIT,
     SIGNATURE_LIMIT, Transport, TrustAnchor, UreqTransport, check_sha256, expected_sha256,
-    fetch_asset, fetch_release, find_gpgv, output_within, verify_signature,
+    fetch_asset, fetch_release, find_gpgv, verify_signature,
 };
 use kestic_i18n::codes::ResticInstallPhase;
 use semver::Version;

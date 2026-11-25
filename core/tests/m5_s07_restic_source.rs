@@ -227,6 +227,31 @@ echo 'git version 2.53.0'
     assert_eq!(resolved.version, version("0.18.0"));
 }
 
+/// AC-M5-07-7 (a): a custom path to a program that never answers `version` is refused after the
+/// probe's time limit, and the binary's lease is released.
+#[test]
+fn ac_m5_07_7_custom_path_that_never_answers_is_refused_in_time() {
+    let dir = TempDir::new().expect("tempdir");
+    let hanging = dir.path().join("hanging");
+    write_executable(&hanging, "#!/bin/sh\nexec sleep 600\n");
+    let started = std::time::Instant::now();
+    let result = check_binary_version(&hanging);
+    assert!(
+        matches!(result, Err(ResticProviderError::UnreadableVersion { .. })),
+        "{result:?}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(15),
+        "asked for {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        kestic_core::restic_gate::ResticBinaryGate::global().readers(),
+        0,
+        "lease released"
+    );
+}
+
 /// AC-M5-07-8: a stand-in like the real 0.16.4 (no `version --json`) is recognised as 0.16.4
 /// from its text and reported as too old, not as an unreadable version.
 #[test]

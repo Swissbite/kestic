@@ -5,14 +5,14 @@
 //! `known_hosts` files say about it (`ssh-keygen -F`), which keys the server shows
 //! (`ssh-keyscan`), and Kestic's own `known_hosts` file, the only one Kestic writes.
 
+use crate::bounded_command::{Bounds, output_bounded};
 use crate::sftp::{DEFAULT_PORT, KnownHostsPaths, ssh_config_args, ssh_host};
 use crate::sync::LockUnpoisoned;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -124,71 +124,24 @@ fn run_tool_within(
     stdin: Option<&str>,
     limit: Duration,
 ) -> Result<std::process::Output, HostKeyError> {
-    let tool_error = |detail: String| HostKeyError::Tool {
-        program: program.to_string(),
-        detail,
-    };
-    // Its own process group: at the time limit the commands ssh started for the user's
-    // configuration (`Match exec`) end with it.
-    let mut child = Command::new(program)
-        .process_group(0)
-        .args(args)
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| tool_error(err.to_string()))?;
-    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        pipe.write_all(text.as_bytes())?;
-    }
-    let read = |pipe: Option<Box<dyn std::io::Read + Send>>| {
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut buf);
-            }
-            tx.send(buf)
-        });
-        rx
-    };
-    let stdout = read(child.stdout.take().map(|p| Box::new(p) as _));
-    let stderr = read(child.stderr.take().map(|p| Box::new(p) as _));
+    let mut cmd = Command::new(program);
+    cmd.args(args);
     // ssh reads the user's configuration (`Match exec`) and resolves names; none of that may hold
-    // up a connection test or the check before a run.
-    let deadline = std::time::Instant::now() + limit;
-    let no_answer = || HostKeyError::NoAnswer {
-        program: program.to_string(),
-        secs: limit.as_secs(),
+    // up a connection test or the check before a run. Its own process group: at the time limit
+    // the commands ssh started for the configuration end with it.
+    let bounds = Bounds {
+        stdin: stdin.map(str::as_bytes),
+        own_group: true,
     };
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if std::time::Instant::now() >= deadline {
-            crate::restic::send_sigkill_to_group(child.id());
-            let _ = child.wait();
-            return Err(no_answer());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    // A command the configuration started in the background may still hold the output open
-    // after the program ended; it gets the time that is left, then ends with its group.
-    let collect = |rx: std::sync::mpsc::Receiver<Vec<u8>>| {
-        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-            .map_err(|_| {
-                crate::restic::send_sigkill_to_group(child.id());
-                no_answer()
-            })
-    };
-    Ok(std::process::Output {
-        status,
-        stdout: collect(stdout)?,
-        stderr: collect(stderr)?,
+    output_bounded(cmd, limit, bounds).map_err(|err| match err.kind() {
+        std::io::ErrorKind::TimedOut => HostKeyError::NoAnswer {
+            program: program.to_string(),
+            secs: limit.as_secs(),
+        },
+        _ => HostKeyError::Tool {
+            program: program.to_string(),
+            detail: err.to_string(),
+        },
     })
 }
 
