@@ -59,7 +59,7 @@ pub fn kestic_data_dir(home: Option<&OsStr>, xdg_data_home: Option<&OsStr>) -> O
     Some(base.join("kestic"))
 }
 
-/// Result of preparing an installation ([`prepare_with`]).
+/// Result of preparing an installation.
 #[derive(Debug)]
 pub enum Preparation {
     /// The app-managed binary already is the release's version; nothing was downloaded.
@@ -161,6 +161,7 @@ impl Drop for PreparedInstall {
     }
 }
 
+#[cfg(any(test, feature = "test-trust-anchor"))]
 fn finish(preparation: Preparation) -> Result<InstallOutcome, InstallError> {
     replace_when_idle(preparation, ResticBinaryGate::global(), &Unobserved)
 }
@@ -204,8 +205,10 @@ pub trait InstallObserver: Sync {
     fn begin_replace(&self) -> bool;
 }
 
+#[cfg(any(test, feature = "test-trust-anchor"))]
 struct Unobserved;
 
+#[cfg(any(test, feature = "test-trust-anchor"))]
 impl InstallObserver for Unobserved {
     fn phase(&self, _phase: ResticInstallPhase) {}
     fn version(&self, _version: &str) {}
@@ -276,6 +279,7 @@ pub(crate) fn replace_when_idle(
     Ok(InstallOutcome::Installed(version))
 }
 
+#[cfg(any(test, feature = "test-trust-anchor"))]
 pub(crate) fn prepare_with(
     request: &InstallRequest<'_>,
     anchor: &TrustAnchor,

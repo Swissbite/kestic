@@ -30,18 +30,23 @@ double scene_y(QQuickItem* item) {
     return item->mapToScene(QPointF(0, 0)).y();
 }
 
-// The pixel size of the font of the text item below `root` (itself included) that shows `text`;
-// -1 if there is none.
-int text_pixel_size(QQuickItem* root, const QString& text) {
-    if (QByteArray(root->metaObject()->className()).startsWith("QQuickText") && root->property("text").toString() == text) {
-        return QFontInfo(root->property("font").value<QFont>()).pixelSize();
+// The text item below `root` (itself included) that shows `text`; nullptr if there is none.
+QQuickItem* text_item_showing(QQuickItem* root, const QString& text) {
+    if (root->inherits("QQuickText") && root->property("text").toString() == text) {
+        return root;
     }
     for (QQuickItem* child : root->childItems()) {
-        if (const int size = text_pixel_size(child, text); size >= 0) {
-            return size;
+        if (QQuickItem* found = text_item_showing(child, text)) {
+            return found;
         }
     }
-    return -1;
+    return nullptr;
+}
+
+// The pixel size of the font of the text item below `root` that shows `text`; -1 if there is none.
+int text_pixel_size(QQuickItem* root, const QString& text) {
+    QQuickItem* item = text_item_showing(root, text);
+    return item ? QFontInfo(item->property("font").value<QFont>()).pixelSize() : -1;
 }
 
 // Whether the title of the title-and-subtitle row `row` is drawn in a font at least as large as its
@@ -242,6 +247,9 @@ int scenario_drive_list(const Ctx& c) {
     M3_CHECK(5213, count_visible(w, "wizDestDrive_1") == 0, "only the removable drive is offered");
     M3_CHECK(5214, count_visible(w, "wizDestNoDriveMessage") == 0, "«no drive» message shown next to a drive");
     M3_CHECK(5220, title_not_smaller_than_subtitle(drive), "drive name drawn smaller than its mount point");
+    QQuickItem* drive_title = text_item_showing(drive, QStringLiteral("USB-Disk"));
+    M3_CHECK(5221, drive_title != nullptr && drive_title->property("textFormat").toInt() == Qt::PlainText,
+        "a drive label could be read as markup");
     M3_CHECK(5215, click_ui_item(w, drive, "drive"), "click on the drive failed");
     QQuickItem* location = item_named(w, "wizDestLocationField");
     M3_CHECK(5216, wait_until([&] { return location && location->property("text").toString() == QLatin1String("/media/user/USB-Disk"); }, 2000),
