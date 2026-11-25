@@ -242,18 +242,14 @@ pub fn backup_toml_snippet(backup: &crate::model::Backup) -> String {
     toml::to_string_pretty(backup).unwrap_or_default()
 }
 
-/// Kestic's data folder (`$XDG_DATA_HOME/kestic`, by default `~/.local/share/kestic`), where
-/// it keeps a restic it manages; `None` without `XDG_DATA_HOME` and `HOME`.
+/// Kestic's data folder from this process's environment (`$XDG_DATA_HOME/kestic`, by default
+/// `~/.local/share/kestic`; see [`crate::restic_install::kestic_data_dir`]), where it keeps the
+/// restic it manages and its `known_hosts`; `None` without an absolute `HOME`.
 pub fn default_data_dir() -> Option<PathBuf> {
-    let base = env::var_os("XDG_DATA_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("HOME")
-                .filter(|v| !v.is_empty())
-                .map(|home| PathBuf::from(home).join(".local").join("share"))
-        })?;
-    Some(base.join("kestic"))
+    crate::restic_install::kestic_data_dir(
+        env::var_os("HOME").as_deref(),
+        env::var_os("XDG_DATA_HOME").as_deref(),
+    )
 }
 
 /// Resolves the canonical configuration file path (`$XDG_CONFIG_HOME/kestic/config.toml`).
@@ -335,21 +331,15 @@ fn migrate(config: &mut AppConfig, legacy_app_managed_path: Option<PathBuf>) {
         // running as a custom path.
         if let Some(path) = legacy_app_managed_path
             && config.restic_provider == ResticProvider::AppManaged
-            && Some(path.as_path()) != app_managed_binary_from_env().as_deref()
+            && Some(path.as_path())
+                != default_data_dir()
+                    .map(|dir| crate::restic_install::app_managed_binary(&dir))
+                    .as_deref()
         {
             config.restic_provider = ResticProvider::Custom { path };
         }
         config.config_version = 4;
     }
-}
-
-/// The app-managed restic, `$XDG_DATA_HOME/kestic/restic`, if the environment names a home.
-fn app_managed_binary_from_env() -> Option<PathBuf> {
-    crate::restic_install::kestic_data_dir(
-        env::var_os("HOME").as_deref(),
-        env::var_os("XDG_DATA_HOME").as_deref(),
-    )
-    .map(|dir| crate::restic_install::app_managed_binary(&dir))
 }
 
 /// Loads `config.toml` if it exists, returning `Ok(None)` if the file does not exist.

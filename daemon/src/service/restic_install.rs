@@ -11,20 +11,21 @@ use super::state::{DaemonCore, refresh_probe_unlocked};
 use crate::dbus_api::ResticInstallStatusDto;
 use crate::dbus_server::emit_status_changed;
 use kestic_core::clock::Clock;
+use kestic_core::config::default_data_dir;
 use kestic_core::model::ResticProvider;
 use kestic_core::model::RunId;
 use kestic_core::provider::{ResticLocations, resolve_with, same_binary};
 use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::restic_install::{
     InstallObserver, InstallOutcome, InstallRequest, RemoveError, app_managed_binary,
-    install_latest_observed, kestic_data_dir, remove_app_managed, remove_leftovers,
+    install_latest_observed, remove_app_managed, remove_leftovers,
 };
 use kestic_core::restic_release::{Arch, InstallError};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ResticInstallCode, ResticInstallOutcome, ResticInstallPhase};
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use time::OffsetDateTime;
@@ -200,14 +201,6 @@ impl Drop for FinishGuard {
     }
 }
 
-/// Kestic's data folder from this process's environment.
-fn data_dir() -> Option<PathBuf> {
-    kestic_data_dir(
-        std::env::var_os("HOME").as_deref(),
-        std::env::var_os("XDG_DATA_HOME").as_deref(),
-    )
-}
-
 /// Removes the leftovers of an installation that was interrupted when an earlier daemon ended,
 /// once: at the start or before this daemon's first installation, whichever comes first. Both
 /// run under the `DaemonCore` lock, so the sweep never meets the temp file of a running
@@ -223,7 +216,7 @@ pub(crate) fn remove_install_leftovers(shared: &Arc<Mutex<DaemonCore>>) {
     shared
         .lock_unpoisoned()
         .install_leftovers
-        .run_once(data_dir().as_deref());
+        .run_once(default_data_dir().as_deref());
 }
 
 impl LeftoverSweep {
@@ -305,7 +298,9 @@ pub fn start_restic_install_async(
         guard.forget_expired_installs();
         // A call that arrives right after the bus name was taken may come before the sweep at
         // the start; then it sweeps here, before its worker writes a temp file.
-        guard.install_leftovers.run_once(data_dir().as_deref());
+        guard
+            .install_leftovers
+            .run_once(default_data_dir().as_deref());
         let running = guard
             .restic_installs
             .values()
@@ -340,7 +335,7 @@ fn run_install(job: InstallJob) {
         clock: Arc::clone(&job.clock),
     };
     let result = Arch::host().and_then(|arch| {
-        let dir = data_dir().ok_or_else(|| {
+        let dir = default_data_dir().ok_or_else(|| {
             InstallError::WriteFailed("neither XDG_DATA_HOME nor HOME is set".to_string())
         })?;
         let request = InstallRequest {
@@ -375,7 +370,7 @@ fn run_install(job: InstallJob) {
 /// restic that links to it, or a custom path to it) or a restic process may run it; removing a
 /// missing binary changes nothing.
 pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), KesticServiceErr> {
-    let Some(dir) = data_dir() else {
+    let Some(dir) = default_data_dir() else {
         return Ok(());
     };
     let binary = app_managed_binary(&dir);

@@ -184,11 +184,9 @@ impl KnownHostsPaths {
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .ok_or(KnownHostsPathError::NoHome)?;
-        let data = std::env::var_os("XDG_DATA_HOME")
-            .filter(|v| !v.is_empty())
-            .map_or_else(|| home.join(".local").join("share"), PathBuf::from);
+        let data = crate::config::default_data_dir().ok_or(KnownHostsPathError::NoHome)?;
         let paths = Self {
-            kestic: data.join("kestic").join("known_hosts"),
+            kestic: data.join("known_hosts"),
             user: home.join(".ssh").join("known_hosts"),
             system: PathBuf::from("/etc/ssh/ssh_known_hosts"),
         };

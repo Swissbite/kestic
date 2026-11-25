@@ -88,11 +88,8 @@ impl ResticLocations {
     /// The locations seen from this process: `restic` in its `PATH` and the app-managed binary
     /// below its `XDG_DATA_HOME`.
     pub fn from_env() -> Self {
-        let app_managed = crate::restic_install::kestic_data_dir(
-            std::env::var_os("HOME").as_deref(),
-            std::env::var_os("XDG_DATA_HOME").as_deref(),
-        )
-        .map(|dir| crate::restic_install::app_managed_binary(&dir));
+        let app_managed = crate::config::default_data_dir()
+            .map(|dir| crate::restic_install::app_managed_binary(&dir));
         Self {
             system: which::which("restic").ok(),
             app_managed,

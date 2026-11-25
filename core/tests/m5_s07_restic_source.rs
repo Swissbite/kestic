@@ -8,10 +8,10 @@ mod common;
 
 use kestic_core::config::{AppConfig, load_optional_config, parse_config_str, save_config};
 use kestic_core::model::ResticProvider;
-use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
 use kestic_core::provider::{
     ResticLocations, ResticProviderError, ResticSurvey, check_binary_version, resolve_with,
 };
+use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
 use kestic_i18n::codes::{ResticPathProblem, ResticStatusCode};
 use kestic_i18n::messages::ResticStatusParams;
 use kestic_test_support::tools::write_executable;
