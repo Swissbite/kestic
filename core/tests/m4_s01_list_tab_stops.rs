@@ -60,7 +60,7 @@ fn block_lines<'a>(lines: &[&'a str], start: usize) -> Vec<&'a str> {
 }
 
 /// Controls that are Tab stops unless they say otherwise.
-const TAB_STOP_CONTROLS: [&str; 11] = [
+const TAB_STOP_CONTROLS: [&str; 12] = [
     "Button {",
     "ToolButton {",
     "CheckBox {",
@@ -72,6 +72,50 @@ const TAB_STOP_CONTROLS: [&str; 11] = [
     "SpinBox {",
     "ItemDelegate {",
     "Card {",
+    "Chip {",
+];
+
+/// The `Repeater`s with Tab-stop rows that AC-M4-01-7 exempts, as file and the reason in the
+/// comment line right above them (`// Not a list: <reason>`).
+const EXEMPTIONS: [(&str, &str); 11] = [
+    (
+        "BackupConditionsEditPage.qml",
+        "form rows, one check box per known network.",
+    ),
+    (
+        "BackupExcludesEditPage.qml",
+        "form rows, one exclude rule each with its own controls.",
+    ),
+    (
+        "BackupScheduleEditPage.qml",
+        "a row of buttons, one per weekday.",
+    ),
+    (
+        "DestinationDetailsForm.qml",
+        "form rows of the environment variables",
+    ),
+    (
+        "DestinationTypeChooser.qml",
+        "radio choices of the cloud service",
+    ),
+    (
+        "DestinationTypeChooser.qml",
+        "the cards to choose the type of the destination from",
+    ),
+    (
+        "KindChips.qml",
+        "the filter chips by kind, a row of buttons.",
+    ),
+    ("MainHeaderArea.qml", "the breadcrumb, a row of buttons."),
+    (
+        "OverviewPage.qml",
+        "the backup cards, a card grid; each card is a Tab stop of its own.",
+    ),
+    ("RestoreBrowsePage.qml", "the path row, a row of buttons."),
+    (
+        "RunDetailPage.qml",
+        "one card per command, each with its text to read and copy.",
+    ),
 ];
 
 /// Whether the block of a `Repeater` holds a row that is a Tab stop: a control of
@@ -95,12 +139,13 @@ fn repeats_tab_stops(lines: &[&str], start: usize) -> bool {
     })
 }
 
-/// AC-M4-01-7 (d): a `Repeater` whose rows are Tab stops is no list of entries: the comment
-/// line right above it says so (`// Not a list: <why>`, e.g. a row of buttons, form rows, the
-/// backup cards of «Übersicht»). A list of entries is a `KeyboardList`.
+/// AC-M4-01-7 (d): a `Repeater` whose rows are Tab stops is no list of entries but one of the
+/// exemptions the AC names: (a) the comment line right above it says so
+/// (`// Not a list: <reason>`), and (b) the Repeaters found are exactly [`EXEMPTIONS`], so a new
+/// one fails. A list of entries is a `KeyboardList`.
 #[test]
 fn ac_m4_01_7_no_repeater_lists_tab_stop_rows() {
-    let mut exempt = 0;
+    let mut found: Vec<(String, String)> = Vec::new();
     for (name, text) in qml_files() {
         let lines: Vec<&str> = text.lines().collect();
         for (i, line) in lines.iter().enumerate() {
@@ -108,15 +153,40 @@ fn ac_m4_01_7_no_repeater_lists_tab_stop_rows() {
                 continue;
             }
             let above = i.checked_sub(1).map_or("", |j| lines[j].trim());
+            let reason = above.strip_prefix("// Not a list: ");
             assert!(
-                above.starts_with("// Not a list:"),
-                "{name}:{}: a Repeater with Tab-stop rows; a list is a KeyboardList",
+                reason.is_some(),
+                "(a) {name}:{}: a Repeater with Tab-stop rows; a list is a KeyboardList",
                 i + 1
             );
-            exempt += 1;
+            found.push((name.clone(), reason.unwrap_or_default().to_string()));
         }
     }
-    assert!(exempt >= 5, "Repeaters with Tab-stop rows found: {exempt}");
+    found.sort();
+    let mut expected: Vec<(String, String)> = EXEMPTIONS
+        .iter()
+        .map(|(f, r)| ((*f).to_string(), (*r).to_string()))
+        .collect();
+    expected.sort();
+    assert_eq!(
+        found, expected,
+        "(b) the Repeaters with Tab-stop rows are the exemptions of AC-M4-01-7"
+    );
+}
+
+/// AC-M4-01-7 (d): a row of `Kirigami.Chip`s is a row of Tab stops.
+#[test]
+fn ac_m4_01_7_chips_count_as_tab_stop_rows() {
+    let (_, text) = qml_files()
+        .into_iter()
+        .find(|(name, _)| name == "KindChips.qml")
+        .expect("KindChips.qml");
+    let lines: Vec<&str> = text.lines().collect();
+    let repeater = lines
+        .iter()
+        .position(|l| l.trim().starts_with("Repeater {"))
+        .expect("the Repeater of the chips");
+    assert!(repeats_tab_stops(&lines, repeater));
 }
 
 /// AC-M4-01-7 (d): (a) no QML file declares a plain `ListView` (lists are `KeyboardList`),

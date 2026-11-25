@@ -33,6 +33,7 @@ Flow {
 
     spacing: Kirigami.Units.smallSpacing
 
+    // Not a list: the filter chips by kind, a row of buttons.
     Repeater {
         model: chips.listModel ? chips.listModel.kind_codes : []
         delegate: Kirigami.Chip {
