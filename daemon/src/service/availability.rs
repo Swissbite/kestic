@@ -303,7 +303,7 @@ fn spawn_restic_availability_checks(
                 ));
             }
         }
-        let (conn_opt, state_dto, tray_opt, tray_state) = {
+        let publication = {
             let mut guard = shared.lock_unpoisoned();
             guard.restic_availability_in_flight = false;
             guard.availability_probe_count += updates.len() as u64;
@@ -313,20 +313,9 @@ fn spawn_restic_availability_checks(
                     guard.dest_availability.insert(dest.id.clone(), dto);
                 }
             }
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (
-                guard.conn.clone(),
-                state_dto,
-                guard.tray.clone(),
-                tray_state,
-            )
+            guard.state_publication()
         };
-        if let Some(tray) = tray_opt {
-            tray.set_full_state(tray_state);
-        }
-        if let Some(conn) = &conn_opt {
-            emit_status_changed(conn, &state_dto);
-        }
+        publication.publish();
     });
 }
 
@@ -383,26 +372,15 @@ pub(crate) fn trigger_background_availability_probe(shared: Arc<Mutex<DaemonCore
 
     thread::spawn(move || {
         let _ = refresh_availability_unlocked(&shared, false);
-        let (conn_opt, state_dto, tray_opt, tray_state) = {
+        let publication = {
             let mut guard = shared.lock_unpoisoned();
             if guard.availability_probe_generation == generation {
                 guard.availability_probe_in_flight = false;
                 guard.availability_probe_started_at = None;
             }
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (
-                guard.conn.clone(),
-                state_dto,
-                guard.tray.clone(),
-                tray_state,
-            )
+            guard.state_publication()
         };
-        if let Some(tray) = tray_opt {
-            tray.set_full_state(tray_state);
-        }
-        if let Some(conn) = &conn_opt {
-            emit_status_changed(conn, &state_dto);
-        }
+        publication.publish();
     });
 }
 

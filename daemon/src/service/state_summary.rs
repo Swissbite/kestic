@@ -94,7 +94,39 @@ struct BackupPendingSummaryInput<'a> {
     dest_busy: bool,
 }
 
+/// The state snapshot taken under the daemon lock, published (tray and `StatusChanged`) after
+/// the lock is released.
+pub(super) struct StatePublication {
+    conn: Option<Connection>,
+    state_dto: DaemonStateDto,
+    tray: Option<Arc<TrayHandle>>,
+    tray_state: KesticTrayState,
+}
+
+impl StatePublication {
+    /// Pushes the snapshot to the tray and emits `StatusChanged`.
+    pub(super) fn publish(self) {
+        if let Some(tray) = self.tray {
+            tray.set_full_state(self.tray_state);
+        }
+        if let Some(conn) = &self.conn {
+            emit_status_changed(conn, &self.state_dto);
+        }
+    }
+}
+
 impl DaemonCore {
+    /// The state snapshot to publish once the lock is released.
+    pub(super) fn state_publication(&self) -> StatePublication {
+        let (state_dto, tray_state) = self.build_state_and_tray();
+        StatePublication {
+            conn: self.conn.clone(),
+            state_dto,
+            tray: self.tray.clone(),
+            tray_state,
+        }
+    }
+
     /// Rebuilds the state snapshot, pushes it to the tray and returns it for the
     /// `StatusChanged` signal.
     pub(super) fn push_tray_state(&self) -> DaemonStateDto {

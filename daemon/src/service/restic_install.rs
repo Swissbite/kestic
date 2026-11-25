@@ -9,7 +9,6 @@
 use super::error::KesticServiceErr;
 use super::state::{DaemonCore, refresh_probe_unlocked};
 use crate::dbus_api::ResticInstallStatusDto;
-use crate::dbus_server::emit_status_changed;
 use kestic_core::clock::Clock;
 use kestic_core::config::default_data_dir;
 use kestic_core::model::ResticProvider;
@@ -413,22 +412,8 @@ fn is_active_source(provider: &ResticProvider, binary: &Path, locations: &Restic
 
 /// Sends the current state to the tray and as `StatusChanged`.
 fn publish_state(shared: &Arc<Mutex<DaemonCore>>) {
-    let (conn, state_dto, tray, tray_state) = {
-        let guard = shared.lock_unpoisoned();
-        let (state_dto, tray_state) = guard.build_state_and_tray();
-        (
-            guard.conn.clone(),
-            state_dto,
-            guard.tray.clone(),
-            tray_state,
-        )
-    };
-    if let Some(tray) = tray {
-        tray.set_full_state(tray_state);
-    }
-    if let Some(conn) = &conn {
-        emit_status_changed(conn, &state_dto);
-    }
+    let publication = shared.lock_unpoisoned().state_publication();
+    publication.publish();
 }
 
 #[cfg(test)]
