@@ -354,8 +354,9 @@ fn ac_m5_03_5_unanswered_preflight_blocks_run_after_15_seconds() {
     );
 }
 
-/// AC-M5-03-7 (FR-01, NFR-02), D-Bus part: a variable named `PATH`, `LD_PRELOAD` or outside
-/// `[A-Z_][A-Z0-9_]*` (a) is refused by `core` over D-Bus too: the connection test reports
+/// AC-M5-03-7 (FR-01, NFR-02), D-Bus part: a variable named `RESTIC_PASSWORD_COMMAND`,
+/// `RESTIC_REPOSITORY_FILE`, `PATH`, `HOME`, `LD_PRELOAD` or outside `[A-Z_][A-Z0-9_]*` (a) is
+/// refused by `core` over D-Bus too: the connection test reports
 /// `reserved_variable` with the name, `AddDestination` fails, nothing is saved and (c) restic is
 /// not started.
 #[test]
@@ -368,7 +369,17 @@ fn ac_m5_03_7_reserved_variable_is_refused_over_dbus() {
             let client = &rig.daemon.client;
             let config_before = fs::read(&rig.daemon.config_path).ok();
             let restic_before = rig.wrapper.started_repo_count();
-            for name in ["PATH", "LD_PRELOAD", "my_var"] {
+            for name in [
+                "RESTIC_PASSWORD_COMMAND",
+                "RESTIC_REPOSITORY_FILE",
+                "PATH",
+                "HOME",
+                "LD_PRELOAD",
+                "my_var",
+                "1TOKEN",
+                "B2-KEY",
+                "",
+            ] {
                 let mut dest = rig.destination();
                 dest.kind = DestinationKind::Generic {
                     url: format!("rclone::local:{}", rig.repo.display()),
