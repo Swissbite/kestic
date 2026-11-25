@@ -104,6 +104,21 @@ fn percent_decode(text: &str) -> Vec<u8> {
     out
 }
 
+/// Whether Kestic can create files in the folder `path`: it creates and removes an empty file
+/// with a random name there. The error says why not.
+pub fn probe_writable(path: &Path) -> std::io::Result<()> {
+    let nonce = crate::model::RunId::generate()
+        .map_or_else(|_| "0".to_string(), |r| r.as_str().to_string());
+    let probe = path.join(format!(".kestic-write-probe-{nonce}"));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)?;
+    // The folder is writable; a probe left behind is an empty file with Kestic's prefix.
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
 /// Whether `path` lies on a CIFS/SMB share according to `inspector`'s mountinfo: a CIFS mount
 /// or an SMB share shown by the FUSE mount of KIO or GVfs.
 pub fn is_on_cifs_share(path: &Path, inspector: &dyn MountInspector) -> bool {

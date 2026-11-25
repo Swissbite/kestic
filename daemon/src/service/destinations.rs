@@ -24,7 +24,6 @@ use kestic_core::known_hosts::HostKeyError;
 use kestic_core::local_path::{NotALocalPath, connection_notes};
 use kestic_core::model::{
     Destination, DestinationId, DestinationKind, MaintenanceSchedule, ModelError, ResticProvider,
-    RunId,
 };
 use kestic_core::provider::resolve_and_check;
 use kestic_core::repo_identity::connection_changed;
@@ -34,7 +33,6 @@ use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, Secret
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode};
 use std::ffi::OsStr;
-use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use zbus::Connection;
@@ -360,20 +358,8 @@ fn check_init_new_destination(
         if path.join("config").exists() {
             return test_failure(ConnectionTestCode::RepositoryExists, String::new());
         }
-        let nonce = RunId::generate().map_or_else(|_| "0".to_string(), |r| r.as_str().to_string());
-        let probe_path = path.join(format!(".kestic-write-probe-{nonce}"));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&probe_path)
-        {
-            Ok(f) => {
-                drop(f);
-                let _ = fs::remove_file(&probe_path);
-            }
-            Err(err) => {
-                return test_failure(ConnectionTestCode::NotWritable, err.to_string());
-            }
+        if let Err(err) = kestic_core::local_path::probe_writable(path) {
+            return test_failure(ConnectionTestCode::NotWritable, err.to_string());
         }
     }
     if is_existing

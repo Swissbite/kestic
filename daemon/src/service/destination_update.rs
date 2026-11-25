@@ -20,7 +20,7 @@ use kestic_core::backend_credentials::BackendCredentials;
 use kestic_core::destination::{
     DestinationError, DestinationSetupMode, check_existing_repository, prepare_repository,
 };
-use kestic_core::model::{Destination, DestinationKind, RunId};
+use kestic_core::model::{Destination, DestinationKind};
 use kestic_core::provider::{ResticProviderError, resolve_and_check};
 use kestic_core::repo_identity::{
     RepositoryId, RepositoryMatch, connection_changed, decide, same_server,
@@ -30,7 +30,6 @@ use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretValue};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ConnectionTestCode, DestinationUpdateOutcome};
-use std::fs;
 use std::sync::{Arc, Mutex};
 use zbus::Connection;
 
@@ -156,20 +155,8 @@ fn check_writable(kind: &DestinationKind) -> Result<(), EditError> {
     let DestinationKind::Local { path } = kind else {
         return Ok(());
     };
-    let nonce = RunId::generate().map_or_else(|_| "0".to_string(), |r| r.as_str().to_string());
-    let probe = path.join(format!(".kestic-write-probe-{nonce}"));
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-    {
-        Ok(file) => {
-            drop(file);
-            let _ = fs::remove_file(&probe);
-            Ok(())
-        }
-        Err(err) => Err(EditError::NotWritable(err.to_string())),
-    }
+    kestic_core::local_path::probe_writable(path)
+        .map_err(|err| EditError::NotWritable(err.to_string()))
 }
 
 /// Checks the edited connection: the login, the saved repository password and the repository
