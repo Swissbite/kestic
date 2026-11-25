@@ -256,16 +256,29 @@ fn applying_app_managed_downloads_it_first_when_missing() {
 }
 
 /// AC-M5-07-5: only the installation that the source dialog started for «Managed by Kestic»
-/// switches the source, and only when it succeeded.
+/// switches the source, only when it succeeded, and not after another source was chosen.
 #[test]
 fn switch_after_install_only_for_its_own_installation() {
-    assert!(switch_after_install("install-1", "install-1", "done"));
+    let started = || {
+        let mut pending = PendingSwitch::default();
+        pending.start("install-1");
+        pending
+    };
+    assert!(started().finish("install-1", "done"));
     // another installation (Download restic, Update Now) never switches
-    assert!(!switch_after_install("", "install-2", "done"));
-    assert!(!switch_after_install("install-1", "install-2", "done"));
-    // a failed or cancelled installation does not switch
-    assert!(!switch_after_install("install-1", "install-1", "error"));
-    assert!(!switch_after_install("install-1", "install-1", "cancelled"));
+    assert!(!PendingSwitch::default().finish("install-2", "done"));
+    let mut other = started();
+    assert!(!other.finish("install-2", "done"));
+    assert!(other.finish("install-1", "done"), "still waits for its own");
+    // a failed or cancelled installation does not switch, and ends the wait
+    let mut failed = started();
+    assert!(!failed.finish("install-1", "error"));
+    assert!(!failed.finish("install-1", "done"));
+    assert!(!started().finish("install-1", "cancelled"));
+    // a source chosen while it downloads wins
+    let mut overridden = started();
+    overridden.cancel();
+    assert!(!overridden.finish("install-1", "done"));
 }
 
 /// AC-M5-07-5: a refused removal of the app-managed restic names it as in use; other refusals

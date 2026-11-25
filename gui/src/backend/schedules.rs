@@ -15,6 +15,7 @@ use crate::state_cache::{
 };
 use crate::time_texts::{cached_daemon_now, cached_today_iso_date};
 use crate::ui_texts::GuiText;
+use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use kestic_core::model::{
     BackupId, MaintenanceSchedule, NotificationSettings, RunConditions, Schedule,
@@ -169,6 +170,12 @@ impl qobject::KesticApp {
         kind: &QString,
         custom_path: &QString,
     ) -> bool {
+        // A source chosen now wins over a switch that waits for a download.
+        self.as_mut()
+            .rust_mut()
+            .restic_switch_after_install
+            .cancel();
+        self.as_mut().set_restic_action_error(QString::from(""));
         let Some(provider) = self
             .as_mut()
             .ok_or_show(build_provider(&kind.to_string(), &custom_path.to_string()))

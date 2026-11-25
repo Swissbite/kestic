@@ -685,9 +685,9 @@ pub struct KesticAppRust {
     restic_install_error_detail: QString,
     /// `install_id` of the last installation started from this GUI.
     restic_install_id: String,
-    /// `install_id` of the installation the source dialog started for «Managed by Kestic»:
-    /// the source switches to it once exactly this installation succeeded.
-    restic_switch_after_install: String,
+    /// The switch to «Managed by Kestic» that waits for the installation the source dialog
+    /// started.
+    restic_switch_after_install: crate::restic_section_view::PendingSwitch,
     blocking_kind: QString,
     blocking_message: QString,
     overall_headline: QString,

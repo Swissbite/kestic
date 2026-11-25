@@ -982,10 +982,7 @@ fn ac_m5_07_5_gui_refused_delete_keeps_the_binary() {
                 "en",
                 &smoke_artifact("restic-switch-refused", "wide", "en"),
                 &[
-                    (
-                        "KESTIC_SMOKE_SYSTEM_RESTIC",
-                        &system.to_string_lossy().into_owned(),
-                    ),
+                    ("KESTIC_SMOKE_SYSTEM_RESTIC", &system.to_string_lossy()),
                     ("KESTIC_SMOKE_EXPECT_REMOVE_FAILURE", "1"),
                 ],
             );
@@ -1023,6 +1020,32 @@ fn restic_source_dialog_downloads_then_switches() {
                 Some(RELEASE),
                 "the downloaded restic is in use"
             );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// A custom restic path that does not exist: the settings show the reason in English and
+/// German with the path as plain text, and the raw reason under «Details».
+#[test]
+fn restic_path_problem_gui_reason_and_details() {
+    run_isolated_test(
+        "restic_path_problem_gui_reason_and_details",
+        "KESTIC_M5_GUI_RESTIC_PATH_PROBLEM_INNER",
+        |root| {
+            let path = root.join("<b>missing</b>").join("restic");
+            let rig = start_with_source(root, Some(ResticProvider::Custom { path: path.clone() }));
+            let path = path.to_string_lossy();
+            for lang in ["en", "de"] {
+                run_m5_gui_smoke(
+                    root,
+                    "m5-restic-path-problem",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restic-path-problem", "wide", lang),
+                    &[("KESTIC_SMOKE_CUSTOM_PATH", &path)],
+                );
+            }
             rig.daemon.stop();
         },
     );

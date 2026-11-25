@@ -432,21 +432,37 @@ Kirigami.ApplicationWindow {
 
                 property bool detailsExpanded: false
 
-                Kirigami.InlineMessage {
-                    objectName: "resticProblemMessage"
-                    type: Kirigami.MessageType.Error
-                    visible: true
-                    text: appBackend.restic_problem_text
+                // The reason names the path the user entered: plain text, never markup.
+                RowLayout {
+                    spacing: Kirigami.Units.smallSpacing
                     Layout.fillWidth: true
-                    actions: [
-                        Kirigami.Action {
-                            objectName: "resticProblemDetailsAction"
-                            visible: appBackend.restic_problem_detail !== ""
-                            icon.name: resticProblemPanel.detailsExpanded ? "go-up" : "go-down"
-                            text: resticProblemPanel.detailsExpanded ? Texts.label("hide_details") : Texts.label("details")
-                            onTriggered: resticProblemPanel.detailsExpanded = !resticProblemPanel.detailsExpanded
-                        }
-                    ]
+
+                    Kirigami.Icon {
+                        source: "dialog-error"
+                        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                        implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                        Layout.alignment: Qt.AlignTop
+                    }
+
+                    Controls.Label {
+                        objectName: "resticProblemMessage"
+                        text: appBackend.restic_problem_text
+                        textFormat: Text.PlainText
+                        color: Kirigami.Theme.negativeTextColor
+                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                        Layout.fillWidth: true
+                    }
+
+                    Controls.Button {
+                        objectName: "resticProblemDetailsButton"
+                        visible: appBackend.restic_problem_detail !== ""
+                        flat: true
+                        icon.name: resticProblemPanel.detailsExpanded ? "go-up" : "go-down"
+                        text: resticProblemPanel.detailsExpanded ? Texts.label("hide_details") : Texts.label("details")
+                        Accessible.name: text
+                        Layout.alignment: Qt.AlignTop
+                        onClicked: resticProblemPanel.detailsExpanded = !resticProblemPanel.detailsExpanded
+                    }
                 }
 
                 // Raw text of the operating system: shown as plain text, never as markup.

@@ -1107,6 +1107,32 @@ int scenario_restic_source_download(const Ctx& c) {
     return 0;
 }
 
+
+// A custom path at KESTIC_SMOKE_CUSTOM_PATH that does not exist: the section names the reason in
+// the GUI language with the path as plain text, and shows the raw reason under «Details».
+int scenario_restic_path_problem(const Ctx& c) {
+    const QString path = qEnvironmentVariable("KESTIC_SMOKE_CUSTOM_PATH");
+    M3_CHECK(5990, !path.isEmpty(), "KESTIC_SMOKE_CUSTOM_PATH not set");
+    QQuickWindow* sw = open_restic_settings(c.window);
+    M3_CHECK(5991, sw != nullptr, "settings window did not open");
+    QQuickItem* message = item_named(sw, "resticProblemMessage");
+    M3_CHECK(5992, wait_until([&] { return message && message->isVisible(); }, 5000), "no reason shown");
+    M3_CHECK_EQ(5993, message->property("text").toString(),
+        loc(c.lang, "Custom restic path is invalid: %1 does not exist", "Eigener restic-Pfad ist ungültig: %1 existiert nicht").arg(path),
+        "translated reason");
+    M3_CHECK(5994, message->property("textFormat").toInt() == Qt::PlainText, "reason not shown as plain text");
+    M3_CHECK_EQ(5995, shown_text(sw, "resticSourceLabel"), loc(c.lang, "Custom path", "Eigener Pfad"), "source row");
+    QQuickItem* details = item_named(sw, "resticProblemDetailsButton");
+    M3_CHECK(5996, details != nullptr && details->isVisible(), "«Details» missing");
+    M3_CHECK(5997, click_ui_item(sw, details, "Details"), "click on «Details» failed");
+    QQuickItem* detail = item_named(sw, "resticProblemDetail");
+    M3_CHECK(5998, wait_until([&] { return detail && detail->isVisible(); }, 2000), "raw reason hidden after «Details»");
+    M3_CHECK(5999, detail->property("textFormat").toInt() == Qt::PlainText && !detail->property("text").toString().isEmpty(),
+        "raw reason empty or not plain text");
+    M3_CHECK(5989, save_settings_screenshot(sw, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m5_smoke_scenario(
@@ -1155,6 +1181,8 @@ void run_m5_smoke_scenario(
         rc = scenario_restic_switch(ctx);
     } else if (scen == QLatin1String("m5-restic-source-download")) {
         rc = scenario_restic_source_download(ctx);
+    } else if (scen == QLatin1String("m5-restic-path-problem")) {
+        rc = scenario_restic_path_problem(ctx);
     } else {
         std::fprintf(stderr, "M5 smoke failed (599): unknown m5 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

@@ -139,7 +139,7 @@ fn problem_texts(status: &ResticStatusDto) -> (String, String) {
     match status.error_kind {
         None | Some(ResticStatusCode::TooOld) => (String::new(), String::new()),
         Some(code) => {
-            let text = status.error_message().map(|m| tr(&m)).unwrap_or_default();
+            let text = status.error_message().map_or_else(String::new, |m| tr(&m));
             let translated = code == ResticStatusCode::InvalidCustomPath
                 && status
                     .path_problem
@@ -160,11 +160,33 @@ pub fn needs_install_first(kind: &str, app_managed_installed: bool) -> bool {
     kind == ResticSourceCode::AppManaged.as_str() && !app_managed_installed
 }
 
-/// Whether the installation `finished_id`, ended in `state`, switches the source to the
-/// app-managed restic: only the one the source dialog started for it (`pending_id`), and
-/// only when it succeeded.
-pub fn switch_after_install(pending_id: &str, finished_id: &str, state: &str) -> bool {
-    !pending_id.is_empty() && pending_id == finished_id && state == "done"
+/// The switch to the app-managed restic that the source dialog asked for while it was not
+/// installed: it waits for the installation the dialog started.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PendingSwitch {
+    install_id: Option<String>,
+}
+
+impl PendingSwitch {
+    /// Waits for the installation `install_id`.
+    pub fn start(&mut self, install_id: &str) {
+        self.install_id = Some(install_id.to_string());
+    }
+
+    /// Drops the wait: another source was chosen since.
+    pub fn cancel(&mut self) {
+        self.install_id = None;
+    }
+
+    /// Ends the wait once the installation `finished_id` ended in `state`; whether to switch
+    /// now: only for the installation the dialog started, and only when it succeeded.
+    pub fn finish(&mut self, finished_id: &str, state: &str) -> bool {
+        if self.install_id.as_deref() != Some(finished_id) {
+            return false;
+        }
+        self.install_id = None;
+        state == "done"
+    }
 }
 
 /// Why `RemoveAppManagedRestic` failed: the restic is in use, or the daemon's text for `code`

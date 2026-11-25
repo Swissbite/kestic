@@ -9,14 +9,13 @@ use super::{dbus_error_text, qobject};
 use crate::restic_install_view::{
     InstallView, OfferInput, failed_poll_view, install_view, restic_offer, start_failure_text,
 };
-use crate::restic_section_view::{
-    ResticSectionView, needs_install_first, remove_failure_text, switch_after_install,
-};
+use crate::restic_section_view::{ResticSectionView, needs_install_first, remove_failure_text};
 use crate::state_cache::{daemon_unavailable_text, make_client, refresh_state_now};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use kestic_core::model::ResticProvider;
 use kestic_daemon::dbus_api::KesticDbusError;
+use kestic_i18n::codes::ServiceErrorCode;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
@@ -86,16 +85,28 @@ impl qobject::KesticApp {
         if !needs_install_first(&kind, *self.restic_app_managed_installed()) {
             return self.set_restic_provider(&QString::from(&kind), custom_path);
         }
+        if self.restic_install_state().to_string() == "running" {
+            self.as_mut()
+                .show_action_error(&start_failure_text(ServiceErrorCode::AlreadyRunning));
+            return false;
+        }
         if !self.as_mut().start_restic_install() {
             return false;
         }
         let install_id = self.restic_install_id.clone();
-        self.as_mut().rust_mut().restic_switch_after_install = install_id;
+        self.as_mut()
+            .rust_mut()
+            .restic_switch_after_install
+            .start(&install_id);
         true
     }
 
     /// Switches to the source «Automatic» from the hint of the restic section.
-    pub fn switch_restic_to_automatic(self: Pin<&mut Self>) -> bool {
+    pub fn switch_restic_to_automatic(mut self: Pin<&mut Self>) -> bool {
+        self.as_mut()
+            .rust_mut()
+            .restic_switch_after_install
+            .cancel();
         self.switch_restic_source(&ResticProvider::Automatic)
     }
 
@@ -175,8 +186,12 @@ impl qobject::KesticApp {
         let finished = view.state != "running";
         if finished {
             self.as_mut().rust_mut().restic_install_id.clear();
-            let pending = std::mem::take(&mut self.as_mut().rust_mut().restic_switch_after_install);
-            if switch_after_install(&pending, &install_id, &view.state) {
+            let switch = self
+                .as_mut()
+                .rust_mut()
+                .restic_switch_after_install
+                .finish(&install_id, &view.state);
+            if switch {
                 self.as_mut()
                     .switch_restic_source(&ResticProvider::AppManaged);
             }
