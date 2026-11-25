@@ -815,11 +815,12 @@ impl FakePortalInhibit {
         flags: u32,
         options: HashMap<String, OwnedVariant>,
     ) -> OwnedObjectPath {
-        self.recorder.inhibit_count.fetch_add(1, Ordering::SeqCst);
+        // Count last: tests wait for the count and then read flags and reason.
         self.recorder.last_flags.store(flags, Ordering::SeqCst);
         if let Some(reason) = options.get("reason").and_then(|v| <&str>::try_from(v).ok()) {
             *self.recorder.last_reason.lock().expect("lock") = reason.to_string();
         }
+        self.recorder.inhibit_count.fetch_add(1, Ordering::SeqCst);
         self.req_path.clone()
     }
 }
