@@ -382,12 +382,12 @@ impl UreqTransport {
     ) -> Result<HttpAnswer, InstallError> {
         let network =
             |err: &dyn std::fmt::Display| InstallError::Network(clip(&format!("{url}: {err}")));
-        let mut response = self
-            .agent
-            .get(url.as_str())
-            .header("Accept", "application/vnd.github+json")
-            .call()
-            .map_err(|err| network(&err))?;
+        let mut request = self.agent.get(url.as_str());
+        // Only GitHub's API answers in its JSON media type; asset downloads get no such wish.
+        if url.path().starts_with("/repos/") {
+            request = request.header("Accept", "application/vnd.github+json");
+        }
+        let mut response = request.call().map_err(|err| network(&err))?;
         let status = response.status().as_u16();
         let location = response
             .headers()

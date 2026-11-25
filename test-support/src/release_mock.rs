@@ -331,7 +331,28 @@ impl ReleaseMock {
 
     /// Request paths in the order they arrived.
     pub fn requests(&self) -> Vec<String> {
-        self.requests.lock().expect("request log").clone()
+        self.requests
+            .lock()
+            .expect("request log")
+            .iter()
+            .map(|logged| {
+                logged
+                    .trim_end_matches(JSON_ACCEPTED)
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// Paths of the requests that asked for GitHub's JSON media type (`Accept`).
+    pub fn json_requests(&self) -> Vec<String> {
+        self.requests
+            .lock()
+            .expect("request log")
+            .iter()
+            .filter_map(|logged| logged.strip_suffix(JSON_ACCEPTED))
+            .map(|path| path.trim_end().to_string())
+            .collect()
     }
 }
 
@@ -345,18 +366,26 @@ impl Drop for ReleaseMock {
     }
 }
 
+/// Mark in the request log of a request that asked for GitHub's JSON media type.
+const JSON_ACCEPTED: &str = "[json]";
+
 fn serve(stream: TcpStream, routes: &HashMap<String, Route>, requests: &Mutex<Vec<String>>) {
     let mut reader = BufReader::new(&stream);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).is_err() {
         return;
     }
+    let mut json_accepted = false;
     loop {
         let mut header = String::new();
         match reader.read_line(&mut header) {
             Ok(0) | Err(_) => break,
             Ok(_) if header == "\r\n" || header == "\n" => break,
-            Ok(_) => {}
+            Ok(_) => {
+                json_accepted |= header
+                    .to_ascii_lowercase()
+                    .starts_with("accept: application/vnd.github+json");
+            }
         }
     }
     let path = request_line
@@ -364,7 +393,12 @@ fn serve(stream: TcpStream, routes: &HashMap<String, Route>, requests: &Mutex<Ve
         .nth(1)
         .unwrap_or_default()
         .to_string();
-    requests.lock().expect("request log").push(path.clone());
+    let logged = if json_accepted {
+        format!("{path} {JSON_ACCEPTED}")
+    } else {
+        path.clone()
+    };
+    requests.lock().expect("request log").push(logged);
     let mut stream = reader.into_inner();
     let route = routes
         .get(&path)
