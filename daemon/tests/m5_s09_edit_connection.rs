@@ -301,10 +301,17 @@ fn ac_m5_05_5_copied_repository_keeps_its_id_and_parent() {
                 copy_dir(&dir.join("repo"), &copy);
                 let moved = local(&dest, &copy);
                 // (a)
+                let calls_before_test = wrapper.entries().len();
                 let tested = client
                     .test_destination_connection(&moved, "connect", "", &none())
                     .expect("TestDestinationConnection");
                 assert!(tested.ok, "(a) the same repository: {tested:?}");
+                assert!(
+                    wrapper.entries()[calls_before_test..]
+                        .iter()
+                        .any(|e| e.kind == 'S' && e.sub == "cat"),
+                    "(a) the repository ID comes from `restic cat config`"
+                );
                 // (b)
                 let calls_before = wrapper.entries().len();
                 let result = client
@@ -484,6 +491,43 @@ fn ac_m5_09_3_stored_id_decides_when_old_address_is_gone() {
                 );
                 daemon.stop();
             }
+        },
+    );
+}
+
+/// M5-S09: saving a changed connection keeps the destination's maintenance schedule, which
+/// `UpdateDestinationMaintenance` set before.
+#[test]
+fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
+    run_isolated_test(
+        "m5_09_saving_a_connection_keeps_the_maintenance_schedule",
+        "KESTIC_M5_09_MAINT_INNER",
+        |root| {
+            let variant = latest_variant();
+            let (daemon, _wrapper, sub) = spawn(root, &variant, "M5EMNT");
+            let dir = root.join(&sub);
+            let client = &daemon.client;
+            let (dest, _) =
+                add_local_destination(client, &variant.bin, &dir.join("repo"), "Disk", |_| {});
+            let mut schedule = saved(&daemon, &dest).maintenance;
+            schedule.prune_interval_days = Some(60);
+            schedule.check_interval_days = Some(90);
+            client
+                .update_destination_maintenance(dest.id.as_str(), &schedule)
+                .expect("UpdateDestinationMaintenance");
+
+            let copy = dir.join("copy");
+            copy_dir(&dir.join("repo"), &copy);
+            let mut moved = local(&dest, &copy);
+            moved.name = "Disk copy".to_string();
+            let result = client
+                .update_destination(&moved, "connect", "", &none(), true)
+                .expect("UpdateDestination");
+            assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
+            let after = saved(&daemon, &dest);
+            assert_eq!(after.name, "Disk copy", "the name is saved");
+            assert_eq!(after.maintenance, schedule, "the schedule is kept");
+            daemon.stop();
         },
     );
 }

@@ -516,6 +516,14 @@ fn save_update(
             "the destination was changed meanwhile; check the connection again".to_string(),
         ));
     }
+    // This call changes the name and the connection; the maintenance schedule and the recovery
+    // kit have calls of their own and keep their saved values.
+    let mut updated = updated;
+    let current = &guard.config.destinations[idx];
+    updated.maintenance = current.maintenance.clone();
+    updated
+        .recovery_kit_key_id
+        .clone_from(&current.recovery_kit_key_id);
     guard.refuse_while_restoring(&updated.id)?;
     guard.refuse_duplicate(&updated)?;
     let store = Arc::clone(&guard.secret_store);
