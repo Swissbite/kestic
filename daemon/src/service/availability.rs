@@ -287,9 +287,12 @@ fn spawn_restic_availability_checks(
     deps: ResticDeps,
 ) {
     thread::spawn(move || {
-        let _run_lease = ResticBinaryGate::global().read();
+        let mut run_lease = ResticBinaryGate::global().read();
         // Without a usable restic the destinations keep their last status.
         let resolved = resolve_and_check(&deps.provider).ok();
+        if let Some(restic) = &resolved {
+            run_lease.bind(&restic.binary);
+        }
         let mut updates = Vec::new();
         if let Some(restic) = resolved.as_ref() {
             for dest in &destinations {
@@ -545,8 +548,9 @@ pub fn unlock_destination_async(
 
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let resolved_bin = probe_for_run(&deps.provider, deps.secret_store.as_ref()).1?;
+    run_lease.bind(&resolved_bin.binary);
     let runtime = deps.runtime(&resolved_bin);
 
     let classification = detect_stale_locks(&dest, &runtime, &[]).map_err(|err| match err {

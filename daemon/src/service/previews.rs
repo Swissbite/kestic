@@ -325,7 +325,8 @@ pub(crate) fn preview_destination_maintenance_unlocked(
 
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let resolved = resolve_restic_recording_probe(shared, &deps)?;
+    run_lease.bind(&resolved.binary);
     execute_prune_dry_run(&dest, &deps.runtime(&resolved), None, &[]).map_err(map_backup_run_err)
 }

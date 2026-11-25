@@ -196,7 +196,7 @@ fn ac_m5_07_7_custom_path_rejected_or_used() {
         .english();
     assert_eq!(
         text,
-        "Custom restic path is invalid: /opt/restic is not executable"
+        "Custom restic path is invalid: /opt/restic cannot be started"
     );
 
     // (a) another program whose `version` prints a version is not restic

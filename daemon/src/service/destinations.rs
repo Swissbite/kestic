@@ -503,7 +503,7 @@ pub(crate) fn add_destination_unlocked(
 ) -> Result<(String, Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let mut dest: Destination = serde_json::from_str(dest_json)
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid destination JSON: {e}")))?;
     let setup_mode = parse_setup_mode(mode)?;
@@ -540,6 +540,7 @@ pub(crate) fn add_destination_unlocked(
     };
 
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    run_lease.bind(&resolved.binary);
     let repo_pw = SecretValue::from_str_secret(repo_password);
     let prepared = setup_destination(
         &dest,
@@ -598,7 +599,7 @@ pub(crate) fn update_destination_password_unlocked(
 ) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let id =
         DestinationId::parse(dest_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
     if new_password.is_empty() {
@@ -616,6 +617,7 @@ pub(crate) fn update_destination_password_unlocked(
         (dest, guard.restic_deps())
     };
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    run_lease.bind(&resolved.binary);
     let candidate = SecretValue::from_str_secret(new_password);
     let repository_id = verify_and_update_stored_password(
         &dest,

@@ -318,8 +318,8 @@ msgid "Custom restic path is invalid: no permission to access %1"
 msgstr "Eigener restic-Pfad ist ungültig: kein Zugriff auf %1"
 
 #: i18n/src/messages.rs
-msgid "Custom restic path is invalid: %1 is not executable"
-msgstr "Eigener restic-Pfad ist ungültig: %1 ist nicht ausführbar"
+msgid "Custom restic path is invalid: %1 cannot be started"
+msgstr "Eigener restic-Pfad ist ungültig: %1 kann nicht gestartet werden"
 
 #: i18n/src/messages.rs
 msgid "Custom restic path is invalid: %1 is not a file"

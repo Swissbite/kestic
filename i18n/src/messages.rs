@@ -328,7 +328,7 @@ impl ResticPathProblem {
             Self::PermissionDenied => {
                 i18n_noop("Custom restic path is invalid: no permission to access %1")
             }
-            Self::NotExecutable => i18n_noop("Custom restic path is invalid: %1 is not executable"),
+            Self::NotExecutable => i18n_noop("Custom restic path is invalid: %1 cannot be started"),
             Self::NotAFile => i18n_noop("Custom restic path is invalid: %1 is not a file"),
             Self::Other => return None,
         };
