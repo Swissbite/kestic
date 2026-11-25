@@ -76,7 +76,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          tag="$(cat -- .github/ci-image/Dockerfile scripts/bootstrap.sh | sha256sum | cut -c1-16)"
+          tag="$(sha256sum -- .github/ci-image/Dockerfile scripts/bootstrap.sh | sha256sum | cut -c1-16)"
           # GHCR requires lowercase repository names.
           image="ghcr.io/${OWNER,,}/kestic-ci:$tag"
           echo "image=$image" >> "$GITHUB_OUTPUT"

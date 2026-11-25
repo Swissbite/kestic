@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
 # Prints the CI image tag: the first 16 hex chars of the SHA-256 over the
-# concatenated image inputs (Dockerfile + scripts/bootstrap.sh).
+# `sha256sum` lines (hash and path) of the image inputs (Dockerfile +
+# scripts/bootstrap.sh). Hashing each file on its own keeps the tag unique:
+# moving bytes from one file to the other changes it.
 #
 #   tag.sh          tag for the working tree
 #   tag.sh <rev>    tag for a git revision (used by ci-image-cleanup.yml)
@@ -29,9 +31,10 @@ if [[ $# -gt 0 ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-    cat -- "${INPUTS[@]}"
+    sha256sum -- "${INPUTS[@]}"
 else
+    # The same lines as `sha256sum -- <files>` prints for the working tree.
     for f in "${INPUTS[@]}"; do
-        git show "$1:$f"
+        printf '%s  %s\n' "$(git show "$1:$f" | sha256sum | cut -c1-64)" "$f"
     done
 fi | sha256sum | cut -c1-16
