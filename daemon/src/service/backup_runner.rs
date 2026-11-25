@@ -313,7 +313,7 @@ fn start_backup_internal(
     let b_id = parse_backup_id(backup_id)?;
     // Held until the run has ended, so the app-managed restic is not replaced between its
     // restic processes.
-    let run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
 
     let mut ctx = claim_backup_destination(shared, &b_id, is_scheduled)?;
 
@@ -324,6 +324,7 @@ fn start_backup_internal(
         &ctx.dest.id,
         &mut ctx.claim_guard,
     )?;
+    run_lease.bind(&resolved.binary);
     let source_status = check_source_status_bounded(
         &ctx.backup,
         current_home_dir().as_deref(),

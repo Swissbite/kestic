@@ -97,3 +97,65 @@ fn cancelled_install_stops_waiting() {
     drop((reader, second));
     assert!(gate.replace_when_idle(&|| false).is_some());
 }
+
+/// AC-M5-07-5 (c): a lease bound to the app-managed binary refuses its removal; a lease bound
+/// to another binary does not.
+#[test]
+fn ac_m5_07_5_removal_refused_while_bound_to_the_binary() {
+    let gate = ResticBinaryGate::new();
+    let app = Path::new("/data/kestic/restic");
+    let system = Path::new("/usr/bin/restic");
+
+    let on_system = gate.read_for(system);
+    let removal = gate.remove_if_unused(app);
+    assert!(
+        removal.is_some(),
+        "a run on the system restic does not block"
+    );
+    drop(removal);
+
+    let on_app = gate.read_for(app);
+    assert!(gate.remove_if_unused(app).is_none(), "a run on it blocks");
+    drop(on_app);
+    drop(on_system);
+    assert!(gate.remove_if_unused(app).is_some());
+}
+
+/// AC-M5-07-5 (c): a lease whose process has not resolved its binary yet counts as possibly
+/// running the app-managed one; binding it to another binary frees the removal.
+#[test]
+fn ac_m5_07_5_unbound_lease_refuses_removal() {
+    let gate = ResticBinaryGate::new();
+    let app = Path::new("/data/kestic/restic");
+    let mut lease = gate.read();
+    assert!(gate.remove_if_unused(app).is_none());
+    lease.bind(Path::new("/usr/bin/restic"));
+    assert!(gate.remove_if_unused(app).is_some());
+    drop(lease);
+    assert_eq!(gate.readers(), 0);
+}
+
+/// AC-M5-07-5 (c): no removal while an installation replaces the binary, and a restic process
+/// that starts during the removal waits for it.
+#[test]
+fn ac_m5_07_5_removal_and_replacement_exclude_each_other() {
+    let gate: &'static ResticBinaryGate = Box::leak(Box::new(ResticBinaryGate::new()));
+    let app = Path::new("/data/kestic/restic");
+    let replacing = gate.replace_when_idle(&|| false).expect("replace lease");
+    assert!(gate.remove_if_unused(app).is_none());
+    drop(replacing);
+
+    let removal = gate.remove_if_unused(app).expect("removal");
+    let (started, started_rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        let _lease = gate.read_for(Path::new("/usr/bin/restic"));
+        started.send(()).expect("send");
+    });
+    assert!(
+        started_rx.recv_timeout(BLOCKED).is_err(),
+        "a restic process waits for the removal"
+    );
+    drop(removal);
+    assert_eq!(started_rx.recv_timeout(DONE), Ok(()));
+    reader.join().expect("reader");
+}

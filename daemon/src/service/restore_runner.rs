@@ -871,7 +871,7 @@ fn update_job_view(jv: &JobViewHandle, p: &ActiveRunProgressDto, status: &Restic
 fn restore_worker(mut worker: RestoreWorker) {
     // Held until the restore has ended, so the app-managed restic is not replaced between its
     // restic processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let _run_lease = ResticBinaryGate::global().read_for(&worker.resolved.binary);
     let mut supervision = RunSupervision::start(
         &worker.supervision,
         &i18n("Restoring from %1").subs(&[&worker.setup.ctx.destination.name]),

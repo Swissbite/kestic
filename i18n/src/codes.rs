@@ -174,6 +174,28 @@ code_enum! {
 }
 
 code_enum! {
+    /// Why a restic path cannot be used (`ResticStatusDto.path_problem`, with
+    /// `invalid_custom_path`).
+    ResticPathProblem {
+        NotFound => "not_found",
+        PermissionDenied => "permission_denied",
+        NotExecutable => "not_executable",
+        NotAFile => "not_a_file",
+        Other => "other",
+    }
+}
+
+code_enum! {
+    /// The configured restic source (`ResticStatusDto.source`).
+    ResticSourceCode {
+        Automatic => "automatic",
+        System => "system",
+        AppManaged => "app_managed",
+        Custom => "custom",
+    }
+}
+
+code_enum! {
     /// Blocking state of the whole app (`BlockingStateDto.kind`).
     BlockingKind {
         SecretStoreLocked => "secret_store_locked",

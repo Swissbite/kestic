@@ -117,7 +117,7 @@ pub(crate) fn list_backup_snapshots_unlocked(
 ) -> Result<BackupSnapshotsDto, KesticServiceErr> {
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let b_id = parse_backup_id(backup_id)?;
     let (current_dest, other_dests, configured, deps) = {
         let guard = shared.lock_unpoisoned();
@@ -140,6 +140,7 @@ pub(crate) fn list_backup_snapshots_unlocked(
     let configured: Vec<&str> = configured.iter().map(String::as_str).collect();
 
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    run_lease.bind(&resolved.binary);
     let list_deps = ListDeps {
         resolved: &resolved,
         kestic_binary: &deps.kestic_binary,
@@ -161,7 +162,7 @@ pub(crate) fn list_destination_snapshots_unlocked(
 ) -> Result<DestinationSnapshotsDto, KesticServiceErr> {
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let d_id = DestinationId::parse(destination_id)
         .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
     let (dest, backups, deps) = {
@@ -181,6 +182,7 @@ pub(crate) fn list_destination_snapshots_unlocked(
     };
 
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    run_lease.bind(&resolved.binary);
     let list_deps = ListDeps {
         resolved: &resolved,
         kestic_binary: &deps.kestic_binary,

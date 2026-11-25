@@ -309,6 +309,22 @@ msgstr "restic %1 ist zu alt; Kestic benötigt mindestens %2"
 msgid "Custom restic path is invalid (%1): %2"
 msgstr "Eigener restic-Pfad ist ungültig (%1): %2"
 
+#: i18n/src/messages.rs
+msgid "Custom restic path is invalid: %1 does not exist"
+msgstr "Eigener restic-Pfad ist ungültig: %1 existiert nicht"
+
+#: i18n/src/messages.rs
+msgid "Custom restic path is invalid: no permission to access %1"
+msgstr "Eigener restic-Pfad ist ungültig: kein Zugriff auf %1"
+
+#: i18n/src/messages.rs
+msgid "Custom restic path is invalid: %1 cannot be started"
+msgstr "Eigener restic-Pfad ist ungültig: %1 kann nicht gestartet werden"
+
+#: i18n/src/messages.rs
+msgid "Custom restic path is invalid: %1 is not a file"
+msgstr "Eigener restic-Pfad ist ungültig: %1 ist keine Datei"
+
 #: daemon/src/service/state.rs:627
 msgid "Cannot read the restic version (%1)"
 msgstr "restic-Version kann nicht gelesen werden (%1)"
@@ -3098,6 +3114,10 @@ msgid "Apply"
 msgstr "Übernehmen"
 
 #: gui/src/qml/SettingsDialog.qml:113
+msgid "Automatic"
+msgstr "Automatisch"
+
+#: gui/src/qml/SettingsDialog.qml
 msgid "System restic (from PATH)"
 msgstr "System-restic (aus PATH)"
 

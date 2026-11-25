@@ -241,7 +241,7 @@ pub fn start_snapshot_query_async(
     let query = parse_request(request_json)?;
     // Held until the query has ended, so the app-managed restic is not replaced between its
     // restic processes.
-    let run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let query_id = RunId::generate()
         .map(|r| r.as_str().to_string())
         .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
@@ -282,6 +282,7 @@ pub fn start_snapshot_query_async(
             return Err(err);
         }
     };
+    run_lease.bind(&resolved.binary);
 
     let shared_worker = Arc::clone(shared);
     let id = query_id.clone();

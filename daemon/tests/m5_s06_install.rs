@@ -222,9 +222,7 @@ fn ac_m5_06_8_install_waits_for_running_backup() {
                 let _ = fs::remove_file(&binary);
                 fs::copy(&rig.wrapper.path, &binary).expect("copy wrapper");
                 let source = client
-                    .set_restic_provider(&ResticProvider::AppManaged {
-                        path: binary.clone(),
-                    })
+                    .set_restic_provider(&ResticProvider::AppManaged)
                     .expect("SetResticProvider");
                 assert!(source.valid, "{}: {source:?}", variant.label);
                 let old_inode = fs::metadata(&binary).expect("binary").ino();
@@ -639,9 +637,7 @@ fn restic_install_refreshes_the_restic_status() {
             let sub = variant.sub("S06CR");
             let (config_path, _) = common::m3::daemon_paths(root, &sub);
             let config = kestic_core::config::AppConfig {
-                restic_provider: ResticProvider::AppManaged {
-                    path: app_managed_binary(&data_dir()),
-                },
+                restic_provider: ResticProvider::AppManaged,
                 ..Default::default()
             };
             fs::create_dir_all(config_path.parent().expect("cfg dir")).expect("cfg dir");

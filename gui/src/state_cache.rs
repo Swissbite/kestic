@@ -726,6 +726,8 @@ pub fn build_provider(kind: &str, custom_path: &str) -> Result<ResticProvider, S
                 path: PathBuf::from(trimmed),
             })
         }
+        "automatic" => Ok(ResticProvider::Automatic),
+        "app_managed" => Ok(ResticProvider::AppManaged),
         _ => Ok(ResticProvider::System),
     }
 }

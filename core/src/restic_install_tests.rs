@@ -250,3 +250,25 @@ fn unpack_stops_at_the_size_limit() {
     let size = std::fs::metadata(&target).expect("metadata").len();
     assert!(size <= UNPACKED_LIMIT + (64 << 10), "{size}");
 }
+
+/// AC-M5-07-5 (c): removing the app-managed restic deletes it unless a restic process runs it;
+/// a missing binary is no error.
+#[test]
+fn ac_m5_07_5_remove_app_managed_respects_running_restic() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let binary = app_managed_binary(dir.path());
+    std::fs::write(&binary, "#!/bin/sh\n").expect("write");
+    let gate = ResticBinaryGate::new();
+
+    let running = gate.read_for(&binary);
+    assert!(matches!(
+        remove_app_managed(dir.path(), &gate),
+        Err(RemoveError::InUse)
+    ));
+    assert!(binary.exists(), "kept while restic runs it");
+    drop(running);
+
+    assert!(remove_app_managed(dir.path(), &gate).expect("removed"));
+    assert!(!binary.exists());
+    assert!(!remove_app_managed(dir.path(), &gate).expect("nothing to remove"));
+}

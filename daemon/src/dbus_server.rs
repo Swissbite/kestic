@@ -12,13 +12,13 @@ use crate::service::{
     DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
     list_backup_snapshots_unlocked, list_destination_snapshots_unlocked,
     preview_destination_maintenance_unlocked, refresh_availability_unlocked,
-    refresh_probe_unlocked, remove_destination_unlocked, run_destination_maintenance_async,
-    set_restic_provider_unlocked, start_all_backups_async, start_backup_async,
-    start_backup_dry_run_async, start_backup_override_async, start_restic_install_async,
-    start_restore_async, start_retention_preview_async, start_snapshot_query_async,
-    test_destination_connection_unlocked, trigger_background_availability_probe,
-    trust_host_key_unlocked, unlock_destination_async, update_destination_password_unlocked,
-    update_destination_unlocked,
+    refresh_probe_unlocked, remove_app_managed_restic, remove_destination_unlocked,
+    run_destination_maintenance_async, set_restic_provider_unlocked, start_all_backups_async,
+    start_backup_async, start_backup_dry_run_async, start_backup_override_async,
+    start_restic_install_async, start_restore_async, start_retention_preview_async,
+    start_snapshot_query_async, test_destination_connection_unlocked,
+    trigger_background_availability_probe, trust_host_key_unlocked, unlock_destination_async,
+    update_destination_password_unlocked, update_destination_unlocked,
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
@@ -535,6 +535,13 @@ impl KesticDbusV1Service {
     #[zbus(name = "StartResticInstall")]
     async fn start_restic_install(&self) -> Result<String, KesticDbusError> {
         self.blocking(start_restic_install_async)
+            .await
+            .map_err(KesticDbusError::from)
+    }
+
+    #[zbus(name = "RemoveAppManagedRestic")]
+    async fn remove_app_managed_restic(&self) -> Result<(), KesticDbusError> {
+        self.blocking(remove_app_managed_restic)
             .await
             .map_err(KesticDbusError::from)
     }

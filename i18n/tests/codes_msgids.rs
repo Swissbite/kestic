@@ -10,8 +10,8 @@
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
     OverallStatusKind, PendingReasonCode, RecoveryAction, ResticInstallCode, ResticInstallOutcome,
-    ResticInstallPhase, ResticStatusCode, RestoreNoteCode, RestoreOutcome, RestoreTargetCode,
-    RunKindCode, RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus,
+    ResticInstallPhase, ResticPathProblem, ResticStatusCode, RestoreNoteCode, RestoreOutcome,
+    RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
@@ -119,9 +119,15 @@ fn all_messages() -> Vec<(String, Message)> {
                 binary_path: Some("/p"),
                 found_version: Some("0.1"),
                 detail: Some("d"),
+                path_problem: None,
                 min_version: "0.18.0",
             }),
         );
+    }
+    for problem in ResticPathProblem::ALL {
+        if let Some(m) = problem.message("/p") {
+            push(format!("{problem:?}"), m);
+        }
     }
     for kind in BlockingKind::ALL {
         push(format!("{kind:?}"), kind.message(None));

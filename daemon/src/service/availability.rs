@@ -5,7 +5,10 @@
 
 use super::backup_runner::start_backup_async;
 use super::error::{KesticServiceErr, map_destination_err};
-use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, ResticDeps, probe_for_run};
+use super::state::{
+    AVAILABILITY_CACHE_TTL_SECS, DaemonCore, ResticDeps, probe_for_run,
+    refresh_restic_probe_unlocked,
+};
 use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto};
 use crate::dbus_server::emit_status_changed;
 use kestic_core::backup::BackupRunError;
@@ -229,6 +232,8 @@ pub(crate) fn refresh_availability_unlocked(
     if !should_run {
         return current_snapshot;
     }
+    // A system restic updated meanwhile may now be recent enough (or an app-managed one gone).
+    refresh_restic_probe_unlocked(shared);
 
     let now = clock.now_utc();
     let now_unix = now.unix_timestamp();
@@ -282,9 +287,12 @@ fn spawn_restic_availability_checks(
     deps: ResticDeps,
 ) {
     thread::spawn(move || {
-        let _run_lease = ResticBinaryGate::global().read();
+        let mut run_lease = ResticBinaryGate::global().read();
         // Without a usable restic the destinations keep their last status.
         let resolved = resolve_and_check(&deps.provider).ok();
+        if let Some(restic) = &resolved {
+            run_lease.bind(&restic.binary);
+        }
         let mut updates = Vec::new();
         if let Some(restic) = resolved.as_ref() {
             for dest in &destinations {
@@ -540,8 +548,9 @@ pub fn unlock_destination_async(
 
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let resolved_bin = probe_for_run(&deps.provider, deps.secret_store.as_ref()).1?;
+    run_lease.bind(&resolved_bin.binary);
     let runtime = deps.runtime(&resolved_bin);
 
     let classification = detect_stale_locks(&dest, &runtime, &[]).map_err(|err| match err {

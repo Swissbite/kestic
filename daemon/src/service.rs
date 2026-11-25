@@ -15,6 +15,7 @@ mod host_keys;
 mod maintenance;
 mod previews;
 mod restic_install;
+mod restic_status;
 mod restore_preview;
 mod restore_runner;
 mod run_errors;
@@ -45,7 +46,7 @@ pub use maintenance::{run_destination_maintenance_async, start_all_backups_async
 pub(crate) use previews::preview_destination_maintenance_unlocked;
 pub use previews::{start_backup_dry_run_async, start_retention_preview_async};
 pub(crate) use restic_install::remove_install_leftovers;
-pub use restic_install::start_restic_install_async;
+pub use restic_install::{remove_app_managed_restic, start_restic_install_async};
 pub use restore_runner::start_restore_async;
 pub use runtime::run_daemon;
 pub use scheduler::tick_scheduler_async;

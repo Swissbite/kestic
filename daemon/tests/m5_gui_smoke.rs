@@ -688,9 +688,7 @@ fn ac_m5_06_5_gui_checksum_message() {
                     .expect("archive") = b"tampered".to_vec();
             }
             let _mock = serve(&files, &key, Vec::new());
-            let source = ResticProvider::AppManaged {
-                path: binary.clone(),
-            };
+            let source = ResticProvider::AppManaged;
             let rig = start_with_source(root, Some(source.clone()));
             run_install_error(
                 root,
@@ -772,12 +770,7 @@ fn restic_install_gui_progress_cancel_and_result() {
             let files = ReleaseFiles::signed(RELEASE, &key);
             let archive = asset_path(RELEASE, &files.archive_name("amd64"));
             let stalled = serve(&files, &key, vec![(archive, Route::StallAfterHeaders)]);
-            let rig = start_with_source(
-                root,
-                Some(ResticProvider::AppManaged {
-                    path: managed_restic(),
-                }),
-            );
+            let rig = start_with_source(root, Some(ResticProvider::AppManaged));
             for lang in ["en", "de"] {
                 run_m5_gui_smoke(
                     root,

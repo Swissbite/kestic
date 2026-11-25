@@ -194,7 +194,7 @@ fn run_destination_maintenance_internal(
 
     // Held until the run has ended, so the app-managed restic is not replaced between its
     // restic processes.
-    let run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let mut ctx = claim_maintenance_destination(shared, &d_id, destination_id, is_scheduled)?;
 
     let (probe, resolved) = probe_before_run(
@@ -204,6 +204,7 @@ fn run_destination_maintenance_internal(
         &d_id,
         &mut ctx.claim_guard,
     )?;
+    run_lease.bind(&resolved.binary);
     let preflight_res = preflight_check_with_restic(&ctx.dest, &ctx.deps.runtime(&resolved));
 
     let launched = {

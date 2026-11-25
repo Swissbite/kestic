@@ -178,7 +178,7 @@ where
     } = launch;
     // Held until the preview has ended, so the app-managed restic is not replaced between its
     // restic processes.
-    let run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let resolved = match probe_for_run(&deps.provider, deps.secret_store.as_ref()).1 {
         Ok(resolved) => resolved,
         Err(err) => {
@@ -186,6 +186,7 @@ where
             return Err(err);
         }
     };
+    run_lease.bind(&resolved.binary);
 
     let id_for_caller = preview_id.clone();
     let shared_worker = Arc::clone(shared);
@@ -324,7 +325,8 @@ pub(crate) fn preview_destination_maintenance_unlocked(
 
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
-    let _run_lease = ResticBinaryGate::global().read();
+    let mut run_lease = ResticBinaryGate::global().read();
     let resolved = resolve_restic_recording_probe(shared, &deps)?;
+    run_lease.bind(&resolved.binary);
     execute_prune_dry_run(&dest, &deps.runtime(&resolved), None, &[]).map_err(map_backup_run_err)
 }

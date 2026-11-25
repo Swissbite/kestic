@@ -11,18 +11,20 @@ use super::state::{DaemonCore, refresh_probe_unlocked};
 use crate::dbus_api::ResticInstallStatusDto;
 use crate::dbus_server::emit_status_changed;
 use kestic_core::clock::Clock;
+use kestic_core::model::ResticProvider;
 use kestic_core::model::RunId;
+use kestic_core::provider::{ResticLocations, resolve_with, same_binary};
 use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::restic_install::{
-    InstallObserver, InstallOutcome, InstallRequest, install_latest_observed, kestic_data_dir,
-    remove_leftovers,
+    InstallObserver, InstallOutcome, InstallRequest, RemoveError, app_managed_binary,
+    install_latest_observed, kestic_data_dir, remove_app_managed, remove_leftovers,
 };
 use kestic_core::restic_release::{Arch, InstallError};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ResticInstallCode, ResticInstallOutcome, ResticInstallPhase};
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use time::OffsetDateTime;
@@ -269,6 +271,14 @@ impl DaemonCore {
         Ok(self.install(install_id)?.lock_unpoisoned().dto())
     }
 
+    /// The `install_id` of the installation that is running.
+    pub(super) fn running_restic_install(&self) -> Option<String> {
+        self.restic_installs
+            .iter()
+            .find(|(_, progress)| progress.lock_unpoisoned().state == InstallState::Running)
+            .map(|(id, _)| id.clone())
+    }
+
     pub fn cancel_restic_install(&mut self, install_id: &str) -> Result<(), KesticServiceErr> {
         let progress = self.install(install_id)?;
         let now = self.clock.now_utc();
@@ -357,6 +367,56 @@ fn run_install(job: InstallJob) {
         .finish(result, job.clock.now_utc());
     if installed {
         publish_state(&job.shared);
+    }
+}
+
+/// `RemoveAppManagedRestic`: deletes the app-managed restic at once. Refused with `InUse` while
+/// it is the restic in use (its source, «Automatic» without a usable system restic, or a custom
+/// path to it) or a restic process may run it; removing a missing binary changes nothing.
+pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), KesticServiceErr> {
+    let Some(dir) = data_dir() else {
+        return Ok(());
+    };
+    let binary = app_managed_binary(&dir);
+    if binary.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    let provider = shared.lock_unpoisoned().config.restic_provider.clone();
+    if is_active_source(&provider, &binary, &ResticLocations::from_env()) {
+        return Err(KesticServiceErr::InUse(
+            "the restic managed by Kestic is the restic in use".to_string(),
+        ));
+    }
+    match remove_app_managed(&dir, ResticBinaryGate::global()) {
+        Ok(_) => {}
+        Err(RemoveError::InUse) => {
+            return Err(KesticServiceErr::InUse(
+                "a restic process uses the restic managed by Kestic".to_string(),
+            ));
+        }
+        Err(RemoveError::Io(err)) => return Err(KesticServiceErr::Internal(err.to_string())),
+    }
+    refresh_probe_unlocked(shared);
+    publish_state(shared);
+    Ok(())
+}
+
+/// Whether `provider` runs the app-managed restic at `binary`, with the system restic at
+/// `locations`.
+fn is_active_source(provider: &ResticProvider, binary: &Path, locations: &ResticLocations) -> bool {
+    match provider {
+        ResticProvider::AppManaged => true,
+        // Without a usable system restic «Automatic» falls back to it; a system restic that is a
+        // link to it is the app-managed one.
+        ResticProvider::Automatic => {
+            resolve_with(&ResticProvider::System, locations).is_err()
+                || locations
+                    .system
+                    .as_deref()
+                    .is_some_and(|system| same_binary(system, binary))
+        }
+        ResticProvider::Custom { path } => same_binary(path, binary),
+        ResticProvider::System => false,
     }
 }
 
