@@ -9,18 +9,26 @@
 use kestic_test_support::workspace::workspace_root;
 use std::fs;
 
-/// The QML files of the GUI with their names.
+/// The QML files of the GUI, also those in subdirectories, with their paths below `gui/src/qml`.
 fn qml_files() -> Vec<(String, String)> {
-    let dir = workspace_root().join("gui/src/qml");
-    let mut out: Vec<(String, String)> = fs::read_dir(&dir)
-        .expect("read gui/src/qml")
-        .map(|e| e.expect("entry").path())
-        .filter(|p| p.extension().is_some_and(|x| x == "qml"))
-        .map(|p| {
-            let name = p.file_name().expect("name").to_string_lossy().into_owned();
-            (name, fs::read_to_string(&p).expect("read qml"))
-        })
-        .collect();
+    let root = workspace_root().join("gui/src/qml");
+    let mut dirs = vec![root.clone()];
+    let mut out: Vec<(String, String)> = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).expect("read a QML directory") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|x| x == "qml") {
+                let name = path
+                    .strip_prefix(&root)
+                    .expect("below gui/src/qml")
+                    .to_string_lossy()
+                    .into_owned();
+                out.push((name, fs::read_to_string(&path).expect("read qml")));
+            }
+        }
+    }
     out.sort();
     out
 }
@@ -60,7 +68,7 @@ fn block_lines<'a>(lines: &[&'a str], start: usize) -> Vec<&'a str> {
 }
 
 /// Controls that are Tab stops unless they say otherwise.
-const TAB_STOP_CONTROLS: [&str; 12] = [
+const TAB_STOP_CONTROLS: [&str; 13] = [
     "Button {",
     "ToolButton {",
     "CheckBox {",
@@ -71,13 +79,15 @@ const TAB_STOP_CONTROLS: [&str; 12] = [
     "ComboBox {",
     "SpinBox {",
     "ItemDelegate {",
+    "SubtitleDelegate {",
     "Card {",
     "Chip {",
 ];
 
 /// The `Repeater`s with Tab-stop rows that AC-M4-01-7 exempts, as file and the reason in the
-/// comment line right above them (`// Not a list: <reason>`).
-const EXEMPTIONS: [(&str, &str); 11] = [
+/// comment line right above them (`// Not a list: <reason>`). The cards of the destination
+/// types are two `Repeater`s, the ready types and those that need a program.
+const EXEMPTIONS: [(&str, &str); 12] = [
     (
         "BackupConditionsEditPage.qml",
         "form rows, one check box per known network.",
@@ -100,7 +110,11 @@ const EXEMPTIONS: [(&str, &str); 11] = [
     ),
     (
         "DestinationTypeChooser.qml",
-        "the cards to choose the type of the destination from",
+        "the cards of the ready destination types",
+    ),
+    (
+        "DestinationTypeChooser.qml",
+        "the cards of the destination types that need a program",
     ),
     (
         "KindChips.qml",
@@ -120,29 +134,69 @@ const EXEMPTIONS: [(&str, &str); 11] = [
 
 /// Whether the block of a `Repeater` holds a row that is a Tab stop: a control of
 /// [`TAB_STOP_CONTROLS`] that does not take the focus by click only, or `activeFocusOnTab: true`.
+/// A control written on one line (`Button { text: "x" }`) counts as well.
 fn repeats_tab_stops(lines: &[&str], start: usize) -> bool {
     let block = block_lines(lines, start);
     block.iter().enumerate().any(|(i, line)| {
         let code = line.trim();
+        if code.starts_with("//") {
+            return false;
+        }
         if code.starts_with("activeFocusOnTab: true") {
             return true;
         }
-        let is_control = TAB_STOP_CONTROLS
-            .iter()
-            .any(|c| code.ends_with(c) && !code.starts_with("//"));
-        is_control
-            && !direct_lines(&block, i).iter().any(|l| {
-                l == "focusPolicy: Qt.NoFocus"
-                    || l == "focusPolicy: Qt.ClickFocus"
-                    || l.starts_with("activeFocusOnTab: false")
-            })
+        if !TAB_STOP_CONTROLS.iter().any(|c| code.contains(c)) {
+            return false;
+        }
+        let one_line = code.matches('{').count() == code.matches('}').count();
+        let own = if one_line {
+            vec![code.to_string()]
+        } else {
+            direct_lines(&block, i)
+        };
+        !own.iter().any(|l| {
+            l.contains("focusPolicy: Qt.NoFocus")
+                || l.contains("focusPolicy: Qt.ClickFocus")
+                || l.contains("activeFocusOnTab: false")
+        })
     })
 }
 
+/// AC-M4-01-7 (d): a control on one line, and one with more code after its brace, is a
+/// Tab-stop row; one that takes the focus by click only is not.
+#[test]
+fn ac_m4_01_7_one_line_controls_count_as_tab_stop_rows() {
+    let one_line = [
+        "Repeater {",
+        "    delegate: Controls.Button { text: \"x\" }",
+        "}",
+    ];
+    assert!(repeats_tab_stops(&one_line, 0), "a control on one line");
+    let trailing = [
+        "Repeater {",
+        "    delegate: Controls.CheckBox { // a row",
+        "        text: \"x\"",
+        "    }",
+        "}",
+    ];
+    assert!(
+        repeats_tab_stops(&trailing, 0),
+        "a control with a comment after its brace"
+    );
+    let click_only = [
+        "Repeater {",
+        "    delegate: Controls.Button { text: \"x\"; focusPolicy: Qt.ClickFocus }",
+        "}",
+    ];
+    assert!(
+        !repeats_tab_stops(&click_only, 0),
+        "a control that takes the focus by click only"
+    );
+}
+
 /// AC-M4-01-7 (d): a `Repeater` whose rows are Tab stops is no list of entries but one of the
-/// exemptions the AC names: (a) the comment line right above it says so
-/// (`// Not a list: <reason>`), and (b) the Repeaters found are exactly [`EXEMPTIONS`], so a new
-/// one fails. A list of entries is a `KeyboardList`.
+/// exemptions the AC names: the comment line right above it says so (`// Not a list: <reason>`),
+/// and the Repeaters found are exactly [`EXEMPTIONS`], so a new one fails. A list of entries is a `KeyboardList`.
 #[test]
 fn ac_m4_01_7_no_repeater_lists_tab_stop_rows() {
     let mut found: Vec<(String, String)> = Vec::new();
@@ -156,7 +210,7 @@ fn ac_m4_01_7_no_repeater_lists_tab_stop_rows() {
             let reason = above.strip_prefix("// Not a list: ");
             assert!(
                 reason.is_some(),
-                "(a) {name}:{}: a Repeater with Tab-stop rows; a list is a KeyboardList",
+                "(d) {name}:{}: a Repeater with Tab-stop rows; a list is a KeyboardList",
                 i + 1
             );
             found.push((name.clone(), reason.unwrap_or_default().to_string()));
@@ -170,7 +224,7 @@ fn ac_m4_01_7_no_repeater_lists_tab_stop_rows() {
     expected.sort();
     assert_eq!(
         found, expected,
-        "(b) the Repeaters with Tab-stop rows are the exemptions of AC-M4-01-7"
+        "(d) the Repeaters with Tab-stop rows are exactly the exemptions of AC-M4-01-7"
     );
 }
 

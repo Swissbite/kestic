@@ -154,6 +154,7 @@ ColumnLayout {
         text: i18n("Ready")
     }
 
+    // Not a list: the cards of the ready destination types
     Repeater {
         model: chooser.readyCards
 
@@ -214,7 +215,7 @@ ColumnLayout {
         text: i18n("Needs Installation")
     }
 
-    // Not a list: the cards to choose the type of the destination from
+    // Not a list: the cards of the destination types that need a program
     Repeater {
         model: chooser.cardsNeedingInstallation
 

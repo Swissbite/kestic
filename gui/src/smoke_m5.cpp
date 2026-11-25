@@ -228,6 +228,71 @@ int scenario_drive_list(const Ctx& c) {
     return 0;
 }
 
+// Whether `item` is `ancestor` or lies below it.
+bool lies_in(QQuickItem* item, QQuickItem* ancestor) {
+    for (QQuickItem* it = item; it; it = it->parentItem()) {
+        if (it == ancestor) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The index of the row of `list` that holds the keyboard focus; -1 when the focus is elsewhere.
+int focused_row_of(QQuickWindow* w, QQuickItem* list) {
+    auto* content = list->property("contentItem").value<QQuickItem*>();
+    for (QQuickItem* it = w->activeFocusItem(); it; it = it->parentItem()) {
+        if (it->parentItem() == content) {
+            return it->property("index").toInt();
+        }
+    }
+    return -1;
+}
+
+// AC-M4-01-7 for the removable drives of «External Drive / USB» (two drives from the UDisks2
+// fake): the list is one Tab stop. (a) Tab enters it on the first drive, (b) Down moves to the
+// second, which Space chooses, (c) the next Tab leaves the list to «Check Again» and Shift+Tab
+// comes back to the second drive, and (d) no drive is a Tab stop of its own.
+int scenario_drive_list_keys(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (const int rc = open_details_of(w, "drive")) {
+        return rc;
+    }
+    M3_CHECK(5230, wait_until([&] { return count_visible(w, "wizDestDrive_1") == 1; }, 3000), "the two drives are not offered");
+    QQuickItem* list = item_named(w, "wizDestDriveList");
+    M3_CHECK(5231, list != nullptr && list->isVisible(), "the drives are no list");
+    for (int i = 0; i < 40 && !lies_in(w->activeFocusItem(), list); ++i) {
+        press_tab(w);
+    }
+    M3_CHECK(5232, focused_row_of(w, list) == 0,
+        qPrintable(QStringLiteral("(a) Tab enters the drives on the first one: ") + describe_focus_item(w->activeFocusItem())));
+    press_and_wait(w, Qt::Key_Down, 80);
+    M3_CHECK(5233, focused_row_of(w, list) == 1,
+        qPrintable(QStringLiteral("(b) Down moves to the second drive: ") + describe_focus_item(w->activeFocusItem())));
+    send_key(w, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+    QQuickItem* location = item_named(w, "wizDestLocationField");
+    M3_CHECK(5234, wait_until([&] { return location && location->property("text").toString() == QLatin1String("/media/user/USB-Disk"); }, 2000),
+        "(b) Space on the second drive does not choose it");
+    press_tab(w);
+    M3_CHECK_EQ(5235, w->activeFocusItem() ? w->activeFocusItem()->objectName() : QString(),
+        QStringLiteral("wizDestDrivesCheckAgainButton"), "(c) the next Tab leaves the drives to «Check Again»");
+    send_key(w, Qt::Key_Backtab, Qt::ShiftModifier);
+    M3_CHECK(5236, focused_row_of(w, list) == 1,
+        qPrintable(QStringLiteral("(c) Shift+Tab comes back to the second drive: ") + describe_focus_item(w->activeFocusItem())));
+    auto* content = list->property("contentItem").value<QQuickItem*>();
+    QList<QQuickItem*> items;
+    collect_visual_descendants(content, items);
+    int rows = 0;
+    for (QQuickItem* it : items) {
+        M3_CHECK(5237, !(it->isVisible() && it->activeFocusOnTab()),
+            qPrintable(QStringLiteral("(d) a drive is a Tab stop: ") + describe_focus_item(it)));
+        rows += it->objectName().startsWith(QLatin1String("wizDestDrive_")) ? 1 : 0;
+    }
+    M3_CHECK(5238, rows == 2, qPrintable(QStringLiteral("(d) drives checked: %1").arg(rows)));
+    M3_CHECK(5239, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 // AC-M5-05-2 (GUI): a folder on a CIFS mount (mountinfo fake); after «Test Connection» Kestic
 // (a) warns that restic advises against repositories on CIFS/SMB shares, «Next» stays disabled
 // until the warning is confirmed, and (b) the destination can be saved after the confirmation.
@@ -1153,6 +1218,8 @@ void run_m5_smoke_scenario(
         rc = scenario_check_again(ctx);
     } else if (scen == QLatin1String("m5-drive-list")) {
         rc = scenario_drive_list(ctx);
+    } else if (scen == QLatin1String("m5-drive-list-keys")) {
+        rc = scenario_drive_list_keys(ctx);
     } else if (scen == QLatin1String("m5-cifs-note")) {
         rc = scenario_cifs_note(ctx);
     } else if (scen == QLatin1String("m5-s3-form")) {

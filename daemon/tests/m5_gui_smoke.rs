@@ -222,6 +222,46 @@ fn m5_05_1_gui_drive_type_offers_the_removable_drive() {
     );
 }
 
+/// AC-M4-01-7 for the removable drives of «External Drive / USB»: with two drives from the
+/// UDisks2 fake the list is one Tab stop; (a) Tab enters it on the first drive, (b) Down and
+/// Space choose the second, (c) Tab leaves it and Shift+Tab comes back, (d) no drive is a Tab
+/// stop of its own. Screenshot in English, wide.
+#[test]
+fn ac_m4_01_7_drive_list_is_one_tab_stop() {
+    run_isolated_test(
+        "ac_m4_01_7_drive_list_is_one_tab_stop",
+        "KESTIC_M5_GUI_DRIVE_KEYS_INNER",
+        |root| {
+            let udisks = FakeUDisks2Handle::start();
+            for (device, label, mount_point) in [
+                ("sdb1", "USB-Disk", "/media/user/USB-Disk"),
+                ("sdc1", "Stick", "/media/user/Stick"),
+            ] {
+                udisks.add_filesystem(FakeUDisks2Filesystem {
+                    device_name: device.to_string(),
+                    label: label.to_string(),
+                    uuid: format!("uuid-{device}"),
+                    mount_points: vec![mount_point.to_string()],
+                    drive_name: format!("drive_{device}"),
+                    size_bytes: 64_000_000_000,
+                    removable: true,
+                    connection_bus: "usb".to_string(),
+                });
+            }
+            let (rig, _fakes, _programs) = start_with_ssh_only(root);
+            run_m5_gui_smoke(
+                root,
+                "m5-drive-list-keys",
+                "wide",
+                "en",
+                &smoke_artifact("drive-list-keys", "wide", "en"),
+                &[],
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// AC-M5-05-2 (GUI part; detection in `core`, D-Bus in `m5_s05_drives`): a folder on a CIFS
 /// mount (mountinfo fake); the wizard (a) warns that restic advises against repositories on
 /// CIFS/SMB shares and keeps «Next» disabled until the warning is confirmed, and (b) saves the

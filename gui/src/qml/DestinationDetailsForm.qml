@@ -240,15 +240,25 @@ ColumnLayout {
             text: i18n("Removable Drives")
         }
 
-        Repeater {
+        // One Tab stop: the arrow keys move between the drives, Space chooses one.
+        KeyboardList {
+            objectName: form.namePrefix + "DriveList"
+            Layout.fillWidth: true
+            implicitHeight: contentHeight
+            interactive: false
+            // No drive is marked until the list gets the focus.
+            currentIndex: -1
             model: drivePicker.drives
 
             delegate: KD.SubtitleDelegate {
+                id: driveRow
+
                 required property var modelData
                 required property int index
 
                 objectName: form.namePrefix + "Drive_" + index
-                Layout.fillWidth: true
+                width: ListView.view.width
+                focusPolicy: Qt.ClickFocus
                 // A filesystem without label is named after its mount point.
                 text: modelData.label !== "" ? modelData.label : modelData.mount_point.split("/").pop()
                 subtitle: modelData.mount_point
@@ -259,8 +269,13 @@ ColumnLayout {
                 Accessible.name: text
                 Accessible.description: subtitle
                 onClicked: {
+                    ListView.view.currentIndex = index;
                     form.draft.location = modelData.mount_point;
                     form.locationEdited();
+                }
+
+                FocusRing {
+                    target: driveRow
                 }
             }
         }
