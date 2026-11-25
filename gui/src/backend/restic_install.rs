@@ -73,6 +73,11 @@ impl qobject::KesticApp {
         self.as_mut().set_restic_offer_enabled(offer.enabled);
     }
 
+    /// The oldest restic Kestic runs, for the texts of the settings.
+    pub fn restic_minimum_version(&self) -> QString {
+        QString::from(&kestic_core::provider::MIN_RESTIC_VERSION.to_string())
+    }
+
     /// Applies the source `kind` of the source dialog. «Managed by Kestic» that is not installed
     /// yet is downloaded first; the switch follows when exactly this installation succeeded.
     pub fn apply_restic_source(

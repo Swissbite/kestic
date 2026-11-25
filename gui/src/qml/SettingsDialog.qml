@@ -176,7 +176,7 @@ Kirigami.ApplicationWindow {
 
             Controls.Label {
                 id: automaticHint
-                text: i18n("The system restic from 0.18.0 on, otherwise the restic managed by Kestic.")
+                text: i18n("The system restic from %1 on, otherwise the restic managed by Kestic.", appBackend.resticMinimumVersion())
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -480,7 +480,7 @@ Kirigami.ApplicationWindow {
             Controls.Label {
                 objectName: "resticMinimumLabel"
                 visible: appBackend.restic_explain_minimum
-                text: i18n("Kestic needs restic 0.18.0 or newer: older versions do not report errors and check results in a form Kestic can read.")
+                text: i18n("Kestic needs restic %1 or newer: older versions do not report errors and check results in a form Kestic can read.", appBackend.resticMinimumVersion())
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true

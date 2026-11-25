@@ -697,7 +697,8 @@ pub fn build_provider(kind: &str, custom_path: &str) -> Result<ResticProvider, S
         }
         "automatic" => Ok(ResticProvider::Automatic),
         "app_managed" => Ok(ResticProvider::AppManaged),
-        _ => Ok(ResticProvider::System),
+        "system" => Ok(ResticProvider::System),
+        other => Err(format!("unknown restic source '{other}'")),
     }
 }
 

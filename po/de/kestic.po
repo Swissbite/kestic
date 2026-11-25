@@ -4557,8 +4557,8 @@ msgstr "unbekannte Version"
 msgid "The restic managed by Kestic is still in use and cannot be deleted now."
 msgstr "Das von Kestic verwaltete restic wird noch verwendet und kann jetzt nicht gelöscht werden."
 
-msgid "The system restic from 0.18.0 on, otherwise the restic managed by Kestic."
-msgstr "Das System-restic ab 0.18.0, sonst das von Kestic verwaltete restic."
+msgid "The system restic from %1 on, otherwise the restic managed by Kestic."
+msgstr "Das System-restic ab %1, sonst das von Kestic verwaltete restic."
 
 msgid "The restic installed on the system (from PATH)."
 msgstr "Das auf dem System installierte restic (aus PATH)."
@@ -4578,8 +4578,8 @@ msgstr "Programm:"
 msgid "Available:"
 msgstr "Vorhanden:"
 
-msgid "Kestic needs restic 0.18.0 or newer: older versions do not report errors and check results in a form Kestic can read."
-msgstr "Kestic benötigt restic 0.18.0 oder neuer: Ältere Versionen melden Fehler und Prüfergebnisse nicht in einer Form, die Kestic auswerten kann."
+msgid "Kestic needs restic %1 or newer: older versions do not report errors and check results in a form Kestic can read."
+msgstr "Kestic benötigt restic %1 oder neuer: Ältere Versionen melden Fehler und Prüfergebnisse nicht in einer Form, die Kestic auswerten kann."
 
 msgid "System restic is now recent enough – switch?"
 msgstr "System-restic ist jetzt aktuell genug – umstellen?"

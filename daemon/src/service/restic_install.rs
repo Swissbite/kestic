@@ -281,7 +281,7 @@ impl DaemonCore {
 }
 
 /// What the worker needs.
-struct InstallJob {
+struct InstallWorker {
     shared: Arc<Mutex<DaemonCore>>,
     progress: Arc<Mutex<InstallProgress>>,
     clock: Arc<dyn Clock>,
@@ -293,7 +293,7 @@ struct InstallJob {
 pub fn start_restic_install_async(
     shared: &Arc<Mutex<DaemonCore>>,
 ) -> Result<String, KesticServiceErr> {
-    let (install_id, job) = {
+    let (install_id, worker) = {
         let mut guard = shared.lock_unpoisoned();
         guard.forget_expired_installs();
         // A call that arrives right after the bus name was taken may come before the sweep at
@@ -317,22 +317,22 @@ pub fn start_restic_install_async(
         guard
             .restic_installs
             .insert(install_id.clone(), Arc::clone(&progress));
-        let job = InstallJob {
+        let worker = InstallWorker {
             shared: Arc::clone(shared),
             progress,
             clock: Arc::clone(&guard.clock),
             search_path: guard.program_search_path(),
         };
-        (install_id, job)
+        (install_id, worker)
     };
-    thread::spawn(move || run_install(job));
+    thread::spawn(move || run_install(worker));
     Ok(install_id)
 }
 
-fn run_install(job: InstallJob) {
+fn run_install(worker: InstallWorker) {
     let _guard = FinishGuard {
-        progress: Arc::clone(&job.progress),
-        clock: Arc::clone(&job.clock),
+        progress: Arc::clone(&worker.progress),
+        clock: Arc::clone(&worker.clock),
     };
     let result = Arch::host().and_then(|arch| {
         let dir = default_data_dir().ok_or_else(|| {
@@ -341,10 +341,10 @@ fn run_install(job: InstallJob) {
         let request = InstallRequest {
             data_dir: &dir,
             arch,
-            search_path: job.search_path.as_deref(),
+            search_path: worker.search_path.as_deref(),
         };
         let observer = Observer {
-            progress: Arc::clone(&job.progress),
+            progress: Arc::clone(&worker.progress),
         };
         install_latest_observed(&request, ResticBinaryGate::global(), &observer)
     });
@@ -355,13 +355,14 @@ fn run_install(job: InstallJob) {
     if installed {
         // The restic in use may be the one just installed: check it again before the
         // installation reports its end, so a GUI that reads the state then sees the new one.
-        refresh_probe_unlocked(&job.shared);
+        refresh_probe_unlocked(&worker.shared);
     }
-    job.progress
+    worker
+        .progress
         .lock_unpoisoned()
-        .finish(result, job.clock.now_utc());
+        .finish(result, worker.clock.now_utc());
     if installed {
-        publish_state(&job.shared);
+        publish_state(&worker.shared);
     }
 }
 

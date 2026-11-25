@@ -446,6 +446,10 @@ pub mod qobject {
         fn load_restore_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString);
 
         #[qinvokable]
+        #[cxx_name = "resticMinimumVersion"]
+        fn restic_minimum_version(self: &KesticApp) -> QString;
+
+        #[qinvokable]
         #[cxx_name = "applyResticSource"]
         fn apply_restic_source(
             self: Pin<&mut KesticApp>,
