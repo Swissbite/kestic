@@ -15,7 +15,7 @@ use kestic_core::model::{ResticProvider, RunStatus};
 use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
 use kestic_core::restic_release::{TrustAnchor, set_test_anchor};
 use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
-use kestic_daemon::dbus_api::{KesticClient, KesticDbusError, ResticBinaryDto, ResticStatusDto};
+use kestic_daemon::dbus_api::{KesticClient, ResticBinaryDto, ResticStatusDto};
 use kestic_i18n::codes::{ResticSourceCode, ServiceErrorCode};
 use kestic_test_support::release_mock::{
     ReleaseFiles, ReleaseMock, Route, TestSigningKey, asset_path,
@@ -340,9 +340,10 @@ fn ac_m5_07_5_source_never_points_at_a_removed_binary() {
                 // (c) the binary is gone
                 assert!(!app.exists(), "link: {through_link}");
                 // (c) the change of source is refused
-                assert!(
-                    matches!(err, KesticDbusError::ResticUnavailable(_)),
-                    "link: {through_link}: {err:?}"
+                assert_eq!(
+                    err.code(),
+                    ServiceErrorCode::ResticUnavailable,
+                    "link: {through_link}"
                 );
                 // (c) the source is unchanged, in the daemon and on disk
                 assert_eq!(
