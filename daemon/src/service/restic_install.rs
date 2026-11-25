@@ -382,13 +382,23 @@ pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), 
     if binary.symlink_metadata().is_err() {
         return Ok(());
     }
-    let provider = shared.lock_unpoisoned().config.restic_provider.clone();
-    if is_active_source(&provider, &binary, &ResticLocations::from_env()) {
-        return Err(KesticServiceErr::InUse(
-            "the restic managed by Kestic is the restic in use".to_string(),
-        ));
-    }
-    match remove_app_managed(&dir, ResticBinaryGate::global()) {
+    let mut provider = shared.lock_unpoisoned().config.restic_provider.clone();
+    let removed = loop {
+        // The check runs restic, so it runs without the lock; the removal then holds the lock,
+        // and a source chosen meanwhile is checked again. `SetResticProvider` checks under the
+        // same lock that the binary it chose still exists.
+        if is_active_source(&provider, &binary, &ResticLocations::from_env()) {
+            return Err(KesticServiceErr::InUse(
+                "the restic managed by Kestic is the restic in use".to_string(),
+            ));
+        }
+        let guard = shared.lock_unpoisoned();
+        if guard.config.restic_provider == provider {
+            break remove_app_managed(&dir, ResticBinaryGate::global());
+        }
+        provider = guard.config.restic_provider.clone();
+    };
+    match removed {
         Ok(_) => {}
         Err(RemoveError::InUse) => {
             return Err(KesticServiceErr::InUse(

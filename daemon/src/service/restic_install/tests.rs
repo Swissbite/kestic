@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
+use std::sync::atomic::{AtomicBool, Ordering};
 use time::macros::datetime;
 
 const START: OffsetDateTime = datetime!(2026-12-01 12:00:00 UTC);
@@ -179,3 +181,82 @@ fn ac_m5_07_5_app_managed_in_use_as_active_source() {
     ));
 }
 
+/// A password store whose availability check removes `binary` once `armed`: it runs after
+/// `SetResticProvider` checked the restic and before it takes the lock, where a concurrent
+/// removal would fall.
+struct RemovingStore {
+    binary: PathBuf,
+    armed: Arc<AtomicBool>,
+}
+
+impl SecretStore for RemovingStore {
+    fn set_secret(&self, _: &str, _: &str, _: &SecretValue) -> Result<(), SecretError> {
+        Ok(())
+    }
+
+    fn get_secret(&self, _: &str, _: &str) -> Result<Option<SecretValue>, SecretError> {
+        Ok(None)
+    }
+
+    fn delete_secret(&self, _: &str, _: &str) -> Result<(), SecretError> {
+        Ok(())
+    }
+
+    fn check_availability(&self) -> Result<(), SecretError> {
+        if self.armed.load(Ordering::SeqCst) {
+            std::fs::remove_file(&self.binary).map_err(|err| SecretError::Io(err.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+/// AC-M5-07-5 (c): a restic removed after `SetResticProvider` checked it never becomes the
+/// source; the source stays as it was.
+#[test]
+fn ac_m5_07_5_source_never_points_at_a_removed_binary() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let binary = dir.path().join("custom/restic");
+    std::fs::create_dir_all(binary.parent().expect("parent")).expect("mkdir");
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\necho '{\"message_type\":\"version\",\"version\":\"0.19.1\"}'\n",
+    )
+    .expect("write");
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let config_path = dir.path().join("config/config.toml");
+    let armed = Arc::new(AtomicBool::new(false));
+    let run_config = crate::service::DaemonRunConfig {
+        config_path: Some(config_path.clone()),
+        state_dir: Some(dir.path().join("state")),
+        secret_store: Some(Arc::new(RemovingStore {
+            binary: binary.clone(),
+            armed: Arc::clone(&armed),
+        })),
+        ..Default::default()
+    };
+    let shared = Arc::new(Mutex::new(
+        DaemonCore::new(&run_config).expect("daemon core"),
+    ));
+    let provider = ResticProvider::Custom {
+        path: binary.clone(),
+    };
+    let provider_json = serde_json::to_string(&provider).expect("provider JSON");
+
+    armed.store(true, Ordering::SeqCst);
+    let result = crate::service::set_restic_provider_unlocked(&shared, &provider_json);
+
+    // (c) the binary is gone
+    assert!(!binary.exists());
+    // (c) the change of source is refused
+    assert!(matches!(
+        result,
+        Err(KesticServiceErr::ResticUnavailable(_))
+    ));
+    // (c) the source is unchanged, in memory and on disk
+    assert_eq!(
+        shared.lock_unpoisoned().config.restic_provider,
+        ResticProvider::default()
+    );
+    assert!(!config_path.exists());
+}

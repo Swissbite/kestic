@@ -876,17 +876,28 @@ pub(crate) fn set_restic_provider_unlocked(
     let locations = ResticLocations::from_env();
     let (probe, resolved) =
         probe_restic_and_secrets_with(&provider, &locations, secret_store.as_ref());
-    if let Err(err) = resolved {
-        if provider == ResticProvider::AppManaged && probe.0.app_managed.is_none() {
-            return Err(KesticServiceErr::InvalidInput(
-                "the restic managed by Kestic is not installed".to_string(),
-            ));
+    let not_installed = || {
+        KesticServiceErr::InvalidInput("the restic managed by Kestic is not installed".to_string())
+    };
+    let binary = match resolved {
+        Ok(resolved) => resolved.binary,
+        Err(_) if provider == ResticProvider::AppManaged && probe.0.app_managed.is_none() => {
+            return Err(not_installed());
         }
-        return Err(map_provider_err(err));
-    }
+        Err(err) => return Err(map_provider_err(err)),
+    };
     let mut restic_status = probe.0.clone();
 
     let mut guard = shared.lock_unpoisoned();
+    // `RemoveAppManagedRestic` deletes under this lock, so a binary removed since the check
+    // above is gone by now.
+    if binary.symlink_metadata().is_err() {
+        return Err(if provider == ResticProvider::AppManaged {
+            not_installed()
+        } else {
+            KesticServiceErr::ResticUnavailable(format!("{} was removed", binary.display()))
+        });
+    }
     let mut next = guard.config.clone();
     next.restic_provider = provider;
     guard.persist_config(next)?;
