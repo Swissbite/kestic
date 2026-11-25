@@ -23,8 +23,21 @@ QtObject {
         property int remainingTicks: 0
         property Item targetItem: null
         property Item targetPage: null
+        // The page's primary list takes the focus, on its highlighted row, once the list has
+        // created that row.
+        property bool preferSelection: false
         onTriggered: {
             manager.updatePageStackViewportAndFocusability();
+            if (preferSelection && targetPage) {
+                // Once the focus is in the list, its row stays: the user may have moved on.
+                var list = manager.focusInPrimaryList(targetPage)
+                    ? targetPage.primaryList
+                    : manager.selectPrimaryList(targetPage);
+                if (list) {
+                    targetItem = list;
+                    preferSelection = false;
+                }
+            }
             if (!targetItem && targetPage) {
                 targetItem = manager.findFirstTabFocusable(targetPage);
             }
@@ -34,7 +47,8 @@ QtObject {
                 return;
             }
             var cur = manager.rootWindow.activeFocusItem;
-            if (cur && cur !== targetItem && cur !== targetPage && manager.isInteractiveTabLeaf(cur)) {
+            if (cur && cur !== targetItem && cur !== targetPage
+                    && (manager.isInteractiveTabLeaf(cur) || manager.isRowOfTabStopList(cur))) {
                 // Only override cur if cur is the default PageRow/Kirigami auto-forwarded first child of targetPage
                 // when we are explicitly restoring a saved trigger item (such as editExcludesRow after pop).
                 var curFirstInPage = targetPage ? manager.findFirstTabFocusable(targetPage) : null;
@@ -59,6 +73,39 @@ QtObject {
             if (remainingTicks <= 0) {
                 stop();
             }
+        }
+    }
+
+    // Whichever way a control gets the focus (Tab, Shift+Tab, a shortcut or a call), it is
+    // scrolled into the visible part of the flickables around it.
+    property Connections focusInViewConnection: Connections {
+        target: manager.rootWindow
+        function onActiveFocusItemChanged() { Qt.callLater(manager.keepFocusInView); }
+    }
+
+    // Scrolls each flickable around the control with the focus just so far that the control is
+    // in view; a control taller than the view only so far that part of it shows. Lists and grids
+    // keep their own rows in view, so the flickable of a list is passed over.
+    function keepFocusInView() {
+        var item = rootWindow.activeFocusItem;
+        if (!item || !item.visible) return;
+        for (var p = item.parent; p; p = p.parent) {
+            if (!(p instanceof Flickable) || p instanceof ListView || p instanceof GridView) continue;
+            if (p.contentHeight <= p.height) continue;
+            var top = item.mapToItem(p.contentItem, 0, 0).y;
+            var bottom = top + item.height;
+            var y = p.contentY;
+            if (item.height <= p.height) {
+                if (bottom > y + p.height) y = bottom - p.height;
+                if (top < y) y = top;
+            } else if (bottom <= y) {
+                y = bottom - p.height;
+            } else if (top >= y + p.height) {
+                y = top;
+            }
+            var minY = p.originY - p.topMargin;
+            var maxY = Math.max(minY, p.originY + p.contentHeight + p.bottomMargin - p.height);
+            p.contentY = Math.max(minY, Math.min(maxY, y));
         }
     }
 
@@ -115,7 +162,7 @@ QtObject {
     function canNavigateBackInBreadcrumb(rev) {
         if (!pageStack || !rootWindow || rev < 0 || rootWindow.inWizardLayer) return false;
         if (rootWindow.narrowMode) return pageStack.depth > 1;
-        if (rootWindow.activeTab === 1 || rootWindow.activeTab === 2 || rootWindow.activeTab === 3) {
+        if (rootWindow.isListDetailTab(rootWindow.activeTab)) {
             return pageStack.depth > 2;
         }
         return pageStack.depth > 1;
@@ -128,26 +175,54 @@ QtObject {
             case 1: return Texts.label("backups");
             case 2: return Texts.label("destinations");
             case 3: return Texts.label("history");
+            case 4: return Texts.label("restore");
             default: return Texts.label("overview");
             }
         }
         return "";
     }
 
+    // Whether the keyboard focus is in the primary list of `listPage`.
+    function focusInPrimaryList(listPage) {
+        var list = listPage ? listPage.primaryList : null;
+        for (var item = rootWindow.activeFocusItem; item && list; item = item.parent) {
+            if (item === list) return true;
+        }
+        return false;
+    }
+
+    // The primary list of `listPage` with its highlighted row made the current row, once; null
+    // while the list has not created that row. Later ticks focus the list, not a row: the list
+    // passes the focus to its current row, so a row the user moved to with the arrow keys keeps
+    // it.
+    function selectPrimaryList(listPage) {
+        var list = listPage ? listPage.primaryList : null;
+        return list && selectPrimaryListRow(listPage) ? list : null;
+    }
+
+    // The highlighted row of the primary list of `listPage`, made the list's current row; null
+    // without one.
+    function selectPrimaryListRow(listPage) {
+        var list = listPage ? listPage.primaryList : null;
+        if (!list) return null;
+        for (var i = 0; i < list.count; ++i) {
+            var item = list.itemAtIndex(i);
+            if (item && item.highlighted) {
+                list.currentIndex = i;
+                return item;
+            }
+        }
+        return null;
+    }
+
     function focusPrimaryListSelection() {
         if (pageStack.depth <= 0) return;
         var listPage = pageStack.get(0);
         if (!listPage) return;
-        var list = listPage.primaryList;
-        if (list) {
-            for (var i = 0; i < list.count; ++i) {
-                var item = list.itemAtIndex(i);
-                if (item && item.highlighted) {
-                    list.currentIndex = i;
-                    focusItemInPageStack(item);
-                    return;
-                }
-            }
+        var item = selectPrimaryListRow(listPage);
+        if (item) {
+            focusItemInPageStack(item);
+            return;
         }
         focusPageContent(listPage);
     }
@@ -223,7 +298,7 @@ QtObject {
                 return;
             }
         }
-        if (!rootWindow.narrowMode && targetIdx === 0 && (rootWindow.activeTab === 1 || rootWindow.activeTab === 2 || rootWindow.activeTab === 3)) {
+        if (!rootWindow.narrowMode && targetIdx === 0 && (rootWindow.isListDetailTab(rootWindow.activeTab))) {
             while (pageStack.depth > 2) {
                 removeTopPageFromStack();
             }
@@ -263,10 +338,22 @@ QtObject {
         return true;
     }
 
+    // Whether `item` lies in a list that is one Tab stop (KeyboardList): the list is the Tab
+    // stop, its current row holds the focus, so the row counts like a focused control.
+    function isRowOfTabStopList(item) {
+        for (var p = item ? item.parent : null; p; p = p.parent) {
+            if (p.activeFocusOnTab && typeof p.keyNavigationEnabled === "boolean") {
+                return p.visible && p.enabled;
+            }
+        }
+        return false;
+    }
+
     function cancelFocusRestoreTimer() {
         focusRestoreTimer.stop();
         focusRestoreTimer.targetItem = null;
         focusRestoreTimer.targetPage = null;
+        focusRestoreTimer.preferSelection = false;
         pendingRestoreFocusItem = null;
     }
 
@@ -325,7 +412,9 @@ QtObject {
         return null;
     }
 
-    function focusPageContent(pageItem) {
+    // Focuses the first control of `pageItem`; with `preferSelection` the highlighted row of its
+    // primary list instead, when it has one (a list page may hold other rows above or below it).
+    function focusPageContent(pageItem, preferSelection) {
         if (!pageItem) return;
         updatePageStackViewportAndFocusability();
         for (var i = 0; i < pageStack.depth; ++i) {
@@ -339,12 +428,18 @@ QtObject {
         updatePageStackViewportAndFocusability();
         focusRestoreTimer.targetPage = pageItem;
         focusRestoreTimer.targetItem = null;
+        focusRestoreTimer.preferSelection = Boolean(preferSelection);
         focusRestoreTimer.remainingTicks = 4;
         focusRestoreTimer.restart();
         Qt.callLater(function() {
             if (!pageItem) return;
             updatePageStackViewportAndFocusability();
-            var first = findFirstTabFocusable(pageItem);
+            var selected = preferSelection ? selectPrimaryList(pageItem) : null;
+            if (selected && focusRestoreTimer.targetPage === pageItem) {
+                // Selected once: the ticks after it only focus the list.
+                focusRestoreTimer.preferSelection = false;
+            }
+            var first = selected || findFirstTabFocusable(pageItem);
             if (first) {
                 focusItemInPageStack(first);
             } else {

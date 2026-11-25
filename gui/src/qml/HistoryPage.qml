@@ -107,7 +107,7 @@ Kirigami.ScrollablePage {
         }
     }
 
-    ListView {
+    KeyboardList {
         id: runsListView
         objectName: "runsListView"
         model: runsModel
@@ -150,7 +150,7 @@ Kirigami.ScrollablePage {
             required property string summaryText
 
             width: ListView.view.width
-            activeFocusOnTab: true
+            focusPolicy: Qt.ClickFocus
             highlighted: page.selectedRunId === runId
             Accessible.name: title
             // Exposed for the smoke test: selected rows must use the selection text colour.
@@ -164,10 +164,7 @@ Kirigami.ScrollablePage {
             }
 
             FocusRing {
-                // Focus ring only: a white wash over the row made the selected text unreadable.
                 target: runRow
-                anchors.margins: runRow.highlighted ? 2 : 0
-                ringColor: runRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {

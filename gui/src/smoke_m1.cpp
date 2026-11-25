@@ -565,41 +565,54 @@ void install_m1_smoke_check(
             auto* bottom_nav = child_item(window, "bottomNavBar");
             SMOKE_CHECK2("M1", 12, top_nav, bottom_nav, "NavigationTabBars missing");
 
-            const QStringList required_tabs = (lang == QLatin1String("de"))
+            const bool de = lang == QLatin1String("de");
+            const QString overview_label = de ? QStringLiteral("Übersicht") : QStringLiteral("Overview");
+            const QString restore_label = de ? QStringLiteral("Wiederherstellen") : QStringLiteral("Restore");
+            const QStringList required_tabs = de
                 ? QStringList {
-                    QStringLiteral("Übersicht"),
+                    overview_label,
+                    restore_label,
                     QStringLiteral("Backups"),
                     QStringLiteral("Ziele"),
                     QStringLiteral("Verlauf"),
                 }
                 : QStringList {
-                    QStringLiteral("Overview"),
+                    overview_label,
+                    restore_label,
                     QStringLiteral("Backups"),
                     QStringLiteral("Destinations"),
                     QStringLiteral("History"),
                 };
-            const QString forbidden_restore = (lang == QLatin1String("de"))
-                ? QStringLiteral("Wiederherstellen")
-                : QStringLiteral("Restore");
 
             const bool in_wizard = window->property("inWizardLayer").toBool();
             if (in_wizard) {
                 SMOKE_CHECK2("M1", 13, !top_nav->isVisible(), !bottom_nav->isVisible(), "NavigationTabBar must be hidden inside wizard layer");
             } else if (mode == QLatin1String("narrow")) {
                 SMOKE_CHECK2("M1", 13, !top_nav->isVisible(), bottom_nav->isVisible(), "expected bottomNavBar visible in narrow mode");
-                SMOKE_CHECK("M1", 14, verify_tab_bar_labels(bottom_nav, 4, required_tabs), "bottomNavBar tab labels missing or truncated");
+                SMOKE_CHECK("M1", 14, verify_tab_bar_labels(bottom_nav, 5, required_tabs), "bottomNavBar tab labels missing or truncated");
             } else {
-                SMOKE_CHECK("M1", 15, verify_tab_bar_labels(top_nav, 4, required_tabs), "topNavBar tab labels missing or truncated");
+                SMOKE_CHECK("M1", 15, verify_tab_bar_labels(top_nav, 5, required_tabs), "topNavBar tab labels missing or truncated");
             }
 
-            // Verify NO Restore tab in M1 and NO New Backup / Add Destination / Quit Kestic in hamburger menu
-            QList<QQuickItem*> nav_items;
-            collect_visual_descendants(mode == QLatin1String("narrow") ? bottom_nav : top_nav, nav_items);
-            for (QQuickItem* it : nav_items) {
-                if (!it->isVisible()) {
-                    continue;
-                }
-                SMOKE_CHECK("M1", 16, it->property("text").toString() != forbidden_restore, "Restore tab must not exist in M1");
+            // AC-M4-01-6 (a): «Restore» sits between «Overview» and «Backups» in the tab bar.
+            if (!in_wizard) {
+                QList<QQuickItem*> nav_items;
+                collect_visual_descendants(mode == QLatin1String("narrow") ? bottom_nav : top_nav, nav_items);
+                auto tab_x = [&](const QString& label) -> qreal {
+                    for (QQuickItem* it : nav_items) {
+                        if (it->isVisible() && it->property("truncated").isValid()
+                                && it->property("text").toString() == label) {
+                            return it->mapToScene(QPointF(0, 0)).x();
+                        }
+                    }
+                    return -1;
+                };
+                const qreal overview_x = tab_x(overview_label);
+                const qreal restore_x = tab_x(restore_label);
+                const qreal backups_x = tab_x(QStringLiteral("Backups"));
+                SMOKE_CHECK("M1", 16, overview_x >= 0, "Overview tab missing");
+                SMOKE_CHECK("M1", 19, restore_x > overview_x, "Restore tab must follow Overview");
+                SMOKE_CHECK("M1", 18, backups_x > restore_x, "Restore tab must come before Backups");
             }
 
             {
@@ -630,6 +643,9 @@ void install_m1_smoke_check(
                 return;
             } else if (scen.startsWith(QLatin1String("m3-"))) {
                 run_m3_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
+                return;
+            } else if (scen.startsWith(QLatin1String("m4-"))) {
+                run_m4_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
                 return;
             } else if (scen.startsWith(QLatin1String("m5-"))) {
                 run_m5_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);

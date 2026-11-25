@@ -363,6 +363,7 @@ pub(crate) fn update_destination_unlocked(
             .destination(&updated.id)
             .cloned()
             .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
+        guard.refuse_while_restoring(&updated.id)?;
         guard.refuse_duplicate(&updated)?;
         let changed = connection_changed(&saved.kind, &updated.kind);
         // A new name alone needs no restic, so it can be saved while `ssh` or `rclone` is
@@ -516,6 +517,7 @@ fn save_update(
             "the destination was changed meanwhile; check the connection again".to_string(),
         ));
     }
+    guard.refuse_while_restoring(&updated.id)?;
     guard.refuse_duplicate(&updated)?;
     let store = Arc::clone(&guard.secret_store);
     let previous = accepted

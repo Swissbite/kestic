@@ -381,5 +381,4 @@ fn publish_state(shared: &Arc<Mutex<DaemonCore>>) {
 }
 
 #[cfg(test)]
-#[path = "restic_install_tests.rs"]
 mod tests;

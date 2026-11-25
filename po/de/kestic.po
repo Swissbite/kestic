@@ -603,7 +603,7 @@ msgstr "REST-Server"
 msgid "Current destination (%1)"
 msgstr "Aktuelles Ziel (%1)"
 
-#: gui/src/models/snapshots_model.rs:76
+#: gui/src/ui_texts.rs
 msgid "Earlier snapshots on '%1'"
 msgstr "Frühere Snapshots auf «%1»"
 
@@ -666,27 +666,27 @@ msgstr "monatliche"
 msgid "yearly"
 msgstr "jährliche"
 
-#: gui/src/state_cache.rs:628
+#: gui/src/retention_texts.rs
 msgid "all within %1"
 msgstr "alle innerhalb von %1"
 
-#: gui/src/state_cache.rs:631
+#: gui/src/retention_texts.rs
 msgid "hourly within %1"
 msgstr "stündliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:634
+#: gui/src/retention_texts.rs
 msgid "daily within %1"
 msgstr "tägliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:637
+#: gui/src/retention_texts.rs
 msgid "weekly within %1"
 msgstr "wöchentliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:640
+#: gui/src/retention_texts.rs
 msgid "monthly within %1"
 msgstr "monatliche innerhalb von %1"
 
-#: gui/src/state_cache.rs:643
+#: gui/src/retention_texts.rs
 msgid "yearly within %1"
 msgstr "jährliche innerhalb von %1"
 
@@ -1974,7 +1974,7 @@ msgstr "Aufbewahrungsvorschau wird berechnet…"
 msgid "Cancel retention preview"
 msgstr "Aufbewahrungsvorschau abbrechen"
 
-#: gui/src/qml/BackupPreviewPage.qml:381
+#: gui/src/retention_texts.rs
 msgid "No snapshots would be removed (%1 kept)."
 msgstr "Es würden keine Snapshots entfernt (%1 behalten)."
 
@@ -2303,17 +2303,17 @@ msgstr "Nächste 3 geplante Läufe:"
 msgid "Snapshots · %1"
 msgstr "Snapshots · %1"
 
-#: gui/src/qml/BackupSnapshotsPage.qml:35
+#: gui/src/ui_texts.rs
 msgid "Refresh"
 msgstr "Aktualisieren"
 
-#: gui/src/qml/BackupSnapshotsPage.qml:54
+#: gui/src/ui_texts.rs
 msgid "Loading snapshots…"
 msgstr "Snapshots werden geladen…"
 
-#: gui/src/qml/BackupSnapshotsPage.qml:75
-msgid "No snapshots yet – the first backup is still pending"
-msgstr "Noch keine Snapshots – das erste Backup steht noch aus"
+#: gui/src/ui_texts.rs
+msgid "No snapshots yet. The first backup is still pending."
+msgstr "Noch keine Snapshots. Das erste Backup steht noch aus."
 
 #: gui/src/qml/BackupSourceEditPage.qml:100
 msgid "Source saved"
@@ -3209,10 +3209,6 @@ msgstr "restic"
 msgid "restic source:"
 msgstr "restic-Quelle:"
 
-#: gui/src/qml/SettingsDialog.qml:280
-msgid "%1 (%2 · %3)"
-msgstr "%1 (%2 · %3)"
-
 #: gui/src/qml/SettingsDialog.qml:288
 msgid "Kestic needs restic 0.18.0 or newer."
 msgstr "Kestic benötigt restic 0.18.0 oder neuer."
@@ -3361,15 +3357,17 @@ msgid_plural "%1 more rules in restic syntax. Enable Expert Mode to edit them."
 msgstr[0] "%1 weitere Regel in restic-Syntax. Aktivieren Sie den Expertenmodus, um sie zu bearbeiten."
 msgstr[1] "%1 weitere Regeln in restic-Syntax. Aktivieren Sie den Expertenmodus, um sie zu bearbeiten."
 
-msgid "%1 snapshot kept · %2"
-msgid_plural "%1 snapshots kept · %2"
-msgstr[0] "%1 Snapshot behalten · %2"
-msgstr[1] "%1 Snapshots behalten · %2"
+#: gui/src/retention_texts.rs
+msgid "%1 snapshot kept"
+msgid_plural "%1 snapshots kept"
+msgstr[0] "%1 Snapshot behalten"
+msgstr[1] "%1 Snapshots behalten"
 
-msgid "%1 snapshot would be removed."
-msgid_plural "%1 snapshots would be removed."
-msgstr[0] "%1 Snapshot würde entfernt."
-msgstr[1] "%1 Snapshots würden entfernt."
+#: gui/src/retention_texts.rs
+msgid "%1 snapshot would be removed"
+msgid_plural "%1 snapshots would be removed"
+msgstr[0] "%1 Snapshot würde entfernt"
+msgstr[1] "%1 Snapshots würden entfernt"
 
 msgid "day"
 msgid_plural "days"
@@ -3601,7 +3599,7 @@ msgstr "Variable hinzufügen"
 msgid "Enter a value for every secret variable."
 msgstr "Geben Sie für jede geheime Variable einen Wert ein."
 
-#: gui/src/qml/DestinationDetailsForm.qml
+#: gui/src/ui_texts.rs
 msgid "Name"
 msgstr "Name"
 
@@ -3947,3 +3945,592 @@ msgstr ""
 #: i18n/src/messages.rs:570
 msgid "Could not save restic in the data folder of Kestic."
 msgstr "restic konnte nicht im Datenordner von Kestic gespeichert werden."
+
+#: gui/src/ui_texts.rs
+msgid "Restore"
+msgstr "Wiederherstellen"
+
+#: gui/src/qml/RestorePage.qml
+msgid "Which backup?"
+msgstr "Aus welchem Backup?"
+
+#: gui/src/models/restore_backups_model.rs
+msgid "%1 snapshot"
+msgid_plural "%1 snapshots"
+msgstr[0] "%1 Snapshot"
+msgstr[1] "%1 Snapshots"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "%1 new"
+msgstr "%1 neu"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Size unknown"
+msgstr "Grösse unbekannt"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Browse"
+msgstr "Durchsuchen"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Compare with Previous"
+msgstr "Mit vorherigem vergleichen"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Restore…"
+msgstr "Wiederherstellen…"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "This Week"
+msgstr "Diese Woche"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Earlier"
+msgstr "Früher"
+
+#: gui/src/models/snapshot_query.rs
+msgid "%1 of %2"
+msgstr "%1 von %2"
+
+#: gui/src/models/snapshot_query.rs
+msgid "%1 entry"
+msgid_plural "%1 entries"
+msgstr[0] "%1 Eintrag"
+msgstr[1] "%1 Einträge"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "%1 item selected"
+msgid_plural "%1 items selected"
+msgstr[0] "%1 Element ausgewählt"
+msgstr[1] "%1 Elemente ausgewählt"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "%1 item selected (%2 here, %3 in ‹%4›)"
+msgid_plural "%1 items selected (%2 here, %3 in ‹%4›)"
+msgstr[0] "%1 Element ausgewählt (%2 hier, %3 in ‹%4›)"
+msgstr[1] "%1 Elemente ausgewählt (%2 hier, %3 in ‹%4›)"
+
+#: gui/src/models/snapshot_browse_model.rs
+msgid "%1 item selected (%2 here, %3 in other folders)"
+msgid_plural "%1 items selected (%2 here, %3 in other folders)"
+msgstr[0] "%1 Element ausgewählt (%2 hier, %3 in anderen Ordnern)"
+msgstr[1] "%1 Elemente ausgewählt (%2 hier, %3 in anderen Ordnern)"
+
+#: gui/src/models/snapshot_query.rs
+msgid "Too many entries to show (%1). Choose a subfolder or narrow the search."
+msgstr "Zu viele Einträge für die Anzeige (%1). Einen Unterordner wählen oder enger suchen."
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Restore Selection…"
+msgstr "Auswahl wiederherstellen…"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Restore All…"
+msgstr "Alles wiederherstellen…"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Select All"
+msgstr "Alles auswählen"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Select files or folders first"
+msgstr "Zuerst Dateien oder Ordner auswählen"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Top folder"
+msgstr "Oberster Ordner"
+
+#: gui/src/ui_texts.rs
+msgid "Filter"
+msgstr "Filtern"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Show Selection"
+msgstr "Auswahl anzeigen"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Clear Selection"
+msgstr "Auswahl aufheben"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Size"
+msgstr "Grösse"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Modified"
+msgstr "Geändert"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "This folder is not in the snapshot."
+msgstr "Dieser Ordner ist nicht im Snapshot."
+
+#: gui/src/ui_texts.rs
+msgid "No entries match the filter."
+msgstr "Kein Eintrag passt zum Filter."
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "This folder is empty in the snapshot."
+msgstr "Dieser Ordner ist im Snapshot leer."
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Marked for restore"
+msgstr "Zum Wiederherstellen markiert"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Mark %1 for restore"
+msgstr "%1 zum Wiederherstellen markieren"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Selection"
+msgstr "Auswahl"
+
+#: gui/src/ui_texts.rs
+msgid "Search in the snapshots of this backup"
+msgstr "In Snapshots dieses Backups suchen"
+
+#: gui/src/models/snapshot_search_model.rs
+msgid "%1 hit for ‹%2›"
+msgid_plural "%1 hits for ‹%2›"
+msgstr[0] "%1 Treffer für ‹%2›"
+msgstr[1] "%1 Treffer für ‹%2›"
+
+#: gui/src/models/snapshot_search_model.rs
+msgid "in %1 snapshot"
+msgid_plural "in %1 snapshots"
+msgstr[0] "in %1 Snapshot"
+msgstr[1] "in %1 Snapshots"
+
+#: gui/src/models/snapshot_search_model.rs
+msgid "No hits for ‹%1›"
+msgstr "Keine Treffer für ‹%1›"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Search"
+msgstr "Suche"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Search for ‹%1›"
+msgstr "Suche nach ‹%1›"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Searching…"
+msgstr "Suche läuft…"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Show"
+msgstr "Anzeigen"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Show %1"
+msgstr "%1 anzeigen"
+
+#: gui/src/qml/RestoreSearchPage.qml
+msgid "Search cancelled"
+msgstr "Suche abgebrochen"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "New"
+msgstr "Neu"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Removed"
+msgstr "Entfernt"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Changed"
+msgstr "Geändert"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Type changed"
+msgstr "Typ geändert"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "Content changed, metadata unchanged"
+msgstr "Inhalt geändert, Metadaten unverändert"
+
+#: gui/src/models/snapshot_diff_model.rs
+msgid "%1 change"
+msgid_plural "%1 changes"
+msgstr[0] "%1 Änderung"
+msgstr[1] "%1 Änderungen"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Compare"
+msgstr "Vergleichen"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "From %1 to %2"
+msgstr "Von %1 bis %2"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Change"
+msgstr "Änderung"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Path"
+msgstr "Pfad"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Comparing…"
+msgstr "Vergleich läuft…"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "Comparison cancelled"
+msgstr "Vergleich abgebrochen"
+
+#: gui/src/qml/RestoreComparePage.qml
+msgid "No differences"
+msgstr "Keine Unterschiede"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Compare…"
+msgstr "Vergleichen…"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Chosen to compare"
+msgstr "Zum Vergleichen gewählt"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Choose %1 to compare"
+msgstr "%1 zum Vergleichen wählen"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "%1 of 2 chosen"
+msgstr "%1 von 2 gewählt"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "Show Differences"
+msgstr "Unterschiede anzeigen"
+
+msgid "Restore Files…"
+msgstr "Dateien wiederherstellen…"
+
+msgid "Restore Files… (no destination connected)"
+msgstr "Dateien wiederherstellen… (kein Ziel verbunden)"
+
+msgid "The chosen folder does not exist in the snapshot"
+msgstr "Der gewählte Ordner fehlt im Snapshot"
+
+msgid "This folder cannot be used for the restore"
+msgstr "Dieser Ordner lässt sich zum Wiederherstellen nicht verwenden"
+
+msgid "Cannot safely restore to %1. Choose 'Into a new folder' instead."
+msgstr "Wiederherstellen nach %1 ist nicht sicher möglich. Stattdessen «In neuen Ordner» wählen."
+
+msgid "Check the preview again before restoring; it is missing or outdated."
+msgstr "Vor dem Wiederherstellen die Vorschau erneut prüfen; sie fehlt oder ist veraltet."
+
+msgid "A restore from this destination is running or waiting."
+msgstr "Ein Restore von diesem Ziel läuft oder wartet."
+
+msgid "%1: restoring"
+msgstr "%1: stellt wieder her"
+
+msgid "%1: restoring · %2%"
+msgstr "%1: stellt wieder her · %2%"
+
+msgid "Overwritten"
+msgstr "Überschrieben"
+
+msgid "Not overwritten"
+msgstr "Nicht überschrieben"
+
+msgid "Unchanged"
+msgstr "Unverändert"
+
+msgid "Owners and groups are not restored; the files will belong to you."
+msgstr "Besitzer und Gruppen werden nicht übernommen, die Dateien gehören Ihnen."
+
+msgid "Some files that are overwritten have further hard links; restic replaces them, and the other names keep the old content."
+msgstr "Einige Dateien, die überschrieben werden, haben weitere Hardlinks; restic ersetzt sie, die anderen Namen behalten den alten Inhalt."
+
+msgid "Nothing in the snapshot matches the selection."
+msgstr "Nichts im Snapshot passt zur Auswahl."
+
+msgid "The target contains symbolic links where the snapshot has files or folders; restic may replace such a link, but it never writes through it."
+msgstr "Im Zielordner liegen symbolische Links, wo der Snapshot Dateien oder Ordner hat; restic ersetzt einen solchen Link unter Umständen, schreibt aber nie hindurch."
+
+msgid "Existing folders at the target get the permissions and modification time from the snapshot. This also happens when no file is overwritten."
+msgstr "Vorhandene Ordner am Ziel erhalten Zugriffsrechte und Änderungszeit aus dem Snapshot. Das gilt auch, wenn keine Datei überschrieben wird."
+
+msgid "%1 already contains files"
+msgstr "%1 enthält bereits Dateien"
+
+msgid "%1 is not a folder"
+msgstr "%1 ist kein Ordner"
+
+msgid "%1 is not writable"
+msgstr "%1 ist nicht beschreibbar"
+
+msgid "%1 does not exist; choose a folder"
+msgstr "%1 existiert nicht; bitte einen Ordner wählen"
+
+msgid "Restoring to %1 would write into the repository of a destination"
+msgstr "Wiederherstellen nach %1 würde in das Repository eines Ziels schreiben"
+
+msgid ""
+"Restoring to %1 would overwrite Kestic's own settings and history. Deselect "
+"Kestic's folder or restore into a new folder."
+msgstr ""
+"Wiederherstellen nach %1 würde die Einstellungen und den Verlauf von Kestic "
+"überschreiben. Den Ordner von Kestic abwählen oder in einen neuen Ordner "
+"wiederherstellen."
+
+msgid "Nothing restored"
+msgstr "Nichts wiederhergestellt"
+
+msgid "Restored"
+msgstr "Wiederhergestellt"
+
+msgid "not assigned"
+msgstr "nicht zugeordnet"
+
+msgid "Restoring from %1"
+msgstr "Wiederherstellen aus %1"
+
+msgid "Restore from %1 finished"
+msgstr "Wiederherstellen aus %1 beendet"
+
+msgid "Restore Snapshot"
+msgstr "Snapshot wiederherstellen"
+
+msgid "'%1' cannot be restored on its own: its name contains characters that are not valid UTF-8. Restore its folder '%2' instead."
+msgstr "«%1» lässt sich nicht einzeln wiederherstellen: Der Name enthält Zeichen, die kein gültiges UTF-8 sind. Stattdessen den Ordner «%2» wiederherstellen."
+
+msgid "Restore Folder"
+msgstr "Ordner wiederherstellen"
+
+msgid "Too many entries are selected for one restore. Restore their folder '%1' instead."
+msgstr "Für eine Wiederherstellung sind zu viele Einträge gewählt. Stattdessen den Ordner «%1» wiederherstellen."
+
+msgid "Restore failed"
+msgstr "Wiederherstellen fehlgeschlagen"
+
+msgid "Restore cancelled"
+msgstr "Wiederherstellen abgebrochen"
+
+#. A speed: an amount of bytes per second, e.g. «4.0 MB/s».
+msgid "%1/s"
+msgstr "%1/s"
+
+#: gui/src/qml/RestoreDialog.qml
+msgid "Network folders such as smb:// cannot be chosen directly. Mount the folder first or choose a local folder."
+msgstr "Netzwerkordner wie smb:// lassen sich nicht direkt wählen. Den Ordner zuerst einbinden oder einen lokalen Ordner wählen."
+
+msgid "Restoring files…"
+msgstr "Dateien werden wiederhergestellt…"
+
+msgid "Open Folder"
+msgstr "Ordner öffnen"
+
+msgid "Overwrite and Restore"
+msgstr "Überschreiben und wiederherstellen"
+
+msgid "Restore Now"
+msgstr "Jetzt wiederherstellen"
+
+msgid "Choose Target Folder"
+msgstr "Zielordner wählen"
+
+msgid "Where to"
+msgstr "Wohin"
+
+msgid "Into a new folder"
+msgstr "In neuen Ordner"
+
+msgid "Into a New Folder"
+msgstr "In neuen Ordner"
+
+msgid "To the original location"
+msgstr "An ursprünglichen Ort"
+
+msgid "The original location cannot be used for this selection; choose a folder."
+msgstr "Der ursprüngliche Ort ist für diese Auswahl nicht möglich; bitte einen Ordner wählen."
+
+msgid "Original: %1 (%2 → %3)"
+msgstr "Original: %1 (%2 → %3)"
+
+msgid "Existing files:"
+msgstr "Vorhandene Dateien:"
+
+msgid "Never overwrite"
+msgstr "Nie überschreiben"
+
+msgid "If older"
+msgstr "Wenn älter"
+
+msgid "If changed"
+msgstr "Wenn verändert"
+
+msgid "Always"
+msgstr "Immer"
+
+msgid "Checking what the restore would change…"
+msgstr "Prüfe, was das Wiederherstellen ändern würde…"
+
+msgid "Everything is restored into this folder; nothing is overwritten."
+msgstr "Alles wird in diesen Ordner wiederhergestellt; nichts wird überschrieben."
+
+msgid "List"
+msgstr "Liste"
+
+msgid "%1 (outdated)"
+msgstr "%1 (veraltet)"
+
+msgid "Restored %1 file"
+msgid_plural "Restored %1 files"
+msgstr[0] "%1 Datei wiederhergestellt"
+msgstr[1] "%1 Dateien wiederhergestellt"
+
+msgid "Restore %1 Item"
+msgid_plural "Restore %1 Items"
+msgstr[0] "%1 Element wiederherstellen"
+msgstr[1] "%1 Elemente wiederherstellen"
+
+msgid "%1 file new"
+msgid_plural "%1 files new"
+msgstr[0] "%1 Datei neu"
+msgstr[1] "%1 Dateien neu"
+
+msgid "%1 existing file will be overwritten"
+msgid_plural "%1 existing files will be overwritten"
+msgstr[0] "%1 vorhandene Datei wird überschrieben"
+msgstr[1] "%1 vorhandene Dateien werden überschrieben"
+
+msgid "%1 existing file will not be overwritten"
+msgid_plural "%1 existing files will not be overwritten"
+msgstr[0] "%1 vorhandene Datei wird nicht überschrieben"
+msgstr[1] "%1 vorhandene Dateien werden nicht überschrieben"
+
+msgid "%1 file unchanged"
+msgid_plural "%1 files unchanged"
+msgstr[0] "%1 Datei unverändert"
+msgstr[1] "%1 Dateien unverändert"
+
+msgid "%1 file will be overwritten. This cannot be undone."
+msgid_plural "%1 files will be overwritten. This cannot be undone."
+msgstr[0] "%1 Datei wird überschrieben. Das lässt sich nicht rückgängig machen."
+msgstr[1] "%1 Dateien werden überschrieben. Das lässt sich nicht rückgängig machen."
+
+msgid "%1 file restored"
+msgid_plural "%1 files restored"
+msgstr[0] "%1 Datei wiederhergestellt"
+msgstr[1] "%1 Dateien wiederhergestellt"
+
+
+
+
+msgid "Hide the list of files"
+msgstr "Liste der Dateien ausblenden"
+
+msgid "Show the list of files"
+msgstr "Liste der Dateien anzeigen"
+
+msgid "Managed by Kestic"
+msgstr "Von Kestic verwaltet"
+
+#: gui/src/retention_texts.rs
+msgid "latest snapshot"
+msgstr "jüngster"
+
+#: gui/src/retention_texts.rs
+msgid "hourly snapshot"
+msgstr "stündlich"
+
+#: gui/src/retention_texts.rs
+msgid "daily snapshot"
+msgstr "täglich"
+
+#: gui/src/retention_texts.rs
+msgid "weekly snapshot"
+msgstr "wöchentlich"
+
+#: gui/src/retention_texts.rs
+msgid "monthly snapshot"
+msgstr "monatlich"
+
+#: gui/src/retention_texts.rs
+msgid "yearly snapshot"
+msgstr "jährlich"
+
+#: gui/src/retention_texts.rs
+msgid "%1 (oldest)"
+msgstr "%1 (ältester)"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "Unassigned"
+msgstr "Nicht zugeordnet"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "Orphaned"
+msgstr "Verwaist"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "Backups not configured here"
+msgstr "Hier nicht angelegte Backups"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "%1 snapshot without a unique Kestic tag"
+msgid_plural "%1 snapshots without a unique Kestic tag"
+msgstr[0] "%1 Snapshot ohne eindeutigen Kestic-Tag"
+msgstr[1] "%1 Snapshots ohne eindeutigen Kestic-Tag"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "%1 backup without description"
+msgid_plural "%1 backups without description"
+msgstr[0] "%1 Backup ohne Beschreibung"
+msgstr[1] "%1 Backups ohne Beschreibung"
+
+#: gui/src/models/restore_groups_model.rs
+msgid "%1 backup with description"
+msgid_plural "%1 backups with description"
+msgstr[0] "%1 Backup mit Beschreibung"
+msgstr[1] "%1 Backups mit Beschreibung"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "latest %1 from %2"
+msgstr "zuletzt %1 von %2"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "latest %1"
+msgstr "zuletzt %1"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Not managed by Kestic"
+msgstr "Von Kestic nicht verwaltet"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Unassigned on '%1'"
+msgstr "Nicht zugeordnet auf «%1»"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Backup without description on '%1'"
+msgstr "Backup ohne Beschreibung auf «%1»"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Backup on '%1'"
+msgstr "Backup auf «%1»"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "Backup not configured here"
+msgstr "Backup hier nicht angelegt"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "'%1': %2"
+msgstr "«%1»: %2"
+
+#: gui/src/qml/RestorePage.qml
+msgid "Other snapshots"
+msgstr "Weitere Snapshots"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "No unassigned snapshots"
+msgstr "Keine nicht zugeordneten Snapshots"
+
+#: gui/src/qml/RestoreSnapshotsPage.qml
+msgid "No orphaned backups"
+msgstr "Keine verwaisten Backups"
+
+#: gui/src/models/restore_snapshots_model.rs
+msgid "ID %1"
+msgstr "ID %1"

@@ -23,6 +23,7 @@ pub mod qobject {
         #[qproperty(bool, daemon_reachable)]
         #[qproperty(bool, restic_valid)]
         #[qproperty(QString, restic_version)]
+        #[qproperty(bool, restic_outdated)]
         #[qproperty(QString, restic_binary_path)]
         #[qproperty(QString, restic_provider_kind)]
         #[qproperty(QString, restic_message)]
@@ -78,6 +79,7 @@ pub mod qobject {
         #[qproperty(QString, last_action_error)]
         #[qproperty(bool, show_quit_dialog_on_start)]
         #[qproperty(bool, show_about_on_start)]
+        #[qproperty(bool, show_restore_on_start)]
         #[qproperty(bool, quit_has_running_run)]
         #[qproperty(QString, quit_running_backup_name)]
         #[qproperty(QString, dry_run_preview_id)]
@@ -101,6 +103,9 @@ pub mod qobject {
         #[qproperty(QString, condition_override_backup_name)]
         #[qproperty(QString, condition_override_message)]
         #[qproperty(bool, maintenance_preview_loading)]
+        #[qproperty(bool, restore_overview_loading)]
+        #[qproperty(bool, restore_snapshots_loading)]
+        #[qproperty(QString, restore_snapshots_error)]
         type KesticApp = super::KesticAppRust;
 
         #[qsignal]
@@ -110,6 +115,14 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "snapshotsUpdated"]
         fn snapshots_updated(self: Pin<&mut KesticApp>);
+
+        #[qsignal]
+        #[cxx_name = "restoreOverviewUpdated"]
+        fn restore_overview_updated(self: Pin<&mut KesticApp>);
+
+        #[qsignal]
+        #[cxx_name = "restoreSnapshotsUpdated"]
+        fn restore_snapshots_updated(self: Pin<&mut KesticApp>);
 
         #[qsignal]
         #[cxx_name = "passiveNotification"]
@@ -122,6 +135,10 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "aboutRequested"]
         fn about_requested(self: Pin<&mut KesticApp>);
+
+        #[qsignal]
+        #[cxx_name = "restoreTabRequested"]
+        fn restore_tab_requested(self: Pin<&mut KesticApp>);
 
         #[qsignal]
         #[cxx_name = "quitConfirmationRequested"]
@@ -432,6 +449,14 @@ pub mod qobject {
         fn load_backup_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "loadRestoreOverview"]
+        fn load_restore_overview(self: Pin<&mut KesticApp>);
+
+        #[qinvokable]
+        #[cxx_name = "loadRestoreSnapshots"]
+        fn load_restore_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString);
+
+        #[qinvokable]
         #[cxx_name = "setResticProvider"]
         fn set_restic_provider(
             self: Pin<&mut KesticApp>,
@@ -583,6 +608,7 @@ mod backups;
 mod destinations;
 mod previews;
 mod restic_install;
+pub(crate) mod restore;
 mod schedules;
 mod state;
 
@@ -605,6 +631,7 @@ pub struct KesticAppRust {
     daemon_reachable: bool,
     restic_valid: bool,
     restic_version: QString,
+    restic_outdated: bool,
     restic_binary_path: QString,
     restic_provider_kind: QString,
     restic_message: QString,
@@ -665,6 +692,7 @@ pub struct KesticAppRust {
     last_action_error: QString,
     show_quit_dialog_on_start: bool,
     show_about_on_start: bool,
+    show_restore_on_start: bool,
     quit_has_running_run: bool,
     quit_running_backup_name: QString,
     dry_run_preview_id: QString,
@@ -688,6 +716,9 @@ pub struct KesticAppRust {
     condition_override_backup_name: QString,
     condition_override_message: QString,
     maintenance_preview_loading: bool,
+    restore_overview_loading: bool,
+    restore_snapshots_loading: bool,
+    restore_snapshots_error: QString,
 }
 
 pub(super) use crate::state_cache::dbus_error_text;

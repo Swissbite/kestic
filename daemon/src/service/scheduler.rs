@@ -213,10 +213,20 @@ fn plan_scheduler_tick(guard: &mut DaemonCore) -> TickPlan {
     let mut busy_dests: HashSet<DestinationId> = guard
         .active_runs
         .values()
+        .filter(|e| !e.is_restore())
         .map(|e| e.run.destination_id.clone())
         .collect();
     busy_dests.extend(guard.claiming_destinations.iter().cloned());
     busy_dests.extend(guard.scheduled_dispatch.keys().cloned());
+    // Backups run beside a restore; maintenance waits for it.
+    let mut maintenance_busy = busy_dests.clone();
+    maintenance_busy.extend(
+        guard
+            .active_runs
+            .values()
+            .filter(|e| e.is_restore())
+            .map(|e| e.run.destination_id.clone()),
+    );
 
     let mut backup_dest_map = HashMap::new();
     let mut evaluations = Vec::with_capacity(backups_snapshot.len());
@@ -251,7 +261,7 @@ fn plan_scheduler_tick(guard: &mut DaemonCore) -> TickPlan {
                 dest,
                 &backups_snapshot,
                 global_pause.as_ref(),
-                &busy_dests,
+                &maintenance_busy,
                 now,
             )
         })
@@ -368,7 +378,7 @@ fn evaluate_single_backup_tick(
         .runs_cache
         .iter()
         .find(|r| {
-            r.backup_id() == Some(&backup.id)
+            r.is_backup_run_of(&backup.id)
                 && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
         })
         .is_some_and(|r| {

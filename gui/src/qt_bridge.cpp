@@ -12,12 +12,90 @@
 #include <QDateTime>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QLocale>
 #include <QMetaObject>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QVariant>
 
 namespace kestic::bridge {
+
+namespace {
+
+// The action bar of a page in a Kirigami column view: the `globalFooter` of the page's
+// `ColumnView` attached object.
+QQuickItem* column_footer(QQuickItem* column) {
+    for (QObject* child : column->children()) {
+        const QVariant footer = child->property("globalFooter");
+        if (footer.isValid()) {
+            return footer.value<QQuickItem*>();
+        }
+    }
+    return nullptr;
+}
+
+// A column view keeps the action bars of its pages in an item it creates before the pages, which
+// puts them before the pages in the Tab chain although they are shown below them. Stacking that
+// item after the last page makes the chain follow the visible order: header, pages, action bars.
+void stack_footers_after_columns(QQuickItem* view) {
+    auto* content = view->property("contentItem").value<QQuickItem*>();
+    if (!content) {
+        return;
+    }
+    const QList<QQuickItem*> children = content->childItems();
+    QQuickItem* last_column = nullptr;
+    for (QQuickItem* child : children) {
+        bool contains = false;
+        QMetaObject::invokeMethod(view, "containsItem", Qt::DirectConnection,
+            Q_RETURN_ARG(bool, contains), Q_ARG(QQuickItem*, child));
+        if (contains) {
+            last_column = child;
+        }
+    }
+    if (!last_column) {
+        return;
+    }
+    for (QQuickItem* child : children) {
+        QQuickItem* footer = column_footer(child);
+        QQuickItem* holder = footer ? footer->parentItem() : nullptr;
+        if (holder && holder != child && holder->parentItem() == content
+            && children.indexOf(holder) < children.indexOf(last_column)) {
+            holder->stackAfter(last_column);
+            return;
+        }
+    }
+}
+
+// A page adds its header after its content, so the Tab chain ran through the content before
+// the header above it. Stacking the header before the content makes it follow the visible order.
+void stack_header_before_content(QQuickItem* page) {
+    auto* header = page->property("header").value<QQuickItem*>();
+    auto* content = page->property("contentItem").value<QQuickItem*>();
+    if (!header || !content || header->parentItem() != page || content->parentItem() != page) {
+        return;
+    }
+    const QList<QQuickItem*> children = page->childItems();
+    if (children.indexOf(header) > children.indexOf(content)) {
+        header->stackBefore(content);
+    }
+}
+
+// Stacks the parts of the pages below `item` so that the Tab chain follows the visible order.
+void stack_pages_in_visible_order(QQuickItem* item) {
+    if (item->inherits("ColumnView")) {
+        stack_footers_after_columns(item);
+    }
+    if (item->inherits("QQuickPage")) {
+        stack_header_before_content(item);
+        return;
+    }
+    const QList<QQuickItem*> children = item->childItems();
+    for (QQuickItem* child : children) {
+        stack_pages_in_visible_order(child);
+    }
+}
+
+} // namespace
 
 class KesticKeyNavFilter : public QObject {
 public:
@@ -30,6 +108,11 @@ public:
         }
 
         auto* ke = static_cast<QKeyEvent*>(event);
+        if (et == QEvent::KeyPress && (ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab)) {
+            if (auto* win = qobject_cast<QQuickWindow*>(watched)) {
+                stack_pages_in_visible_order(win->contentItem());
+            }
+        }
         const Qt::KeyboardModifiers mods = ke->modifiers() & ~Qt::KeypadModifier;
         if (mods != Qt::NoModifier) {
             return QObject::eventFilter(watched, event);
@@ -162,6 +245,11 @@ rust::String i18np_subs(rust::Str singular, rust::Str plural, std::int64_t n, ru
         localized = localized.subs(QString::fromUtf8(arg.data(), static_cast<qsizetype>(arg.size())));
     }
     const QByteArray utf8 = localized.toString().toUtf8();
+    return rust::String(utf8.constData(), static_cast<size_t>(utf8.size()));
+}
+
+rust::String format_count(std::int64_t n) {
+    const QByteArray utf8 = QLocale().toString(static_cast<qlonglong>(n)).toUtf8();
     return rust::String(utf8.constData(), static_cast<size_t>(utf8.size()));
 }
 

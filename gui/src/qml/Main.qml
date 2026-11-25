@@ -17,7 +17,8 @@ Kirigami.ApplicationWindow {
     minimumHeight: Math.round(Kirigami.Units.gridUnit * 24)
     visible: true
 
-    // Primary tabs: Overview, Backups, Destinations, History
+    // Primary tabs: Overview (0), Restore (4), Backups (1), Destinations (2), History (3); the
+    // number is the tab's `tabIndex`, not its position in the tab bar.
     property int activeTab: 0
     onActiveTabChanged: syncNavChecked()
     readonly property bool narrowMode: width < Kirigami.Units.gridUnit * 35
@@ -54,6 +55,9 @@ Kirigami.ApplicationWindow {
     readonly property var runsModelRef: runsModel
     readonly property var snapshotsModelRef: snapshotsModel
     readonly property var runLogsModelRef: runLogsModel
+    readonly property var restoreBackupsModelRef: restoreBackupsModel
+    readonly property var restoreSnapshotsModelRef: restoreSnapshotsModel
+    readonly property var restoreGroupsModelRef: restoreGroupsModel
 
     function tabNameForIndex(idx) {
         switch (idx) {
@@ -61,6 +65,7 @@ Kirigami.ApplicationWindow {
         case 1: return "backups";
         case 2: return "destinations";
         case 3: return "history";
+        case 4: return "restore";
         default: return "overview";
         }
     }
@@ -101,7 +106,7 @@ Kirigami.ApplicationWindow {
     function navigateToBreadcrumbIndex(targetIdx) { focusManager.navigateToBreadcrumbIndex(targetIdx); }
     function cancelFocusRestoreTimer() { focusManager.cancelFocusRestoreTimer(); }
     function focusItemInPageStack(targetItem) { return focusManager.focusItemInPageStack(targetItem); }
-    function focusPageContent(pageItem) { focusManager.focusPageContent(pageItem); }
+    function focusPageContent(pageItem, preferSelection) { focusManager.focusPageContent(pageItem, preferSelection); }
     function pushSubPageAtDepth(pageObj, targetDepth) { focusManager.pushSubPageAtDepth(pageObj, targetDepth); }
     function popSubPage() { focusManager.popSubPage(); }
     function replaceRootPage(pageObj) { focusManager.replaceRootPage(pageObj); }
@@ -139,7 +144,7 @@ Kirigami.ApplicationWindow {
 
     function syncNavChecked() {
         for (var i = 0; i < navActions.length; ++i) {
-            navActions[i].checked = (i === root.activeTab);
+            navActions[i].checked = (navActions[i].tabIndex === root.activeTab);
         }
     }
 
@@ -228,6 +233,18 @@ Kirigami.ApplicationWindow {
                 pageStack.push(destinationDetailComponent.createObject(pageStack, { destinationId: firstDest }));
                 pageStack.currentIndex = 0;
             }
+        } else if (idx === 4) {
+            restoreBackupsModel.sync();
+            var firstRestoreId = restoreBackupsModel.idAt(0);
+            primaryPage = restorePageComponent.createObject(pageStack, { selectedBackupId: firstRestoreId });
+            replaceRootPage(primaryPage);
+            if (!narrowMode && firstRestoreId !== "") {
+                pageStack.push(restoreSnapshotsComponent.createObject(pageStack, {
+                    backupId: firstRestoreId,
+                    backupName: backupNameOf(firstRestoreId)
+                }));
+                pageStack.currentIndex = 0;
+            }
         } else if (idx === 3) {
             runsModel.setFilter("", false, "");
             var firstRun = runsModel.idAt(0);
@@ -240,7 +257,7 @@ Kirigami.ApplicationWindow {
         }
         updatePageStackViewportAndFocusability();
         if (primaryPage) {
-            focusPageContent(primaryPage);
+            focusPageContent(primaryPage, true);
         }
     }
 
@@ -302,6 +319,11 @@ Kirigami.ApplicationWindow {
                            conditionOverrideDialog]) {
             if (closeIfOpen(dlg)) return true;
         }
+        // Rejecting (not only closing) stops the restore dialog's running preview.
+        if (restoreDialog.opened || restoreDialog.visible) {
+            restoreDialog.reject();
+            return true;
+        }
         if (root.inWizardLayer) {
             var wiz = wizardPageStack.currentItem;
             if (wiz && typeof wiz.handleEscape === "function") {
@@ -320,7 +342,7 @@ Kirigami.ApplicationWindow {
                 cur.backRequested(backEvent);
             }
             if (!backEvent.accepted) {
-                if (!root.narrowMode && pageStack.depth === 2 && (root.activeTab === 1 || root.activeTab === 2 || root.activeTab === 3)) {
+                if (!root.narrowMode && pageStack.depth === 2 && root.isListDetailTab(root.activeTab)) {
                     focusPrimaryListSelection();
                 } else {
                     popSubPage();
@@ -465,6 +487,101 @@ Kirigami.ApplicationWindow {
             mode: "retention",
             retentionJson: retentionJson || ""
         }), Math.min(pageStack.depth, 3));
+    }
+
+    // Name of the configured backup `backupId`, empty if there is none.
+    function backupNameOf(backupId) {
+        var data = backupsModel.rowMap(backupId);
+        return data ? data.name : "";
+    }
+
+    // Shows the snapshots of `backupId` next to the backup list of the restore area.
+    function openRestoreSnapshots(backupId) {
+        showRestoreSnapshots(backupId, "", backupNameOf(backupId));
+    }
+
+    // Shows the further snapshot group `group` (unassigned, orphaned, not configured here),
+    // titled `name`, next to the backup list of the restore area.
+    function openRestoreGroup(group, name) {
+        showRestoreSnapshots("", group, name);
+    }
+
+    function showRestoreSnapshots(backupId, group, title) {
+        if (activeTab !== 4) {
+            performSwitchTab(4);
+        }
+        var list = pageStack.get(0);
+        if (list && list.objectName === "restorePage") {
+            list.selectedBackupId = backupId;
+            list.selectedGroup = group;
+        }
+        while (pageStack.depth > 2) {
+            removeTopPageFromStack();
+        }
+        var existing = pageStack.depth === 2 ? pageStack.get(1) : null;
+        if (existing && existing.objectName === "restoreSnapshotsPage") {
+            existing.showSource(backupId, group, title);
+        } else {
+            while (pageStack.depth > 1) removeTopPageFromStack();
+            pageStack.push(restoreSnapshotsComponent.createObject(pageStack, {
+                backupId: backupId,
+                group: group,
+                backupName: title
+            }));
+        }
+        updatePageStackViewportAndFocusability();
+    }
+
+    // Opens snapshot `snapshotId` of the snapshot list for browsing, next to that list.
+    function openSnapshotBrowser(destinationId, snapshotId) {
+        var snap = restoreSnapshotsModel.rowMap(snapshotId);
+        pushSubPageAtDepth(restoreBrowseComponent.createObject(pageStack, {
+            destinationId: destinationId,
+            snapshotId: snapshotId,
+            startDir: snap ? snap.startDir : "/",
+            topDir: snap ? snap.startDir : "",
+            snapshotTitle: snap ? snap.dateTime : ""
+        }), 2);
+    }
+
+    // Shows the differences from snapshot `fromId` to `toId` of the snapshot list, next to
+    // that list.
+    function openSnapshotCompare(destinationId, fromId, toId) {
+        var from = restoreSnapshotsModel.rowMap(fromId);
+        var to = restoreSnapshotsModel.rowMap(toId);
+        pushSubPageAtDepth(restoreCompareComponent.createObject(pageStack, {
+            destinationId: destinationId,
+            fromSnapshotId: fromId,
+            toSnapshotId: toId,
+            fromSnapshotText: from ? from.dateTime : "",
+            toSnapshotText: to ? to.dateTime : ""
+        }), 2);
+    }
+
+    // Searches the snapshots of `backupId` for `text`, next to the snapshot list.
+    function openSnapshotSearch(backupId, text) {
+        var backup = backupsModel.rowMap(backupId);
+        pushSubPageAtDepth(restoreSearchComponent.createObject(pageStack, {
+            destinationId: backup ? backup.destinationId : "",
+            backupId: backupId,
+            searchText: text
+        }), 2);
+    }
+
+    // Opens the folder `folder` of snapshot `snapshotId` with the search hit `path` (a folder when
+    // `isDir`) selected, next to the hits.
+    function openSearchHit(destinationId, snapshotId, folder, path, isDir, snapshotText) {
+        // The hits are snapshots of the backup whose snapshot list is shown.
+        var snap = restoreSnapshotsModel.rowMap(snapshotId);
+        pushSubPageAtDepth(restoreBrowseComponent.createObject(pageStack, {
+            destinationId: destinationId,
+            snapshotId: snapshotId,
+            startDir: folder,
+            topDir: snap ? snap.startDir : "",
+            focusPath: path,
+            focusIsDir: isDir,
+            snapshotTitle: snapshotText
+        }), 3);
     }
 
     function openBackupReassignPage(backupId) {
@@ -624,6 +741,7 @@ Kirigami.ApplicationWindow {
             root.requestActivate();
         }
         onAboutRequested: root.openAboutPage()
+        onRestoreTabRequested: root.switchTab(4)
         onQuitConfirmationRequested: function() {
             root.show();
             if (Qt.platform.pluginName !== "offscreen") {
@@ -642,6 +760,15 @@ Kirigami.ApplicationWindow {
     RunsModel { id: runsModel; objectName: "runsModel" }
     SnapshotsModel { id: snapshotsModel; objectName: "snapshotsModel" }
     RunLogsModel { id: runLogsModel; objectName: "runLogsModel" }
+    RestoreBackupsModel { id: restoreBackupsModel; objectName: "restoreBackupsModel" }
+    RestoreSnapshotsModel { id: restoreSnapshotsModel; objectName: "restoreSnapshotsModel" }
+    RestoreGroupsModel { id: restoreGroupsModel; objectName: "restoreGroupsModel" }
+    RestorePreviewModel { id: restorePreviewModel; objectName: "restorePreviewModel" }
+
+    RestoreDialog {
+        id: restoreDialog
+        model: restorePreviewModel
+    }
 
     PageFocusManager {
         id: focusManager
@@ -689,6 +816,11 @@ Kirigami.ApplicationWindow {
             if (("" + p).indexOf("QQuickMenu") !== -1) {
                 return true;
             }
+            // The item of an open Menu popup (Qt names it after the popup type); a menu item
+            // with the focus (the pointer rests on it) lies below it.
+            if (("" + p).indexOf("QQuickPopupItem") !== -1 && p.objectName === "Menu") {
+                return true;
+            }
             p = p.parent;
         }
         return false;
@@ -729,8 +861,14 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // Restore, Backups, Destinations and History show a list with its detail next to it.
+    function isListDetailTab(tab) {
+        return tab === 1 || tab === 2 || tab === 3 || tab === 4;
+    }
+
     property list<Kirigami.Action> navActions: [
         Kirigami.Action {
+            readonly property int tabIndex: 0
             objectName: "overviewTabAction"
             icon.name: "dashboard-show"
             text: Texts.label("overview")
@@ -738,6 +876,15 @@ Kirigami.ApplicationWindow {
             onTriggered: root.switchTab(0)
         },
         Kirigami.Action {
+            readonly property int tabIndex: 4
+            objectName: "restoreTabAction"
+            icon.name: "document-revert"
+            text: Texts.label("restore")
+            checked: root.activeTab === 4
+            onTriggered: root.switchTab(4)
+        },
+        Kirigami.Action {
+            readonly property int tabIndex: 1
             objectName: "backupsTabAction"
             icon.name: "folder-sync"
             text: Texts.label("backups")
@@ -745,6 +892,7 @@ Kirigami.ApplicationWindow {
             onTriggered: root.switchTab(1)
         },
         Kirigami.Action {
+            readonly property int tabIndex: 2
             objectName: "destinationsTabAction"
             icon.name: "network-server"
             text: Texts.label("destinations")
@@ -752,6 +900,7 @@ Kirigami.ApplicationWindow {
             onTriggered: root.switchTab(2)
         },
         Kirigami.Action {
+            readonly property int tabIndex: 3
             objectName: "historyTabAction"
             icon.name: "view-history"
             text: Texts.label("history")
@@ -761,10 +910,12 @@ Kirigami.ApplicationWindow {
     ]
 
     header: MainHeaderArea {
+        objectName: "mainHeaderArea"
         width: parent ? parent.width : 0
         rootWindow: root
         appBackend: root.backendRef
         pageStackRef: pageStack
+        restoreModel: restorePreviewModel
     }
 
     footer: Kirigami.NavigationTabBar {
@@ -775,13 +926,23 @@ Kirigami.ApplicationWindow {
         position: Controls.ToolBar.Footer
         actions: root.navActions
         delegate: Kirigami.NavigationTabButton {
+            id: bottomNavTab
             required property Controls.Action modelData
             parent: bottomNavBar.contentItem
             action: modelData
             onActionChanged: action.checkable = true
-            Layout.minimumWidth: bottomNavBar.buttonWidth
-            Layout.maximumWidth: bottomNavBar.buttonWidth
+            // All tabs are equally wide unless a label does not fit on one line: then it takes
+            // the room from the tabs with shorter labels («Wiederherstellen» in German).
+            Layout.minimumWidth: Math.ceil(bottomNavTabText.advanceWidth) + leftPadding + rightPadding + Kirigami.Units.smallSpacing * 2
+            Layout.preferredWidth: bottomNavBar.buttonWidth
+            Layout.fillWidth: true
             Layout.fillHeight: true
+
+            TextMetrics {
+                id: bottomNavTabText
+                font: bottomNavTab.font
+                text: bottomNavTab.text
+            }
 
             Kirigami.Icon {
                 source: "emblem-important"
@@ -798,7 +959,9 @@ Kirigami.ApplicationWindow {
     }
 
     pageStack.visible: !root.inWizardLayer
-    pageStack.defaultColumnWidth: Math.max(Kirigami.Units.gridUnit * 17, Math.floor((pageStack.width - 2) / 2))
+    // One breakpoint for the whole window: narrow shows one column and the tab bar at the
+    // bottom, wide two columns side by side and the tab bar at the top.
+    pageStack.defaultColumnWidth: root.narrowMode ? pageStack.width : Math.floor((pageStack.width - 2) / 2)
     pageStack.columnView.interactive: false
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.Breadcrumb
     pageStack.globalToolBar.showNavigationButtons: Kirigami.ApplicationHeaderStyle.NoNavigationButtons
@@ -856,6 +1019,9 @@ Kirigami.ApplicationWindow {
         // some of them only once, so it opens after that.
         if (appBackend.show_about_on_start) {
             Qt.callLater(openAboutPage);
+        }
+        if (appBackend.show_restore_on_start) {
+            Qt.callLater(switchTab, 4);
         }
     }
 
@@ -922,6 +1088,67 @@ Kirigami.ApplicationWindow {
             rootWindow: root
             appBackend: root.backendRef
             backupsModel: root.backupsModelRef
+        }
+    }
+
+    Component {
+        id: restorePageComponent
+        RestorePage {
+            rootWindow: root
+            appBackend: root.backendRef
+            restoreBackupsModel: root.restoreBackupsModelRef
+            restoreGroupsModel: root.restoreGroupsModelRef
+        }
+    }
+
+    Component {
+        id: restoreSnapshotsComponent
+        RestoreSnapshotsPage {
+            rootWindow: root
+            appBackend: root.backendRef
+            restoreSnapshotsModel: root.restoreSnapshotsModelRef
+            onBrowseRequested: function(destinationId, snapshotId) {
+                root.openSnapshotBrowser(destinationId, snapshotId);
+            }
+            onSearchRequested: function(backupId, text) {
+                root.openSnapshotSearch(backupId, text);
+            }
+            onCompareRequested: function(destinationId, fromSnapshotId, toSnapshotId) {
+                root.openSnapshotCompare(destinationId, fromSnapshotId, toSnapshotId);
+            }
+            onRestoreRequested: function(destinationId, snapshotId) {
+                restoreDialog.openFor(destinationId, snapshotId, [], primaryList);
+            }
+        }
+    }
+
+    Component {
+        id: restoreCompareComponent
+        RestoreComparePage {
+            rootWindow: root
+            appBackend: root.backendRef
+        }
+    }
+
+    Component {
+        id: restoreSearchComponent
+        RestoreSearchPage {
+            rootWindow: root
+            appBackend: root.backendRef
+            onShowRequested: function(destinationId, snapshotId, folder, path, isDir, snapshotText) {
+                root.openSearchHit(destinationId, snapshotId, folder, path, isDir, snapshotText);
+            }
+        }
+    }
+
+    Component {
+        id: restoreBrowseComponent
+        RestoreBrowsePage {
+            rootWindow: root
+            appBackend: root.backendRef
+            onRestoreRequested: function(destinationId, snapshotId, selection) {
+                restoreDialog.openFor(destinationId, snapshotId, selection, primaryList);
+            }
         }
     }
 

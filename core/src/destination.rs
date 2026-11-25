@@ -843,6 +843,7 @@ fn execute_probe_command(
         },
         log_lines,
         errors: Vec::new(),
+        stdout_json_array: None,
     };
     Ok(ProbeOutput {
         result,

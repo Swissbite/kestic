@@ -60,6 +60,10 @@ pub enum KesticServiceErr {
     HostKeyUnknown(String),
     /// SFTP: the server shows another host key; the message is the file with the old entry.
     HostKeyChanged(String),
+    /// `StartRestore` without a matching, finished, fresh preview.
+    PreviewRequired(String),
+    /// A destination changed or removed while a restore from it starts, waits or runs.
+    RestoreRunning(String),
     Internal(String),
 }
 
@@ -79,6 +83,8 @@ impl std::fmt::Display for KesticServiceErr {
             | Self::DuplicateLocation(m)
             | Self::HostKeyUnknown(m)
             | Self::HostKeyChanged(m)
+            | Self::PreviewRequired(m)
+            | Self::RestoreRunning(m)
             | Self::Internal(m) => f.write_str(m),
             Self::ManualRunBlocked(reason) => f.write_str(reason.as_str()),
             Self::SleepInProgress => f.write_str("sleep_in_progress"),
@@ -113,9 +119,16 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::DuplicateLocation(m) => KesticDbusError::DuplicateLocation(m),
             KesticServiceErr::HostKeyUnknown(m) => KesticDbusError::HostKeyUnknown(m),
             KesticServiceErr::HostKeyChanged(m) => KesticDbusError::HostKeyChanged(m),
+            KesticServiceErr::PreviewRequired(m) => KesticDbusError::PreviewRequired(m),
+            KesticServiceErr::RestoreRunning(m) => KesticDbusError::RestoreRunning(m),
             KesticServiceErr::Internal(m) => KesticDbusError::Internal(m),
         }
     }
+}
+
+/// An `InvalidInput` error with `message`.
+pub(super) fn invalid(message: impl std::fmt::Display) -> KesticServiceErr {
+    KesticServiceErr::InvalidInput(message.to_string())
 }
 
 pub(super) fn map_config_err(err: ConfigError) -> KesticServiceErr {
@@ -219,6 +232,8 @@ pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
     match err {
         BackupRunError::SourceUnavailable(_) => ErrorKind::SourceUnavailable,
         BackupRunError::Cancelled => ErrorKind::Cancelled,
+        BackupRunError::PathNotInSnapshot(_) => ErrorKind::PathNotInSnapshot,
+        BackupRunError::InvalidTarget { .. } => ErrorKind::InvalidTarget,
         BackupRunError::Destination(DestinationError::Secret(_)) => ErrorKind::SecretStoreLocked,
         BackupRunError::Destination(dest_err) => {
             destination_failure(dest_err).map_or(ErrorKind::Unknown, |kind| kind.error_kind())

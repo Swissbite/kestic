@@ -29,6 +29,7 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | – | Flatpak ([architecture.md](../architecture.md) «Packaging», «Secrets») |
 | – | Projekt-Website auf GitHub Pages (inkl. automatisch generierter & aktualisierter GUI-Screenshots aus den QML-Offscreen-Smoke-Tests, optional über `kestic.daester.net` / GitHub Pages) |
 | – | «Tastenkürzel einrichten…» im Hauptmenü: Editor für alle Tastenkürzel ([ui/stil-und-texte.md](../ui/stil-und-texte.md) §13.1) |
+| – | Wiederherstellen direkt in einen Netzwerkordner (`smb://` u. a.) aus dem System-Dateidialog; nicht über kio-fuse, das jede Datei erst lokal puffert (doppelter Platz) und bei Netzfehlern schlecht abbricht (Entscheid auf #154) |
 
 ## Luxus
 
@@ -37,6 +38,7 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | FR-09 | Auto-Exclude-Presets mit Ausnahmen |
 | FR-25 | Snapshot in Dolphin browsen |
 | FR-26 | Grössen-Explorer |
+| – | «Frühere Versionen…» im Kontextmenü von Dolphin: zeigt die Versionen einer Datei über alle Snapshots (gleiche Fassungen zusammengefasst) und bietet «Diese Version speichern unter…» über `restic dump`; überschreibt nie still |
 
 ## Zuletzt (P3)
 

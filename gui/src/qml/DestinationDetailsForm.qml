@@ -495,7 +495,7 @@ ColumnLayout {
             // their fields.
             RowLayout {
                 Controls.Label {
-                    text: i18n("Name")
+                    text: Texts.label("name")
                     font: Kirigami.Theme.smallFont
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 6
                     Layout.fillWidth: true
@@ -526,6 +526,7 @@ ColumnLayout {
                 }
             }
 
+            // Not a list: form rows of the environment variables
             Repeater {
                 model: form.draft.envModel
 

@@ -63,13 +63,15 @@ where
 }
 
 use crate::overall_text::localized_availability_reason;
+use crate::retention_texts::within_text;
+use crate::time_texts::{format_datetime_display, format_time_short};
 use crate::ui_texts::GuiText;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
-use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::model::{
     Backup, BackupId, DestinationId, DestinationKind, ExcludeRules, KeepCount,
-    MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPolicy,
-    RetentionPreset, Run, RunConditions, RunKind, RunStatus, Schedule, Source, SourceKind, Weekday,
+    MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPeriod,
+    RetentionPolicy, RetentionPreset, Run, RunConditions, RunKind, RunStatus, Schedule, Source,
+    SourceKind, Weekday,
 };
 use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_slots};
 use kestic_core::sync::LockUnpoisoned;
@@ -94,7 +96,7 @@ pub fn daemon_unavailable_text() -> String {
 pub fn not_found_text() -> String {
     tr(&ServiceErrorCode::NotFound.message())
 }
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -112,6 +114,8 @@ pub struct GuiLaunchConfig {
     pub no_autostart_daemon: bool,
     pub show_quit_dialog_on_start: bool,
     pub show_about_on_start: bool,
+    /// Open the window on the tab «Restore» (`--show-restore`, tray «Restore Files…»).
+    pub show_restore_on_start: bool,
 }
 
 impl Default for GuiLaunchConfig {
@@ -122,6 +126,7 @@ impl Default for GuiLaunchConfig {
             no_autostart_daemon: false,
             show_quit_dialog_on_start: false,
             show_about_on_start: false,
+            show_restore_on_start: false,
         }
     }
 }
@@ -145,6 +150,7 @@ pub struct SharedGuiState {
     pub pending_blocked: Option<(String, BlockedReason)>,
     pub pending_show_window: bool,
     pub pending_show_about: bool,
+    pub pending_show_restore: bool,
     pub pending_quit: Option<(bool, String)>,
     pub maintenance_preview: Option<(String, Result<String, String>)>,
     pub signal_conn: Option<zbus::Connection>,
@@ -168,6 +174,7 @@ impl SharedGuiState {
             pending_blocked: None,
             pending_show_window: false,
             pending_show_about: false,
+            pending_show_restore: false,
             pending_quit: None,
             maintenance_preview: None,
             signal_conn: None,
@@ -289,6 +296,33 @@ pub fn ensure_daemon_and_refresh() {
     refresh_state_now();
 }
 
+/// Drops the progress of runs that ended. Still active are the run of each backup and every run
+/// the state lists as running: a restore or a maintenance also runs beside a backup, and only
+/// one run is the overall progress. That one is added when its progress has not arrived yet.
+fn retain_active_progress(
+    progress: &mut HashMap<String, ActiveRunProgressDto>,
+    backups: &[BackupSummaryDto],
+    recent_runs: &[Run],
+    overall: Option<&ActiveRunProgressDto>,
+) {
+    let active_ids: HashSet<&str> = backups
+        .iter()
+        .filter_map(|b| b.active_run.as_ref())
+        .chain(
+            recent_runs
+                .iter()
+                .filter(|r| r.status == RunStatus::Running),
+        )
+        .map(|r| r.id.as_str())
+        .collect();
+    progress.retain(|id, _| active_ids.contains(id.as_str()));
+    if let Some(p) = overall {
+        progress
+            .entry(p.run_id.clone())
+            .or_insert_with(|| p.clone());
+    }
+}
+
 pub fn refresh_state_now() {
     shared_state().lock_unpoisoned().last_state_fetch = Some(Instant::now());
     let client = match make_client() {
@@ -309,18 +343,12 @@ pub fn refresh_state_now() {
                 let was_reachable = guard.daemon_reachable;
                 guard.daemon_reachable = true;
                 guard.daemon_error = None;
-                let active_ids: Vec<String> = state
-                    .backups
-                    .iter()
-                    .filter_map(|b| b.active_run.as_ref().map(|r| r.id.as_str().to_string()))
-                    .collect();
-                guard.active_progress.retain(|k, _| active_ids.contains(k));
-                if let Some(p) = &state.overall.active_run_progress {
-                    guard
-                        .active_progress
-                        .entry(p.run_id.clone())
-                        .or_insert_with(|| p.clone());
-                }
+                retain_active_progress(
+                    &mut guard.active_progress,
+                    &state.backups,
+                    &state.recent_runs,
+                    state.overall.active_run_progress.as_ref(),
+                );
                 guard.state = Some(state);
                 guard.state_fetched = true;
                 (
@@ -422,6 +450,10 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
                     Some("ShowAboutRequested") => {
                         let mut guard = shared_state().lock_unpoisoned();
                         guard.pending_show_about = true;
+                    }
+                    Some("ShowRestoreRequested") => {
+                        let mut guard = shared_state().lock_unpoisoned();
+                        guard.pending_show_restore = true;
                     }
                     Some("QuitConfirmationRequested") => {
                         if let Ok((has_running, name)) = msg.body().deserialize::<(bool, String)>()
@@ -599,23 +631,18 @@ pub fn format_retention_summary(policy: &RetentionPolicy) -> String {
     if let Some(kc) = policy.keep_yearly {
         parts.push(format_keep_count_part(kc, &i18n("yearly").to_string()));
     }
-    if let Some(w) = &policy.keep_within {
-        parts.push(i18n("all within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_hourly {
-        parts.push(i18n("hourly within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_daily {
-        parts.push(i18n("daily within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_weekly {
-        parts.push(i18n("weekly within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_monthly {
-        parts.push(i18n("monthly within %1").subs(&[w]));
-    }
-    if let Some(w) = &policy.keep_within_yearly {
-        parts.push(i18n("yearly within %1").subs(&[w]));
+    let within_rules = [
+        (None, &policy.keep_within),
+        (Some(RetentionPeriod::Hourly), &policy.keep_within_hourly),
+        (Some(RetentionPeriod::Daily), &policy.keep_within_daily),
+        (Some(RetentionPeriod::Weekly), &policy.keep_within_weekly),
+        (Some(RetentionPeriod::Monthly), &policy.keep_within_monthly),
+        (Some(RetentionPeriod::Yearly), &policy.keep_within_yearly),
+    ];
+    for (period, duration) in within_rules {
+        if let Some(duration) = duration {
+            parts.push(within_text(period, duration));
+        }
     }
     if parts.is_empty() {
         i18n("No rules configured").to_string()
@@ -1193,74 +1220,8 @@ pub fn format_run_status(
         RunStatus::Running => (i18n("Running").to_string(), "state-sync", "highlight"),
         RunStatus::Pending => (i18n("Waiting").to_string(), "chronometer", "text"),
         RunStatus::Cancelled => (i18n("Cancelled").to_string(), "process-stop", "text"),
-        RunStatus::Interrupted => (i18n("Interrupted").to_string(), "state-offline", "text"),
+        RunStatus::Interrupted => (GuiText::Interrupted.text(), "state-offline", "text"),
     }
-}
-
-fn to_local(ts: OffsetDateTime) -> OffsetDateTime {
-    let offset_secs = crate::qt_bridge::ffi::local_offset_seconds(ts.unix_timestamp());
-    let offset = time::UtcOffset::from_whole_seconds(offset_secs).unwrap_or(ts.offset());
-    ts.to_offset(offset)
-}
-
-pub fn format_day_group(ts: OffsetDateTime, now: OffsetDateTime) -> String {
-    let date = to_local(ts).date();
-    let today = to_local(now).date();
-    if date == today {
-        return i18n("Today").to_string();
-    }
-    if let Some(yesterday) = today.previous_day()
-        && date == yesterday
-    {
-        return i18n("Yesterday").to_string();
-    }
-    format!(
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
-}
-
-pub fn format_time_short(ts: OffsetDateTime) -> String {
-    let local = to_local(ts);
-    format!("{:02}:{:02}", local.hour(), local.minute())
-}
-
-pub fn format_datetime_display(ts: OffsetDateTime) -> String {
-    let local = to_local(ts);
-    let date = local.date();
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day(),
-        local.hour(),
-        local.minute()
-    )
-}
-
-pub fn current_now() -> OffsetDateTime {
-    SystemClock.now_utc()
-}
-
-pub fn daemon_now(state: &DaemonStateDto) -> OffsetDateTime {
-    OffsetDateTime::from_unix_timestamp(state.overall.now_unix).unwrap_or_else(|_| current_now())
-}
-
-pub fn cached_daemon_now() -> OffsetDateTime {
-    let guard = shared_state().lock_unpoisoned();
-    guard.state.as_ref().map_or_else(current_now, daemon_now)
-}
-
-pub fn cached_today_iso_date() -> String {
-    let date = to_local(cached_daemon_now()).date();
-    format!(
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
 }
 
 /// Title of a run in the history; a backup that no longer exists is named as deleted, never

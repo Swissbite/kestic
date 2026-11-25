@@ -1,21 +1,16 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Destination CRUD, connection testing, password updates, repository unlock, and snapshot listing.
+//! Destination CRUD, connection testing, password updates and repository unlock.
 
-use super::error::parse_backup_id;
 use super::error::{
     KesticServiceErr, map_config_err, map_destination_err, map_provider_err, map_secret_err,
     parse_setup_mode,
 };
 use super::state::DaemonCore;
-use crate::dbus_api::{
-    BackendSecrets, BackupSnapshotsDto, ConnectionTestResultDto, DaemonStateDto,
-    PreviousDestinationSnapshotsDto, SnapshotSummaryDto,
-};
+use crate::dbus_api::{BackendSecrets, ConnectionTestResultDto, DaemonStateDto};
 use crate::tray::KesticTrayState;
 use kestic_core::backend_credentials::BackendCredentials;
-use kestic_core::backup::list_snapshots_for_backup;
 use kestic_core::clock::Clock;
 use kestic_core::config::ConfigError;
 use kestic_core::destination::{
@@ -27,15 +22,14 @@ use kestic_core::generic::{GenericInputError, missing_program};
 use kestic_core::known_hosts::HostKeyError;
 use kestic_core::local_path::{NotALocalPath, connection_notes};
 use kestic_core::model::{
-    BackupId, Destination, DestinationId, DestinationKind, MaintenanceSchedule, ModelError,
-    ResticProvider, RunId,
+    Destination, DestinationId, DestinationKind, MaintenanceSchedule, ModelError, ResticProvider,
+    RunId,
 };
 use kestic_core::provider::resolve_and_check;
 use kestic_core::repo_identity::connection_changed;
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO};
 use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
-use kestic_core::snapshot::ResticSnapshot;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode};
 use std::ffi::OsStr;
@@ -45,10 +39,25 @@ use std::sync::{Arc, Mutex};
 use zbus::Connection;
 
 impl DaemonCore {
+    /// A destination a restore starts from, waits for or runs from stays as it is until the
+    /// restore has ended.
+    pub(super) fn refuse_while_restoring(
+        &self,
+        id: &DestinationId,
+    ) -> Result<(), KesticServiceErr> {
+        if self.has_restore_on(id) {
+            return Err(KesticServiceErr::RestoreRunning(format!(
+                "a restore from destination {id} runs or waits"
+            )));
+        }
+        Ok(())
+    }
+
     /// Removes the destination from the configuration and its secrets; returns it.
     pub fn remove_destination(&mut self, dest_id: &str) -> Result<Destination, KesticServiceErr> {
         let id = DestinationId::parse(dest_id)
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
+        self.refuse_while_restoring(&id)?;
         let mut next = self.config.clone();
         let removed = next.remove_destination(&id).map_err(|err| match err {
             ConfigError::Validation(msg) if msg.contains("still referenced by") => {
@@ -470,75 +479,6 @@ fn resolve_stored_repo_password(
     }
 }
 
-fn collect_backup_snapshots(
-    b_id: &BackupId,
-    current_dest: &Destination,
-    other_dests: &[&Destination],
-    resolved: &kestic_core::provider::ResolvedRestic,
-    kestic_binary: &Path,
-    secret_store: &dyn SecretStore,
-    clock: &dyn Clock,
-) -> BackupSnapshotsDto {
-    let mut current_error = None;
-    let current_snapshots = match list_snapshots_for_backup(
-        b_id,
-        current_dest,
-        resolved,
-        kestic_binary,
-        secret_store,
-        clock,
-        &[],
-    ) {
-        Ok(snaps) => snaps.into_iter().map(snapshot_to_dto).collect(),
-        Err(err) => {
-            current_error = Some(err.to_string());
-            Vec::new()
-        }
-    };
-
-    // also scan any other configured destinations for earlier `kestic:<backup-id>` snapshots.
-    let mut previous_destinations = Vec::new();
-    for other_dest in other_dests {
-        if let Ok(snaps) = list_snapshots_for_backup(
-            b_id,
-            other_dest,
-            resolved,
-            kestic_binary,
-            secret_store,
-            clock,
-            &[],
-        ) && !snaps.is_empty()
-        {
-            previous_destinations.push(PreviousDestinationSnapshotsDto {
-                destination_id: other_dest.id.as_str().to_string(),
-                destination_name: other_dest.name.clone(),
-                snapshots: snaps.into_iter().map(snapshot_to_dto).collect(),
-            });
-        }
-    }
-
-    BackupSnapshotsDto {
-        backup_id: b_id.as_str().to_string(),
-        current_destination_name: current_dest.name.clone(),
-        current_snapshots,
-        current_error,
-        previous_destinations,
-    }
-}
-
-fn snapshot_to_dto(s: ResticSnapshot) -> SnapshotSummaryDto {
-    SnapshotSummaryDto {
-        short_id: s.short_id.unwrap_or_else(|| s.id.chars().take(8).collect()),
-        id: s.id,
-        time: s.time,
-        hostname: s.hostname.unwrap_or_default(),
-        paths: s.paths,
-        tags: s.tags,
-        total_bytes_processed: s.summary.as_ref().and_then(|x| x.total_bytes_processed),
-        total_files_processed: s.summary.as_ref().and_then(|x| x.total_files_processed),
-    }
-}
-
 /// Refuses a destination whose backend needs a program that is not in the daemon's `PATH`
 /// (`rclone`): restic would fail with its own unclear error.
 pub(super) fn refuse_missing_program(
@@ -754,41 +694,6 @@ pub(crate) fn test_destination_connection_unlocked(
     }
     result
 }
-
-pub(crate) fn list_backup_snapshots_unlocked(
-    shared: &Arc<Mutex<DaemonCore>>,
-    backup_id: &str,
-) -> Result<BackupSnapshotsDto, KesticServiceErr> {
-    // Held for the whole call, so the app-managed restic is not replaced between its restic
-    // processes.
-    let _run_lease = ResticBinaryGate::global().read();
-    let b_id = parse_backup_id(backup_id)?;
-    let (current_dest, other_dests, deps) = {
-        let guard = shared.lock_unpoisoned();
-        let current_dest = guard.backup_destination(&b_id)?;
-        let other_dests: Vec<Destination> = guard
-            .config
-            .destinations
-            .iter()
-            .filter(|d| d.id != current_dest.id)
-            .cloned()
-            .collect();
-        (current_dest, other_dests, guard.restic_deps())
-    };
-
-    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
-    let other_refs: Vec<&Destination> = other_dests.iter().collect();
-    Ok(collect_backup_snapshots(
-        &b_id,
-        &current_dest,
-        &other_refs,
-        &resolved,
-        &deps.kestic_binary,
-        deps.secret_store.as_ref(),
-        deps.clock.as_ref(),
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

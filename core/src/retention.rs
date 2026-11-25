@@ -460,3 +460,137 @@ impl RetentionPolicy {
         args
     }
 }
+
+/// The span of time one rule of a retention policy keeps one snapshot of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetentionPeriod {
+    Hourly,
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+/// Why `restic forget` keeps a snapshot: one entry of `matches` in its `reasons`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForgetReason {
+    /// `last snapshot`: among the newest snapshots (`--keep-last`).
+    Last,
+    /// `within 30d`: younger than the duration (`--keep-within`).
+    Within(String),
+    /// `daily snapshot` (`--keep-daily`) or `daily within 30d` (`--keep-within-daily`).
+    /// `oldest` marks the oldest snapshot, which restic keeps while a rule has fewer
+    /// snapshots than it may keep (`oldest yearly snapshot`).
+    Period {
+        period: RetentionPeriod,
+        within: Option<String>,
+        oldest: bool,
+    },
+}
+
+impl ForgetReason {
+    /// Reads a reason as restic writes it; `None` for one Kestic does not know (e.g. from
+    /// `--keep-tag`).
+    pub fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        if raw == "last snapshot" {
+            return Some(Self::Last);
+        }
+        if let Some(duration) = raw.strip_prefix("within ") {
+            return validate_restic_duration(duration).ok().map(Self::Within);
+        }
+        let (oldest, rest) = match raw.strip_prefix("oldest ") {
+            Some(rest) => (true, rest),
+            None => (false, raw),
+        };
+        let (word, tail) = rest.split_once(' ')?;
+        let period = match word {
+            "hourly" => RetentionPeriod::Hourly,
+            "daily" => RetentionPeriod::Daily,
+            "weekly" => RetentionPeriod::Weekly,
+            "monthly" => RetentionPeriod::Monthly,
+            "yearly" => RetentionPeriod::Yearly,
+            _ => return None,
+        };
+        let within = if tail == "snapshot" {
+            None
+        } else {
+            Some(validate_restic_duration(tail.strip_prefix("within ")?).ok()?)
+        };
+        Some(Self::Period {
+            period,
+            within,
+            oldest,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn period(period: RetentionPeriod, within: Option<&str>, oldest: bool) -> ForgetReason {
+        ForgetReason::Period {
+            period,
+            within: within.map(str::to_string),
+            oldest,
+        }
+    }
+
+    /// AC-M2-06-2: the reasons restic 0.18.0, 0.19.1 and 0.20.0 give for a kept snapshot
+    /// (checked against temp repositories with every `--keep-*` rule) are read as such.
+    #[test]
+    fn ac_m2_06_2_forget_reasons_of_restic_are_read() {
+        assert_eq!(
+            ForgetReason::parse("last snapshot"),
+            Some(ForgetReason::Last)
+        );
+        assert_eq!(
+            ForgetReason::parse("within 3d"),
+            Some(ForgetReason::Within("3d".to_string()))
+        );
+        assert_eq!(
+            ForgetReason::parse("hourly snapshot"),
+            Some(period(RetentionPeriod::Hourly, None, false))
+        );
+        assert_eq!(
+            ForgetReason::parse("daily snapshot"),
+            Some(period(RetentionPeriod::Daily, None, false))
+        );
+        assert_eq!(
+            ForgetReason::parse("weekly snapshot"),
+            Some(period(RetentionPeriod::Weekly, None, false))
+        );
+        assert_eq!(
+            ForgetReason::parse("monthly snapshot"),
+            Some(period(RetentionPeriod::Monthly, None, false))
+        );
+        assert_eq!(
+            ForgetReason::parse("yearly snapshot"),
+            Some(period(RetentionPeriod::Yearly, None, false))
+        );
+        assert_eq!(
+            ForgetReason::parse("oldest yearly snapshot"),
+            Some(period(RetentionPeriod::Yearly, None, true))
+        );
+        assert_eq!(
+            ForgetReason::parse("daily within 30d"),
+            Some(period(RetentionPeriod::Daily, Some("30d"), false))
+        );
+        assert_eq!(
+            ForgetReason::parse("oldest yearly within 2y5m"),
+            Some(period(RetentionPeriod::Yearly, Some("2y5m"), true))
+        );
+    }
+
+    /// AC-M2-06-2: a reason Kestic does not know is not guessed.
+    #[test]
+    fn ac_m2_06_2_unknown_forget_reasons_are_not_read() {
+        assert_eq!(ForgetReason::parse("has tags"), None);
+        assert_eq!(ForgetReason::parse("daily"), None);
+        assert_eq!(ForgetReason::parse("daily within"), None);
+        assert_eq!(ForgetReason::parse("daily within 30x"), None);
+        assert_eq!(ForgetReason::parse("within soon"), None);
+        assert_eq!(ForgetReason::parse("oldest last snapshot"), None);
+    }
+}

@@ -15,6 +15,21 @@ use thiserror::Error;
 /// Minimum supported restic version.
 pub const MIN_RESTIC_VERSION: Version = Version::new(0, 18, 0);
 
+/// The newest restic version the tests run against (`RESTIC_LATEST_VERSION` in
+/// `scripts/bootstrap.sh`). An older version still works fully; settings only mark it as
+/// outdated.
+pub const TESTED_RESTIC_VERSION: Version = Version::new(0, 20, 0);
+
+/// Whether `version` is older than the newest tested version.
+pub fn is_outdated(version: &Version) -> bool {
+    *version < TESTED_RESTIC_VERSION
+}
+
+/// [`is_outdated`] for a version as text (`0.18.0`); unreadable text is not outdated.
+pub fn is_outdated_text(version: &str) -> bool {
+    Version::parse(version.trim()).is_ok_and(|v| is_outdated(&v))
+}
+
 /// Successfully resolved and validated restic binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedRestic {

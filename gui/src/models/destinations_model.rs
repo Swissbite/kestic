@@ -7,9 +7,10 @@ use super::qobject;
 use super::rows::{id_at, row_map, row_of};
 use crate::overall_text::maintenance_status_line;
 use crate::state_cache::{
-    daemon_now, format_datetime_display, format_destination_status, format_maintenance_entry,
-    format_slot_timestamp, i18n, json_or, shared_state,
+    format_destination_status, format_maintenance_entry, format_slot_timestamp, i18n, json_or,
+    shared_state,
 };
+use crate::time_texts::{daemon_now, format_datetime_display};
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
@@ -59,53 +60,57 @@ fn generic_label(url: &str) -> String {
     }
 }
 
-fn build_destination_row(
-    d: &DestinationSummaryDto,
-    backups: &[BackupSummaryDto],
-    now: OffsetDateTime,
-) -> DestinationRow {
-    let (kind_name, kind_label, location, username) = match &d.destination.kind {
-        DestinationKind::Local { path } => (
-            "local".to_string(),
-            i18n("Local Folder").to_string(),
-            path.to_string_lossy().into_owned(),
-            String::new(),
-        ),
-        DestinationKind::Rest { url, username } => (
-            "rest".to_string(),
-            GuiText::RestServer.text(),
-            url.clone(),
-            username.clone().unwrap_or_default(),
-        ),
+/// Where the repository of a destination lies, as the user entered it: the folder, the URL or
+/// the address of the server.
+pub(crate) fn location_text(kind: &DestinationKind) -> String {
+    match kind {
+        DestinationKind::Local { path } => path.to_string_lossy().into_owned(),
+        DestinationKind::Rest { url, .. } => url.clone(),
         DestinationKind::Sftp {
             host,
             port,
             user,
             path,
-        } => (
-            "sftp".to_string(),
-            GuiText::Sftp.text(),
-            kestic_core::sftp::display_location(host, *port, user, path),
-            user.clone(),
-        ),
+        } => kestic_core::sftp::display_location(host, *port, user, path),
         DestinationKind::S3 {
             endpoint,
             bucket,
             path,
             ..
-        } => (
+        } => kestic_core::s3::display_location(endpoint, bucket, path.as_deref()),
+        DestinationKind::Generic { url, .. } => url.trim().to_string(),
+    }
+}
+
+fn build_destination_row(
+    d: &DestinationSummaryDto,
+    backups: &[BackupSummaryDto],
+    now: OffsetDateTime,
+) -> DestinationRow {
+    let (kind_name, kind_label, username) = match &d.destination.kind {
+        DestinationKind::Local { .. } => (
+            "local".to_string(),
+            i18n("Local Folder").to_string(),
+            String::new(),
+        ),
+        DestinationKind::Rest { username, .. } => (
+            "rest".to_string(),
+            GuiText::RestServer.text(),
+            username.clone().unwrap_or_default(),
+        ),
+        DestinationKind::Sftp { user, .. } => {
+            ("sftp".to_string(), GuiText::Sftp.text(), user.clone())
+        }
+        DestinationKind::S3 { .. } => (
             "s3".to_string(),
             GuiText::S3Compatible.text(),
-            kestic_core::s3::display_location(endpoint, bucket, path.as_deref()),
             String::new(),
         ),
-        DestinationKind::Generic { url, .. } => (
-            "generic".to_string(),
-            generic_label(url),
-            url.trim().to_string(),
-            String::new(),
-        ),
+        DestinationKind::Generic { url, .. } => {
+            ("generic".to_string(), generic_label(url), String::new())
+        }
     };
+    let location = location_text(&d.destination.kind);
     let kind_json = json_or(&d.destination.kind, "{}");
     let (status_text, status_icon) = format_destination_status(d, now);
     let pending_forget_count = backups
