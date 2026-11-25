@@ -114,6 +114,8 @@ const milestones = [
 const doneCount = milestones.filter((m) => m.done).length;
 const nextMilestone = milestones.find((m) => !m.done);
 const buildFromSource = `${repoUrl}#building--testing`;
+const requirements =
+  "Needs a Debian- or Ubuntu-based amd64 system with Plasma 6, KDE Frameworks 6.24 or newer, and Qt 6.10.2. Tested on TUXEDO OS 24.04.";
 ---
 
 <Base
@@ -169,7 +171,7 @@ const buildFromSource = `${repoUrl}#building--testing`;
           {
             release ? (
               <>
-                <a class="button primary" href={release.debUrl}>Download {release.tag}</a>
+                <a class="button primary" href={release.debUrl}>Download {release.tag} (.deb, amd64)</a>
                 <a class="button" href="#try">Try it</a>
               </>
             ) : (
@@ -185,8 +187,8 @@ const buildFromSource = `${repoUrl}#building--testing`;
           <dd>SFTP, S3 and other backends, guided first-run setup.</dd>
           <dt>Runs on</dt>
           <dd>
-            Plasma 6.6 with KDE Frameworks 6.24 or newer: TUXEDO OS 24.04 (tested), Kubuntu 26.04,
-            KDE neon. Needs restic 0.18.0 or newer.
+            Debian- and Ubuntu-based amd64 systems with Plasma 6, KDE Frameworks 6.24 or newer,
+            and Qt 6.10.2. Tested on TUXEDO OS 24.04. Needs restic 0.18.0 or newer.
           </dd>
         </dl>
       </section>
@@ -271,7 +273,7 @@ const buildFromSource = `${repoUrl}#building--testing`;
       </section>
 
       <div class="wrap section-divider" aria-hidden="true">
-        <RetentionTimeline divider />
+        <RetentionTimeline />
       </div>
 
       <section id="how" class="section wrap">
@@ -325,8 +327,8 @@ RESTIC_PASSWORD_COMMAND='kestic secret get k3n8x2qd' \
               <div class="section-head">
                 <h2>Try it</h2>
                 <p>
-                  Download the package of <a href={release.url}>{release.tag}</a> for amd64 and
-                  install it with apt. Kestic needs restic 0.18.0 or newer.
+                  Download the package of <a href={release.url}>{release.tag}</a> and install it
+                  with apt. {requirements} Kestic needs restic 0.18.0 or newer.
                 </p>
               </div>
               <pre class="command mono" aria-label="Commands to download and install Kestic"><code>wget {release.debUrl}
@@ -344,6 +346,7 @@ sudo apt install ./{release.debFile}</code></pre>
                 <p>
                   There is no release yet, so you build the package yourself. The bootstrap script
                   installs the Rust toolchain, the Qt and KDE development packages, and cargo-deb.
+                  {requirements}
                 </p>
               </div>
               <pre class="command mono" aria-label="Commands to build and install Kestic"><code>git clone {repoUrl}.git && cd kestic
