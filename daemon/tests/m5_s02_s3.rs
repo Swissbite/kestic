@@ -13,12 +13,13 @@ mod common;
 
 use common::m3::{
     M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, assert_dbus_error_name, backup_summary,
-    dest_summary, restic_variants, spawn_m3_daemon, wait_for_state,
+    dest_summary, latest_variant, restic_variants, spawn_m3_daemon, wait_for_state,
 };
 use common::{
     CapturedKesticSignal, KesticSignalCollector, isolated_secret_store, run_isolated_test,
 };
 use kestic_core::backend_credentials::{SECRET_KIND_S3_ACCESS_KEY, SECRET_KIND_S3_SECRET_KEY};
+use kestic_core::destination::DEFAULT_CONNECT_TIMEOUT;
 use kestic_core::model::{Backup, BackupId, Destination, DestinationKind, RunStatus, Source};
 use kestic_core::secrets::SecretStore;
 use kestic_daemon::dbus_api::{BackendSecrets, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
@@ -27,7 +28,11 @@ use kestic_i18n::messages::{UiText, connection_test_text};
 use kestic_test_support::password::{s3_key, strong_password};
 use kestic_test_support::s3_server::S3ServerGuard;
 use std::fs;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const BUCKET: &str = "kestic-backup";
@@ -360,68 +365,154 @@ fn ac_m5_02_4_stopped_s3_server_blocks_manual_run_within_15_seconds() {
         |root| {
             for variant in restic_variants() {
                 let mut rig = start_s3_rig(root, &variant, "M5S3D");
-                let (dest, backup_id) = rig.add_destination_and_backup(root);
-                let client = rig.daemon.client.clone();
-                let before = client.get_state().expect("GetState");
-                assert!(
-                    dest_summary(&before, &dest.id).availability.reachable,
-                    "the status still says reachable"
-                );
-                let signals =
-                    KesticSignalCollector::start(&rig.bus, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
-                rig.server.stop();
-                let restic_before = rig.wrapper.started_repo_count();
-
-                let started = Instant::now();
-                let err = client
-                    .start_backup(backup_id.as_str())
-                    .expect_err("StartBackup on a stopped server");
-                // (a)
-                assert_dbus_error_name(&err, "net.daester.Kestic.Error.ManualRunBlocked");
-                // (b)
-                assert_eq!(
-                    rig.wrapper.started_repo_count(),
-                    restic_before,
-                    "(b) no restic call: {:?}",
-                    rig.wrapper.entries()
-                );
-                // (c)
-                let sigs = signals.wait_until(Duration::from_secs(15), |s| {
-                    s.iter()
-                        .any(|sig| matches!(sig, CapturedKesticSignal::ManualRunBlocked { .. }))
-                });
-                assert!(
-                    started.elapsed() <= Duration::from_secs(15),
-                    "(c) blocked after {:?}",
-                    started.elapsed()
-                );
-                assert!(
-                    sigs.iter().any(|s| matches!(
-                        s,
-                        CapturedKesticSignal::ManualRunBlocked { reason, .. }
-                            if reason == BlockedReason::DestinationUnreachable.as_str()
-                    )),
-                    "(c) ManualRunBlocked «destination unreachable»: {sigs:?}"
-                );
-                let state = client.get_state().expect("GetState");
-                // (d)
-                assert!(
-                    !dest_summary(&state, &dest.id).availability.reachable,
-                    "(d) status unreachable"
-                );
-                // (e)
-                let availability = &backup_summary(&state, &backup_id).availability;
-                assert!(!availability.available, "(e) «Back Up Now» disabled");
-                assert_eq!(
-                    availability.blocked_reason,
-                    Some(BlockedReason::DestinationUnreachable),
-                    "(e) with the reason"
-                );
-                drop(signals);
+                manual_run_blocked_within_15_seconds(root, &mut rig, |rig| rig.server.stop());
                 rig.daemon.stop();
             }
         },
     );
+}
+
+/// AC-M5-02-4 (FR-30, P32), a server that accepts the TCP connection and never answers HTTP:
+/// (a) the pre-check gives up after its time limit (connect timeout 10 s), (b)–(e) as with a
+/// stopped server. restic never starts, so one restic version is enough.
+#[test]
+fn ac_m5_02_4_hanging_s3_server_blocks_manual_run_within_15_seconds() {
+    run_isolated_test(
+        "ac_m5_02_4_hanging_s3_server_blocks_manual_run_within_15_seconds",
+        "KESTIC_M5_02_4_HANG_INNER",
+        |root| {
+            let mut rig = start_s3_rig(root, &latest_variant(), "M5S3H");
+            let (hole, refused_after) =
+                manual_run_blocked_within_15_seconds(root, &mut rig, |rig| {
+                    rig.server.stop();
+                    SilentServer::bind(rig.server.port)
+                });
+            // (a) the pre-check connected and waited for an answer as long as its time limit
+            assert!(hole.accepted() > 0, "(a) the pre-check never connected");
+            assert!(
+                refused_after >= DEFAULT_CONNECT_TIMEOUT,
+                "(a) gave up after {refused_after:?}"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// Adds a destination and a backup on `rig`, makes the server unreachable with `cut` while the
+/// status still says reachable, and checks AC-M5-02-4 (a)–(e) for «Back Up Now». Returns what
+/// `cut` returned, which lives until then, and how long `StartBackup` took to refuse.
+fn manual_run_blocked_within_15_seconds<T>(
+    root: &Path,
+    rig: &mut S3Rig,
+    cut: impl FnOnce(&mut S3Rig) -> T,
+) -> (T, Duration) {
+    let (dest, backup_id) = rig.add_destination_and_backup(root);
+    let client = rig.daemon.client.clone();
+    let before = client.get_state().expect("GetState");
+    assert!(
+        dest_summary(&before, &dest.id).availability.reachable,
+        "the status still says reachable"
+    );
+    let signals = KesticSignalCollector::start(&rig.bus, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
+    let kept = cut(rig);
+    let restic_before = rig.wrapper.started_repo_count();
+
+    let started = Instant::now();
+    let err = client
+        .start_backup(backup_id.as_str())
+        .expect_err("StartBackup on an unreachable server");
+    let refused_after = started.elapsed();
+    // (a)
+    assert_dbus_error_name(&err, "net.daester.Kestic.Error.ManualRunBlocked");
+    // (b)
+    assert_eq!(
+        rig.wrapper.started_repo_count(),
+        restic_before,
+        "(b) no restic call: {:?}",
+        rig.wrapper.entries()
+    );
+    // (c)
+    let sigs = signals.wait_until(Duration::from_secs(15), |s| {
+        s.iter()
+            .any(|sig| matches!(sig, CapturedKesticSignal::ManualRunBlocked { .. }))
+    });
+    assert!(
+        started.elapsed() <= Duration::from_secs(15),
+        "(c) blocked after {:?}",
+        started.elapsed()
+    );
+    assert!(
+        sigs.iter().any(|s| matches!(
+            s,
+            CapturedKesticSignal::ManualRunBlocked { reason, .. }
+                if reason == BlockedReason::DestinationUnreachable.as_str()
+        )),
+        "(c) ManualRunBlocked «destination unreachable»: {sigs:?}"
+    );
+    let state = client.get_state().expect("GetState");
+    // (d)
+    assert!(
+        !dest_summary(&state, &dest.id).availability.reachable,
+        "(d) status unreachable"
+    );
+    // (e)
+    let availability = &backup_summary(&state, &backup_id).availability;
+    assert!(!availability.available, "(e) «Back Up Now» disabled");
+    assert_eq!(
+        availability.blocked_reason,
+        Some(BlockedReason::DestinationUnreachable),
+        "(e) with the reason"
+    );
+    (kept, refused_after)
+}
+
+/// Accepts TCP connections on a port and never answers; stops on drop.
+struct SilentServer {
+    accepted: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl SilentServer {
+    fn bind(port: u16) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind the silent server");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (accepted_bg, stop_bg) = (Arc::clone(&accepted), Arc::clone(&stop));
+        let thread = thread::spawn(move || {
+            let mut open = Vec::new();
+            while !stop_bg.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        open.push(stream);
+                        accepted_bg.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(_) => thread::sleep(Duration::from_millis(10)),
+                }
+            }
+        });
+        Self {
+            accepted,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for SilentServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("silent server thread");
+        }
+    }
 }
 
 /// M5-S02, missing bucket (restic-integration.md §Credentials): the connection test of a new
