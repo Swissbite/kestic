@@ -245,6 +245,7 @@ EditorPage {
                 Layout.fillWidth: true
             }
 
+            // Not a list: form rows, one check box per known network.
             Repeater {
                 model: page.knownNetworks
                 delegate: Controls.CheckBox {

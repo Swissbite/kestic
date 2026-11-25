@@ -15,15 +15,26 @@ use kestic_core::model::{
     MaintenanceSchedule, NestedSourceConflict, NotificationSettings, RetentionPolicy, Run, Source,
 };
 use kestic_core::provider::MIN_RESTIC_VERSION;
+pub use kestic_core::query_list::{PageFilter, PageRequest as SnapshotQueryPage};
 use kestic_core::restic::RecoveryAction;
+pub use kestic_core::restore::RestoreTarget;
+pub use kestic_core::restore_preview::RestorePreviewEntry as RestorePreviewEntryDto;
+pub use kestic_core::restore_target::OriginalLocation as RestoreOriginalDto;
 use kestic_core::scheduler::PauseDuration;
 use kestic_core::secrets::SecretValue;
+use kestic_core::snapshot::ResticSnapshot;
+pub use kestic_core::snapshot_diff::DiffChange as DiffChangeDto;
+pub use kestic_core::snapshot_find::{FindHit as FindHitDto, FindScope};
+pub use kestic_core::snapshot_ls::LsEntry as LsEntryDto;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome,
     ErrorKind, PendingReasonCode, ResticInstallCode, ResticInstallOutcome, ResticInstallPhase,
     ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
 };
-pub use kestic_i18n::codes::{OverallStatusKind, RunProgressPhase};
+pub use kestic_i18n::codes::{
+    OverallStatusKind, RestoreNoteCode, RestoreOutcome, RestoreOverwrite, RestoreTargetCode,
+    RunKindCode, RunProgressPhase, SnapshotChange, SnapshotQueryKind,
+};
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
 };
@@ -63,6 +74,8 @@ pub enum KesticDbusError {
     DuplicateLocation(String),
     HostKeyUnknown(String),
     HostKeyChanged(String),
+    PreviewRequired(String),
+    RestoreRunning(String),
     Internal(String),
 }
 
@@ -85,6 +98,8 @@ impl KesticDbusError {
             Self::DuplicateLocation(_) => ServiceErrorCode::DuplicateLocation,
             Self::HostKeyUnknown(_) => ServiceErrorCode::HostKeyUnknown,
             Self::HostKeyChanged(_) => ServiceErrorCode::HostKeyChanged,
+            Self::PreviewRequired(_) => ServiceErrorCode::PreviewRequired,
+            Self::RestoreRunning(_) => ServiceErrorCode::RestoreRunning,
             Self::Internal(_) => ServiceErrorCode::Internal,
         }
     }
@@ -171,6 +186,9 @@ pub struct BackupAvailabilityDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActiveRunProgressDto {
     pub run_id: String,
+    /// Backup, maintenance or restore.
+    #[serde(default)]
+    pub kind: RunKindCode,
     pub backup_id: Option<String>,
     pub backup_name: String,
     /// `scanning` until restic knows the total, then `scan_finished`.
@@ -354,6 +372,72 @@ pub struct SnapshotSummaryDto {
     pub tags: Vec<String>,
     pub total_bytes_processed: Option<u64>,
     pub total_files_processed: Option<u64>,
+    /// Data newly written by the snapshot; `null` without it in the summary.
+    #[serde(default)]
+    pub data_added: Option<u64>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub uid: Option<u32>,
+}
+
+impl From<ResticSnapshot> for SnapshotSummaryDto {
+    fn from(s: ResticSnapshot) -> Self {
+        let summary = s.summary.as_ref();
+        Self {
+            short_id: s.short_id.unwrap_or_else(|| s.id.chars().take(8).collect()),
+            total_bytes_processed: summary.and_then(|x| x.total_bytes_processed),
+            total_files_processed: summary.and_then(|x| x.total_files_processed),
+            data_added: summary.and_then(|x| x.data_added),
+            id: s.id,
+            time: s.time,
+            hostname: s.hostname.unwrap_or_default(),
+            paths: s.paths,
+            tags: s.tags,
+            username: s.username,
+            uid: s.uid,
+        }
+    }
+}
+
+/// Number of snapshots of one configured backup in a destination.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupSnapshotCountDto {
+    pub backup_id: String,
+    pub backup_name: String,
+    pub count: u64,
+    /// Time of the newest snapshot; `null` without snapshots.
+    pub latest_time: Option<String>,
+}
+
+/// Snapshots of a backup ID that is neither configured nor described by a metadata snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrphanedBackupDto {
+    pub backup_id: String,
+    pub count: u64,
+    pub latest_time: Option<String>,
+    pub latest_hostname: Option<String>,
+    pub snapshots: Vec<SnapshotSummaryDto>,
+}
+
+/// Snapshots of a backup ID that is not configured here but described by a metadata snapshot of
+/// the destination: the backup can still be taken over, so they are not orphaned. Same fields
+/// as an orphaned backup.
+pub type DescribedBackupDto = OrphanedBackupDto;
+
+/// Result of `ListDestinationSnapshots`: all snapshots of a destination, sorted, newest first,
+/// without metadata snapshots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DestinationSnapshotsDto {
+    pub destination_id: String,
+    /// Why the snapshots could not be listed; detail: `error_detail`.
+    pub error_kind: Option<ErrorKind>,
+    pub error_detail: Option<String>,
+    pub backups: Vec<BackupSnapshotCountDto>,
+    pub unassigned: Vec<SnapshotSummaryDto>,
+    pub orphaned: Vec<OrphanedBackupDto>,
+    #[serde(default)]
+    pub described: Vec<DescribedBackupDto>,
 }
 
 /// Earlier snapshots on a previously assigned, still configured destination.
@@ -371,11 +455,238 @@ pub struct BackupSnapshotsDto {
     pub current_destination_name: String,
     pub current_snapshots: Vec<SnapshotSummaryDto>,
     pub current_error: Option<String>,
+    /// Error code of `current_error`.
+    #[serde(default)]
+    pub current_error_kind: Option<ErrorKind>,
     pub previous_destinations: Vec<PreviousDestinationSnapshotsDto>,
 }
 
 /// Entry of `ListDestinationTypes`: a destination type and whether it is ready.
 pub type DestinationTypeDto = kestic_core::destination_types::DestinationTypeStatus;
+
+/// Request of `StartSnapshotQuery`: the kind, the destination and the fields of that kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotQueryRequest {
+    pub kind: SnapshotQueryKind,
+    pub destination_id: String,
+    /// `ls`: the full snapshot ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_id: Option<String>,
+    /// `ls`: the absolute folder to list (one level, never recursive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    /// `find`: the text to search for in the paths, taken literally, any case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    /// `find`: the snapshots to search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<FindScope>,
+    /// `diff`: the full ID of the snapshot compared from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_snapshot_id: Option<String>,
+    /// `diff`: the full ID of the snapshot compared to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_snapshot_id: Option<String>,
+    /// `restore_preview`: absolute snapshot paths to restore; empty = everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<Vec<String>>,
+    /// `restore_preview`: the target; without it the daemon takes the suggested new folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<RestoreTarget>,
+    /// `restore_preview`: what happens to existing files (default `never`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overwrite: Option<RestoreOverwrite>,
+}
+
+impl SnapshotQueryRequest {
+    /// Lists `dir` of snapshot `snapshot_id` (one level).
+    pub fn ls(destination_id: &str, snapshot_id: &str, dir: &str) -> Self {
+        Self {
+            kind: SnapshotQueryKind::Ls,
+            destination_id: destination_id.to_string(),
+            snapshot_id: Some(snapshot_id.to_string()),
+            dir: Some(dir.to_string()),
+            pattern: None,
+            scope: None,
+            from_snapshot_id: None,
+            to_snapshot_id: None,
+            selection: None,
+            target: None,
+            overwrite: None,
+        }
+    }
+
+    /// Searches the snapshots of `scope` for paths that contain `text`.
+    pub fn find(destination_id: &str, scope: FindScope, text: &str) -> Self {
+        Self {
+            kind: SnapshotQueryKind::Find,
+            destination_id: destination_id.to_string(),
+            snapshot_id: None,
+            dir: None,
+            pattern: Some(text.to_string()),
+            scope: Some(scope),
+            from_snapshot_id: None,
+            to_snapshot_id: None,
+            selection: None,
+            target: None,
+            overwrite: None,
+        }
+    }
+
+    /// Compares snapshot `from` with snapshot `to`.
+    pub fn diff(destination_id: &str, from: &str, to: &str) -> Self {
+        Self {
+            kind: SnapshotQueryKind::Diff,
+            destination_id: destination_id.to_string(),
+            snapshot_id: None,
+            dir: None,
+            pattern: None,
+            scope: None,
+            from_snapshot_id: Some(from.to_string()),
+            to_snapshot_id: Some(to.to_string()),
+            selection: None,
+            target: None,
+            overwrite: None,
+        }
+    }
+
+    /// Previews restoring `selection` of `snapshot_id` into `target` (`None` = the suggested
+    /// new folder).
+    pub fn restore_preview(
+        destination_id: &str,
+        snapshot_id: &str,
+        selection: &[String],
+        target: Option<RestoreTarget>,
+        overwrite: RestoreOverwrite,
+    ) -> Self {
+        Self {
+            kind: SnapshotQueryKind::RestorePreview,
+            destination_id: destination_id.to_string(),
+            snapshot_id: Some(snapshot_id.to_string()),
+            dir: None,
+            pattern: None,
+            scope: None,
+            from_snapshot_id: None,
+            to_snapshot_id: None,
+            selection: Some(selection.to_vec()),
+            target,
+            overwrite: Some(overwrite),
+        }
+    }
+}
+
+/// A page of a query list (`ListPageDto`): the page, its offset, all entries of the query,
+/// those matching the filter, and whether the list was too large to hold.
+pub type ListPageDto<T> = kestic_core::query_list::ListPage<T>;
+
+/// Result of an `ls` query: one folder level of a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LsResultDto {
+    pub dir: String,
+    /// From the first node; restic lists nothing for a missing folder.
+    pub dir_exists: bool,
+    pub entries: ListPageDto<LsEntryDto>,
+}
+
+/// Result of a `find` query: the hits, newest snapshot first and by path; `total` 0 means «no
+/// hits».
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindResultDto {
+    pub hits: ListPageDto<FindHitDto>,
+    /// Number of snapshots with at least one hit.
+    pub snapshots_matched: u64,
+}
+
+/// Result of a `diff` query: the changed paths by path, and the counts of the whole comparison
+/// (independent of the filter).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffResultDto {
+    pub changes: ListPageDto<DiffChangeDto>,
+    pub added_files: u64,
+    pub removed_files: u64,
+    pub changed_files: u64,
+    pub bytes_added: u64,
+    pub bytes_removed: u64,
+    /// restic reported no change («no differences»).
+    pub identical: bool,
+}
+
+/// What the daemon suggests as target of a restore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreSuggestionDto {
+    /// The suggested new folder (`~/Restored/<backup> <time>`).
+    pub new_folder: String,
+    pub original: RestoreOriginalDto,
+}
+
+/// The daemon's check of a restore target; `detail` is the resolved folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreTargetCheckDto {
+    pub code: RestoreTargetCode,
+    pub detail: String,
+}
+
+/// The target a preview used, with its check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestorePreviewTargetDto {
+    #[serde(flatten)]
+    pub target: RestoreTarget,
+    pub check: RestoreTargetCheckDto,
+}
+
+/// Result of a `restore_preview` query. At the default target (a new, empty folder) no dry run
+/// runs: the counts and `entries` stay empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestorePreviewResultDto {
+    pub suggestion: RestoreSuggestionDto,
+    pub target: RestorePreviewTargetDto,
+    pub new_files: u64,
+    pub overwritten_files: u64,
+    pub kept_files: u64,
+    pub identical_files: u64,
+    pub bytes_to_write: u64,
+    pub entries: ListPageDto<RestorePreviewEntryDto>,
+    pub notes: Vec<RestoreNoteCode>,
+}
+
+/// Request of `StartRestore`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreRequest {
+    pub destination_id: String,
+    pub snapshot_id: String,
+    /// Absolute snapshot paths; empty = everything.
+    #[serde(default)]
+    pub selection: Vec<String>,
+    pub target: RestoreTarget,
+    #[serde(default)]
+    pub overwrite: RestoreOverwrite,
+    /// `query_id` of a finished `restore_preview` with the same parameters.
+    #[serde(default)]
+    pub preview_id: Option<String>,
+}
+
+/// Result of a finished snapshot query, tagged with its kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SnapshotQueryResultDto {
+    Ls(LsResultDto),
+    Find(FindResultDto),
+    Diff(DiffResultDto),
+    RestorePreview(Box<RestorePreviewResultDto>),
+}
+
+/// Status of a snapshot query (`GetSnapshotQueryStatus`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotQueryStatusDto {
+    /// `"running"` | `"done"` | `"cancelled"` | `"error"`
+    pub state: String,
+    /// Cause while `state == "error"`.
+    pub error_kind: Option<ErrorKind>,
+    /// Raw error text (shown for `unknown`).
+    pub error_detail: Option<String>,
+    /// Only once the query is done.
+    pub result: Option<SnapshotQueryResultDto>,
+}
 
 /// Result of `TestDestinationConnection`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -551,7 +862,7 @@ impl ActiveRunProgressDto {
     pub fn info(&self) -> ActiveRunInfo<'_> {
         ActiveRunInfo {
             name: &self.backup_name,
-            is_maintenance: self.backup_id.is_none(),
+            kind: self.kind,
             phase: self.phase,
             percent_done: self.percent_done,
         }
@@ -707,6 +1018,42 @@ impl KesticClient {
         backup_id: &str,
     ) -> Result<BackupSnapshotsDto, KesticDbusError> {
         self.call_json("ListBackupSnapshots", &(backup_id,))
+    }
+
+    pub fn list_destination_snapshots(
+        &self,
+        destination_id: &str,
+    ) -> Result<DestinationSnapshotsDto, KesticDbusError> {
+        self.call_json("ListDestinationSnapshots", &(destination_id,))
+    }
+
+    pub fn start_snapshot_query(
+        &self,
+        request: &SnapshotQueryRequest,
+    ) -> Result<String, KesticDbusError> {
+        let json = to_json_arg(request)?;
+        self.call("StartSnapshotQuery", &(json.as_str(),))
+            .map_err(KesticDbusError::from)
+    }
+
+    pub fn get_snapshot_query_status(
+        &self,
+        query_id: &str,
+        page: &SnapshotQueryPage,
+    ) -> Result<SnapshotQueryStatusDto, KesticDbusError> {
+        let json = to_json_arg(page)?;
+        self.call_json("GetSnapshotQueryStatus", &(query_id, json.as_str()))
+    }
+
+    pub fn cancel_snapshot_query(&self, query_id: &str) -> zbus::Result<()> {
+        self.call("CancelSnapshotQuery", &(query_id,))
+    }
+
+    /// Starts a restore run; returns its run ID.
+    pub fn start_restore(&self, request: &RestoreRequest) -> Result<String, KesticDbusError> {
+        let json = to_json_arg(request)?;
+        self.call("StartRestore", &(json.as_str(),))
+            .map_err(KesticDbusError::from)
     }
 
     pub fn test_destination_connection(

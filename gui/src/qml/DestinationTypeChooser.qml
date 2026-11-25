@@ -184,6 +184,7 @@ ColumnLayout {
         Layout.leftMargin: Kirigami.Units.gridUnit * 2
         spacing: Kirigami.Units.smallSpacing
 
+        // Not a list: radio choices of the cloud service
         Repeater {
             model: chooser.cloudServices
 
@@ -213,6 +214,7 @@ ColumnLayout {
         text: i18n("Needs Installation")
     }
 
+    // Not a list: the cards to choose the type of the destination from
     Repeater {
         model: chooser.cardsNeedingInstallation
 

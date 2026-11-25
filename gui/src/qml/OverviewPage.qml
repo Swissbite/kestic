@@ -200,6 +200,7 @@ Kirigami.ScrollablePage {
                 objectName: "overviewCardsLayout"
                 Layout.fillWidth: true
 
+                // Not a list: the backup cards, a card grid; each card is a Tab stop of its own.
                 Repeater {
                     model: backupsModel
 
@@ -227,6 +228,11 @@ Kirigami.ScrollablePage {
                         required property string nextScheduledAtText
                         required property string pendingReasonsTooltip
 
+                        // Without banner and actions: Kirigami's empty banner has a negative height
+                        // and pulled the content onto the top border, its empty action bar added
+                        // space below.
+                        header: null
+                        footer: null
                         showClickFeedback: true
                         activeFocusOnTab: true
                         Accessible.name: card.name
@@ -317,6 +323,8 @@ Kirigami.ScrollablePage {
                             }
 
                             Controls.ProgressBar {
+                                // Fusion leaves the bar 0 px high and draws nothing; 6 px is the bar of Breeze.
+                                Layout.minimumHeight: topInset + bottomInset + Math.round(Kirigami.Units.smallSpacing * 1.5)
                                 objectName: "backupCardProgressBar"
                                 visible: card.isRunning
                                 from: 0
@@ -331,6 +339,12 @@ Kirigami.ScrollablePage {
                                 text: card.activeProgressText
                                 opacity: 0.8
                                 Layout.fillWidth: true
+                            }
+
+                            // A card stretched to a taller neighbour keeps its rows together and
+                            // its buttons at the bottom.
+                            Item {
+                                Layout.fillHeight: true
                             }
 
                             RowLayout {

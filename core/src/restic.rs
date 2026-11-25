@@ -909,6 +909,21 @@ pub struct ResticExecutionResult {
     pub command_record: CommandRecord,
     pub log_lines: Vec<String>,
     pub errors: Vec<ResticErrorMessage>,
+    /// The first stdout line holding a JSON array (`restic snapshots --json`), before
+    /// redaction: replacing a secret that happens to equal a tag, host name or key would change
+    /// the data. It is only parsed, never logged.
+    pub stdout_json_array: Option<UnredactedLine>,
+}
+
+/// A restic output line before redaction; its `Debug` output leaves the text out, so it never
+/// reaches a log through `{:?}`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct UnredactedLine(pub String);
+
+impl std::fmt::Debug for UnredactedLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UnredactedLine(..)")
+    }
 }
 
 struct ResolvedRunSecrets {
@@ -1064,11 +1079,100 @@ pub fn run_restic<F>(
     clock: &dyn Clock,
     cancel: Option<&CancelHandle>,
     extra_env: &[(&str, &str)],
-    mut on_event: F,
+    on_event: F,
 ) -> Result<ResticExecutionResult, ResticRunError>
 where
     F: FnMut(&ResticStreamEvent) + Send,
 {
+    let access = RunAccess {
+        destination,
+        secret_store,
+        clock,
+        cancel,
+        extra_env,
+    };
+    run_restic_with(spec, &access, on_event, StdoutSink::Log)
+}
+
+/// Like [`run_restic`], but hands every stdout line unredacted to `on_line` instead of logging
+/// and parsing it: the lines are data (file names of a snapshot) that redaction would change
+/// and that must never reach a log. Errors and `exit_error` still come from stderr.
+pub fn run_restic_streaming(
+    spec: &ResticCommandSpec,
+    destination: &Destination,
+    secret_store: Option<&dyn SecretStore>,
+    clock: &dyn Clock,
+    cancel: Option<&CancelHandle>,
+    extra_env: &[(&str, &str)],
+    on_line: &mut dyn FnMut(&str),
+) -> Result<ResticExecutionResult, ResticRunError> {
+    let access = RunAccess {
+        destination,
+        secret_store,
+        clock,
+        cancel,
+        extra_env,
+    };
+    run_restic_with(spec, &access, |_| {}, StdoutSink::Data(on_line))
+}
+
+/// Like [`run_restic_streaming`], but hands stdout to `read` as one reader, for output that is
+/// not split into lines (`find --json` prints one JSON array, possibly very long). Whatever
+/// `read` leaves unread is drained, so restic never blocks on a full pipe.
+pub fn run_restic_reading(
+    spec: &ResticCommandSpec,
+    destination: &Destination,
+    secret_store: Option<&dyn SecretStore>,
+    clock: &dyn Clock,
+    cancel: Option<&CancelHandle>,
+    extra_env: &[(&str, &str)],
+    read: &mut dyn FnMut(&mut dyn BufRead),
+) -> Result<ResticExecutionResult, ResticRunError> {
+    let access = RunAccess {
+        destination,
+        secret_store,
+        clock,
+        cancel,
+        extra_env,
+    };
+    run_restic_with(spec, &access, |_| {}, StdoutSink::Reader(read))
+}
+
+/// What a restic call reaches and how it can be cancelled.
+struct RunAccess<'a> {
+    destination: &'a Destination,
+    secret_store: Option<&'a dyn SecretStore>,
+    clock: &'a dyn Clock,
+    cancel: Option<&'a CancelHandle>,
+    extra_env: &'a [(&'a str, &'a str)],
+}
+
+/// Where the stdout lines of a restic call go.
+enum StdoutSink<'a> {
+    /// Redacted into the log and parsed as events.
+    Log,
+    /// Unredacted to the caller only.
+    Data(&'a mut dyn FnMut(&str)),
+    /// Unredacted to the caller only, as one reader.
+    Reader(&'a mut dyn FnMut(&mut dyn BufRead)),
+}
+
+fn run_restic_with<F>(
+    spec: &ResticCommandSpec,
+    access: &RunAccess<'_>,
+    mut on_event: F,
+    mut sink: StdoutSink<'_>,
+) -> Result<ResticExecutionResult, ResticRunError>
+where
+    F: FnMut(&ResticStreamEvent) + Send,
+{
+    let RunAccess {
+        destination,
+        secret_store,
+        clock,
+        cancel,
+        extra_env,
+    } = *access;
     let started_at = clock.now_utc();
     let secrets = resolve_restic_secrets(destination, secret_store)?;
     let mut prepared = build_restic_command(spec, &secrets.backend, extra_env)?;
@@ -1086,7 +1190,7 @@ where
     // On an early return or a panic it is dropped before `child`, so the pid is forgotten
     // before the process is reaped and its pid can be reused.
     let registration = PidRegistration(cancel);
-    let (stdout, stderr) = {
+    let (mut stdout, stderr) = {
         let mut started = child.lock();
         if let Some(handle) = cancel {
             handle.set_pid(Some(started.id()));
@@ -1110,9 +1214,22 @@ where
     let mut stats: Option<RunStats> = None;
     let mut error_messages: Vec<ResticErrorMessage> = Vec::new();
     let mut exit_error_msg: Option<String> = None;
+    let mut stdout_json_array: Option<UnredactedLine> = None;
 
-    if let Some(out_stream) = stdout {
+    if let (Some(out_stream), StdoutSink::Reader(read)) = (stdout.as_mut(), &mut sink) {
+        let mut reader = BufReader::new(out_stream);
+        read(&mut reader);
+        // Unread output is dropped; reading errors end the drain like the end of the output.
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
+    } else if let Some(out_stream) = stdout {
         for line in BufReader::new(out_stream).lines().map_while(Result::ok) {
+            if let StdoutSink::Data(on_line) = &mut sink {
+                on_line(&line);
+                continue;
+            }
+            if stdout_json_array.is_none() && line.trim_start().starts_with('[') {
+                stdout_json_array = Some(UnredactedLine(line.clone()));
+            }
             let redacted = handle_stream_line(
                 &line,
                 &secrets_to_redact,
@@ -1184,6 +1301,7 @@ where
         },
         log_lines,
         errors: error_messages,
+        stdout_json_array,
     })
 }
 

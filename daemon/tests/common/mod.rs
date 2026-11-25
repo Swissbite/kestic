@@ -5,6 +5,9 @@
 
 pub mod fakes;
 pub mod m3;
+pub mod m4;
+pub mod m4_restore;
+pub mod po_translator;
 
 pub use kestic_test_support::bus::PrivateDbusGuard;
 pub use kestic_test_support::workspace::find_kestic_binary;
@@ -652,6 +655,7 @@ pub enum CapturedKesticSignal {
     },
     ShowWindowRequested,
     ShowAboutRequested,
+    ShowRestoreRequested,
     QuitConfirmationRequested {
         has_running_run: bool,
         running_backup_name: String,
@@ -749,6 +753,7 @@ impl KesticSignalCollector {
                         }
                         "ShowWindowRequested" => Some(CapturedKesticSignal::ShowWindowRequested),
                         "ShowAboutRequested" => Some(CapturedKesticSignal::ShowAboutRequested),
+                        "ShowRestoreRequested" => Some(CapturedKesticSignal::ShowRestoreRequested),
                         "QuitConfirmationRequested" => {
                             msg.body().deserialize::<(bool, String)>().ok().map(
                                 |(has_running_run, running_backup_name)| {

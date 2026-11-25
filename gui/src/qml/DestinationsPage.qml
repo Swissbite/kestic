@@ -37,7 +37,7 @@ Kirigami.ScrollablePage {
         ]
     }
 
-    ListView {
+    KeyboardList {
         id: destinationsListView
         objectName: "destinationsListView"
         model: destinationsModel
@@ -80,7 +80,7 @@ Kirigami.ScrollablePage {
             required property bool hasProblem
 
             width: ListView.view.width
-            activeFocusOnTab: true
+            focusPolicy: Qt.ClickFocus
             highlighted: page.selectedDestinationId === destinationId
             Accessible.name: name
 
@@ -92,19 +92,17 @@ Kirigami.ScrollablePage {
             }
 
             FocusRing {
-                // Focus ring only: a white wash over the row made the selected text unreadable.
                 target: row
-                anchors.margins: row.highlighted ? 2 : 0
-                ringColor: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {
                 spacing: Kirigami.Units.mediumSpacing
 
-                Kirigami.Icon {
+                RowIcon {
+                    iconSize: Kirigami.Units.iconSizes.medium
                     source: row.kindName === "rest" ? "network-server" : (row.kindName === "s3" || row.kindName === "generic") ? "folder-cloud" : "folder"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.medium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.medium
+                    onSelection: row.highlighted
+                    backdropObjectName: "destinationRowIconBackdrop"
                 }
 
                 ColumnLayout {

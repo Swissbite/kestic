@@ -32,7 +32,7 @@ Kirigami.ScrollablePage {
     actions: [
         Kirigami.Action {
             icon.name: "view-refresh"
-            text: i18n("Refresh")
+            text: Texts.label("refresh")
             onTriggered: appBackend.loadBackupSnapshots(backupId)
         },
         Kirigami.Action {
@@ -51,7 +51,7 @@ Kirigami.ScrollablePage {
         Kirigami.LoadingPlaceholder {
             Layout.fillWidth: true
             visible: appBackend.snapshots_loading
-            text: i18n("Loading snapshots…")
+            text: Texts.label("loading_snapshots")
         }
 
         Kirigami.InlineMessage {
@@ -72,16 +72,15 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 2
             visible: !appBackend.snapshots_loading && snapshotsListView.count === 0 && appBackend.snapshots_error === ""
             icon.name: "view-history"
-            text: i18n("No snapshots yet – the first backup is still pending")
+            text: Texts.label("no_snapshots_yet")
         }
 
-        ListView {
+        KeyboardList {
             id: snapshotsListView
             objectName: "snapshotsListView"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(contentHeight, Kirigami.Units.gridUnit * 12)
             visible: !appBackend.snapshots_loading && count > 0
-            activeFocusOnTab: visible && count > 0
             keyNavigationEnabled: true
             model: snapshotsModel
             spacing: Kirigami.Units.smallSpacing
@@ -102,6 +101,7 @@ Kirigami.ScrollablePage {
 
             delegate: Controls.ItemDelegate {
                 id: snapRow
+                focusPolicy: Qt.ClickFocus
                 objectName: "snapshotListItem"
                 required property int index
                 required property string shortId
@@ -116,7 +116,6 @@ Kirigami.ScrollablePage {
 
                 FocusRing {
                     target: snapRow
-                    ringColor: snapRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
                 }
 
                 contentItem: ColumnLayout {

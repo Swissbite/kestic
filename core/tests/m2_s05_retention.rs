@@ -15,8 +15,8 @@ use kestic_core::backup::{
 };
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{
-    Backup, Destination, DestinationKind, KeepCount, ModelError, RetentionPolicy, RetentionPreset,
-    Source, validate_restic_duration,
+    Backup, Destination, DestinationKind, ForgetReason, KeepCount, ModelError, RetentionPeriod,
+    RetentionPolicy, RetentionPreset, Source, validate_restic_duration,
 };
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::snapshot::ResticSnapshot;
@@ -1013,6 +1013,97 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
             after_ids, before_ids,
             "{label}: forget --dry-run must delete zero snapshots"
         );
+    }
+}
+
+/// AC-M2-06-2: every reason the supported restic versions give for a kept snapshot is one
+/// Kestic reads (and so shows in the GUI language): `--keep-last`, `--keep-within`, every period
+/// rule with and without a duration.
+#[test]
+fn ac_m2_06_2_every_reason_of_restic_is_read() {
+    for (label, restic_bin) in common::restic_test_binaries() {
+        let dir = TempDir::new().expect("tempdir");
+        let cache_dir = common::restic_cache_dir(dir.path());
+        let repo_dir = dir.path().join("repo");
+        let src_dir = dir.path().join("src");
+        fs::create_dir_all(&src_dir).expect("mkdir src");
+        fs::write(src_dir.join("data.txt"), b"reasons test").expect("write data");
+
+        let rig =
+            common::ResticRig::new(dir.path(), &restic_bin, datetime!(2026-11-23 10:00:00 UTC));
+        let runtime = rig.runtime();
+        let (dest, pw) = rig.local_repo("Reasons Test", &repo_dir);
+
+        let mut backup = Backup::new("Reasons Backup", Source::folder(&src_dir), dest.id.clone())
+            .expect("backup");
+        let within = |d: &str| Some(d.to_string());
+        backup.retention = RetentionPolicy {
+            keep_last: Some(KeepCount::Count(1)),
+            keep_hourly: Some(KeepCount::Count(2)),
+            keep_daily: Some(KeepCount::Count(2)),
+            keep_weekly: Some(KeepCount::Count(2)),
+            keep_monthly: Some(KeepCount::Count(2)),
+            keep_yearly: Some(KeepCount::Count(5)),
+            keep_within: within("3d"),
+            keep_within_hourly: within("48h"),
+            keep_within_daily: within("30d"),
+            keep_within_weekly: within("6m"),
+            keep_within_monthly: within("1y"),
+            keep_within_yearly: within("2y"),
+        };
+
+        for time in [
+            "2026-01-01 10:00:00",
+            "2026-02-03 10:00:00",
+            "2026-06-03 10:00:00",
+            "2026-11-20 10:00:00",
+            "2026-11-22 09:00:00",
+            "2026-11-22 10:00:00",
+        ] {
+            create_snapshot_at_time(
+                &rig.resolved.binary,
+                &repo_dir,
+                &pw,
+                &src_dir,
+                &backup.tag(),
+                time,
+                &cache_dir,
+            );
+        }
+
+        let preview = execute_forget_dry_run_with(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
+            .unwrap_or_else(|e| panic!("{label}: preview failed: {e}"));
+        let reasons: Vec<&String> = preview.snapshots.iter().flat_map(|s| &s.reasons).collect();
+        assert!(!reasons.is_empty(), "{label}: restic gave no reasons");
+        let parsed: Vec<ForgetReason> = reasons
+            .iter()
+            .map(|r| {
+                ForgetReason::parse(r)
+                    .unwrap_or_else(|| panic!("{label}: unknown reason «{r}» from restic"))
+            })
+            .collect();
+
+        assert!(parsed.contains(&ForgetReason::Last), "{label}: --keep-last");
+        assert!(
+            parsed.contains(&ForgetReason::Within("3d".to_string())),
+            "{label}: --keep-within"
+        );
+        for (period, duration) in [
+            (RetentionPeriod::Hourly, "48h"),
+            (RetentionPeriod::Daily, "30d"),
+            (RetentionPeriod::Weekly, "6m"),
+            (RetentionPeriod::Monthly, "1y"),
+            (RetentionPeriod::Yearly, "2y"),
+        ] {
+            let rule = |within: Option<&str>| {
+                parsed.iter().any(|p| {
+                    matches!(p, ForgetReason::Period { period: q, within: w, .. }
+                        if *q == period && w.as_deref() == within)
+                })
+            };
+            assert!(rule(None), "{label}: --keep-{period:?}");
+            assert!(rule(Some(duration)), "{label}: --keep-within-{period:?}");
+        }
     }
 }
 

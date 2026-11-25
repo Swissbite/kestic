@@ -370,6 +370,10 @@ EditorPage {
                 Controls.SpinBox {
                     id: pruneHourSpin
                     objectName: "pruneHourSpin"
+                    // The digits are centred in the whole box: Fusion makes the box lower than the
+                    // padding of the style allows and would cut them.
+                    topPadding: 0
+                    bottomPadding: 0
                     from: 0
                     to: 23
                     value: page.pruneHour
@@ -384,6 +388,10 @@ EditorPage {
                 Controls.SpinBox {
                     id: pruneMinuteSpin
                     objectName: "pruneMinuteSpin"
+                    // The digits are centred in the whole box: Fusion makes the box lower than the
+                    // padding of the style allows and would cut them.
+                    topPadding: 0
+                    bottomPadding: 0
                     from: 0
                     to: 59
                     value: page.pruneMinute
@@ -450,6 +458,10 @@ EditorPage {
                 Controls.SpinBox {
                     id: checkHourSpin
                     objectName: "checkHourSpin"
+                    // The digits are centred in the whole box: Fusion makes the box lower than the
+                    // padding of the style allows and would cut them.
+                    topPadding: 0
+                    bottomPadding: 0
                     from: 0
                     to: 23
                     value: page.checkHour
@@ -464,6 +476,10 @@ EditorPage {
                 Controls.SpinBox {
                     id: checkMinuteSpin
                     objectName: "checkMinuteSpin"
+                    // The digits are centred in the whole box: Fusion makes the box lower than the
+                    // padding of the style allows and would cut them.
+                    topPadding: 0
+                    bottomPadding: 0
                     from: 0
                     to: 59
                     value: page.checkMinute

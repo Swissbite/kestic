@@ -54,11 +54,12 @@ pub(super) trait ModelRow {
 }
 
 /// Defines a row struct and its `ModelRow` implementation from one field list; the optional
-/// `hidden` fields are part of the row but have no QML role.
+/// `hidden` fields are part of the row but have no QML role. The struct is visible to all
+/// models (its fields are not), so the shared query list code can hold its rows.
 macro_rules! model_row {
     ($row:ident { $($field:ident : $ty:ty => $role:literal,)+ } $(hidden { $($plain:ident : $plain_ty:ty,)+ })?) => {
         #[derive(Clone, Default, PartialEq)]
-        struct $row {
+        pub(super) struct $row {
             $($field: $ty,)+
             $($($plain: $plain_ty,)+)?
         }
@@ -66,14 +67,14 @@ macro_rules! model_row {
         impl $crate::models::rows::ModelRow for $row {
             const ROLES: &'static [&'static str] = &[$($role),+];
 
-            fn value(&self, index: usize) -> QVariant {
+            fn value(&self, index: usize) -> ::cxx_qt_lib::QVariant {
                 let values: &[&dyn $crate::models::rows::ToVariant] = &[$(&self.$field),+];
                 values
                     .get(index)
-                    .map_or_else(QVariant::default, |value| value.to_variant())
+                    .map_or_else(::cxx_qt_lib::QVariant::default, |value| value.to_variant())
             }
 
-            fn values(&self) -> Vec<QVariant> {
+            fn values(&self) -> Vec<::cxx_qt_lib::QVariant> {
                 vec![$($crate::models::rows::ToVariant::to_variant(&self.$field)),+]
             }
         }

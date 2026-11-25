@@ -37,7 +37,7 @@ Kirigami.ScrollablePage {
         ]
     }
 
-    ListView {
+    KeyboardList {
         id: backupsListView
         objectName: "backupsListView"
         model: backupsModel
@@ -83,7 +83,7 @@ Kirigami.ScrollablePage {
             required property bool isRunning
 
             width: ListView.view.width
-            activeFocusOnTab: true
+            focusPolicy: Qt.ClickFocus
             highlighted: page.selectedBackupId === backupId
             Accessible.name: name
 
@@ -95,19 +95,17 @@ Kirigami.ScrollablePage {
             }
 
             FocusRing {
-                // Focus ring only: a white wash over the row made the selected text unreadable.
                 target: row
-                anchors.margins: row.highlighted ? 2 : 0
-                ringColor: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.highlightColor
             }
 
             contentItem: RowLayout {
                 spacing: Kirigami.Units.mediumSpacing
 
-                Kirigami.Icon {
+                RowIcon {
+                    iconSize: Kirigami.Units.iconSizes.medium
                     source: row.sourceKind === "drive" ? "drive-harddisk" : "folder"
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.medium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.medium
+                    onSelection: row.highlighted
+                    backdropObjectName: "backupRowSourceIconBackdrop"
                 }
 
                 ColumnLayout {

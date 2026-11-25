@@ -12,6 +12,7 @@ use super::error::{
     KesticServiceErr, localized_backup_run_error, localized_failure_summary,
     localized_source_check_reason,
 };
+use super::restore_runner::start_pending_restores;
 use super::run_errors::{run_blocks_schedule, unreadable_items_from_lines};
 use super::state::{DaemonCore, ResticDeps, probe_before_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
@@ -50,7 +51,7 @@ use kestic_core::scheduler::{
 };
 use kestic_core::secrets::{SecretStore, SecretValue};
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::{BlockedReason, ErrorKind, RunProgressPhase};
+use kestic_i18n::codes::{BlockedReason, ErrorKind, RunKindCode, RunProgressPhase};
 use kestic_i18n::messages::{ActiveRunInfo, active_run_message, interrupted_by_sleep_message};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -292,7 +293,7 @@ fn launch_backup_run_record(
             display_name: &backup.name,
             dest_id: &dest.id,
         },
-        claim_guard,
+        Some(claim_guard),
     );
     Ok(LaunchedBackupRun {
         pending_other_backups,
@@ -455,7 +456,7 @@ impl BackupProgressReporter<'_> {
                 speed_bytes_per_sec: p.speed_bps,
                 info_message: tr(&active_run_message(&ActiveRunInfo {
                     name: self.backup_name,
-                    is_maintenance: false,
+                    kind: RunKindCode::Backup,
                     phase: p.phase,
                     percent_done: p.percent_done,
                 })),
@@ -730,7 +731,19 @@ fn process_backup_success_result(
         detected_stale_locks = Some(0);
     }
 
-    if !sleep_interrupted && !cancel.is_cancelled() && (backup_exit == 0 || backup_exit == 3) {
+    // `forget` needs the exclusive lock: with a restore running it waits for the next
+    // maintenance (the backup stays `forget` pending); otherwise the run claims the destination
+    // exclusively, so a restore started now waits for it.
+    let forget_due =
+        !sleep_interrupted && !cancel.is_cancelled() && (backup_exit == 0 || backup_exit == 3);
+    let forget_now = forget_due
+        && shared_worker
+            .lock_unpoisoned()
+            .claim_exclusive_phase(&run.id, &dest.id);
+    if forget_due && !forget_now {
+        primary_forget_state = Some(true);
+    }
+    if forget_now {
         let mut forget_out = PostForgetOutcome {
             status: &mut status,
             summary: &mut summary,
@@ -1043,5 +1056,6 @@ fn finalize_backup_run_state(
         emit_status_changed(conn, &state_dto);
     }
 
+    start_pending_restores(shared_worker, &ctx.dest.id);
     drain_queued_backups_async(shared_worker);
 }

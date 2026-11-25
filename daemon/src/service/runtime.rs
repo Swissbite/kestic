@@ -11,8 +11,9 @@ use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, DaemonOutcome, Daemo
 use crate::binary_watch::{BinaryIdentity, BinaryStatus};
 use crate::dbus_api::{DestinationAvailabilityDto, KESTIC_BUS_NAME};
 use crate::dbus_server::{
-    emit_quit_confirmation_requested, emit_show_about_requested, emit_show_window_requested,
-    emit_status_changed, start_dbus_server,
+    close_after_pending_replies, emit_quit_confirmation_requested, emit_show_about_requested,
+    emit_show_restore_requested, emit_show_window_requested, emit_status_changed,
+    start_dbus_server,
 };
 use crate::i18n::{i18n, tr_text};
 use crate::monitors::{SystemMonitorEvent, SystemMonitorHandle, read_system_environment};
@@ -34,6 +35,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use zbus::Connection;
+
+/// How long the shutdown waits for replies still under way before it leaves the connection.
+const PENDING_REPLY_LIMIT: Duration = Duration::from_secs(2);
 
 /// Runs the Kestic daemon service loop (`SingleInstanceLock` + `net.daester.Kestic1` + `TrayHandle`).
 pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
@@ -67,15 +71,20 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     };
 
     let core_for_about = Arc::clone(&core);
-    let conn_for_about = conn.clone();
+    // The hook takes the connection from the core when it runs and holds none itself: the tray
+    // service keeps the hook until its own executor has wound down, after the tray's shutdown,
+    // and a handle in it would make the shutdown wait for the D-Bus connection until its limit.
     let about_to_show_hook: Arc<dyn Fn() -> Option<KesticTrayState> + Send + Sync> =
         Arc::new(move || {
             let _ = refresh_availability_unlocked(&core_for_about, false);
-            let (state_dto, tray_state) = {
+            let (state_dto, tray_state, conn) = {
                 let guard = core_for_about.lock_unpoisoned();
-                guard.build_state_and_tray()
+                let (state_dto, tray_state) = guard.build_state_and_tray();
+                (state_dto, tray_state, guard.conn.clone())
             };
-            emit_status_changed(&conn_for_about, &state_dto);
+            if let Some(conn) = conn {
+                emit_status_changed(&conn, &state_dto);
+            }
             Some(tray_state)
         });
 
@@ -264,6 +273,7 @@ fn shutdown_daemon_and_maybe_reexec(
         // Runs cancelled by shutdown are interrupted, not user-cancelled (no slot handling).
         guard.shutdown_flag.store(true, Ordering::SeqCst);
         guard.cancel_any_active_run();
+        guard.drop_pending_restores();
         guard.tray = None;
         guard.conn = None;
     }
@@ -273,7 +283,12 @@ fn shutdown_daemon_and_maybe_reexec(
     }
     let _ = zbus::block_on(conn.release_name(config.bus_name.as_str()));
     drop(lock);
-    let _ = zbus::block_on(conn.close());
+    if !close_after_pending_replies(conn, PENDING_REPLY_LIMIT) {
+        eprintln!(
+            "kestic-daemon: D-Bus connection still in use after {}s; it closes with its last user",
+            PENDING_REPLY_LIMIT.as_secs()
+        );
+    }
 
     if let Some(exe_path) = pending_exec_path {
         use std::os::unix::process::CommandExt;
@@ -503,6 +518,7 @@ fn handle_prepare_for_sleep(
             tray_bg.set_full_state(tray_state);
             emit_status_changed(&conn_bg, &state_dto);
             drain_queued_backups_async(&core_bg);
+            super::restore_runner::start_all_pending_restores(&core_bg);
             if enable_scheduler {
                 tick_scheduler_async(&core_bg);
             }
@@ -546,6 +562,7 @@ fn is_gui_live(core: &Arc<Mutex<DaemonCore>>, conn: &Connection) -> bool {
 #[derive(Debug, Clone, Copy)]
 enum GuiStart {
     Window,
+    Restore,
     About,
     ConfirmQuit,
 }
@@ -555,6 +572,7 @@ impl GuiStart {
     fn flag(self) -> Option<&'static str> {
         match self {
             Self::Window => None,
+            Self::Restore => Some("--show-restore"),
             Self::About => Some("--show-about"),
             Self::ConfirmQuit => Some("--confirm-quit"),
         }
@@ -643,7 +661,7 @@ fn handle_tray_action(
             });
         }
         TrayAction::CancelRun(run_id) => {
-            let guard = core.lock_unpoisoned();
+            let mut guard = core.lock_unpoisoned();
             let _ = guard.cancel_run(&run_id);
         }
         TrayAction::PauseGlobal(duration) => {
@@ -688,6 +706,13 @@ fn handle_tray_action(
             let gui_live = is_gui_live(core, conn);
             emit_show_window_requested(conn);
             spawn_gui_unless_live(core, config, gui_live, GuiStart::Window);
+        }
+        TrayAction::OpenRestore => {
+            let gui_live = is_gui_live(core, conn);
+            // A GUI that does not know `ShowRestoreRequested` yet still shows its window.
+            emit_show_window_requested(conn);
+            emit_show_restore_requested(conn);
+            spawn_gui_unless_live(core, config, gui_live, GuiStart::Restore);
         }
         TrayAction::OpenAbout => {
             let gui_live = is_gui_live(core, conn);

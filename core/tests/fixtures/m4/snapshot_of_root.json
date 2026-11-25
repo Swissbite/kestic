@@ -1,0 +1,15 @@
+{
+  "time": "2026-11-15T12:00:00+01:00",
+  "tree": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+  "paths": ["/"],
+  "hostname": "server",
+  "username": "root",
+  "uid": 0,
+  "gid": 0,
+  "tags": ["daily"],
+  "program_version": "restic 0.18.0",
+  "id": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+  "short_id": "b2c3d4e5",
+  "message_type": "snapshot",
+  "struct_type": "snapshot"
+}
