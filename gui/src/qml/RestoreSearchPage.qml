@@ -25,7 +25,7 @@ Kirigami.ScrollablePage {
     readonly property var primaryList: searchListView
     readonly property alias searchModel: snapshotSearchModel
 
-    signal showRequested(var destinationId, var snapshotId, var folder, var path, var snapshotText)
+    signal showRequested(var destinationId, var snapshotId, var folder, var path, var isDir, var snapshotText)
 
     // The user cancelled the search; a hidden page that comes back does not start it again.
     property bool cancelledByUser: false
@@ -43,6 +43,7 @@ Kirigami.ScrollablePage {
             snapshotSearchModel.data(hit, 1),
             snapshotSearchModel.data(hit, 3),
             snapshotSearchModel.data(hit, 0),
+            snapshotSearchModel.data(hit, 4),
             snapshotSearchModel.data(hit, 2));
     }
 
@@ -115,7 +116,7 @@ Kirigami.ScrollablePage {
         }
     }
 
-    ListView {
+    KeyboardList {
         id: searchListView
         objectName: "searchListView"
         model: snapshotSearchModel
@@ -179,7 +180,7 @@ Kirigami.ScrollablePage {
             required property string subtitle
 
             width: ListView.view.width
-            activeFocusOnTab: true
+            focusPolicy: Qt.ClickFocus
             highlighted: ListView.isCurrentItem
             Accessible.name: path
             Accessible.description: subtitle

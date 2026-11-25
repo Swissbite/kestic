@@ -226,6 +226,27 @@ fn chip_text(outcome: RestoreOutcome, count: u64) -> String {
     GuiText::TwoParts.with_args(&[&tr(&outcome.message()), &format_count(count)])
 }
 
+/// The line of a running restore: its progress, and the speed once it is known.
+pub(crate) fn restore_progress_text(progress: &str, speed_bps: u64) -> String {
+    if speed_bps == 0 {
+        return progress.to_string();
+    }
+    let speed = i18n("%1/s").subs(&[&format_bytes(speed_bps)]).to_string();
+    GuiText::TwoParts.with_args(&[progress, &speed])
+}
+
+/// The state the restore message shows for an ended run. A cancelled run (the user's choice)
+/// and an interrupted one (sleep, daemon start) are no failures: their message stays neutral.
+pub(crate) fn run_state_of(status: RunStatus) -> &'static str {
+    match status {
+        RunStatus::Ok => "ok",
+        RunStatus::Warning => "warning",
+        RunStatus::Cancelled => "cancelled",
+        RunStatus::Interrupted => "interrupted",
+        _ => "error",
+    }
+}
+
 /// The line shown when a restore run ended.
 pub(crate) fn run_end_text(detail: &RunDetailDto) -> String {
     match detail.run.status {
@@ -238,7 +259,7 @@ pub(crate) fn run_end_text(detail: &RunDetailDto) -> String {
             i18np("%1 file restored", "%1 files restored", files, &[])
         }
         RunStatus::Warning => tr(&nothing_restored_message()),
-        RunStatus::Cancelled => tr(&ErrorKind::Cancelled.message(None, false)),
+        RunStatus::Cancelled => i18n("Restore cancelled").to_string(),
         // Stopped by sleep (the run says so) or ended at the next daemon start (no message).
         RunStatus::Interrupted => detail
             .run
@@ -477,6 +498,15 @@ impl qobject::RestorePreviewModel {
         self.as_mut().start_query(request);
     }
 
+    /// The texts of every outcome the preview list can show, to size its outcome column.
+    pub fn outcome_texts(&self) -> QStringList {
+        let mut list = QStringList::default();
+        for outcome in RestoreOutcome::ALL {
+            list.append(QString::from(&tr(&outcome.message())));
+        }
+        list
+    }
+
     /// Tries again after an error (the preview failed, or a page or a filter could not be
     /// fetched): runs the preview again, with the same filter.
     pub fn retry(mut self: Pin<&mut Self>) {
@@ -608,15 +638,15 @@ impl qobject::RestorePreviewModel {
                     .lock_unpoisoned()
                     .active_progress
                     .get(&run_id)
-                    .map(|p| tr(&active_run_message(&p.info())));
+                    .map(|p| {
+                        restore_progress_text(&tr(&active_run_message(&p.info())), p.speed_bps)
+                    });
                 if let Some(text) = progress {
                     self.as_mut().set_run_text(QString::from(&text));
                 }
                 return;
             }
-            RunStatus::Ok => "ok",
-            RunStatus::Warning => "warning",
-            _ => "error",
+            status => run_state_of(status),
         };
         self.as_mut()
             .set_run_text(QString::from(&run_end_text(&detail)));
@@ -856,5 +886,43 @@ mod tests {
             run_end_text(&ended_run(RunStatus::Error, Some("restic failed"))),
             "Restore failed"
         );
+    }
+
+    /// AC-M4-05-30 (banner part): the line of a running restore names (a) no speed before one
+    /// is known and (b) the speed once it is.
+    #[test]
+    fn ac_m4_05_30_running_restore_line_names_the_speed() {
+        assert_eq!(
+            restore_progress_text("Home: restoring · 1%", 0),
+            "Home: restoring · 1%",
+            "(a) no speed yet"
+        );
+        assert_eq!(
+            restore_progress_text("Home: restoring · 1%", 4_000_000),
+            format!("Home: restoring · 1% · {}/s", format_bytes(4_000_000)),
+            "(b) with the speed"
+        );
+    }
+
+    /// AC-M4-05-29 (b, unit part): a cancelled and an interrupted restore end in neutral states
+    /// of their own, a failed one in «error».
+    #[test]
+    fn ac_m4_05_29_cancelled_and_interrupted_restores_are_no_errors() {
+        assert_eq!(
+            run_state_of(RunStatus::Cancelled),
+            "cancelled",
+            "(b) cancelled"
+        );
+        assert_eq!(
+            run_state_of(RunStatus::Interrupted),
+            "interrupted",
+            "(b) interrupted"
+        );
+        assert_eq!(
+            run_state_of(RunStatus::Error),
+            "error",
+            "a failure stays an error"
+        );
+        assert_eq!(run_state_of(RunStatus::Ok), "ok", "ok");
     }
 }

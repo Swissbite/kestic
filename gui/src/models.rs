@@ -86,6 +86,9 @@ pub mod qobject {
         #[qproperty(QString, too_large_text)]
         #[qproperty(i32, selection_count)]
         #[qproperty(QString, selection_text)]
+        #[qproperty(QString, top_dir)]
+        #[qproperty(bool, whole_snapshot)]
+        #[qproperty(i32, header_check_state)]
         type SnapshotBrowseModel = super::SnapshotBrowseModelRust;
 
         /// The hits of a search in the snapshots of one backup, fetched page by page.
@@ -656,6 +659,26 @@ pub mod qobject {
         #[cxx_name = "selectedPaths"]
         fn selected_paths(self: &SnapshotBrowseModel) -> QStringList;
         #[qinvokable]
+        #[cxx_name = "selectAll"]
+        fn select_all(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        #[cxx_name = "toggleAll"]
+        fn toggle_all(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        #[cxx_name = "restoreSelection"]
+        fn restore_selection(self: &SnapshotBrowseModel) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "sizeSample"]
+        fn size_sample(self: &SnapshotBrowseModel) -> QString;
+        #[qinvokable]
+        #[cxx_name = "topDirSeenFrom"]
+        fn top_dir_seen_from(
+            self: &SnapshotBrowseModel,
+            top: &QString,
+            entry: &QString,
+            entry_is_dir: bool,
+        ) -> QString;
+        #[qinvokable]
         #[cxx_name = "segmentNames"]
         fn segment_names(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
         #[qinvokable]
@@ -801,6 +824,9 @@ pub mod qobject {
         fn restore_folder_instead(self: Pin<&mut RestorePreviewModel>);
         #[qinvokable]
         fn retry(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "outcomeTexts"]
+        fn outcome_texts(self: &RestorePreviewModel) -> QStringList;
     }
 }
 

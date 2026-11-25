@@ -200,6 +200,7 @@ Kirigami.ScrollablePage {
                 objectName: "overviewCardsLayout"
                 Layout.fillWidth: true
 
+                // Not a list: the backup cards, a card grid; each card is a Tab stop of its own.
                 Repeater {
                     model: backupsModel
 

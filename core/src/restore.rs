@@ -118,6 +118,57 @@ pub fn normalize_selection(selection: &[String]) -> Result<Vec<String>, Snapshot
         .collect())
 }
 
+/// Whether `selection` (absolute snapshot paths) restores the same files as the whole snapshot,
+/// whose restore runs from its top folder `top` ([`resolve_plan`]): each of the `entries`
+/// entries of `top` is selected and nothing outside `top`. Entries below a selected one change
+/// nothing; `top` itself selected from the folder above is not counted as its entries.
+pub fn selection_is_whole_folder<'a, I>(selection: I, top: &str, entries: u64) -> bool
+where
+    I: IntoIterator<Item = &'a String>,
+    I::IntoIter: Clone,
+{
+    let selection = selection.into_iter();
+    let inside = |path: &str| {
+        path != top
+            && (top == "/"
+                || path
+                    .strip_prefix(top)
+                    .is_some_and(|rest| rest.starts_with('/')))
+    };
+    if entries == 0 || !selection.clone().all(|p| inside(p)) {
+        return false;
+    }
+    let direct: std::collections::HashSet<&str> = selection
+        .map(String::as_str)
+        .filter(|p| parent_dir(p) == top)
+        .collect();
+    direct.len() as u64 == entries
+}
+
+/// The folder a restore of the whole snapshot runs from ([`resolve_plan`]), as far as one entry
+/// `entry` of the snapshot's tree tells it: `top`, the common folder of the snapshot's paths,
+/// when `entry` lies inside it or is `top` as a folder; `/` when `entry` is `top` as a file or
+/// lies beside it, because a tree that holds `top` as a folder holds nothing beside it but the
+/// folders above. `None` for a folder above `top`: the tree holds those either way, so only a
+/// listing of `top` tells. An empty `top` (not known) stays empty.
+pub fn top_folder_seen_from<'a>(top: &'a str, entry: &str, entry_is_dir: bool) -> Option<&'a str> {
+    let below = |inner: &str, outer: &str| {
+        outer == "/"
+            || inner
+                .strip_prefix(outer)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    if top.is_empty() || top == "/" || (entry != top && below(entry, top)) {
+        Some(top)
+    } else if entry == top {
+        Some(if entry_is_dir { top } else { "/" })
+    } else if below(top, entry) {
+        None
+    } else {
+        Some("/")
+    }
+}
+
 /// The deepest folder that contains every path of `paths` (normalised, none below another);
 /// for several paths that is always a folder above each of them.
 fn common_folder(paths: &[String]) -> String {

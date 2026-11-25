@@ -290,14 +290,13 @@ Kirigami.ScrollablePage {
                     text: i18n("Files (%1)", page.dryRunResult && page.dryRunResult.files ? page.dryRunResult.files.length : 0)
                 }
 
-                ListView {
+                KeyboardList {
                     id: dryRunFilesListView
                     objectName: "dryRunFilesListView"
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(Kirigami.Units.gridUnit * 16, contentHeight + Kirigami.Units.smallSpacing)
                     clip: true
                     keyNavigationEnabled: true
-                    activeFocusOnTab: true
                     visible: count > 0
                     model: page.dryRunResult && page.dryRunResult.files ? page.dryRunResult.files : []
                     delegate: Controls.Label {
@@ -381,7 +380,11 @@ Kirigami.ScrollablePage {
                 text: i18n("No snapshots in this backup yet")
             }
 
-            Repeater {
+            KeyboardList {
+                objectName: "retentionPreviewListView"
+                Layout.fillWidth: true
+                implicitHeight: contentHeight
+                interactive: false
                 model: page.retentionPreviewState === "done"
                     && page.retentionPreviewData
                     && page.retentionPreviewData.snapshots
@@ -391,8 +394,8 @@ Kirigami.ScrollablePage {
                 delegate: Controls.ItemDelegate {
                     id: snapRow
                     required property var modelData
-                    Layout.fillWidth: true
-                    activeFocusOnTab: true
+                    width: ListView.view.width
+                    focusPolicy: Qt.ClickFocus
                     Accessible.name: i18n("Snapshot %1: %2", modelData.short_id, modelData.action === "remove" ? Texts.label("remove") : i18n("Keep"))
 
                     FocusRing {

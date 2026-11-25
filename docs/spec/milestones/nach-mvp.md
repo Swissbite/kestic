@@ -27,6 +27,7 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | – | Flatpak ([architecture.md](../architecture.md) «Packaging», «Secrets») |
 | – | Projekt-Website auf GitHub Pages (inkl. automatisch generierter & aktualisierter GUI-Screenshots aus den QML-Offscreen-Smoke-Tests, optional über `kestic.daester.net` / GitHub Pages) |
 | – | «Tastenkürzel einrichten…» im Hauptmenü: Editor für alle Tastenkürzel ([ui/stil-und-texte.md](../ui/stil-und-texte.md) §13.1) |
+| – | Wiederherstellen direkt in einen Netzwerkordner (`smb://` u. a.) aus dem System-Dateidialog; nicht über kio-fuse, das jede Datei erst lokal puffert (doppelter Platz) und bei Netzfehlern schlecht abbricht (Entscheid auf #154) |
 
 ## Luxus
 

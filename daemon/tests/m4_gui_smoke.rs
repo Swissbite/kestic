@@ -1144,3 +1144,310 @@ fn ac_m4_07_2_unassigned_snapshot_browses_and_restores_like_a_kestic_one() {
         },
     );
 }
+
+/// AC-M4-01-7: every list is one Tab stop, from the backup and snapshot lists to a folder of
+/// 1 000 entries, and no row of any list on the tabs is a Tab stop of its own (scene
+/// `m4-list-tab-stop`).
+#[test]
+fn ac_m4_01_7_every_list_is_one_tab_stop() {
+    run_isolated_test(
+        "ac_m4_01_7_every_list_is_one_tab_stop",
+        "KESTIC_AC_M4_01_7_INNER",
+        |root| {
+            let (rig, _fakes) = browse_env(root, QueryLimits::default());
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-list-tab-stop",
+                    "wide",
+                    lang,
+                    &smoke_artifact("list-tab-stop", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-01-8: a right click opens the context menu of a snapshot on the press, at the
+/// pointer, also after a long press or a move, on every row every time (scene
+/// `m4-snapshot-right-click`).
+#[test]
+fn ac_m4_01_8_right_click_opens_the_snapshot_menu_every_time() {
+    run_isolated_test(
+        "ac_m4_01_8_right_click_opens_the_snapshot_menu_every_time",
+        "KESTIC_AC_M4_01_8_INNER",
+        |root| {
+            let (rig, _fakes) = restore_env(root);
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-snapshot-right-click",
+                    "wide",
+                    lang,
+                    &smoke_artifact("snapshot-context-menu", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-01-9: the tab bar and the columns switch at the same width, and a column at that width
+/// shows short names of the folder list in full (scene `m4-breakpoint`).
+#[test]
+fn ac_m4_01_9_tab_bar_and_columns_switch_at_one_width() {
+    run_isolated_test(
+        "ac_m4_01_9_tab_bar_and_columns_switch_at_one_width",
+        "KESTIC_AC_M4_01_9_INNER",
+        |root| {
+            let (rig, _fakes) = browse_env(root, QueryLimits::default());
+            for lang in ["en", "de"] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-breakpoint",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-browse-breakpoint", "wide", lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-03-8: the header check box and Ctrl+A select every entry of the folder shown, also
+/// those not loaded yet, and with a filter the matching ones (scene `m4-browse-select-all`).
+#[test]
+fn ac_m4_03_8_select_all_entries_of_the_folder_shown() {
+    run_isolated_test(
+        "ac_m4_03_8_select_all_entries_of_the_folder_shown",
+        "KESTIC_AC_M4_03_8_INNER",
+        |root| {
+            let (rig, _fakes) = browse_env(root, QueryLimits::default());
+            for (layout, lang) in [("wide", "en"), ("wide", "de"), ("narrow", "en")] {
+                run_m4_gui_smoke(
+                    root,
+                    "m4-browse-select-all",
+                    layout,
+                    lang,
+                    &smoke_artifact("restore-browse-select-all", layout, lang),
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M4-05-26: with every entry of the top folder selected, «Restore All…» restores the whole
+/// snapshot: one `restic restore` of `<snapshot>:<top folder>` without `--include`, and the new
+/// folder holds every file of the snapshot (scene `m4-restore-all`).
+#[test]
+fn ac_m4_05_26_restore_all_restores_the_whole_snapshot() {
+    run_isolated_test(
+        "ac_m4_05_26_restore_all_restores_the_whole_snapshot",
+        "KESTIC_AC_M4_05_26_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes, _release) = restore_dialog_env(&sub, &latest_variant());
+                let src = sub.join("trees/src");
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-all",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-all", "wide", lang),
+                );
+                let state = rig.daemon.client.get_state().expect("GetState");
+                let restores: Vec<_> = state
+                    .recent_runs
+                    .iter()
+                    .filter(|r| matches!(r.kind, kestic_core::model::RunKind::Restore { .. }))
+                    .collect();
+                assert_eq!(restores.len(), 1, "(a) {lang}: one restore run");
+                let args = &restores[0].commands.last().expect("restore command").args;
+                assert!(
+                    args.iter()
+                        .any(|a| a.ends_with(&format!(":{}", src.display()))),
+                    "(a) {lang}: restores the top folder of the snapshot: {args:?}"
+                );
+                assert!(
+                    !args.iter().any(|a| a.starts_with("--include")),
+                    "(a) {lang}: the whole snapshot, without --include: {args:?}"
+                );
+                let target = args
+                    .iter()
+                    .position(|a| a == "--target")
+                    .and_then(|i| args.get(i + 1))
+                    .map(std::path::PathBuf::from)
+                    .expect("--target");
+                for file in ["a.txt", "b.bin", "docs/x.txt", "docs/deep/y.txt", "empty"] {
+                    assert!(
+                        target.join(file).exists(),
+                        "(a) {lang}: {file} restored into {}",
+                        target.display()
+                    );
+                }
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-26 (a), browser opened from a search hit: a snapshot of one file is restored from
+/// `/`, and every entry of `/` selected reads «Restore All…» with an empty selection, opened
+/// from the hit of the file (scene `m4-restore-all-from-search`) and from a folder hit above it
+/// (scene `m4-restore-all-from-folder-hit`).
+#[test]
+fn ac_m4_05_26_restore_all_from_a_search_hit() {
+    run_isolated_test(
+        "ac_m4_05_26_restore_all_from_a_search_hit",
+        "KESTIC_AC_M4_05_26_SEARCH_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes) = restore_mapping_env(&sub);
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-all-from-search",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-all-from-search", "wide", lang),
+                );
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-all-from-folder-hit",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-all-from-folder-hit", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-27: the Tab order of the restore dialog, forward and backward, stays in the dialog,
+/// and Esc returns the focus to the folder list (scene `m4-restore-dialog-tab`).
+#[test]
+fn ac_m4_05_27_restore_dialog_tab_order() {
+    run_isolated_test(
+        "ac_m4_05_27_restore_dialog_tab_order",
+        "KESTIC_AC_M4_05_27_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes, _release) = restore_dialog_env(&sub, &latest_variant());
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-dialog-tab",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-dialog-tab", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-29: the restore banner shows a running restore with an icon of the theme, a
+/// cancelled one as neutral information, and again the next restore after it was closed;
+/// AC-M4-05-30 (d): the running message names the speed (scene `m4-restore-banner`).
+#[test]
+fn ac_m4_05_29_restore_banner_shows_running_and_cancelled() {
+    run_isolated_test(
+        "ac_m4_05_29_restore_banner_shows_running_and_cancelled",
+        "KESTIC_AC_M4_05_29_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes, _release) = restore_dialog_env(&sub, &latest_variant());
+                const MIB: u64 = 1024 * 1024;
+                let line = |bytes: u64| {
+                    format!(
+                        "{{\"message_type\":\"status\",\"percent_done\":0.25,\
+                         \"files_restored\":1,\"bytes_restored\":{bytes},\"total_bytes\":{}}}\n",
+                        40 * MIB
+                    )
+                };
+                rig.wrapper.hold_with_repeated_output("restore", &line(MIB));
+                std::thread::scope(|scope| {
+                    // AC-M4-05-30 (d): once restic runs, 4 MiB more after 1 s on the daemon's clock.
+                    // The daemon reads a 1 MiB line first; the 5 MiB line then comes at the same
+                    // moment, which changes no speed, and the clock moves once it has been read.
+                    scope.spawn(|| {
+                        let deadline = Instant::now() + Duration::from_secs(90);
+                        let wait_for_bytes = |bytes: u64| {
+                            while Instant::now() < deadline {
+                                let read = rig
+                                    .daemon
+                                    .client
+                                    .get_state()
+                                    .ok()
+                                    .and_then(|state| state.overall.active_run_progress)
+                                    .is_some_and(|p| p.bytes_done == bytes);
+                                if read {
+                                    return;
+                                }
+                                std::thread::sleep(Duration::from_millis(100));
+                            }
+                        };
+                        wait_for_bytes(MIB);
+                        std::fs::write(
+                            format!("{}.restore.repeat", rig.wrapper.hold.display()),
+                            line(5 * MIB),
+                        )
+                        .expect("write the next status line");
+                        wait_for_bytes(5 * MIB);
+                        rig.clock.advance(Duration::from_secs(1));
+                    });
+                    run_m4_gui_smoke(
+                        root,
+                        "m4-restore-banner",
+                        "wide",
+                        lang,
+                        &smoke_artifact("restore-banner", "wide", lang),
+                    );
+                });
+                rig.wrapper.release("restore");
+                rig.daemon.stop();
+            }
+        },
+    );
+}
+
+/// AC-M4-05-28: a network folder from the folder chooser keeps the target and says that only
+/// local folders can be chosen (scene `m4-restore-network-folder`).
+#[test]
+fn ac_m4_05_28_network_folder_is_no_restore_target() {
+    run_isolated_test(
+        "ac_m4_05_28_network_folder_is_no_restore_target",
+        "KESTIC_AC_M4_05_28_INNER",
+        |root| {
+            for lang in ["en", "de"] {
+                let sub = root.join(lang);
+                std::fs::create_dir_all(&sub).expect("mkdir scene root");
+                common::po_translator::set_daemon_language(lang);
+                let (rig, _fakes, _release) = restore_dialog_env(&sub, &latest_variant());
+                run_m4_gui_smoke(
+                    root,
+                    "m4-restore-network-folder",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restore-network-folder", "wide", lang),
+                );
+                rig.daemon.stop();
+            }
+        },
+    );
+}

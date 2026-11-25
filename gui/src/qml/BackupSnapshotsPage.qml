@@ -75,13 +75,12 @@ Kirigami.ScrollablePage {
             text: Texts.label("no_snapshots_yet")
         }
 
-        ListView {
+        KeyboardList {
             id: snapshotsListView
             objectName: "snapshotsListView"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(contentHeight, Kirigami.Units.gridUnit * 12)
             visible: !appBackend.snapshots_loading && count > 0
-            activeFocusOnTab: visible && count > 0
             keyNavigationEnabled: true
             model: snapshotsModel
             spacing: Kirigami.Units.smallSpacing
@@ -102,6 +101,7 @@ Kirigami.ScrollablePage {
 
             delegate: Controls.ItemDelegate {
                 id: snapRow
+                focusPolicy: Qt.ClickFocus
                 objectName: "snapshotListItem"
                 required property int index
                 required property string shortId

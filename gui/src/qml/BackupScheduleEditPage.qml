@@ -362,6 +362,7 @@ EditorPage {
                         anchors.margins: Kirigami.Units.smallSpacing
                         spacing: Kirigami.Units.smallSpacing
 
+                        // Not a list: a row of buttons, one per weekday.
                         Repeater {
                             model: page.weekdayOptions
                             delegate: Controls.Button {

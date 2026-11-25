@@ -104,6 +104,7 @@ fn main() {
         "src/qml/WizardPage.qml",
         "src/qml/EditorPage.qml",
         "src/qml/FocusRing.qml",
+        "src/qml/KeyboardList.qml",
         "src/qml/RowIcon.qml",
         "src/qml/QueryStatus.qml",
         "src/qml/FilterField.qml",

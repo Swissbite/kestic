@@ -287,3 +287,88 @@ fn m4_s05_restore_shows_its_progress_in_plasma() {
         },
     );
 }
+
+/// AC-M4-05-30 (daemon part): the Plasma job of a restore shows the speed from the growth of
+/// the bytes restored over the daemon's clock: (a) none from status lines at one moment, and
+/// (b) 4 MiB/s from a line 1 s later with 4 MiB more.
+#[test]
+fn ac_m4_05_30_restore_job_shows_the_speed_of_the_bytes_restored() {
+    run_isolated_test(
+        "ac_m4_05_30_restore_job_shows_the_speed_of_the_bytes_restored",
+        "KESTIC_AC_M4_05_30_INNER",
+        |root| {
+            const MIB: u64 = 1024 * 1024;
+            let job_view = common::fakes::FakeJobViewHandle::start("org.kde.JobViewServer");
+            let _fakes = StdFakes::start();
+            let rec = &job_view.recorder;
+            let variant = latest_variant();
+            let fx = RestoreFixture::start(root, &variant, "M4RS", small_tree, |o| {
+                o.enable_job_view = true;
+            });
+            let line = |bytes: u64| {
+                format!(
+                    "{{\"message_type\":\"status\",\"percent_done\":0.25,\"files_restored\":1,\
+                     \"bytes_restored\":{bytes},\"total_bytes\":{}}}\n",
+                    40 * MIB
+                )
+            };
+            fx.rig
+                .wrapper
+                .hold_with_repeated_output("restore", &line(MIB));
+            let target = RestoreTarget::NewFolder {
+                dir: fx.new_dir("speed").to_string_lossy().into_owned(),
+            };
+            let run_id = fx
+                .start_restore(&["a.txt"], target, RestoreOverwrite::Never, None)
+                .expect("StartRestore");
+            common::m3::wait_until("first progress update", || {
+                !rec.sizes.lock().expect("lock").is_empty()
+            });
+            assert!(
+                rec.sizes
+                    .lock()
+                    .expect("lock")
+                    .iter()
+                    .all(|(_, _, speed)| *speed == 0),
+                "(a) no speed from lines at one moment"
+            );
+            // The 5 MiB line comes at the same moment first, which changes no speed; the clock
+            // moves once the job view shows it, so no older line follows the move.
+            std::fs::write(
+                format!("{}.restore.repeat", fx.rig.wrapper.hold.display()),
+                line(5 * MIB),
+            )
+            .expect("write the next status line");
+            common::m3::wait_until("progress of the 5 MiB line", || {
+                rec.sizes
+                    .lock()
+                    .expect("lock")
+                    .iter()
+                    .any(|(bytes, _, _)| *bytes == 5 * MIB)
+            });
+            fx.rig.clock.advance(Duration::from_secs(1));
+            common::m3::wait_until("progress with a speed", || {
+                rec.sizes
+                    .lock()
+                    .expect("lock")
+                    .iter()
+                    .any(|(_, _, speed)| *speed > 0)
+            });
+            let speeds: Vec<u64> = rec
+                .sizes
+                .lock()
+                .expect("lock")
+                .iter()
+                .map(|(_, _, speed)| *speed)
+                .filter(|s| *s > 0)
+                .collect();
+            assert!(
+                speeds.iter().all(|s| *s == 4 * MIB),
+                "(b) 4 MiB more after 1 s: {speeds:?}"
+            );
+            fx.rig.wrapper.release("restore");
+            fx.wait_run(&run_id);
+            fx.rig.daemon.stop();
+        },
+    );
+}

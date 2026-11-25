@@ -16,7 +16,9 @@ Kirigami.Dialog {
     id: dialog
     objectName: "restoreDialog"
     title: dialog.model ? dialog.model.title : ""
-    standardButtons: Kirigami.Dialog.Cancel
+    // «Cancel» is a footer action like «Restore Now», before it, so both stand in the order they
+    // show, also for Tab; the close button of the header follows «Restore Now» in the Tab cycle.
+    standardButtons: Kirigami.Dialog.NoButton
     padding: Kirigami.Units.largeSpacing
     // Centred by its content height: positioning the popup may adjust `height`, which the
     // default binding of `y` reads.
@@ -24,6 +26,51 @@ Kirigami.Dialog {
 
     required property var model
     property bool listShown: false
+    // The width of the longest outcome text of the preview list.
+    property int outcomeColumnWidth: 0
+
+    TextMetrics {
+        id: outcomeMetrics
+        font: Kirigami.Theme.defaultFont
+    }
+
+    Component.onCompleted: {
+        var texts = dialog.model.outcomeTexts();
+        var widest = 0;
+        for (var i = 0; i < texts.length; ++i) {
+            outcomeMetrics.text = texts[i];
+            widest = Math.max(widest, outcomeMetrics.advanceWidth);
+        }
+        outcomeColumnWidth = Math.ceil(widest);
+    }
+    // The folder chooser returned a network folder (smb://, sftp://…), which is no target.
+    property bool networkFolderRefused: false
+
+    // Takes the folder the chooser returned. A local folder (also one mounted from the network
+    // through fstab or systemd) becomes the target; restic writes only to local paths, so for a
+    // network URL the dialog says so and keeps its target, without asking the daemon.
+    function chooseFolderUrl(url) {
+        var text = url.toString();
+        if (text === "") {
+            return;
+        }
+        if (!text.startsWith("file://")) {
+            networkFolderRefused = true;
+            return;
+        }
+        // file:///path, or file://localhost/path; another host is a folder in the network.
+        var rest = text.substring("file://".length);
+        if (!rest.startsWith("/")) {
+            var slash = rest.indexOf("/");
+            if (slash < 0 || rest.substring(0, slash) !== "localhost") {
+                networkFolderRefused = true;
+                return;
+            }
+            rest = rest.substring(slash);
+        }
+        networkFolderRefused = false;
+        dialog.model.chooseFolder(decodeURIComponent(rest));
+    }
 
     // The list that gets the focus back when the dialog closes: the dialog may open from a
     // context menu, whose item is gone by then.
@@ -35,6 +82,7 @@ Kirigami.Dialog {
         returnFocusList = focusList || null;
         kindChips.uncheckAll();
         listShown = false;
+        networkFolderRefused = false;
         previewFilter.resetFilter();
         model.open(destinationId, snapshotId, selection);
         open();
@@ -57,7 +105,7 @@ Kirigami.Dialog {
     // steps through it.
     readonly property bool overwrites: dialog.model !== null && dialog.model.overwrites
     onOverwritesChanged: {
-        var cancel = dialog.standardButton(Kirigami.Dialog.Cancel);
+        var cancel = dialog.customFooterButton(cancelAction);
         if (cancel) {
             cancel.Accessible.defaultButton = overwrites;
             if (overwrites && !overwriteBox.activeFocus) cancel.forceActiveFocus(Qt.TabFocusReason);
@@ -65,6 +113,13 @@ Kirigami.Dialog {
     }
 
     customFooterActions: [
+        Kirigami.Action {
+            id: cancelAction
+            objectName: "restoreCancelAction"
+            icon.name: "dialog-cancel"
+            text: Texts.label("cancel")
+            onTriggered: dialog.reject()
+        },
         Kirigami.Action {
             id: restoreNowAction
             objectName: "restoreNowAction"
@@ -90,10 +145,7 @@ Kirigami.Dialog {
     FolderDialog {
         id: folderDialog
         title: i18n("Choose Target Folder")
-        onAccepted: {
-            var local = decodeURIComponent(selectedFolder.toString().replace(/^file:\/\//, ""));
-            if (local.length > 0) dialog.model.chooseFolder(local);
-        }
+        onAccepted: dialog.chooseFolderUrl(selectedFolder)
     }
 
     ColumnLayout {
@@ -113,7 +165,10 @@ Kirigami.Dialog {
             objectName: "restoreNewFolderRadio"
             Layout.fillWidth: true
             text: i18n("Into a new folder")
-            onClicked: dialog.model.chooseFolder("")
+            onClicked: {
+                dialog.networkFolderRefused = false;
+                dialog.model.chooseFolder("");
+            }
         }
         // A click must not break the link to the model: the dialog opens again with its state.
         Binding {
@@ -153,7 +208,10 @@ Kirigami.Dialog {
             Layout.fillWidth: true
             enabled: dialog.model !== null && dialog.model.original_available
             text: i18n("To the original location")
-            onClicked: dialog.model.chooseOriginal()
+            onClicked: {
+                dialog.networkFolderRefused = false;
+                dialog.model.chooseOriginal();
+            }
         }
         Binding {
             target: originalRadio
@@ -217,6 +275,14 @@ Kirigami.Dialog {
                 property: "currentIndex"
                 value: dialog.model ? dialog.model.overwrite : 0
             }
+        }
+
+        LiteralMessage {
+            objectName: "restoreNetworkFolderMessage"
+            Layout.fillWidth: true
+            type: Kirigami.MessageType.Warning
+            visible: dialog.networkFolderRefused
+            plainText: i18n("Network folders such as smb:// cannot be chosen directly. Mount the folder first or choose a local folder.")
         }
 
         LiteralMessage {
@@ -372,7 +438,7 @@ Kirigami.Dialog {
             namePrefix: "restoreKindChip_"
         }
 
-        ListView {
+        KeyboardList {
             id: restoreListView
             objectName: "restorePreviewList"
             Layout.fillWidth: true
@@ -380,12 +446,12 @@ Kirigami.Dialog {
             visible: dialog.listShown && dialog.model !== null && dialog.model.state === "done"
                 && dialog.model.preview_required && !dialog.model.too_large
             clip: true
-            activeFocusOnTab: true
             keyNavigationEnabled: true
             model: dialog.model
             Controls.ScrollBar.vertical: Controls.ScrollBar {}
             delegate: Controls.ItemDelegate {
                 id: row
+                focusPolicy: Qt.ClickFocus
                 required property string path
                 required property string outcomeText
                 required property string sizeText
@@ -399,12 +465,12 @@ Kirigami.Dialog {
                         textFormat: Text.PlainText
                         elide: Text.ElideMiddle
                     }
-                    // A column of its own, so the outcomes line up.
+                    // A column of its own as wide as the longest outcome, so the outcomes line
+                    // up; the path gives up the space.
                     Controls.Label {
                         text: row.outcomeText
                         opacity: 0.75
-                        elide: Text.ElideRight
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                        Layout.preferredWidth: dialog.outcomeColumnWidth
                     }
                     Controls.Label {
                         text: row.sizeText

@@ -3447,6 +3447,14 @@ msgid "Restore Selection…"
 msgstr "Auswahl wiederherstellen…"
 
 #: gui/src/qml/RestoreBrowsePage.qml
+msgid "Restore All…"
+msgstr "Alles wiederherstellen…"
+
+#: gui/src/qml/RestoreBrowsePage.qml
+msgid "Select All"
+msgstr "Alles auswählen"
+
+#: gui/src/qml/RestoreBrowsePage.qml
 msgid "Select files or folders first"
 msgstr "Zuerst Dateien oder Ordner auswählen"
 
@@ -3723,6 +3731,17 @@ msgstr "Für eine Wiederherstellung sind zu viele Einträge gewählt. Stattdesse
 
 msgid "Restore failed"
 msgstr "Wiederherstellen fehlgeschlagen"
+
+msgid "Restore cancelled"
+msgstr "Wiederherstellen abgebrochen"
+
+#. A speed: an amount of bytes per second, e.g. «4.0 MB/s».
+msgid "%1/s"
+msgstr "%1/s"
+
+#: gui/src/qml/RestoreDialog.qml
+msgid "Network folders such as smb:// cannot be chosen directly. Mount the folder first or choose a local folder."
+msgstr "Netzwerkordner wie smb:// lassen sich nicht direkt wählen. Den Ordner zuerst einbinden oder einen lokalen Ordner wählen."
 
 msgid "Restoring files…"
 msgstr "Dateien werden wiederhergestellt…"

@@ -25,6 +25,19 @@ Kirigami.ScrollablePage {
     readonly property var unreadableFiles: rootWindow.parseJsonOr(appBackend.selected_run_unreadable_json, [])
     readonly property var commandsList: rootWindow.parseJsonOr(appBackend.selected_run_commands_json, [])
 
+    // Asks whether the unreadable file `path` goes into the exclude rules of the run's backup.
+    function askToExclude(path) {
+        page.pendingExcludePath = path;
+        page.pendingExcludeRuleLabel = path;
+        page.pendingExcludeIsDir = false;
+        var dto = rootWindow.parseJsonOr(appBackend.formatExcludeRuleForItem(path), null);
+        if (dto) {
+            page.pendingExcludeRuleLabel = dto.rule || path;
+            page.pendingExcludeIsDir = Boolean(dto.is_dir);
+        }
+        addExcludeDialog.open();
+    }
+
     function refreshDetail() {
         appBackend.loadRunDetail(runId);
         runLogsModel.setFilter(logLevelFilter(), logSearchField.text);
@@ -260,36 +273,54 @@ Kirigami.ScrollablePage {
                     text: i18n("Unreadable files")
                 }
 
-                Repeater {
+                // One Tab stop: the arrow keys choose a file, Enter asks to add it to the exclude
+                // rules like the button of its row.
+                KeyboardList {
+                    objectName: "unreadableFilesList"
+                    Layout.fillWidth: true
+                    implicitHeight: contentHeight
+                    interactive: false
+                    // No row is marked until the list gets the focus.
+                    currentIndex: -1
                     model: page.unreadableFiles
 
-                    delegate: RowLayout {
+                    delegate: Controls.ItemDelegate {
+                        id: unreadableRow
+                        required property int index
                         required property string modelData
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Controls.Label {
-                            text: modelData
-                            font: Kirigami.Theme.fixedWidthFont
-                            elide: Text.ElideMiddle
-                            Layout.fillWidth: true
+                        width: ListView.view.width
+                        focusPolicy: Qt.ClickFocus
+                        highlighted: ListView.isCurrentItem
+                        Accessible.name: modelData
+                        // A click, or Enter (the window activates the focused control), asks to
+                        // add the file to the exclude rules like the button of the row.
+                        onClicked: {
+                            ListView.view.currentIndex = index;
+                            if (appBackend.selected_run_backup_id !== "") page.askToExclude(modelData);
                         }
 
-                        Controls.Button {
-                            objectName: "addUnreadableExcludeButton"
-                            text: appBackend.recoveryActionLabel("add_to_excludes")
-                            visible: appBackend.selected_run_backup_id !== ""
-                            Accessible.name: i18n("Add %1 to exclude rules", modelData)
-                            onClicked: {
-                                page.pendingExcludePath = modelData;
-                                page.pendingExcludeRuleLabel = modelData;
-                                page.pendingExcludeIsDir = false;
-                                var dto = rootWindow.parseJsonOr(appBackend.formatExcludeRuleForItem(modelData), null);
-                                if (dto) {
-                                    page.pendingExcludeRuleLabel = dto.rule || modelData;
-                                    page.pendingExcludeIsDir = Boolean(dto.is_dir);
-                                }
-                                addExcludeDialog.open();
+                        FocusRing {
+                            target: unreadableRow
+                        }
+
+                        contentItem: RowLayout {
+                            spacing: Kirigami.Units.smallSpacing
+
+                            Controls.Label {
+                                text: unreadableRow.modelData
+                                font: Kirigami.Theme.fixedWidthFont
+                                elide: Text.ElideMiddle
+                                Layout.fillWidth: true
+                                color: unreadableRow.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                            }
+
+                            Controls.Button {
+                                objectName: "addUnreadableExcludeButton"
+                                text: appBackend.recoveryActionLabel("add_to_excludes")
+                                visible: appBackend.selected_run_backup_id !== ""
+                                focusPolicy: Qt.NoFocus
+                                Accessible.name: i18n("Add %1 to exclude rules", unreadableRow.modelData)
+                                onClicked: page.askToExclude(unreadableRow.modelData)
                             }
                         }
                     }
@@ -348,13 +379,12 @@ Kirigami.ScrollablePage {
                     text: i18n("No log available for this run")
                 }
 
-                ListView {
+                KeyboardList {
                     id: runLogsListView
                     objectName: "runLogsListView"
                     Layout.fillWidth: true
                     Layout.preferredHeight: Kirigami.Units.gridUnit * 16
                     visible: count > 0
-                    activeFocusOnTab: visible && count > 0
                     keyNavigationEnabled: true
                     clip: true
                     model: runLogsModel
@@ -367,6 +397,7 @@ Kirigami.ScrollablePage {
 
                     delegate: Controls.ItemDelegate {
                         id: logRow
+                        focusPolicy: Qt.ClickFocus
                         required property int index
                         required property string lineText
                         required property string level
@@ -411,6 +442,7 @@ Kirigami.ScrollablePage {
                     text: i18n("No commands recorded for this run")
                 }
 
+                // Not a list: one card per command, each with its text to read and copy.
                 Repeater {
                     model: page.commandsList
 

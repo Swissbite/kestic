@@ -38,6 +38,7 @@ use kestic_core::restore_target::{
     preview_required, remove_empty_folders,
 };
 use kestic_core::sync::LockUnpoisoned;
+use kestic_core::transfer_speed::TransferSpeed;
 use kestic_i18n::codes::{
     ErrorKind, RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode,
 };
@@ -422,6 +423,7 @@ fn launch(
             cancel,
             conn: conn_opt,
             tray: tray_opt,
+            speed: TransferSpeed::new(),
         });
     });
     Ok(())
@@ -695,6 +697,8 @@ struct RestoreWorker {
     cancel: CancelHandle,
     conn: Option<Connection>,
     tray: Option<Arc<TrayHandle>>,
+    /// The speed from the growth of the bytes restored between status lines.
+    speed: TransferSpeed,
 }
 
 /// What the restic part of a restore ended with.
@@ -737,7 +741,10 @@ impl RestoreWorker {
         }
     }
 
-    fn report(&self, status: &ResticStatusMessage, job_view: Option<&JobViewHandle>) {
+    fn report(&mut self, status: &ResticStatusMessage, job_view: Option<&JobViewHandle>) {
+        let speed = self
+            .speed
+            .update(self.deps.clock.now_utc(), status.bytes_done.unwrap_or(0));
         let mut guard = self.shared.lock_unpoisoned();
         let mut progress = None;
         if let Some(entry) = guard.active_runs.get_mut(&self.run.id) {
@@ -753,6 +760,7 @@ impl RestoreWorker {
             entry.progress.total_bytes = total;
             entry.progress.files_done = status.files_done.unwrap_or(0);
             entry.progress.seconds_remaining = status.seconds_remaining.unwrap_or(0);
+            entry.progress.speed_bps = speed.unwrap_or(0);
             progress = Some(entry.progress.clone());
         }
         let (_, tray_state) = guard.build_state_and_tray();
@@ -848,7 +856,7 @@ fn update_job_view(jv: &JobViewHandle, p: &ActiveRunProgressDto, status: &Restic
         percent: u32::from(rounded_percent(p.percent_done)),
         processed_bytes,
         total_bytes: p.total_bytes,
-        speed_bytes_per_sec: 0,
+        speed_bytes_per_sec: p.speed_bps,
         info_message: tr(&active_run_message(&ActiveRunInfo {
             name: &p.backup_name,
             kind: RunKindCode::Restore,

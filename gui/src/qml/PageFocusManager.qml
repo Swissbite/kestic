@@ -47,7 +47,8 @@ QtObject {
                 return;
             }
             var cur = manager.rootWindow.activeFocusItem;
-            if (cur && cur !== targetItem && cur !== targetPage && manager.isInteractiveTabLeaf(cur)) {
+            if (cur && cur !== targetItem && cur !== targetPage
+                    && (manager.isInteractiveTabLeaf(cur) || manager.isRowOfTabStopList(cur))) {
                 // Only override cur if cur is the default PageRow/Kirigami auto-forwarded first child of targetPage
                 // when we are explicitly restoring a saved trigger item (such as editExcludesRow after pop).
                 var curFirstInPage = targetPage ? manager.findFirstTabFocusable(targetPage) : null;
@@ -302,6 +303,17 @@ QtObject {
             return false;
         }
         return true;
+    }
+
+    // Whether `item` lies in a list that is one Tab stop (KeyboardList): the list is the Tab
+    // stop, its current row holds the focus, so the row counts like a focused control.
+    function isRowOfTabStopList(item) {
+        for (var p = item ? item.parent : null; p; p = p.parent) {
+            if (p.activeFocusOnTab && typeof p.keyNavigationEnabled === "boolean") {
+                return p.visible && p.enabled;
+            }
+        }
+        return false;
     }
 
     function cancelFocusRestoreTimer() {

@@ -11,7 +11,8 @@ use kestic_core::history::RunHistory;
 use kestic_core::model::{BackupId, DestinationId, RestoreStats, Run, RunKind, RunStatus};
 use kestic_core::restore::{
     EntryKind, ProbeCollector, RestoreCall, escape_glob, folder_instead_of_unmatchable,
-    normalize_selection, plan_restore, probe_path, restore_args, selection_with_folders_instead,
+    normalize_selection, plan_restore, probe_path, restore_args, selection_is_whole_folder,
+    selection_with_folders_instead, top_folder_seen_from,
 };
 use kestic_core::restore_target::{
     FolderWords, SuggestionInput, new_folder_name, original_location, suggested_new_folder,
@@ -379,5 +380,130 @@ fn m4_s05_dangling_symlink_is_no_target_folder() {
     assert_eq!(
         check_target(&target, &[]).code,
         RestoreTargetCode::NotADirectory
+    );
+}
+
+fn paths(list: &[&str]) -> Vec<String> {
+    list.iter().map(|p| (*p).to_string()).collect()
+}
+
+/// AC-M4-05-26 (unit part): a selection restores the whole snapshot when (a) every entry of
+/// the top folder is selected and nothing outside it; entries below a selected one change
+/// nothing. (b) With an entry of the top folder missing, an entry outside the top folder, the
+/// top folder itself or a folder without entries it is a selection, and (c) so are all entries
+/// of a subfolder.
+#[test]
+fn ac_m4_05_26_selection_of_every_top_entry_is_the_whole_snapshot() {
+    let top = "/home/u";
+    let all = paths(&["/home/u/a.txt", "/home/u/docs", "/home/u/empty"]);
+    assert!(
+        selection_is_whole_folder(&all, top, 3),
+        "(a) every entry of the top folder"
+    );
+    let mut nested = all.clone();
+    nested.push("/home/u/docs/x.txt".to_string());
+    assert!(
+        selection_is_whole_folder(&nested, top, 3),
+        "(a) an entry below a selected one"
+    );
+    assert!(
+        selection_is_whole_folder(&paths(&["/a", "/home"]), "/", 2),
+        "(a) every entry of `/`"
+    );
+    // A single folder in the top folder is the whole snapshot too: like «Restore…» in the
+    // context menu, the restore runs from the top folder, so the folder lands below the target
+    // with its name (target/x/…), not its content directly in the target.
+    assert!(
+        selection_is_whole_folder(&paths(&["/home/u/x"]), top, 1),
+        "(a) the only entry of the top folder, a folder"
+    );
+
+    assert!(
+        !selection_is_whole_folder(&all[..2], top, 3),
+        "(b) one entry of the top folder missing"
+    );
+    let mut outside = all.clone();
+    outside.push("/home/other".to_string());
+    assert!(
+        !selection_is_whole_folder(&outside, top, 3),
+        "(b) an entry outside the top folder"
+    );
+    let mut sibling = all.clone();
+    sibling.push("/home/u2/f".to_string());
+    assert!(
+        !selection_is_whole_folder(&sibling, top, 3),
+        "(b) a folder whose name starts like the top folder is outside it"
+    );
+    assert!(
+        !selection_is_whole_folder(&paths(&["/home/u"]), top, 1),
+        "(b) the top folder itself, selected from the folder above"
+    );
+    assert!(
+        !selection_is_whole_folder(&Vec::new(), top, 0),
+        "(b) a top folder without entries"
+    );
+    assert!(
+        !selection_is_whole_folder(&paths(&["/home/u/docs/x.txt", "/home/u/docs/deep"]), top, 2),
+        "(c) every entry of a subfolder, as many as the top folder has"
+    );
+}
+
+/// AC-M4-05-26 (unit part, browser opened from a search hit): the top folder of a whole-snapshot
+/// restore, judged from the hit. (a) It stays the common folder while the hit lies inside it or
+/// is it as a folder; (b) a file at the common folder (a snapshot of a single file) or a hit
+/// beside it (a snapshot of relative paths) makes it `/`; (c) an unknown top folder stays
+/// unknown; (d) a folder above it does not tell (the top folder is listed then).
+#[test]
+fn ac_m4_05_26_top_folder_seen_from_a_search_hit() {
+    let top = "/home/u";
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u/docs/x.txt", false),
+        Some(top),
+        "(a) a file inside"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u/docs", true),
+        Some(top),
+        "(a) a folder inside"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, top, true),
+        Some(top),
+        "(a) the top folder itself"
+    );
+    assert_eq!(
+        top_folder_seen_from("/", "/a", false),
+        Some("/"),
+        "(a) `/` stays"
+    );
+    assert_eq!(
+        top_folder_seen_from("/home/u/f.txt", "/home/u/f.txt", false),
+        Some("/"),
+        "(b) a snapshot of a single file"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/rel/x.txt", false),
+        Some("/"),
+        "(b) a hit beside it"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u2/x.txt", false),
+        Some("/"),
+        "(b) a name that starts like the top folder is beside it"
+    );
+    assert_eq!(
+        top_folder_seen_from("", "/a", false),
+        Some(""),
+        "(c) unknown stays unknown"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home", true),
+        None,
+        "(d) a folder above"
+    );
+    assert_eq!(
+        top_folder_seen_from("/home/u/f.txt", "/home/u", true),
+        None,
+        "(d) a folder above the file of a single-file snapshot"
     );
 }
