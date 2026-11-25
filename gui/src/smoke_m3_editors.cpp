@@ -630,7 +630,6 @@ int scenario_settings(const Ctx& c) {
         QStringLiteral("notifWarningSwitch"),
         QStringLiteral("notifOverdueSwitch"),
         QStringLiteral("notifMaintenanceSwitch"),
-        QStringLiteral("notifResticUpdateSwitch"),
     };
     for (const QString& name : controls) {
         QObject* ctl = settings->findChild<QObject*>(name);

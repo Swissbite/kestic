@@ -6,7 +6,6 @@ import QtQuick.Controls as Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
-import org.kde.kirigami.delegates as KD
 import net.daester.kestic 1.0
 
 // Name, location, repository mode, credentials and connection test of a destination.
@@ -112,7 +111,7 @@ ColumnLayout {
             }
 
             Controls.Label {
-                text: i18n("Compare the fingerprint with the one of the server. Kestic then remembers the server.")
+                text: i18n("Compare the fingerprint with the server's. Kestic then remembers the server.")
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
@@ -248,7 +247,7 @@ ColumnLayout {
             interactive: false
             model: drivePicker.drives
 
-            delegate: KD.SubtitleDelegate {
+            delegate: TitleSubtitleDelegate {
                 id: driveRow
 
                 required property var modelData
@@ -291,6 +290,9 @@ ColumnLayout {
 
         Controls.Button {
             objectName: form.namePrefix + "DrivesCheckAgainButton"
+            // Starts where the background of a drive row starts, with a gap below the rows.
+            Layout.leftMargin: Kirigami.Units.mediumSpacing
+            Layout.topMargin: Kirigami.Units.smallSpacing
             icon.name: "view-refresh"
             text: Texts.label("check_again")
             Accessible.name: text

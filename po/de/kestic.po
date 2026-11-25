@@ -3185,14 +3185,6 @@ msgstr "Bei Wartungsfehlern benachrichtigen:"
 msgid "Notify on maintenance failures"
 msgstr "Bei Wartungsfehlern benachrichtigen"
 
-#: gui/src/qml/SettingsDialog.qml:243
-msgid "Notify on restic updates:"
-msgstr "Bei restic-Aktualisierungen benachrichtigen:"
-
-#: gui/src/qml/SettingsDialog.qml:245
-msgid "Notify on restic updates"
-msgstr "Bei restic-Aktualisierungen benachrichtigen"
-
 #: gui/src/qml/SettingsDialog.qml:251
 msgid "Background Service"
 msgstr "Hintergrunddienst"
@@ -3843,8 +3835,7 @@ msgstr "Fingerprint:"
 
 #: gui/src/qml/DestinationDetailsForm.qml
 msgid ""
-"Compare the fingerprint with the one of the server. Kestic then remembers the "
-"server."
+"Compare the fingerprint with the server's. Kestic then remembers the server."
 msgstr "Vergleichen Sie den Fingerprint mit dem des Servers. Danach merkt sich Kestic den Server."
 
 #: gui/src/qml/DestinationDetailsForm.qml

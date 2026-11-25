@@ -7,6 +7,8 @@
 #include "src/smoke_m3_util.h"
 
 #include <QFile>
+#include <QFont>
+#include <QFontInfo>
 #include <algorithm>
 #include <QPointF>
 
@@ -26,6 +28,28 @@ QQuickItem* card_item(QQuickWindow* w, const char* card) {
 
 double scene_y(QQuickItem* item) {
     return item->mapToScene(QPointF(0, 0)).y();
+}
+
+// The pixel size of the font of the text item below `root` (itself included) that shows `text`;
+// -1 if there is none.
+int text_pixel_size(QQuickItem* root, const QString& text) {
+    if (QByteArray(root->metaObject()->className()).startsWith("QQuickText") && root->property("text").toString() == text) {
+        return QFontInfo(root->property("font").value<QFont>()).pixelSize();
+    }
+    for (QQuickItem* child : root->childItems()) {
+        if (const int size = text_pixel_size(child, text); size >= 0) {
+            return size;
+        }
+    }
+    return -1;
+}
+
+// Whether the title of the title-and-subtitle row `row` is drawn in a font at least as large as its
+// subtitle.
+bool title_not_smaller_than_subtitle(QQuickItem* row) {
+    const int title = text_pixel_size(row, row->property("text").toString());
+    const int subtitle = text_pixel_size(row, row->property("subtitle").toString());
+    return title > 0 && subtitle > 0 && title >= subtitle;
 }
 
 // Scrolls the page `page_name` so that `item` is in view (the narrow window does not show all of
@@ -105,6 +129,9 @@ int scenario_destination_types(const Ctx& c) {
     }
     M3_CHECK_EQ(5060, card_item(w, "sftp")->property("text").toString(), loc(c.lang, "NAS / Server via SSH", "NAS / Server per SSH"), "sftp card title");
     M3_CHECK_EQ(5061, rclone->property("text").toString(), loc(c.lang, "Cloud Services via rclone", "Cloud-Dienste über rclone"), "rclone card title");
+    for (const char* each : {"drive", "folder", "sftp", "rest", "cloud", "rclone"}) {
+        M3_CHECK(5062, title_not_smaller_than_subtitle(card_item(w, each)), card_name(each).constData());
+    }
 
     if (const int rc = open_rclone_entry(w)) {
         return rc;
@@ -214,6 +241,7 @@ int scenario_drive_list(const Ctx& c) {
     M3_CHECK_EQ(5212, drive->property("subtitle").toString(), QStringLiteral("/media/user/USB-Disk"), "AC-M5-05-1 (a): mount point");
     M3_CHECK(5213, count_visible(w, "wizDestDrive_1") == 0, "only the removable drive is offered");
     M3_CHECK(5214, count_visible(w, "wizDestNoDriveMessage") == 0, "«no drive» message shown next to a drive");
+    M3_CHECK(5220, title_not_smaller_than_subtitle(drive), "drive name drawn smaller than its mount point");
     M3_CHECK(5215, click_ui_item(w, drive, "drive"), "click on the drive failed");
     QQuickItem* location = item_named(w, "wizDestLocationField");
     M3_CHECK(5216, wait_until([&] { return location && location->property("text").toString() == QLatin1String("/media/user/USB-Disk"); }, 2000),
@@ -761,17 +789,17 @@ int scenario_rclone_form(const Ctx& c) {
         return rc;
     }
     QQuickItem* url = item_named(w, "wizDestUrlField");
-    M3_CHECK2(5600, url != nullptr, url->isVisible(), "rclone form did not open");
-    M3_CHECK_EQ(5601, url->property("text").toString(), QString(), "remote empty, without the scheme");
-    M3_CHECK_EQ(5602, url->property("placeholderText").toString(), QStringLiteral("myremote:backups/laptop"), "remote placeholder");
+    M3_CHECK2(5560, url != nullptr, url->isVisible(), "rclone form did not open");
+    M3_CHECK_EQ(5561, url->property("text").toString(), QString(), "remote empty, without the scheme");
+    M3_CHECK_EQ(5562, url->property("placeholderText").toString(), QStringLiteral("myremote:backups/laptop"), "remote placeholder");
     set_text(w, "wizDestNameField", QStringLiteral("Drive"));
     set_text(w, "wizDestUrlField", QStringLiteral("gdrive:backup"));
     QQuickItem* error = item_named(w, "wizDestGenericError");
     QQuickItem* test = item_named(w, "wizDestTestButton");
     // `gdrive:` is no scheme of its own: the form accepts it only as `rclone:gdrive:backup`.
-    M3_CHECK(5603, wait_until([&] { return !error->isVisible() && test->isEnabled(); }, 2000), "the remote is not put after rclone:");
+    M3_CHECK(5563, wait_until([&] { return !error->isVisible() && test->isEnabled(); }, 2000), "the remote is not put after rclone:");
     wait_ms(300);
-    M3_CHECK(5605, save_screenshot(w, c.out_path), "screenshot failed");
+    M3_CHECK(5564, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
 
@@ -938,6 +966,8 @@ int scenario_restic_install_cancel(const Ctx& c) {
         "the step «Downloading restic…» is not shown");
     QQuickItem* bar = item_named(sw, "resticInstallProgressBar");
     M3_CHECK(5843, bar != nullptr && bar->isVisible(), "progress bar hidden");
+    auto* bar_track = qvariant_cast<QQuickItem*>(bar->property("background"));
+    M3_CHECK(5851, bar_track != nullptr && bar_track->height() > 0 && bar_track->width() > 0, "progress bar drawn without height");
     QQuickItem* cancel = item_named(sw, "cancelResticInstallButton");
     M3_CHECK(5844, cancel != nullptr && cancel->isVisible() && cancel->isEnabled(), "«Cancel» not offered while downloading");
     M3_CHECK(5845, !download->isEnabled(), "«Download restic» enabled while installing");

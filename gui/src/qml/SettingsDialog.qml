@@ -40,7 +40,7 @@ Kirigami.ApplicationWindow {
             notifWarningSwitch.checked,
             notifOverdueSwitch.checked,
             notifMaintenanceSwitch.checked,
-            notifResticUpdateSwitch.checked
+            appBackend.notif_on_restic_update
         );
     }
 
@@ -347,15 +347,6 @@ Kirigami.ApplicationWindow {
                 onToggled: settingsWindow.saveSettingsFromUi()
             }
 
-            Controls.Switch {
-                id: notifResticUpdateSwitch
-                objectName: "notifResticUpdateSwitch"
-                Kirigami.FormData.label: i18n("Notify on restic updates:")
-                checked: appBackend.notif_on_restic_update
-                Accessible.name: i18n("Notify on restic updates")
-                onToggled: settingsWindow.saveSettingsFromUi()
-            }
-
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
                 Kirigami.FormData.label: i18n("Background Service")
@@ -620,6 +611,7 @@ Kirigami.ApplicationWindow {
 
                     Controls.ProgressBar {
                         objectName: "resticInstallProgressBar"
+                        Layout.minimumHeight: topInset + bottomInset + Math.round(Kirigami.Units.smallSpacing * 1.5)
                         from: 0
                         to: 1
                         indeterminate: appBackend.restic_install_progress < 0
