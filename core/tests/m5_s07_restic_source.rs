@@ -255,6 +255,41 @@ fn ac_m5_07_8_text_fallback_detects_016() {
     );
 }
 
+/// AC-M5-07-8 (a): a `version --json` answer that is no version message (another
+/// `message_type`, or none) is not taken as the version; the text fallback reads it.
+#[test]
+fn ac_m5_07_8_text_fallback_without_version_message() {
+    let dir = TempDir::new().expect("tempdir");
+    for (label, json) in [
+        (
+            "other type",
+            r#"{"message_type":"status","version":"0.99.0"}"#,
+        ),
+        ("no type", r#"{"version":"0.99.0"}"#),
+    ] {
+        let binary = dir.path().join(label.replace(' ', "-"));
+        write_executable(
+            &binary,
+            &format!(
+                "#!/bin/sh\n\
+                 if [ \"${{1:-}}\" = version ] && [ \"${{2:-}}\" = --json ]; then\n\
+                 echo '{json}'\n\
+                 exit 0\n\
+                 fi\n\
+                 if [ \"${{1:-}}\" = version ]; then\n\
+                 echo 'restic 0.18.1 compiled with go1.24.1 on linux/amd64'\n\
+                 exit 0\n\
+                 fi\n\
+                 exit 2\n"
+            ),
+        );
+
+        let resolved = check_binary_version(&binary).unwrap_or_else(|e| panic!("{label}: {e}"));
+        // (a) the version from the text, not from the JSON answer
+        assert_eq!(resolved.version, version("0.18.1"), "{label}");
+    }
+}
+
 /// AC-M5-07-9: for real restic 0.18.0 and the latest, the version comes from `version --json`
 /// alone.
 #[test]
