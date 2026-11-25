@@ -859,8 +859,9 @@ fn ac_m4_06_1_restore_dialog_shows_the_mapping() {
     );
 }
 
-/// AC-M4-05-22 (b, c): the setting «restic source» marks restic 0.18.0 «(outdated)» and the
-/// newest tested version not (scene `m4-restic-outdated`).
+/// AC-M4-05-22 (b, c): the setting «restic source» shows «· recommended: 0.20.0» behind
+/// restic 0.18.0 and no such note behind the newest tested version (scene
+/// `m4-restic-outdated`).
 #[test]
 fn ac_m4_05_22_settings_mark_outdated_restic() {
     run_isolated_test(

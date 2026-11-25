@@ -1,16 +1,21 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Installation of the restic managed by Kestic from the settings (`StartResticInstall`,
-//! `GetResticInstallStatus`, `CancelResticInstall`) for [`super::qobject::KesticApp`].
+//! The restic section of the settings for [`super::qobject::KesticApp`]: its rows and offers,
+//! changing the source, removing the restic managed by Kestic (`RemoveAppManagedRestic`) and
+//! installing it (`StartResticInstall`, `GetResticInstallStatus`, `CancelResticInstall`).
 
 use super::{dbus_error_text, qobject};
 use crate::restic_install_view::{
     InstallView, OfferInput, failed_poll_view, install_view, restic_offer, start_failure_text,
 };
+use crate::restic_section_view::{
+    ResticSectionView, needs_install_first, remove_failure_text, switch_after_install,
+};
 use crate::state_cache::{daemon_unavailable_text, make_client, refresh_state_now};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
+use kestic_core::model::ResticProvider;
 use kestic_daemon::dbus_api::KesticDbusError;
 use std::pin::Pin;
 
@@ -33,18 +38,98 @@ impl qobject::KesticApp {
         self.update_restic_offer();
     }
 
+    /// Publishes the rows and offers of the restic section.
+    pub(super) fn show_restic_section(mut self: Pin<&mut Self>, view: &ResticSectionView) {
+        self.as_mut()
+            .set_restic_source_text(QString::from(&view.source));
+        self.as_mut()
+            .set_restic_version_text(QString::from(&view.version));
+        self.as_mut()
+            .set_restic_program_text(QString::from(&view.program));
+        self.as_mut()
+            .set_restic_available_text(QString::from(&view.available));
+        self.as_mut()
+            .set_restic_problem_text(QString::from(&view.problem));
+        self.as_mut()
+            .set_restic_problem_detail(QString::from(&view.problem_detail));
+        self.as_mut()
+            .set_restic_explain_minimum(view.explain_minimum);
+        self.as_mut().set_restic_offer_switch(view.offer_switch);
+        self.as_mut().set_restic_offer_remove(view.offer_remove);
+        self.as_mut()
+            .set_restic_uses_app_managed(view.uses_app_managed);
+        self.as_mut()
+            .set_restic_app_managed_installed(view.app_managed_installed);
+    }
+
     /// Recomputes which restic action the settings and the blocking bar offer.
     pub(super) fn update_restic_offer(mut self: Pin<&mut Self>) {
-        let source_kind = self.restic_provider_kind().to_string();
         let offer = restic_offer(OfferInput {
             daemon_reachable: *self.daemon_reachable(),
             restic_valid: *self.restic_valid(),
-            source_kind: &source_kind,
+            uses_app_managed: *self.restic_uses_app_managed(),
             installing: self.restic_install_state().to_string() == "running",
         });
         self.as_mut().set_restic_offer_download(offer.download);
         self.as_mut().set_restic_offer_update(offer.update);
         self.as_mut().set_restic_offer_enabled(offer.enabled);
+    }
+
+    /// Applies the source `kind` of the source dialog. «Managed by Kestic» that is not installed
+    /// yet is downloaded first; the switch follows when exactly this installation succeeded.
+    pub fn apply_restic_source(
+        mut self: Pin<&mut Self>,
+        kind: &QString,
+        custom_path: &QString,
+    ) -> bool {
+        let kind = kind.to_string();
+        if !needs_install_first(&kind, *self.restic_app_managed_installed()) {
+            return self.set_restic_provider(&QString::from(&kind), custom_path);
+        }
+        if !self.as_mut().start_restic_install() {
+            return false;
+        }
+        let install_id = self.restic_install_id.clone();
+        self.as_mut().rust_mut().restic_switch_after_install = install_id;
+        true
+    }
+
+    /// Switches to the source «Automatic» from the hint of the restic section.
+    pub fn switch_restic_to_automatic(self: Pin<&mut Self>) -> bool {
+        self.switch_restic_source(&ResticProvider::Automatic)
+    }
+
+    /// Switches the source to `provider` outside the source dialog; a failure shows in the
+    /// restic section.
+    fn switch_restic_source(mut self: Pin<&mut Self>, provider: &ResticProvider) -> bool {
+        let result = make_client()
+            .map_err(|_| daemon_unavailable_text())
+            .and_then(|client| {
+                client
+                    .set_restic_provider(provider)
+                    .map_err(|err| dbus_error_text(&err))
+            });
+        let error = result.as_ref().err().cloned().unwrap_or_default();
+        self.as_mut().set_restic_action_error(QString::from(&error));
+        refresh_state_now();
+        self.as_mut().apply_cached_state();
+        result.is_ok()
+    }
+
+    /// Deletes the restic managed by Kestic; a refusal shows why and keeps it.
+    pub fn remove_app_managed_restic(mut self: Pin<&mut Self>) -> bool {
+        let result = make_client()
+            .map_err(|_| daemon_unavailable_text())
+            .and_then(|client| {
+                client
+                    .remove_app_managed_restic()
+                    .map_err(|err| remove_failure_text(KesticDbusError::from(err).code()))
+            });
+        let error = result.as_ref().err().cloned().unwrap_or_default();
+        self.as_mut().set_restic_action_error(QString::from(&error));
+        refresh_state_now();
+        self.as_mut().apply_cached_state();
+        result.is_ok()
     }
 
     pub fn start_restic_install(mut self: Pin<&mut Self>) -> bool {
@@ -90,6 +175,11 @@ impl qobject::KesticApp {
         let finished = view.state != "running";
         if finished {
             self.as_mut().rust_mut().restic_install_id.clear();
+            let pending = std::mem::take(&mut self.as_mut().rust_mut().restic_switch_after_install);
+            if switch_after_install(&pending, &install_id, &view.state) {
+                self.as_mut()
+                    .switch_restic_source(&ResticProvider::AppManaged);
+            }
         }
         self.as_mut().show_install(&view);
         if finished {

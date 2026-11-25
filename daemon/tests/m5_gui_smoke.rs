@@ -798,3 +798,232 @@ fn restic_install_gui_progress_cancel_and_result() {
         },
     );
 }
+
+/// A stand-in restic that answers `version --json` with `version`.
+fn json_restic(version: &str) -> String {
+    format!("#!/bin/sh\necho '{{\"message_type\":\"version\",\"version\":\"{version}\"}}'\n")
+}
+
+/// The system restic of this isolated test (first in `PATH`).
+fn system_restic(root: &Path) -> PathBuf {
+    root.join(SYSTEM_PROGRAMS_DIR).join("restic")
+}
+
+/// Writes `script` to `path` through a new file, so a process still running the old one is not
+/// disturbed.
+fn replace_executable(path: &Path, script: &str) {
+    let temp = path.with_extension("new");
+    write_executable(&temp, script);
+    fs::rename(&temp, path).expect("rename");
+}
+
+/// Installs the app-managed restic stand-in `version`.
+fn install_managed(version: &str) -> PathBuf {
+    let binary = managed_restic();
+    fs::create_dir_all(binary.parent().expect("data dir")).expect("data dir");
+    replace_executable(&binary, &json_restic(version));
+    binary
+}
+
+/// AC-M5-07-3 (GUI smoke): «Automatic», system restic 0.16.4, no app-managed restic; the
+/// restic section (a) explains why 0.18.0 is needed and names 0.16.4 as too old, and (b)
+/// offers «Download restic» (the C++ scenario checks each). Screenshots in English and German.
+#[test]
+fn ac_m5_07_3_gui_explains_minimum_and_offers_download() {
+    run_isolated_test_with_system_programs(
+        "ac_m5_07_3_gui_explains_minimum_and_offers_download",
+        "KESTIC_M5_GUI_RESTIC_TOO_OLD_INNER",
+        |root| {
+            let rig = start_with_old_system_restic(root);
+            for lang in ["en", "de"] {
+                run_m5_gui_smoke(
+                    root,
+                    "m5-restic-too-old",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restic-too-old", "wide", lang),
+                    &[],
+                );
+            }
+            assert!(
+                !managed_restic().exists(),
+                "(b) nothing downloaded before a click"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M5-07-4 (GUI smoke): system restic 0.18.1 and app-managed 0.19.1 under «Automatic»; the
+/// restic section shows (a) both versions, (b) source, version in use and program in rows of
+/// their own, and (c) «recommended: 0.20.0»; AC-M5-07-5 (d) no switch hint, only the offer to
+/// delete. The source dialog checks «Automatic» only and keeps a choice across a new status.
+/// Screenshots in English and German.
+#[test]
+fn ac_m5_07_4_gui_rows_and_both_versions() {
+    run_isolated_test_with_system_programs(
+        "ac_m5_07_4_gui_rows_and_both_versions",
+        "KESTIC_M5_GUI_RESTIC_VERSIONS_INNER",
+        |root| {
+            let system = system_restic(root);
+            replace_executable(&system, &json_restic("0.18.1"));
+            install_managed("0.19.1");
+            let rig = start_with_source(root, None);
+            let status = rig.daemon.client.get_state().expect("state").restic_status;
+            let system_path = system.to_string_lossy().into_owned();
+            assert_eq!(
+                status.binary_path.as_deref(),
+                Some(system_path.as_str()),
+                "precondition: {status:?}"
+            );
+            for lang in ["en", "de"] {
+                run_m5_gui_smoke(
+                    root,
+                    "m5-restic-versions",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restic-versions", "wide", lang),
+                    &[("KESTIC_SMOKE_SYSTEM_RESTIC", &system_path)],
+                );
+            }
+            let state = rig.daemon.client.get_state().expect("state");
+            assert_eq!(
+                state.config.restic_provider,
+                ResticProvider::Automatic,
+                "the dialog changed nothing without «Apply»"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M5-07-5 (GUI smoke): «Managed by Kestic» chosen, the system restic stand-in is replaced
+/// 0.16.4 → 0.18.1 and Kestic checks the versions again; (a) the settings show «System restic is
+/// now recent enough – switch?», (b) its action «Automatic» switches to the system restic, (c)
+/// «Delete» removes the app-managed restic, and (d) with «Automatic» on the system restic only
+/// the deletion is offered (the C++ scenario checks each). English and German.
+#[test]
+fn ac_m5_07_5_gui_switch_to_automatic_and_delete() {
+    run_isolated_test_with_system_programs(
+        "ac_m5_07_5_gui_switch_to_automatic_and_delete",
+        "KESTIC_M5_GUI_RESTIC_SWITCH_INNER",
+        |root| {
+            let system = system_restic(root);
+            replace_executable(&system, RESTIC_0_16_4);
+            let managed = install_managed("0.19.1");
+            let rig = start_with_source(root, Some(ResticProvider::AppManaged));
+            let client = &rig.daemon.client;
+            assert!(
+                !client
+                    .get_state()
+                    .expect("state")
+                    .restic_status
+                    .offer_switch_to_system,
+                "precondition: 0.16.4 is not enough"
+            );
+            // The system restic is updated; Kestic checks the versions again after 60 s.
+            replace_executable(&system, &json_restic("0.18.1"));
+            rig.clock.advance(std::time::Duration::from_secs(61));
+            client.check_availability(false).expect("CheckAvailability");
+            let system_path = system.to_string_lossy().into_owned();
+            for lang in ["en", "de"] {
+                if lang == "de" {
+                    install_managed("0.19.1");
+                    client
+                        .set_restic_provider(&ResticProvider::AppManaged)
+                        .expect("back to «Managed by Kestic»");
+                }
+                let status = client.get_state().expect("state").restic_status;
+                assert!(status.offer_switch_to_system, "precondition: {status:?}");
+                run_m5_gui_smoke(
+                    root,
+                    "m5-restic-switch",
+                    "wide",
+                    lang,
+                    &smoke_artifact("restic-switch", "wide", lang),
+                    &[("KESTIC_SMOKE_SYSTEM_RESTIC", &system_path)],
+                );
+                let state = client.get_state().expect("state");
+                // (b)
+                assert_eq!(state.config.restic_provider, ResticProvider::Automatic);
+                assert_eq!(
+                    state.restic_status.binary_path.as_deref(),
+                    Some(system_path.as_str())
+                );
+                // (c)
+                assert!(!managed.exists(), "(c) the app-managed restic is deleted");
+                assert_eq!(state.restic_status.app_managed, None);
+            }
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M5-07-5 (c), refused: the folder of the app-managed restic cannot be written, so «Delete»
+/// fails; the settings show the reason, keep the offer, and the binary stays.
+#[test]
+fn ac_m5_07_5_gui_refused_delete_keeps_the_binary() {
+    use std::os::unix::fs::PermissionsExt;
+    run_isolated_test_with_system_programs(
+        "ac_m5_07_5_gui_refused_delete_keeps_the_binary",
+        "KESTIC_M5_GUI_RESTIC_DELETE_REFUSED_INNER",
+        |root| {
+            let system = system_restic(root);
+            replace_executable(&system, &json_restic("0.18.1"));
+            let managed = install_managed("0.19.1");
+            let before = fs::read(&managed).expect("binary");
+            let rig = start_with_source(root, Some(ResticProvider::AppManaged));
+            let dir = managed.parent().expect("data dir").to_path_buf();
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("read-only");
+            run_m5_gui_smoke(
+                root,
+                "m5-restic-switch",
+                "wide",
+                "en",
+                &smoke_artifact("restic-switch-refused", "wide", "en"),
+                &[
+                    (
+                        "KESTIC_SMOKE_SYSTEM_RESTIC",
+                        &system.to_string_lossy().into_owned(),
+                    ),
+                    ("KESTIC_SMOKE_EXPECT_REMOVE_FAILURE", "1"),
+                ],
+            );
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).expect("writable");
+            assert_eq!(fs::read(&managed).expect("binary"), before, "binary kept");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// «Managed by Kestic» chosen in the source dialog while it is not installed: «Apply» downloads
+/// and checks it first and switches the source only after the installation succeeded.
+#[test]
+fn restic_source_dialog_downloads_then_switches() {
+    run_isolated_test_with_system_programs(
+        "restic_source_dialog_downloads_then_switches",
+        "KESTIC_M5_GUI_RESTIC_SOURCE_DOWNLOAD_INNER",
+        |root| {
+            replace_executable(&system_restic(root), &json_restic("0.18.1"));
+            let key = TestSigningKey::generate("kestic-test-release");
+            let _mock = serve(&ReleaseFiles::signed(RELEASE, &key), &key, Vec::new());
+            let rig = start_with_source(root, None);
+            run_m5_gui_smoke(
+                root,
+                "m5-restic-source-download",
+                "wide",
+                "en",
+                &smoke_artifact("restic-source-download", "wide", "en"),
+                &[],
+            );
+            let state = rig.daemon.client.get_state().expect("state");
+            assert_eq!(state.config.restic_provider, ResticProvider::AppManaged);
+            assert_eq!(
+                state.restic_status.version.as_deref(),
+                Some(RELEASE),
+                "the downloaded restic is in use"
+            );
+            rig.daemon.stop();
+        },
+    );
+}

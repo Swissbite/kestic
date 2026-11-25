@@ -101,12 +101,12 @@ pub fn start_failure_text(code: ServiceErrorCode) -> String {
 
 /// What decides which restic action the settings and the blocking bar offer.
 #[derive(Debug, Clone, Copy)]
-pub struct OfferInput<'a> {
+pub struct OfferInput {
     pub daemon_reachable: bool,
     /// The restic in use runs and is new enough.
     pub restic_valid: bool,
-    /// `"system"`, `"app_managed"` or `"custom"`.
-    pub source_kind: &'a str,
+    /// The restic in use is the one Kestic manages (chosen or through «Automatic»).
+    pub uses_app_managed: bool,
     /// An installation runs.
     pub installing: bool,
 }
@@ -123,10 +123,10 @@ pub struct Offer {
 }
 
 /// The restic actions for `input`.
-pub fn restic_offer(input: OfferInput<'_>) -> Offer {
+pub fn restic_offer(input: OfferInput) -> Offer {
     Offer {
         download: !input.restic_valid,
-        update: input.restic_valid && input.source_kind == "app_managed",
+        update: input.restic_valid && input.uses_app_managed,
         enabled: input.daemon_reachable && !input.installing,
     }
 }

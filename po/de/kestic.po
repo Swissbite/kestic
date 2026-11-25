@@ -3117,14 +3117,6 @@ msgstr "Übernehmen"
 msgid "Automatic"
 msgstr "Automatisch"
 
-#: gui/src/qml/SettingsDialog.qml
-msgid "System restic (from PATH)"
-msgstr "System-restic (aus PATH)"
-
-#: gui/src/qml/SettingsDialog.qml:120
-msgid "Custom program path"
-msgstr "Eigener Programmpfad"
-
 #: gui/src/qml/SettingsDialog.qml:140
 msgid "Custom restic program path"
 msgstr "Eigener Pfad zum restic-Programm"
@@ -3224,14 +3216,6 @@ msgstr "Wenn Sie das Fenster schliessen, läuft Kestic weiter, auch die Backups.
 #: gui/src/qml/SettingsDialog.qml:274
 msgid "restic"
 msgstr "restic"
-
-#: gui/src/qml/SettingsDialog.qml:278
-msgid "restic source:"
-msgstr "restic-Quelle:"
-
-#: gui/src/qml/SettingsDialog.qml:288
-msgid "Kestic needs restic 0.18.0 or newer."
-msgstr "Kestic benötigt restic 0.18.0 oder neuer."
 
 #: gui/src/qml/SettingsDialog.qml:301
 msgid "Change restic Source…"
@@ -4394,9 +4378,6 @@ msgstr "Alles wird in diesen Ordner wiederhergestellt; nichts wird überschriebe
 msgid "List"
 msgstr "Liste"
 
-msgid "%1 (outdated)"
-msgstr "%1 (veraltet)"
-
 msgid "Restored %1 file"
 msgid_plural "Restored %1 files"
 msgstr[0] "%1 Datei wiederhergestellt"
@@ -4554,3 +4535,60 @@ msgstr "Keine verwaisten Backups"
 #: gui/src/models/restore_snapshots_model.rs
 msgid "ID %1"
 msgstr "ID %1"
+
+msgid "System"
+msgstr "System"
+
+msgid "Custom path"
+msgstr "Eigener Pfad"
+
+msgid "Automatic (%1)"
+msgstr "Automatisch (%1)"
+
+msgid "%1 · recommended: %2"
+msgstr "%1 · empfohlen: %2"
+
+msgid "%1 · too old, at least %2"
+msgstr "%1 · zu alt, mindestens %2"
+
+msgid "System %1 · Managed by Kestic %2"
+msgstr "System %1 · Von Kestic verwaltet %2"
+
+msgid "unknown version"
+msgstr "unbekannte Version"
+
+msgid "The restic managed by Kestic is still in use and cannot be deleted now."
+msgstr "Das von Kestic verwaltete restic wird noch verwendet und kann jetzt nicht gelöscht werden."
+
+msgid "The system restic from 0.18.0 on, otherwise the restic managed by Kestic."
+msgstr "Das System-restic ab 0.18.0, sonst das von Kestic verwaltete restic."
+
+msgid "The restic installed on the system (from PATH)."
+msgstr "Das auf dem System installierte restic (aus PATH)."
+
+msgid "The official restic release that Kestic downloaded and checked."
+msgstr "Das offizielle restic-Release, das Kestic heruntergeladen und geprüft hat."
+
+msgid "Not installed yet: Apply downloads and checks the official restic release first."
+msgstr "Noch nicht installiert: «Übernehmen» lädt zuerst das offizielle restic-Release herunter und prüft es."
+
+msgid "Version:"
+msgstr "Version:"
+
+msgid "Program:"
+msgstr "Programm:"
+
+msgid "Available:"
+msgstr "Vorhanden:"
+
+msgid "Kestic needs restic 0.18.0 or newer: older versions do not report errors and check results in a form Kestic can read."
+msgstr "Kestic benötigt restic 0.18.0 oder neuer: Ältere Versionen melden Fehler und Prüfergebnisse nicht in einer Form, die Kestic auswerten kann."
+
+msgid "System restic is now recent enough – switch?"
+msgstr "System-restic ist jetzt aktuell genug – umstellen?"
+
+msgid "The restic managed by Kestic is no longer used."
+msgstr "Das von Kestic verwaltete restic wird nicht mehr verwendet."
+
+msgid "Delete"
+msgstr "Löschen"

@@ -174,15 +174,15 @@ fn install_view_after_failed_poll() {
 }
 
 /// AC-M5-06-12 (b): «Download restic» is offered whenever restic is unusable, «Update Now»
-/// only for the valid restic Kestic manages; nothing can start without the daemon or while an
-/// installation runs.
+/// only while the restic in use is the valid one Kestic manages (chosen or through
+/// «Automatic»); nothing can start without the daemon or while an installation runs.
 #[test]
 fn restic_offer_matrix() {
-    let offer = |daemon_reachable, restic_valid, source_kind, installing| {
+    let offer = |daemon_reachable, restic_valid, uses_app_managed, installing| {
         restic_offer(OfferInput {
             daemon_reachable,
             restic_valid,
-            source_kind,
+            uses_app_managed,
             installing,
         })
     };
@@ -203,34 +203,28 @@ fn restic_offer_matrix() {
     };
     // unusable restic, whatever the source: download
     assert_eq!(
-        offer(true, false, "system", false),
+        offer(true, false, false, false),
         download,
-        "system too old or missing"
+        "restic unusable"
     );
     assert_eq!(
-        offer(true, false, "custom", false),
+        offer(true, false, true, false),
         download,
-        "custom path invalid"
+        "managed binary unusable"
     );
-    assert_eq!(
-        offer(true, false, "app_managed", false),
-        download,
-        "managed binary missing"
-    );
-    // valid restic: update only for the managed one
-    assert_eq!(offer(true, true, "app_managed", false), update);
-    assert_eq!(offer(true, true, "system", false), nothing);
-    assert_eq!(offer(true, true, "custom", false), nothing);
+    // valid restic: update only for the managed one in use
+    assert_eq!(offer(true, true, true, false), update);
+    assert_eq!(offer(true, true, false, false), nothing);
     // disabled without the daemon or while installing
     assert_eq!(
-        offer(false, false, "system", false),
+        offer(false, false, false, false),
         Offer {
             enabled: false,
             ..download
         }
     );
     assert_eq!(
-        offer(true, true, "app_managed", true),
+        offer(true, true, true, true),
         Offer {
             enabled: false,
             ..update

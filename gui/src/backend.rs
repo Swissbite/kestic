@@ -23,10 +23,20 @@ pub mod qobject {
         #[qproperty(bool, daemon_reachable)]
         #[qproperty(bool, restic_valid)]
         #[qproperty(QString, restic_version)]
-        #[qproperty(bool, restic_outdated)]
         #[qproperty(QString, restic_binary_path)]
         #[qproperty(QString, restic_provider_kind)]
-        #[qproperty(QString, restic_message)]
+        #[qproperty(QString, restic_source_text)]
+        #[qproperty(QString, restic_version_text)]
+        #[qproperty(QString, restic_program_text)]
+        #[qproperty(QString, restic_available_text)]
+        #[qproperty(QString, restic_problem_text)]
+        #[qproperty(QString, restic_problem_detail)]
+        #[qproperty(bool, restic_explain_minimum)]
+        #[qproperty(bool, restic_offer_switch)]
+        #[qproperty(bool, restic_offer_remove)]
+        #[qproperty(bool, restic_uses_app_managed)]
+        #[qproperty(bool, restic_app_managed_installed)]
+        #[qproperty(QString, restic_action_error)]
         #[qproperty(bool, restic_offer_download)]
         #[qproperty(bool, restic_offer_update)]
         #[qproperty(bool, restic_offer_enabled)]
@@ -465,6 +475,22 @@ pub mod qobject {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "applyResticSource"]
+        fn apply_restic_source(
+            self: Pin<&mut KesticApp>,
+            kind: &QString,
+            custom_path: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "switchResticToAutomatic"]
+        fn switch_restic_to_automatic(self: Pin<&mut KesticApp>) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "removeAppManagedRestic"]
+        fn remove_app_managed_restic(self: Pin<&mut KesticApp>) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "startResticInstall"]
         fn start_restic_install(self: Pin<&mut KesticApp>) -> bool;
 
@@ -631,10 +657,21 @@ pub struct KesticAppRust {
     daemon_reachable: bool,
     restic_valid: bool,
     restic_version: QString,
-    restic_outdated: bool,
     restic_binary_path: QString,
     restic_provider_kind: QString,
-    restic_message: QString,
+    restic_source_text: QString,
+    restic_version_text: QString,
+    restic_program_text: QString,
+    restic_available_text: QString,
+    restic_problem_text: QString,
+    restic_problem_detail: QString,
+    restic_explain_minimum: bool,
+    restic_offer_switch: bool,
+    restic_offer_remove: bool,
+    restic_uses_app_managed: bool,
+    restic_app_managed_installed: bool,
+    /// Why the last switch or removal in the restic section failed.
+    restic_action_error: QString,
     restic_offer_download: bool,
     restic_offer_update: bool,
     restic_offer_enabled: bool,
@@ -648,6 +685,9 @@ pub struct KesticAppRust {
     restic_install_error_detail: QString,
     /// `install_id` of the last installation started from this GUI.
     restic_install_id: String,
+    /// `install_id` of the installation the source dialog started for «Managed by Kestic»:
+    /// the source switches to it once exactly this installation succeeded.
+    restic_switch_after_install: String,
     blocking_kind: QString,
     blocking_message: QString,
     overall_headline: QString,

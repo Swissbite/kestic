@@ -910,6 +910,203 @@ int scenario_restic_install_result(const Ctx& c) {
     return 0;
 }
 
+
+// The text of the label called `name` in the settings window `sw` ("" when it is hidden).
+QString shown_text(QQuickWindow* sw, const char* name) {
+    QQuickItem* item = item_named(sw, name);
+    return item && item->isVisible() ? item->property("text").toString() : QString();
+}
+
+// Whether the inline message called `name` is shown.
+bool message_shown(QQuickWindow* sw, const char* name) {
+    QQuickItem* item = item_named(sw, name);
+    return item && item->isVisible();
+}
+
+// AC-M5-07-3: «Automatic», system restic 0.16.4, no app-managed restic: the restic section
+// (a) explains why 0.18.0 is needed and names 0.16.4 as too old, and (b) offers «Download
+// restic»; nothing is installing.
+int scenario_restic_too_old(const Ctx& c) {
+    QQuickWindow* sw = open_restic_settings(c.window);
+    M3_CHECK(5900, sw != nullptr, "settings window did not open");
+    M3_CHECK(5901, wait_until([&] { return !shown_text(sw, "resticVersionLabel").isEmpty(); }, 5000), "no version row");
+    // (a)
+    M3_CHECK_EQ(5902, shown_text(sw, "resticMinimumLabel"),
+        loc(c.lang, "Kestic needs restic 0.18.0 or newer: older versions do not report errors and check results in a form Kestic can read.",
+            "Kestic benötigt restic 0.18.0 oder neuer: Ältere Versionen melden Fehler und Prüfergebnisse nicht in einer Form, die Kestic auswerten kann."),
+        "(a) the sentence why 0.18.0 is needed");
+    M3_CHECK_EQ(5903, shown_text(sw, "resticVersionLabel"),
+        loc(c.lang, "0.16.4 · too old, at least 0.18.0", "0.16.4 · zu alt, mindestens 0.18.0"), "(a) version row");
+    M3_CHECK_EQ(5904, shown_text(sw, "resticSourceLabel"), loc(c.lang, "Automatic (System)", "Automatisch (System)"), "source row");
+    // (b)
+    QQuickItem* download = item_named(sw, "downloadResticButton");
+    M3_CHECK(5905, download != nullptr && download->isVisible() && download->isEnabled(), "(b) «Download restic» not offered");
+    M3_CHECK_EQ(5906, restic_install_state(c), QString(), "an installation started before the click");
+    M3_CHECK(5907, !message_shown(sw, "resticSwitchMessage") && !message_shown(sw, "resticRemoveMessage"),
+        "switch or removal offered without an app-managed restic");
+    M3_CHECK(5908, save_settings_screenshot(sw, c.out_path), "screenshot failed");
+    return 0;
+}
+
+// AC-M5-07-4: system restic 0.18.1 at KESTIC_SMOKE_SYSTEM_RESTIC and app-managed 0.19.1 under
+// «Automatic»: (a) both versions in «Available:», (b) source, version and program each in a row
+// of their own, (c) «recommended: 0.20.0» behind the version. AC-M5-07-5 (d): no switch hint,
+// only the offer to delete. The source dialog has exactly one choice, «Automatic», and a new
+// status does not reset a choice made in it.
+int scenario_restic_versions(const Ctx& c) {
+    const QString system = qEnvironmentVariable("KESTIC_SMOKE_SYSTEM_RESTIC");
+    M3_CHECK(5910, !system.isEmpty(), "KESTIC_SMOKE_SYSTEM_RESTIC not set");
+    QQuickWindow* sw = open_restic_settings(c.window);
+    M3_CHECK(5911, sw != nullptr, "settings window did not open");
+    M3_CHECK(5912, wait_until([&] { return !shown_text(sw, "resticAvailableLabel").isEmpty(); }, 5000), "no row «Available:»");
+    // (a)
+    M3_CHECK_EQ(5913, shown_text(sw, "resticAvailableLabel"),
+        loc(c.lang, "System 0.18.1 · Managed by Kestic 0.19.1", "System 0.18.1 · Von Kestic verwaltet 0.19.1"), "(a) both versions");
+    // (b) one row each, in this order
+    M3_CHECK_EQ(5914, shown_text(sw, "resticSourceLabel"), loc(c.lang, "Automatic (System)", "Automatisch (System)"), "(b) source row");
+    M3_CHECK_EQ(5915, shown_text(sw, "resticProgramLabel"), system, "(b) program row");
+    QQuickItem* source = item_named(sw, "resticSourceLabel");
+    QQuickItem* version = item_named(sw, "resticVersionLabel");
+    QQuickItem* program = item_named(sw, "resticProgramLabel");
+    QQuickItem* available = item_named(sw, "resticAvailableLabel");
+    M3_CHECK(5916, scene_y(source) < scene_y(version) && scene_y(version) < scene_y(program)
+            && scene_y(program) < scene_y(available),
+        "(b) source, version, program and available are not rows of their own");
+    M3_CHECK(5917, program->property("textFormat").toInt() == Qt::PlainText, "program path not shown as plain text");
+    // (c)
+    M3_CHECK_EQ(5918, shown_text(sw, "resticVersionLabel"),
+        loc(c.lang, "0.18.1 · recommended: 0.20.0", "0.18.1 · empfohlen: 0.20.0"), "(c) version row");
+    M3_CHECK(5919, shown_text(sw, "resticMinimumLabel").isEmpty(), "the sentence why 0.18.0 is needed without a too old version");
+    // AC-M5-07-5 (d)
+    M3_CHECK(5920, !message_shown(sw, "resticSwitchMessage"), "AC-M5-07-5 (d): switch hint with «Automatic»");
+    M3_CHECK(5921, message_shown(sw, "resticRemoveMessage"), "AC-M5-07-5 (d): no offer to delete the app-managed restic");
+    M3_CHECK(5922, save_settings_screenshot(sw, c.out_path), "screenshot failed");
+
+    QQuickItem* change = item_named(sw, "changeResticSourceButton");
+    M3_CHECK(5923, click_ui_item(sw, change, "Change restic Source"), "click on «Change restic Source…» failed");
+    QQuickItem* automatic = item_named(sw, "resticSourceAutomaticRadio");
+    M3_CHECK(5924, wait_until([&] { return automatic && automatic->isVisible(); }, 3000), "source dialog did not open");
+    const char* radios[] = {"resticSourceAutomaticRadio", "resticSourceSystemRadio", "resticSourceAppManagedRadio", "resticSourceCustomRadio"};
+    const char* texts_en[] = {"Automatic", "System", "Managed by Kestic", "Custom path"};
+    const char* texts_de[] = {"Automatisch", "System", "Von Kestic verwaltet", "Eigener Pfad"};
+    int checked = 0;
+    for (int i = 0; i < 4; ++i) {
+        QQuickItem* radio = item_named(sw, radios[i]);
+        M3_CHECK(5925, radio != nullptr && radio->isVisible(), "a source is missing in the dialog");
+        M3_CHECK_EQ(5926, radio->property("text").toString(), loc(c.lang, texts_en[i], texts_de[i]), "source name");
+        checked += radio->property("checked").toBool() ? 1 : 0;
+    }
+    M3_CHECK(5927, checked == 1 && automatic->property("checked").toBool(), "not exactly «Automatic» checked");
+    wait_ms(400);
+    QString dialog_shot = c.out_path;
+    dialog_shot.replace(QStringLiteral("restic-versions"), QStringLiteral("restic-source-dialog"));
+    M3_CHECK(5928, save_screenshot(sw, dialog_shot), "screenshot failed");
+    QQuickItem* custom = item_named(sw, "resticSourceCustomRadio");
+    M3_CHECK(5929, click_ui_item(sw, custom, "Custom path"), "click on «Custom path» failed");
+    set_text(sw, "customResticPathField", QStringLiteral("/opt/restic/restic"));
+    QMetaObject::invokeMethod(c.backend, "checkAvailability", Q_ARG(bool, true));
+    wait_ms(500);
+    M3_CHECK(5930, custom->property("checked").toBool() && !automatic->property("checked").toBool(),
+        "a new status reset the choice in the source dialog");
+    M3_CHECK_EQ(5931, item_named(sw, "customResticPathField")->property("text").toString(), QStringLiteral("/opt/restic/restic"),
+        "a new status reset the entered path");
+    QMetaObject::invokeMethod(sw, "handleEscape");
+    M3_CHECK(5932, wait_until([&] { return !automatic->isVisible(); }, 3000), "source dialog did not close");
+    M3_CHECK_EQ(5933, c.backend->property("restic_provider_kind").toString(), QStringLiteral("automatic"),
+        "the source changed without «Apply»");
+    return 0;
+}
+
+// AC-M5-07-5: «Managed by Kestic» and a system restic at KESTIC_SMOKE_SYSTEM_RESTIC that is
+// recent enough now: (a) the hint «System restic is now recent enough – switch?»; (b) its action
+// «Automatic» switches to the system restic; (c) then deleting the app-managed restic is offered
+// and (d) no hint is shown. With KESTIC_SMOKE_EXPECT_REMOVE_FAILURE=1 the deletion fails: the
+// reason is shown and the offer stays; otherwise the offer disappears.
+int scenario_restic_switch(const Ctx& c) {
+    const QString system = qEnvironmentVariable("KESTIC_SMOKE_SYSTEM_RESTIC");
+    M3_CHECK(5940, !system.isEmpty(), "KESTIC_SMOKE_SYSTEM_RESTIC not set");
+    const bool expect_failure = qEnvironmentVariable("KESTIC_SMOKE_EXPECT_REMOVE_FAILURE") == QLatin1String("1");
+    QQuickWindow* sw = open_restic_settings(c.window);
+    M3_CHECK(5941, sw != nullptr, "settings window did not open");
+    // (a)
+    M3_CHECK(5942, wait_until([&] { return message_shown(sw, "resticSwitchMessage"); }, 5000), "(a) no switch hint");
+    M3_CHECK_EQ(5943, item_named(sw, "resticSwitchMessage")->property("text").toString(),
+        loc(c.lang, "System restic is now recent enough – switch?", "System-restic ist jetzt aktuell genug – umstellen?"), "(a) hint");
+    QObject* to_automatic = object_named(sw, "switchResticToAutomaticAction");
+    M3_CHECK(5944, to_automatic != nullptr && to_automatic->property("enabled").toBool(), "(b) action missing");
+    M3_CHECK_EQ(5945, to_automatic->property("text").toString(), loc(c.lang, "Automatic", "Automatisch"), "(b) action text");
+    M3_CHECK_EQ(5946, shown_text(sw, "resticSourceLabel"), loc(c.lang, "Managed by Kestic", "Von Kestic verwaltet"), "source row");
+    M3_CHECK(5947, !message_shown(sw, "resticRemoveMessage"), "deletion offered while the app-managed restic is in use");
+    M3_CHECK(5948, save_settings_screenshot(sw, c.out_path), "screenshot failed");
+    // (b)
+    trigger(to_automatic);
+    M3_CHECK(5949, wait_until([&] { return c.backend->property("restic_provider_kind").toString() == QLatin1String("automatic"); }, 5000),
+        "(b) the source did not switch to «Automatic»");
+    M3_CHECK_EQ(5950, shown_text(sw, "resticProgramLabel"), system, "(b) the system restic is not the one in use");
+    M3_CHECK_EQ(5951, shown_text(sw, "resticSourceLabel"), loc(c.lang, "Automatic (System)", "Automatisch (System)"), "(b) source row");
+    QQuickItem* change = item_named(sw, "changeResticSourceButton");
+    M3_CHECK(5952, change != nullptr && change->hasActiveFocus(), "the focus is not on «Change restic Source…» after the switch");
+    // (d), (c)
+    M3_CHECK(5953, wait_until([&] { return !message_shown(sw, "resticSwitchMessage"); }, 3000), "(d) hint after the switch");
+    M3_CHECK(5954, message_shown(sw, "resticRemoveMessage"), "(c) no offer to delete the app-managed restic");
+    M3_CHECK_EQ(5955, item_named(sw, "resticRemoveMessage")->property("text").toString(),
+        loc(c.lang, "The restic managed by Kestic is no longer used.", "Das von Kestic verwaltete restic wird nicht mehr verwendet."),
+        "(c) offer text");
+    QObject* remove = object_named(sw, "removeAppManagedResticAction");
+    M3_CHECK(5956, remove != nullptr && remove->property("enabled").toBool(), "(c) «Delete» missing");
+    M3_CHECK_EQ(5957, remove->property("text").toString(), loc(c.lang, "Delete", "Löschen"), "(c) action text");
+    QString offer_shot = c.out_path;
+    offer_shot.replace(QStringLiteral("restic-switch"), QStringLiteral("restic-remove-offer"));
+    M3_CHECK(5958, save_settings_screenshot(sw, offer_shot), "screenshot failed");
+    trigger(remove);
+    if (expect_failure) {
+        M3_CHECK(5959, wait_until([&] { return !shown_text(sw, "resticActionError").isEmpty(); }, 5000),
+            "a failed deletion shows no reason");
+        M3_CHECK(5960, message_shown(sw, "resticRemoveMessage"), "the offer disappeared after a failed deletion");
+        M3_CHECK(5961, !shown_text(sw, "resticAvailableLabel").isEmpty(), "the app-managed restic is no longer listed");
+        QString failed_shot = c.out_path;
+        failed_shot.replace(QStringLiteral("restic-switch"), QStringLiteral("restic-remove-failed"));
+        M3_CHECK(5962, save_settings_screenshot(sw, failed_shot), "screenshot failed");
+    } else {
+        M3_CHECK(5963, wait_until([&] { return !message_shown(sw, "resticRemoveMessage"); }, 5000), "(c) the offer stayed after deleting");
+        M3_CHECK(5964, shown_text(sw, "resticAvailableLabel").isEmpty(), "(c) the app-managed restic is still listed");
+        M3_CHECK(5965, shown_text(sw, "resticActionError").isEmpty(), "(c) an error after deleting");
+    }
+    M3_CHECK(5966, change->hasActiveFocus(), "the focus is not on «Change restic Source…» after «Delete»");
+    return 0;
+}
+
+
+// «Managed by Kestic» chosen in the source dialog while it is not installed: the dialog says that
+// «Apply» downloads it first; «Apply» starts the installation, and once it finished the source
+// is «Managed by Kestic».
+int scenario_restic_source_download(const Ctx& c) {
+    QQuickWindow* sw = open_restic_settings(c.window);
+    M3_CHECK(5970, sw != nullptr, "settings window did not open");
+    QQuickItem* change = item_named(sw, "changeResticSourceButton");
+    M3_CHECK(5971, click_ui_item(sw, change, "Change restic Source"), "click on «Change restic Source…» failed");
+    QQuickItem* app_managed = item_named(sw, "resticSourceAppManagedRadio");
+    M3_CHECK(5972, wait_until([&] { return app_managed && app_managed->isVisible(); }, 3000), "source dialog did not open");
+    M3_CHECK(5973, click_ui_item(sw, app_managed, "Managed by Kestic"), "click on «Managed by Kestic» failed");
+    M3_CHECK_EQ(5974, shown_text(sw, "resticSourceAppManagedHint"),
+        loc(c.lang, "Not installed yet: Apply downloads and checks the official restic release first.",
+            "Noch nicht installiert: «Übernehmen» lädt zuerst das offizielle restic-Release herunter und prüft es."),
+        "hint for a restic that is not installed");
+    wait_ms(300);
+    M3_CHECK(5975, save_screenshot(sw, c.out_path), "screenshot failed");
+    M3_CHECK_EQ(5976, restic_install_state(c), QString(), "an installation started before «Apply»");
+    QObject* apply = object_named(sw, "applyResticSourceAction");
+    M3_CHECK(5977, apply != nullptr && apply->property("enabled").toBool(), "«Apply» not enabled");
+    trigger(apply);
+    M3_CHECK(5978, !restic_install_state(c).isEmpty(), "«Apply» did not start the installation");
+    M3_CHECK(5979, wait_until([&] { return restic_install_state(c) == QLatin1String("done"); }, 60000),
+        "the installation did not finish");
+    M3_CHECK(5980, wait_until([&] { return c.backend->property("restic_provider_kind").toString() == QLatin1String("app_managed"); }, 5000),
+        "the source did not switch to «Managed by Kestic» after the installation");
+    M3_CHECK_EQ(5981, shown_text(sw, "resticSourceLabel"), loc(c.lang, "Managed by Kestic", "Von Kestic verwaltet"), "source row");
+    return 0;
+}
+
 } // namespace
 
 void run_m5_smoke_scenario(
@@ -950,6 +1147,14 @@ void run_m5_smoke_scenario(
         rc = scenario_restic_install_cancel(ctx);
     } else if (scen == QLatin1String("m5-restic-install-result")) {
         rc = scenario_restic_install_result(ctx);
+    } else if (scen == QLatin1String("m5-restic-too-old")) {
+        rc = scenario_restic_too_old(ctx);
+    } else if (scen == QLatin1String("m5-restic-versions")) {
+        rc = scenario_restic_versions(ctx);
+    } else if (scen == QLatin1String("m5-restic-switch")) {
+        rc = scenario_restic_switch(ctx);
+    } else if (scen == QLatin1String("m5-restic-source-download")) {
+        rc = scenario_restic_source_download(ctx);
     } else {
         std::fprintf(stderr, "M5 smoke failed (599): unknown m5 smoke scenario %s\n", qPrintable(scen));
         QCoreApplication::exit(599);

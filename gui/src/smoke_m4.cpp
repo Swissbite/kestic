@@ -1929,9 +1929,9 @@ int scenario_show_restore(const Ctx& c) {
     return 0;
 }
 
-/// AC-M4-05-22 (b, c): the setting «restic source» shows «(outdated)» after the version of
-/// restic 0.18.0 (`KESTIC_SMOKE_EXPECT_OUTDATED=1`) and no such note with the newest tested
-/// version.
+/// AC-M4-05-22 (b, c): the setting «restic source» shows «· recommended: <tested version>»
+/// after the version of restic 0.18.0 (`KESTIC_SMOKE_EXPECT_OUTDATED=1`) and no such note with
+/// the newest tested version.
 int scenario_restic_outdated(const Ctx& c) {
     QQuickWindow* w = c.window;
     M4_CHECK(6301, wait_until([&] { return c.backend->property("restic_valid").toBool(); }, 10000), "restic usable");
@@ -1941,17 +1941,21 @@ int scenario_restic_outdated(const Ctx& c) {
     M4_CHECK(6303, wait_until([&] { return settings->isVisible(); }, 3000), "settings open");
     QObject* label = settings->findChild<QObject*>(QStringLiteral("resticSourceLabel"));
     M4_CHECK(6304, label != nullptr, "resticSourceLabel missing");
+    QObject* version_label = settings->findChild<QObject*>(QStringLiteral("resticVersionLabel"));
+    M4_CHECK(6310, version_label != nullptr, "resticVersionLabel missing");
     const QString text = label->property("text").toString();
-    const QString note = loc(c.lang, "(outdated)", "(veraltet)");
+    const QString version = version_label->property("text").toString();
+    const QString note = loc(c.lang, "recommended:", "empfohlen:");
     for (const char* code : {"system", "app_managed", "custom"}) {
         M4_CHECK(6308, !text.contains(QLatin1String(code)), "no raw provider code in the restic source");
     }
-    M4_CHECK(6309, text.startsWith(loc(c.lang, "Custom program path", "Eigener Programmpfad")),
+    M4_CHECK_EQ(6309, text, loc(c.lang, "Custom path", "Eigener Pfad"),
         "the source is named like the choice in the source dialog");
     if (qEnvironmentVariable("KESTIC_SMOKE_EXPECT_OUTDATED") == QLatin1String("1")) {
-        M4_CHECK(6305, text.contains(QStringLiteral("0.18.0 ") + note), "(b) «(outdated)» after 0.18.0");
+        M4_CHECK_EQ(6305, version, loc(c.lang, "0.18.0 · recommended: 0.20.0", "0.18.0 · empfohlen: 0.20.0"),
+            "(b) «recommended» after 0.18.0");
     } else {
-        M4_CHECK(6306, !text.contains(note), "(c) no «(outdated)» with the newest version");
+        M4_CHECK(6306, !version.isEmpty() && !version.contains(note), "(c) no «recommended» with the newest version");
     }
     // Scroll the setting into view for the screenshot.
     auto* label_item = qobject_cast<QQuickItem*>(label);
