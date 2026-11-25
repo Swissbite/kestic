@@ -416,7 +416,7 @@ fn ac_m5_06_12_no_release_access_before_start() {
     );
 }
 
-/// One installation at a time; a cancel during a stalled download ends the installation at once
+/// M5-S06: one installation at a time; a cancel during a stalled download ends the installation at once
 /// (its worker can no longer replace the binary); finished installations stay readable for ten
 /// minutes after their end; unknown ids are `NotFound`.
 #[test]
@@ -482,7 +482,7 @@ fn restic_install_cancel_already_running_and_expiry() {
     );
 }
 
-/// `already_current` and the errors after a download (another version, an older release) keep
+/// M5-S06: `already_current` and the errors after a download (another version, an older release) keep
 /// the binary and leave nothing behind.
 #[test]
 fn restic_install_outcomes_and_errors_after_download() {
@@ -538,8 +538,8 @@ fn restic_install_outcomes_and_errors_after_download() {
     );
 }
 
-/// What an interrupted installation left in the data folder is removed when the daemon starts;
-/// everything else stays.
+/// M5-S06: what an interrupted installation left in the data folder is removed when the daemon
+/// starts; everything else stays.
 #[test]
 fn leftovers_removed_at_daemon_start() {
     run_isolated_test(
@@ -622,7 +622,7 @@ fn ac_m5_06_8_install_waits_for_running_preview() {
     );
 }
 
-/// After an installation the daemon checks restic again: with the app-managed restic as the
+/// M5-S06: after an installation the daemon checks restic again: with the app-managed restic as the
 /// source and its binary missing, (a) the state first reports restic unusable and (b) after the
 /// installation reports the installed version, without a run or another call in between.
 #[test]

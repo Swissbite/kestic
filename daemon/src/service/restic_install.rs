@@ -15,6 +15,8 @@ use kestic_core::config::default_data_dir;
 use kestic_core::model::ResticProvider;
 use kestic_core::model::RunId;
 use kestic_core::provider::{ResticLocations, resolve_with, same_binary};
+// An installation has the states of a list query.
+use kestic_core::query_list::QueryState as InstallState;
 use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::restic_install::{
     InstallObserver, InstallOutcome, InstallRequest, RemoveError, app_managed_binary,
@@ -32,26 +34,6 @@ use time::OffsetDateTime;
 
 /// How long a finished installation stays readable.
 const KEEP_FINISHED: time::Duration = time::Duration::minutes(10);
-
-/// `state` of [`ResticInstallStatusDto`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InstallState {
-    Running,
-    Done,
-    Cancelled,
-    Error,
-}
-
-impl InstallState {
-    fn wire_name(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Done => "done",
-            Self::Cancelled => "cancelled",
-            Self::Error => "error",
-        }
-    }
-}
 
 /// What an installation reported so far. While it installs, the worker locks only this, never
 /// `DaemonCore`, so it can report while it holds the replace lease and restic processes wait

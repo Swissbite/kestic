@@ -66,11 +66,16 @@ impl qobject::KesticApp {
             daemon_reachable: *self.daemon_reachable(),
             restic_valid: *self.restic_valid(),
             uses_app_managed: self.restic_uses_app_managed,
-            installing: self.restic_install_state().to_string() == "running",
+            installing: self.installing_restic(),
         });
         self.as_mut().set_restic_offer_download(offer.download);
         self.as_mut().set_restic_offer_update(offer.update);
         self.as_mut().set_restic_offer_enabled(offer.enabled);
+    }
+
+    /// Whether an installation of restic runs (the `state` of its status is `running`).
+    fn installing_restic(&self) -> bool {
+        self.restic_install_state().to_string() == "running"
     }
 
     /// The oldest restic Kestic runs, for the texts of the settings.
@@ -89,7 +94,7 @@ impl qobject::KesticApp {
         if !needs_install_first(&kind, *self.restic_app_managed_installed()) {
             return self.set_restic_provider(&QString::from(&kind), custom_path);
         }
-        if self.restic_install_state().to_string() == "running" {
+        if self.installing_restic() {
             self.as_mut()
                 .show_action_error(&start_failure_text(ServiceErrorCode::AlreadyRunning));
             return false;
@@ -153,7 +158,7 @@ impl qobject::KesticApp {
     }
 
     pub fn start_restic_install(self: Pin<&mut Self>) -> bool {
-        if self.restic_install_state().to_string() == "running" {
+        if self.installing_restic() {
             return false;
         }
         match request_restic_install() {
