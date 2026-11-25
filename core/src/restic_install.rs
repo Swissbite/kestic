@@ -6,7 +6,7 @@
 //! version it reports, then `rename` it over the old binary. Until that `rename` the old binary
 //! is never touched, and every error removes the temporary file.
 
-use crate::provider::MIN_RESTIC_VERSION;
+use crate::provider::{MIN_RESTIC_VERSION, parse_version_json};
 use crate::restic_gate::ResticBinaryGate;
 use crate::restic_release::{
     ARCHIVE_LIMIT, Arch, DownloadPlan, HttpAnswer, InstallError, RELEASE_INFO_LIMIT,
@@ -499,13 +499,7 @@ fn reported_version(binary: &Path, limit: Duration) -> Result<Version, String> {
     if !out.status.success() {
         return Err(format!("`version --json` ended with {}", out.status));
     }
-    #[derive(serde::Deserialize)]
-    struct VersionJson {
-        version: String,
-    }
-    let parsed: VersionJson =
-        serde_json::from_slice(&out.stdout).map_err(|err| format!("no version JSON: {err}"))?;
-    Version::parse(parsed.version.trim()).map_err(|err| format!("{}: {err}", parsed.version))
+    parse_version_json(&out.stdout)
 }
 
 /// Runs `binary version --json` (at most `limit`) and checks the version against `release`.

@@ -38,6 +38,24 @@ fn ac_m5_06_9_unusable_payload_and_version_forms() {
         check_binary_version(&old, &Version::new(0, 17, 99), limit),
         Err(InstallError::TooOld { .. })
     ));
+    let other_message = script(
+        dir.path(),
+        "other",
+        "#!/bin/sh\necho '{\"message_type\":\"summary\",\"version\":\"0.19.1\"}'\n",
+    );
+    assert!(matches!(
+        check_binary_version(&other_message, &release, limit),
+        Err(InstallError::VersionMismatch { .. })
+    ));
+    let no_message_type = script(
+        dir.path(),
+        "untyped",
+        "#!/bin/sh\necho '{\"version\":\"0.19.1\"}'\n",
+    );
+    assert!(matches!(
+        check_binary_version(&no_message_type, &release, limit),
+        Err(InstallError::VersionMismatch { .. })
+    ));
     let not_json = script(dir.path(), "text", "#!/bin/sh\necho 'restic 0.19.1'\n");
     assert!(matches!(
         check_binary_version(&not_json, &release, limit),

@@ -301,7 +301,12 @@ fn probe_version_json(binary: &Path) -> Result<Version, String> {
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    parse_version_json(&out.stdout)
+}
+
+/// The version in the output of `restic version --json`: one message of type `version`.
+pub(crate) fn parse_version_json(stdout: &[u8]) -> Result<Version, String> {
+    let stdout = String::from_utf8_lossy(stdout);
     let parsed: ResticVersionJson =
         serde_json::from_str(stdout.trim()).map_err(|err| format!("invalid JSON: {err}"))?;
     if parsed.message_type.as_deref() != Some("version") {
