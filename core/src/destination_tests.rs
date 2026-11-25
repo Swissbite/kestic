@@ -726,3 +726,59 @@ fn host_key_error_texts_start_with_their_markers() {
         "{changed}"
     );
 }
+
+/// A host key that cannot be checked for another reason than a server that does not answer
+/// (here a jump host in the ssh configuration) does not make the destination unreachable: the
+/// check before a run leaves it to the run, which checks again and names the reason.
+#[test]
+fn preflight_leaves_an_uncheckable_host_key_to_the_run() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let config = dir.path().join("ssh_config");
+    fs::write(
+        &config,
+        "Host behind-gateway\n  ProxyJump gateway.invalid\n",
+    )
+    .expect("config");
+    crate::sftp::set_test_ssh_config(Some(config));
+    let script = dir.path().join("restic");
+    kestic_test_support::tools::write_executable(&script, "#!/bin/sh\nexit 0\n");
+    let resolved = ResolvedRestic {
+        binary: script,
+        version: semver::Version::new(0, 18, 0),
+    };
+    let dest = Destination::new(
+        "Behind",
+        DestinationKind::Sftp {
+            host: "behind-gateway".to_string(),
+            port: 22,
+            user: "anna".to_string(),
+            path: "/srv/backups".to_string(),
+        },
+    )
+    .expect("destination");
+    let store = crate::secrets::InMemorySecretStore::new();
+    let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+    let helper = dir.path().join("kestic");
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: &store,
+        clock: &clock,
+        cache_dir: None,
+    };
+
+    let checked = verify_sftp_host_key(&dest);
+    assert!(
+        matches!(
+            checked,
+            Err(DestinationError::HostKeyCheck(HostKeyError::JumpHost(_)))
+        ),
+        "the run's own check names the jump host: {checked:?}"
+    );
+    let preflight = preflight_check_with_restic(&dest, &runtime);
+    assert!(
+        preflight.is_ok(),
+        "reachable for the pre-check: {preflight:?}"
+    );
+    crate::sftp::set_test_ssh_config(None);
+}

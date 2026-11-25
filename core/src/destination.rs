@@ -154,7 +154,8 @@ pub fn preflight_check_destination(
 /// credentials; for SFTP the host key check comes first, and both together stop after
 /// [`CONNECTION_TEST_TIMEOUT`]. A destination that does not answer or cannot be reached fails,
 /// and so does an unknown or changed SFTP host key (restic does not start); every other answer
-/// (no repository, wrong password, refused login) is left to the run, which reports it.
+/// (no repository, wrong password, refused login, a host key that could not be checked) is left
+/// to the run, which reports it.
 pub fn preflight_check_with_restic(
     dest: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -164,7 +165,17 @@ pub fn preflight_check_with_restic(
         return Ok(());
     }
     let started = Instant::now();
-    verify_sftp_host_key(dest)?;
+    match verify_sftp_host_key(dest) {
+        // A server that does not answer in time is not reachable.
+        Err(err @ DestinationError::HostKeyCheck(HostKeyError::NoAnswer { .. })) => {
+            return Err(err);
+        }
+        // The key could not be checked for another reason (a jump host in the ssh
+        // configuration, a failing tool): the run checks again, does not start restic and
+        // reports that reason.
+        Err(DestinationError::HostKeyCheck(_)) => return Ok(()),
+        other => other?,
+    }
     // A locked password store says nothing about the destination; the run reports it.
     let Ok(backend) = BackendCredentials::load_stored(dest, runtime.secret_store) else {
         return Ok(());
