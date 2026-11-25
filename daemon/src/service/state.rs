@@ -240,6 +240,8 @@ pub struct DaemonCore {
     pub(super) restic_installs: super::restic_install::InstallMap,
     /// Removal of what an interrupted installation of an earlier daemon left behind.
     pub(super) install_leftovers: super::restic_install::LeftoverSweep,
+    /// SFTP destinations being added or moved to another server right now.
+    pub(super) sftp_setups: super::host_keys::SftpSetups,
     pub(super) snapshot_queries: QueryStore<SharedResult>,
     pub(super) window_active: bool,
     pub(super) window_page: String,
@@ -359,6 +361,7 @@ impl DaemonCore {
             retention_previews: HashMap::new(),
             restic_installs: HashMap::new(),
             install_leftovers: super::restic_install::LeftoverSweep::default(),
+            sftp_setups: super::host_keys::SftpSetups::default(),
             snapshot_queries: QueryStore::new(run_config.query_limits),
             window_active: false,
             window_page: String::new(),
