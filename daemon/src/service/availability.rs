@@ -5,7 +5,10 @@
 
 use super::backup_runner::start_backup_async;
 use super::error::{KesticServiceErr, map_destination_err};
-use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, ResticDeps, probe_for_run};
+use super::state::{
+    AVAILABILITY_CACHE_TTL_SECS, DaemonCore, ResticDeps, probe_for_run,
+    refresh_restic_probe_unlocked,
+};
 use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto};
 use crate::dbus_server::emit_status_changed;
 use kestic_core::backup::BackupRunError;
@@ -229,6 +232,8 @@ pub(crate) fn refresh_availability_unlocked(
     if !should_run {
         return current_snapshot;
     }
+    // A system restic updated meanwhile may now be recent enough (or an app-managed one gone).
+    refresh_restic_probe_unlocked(shared);
 
     let now = clock.now_utc();
     let now_unix = now.unix_timestamp();

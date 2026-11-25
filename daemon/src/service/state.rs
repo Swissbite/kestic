@@ -5,6 +5,7 @@
 
 use super::error::{KesticServiceErr, map_provider_err};
 use super::previews::PreviewEntry;
+use super::restic_status::restic_status_with;
 use super::restore_runner::{PendingRestore, RestoreClaim};
 use super::run_errors::unreadable_items_from_lines;
 use super::snapshot_queries::SharedResult;
@@ -29,7 +30,7 @@ use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, ResticProvider, Run, RunId, RunKind, RunStatus,
 };
 use kestic_core::mount::{MountInspector, SourceCheckResult, SystemMountInspector};
-use kestic_core::provider::{ResolvedRestic, ResticProviderError, resolve_and_check};
+use kestic_core::provider::{ResolvedRestic, ResticLocations, ResticProviderError};
 use kestic_core::query_list::{QueryLimits, QueryStore};
 use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_core::scheduler::{
@@ -37,7 +38,7 @@ use kestic_core::scheduler::{
 };
 use kestic_core::secrets::{SecretError, SecretStore};
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::{BlockingKind, PendingReasonCode, ResticStatusCode};
+use kestic_i18n::codes::{BlockingKind, PendingReasonCode};
 use kestic_i18n::messages::{pause_message, unmet_conditions_message};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
@@ -714,54 +715,22 @@ pub(super) fn probe_restic_and_secrets_raw(
 }
 
 /// Probes restic and the password store once, returning the probe tuple and, if usable,
-/// the resolved restic binary (single `restic version` call per start).
+/// the resolved restic binary.
 pub(super) fn probe_restic_and_secrets_resolved(
     provider: &ResticProvider,
     secret_store: &dyn SecretStore,
 ) -> (ProbeTuple, Result<ResolvedRestic, ResticProviderError>) {
-    let resolved_res = resolve_and_check(provider);
-    let restic_status = match &resolved_res {
-        Ok(resolved) => ResticStatusDto {
-            valid: true,
-            binary_path: Some(resolved.binary.to_string_lossy().into_owned()),
-            version: Some(resolved.version.to_string()),
-            error_kind: None,
-            found_version: Some(resolved.version.to_string()),
-            detail: None,
-        },
-        Err(ResticProviderError::NotFound { .. }) => ResticStatusDto {
-            valid: false,
-            binary_path: None,
-            version: None,
-            error_kind: Some(ResticStatusCode::NotFound),
-            found_version: None,
-            detail: None,
-        },
-        Err(ResticProviderError::TooOld { binary, found, .. }) => ResticStatusDto {
-            valid: false,
-            binary_path: Some(binary.to_string_lossy().into_owned()),
-            version: None,
-            error_kind: Some(ResticStatusCode::TooOld),
-            found_version: Some(found.to_string()),
-            detail: None,
-        },
-        Err(ResticProviderError::InvalidCustomPath { path, reason }) => ResticStatusDto {
-            valid: false,
-            binary_path: Some(path.to_string_lossy().into_owned()),
-            version: None,
-            error_kind: Some(ResticStatusCode::InvalidCustomPath),
-            found_version: None,
-            detail: Some(reason.clone()),
-        },
-        Err(ResticProviderError::UnreadableVersion { binary, detail }) => ResticStatusDto {
-            valid: false,
-            binary_path: Some(binary.to_string_lossy().into_owned()),
-            version: None,
-            error_kind: Some(ResticStatusCode::UnreadableVersion),
-            found_version: None,
-            detail: Some(detail.clone()),
-        },
-    };
+    probe_restic_and_secrets_with(provider, &ResticLocations::from_env(), secret_store)
+}
+
+/// [`probe_restic_and_secrets_resolved`] with the system and the app-managed restic at
+/// `locations`.
+pub(super) fn probe_restic_and_secrets_with(
+    provider: &ResticProvider,
+    locations: &ResticLocations,
+    secret_store: &dyn SecretStore,
+) -> (ProbeTuple, Result<ResolvedRestic, ResticProviderError>) {
+    let (restic_status, resolved_res) = restic_status_with(provider, locations);
 
     let secret_status = match secret_store.check_availability() {
         Ok(()) => SecretStoreStatusDto {
@@ -781,19 +750,39 @@ pub(super) fn probe_restic_and_secrets_resolved(
         },
     };
 
-    let blocking = if !secret_status.available {
-        Some(BlockingStateDto {
-            kind: BlockingKind::SecretStoreLocked,
-        })
-    } else if !restic_status.valid {
-        Some(BlockingStateDto {
-            kind: BlockingKind::ResticUnavailable,
-        })
-    } else {
-        None
-    };
+    let blocking = blocking_state(&restic_status, &secret_status);
 
     ((restic_status, secret_status, blocking), resolved_res)
+}
+
+/// The blocking state: a locked password store first, then an unusable restic.
+fn blocking_state(
+    restic_status: &ResticStatusDto,
+    secret_status: &SecretStoreStatusDto,
+) -> Option<BlockingStateDto> {
+    let kind = if !secret_status.available {
+        BlockingKind::SecretStoreLocked
+    } else if !restic_status.valid {
+        BlockingKind::ResticUnavailable
+    } else {
+        return None;
+    };
+    Some(BlockingStateDto { kind })
+}
+
+/// Checks the system and the app-managed restic again and stores the new restic status; the
+/// password store keeps its last status.
+pub(super) fn refresh_restic_probe_unlocked(shared: &Arc<Mutex<DaemonCore>>) {
+    let provider = shared.lock_unpoisoned().config.restic_provider.clone();
+    let (restic_status, _) = restic_status_with(&provider, &ResticLocations::from_env());
+    let mut guard = shared.lock_unpoisoned();
+    // A source set meanwhile was checked by its own call.
+    if guard.config.restic_provider != provider {
+        return;
+    }
+    let secret_status = guard.cached_probe.1.clone();
+    let blocking = blocking_state(&restic_status, &secret_status);
+    guard.record_probe((restic_status, secret_status, blocking));
 }
 
 /// Error for a locked password store; `detail` is the reason the probe reported.
@@ -880,19 +869,29 @@ pub(crate) fn set_restic_provider_unlocked(
 > {
     let provider: ResticProvider = serde_json::from_str(provider_json)
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid provider JSON: {e}")))?;
-    let _ = resolve_and_check(&provider).map_err(map_provider_err)?;
     let secret_store = {
         let guard = shared.lock_unpoisoned();
         Arc::clone(&guard.secret_store)
     };
-    let probe = probe_restic_and_secrets_raw(&provider, secret_store.as_ref());
-    let restic_status = probe.0.clone();
+    let locations = ResticLocations::from_env();
+    let (probe, resolved) =
+        probe_restic_and_secrets_with(&provider, &locations, secret_store.as_ref());
+    if let Err(err) = resolved {
+        if provider == ResticProvider::AppManaged && probe.0.app_managed.is_none() {
+            return Err(KesticServiceErr::InvalidInput(
+                "the restic managed by Kestic is not installed".to_string(),
+            ));
+        }
+        return Err(map_provider_err(err));
+    }
+    let mut restic_status = probe.0.clone();
 
     let mut guard = shared.lock_unpoisoned();
     let mut next = guard.config.clone();
     next.restic_provider = provider;
     guard.persist_config(next)?;
     guard.record_probe(probe);
+    restic_status.install_id = guard.running_restic_install();
     let (state_dto, tray_state) = guard.build_state_and_tray();
     Ok((restic_status, guard.conn.clone(), state_dto, tray_state))
 }

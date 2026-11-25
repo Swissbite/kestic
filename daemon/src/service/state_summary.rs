@@ -182,7 +182,8 @@ impl DaemonCore {
     /// Computes full state snapshot (`DaemonStateDto`) and synchronized `KesticTrayState`.
     pub fn build_state_and_tray(&self) -> (DaemonStateDto, KesticTrayState) {
         let now = self.clock.now_utc();
-        let (restic_status, secret_store_status, blocking) = self.cached_probe.clone();
+        let (mut restic_status, secret_store_status, blocking) = self.cached_probe.clone();
+        restic_status.install_id = self.running_restic_install();
         let nested_map = find_nested_source_warnings(&self.config.backups);
         let global_pause_raw = self.global_pause_cached();
         let global_paused = is_pause_active(global_pause_raw.as_ref(), now);

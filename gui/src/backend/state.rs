@@ -268,8 +268,9 @@ impl qobject::KesticApp {
             state.restic_status.binary_path.as_deref().unwrap_or(""),
         ));
         let provider_kind = match &state.config.restic_provider {
+            ResticProvider::Automatic => "automatic",
             ResticProvider::System => "system",
-            ResticProvider::AppManaged { .. } => "app_managed",
+            ResticProvider::AppManaged => "app_managed",
             ResticProvider::Custom { .. } => "custom",
         };
         self.as_mut()

@@ -5,8 +5,10 @@
 
 use crate::model::ResticProvider;
 use crate::restic_gate::ResticBinaryGate;
+use kestic_i18n::codes::ResticPathProblem;
 use semver::Version;
 use serde::Deserialize;
+use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -42,8 +44,12 @@ pub struct ResolvedRestic {
 pub enum ResticProviderError {
     #[error("restic not found (at least {min_version} required)")]
     NotFound { min_version: String },
-    #[error("custom restic path does not exist or is not executable: {path}")]
-    InvalidCustomPath { path: PathBuf, reason: String },
+    #[error("restic path cannot be used ({path}): {reason}")]
+    InvalidCustomPath {
+        path: PathBuf,
+        problem: ResticPathProblem,
+        reason: String,
+    },
     #[error("unable to determine restic version ({binary}): {detail}")]
     UnreadableVersion { binary: PathBuf, detail: String },
     #[error("restic {found} is too old, at least {min_version} required ({binary})")]
@@ -54,57 +60,202 @@ pub enum ResticProviderError {
     },
 }
 
+impl ResticProviderError {
+    fn not_found() -> Self {
+        Self::NotFound {
+            min_version: MIN_RESTIC_VERSION.to_string(),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct ResticVersionJson {
     version: String,
 }
 
-/// Resolves and validates the restic executable configured by `provider`.
-pub fn resolve_and_check(provider: &ResticProvider) -> Result<ResolvedRestic, ResticProviderError> {
-    let binary = match provider {
-        ResticProvider::System => {
-            which::which("restic").map_err(|_| ResticProviderError::NotFound {
-                min_version: MIN_RESTIC_VERSION.to_string(),
-            })?
-        }
-        ResticProvider::AppManaged { path } | ResticProvider::Custom { path } => {
-            validate_executable_path(path)?;
-            path.clone()
-        }
-    };
+/// Where the system restic and the restic managed by Kestic are.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResticLocations {
+    /// `restic` found in `PATH`; `None` when there is none.
+    pub system: Option<PathBuf>,
+    /// The fixed place of the app-managed restic, whether it exists or not; `None` without
+    /// `XDG_DATA_HOME` and `HOME`.
+    pub app_managed: Option<PathBuf>,
+}
 
-    check_binary_version(&binary)
+impl ResticLocations {
+    /// The locations seen from this process: `restic` in its `PATH` and the app-managed binary
+    /// below its `XDG_DATA_HOME`.
+    pub fn from_env() -> Self {
+        let app_managed = crate::restic_install::kestic_data_dir(
+            std::env::var_os("HOME").as_deref(),
+            std::env::var_os("XDG_DATA_HOME").as_deref(),
+        )
+        .map(|dir| crate::restic_install::app_managed_binary(&dir));
+        Self {
+            system: which::which("restic").ok(),
+            app_managed,
+        }
+    }
+
+    /// Checks the app-managed binary; `None` when it does not exist. A removal of it that
+    /// runs ends first.
+    fn check_app_managed<T>(&self, check: impl FnOnce(&Path) -> T) -> Option<T> {
+        let path = self.app_managed.as_deref()?;
+        let _lease = ResticBinaryGate::global().read_for(path);
+        path.symlink_metadata().ok()?;
+        Some(check(path))
+    }
+}
+
+/// A binary that was found and checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedBinary {
+    pub path: PathBuf,
+    pub result: Result<ResolvedRestic, ResticProviderError>,
+}
+
+impl CheckedBinary {
+    fn check(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            result: check_binary_version(path),
+        }
+    }
+
+    /// The version the binary reports, also when it is too old.
+    pub fn found_version(&self) -> Option<&Version> {
+        match &self.result {
+            Ok(resolved) => Some(&resolved.version),
+            Err(ResticProviderError::TooOld { found, .. }) => Some(found),
+            Err(_) => None,
+        }
+    }
+
+    /// Whether the binary reports a version below [`MIN_RESTIC_VERSION`].
+    pub fn too_old(&self) -> bool {
+        matches!(self.result, Err(ResticProviderError::TooOld { .. }))
+    }
+
+    /// Whether the binary can be used.
+    pub fn usable(&self) -> bool {
+        self.result.is_ok()
+    }
+}
+
+/// Both binaries Kestic can use without a custom path, each checked once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResticSurvey {
+    /// `None` when there is no `restic` in `PATH`.
+    pub system: Option<CheckedBinary>,
+    /// `None` when the app-managed binary does not exist.
+    pub app_managed: Option<CheckedBinary>,
+}
+
+impl ResticSurvey {
+    /// Checks the system and the app-managed restic of `locations`.
+    pub fn probe(locations: &ResticLocations) -> Self {
+        Self {
+            system: locations.system.as_deref().map(CheckedBinary::check),
+            app_managed: locations.check_app_managed(CheckedBinary::check),
+        }
+    }
+
+    /// The binary `provider` uses, from the checks of this survey; a custom path is checked
+    /// now.
+    pub fn resolve(
+        &self,
+        provider: &ResticProvider,
+    ) -> Result<ResolvedRestic, ResticProviderError> {
+        resolve_by(
+            provider,
+            || self.system.as_ref().map(|c| c.result.clone()),
+            || self.app_managed.as_ref().map(|c| c.result.clone()),
+        )
+    }
+}
+
+/// Resolves and validates the restic executable configured by `provider`, looking for the
+/// system and the app-managed restic in `locations`. Only the binaries the provider needs are
+/// checked.
+pub fn resolve_with(
+    provider: &ResticProvider,
+    locations: &ResticLocations,
+) -> Result<ResolvedRestic, ResticProviderError> {
+    resolve_by(
+        provider,
+        || locations.system.as_deref().map(check_binary_version),
+        || locations.check_app_managed(check_binary_version),
+    )
+}
+
+/// Resolution of `provider` from the checks of the system and the app-managed binary (`None`:
+/// not there), which run only when needed. «Automatic» takes the system restic if it is usable,
+/// else an existing app-managed one; without either it reports why the system restic is not
+/// usable.
+fn resolve_by(
+    provider: &ResticProvider,
+    system: impl FnOnce() -> Option<Result<ResolvedRestic, ResticProviderError>>,
+    app_managed: impl FnOnce() -> Option<Result<ResolvedRestic, ResticProviderError>>,
+) -> Result<ResolvedRestic, ResticProviderError> {
+    let missing = || Err(ResticProviderError::not_found());
+    match provider {
+        ResticProvider::System => system().unwrap_or_else(missing),
+        ResticProvider::AppManaged => app_managed().unwrap_or_else(missing),
+        ResticProvider::Custom { path } => check_binary_version(path),
+        ResticProvider::Automatic => match system() {
+            Some(Ok(resolved)) => Ok(resolved),
+            system_err => app_managed().or(system_err).unwrap_or_else(missing),
+        },
+    }
+}
+
+/// Resolves and validates the restic executable configured by `provider` (see
+/// [`resolve_with`]) at the locations of this process.
+pub fn resolve_and_check(provider: &ResticProvider) -> Result<ResolvedRestic, ResticProviderError> {
+    resolve_with(provider, &ResticLocations::from_env())
 }
 
 /// Validates that `path` exists, is a regular file (or symlink to one), and has an executable bit.
 pub fn validate_executable_path(path: &Path) -> Result<(), ResticProviderError> {
-    if path.as_os_str().is_empty() || !path.exists() {
-        return Err(ResticProviderError::InvalidCustomPath {
-            path: path.to_path_buf(),
-            reason: "file does not exist".to_string(),
-        });
-    }
-    let meta = std::fs::metadata(path).map_err(|err| ResticProviderError::InvalidCustomPath {
+    let invalid = |problem, reason: String| ResticProviderError::InvalidCustomPath {
         path: path.to_path_buf(),
-        reason: err.to_string(),
+        problem,
+        reason,
+    };
+    if path.as_os_str().is_empty() {
+        return Err(invalid(
+            ResticPathProblem::NotFound,
+            "the path is empty".to_string(),
+        ));
+    }
+    let meta = std::fs::metadata(path).map_err(|err| {
+        let problem = match err.kind() {
+            ErrorKind::NotFound | ErrorKind::NotADirectory => ResticPathProblem::NotFound,
+            ErrorKind::PermissionDenied => ResticPathProblem::PermissionDenied,
+            _ => ResticPathProblem::Other,
+        };
+        invalid(problem, err.to_string())
     })?;
     if !meta.is_file() {
-        return Err(ResticProviderError::InvalidCustomPath {
-            path: path.to_path_buf(),
-            reason: "path is not a file".to_string(),
-        });
+        return Err(invalid(
+            ResticPathProblem::NotAFile,
+            "path is not a file".to_string(),
+        ));
     }
     if meta.permissions().mode() & 0o111 == 0 {
-        return Err(ResticProviderError::InvalidCustomPath {
-            path: path.to_path_buf(),
-            reason: "file is not executable".to_string(),
-        });
+        return Err(invalid(
+            ResticPathProblem::NotExecutable,
+            "file is not executable".to_string(),
+        ));
     }
     Ok(())
 }
 
 /// Probes `binary` via `restic version --json` and falls back to plain-text `restic version`.
 pub fn check_binary_version(binary: &Path) -> Result<ResolvedRestic, ResticProviderError> {
+    // Held for the whole check, so the binary is neither replaced nor removed between the calls.
+    let _lease = ResticBinaryGate::global().read_for(binary);
     validate_executable_path(binary)?;
 
     let version = probe_version_json(binary)
@@ -129,7 +280,6 @@ pub fn check_binary_version(binary: &Path) -> Result<ResolvedRestic, ResticProvi
 }
 
 fn probe_version_json(binary: &Path) -> Result<Version, String> {
-    let _lease = ResticBinaryGate::global().read();
     let out = Command::new(binary)
         .args(["version", "--json"])
         .output()
@@ -149,7 +299,6 @@ fn probe_version_json(binary: &Path) -> Result<Version, String> {
 }
 
 fn probe_version_text(binary: &Path) -> Result<Version, String> {
-    let _lease = ResticBinaryGate::global().read();
     let out = Command::new(binary)
         .arg("version")
         .output()

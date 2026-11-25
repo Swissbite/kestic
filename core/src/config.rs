@@ -21,7 +21,12 @@ use thiserror::Error;
 ///   «no rule set»).
 /// - `2`: every backup needs at least one active keep rule.
 /// - `3`: network run conditions only for network destinations.
-pub const CURRENT_CONFIG_VERSION: u32 = 3;
+/// - `4`: restic source «Automatic».
+pub const CURRENT_CONFIG_VERSION: u32 = 4;
+
+fn default_restic_release_check() -> bool {
+    true
+}
 
 fn default_overdue_threshold() -> u32 {
     DEFAULT_OVERDUE_THRESHOLD
@@ -63,6 +68,9 @@ pub struct AppConfig {
     pub config_version: u32,
     #[serde(default)]
     pub restic_provider: ResticProvider,
+    /// Look for new restic releases once a week (read from FR-51 on).
+    #[serde(default = "default_restic_release_check")]
+    pub restic_release_check: bool,
     #[serde(default)]
     pub expert_mode: bool,
     #[serde(default = "default_overdue_threshold")]
@@ -80,6 +88,7 @@ impl Default for AppConfig {
         Self {
             config_version: CURRENT_CONFIG_VERSION,
             restic_provider: ResticProvider::default(),
+            restic_release_check: true,
             expert_mode: false,
             default_overdue_threshold: DEFAULT_OVERDUE_THRESHOLD,
             notifications: NotificationSettings::default(),
@@ -292,6 +301,14 @@ fn migrate(config: &mut AppConfig) {
             }
         }
         config.config_version = 3;
+    }
+    if config.config_version < 4 {
+        // «Automatic» did not exist before: nobody chose «System» over it, so «System» becomes
+        // the new default.
+        if config.restic_provider == ResticProvider::System {
+            config.restic_provider = ResticProvider::Automatic;
+        }
+        config.config_version = 4;
     }
 }
 

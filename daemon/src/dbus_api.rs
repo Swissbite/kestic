@@ -29,7 +29,8 @@ pub use kestic_core::snapshot_ls::LsEntry as LsEntryDto;
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome,
     ErrorKind, PendingReasonCode, ResticInstallCode, ResticInstallOutcome, ResticInstallPhase,
-    ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+    ResticPathProblem, ResticSourceCode, ResticStatusCode, ServiceErrorCode, SkipReason,
+    SourceStatus,
 };
 pub use kestic_i18n::codes::{
     OverallStatusKind, RestoreNoteCode, RestoreOutcome, RestoreOverwrite, RestoreTargetCode,
@@ -125,6 +126,38 @@ pub struct ResticStatusDto {
     /// Raw reason for `invalid_custom_path` / detail for `unreadable_version`.
     #[serde(default)]
     pub detail: Option<String>,
+    /// Why the path of `invalid_custom_path` cannot be used.
+    #[serde(default)]
+    pub path_problem: Option<ResticPathProblem>,
+    /// The configured restic source.
+    #[serde(default = "default_restic_source")]
+    pub source: ResticSourceCode,
+    /// The restic in `PATH`, `None` when there is none.
+    #[serde(default)]
+    pub system: Option<ResticBinaryDto>,
+    /// The restic managed by Kestic, `None` when it is not installed.
+    #[serde(default)]
+    pub app_managed: Option<ResticBinaryDto>,
+    /// The app-managed restic is the source, but the system restic is now recent enough.
+    #[serde(default)]
+    pub offer_switch_to_system: bool,
+    /// The installation of the app-managed restic that is running.
+    #[serde(default)]
+    pub install_id: Option<String>,
+}
+
+fn default_restic_source() -> ResticSourceCode {
+    ResticSourceCode::Automatic
+}
+
+/// One restic binary Kestic found (`ResticStatusDto.system`, `.app_managed`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResticBinaryDto {
+    pub path: String,
+    /// The version it reports, also when it is too old; `None` when it cannot be read.
+    pub version: Option<String>,
+    /// It reports a version below the minimum.
+    pub too_old: bool,
 }
 
 /// Secret store probe state reported to GUI.
@@ -898,6 +931,7 @@ impl ResticStatusDto {
             binary_path: self.binary_path.as_deref(),
             found_version: self.found_version.as_deref(),
             detail: self.detail.as_deref(),
+            path_problem: self.path_problem,
             min_version,
         }
     }
@@ -1154,6 +1188,10 @@ impl KesticClient {
     ) -> Result<ResticStatusDto, KesticDbusError> {
         let json = to_json_arg(provider)?;
         self.call_json("SetResticProvider", &(json.as_str(),))
+    }
+
+    pub fn remove_app_managed_restic(&self) -> zbus::Result<()> {
+        self.call("RemoveAppManagedRestic", &())
     }
 
     pub fn set_expert_mode(&self, enabled: bool) -> zbus::Result<()> {

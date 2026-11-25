@@ -25,6 +25,7 @@ Kirigami.ApplicationWindow {
     // The restic source as the user chose it (the provider code is no text).
     function providerLabel(kind) {
         switch (kind) {
+        case "automatic": return i18n("Automatic");
         case "system": return i18n("System restic (from PATH)");
         case "app_managed": return i18n("Managed by Kestic");
         default: return i18n("Custom program path");
@@ -356,7 +357,7 @@ Kirigami.ApplicationWindow {
                     text: i18n("Change restic Source…")
                     Accessible.name: i18n("Change restic Source")
                     onClicked: {
-                        settingsWindow.pendingProviderKind = appBackend.restic_provider_kind === "custom" ? "custom" : "system";
+                        settingsWindow.pendingProviderKind = appBackend.restic_provider_kind;
                         settingsWindow.pendingCustomPath = appBackend.restic_binary_path;
                         resticSourceDialog.open();
                     }

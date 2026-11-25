@@ -12,8 +12,9 @@
 use crate::codes::{
     BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
     OverallStatusKind, PendingReasonCode, RecoveryAction, ResticInstallCode, ResticInstallOutcome,
-    ResticInstallPhase, ResticStatusCode, RestoreNoteCode, RestoreOutcome, RestoreTargetCode,
-    RunKindCode, RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus, code_enum,
+    ResticInstallPhase, ResticPathProblem, ResticStatusCode, RestoreNoteCode, RestoreOutcome,
+    RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus,
+    code_enum,
 };
 
 /// Marks `msgid` for extraction (`xgettext --keyword=i18n_noop:1`) without translating it.
@@ -312,8 +313,27 @@ pub struct ResticStatusParams<'a> {
     pub found_version: Option<&'a str>,
     /// Raw reason for `invalid_custom_path`, raw detail for `unreadable_version`.
     pub detail: Option<&'a str>,
+    /// Why the path of `invalid_custom_path` cannot be used; `None` or `other` shows `detail`.
+    pub path_problem: Option<ResticPathProblem>,
     /// Minimum restic version Kestic needs.
     pub min_version: &'a str,
+}
+
+impl ResticPathProblem {
+    /// Why the restic path `path` cannot be used; `None` for `other`, whose raw detail is the
+    /// information.
+    pub fn message(self, path: &str) -> Option<Message> {
+        let msgid = match self {
+            Self::NotFound => i18n_noop("Custom restic path is invalid: %1 does not exist"),
+            Self::PermissionDenied => {
+                i18n_noop("Custom restic path is invalid: no permission to access %1")
+            }
+            Self::NotExecutable => i18n_noop("Custom restic path is invalid: %1 is not executable"),
+            Self::NotAFile => i18n_noop("Custom restic path is invalid: %1 is not a file"),
+            Self::Other => return None,
+        };
+        Some(Message::with_args(msgid, &[path]))
+    }
 }
 
 impl ResticStatusCode {
@@ -328,13 +348,18 @@ impl ResticStatusCode {
                 i18n_noop("restic %1 is too old; Kestic needs at least %2"),
                 &[params.found_version.unwrap_or_default(), min],
             ),
-            Self::InvalidCustomPath => Message::with_args(
-                i18n_noop("Custom restic path is invalid (%1): %2"),
-                &[
-                    params.binary_path.unwrap_or_default(),
-                    params.detail.unwrap_or_default(),
-                ],
-            ),
+            Self::InvalidCustomPath => {
+                let path = params.binary_path.unwrap_or_default();
+                params
+                    .path_problem
+                    .and_then(|problem| problem.message(path))
+                    .unwrap_or_else(|| {
+                        Message::with_args(
+                            i18n_noop("Custom restic path is invalid (%1): %2"),
+                            &[path, params.detail.unwrap_or_default()],
+                        )
+                    })
+            }
             Self::UnreadableVersion => Message::with_args(
                 i18n_noop("Cannot read the restic version (%1)"),
                 &[params.detail.unwrap_or_default()],

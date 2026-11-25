@@ -89,6 +89,29 @@ pub fn app_managed_binary(data_dir: &Path) -> PathBuf {
     data_dir.join(BINARY_NAME)
 }
 
+/// Why the app-managed binary was not removed.
+#[derive(Debug, thiserror::Error)]
+pub enum RemoveError {
+    /// A restic process may run it, or an installation replaces it.
+    #[error("the restic managed by Kestic is in use")]
+    InUse,
+    #[error("cannot remove the restic managed by Kestic: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Deletes the app-managed restic in `data_dir` at once, unless a restic process may run it or
+/// an installation replaces it ([`ResticBinaryGate::remove_if_unused`]); restic processes that
+/// start meanwhile wait. Returns whether there was a binary to delete.
+pub fn remove_app_managed(data_dir: &Path, gate: &ResticBinaryGate) -> Result<bool, RemoveError> {
+    let binary = app_managed_binary(data_dir);
+    let _removal = gate.remove_if_unused(&binary).ok_or(RemoveError::InUse)?;
+    match fs::remove_file(&binary) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// A downloaded and checked restic in its temporary file, ready to replace the app-managed
 /// binary. Dropping it without [`PreparedInstall::commit`] deletes the temporary file.
 #[derive(Debug)]

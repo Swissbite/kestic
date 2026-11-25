@@ -140,11 +140,14 @@ define_entity_id!(RunId, "Unique 8-char Base32 identifier for a [`Run`].");
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResticProvider {
-    /// System `restic` resolved from `$PATH`.
+    /// The system `restic` if it is at least the minimum version, otherwise the app-managed one.
     #[default]
+    Automatic,
+    /// System `restic` resolved from `$PATH`.
     System,
-    /// App-managed download under `$XDG_DATA_HOME/kestic/`.
-    AppManaged { path: PathBuf },
+    /// The restic Kestic downloads to its fixed place `$XDG_DATA_HOME/kestic/restic`. A `path`
+    /// written by an older Kestic is ignored.
+    AppManaged,
     /// User-configured explicit binary path.
     Custom { path: PathBuf },
 }

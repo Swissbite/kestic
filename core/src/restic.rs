@@ -1185,7 +1185,8 @@ where
 
     // Held until restic has ended, so the app-managed binary is not replaced meanwhile; an
     // early return stops restic before the lease ends.
-    let _lease = crate::restic_gate::ResticBinaryGate::global().read();
+    let _lease = crate::restic_gate::ResticBinaryGate::global()
+        .read_for(Path::new(prepared.cmd.get_program()));
     let mut child = ChildGuard::new(prepared.cmd.spawn()?);
     // On an early return or a panic it is dropped before `child`, so the pid is forgotten
     // before the process is reaped and its pid can be reused.
