@@ -1930,9 +1930,9 @@ int scenario_show_restore(const Ctx& c) {
 }
 
 /// AC-M4-05-22 (b, c): the setting «restic source» shows «· recommended: <tested version>»
-/// after the version of restic 0.18.0 (`KESTIC_SMOKE_EXPECT_OUTDATED=1`) and no such note with
+/// after the version of restic 0.18.0 (`KESTIC_SMOKE_EXPECT_RECOMMENDED=1`) and no such note with
 /// the newest tested version.
-int scenario_restic_outdated(const Ctx& c) {
+int scenario_restic_recommended(const Ctx& c) {
     QQuickWindow* w = c.window;
     M4_CHECK(6301, wait_until([&] { return c.backend->property("restic_valid").toBool(); }, 10000), "restic usable");
     QMetaObject::invokeMethod(w, "openSettingsWindow");
@@ -1951,7 +1951,7 @@ int scenario_restic_outdated(const Ctx& c) {
     }
     M4_CHECK_EQ(6309, text, loc(c.lang, "Custom path", "Eigener Pfad"),
         "the source is named like the choice in the source dialog");
-    if (qEnvironmentVariable("KESTIC_SMOKE_EXPECT_OUTDATED") == QLatin1String("1")) {
+    if (qEnvironmentVariable("KESTIC_SMOKE_EXPECT_RECOMMENDED") == QLatin1String("1")) {
         M4_CHECK_EQ(6305, version, loc(c.lang, "0.18.0 · recommended: 0.20.0", "0.18.0 · empfohlen: 0.20.0"),
             "(b) «recommended» after 0.18.0");
     } else {
@@ -3282,8 +3282,8 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_target_texts(ctx);
     } else if (scen == QLatin1String("m4-restore-mapping")) {
         rc = scenario_restore_mapping(ctx);
-    } else if (scen == QLatin1String("m4-restic-outdated")) {
-        rc = scenario_restic_outdated(ctx);
+    } else if (scen == QLatin1String("m4-restic-recommended")) {
+        rc = scenario_restic_recommended(ctx);
     } else if (scen == QLatin1String("m4-foreign")) {
         rc = scenario_foreign(ctx);
     } else if (scen == QLatin1String("m4-foreign-restore")) {
