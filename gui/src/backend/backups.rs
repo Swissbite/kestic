@@ -6,7 +6,7 @@
 
 use super::{Finish, dbus_error_text, qobject};
 use crate::state_cache::{
-    build_new_backup, cached_destination_kind, clone_updated_backup, clone_updated_backup_excludes,
+    build_new_backup, cached_destination_kind, clone_updated_backup_excludes,
     clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text, i18n,
     localized_condition_override_message, localized_manual_block_message,
     localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, make_client,
@@ -193,42 +193,6 @@ impl qobject::KesticApp {
         };
         self.finish_action(client.add_backup(&backup), Finish::Plain)
             .map_or_else(QString::default, |id| QString::from(&id))
-    }
-
-    pub fn update_backup(
-        mut self: Pin<&mut Self>,
-        id: &QString,
-        name: &QString,
-        source_path: &QString,
-        dest_id: &QString,
-        excludes_text: &QString,
-        exclude_caches: bool,
-    ) -> bool {
-        let Some(existing) = self.as_mut().existing_backup_or_err(&id.to_string()) else {
-            return false;
-        };
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        let src_str = source_path.to_string();
-        let detected = if src_str.trim() != existing.source.path.to_string_lossy().as_ref() {
-            client.detect_source(src_str.trim()).ok()
-        } else {
-            None
-        };
-        let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup(
-            &existing,
-            &name.to_string(),
-            &src_str,
-            &dest_id.to_string(),
-            &excludes_text.to_string(),
-            exclude_caches,
-            detected,
-        )) else {
-            return false;
-        };
-        self.finish_action(client.update_backup(&updated), Finish::Saved)
-            .is_some()
     }
 
     pub fn update_backup_excludes(

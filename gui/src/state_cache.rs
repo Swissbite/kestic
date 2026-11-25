@@ -502,37 +502,6 @@ pub fn build_new_backup(
     Ok(backup)
 }
 
-pub fn clone_updated_backup(
-    existing: &Backup,
-    name: &str,
-    source_path: &str,
-    dest_id: &str,
-    excludes_text: &str,
-    exclude_caches: bool,
-    detected_source: Option<Source>,
-) -> Result<Backup, String> {
-    let mut updated = existing.clone();
-    updated.rename(name.trim()).map_err(|e| e.to_string())?;
-    let trimmed_source = source_path.trim();
-    if trimmed_source != existing.source.path.to_string_lossy().as_ref() {
-        let new_src =
-            detected_source.unwrap_or_else(|| Source::folder(PathBuf::from(trimmed_source)));
-        updated.set_source(new_src).map_err(|e| e.to_string())?;
-    } else if let Some(det) = detected_source {
-        updated.set_source(det).map_err(|e| e.to_string())?;
-    }
-    if !dest_id.trim().is_empty() {
-        let d_id = DestinationId::parse(dest_id.trim()).map_err(|e| e.to_string())?;
-        updated.reassign_destination(d_id);
-    }
-    let mut excludes = existing.excludes.clone();
-    excludes.lines = excludes_text.lines().map(|l| l.to_string()).collect();
-    excludes.exclude_caches = exclude_caches;
-    updated.excludes = excludes;
-    updated.validate().map_err(|e| e.to_string())?;
-    Ok(updated)
-}
-
 pub fn clone_updated_backup_excludes(
     existing: &Backup,
     excludes: ExcludeRules,

@@ -55,8 +55,7 @@ impl qobject::KesticApp {
             .set_restic_explain_minimum(view.explain_minimum);
         self.as_mut().set_restic_offer_switch(view.offer_switch);
         self.as_mut().set_restic_offer_remove(view.offer_remove);
-        self.as_mut()
-            .set_restic_uses_app_managed(view.uses_app_managed);
+        self.as_mut().rust_mut().restic_uses_app_managed = view.uses_app_managed;
         self.as_mut()
             .set_restic_app_managed_installed(view.app_managed_installed);
     }
@@ -66,7 +65,7 @@ impl qobject::KesticApp {
         let offer = restic_offer(OfferInput {
             daemon_reachable: *self.daemon_reachable(),
             restic_valid: *self.restic_valid(),
-            uses_app_managed: *self.restic_uses_app_managed(),
+            uses_app_managed: self.restic_uses_app_managed,
             installing: self.restic_install_state().to_string() == "running",
         });
         self.as_mut().set_restic_offer_download(offer.download);

@@ -195,12 +195,6 @@ impl SftpServerGuard {
         format!("{} {}", self.known_hosts_name(), public_key(&other))
     }
 
-    /// Starts the server again on the same port with the same keys.
-    pub fn restart(&mut self) {
-        self.stop();
-        self.spawn();
-    }
-
     /// Stops the server immediately.
     pub fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {

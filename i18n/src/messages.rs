@@ -368,18 +368,6 @@ impl ResticStatusCode {
     }
 }
 
-/// Restic status line: «restic ‹version›» when usable, otherwise the reason.
-pub fn restic_status_text(
-    error_kind: Option<ResticStatusCode>,
-    version: Option<&str>,
-    params: &ResticStatusParams<'_>,
-) -> UiText {
-    match error_kind {
-        Some(code) => UiText::Message(code.message(params)),
-        None => UiText::Raw(format!("restic {}", version.unwrap_or_default())),
-    }
-}
-
 impl BlockingKind {
     /// Blocking-state text; `restic` is the reason of an unusable restic.
     pub fn message(self, restic: Option<Message>) -> Message {

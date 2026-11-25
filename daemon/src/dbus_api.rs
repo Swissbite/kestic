@@ -36,9 +36,7 @@ pub use kestic_i18n::codes::{
     OverallStatusKind, RestoreNoteCode, RestoreOutcome, RestoreOverwrite, RestoreTargetCode,
     RunKindCode, RunProgressPhase, SnapshotChange, SnapshotQueryKind,
 };
-use kestic_i18n::messages::{
-    ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
-};
+use kestic_i18n::messages::{ActiveRunInfo, Message, OverallCounts, ResticStatusParams};
 
 use crate::tray::TrayStatus;
 use serde::de::DeserializeOwned;
@@ -941,16 +939,6 @@ impl ResticStatusDto {
         let min = MIN_RESTIC_VERSION.to_string();
         self.error_kind
             .map(|code| code.message(&self.text_params(&min)))
-    }
-
-    /// Status line: «restic ‹version›» or the reason restic is unusable.
-    pub fn status_text(&self) -> UiText {
-        let min = MIN_RESTIC_VERSION.to_string();
-        restic_status_text(
-            self.error_kind,
-            self.version.as_deref(),
-            &self.text_params(&min),
-        )
     }
 }
 

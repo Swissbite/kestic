@@ -34,7 +34,6 @@ pub mod qobject {
         #[qproperty(bool, restic_explain_minimum)]
         #[qproperty(bool, restic_offer_switch)]
         #[qproperty(bool, restic_offer_remove)]
-        #[qproperty(bool, restic_uses_app_managed)]
         #[qproperty(bool, restic_app_managed_installed)]
         #[qproperty(QString, restic_action_error)]
         #[qproperty(bool, restic_offer_download)]
@@ -298,18 +297,6 @@ pub mod qobject {
         ) -> QString;
 
         #[qinvokable]
-        #[cxx_name = "updateBackup"]
-        fn update_backup(
-            self: Pin<&mut KesticApp>,
-            id: &QString,
-            name: &QString,
-            source_path: &QString,
-            dest_id: &QString,
-            excludes_text: &QString,
-            exclude_caches: bool,
-        ) -> bool;
-
-        #[qinvokable]
         #[cxx_name = "updateBackupExcludes"]
         fn update_backup_excludes(
             self: Pin<&mut KesticApp>,
@@ -383,10 +370,6 @@ pub mod qobject {
         fn normalize_exclude_folder(self: &KesticApp, folder_path: &QString) -> QString;
 
         #[qinvokable]
-        #[cxx_name = "buildExcludeFilePreview"]
-        fn build_exclude_file_preview(self: &KesticApp, excludes_json: &QString) -> QString;
-
-        #[qinvokable]
         #[cxx_name = "startBackupDryRun"]
         fn start_backup_dry_run(
             self: Pin<&mut KesticApp>,
@@ -405,10 +388,6 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "retentionPresetJson"]
         fn retention_preset_json(self: &KesticApp, preset_name: &QString) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "formatRetentionSummaryJson"]
-        fn format_retention_summary_json(self: &KesticApp, retention_json: &QString) -> QString;
 
         #[qinvokable]
         #[cxx_name = "startRetentionPreview"]
@@ -465,14 +444,6 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "loadRestoreSnapshots"]
         fn load_restore_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString);
-
-        #[qinvokable]
-        #[cxx_name = "setResticProvider"]
-        fn set_restic_provider(
-            self: Pin<&mut KesticApp>,
-            kind: &QString,
-            custom_path: &QString,
-        ) -> bool;
 
         #[qinvokable]
         #[cxx_name = "applyResticSource"]
@@ -614,14 +585,6 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "previewScheduleSlotsJson"]
         fn preview_schedule_slots_json(self: &KesticApp, schedule_json: &QString) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "formatScheduleSummaryJson"]
-        fn format_schedule_summary_json(self: &KesticApp, schedule_json: &QString) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "formatConditionsSummaryJson"]
-        fn format_conditions_summary_json(self: &KesticApp, conditions_json: &QString) -> QString;
 
         #[qinvokable]
         #[cxx_name = "formatMaintenanceSummaryJson"]

@@ -59,7 +59,7 @@ pub fn kestic_data_dir(home: Option<&OsStr>, xdg_data_home: Option<&OsStr>) -> O
     Some(base.join("kestic"))
 }
 
-/// Result of [`prepare_install`].
+/// Result of preparing an installation ([`prepare_with`]).
 #[derive(Debug)]
 pub enum Preparation {
     /// The app-managed binary already is the release's version; nothing was downloaded.
@@ -78,7 +78,7 @@ impl Preparation {
     }
 }
 
-/// Result of [`install_latest`].
+/// Result of an installation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallOutcome {
     Installed(Version),
@@ -161,27 +161,12 @@ impl Drop for PreparedInstall {
     }
 }
 
-/// Downloads the latest restic release, checks it and writes it to a temporary file in
-/// `request.data_dir`; the app-managed binary stays as it is.
-pub fn prepare_install(request: &InstallRequest<'_>) -> Result<Preparation, InstallError> {
-    let anchor = TrustAnchor::for_this_build()?;
-    prepare_with(
-        request,
-        &anchor,
-        &crate::restic_release::UreqTransport::new(),
-    )
-}
-
-/// Downloads, checks and installs the latest restic release.
-pub fn install_latest(request: &InstallRequest<'_>) -> Result<InstallOutcome, InstallError> {
-    finish(prepare_install(request)?)
-}
-
 fn finish(preparation: Preparation) -> Result<InstallOutcome, InstallError> {
     replace_when_idle(preparation, ResticBinaryGate::global(), &Unobserved)
 }
 
-/// [`prepare_install`] with an anchor of the test build.
+/// Downloads the latest restic release with an anchor of the test build, checks it and writes
+/// it to a temporary file in `request.data_dir`; the app-managed binary stays as it is.
 #[cfg(feature = "test-trust-anchor")]
 pub fn prepare_install_with_anchor(
     request: &InstallRequest<'_>,
@@ -194,7 +179,7 @@ pub fn prepare_install_with_anchor(
     )
 }
 
-/// [`install_latest`] with an anchor of the test build.
+/// Downloads, checks and installs the latest restic release with an anchor of the test build.
 #[cfg(feature = "test-trust-anchor")]
 pub fn install_latest_with_anchor(
     request: &InstallRequest<'_>,
