@@ -211,52 +211,61 @@ impl SecretStore for RemovingStore {
 }
 
 /// AC-M5-07-5 (c): a restic removed after `SetResticProvider` checked it never becomes the
-/// source; the source stays as it was.
+/// source, also when the chosen path is a link to it; the source stays as it was.
 #[test]
 fn ac_m5_07_5_source_never_points_at_a_removed_binary() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    let binary = dir.path().join("custom/restic");
-    std::fs::create_dir_all(binary.parent().expect("parent")).expect("mkdir");
-    std::fs::write(
-        &binary,
-        "#!/bin/sh\necho '{\"message_type\":\"version\",\"version\":\"0.19.1\"}'\n",
-    )
-    .expect("write");
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    let config_path = dir.path().join("config/config.toml");
-    let armed = Arc::new(AtomicBool::new(false));
-    let run_config = crate::service::DaemonRunConfig {
-        config_path: Some(config_path.clone()),
-        state_dir: Some(dir.path().join("state")),
-        secret_store: Some(Arc::new(RemovingStore {
-            binary: binary.clone(),
-            armed: Arc::clone(&armed),
-        })),
-        ..Default::default()
-    };
-    let shared = Arc::new(Mutex::new(
-        DaemonCore::new(&run_config).expect("daemon core"),
-    ));
-    let provider = ResticProvider::Custom {
-        path: binary.clone(),
-    };
-    let provider_json = serde_json::to_string(&provider).expect("provider JSON");
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    for through_link in [false, true] {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let binary = dir.path().join("data/restic");
+        std::fs::create_dir_all(binary.parent().expect("parent")).expect("mkdir");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\necho '{\"message_type\":\"version\",\"version\":\"0.19.1\"}'\n",
+        )
+        .expect("write");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let chosen = if through_link {
+            let link = dir.path().join("custom/restic");
+            std::fs::create_dir_all(link.parent().expect("parent")).expect("mkdir");
+            symlink(&binary, &link).expect("symlink");
+            link
+        } else {
+            binary.clone()
+        };
+        let config_path = dir.path().join("config/config.toml");
+        let armed = Arc::new(AtomicBool::new(false));
+        let run_config = crate::service::DaemonRunConfig {
+            config_path: Some(config_path.clone()),
+            state_dir: Some(dir.path().join("state")),
+            secret_store: Some(Arc::new(RemovingStore {
+                binary: binary.clone(),
+                armed: Arc::clone(&armed),
+            })),
+            ..Default::default()
+        };
+        let shared = Arc::new(Mutex::new(
+            DaemonCore::new(&run_config).expect("daemon core"),
+        ));
+        let provider = ResticProvider::Custom { path: chosen };
+        let provider_json = serde_json::to_string(&provider).expect("provider JSON");
 
-    armed.store(true, Ordering::SeqCst);
-    let result = crate::service::set_restic_provider_unlocked(&shared, &provider_json);
+        armed.store(true, Ordering::SeqCst);
+        let result = crate::service::set_restic_provider_unlocked(&shared, &provider_json);
 
-    // (c) the binary is gone
-    assert!(!binary.exists());
-    // (c) the change of source is refused
-    assert!(matches!(
-        result,
-        Err(KesticServiceErr::ResticUnavailable(_))
-    ));
-    // (c) the source is unchanged, in memory and on disk
-    assert_eq!(
-        shared.lock_unpoisoned().config.restic_provider,
-        ResticProvider::default()
-    );
-    assert!(!config_path.exists());
+        // (c) the binary is gone
+        assert!(!binary.exists(), "link: {through_link}");
+        // (c) the change of source is refused
+        assert!(
+            matches!(result, Err(KesticServiceErr::ResticUnavailable(_))),
+            "link: {through_link}"
+        );
+        // (c) the source is unchanged, in memory and on disk
+        assert_eq!(
+            shared.lock_unpoisoned().config.restic_provider,
+            ResticProvider::default(),
+            "link: {through_link}"
+        );
+        assert!(!config_path.exists(), "link: {through_link}");
+    }
 }

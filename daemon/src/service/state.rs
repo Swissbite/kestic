@@ -893,8 +893,8 @@ pub(crate) fn set_restic_provider_unlocked(
 
     let mut guard = shared.lock_unpoisoned();
     // `RemoveAppManagedRestic` deletes under this lock, so a binary removed since the check
-    // above is gone by now.
-    if binary.symlink_metadata().is_err() {
+    // above is gone by now; a link to it then points nowhere.
+    if !binary.exists() {
         return Err(if provider == ResticProvider::AppManaged {
             not_installed()
         } else {
