@@ -151,6 +151,11 @@ Kirigami.ApplicationWindow {
         ]
 
         ColumnLayout {
+            id: resticSourceOptions
+
+            // Hints and the path field start where the text of the options starts.
+            readonly property real optionTextIndent: resticSourceAutomaticRadio.leftPadding + resticSourceAutomaticRadio.contentItem.leftPadding
+
             spacing: Kirigami.Units.mediumSpacing
             implicitWidth: Kirigami.Units.gridUnit * 24
 
@@ -159,6 +164,7 @@ Kirigami.ApplicationWindow {
             }
 
             Controls.RadioButton {
+                id: resticSourceAutomaticRadio
                 objectName: "resticSourceAutomaticRadio"
                 text: Texts.label("restic_automatic")
                 checked: settingsWindow.pendingProviderKind === "automatic"
@@ -174,7 +180,7 @@ Kirigami.ApplicationWindow {
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
-                Layout.leftMargin: Kirigami.Units.gridUnit * 2
+                Layout.leftMargin: resticSourceOptions.optionTextIndent
             }
 
             Controls.RadioButton {
@@ -193,7 +199,7 @@ Kirigami.ApplicationWindow {
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
-                Layout.leftMargin: Kirigami.Units.gridUnit * 2
+                Layout.leftMargin: resticSourceOptions.optionTextIndent
             }
 
             Controls.RadioButton {
@@ -215,7 +221,7 @@ Kirigami.ApplicationWindow {
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
-                Layout.leftMargin: Kirigami.Units.gridUnit * 2
+                Layout.leftMargin: resticSourceOptions.optionTextIndent
             }
 
             Controls.RadioButton {
@@ -237,7 +243,7 @@ Kirigami.ApplicationWindow {
                 placeholderText: "/usr/local/bin/restic"
                 Accessible.name: i18n("Custom restic program path")
                 Layout.fillWidth: true
-                Layout.leftMargin: Kirigami.Units.gridUnit * 2
+                Layout.leftMargin: resticSourceOptions.optionTextIndent
             }
 
             Controls.Label {
@@ -434,10 +440,12 @@ Kirigami.ApplicationWindow {
 
                 // The reason names the path the user entered: plain text, never markup.
                 RowLayout {
+                    id: resticProblemRow
                     spacing: Kirigami.Units.smallSpacing
                     Layout.fillWidth: true
 
                     Kirigami.Icon {
+                        id: resticProblemIcon
                         source: "dialog-error"
                         implicitWidth: Kirigami.Units.iconSizes.smallMedium
                         implicitHeight: Kirigami.Units.iconSizes.smallMedium
@@ -474,6 +482,7 @@ Kirigami.ApplicationWindow {
                     font: Kirigami.Theme.fixedWidthFont
                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                     Layout.fillWidth: true
+                    Layout.leftMargin: resticProblemIcon.width + resticProblemRow.spacing
                 }
             }
 
