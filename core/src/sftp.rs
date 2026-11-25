@@ -258,6 +258,17 @@ pub fn ssh_config_args() -> Vec<String> {
     }
 }
 
+/// The ssh options of every connection Kestic makes or lets restic make: strict host key
+/// checking without any write by ssh, no prompts, and a connect time limit.
+pub(crate) fn strict_ssh_options() -> [String; 4] {
+    [
+        "StrictHostKeyChecking=yes".to_string(),
+        "UpdateHostKeys=no".to_string(),
+        "BatchMode=yes".to_string(),
+        format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"),
+    ]
+}
+
 /// The value of restic's `sftp.args`: both `known_hosts` paths explicitly, strict host key
 /// checking without any write by ssh, no prompts, and a connect time limit. restic splits it like
 /// a shell (single quotes keep the spaces), ssh reads the double-quoted paths of
@@ -270,10 +281,8 @@ pub fn sftp_args(paths: &KnownHostsPaths) -> Result<String, KnownHostsPathError>
         let config = quotable(&config)?;
         parts.push(format!("-F '{config}' -o IdentitiesOnly=yes"));
     }
-    parts.push(format!(
-        "-o 'UserKnownHostsFile=\"{kestic}\" \"{user}\"' -o StrictHostKeyChecking=yes \
-         -o UpdateHostKeys=no -o BatchMode=yes -o ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"
-    ));
+    parts.push(format!("-o 'UserKnownHostsFile=\"{kestic}\" \"{user}\"'"));
+    parts.extend(strict_ssh_options().map(|option| format!("-o {option}")));
     Ok(parts.join(" "))
 }
 

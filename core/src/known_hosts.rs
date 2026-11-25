@@ -215,7 +215,8 @@ fn is_plain_name(name: &str) -> bool {
 /// The entries for `name` in `file` (`ssh-keygen -F`, which also finds hashed names). A missing
 /// file has none.
 fn lookup(name: &str, file: &Path) -> Result<Vec<KnownEntry>, HostKeyError> {
-    if !file.is_file() {
+    // ssh skips a file it cannot read; so does Kestic.
+    if !file.is_file() || fs::File::open(file).is_err() {
         return Ok(Vec::new());
     }
     let out = run_tool(
@@ -630,13 +631,8 @@ pub fn login_failure(
             paths.user.display()
         ),
     ]);
-    for option in [
-        "StrictHostKeyChecking=yes",
-        "UpdateHostKeys=no",
-        "BatchMode=yes",
-        "ConnectTimeout=10",
-    ] {
-        args.extend(["-o".to_string(), option.to_string()]);
+    for option in crate::sftp::strict_ssh_options() {
+        args.extend(["-o".to_string(), option]);
     }
     args.extend([
         "-p".to_string(),
@@ -738,6 +734,25 @@ mod tests {
         assert_eq!(entries[1].key, KEY_ECDSA);
         assert!(entries[2].revoked);
         assert_eq!(entries[2].key, KEY_B);
+    }
+
+    /// M5-S01: a `known_hosts` file Kestic cannot read is skipped, as ssh skips it, instead of
+    /// failing the check.
+    #[test]
+    fn m5_01_unreadable_known_hosts_file_is_skipped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("dir");
+        let file = dir.path().join("known_hosts");
+        fs::write(&file, format!("nas.local ssh-ed25519 {KEY_A}\n")).expect("write");
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).expect("chmod");
+        let found = lookup("nas.local", &file);
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).expect("chmod back");
+        assert!(
+            matches!(&found, Ok(entries) if entries.is_empty()),
+            "{found:?}"
+        );
+        let readable = lookup("nas.local", &file).expect("readable file");
+        assert_eq!(readable.len(), 1, "the readable file is read");
     }
 
     /// M5-S01 (AC-M5-01-7): a line whose key ssh cannot read (cut off, no base64, the blob of
