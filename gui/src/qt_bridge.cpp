@@ -34,10 +34,9 @@ QQuickItem* column_footer(QQuickItem* column) {
     return nullptr;
 }
 
-// A column view keeps the action bars of its pages in an item it created before the pages, so
-// the Tab chain ran from the pages to the window header, then to the action bars at the bottom.
-// Stacking that item after the last page makes the chain follow the visible order: header,
-// pages, action bars.
+// A column view keeps the action bars of its pages in an item it creates before the pages, which
+// puts them before the pages in the Tab chain although they are shown below them. Stacking that
+// item after the last page makes the chain follow the visible order: header, pages, action bars.
 void stack_footers_after_columns(QQuickItem* view) {
     auto* content = view->property("contentItem").value<QQuickItem*>();
     if (!content) {
