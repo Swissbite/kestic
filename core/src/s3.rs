@@ -16,22 +16,27 @@ pub fn validate(endpoint: &str, bucket: &str, path: Option<&str>) -> Result<(), 
              hyphens, starting and ending with a letter or digit"
         )));
     }
-    if let Some(p) = path {
-        let trimmed = trimmed_path(p);
-        if !trimmed.is_empty() && trimmed.split('/').any(|seg| matches!(seg, "" | "." | "..")) {
-            return Err(ModelError::InvalidDestination(format!(
-                "S3 path must not contain empty, '.' or '..' segments: '{p}'"
-            )));
-        }
-        // restic reads the address as URL: `#` and `?` would cut the path, `%` would decode it.
-        // Spaces and quotes would split the address in restic's messages, which Kestic reads.
-        if p.chars()
-            .any(|c| matches!(c, '#' | '?' | '%' | '"') || c.is_control() || c.is_whitespace())
-        {
-            return Err(ModelError::InvalidDestination(format!(
-                "S3 path must not contain '#', '?', '%', quotes, spaces or control characters: '{p}'"
-            )));
-        }
+    path.map_or(Ok(()), check_path)
+}
+
+/// Checks the path inside the bucket: no empty, `.` or `..` segments and no character that would
+/// change the address restic reads.
+pub fn check_path(path: &str) -> Result<(), ModelError> {
+    let trimmed = trimmed_path(path);
+    if !trimmed.is_empty() && trimmed.split('/').any(|seg| matches!(seg, "" | "." | "..")) {
+        return Err(ModelError::InvalidDestination(format!(
+            "S3 path must not contain empty, '.' or '..' segments: '{path}'"
+        )));
+    }
+    // restic reads the address as URL: `#` and `?` would cut the path, `%` would decode it.
+    // Spaces and quotes would split the address in restic's messages, which Kestic reads.
+    if path
+        .chars()
+        .any(|c| matches!(c, '#' | '?' | '%' | '"') || c.is_control() || c.is_whitespace())
+    {
+        return Err(ModelError::InvalidDestination(format!(
+            "S3 path must not contain '#', '?', '%', quotes, spaces or control characters: '{path}'"
+        )));
     }
     Ok(())
 }

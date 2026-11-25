@@ -106,6 +106,7 @@ fn main() {
         "src/qml/FocusRing.qml",
         "src/qml/KeyboardList.qml",
         "src/qml/RowIcon.qml",
+        "src/qml/FieldError.qml",
         "src/qml/TitleSubtitleDelegate.qml",
         "src/qml/QueryStatus.qml",
         "src/qml/FilterField.qml",

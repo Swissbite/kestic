@@ -38,21 +38,35 @@ pub fn validate(host: &str, port: u16, user: &str, path: &str) -> Result<(), Mod
             user.escape_default()
         ));
     }
+    check_path(path)
+}
+
+/// Checks the path on the server: not empty, no control characters and not starting with `~`.
+pub fn check_path(path: &str) -> Result<(), ModelError> {
+    let invalid = |msg: &str| Err(ModelError::InvalidDestination(msg.to_string()));
     let path = path.trim();
     if path.is_empty() {
-        return invalid("SFTP path must not be empty".to_string());
+        return invalid("SFTP path must not be empty");
     }
     if path.chars().any(char::is_control) {
-        return invalid("SFTP path must not contain control characters".to_string());
+        return invalid("SFTP path must not contain control characters");
     }
     // restic refuses a path starting with `~`: it would not be expanded on the server.
     if path.starts_with('~') {
         return invalid(
-            "SFTP path must not start with '~'; enter it relative to the home folder instead"
-                .to_string(),
+            "SFTP path must not start with '~'; enter it relative to the home folder instead",
         );
     }
     Ok(())
+}
+
+/// The port in `text`: only digits, 1 to 65535.
+pub fn parse_port(text: &str) -> Option<u16> {
+    let text = text.trim();
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok().filter(|port| *port > 0)
 }
 
 /// Whether `user` (trimmed) is a user name Kestic hands to ssh: letters (also non-ASCII),
@@ -640,6 +654,15 @@ mod tests {
             classify_exit_for(Transport::Sftp, 1, None, Vec::new(), late).kind,
             ResticFailureKind::HostKeyUnknown
         );
+    }
+
+    #[test]
+    fn ports_are_digits_from_1_to_65535() {
+        assert_eq!(parse_port(" 22 "), Some(22));
+        assert_eq!(parse_port("65535"), Some(65535));
+        for text in ["", "0", "65536", "+22", "-1", "2 2", "22a"] {
+            assert_eq!(parse_port(text), None, "{text:?}");
+        }
     }
 
     #[test]

@@ -3512,8 +3512,14 @@ msgid "Use 3 to 63 lowercase letters, digits, dots or hyphens."
 msgstr "Verwenden Sie 3 bis 63 Kleinbuchstaben, Ziffern, Punkte oder Bindestriche."
 
 #: gui/src/qml/DestinationDetailsForm.qml
-msgid "Use no spaces, quotes, #, ? or %."
-msgstr "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder %."
+msgid "Use no spaces, quotes, #, ? or %, and no empty, . or .. parts."
+msgstr ""
+"Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder % und keine "
+"leeren, «.»- oder «..»-Teile."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use no spaces in the region."
+msgstr "Verwenden Sie keine Leerzeichen in der Region."
 
 #: gui/src/qml/DestinationDetailsForm.qml
 msgid "Enter the access key and the secret key."

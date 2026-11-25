@@ -312,11 +312,10 @@ ColumnLayout {
             Accessible.name: i18n("Destination name")
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "NameError"
             visible: !form.draft.nameValid
             text: i18n("Name is required.")
-            color: Kirigami.Theme.negativeTextColor
         }
 
         RowLayout {
@@ -346,14 +345,13 @@ ColumnLayout {
             }
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "LocationError"
             visible: !form.draft.kindIsS3 && !form.draft.kindIsGeneric && !form.draft.kindIsSftp
                 && !form.draft.locationValid
             text: form.draft.kindIsRest
                 ? i18n("Enter a valid http:// or https:// address.")
                 : i18n("Path is required.")
-            color: Kirigami.Theme.negativeTextColor
         }
 
         // SFTP: server, port, user and path; the login uses an SSH key or the ssh-agent.
@@ -371,13 +369,10 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "HostError"
             visible: form.draft.kindIsSftp && !form.draft.hostValid
             text: i18n("Enter a host name or an IP address.")
-            color: Kirigami.Theme.negativeTextColor
-            wrapMode: Text.Wrap
-            Layout.fillWidth: true
         }
 
         Controls.TextField {
@@ -393,13 +388,10 @@ ColumnLayout {
             Accessible.name: i18n("SSH port")
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "PortError"
             visible: form.draft.kindIsSftp && !form.draft.portValid
             text: i18n("Enter a port from 1 to 65535.")
-            color: Kirigami.Theme.negativeTextColor
-            wrapMode: Text.Wrap
-            Layout.fillWidth: true
         }
 
         Controls.TextField {
@@ -415,13 +407,10 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "SftpUserError"
             visible: form.draft.kindIsSftp && !form.draft.sftpUserValid
             text: i18n("Enter the user name on the server: only letters, digits, '.', '_' and '-'.")
-            color: Kirigami.Theme.negativeTextColor
-            wrapMode: Text.Wrap
-            Layout.fillWidth: true
         }
 
         Controls.TextField {
@@ -438,13 +427,10 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "SftpPathError"
             visible: form.draft.kindIsSftp && !form.draft.sftpPathValid
             text: i18n("Enter an absolute path or one relative to the home folder, not starting with '~'.")
-            color: Kirigami.Theme.negativeTextColor
-            wrapMode: Text.Wrap
-            Layout.fillWidth: true
             Layout.preferredWidth: Kirigami.Units.gridUnit * 24
         }
 
@@ -479,13 +465,10 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "GenericError"
             visible: form.draft.kindIsGeneric && form.draft.genericErrors.url !== ""
             text: form.draft.genericErrors.url
-            color: Kirigami.Theme.negativeTextColor
-            wrapMode: Text.Wrap
-            Layout.fillWidth: true
             Layout.preferredWidth: Kirigami.Units.gridUnit * 24
         }
 
@@ -602,13 +585,10 @@ ColumnLayout {
             }
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "EnvError"
             visible: form.draft.kindIsGeneric && form.draft.genericErrors.env !== ""
             text: form.draft.genericErrors.env
-            color: Kirigami.Theme.negativeTextColor
-            wrapMode: Text.Wrap
-            Layout.fillWidth: true
             Layout.preferredWidth: Kirigami.Units.gridUnit * 24
         }
 
@@ -621,11 +601,10 @@ ColumnLayout {
             onClicked: form.draft.addEnvVar()
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "EnvSecretsError"
             visible: form.draft.kindIsGeneric && !form.draft.keysValid
             text: i18n("Enter a value for every secret variable.")
-            color: Kirigami.Theme.negativeTextColor
         }
 
         Controls.TextField {
@@ -642,11 +621,10 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "EndpointError"
             visible: form.draft.kindIsS3 && !form.draft.endpointValid
             text: i18n("Enter the address with http:// or https://, without a path.")
-            color: Kirigami.Theme.negativeTextColor
         }
 
         Controls.TextField {
@@ -662,11 +640,10 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "BucketError"
             visible: form.draft.kindIsS3 && !form.draft.bucketValid
             text: i18n("Use 3 to 63 lowercase letters, digits, dots or hyphens.")
-            color: Kirigami.Theme.negativeTextColor
         }
 
         Controls.TextField {
@@ -682,11 +659,10 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "S3PathError"
             visible: form.draft.kindIsS3 && !form.draft.s3PathValid
-            text: i18n("Use no spaces, quotes, #, ? or %.")
-            color: Kirigami.Theme.negativeTextColor
+            text: i18n("Use no spaces, quotes, #, ? or %, and no empty, . or .. parts.")
         }
 
         Controls.TextField {
@@ -700,6 +676,12 @@ ColumnLayout {
             }
             Accessible.name: i18n("S3 region")
             Layout.fillWidth: true
+        }
+
+        FieldError {
+            objectName: form.namePrefix + "RegionError"
+            visible: form.draft.kindIsS3 && !form.draft.regionValid
+            text: i18n("Use no spaces in the region.")
         }
 
         Controls.TextField {
@@ -732,11 +714,10 @@ ColumnLayout {
             Layout.fillWidth: true
         }
 
-        Controls.Label {
+        FieldError {
             objectName: form.namePrefix + "KeysError"
             visible: form.draft.kindIsS3 && !form.draft.keysValid
             text: i18n("Enter the access key and the secret key.")
-            color: Kirigami.Theme.negativeTextColor
         }
 
         // Ends the variables section of the generic form, so the repository rows stand apart.

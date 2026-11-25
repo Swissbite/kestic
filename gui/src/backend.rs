@@ -236,12 +236,8 @@ pub mod qobject {
         fn env_var_secret_by_default(self: &KesticApp, name: &QString) -> bool;
 
         #[qinvokable]
-        #[cxx_name = "sftpUserValid"]
-        fn sftp_user_valid(self: &KesticApp, user: &QString) -> bool;
-
-        #[qinvokable]
-        #[cxx_name = "sftpHostValid"]
-        fn sftp_host_valid(self: &KesticApp, host: &QString) -> bool;
+        #[cxx_name = "destinationFieldChecks"]
+        fn destination_field_checks(self: &KesticApp, fields_json: &QString) -> QString;
 
         #[qinvokable]
         #[cxx_name = "testDestination"]

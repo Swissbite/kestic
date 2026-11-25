@@ -444,7 +444,8 @@ int scenario_s3_form(const Ctx& c) {
     QQuickItem* path_error = item_named(w, "wizDestS3PathError");
     M3_CHECK(5418, wait_until([&] { return path_error && path_error->isVisible(); }, 2000), "no hint for a path with a space");
     M3_CHECK_EQ(5419, path_error->property("text").toString(),
-        loc(c.lang, "Use no spaces, quotes, #, ? or %.", "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder %."),
+        loc(c.lang, "Use no spaces, quotes, #, ? or %, and no empty, . or .. parts.",
+            "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder % und keine leeren, «.»- oder «..»-Teile."),
         "path hint text");
     scroll_into_view(w, path_error);
     wait_ms(600);
