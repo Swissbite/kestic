@@ -146,7 +146,7 @@ pub enum ResticProvider {
     /// System `restic` resolved from `$PATH`.
     System,
     /// The restic Kestic downloads to its fixed place `$XDG_DATA_HOME/kestic/restic`. A `path`
-    /// written by an older Kestic is ignored.
+    /// elsewhere, written by an older Kestic, becomes [`ResticProvider::Custom`] on loading.
     AppManaged,
     /// User-configured explicit binary path.
     Custom { path: PathBuf },

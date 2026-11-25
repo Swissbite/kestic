@@ -8,6 +8,7 @@ mod common;
 
 use kestic_core::config::{AppConfig, load_optional_config, parse_config_str, save_config};
 use kestic_core::model::ResticProvider;
+use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
 use kestic_core::provider::{
     ResticLocations, ResticProviderError, ResticSurvey, check_binary_version, resolve_with,
 };
@@ -329,7 +330,8 @@ const CONFIG_V3: &str = r#"config_version = 3
 kind = "system"
 "#;
 
-/// AC-M5-07-10: a version-3 config turns «System» into «Automatic», keeps a custom path and is
+/// AC-M5-07-10: a version-3 config turns «System» into «Automatic», keeps a custom path, turns an
+/// app-managed binary outside Kestic's own place into a custom path and is
 /// written as version 4 only by the next save.
 #[test]
 fn ac_m5_07_10_migrates_config_3_to_4() {
@@ -365,12 +367,30 @@ fn ac_m5_07_10_migrates_config_3_to_4() {
     let v4 = parse_config_str("config_version = 4\n\n[restic_provider]\nkind = \"system\"\n")
         .expect("v4");
     assert_eq!(v4.restic_provider, ResticProvider::System);
-    // an app-managed source of version 3 still carried its path
-    let app = parse_config_str(
-        "config_version = 3\n\n[restic_provider]\nkind = \"app_managed\"\npath = \"/home/u/.local/share/kestic/restic\"\n",
+    // an app-managed source of version 3 still carried its path: Kestic's own place stays
+    // app-managed, a binary elsewhere keeps running as a custom path
+    let own = kestic_data_dir(
+        std::env::var_os("HOME").as_deref(),
+        std::env::var_os("XDG_DATA_HOME").as_deref(),
     )
+    .map(|dir| app_managed_binary(&dir))
+    .expect("data dir");
+    let app = parse_config_str(&format!(
+        "config_version = 3\n\n[restic_provider]\nkind = \"app_managed\"\npath = \"{}\"\n",
+        own.display()
+    ))
     .expect("v3 app-managed");
     assert_eq!(app.restic_provider, ResticProvider::AppManaged);
+    let elsewhere = parse_config_str(
+        "config_version = 3\n\n[restic_provider]\nkind = \"app_managed\"\npath = \"/opt/kestic/restic\"\n",
+    )
+    .expect("v3 app-managed elsewhere");
+    assert_eq!(
+        elsewhere.restic_provider,
+        ResticProvider::Custom {
+            path: PathBuf::from("/opt/kestic/restic")
+        }
+    );
     // a new config starts with «Automatic» and checks for releases
     let fresh = AppConfig::default();
     assert_eq!(fresh.restic_provider, ResticProvider::Automatic);

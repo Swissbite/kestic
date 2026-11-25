@@ -60,6 +60,18 @@ struct ConfigHeader {
     config_version: Option<u32>,
 }
 
+/// `restic_provider` as Kestic wrote it before version 4: `app_managed` still named its binary.
+#[derive(Deserialize)]
+struct LegacyProviderHeader {
+    restic_provider: Option<LegacyProvider>,
+}
+
+#[derive(Deserialize)]
+struct LegacyProvider {
+    kind: String,
+    path: Option<PathBuf>,
+}
+
 /// Top-level persisted configuration (`$XDG_CONFIG_HOME/kestic/config.toml`).
 ///
 /// Must never store secret values — only Secret Service references.
@@ -267,7 +279,16 @@ pub fn parse_config_str(raw: &str) -> Result<AppConfig, ConfigError> {
         });
     }
     let mut config: AppConfig = toml::from_str(raw)?;
-    migrate(&mut config);
+    let legacy_app_managed_path = if version < 4 {
+        toml::from_str::<LegacyProviderHeader>(raw)
+            .ok()
+            .and_then(|header| header.restic_provider)
+            .filter(|provider| provider.kind == "app_managed")
+            .and_then(|provider| provider.path)
+    } else {
+        None
+    };
+    migrate(&mut config, legacy_app_managed_path);
     config.validate()?;
     Ok(config)
 }
@@ -275,7 +296,9 @@ pub fn parse_config_str(raw: &str) -> Result<AppConfig, ConfigError> {
 /// Upgrades an older configuration in memory to [`CURRENT_CONFIG_VERSION`].
 ///
 /// The next save writes the migrated file; the file on disk stays untouched until then.
-fn migrate(config: &mut AppConfig) {
+///
+/// `legacy_app_managed_path` is the binary a version-3 `app_managed` source named.
+fn migrate(config: &mut AppConfig, legacy_app_managed_path: Option<PathBuf>) {
     if config.config_version < 2 {
         // Version 1 never ran `forget`: an empty retention meant «keep every snapshot».
         // Keep that behaviour explicitly instead of silently applying a preset that
@@ -308,8 +331,25 @@ fn migrate(config: &mut AppConfig) {
         if config.restic_provider == ResticProvider::System {
             config.restic_provider = ResticProvider::Automatic;
         }
+        // «Managed by Kestic» now always means Kestic's own place; a binary elsewhere keeps
+        // running as a custom path.
+        if let Some(path) = legacy_app_managed_path
+            && config.restic_provider == ResticProvider::AppManaged
+            && Some(path.as_path()) != app_managed_binary_from_env().as_deref()
+        {
+            config.restic_provider = ResticProvider::Custom { path };
+        }
         config.config_version = 4;
     }
+}
+
+/// The app-managed restic, `$XDG_DATA_HOME/kestic/restic`, if the environment names a home.
+fn app_managed_binary_from_env() -> Option<PathBuf> {
+    crate::restic_install::kestic_data_dir(
+        env::var_os("HOME").as_deref(),
+        env::var_os("XDG_DATA_HOME").as_deref(),
+    )
+    .map(|dir| crate::restic_install::app_managed_binary(&dir))
 }
 
 /// Loads `config.toml` if it exists, returning `Ok(None)` if the file does not exist.
