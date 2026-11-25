@@ -315,42 +315,22 @@ fn ac_m5_03_7_reserved_and_invalid_variable_names_are_refused() {
         );
     }
 
-    // (c) A configuration read without the check (hand-edited file).
-    let dir = TempDir::new().expect("tempdir");
-    let resolved = fake_restic(dir.path());
-    let store = InMemorySecretStore::new();
-    let mut dest = generic("b2:bucket:laptop", Vec::new()).expect("destination");
-    dest.kind = DestinationKind::Generic {
-        url: "b2:bucket:laptop".to_string(),
-        env: vec![
-            var("PATH", false, Some("/tmp/evil")),
-            var("LD_PRELOAD", false, Some("/tmp/evil.so")),
-            var("RESTIC_PASSWORD_COMMAND", true, None),
-            var("B2_ACCOUNT_ID", false, Some("0012ab")),
-        ],
-    };
-    store
-        .set_secret(
-            dest.id.as_str(),
-            SECRET_KIND_REPO,
-            &SecretValue::from_str_secret(strong_password()),
-        )
-        .expect("store repository password");
-    let spec = ResticCommandSpec::for_destination(
-        &resolved.binary,
-        dir.path().join("kestic"),
-        &dest,
-        vec!["snapshots".to_string()],
+    // (c) A configuration read without the check (hand-edited file): one run per refused name
+    // as a plain variable with a value of its own, and one with `RESTIC_PASSWORD_COMMAND` as a
+    // secret variable with a stored value.
+    for (i, name) in refused.iter().enumerate() {
+        let value = format!("/tmp/refused-value-{i}");
+        let env = run_hand_edited(vec![var(name, false, Some(&value))], None);
+        assert!(!env.contains(&value), "(c) {name:?} passed: {env}");
+    }
+    let env = run_hand_edited(
+        vec![var("RESTIC_PASSWORD_COMMAND", true, None)],
+        Some(("RESTIC_PASSWORD_COMMAND", "echo stored-command")),
     );
-    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
-    run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
-    let env = read(dir.path().join("env.log"));
-    assert_ne!(
-        env_value(&env, "PATH").as_deref(),
-        Some("/tmp/evil"),
-        "(c) PATH passed"
+    assert!(
+        !env.contains("stored-command"),
+        "(c) the secret RESTIC_PASSWORD_COMMAND passed: {env}"
     );
-    assert_eq!(env_value(&env, "LD_PRELOAD"), None, "(c) LD_PRELOAD passed");
     assert!(
         env_value(&env, "RESTIC_PASSWORD_COMMAND").is_some_and(|v| v.contains("secret get")),
         "(c) Kestic's own password command stays"
@@ -360,6 +340,46 @@ fn ac_m5_03_7_reserved_and_invalid_variable_names_are_refused() {
         Some("0012ab"),
         "(c) valid variables still reach restic"
     );
+}
+
+/// Runs restic for a generic destination whose variables are `vars` plus a valid
+/// `B2_ACCOUNT_ID`, set without the check like a hand-edited configuration, with `secret` (name
+/// and value of a secret variable) in the password store; returns the environment restic saw.
+fn run_hand_edited(mut vars: Vec<EnvVar>, secret: Option<(&str, &str)>) -> String {
+    let dir = TempDir::new().expect("tempdir");
+    let resolved = fake_restic(dir.path());
+    let store = InMemorySecretStore::new();
+    let mut dest = generic("b2:bucket:laptop", Vec::new()).expect("destination");
+    vars.push(var("B2_ACCOUNT_ID", false, Some("0012ab")));
+    dest.kind = DestinationKind::Generic {
+        url: "b2:bucket:laptop".to_string(),
+        env: vars,
+    };
+    store
+        .set_secret(
+            dest.id.as_str(),
+            SECRET_KIND_REPO,
+            &SecretValue::from_str_secret(strong_password()),
+        )
+        .expect("store repository password");
+    if let Some((name, value)) = secret {
+        store
+            .set_secret(
+                dest.id.as_str(),
+                &secret_kind(name),
+                &SecretValue::from_str_secret(value),
+            )
+            .expect("store the secret variable");
+    }
+    let spec = ResticCommandSpec::for_destination(
+        &resolved.binary,
+        dir.path().join("kestic"),
+        &dest,
+        vec!["snapshots".to_string()],
+    );
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
+    read(dir.path().join("env.log"))
 }
 
 /// M5-S03, variables of the generic form: a variable named `RESTIC_CACHE_DIR` does not move
