@@ -113,3 +113,62 @@ fn leftover_sweep_runs_once() {
     // (b) the second call leaves the running installation alone
     assert!(running.exists());
 }
+
+/// AC-M5-07-5 (c): the app-managed restic is in use while it is the source, the fallback of
+/// «Automatic», the system restic through a link, or a custom path to it.
+#[test]
+fn ac_m5_07_5_app_managed_in_use_as_active_source() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let app = dir.path().join("data/restic");
+    std::fs::create_dir_all(app.parent().expect("parent")).expect("mkdir");
+    std::fs::write(
+        &app,
+        "#!/bin/sh\necho '{\"message_type\":\"version\",\"version\":\"0.19.1\"}'\n",
+    )
+    .expect("write");
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let own_system = dir.path().join("bin/restic");
+    std::fs::create_dir_all(own_system.parent().expect("parent")).expect("mkdir");
+    std::fs::copy(&app, &own_system).expect("copy");
+    let linked_system = dir.path().join("link/restic");
+    std::fs::create_dir_all(linked_system.parent().expect("parent")).expect("mkdir");
+    symlink(&app, &linked_system).expect("symlink");
+    let at = |system: Option<&Path>| ResticLocations {
+        system: system.map(Path::to_path_buf),
+        app_managed: Some(app.clone()),
+    };
+
+    assert!(is_active_source(
+        &ResticProvider::AppManaged,
+        &app,
+        &at(Some(&own_system))
+    ));
+    assert!(is_active_source(
+        &ResticProvider::Automatic,
+        &app,
+        &at(None)
+    ));
+    assert!(is_active_source(
+        &ResticProvider::Automatic,
+        &app,
+        &at(Some(&linked_system))
+    ));
+    assert!(!is_active_source(
+        &ResticProvider::Automatic,
+        &app,
+        &at(Some(&own_system))
+    ));
+    assert!(is_active_source(
+        &ResticProvider::Custom {
+            path: linked_system.clone()
+        },
+        &app,
+        &at(None)
+    ));
+    assert!(!is_active_source(
+        &ResticProvider::System,
+        &app,
+        &at(Some(&own_system))
+    ));
+}

@@ -13,7 +13,7 @@ use crate::dbus_server::emit_status_changed;
 use kestic_core::clock::Clock;
 use kestic_core::model::ResticProvider;
 use kestic_core::model::RunId;
-use kestic_core::provider::{ResticLocations, resolve_with};
+use kestic_core::provider::{ResticLocations, resolve_with, same_binary};
 use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::restic_install::{
     InstallObserver, InstallOutcome, InstallRequest, RemoveError, app_managed_binary,
@@ -382,7 +382,7 @@ pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), 
         return Ok(());
     }
     let provider = shared.lock_unpoisoned().config.restic_provider.clone();
-    if is_active_source(&provider, &binary) {
+    if is_active_source(&provider, &binary, &ResticLocations::from_env()) {
         return Err(KesticServiceErr::InUse(
             "the restic managed by Kestic is the restic in use".to_string(),
         ));
@@ -401,22 +401,22 @@ pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), 
     Ok(())
 }
 
-/// Whether `provider` runs the app-managed restic at `binary`.
-fn is_active_source(provider: &ResticProvider, binary: &Path) -> bool {
+/// Whether `provider` runs the app-managed restic at `binary`, with the system restic at
+/// `locations`.
+fn is_active_source(provider: &ResticProvider, binary: &Path, locations: &ResticLocations) -> bool {
     match provider {
         ResticProvider::AppManaged => true,
+        // Without a usable system restic «Automatic» falls back to it; a system restic that is a
+        // link to it is the app-managed one.
         ResticProvider::Automatic => {
-            resolve_with(&ResticProvider::System, &ResticLocations::from_env()).is_err()
+            resolve_with(&ResticProvider::System, locations).is_err()
+                || locations
+                    .system
+                    .as_deref()
+                    .is_some_and(|system| same_binary(system, binary))
         }
-        ResticProvider::Custom { path } => same_file(path, binary),
+        ResticProvider::Custom { path } => same_binary(path, binary),
         ResticProvider::System => false,
-    }
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
     }
 }
 

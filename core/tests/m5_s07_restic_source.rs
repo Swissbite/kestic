@@ -199,6 +199,26 @@ fn ac_m5_07_7_custom_path_rejected_or_used() {
         "Custom restic path is invalid: /opt/restic is not executable"
     );
 
+    // (a) another program whose `version` prints a version is not restic
+    let other = dir.path().join("other");
+    write_executable(
+        &other,
+        "#!/bin/sh
+if [ \"${2:-}\" = --json ]; then exit 129; fi
+echo 'git version 2.53.0'
+",
+    );
+    assert!(
+        matches!(
+            custom(&other),
+            Err(ResticProviderError::UnreadableVersion { .. })
+        ),
+        "{:?}",
+        custom(&other)
+    );
+    // (a) a relative path, which restic would look up in `PATH` instead
+    assert_eq!(problem(Path::new("restic")), ResticPathProblem::Other);
+
     // (b) restic 0.18.0 is used
     let good = json_stand_in(&dir.path().join("good/restic"), "0.18.0");
     let resolved = custom(&good).expect("0.18.0 is accepted");

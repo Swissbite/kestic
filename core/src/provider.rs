@@ -229,6 +229,14 @@ pub fn validate_executable_path(path: &Path) -> Result<(), ResticProviderError> 
             "the path is empty".to_string(),
         ));
     }
+    // A relative path would be checked against the daemon's working folder but looked up in
+    // `PATH` when restic starts.
+    if !path.is_absolute() {
+        return Err(invalid(
+            ResticPathProblem::Other,
+            "the path is not absolute".to_string(),
+        ));
+    }
     let meta = std::fs::metadata(path).map_err(|err| {
         let problem = match err.kind() {
             ErrorKind::NotFound | ErrorKind::NotADirectory => ResticPathProblem::NotFound,
@@ -313,14 +321,22 @@ fn probe_version_text(binary: &Path) -> Result<Version, String> {
         .ok_or_else(|| format!("could not find semver in `{}`", stdout.trim()))
 }
 
-/// Extracts a `restic` version from `restic version` text output (e.g. `restic 0.16.4 compiled with go1.22`).
+/// Extracts the version from the text of `restic version` (`restic 0.16.4 compiled with go1.22
+/// …`); `None` for the output of any other program.
 pub fn parse_version_text(text: &str) -> Option<Version> {
-    for token in text.split_whitespace() {
-        if let Ok(ver) = parse_semver_token(token) {
-            return Some(ver);
-        }
+    let mut tokens = text.split_whitespace();
+    if tokens.next()? != "restic" {
+        return None;
     }
-    None
+    parse_semver_token(tokens.next()?).ok()
+}
+
+/// Whether `a` and `b` are the same file, also through links.
+pub fn same_binary(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 fn parse_semver_token(raw: &str) -> Result<Version, String> {

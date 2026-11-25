@@ -117,6 +117,19 @@ fn ac_m5_07_5_status_reports_both_binaries_and_the_offer() {
         })
     );
 
+    // a system restic that is a link to the app-managed one is no reason to switch
+    let linked = dir.path().join("linked/restic");
+    fs::create_dir_all(linked.parent().expect("parent")).expect("mkdir");
+    std::os::unix::fs::symlink(&app, &linked).expect("symlink");
+    let (managed, _) = restic_status_with(
+        &ResticProvider::AppManaged,
+        &ResticLocations {
+            system: Some(linked),
+            app_managed: Some(app.clone()),
+        },
+    );
+    assert!(!managed.offer_switch_to_system);
+
     let old_system = ResticLocations {
         system: Some(stand_in_0_16_4(&dir.path().join("old/restic"))),
         app_managed: Some(app),

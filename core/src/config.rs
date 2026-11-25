@@ -68,7 +68,7 @@ pub struct AppConfig {
     pub config_version: u32,
     #[serde(default)]
     pub restic_provider: ResticProvider,
-    /// Look for new restic releases once a week (read from FR-51 on).
+    /// Look for new restic releases once a week; nothing reads it yet.
     #[serde(default = "default_restic_release_check")]
     pub restic_release_check: bool,
     #[serde(default)]

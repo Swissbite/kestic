@@ -7,7 +7,7 @@
 use crate::dbus_api::{ResticBinaryDto, ResticStatusDto};
 use kestic_core::model::ResticProvider;
 use kestic_core::provider::{
-    CheckedBinary, ResolvedRestic, ResticLocations, ResticProviderError, ResticSurvey,
+    CheckedBinary, ResolvedRestic, ResticLocations, ResticProviderError, ResticSurvey, same_binary,
 };
 use kestic_i18n::codes::{ResticSourceCode, ResticStatusCode};
 
@@ -94,8 +94,15 @@ pub(super) fn restic_status_with(
     let mut dto = resolution_dto(&resolved, source_code(provider));
     dto.system = survey.system.as_ref().map(binary_dto);
     dto.app_managed = survey.app_managed.as_ref().map(binary_dto);
+    // A system restic that is only a link to the app-managed one is no alternative to it.
     dto.offer_switch_to_system = *provider == ResticProvider::AppManaged
-        && survey.system.as_ref().is_some_and(CheckedBinary::usable);
+        && survey.system.as_ref().is_some_and(|system| {
+            system.usable()
+                && locations
+                    .app_managed
+                    .as_deref()
+                    .is_none_or(|app| !same_binary(&system.path, app))
+        });
     (dto, resolved)
 }
 

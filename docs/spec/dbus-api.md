@@ -70,6 +70,7 @@ Strukturierte DTOs werden als UTF-8-JSON übergeben (mit festem Schema in `kesti
 | `RemoveBackup` | `(backup_id: s) -> ()` | Entfernt Backup nur aus `config.toml`; Snapshots bleiben im Ziel | FR-56, P39, AC-M1-19-2 |
 | `SetResticProvider` | `(provider_json: s) -> s` (`ResticStatusDto`-JSON) | Prüft `ResticProvider` (`System` / `Custom`, ab M5 auch `Automatic` und `AppManaged` ohne Pfad), speichert bei Erfolg in `config.toml`; `AppManaged` nur, wenn das Binary vorhanden ist, sonst `InvalidInput` | FR-33, M1-S04, M5-S07 |
 | `StartResticInstall` | `() -> s` (`install_id`) | Lädt das neueste restic-Release für die CPU-Architektur, prüft und ersetzt das App-verwaltete Binary ([architecture.md](architecture.md) «restic-Bereitstellung»); Erstinstallation und Update. Läuft schon eine, Fehler `AlreadyRunning` | FR-33, FR-51, M5-S06, M5-S08 |
+| `RemoveAppManagedRestic` | `() -> ()` | Löscht das App-verwaltete Binary sofort; verweigert mit `InUse`, solange es die aktive restic-Quelle ist oder ein Lauf es benutzt (kein Warten im Aufruf) | FR-33, AC-M5-07-5 |
 | `GetResticInstallStatus` | `(install_id: s) -> s` (`ResticInstallStatusDto`-JSON) | Status, Fortschritt, Ergebnis oder Fehler einer Installation | FR-33, M5-S06 |
 | `CancelResticInstall` | `(install_id: s) -> ()` | Bricht eine Installation vor dem `rename` ab; das alte Binary bleibt | FR-33, M5-S06 |
 | `SetExpertMode` | `(enabled: b) -> ()` | Speichert `expert_mode` in `config.toml` | E16, K2 |
@@ -107,7 +108,6 @@ Strukturierte DTOs werden als UTF-8-JSON übergeben (mit festem Schema in `kesti
 
 Noch nicht im Interface (die Zeile gehört in die Tabelle, sobald die Methode umgesetzt ist; `AC-M4-00-1 (c)` vergleicht die Tabelle mit dem Code):
 
-- `RemoveAppManagedRestic` `() -> ()`: Löscht das App-verwaltete Binary sofort; verweigert mit `InUse`, solange es die aktive restic-Quelle ist oder ein Lauf es benutzt (kein Warten im Aufruf) (FR-33, AC-M5-07-5)
 - `SetResticReleaseCheck` `(enabled: b) -> ()`: Schalter «Wöchentlich nach neuen Versionen suchen» in `config.toml`; nach dem MVP, nicht in M5 (FR-51)
 
 Ergänzte DTO-Felder ab M2/M3: `BackupSummaryDto` trägt zusätzlich `pending_forget` (M2-S07), `nested_warnings` (M2-S10), `exclude_lint_warnings` (M2-S03) sowie `is_paused`, `paused_since_unix`, `paused_until_unix`, `next_scheduled_at_unix`, `pending_primary_code`, `pending_reason_codes`, `pending_retry_at_unix`, `missed_slots_count`, `has_unmet_run_condition`, `unmet_run_conditions` und `battery_percent` (M3); `BackupAvailabilityDto.source_status` nennt den Laufwerks- oder Quellenfehler als Code (`M2-S09`); `DestinationSummaryDto` trägt Wartungszeitpunkte (`next_prune_at_unix`, `next_check_at_unix`, `last_prune_at_unix`, `last_check_at_unix`, `last_maintenance_run`, `maintenance_running`, `pending_forget_count`, `stale_lock_count`, `maintenance_pending_reason`, `maintenance_retry_at_unix`); `OverallStatusDto` trägt Pause-Metadaten (`paused_since_unix`, `paused_until_unix`, `next_scheduled_backup_name`, `next_scheduled_at_unix`).
