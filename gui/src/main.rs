@@ -10,6 +10,7 @@ mod models;
 mod overall_text;
 mod qt_bridge;
 mod restic_install_view;
+mod restic_section_view;
 mod retention_texts;
 mod run_texts;
 #[cfg(feature = "test-harness")]

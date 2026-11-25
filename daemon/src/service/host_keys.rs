@@ -13,7 +13,7 @@ use kestic_core::known_hosts::{HostKeyCheck, ScannedHostKey, forget, known_hosts
 use kestic_core::model::{Destination, DestinationKind, RunId};
 use kestic_core::sftp::{KnownHostsPaths, ssh_host};
 use kestic_core::sync::LockUnpoisoned;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
 
@@ -82,10 +82,90 @@ pub(crate) fn trust_host_key_unlocked(
     }
 }
 
-/// After `removed` left the configuration: when no destination in `remaining` uses its SFTP
-/// server (host and port) any more, removes the server's lines from Kestic's `known_hosts`.
+/// SFTP destinations being added or moved to another server right now: their server's lines in
+/// Kestic's `known_hosts` were checked and must stay until the destination is saved or given up.
+#[derive(Default)]
+pub(crate) struct SftpSetups {
+    next: u64,
+    running: HashMap<u64, Destination>,
+}
+
+impl SftpSetups {
+    /// Registers `dest` while it is set up; `None` for a destination that is no SFTP one.
+    fn begin(&mut self, dest: &Destination) -> Option<u64> {
+        if !matches!(dest.kind, DestinationKind::Sftp { .. }) {
+            return None;
+        }
+        self.next += 1;
+        self.running.insert(self.next, dest.clone());
+        Some(self.next)
+    }
+
+    /// Ends the setup that [`SftpSetups::begin`] returned `token` for.
+    fn end(&mut self, token: Option<u64>) {
+        if let Some(token) = token {
+            self.running.remove(&token);
+        }
+    }
+}
+
+/// Keeps a destination registered in [`SftpSetups`] until dropped. Dropping it locks the daemon
+/// state, so a function creates it before any other guard of that lock it holds at the same time
+/// (locals are dropped in reverse order).
+pub(super) struct SftpSetupGuard<'a> {
+    shared: &'a Arc<Mutex<DaemonCore>>,
+    token: Option<u64>,
+}
+
+impl<'a> SftpSetupGuard<'a> {
+    /// Registers `dest` in `core`, the locked state of `shared`.
+    pub(super) fn begin(
+        shared: &'a Arc<Mutex<DaemonCore>>,
+        core: &mut DaemonCore,
+        dest: &Destination,
+    ) -> Self {
+        Self {
+            shared,
+            token: core.sftp_setups.begin(dest),
+        }
+    }
+}
+
+impl Drop for SftpSetupGuard<'_> {
+    fn drop(&mut self) {
+        if self.token.is_some() {
+            self.shared.lock_unpoisoned().sftp_setups.end(self.token);
+        }
+    }
+}
+
+/// The destinations that may need a line of Kestic's `known_hosts`: the saved ones and those
+/// being set up.
+fn host_key_users(core: &DaemonCore) -> Vec<Destination> {
+    core.config
+        .destinations
+        .iter()
+        .chain(core.sftp_setups.running.values())
+        .cloned()
+        .collect()
+}
+
+/// Host, port and user of an SFTP destination.
+fn sftp_login(dest: &Destination) -> Option<(&str, u16, &str)> {
+    match &dest.kind {
+        DestinationKind::Sftp {
+            host, port, user, ..
+        } => Some((host.as_str(), *port, user.as_str())),
+        _ => None,
+    }
+}
+
+/// After `removed` left the configuration: when no destination uses its SFTP server (host and
+/// port) any more, removes the server's lines from Kestic's `known_hosts`. Asking ssh how it
+/// resolves the servers may take a while, so it runs without the daemon state; the decision and
+/// the removal then hold it, so a destination saved or set up meanwhile keeps its line.
 /// `~/.ssh/known_hosts` is never written.
-pub(super) fn forget_unused_host(removed: &Destination, remaining: &[Destination]) {
+pub(super) fn forget_unused_host(shared: &Arc<Mutex<DaemonCore>>, removed: &Destination) {
     let DestinationKind::Sftp {
         host, port, user, ..
     } = &removed.kind
@@ -93,20 +173,24 @@ pub(super) fn forget_unused_host(removed: &Destination, remaining: &[Destination
         return;
     };
     let server = ssh_host(host).to_ascii_lowercase();
+    let same_server = |d: &Destination| {
+        sftp_login(d)
+            .is_some_and(|(h, p, _)| p == *port && ssh_host(h).to_ascii_lowercase() == server)
+    };
+    let users = host_key_users(&shared.lock_unpoisoned());
     let name = known_hosts_name(host, *port, user);
-    // Another destination on the same host and port, or one ssh resolves to the same
-    // `known_hosts` name (an alias of the server), still needs the line.
-    let still_used = remaining.iter().any(|d| match &d.kind {
-        DestinationKind::Sftp {
-            host: h,
-            port: p,
-            user: u,
-            ..
-        } => {
-            (*p == *port && ssh_host(h).to_ascii_lowercase() == server)
-                || known_hosts_name(h, *p, u) == name
-        }
-        _ => false,
+    // The `known_hosts` name of every other server: an alias ssh resolves to the same name
+    // still needs the line.
+    let names: HashMap<(&str, u16, &str), String> = users
+        .iter()
+        .filter(|d| !same_server(d))
+        .filter_map(|d| sftp_login(d).map(|(h, p, u)| ((h, p, u), known_hosts_name(h, p, u))))
+        .collect();
+    let core = shared.lock_unpoisoned();
+    // A server saved or set up since the names were asked counts as the same one.
+    let still_used = host_key_users(&core).iter().any(|d| {
+        same_server(d)
+            || sftp_login(d).is_some_and(|login| names.get(&login).is_none_or(|n| *n == name))
     });
     if still_used {
         return;

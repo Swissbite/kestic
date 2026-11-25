@@ -10,6 +10,7 @@ use super::destinations::{destination_error_result, secret_error_result, test_fa
 use super::error::{
     KesticServiceErr, map_destination_err, map_provider_err, map_secret_err, parse_setup_mode,
 };
+use super::host_keys::SftpSetupGuard;
 use super::state::{DaemonCore, ResticDeps};
 use crate::dbus_api::{
     BackendSecrets, ConnectionTestResultDto, DaemonStateDto, DestinationUpdateResultDto,
@@ -356,8 +357,8 @@ pub(crate) fn update_destination_unlocked(
         .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
     let setup_mode = parse_setup_mode(mode)?;
 
-    let (saved, stored_id, deps, changed) = {
-        let guard = shared.lock_unpoisoned();
+    let (saved, stored_id, deps, changed, _setup) = {
+        let mut guard = shared.lock_unpoisoned();
         let saved = guard
             .config
             .destination(&updated.id)
@@ -376,7 +377,10 @@ pub(crate) fn update_destination_unlocked(
             super::destinations::refuse_missing_program(&updated.kind, &guard)?;
         }
         let stored_id = guard.history.repository_id(&saved.id).ok().flatten();
-        (saved, stored_id, guard.restic_deps(), changed)
+        // A new server's host key checked below stays in Kestic's `known_hosts` until the
+        // change is saved, even when another destination on that server is removed meanwhile.
+        let setup = changed.then(|| SftpSetupGuard::begin(shared, &mut guard, &updated));
+        (saved, stored_id, guard.restic_deps(), changed, setup)
     };
 
     let accepted = if setup_mode == DestinationSetupMode::InitNew {
@@ -416,16 +420,11 @@ pub(crate) fn update_destination_unlocked(
         }
     };
 
-    let remaining = {
-        let mut guard = shared.lock_unpoisoned();
-        save_update(&mut guard, &saved, updated, accepted)?;
-        guard.config.destinations.clone()
-    };
+    save_update(&mut shared.lock_unpoisoned(), &saved, updated, accepted)?;
     // An SFTP destination moved to another server leaves the old server's lines in Kestic's
-    // `known_hosts` only while another destination uses it; asking ssh how it resolves the
-    // server may take a while, so the daemon state is not held meanwhile.
+    // `known_hosts` only while another destination uses it.
     if changed {
-        super::host_keys::forget_unused_host(&saved, &remaining);
+        super::host_keys::forget_unused_host(shared, &saved);
     }
     let guard = shared.lock_unpoisoned();
     Ok(reply(&guard, DestinationUpdateOutcome::Saved))

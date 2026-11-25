@@ -301,13 +301,66 @@ fn parse_entries(text: &str) -> Vec<KnownEntry> {
             if revoked {
                 fields.next()?;
             }
-            Some(KnownEntry {
+            let key_type = fields.next()?;
+            let key = fields.next()?;
+            // ssh ignores a line whose key it cannot read, so it is no key of the host.
+            is_key_blob(key_type, key).then(|| KnownEntry {
                 revoked,
-                key_type: fields.next()?.to_string(),
-                key: fields.next()?.to_string(),
+                key_type: key_type.to_string(),
+                key: key.to_string(),
             })
         })
         .collect()
+}
+
+/// Whether `key` is a public key of `key_type` as ssh writes it: base64 of length-prefixed
+/// fields that fill it exactly, at least the type and one more, the first naming the type.
+fn is_key_blob(key_type: &str, key: &str) -> bool {
+    let Some(blob) = decode_base64(key) else {
+        return false;
+    };
+    let mut rest = blob.as_slice();
+    let mut fields: Vec<&[u8]> = Vec::new();
+    while let Some((len, tail)) = rest.split_first_chunk::<4>() {
+        let Ok(len) = usize::try_from(u32::from_be_bytes(*len)) else {
+            return false;
+        };
+        if tail.len() < len {
+            return false;
+        }
+        let (field, tail) = tail.split_at(len);
+        fields.push(field);
+        rest = tail;
+    }
+    rest.is_empty() && fields.len() >= 2 && fields[0] == key_type.as_bytes()
+}
+
+/// Standard base64 with padding; `None` for anything else.
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    let body = text.trim_end_matches('=');
+    if !text.len().is_multiple_of(4) || text.len() - body.len() > 2 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let (mut acc, mut bits) = (0_u32, 0_u32);
+    for c in body.bytes() {
+        let value = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        acc = (acc << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(u8::try_from(acc >> bits).ok()?);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
 
 /// The keys of `types` that `target` shows (`ssh-keyscan`), in the order of [`SCAN_TYPES`], and
@@ -719,17 +772,61 @@ mod tests {
 
     #[test]
     fn entries_of_ssh_keygen_find_output_are_parsed() {
-        let out = "# Host [h]:2222 found: line 1\n\
-                   [h]:2222 ssh-ed25519 AAAA1\n\
-                   |1|abc=|def= ecdsa-sha2-nistp256 AAAA2 comment\n\
-                   @cert-authority * ssh-rsa AAAA3\n\
-                   @revoked [h]:2222 ssh-rsa AAAA4\n";
-        let entries = parse_entries(out);
+        let out = format!(
+            "# Host [h]:2222 found: line 1\n\
+             [h]:2222 ssh-ed25519 {KEY_A}\n\
+             |1|abc=|def= ecdsa-sha2-nistp256 {KEY_ECDSA} comment\n\
+             @cert-authority * ssh-ed25519 {KEY_A}\n\
+             @revoked [h]:2222 ssh-ed25519 {KEY_B}\n"
+        );
+        let entries = parse_entries(&out);
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].key_type, "ssh-ed25519");
-        assert_eq!(entries[1].key, "AAAA2");
+        assert_eq!(entries[1].key, KEY_ECDSA);
         assert!(entries[2].revoked);
-        assert_eq!(entries[2].key, "AAAA4");
+        assert_eq!(entries[2].key, KEY_B);
+    }
+
+    /// M5-S01 (AC-M5-01-7): a line whose key ssh cannot read (cut off, no base64, the blob of
+    /// another type, nothing after the type) is no entry, as for ssh.
+    #[test]
+    fn m5_01_lines_with_an_unreadable_key_are_no_entries() {
+        let cut = &KEY_A[..KEY_A.len() - 8];
+        let type_only = "AAAAC3NzaC1lZDI1NTE5";
+        for (case, line) in [
+            ("cut off", format!("h ssh-ed25519 {cut}")),
+            ("no base64", "h ssh-ed25519 garbage!".to_string()),
+            ("other type", format!("h ssh-rsa {KEY_A}")),
+            ("type only", format!("h ssh-ed25519 {type_only}")),
+            ("revoked, cut off", format!("@revoked h ssh-ed25519 {cut}")),
+        ] {
+            assert!(parse_entries(&line).is_empty(), "{case}: {line}");
+        }
+    }
+
+    /// M5-S01 (AC-M5-01-7): a line for the host whose key ssh cannot read does not count as a
+    /// changed key; the key the server shows is trusted.
+    #[test]
+    fn m5_01_an_unreadable_key_line_is_no_changed_key() {
+        let cut = &KEY_A[..KEY_A.len() - 8];
+        for line in [
+            format!("h.example ssh-ed25519 {cut}\n"),
+            "h.example ssh-ed25519 garbage!\n".to_string(),
+        ] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let paths = temp_paths(dir.path());
+            fs::write(&paths.user, &line).expect("write user known_hosts");
+            assert_eq!(
+                trust(&paths, &scanned("h.example", KEY_B)).expect("trust"),
+                HostKeyCheck::Known,
+                "{line}"
+            );
+            assert_eq!(
+                fs::read_to_string(&paths.kestic).expect("read"),
+                format!("h.example ssh-ed25519 {KEY_B}\n"),
+                "the shown key is written"
+            );
+        }
     }
 
     #[test]
@@ -769,6 +866,7 @@ mod tests {
 
     const KEY_A: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIDs3azM0A+L/eWx8w8fjCWEg9C28yO26W7PfAf94XvHq";
     const KEY_B: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIKJIQrwuBBjZZ5pj4R9SRKB6ie3rmpih689TdvvKAeGQ";
+    const KEY_ECDSA: &str = "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBHhEg4IZO4e7gCyzonrFu4UUPaxndtB0O5MABz3p9IwkTKD/kEBm7NH52lzDAh36YJlhaUXUPigG6NGlr619FKQ=";
 
     fn temp_paths(dir: &Path) -> KnownHostsPaths {
         fs::create_dir_all(dir.join("kestic")).expect("mkdir");

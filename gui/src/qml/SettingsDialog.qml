@@ -19,16 +19,17 @@ Kirigami.ApplicationWindow {
 
     required property var appBackend
 
-    property string pendingProviderKind: "system"
+    property string pendingProviderKind: "automatic"
     property string pendingCustomPath: ""
 
-    // The restic source as the user chose it (the provider code is no text).
-    function providerLabel(kind) {
-        switch (kind) {
-        case "automatic": return i18n("Automatic");
-        case "system": return i18n("System restic (from PATH)");
-        case "app_managed": return i18n("Managed by Kestic");
-        default: return i18n("Custom program path");
+    // Applies the choice of the source dialog and closes it when the daemon accepted it or the
+    // download of the restic managed by Kestic started.
+    function applyResticSourceChoice() {
+        if (settingsWindow.pendingProviderKind === "custom" && settingsWindow.pendingCustomPath.trim().length === 0) {
+            return;
+        }
+        if (appBackend.applyResticSource(settingsWindow.pendingProviderKind, settingsWindow.pendingCustomPath)) {
+            resticSourceDialog.close();
         }
     }
 
@@ -144,29 +145,90 @@ Kirigami.ApplicationWindow {
                 objectName: "applyResticSourceAction"
                 icon.name: "dialog-ok-apply"
                 text: i18n("Apply")
-                enabled: settingsWindow.pendingProviderKind === "system" || settingsWindow.pendingCustomPath.trim().length > 0
-                onTriggered: {
-                    if (appBackend.setResticProvider(settingsWindow.pendingProviderKind, settingsWindow.pendingCustomPath)) {
-                        resticSourceDialog.close();
-                    }
-                }
+                enabled: settingsWindow.pendingProviderKind !== "custom" || settingsWindow.pendingCustomPath.trim().length > 0
+                onTriggered: settingsWindow.applyResticSourceChoice()
             }
         ]
 
         ColumnLayout {
+            id: resticSourceOptions
+
+            // Hints and the path field start where the text of the options starts.
+            readonly property real optionTextIndent: resticSourceAutomaticRadio.leftPadding + resticSourceAutomaticRadio.contentItem.leftPadding
+
             spacing: Kirigami.Units.mediumSpacing
             implicitWidth: Kirigami.Units.gridUnit * 24
 
-            Controls.RadioButton {
-                text: i18n("System restic (from PATH)")
-                checked: settingsWindow.pendingProviderKind === "system"
-                Accessible.name: text
-                onToggled: if (checked) settingsWindow.pendingProviderKind = "system"
+            Controls.ButtonGroup {
+                id: resticSourceGroup
             }
 
             Controls.RadioButton {
-                text: i18n("Custom program path")
+                id: resticSourceAutomaticRadio
+                objectName: "resticSourceAutomaticRadio"
+                text: Texts.label("restic_automatic")
+                checked: settingsWindow.pendingProviderKind === "automatic"
+                Controls.ButtonGroup.group: resticSourceGroup
+                Accessible.name: text
+                Accessible.description: automaticHint.text
+                onToggled: if (checked) settingsWindow.pendingProviderKind = "automatic"
+            }
+
+            Controls.Label {
+                id: automaticHint
+                text: i18n("The system restic from 0.18.0 on, otherwise the restic managed by Kestic.")
+                opacity: 0.75
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.leftMargin: resticSourceOptions.optionTextIndent
+            }
+
+            Controls.RadioButton {
+                objectName: "resticSourceSystemRadio"
+                text: Texts.label("restic_system")
+                checked: settingsWindow.pendingProviderKind === "system"
+                Controls.ButtonGroup.group: resticSourceGroup
+                Accessible.name: text
+                Accessible.description: systemHint.text
+                onToggled: if (checked) settingsWindow.pendingProviderKind = "system"
+            }
+
+            Controls.Label {
+                id: systemHint
+                text: i18n("The restic installed on the system (from PATH).")
+                opacity: 0.75
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.leftMargin: resticSourceOptions.optionTextIndent
+            }
+
+            Controls.RadioButton {
+                objectName: "resticSourceAppManagedRadio"
+                text: Texts.label("restic_app_managed")
+                checked: settingsWindow.pendingProviderKind === "app_managed"
+                Controls.ButtonGroup.group: resticSourceGroup
+                Accessible.name: text
+                Accessible.description: appManagedHint.text
+                onToggled: if (checked) settingsWindow.pendingProviderKind = "app_managed"
+            }
+
+            Controls.Label {
+                id: appManagedHint
+                objectName: "resticSourceAppManagedHint"
+                text: appBackend.restic_app_managed_installed
+                    ? i18n("The official restic release that Kestic downloaded and checked.")
+                    : i18n("Not installed yet: Apply downloads and checks the official restic release first.")
+                opacity: 0.75
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.leftMargin: resticSourceOptions.optionTextIndent
+            }
+
+            Controls.RadioButton {
+                objectName: "resticSourceCustomRadio"
+                text: Texts.label("restic_custom")
                 checked: settingsWindow.pendingProviderKind === "custom"
+                Controls.ButtonGroup.group: resticSourceGroup
                 Accessible.name: text
                 onToggled: if (checked) settingsWindow.pendingProviderKind = "custom"
             }
@@ -177,21 +239,17 @@ Kirigami.ApplicationWindow {
                 enabled: settingsWindow.pendingProviderKind === "custom"
                 text: settingsWindow.pendingCustomPath
                 onTextChanged: settingsWindow.pendingCustomPath = text
-                onAccepted: {
-                    if (settingsWindow.pendingProviderKind === "system" || settingsWindow.pendingCustomPath.trim().length > 0) {
-                        if (appBackend.setResticProvider(settingsWindow.pendingProviderKind, settingsWindow.pendingCustomPath)) {
-                            resticSourceDialog.close();
-                        }
-                    }
-                }
+                onAccepted: settingsWindow.applyResticSourceChoice()
                 placeholderText: "/usr/local/bin/restic"
                 Accessible.name: i18n("Custom restic program path")
                 Layout.fillWidth: true
+                Layout.leftMargin: resticSourceOptions.optionTextIndent
             }
 
             Controls.Label {
                 visible: appBackend.last_action_error !== ""
                 text: appBackend.last_action_error
+                textFormat: Text.PlainText
                 color: Kirigami.Theme.negativeTextColor
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -328,21 +386,163 @@ Kirigami.ApplicationWindow {
 
             Controls.Label {
                 objectName: "resticSourceLabel"
-                Kirigami.FormData.label: i18n("restic source:")
-                text: appBackend.restic_valid
-                    ? Texts.labelArgs("two_parts", [settingsWindow.providerLabel(appBackend.restic_provider_kind),
-                        Texts.labelArgs("two_parts", [
-                            appBackend.restic_outdated ? i18n("%1 (outdated)", appBackend.restic_version) : appBackend.restic_version,
-                            appBackend.restic_binary_path])])
-                    : appBackend.restic_message
+                Kirigami.FormData.label: Texts.label("source_label")
+                text: appBackend.restic_source_text
+                textFormat: Text.PlainText
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 26
             }
 
             Controls.Label {
-                text: i18n("Kestic needs restic 0.18.0 or newer.")
+                objectName: "resticVersionLabel"
+                Kirigami.FormData.label: i18n("Version:")
+                visible: appBackend.restic_version_text !== ""
+                text: appBackend.restic_version_text
+                textFormat: Text.PlainText
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+            }
+
+            // A path of the file system: plain text, broken anywhere so a long one stays inside.
+            Controls.Label {
+                objectName: "resticProgramLabel"
+                Kirigami.FormData.label: i18n("Program:")
+                visible: appBackend.restic_program_text !== ""
+                text: appBackend.restic_program_text
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+            }
+
+            Controls.Label {
+                objectName: "resticAvailableLabel"
+                Kirigami.FormData.label: i18n("Available:")
+                visible: appBackend.restic_available_text !== ""
+                text: appBackend.restic_available_text
+                textFormat: Text.PlainText
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+            }
+
+            // Why restic cannot be used, with the raw reason under «Details».
+            ColumnLayout {
+                id: resticProblemPanel
+                spacing: Kirigami.Units.smallSpacing
+                visible: appBackend.restic_problem_text !== ""
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+
+                property bool detailsExpanded: false
+
+                // The reason names the path the user entered: plain text, never markup.
+                RowLayout {
+                    id: resticProblemRow
+                    spacing: Kirigami.Units.smallSpacing
+                    Layout.fillWidth: true
+
+                    Kirigami.Icon {
+                        id: resticProblemIcon
+                        source: "dialog-error"
+                        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                        implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                        Layout.alignment: Qt.AlignTop
+                    }
+
+                    Controls.Label {
+                        objectName: "resticProblemMessage"
+                        text: appBackend.restic_problem_text
+                        textFormat: Text.PlainText
+                        color: Kirigami.Theme.negativeTextColor
+                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                        Layout.fillWidth: true
+                    }
+
+                    Controls.Button {
+                        objectName: "resticProblemDetailsButton"
+                        visible: appBackend.restic_problem_detail !== ""
+                        flat: true
+                        icon.name: resticProblemPanel.detailsExpanded ? "go-up" : "go-down"
+                        text: resticProblemPanel.detailsExpanded ? Texts.label("hide_details") : Texts.label("details")
+                        Accessible.name: text
+                        Layout.alignment: Qt.AlignTop
+                        onClicked: resticProblemPanel.detailsExpanded = !resticProblemPanel.detailsExpanded
+                    }
+                }
+
+                // Raw text of the operating system: shown as plain text, never as markup.
+                Controls.Label {
+                    objectName: "resticProblemDetail"
+                    visible: resticProblemPanel.detailsExpanded && appBackend.restic_problem_detail !== ""
+                    text: appBackend.restic_problem_detail
+                    textFormat: Text.PlainText
+                    font: Kirigami.Theme.fixedWidthFont
+                    wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                    Layout.fillWidth: true
+                    Layout.leftMargin: resticProblemIcon.width + resticProblemRow.spacing
+                }
+            }
+
+            Controls.Label {
+                objectName: "resticMinimumLabel"
+                visible: appBackend.restic_explain_minimum
+                text: i18n("Kestic needs restic 0.18.0 or newer: older versions do not report errors and check results in a form Kestic can read.")
                 opacity: 0.75
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+            }
+
+            Kirigami.InlineMessage {
+                objectName: "resticSwitchMessage"
+                type: Kirigami.MessageType.Information
+                visible: appBackend.restic_offer_switch
+                text: i18n("System restic is now recent enough – switch?")
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+                actions: [
+                    Kirigami.Action {
+                        objectName: "switchResticToAutomaticAction"
+                        text: Texts.label("restic_automatic")
+                        enabled: appBackend.daemon_reachable
+                        onTriggered: {
+                            appBackend.switchResticToAutomatic();
+                            changeResticSourceButton.forceActiveFocus();
+                        }
+                    }
+                ]
+            }
+
+            Kirigami.InlineMessage {
+                objectName: "resticRemoveMessage"
+                type: Kirigami.MessageType.Information
+                visible: appBackend.restic_offer_remove
+                text: i18n("The restic managed by Kestic is no longer used.")
+                Layout.fillWidth: true
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+                actions: [
+                    Kirigami.Action {
+                        objectName: "removeAppManagedResticAction"
+                        icon.name: "edit-delete"
+                        text: i18n("Delete")
+                        enabled: appBackend.restic_offer_enabled
+                        onTriggered: {
+                            appBackend.removeAppManagedRestic();
+                            changeResticSourceButton.forceActiveFocus();
+                        }
+                    }
+                ]
+            }
+
+            Controls.Label {
+                objectName: "resticActionError"
+                visible: appBackend.restic_action_error !== ""
+                text: appBackend.restic_action_error
+                textFormat: Text.PlainText
+                color: Kirigami.Theme.negativeTextColor
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 26
@@ -357,8 +557,10 @@ Kirigami.ApplicationWindow {
                     text: i18n("Change restic Source…")
                     Accessible.name: i18n("Change restic Source")
                     onClicked: {
-                        settingsWindow.pendingProviderKind = appBackend.restic_provider_kind;
-                        settingsWindow.pendingCustomPath = appBackend.restic_binary_path;
+                        settingsWindow.pendingProviderKind = appBackend.restic_provider_kind !== ""
+                            ? appBackend.restic_provider_kind : "automatic";
+                        settingsWindow.pendingCustomPath = appBackend.restic_provider_kind === "custom"
+                            ? appBackend.restic_binary_path : "";
                         resticSourceDialog.open();
                     }
                 }

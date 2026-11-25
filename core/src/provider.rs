@@ -18,8 +18,8 @@ use thiserror::Error;
 pub const MIN_RESTIC_VERSION: Version = Version::new(0, 18, 0);
 
 /// The newest restic version the tests run against (`RESTIC_LATEST_VERSION` in
-/// `scripts/bootstrap.sh`). An older version still works fully; settings only mark it as
-/// outdated.
+/// `scripts/bootstrap.sh`). An older version still works fully; settings only name this
+/// version as the recommended one.
 pub const TESTED_RESTIC_VERSION: Version = Version::new(0, 20, 0);
 
 /// Whether `version` is older than the newest tested version.
@@ -70,6 +70,7 @@ impl ResticProviderError {
 
 #[derive(Deserialize)]
 struct ResticVersionJson {
+    message_type: Option<String>,
     version: String,
 }
 
@@ -303,6 +304,12 @@ fn probe_version_json(binary: &Path) -> Result<Version, String> {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed: ResticVersionJson =
         serde_json::from_str(stdout.trim()).map_err(|err| format!("invalid JSON: {err}"))?;
+    if parsed.message_type.as_deref() != Some("version") {
+        return Err(format!(
+            "no version message: message_type {:?}",
+            parsed.message_type
+        ));
+    }
     parse_semver_token(&parsed.version)
 }
 

@@ -336,12 +336,15 @@ pub fn classify_exit_for(
     let sftp_failure = exit_code == 1 && transport == Transport::Sftp;
     // ssh's lines name a failure only when the SFTP session never started: after a login the
     // server's banner, shown with the same prefix, can say anything.
-    // restic's own message, not its error lines, which carry file names.
+    // restic's own message, not its error lines, which carry file names: without the JSON
+    // message it is restic's last line, after any line a file name with line breaks may have
+    // added. ssh's lines are passed on by another thread of restic and may still follow it.
     let session_not_started = exit_error_msg.map_or_else(
         || {
             raw_stderr
                 .lines()
-                .any(|l| l.starts_with("Fatal: ") && l.contains(SFTP_SESSION_NOT_STARTED))
+                .rfind(|l| !l.trim().is_empty() && !l.starts_with("subprocess ssh: "))
+                .is_some_and(|l| l.starts_with("Fatal: ") && l.contains(SFTP_SESSION_NOT_STARTED))
         },
         |msg| msg.contains(SFTP_SESSION_NOT_STARTED),
     );
