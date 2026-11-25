@@ -13,6 +13,7 @@ use super::backup_runner::{
 use super::error::{
     KesticServiceErr, localized_source_check_reason, manual_run_blocked_reason, service_error_kind,
 };
+use super::restore_runner::start_pending_restores;
 use super::run_errors::run_blocks_schedule;
 use super::state::{DaemonCore, ResticDeps, probe_before_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
@@ -84,6 +85,12 @@ fn claim_maintenance_destination(
         .destination(d_id)
         .cloned()
         .ok_or_else(|| KesticServiceErr::NotFound(destination_id.to_string()))?;
+    if guard.has_active_restore(d_id) {
+        return Err(KesticServiceErr::AlreadyRunning(format!(
+            "a restore is running on destination '{}'",
+            dest.name
+        )));
+    }
     let claim_guard = guard.claim_destination(shared, &dest, is_scheduled)?;
     Ok(MaintenanceClaimContext {
         dest,
@@ -125,6 +132,16 @@ fn launch_maintenance_run_record(
     d_id: &DestinationId,
     dest: &Destination,
 ) -> Result<LaunchedMaintenanceRun, KesticServiceErr> {
+    // A restore that started while maintenance was being prepared keeps the destination: the
+    // exclusive lock of `prune` would fail against its lock.
+    if guard.has_active_restore(d_id) {
+        guard.release_claim(d_id, claim_guard);
+        guard.push_state();
+        return Err(KesticServiceErr::AlreadyRunning(format!(
+            "a restore is running on destination '{}'",
+            dest.name
+        )));
+    }
     let pending_backups: Vec<Backup> = guard
         .config
         .backups
@@ -150,7 +167,7 @@ fn launch_maintenance_run_record(
             display_name: &dest.name,
             dest_id: d_id,
         },
-        claim_guard,
+        Some(claim_guard),
     );
     Ok(LaunchedMaintenanceRun {
         pending_backups,
@@ -579,6 +596,7 @@ fn finalize_maintenance_run_state(input: MaintenanceFinalizeInput<'_>) {
         emit_status_changed(conn, &state_dto);
     }
 
+    start_pending_restores(shared_worker, &ctx.dest.id);
     drain_queued_backups_async(shared_worker);
 }
 
@@ -683,7 +701,7 @@ fn collect_start_all_entries(shared: &Arc<Mutex<DaemonCore>>) -> Vec<StartAllEnt
                     .runs_cache
                     .iter()
                     .find(|r| {
-                        r.backup_id() == Some(&s.backup.id)
+                        r.is_backup_run_of(&s.backup.id)
                             && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
                     })
                     .is_some_and(run_blocks_schedule);

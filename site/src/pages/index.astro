@@ -9,7 +9,7 @@ import ThemeToggle from "../components/ThemeToggle.astro";
 import WindowFrame from "../components/WindowFrame.astro";
 import appIcon from "../../../packaging/icons/hicolor/scalable/apps/kestic.svg";
 import { heroShot, galleryShots } from "../screenshots.ts";
-import { buildShaShort, commitUrl, repoUrl } from "../build-info.ts";
+import { buildShaShort, commitUrl, release, repoUrl } from "../build-info.ts";
 
 const features = [
   {
@@ -45,8 +45,24 @@ const features = [
     text: "Hold all schedules for an hour, until tomorrow, or until you resume. Manual backups still run.",
   },
   {
+    term: "Restore",
+    text: "Browse a snapshot folder by folder, or search all snapshots of a backup for a file name, and mark what you want back. It goes into a new folder by default, so nothing is overwritten. At the original location, a home folder saved under another user name maps to yours.",
+  },
+  {
+    term: "Restore preview",
+    text: "Restoring to the original location or into a folder with files in it needs a preview first. It lists which files would be new, overwritten, not overwritten, or unchanged. Existing files stay as they are unless you pick an overwrite mode.",
+  },
+  {
+    term: "Compare",
+    text: "See what changed between two snapshots: new, changed, and removed files, filtered by kind.",
+  },
+  {
+    term: "Unassigned snapshots",
+    text: "Snapshots made with plain restic show up as unassigned, those of backups no longer known as orphaned. You can browse and restore them; Kestic only reads them.",
+  },
+  {
     term: "Native on Plasma",
-    text: "A tray entry, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store.",
+    text: "A tray entry with Restore Files…, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store.",
   },
 ] as const;
 
@@ -78,8 +94,8 @@ const milestones = [
   {
     id: "M4",
     name: "Restore",
-    scope: "Browse and compare snapshots, restore files without overwriting existing ones.",
-    done: false,
+    scope: "Browse and compare snapshots, restore files, by default without overwriting existing ones.",
+    done: true,
   },
   {
     id: "M5",
@@ -106,9 +122,15 @@ const buildFromSource = `${repoUrl}#building--testing`;
 >
   <div class="preview-bar mono">
     <div class="wrap">
-      Development preview · main @ <a href={commitUrl}>{buildShaShort}</a><span class="no-release">
-        · no release yet</span
-      >
+      Development preview · main @ <a href={commitUrl}>{buildShaShort}</a>{
+        release ? (
+          <span class="release-note">
+            · latest release <a href={release.url}>{release.tag}</a>
+          </span>
+        ) : (
+          <span class="release-note">· no release yet</span>
+        )
+      }
     </div>
   </div>
 
@@ -144,17 +166,23 @@ const buildFromSource = `${repoUrl}#building--testing`;
           run.
         </p>
         <div class="actions">
-          <a class="button primary" href="#try">Try it</a>
+          {
+            release ? (
+              <>
+                <a class="button primary" href={release.debUrl}>Download {release.tag}</a>
+                <a class="button" href="#try">Try it</a>
+              </>
+            ) : (
+              <a class="button primary" href="#try">Try it</a>
+            )
+          }
           <a class="button" href={repoUrl}>View on GitHub</a>
         </div>
         <dl class="mono facts">
           <dt>Today</dt>
-          <dd>Back up to a local folder or drive, or a REST server.</dd>
+          <dd>Back up to a local folder or drive, or a REST server, and restore from your snapshots.</dd>
           <dt>Not yet</dt>
-          <dd>
-            Restoring in the app (restic restores your snapshots meanwhile), SFTP, S3 and other
-            backends, guided first-run setup.
-          </dd>
+          <dd>SFTP, S3 and other backends, guided first-run setup.</dd>
           <dt>Runs on</dt>
           <dd>
             Plasma 6.6 with KDE Frameworks 6.24 or newer: TUXEDO OS 24.04 (tested), Kubuntu 26.04,
@@ -183,8 +211,8 @@ const buildFromSource = `${repoUrl}#building--testing`;
         <div class="section-head">
           <h2>What it does</h2>
           <p>
-            All of this works today. Still missing: restoring in the app, backends beyond local and
-            REST, and a guided first-run setup.
+            All of this works today. Still missing: backends beyond local and REST, and a guided
+            first-run setup.
           </p>
         </div>
         <ol class="features">
@@ -250,8 +278,8 @@ const buildFromSource = `${repoUrl}#building--testing`;
         <div class="section-head">
           <h2>Plain restic underneath</h2>
           <p>
-            Every backup and maintenance run is an ordinary restic command. Kestic shows it next to
-            each backup and in the history of every run.
+            Every backup, maintenance run, and restore is an ordinary restic command. Kestic shows
+            it in the history of every run, and next to each backup.
           </p>
         </div>
         <pre class="command mono" aria-label="Example restic command run by Kestic"><code><span class="comment"># What "Back Up Now" runs, as "Show Command" shows it (wrapped here)</span>
@@ -270,7 +298,7 @@ RESTIC_PASSWORD_COMMAND='kestic secret get k3n8x2qd' \
           <li>
             <span class="mono accent">App</span>
             <strong>Kestic</strong>
-            <span>Kirigami window for setup, status, and history.</span>
+            <span>Kirigami window for setup, status, history, and restore.</span>
           </li>
           <li>
             <span class="mono accent">D-Bus</span>
@@ -291,21 +319,44 @@ RESTIC_PASSWORD_COMMAND='kestic secret get k3n8x2qd' \
       </section>
 
       <section id="try" class="section wrap">
-        <div class="section-head">
-          <h2>Try it</h2>
-          <p>
-            There is no release yet, so you build the package yourself. The bootstrap script installs
-            the Rust toolchain, the Qt and KDE development packages, and cargo-deb.
-          </p>
-        </div>
-        <pre class="command mono" aria-label="Commands to build and install Kestic"><code>git clone {repoUrl}.git && cd kestic
+        {
+          release ? (
+            <>
+              <div class="section-head">
+                <h2>Try it</h2>
+                <p>
+                  Download the package of <a href={release.url}>{release.tag}</a> for amd64 and
+                  install it with apt. Kestic needs restic 0.18.0 or newer.
+                </p>
+              </div>
+              <pre class="command mono" aria-label="Commands to download and install Kestic"><code>wget {release.debUrl}
+sudo apt install ./{release.debFile}</code></pre>
+              <p class="note">
+                Then open Kestic from the application menu. From now on its background service
+                starts with your Plasma session. To build the package yourself instead, see{" "}
+                <a href={buildFromSource}>Building and testing</a>.
+              </p>
+            </>
+          ) : (
+            <>
+              <div class="section-head">
+                <h2>Try it</h2>
+                <p>
+                  There is no release yet, so you build the package yourself. The bootstrap script
+                  installs the Rust toolchain, the Qt and KDE development packages, and cargo-deb.
+                </p>
+              </div>
+              <pre class="command mono" aria-label="Commands to build and install Kestic"><code>git clone {repoUrl}.git && cd kestic
 ./scripts/bootstrap.sh
 just deb
 sudo apt install ./target/debian/kestic_*.deb</code></pre>
-        <p class="note">
-          Then open Kestic from the application menu. From now on its background service starts
-          with your Plasma session. <a href={buildFromSource}>Building and testing in detail</a>
-        </p>
+              <p class="note">
+                Then open Kestic from the application menu. From now on its background service
+                starts with your Plasma session. <a href={buildFromSource}>Building and testing in detail</a>
+              </p>
+            </>
+          )
+        }
       </section>
     </main>
   </Lightbox>
@@ -612,7 +663,7 @@ sudo apt install ./target/debian/kestic_*.deb</code></pre>
   }
   @media (max-width: 480px) {
     .site-header nav a:last-child,
-    .preview-bar .no-release {
+    .preview-bar .release-note {
       display: none;
     }
     .facts {

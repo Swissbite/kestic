@@ -7,7 +7,12 @@
 # the successful Verify run on main. Every push to main (site/** included)
 # runs Verify first, so no own push trigger is needed, and the last deploy
 # always carries the newest main with its own screenshots. Pull requests touching the
-# site only build it, with the screenshots of the latest successful main run.
+# site only build it, with the screenshots of the latest successful main run; screenshots
+# the pull request adds to the manifest are not there yet, so they are only warnings.
+#
+# The page names the newest final release (vX.Y.Z, no pre-release suffix) and offers its
+# .deb. The Release workflow starts this workflow on main after publishing a release, so
+# the page follows without a push.
 
 name: Pages
 
@@ -98,12 +103,42 @@ jobs:
         working-directory: site
         run: pnpm install --frozen-lockfile
 
+      # Every 0.x release is a pre-release on GitHub, so releases/latest does not find it:
+      # take the highest tag without suffix instead (pre-releases of integration branches
+      # are v0.<n>.0-m<n>.<k>). Drafts are left out.
+      - name: Find the newest release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json tagName,isDraft --jq '.[] | select(.isDraft | not) | .tagName' |
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          deb_url=""
+          if [ -n "$tag" ]; then
+            deb_url="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '[.assets[] | select(.name | endswith("_amd64.deb")) | .url] | first // empty')"
+            if [ -z "$deb_url" ]; then
+              echo "::error::Release $tag has no _amd64.deb asset"
+              exit 1
+            fi
+            echo "Newest release: $tag ($deb_url)"
+          else
+            echo "No release yet"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "deb-url=$deb_url" >> "$GITHUB_OUTPUT"
+
       - name: Check and build site
         working-directory: site
         env:
           KESTIC_SCREENSHOTS_DIR: ${{ runner.temp }}/smoke-artifacts
+          KESTIC_SCREENSHOTS_ALLOW_MISSING: ${{ github.event_name == 'pull_request' }}
           # The commit the screenshots were rendered from, shown on the page.
           KESTIC_BUILD_SHA: ${{ steps.source.outputs.sha }}
+          KESTIC_RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          KESTIC_RELEASE_DEB_URL: ${{ steps.release.outputs.deb-url }}
         run: pnpm build
 
       - name: Upload Pages artifact

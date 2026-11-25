@@ -303,6 +303,7 @@ EditorPage {
             Layout.fillWidth: true
         }
 
+        // Not a list: form rows, one exclude rule each with its own controls.
         Repeater {
             model: page.folders
 
@@ -386,6 +387,10 @@ EditorPage {
             Controls.SpinBox {
                 id: sizeLimitNumberField
                 objectName: "sizeLimitNumberField"
+                // The digits are centred in the whole box: Fusion makes the box lower than the
+                // padding of the style allows and would cut them.
+                topPadding: 0
+                bottomPadding: 0
                 from: 1
                 to: 999999
                 editable: true

@@ -55,6 +55,108 @@ pub mod qobject {
         #[qml_element]
         type RunLogsModel = super::RunLogsModelRust;
 
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        type RestoreBackupsModel = super::RestoreBackupsModelRust;
+
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        type RestoreSnapshotsModel = super::RestoreSnapshotsModelRust;
+
+        /// The further snapshots of the restore area: unassigned, orphaned, not configured here.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        type RestoreGroupsModel = super::RestoreGroupsModelRust;
+
+        /// One folder of a snapshot, fetched page by page, with the selection to restore.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        #[qproperty(QString, state)]
+        #[qproperty(QString, error_text)]
+        #[qproperty(QString, dir)]
+        #[qproperty(bool, dir_exists)]
+        #[qproperty(bool, too_large)]
+        #[qproperty(i32, total)]
+        #[qproperty(i32, matched)]
+        #[qproperty(QString, count_text)]
+        #[qproperty(QString, too_large_text)]
+        #[qproperty(i32, selection_count)]
+        #[qproperty(QString, selection_text)]
+        #[qproperty(QString, top_dir)]
+        #[qproperty(bool, whole_snapshot)]
+        #[qproperty(i32, header_check_state)]
+        type SnapshotBrowseModel = super::SnapshotBrowseModelRust;
+
+        /// The hits of a search in the snapshots of one backup, fetched page by page.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        #[qproperty(QString, state)]
+        #[qproperty(QString, error_text)]
+        #[qproperty(QString, search_text)]
+        #[qproperty(bool, too_large)]
+        #[qproperty(i32, total)]
+        #[qproperty(i32, matched)]
+        #[qproperty(QString, count_text)]
+        #[qproperty(QString, too_large_text)]
+        #[qproperty(QString, no_hits_text)]
+        type SnapshotSearchModel = super::SnapshotSearchModelRust;
+
+        /// The changes from one snapshot to another, fetched page by page.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        #[qproperty(QString, state)]
+        #[qproperty(QString, error_text)]
+        #[qproperty(bool, identical)]
+        #[qproperty(bool, too_large)]
+        #[qproperty(i32, total)]
+        #[qproperty(i32, matched)]
+        #[qproperty(QString, count_text)]
+        #[qproperty(QString, too_large_text)]
+        #[qproperty(QStringList, kind_codes)]
+        #[qproperty(QStringList, kind_texts)]
+        type SnapshotDiffModel = super::SnapshotDiffModelRust;
+
+        /// The dialog «Restore n items»: target, mode, preview list and the run it starts.
+        #[qobject]
+        #[base = QAbstractListModel]
+        #[qml_element]
+        #[qproperty(QString, state)]
+        #[qproperty(QString, error_text)]
+        #[qproperty(QString, title)]
+        #[qproperty(QString, new_folder)]
+        #[qproperty(QString, original_dir)]
+        #[qproperty(bool, original_available)]
+        #[qproperty(QString, mapping_text)]
+        #[qproperty(QString, original_note)]
+        #[qproperty(bool, target_original)]
+        #[qproperty(QString, target_dir)]
+        #[qproperty(i32, overwrite)]
+        #[qproperty(QString, check_text)]
+        #[qproperty(bool, preview_required)]
+        #[qproperty(QString, summary_text)]
+        #[qproperty(QString, consequence_text)]
+        #[qproperty(bool, overwrites)]
+        #[qproperty(QString, notes_text)]
+        #[qproperty(bool, can_restore)]
+        #[qproperty(i32, matched)]
+        #[qproperty(bool, too_large)]
+        #[qproperty(QString, too_large_text)]
+        #[qproperty(QString, count_text)]
+        #[qproperty(QStringList, kind_codes)]
+        #[qproperty(QStringList, kind_texts)]
+        #[qproperty(QString, run_state)]
+        #[qproperty(QString, run_text)]
+        #[qproperty(QString, run_target)]
+        #[qproperty(QString, folder_instead)]
+        #[qproperty(bool, target_refused)]
+        type RestorePreviewModel = super::RestorePreviewModelRust;
+
         /// Texts used in more than one place, by code (`Texts.label("close")`): labels shared
         /// with the tray (`kestic-i18n`) and GUI texts (`ui_texts`). No daemon connection.
         #[qobject]
@@ -169,6 +271,159 @@ pub mod qobject {
             top_left: &QModelIndex,
             bottom_right: &QModelIndex,
         );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_restore_backups(self: Pin<&mut RestoreBackupsModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_restore_backups(self: Pin<&mut RestoreBackupsModel>);
+        #[cxx_name = "index"]
+        #[inherit]
+        fn index_restore_backups(
+            self: &RestoreBackupsModel,
+            row: i32,
+            column: i32,
+            parent: &QModelIndex,
+        ) -> QModelIndex;
+        #[cxx_name = "dataChanged"]
+        #[inherit]
+        fn data_changed_restore_backups(
+            self: Pin<&mut RestoreBackupsModel>,
+            top_left: &QModelIndex,
+            bottom_right: &QModelIndex,
+        );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_restore_groups(self: Pin<&mut RestoreGroupsModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_restore_groups(self: Pin<&mut RestoreGroupsModel>);
+        #[cxx_name = "index"]
+        #[inherit]
+        fn index_restore_groups(
+            self: &RestoreGroupsModel,
+            row: i32,
+            column: i32,
+            parent: &QModelIndex,
+        ) -> QModelIndex;
+        #[cxx_name = "dataChanged"]
+        #[inherit]
+        fn data_changed_restore_groups(
+            self: Pin<&mut RestoreGroupsModel>,
+            top_left: &QModelIndex,
+            bottom_right: &QModelIndex,
+        );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_restore_snapshots(self: Pin<&mut RestoreSnapshotsModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_restore_snapshots(self: Pin<&mut RestoreSnapshotsModel>);
+        #[cxx_name = "index"]
+        #[inherit]
+        fn index_restore_snapshots(
+            self: &RestoreSnapshotsModel,
+            row: i32,
+            column: i32,
+            parent: &QModelIndex,
+        ) -> QModelIndex;
+        #[cxx_name = "dataChanged"]
+        #[inherit]
+        fn data_changed_restore_snapshots(
+            self: Pin<&mut RestoreSnapshotsModel>,
+            top_left: &QModelIndex,
+            bottom_right: &QModelIndex,
+        );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_browse(self: Pin<&mut SnapshotBrowseModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_browse(self: Pin<&mut SnapshotBrowseModel>);
+        #[cxx_name = "beginInsertRows"]
+        #[inherit]
+        fn begin_insert_rows_browse(
+            self: Pin<&mut SnapshotBrowseModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[cxx_name = "endInsertRows"]
+        #[inherit]
+        fn end_insert_rows_browse(self: Pin<&mut SnapshotBrowseModel>);
+        #[cxx_name = "index"]
+        #[inherit]
+        fn index_browse(
+            self: &SnapshotBrowseModel,
+            row: i32,
+            column: i32,
+            parent: &QModelIndex,
+        ) -> QModelIndex;
+        #[cxx_name = "dataChanged"]
+        #[inherit]
+        fn data_changed_browse(
+            self: Pin<&mut SnapshotBrowseModel>,
+            top_left: &QModelIndex,
+            bottom_right: &QModelIndex,
+        );
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_search(self: Pin<&mut SnapshotSearchModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_search(self: Pin<&mut SnapshotSearchModel>);
+        #[cxx_name = "beginInsertRows"]
+        #[inherit]
+        fn begin_insert_rows_search(
+            self: Pin<&mut SnapshotSearchModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[cxx_name = "endInsertRows"]
+        #[inherit]
+        fn end_insert_rows_search(self: Pin<&mut SnapshotSearchModel>);
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_diff(self: Pin<&mut SnapshotDiffModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_diff(self: Pin<&mut SnapshotDiffModel>);
+        #[cxx_name = "beginInsertRows"]
+        #[inherit]
+        fn begin_insert_rows_diff(
+            self: Pin<&mut SnapshotDiffModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[cxx_name = "endInsertRows"]
+        #[inherit]
+        fn end_insert_rows_diff(self: Pin<&mut SnapshotDiffModel>);
+
+        #[cxx_name = "beginResetModel"]
+        #[inherit]
+        fn begin_reset_preview(self: Pin<&mut RestorePreviewModel>);
+        #[cxx_name = "endResetModel"]
+        #[inherit]
+        fn end_reset_preview(self: Pin<&mut RestorePreviewModel>);
+        #[cxx_name = "beginInsertRows"]
+        #[inherit]
+        fn begin_insert_rows_preview(
+            self: Pin<&mut RestorePreviewModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[cxx_name = "endInsertRows"]
+        #[inherit]
+        fn end_insert_rows_preview(self: Pin<&mut RestorePreviewModel>);
     }
 
     extern "RustQt" {
@@ -290,22 +545,320 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setFilter"]
         fn set_filter(self: Pin<&mut RunLogsModel>, level_filter: &QString, query: &QString);
+
+        // RestoreBackupsModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &RestoreBackupsModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &RestoreBackupsModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &RestoreBackupsModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        fn sync(self: Pin<&mut RestoreBackupsModel>);
+        #[qinvokable]
+        #[cxx_name = "rowOf"]
+        fn row_of(self: &RestoreBackupsModel, backup_id: &QString) -> i32;
+        #[qinvokable]
+        #[cxx_name = "idAt"]
+        fn id_at(self: &RestoreBackupsModel, row: i32) -> QString;
+
+        // RestoreGroupsModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &RestoreGroupsModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &RestoreGroupsModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &RestoreGroupsModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        fn sync(self: Pin<&mut RestoreGroupsModel>);
+
+        // RestoreSnapshotsModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &RestoreSnapshotsModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &RestoreSnapshotsModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &RestoreSnapshotsModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        fn sync(self: Pin<&mut RestoreSnapshotsModel>);
+        #[qinvokable]
+        #[cxx_name = "rowOf"]
+        fn row_of(self: &RestoreSnapshotsModel, snapshot_id: &QString) -> i32;
+        #[qinvokable]
+        #[cxx_name = "idAt"]
+        fn id_at(self: &RestoreSnapshotsModel, row: i32) -> QString;
+        #[qinvokable]
+        #[cxx_name = "rowMap"]
+        fn row_map(self: &RestoreSnapshotsModel, snapshot_id: &QString) -> QVariant;
+        /// Lists the snapshot group `group` (`unassigned`, `orphaned`, `described`) of all
+        /// destinations instead of the loaded backup; empty: the backup again.
+        #[qinvokable]
+        #[cxx_name = "setGroup"]
+        fn set_group(self: Pin<&mut RestoreSnapshotsModel>, group: &QString);
+        /// Why destinations of the shown group could not be listed; empty without errors.
+        #[qinvokable]
+        #[cxx_name = "groupError"]
+        fn group_error(self: &RestoreSnapshotsModel) -> QString;
+
+        // SnapshotBrowseModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &SnapshotBrowseModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &SnapshotBrowseModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &SnapshotBrowseModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &SnapshotBrowseModel, parent: &QModelIndex) -> bool;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut SnapshotBrowseModel>, parent: &QModelIndex);
+        #[qinvokable]
+        fn open(
+            self: Pin<&mut SnapshotBrowseModel>,
+            destination_id: &QString,
+            snapshot_id: &QString,
+            dir: &QString,
+        );
+        #[qinvokable]
+        fn poll(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        fn cancel(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut SnapshotBrowseModel>, text: &QString);
+        #[qinvokable]
+        #[cxx_name = "toggleSelected"]
+        fn toggle_selected(self: Pin<&mut SnapshotBrowseModel>, row: i32);
+        #[qinvokable]
+        #[cxx_name = "clearSelection"]
+        fn clear_selection(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        #[cxx_name = "selectedPaths"]
+        fn selected_paths(self: &SnapshotBrowseModel) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "selectAll"]
+        fn select_all(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        #[cxx_name = "toggleAll"]
+        fn toggle_all(self: Pin<&mut SnapshotBrowseModel>);
+        #[qinvokable]
+        #[cxx_name = "restoreSelection"]
+        fn restore_selection(self: &SnapshotBrowseModel) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "sizeSample"]
+        fn size_sample(self: &SnapshotBrowseModel) -> QString;
+        #[qinvokable]
+        #[cxx_name = "topDirSeenFrom"]
+        fn top_dir_seen_from(
+            self: &SnapshotBrowseModel,
+            top: &QString,
+            entry: &QString,
+            entry_is_dir: bool,
+        ) -> QString;
+        #[qinvokable]
+        #[cxx_name = "segmentNames"]
+        fn segment_names(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "segmentPaths"]
+        fn segment_paths(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "rowOfPath"]
+        fn row_of_path(self: Pin<&mut SnapshotBrowseModel>, path: &QString) -> i32;
+
+        // SnapshotSearchModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &SnapshotSearchModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &SnapshotSearchModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &SnapshotSearchModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &SnapshotSearchModel, parent: &QModelIndex) -> bool;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut SnapshotSearchModel>, parent: &QModelIndex);
+        #[qinvokable]
+        fn search(
+            self: Pin<&mut SnapshotSearchModel>,
+            destination_id: &QString,
+            backup_id: &QString,
+            text: &QString,
+        );
+        #[qinvokable]
+        fn poll(self: Pin<&mut SnapshotSearchModel>);
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut SnapshotSearchModel>, text: &QString);
+        #[qinvokable]
+        fn cancel(self: Pin<&mut SnapshotSearchModel>);
+
+        // SnapshotDiffModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &SnapshotDiffModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &SnapshotDiffModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &SnapshotDiffModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &SnapshotDiffModel, parent: &QModelIndex) -> bool;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut SnapshotDiffModel>, parent: &QModelIndex);
+        #[qinvokable]
+        fn compare(
+            self: Pin<&mut SnapshotDiffModel>,
+            destination_id: &QString,
+            from_snapshot_id: &QString,
+            to_snapshot_id: &QString,
+        );
+        #[qinvokable]
+        fn poll(self: Pin<&mut SnapshotDiffModel>);
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut SnapshotDiffModel>, text: &QString);
+        #[qinvokable]
+        #[cxx_name = "setKinds"]
+        fn set_kinds(self: Pin<&mut SnapshotDiffModel>, codes: &QStringList);
+        #[qinvokable]
+        fn cancel(self: Pin<&mut SnapshotDiffModel>);
+
+        // RestorePreviewModel
+        #[qinvokable]
+        #[cxx_override]
+        fn data(self: &RestorePreviewModel, index: &QModelIndex, role: i32) -> QVariant;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "roleNames"]
+        fn role_names(self: &RestorePreviewModel) -> QHash_i32_QByteArray;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: &RestorePreviewModel, _parent: &QModelIndex) -> i32;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &RestorePreviewModel, parent: &QModelIndex) -> bool;
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut RestorePreviewModel>, parent: &QModelIndex);
+        #[qinvokable]
+        fn open(
+            self: Pin<&mut RestorePreviewModel>,
+            destination_id: &QString,
+            snapshot_id: &QString,
+            selection: &QStringList,
+        );
+        #[qinvokable]
+        #[cxx_name = "chooseFolder"]
+        fn choose_folder(self: Pin<&mut RestorePreviewModel>, dir: &QString);
+        #[qinvokable]
+        #[cxx_name = "chooseOriginal"]
+        fn choose_original(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "chooseOverwrite"]
+        fn choose_overwrite(self: Pin<&mut RestorePreviewModel>, index: i32);
+        #[qinvokable]
+        #[cxx_name = "setKinds"]
+        fn set_kinds(self: Pin<&mut RestorePreviewModel>, codes: &QStringList);
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut RestorePreviewModel>, text: &QString);
+        #[qinvokable]
+        fn poll(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        fn cancel(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "startRestore"]
+        fn start_restore(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "pollRun"]
+        fn poll_run(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "cancelRun"]
+        fn cancel_run(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "dismissRun"]
+        fn dismiss_run(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "restoreFolderInstead"]
+        fn restore_folder_instead(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        fn retry(self: Pin<&mut RestorePreviewModel>);
+        #[qinvokable]
+        #[cxx_name = "outcomeTexts"]
+        fn outcome_texts(self: &RestorePreviewModel) -> QStringList;
     }
 }
 
 #[macro_use]
 mod rows;
+#[macro_use]
+mod snapshot_query;
 
 mod backups_model;
 mod destinations_model;
+mod restore_backups_model;
+mod restore_groups_model;
+mod restore_preview_model;
+mod restore_snapshots_model;
 mod run_logs_model;
 mod runs_model;
+mod snapshot_browse_model;
+mod snapshot_diff_model;
+mod snapshot_search_model;
 mod snapshots_model;
 
 pub use backups_model::BackupsModelRust;
 pub use destinations_model::DestinationsModelRust;
+pub use restore_backups_model::RestoreBackupsModelRust;
+pub use restore_groups_model::RestoreGroupsModelRust;
+pub use restore_preview_model::RestorePreviewModelRust;
+pub use restore_snapshots_model::RestoreSnapshotsModelRust;
 pub use run_logs_model::RunLogsModelRust;
 pub use runs_model::RunsModelRust;
+pub use snapshot_browse_model::SnapshotBrowseModelRust;
+pub use snapshot_diff_model::SnapshotDiffModelRust;
+pub use snapshot_search_model::SnapshotSearchModelRust;
 pub use snapshots_model::SnapshotsModelRust;
 
 /// Backing struct of the `Texts` QML singleton.

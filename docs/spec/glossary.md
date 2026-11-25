@@ -14,6 +14,9 @@ Verbindliche Begriffe für UI, Spec und Code. Nicht verwenden: «Profil», «Job
 | Wartung | Maintenance | `Maintenance` | `prune`, `check` |
 | Lauf | Run | `Run` | ein restic-Aufruf bzw. eine Folge (backup → forget) |
 | Snapshot | Snapshot | `Snapshot` | Snapshot |
+| Wiederherstellen | Restore | `RunKind::Restore` | `restore`: Dateien oder Ordner aus einem Snapshot zurückholen; Standardziel ist ein neuer Ordner, Originalort und nicht leerer Ordner nur mit Vorschau (F5) |
+| Vorschau | Preview | `SnapshotQueryKind::RestorePreview` | `restore --dry-run`: zeigt vor dem Wiederherstellen, welche Dateien neu, überschrieben, nicht überschrieben oder unverändert wären; ändert nichts. Beim Standardziel (neuer, leerer Ordner) läuft kein `restore --dry-run`, die Vorschau liefert nur Zielvorschlag und Prüfung |
+| Vergleichen | Compare | `SnapshotQueryKind::Diff` | `diff`: Unterschiede zwischen zwei Snapshots (FR-07) |
 | Wiederherstellungs-Kit | Recovery kit | `RecoveryKit` | zusätzlicher Key (`key add`) |
 | Hintergrunddienst | Background service | `daemon` | – |
 | einrichten | Configure / Set up | – | – (nur für die Einstellungen von Kestic: «Kestic einrichten…», «Tastenkürzel einrichten…»; Backups und Ziele werden **angelegt**: «Erstes Backup anlegen», «Noch keine Ziele angelegt») |
@@ -21,7 +24,7 @@ Verbindliche Begriffe für UI, Spec und Code. Nicht verwenden: «Profil», «Job
 | Verlauf | History | `RunHistory` | – (Lauf-Historie, FR-18) |
 | Aufräumen | Clean up | `Maintenance::Prune` | `prune` |
 | Prüfen | Verify | `Maintenance::Check` | `check` |
-| Nicht zugeordnet | Unassigned | – | Snapshots ohne Kestic-Tag (FR-36) |
+| Nicht zugeordnet | Unassigned | – | Snapshots ohne eindeutigen Kestic-Tag (FR-36) |
 | Wartet | Waiting | Status `ausstehend` | – (UI-Wort für `ausstehend`) |
 | Ausnahme | Exception | `ExcludeRule::Negated` | `!`-Negation in Ausschluss-Regeln |
 | Entfernen | Remove | – | nur aus der Kestic-Konfiguration nehmen; Daten im Ziel bleiben (FR-56) |

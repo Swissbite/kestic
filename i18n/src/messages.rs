@@ -11,8 +11,9 @@
 
 use crate::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
-    SkipReason, SourceStatus, code_enum,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, RestoreNoteCode, RestoreOutcome,
+    RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus,
+    code_enum,
 };
 
 /// Marks `msgid` for extraction (`xgettext --keyword=i18n_noop:1`) without translating it.
@@ -111,6 +112,10 @@ impl ErrorKind {
             Self::Cancelled => i18n_noop("Cancelled by user"),
             Self::SecretStoreLocked => i18n_noop("Password store is locked"),
             Self::ResticUnavailable => i18n_noop("restic is unavailable or too old."),
+            Self::PathNotInSnapshot => {
+                i18n_noop("The chosen folder does not exist in the snapshot")
+            }
+            Self::InvalidTarget => i18n_noop("This folder cannot be used for the restore"),
             Self::Unknown if is_warning => i18n_noop("Backed up with warning"),
             Self::Unknown => {
                 return match exit_code {
@@ -127,12 +132,19 @@ impl ErrorKind {
 }
 
 impl ErrorKind {
-    /// Text of an error without run context: the message of the kind, or for `unknown` the
-    /// raw `detail` (English restic, system or daemon error text) when there is one.
+    /// Text of an error without run context: the message of the kind, for `unknown` the raw
+    /// `detail` (English restic, system or daemon error text) when there is one, and for
+    /// `invalid_target` the folder named in `detail`.
     pub fn text(self, detail: Option<&str>) -> UiText {
         match detail {
             Some(raw) if self == Self::Unknown && !raw.trim().is_empty() => {
                 UiText::Raw(raw.to_string())
+            }
+            Some(path) if self == Self::InvalidTarget && !path.trim().is_empty() => {
+                UiText::Message(Message::with_args(
+                    i18n_noop("Cannot safely restore to %1. Choose 'Into a new folder' instead."),
+                    &[path],
+                ))
             }
             _ => UiText::Message(self.message(None, false)),
         }
@@ -413,6 +425,12 @@ impl ServiceErrorCode {
             Self::DuplicateLocation => {
                 i18n_noop("This location is already used by another destination.")
             }
+            Self::PreviewRequired => {
+                i18n_noop("Check the preview again before restoring; it is missing or outdated.")
+            }
+            Self::RestoreRunning => {
+                i18n_noop("A restore from this destination is running or waiting.")
+            }
             Self::Internal => i18n_noop("Internal error in the background service."),
             Self::DaemonUnreachable => i18n_noop("Background service unavailable."),
         };
@@ -517,19 +535,32 @@ impl Label {
 /// The active run as shown in headline, tray and subtitle.
 #[derive(Debug, Clone, Copy)]
 pub struct ActiveRunInfo<'a> {
-    /// Backup name, or destination name for maintenance.
+    /// Backup name, or destination name for maintenance and for a restore without backup.
     pub name: &'a str,
-    pub is_maintenance: bool,
+    pub kind: RunKindCode,
     /// While `Scanning` there is no percentage (restic is still finding files).
     pub phase: RunProgressPhase,
     pub percent_done: f64,
 }
 
 /// «‹Backup›: backing up · n%», while restic still finds files «‹Backup›: backing up · looking
-/// through files», or «Maintaining ‹Destination›» (glossary: Wartung, Dateien durchsehen).
+/// through files», «Maintaining ‹Destination›» or «‹Backup›: restoring · n%» (glossary:
+/// Wartung, Dateien durchsehen, Wiederherstellen).
 pub fn active_run_message(run: &ActiveRunInfo<'_>) -> Message {
-    if run.is_maintenance {
-        return maintaining_message(run.name);
+    match run.kind {
+        RunKindCode::Maintenance => return maintaining_message(run.name),
+        RunKindCode::Restore => {
+            return match run.phase {
+                RunProgressPhase::Scanning => {
+                    Message::with_args(i18n_noop("%1: restoring"), &[run.name])
+                }
+                RunProgressPhase::ScanFinished => Message::with_args(
+                    i18n_noop("%1: restoring · %2%"),
+                    &[run.name, &percent(run.percent_done)],
+                ),
+            };
+        }
+        RunKindCode::Backup | RunKindCode::Meta => {}
     }
     match run.phase {
         RunProgressPhase::Scanning => Message::with_args(
@@ -631,7 +662,7 @@ pub fn overall_subtitle(
     if counts.failed == 0 && counts.overdue == 0 {
         return None;
     }
-    if active.is_maintenance {
+    if active.kind != RunKindCode::Backup {
         return Some(active_run_message(active));
     }
     Some(match active.phase {
@@ -643,4 +674,65 @@ pub fn overall_subtitle(
             &[active.name, &percent(active.percent_done)],
         ),
     })
+}
+
+impl RestoreOutcome {
+    /// What happens to a file in a restore, as the preview lists and filters it.
+    pub fn message(self) -> Message {
+        Message::new(match self {
+            Self::New => i18n_noop("New"),
+            Self::Overwritten => i18n_noop("Overwritten"),
+            Self::Kept => i18n_noop("Not overwritten"),
+            Self::Identical => i18n_noop("Unchanged"),
+        })
+    }
+}
+
+impl RestoreNoteCode {
+    /// A note of the restore preview.
+    pub fn message(self) -> Message {
+        Message::new(match self {
+            Self::OwnershipNotRestored => {
+                i18n_noop("Owners and groups are not restored; the files will belong to you.")
+            }
+            Self::HardLinksAffected => i18n_noop(
+                "Some files that are overwritten have further hard links; restic replaces them, and the other names keep the old content.",
+            ),
+            Self::NothingSelectedMatches => {
+                i18n_noop("Nothing in the snapshot matches the selection.")
+            }
+            Self::SymlinkInTarget => i18n_noop(
+                "The target contains symbolic links where the snapshot has files or folders; restic may replace such a link, but it never writes through it.",
+            ),
+            Self::FolderMetadataReset => i18n_noop(
+                "Existing folders at the target get the permissions and modification time from the snapshot. This also happens when no file is overwritten.",
+            ),
+        })
+    }
+}
+
+impl RestoreTargetCode {
+    /// Result of the target check; `None` for a target that can be used as it is. `detail` is
+    /// the checked path.
+    pub fn message(self, detail: &str) -> Option<Message> {
+        let msgid = match self {
+            Self::Ok => return None,
+            Self::ExistsNotEmpty => i18n_noop("%1 already contains files"),
+            Self::NotADirectory => i18n_noop("%1 is not a folder"),
+            Self::NotWritable => i18n_noop("%1 is not writable"),
+            Self::MissingMappedDir => i18n_noop("%1 does not exist; choose a folder"),
+            Self::InsideRepository => {
+                i18n_noop("Restoring to %1 would write into the repository of a destination")
+            }
+            Self::KesticData => i18n_noop(
+                "Restoring to %1 would overwrite Kestic's own settings and history. Deselect Kestic's folder or restore into a new folder.",
+            ),
+        };
+        Some(Message::with_args(msgid, &[detail]))
+    }
+}
+
+/// A restore that wrote nothing because its selection matched nothing (run status `Warnung`).
+pub fn nothing_restored_message() -> Message {
+    Message::new(i18n_noop("Nothing restored"))
 }

@@ -7,9 +7,10 @@ use super::qobject;
 use super::rows::{id_at, row_map, row_of};
 use crate::overall_text::maintenance_status_line;
 use crate::state_cache::{
-    daemon_now, format_datetime_display, format_destination_status, format_maintenance_entry,
-    format_slot_timestamp, i18n, json_or, shared_state,
+    format_destination_status, format_maintenance_entry, format_slot_timestamp, i18n, json_or,
+    shared_state,
 };
+use crate::time_texts::{daemon_now, format_datetime_display};
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
@@ -47,25 +48,32 @@ pub struct DestinationsModelRust {
     rows: Vec<DestinationRow>,
 }
 
+/// Where the repository of a destination lies, as the user entered it: the folder or the URL.
+pub(crate) fn location_text(kind: &DestinationKind) -> String {
+    match kind {
+        DestinationKind::Local { path } => path.to_string_lossy().into_owned(),
+        DestinationKind::Rest { url, .. } => url.clone(),
+    }
+}
+
 fn build_destination_row(
     d: &DestinationSummaryDto,
     backups: &[BackupSummaryDto],
     now: OffsetDateTime,
 ) -> DestinationRow {
-    let (kind_name, kind_label, location, username) = match &d.destination.kind {
-        DestinationKind::Local { path } => (
+    let (kind_name, kind_label, username) = match &d.destination.kind {
+        DestinationKind::Local { .. } => (
             "local".to_string(),
             i18n("Local Folder").to_string(),
-            path.to_string_lossy().into_owned(),
             String::new(),
         ),
-        DestinationKind::Rest { url, username } => (
+        DestinationKind::Rest { username, .. } => (
             "rest".to_string(),
             GuiText::RestServer.text(),
-            url.clone(),
             username.clone().unwrap_or_default(),
         ),
     };
+    let location = location_text(&d.destination.kind);
     let (status_text, status_icon) = format_destination_status(d, now);
     let pending_forget_count = backups
         .iter()

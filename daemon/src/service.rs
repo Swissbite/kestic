@@ -12,9 +12,13 @@ mod destinations;
 mod error;
 mod maintenance;
 mod previews;
+mod restore_preview;
+mod restore_runner;
 mod run_errors;
 mod runtime;
 mod scheduler;
+mod snapshot_queries;
+mod snapshots;
 mod state;
 mod state_cache;
 mod state_summary;
@@ -28,15 +32,18 @@ pub(crate) use availability::{
 pub use backup_runner::{start_backup_async, start_backup_override_async};
 pub(crate) use backups::get_run_detail_unlocked;
 pub(crate) use destinations::{
-    add_destination_unlocked, list_backup_snapshots_unlocked, test_destination_connection_unlocked,
+    add_destination_unlocked, test_destination_connection_unlocked,
     update_destination_password_unlocked, update_destination_unlocked,
 };
 pub use error::KesticServiceErr;
 pub use maintenance::{run_destination_maintenance_async, start_all_backups_async};
 pub(crate) use previews::preview_destination_maintenance_unlocked;
 pub use previews::{start_backup_dry_run_async, start_retention_preview_async};
+pub use restore_runner::start_restore_async;
 pub use runtime::run_daemon;
 pub use scheduler::tick_scheduler_async;
+pub use snapshot_queries::start_snapshot_query_async;
+pub(crate) use snapshots::{list_backup_snapshots_unlocked, list_destination_snapshots_unlocked};
 pub use state::{
     AVAILABILITY_CACHE_TTL_SECS, DaemonCore, DaemonOutcome, DaemonRunConfig, SimulatedOverallStatus,
 };

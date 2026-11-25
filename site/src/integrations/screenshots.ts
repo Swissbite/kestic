@@ -4,6 +4,11 @@
 // Copies the screenshots listed in `src/screenshots.ts` from the GUI smoke
 // artifacts into `public/screenshots/` before dev or build. Only listed PNGs
 // are read; nothing from the artifact directory is executed.
+//
+// A screenshot that is missing or does not match the manifest fails the build.
+// With KESTIC_SCREENSHOTS_ALLOW_MISSING=true (builds of pull requests, which
+// take the screenshots of main while the manifest may already name new ones)
+// the problems are only warnings and the matching screenshots are copied.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
@@ -55,26 +60,34 @@ export default function screenshots(): AstroIntegration {
               : resolve(siteRoot, fromEnv)
             : resolve(siteRoot, "..", "target", "smoke-artifacts");
 
-        const problems = allShots
-          .map((shot) => problemsWith(shot, sourceDir))
+        const checked = allShots.map((shot) => ({ shot, problem: problemsWith(shot, sourceDir) }));
+        const problems = checked
+          .map(({ problem }) => problem)
           .filter((problem): problem is string => problem !== null);
         if (problems.length > 0) {
-          throw new Error(
-            [
-              `Screenshots in ${sourceDir} do not match src/screenshots.ts:`,
-              ...problems.map((problem) => `  - ${problem}`),
-              "Run `just smoke` / `just verify`, or point KESTIC_SCREENSHOTS_DIR at the smoke-artifacts directory.",
-            ].join("\n"),
-          );
+          const report = [
+            `Screenshots in ${sourceDir} do not match src/screenshots.ts:`,
+            ...problems.map((problem) => `  - ${problem}`),
+          ];
+          if (process.env["KESTIC_SCREENSHOTS_ALLOW_MISSING"] !== "true") {
+            throw new Error(
+              [
+                ...report,
+                "Run `just smoke` / `just verify`, or point KESTIC_SCREENSHOTS_DIR at the smoke-artifacts directory.",
+              ].join("\n"),
+            );
+          }
+          logger.warn([...report, "KESTIC_SCREENSHOTS_ALLOW_MISSING=true: building without them."].join("\n"));
         }
 
         const targetDir = join(fileURLToPath(config.publicDir), "screenshots");
         rmSync(targetDir, { recursive: true, force: true });
         mkdirSync(targetDir, { recursive: true });
-        for (const shot of allShots) {
+        const usable = checked.filter(({ problem }) => problem === null).map(({ shot }) => shot);
+        for (const shot of usable) {
           copyFileSync(join(sourceDir, shot.file), join(targetDir, shot.file));
         }
-        logger.info(`copied ${allShots.length} screenshots from ${sourceDir}`);
+        logger.info(`copied ${usable.length} of ${allShots.length} screenshots from ${sourceDir}`);
       },
     },
   };

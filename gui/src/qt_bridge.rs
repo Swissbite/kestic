@@ -20,6 +20,10 @@ pub mod ffi {
         #[namespace = "kestic::bridge"]
         fn i18np_subs(singular: &str, plural: &str, n: i64, args: &[&str]) -> String;
 
+        /// `n` with the digit grouping of the locale, as KI18n shows counts.
+        #[namespace = "kestic::bridge"]
+        fn format_count(n: i64) -> String;
+
         #[namespace = "kestic::bridge"]
         fn local_offset_seconds(unix_secs: i64) -> i32;
 

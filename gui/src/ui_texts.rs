@@ -50,6 +50,7 @@ gui_texts! {
     RemoveFromKesticEllipsis = "remove_from_kestic_ellipsis" => i18n_noop("Remove from Kestic…"),
     RenameEllipsis = "rename_ellipsis" => i18n_noop("Rename…"),
     Resume = "resume" => i18n_noop("Resume"),
+    Refresh = "refresh" => i18n_noop("Refresh"),
     Retry = "retry" => i18n_noop("Retry"),
     Save = "save" => i18n_noop("Save"),
     Settings = "settings" => i18n_noop("Settings"),
@@ -65,6 +66,7 @@ gui_texts! {
     // Areas and sections
     AboutKestic = "about_kestic" => i18n_noop("About Kestic"),
     Overview = "overview" => i18n_noop("Overview"),
+    Restore = "restore" => i18n_noop("Restore"),
     Backups = "backups" => i18n_noop("Backups"),
     Destinations = "destinations" => i18n_noop("Destinations"),
     History = "history" => i18n_noop("History"),
@@ -87,6 +89,8 @@ gui_texts! {
     SourceFolderPath = "source_folder_path" => i18n_noop("Source folder path"),
     ExcludeTrash = "exclude_trash" => i18n_noop("Exclude trash folders"),
     ExcludeRulesSyntax = "exclude_rules_syntax" => i18n_noop("Exclude rules in restic syntax"),
+    Filter = "filter" => i18n_noop("Filter"),
+    SearchInBackupSnapshots = "search_in_backup_snapshots" => i18n_noop("Search in the snapshots of this backup"),
 
     // Values
     None = "none" => i18n_noop("None"),
@@ -96,6 +100,7 @@ gui_texts! {
     RestServer = "rest_server" => i18n_noop("REST Server"),
     ManualOnly = "manual_only" => i18n_noop("Manual only"),
     DeletedBackup = "deleted_backup" => i18n_noop("Deleted backup"),
+    Interrupted = "interrupted" => i18n_noop("Interrupted"),
     Daily = "daily" => i18n_noop("Daily"),
     PresetStandard = "preset_standard" => i18n_noop("Standard (7 daily, 4 weekly, 12 monthly)"),
     PresetEconomical = "preset_economical" => i18n_noop("Economical (7 daily, 4 weekly)"),
@@ -115,6 +120,10 @@ gui_texts! {
     Sat = "sat" => i18n_noop("Sat"),
     Sun = "sun" => i18n_noop("Sun"),
     TwoParts = "two_parts" => i18n_noop("%1 · %2"),
+    EarlierSnapshotsOn = "earlier_snapshots_on" => i18n_noop("Earlier snapshots on '%1'"),
+    LoadingSnapshots = "loading_snapshots" => i18n_noop("Loading snapshots…"),
+    NoEntriesMatchFilter = "no_entries_match_filter" => i18n_noop("No entries match the filter."),
+    NoSnapshotsYet = "no_snapshots_yet" => i18n_noop("No snapshots yet. The first backup is still pending."),
 
     // Messages
     SaveChangesQuestion = "save_changes_question" => i18n_noop("Save changes?"),

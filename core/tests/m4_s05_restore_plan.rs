@@ -1,0 +1,509 @@
+// SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#![forbid(unsafe_code)]
+
+//! M4-S05 restore without restic: the arguments of `restic restore`, the plan of a selection,
+//! glob escaping, the suggested new folder and the restore run in the history.
+
+use kestic_core::clock::FakeClock;
+use kestic_core::history::RunHistory;
+use kestic_core::model::{BackupId, DestinationId, RestoreStats, Run, RunKind, RunStatus};
+use kestic_core::restore::{
+    EntryKind, ProbeCollector, RestoreCall, escape_glob, folder_instead_of_unmatchable,
+    normalize_selection, plan_restore, probe_path, restore_args, selection_is_whole_folder,
+    selection_with_folders_instead, top_folder_seen_from,
+};
+use kestic_core::restore_target::{
+    FolderWords, SuggestionInput, new_folder_name, original_location, suggested_new_folder,
+};
+use kestic_core::snapshot::ResticSnapshot;
+use kestic_i18n::codes::RestoreOverwrite;
+use std::path::Path;
+use time::macros::datetime;
+
+const ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn sel(paths: &[&str]) -> Vec<String> {
+    normalize_selection(&paths.iter().map(|p| (*p).to_string()).collect::<Vec<_>>())
+        .expect("valid selection")
+}
+
+/// AC-M4-05-6: every restore call (a) names `--overwrite` explicitly, (b) never relies on
+/// restic's implicit default `always`, and (c) carries neither `--sparse` nor `--verify`.
+#[test]
+fn ac_m4_05_6_every_restore_call_names_the_overwrite_mode() {
+    let plan = plan_restore(ID, &sel(&["/home/u/a.txt"]), EntryKind::Other).expect("plan");
+    for mode in RestoreOverwrite::ALL {
+        for call in [RestoreCall::DryRun, RestoreCall::Run] {
+            let args = restore_args(&plan, Path::new("/t"), mode, call);
+            let pos = args.iter().position(|a| a == "--overwrite");
+            assert!(pos.is_some(), "(a) {mode:?} {call:?}: {args:?}");
+            let value = pos.and_then(|i| args.get(i + 1)).map(String::as_str);
+            let expected = match mode {
+                RestoreOverwrite::Never => "never",
+                RestoreOverwrite::IfNewer => "if-newer",
+                RestoreOverwrite::IfChanged => "if-changed",
+                RestoreOverwrite::Always => "always",
+            };
+            assert_eq!(value, Some(expected), "(b) {mode:?} {call:?}: {args:?}");
+            assert!(
+                !args
+                    .iter()
+                    .any(|a| a.starts_with("--sparse") || a.starts_with("--verify")),
+                "(c) {mode:?} {call:?}: {args:?}"
+            );
+        }
+    }
+    assert_eq!(
+        RestoreOverwrite::default(),
+        RestoreOverwrite::Never,
+        "(b) default"
+    );
+}
+
+/// The restore run the daemon creates for `snapshot` on `destination`: the backup reference is
+/// the configured backup the snapshot's `kestic:` tag names, the run is then created with it.
+fn restore_run_for(
+    clock: &FakeClock,
+    destination: &DestinationId,
+    snapshot: &ResticSnapshot,
+    configured: &[&str],
+) -> Run {
+    let backup = snapshot
+        .assigned_backup(configured)
+        .map(|id| BackupId::parse(id).expect("backup ID from the tag"));
+    Run::new_restore(clock, destination.clone(), backup).expect("run")
+}
+
+fn tagged_snapshot(tags: &[&str]) -> ResticSnapshot {
+    serde_json::from_value(serde_json::json!({
+        "id": ID,
+        "time": "2026-11-15T12:00:00Z",
+        "tags": tags,
+        "paths": ["/home/u"],
+        "hostname": "laptop",
+    }))
+    .expect("snapshot JSON")
+}
+
+/// AC-M4-05-12: a restore of a snapshot with `kestic:b1` (a) is a run of the kind `Restore`,
+/// (b) belongs to the destination, (c) carries the backup `b1` and (d) appears in the history
+/// of `b1` and of the destination. The run is derived from the snapshot's tags with the core
+/// functions the daemon uses (`ResticSnapshot::assigned_backup`, `Run::new_restore`).
+#[test]
+fn ac_m4_05_12_restore_run_belongs_to_destination_and_backup() {
+    let clock = FakeClock::new(datetime!(2026-11-15 12:00 UTC));
+    let dest = DestinationId::generate().expect("destination id");
+    let b1 = BackupId::generate().expect("backup id");
+    let configured = [b1.as_str()];
+    let tag = format!("kestic:{b1}");
+    let snapshot = tagged_snapshot(&["daily", &tag]);
+
+    let mut run = restore_run_for(&clock, &dest, &snapshot, &configured);
+    assert!(
+        matches!(run.kind, RunKind::Restore { .. }),
+        "AC-M4-05-12 (a): kind Restore, got {:?}",
+        run.kind
+    );
+    assert_eq!(
+        run.destination_id, dest,
+        "AC-M4-05-12 (b): the run belongs to the destination"
+    );
+    assert_eq!(
+        run.backup_id(),
+        Some(&b1),
+        "AC-M4-05-12 (c): the backup reference is b1 from the snapshot's tag"
+    );
+    let untagged = restore_run_for(&clock, &dest, &tagged_snapshot(&["daily"]), &configured);
+    assert!(
+        matches!(untagged.kind, RunKind::Restore { backup_id: None }),
+        "AC-M4-05-12 (c): a snapshot without Kestic tag gives a restore without backup \
+         reference, got {:?}",
+        untagged.kind
+    );
+    assert_eq!(
+        untagged.destination_id, dest,
+        "AC-M4-05-12 (b): a restore without backup reference still belongs to the destination"
+    );
+
+    run.status = RunStatus::Ok;
+    run.restore = Some(RestoreStats {
+        files_new: 2,
+        ..RestoreStats::default()
+    });
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut history = RunHistory::open(dir.path()).expect("history");
+    history.upsert_run(&run, &[]).expect("store run");
+    let runs = history.list_runs().expect("runs");
+    let of_backup: Vec<&Run> = runs.iter().filter(|r| r.backup_id() == Some(&b1)).collect();
+    let of_dest: Vec<&Run> = runs.iter().filter(|r| r.destination_id == dest).collect();
+    assert_eq!(of_backup.len(), 1, "(d) history of b1");
+    assert_eq!(of_dest.len(), 1, "(d) history of the destination");
+    assert_eq!(of_backup[0].restore, run.restore, "(d) stats stored");
+}
+
+fn input<'a>(home: &'a Path, backup: Option<&'a str>) -> SuggestionInput<'a> {
+    SuggestionInput {
+        home,
+        words: FolderWords {
+            restored: "Wiederhergestellt",
+            not_assigned: "nicht zugeordnet",
+        },
+        backup_name: backup,
+        destination_name: "NAS",
+        snapshot_short_id: "e3d4e5f6",
+        snapshot_time: datetime!(2026-11-15 12:00 +01:00),
+    }
+}
+
+/// AC-M4-05-13 (unit part): the suggested new folder (a) is
+/// `~/Wiederhergestellt/Persönlicher Ordner 2026-11-15 12-00`, (b) gets « (2)» when that folder
+/// exists, (c) is `<destination> nicht zugeordnet <short id>` without a backup, and (d) has no
+/// `/`, control characters or leading dot.
+#[test]
+fn ac_m4_05_13_suggested_new_folder_name() {
+    let home = tempfile::tempdir().expect("home");
+    let first = suggested_new_folder(&input(home.path(), Some("Persönlicher Ordner")));
+    assert_eq!(
+        first,
+        home.path()
+            .join("Wiederhergestellt/Persönlicher Ordner 2026-11-15 12-00"),
+        "(a)"
+    );
+    std::fs::create_dir_all(&first).expect("existing folder");
+    assert_eq!(
+        suggested_new_folder(&input(home.path(), Some("Persönlicher Ordner"))),
+        home.path()
+            .join("Wiederhergestellt/Persönlicher Ordner 2026-11-15 12-00 (2)"),
+        "(b)"
+    );
+    assert_eq!(
+        suggested_new_folder(&input(home.path(), None)),
+        home.path()
+            .join("Wiederhergestellt/NAS nicht zugeordnet e3d4e5f6"),
+        "(c)"
+    );
+    assert_eq!(
+        new_folder_name("..a/b\u{7}c", datetime!(2026-11-15 12:00 UTC)),
+        "abc 2026-11-15 12-00",
+        "(d)"
+    );
+}
+
+fn root_snapshot() -> ResticSnapshot {
+    let raw = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/m4/snapshot_of_root.json"),
+    )
+    .expect("fixture");
+    serde_json::from_str(&raw).expect("snapshot json")
+}
+
+/// AC-M4-05-17 (unit part): (b) every restore runs as `<snapshot>:<common folder of the
+/// selection>` (a single chosen folder is its own), and (c) `--target` is the new or chosen
+/// folder, at the original location the folder of the selection, never `/`, also for a snapshot
+/// of `/` (JSON fixture).
+#[test]
+fn ac_m4_05_17_restore_runs_from_the_common_folder_never_into_root() {
+    let several = sel(&["/home/u/docs/a.txt", "/home/u/docs/sub/b.txt", "/home/u/x"]);
+    assert_eq!(probe_path(&several), "/home/u", "(b) probe of several");
+    let plan = plan_restore(ID, &several, EntryKind::Dir).expect("plan");
+    assert_eq!(plan.folder, "/home/u", "(b) common folder");
+    let folder = plan_restore(ID, &sel(&["/home/u/docs"]), EntryKind::Dir).expect("plan");
+    assert_eq!(folder.folder, "/home/u/docs", "(b) a folder is its own");
+    assert!(folder.includes.is_empty(), "(b) no include for a folder");
+    let args = restore_args(
+        &folder,
+        Path::new("/new"),
+        RestoreOverwrite::Never,
+        RestoreCall::Run,
+    );
+    assert!(args.contains(&format!("{ID}:/home/u/docs")), "(b) {args:?}");
+    let target = args
+        .iter()
+        .position(|a| a == "--target")
+        .and_then(|i| args.get(i + 1));
+    assert_eq!(target.map(String::as_str), Some("/new"), "(c) new folder");
+
+    let snapshot = root_snapshot();
+    let mut probe = ProbeCollector::new("/");
+    probe.push_line(
+        &serde_json::to_string(&serde_json::json!({
+            "message_type": "snapshot", "paths": ["/"], "time": snapshot.time, "id": snapshot.id,
+        }))
+        .expect("json"),
+    );
+    assert_eq!(probe.finish().1, EntryKind::Dir, "(c) `/` always exists");
+    let across = sel(&["/etc/x", "/home/u/y"]);
+    let plan = plan_restore(ID, &across, EntryKind::Dir).expect("plan");
+    assert_eq!(plan.folder, "/", "(c) common folder of top-level entries");
+    let original = original_location(&plan.folder, &snapshot, None);
+    assert!(original.needs_user_choice, "(c) `/` needs a chosen folder");
+    assert_eq!(original.mapped_dir, None, "(c) `/` is never a target");
+    let inside = original_location("/etc", &snapshot, None);
+    assert_eq!(
+        inside.mapped_dir.as_deref(),
+        Some("/etc"),
+        "(c) original folder"
+    );
+}
+
+/// AC-M4-05-18 (unit part): `escape_glob` escapes `\`, `*`, `?` and `[` with `\` and leaves
+/// everything else (spaces, umlauts, line breaks, leading `-`, `]`) alone.
+#[test]
+fn ac_m4_05_18_escape_glob_escapes_glob_characters_only() {
+    assert_eq!(escape_glob("[x].txt"), "\\[x].txt");
+    assert_eq!(escape_glob("*star?.txt"), "\\*star\\?.txt");
+    assert_eq!(escape_glob("back\\slash"), "back\\\\slash");
+    assert_eq!(escape_glob("-dash"), "-dash");
+    assert_eq!(escape_glob("new\nline ü.txt"), "new\nline ü.txt");
+    let plan = plan_restore(ID, &sel(&["/d/[x].txt"]), EntryKind::Other).expect("plan");
+    assert_eq!(plan.folder, "/d");
+    assert_eq!(plan.includes, vec!["--include=/\\[x].txt".to_string()]);
+}
+
+/// AC-M4-05-22 (b, c): «outdated» means older than the newest version the tests run against,
+/// `RESTIC_LATEST_VERSION` in `scripts/bootstrap.sh`; 0.18.0 is outdated, that version not.
+#[test]
+fn ac_m4_05_22_outdated_is_older_than_the_tested_version() {
+    let bootstrap = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/bootstrap.sh"),
+    )
+    .expect("bootstrap.sh");
+    let latest = bootstrap
+        .lines()
+        .find_map(|l| l.strip_prefix("RESTIC_LATEST_VERSION="))
+        .map(|v| v.trim_matches('"').to_string())
+        .expect("RESTIC_LATEST_VERSION");
+    assert_eq!(
+        kestic_core::provider::TESTED_RESTIC_VERSION.to_string(),
+        latest,
+        "the tested version follows bootstrap.sh"
+    );
+    assert!(kestic_core::provider::is_outdated_text("0.18.0"), "(b)");
+    assert!(!kestic_core::provider::is_outdated_text(&latest), "(c)");
+}
+
+/// A restore waiting for maintenance lives only in the daemon: at the next start it is no
+/// longer `pending`.
+#[test]
+fn m4_s05_waiting_restore_ends_at_daemon_start() {
+    let clock = FakeClock::new(datetime!(2026-11-15 12:00 UTC));
+    let mut run =
+        Run::new_restore(&clock, DestinationId::generate().expect("id"), None).expect("run");
+    run.status = RunStatus::Pending;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut history = RunHistory::open(dir.path()).expect("history");
+    history.upsert_run(&run, &[]).expect("store run");
+    history
+        .mark_interrupted_on_startup(&clock)
+        .expect("startup");
+    let runs = history.list_runs().expect("runs");
+    assert_eq!(runs[0].status, RunStatus::Interrupted);
+}
+
+/// A missing new folder is checked at its deepest existing ancestor.
+#[test]
+fn m4_s05_missing_folder_is_checked_at_its_parent() {
+    use kestic_core::restore::RestoreTarget;
+    use kestic_core::restore_target::check_target;
+    use kestic_i18n::codes::RestoreTargetCode;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("file");
+    std::fs::write(&file, "x").expect("file");
+    let locked = dir.path().join("locked");
+    std::fs::create_dir(&locked).expect("mkdir");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let target = |p: std::path::PathBuf| RestoreTarget::NewFolder {
+        dir: p.to_string_lossy().into_owned(),
+    };
+    let below_file = check_target(&target(file.join("new")), &[]).code;
+    let below_locked = check_target(&target(locked.join("a")), &[]).code;
+    let too_deep = check_target(&target(dir.path().join("x/y/z")), &[]).code;
+    let fresh = check_target(&target(dir.path().join("new/x")), &[]).code;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert_eq!(below_file, RestoreTargetCode::NotADirectory);
+    assert_eq!(below_locked, RestoreTargetCode::NotWritable);
+    assert_eq!(fresh, RestoreTargetCode::Ok);
+    assert_eq!(
+        too_deep,
+        RestoreTargetCode::MissingMappedDir,
+        "only two levels are created"
+    );
+}
+
+/// A name restic cannot match (not UTF-8, shown as U+FFFD) is replaced by the nearest folder
+/// above it without U+FFFD; names restic can match stay.
+#[test]
+fn m4_s05_unmatchable_name_gives_way_to_its_folder() {
+    assert_eq!(
+        folder_instead_of_unmatchable("/home/u/docs/bad\u{FFFD}.txt").as_deref(),
+        Some("/home/u/docs")
+    );
+    assert_eq!(
+        folder_instead_of_unmatchable("/home/u/b\u{FFFD}d/a.txt").as_deref(),
+        Some("/home/u"),
+        "a folder with U+FFFD gives way to its own folder"
+    );
+    assert_eq!(
+        folder_instead_of_unmatchable("/b\u{FFFD}d").as_deref(),
+        Some("/")
+    );
+    assert_eq!(folder_instead_of_unmatchable("/home/u/a.txt"), None);
+    assert_eq!(
+        selection_with_folders_instead(&strings(&[
+            "/home/u/docs/a.txt",
+            "/home/u/docs/x\u{FFFD}.txt",
+            "/home/u/docs/y\u{FFFD}.txt",
+        ])),
+        strings(&["/home/u/docs/a.txt", "/home/u/docs"])
+    );
+}
+
+fn strings(paths: &[&str]) -> Vec<String> {
+    paths.iter().map(ToString::to_string).collect()
+}
+
+/// A symbolic link to nothing is no target folder: restic could not create the folder there.
+#[test]
+fn m4_s05_dangling_symlink_is_no_target_folder() {
+    use kestic_core::restore::RestoreTarget;
+    use kestic_core::restore_target::check_target;
+    use kestic_i18n::codes::RestoreTargetCode;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(dir.path().join("gone"), &link).expect("symlink");
+    let target = RestoreTarget::NewFolder {
+        dir: link.to_string_lossy().into_owned(),
+    };
+    assert_eq!(
+        check_target(&target, &[]).code,
+        RestoreTargetCode::NotADirectory
+    );
+}
+
+fn paths(list: &[&str]) -> Vec<String> {
+    list.iter().map(|p| (*p).to_string()).collect()
+}
+
+/// AC-M4-05-26 (unit part): a selection restores the whole snapshot when (a) every entry of
+/// the top folder is selected and nothing outside it; entries below a selected one change
+/// nothing. (b) With an entry of the top folder missing, an entry outside the top folder, the
+/// top folder itself or a folder without entries it is a selection, and (c) so are all entries
+/// of a subfolder.
+#[test]
+fn ac_m4_05_26_selection_of_every_top_entry_is_the_whole_snapshot() {
+    let top = "/home/u";
+    let all = paths(&["/home/u/a.txt", "/home/u/docs", "/home/u/empty"]);
+    assert!(
+        selection_is_whole_folder(&all, top, 3),
+        "(a) every entry of the top folder"
+    );
+    let mut nested = all.clone();
+    nested.push("/home/u/docs/x.txt".to_string());
+    assert!(
+        selection_is_whole_folder(&nested, top, 3),
+        "(a) an entry below a selected one"
+    );
+    assert!(
+        selection_is_whole_folder(&paths(&["/a", "/home"]), "/", 2),
+        "(a) every entry of `/`"
+    );
+    // A single folder in the top folder is the whole snapshot too: like «Restore…» in the
+    // context menu, the restore runs from the top folder, so the folder lands below the target
+    // with its name (target/x/…), not its content directly in the target.
+    assert!(
+        selection_is_whole_folder(&paths(&["/home/u/x"]), top, 1),
+        "(a) the only entry of the top folder, a folder"
+    );
+
+    assert!(
+        !selection_is_whole_folder(&all[..2], top, 3),
+        "(b) one entry of the top folder missing"
+    );
+    let mut outside = all.clone();
+    outside.push("/home/other".to_string());
+    assert!(
+        !selection_is_whole_folder(&outside, top, 3),
+        "(b) an entry outside the top folder"
+    );
+    let mut sibling = all.clone();
+    sibling.push("/home/u2/f".to_string());
+    assert!(
+        !selection_is_whole_folder(&sibling, top, 3),
+        "(b) a folder whose name starts like the top folder is outside it"
+    );
+    assert!(
+        !selection_is_whole_folder(&paths(&["/home/u"]), top, 1),
+        "(b) the top folder itself, selected from the folder above"
+    );
+    assert!(
+        !selection_is_whole_folder(&Vec::new(), top, 0),
+        "(b) a top folder without entries"
+    );
+    assert!(
+        !selection_is_whole_folder(&paths(&["/home/u/docs/x.txt", "/home/u/docs/deep"]), top, 2),
+        "(c) every entry of a subfolder, as many as the top folder has"
+    );
+}
+
+/// AC-M4-05-26 (unit part, browser opened from a search hit): the top folder of a whole-snapshot
+/// restore, judged from the hit. (a) It stays the common folder while the hit lies inside it or
+/// is it as a folder; (b) a file at the common folder (a snapshot of a single file) or a hit
+/// beside it (a snapshot of relative paths) makes it `/`; (c) an unknown top folder stays
+/// unknown; (d) a folder above it does not tell (the top folder is listed then).
+#[test]
+fn ac_m4_05_26_top_folder_seen_from_a_search_hit() {
+    let top = "/home/u";
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u/docs/x.txt", false),
+        Some(top),
+        "(a) a file inside"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u/docs", true),
+        Some(top),
+        "(a) a folder inside"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, top, true),
+        Some(top),
+        "(a) the top folder itself"
+    );
+    assert_eq!(
+        top_folder_seen_from("/", "/a", false),
+        Some("/"),
+        "(a) `/` stays"
+    );
+    assert_eq!(
+        top_folder_seen_from("/home/u/f.txt", "/home/u/f.txt", false),
+        Some("/"),
+        "(b) a snapshot of a single file"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/rel/x.txt", false),
+        Some("/"),
+        "(b) a hit beside it"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home/u2/x.txt", false),
+        Some("/"),
+        "(b) a name that starts like the top folder is beside it"
+    );
+    assert_eq!(
+        top_folder_seen_from("", "/a", false),
+        Some(""),
+        "(c) unknown stays unknown"
+    );
+    assert_eq!(
+        top_folder_seen_from(top, "/home", true),
+        None,
+        "(d) a folder above"
+    );
+    assert_eq!(
+        top_folder_seen_from("/home/u/f.txt", "/home/u", true),
+        None,
+        "(d) a folder above the file of a single-file snapshot"
+    );
+}

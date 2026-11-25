@@ -7,12 +7,12 @@ use super::qobject;
 use super::rows::{id_at, row_map, row_of};
 use crate::overall_text::localized_availability_reason;
 use crate::state_cache::{
-    backup_exclude_file_path_str, daemon_now, format_backup_status, format_bytes,
-    format_conditions_summary, format_duration_ms, format_exclude_summary,
-    format_next_scheduled_line, format_pause_line, format_retention_summary,
-    format_schedule_summary, format_source_kind_label, i18n, i18np, json_or, localized_last_error,
-    pending_reason_line, shared_state,
+    backup_exclude_file_path_str, format_backup_status, format_bytes, format_conditions_summary,
+    format_duration_ms, format_exclude_summary, format_next_scheduled_line, format_pause_line,
+    format_retention_summary, format_schedule_summary, format_source_kind_label, i18n, i18np,
+    json_or, localized_last_error, pending_reason_line, shared_state,
 };
+use crate::time_texts::daemon_now;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
 use kestic_core::model::{RetentionPreset, Run, SourceKind};

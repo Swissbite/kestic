@@ -4,6 +4,7 @@
 //! Unit tests of `state_cache` (kept in their own file, NFR-12 file size).
 
 use super::*;
+use crate::time_texts::{format_datetime_display, format_day_group, format_time_short};
 use time::macros::datetime;
 
 #[test]
@@ -202,4 +203,62 @@ fn finding2_every_n_days_uses_singular_for_one() {
         format_schedule_summary(&schedule(3)),
         "Every 3 days from 2026-11-21 at 12:00"
     );
+}
+
+fn progress_of(run: &Run, percent_done: f64) -> ActiveRunProgressDto {
+    ActiveRunProgressDto {
+        run_id: run.id.as_str().to_string(),
+        kind: Default::default(),
+        backup_id: None,
+        backup_name: String::new(),
+        phase: Default::default(),
+        percent_done,
+        bytes_done: 0,
+        total_bytes: 0,
+        files_done: 0,
+        speed_bps: 0,
+        seconds_remaining: 0,
+    }
+}
+
+/// M4-S05, a restore beside a backup (AC-M4-05-9): a state refresh, whose overall progress is
+/// the backup's, (a) keeps the progress of the running restore as it was, (b) adds the
+/// backup's, and (c) drops the progress of a run that ended.
+#[test]
+fn m4_s05_restore_progress_survives_a_state_refresh_beside_a_backup() {
+    let clock = kestic_core::clock::FakeClock::new(datetime!(2026-11-23 12:00:00 UTC));
+    let backup_run = |status| {
+        let mut run = Run::new_backup(&clock, &sample_backup()).expect("run");
+        run.status = status;
+        run
+    };
+    let mut restore = Run::new_restore(&clock, sample_backup().destination_id, None).expect("run");
+    restore.status = RunStatus::Running;
+    let running_backup = backup_run(RunStatus::Running);
+    let ended = backup_run(RunStatus::Ok);
+    let mut progress = HashMap::from([
+        (restore.id.as_str().to_string(), progress_of(&restore, 40.0)),
+        (ended.id.as_str().to_string(), progress_of(&ended, 100.0)),
+    ]);
+
+    retain_active_progress(
+        &mut progress,
+        &[],
+        &[running_backup.clone(), restore.clone(), ended.clone()],
+        Some(&progress_of(&running_backup, 5.0)),
+    );
+
+    assert_eq!(
+        progress.get(restore.id.as_str()).map(|p| p.percent_done),
+        Some(40.0),
+        "(a)"
+    );
+    assert_eq!(
+        progress
+            .get(running_backup.id.as_str())
+            .map(|p| p.percent_done),
+        Some(5.0),
+        "(b)"
+    );
+    assert!(!progress.contains_key(ended.id.as_str()), "(c)");
 }

@@ -436,10 +436,10 @@ fn ac_m1_11_2_11_3_11_5_dbusmenu_items_quit_confirmation_and_active_progress() {
                 "missing 'Pause Schedules' in {labels:?}"
             );
 
-            for forbidden in ["Restore Files…", "Create Recovery Kit…", "Update restic…"] {
+            for forbidden in ["Create Recovery Kit…", "Update restic…"] {
                 assert!(
                     !labels.iter().any(|l| l.contains(forbidden)),
-                    "M4-M6 item `{forbidden}` must not exist yet in M3 tray menu: {labels:?}"
+                    "M5-M6 item `{forbidden}` must not exist yet in the tray menu: {labels:?}"
                 );
             }
 

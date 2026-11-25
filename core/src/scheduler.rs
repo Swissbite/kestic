@@ -41,6 +41,16 @@ impl TimezoneSpec {
     }
 }
 
+/// `dt` at the UTC offset the time zone of `tz_spec` has at that moment (unchanged when the
+/// offset is out of range).
+pub fn to_local_offset(dt: OffsetDateTime, tz_spec: &TimezoneSpec) -> OffsetDateTime {
+    let seconds = tz_spec.resolve().to_offset(to_jiff_ts(dt)).seconds();
+    time::UtcOffset::from_whole_seconds(seconds)
+        .ok()
+        .and_then(|offset| dt.checked_to_offset(offset))
+        .unwrap_or(dt)
+}
+
 fn to_jiff_ts(dt: OffsetDateTime) -> Timestamp {
     Timestamp::from_second(dt.unix_timestamp()).unwrap_or(Timestamp::UNIX_EPOCH)
 }

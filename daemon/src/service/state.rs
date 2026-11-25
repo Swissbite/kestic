@@ -5,7 +5,9 @@
 
 use super::error::{KesticServiceErr, map_provider_err};
 use super::previews::PreviewEntry;
+use super::restore_runner::{PendingRestore, RestoreClaim};
 use super::run_errors::unreadable_items_from_lines;
+use super::snapshot_queries::SharedResult;
 use super::supervision::SupervisionConfig;
 use crate::dbus_api::{
     ActiveRunProgressDto, BlockingStateDto, DaemonStateDto, DestinationAvailabilityDto,
@@ -24,10 +26,11 @@ use kestic_core::history::{
     last_successful_backup_at,
 };
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, ResticProvider, Run, RunId, RunStatus,
+    Backup, BackupId, Destination, DestinationId, ResticProvider, Run, RunId, RunKind, RunStatus,
 };
 use kestic_core::mount::{MountInspector, SourceCheckResult, SystemMountInspector};
 use kestic_core::provider::{ResolvedRestic, ResticProviderError, resolve_and_check};
+use kestic_core::query_list::{QueryLimits, QueryStore};
 use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_core::scheduler::{
     SystemEnvironment, TimezoneSpec, UnmetPrecondition, format_local_hhmm, format_local_slot_hint,
@@ -117,6 +120,8 @@ pub struct DaemonRunConfig {
     pub enable_scheduler: bool,
     pub enable_binary_watch: bool,
     pub binary_watch_args: Option<Vec<String>>,
+    /// Memory limits for the lists of snapshot queries.
+    pub query_limits: QueryLimits,
 }
 
 impl Default for DaemonRunConfig {
@@ -147,6 +152,7 @@ impl Default for DaemonRunConfig {
             enable_scheduler: false,
             enable_binary_watch: false,
             binary_watch_args: None,
+            query_limits: QueryLimits::default(),
         }
     }
 }
@@ -167,6 +173,14 @@ pub(super) struct ActiveRunEntry {
     pub(super) progress: ActiveRunProgressDto,
     pub(super) cancel: CancelHandle,
     pub(super) sleep_interrupted: bool,
+    /// The run holds the exclusive repository lock (a backup's `forget`).
+    pub(super) exclusive: bool,
+}
+
+impl ActiveRunEntry {
+    pub(super) fn is_restore(&self) -> bool {
+        matches!(self.run.kind, RunKind::Restore { .. })
+    }
 }
 
 /// Core stateful daemon engine shared between D-Bus interface methods, tray actions, and unit tests.
@@ -206,9 +220,15 @@ pub struct DaemonCore {
     pub(super) active_runs: HashMap<RunId, ActiveRunEntry>,
     pub(super) claiming_destinations: HashSet<DestinationId>,
     pub(super) queued_backups: VecDeque<BackupId>,
+    /// Restores waiting for maintenance of their destination to end.
+    pub(super) pending_restores: Vec<PendingRestore>,
+    /// Every accepted restore until its run ends (starting, waiting or running): its
+    /// destination and resolved target folder.
+    pub(super) restore_claims: HashMap<RunId, RestoreClaim>,
     pub(super) sleep_in_progress: bool,
     pub(super) dry_runs: HashMap<String, PreviewEntry<BackupDryRunResult>>,
     pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
+    pub(super) snapshot_queries: QueryStore<SharedResult>,
     pub(super) window_active: bool,
     pub(super) window_page: String,
     pub(crate) registered_gui_sender: Option<String>,
@@ -318,9 +338,12 @@ impl DaemonCore {
             active_runs: HashMap::new(),
             claiming_destinations: HashSet::new(),
             queued_backups: VecDeque::new(),
+            pending_restores: Vec::new(),
+            restore_claims: HashMap::new(),
             sleep_in_progress: false,
             dry_runs: HashMap::new(),
             retention_previews: HashMap::new(),
+            snapshot_queries: QueryStore::new(run_config.query_limits),
             window_active: false,
             window_page: String::new(),
             registered_gui_sender: None,
@@ -403,12 +426,46 @@ impl DaemonCore {
         &self.history
     }
 
+    /// Whether a backup or maintenance run holds or claims `dest_id`. Restores keep their own
+    /// accounting: they run beside backups ([`Self::has_active_restore`]).
     pub(super) fn is_destination_busy(&self, dest_id: &DestinationId) -> bool {
         self.claiming_destinations.contains(dest_id)
             || self
                 .active_runs
                 .values()
-                .any(|e| &e.run.destination_id == dest_id)
+                .any(|e| &e.run.destination_id == dest_id && !e.is_restore())
+    }
+
+    /// Whether a restore runs on `dest_id`; maintenance waits for it.
+    pub(super) fn has_active_restore(&self, dest_id: &DestinationId) -> bool {
+        self.active_runs
+            .values()
+            .any(|e| &e.run.destination_id == dest_id && e.is_restore())
+    }
+
+    /// Whether a run on `dest_id` holds the exclusive lock (maintenance, or a backup in its
+    /// `forget`); a restore waits for it.
+    pub(super) fn has_exclusive_run(&self, dest_id: &DestinationId) -> bool {
+        self.active_runs.values().any(|e| {
+            &e.run.destination_id == dest_id
+                && (e.exclusive || matches!(e.run.kind, RunKind::Maintenance))
+        })
+    }
+
+    /// Marks run `run_id` as holding the exclusive lock unless a restore runs on `dest_id`;
+    /// returns whether it may go on.
+    pub(super) fn claim_exclusive_phase(
+        &mut self,
+        run_id: &RunId,
+        dest_id: &DestinationId,
+    ) -> bool {
+        if self.has_active_restore(dest_id) {
+            return false;
+        }
+        if let Some(entry) = self.active_runs.get_mut(run_id) {
+            entry.exclusive = true;
+        }
+        true
     }
 
     pub(super) fn upsert_run_cached(
@@ -444,7 +501,7 @@ impl DaemonCore {
         }
         self.history.delete_pending_runs_for_backup(backup_id)?;
         self.runs_cache
-            .retain(|r| !(r.backup_id() == Some(backup_id) && r.status == RunStatus::Pending));
+            .retain(|r| !(r.is_backup_run_of(backup_id) && r.status == RunStatus::Pending));
         Ok(())
     }
 
@@ -568,14 +625,18 @@ impl DaemonCore {
         self.persist_config(next)
     }
 
-    pub fn cancel_run(&self, run_id: &str) -> Result<(), KesticServiceErr> {
+    /// Cancels the active run `run_id`, or a restore that still waits for maintenance (it ends
+    /// as cancelled without starting).
+    pub fn cancel_run(&mut self, run_id: &str) -> Result<(), KesticServiceErr> {
         let id = RunId::parse(run_id).map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
-        let entry = self
-            .active_runs
-            .get(&id)
-            .ok_or_else(|| KesticServiceErr::NotFound(run_id.to_string()))?;
-        entry.cancel.cancel();
-        Ok(())
+        if let Some(entry) = self.active_runs.get(&id) {
+            entry.cancel.cancel();
+            return Ok(());
+        }
+        if self.cancel_pending_restore(&id) {
+            return Ok(());
+        }
+        Err(KesticServiceErr::NotFound(run_id.to_string()))
     }
 
     pub fn cancel_any_active_run(&self) -> bool {
@@ -585,6 +646,11 @@ impl DaemonCore {
             any = true;
         }
         any
+    }
+
+    /// Whether the daemon is stopping: nothing new starts.
+    pub(super) fn stopping(&self) -> bool {
+        self.shutdown_flag.load(Ordering::SeqCst)
     }
 
     pub fn request_shutdown(&self) {
@@ -602,7 +668,7 @@ fn load_run_unreadable_cache(runs: &[Run], config: &AppConfig) -> HashMap<RunId,
     let mut cache = HashMap::new();
     for backup in &config.backups {
         let last = runs.iter().find(|r| {
-            r.backup_id() == Some(&backup.id)
+            r.is_backup_run_of(&backup.id)
                 && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
         });
         if let Some(run) = last

@@ -6,10 +6,8 @@
 use super::qobject;
 use super::rows::{id_at, row_of};
 use crate::run_texts::run_status;
-use crate::state_cache::{
-    daemon_now, format_day_group, format_duration_ms, format_run_kind_name, format_time_short,
-    shared_state,
-};
+use crate::state_cache::{format_duration_ms, format_run_kind_name, shared_state};
+use crate::time_texts::{daemon_now, format_day_group, format_time_short};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
 use kestic_core::model::RunStatus;

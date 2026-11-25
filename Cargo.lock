@@ -1155,6 +1155,7 @@ dependencies = [
  "kestic-i18n",
  "kestic-test-support",
  "rusqlite",
+ "rustix",
  "semver",
  "serde",
  "serde_json",

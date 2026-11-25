@@ -5,6 +5,7 @@
 
 use super::error::parse_backup_id;
 use super::error::{KesticServiceErr, map_config_err};
+use super::restore_runner::restore_error_kind;
 use super::run_errors::{error_run_kind, unreadable_items_from_lines};
 use super::state::DaemonCore;
 use crate::dbus_api::{ExcludeRulePreviewDto, RunDetailDto};
@@ -13,9 +14,9 @@ use kestic_core::backup::{exclude_file_path, write_exclude_file};
 use kestic_core::config::ConfigError;
 use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, ExcludeLintWarning, ExcludePathTestResult,
-    ExcludeRules, NestedSourceConflict, ResticProvider, Run, RunId, RunStatus, Schedule, Source,
-    SourceKind, check_nested_sources_for_candidate, evaluate_exclude_path, lint_exclude_rules,
-    normalize_folder_rule,
+    ExcludeRules, NestedSourceConflict, ResticProvider, Run, RunId, RunKind, RunStatus, Schedule,
+    Source, SourceKind, check_nested_sources_for_candidate, evaluate_exclude_path,
+    lint_exclude_rules, normalize_folder_rule,
 };
 use kestic_core::mount::{current_home_dir, detect_source_with};
 use kestic_core::provider::resolve_and_check;
@@ -388,7 +389,9 @@ pub(crate) fn get_run_detail_unlocked(
     let mut error_raw_detail = run.summary_message.clone();
     let mut unreadable_files = Vec::new();
 
-    if matches!(run.status, RunStatus::Error | RunStatus::Warning) {
+    if matches!(run.kind, RunKind::Restore { .. }) {
+        error_kind = restore_error_kind(&run, &log_lines);
+    } else if matches!(run.status, RunStatus::Error | RunStatus::Warning) {
         unreadable_files = unreadable_items_from_lines(log_lines.iter().map(String::as_str));
         if run.status == RunStatus::Error
             || run.exit_code == Some(3)

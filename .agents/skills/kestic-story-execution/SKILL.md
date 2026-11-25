@@ -15,7 +15,7 @@ Use this skill when starting a story, a batch of stories, or a new milestone.
   - mandatory glossary terms and prohibited words,
   - UI copy/layout constraints,
   - Stop & Ask triggers (new crates, spec ambiguities).
-- If a Stop & Ask condition applies, log it in `docs/spec/questions.md`, mark the story blocked, and move to the next independent story.
+- If a Stop & Ask condition applies, log it in `docs/spec/questions.md`, mark the story blocked, and move to the next independent story. In a milestone run from GitHub issues, ask on the story's issue instead (`kestic-milestone-autonomy` §2).
 
 ## 2. Parallelize Independent Work
 
@@ -35,7 +35,7 @@ Use this skill when starting a story, a batch of stories, or a new milestone.
   3. Add SPDX headers (or `.reuse/dep5` entry) to every new file.
   4. Visually inspect any generated GUI screenshots in `target/smoke-artifacts/`.
   5. Confirm zero compiler/clippy/C++/QML warnings and no new `#[allow(...)]` or lint suppressions where a clean refactor or `-isystem` solves the root cause (`NFR-12`).
-  6. Run full `just verify` and confirm exit code `0`.
+  6. Run full `just verify` and confirm exit code `0`. In a milestone run (`kestic-milestone-autonomy` §3) this full run happens once before the first push; after review fixes CI runs it on every push.
 
 ## 4. Background Task Discipline
 

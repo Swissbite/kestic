@@ -9,23 +9,21 @@
 
 use kestic_i18n::codes::{
     BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RunProgressPhase, ServiceErrorCode,
-    SkipReason, SourceStatus,
+    PendingReasonCode, RecoveryAction, ResticStatusCode, RestoreNoteCode, RestoreOutcome,
+    RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
-    completed_message, connection_test_text, dns_failed_message, overall_headline,
-    overall_subtitle, unmet_conditions_message,
+    completed_message, connection_test_text, dns_failed_message, nothing_restored_message,
+    overall_headline, overall_subtitle, unmet_conditions_message,
 };
-mod common;
-
-use common::language;
+use kestic_test_support::po::catalog;
 use kestic_test_support::workspace::workspace_root;
 use std::collections::{BTreeSet, HashMap};
 
 /// msgid -> German translation of the singular catalog entries.
 fn german_catalog() -> HashMap<String, String> {
-    language::catalog(&workspace_root())
+    catalog(&workspace_root())
         .into_iter()
         .filter(|e| !e.plural)
         .map(|e| (e.msgid().to_string(), e.german()[0].clone()))
@@ -137,6 +135,18 @@ fn all_messages() -> Vec<(String, Message)> {
     for code in ServiceErrorCode::ALL {
         push(format!("{code:?}"), code.message());
     }
+    for outcome in RestoreOutcome::ALL {
+        push(format!("{outcome:?}"), outcome.message());
+    }
+    for note in RestoreNoteCode::ALL {
+        push(format!("{note:?}"), note.message());
+    }
+    for code in RestoreTargetCode::ALL {
+        if let Some(m) = code.message("/t") {
+            push(format!("{code:?}"), m);
+        }
+    }
+    push("nothing_restored".into(), nothing_restored_message());
     out.extend(overall_messages());
     out
 }
@@ -145,14 +155,24 @@ fn all_messages() -> Vec<(String, Message)> {
 fn overall_messages() -> Vec<(String, Message)> {
     let mut out: Vec<(String, Message)> = Vec::new();
     let mut push = |label: String, m: Message| out.push((label, m));
-    for (name, is_maintenance, phase) in [
-        ("run", false, RunProgressPhase::ScanFinished),
-        ("scan", false, RunProgressPhase::Scanning),
-        ("maint", true, RunProgressPhase::Scanning),
+    for (name, kind, phase) in [
+        ("run", RunKindCode::Backup, RunProgressPhase::ScanFinished),
+        ("scan", RunKindCode::Backup, RunProgressPhase::Scanning),
+        (
+            "maint",
+            RunKindCode::Maintenance,
+            RunProgressPhase::Scanning,
+        ),
+        ("restore", RunKindCode::Restore, RunProgressPhase::Scanning),
+        (
+            "restoring",
+            RunKindCode::Restore,
+            RunProgressPhase::ScanFinished,
+        ),
     ] {
         let run = ActiveRunInfo {
             name,
-            is_maintenance,
+            kind,
             phase,
             percent_done: 50.0,
         };

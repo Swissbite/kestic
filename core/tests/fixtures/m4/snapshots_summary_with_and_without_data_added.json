@@ -1,0 +1,48 @@
+[
+  {
+    "time": "2026-11-14T12:00:00.5+01:00",
+    "tree": "d2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+    "paths": ["/home/user"],
+    "hostname": "tuxedo",
+    "username": "user",
+    "uid": 1000,
+    "gid": 1000,
+    "tags": ["kestic:backup-home"],
+    "program_version": "restic 0.18.0",
+    "summary": {
+      "backup_start": "2026-11-14T12:00:00.5+01:00",
+      "backup_end": "2026-11-14T12:01:10+01:00",
+      "files_new": 3,
+      "files_changed": 1,
+      "files_unmodified": 1200,
+      "total_files_processed": 1204,
+      "total_bytes_processed": 2147483648
+    },
+    "id": "e3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+    "short_id": "e3d4e5f6"
+  },
+  {
+    "time": "2026-11-15T12:00:00.25+01:00",
+    "tree": "f2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+    "paths": ["/home/user"],
+    "hostname": "tuxedo",
+    "username": "user",
+    "uid": 1000,
+    "gid": 1000,
+    "tags": ["kestic:backup-home"],
+    "program_version": "restic 0.18.0",
+    "summary": {
+      "backup_start": "2026-11-15T12:00:00.25+01:00",
+      "backup_end": "2026-11-15T12:01:02+01:00",
+      "files_new": 12,
+      "files_changed": 4,
+      "files_unmodified": 1190,
+      "data_added": 312000000,
+      "data_added_packed": 290000000,
+      "total_files_processed": 1206,
+      "total_bytes_processed": 2147483648
+    },
+    "id": "a4d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+    "short_id": "a4d4e5f6"
+  }
+]

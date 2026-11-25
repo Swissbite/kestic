@@ -7,6 +7,7 @@ use crate::clock::Clock;
 pub use crate::excludes::*;
 use crate::mount::normalize_lexical_path;
 pub use crate::retention::*;
+use crate::snapshot::{BACKUP_TAG_PREFIX, META_TAG_PREFIX};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -687,12 +688,12 @@ impl Backup {
 
     /// Returns the restic snapshot tag identifying this backup (`kestic:<backup-id>`).
     pub fn tag(&self) -> String {
-        format!("kestic:{}", self.id)
+        format!("{BACKUP_TAG_PREFIX}{}", self.id)
     }
 
     /// Returns the restic metadata snapshot tag (`kestic-meta:<backup-id>`).
     pub fn meta_tag(&self) -> String {
-        format!("kestic-meta:{}", self.id)
+        format!("{META_TAG_PREFIX}{}", self.id)
     }
 
     /// Validates invariants on this backup definition.
@@ -987,6 +988,24 @@ impl MaintenanceStats {
     }
 }
 
+/// Result of a restore run (`RestoreStats`, stored in `runs.stats_json`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RestoreStats {
+    /// Files that did not exist at the target before.
+    pub files_new: u64,
+    pub files_overwritten: u64,
+    /// Existing, different files that stayed (from the preview).
+    pub files_kept: u64,
+    pub bytes_restored: u64,
+    pub target_dir: String,
+    pub overwrite: kestic_i18n::codes::RestoreOverwrite,
+    /// Number of selected entries (0 = the whole snapshot).
+    pub selection_count: u64,
+    /// Why a failed restore failed; `None` otherwise and in rows stored before it existed.
+    pub error_kind: Option<kestic_i18n::codes::ErrorKind>,
+}
+
 /// Single execution record (glossary: `Run`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Run {
@@ -1014,6 +1033,9 @@ pub struct Run {
     /// recorded before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maintenance: Option<MaintenanceStats>,
+    /// Result of a restore run; `None` for other run kinds and before the restore ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore: Option<RestoreStats>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_path: Option<PathBuf>,
 }
@@ -1040,6 +1062,7 @@ impl Run {
             commands: Vec::new(),
             stats: None,
             maintenance: None,
+            restore: None,
             log_path: None,
         })
     }
@@ -1112,6 +1135,11 @@ impl Run {
             RunStatus::Running,
             None,
         )
+    }
+
+    /// Whether this is a backup run of `backup` (a restore of one of its snapshots is not).
+    pub fn is_backup_run_of(&self, backup: &BackupId) -> bool {
+        matches!(&self.kind, RunKind::Backup { backup_id } if backup_id == backup)
     }
 
     /// Returns the associated [`BackupId`], if any.

@@ -9,12 +9,14 @@ use crate::dbus_api::{
 use crate::monitors::list_known_networks;
 use crate::service::{
     DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
-    list_backup_snapshots_unlocked, preview_destination_maintenance_unlocked,
-    refresh_availability_unlocked, refresh_probe_unlocked, run_destination_maintenance_async,
-    set_restic_provider_unlocked, start_all_backups_async, start_backup_async,
-    start_backup_dry_run_async, start_backup_override_async, start_retention_preview_async,
-    test_destination_connection_unlocked, trigger_background_availability_probe,
-    unlock_destination_async, update_destination_password_unlocked, update_destination_unlocked,
+    list_backup_snapshots_unlocked, list_destination_snapshots_unlocked,
+    preview_destination_maintenance_unlocked, refresh_availability_unlocked,
+    refresh_probe_unlocked, run_destination_maintenance_async, set_restic_provider_unlocked,
+    start_all_backups_async, start_backup_async, start_backup_dry_run_async,
+    start_backup_override_async, start_restore_async, start_retention_preview_async,
+    start_snapshot_query_async, test_destination_connection_unlocked,
+    trigger_background_availability_probe, unlock_destination_async,
+    update_destination_password_unlocked, update_destination_unlocked,
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
 use crate::tray::KesticTrayState;
@@ -24,6 +26,7 @@ use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
+use std::time::Duration;
 use zbus::object_server::SignalEmitter;
 use zbus::{Connection, interface};
 
@@ -140,6 +143,54 @@ impl KesticDbusV1Service {
             .blocking(move |core| list_backup_snapshots_unlocked(core, &id))
             .await?;
         to_json_arg(&snaps)
+    }
+
+    #[zbus(name = "ListDestinationSnapshots")]
+    async fn list_destination_snapshots(
+        &self,
+        destination_id: &str,
+    ) -> Result<String, KesticDbusError> {
+        let id = destination_id.to_string();
+        let snaps = self
+            .blocking(move |core| list_destination_snapshots_unlocked(core, &id))
+            .await?;
+        to_json_arg(&snaps)
+    }
+
+    #[zbus(name = "StartSnapshotQuery")]
+    async fn start_snapshot_query(&self, request_json: &str) -> Result<String, KesticDbusError> {
+        let req = request_json.to_string();
+        self.blocking(move |core| start_snapshot_query_async(core, &req))
+            .await
+            .map_err(KesticDbusError::from)
+    }
+
+    #[zbus(name = "StartRestore")]
+    async fn start_restore(&self, request_json: &str) -> Result<String, KesticDbusError> {
+        let req = request_json.to_string();
+        self.blocking(move |core| start_restore_async(core, &req))
+            .await
+            .map_err(KesticDbusError::from)
+    }
+
+    #[zbus(name = "GetSnapshotQueryStatus")]
+    fn get_snapshot_query_status(
+        &self,
+        query_id: &str,
+        page_json: &str,
+    ) -> Result<String, KesticDbusError> {
+        // The page is cut without the daemon's lock: filtering a long list takes a while.
+        let status = self
+            .core
+            .lock_unpoisoned()
+            .snapshot_query_status(query_id, page_json)?;
+        to_json_arg(&status.page()?)
+    }
+
+    #[zbus(name = "CancelSnapshotQuery")]
+    fn cancel_snapshot_query(&self, query_id: &str) -> Result<(), KesticDbusError> {
+        let guard = self.core.lock_unpoisoned();
+        Ok(guard.cancel_snapshot_query(query_id)?)
     }
 
     #[zbus(name = "TestDestinationConnection")]
@@ -303,7 +354,7 @@ impl KesticDbusV1Service {
 
     #[zbus(name = "CancelRun")]
     fn cancel_run(&self, run_id: &str) -> Result<(), KesticDbusError> {
-        let guard = self.core.lock_unpoisoned();
+        let mut guard = self.core.lock_unpoisoned();
         Ok(guard.cancel_run(run_id)?)
     }
 
@@ -613,12 +664,30 @@ impl KesticDbusV1Service {
     #[zbus(signal, name = "ShowAboutRequested")]
     async fn show_about_requested(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 
+    #[zbus(signal, name = "ShowRestoreRequested")]
+    async fn show_restore_requested(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
+
     #[zbus(signal, name = "QuitConfirmationRequested")]
     async fn quit_confirmation_requested(
         ctxt: &SignalEmitter<'_>,
         has_running_run: bool,
         running_backup_name: &str,
     ) -> zbus::Result<()>;
+}
+
+/// Closes `conn` once every other handle of it is gone, waiting at most `limit`; returns whether
+/// it closed in time. A method call holds a handle until its reply has been written, so the reply
+/// to the call that stopped the daemon, such as `ConfirmQuit`, still reaches its caller instead of
+/// `NoReply`. After `limit` the connection closes as its last handle goes, at the latest when the
+/// process ends.
+pub fn close_after_pending_replies(conn: Connection, limit: Duration) -> bool {
+    let (closed_tx, closed_rx) = mpsc::channel();
+    thread::spawn(move || {
+        zbus::block_on(conn.graceful_shutdown());
+        // The receiver is gone when the wait timed out; nobody is left to tell.
+        closed_tx.send(()).ok();
+    });
+    closed_rx.recv_timeout(limit).is_ok()
 }
 
 pub(crate) fn start_dbus_server(
@@ -767,6 +836,12 @@ pub(crate) fn emit_show_window_requested(conn: &Connection) {
 pub(crate) fn emit_show_about_requested(conn: &Connection) {
     queue_signal(conn, async move |emitter| {
         KesticDbusV1Service::show_about_requested(emitter).await
+    });
+}
+
+pub(crate) fn emit_show_restore_requested(conn: &Connection) {
+    queue_signal(conn, async move |emitter| {
+        KesticDbusV1Service::show_restore_requested(emitter).await
     });
 }
 
