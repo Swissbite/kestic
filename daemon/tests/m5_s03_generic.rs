@@ -280,8 +280,14 @@ fn ac_m5_03_5_unanswered_preflight_blocks_run_after_15_seconds() {
                     .expect_err("StartBackup on a destination that does not answer");
                 let blocked_after = started.elapsed();
                 // (a)
+                let cats = rig.wrapper.of('S', "cat");
                 assert!(
-                    rig.wrapper.of('S', "cat").len() > cat_before,
+                    cats.iter().skip(cat_before).any(|call| {
+                        // The first argument after `cat` that is no flag names what restic reads.
+                        let mut args = call.detail.split_whitespace();
+                        args.any(|arg| arg == "cat")
+                            && args.find(|arg| !arg.starts_with('-')) == Some("config")
+                    }),
                     "(a) restic cat config ran: {:?}",
                     rig.wrapper.entries()
                 );
