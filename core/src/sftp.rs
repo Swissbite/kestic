@@ -633,6 +633,14 @@ mod tests {
                 "{ssh_line}: {found:?}"
             );
         }
+        // ssh's verdict may come after restic's own message; it still counts.
+        let late = "Fatal: unable to open repository at sftp://u@h:22//r: unable to start the \
+                    sftp session, error: EOF\n\
+                    subprocess ssh: Host key verification failed.\n";
+        assert_eq!(
+            classify_exit_for(Transport::Sftp, 1, None, Vec::new(), late).kind,
+            ResticFailureKind::HostKeyUnknown
+        );
     }
 
     #[test]
