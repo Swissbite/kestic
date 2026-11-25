@@ -605,8 +605,7 @@ impl SftpRig {
     /// [`SftpRig::add`] with the server under the name `host`.
     fn add_at(&self, variant: &ResticVariant, host: &str, repo: &str) -> (Destination, String) {
         let created = copy_template_repo(&variant.bin, &self.dir.join(repo));
-        let dest =
-            Destination::new(&format!("Server {repo}"), self.kind(host, repo)).expect("SFTP");
+        let dest = Destination::new(format!("Server {repo}"), self.kind(host, repo)).expect("SFTP");
         self.trust(&dest);
         self.daemon
             .client
