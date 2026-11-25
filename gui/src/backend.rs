@@ -240,6 +240,10 @@ pub mod qobject {
         fn sftp_user_valid(self: &KesticApp, user: &QString) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "sftpHostValid"]
+        fn sftp_host_valid(self: &KesticApp, host: &QString) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "testDestination"]
         fn test_destination(
             self: Pin<&mut KesticApp>,

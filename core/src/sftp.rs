@@ -66,7 +66,8 @@ pub fn is_valid_user(user: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c.is_alphabetic() || matches!(c, '.' | '_' | '-'))
 }
 
-fn is_valid_host(host: &str) -> bool {
+/// Whether `host` is a host name or an IP address (`::1` or `[::1]`) Kestic passes to ssh.
+pub fn is_valid_host(host: &str) -> bool {
     let host = host.trim();
     if bare_ipv6(host).is_some() {
         return true;
@@ -650,6 +651,8 @@ mod tests {
         for (host, port, user, path) in [
             ("-oProxyCommand=x", 22, "anna", "/srv"),
             ("nas local", 22, "anna", "/srv"),
+            ("dead:beef", 22, "anna", "/srv"),
+            ("[nas.local]", 22, "anna", "/srv"),
             ("nas.local", 0, "anna", "/srv"),
             ("nas.local", 22, "-oProxyCommand=x", "/srv"),
             ("nas.local", 22, "an na", "/srv"),

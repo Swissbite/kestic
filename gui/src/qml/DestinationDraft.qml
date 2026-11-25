@@ -80,7 +80,7 @@ QtObject {
     readonly property bool s3PathValid: !/[\s"#?%\x00-\x1f\x7f]/.test(s3Path.trim())
     // SFTP: a host name or IP address, a port, a user and a path as `core` checks them; a host or
     // user starting with `-` would reach ssh as an option.
-    readonly property bool hostValid: /^(\[[0-9a-fA-F:.]+\]|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*|[A-Za-z0-9_][A-Za-z0-9._-]*)$/.test(host.trim())
+    readonly property bool hostValid: appBackend.sftpHostValid(host)
     readonly property bool portValid: /^[0-9]{1,5}$/.test(port.trim()) && Number(port) >= 1 && Number(port) <= 65535
     // As core checks it: letters (also non-ASCII), digits, '.', '_' and '-', not starting with '-'.
     readonly property bool sftpUserValid: appBackend.sftpUserValid(username)

@@ -92,6 +92,11 @@ impl qobject::KesticApp {
         kestic_core::sftp::is_valid_user(&user.to_string())
     }
 
+    /// Whether `host` is a host of an SFTP destination as `core` checks it.
+    pub fn sftp_host_valid(&self, host: &QString) -> bool {
+        kestic_core::sftp::is_valid_host(&host.to_string())
+    }
+
     /// Whether «Geheim» starts switched on for a new variable named `name`.
     pub fn env_var_secret_by_default(&self, name: &QString) -> bool {
         kestic_core::generic::secret_by_default(&name.to_string())
