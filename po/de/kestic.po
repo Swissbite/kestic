@@ -3547,10 +3547,6 @@ msgid "Show %1"
 msgstr "%1 anzeigen"
 
 #: gui/src/qml/RestoreSearchPage.qml
-msgid "Search text"
-msgstr "Suchbegriff"
-
-#: gui/src/qml/RestoreSearchPage.qml
 msgid "Search cancelled"
 msgstr "Suche abgebrochen"
 

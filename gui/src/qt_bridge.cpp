@@ -66,14 +66,32 @@ void stack_footers_after_columns(QQuickItem* view) {
     }
 }
 
-void stack_page_footers_after_pages(QQuickItem* item) {
+// A page adds its header after its content, so the Tab chain ran through the content before
+// the header above it. Stacking the header before the content makes it follow the visible order.
+void stack_header_before_content(QQuickItem* page) {
+    auto* header = page->property("header").value<QQuickItem*>();
+    auto* content = page->property("contentItem").value<QQuickItem*>();
+    if (!header || !content || header->parentItem() != page || content->parentItem() != page) {
+        return;
+    }
+    const QList<QQuickItem*> children = page->childItems();
+    if (children.indexOf(header) > children.indexOf(content)) {
+        header->stackBefore(content);
+    }
+}
+
+// Stacks the parts of the pages below `item` so that the Tab chain follows the visible order.
+void stack_pages_in_visible_order(QQuickItem* item) {
     if (item->inherits("ColumnView")) {
         stack_footers_after_columns(item);
+    }
+    if (item->inherits("QQuickPage")) {
+        stack_header_before_content(item);
         return;
     }
     const QList<QQuickItem*> children = item->childItems();
     for (QQuickItem* child : children) {
-        stack_page_footers_after_pages(child);
+        stack_pages_in_visible_order(child);
     }
 }
 
@@ -92,7 +110,7 @@ public:
         auto* ke = static_cast<QKeyEvent*>(event);
         if (et == QEvent::KeyPress && (ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab)) {
             if (auto* win = qobject_cast<QQuickWindow*>(watched)) {
-                stack_page_footers_after_pages(win->contentItem());
+                stack_pages_in_visible_order(win->contentItem());
             }
         }
         const Qt::KeyboardModifiers mods = ke->modifiers() & ~Qt::KeypadModifier;

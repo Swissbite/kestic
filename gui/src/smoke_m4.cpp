@@ -3011,6 +3011,190 @@ int scenario_list_page_keys(const Ctx& c) {
     return 0;
 }
 
+// Whether `item` lies wholly inside the window.
+bool inside_window(QQuickWindow* w, QQuickItem* item) {
+    const QRectF r = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+    return r.top() >= -0.5 && r.left() >= -0.5 && r.bottom() <= w->height() + 0.5
+        && r.right() <= w->width() + 0.5;
+}
+
+// Whether `item` derives from the QML type `type` (a QML type's class name starts with it).
+bool is_of_qml_type(QQuickItem* item, const char* type) {
+    for (const QMetaObject* mo = item->metaObject(); mo; mo = mo->superClass()) {
+        if (QByteArray(mo->className()).startsWith(type)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The search fields shown in the window: visible Kirigami.SearchField items inside the window,
+// without the «Filter» fields of lists.
+QList<QQuickItem*> shown_search_fields(QQuickWindow* w) {
+    QList<QQuickItem*> items;
+    collect_visual_descendants(w->contentItem(), items);
+    QList<QQuickItem*> fields;
+    for (QQuickItem* it : items) {
+        if (it->isVisible() && it->width() > 0 && inside_window(w, it) && is_of_qml_type(it, "SearchField")
+            && !is_of_qml_type(it, "FilterField")) {
+            fields << it;
+        }
+    }
+    return fields;
+}
+
+/// AC-M4-01-4 (b), search field of the snapshot list: with more snapshots than fit, after the
+/// last row (a) Shift+Tab focuses the search field and it is in the visible area of the page,
+/// (b) the field is not part of the page's scrolling content.
+int scenario_search_field_fixed(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 8001, 30)) {
+        return rc;
+    }
+    QQuickItem* page = visible_item(w, "restoreSnapshotsPage");
+    QQuickItem* list = visible_item(w, "restoreSnapshotsListView");
+    QQuickItem* field = visible_item(w, "snapshotSearchField");
+    M4_CHECK(8010, page && list && field, "snapshot page, list or search field missing");
+    auto* flick = page->property("flickable").value<QQuickItem*>();
+    M4_CHECK(8011, flick != nullptr, "the snapshot page has no flickable");
+    M4_CHECK(8012, list->height() > flick->height() * 2, "the snapshots do not fit into the page");
+    M4_CHECK(8013, tab_into(w, list, 40), "Tab reaches the snapshot list");
+    press_and_wait(w, Qt::Key_End, 120);
+    M4_CHECK(8014, list->property("currentIndex").toInt() == list->property("count").toInt() - 1,
+        "End selects the last snapshot");
+    M4_CHECK(8015, flick->property("contentY").toReal() > flick->height(),
+        "the page is scrolled down to the last snapshot");
+    press_backtab(w);
+    M4_CHECK(8020, wait_until([&] { return field->hasActiveFocus(); }, 2000),
+        qPrintable(QStringLiteral("(a) Shift+Tab from the list focuses the search field: ") + focus_name(w)));
+    wait_ms(200);
+    const QRectF r = field->mapRectToItem(page, QRectF(0, 0, field->width(), field->height()));
+    M4_CHECK(8021, r.top() >= -0.5 && r.bottom() <= page->height() + 0.5 && inside_window(w, field)
+            && shown_in_its_flickables(field),
+        qPrintable(QStringLiteral("(a) the search field is in the visible area of the page: %1..%2 of %3")
+            .arg(r.top()).arg(r.bottom()).arg(page->height())));
+    M4_CHECK(8022, !lies_in(field, flick), "(b) the search field is not part of the scrolling content");
+    M4_CHECK(8023, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
+/// AC-M4-01-4 (b), results of a search: (c) after a search the window shows exactly one search
+/// field, (d) while a new search runs no hit row shows under the loading placeholder, (e) the
+/// header with the searched text and the number of hits is one line beside «Filter».
+/// `KESTIC_SMOKE_HOLD_FIND` names the marker file that holds `restic find` while it exists.
+int scenario_search_header(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    const bool narrow = w->property("narrowMode").toBool();
+    if (int rc = open_restore_snapshots(c, 8101, 3)) {
+        return rc;
+    }
+    if (int rc = search_with_keyboard(c, QStringLiteral("bericht.pdf"), 8106)) {
+        return rc;
+    }
+    wait_ms(600); // let the page transition end
+    Search s = search_page(w);
+    M4_CHECK(8110, s.model->rowCount() == 2, "two hits");
+    if (!narrow) {
+        const QList<QQuickItem*> fields = shown_search_fields(w);
+        M4_CHECK(8111, fields.size() == 1,
+            qPrintable(QStringLiteral("(c) the window shows exactly one search field, not %1").arg(fields.size())));
+        M4_CHECK(8112, fields.first()->objectName() == QLatin1String("snapshotSearchField"),
+            "(c) the one search field is that of the snapshot list");
+    }
+    QList<QQuickItem*> page_items;
+    collect_visual_descendants(s.page, page_items);
+    M4_CHECK(8113, page_items.contains(qobject_cast<QQuickItem*>(object_named(w, "searchFilterField"))),
+        "the header of the search page is part of the page");
+    for (QQuickItem* it : page_items) {
+        M4_CHECK(8114, !(is_of_qml_type(it, "SearchField") && !is_of_qml_type(it, "FilterField")),
+            "(c) the search page has no search field of its own");
+    }
+
+    auto* label = qobject_cast<QQuickItem*>(object_named(w, "searchCountLabel"));
+    auto* filter = qobject_cast<QQuickItem*>(object_named(w, "searchFilterField"));
+    M4_CHECK(8120, label && filter && label->isVisible() && filter->isVisible(),
+        "the number of hits and «Filter» are shown");
+    M4_CHECK_EQ(8121, label->property("text").toString(),
+        loc(c.lang, "2 hits for ‹bericht.pdf› in 2 snapshots", "2 Treffer für ‹bericht.pdf› in 2 Snapshots"),
+        "(e) the header names the searched text and the number of hits");
+    M4_CHECK(8122, label->property("lineCount").toInt() == 1,
+        qPrintable(QStringLiteral("(e) the header is one line, not %1").arg(label->property("lineCount").toInt())));
+    const QRectF lr = label->mapRectToScene(QRectF(0, 0, label->width(), label->height()));
+    const QRectF fr = filter->mapRectToScene(QRectF(0, 0, filter->width(), filter->height()));
+    M4_CHECK(8123, lr.center().y() > fr.top() && lr.center().y() < fr.bottom() && lr.right() <= fr.left() + 0.5,
+        "(e) the header line stands beside «Filter»");
+    M4_CHECK(8124, save_screenshot(w, c.out_path), "screenshot failed");
+
+    if (narrow) {
+        return 0;
+    }
+
+    // A new search from the search field of the snapshot list beside the hits, held while it
+    // runs.
+    QFile hold(qEnvironmentVariable("KESTIC_SMOKE_HOLD_FIND"));
+    M4_CHECK(8130, hold.open(QIODevice::WriteOnly), "the hold marker could not be written");
+    hold.write("1");
+    hold.close();
+    send_key(w, Qt::Key_F, Qt::ControlModifier);
+    M4_CHECK(8131, wait_until([&] {
+        QQuickItem* field = item_named(w, "snapshotSearchField");
+        return field && field->hasActiveFocus();
+    }, 2000), "Ctrl+F moves the focus to the search field of the snapshot list");
+    send_key(w, Qt::Key_A, Qt::ControlModifier);
+    type_text(w, QStringLiteral("bericht"));
+    send_key(w, Qt::Key_Return);
+    M4_CHECK(8132, wait_until([&] {
+        Search running = search_page(w);
+        return running.model && running.model->property("state").toString() == QLatin1String("running");
+    }, 10000), "Return starts a new search");
+    finish_incubation(w);
+    wait_ms(600);
+    QList<QQuickItem*> items;
+    collect_visual_descendants(w->contentItem(), items);
+    for (QQuickItem* it : items) {
+        M4_CHECK(8140, !(it->objectName() == QLatin1String("searchHitRow") && it->isVisible()
+                && inside_window(w, it)),
+            "(d) no hit row shows while the search runs");
+    }
+    QQuickItem* busy = visible_item(w, "searchBusy");
+    M4_CHECK(8141, busy != nullptr && inside_window(w, busy), "(d) the loading placeholder is shown");
+    M4_CHECK(8142, visible_item(w, "searchCancelButton") != nullptr, "(d) «Cancel» is shown");
+    M4_CHECK(8143, save_screenshot(w, screenshot_variant(c.out_path, "-running")), "screenshot failed");
+    QFile::remove(hold.fileName());
+    return 0;
+}
+
+/// AC-M4-01-4 (b), any page: a control scrolled out of view that gets the focus by Tab is
+/// scrolled into the visible area. The backup detail page in a short window, scrolled to its
+/// top; Tab walks down to its last row.
+int scenario_focus_in_view(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    w->resize(w->width(), 420);
+    wait_ms(300);
+    QObject* backups_tab = object_named(w, "backupsTabAction");
+    M4_CHECK(8201, backups_tab != nullptr, "backupsTabAction missing");
+    trigger(backups_tab);
+    M4_CHECK(8202, wait_until([&] { return visible_item(w, "backupDetailPage") != nullptr; }, 5000),
+        "«Backups» shows the detail of a backup");
+    finish_incubation(w);
+    wait_ms(600);
+    QQuickItem* page = visible_item(w, "backupDetailPage");
+    QQuickItem* row = visible_item(w, "viewFullConfigRow");
+    M4_CHECK(8203, page && row, "detail page or its last row missing");
+    auto* flick = page->property("flickable").value<QQuickItem*>();
+    M4_CHECK(8204, flick != nullptr, "the detail page has no flickable");
+    flick->setProperty("contentY", flick->property("originY").toReal() - flick->property("topMargin").toReal());
+    wait_ms(200);
+    M4_CHECK(8205, !shown_in_its_flickables(row), "the last row starts out of view");
+    M4_CHECK(8206, tab_to(w, "viewFullConfigRow", 60) != nullptr,
+        qPrintable(QStringLiteral("Tab reaches the last row: ") + focus_name(w)));
+    wait_ms(200);
+    M4_CHECK(8207, shown_in_its_flickables(row) && inside_window(w, row),
+        "a control that gets the focus by Tab is scrolled into view");
+    M4_CHECK(8208, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -3085,6 +3269,12 @@ void run_m4_smoke_scenario(
         rc = scenario_tab_order(ctx);
     } else if (scen == QLatin1String("m4-list-page-keys")) {
         rc = scenario_list_page_keys(ctx);
+    } else if (scen == QLatin1String("m4-search-field-fixed")) {
+        rc = scenario_search_field_fixed(ctx);
+    } else if (scen == QLatin1String("m4-search-header")) {
+        rc = scenario_search_header(ctx);
+    } else if (scen == QLatin1String("m4-focus-in-view")) {
+        rc = scenario_focus_in_view(ctx);
     } else if (scen == QLatin1String("m4-breakpoint")) {
         rc = scenario_breakpoint(ctx);
     } else if (scen == QLatin1String("m4-restore-banner")) {

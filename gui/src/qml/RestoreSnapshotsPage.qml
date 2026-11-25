@@ -10,9 +10,9 @@ import net.daester.kestic 1.0
 // Restore area, right column: the snapshots of one backup, newest first, grouped by day, or
 // those of one further group (unassigned, orphaned, not configured here) per destination.
 // Return opens a snapshot for browsing; the context menu (Menu key, Shift+F10 or right click)
-// also compares it with the previous one or restores it. The search field (Ctrl+F) searches
-// all snapshots of the backup. «Compare…» turns the list into a choice of exactly two snapshots
-// (Return or Space marks one) whose differences «Show Differences» opens.
+// also compares it with the previous one or restores it. The search field (Ctrl+F) above the
+// list searches all snapshots of the backup. «Compare…» turns the list into a choice of exactly
+// two snapshots (Return or Space marks one) whose differences «Show Differences» opens.
 Kirigami.ScrollablePage {
     id: page
     objectName: "restoreSnapshotsPage"
@@ -169,6 +169,26 @@ Kirigami.ScrollablePage {
         }
     ]
 
+    // The search field stays in the page's header while the snapshots scroll below it.
+    header: Controls.ToolBar {
+        visible: page.group === ""
+        leftPadding: Kirigami.Units.largeSpacing
+        rightPadding: Kirigami.Units.largeSpacing
+        contentItem: Kirigami.SearchField {
+            id: searchField
+            objectName: "snapshotSearchField"
+            placeholderText: Texts.label("search_in_backup_snapshots")
+            Accessible.name: Texts.label("search_in_backup_snapshots")
+            // Ctrl+F (the field's default) focuses this field; the other search and filter
+            // fields of the restore area have none, so the shortcut is never ambiguous.
+            // Searching runs restic over every snapshot, so it starts on Return only.
+            autoAccept: false
+            onAccepted: {
+                if (text.trim() !== "") page.searchRequested(page.backupId, text);
+            }
+        }
+    }
+
     footer: Controls.ToolBar {
         visible: page.compareMode
         contentItem: RowLayout {
@@ -197,22 +217,6 @@ Kirigami.ScrollablePage {
     ColumnLayout {
         width: parent.width
         spacing: Kirigami.Units.mediumSpacing
-
-        Kirigami.SearchField {
-            id: searchField
-            objectName: "snapshotSearchField"
-            Layout.fillWidth: true
-            visible: page.group === ""
-            placeholderText: Texts.label("search_in_backup_snapshots")
-            Accessible.name: Texts.label("search_in_backup_snapshots")
-            // Ctrl+F (the field's default) focuses this field; the other search and filter
-            // fields of the restore area have none, so the shortcut is never ambiguous.
-            // Searching runs restic over every snapshot, so it starts on Return only.
-            autoAccept: false
-            onAccepted: {
-                if (text.trim() !== "") page.searchRequested(page.backupId, text);
-            }
-        }
 
         Kirigami.LoadingPlaceholder {
             Layout.fillWidth: true

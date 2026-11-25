@@ -76,6 +76,39 @@ QtObject {
         }
     }
 
+    // Whichever way a control gets the focus (Tab, Shift+Tab, a shortcut or a call), it is
+    // scrolled into the visible part of the flickables around it.
+    property Connections focusInViewConnection: Connections {
+        target: manager.rootWindow
+        function onActiveFocusItemChanged() { Qt.callLater(manager.keepFocusInView); }
+    }
+
+    // Scrolls each flickable around the control with the focus just so far that the control is
+    // in view; a control taller than the view only so far that part of it shows. Lists and grids
+    // keep their own rows in view, so the flickable of a list is passed over.
+    function keepFocusInView() {
+        var item = rootWindow.activeFocusItem;
+        if (!item || !item.visible) return;
+        for (var p = item.parent; p; p = p.parent) {
+            if (!(p instanceof Flickable) || p instanceof ListView || p instanceof GridView) continue;
+            if (p.contentHeight <= p.height) continue;
+            var top = item.mapToItem(p.contentItem, 0, 0).y;
+            var bottom = top + item.height;
+            var y = p.contentY;
+            if (item.height <= p.height) {
+                if (bottom > y + p.height) y = bottom - p.height;
+                if (top < y) y = top;
+            } else if (bottom <= y) {
+                y = bottom - p.height;
+            } else if (top >= y + p.height) {
+                y = top;
+            }
+            var minY = p.originY - p.topMargin;
+            var maxY = Math.max(minY, p.originY + p.contentHeight + p.bottomMargin - p.height);
+            p.contentY = Math.max(minY, Math.min(maxY, y));
+        }
+    }
+
     function clearSavedFocus() {
         savedFocusDepth1 = null;
         savedFocusDepth2 = null;
