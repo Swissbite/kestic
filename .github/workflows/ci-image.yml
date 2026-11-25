@@ -55,6 +55,8 @@ jobs:
   ensure:
     name: Ensure CI image
     runs-on: ubuntu-latest
+    # A full image build takes well under this; a hang should not hold a runner for 6 h.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
