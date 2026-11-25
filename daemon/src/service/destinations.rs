@@ -7,6 +7,7 @@ use super::error::{
     KesticServiceErr, map_config_err, map_destination_err, map_provider_err, map_secret_err,
     parse_setup_mode,
 };
+use super::host_keys::SftpSetupGuard;
 use super::state::DaemonCore;
 use crate::dbus_api::{BackendSecrets, ConnectionTestResultDto, DaemonStateDto};
 use crate::tray::KesticTrayState;
@@ -521,8 +522,8 @@ pub(crate) fn add_destination_unlocked(
         )));
     }
 
-    let deps = {
-        let guard = shared.lock_unpoisoned();
+    let (deps, _setup) = {
+        let mut guard = shared.lock_unpoisoned();
         if guard.config.destination(&dest.id).is_some() {
             dest.id =
                 DestinationId::generate_unique(guard.config.destinations.iter().map(|d| &d.id))
@@ -536,7 +537,10 @@ pub(crate) fn add_destination_unlocked(
         if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {
             return Err(KesticServiceErr::DuplicateLocation(existing.name.clone()));
         }
-        guard.restic_deps()
+        // The host key checked below stays in Kestic's `known_hosts` until the destination is
+        // saved, even when another destination on the server is removed meanwhile.
+        let setup = SftpSetupGuard::begin(shared, &mut guard, &dest);
+        (guard.restic_deps(), setup)
     };
 
     let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
@@ -574,19 +578,14 @@ pub(crate) fn add_destination_unlocked(
     Ok((new_id, guard.conn.clone(), state_dto, tray_state))
 }
 
-/// `RemoveDestination`: removes the destination, then, without holding the daemon state, the
-/// lines of its SFTP server from Kestic's `known_hosts` when no other destination uses it (asking
-/// ssh how it resolves the server may take a while).
+/// `RemoveDestination`: removes the destination, then the lines of its SFTP server from Kestic's
+/// `known_hosts` when no other destination uses it.
 pub(crate) fn remove_destination_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     dest_id: &str,
 ) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
-    let (removed, remaining) = {
-        let mut guard = shared.lock_unpoisoned();
-        let removed = guard.remove_destination(dest_id)?;
-        (removed, guard.config.destinations.clone())
-    };
-    super::host_keys::forget_unused_host(&removed, &remaining);
+    let removed = shared.lock_unpoisoned().remove_destination(dest_id)?;
+    super::host_keys::forget_unused_host(shared, &removed);
     let guard = shared.lock_unpoisoned();
     let (state_dto, tray_state) = guard.build_state_and_tray();
     Ok((guard.conn.clone(), state_dto, tray_state))

@@ -14,6 +14,7 @@ use common::{SYSTEM_PROGRAMS_DIR, run_isolated_test_with_system_programs};
 use kestic_core::model::{ResticProvider, RunStatus};
 use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
 use kestic_core::restic_release::{TrustAnchor, set_test_anchor};
+use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
 use kestic_daemon::dbus_api::{KesticClient, ResticBinaryDto, ResticStatusDto};
 use kestic_i18n::codes::{ResticSourceCode, ServiceErrorCode};
 use kestic_test_support::release_mock::{
@@ -22,6 +23,8 @@ use kestic_test_support::release_mock::{
 use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use time::OffsetDateTime;
 use time::macros::datetime;
@@ -261,6 +264,100 @@ fn restic_status_names_the_running_installation() {
             });
             assert_eq!(restic_status(client).install_id, None);
             rig.daemon.stop();
+        },
+    );
+}
+
+/// A password store whose availability check removes `binary` once, after `armed` was set: it
+/// runs after `SetResticProvider` checked the restic and before it takes the daemon lock, where
+/// a concurrent `RemoveAppManagedRestic` would fall.
+struct RemovingStore {
+    binary: PathBuf,
+    armed: Arc<AtomicBool>,
+}
+
+impl SecretStore for RemovingStore {
+    fn set_secret(&self, _: &str, _: &str, _: &SecretValue) -> Result<(), SecretError> {
+        Ok(())
+    }
+
+    fn get_secret(&self, _: &str, _: &str) -> Result<Option<SecretValue>, SecretError> {
+        Ok(None)
+    }
+
+    fn delete_secret(&self, _: &str, _: &str) -> Result<(), SecretError> {
+        Ok(())
+    }
+
+    fn check_availability(&self) -> Result<(), SecretError> {
+        if self.armed.swap(false, Ordering::SeqCst) {
+            fs::remove_file(&self.binary).map_err(|err| SecretError::Io(err.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+/// AC-M5-07-5 (c): the app-managed restic removed after `SetResticProvider` checked the chosen
+/// path never becomes the source, whether the path is the binary or a link to it; the source
+/// stays as it was.
+#[test]
+fn ac_m5_07_5_source_never_points_at_a_removed_binary() {
+    run_isolated_test_with_system_programs(
+        "ac_m5_07_5_source_never_points_at_a_removed_binary",
+        "KESTIC_M5_07_5R_INNER",
+        |root| {
+            for through_link in [false, true] {
+                let app = app_binary();
+                write_executable(&app, &json_script("0.19.1"));
+                let chosen = if through_link {
+                    let link = root.join("custom-link/restic");
+                    fs::create_dir_all(link.parent().expect("parent")).expect("mkdir");
+                    std::os::unix::fs::symlink(&app, &link).expect("symlink");
+                    link
+                } else {
+                    app.clone()
+                };
+                let armed = Arc::new(AtomicBool::new(false));
+                let store = RemovingStore {
+                    binary: app.clone(),
+                    armed: Arc::clone(&armed),
+                };
+                let base = if through_link { "S07R5L" } else { "S07R5D" };
+                let rig = M3Rig::start(root, &latest_variant(), base, START, |o| {
+                    o.enable_monitors = false;
+                    o.enable_scheduler = false;
+                    o.set_restic_provider = false;
+                    o.secret_store = Some(Arc::new(store));
+                });
+                let client = &rig.daemon.client;
+                let config_before = fs::read(&rig.daemon.config_path).ok();
+
+                armed.store(true, Ordering::SeqCst);
+                let err = client
+                    .set_restic_provider(&ResticProvider::Custom { path: chosen })
+                    .expect_err("SetResticProvider on a removed restic");
+
+                // (c) the binary is gone
+                assert!(!app.exists(), "link: {through_link}");
+                // (c) the change of source is refused
+                assert_eq!(
+                    err.code(),
+                    ServiceErrorCode::ResticUnavailable,
+                    "link: {through_link}"
+                );
+                // (c) the source is unchanged, in the daemon and on disk
+                assert_eq!(
+                    restic_status(client).source,
+                    ResticSourceCode::Automatic,
+                    "link: {through_link}"
+                );
+                assert_eq!(
+                    fs::read(&rig.daemon.config_path).ok(),
+                    config_before,
+                    "link: {through_link}"
+                );
+                rig.daemon.stop();
+            }
         },
     );
 }

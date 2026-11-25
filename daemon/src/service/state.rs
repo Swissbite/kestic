@@ -240,6 +240,8 @@ pub struct DaemonCore {
     pub(super) restic_installs: super::restic_install::InstallMap,
     /// Removal of what an interrupted installation of an earlier daemon left behind.
     pub(super) install_leftovers: super::restic_install::LeftoverSweep,
+    /// SFTP destinations being added or moved to another server right now.
+    pub(super) sftp_setups: super::host_keys::SftpSetups,
     pub(super) snapshot_queries: QueryStore<SharedResult>,
     pub(super) window_active: bool,
     pub(super) window_page: String,
@@ -359,6 +361,7 @@ impl DaemonCore {
             retention_previews: HashMap::new(),
             restic_installs: HashMap::new(),
             install_leftovers: super::restic_install::LeftoverSweep::default(),
+            sftp_setups: super::host_keys::SftpSetups::default(),
             snapshot_queries: QueryStore::new(run_config.query_limits),
             window_active: false,
             window_page: String::new(),
@@ -876,17 +879,28 @@ pub(crate) fn set_restic_provider_unlocked(
     let locations = ResticLocations::from_env();
     let (probe, resolved) =
         probe_restic_and_secrets_with(&provider, &locations, secret_store.as_ref());
-    if let Err(err) = resolved {
-        if provider == ResticProvider::AppManaged && probe.0.app_managed.is_none() {
-            return Err(KesticServiceErr::InvalidInput(
-                "the restic managed by Kestic is not installed".to_string(),
-            ));
+    let not_installed = || {
+        KesticServiceErr::InvalidInput("the restic managed by Kestic is not installed".to_string())
+    };
+    let binary = match resolved {
+        Ok(resolved) => resolved.binary,
+        Err(_) if provider == ResticProvider::AppManaged && probe.0.app_managed.is_none() => {
+            return Err(not_installed());
         }
-        return Err(map_provider_err(err));
-    }
+        Err(err) => return Err(map_provider_err(err)),
+    };
     let mut restic_status = probe.0.clone();
 
     let mut guard = shared.lock_unpoisoned();
+    // `RemoveAppManagedRestic` deletes under this lock, so a binary removed since the check
+    // above is gone by now; a link to it then points nowhere.
+    if !binary.exists() {
+        return Err(if provider == ResticProvider::AppManaged {
+            not_installed()
+        } else {
+            KesticServiceErr::ResticUnavailable(format!("{} was removed", binary.display()))
+        });
+    }
     let mut next = guard.config.clone();
     next.restic_provider = provider;
     guard.persist_config(next)?;

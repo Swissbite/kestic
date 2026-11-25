@@ -800,6 +800,61 @@ fn ac_m5_01_8_host_line_goes_with_the_last_destination_on_the_server() {
     );
 }
 
+/// AC-M5-01-8 (a), with an `AddDestination` on the same server still running: removing the
+/// only saved destination on the server keeps the line, which the new destination checked and
+/// still needs once it is saved.
+#[test]
+fn ac_m5_01_8_line_stays_for_a_destination_added_meanwhile() {
+    run_isolated_test(
+        "ac_m5_01_8_line_stays_for_a_destination_added_meanwhile",
+        "KESTIC_M5_01_8_ADD_INNER",
+        |root| {
+            let rig = start_sftp_rig(root, &common::m3::latest_variant(), "M5SftpR");
+            let p = paths();
+            let first = rig.destination("NAS", "first");
+            let second = rig.destination("NAS 2", "second");
+            rig.add_new(&first);
+            let line = rig.server.known_hosts_line();
+            let kestic_lines = || {
+                fs::read_to_string(&p.kestic)
+                    .unwrap_or_default()
+                    .lines()
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(kestic_lines(), vec![line.clone()], "the trusted line");
+            let inits_before = rig.wrapper.of('S', "init").len();
+            rig.wrapper.hold("init");
+            let client = rig.daemon.client.clone();
+            let adding = std::thread::spawn({
+                let second = second.clone();
+                move || client.add_destination(&second, "init", &strong_password(), &no_secrets())
+            });
+            // The host key of the second destination was checked; restic now creates its
+            // repository.
+            rig.wrapper
+                .wait_for('S', "init", inits_before + 1, Duration::from_secs(30));
+
+            rig.daemon
+                .client
+                .remove_destination(first.id.as_str())
+                .expect("RemoveDestination first");
+            rig.wrapper.release("init");
+            adding
+                .join()
+                .expect("AddDestination thread")
+                .expect("AddDestination second");
+            // (a)
+            assert_eq!(
+                kestic_lines(),
+                vec![line.clone()],
+                "(a) line removed while the second destination was being added"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// AC-M5-01-7 (a)–(d), second case: a server that no longer shows the key type Kestic's file
 /// knows for it (an ecdsa line, the server shows only ed25519) is treated like a changed key:
 /// (a) the test names the file, (b) no key to trust is offered, (c) the file stays as it is and

@@ -371,8 +371,9 @@ fn run_install(job: InstallJob) {
 }
 
 /// `RemoveAppManagedRestic`: deletes the app-managed restic at once. Refused with `InUse` while
-/// it is the restic in use (its source, «Automatic» without a usable system restic, or a custom
-/// path to it) or a restic process may run it; removing a missing binary changes nothing.
+/// it is the restic in use (its source, «Automatic» without a usable system restic, a system
+/// restic that links to it, or a custom path to it) or a restic process may run it; removing a
+/// missing binary changes nothing.
 pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), KesticServiceErr> {
     let Some(dir) = data_dir() else {
         return Ok(());
@@ -381,13 +382,23 @@ pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), 
     if binary.symlink_metadata().is_err() {
         return Ok(());
     }
-    let provider = shared.lock_unpoisoned().config.restic_provider.clone();
-    if is_active_source(&provider, &binary, &ResticLocations::from_env()) {
-        return Err(KesticServiceErr::InUse(
-            "the restic managed by Kestic is the restic in use".to_string(),
-        ));
-    }
-    match remove_app_managed(&dir, ResticBinaryGate::global()) {
+    let mut provider = shared.lock_unpoisoned().config.restic_provider.clone();
+    let removed = loop {
+        // The check runs restic, so it runs without the lock; the removal then holds the lock,
+        // and a source chosen meanwhile is checked again. `SetResticProvider` checks under the
+        // same lock that the binary it chose still exists.
+        if is_active_source(&provider, &binary, &ResticLocations::from_env()) {
+            return Err(KesticServiceErr::InUse(
+                "the restic managed by Kestic is the restic in use".to_string(),
+            ));
+        }
+        let guard = shared.lock_unpoisoned();
+        if guard.config.restic_provider == provider {
+            break remove_app_managed(&dir, ResticBinaryGate::global());
+        }
+        provider = guard.config.restic_provider.clone();
+    };
+    match removed {
         Ok(_) => {}
         Err(RemoveError::InUse) => {
             return Err(KesticServiceErr::InUse(
@@ -404,19 +415,21 @@ pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), 
 /// Whether `provider` runs the app-managed restic at `binary`, with the system restic at
 /// `locations`.
 fn is_active_source(provider: &ResticProvider, binary: &Path, locations: &ResticLocations) -> bool {
+    // A system restic that is a link to the app-managed one is the app-managed one.
+    let system_is_it = || {
+        locations
+            .system
+            .as_deref()
+            .is_some_and(|system| same_binary(system, binary))
+    };
     match provider {
         ResticProvider::AppManaged => true,
-        // Without a usable system restic «Automatic» falls back to it; a system restic that is a
-        // link to it is the app-managed one.
+        // Without a usable system restic «Automatic» falls back to it.
         ResticProvider::Automatic => {
-            resolve_with(&ResticProvider::System, locations).is_err()
-                || locations
-                    .system
-                    .as_deref()
-                    .is_some_and(|system| same_binary(system, binary))
+            resolve_with(&ResticProvider::System, locations).is_err() || system_is_it()
         }
         ResticProvider::Custom { path } => same_binary(path, binary),
-        ResticProvider::System => false,
+        ResticProvider::System => system_is_it(),
     }
 }
 

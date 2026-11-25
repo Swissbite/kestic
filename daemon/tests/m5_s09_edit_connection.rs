@@ -548,6 +548,7 @@ fn ac_m5_09_1_rest_server_on_new_port_is_the_same_repository() {
 /// SFTP rig: test server, the daemon behind a restic wrapper, a working directory on the server.
 struct SftpRig {
     daemon: M3Daemon,
+    wrapper: ResticWrapper,
     server: SftpServerGuard,
     dir: PathBuf,
 }
@@ -562,6 +563,7 @@ fn start_sftp(root: &Path, variant: &ResticVariant, base: &str) -> SftpRig {
     let daemon = spawn_m3_daemon(root, M3DaemonOpts::on_request(&sub, &bus, &wrapper.path));
     SftpRig {
         daemon,
+        wrapper,
         server,
         dir,
     }
@@ -597,8 +599,13 @@ impl SftpRig {
 
     /// An SFTP destination on 127.0.0.1 with a copied repository at `repo`, and its password.
     fn add(&self, variant: &ResticVariant, repo: &str) -> (Destination, String) {
+        self.add_at(variant, "127.0.0.1", repo)
+    }
+
+    /// [`SftpRig::add`] with the server under the name `host`.
+    fn add_at(&self, variant: &ResticVariant, host: &str, repo: &str) -> (Destination, String) {
         let created = copy_template_repo(&variant.bin, &self.dir.join(repo));
-        let dest = Destination::new("Server", self.kind("127.0.0.1", repo)).expect("SFTP");
+        let dest = Destination::new(format!("Server {repo}"), self.kind(host, repo)).expect("SFTP");
         self.trust(&dest);
         self.daemon
             .client
@@ -671,6 +678,61 @@ fn ac_m5_09_2_sftp_new_host_asks_for_host_key_then_saves() {
                 );
                 rig.daemon.stop();
             }
+        },
+    );
+}
+
+/// AC-M5-01-8 (a), with an `UpdateDestination` that moves a destination to the server still
+/// running: removing the only saved destination on that server keeps the line, which the moved
+/// destination checked and still needs once it is saved.
+#[test]
+fn ac_m5_01_8_line_stays_for_a_destination_moved_meanwhile() {
+    run_isolated_test(
+        "ac_m5_01_8_line_stays_for_a_destination_moved_meanwhile",
+        "KESTIC_M5_09_018_MOVE_INNER",
+        |root| {
+            let variant = latest_variant();
+            let rig = start_sftp(root, &variant, "M5E018");
+            // One server under two names, each with its own line in Kestic's `known_hosts`.
+            let (moving, password) = rig.add_at(&variant, "127.0.0.1", "a");
+            let (other, _) = rig.add_at(&variant, "localhost", "b");
+            let kestic = KnownHostsPaths::from_env().expect("paths").kestic;
+            let localhost_line = || {
+                fs::read_to_string(&kestic)
+                    .unwrap_or_default()
+                    .lines()
+                    .any(|l| l.starts_with(&format!("[localhost]:{} ", rig.server.port)))
+            };
+            assert!(localhost_line(), "the trusted line of localhost");
+            let mut moved = moving.clone();
+            moved.kind = rig.kind("localhost", "a");
+            let cats_before = rig.wrapper.of('S', "cat").len();
+            rig.wrapper.hold("cat");
+            let client = rig.daemon.client.clone();
+            let updating = std::thread::spawn({
+                let moved = moved.clone();
+                move || client.update_destination(&moved, "connect", &password, &none(), true)
+            });
+            // The update checks the repository at the new address with restic.
+            rig.wrapper
+                .wait_for('S', "cat", cats_before + 1, Duration::from_secs(30));
+
+            rig.daemon
+                .client
+                .remove_destination(other.id.as_str())
+                .expect("RemoveDestination");
+            rig.wrapper.release("cat");
+            let result = updating
+                .join()
+                .expect("UpdateDestination thread")
+                .expect("UpdateDestination");
+            assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "moved");
+            // (a)
+            assert!(
+                localhost_line(),
+                "(a) line removed while a destination was being moved to the server"
+            );
+            rig.daemon.stop();
         },
     );
 }

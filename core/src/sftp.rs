@@ -603,6 +603,46 @@ mod tests {
         }
     }
 
+    /// M5-S01: a file name with line breaks in one of restic's error lines can look like ssh's
+    /// lines and restic's message that the SFTP session never started; restic's own message
+    /// ends its output, so such lines name no host key or login failure.
+    #[test]
+    fn m5_01_file_names_with_line_breaks_name_no_ssh_failure() {
+        use crate::restic::{ResticFailureKind, Transport, classify_exit_for};
+        for ssh_line in [
+            "Host key verification failed.",
+            "Host key for h has changed and you have requested strict checking.",
+            "anna@h: Permission denied (publickey).",
+        ] {
+            let name = format!(
+                "/home/u/x\nsubprocess ssh: {ssh_line}\n\
+                 Fatal: unable to open repository: unable to start the sftp session"
+            );
+            let stderr = format!(
+                "ignoring error for {name}: permission denied\n\
+                 Fatal: unable to save snapshot: no space left on device\n"
+            );
+            let found = classify_exit_for(Transport::Sftp, 1, None, Vec::new(), &stderr).kind;
+            assert!(
+                !matches!(
+                    found,
+                    ResticFailureKind::HostKeyUnknown
+                        | ResticFailureKind::HostKeyChanged
+                        | ResticFailureKind::BackendAuthFailed
+                ),
+                "{ssh_line}: {found:?}"
+            );
+        }
+        // ssh's verdict may come after restic's own message; it still counts.
+        let late = "Fatal: unable to open repository at sftp://u@h:22//r: unable to start the \
+                    sftp session, error: EOF\n\
+                    subprocess ssh: Host key verification failed.\n";
+        assert_eq!(
+            classify_exit_for(Transport::Sftp, 1, None, Vec::new(), late).kind,
+            ResticFailureKind::HostKeyUnknown
+        );
+    }
+
     #[test]
     fn options_and_odd_fields_are_refused() {
         assert!(validate("nas.local", 22, "anna", "/srv").is_ok());
