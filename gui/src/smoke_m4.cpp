@@ -5,6 +5,7 @@
 // Every scenario returns 0 on success and a unique non-zero code on the first failed
 // assertion; one precise condition per assertion (no `||` fallbacks).
 
+#include <cstdlib>
 #include "src/smoke_m3_util.h"
 
 #include <algorithm>
@@ -2822,6 +2823,194 @@ int scenario_restore_network_folder(const Ctx& c) {
     return 0;
 }
 
+// Where the Tab stop `it` lies: the header with the navigation, a page's content, or the action
+// bar of a page at the bottom of the page row.
+QString tab_region(QQuickWindow* w, QQuickItem* it) {
+    if (!it) {
+        return QStringLiteral("none");
+    }
+    if (lies_in(it, item_named(w, "mainHeaderArea"))) {
+        return QStringLiteral("navigation");
+    }
+    for (QQuickItem* p = it; p; p = p->parentItem()) {
+        if (p->inherits("QQuickPage")) {
+            return QStringLiteral("content");
+        }
+    }
+    if (lies_in(it, w->property("pageStack").value<QQuickItem*>())) {
+        return QStringLiteral("action bar");
+    }
+    return QStringLiteral("other: ") + describe_focus_item(it);
+}
+
+void press_backtab(QQuickWindow* w) {
+    send_key(w, Qt::Key_Backtab, Qt::ShiftModifier);
+}
+
+// The regions of one full Tab round from the focus item, in order, with runs of the same region
+// merged, starting with the navigation: a round is a cycle, and one that begins in the middle of
+// the navigation still lists it once.
+QStringList tab_round_regions(QQuickWindow* w, int max_steps) {
+    QQuickItem* start = w->activeFocusItem();
+    QStringList stops;
+    for (int i = 0; i < max_steps; ++i) {
+        stops << tab_region(w, w->activeFocusItem());
+        press_tab(w);
+        if (w->activeFocusItem() == start) {
+            break;
+        }
+    }
+    int first = 0;
+    for (int i = 0; i < stops.size(); ++i) {
+        const QString& prev = stops.at((i + stops.size() - 1) % stops.size());
+        if (stops.at(i) == QLatin1String("navigation") && prev != QLatin1String("navigation")) {
+            first = i;
+            break;
+        }
+    }
+    QStringList runs;
+    for (int i = 0; i < stops.size(); ++i) {
+        const QString& region = stops.at((first + i) % stops.size());
+        if (runs.isEmpty() || runs.constLast() != region) {
+            runs << region;
+        }
+    }
+    return runs;
+}
+
+/// AC-M4-01-4 (b): the Tab order follows the visible order. On «Restore» one Tab from the
+/// snapshot list reaches «Compare…» in the action bar, Shift+Tab from the backup list reaches the
+/// navigation, and a full Tab round runs navigation, content, action bar; on «Backups» the
+/// content is followed by the action bar and then the navigation.
+int scenario_tab_order(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7801, 3)) {
+        return rc;
+    }
+    M4_CHECK(7810, tab_to(w, "restoreSnapshotListItem", 40) != nullptr, "Tab reaches the snapshot list");
+    press_tab(w);
+    QObject* compare = object_named(w, "restoreCompareAction");
+    M4_CHECK(7811, compare != nullptr, "restoreCompareAction missing");
+    M4_CHECK(7812, tab_region(w, w->activeFocusItem()) == QLatin1String("action bar"),
+        qPrintable(QStringLiteral("one Tab from the snapshot list reaches the action bar: ") + focus_name(w)));
+    M4_CHECK(7813, w->activeFocusItem()->property("text").toString() == compare->property("text").toString(),
+        qPrintable(QStringLiteral("one Tab from the snapshot list reaches «Compare…»: ") + focus_name(w)));
+
+    M4_CHECK(7820, tab_to(w, "restoreBackupListItem", 40) != nullptr, "Tab reaches the backup list");
+    press_backtab(w);
+    M4_CHECK(7821, tab_region(w, w->activeFocusItem()) == QLatin1String("navigation"),
+        qPrintable(QStringLiteral("Shift+Tab from the backup list reaches the navigation: ") + focus_name(w)));
+
+    const QStringList round = tab_round_regions(w, 60);
+    const QStringList expected { QStringLiteral("navigation"), QStringLiteral("content"), QStringLiteral("action bar") };
+    M4_CHECK(7830, round == expected,
+        qPrintable(QStringLiteral("a full Tab round on «Restore» runs navigation, content, action bar: ")
+            + round.join(QStringLiteral(", "))));
+    M4_CHECK(7831, save_screenshot(w, c.out_path), "screenshot failed");
+
+    QObject* backups_tab = object_named(w, "backupsTabAction");
+    M4_CHECK(7840, backups_tab != nullptr, "backupsTabAction missing");
+    trigger(backups_tab);
+    M4_CHECK(7841, wait_until([&] {
+        QQuickItem* list = visible_item(w, "backupsListPage");
+        return w->property("activeTab").toInt() == 1 && list && visible_item(w, "backupDetailPage")
+            && lies_in(w->activeFocusItem(), list);
+    }, 5000), qPrintable(QStringLiteral("«Backups» shows the list with the focus and the detail page: ") + focus_name(w)));
+    finish_incubation(w);
+    QString before = tab_region(w, w->activeFocusItem());
+    for (int i = 0; i < 60 && tab_region(w, w->activeFocusItem()) != QLatin1String("action bar"); ++i) {
+        before = tab_region(w, w->activeFocusItem());
+        press_tab(w);
+    }
+    M4_CHECK(7842, tab_region(w, w->activeFocusItem()) == QLatin1String("action bar"),
+        qPrintable(QStringLiteral("Tab reaches the action bar of «Backups»: ") + focus_name(w)));
+    M4_CHECK(7843, before == QLatin1String("content"),
+        qPrintable(QStringLiteral("on «Backups» the action bar follows the content, not ") + before));
+    for (int i = 0; i < 10 && tab_region(w, w->activeFocusItem()) == QLatin1String("action bar"); ++i) {
+        press_tab(w);
+    }
+    M4_CHECK(7844, tab_region(w, w->activeFocusItem()) == QLatin1String("navigation"),
+        qPrintable(QStringLiteral("on «Backups» the navigation follows the action bar: ") + focus_name(w)));
+    return 0;
+}
+
+// The nearest flickable around `item`.
+QQuickItem* outer_flickable(QQuickItem* item) {
+    for (QQuickItem* p = item ? item->parentItem() : nullptr; p; p = p->parentItem()) {
+        if (p->inherits("QQuickFlickable")) {
+            return p;
+        }
+    }
+    return nullptr;
+}
+
+// Whether `row` lies wholly in the visible area of `flick`.
+bool row_in_view(QQuickItem* row, QQuickItem* flick) {
+    const QRectF r = row->mapRectToItem(flick, QRectF(0, 0, row->width(), row->height()));
+    return r.top() >= -0.5 && r.bottom() <= flick->height() + 0.5;
+}
+
+QString row_view_state(QQuickItem* row, QQuickItem* flick) {
+    if (!row || !flick) {
+        return QStringLiteral("row or flickable missing");
+    }
+    const QRectF r = row->mapRectToItem(flick, QRectF(0, 0, row->width(), row->height()));
+    return QStringLiteral("row %1 at %2..%3, visible height %4")
+        .arg(row->property("index").toInt()).arg(r.top()).arg(r.bottom()).arg(flick->height());
+}
+
+/// AC-M4-01-7 (b): in the snapshot list with more rows than fit, the current row stays in the
+/// visible area of the page after Down to the last row, and Page Down from the first row moves
+/// by about one visible page, not to the last row.
+int scenario_list_page_keys(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    if (int rc = open_restore_snapshots(c, 7901, 30)) {
+        return rc;
+    }
+    QQuickItem* list = visible_item(w, "restoreSnapshotsListView");
+    M4_CHECK(7910, list != nullptr, "restoreSnapshotsListView missing");
+    const int count = list->property("count").toInt();
+    QQuickItem* flick = outer_flickable(list);
+    M4_CHECK(7911, flick != nullptr, "no flickable around the snapshot list");
+    M4_CHECK(7912, list->height() > flick->height() * 2,
+        qPrintable(QStringLiteral("the snapshot list is taller than two visible pages: %1 rows, %2 of %3")
+            .arg(count).arg(list->height()).arg(flick->height())));
+    M4_CHECK(7913, tab_into(w, list, 40), "Tab reaches the snapshot list");
+    press_and_wait(w, Qt::Key_Home, 80);
+    M4_CHECK(7914, list->property("currentIndex").toInt() == 0, "Home selects the first snapshot");
+
+    for (int i = 1; i < count; ++i) {
+        press_and_wait(w, Qt::Key_Down, 30);
+        QQuickItem* row = focused_snapshot_row(w);
+        M4_CHECK(7920, row != nullptr && row_in_view(row, flick),
+            qPrintable(QStringLiteral("(b) after Down the current row is in view: ") + row_view_state(row, flick)));
+    }
+    M4_CHECK(7921, list->property("currentIndex").toInt() == count - 1, "(b) Down reaches the last snapshot");
+    M4_CHECK(7922, save_screenshot(w, c.out_path), "screenshot failed");
+
+    press_and_wait(w, Qt::Key_Home, 80);
+    QQuickItem* first = focused_snapshot_row(w);
+    M4_CHECK(7930, first != nullptr && first->property("index").toInt() == 0 && row_in_view(first, flick),
+        qPrintable(QStringLiteral("(b) Home shows the first snapshot: ") + row_view_state(first, flick)));
+    const int page = static_cast<int>(flick->height() / first->height());
+    press_and_wait(w, Qt::Key_PageDown, 80);
+    const int after_page_down = list->property("currentIndex").toInt();
+    M4_CHECK(7931, after_page_down < count - 1,
+        qPrintable(QStringLiteral("(b) Page Down from the first row does not jump to the last row: %1 of %2")
+            .arg(after_page_down).arg(count)));
+    M4_CHECK(7932, std::abs(after_page_down - page) <= 1,
+        qPrintable(QStringLiteral("(b) Page Down moves by about one visible page (%1 rows): to row %2")
+            .arg(page).arg(after_page_down)));
+    QQuickItem* paged = focused_snapshot_row(w);
+    M4_CHECK(7933, paged != nullptr && row_in_view(paged, flick),
+        qPrintable(QStringLiteral("(b) after Page Down the current row is in view: ") + row_view_state(paged, flick)));
+    press_and_wait(w, Qt::Key_PageUp, 80);
+    QQuickItem* back = focused_snapshot_row(w);
+    M4_CHECK(7934, list->property("currentIndex").toInt() == 0 && back != nullptr && row_in_view(back, flick),
+        qPrintable(QStringLiteral("(b) Page Up goes back one page to the first row, in view: ") + row_view_state(back, flick)));
+    return 0;
+}
+
 } // namespace
 
 void run_m4_smoke_scenario(
@@ -2892,6 +3081,10 @@ void run_m4_smoke_scenario(
         rc = scenario_restore_all_from_folder_hit(ctx);
     } else if (scen == QLatin1String("m4-restore-dialog-tab")) {
         rc = scenario_restore_dialog_tab(ctx);
+    } else if (scen == QLatin1String("m4-tab-order")) {
+        rc = scenario_tab_order(ctx);
+    } else if (scen == QLatin1String("m4-list-page-keys")) {
+        rc = scenario_list_page_keys(ctx);
     } else if (scen == QLatin1String("m4-breakpoint")) {
         rc = scenario_breakpoint(ctx);
     } else if (scen == QLatin1String("m4-restore-banner")) {
