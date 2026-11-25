@@ -14,8 +14,8 @@ use common::{SYSTEM_PROGRAMS_DIR, run_isolated_test_with_system_programs};
 use kestic_core::model::{ResticProvider, RunStatus};
 use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
 use kestic_core::restic_release::{TrustAnchor, set_test_anchor};
-use kestic_daemon::dbus_api::{KesticClient, KesticDbusError, ResticBinaryDto, ResticStatusDto};
-use kestic_i18n::codes::ResticSourceCode;
+use kestic_daemon::dbus_api::{KesticClient, ResticBinaryDto, ResticStatusDto};
+use kestic_i18n::codes::{ResticSourceCode, ServiceErrorCode};
 use kestic_test_support::release_mock::{
     ReleaseFiles, ReleaseMock, Route, TestSigningKey, asset_path,
 };
@@ -161,7 +161,8 @@ fn ac_m5_07_5_switch_to_automatic_and_remove_app_managed() {
             let err = client
                 .set_restic_provider(&ResticProvider::AppManaged)
                 .expect_err("not installed");
-            assert!(matches!(err, KesticDbusError::InvalidInput(_)), "{err:?}");
+            // Only the code is compared and printed: an error may carry secret details.
+            assert_eq!(err.code(), ServiceErrorCode::InvalidInput);
             rig.daemon.stop();
         },
     );
