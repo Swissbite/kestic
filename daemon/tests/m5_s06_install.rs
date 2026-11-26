@@ -13,10 +13,13 @@ use common::m3::{
     M3Rig, assert_dbus_error_name, latest_variant, restic_variants, wait_for_state, wait_until,
 };
 use common::release::{serve, trust};
-use common::{load_config, run_isolated_test};
+use common::{
+    SYSTEM_PROGRAMS_DIR, load_config, run_isolated_test, run_isolated_test_with_system_programs,
+};
 use kestic_core::model::ResticProvider;
 use kestic_core::restic_install::{TEMP_PREFIX, app_managed_binary, kestic_data_dir};
 use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient, ResticInstallStatusDto};
+use kestic_i18n::codes::ResticSourceCode;
 use kestic_i18n::codes::{
     ResticInstallCode, ResticInstallOutcome, ResticInstallPhase, ServiceErrorCode,
 };
@@ -331,19 +334,19 @@ fn ac_m5_06_8_cancel_while_waiting_for_runs_keeps_binary() {
     );
 }
 
-/// AC-M5-06-12 (a), (c): with a restic that is too old, the daemon starts and reports without
-/// asking the release server; only `StartResticInstall` does.
+/// AC-M5-06-12 (a), (c): with the source «Automatisch» and a system restic 0.16.4 (too old), the
+/// daemon starts and reports without asking the release server; only `StartResticInstall`
+/// does.
 #[test]
 fn ac_m5_06_12_no_release_access_before_start() {
-    run_isolated_test(
+    run_isolated_test_with_system_programs(
         "ac_m5_06_12_no_release_access_before_start",
         "KESTIC_M5_06_12_INNER",
         |root| {
             let key = TestSigningKey::generate("kestic-test-release");
             let mock = serve(&ReleaseFiles::signed(RELEASE, &key), &key, Vec::new());
-            let old_restic = root.join("old-restic");
             write_executable(
-                &old_restic,
+                &root.join(SYSTEM_PROGRAMS_DIR).join("restic"),
                 "#!/bin/sh\nif [ \"$1\" = version ] && [ -z \"$2\" ]; then\n  \
                  echo 'restic 0.16.4 compiled with go1.22.2 on linux/amd64'\n  exit 0\nfi\nexit 1\n",
             );
@@ -351,9 +354,7 @@ fn ac_m5_06_12_no_release_access_before_start() {
             let sub = variant.sub("S06B12");
             let (config_path, _) = common::m3::daemon_paths(root, &sub);
             let config = kestic_core::config::AppConfig {
-                restic_provider: ResticProvider::Custom {
-                    path: old_restic.clone(),
-                },
+                restic_provider: ResticProvider::Automatic,
                 ..Default::default()
             };
             fs::create_dir_all(config_path.parent().expect("cfg dir")).expect("cfg dir");
@@ -375,6 +376,7 @@ fn ac_m5_06_12_no_release_access_before_start() {
             let state = client.get_state().expect("state");
             assert!(!state.restic_status.valid, "{:?}", state.restic_status);
             assert_eq!(state.restic_status.found_version.as_deref(), Some("0.16.4"));
+            assert_eq!(state.restic_status.source, ResticSourceCode::Automatic);
             std::thread::sleep(Duration::from_secs(2));
             // (a) nothing was asked before the start
             assert_eq!(mock.requests(), Vec::<String>::new());

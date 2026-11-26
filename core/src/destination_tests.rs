@@ -732,6 +732,15 @@ fn host_key_error_texts_start_with_their_markers() {
 /// reason, but does not make the destination unreachable.
 #[test]
 fn uncheckable_host_key_stops_restic_but_is_reachable() {
+    // Kestic's known_hosts paths come from `HOME`: the test runs in a temp home.
+    kestic_test_support::gui::run_with_temp_home(
+        "destination::tests::uncheckable_host_key_stops_restic_but_is_reachable",
+        "KESTIC_CORE_JUMP_HOST_INNER",
+        |_| uncheckable_host_key(),
+    );
+}
+
+fn uncheckable_host_key() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let config = dir.path().join("ssh_config");
     fs::write(

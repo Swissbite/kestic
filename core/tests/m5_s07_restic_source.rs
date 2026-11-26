@@ -14,6 +14,7 @@ use kestic_core::provider::{
 use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
 use kestic_i18n::codes::{ResticPathProblem, ResticStatusCode};
 use kestic_i18n::messages::ResticStatusParams;
+use kestic_test_support::gui::run_with_temp_home;
 use kestic_test_support::tools::write_executable;
 use semver::Version;
 use std::fs;
@@ -357,9 +358,18 @@ kind = "system"
 
 /// AC-M5-07-10: a version-3 config turns «System» into «Automatic», keeps a custom path, turns an
 /// app-managed binary outside Kestic's own place into a custom path and is
-/// written as version 4 only by the next save.
+/// written as version 4 only by the next save. Kestic's own place comes from `HOME` and
+/// `XDG_DATA_HOME`, so the test runs in a temp home.
 #[test]
 fn ac_m5_07_10_migrates_config_3_to_4() {
+    run_with_temp_home(
+        "ac_m5_07_10_migrates_config_3_to_4",
+        "KESTIC_M5_07_10_INNER",
+        |_| migrates_config_3_to_4(),
+    );
+}
+
+fn migrates_config_3_to_4() {
     // (a) system becomes automatic
     let migrated = parse_config_str(CONFIG_V3).expect("v3");
     assert_eq!(migrated.restic_provider, ResticProvider::Automatic);
@@ -400,6 +410,11 @@ fn ac_m5_07_10_migrates_config_3_to_4() {
     )
     .map(|dir| app_managed_binary(&dir))
     .expect("data dir");
+    assert!(
+        own.starts_with(std::env::var_os("KESTIC_TEST_ROOT").expect("temp home")),
+        "{}",
+        own.display()
+    );
     let app = parse_config_str(&format!(
         "config_version = 3\n\n[restic_provider]\nkind = \"app_managed\"\npath = \"{}\"\n",
         own.display()
