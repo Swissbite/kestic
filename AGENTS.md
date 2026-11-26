@@ -50,7 +50,7 @@ Projektspezifische Skills liegen agenten-neutral unter [.agents/skills/](.agents
 6. `just verify` ausführen. **Grün = Story erledigt.** Sonst nicht als erledigt melden.
 7. Manuelle ACs nicht selbst abhaken, sondern in `manual-acceptance.md` offen lassen (Prüfung mit Schritt-für-Schritt-Anleitung gemäss `kestic-manual-acceptance`).
 8. **Meilenstein-Abschluss (Doku-Sync):** Bei Abschluss eines Meilensteins wird das englische [README.md](README.md) (und etwaige englische Einstiegsdoku) mit dem neuen Meilenstein-Stand abgeglichen; `docs/spec/` bleibt dabei einsprachig Deutsch.
-9. **Meilenstein-Abschluss (Release vorbereiten):** Der Abschluss-PR nach `main` legt die Highlights `docs/releases/<tag>.md` an (`v0.<n>.0` nach M<n>, `v1.0.0` nach M6; Format: [docs/releases/README.md](docs/releases/README.md)). Versionen kommen nur aus Git-Tags: keine Versionsnummer in `Cargo.toml` ändern. Tags und Releases legt nur der Release-Workflow an, gestartet vom Maintainer; Agenten können ihn nicht starten.
+9. **Meilenstein-Abschluss (Release vorbereiten):** Der Abschluss-PR nach `main` legt die Highlights `docs/releases/<tag>.md` an (`v0.<n>.0` nach M<n>, also `v0.6.0` nach M6; `v1.0.0` legt der Maintainer später fest; Format: [docs/releases/README.md](docs/releases/README.md)). Versionen kommen nur aus Git-Tags: keine Versionsnummer in `Cargo.toml` ändern. Tags und Releases legt nur der Release-Workflow an, gestartet vom Maintainer; Agenten können ihn nicht starten.
 
 ## Prüfbefehl
 

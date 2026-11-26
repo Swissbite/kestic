@@ -8,7 +8,7 @@ Teil von [index.md](index.md) (§11–§13). Verbindlichkeit, Referenz-Datensatz
 
 - Nur `Kirigami.Theme`, keine Hex-Werte. Color-Sets setzen Kirigami-Komponenten selbst (`View` für Listen/Formulare, `Window` für Seiten, `Header` für Kopfleisten).
 - Semantik gemäss HIG: `highlightColor` (Auswahl), `neutralTextColor`/`neutralBackgroundColor` (Warnung, nicht-Default), `negativeTextColor`/`negativeBackgroundColor` (Fehler, überfällig, gefährliche Aktion, Gefahrenbereich), `positiveTextColor` (nur Icons/Akzente bei ok). Statustext sonst `textColor` (Kontrast, §6.2).
-- Hell/Dunkel und Akzentfarbe folgen dem Plasma-Farbschema (Referenzsystem: Breeze Dunkel **[verifiziert: Referenzsystem]**). Screenshots in Breeze, Breeze Dunkel, Breeze Hoher Kontrast (U16).
+- Hell/Dunkel und Akzentfarbe folgen dem Plasma-Farbschema (Referenzsystem: Breeze Dunkel **[verifiziert: Referenzsystem]**). Screenshots in Breeze und Breeze Dunkel (U16); Hoher Kontrast und RTL prüft ein Mensch (AC-M6-09-7).
 
 ### 11.2 Schrift, Abstände, Animation
 
@@ -114,7 +114,7 @@ Standardaktionen über `KStandardShortcut`; Kürzel nie nur Funktionstaste (HIG)
 | --- | --- |
 | Neues Backup | Ctrl+N |
 | Suchen | Ctrl+F |
-| Aktualisieren | Ctrl+R (zusätzlich F5) |
+| Aktualisieren | Ctrl+R (zusätzlich F5) (nach MVP) |
 | Kestic einrichten (Einstellungen) | Ctrl+Shift+, |
 | Handbuch | F1 (Standard) |
 | Ziel 1–5 der Navigation | Alt+1 … Alt+5 |

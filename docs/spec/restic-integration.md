@@ -220,6 +220,7 @@ Gerüst; wächst je Meilenstein, vollständig in M6-S11. Unbekannte Exit-Codes g
 | SFTP: `Host key verification failed` | `Fehler` (dauerhaft, F2) | Kestic prüft selbst nach (`ssh-keygen -F`, `ssh-keyscan`): «Unbekannter Server» bzw. «Der Server meldet sich anders als bisher» (AC-M5-01-4, AC-M5-01-7) | Verbindung prüfen; bei geändertem Schlüssel keine |
 | SFTP: `Permission denied (publickey…)` | `Fehler` (dauerhaft, F2) | Anmeldung mit SSH-Schlüssel abgelehnt (`ssh_key_rejected`, AC-M5-01-3) | Hinweis auf `ssh-copy-id` und ssh-agent |
 | restic zu alt / nicht gefunden | blockierend | «restic x ist zu alt, mindestens 0.18.0 nötig» bzw. «restic nicht gefunden» (FR-33, P31) | Einstellung «restic-Quelle» |
-| Passwortspeicher gesperrt | blockierend | in M6-S11 festzulegen | in M6-S11 festzulegen |
+| Passwortspeicher gesperrt | blockierend | «Der Passwortspeicher (KWallet) ist gesperrt. Kestic kann nicht auf die Ziele zugreifen.» / «The password store (KWallet) is locked. Kestic cannot access the destinations.» (AC-M6-11-3) | «Entsperren…» löst die Entsperr-Abfrage des Secret Service aus; danach läuft die Aktion ohne Neustart weiter |
+| Zertifikat des Servers nicht vertrauenswürdig (`x509: certificate signed by unknown authority`) | `Fehler` | «Dem Zertifikat des Servers wird nicht vertraut» (AC-M6-11-4) | «Anleitung öffnen» (Handbuchkapitel «Eigener Server mit eigenem Zertifikat», AC-M6-13-5) |
 
 Texte DE/EN und alle weiteren Fälle (DNS, Auth am Backend, Timeout) ergänzt die jeweilige Story; Abschluss M6-S11.

@@ -46,3 +46,24 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | --- | --- |
 | FR-48 | Danger Zone – Backup komplett löschen |
 | FR-52 | Daemon als eigenes Binary ohne Qt |
+
+## Zurückgestellt aus dem M6-Kickoff (2026-11-26)
+
+Nach M6 bzw. nach `v0.6.0` geplant; Details im jeweiligen Issue.
+
+| Issue | Inhalt |
+| --- | --- |
+| #195 | SFTP: weniger Host-Schlüssel-Prüfungen pro Lauf, gleichzeitige Erreichbarkeitsprüfungen (erst messen) |
+| #194 | Refactorings und Tests aus den Resten von M5 |
+| #211 | Zeitplan: häufigere Optionen als täglich (stündlich, alle n Stunden) |
+| #216 | i18n: Deutsch mit Eszett in `po/de`, Schweizer Deutsch als `de_CH` erzeugen, neue Sprache als Pull Request mit einer Datei |
+| #217 | Website: Englisch, Deutsch und Schweizer Deutsch nach Browser-Sprache |
+| #222 | UI-Spec-Lücken für die Zeit nach 1.0 (Hinweise auf veraltete Daten, Datums-Tooltips, Verlaufs-Chip, Tray ausblenden, Log folgen) |
+| #83 | Spec bereinigen und ins Englische übersetzen |
+| #207 | CA- und Client-Zertifikatsfelder für HTTP-Ziele (bis dahin: Zertifikatsspeicher des Systems, Handbuchkapitel «Eigener Server mit eigenem Zertifikat», klare Meldung, AC-M6-11-4 und AC-M6-13-5) |
+| – (FR-35) | Kit **drucken**: `v0.6.0` zeigt das Kit und exportiert es als Datei |
+| – (F2) | AC für «übrige Fehler» nachtragen: Platte voll und unbekannte Exit-Codes sperren den fälligen Termin nicht dauerhaft (gebaut und getestet, Nachvollziehbarkeit) |
+| – (P5) | AC für die Fortschrittsregeln nachtragen (gebaut und getestet, Nachvollziehbarkeit) |
+| – (FR-38) | «Erwartung für das erste Backup kommunizieren»: Dauer und Fortsetzen nach Unterbrechung (die Grössenschätzung hat AC-M6-01-5) |
+| – (FR-14) | Erkennung umgezogener Repos beim Bearbeiten einer Verbindung (Abgleich der bekannten Snapshots, Hinweis «Umgezogenes Repository erkannt», Zustand «Kit fehlt» nach dem Umzug, Feld «Passwort des neuen Repositorys»): im MVP vergleicht Kestic nur die Repo-ID (FR-56) |
+| – (U-Tasten) | Ctrl+R und F5 (Aktualisieren): die GUI aktualisiert über Signale des Daemons |
