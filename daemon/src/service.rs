@@ -34,7 +34,10 @@ pub(crate) use availability::{
     trigger_background_availability_probe,
 };
 pub use backup_runner::{start_backup_async, start_backup_override_async};
-pub(crate) use backups::get_run_detail_unlocked;
+pub(crate) use backups::{
+    add_exclude_rule_for_item_unlocked, detect_source_unlocked, format_exclude_rule_for_item,
+    get_run_detail_unlocked,
+};
 pub(crate) use destination_update::update_destination_unlocked;
 pub(crate) use destinations::{
     add_destination_unlocked, remove_destination_unlocked, test_destination_connection_unlocked,

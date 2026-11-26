@@ -736,17 +736,20 @@ pub fn format_duration_ms(ms: u64) -> String {
     i18n("%1 h %2 min").subs(&[&hours.to_string(), &rem_mins.to_string()])
 }
 
+/// A size in decimal units (B, KB, MB, GB) with the decimal separator of the locale; the one
+/// formatting path for sizes in models and QML.
 pub fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1000.0;
     const MB: f64 = 1_000_000.0;
     const GB: f64 = 1_000_000_000.0;
     let b = bytes as f64;
+    let decimal = crate::qt_bridge::ffi::format_decimal;
     if b >= GB {
-        format!("{:.1} GB", b / GB)
+        format!("{} GB", decimal(b / GB, 1))
     } else if b >= MB {
-        format!("{:.1} MB", b / MB)
+        format!("{} MB", decimal(b / MB, 1))
     } else if b >= KB {
-        format!("{:.0} KB", b / KB)
+        format!("{} KB", decimal(b / KB, 0))
     } else {
         format!("{bytes} B")
     }

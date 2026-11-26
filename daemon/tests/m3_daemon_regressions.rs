@@ -34,7 +34,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use time::macros::datetime;
@@ -1332,6 +1332,126 @@ fn m3_hung_source_probe_is_replaced_when_stale() {
             rig.daemon.stop();
         },
     );
+}
+
+/// Issue #180, item 2: `DetectSource` reads the mount table without the core's lock, so a hung
+/// mount blocks only that call: (a) `GetState` answers while it hangs, (b) at once, and (c)
+/// `DetectSource` answers once the mount returns.
+#[test]
+fn detect_source_on_a_hung_mount_does_not_block_other_calls() {
+    run_isolated_test(
+        "detect_source_on_a_hung_mount_does_not_block_other_calls",
+        "KESTIC_M3_REG_DETECT_INNER",
+        |root| {
+            let _fakes = DesktopFakes::start();
+            let variant = latest_variant();
+            let inspector = Arc::new(HangingMountInspector::default());
+            let rig = M3Rig::start(
+                root,
+                &variant,
+                "M3RegDetect",
+                datetime!(2026-12-01 10:00:00 UTC),
+                |o| {
+                    o.mount_inspector = Some(Arc::clone(&inspector) as Arc<dyn MountInspector>);
+                    o.enable_monitors = false;
+                },
+            );
+            let src_dir = root.join("detect-src");
+            fs::create_dir_all(&src_dir).expect("mkdir src");
+
+            let calls_before = inspector.calls.load(Ordering::SeqCst);
+            inspector.hang_all.store(true, Ordering::SeqCst);
+            let bus_name = rig.variant.bus_name("M3RegDetect");
+            let src_path = src_dir.to_string_lossy().into_owned();
+            let detect = thread::spawn(move || {
+                let c = KesticClient::connect(&bus_name, KESTIC_OBJECT_PATH).expect("client");
+                c.detect_source(&src_path)
+            });
+            wait_until_within(Duration::from_secs(5), "DetectSource hangs", || {
+                inspector.calls.load(Ordering::SeqCst) > calls_before
+                    && inspector.hanging.load(Ordering::SeqCst)
+            });
+
+            // A separate thread, so a GetState stuck behind the lock fails the test instead of
+            // hanging it.
+            let bus_name = rig.variant.bus_name("M3RegDetect");
+            let (state_tx, state_rx) = mpsc::channel();
+            thread::spawn(move || {
+                let c = KesticClient::connect(&bus_name, KESTIC_OBJECT_PATH).expect("client");
+                let started = Instant::now();
+                let state = c.get_state();
+                state_tx.send((state.is_ok(), started.elapsed())).ok();
+            });
+            let answer = state_rx.recv_timeout(Duration::from_secs(10)).ok();
+            inspector.release_all();
+            assert!(
+                answer.is_some_and(|(ok, _)| ok),
+                "(a) GetState answers while DetectSource hangs: {answer:?}"
+            );
+            let elapsed = answer.map(|(_, elapsed)| elapsed);
+            assert!(
+                elapsed.is_some_and(|e| e < Duration::from_secs(2)),
+                "(b) GetState answers without waiting for the mount: {elapsed:?}"
+            );
+
+            let detected = detect
+                .join()
+                .expect("join DetectSource")
+                .expect("DetectSource after the mount returns");
+            assert_eq!(
+                detected.path, src_dir,
+                "(c) DetectSource answers once the mount returns"
+            );
+
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// Issue #180, item 5: the child of an isolated test that hangs is killed after its limit:
+/// (a) the run is reported as timed out, (b) soon after the limit, (c) with the child's output,
+/// and (d) the processes the child started are killed too.
+#[test]
+fn isolated_test_child_is_killed_after_its_limit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let pid_file = dir.path().join("grandchild.pid");
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
+        .arg(r#"sleep 60 & echo $! > "$1"; echo started; wait"#)
+        .arg("sh")
+        .arg(&pid_file);
+    let started = Instant::now();
+    let out = common::output_within(cmd, Duration::from_millis(500));
+    let elapsed = started.elapsed();
+    assert!(out.timed_out, "(a) the hung child is reported as timed out");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "(b) the child is killed soon after the limit: {elapsed:?}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "started\n",
+        "(c) the output up to the kill is kept"
+    );
+    let grandchild = fs::read_to_string(&pid_file).expect("grandchild pid");
+    let grandchild = grandchild.trim();
+    wait_until_within(
+        Duration::from_secs(5),
+        "(d) the process the child started is killed",
+        || !process_alive(grandchild),
+    );
+    assert!(
+        !process_alive(grandchild),
+        "(d) the process the child started is killed"
+    );
+}
+
+/// Whether `pid` runs: it exists in `/proc` and is not a zombie waiting to be reaped.
+fn process_alive(pid: &str) -> bool {
+    fs::read_to_string(PathBuf::from("/proc").join(pid).join("stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .is_some_and(|(_, rest)| !rest.trim_start().starts_with('Z'))
+    })
 }
 
 /// Concurrent queue drains racing for the same destination must not drop a

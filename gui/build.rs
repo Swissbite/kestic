@@ -170,6 +170,7 @@ fn main() {
     let builder = unsafe {
         builder.cc_builder(|cc| {
             cc.flag("-isystem/usr/include/KF6/KI18n");
+            cc.warnings_into_errors(true);
         })
     };
     builder.build();

@@ -9,8 +9,9 @@ use crate::dbus_api::{
 use crate::monitors::list_known_networks;
 use crate::removable_drives::list_removable_drives;
 use crate::service::{
-    DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
-    list_backup_snapshots_unlocked, list_destination_snapshots_unlocked,
+    DaemonCore, add_destination_unlocked, add_exclude_rule_for_item_unlocked,
+    detect_source_unlocked, drain_queued_backups_async, format_exclude_rule_for_item,
+    get_run_detail_unlocked, list_backup_snapshots_unlocked, list_destination_snapshots_unlocked,
     preview_destination_maintenance_unlocked, refresh_availability_unlocked,
     refresh_probe_unlocked, remove_app_managed_restic, remove_destination_unlocked,
     run_destination_maintenance_async, set_restic_provider_unlocked, start_all_backups_async,
@@ -27,6 +28,8 @@ use kestic_core::model::{BackupId, Run};
 use kestic_core::secrets::SecretError;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
+use std::any::Any;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -64,8 +67,12 @@ impl KesticDbusV1Service {
     }
 
     /// Runs `f` on a worker thread with the shared core, so a slow restic call never blocks the
-    /// bus connection; the core's lock is only taken inside `f`.
-    async fn blocking<T>(&self, f: impl FnOnce(&Arc<Mutex<DaemonCore>>) -> T + Send + 'static) -> T
+    /// bus connection; the core's lock is only taken inside `f`. A panic in `f` becomes
+    /// [`KesticDbusError::Internal`].
+    async fn blocking<T>(
+        &self,
+        f: impl FnOnce(&Arc<Mutex<DaemonCore>>) -> T + Send + 'static,
+    ) -> Result<T, KesticDbusError>
     where
         T: Send + 'static,
     {
@@ -135,7 +142,7 @@ impl KesticDbusV1Service {
         let id = run_id.to_string();
         let detail = self
             .blocking(move |core| get_run_detail_unlocked(core, &id))
-            .await?;
+            .await??;
         to_json_arg(&detail)
     }
 
@@ -144,7 +151,7 @@ impl KesticDbusV1Service {
         let id = backup_id.to_string();
         let snaps = self
             .blocking(move |core| list_backup_snapshots_unlocked(core, &id))
-            .await?;
+            .await??;
         to_json_arg(&snaps)
     }
 
@@ -156,7 +163,7 @@ impl KesticDbusV1Service {
         let id = destination_id.to_string();
         let snaps = self
             .blocking(move |core| list_destination_snapshots_unlocked(core, &id))
-            .await?;
+            .await??;
         to_json_arg(&snaps)
     }
 
@@ -164,7 +171,7 @@ impl KesticDbusV1Service {
     async fn start_snapshot_query(&self, request_json: &str) -> Result<String, KesticDbusError> {
         let req = request_json.to_string();
         self.blocking(move |core| start_snapshot_query_async(core, &req))
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
@@ -172,7 +179,7 @@ impl KesticDbusV1Service {
     async fn start_restore(&self, request_json: &str) -> Result<String, KesticDbusError> {
         let req = request_json.to_string();
         self.blocking(move |core| start_restore_async(core, &req))
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
@@ -215,7 +222,7 @@ impl KesticDbusV1Service {
                     &form.backend_secrets_json,
                 )
             })
-            .await;
+            .await?;
         to_json_arg(&res)
     }
 
@@ -238,7 +245,7 @@ impl KesticDbusV1Service {
                     &form.backend_secrets_json,
                 )
             })
-            .await?;
+            .await??;
         self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
             .await;
         Ok(new_id)
@@ -265,7 +272,7 @@ impl KesticDbusV1Service {
                     verify_connection,
                 )
             })
-            .await?;
+            .await??;
         self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
             .await;
         serde_json::to_string(&result).map_err(|e| KesticDbusError::Internal(e.to_string()))
@@ -281,7 +288,7 @@ impl KesticDbusV1Service {
         let pw = new_password.to_string();
         let (conn_opt, state_dto, tray_state) = self
             .blocking(move |core| update_destination_password_unlocked(core, &id, &pw))
-            .await?;
+            .await??;
         self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
             .await;
         Ok(())
@@ -291,7 +298,7 @@ impl KesticDbusV1Service {
     async fn trust_host_key(&self, host_key_id: &str) -> Result<(), KesticDbusError> {
         let id = host_key_id.to_string();
         self.blocking(move |core| trust_host_key_unlocked(core, &id))
-            .await?;
+            .await??;
         Ok(())
     }
 
@@ -300,7 +307,7 @@ impl KesticDbusV1Service {
         let id = dest_id.to_string();
         let (conn_opt, state_dto, tray_state) = self
             .blocking(move |core| remove_destination_unlocked(core, &id))
-            .await?;
+            .await??;
         self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
             .await;
         Ok(())
@@ -343,7 +350,7 @@ impl KesticDbusV1Service {
         let pj = provider_json.to_string();
         let (res, conn_opt, state_dto, tray_state) = self
             .blocking(move |core| set_restic_provider_unlocked(core, &pj))
-            .await?;
+            .await??;
         self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
             .await;
         to_json_arg(&res)
@@ -358,13 +365,13 @@ impl KesticDbusV1Service {
     async fn start_backup(&self, backup_id: &str) -> Result<String, KesticDbusError> {
         let id = backup_id.to_string();
         self.blocking(move |core| start_backup_async(core, &id))
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
     #[zbus(name = "StartAllBackups")]
     async fn start_all_backups(&self) -> Result<String, KesticDbusError> {
-        let res = self.blocking(start_all_backups_async).await;
+        let res = self.blocking(start_all_backups_async).await?;
         to_json_arg(&res)
     }
 
@@ -378,7 +385,7 @@ impl KesticDbusV1Service {
     async fn check_availability(&self, force: bool) -> Result<String, KesticDbusError> {
         let avail = self
             .blocking(move |core| refresh_availability_unlocked(core, force))
-            .await;
+            .await?;
         self.publish_current().await;
         to_json_arg(&avail)
     }
@@ -431,7 +438,7 @@ impl KesticDbusV1Service {
             refresh_probe_unlocked(&core_probe);
             res
         })
-        .await;
+        .await?;
 
         self.publish_current().await;
 
@@ -443,9 +450,11 @@ impl KesticDbusV1Service {
     }
 
     #[zbus(name = "DetectSource")]
-    fn detect_source(&self, path: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock_unpoisoned();
-        let src = guard.detect_source(path)?;
+    async fn detect_source(&self, path: &str) -> Result<String, KesticDbusError> {
+        let path = path.to_string();
+        let src = self
+            .blocking(move |core| detect_source_unlocked(core, &path))
+            .await??;
         to_json_arg(&src)
     }
 
@@ -489,7 +498,7 @@ impl KesticDbusV1Service {
         let id = backup_id.to_string();
         let ret = retention_json.to_string();
         self.blocking(move |core| start_retention_preview_async(core, &id, &ret))
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
@@ -515,7 +524,7 @@ impl KesticDbusV1Service {
         let id = backup_id.to_string();
         let ex = excludes_json.to_string();
         self.blocking(move |core| start_backup_dry_run_async(core, &id, &ex))
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
@@ -535,14 +544,14 @@ impl KesticDbusV1Service {
     #[zbus(name = "StartResticInstall")]
     async fn start_restic_install(&self) -> Result<String, KesticDbusError> {
         self.blocking(start_restic_install_async)
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
     #[zbus(name = "RemoveAppManagedRestic")]
     async fn remove_app_managed_restic(&self) -> Result<(), KesticDbusError> {
         self.blocking(remove_app_managed_restic)
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
@@ -560,9 +569,12 @@ impl KesticDbusV1Service {
     }
 
     #[zbus(name = "FormatExcludeRuleForItem")]
-    fn format_exclude_rule_for_item(&self, item_path: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock_unpoisoned();
-        let preview = guard.format_exclude_rule_for_item(item_path)?;
+    async fn format_exclude_rule_for_item(
+        &self,
+        item_path: &str,
+    ) -> Result<String, KesticDbusError> {
+        let item = item_path.to_string();
+        let preview = run_blocking_task(move || format_exclude_rule_for_item(&item)).await??;
         to_json_arg(&preview)
     }
 
@@ -572,9 +584,13 @@ impl KesticDbusV1Service {
         backup_id: &str,
         item_path: &str,
     ) -> Result<String, KesticDbusError> {
-        let preview = self
-            .mutate(|core| core.add_exclude_rule_for_item(backup_id, item_path))
-            .await?;
+        let id = backup_id.to_string();
+        let item = item_path.to_string();
+        let (preview, conn_opt, state_dto, tray_state) = self
+            .blocking(move |core| add_exclude_rule_for_item_unlocked(core, &id, &item))
+            .await??;
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
         to_json_arg(&preview)
     }
 
@@ -585,7 +601,7 @@ impl KesticDbusV1Service {
     ) -> Result<String, KesticDbusError> {
         let id = destination_id.to_string();
         self.blocking(move |core| run_destination_maintenance_async(core, &id))
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
@@ -598,7 +614,7 @@ impl KesticDbusV1Service {
     #[zbus(name = "ResumeGlobal")]
     async fn resume_global(&self) -> Result<(), KesticDbusError> {
         self.mutate(|core| core.resume_global()).await?;
-        self.blocking(drain_queued_backups_async).await;
+        self.blocking(drain_queued_backups_async).await?;
         Ok(())
     }
 
@@ -615,7 +631,7 @@ impl KesticDbusV1Service {
     #[zbus(name = "ResumeBackup")]
     async fn resume_backup(&self, backup_id: &str) -> Result<(), KesticDbusError> {
         self.mutate(|core| core.resume_backup(backup_id)).await?;
-        self.blocking(drain_queued_backups_async).await;
+        self.blocking(drain_queued_backups_async).await?;
         Ok(())
     }
 
@@ -623,7 +639,7 @@ impl KesticDbusV1Service {
     async fn start_backup_override(&self, backup_id: &str) -> Result<String, KesticDbusError> {
         let id = backup_id.to_string();
         self.blocking(move |core| start_backup_override_async(core, &id))
-            .await
+            .await?
             .map_err(KesticDbusError::from)
     }
 
@@ -632,7 +648,7 @@ impl KesticDbusV1Service {
         let id = destination_id.to_string();
         let count = self
             .blocking(move |core| unlock_destination_async(core, &id))
-            .await?;
+            .await??;
 
         self.publish_current().await;
         Ok(count)
@@ -646,7 +662,7 @@ impl KesticDbusV1Service {
         let id = destination_id.to_string();
         let preview = self
             .blocking(move |core| preview_destination_maintenance_unlocked(core, &id))
-            .await?;
+            .await??;
         to_json_arg(&preview)
     }
 
@@ -678,7 +694,7 @@ impl KesticDbusV1Service {
             let guard = self.core.lock_unpoisoned();
             guard.monitor_bus.clone()
         };
-        let networks = run_blocking_task(move || list_known_networks(&monitor_bus)).await;
+        let networks = run_blocking_task(move || list_known_networks(&monitor_bus)).await?;
         to_json_arg(&networks)
     }
 
@@ -687,7 +703,7 @@ impl KesticDbusV1Service {
     #[zbus(name = "ListDestinationTypes")]
     async fn list_destination_types(&self) -> Result<String, KesticDbusError> {
         let search_path = self.core.lock_unpoisoned().program_search_path();
-        let types = run_blocking_task(move || destination_types(search_path.as_deref())).await;
+        let types = run_blocking_task(move || destination_types(search_path.as_deref())).await?;
         to_json_arg(&types)
     }
 
@@ -698,7 +714,7 @@ impl KesticDbusV1Service {
             let guard = self.core.lock_unpoisoned();
             guard.monitor_bus.clone()
         };
-        let drives = run_blocking_task(move || list_removable_drives(&monitor_bus)).await;
+        let drives = run_blocking_task(move || list_removable_drives(&monitor_bus)).await?;
         to_json_arg(&drives)
     }
 
@@ -762,16 +778,24 @@ pub(crate) fn start_dbus_server(
         .map_err(|err| format!("failed to acquire D-Bus name `{bus_name}`: {err}"))
 }
 
-async fn run_blocking_task<T, F>(f: F) -> T
+/// Runs `f` on its own thread and waits for it without blocking the bus connection. A panic in
+/// `f` ends the wait with [`KesticDbusError::Internal`], so the caller gets an answer instead of
+/// waiting for its D-Bus timeout.
+async fn run_blocking_task<T, F>(f: F) -> Result<T, KesticDbusError>
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
 {
-    let state: Arc<Mutex<(Option<T>, Option<std::task::Waker>)>> =
-        Arc::new(Mutex::new((None, None)));
+    type Slot<T> = (Option<Result<T, KesticDbusError>>, Option<std::task::Waker>);
+    let state: Arc<Mutex<Slot<T>>> = Arc::new(Mutex::new((None, None)));
     let state_bg = Arc::clone(&state);
     thread::spawn(move || {
-        let value = f();
+        let value = panic::catch_unwind(AssertUnwindSafe(f)).map_err(|payload| {
+            KesticDbusError::Internal(format!(
+                "background task panicked: {}",
+                panic_message(payload.as_ref())
+            ))
+        });
         let waker = {
             let mut guard = state_bg.lock_unpoisoned();
             guard.0 = Some(value);
@@ -791,6 +815,15 @@ where
         }
     })
     .await
+}
+
+/// The text of a panic payload (`panic!` with a literal or a formatted message).
+fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
 }
 
 async fn emit_status_changed_async(conn: &Connection, state_dto: &DaemonStateDto) {
@@ -918,3 +951,7 @@ pub(crate) fn emit_quit_confirmation_requested(
         KesticDbusV1Service::quit_confirmation_requested(emitter, has_running_run, &name).await
     });
 }
+
+#[cfg(test)]
+#[path = "dbus_server_tests.rs"]
+mod tests;

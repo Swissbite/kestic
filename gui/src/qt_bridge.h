@@ -15,6 +15,7 @@ rust::String i18n_subs(rust::Str msgid, rust::Slice<const rust::Str> args);
 
 rust::String i18np_subs(rust::Str singular, rust::Str plural, std::int64_t n, rust::Slice<const rust::Str> args);
 rust::String format_count(std::int64_t n);
+rust::String format_decimal(double value, std::int32_t decimals);
 
 std::int32_t local_offset_seconds(std::int64_t unix_secs);
 

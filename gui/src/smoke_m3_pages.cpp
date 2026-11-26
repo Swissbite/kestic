@@ -363,7 +363,7 @@ int scenario_maintenance_run_detail(const Ctx& c) {
     M3_CHECK(4709, lines.size() == 3, "result tab has three lines");
     M3_CHECK_EQ(4710, lines.at(0), loc(c.lang, "Documents: 2 snapshots removed", "Documents: 2 Snapshots entfernt"),
                 "(d) removed snapshots");
-    M3_CHECK_EQ(4711, lines.at(1), loc(c.lang, "Clean up: 1.3 MB freed", "Aufräumen: 1.3 MB freigegeben"),
+    M3_CHECK_EQ(4711, lines.at(1), loc(c.lang, "Clean up: 1.3 MB freed", "Aufräumen: 1,3 MB freigegeben"),
                 "(e) freed space");
     M3_CHECK_EQ(4712, lines.at(2), loc(c.lang, "Verify: no errors found", "Prüfen: keine Fehler gefunden"),
                 "(f) check result");

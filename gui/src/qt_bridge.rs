@@ -24,6 +24,11 @@ pub mod ffi {
         #[namespace = "kestic::bridge"]
         fn format_count(n: i64) -> String;
 
+        /// `value` with `decimals` decimal places and the decimal separator and digit grouping of
+        /// the locale.
+        #[namespace = "kestic::bridge"]
+        fn format_decimal(value: f64, decimals: i32) -> String;
+
         #[namespace = "kestic::bridge"]
         fn local_offset_seconds(unix_secs: i64) -> i32;
 

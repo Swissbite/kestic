@@ -4,6 +4,7 @@
 //! Unit tests of `run_texts`: run detail page of a maintenance run.
 
 use super::*;
+use crate::qt_bridge::ffi::format_decimal;
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{
     Backup, CheckSummary, Destination, DestinationKind, MaintenanceForget, Source,
@@ -106,7 +107,9 @@ fn ac_m3_05_9_maintenance_result_lists_removed_snapshots_freed_space_and_check()
         Some("Documents: 2 snapshots removed"),
         "(d)"
     );
-    assert_eq!(lines.get(1).copied(), Some("Clean up: 1.3 MB freed"), "(e)");
+    // Sizes carry the decimal separator of the test's locale.
+    let freed = format!("Clean up: {} MB freed", format_decimal(1.3, 1));
+    assert_eq!(lines.get(1).copied(), Some(freed.as_str()), "(e)");
     assert_eq!(
         lines.get(2).copied(),
         Some("Verify: no errors found"),
@@ -170,7 +173,10 @@ fn finding1_maintenance_result_claims_nothing_unknown() {
     warned.status = RunStatus::Warning;
     assert_eq!(
         run_result_summary(&warned, &names),
-        "Clean up: 1.3 MB freed\nVerify: no errors found",
+        format!(
+            "Clean up: {} MB freed\nVerify: no errors found",
+            format_decimal(1.3, 1)
+        ),
         "(b)"
     );
 
