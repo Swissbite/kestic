@@ -309,7 +309,9 @@ fn ac_m5_05_5_copied_repository_keeps_its_id_and_parent() {
                 assert!(
                     wrapper.entries()[calls_before_test..]
                         .iter()
-                        .any(|e| e.kind == 'S' && e.sub == "cat"),
+                        .any(|e| e.kind == 'S'
+                            && e.sub == "cat"
+                            && e.detail.split_whitespace().any(|arg| arg == "config")),
                     "(a) the repository ID comes from `restic cat config`"
                 );
                 // (b)

@@ -284,8 +284,11 @@ pub fn parse_config_str(raw: &str) -> Result<AppConfig, ConfigError> {
     } else {
         None
     };
-    let own_app_managed =
-        default_data_dir().map(|dir| crate::restic_install::app_managed_binary(&dir));
+    // Only an old app-managed path needs Kestic's own place, which comes from the environment.
+    let own_app_managed = legacy_app_managed_path
+        .as_ref()
+        .and_then(|_| default_data_dir())
+        .map(|dir| crate::restic_install::app_managed_binary(&dir));
     migrate(
         &mut config,
         legacy_app_managed_path,

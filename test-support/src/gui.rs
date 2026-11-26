@@ -296,3 +296,33 @@ impl SmokeFixture {
         }
     }
 }
+
+/// Runs `body` in a child process of the current test binary (`test_name --exact`) whose `HOME`
+/// and `XDG_*` directories lie in a fresh [`IsolatedEnv`], so the test never reads the real home
+/// folder; `inner_env` marks the child, which gets the root of the tree.
+pub fn run_with_temp_home(test_name: &str, inner_env: &str, body: impl FnOnce(&Path)) {
+    if std::env::var_os(inner_env).as_deref() == Some("1".as_ref()) {
+        let root = std::env::var_os("KESTIC_TEST_ROOT").expect("KESTIC_TEST_ROOT set");
+        body(Path::new(&root));
+        return;
+    }
+    let dirs = IsolatedEnv::create(inner_env, None);
+    let out = Command::new(std::env::current_exe().expect("current test executable"))
+        .args([test_name, "--exact"])
+        .env(inner_env, "1")
+        .env("KESTIC_TEST_ROOT", &dirs.root)
+        .env("HOME", &dirs.home)
+        .env("XDG_CONFIG_HOME", &dirs.cfg)
+        .env("XDG_DATA_HOME", &dirs.data)
+        .env("XDG_CACHE_HOME", &dirs.cache)
+        .env("XDG_STATE_HOME", &dirs.state)
+        .env("XDG_RUNTIME_DIR", &dirs.run)
+        .output()
+        .expect("run the test in a temp home");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("1 passed"),
+        "test `{test_name}` in a temp home failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
