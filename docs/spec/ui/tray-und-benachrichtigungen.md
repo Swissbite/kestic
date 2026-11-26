@@ -35,7 +35,7 @@ Teil von [index.md](index.md) (§10). Verbindlichkeit, Referenz-Datensatz (§0.2
   3. Zeitpläne pausieren ► 1 Stunde · 3 Stunden · Bis morgen · Bis ich fortsetze — bzw. «Zeitpläne fortsetzen», wenn pausiert (Status «Pausiert seit …»)
   4. Laufendes Backup abbrechen (deaktiviert, wenn kein Backup läuft; ein laufender Restore zählt nicht, er wird im Hauptfenster abgebrochen; AC-M4-05-24)
   5. — Wiederherstellungs-Kit erzeugen… (nur aktiv, wenn einem erreichbaren Ziel mit gültigem Passwort das Kit fehlt, sonst deaktiviert mit Grund, §8.2; öffnet GUI) · restic aktualisieren… (nur aktiv bei verfügbarem Update, F20; öffnet GUI)
-  6. — Kestic öffnen · Dateien wiederherstellen… (aktiv, sobald ein Ziel eingerichtet ist, jeder Snapshot dort lässt sich wiederherstellen, auch ohne Kestic-Tag; ohne Ziel deaktiviert mit Grund «Dateien wiederherstellen… (kein Ziel verbunden)»; öffnet das Hauptfenster auf dem Tab «Wiederherstellen» wie «Kestic öffnen»; AC-M4-05-24)
+  6. — Kestic öffnen · Dateien wiederherstellen… (aktiv, sobald ein Ziel eingerichtet ist, jeder Snapshot dort lässt sich wiederherstellen, auch ohne Kestic-Tag; ohne Ziel deaktiviert mit Grund «Dateien wiederherstellen… (kein Ziel verbunden)» (ab M6-S06 stattdessen aktiv: öffnet «Vorhandenes Backup verbinden…», AC-M6-06-6); öffnet das Hauptfenster auf dem Tab «Wiederherstellen» wie «Kestic öffnen»; AC-M4-05-24)
   7. — Kestic beenden… (§9.5)
   8. — Versionszeile «Kestic 0.1.0 · a561018»: Version und kurzer Git-Hash des Daemons (ohne bekannten Hash nur die Version), aktiv; ein Klick öffnet «Über Kestic» in der GUI auf demselben Weg wie «Kestic öffnen» (offene GUI: Signal, sonst Start mit `--show-about`). Name und Nummern, in jeder Sprache gleich (AC-M1-11-6).
 

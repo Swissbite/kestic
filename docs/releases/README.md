@@ -7,14 +7,14 @@ Kestic's version numbers come only from Git tags `v<major>.<minor>.<patch>[-<pre
 | `v0.4.0-m4.<k>` | automatically, on every merge into the integration branch `m4` (pre-release) |
 | `v0.4.0` | after milestone M4, started by the maintainer |
 | `v0.5.0` | after M5 |
-| `v1.0.0` | after M6 (MVP) |
+| `v0.6.0` | after M6 (end of the MVP scope; `v1.0.0` is decided by the maintainer later) |
 
-Every `0.x` version is marked as a pre-release on GitHub. In apt, `0.4.0` replaces every `0.4.0~m4.<k>`.
+A version without a suffix (`v0.6.0`, later `v1.x`) is a normal GitHub release marked «Latest». Only the branch builds `v0.<n>.0-m<n>.<k>` and the release candidates `-rc.<k>` are pre-releases, never «Latest». In apt, `0.4.0` replaces every `0.4.0~m4.<k>`.
 
 ## Starting a release (maintainer only)
 
 1. The closing pull request of the milestone, with the highlights file (below), is merged into `main` with a merge commit (no squash, no rebase), so the branch's pre-release tags are on `main` and `minor` continues from them.
-2. In GitHub: Actions → **Release** → **Run workflow** on `main`. Pick the bump. `minor` turns the milestone's pre-releases (`v0.4.0-m4.12`) into `v0.4.0`. `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch` and `prerelease` work like npm's `semver inc`; the `pre…` bumps give release candidates (`v1.0.0-rc.1`).
+2. In GitHub: Actions → **Release** → **Run workflow** on `main`. Pick the bump. `minor` turns the milestone's pre-releases (`v0.4.0-m4.12`) into `v0.4.0`. `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch` and `prerelease` work like npm's `semver inc`; the `pre…` bumps give release candidates (`v0.6.0-rc.1`).
 3. Leave **dry run** ticked first. That run shows the version, the release notes and the assets in the job summary of `publish` and creates nothing. Without a Verify run of the commit it takes the screenshots of the latest green Verify run on `main`, or goes on without screenshots.
 4. Run it again with **dry run** unticked. The workflow waits for the green Verify run of the commit on `main` (it fails if the run does not appear within 5 minutes; then it waits up to 90 minutes), builds the `.deb` and creates the tag through the API. Then it publishes the release with the `.deb`, the GUI smoke screenshots (`kestic_<version>_screenshots.zip`), `SHA256SUMS` and a build provenance attestation of the `.deb` (`gh attestation verify kestic_<version>-1_amd64.deb --repo Swissbite/kestic`).
 

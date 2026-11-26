@@ -64,7 +64,11 @@ Alle Build-, Lint- und Smoke-Stufen laufen warnungsfrei (`cargo clippy --workspa
 - Jede Erkenntnis aus einer manuellen Abnahme wird, wo möglich, ein automatisierter Test (Name mit `acceptance`; der Kommentar beschreibt das geprüfte Verhalten, Datum und Befund stehen in Commit-Message und [manual-acceptance.md](manual-acceptance.md)).
 - Fakes können neben dem Normalfall auch **Schwall** (viele Signale kurz hintereinander), **Verzögerung** (langsame oder ausbleibende Antwort) und **Fehler** (typische restic-Meldungen wie «no space left on device»).
 - Configs **aller Vorversionen** bleiben als Fixtures erhalten und werden in einem Test geladen (Migration).
-- Smoke-Screenshots entstehen in **hell und dunkel**, mit fokussierten Elementen, dazu Text-Snapshots der sichtbaren Texte (de/en). Zugängliche Namen prüft der Smoke über Qts Accessibility-Schnittstelle (`QAccessible`, wie über AT-SPI exportiert); eine automatische Kontrastprüfung folgt, wenn die Laufzeit vertretbar bleibt. Orca bleibt eine Stichprobe in der manuellen Abnahme.
+- Smoke-Screenshots entstehen in **hell und dunkel** (Breeze, Breeze Dunkel; DE und EN), mit fokussierten Elementen, dazu Text-Snapshots der sichtbaren Texte (de/en). Zugängliche Namen prüft der Smoke über Qts Accessibility-Schnittstelle (`QAccessible`, wie über AT-SPI exportiert); eine automatische Kontrastprüfung folgt, wenn die Laufzeit vertretbar bleibt. Orca bleibt eine Stichprobe in der manuellen Abnahme. Breeze Hoher Kontrast und ein RTL-Gebietsschema (U16) prüft ein Mensch in der manuellen Abnahme (AC-M6-09-7), nicht `just verify`.
+
+## UI-Aussagen ohne AC (Entscheid 2026-11-26, #223)
+
+Jede prüfbare Aussage in [ui/](ui/index.md) (Kürzel, Texte, Zustände, Aktionen, Verhalten) hat einen AC in [milestones/](milestones/) oder die Markierung «nach MVP» ([milestones/nach-mvp.md](milestones/nach-mvp.md)). Eine UI-Aussage ohne AC wird nie gebaut und nie geprüft. Der Review jeder Story, die `docs/spec/ui/` ändert oder umsetzt, prüft diese Regel (AC-M6-32-4); ein automatischer Prüfer steht als offene Frage in M6-S32.
 
 ## Grenze der Automatisierung (Q8)
 

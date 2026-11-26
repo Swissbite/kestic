@@ -124,5 +124,11 @@ Quelle: [milestones/m6-onboarding-und-sicherheit.md](milestones/m6-onboarding-un
 
 - [ ] **AC-M6-01-7** – wenn er das erste Backup «Home → externe Disk» einrichtet, dann gelingt das ohne Hilfe in höchstens 5 Schritten
 - [ ] **AC-M6-08-1** – wenn der Abschnitt «Bedrohungsmodell» gelesen wird, dann nennt er als akzeptiert, dass Prozesse desselben Benutzers Secrets lesen (Secret Service, `kestic secret get`, `/proc/<pid>/environ`), und als Risiken mit Gegenmassnahme Kit-Datei (F8) und Export-Script ohne Secrets (F16)
+- [ ] **AC-M6-08-2** – wenn der Abschnitt «Bedrohungsmodell» gelesen wird, dann beschreibt er Angreifermodell, Grenzen (Root, physischer Zugriff) und eine Bewertung je Risiko
 - [ ] **AC-M6-09-2** – wenn der Test die Fokuskette per simuliertem Tab durchläuft, dann erreicht er jedes aktivierbare Element genau einmal in sichtbarer Reihenfolge, und Enter bzw. Leertaste lösen es aus
 - [ ] **AC-M6-09-3** – wenn der Test für jedes aktivierbare Element `Accessible.name` ausliest, dann ist er nicht leer, und Statusinformationen sind neben der Farbe auch als Text oder Icon vorhanden
+- [ ] **AC-M6-09-6** – wenn `ACCESSIBILITY.md` gelesen wird, dann nennt sie nichts als geprüft, was weder ein AC noch die manuelle Abnahme belegt
+- [ ] **AC-M6-09-7** – wenn jeder MVP-Screen in Breeze Hoher Kontrast und mit einem RTL-Gebietsschema von Hand angesehen wird, dann bleibt jede Beschriftung lesbar und nicht abgeschnitten, und Statusinformationen sind auch ohne Farbe erkennbar
+- [ ] **AC-M6-13-6** – wenn ein Mensch ohne restic-Kenntnisse mit dem Handbuch allein ein Backup einrichtet und eine Datei wiederherstellt, dann findet er die Antworten ohne weitere Hilfe
+- [ ] **AC-M6-23-5** – wenn das `.deb` in Discover auf TUXEDO OS geöffnet wird, dann zeigen Name «Kestic», Entwickler, Lizenz, Icon und Screenshots
+- [ ] **AC-M6-24-1** – wenn der UX-Review durchgeführt ist, dann gibt es je Prüfsicht einen Bericht mit Befunden (Screen oder Ablauf, Problem, HIG-Verweis, Vorschlag, Gruppe)

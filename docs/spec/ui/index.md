@@ -131,7 +131,7 @@ Das Hauptfenster ist nie Voraussetzung für einen Lauf (NFR-04). Fenster schlies
 | U13 | Glossar | UI-Begriffe: «Übersicht», «Verlauf» (= Lauf-Historie), «Aufräumen» (`prune`), «Prüfen» (`check`), «Nicht zugeordnet» (FR-36), «Verwaist», «Wartet» (UI für `ausstehend`), «Ausnahme» (Negation), «Sperre» (Lock), «Fortschrittsanzeige», «Passwortspeicher», «Systemabschnitt» | [glossary.md](../glossary.md) |
 | U14 | Icons Zustände | `chronometer` = wartet, `state-pause` = pausiert, `alarm-symbolic` = überfällig, `state-warning` = Warnung | §6.2 |
 | U15 | Assistenten | linear, nur zwingende Schritte; Repo/Keys erst beim Abschluss; wiederverwendet für «Neues Backup», «Ziel hinzufügen», «Neuer Rechner» | M6-S01, M6-S06, FR-38 |
-| U16 | Screenshots | je Screen in Breeze, Breeze Dunkel, Hoher Kontrast; DE + EN; ein RTL-Screenshot | Q3, `just verify` |
+| U16 | Screenshots | je Screen in Breeze und Breeze Dunkel, DE + EN (automatisch, `just verify`); Hoher Kontrast und RTL prüft ein Mensch (AC-M6-09-7) | Q3, `just verify`, M6-S09 |
 | U17 | Benachrichtigungen | MVP: Daemon sendet immer; GUI meldet `WindowActive` (F14). **FR-55 (P2):** Unterdrückung nur, wenn Fenster aktiv und betroffene Seite sichtbar; `WindowActive(bool, page)` | F3, F14, M1-S09, `dbus-api.md` |
 | U18 | Speichern in Editoren | Backup-Editoren mit `[Speichern]` = `UpdateBackup`; Zwischenstand nur in der GUI | M2-S02, M2-S06 (AC) |
 | U19 | Zustandsleiste | blockierende Zustände Daemon → Passwortspeicher → restic im Fensterkopf, Aktionen deaktiviert; Selbsttest beim GUI-Start | M1-S13, M5-S07, M6-S11 |
