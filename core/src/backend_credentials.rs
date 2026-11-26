@@ -34,13 +34,19 @@ impl BackendSecretSlot {
 }
 
 /// Prefixes of the variables in the caller's environment that would change which credentials,
-/// profile, role or region restic uses for S3; Kestic removes every such variable so only its
-/// own values count.
-const INHERITED_AWS_PREFIXES: [&str; 2] = ["AWS_", "RESTIC_AWS_"];
+/// profile, role or region restic uses for S3 (restic also reads MinIO's own variables); Kestic
+/// removes every such variable so only its own values count.
+const INHERITED_S3_PREFIXES: [&str; 3] = ["AWS_", "RESTIC_AWS_", "MINIO_"];
+
+/// Prefix of the user name and password restic reads for a REST server.
+const INHERITED_REST_PREFIXES: [&str; 1] = ["RESTIC_REST_"];
 
 /// Prefixes of the variables in the caller's environment that the backends of the generic form
-/// read (B2, Azure, Swift, rclone); a destination gets only the variables configured for it.
-const INHERITED_GENERIC_PREFIXES: [&str; 4] = ["B2_", "AZURE_", "OS_", "RCLONE_"];
+/// read: B2, Azure, Google Cloud Storage, Swift (`OS_`, and `ST_` for its v1 login), rclone, and
+/// the AWS variables rclone reads for an S3 remote; a destination gets only the variables
+/// configured for it.
+const INHERITED_GENERIC_PREFIXES: [&str; 7] =
+    ["B2_", "AZURE_", "GOOGLE_", "OS_", "ST_", "RCLONE_", "AWS_"];
 
 /// The kinds of the fixed credentials, for removing a destination's credentials whatever its
 /// kind was.
@@ -85,15 +91,23 @@ impl DestinationKind {
     }
 
     /// Name prefixes of the variables in the caller's environment that are removed before
-    /// restic starts, so the backend gets credentials only from Kestic: `AWS_` and
-    /// `RESTIC_AWS_` for S3; `B2_`, `AZURE_`, `OS_` and `RCLONE_` for the generic form, whose
-    /// own variables are set afterwards.
+    /// restic starts, so the backend gets credentials only from Kestic: `AWS_`, `RESTIC_AWS_`
+    /// and `MINIO_` for S3; `RESTIC_REST_` for REST; `B2_`, `AZURE_`, `GOOGLE_`, `OS_`, `ST_`,
+    /// `RCLONE_` and `AWS_` for the generic form, whose own variables are set afterwards.
     pub fn backend_env_cleared_prefixes(&self) -> Vec<&'static str> {
         match self {
-            Self::S3 { .. } => INHERITED_AWS_PREFIXES.to_vec(),
+            Self::S3 { .. } => INHERITED_S3_PREFIXES.to_vec(),
+            Self::Rest { .. } => INHERITED_REST_PREFIXES.to_vec(),
             Self::Generic { .. } => INHERITED_GENERIC_PREFIXES.to_vec(),
-            Self::Local { .. } | Self::Rest { .. } | Self::Sftp { .. } => Vec::new(),
+            Self::Local { .. } | Self::Sftp { .. } => Vec::new(),
         }
+    }
+
+    /// Whether restic, missing a credential Kestic would set, falls back to credential files or
+    /// logins of the user (`~/.aws/credentials`, a gcloud or Azure CLI login) and would send
+    /// those to the endpoint; a REST server without password only gets the user name.
+    pub(crate) fn falls_back_to_user_credentials(&self) -> bool {
+        matches!(self, Self::S3 { .. } | Self::Generic { .. })
     }
 
     /// Environment variables for restic that are not secret: the REST user name, the S3 region

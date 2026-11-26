@@ -566,9 +566,9 @@ fn run_with_temp_repo_password_file(
     backend: &BackendCredentials,
     probe: ProbeRuntime<'_>,
 ) -> Result<ProbeOutput, DestinationError> {
-    // Where inherited credentials are removed, restic without Kestic's own would fall back to
-    // the user's credential files and send their keys to this endpoint.
-    if !dest.kind.backend_env_cleared_prefixes().is_empty()
+    // Without Kestic's own credentials restic would fall back to the user's credential files
+    // and send their keys to this endpoint.
+    if dest.kind.falls_back_to_user_credentials()
         && let Some(kind) = backend.first_missing(&dest.kind)
     {
         return Err(DestinationError::Runner(
