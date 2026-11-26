@@ -72,6 +72,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The planning scripts come from main, not from the checkout: on a push to m<n> the checkout
+      # is not reviewed yet, and a script from it could set any tag, commit or pre-release flag
+      # that `publish` then uses with the release app's token. A change to these scripts on m<n>
+      # therefore affects pre-releases only once it is on main. Their output is checked before it
+      # becomes a step output.
       - name: Plan tag, version and notes
         id: plan
         env:
@@ -95,12 +100,48 @@ jobs:
             what="$REF_NAME"
             DRY_RUN=false
           fi
+          scripts="$RUNNER_TEMP/release-scripts"
+          mkdir -p "$scripts"
+          for f in release-notes.sh release-version.sh; do
+            git show "origin/main:.github/scripts/$f" > "$scripts/$f"
+          done
+          plan="$(bash "$scripts/release-notes.sh" "$kind" "$what" "$GITHUB_SHA" "$RUNNER_TEMP/notes")"
+
+          # Each documented key exactly once, nothing else, and a branch only gets its own
+          # pre-release tags.
+          declare -A value=()
+          while IFS= read -r line; do
+            key="${line%%=*}"
+            case "$key" in
+              tag | version | prerelease | title | previous-tag) ;;
+              *) echo "::error::Unexpected line from release-notes.sh: $line"; exit 1 ;;
+            esac
+            if [[ "$line" != *=* ]] || [ -n "${value[$key]+set}" ]; then
+              echo "::error::Malformed or repeated key from release-notes.sh: $line"
+              exit 1
+            fi
+            value[$key]="${line#*=}"
+          done <<< "$plan"
+          for key in tag version prerelease title previous-tag; do
+            if [ -z "${value[$key]+set}" ]; then
+              echo "::error::release-notes.sh printed no $key"
+              exit 1
+            fi
+          done
+          if [ "$kind" = branch ]; then
+            n="${REF_NAME#m}"
+            if ! [[ "${value[tag]}" =~ ^v0\.$n\.0-m$n\.[0-9]+$ ]] || [ "${value[prerelease]}" != true ]; then
+              echo "::error::$REF_NAME may only publish pre-releases v0.$n.0-m$n.<k>, got ${value[tag]} (prerelease=${value[prerelease]})"
+              exit 1
+            fi
+          fi
+
           {
             echo "kind=$kind"
             echo "commit=$GITHUB_SHA"
             echo "dry-run=$DRY_RUN"
+            printf '%s\n' "$plan"
           } >> "$GITHUB_OUTPUT"
-          .github/scripts/release-notes.sh "$kind" "$what" "$GITHUB_SHA" "$RUNNER_TEMP/notes" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -109,11 +150,15 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
-  # After prepare, so a failed plan never builds or pushes an image.
+  # After prepare, so a failed plan never builds or pushes an image. A release rebuilds the image
+  # from main instead of reusing an existing tag, because that tag may have been built in a pull
+  # request or on a branch.
   ci-image:
     name: CI image
     needs: prepare
     uses: ./.github/workflows/ci-image.yml
+    with:
+      force: ${{ github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: read
       packages: write

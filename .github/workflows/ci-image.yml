@@ -3,7 +3,13 @@
 
 # Builds the CI container image (.github/ci-image/Dockerfile) and pushes it to
 # GHCR, tagged with a content hash of the Dockerfile and scripts/bootstrap.sh
-# (computed by .github/ci-image/tag.sh).
+# (same formula as .github/ci-image/tag.sh).
+#
+# The job's token may push to GHCR, and on pull requests and integration
+# branches the checkout is code the maintainer has not reviewed yet. So no step
+# executes a file from the checkout: the tag is computed inline, the checkout
+# keeps no credentials, and the Dockerfile only runs inside `docker build`,
+# which sees neither the token nor the runner's files outside `scripts/`.
 #
 # verify.yml calls this workflow as its first job (workflow_call). If an image
 # with the matching tag already exists, the job only checks the registry
@@ -16,7 +22,8 @@
 # if bootstrap.sh does not change. The previous version becomes untagged and is
 # removed by ci-image-cleanup.yml. PR/branch tags are rebuilt from scratch at
 # the latest after 10 days because the cleanup deletes them. Manual dispatch
-# with `force` does the same on demand.
+# with `force` does the same on demand, and release.yml forces a rebuild for
+# every release.
 
 name: CI image
 
@@ -48,6 +55,8 @@ jobs:
   ensure:
     name: Ensure CI image
     runs-on: ubuntu-latest
+    # A full image build takes well under this; a hang should not hold a runner for 6 h.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -57,14 +66,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
+      # Inline instead of calling tag.sh: a script from the checkout would run
+      # with this job's token. Keep the formula in sync with tag.sh, which
+      # ci-image-cleanup.yml uses to find the tags still in use.
       - name: Compute image reference
         id: ref
         env:
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          tag="$(.github/ci-image/tag.sh)"
+          tag="$(sha256sum -- .github/ci-image/Dockerfile scripts/bootstrap.sh | sha256sum | cut -c1-16)"
           # GHCR requires lowercase repository names.
           image="ghcr.io/${OWNER,,}/kestic-ci:$tag"
           echo "image=$image" >> "$GITHUB_OUTPUT"

@@ -5,45 +5,33 @@
 // Signature element: the snapshots a retention of 12 monthly, 4 weekly and
 // 7 daily keeps, laid out on a time axis that ends at «now».
 
-interface Props {
-  /** Thin divider without labels. */
-  divider?: boolean;
-}
-
-const { divider = false } = Astro.props;
-
 const monthly = Array.from({ length: 12 }, (_, i) => 6 + i * 50);
 const weekly = Array.from({ length: 4 }, (_, i) => 640 + i * 52);
 const daily = Array.from({ length: 7 }, (_, i) => 852 + i * 19);
-const height = divider ? 24 : 76;
-const axis = divider ? 12 : 34;
+const height = 76;
+const axis = 34;
 ---
 
-<div class:list={["timeline", { divider }]}>
+<div class="timeline">
   <svg
     viewBox={`0 0 1000 ${height}`}
     preserveAspectRatio="none"
-    role={divider ? "presentation" : "img"}
-    aria-hidden={divider ? "true" : undefined}
-    aria-label={divider ? undefined : "Retention as a timeline: 12 monthly, 4 weekly and 7 daily snapshots are kept up to now."}
+    role="img"
+    aria-label="Retention as a timeline: 12 monthly, 4 weekly and 7 daily snapshots are kept up to now."
   >
     <line x1="0" y1={axis} x2="1000" y2={axis} class="axis" />
-    {monthly.map((x) => <line x1={x} x2={x} y1={axis - (divider ? 8 : 14)} y2={axis + (divider ? 8 : 14)} class="tick" />)}
-    {weekly.map((x) => <line x1={x} x2={x} y1={axis - (divider ? 6 : 10)} y2={axis + (divider ? 6 : 10)} class="tick" />)}
-    {daily.map((x) => <line x1={x} x2={x} y1={axis - (divider ? 4 : 6)} y2={axis + (divider ? 4 : 6)} class="tick daily" />)}
+    {monthly.map((x) => <line x1={x} x2={x} y1={axis - 14} y2={axis + 14} class="tick" />)}
+    {weekly.map((x) => <line x1={x} x2={x} y1={axis - 10} y2={axis + 10} class="tick" />)}
+    {daily.map((x) => <line x1={x} x2={x} y1={axis - 6} y2={axis + 6} class="tick daily" />)}
   </svg>
   <span class="now" style={`top: ${axis}px`} aria-hidden="true"></span>
 </div>
-{
-  !divider && (
-    <div class="labels mono mute" aria-hidden="true">
-      <span>12 monthly</span>
-      <span class="weekly">4 weekly</span>
-      <span class="daily-label">7<span class="long">&nbsp;daily</span></span>
-      <span class="now-label accent">now</span>
-    </div>
-  )
-}
+<div class="labels mono mute" aria-hidden="true">
+  <span>12 monthly</span>
+  <span class="weekly">4 weekly</span>
+  <span class="daily-label">7<span class="long">&nbsp;daily</span></span>
+  <span class="now-label accent">now</span>
+</div>
 
 <style>
   .timeline {
@@ -53,12 +41,6 @@ const axis = divider ? 12 : 34;
   .timeline svg {
     width: 100%;
     height: 76px;
-  }
-  .timeline.divider {
-    opacity: 0.55;
-  }
-  .timeline.divider svg {
-    height: 24px;
   }
   .axis {
     stroke: currentColor;
@@ -81,11 +63,6 @@ const axis = divider ? 12 : 34;
     margin-top: -6px;
     border-radius: 50%;
     background: var(--accent);
-  }
-  .divider .now {
-    width: 8px;
-    height: 8px;
-    margin-top: -4px;
   }
   .labels {
     position: relative;
