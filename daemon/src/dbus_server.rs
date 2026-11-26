@@ -9,8 +9,9 @@ use crate::dbus_api::{
 use crate::monitors::list_known_networks;
 use crate::removable_drives::list_removable_drives;
 use crate::service::{
-    DaemonCore, add_destination_unlocked, drain_queued_backups_async, get_run_detail_unlocked,
-    list_backup_snapshots_unlocked, list_destination_snapshots_unlocked,
+    DaemonCore, add_destination_unlocked, add_exclude_rule_for_item_unlocked,
+    detect_source_unlocked, drain_queued_backups_async, format_exclude_rule_for_item,
+    get_run_detail_unlocked, list_backup_snapshots_unlocked, list_destination_snapshots_unlocked,
     preview_destination_maintenance_unlocked, refresh_availability_unlocked,
     refresh_probe_unlocked, remove_app_managed_restic, remove_destination_unlocked,
     run_destination_maintenance_async, set_restic_provider_unlocked, start_all_backups_async,
@@ -449,9 +450,11 @@ impl KesticDbusV1Service {
     }
 
     #[zbus(name = "DetectSource")]
-    fn detect_source(&self, path: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock_unpoisoned();
-        let src = guard.detect_source(path)?;
+    async fn detect_source(&self, path: &str) -> Result<String, KesticDbusError> {
+        let path = path.to_string();
+        let src = self
+            .blocking(move |core| detect_source_unlocked(core, &path))
+            .await??;
         to_json_arg(&src)
     }
 
@@ -566,9 +569,12 @@ impl KesticDbusV1Service {
     }
 
     #[zbus(name = "FormatExcludeRuleForItem")]
-    fn format_exclude_rule_for_item(&self, item_path: &str) -> Result<String, KesticDbusError> {
-        let guard = self.core.lock_unpoisoned();
-        let preview = guard.format_exclude_rule_for_item(item_path)?;
+    async fn format_exclude_rule_for_item(
+        &self,
+        item_path: &str,
+    ) -> Result<String, KesticDbusError> {
+        let item = item_path.to_string();
+        let preview = run_blocking_task(move || format_exclude_rule_for_item(&item)).await??;
         to_json_arg(&preview)
     }
 
@@ -578,9 +584,13 @@ impl KesticDbusV1Service {
         backup_id: &str,
         item_path: &str,
     ) -> Result<String, KesticDbusError> {
-        let preview = self
-            .mutate(|core| core.add_exclude_rule_for_item(backup_id, item_path))
-            .await?;
+        let id = backup_id.to_string();
+        let item = item_path.to_string();
+        let (preview, conn_opt, state_dto, tray_state) = self
+            .blocking(move |core| add_exclude_rule_for_item_unlocked(core, &id, &item))
+            .await??;
+        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
+            .await;
         to_json_arg(&preview)
     }
 

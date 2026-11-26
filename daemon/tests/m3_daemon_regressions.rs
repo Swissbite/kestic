@@ -34,7 +34,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use time::macros::datetime;
@@ -1329,6 +1329,80 @@ fn m3_hung_source_probe_is_replaced_when_stale() {
             );
 
             inspector.release_all();
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// Issue #180, item 2: `DetectSource` reads the mount table without the core's lock, so a hung
+/// mount blocks only that call: (a) `GetState` answers while it hangs, (b) at once, and (c)
+/// `DetectSource` answers once the mount returns.
+#[test]
+fn detect_source_on_a_hung_mount_does_not_block_other_calls() {
+    run_isolated_test(
+        "detect_source_on_a_hung_mount_does_not_block_other_calls",
+        "KESTIC_M3_REG_DETECT_INNER",
+        |root| {
+            let _fakes = DesktopFakes::start();
+            let variant = latest_variant();
+            let inspector = Arc::new(HangingMountInspector::default());
+            let rig = M3Rig::start(
+                root,
+                &variant,
+                "M3RegDetect",
+                datetime!(2026-12-01 10:00:00 UTC),
+                |o| {
+                    o.mount_inspector = Some(Arc::clone(&inspector) as Arc<dyn MountInspector>);
+                    o.enable_monitors = false;
+                },
+            );
+            let src_dir = root.join("detect-src");
+            fs::create_dir_all(&src_dir).expect("mkdir src");
+
+            let calls_before = inspector.calls.load(Ordering::SeqCst);
+            inspector.hang_all.store(true, Ordering::SeqCst);
+            let bus_name = rig.variant.bus_name("M3RegDetect");
+            let src_path = src_dir.to_string_lossy().into_owned();
+            let detect = thread::spawn(move || {
+                let c = KesticClient::connect(&bus_name, KESTIC_OBJECT_PATH).expect("client");
+                c.detect_source(&src_path)
+            });
+            wait_until_within(Duration::from_secs(5), "DetectSource hangs", || {
+                inspector.calls.load(Ordering::SeqCst) > calls_before
+                    && inspector.hanging.load(Ordering::SeqCst)
+            });
+
+            // A separate thread, so a GetState stuck behind the lock fails the test instead of
+            // hanging it.
+            let bus_name = rig.variant.bus_name("M3RegDetect");
+            let (state_tx, state_rx) = mpsc::channel();
+            thread::spawn(move || {
+                let c = KesticClient::connect(&bus_name, KESTIC_OBJECT_PATH).expect("client");
+                let started = Instant::now();
+                let state = c.get_state();
+                state_tx.send((state.is_ok(), started.elapsed())).ok();
+            });
+            let answer = state_rx.recv_timeout(Duration::from_secs(10)).ok();
+            inspector.release_all();
+            assert!(
+                answer.is_some_and(|(ok, _)| ok),
+                "(a) GetState answers while DetectSource hangs: {answer:?}"
+            );
+            let elapsed = answer.map(|(_, elapsed)| elapsed);
+            assert!(
+                elapsed.is_some_and(|e| e < Duration::from_secs(2)),
+                "(b) GetState answers without waiting for the mount: {elapsed:?}"
+            );
+
+            let detected = detect
+                .join()
+                .expect("join DetectSource")
+                .expect("DetectSource after the mount returns");
+            assert_eq!(
+                detected.path, src_dir,
+                "(c) DetectSource answers once the mount returns"
+            );
+
             rig.daemon.stop();
         },
     );

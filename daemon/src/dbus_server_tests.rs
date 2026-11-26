@@ -20,7 +20,10 @@ fn run_blocking_task_answers_a_panic_with_an_internal_error() {
         .expect("a panicking task must end the wait");
     match res {
         Err(KesticDbusError::Internal(msg)) => {
-            assert!(msg.contains("task broke"), "the panic message is kept: {msg}");
+            assert!(
+                msg.contains("task broke"),
+                "the panic message is kept: {msg}"
+            );
         }
         other => panic!("expected an internal error, got {other:?}"),
     }
