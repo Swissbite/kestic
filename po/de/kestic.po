@@ -232,8 +232,8 @@ msgid "Paused since %1"
 msgstr "Pausiert seit %1"
 
 #: daemon/src/service/state.rs:433
-msgid "AC power (battery %1%)"
-msgstr "Netzstrom (Akku %1%)"
+msgid "AC power (battery %1)"
+msgstr "Netzstrom (Akku %1)"
 
 #: daemon/src/service/state.rs:435
 msgid "AC power"
@@ -342,8 +342,8 @@ msgid "Next backup: %1 (%2)"
 msgstr "Nächstes Backup: %1 (%2)"
 
 #: daemon/src/service/state_summary.rs:546 gui/src/overall_text.rs:84
-msgid "Currently running: %1 (%2%)"
-msgstr "Läuft gerade: %1 (%2%)"
+msgid "Currently running: %1 (%2)"
+msgstr "Läuft gerade: %1 (%2)"
 
 #: i18n/src/messages.rs
 msgid "Currently running: %1"
@@ -400,8 +400,8 @@ msgstr "%1 Backups mit Warnungen abgeschlossen"
 
 #: daemon/src/service/state_summary.rs:817 daemon/src/tray.rs:172
 #: gui/src/overall_text.rs:41
-msgid "%1: backing up · %2%"
-msgstr "%1: sichert · %2%"
+msgid "%1: backing up · %2"
+msgstr "%1: sichert · %2"
 
 #: i18n/src/messages.rs
 msgid "%1: backing up · looking through files"
@@ -581,12 +581,12 @@ msgid "Personal folder"
 msgstr "Persönlicher Ordner"
 
 #: gui/src/models/backups_model.rs:92
-msgid "%1% · %2 of %3"
-msgstr "%1% · %2 von %3"
+msgid "%1 · %2 of %3"
+msgstr "%1 · %2 von %3"
 
 #: gui/src/models/backups_model.rs
-msgid "%1% · %2 of %3 · about %4 left"
-msgstr "%1% · %2 von %3 · noch etwa %4"
+msgid "%1 · %2 of %3 · about %4 left"
+msgstr "%1 · %2 von %3 · noch etwa %4"
 
 #: gui/src/models/backups_model.rs
 msgid "%2 · %1 file so far"
@@ -594,9 +594,9 @@ msgid_plural "%2 · %1 files so far"
 msgstr[0] "%2 · %1 Datei bisher"
 msgstr[1] "%2 · %1 Dateien bisher"
 
-#: gui/src/models/backups_model.rs:94
+#: gui/src/state_cache.rs i18n/src/messages.rs
 msgid "%1%"
-msgstr "%1%"
+msgstr "%1 %"
 
 #: gui/src/models/backups_model.rs:101
 msgid "No runs yet"
@@ -946,8 +946,8 @@ msgid "Schedule: Manual only"
 msgstr "Zeitplan: Nur manuell"
 
 #: gui/src/state_cache.rs:1018
-msgid "Backing up · %1%"
-msgstr "Sichert · %1%"
+msgid "Backing up · %1"
+msgstr "Sichert · %1"
 
 #: gui/src/state_cache.rs
 msgid "Backing up · looking through files"
@@ -4227,8 +4227,8 @@ msgstr "Ein Restore von diesem Ziel läuft oder wartet."
 msgid "%1: restoring"
 msgstr "%1: stellt wieder her"
 
-msgid "%1: restoring · %2%"
-msgstr "%1: stellt wieder her · %2%"
+msgid "%1: restoring · %2"
+msgstr "%1: stellt wieder her · %2"
 
 msgid "Overwritten"
 msgstr "Überschrieben"

@@ -285,3 +285,22 @@ fn restic_source_kinds_are_parsed_and_unknown_ones_refused() {
     );
     assert!(build_provider("apm_managed", "").is_err());
 }
+
+/// #203, GUI side (German «25 %»: smoke scene `m3-overview-progress-percent`):
+/// (a) `format_percent` puts the number from `QLocale` into the catalog's pattern, English «25%»
+/// without a catalog, and (b) a message with a percentage is translated through it.
+#[test]
+fn m5_203_gui_percent_goes_through_format_percent() {
+    let count = crate::qt_bridge::ffi::format_count(25);
+    // (a)
+    assert_eq!(format_percent(25), format!("{count}%"), "(a)");
+    // (b)
+    let message =
+        kestic_i18n::messages::active_run_message(&kestic_i18n::messages::ActiveRunInfo {
+            name: "Docs",
+            kind: kestic_i18n::codes::RunKindCode::Backup,
+            phase: RunProgressPhase::ScanFinished,
+            percent_done: 25.0,
+        });
+    assert_eq!(tr(&message), format!("Docs: backing up · {count}%"), "(b)");
+}
