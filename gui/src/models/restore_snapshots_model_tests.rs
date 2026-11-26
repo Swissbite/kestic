@@ -4,6 +4,7 @@
 //! Unit tests of the snapshot texts in the restore area.
 
 use super::*;
+use crate::qt_bridge::ffi::format_decimal;
 use kestic_core::snapshot::ResticSnapshot;
 
 fn fixture_dtos(raw: &str) -> Vec<SnapshotSummaryDto> {
@@ -37,9 +38,11 @@ fn ac_m4_01_1_size_is_data_added_or_total_bytes_processed() {
     let dtos = fixture_dtos(include_str!(
         "../../../core/tests/fixtures/m4/snapshots_summary_with_and_without_data_added.json"
     ));
+    // Sizes carry the decimal separator of the test's locale.
+    let new_data = format!("{} MB new", format_decimal(312.0, 1));
     assert_eq!(
         snapshot_size_text(&dtos[1]),
-        "312.0 MB new",
+        new_data,
         "(d) data_added as new data"
     );
     assert_eq!(
@@ -49,7 +52,7 @@ fn ac_m4_01_1_size_is_data_added_or_total_bytes_processed() {
     );
     assert_eq!(
         snapshot_subtitle(&dtos[1]),
-        "312.0 MB new · tuxedo",
+        format!("{new_data} · tuxedo"),
         "(c) size and host"
     );
 }

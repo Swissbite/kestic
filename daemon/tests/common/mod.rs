@@ -162,8 +162,9 @@ pub struct LimitedOutput {
     pub timed_out: bool,
 }
 
-/// Runs `cmd` and collects its output; after `limit` the child is killed. The child stays in the
-/// test's process group, so nextest still ends whatever it started when it ends the test.
+/// Runs `cmd` and collects its output; after `limit` the child and every process it started
+/// (daemons, restic, test servers) are killed. The child stays in the test's process group, so
+/// an interrupt or a timeout of nextest still reaches it.
 pub fn output_within(mut cmd: Command, limit: Duration) -> LimitedOutput {
     use std::io::Read;
     use std::process::Stdio;
@@ -193,6 +194,7 @@ pub fn output_within(mut cmd: Command, limit: Duration) -> LimitedOutput {
         }
         if Instant::now() >= deadline {
             timed_out = true;
+            kill_descendants(child.id());
             // The child may have ended right now; `wait` reports its status either way.
             child.kill().ok();
             break child.wait().expect("wait for killed isolated test child");
@@ -208,6 +210,45 @@ pub fn output_within(mut cmd: Command, limit: Duration) -> LimitedOutput {
         stdout: collect(stdout_rx),
         stderr: collect(stderr_rx),
         timed_out,
+    }
+}
+
+/// Kills every process below `root` (its children, their children, …) with `SIGKILL`.
+fn kill_descendants(root: u32) {
+    let parents: Vec<(u32, u32)> = std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+            // `pid (comm) state ppid …`; `comm` may contain spaces and parentheses.
+            let ppid = stat
+                .rsplit_once(')')?
+                .1
+                .split_whitespace()
+                .nth(1)?
+                .parse()
+                .ok()?;
+            Some((pid, ppid))
+        })
+        .collect();
+    let mut found = vec![root];
+    let mut idx = 0;
+    while idx < found.len() {
+        let parent = found[idx];
+        found.extend(
+            parents
+                .iter()
+                .filter(|(_, pp)| *pp == parent)
+                .map(|(pid, _)| *pid),
+        );
+        idx += 1;
+    }
+    let pids: Vec<String> = found[1..].iter().map(u32::to_string).collect();
+    if !pids.is_empty() {
+        // A process that ended in the meantime makes `kill` fail for that pid only.
+        Command::new("kill").arg("-KILL").args(&pids).status().ok();
     }
 }
 

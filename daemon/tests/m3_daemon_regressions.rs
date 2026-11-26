@@ -1409,11 +1409,17 @@ fn detect_source_on_a_hung_mount_does_not_block_other_calls() {
 }
 
 /// Issue #180, item 5: the child of an isolated test that hangs is killed after its limit:
-/// (a) the run is reported as timed out, (b) soon after the limit, (c) with the child's output.
+/// (a) the run is reported as timed out, (b) soon after the limit, (c) with the child's output,
+/// and (d) the processes the child started are killed too.
 #[test]
 fn isolated_test_child_is_killed_after_its_limit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let pid_file = dir.path().join("grandchild.pid");
     let mut cmd = Command::new("sh");
-    cmd.args(["-c", "echo started; exec sleep 60"]);
+    cmd.arg("-c")
+        .arg(r#"sleep 60 & echo $! > "$1"; echo started; wait"#)
+        .arg("sh")
+        .arg(&pid_file);
     let started = Instant::now();
     let out = common::output_within(cmd, Duration::from_millis(500));
     let elapsed = started.elapsed();
@@ -1427,6 +1433,25 @@ fn isolated_test_child_is_killed_after_its_limit() {
         "started\n",
         "(c) the output up to the kill is kept"
     );
+    let grandchild = fs::read_to_string(&pid_file).expect("grandchild pid");
+    let grandchild = grandchild.trim();
+    wait_until_within(
+        Duration::from_secs(5),
+        "(d) the process the child started is killed",
+        || !process_alive(grandchild),
+    );
+    assert!(
+        !process_alive(grandchild),
+        "(d) the process the child started is killed"
+    );
+}
+
+/// Whether `pid` runs: it exists in `/proc` and is not a zombie waiting to be reaped.
+fn process_alive(pid: &str) -> bool {
+    fs::read_to_string(PathBuf::from("/proc").join(pid).join("stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .is_some_and(|(_, rest)| !rest.trim_start().starts_with('Z'))
+    })
 }
 
 /// Concurrent queue drains racing for the same destination must not drop a
