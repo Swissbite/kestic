@@ -193,17 +193,15 @@ fn assert_only_entered(
             "(a) {what}: inherited {name} reached restic"
         );
         if !entered.iter().any(|(n, _)| n == name) {
-            assert_eq!(
-                env_value(env, name),
-                None,
+            assert!(
+                env_value(env, name).is_none(),
                 "(a) {what}: inherited {name} is removed"
             );
         }
     }
     for (name, value) in entered {
-        assert_eq!(
-            env_value(env, name).as_deref(),
-            Some(*value),
+        assert!(
+            env_value(env, name).as_deref() == Some(*value),
             "(b) {what}: {name} entered in the destination"
         );
     }
