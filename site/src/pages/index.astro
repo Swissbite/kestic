@@ -73,12 +73,16 @@ const features = [
     text: "Move a destination to another address or path, or change its credentials. Kestic checks that it is the same repository before it saves; another repository can be added as a new destination.",
   },
   {
+    term: "Access data",
+    text: "A destination uses only the access data entered for it, never cloud credentials, certificates, or logins found in the environment. Azure and Google Cloud need their own key or token, or an Azure CLI login you choose explicitly.",
+  },
+  {
     term: "restic source",
     text: "Automatic uses the system restic if it is 0.18.0 or newer, otherwise one managed by Kestic: the official release, downloaded only when you ask, checked against restic's signature, and never replaced while a run uses it. You can also pick the system restic or a path of your own.",
   },
   {
     term: "Native on Plasma",
-    text: "A tray entry with Restore Files…, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store.",
+    text: "A tray entry with Restore Files…, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store. Sizes and percentages follow your language.",
   },
 ] as const;
 
