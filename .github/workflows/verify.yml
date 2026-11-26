@@ -25,6 +25,10 @@ permissions:
 
 # `just verify` split into jobs that run in parallel; each calls the same just
 # recipe as `just verify` (via .github/scripts/ci-just.sh, as user `kesticci`):
+#   scope      which jobs the run needs (.github/scripts/ci-scope.sh): a pull
+#              request that changes only documentation or the site skips the
+#              jobs that build and test, one that changes only the specification
+#              runs spec-tests instead; every other event runs everything
 #   ci-image   finds or builds the CI image all other jobs run in
 #   checks     `_static-checks`: fmt, file sizes, cargo deny, reuse lint
 #   clippy     `_clippy`: clippy without and with the test harness
@@ -33,8 +37,33 @@ permissions:
 #   test       `_nextest-from-archive` in parts by nextest test group; the part
 #              with `screenshot` also runs `_smoke-run` (the screenshot of `just smoke`)
 #   deb-check  `_nextest-from-archive` for the tests on the built .deb
-#   verify     the required check: green only when every job above succeeded
+#   spec-tests `_spec-tests`: the tests that read docs/spec/, for spec-only pull requests
+#   verify     the required check: green only when every job the scope needs
+#              succeeded and no other job failed
 jobs:
+  # Runs outside the CI image: it only compares the merge commit of a pull
+  # request with its first parent, the base branch.
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+      clippy: ${{ steps.scope.outputs.clippy }}
+      build: ${{ steps.scope.outputs.build }}
+      release: ${{ steps.scope.outputs.release }}
+      test: ${{ steps.scope.outputs.test }}
+      deb-check: ${{ steps.scope.outputs.deb-check }}
+      spec-tests: ${{ steps.scope.outputs.spec-tests }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: .github/scripts/ci-scope.sh outputs "$EVENT_NAME" >> "$GITHUB_OUTPUT"
+
   # Prebuilt image with base tools, en_US.UTF-8 locale, user `kesticci` and all
   # apt packages from bootstrap.sh; tagged by content hash of
   # .github/ci-image/Dockerfile + scripts/bootstrap.sh (built only if missing).
@@ -69,7 +98,8 @@ jobs:
   # Defines the YAML anchors `build-cache-paths` (same list as the restore step
   # in .github/actions/kestic-setup) and `drop-workspace-units`, reused below.
   clippy:
-    needs: ci-image
+    needs: [ci-image, scope]
+    if: needs.scope.outputs.clippy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions: *image-permissions
@@ -102,7 +132,8 @@ jobs:
           key: ${{ steps.setup.outputs.build-cache-key }}
 
   build:
-    needs: ci-image
+    needs: [ci-image, scope]
+    if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions: *image-permissions
@@ -136,7 +167,8 @@ jobs:
           key: ${{ steps.setup.outputs.build-cache-key }}
 
   release:
-    needs: ci-image
+    needs: [ci-image, scope]
+    if: needs.scope.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions: *image-permissions
@@ -170,7 +202,8 @@ jobs:
   # groups, so a new test always runs somewhere; deb-check takes the .deb tests.
   test:
     name: test (${{ matrix.part }})
-    needs: [ci-image, build]
+    needs: [ci-image, scope, build]
+    if: needs.scope.outputs.test == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: *image-permissions
@@ -225,7 +258,8 @@ jobs:
           if-no-files-found: error
 
   deb-check:
-    needs: [ci-image, build, release]
+    needs: [ci-image, scope, build, release]
+    if: needs.scope.outputs.deb-check == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: *image-permissions
@@ -246,15 +280,36 @@ jobs:
       - run: chmod a+r "$RUNNER_TEMP/$ARCHIVE_NAME" && chown -R kesticci:kesticci target
       - run: .github/scripts/ci-just.sh _nextest-from-archive "$RUNNER_TEMP/$ARCHIVE_NAME" 'binary(m0_s05_deb_packaging)'
 
-  # The required check. A failed, skipped or cancelled job counts as failed.
+  # The tests that read the specification (ci-scope.sh spec-tests), built on
+  # their own, for a pull request that changes docs/spec/ but no code.
+  spec-tests:
+    needs: [ci-image, scope]
+    if: needs.scope.outputs.spec-tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions: *image-permissions
+    container: *image
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/kestic-setup
+        with:
+          build-cache: dev
+      - run: .github/scripts/ci-just.sh _spec-tests
+
+  # The required check. A failed or cancelled job counts as failed, and so does
+  # a skipped job that the scope needs (ci-scope.sh verdict).
   verify:
     if: always()
-    needs: [ci-image, checks, clippy, build, release, test, deb-check]
+    needs: [ci-image, scope, checks, clippy, build, release, test, deb-check, spec-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
       # One artifact with all screenshots, as pages.yml expects. Download and
       # upload again (instead of merging) so that re-running failed jobs works.
       - name: Download GUI smoke screenshots
@@ -275,6 +330,8 @@ jobs:
       - name: All jobs succeeded
         env:
           NEEDS: ${{ toJSON(needs) }}
+          SCOPE: ${{ needs.scope.outputs.scope }}
         run: |
-          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null
+          set -o pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key) \(.value.result)"' |
+            .github/scripts/ci-scope.sh verdict "$SCOPE"

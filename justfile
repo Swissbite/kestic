@@ -23,7 +23,8 @@ verify:
     just _nextest
 
 # Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE, the merge
-# rule, the watcher and the GitHub token of the agent container, the release version arithmetic
+# rule, the watcher and the GitHub token of the agent container, the release version arithmetic,
+# the job selection of the Verify workflow and the screenshot source of the Pages site
 _static-checks:
     cargo fmt --all -- --check
     just _check-file-sizes
@@ -33,6 +34,8 @@ _static-checks:
     .devcontainer/test-kestic-agent-watch.sh
     .devcontainer/test-kestic-agent-token.sh
     .github/scripts/test-release-version.sh
+    .github/scripts/test-ci-scope.sh
+    .github/scripts/test-pages-screenshots.sh
 
 # clippy without and with the test harness
 _clippy:
@@ -151,6 +154,18 @@ _nextest:
     fi
     cargo nextest run --workspace --features kestic-gui/test-harness -E 'package(kestic-test-support)'
     cargo nextest run --workspace --features kestic-gui/test-harness -E 'not package(kestic-test-support)'
+
+# Only the tests that read files under docs/spec/ (CI, for pull requests that change only the
+# specification; .github/scripts/ci-scope.sh lists them)
+_spec-tests:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tests="$(.github/scripts/ci-scope.sh spec-tests)"
+    args=()
+    while read -r package binary; do
+        args+=(-p "$package" --test "$binary")
+    done <<< "$tests"
+    cargo nextest run "${args[@]}"
 
 # Packs the test binaries of `_build-test-harness` into a nextest archive (CI)
 _nextest-archive archive:

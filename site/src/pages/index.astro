@@ -9,7 +9,7 @@ import ThemeToggle from "../components/ThemeToggle.astro";
 import WindowFrame from "../components/WindowFrame.astro";
 import appIcon from "../../../packaging/icons/hicolor/scalable/apps/kestic.svg";
 import { heroShot, galleryShots } from "../screenshots.ts";
-import { buildShaShort, commitUrl, release, repoUrl } from "../build-info.ts";
+import { buildShaShort, commitUrl, release, repoUrl, screenshotsVersion } from "../build-info.ts";
 
 const features = [
   {
@@ -144,7 +144,7 @@ const requirements =
 >
   <div class="preview-bar mono">
     <div class="wrap">
-      Development preview · main @ <a href={commitUrl}>{buildShaShort}</a>{
+      Development preview · {screenshotsVersion ?? "main"} @ <a href={commitUrl}>{buildShaShort}</a>{
         release ? (
           <span class="release-note">
             · latest release <a href={release.url}>{release.tag}</a>
@@ -217,8 +217,8 @@ const requirements =
       <div class="wrap hero-shot">
         <WindowFrame shot={heroShot} number={1} eager />
         <p class="mono mute provenance">
-          Rendered by the test suite at <a href={commitUrl}>{buildShaShort}</a>, like every
-          screenshot on this page.
+          Rendered by the test suite at {screenshotsVersion ? `${screenshotsVersion} @ ` : ""}<a
+            href={commitUrl}>{buildShaShort}</a>, like every screenshot on this page.
         </p>
       </div>
 
