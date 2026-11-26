@@ -21,7 +21,7 @@
 # installs them into the home volume, so they always match the checked-out
 # branch), any token or login.
 
-ARG CI_IMAGE=ghcr.io/swissbite/kestic-ci:c1f517bf7e516ed5
+ARG CI_IMAGE=ghcr.io/swissbite/kestic-ci:cb2162f5998cc773
 FROM ${CI_IMAGE}
 
 ARG CI_IMAGE
