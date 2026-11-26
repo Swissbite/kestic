@@ -340,7 +340,6 @@ fn migrate(
         }
         // «Managed by Kestic» now always means Kestic's own place; a binary elsewhere keeps
         // running as a custom path.
-        // Without a home folder Kestic's own place is unknown and the source stays as it is.
         // Without a home folder Kestic's own place is unknown, and a relative path names no
         // place at all: the source then stays as it is.
         if let Some(path) = legacy_app_managed_path
