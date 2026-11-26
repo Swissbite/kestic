@@ -202,6 +202,7 @@ fn install_daemon_ki18n() {
     let qt_lock = Arc::new(Mutex::new(()));
     let qt_lock_subs = Arc::clone(&qt_lock);
     let qt_lock_plural = Arc::clone(&qt_lock);
+    let qt_lock_count = Arc::clone(&qt_lock);
     let translator = Arc::new(kestic_daemon::i18n::CallbackSubsTranslator {
         translate_fn: move |msgid: &str| {
             let _g = qt_lock.lock_unpoisoned();
@@ -215,6 +216,10 @@ fn install_daemon_ki18n() {
             let _g = qt_lock_plural.lock_unpoisoned();
             let n = i64::try_from(n).unwrap_or(i64::MAX);
             crate::qt_bridge::ffi::i18np_subs(singular, plural, n, args)
+        },
+        format_count_fn: move |n: i64| {
+            let _g = qt_lock_count.lock_unpoisoned();
+            crate::qt_bridge::ffi::format_count(n)
         },
     });
     kestic_daemon::i18n::set_daemon_translator(translator);

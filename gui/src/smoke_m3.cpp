@@ -267,9 +267,10 @@ int scenario_backup_progress(const Ctx& c, bool scanning) {
         M3_CHECK(3868, bar->property("indeterminate").toBool(), "bar must have no end point while scanning");
         M3_CHECK(3869, role_value(bm, 0, "activeScanning").toBool(), "activeScanning role");
     } else {
-        M3_CHECK_EQ(3870, status, loc(c.lang, "Backing up · 25%", "Sichert · 25%"), "status after the scan");
-        M3_CHECK_EQ(3871, line, loc(c.lang, "25% · 1.0 MB of 4.2 MB · about 30 s left", "25% · 1,0 MB von 4,2 MB · noch etwa 30 s"), "percentage, amount and time left");
-        M3_CHECK_EQ(3872, headline, loc(c.lang, "Docs: backing up · 25%", "Docs: sichert · 25%"), "headline after the scan");
+        // German puts a no-break space before the percent sign, English none.
+        M3_CHECK_EQ(3870, status, loc(c.lang, "Backing up · 25%", "Sichert · 25\u00a0%"), "status after the scan");
+        M3_CHECK_EQ(3871, line, loc(c.lang, "25% · 1.0 MB of 4.2 MB · about 30 s left", "25\u00a0% · 1,0 MB von 4,2 MB · noch etwa 30 s"), "percentage, amount and time left");
+        M3_CHECK_EQ(3872, headline, loc(c.lang, "Docs: backing up · 25%", "Docs: sichert · 25\u00a0%"), "headline after the scan");
         M3_CHECK(3873, !bar->property("indeterminate").toBool(), "bar must have an end point after the scan");
         M3_CHECK(3874, !role_value(bm, 0, "activeScanning").toBool(), "activeScanning role");
     }

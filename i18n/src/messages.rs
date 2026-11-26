@@ -22,11 +22,23 @@ pub const fn i18n_noop(msgid: &'static str) -> &'static str {
     msgid
 }
 
+/// Pattern of a percentage: the place of the number and the percent sign differ between
+/// languages («25%», «25 %»), so the catalog holds it, as in KDE's own catalogs.
+pub const PERCENT_PATTERN: &str = i18n_noop("%1%");
+
+/// An argument of a [`Message`]: text as it is, or a percentage that each side formats for its
+/// own language with [`PERCENT_PATTERN`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageArg {
+    Text(String),
+    Percent(u8),
+}
+
 /// Translatable text: English msgid with `%1`… placeholders and their arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     pub msgid: &'static str,
-    pub args: Vec<String>,
+    pub args: Vec<MessageArg>,
 }
 
 impl Message {
@@ -42,14 +54,40 @@ impl Message {
     pub fn with_args(msgid: &'static str, args: &[&str]) -> Self {
         Self {
             msgid,
-            args: args.iter().map(|a| (*a).to_string()).collect(),
+            args: args
+                .iter()
+                .map(|a| MessageArg::Text((*a).to_string()))
+                .collect(),
         }
+    }
+
+    /// Adds `percent` as the next argument.
+    #[must_use]
+    pub fn with_percent(mut self, percent: u8) -> Self {
+        self.args.push(MessageArg::Percent(percent));
+        self
+    }
+
+    /// The arguments as text, percentages formatted by `format_percent`.
+    pub fn rendered_args(&self, format_percent: impl Fn(u8) -> String) -> Vec<String> {
+        self.args
+            .iter()
+            .map(|arg| match arg {
+                MessageArg::Text(text) => text.clone(),
+                MessageArg::Percent(p) => format_percent(*p),
+            })
+            .collect()
     }
 
     /// Untranslated English text (msgid with substituted arguments), for logs and fallbacks.
     pub fn english(&self) -> String {
-        substitute_placeholders(self.msgid, &self.args)
+        substitute_placeholders(self.msgid, &self.rendered_args(english_percent))
     }
+}
+
+/// `percent` in English («25%»).
+pub fn english_percent(percent: u8) -> String {
+    substitute_placeholders(PERCENT_PATTERN, &[percent.to_string()])
 }
 
 /// Single-pass `%1`..`%9` substitution (a `%` not followed by a used digit stays as it is).
@@ -88,11 +126,6 @@ pub fn rounded_percent(value: f64) -> u8 {
         .rev()
         .find(|&p| f64::from(p) <= rounded)
         .unwrap_or(0)
-}
-
-/// Rounded percentage (0–100) for progress lines.
-fn percent(percent_done: f64) -> String {
-    rounded_percent(percent_done).to_string()
 }
 
 impl ErrorKind {
@@ -212,9 +245,7 @@ impl PendingReasonCode {
         let msgid = match self {
             Self::OnBattery => {
                 return match battery_percent {
-                    Some(pct) => {
-                        Message::with_args(i18n_noop("AC power (battery %1%)"), &[&pct.to_string()])
-                    }
+                    Some(pct) => Message::new(i18n_noop("AC power (battery %1)")).with_percent(pct),
                     None => Message::new(i18n_noop("AC power")),
                 };
             }
@@ -719,10 +750,10 @@ pub fn active_run_message(run: &ActiveRunInfo<'_>) -> Message {
                 RunProgressPhase::Scanning => {
                     Message::with_args(i18n_noop("%1: restoring"), &[run.name])
                 }
-                RunProgressPhase::ScanFinished => Message::with_args(
-                    i18n_noop("%1: restoring · %2%"),
-                    &[run.name, &percent(run.percent_done)],
-                ),
+                RunProgressPhase::ScanFinished => {
+                    Message::with_args(i18n_noop("%1: restoring · %2"), &[run.name])
+                        .with_percent(rounded_percent(run.percent_done))
+                }
             };
         }
         RunKindCode::Backup | RunKindCode::Meta => {}
@@ -732,10 +763,10 @@ pub fn active_run_message(run: &ActiveRunInfo<'_>) -> Message {
             i18n_noop("%1: backing up · looking through files"),
             &[run.name],
         ),
-        RunProgressPhase::ScanFinished => Message::with_args(
-            i18n_noop("%1: backing up · %2%"),
-            &[run.name, &percent(run.percent_done)],
-        ),
+        RunProgressPhase::ScanFinished => {
+            Message::with_args(i18n_noop("%1: backing up · %2"), &[run.name])
+                .with_percent(rounded_percent(run.percent_done))
+        }
     }
 }
 
@@ -834,10 +865,10 @@ pub fn overall_subtitle(
         RunProgressPhase::Scanning => {
             Message::with_args(i18n_noop("Currently running: %1"), &[active.name])
         }
-        RunProgressPhase::ScanFinished => Message::with_args(
-            i18n_noop("Currently running: %1 (%2%)"),
-            &[active.name, &percent(active.percent_done)],
-        ),
+        RunProgressPhase::ScanFinished => {
+            Message::with_args(i18n_noop("Currently running: %1 (%2)"), &[active.name])
+                .with_percent(rounded_percent(active.percent_done))
+        }
     })
 }
 

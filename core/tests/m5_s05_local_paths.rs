@@ -131,7 +131,9 @@ fn ac_m5_05_3_kio_address_is_rejected_with_hint() {
     );
     assert_eq!(
         hint.args,
-        vec!["smb://nas/backups".to_string()],
+        vec![kestic_i18n::messages::MessageArg::Text(
+            "smb://nas/backups".to_string()
+        )],
         "(a) address"
     );
 }
