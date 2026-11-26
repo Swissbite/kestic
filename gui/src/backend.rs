@@ -349,6 +349,10 @@ pub mod qobject {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "formatBytes"]
+        fn format_bytes(self: &KesticApp, bytes: i64) -> QString;
+
+        #[qinvokable]
         #[cxx_name = "formatExcludeRuleForItem"]
         fn format_exclude_rule_for_item(self: &KesticApp, item_path: &QString) -> QString;
 

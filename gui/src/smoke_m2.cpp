@@ -204,6 +204,17 @@ void scene_dry_run_preview(const Scene& s) {
     QObject* cmd_act = child_object(window, "showDryRunCommandAction");
     SMOKE_CHECK5("M2", 233, files_view, files_view->isVisible(), files_view->property("count").toInt() >= 1, cmd_act, cmd_act->property("visible").toBool(),
         "dry-run files list or Show Command action missing");
+    // The total size goes through the shared size formatting.
+    const QVariant real_result = preview_page->property("dryRunResult");
+    QVariantMap fake_result = real_result.value<QJSValue>().toVariant().toMap();
+    fake_result.insert(QStringLiteral("total_bytes"), 1234500000000.0);
+    preview_page->setProperty("dryRunResult", fake_result);
+    wait_ms(50);
+    QQuickItem* total_size = child_item(window, "dryRunTotalSize");
+    SMOKE_CHECK2("M2", 234, total_size, total_size->property("text").toString() == QStringLiteral("1,234.5 GB"),
+        "dry-run total size is not formatted by formatBytes");
+    preview_page->setProperty("dryRunResult", real_result);
+    wait_ms(50);
     smoke_finish("M2", warnings.get(), window, out_path);
 }
 

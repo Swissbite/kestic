@@ -4,6 +4,7 @@
 #include "src/smoke_helper.h"
 #include "src/smoke_common.h"
 #include <QColor>
+#include <QLocale>
 
 namespace kestic::smoke {
 
@@ -485,6 +486,9 @@ void install_m1_smoke_check(
     const QString out_path = QString::fromUtf8(screenshot_path.data(), static_cast<qsizetype>(screenshot_path.size()));
     const QString mode = QString::fromUtf8(layout_mode.data(), static_cast<qsizetype>(layout_mode.size()));
     const QString lang = QString::fromUtf8(expected_lang.data(), static_cast<qsizetype>(expected_lang.size()));
+    // Numbers and sizes follow the formats locale; the smoke stands in for a system whose formats
+    // match its language, because the test image has only the en_US glibc locale.
+    QLocale::setDefault(QLocale(lang));
     auto warnings = std::make_shared<QStringList>();
     finish_incubation_on_quit(engine);
 

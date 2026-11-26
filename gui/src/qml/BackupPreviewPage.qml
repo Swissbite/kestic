@@ -29,14 +29,6 @@ Kirigami.ScrollablePage {
     property var retentionPreviewData: null
     property string retentionPreviewError: ""
 
-    function formatSize(bytes) {
-        var b = Number(bytes || 0);
-        if (b >= 1000000000) return (b / 1000000000).toFixed(1) + " GB";
-        if (b >= 1000000) return (b / 1000000).toFixed(1) + " MB";
-        if (b >= 1000) return Math.round(b / 1000) + " KB";
-        return b + " B";
-    }
-
     function startDryRunIfNeeded() {
         if (mode !== "dry_run") return;
         retentionPollTimer.stop();
@@ -240,8 +232,9 @@ Kirigami.ScrollablePage {
                         text: page.dryRunResult ? String(page.dryRunResult.total_files) : "0"
                     }
                     Controls.Label {
+                        objectName: "dryRunTotalSize"
                         Kirigami.FormData.label: i18n("Total size:")
-                        text: page.dryRunResult ? page.formatSize(page.dryRunResult.total_bytes) : "0 B"
+                        text: page.appBackend.formatBytes(page.dryRunResult ? page.dryRunResult.total_bytes : 0)
                     }
                     Controls.Label {
                         Kirigami.FormData.label: i18n("Changes:")
@@ -254,7 +247,7 @@ Kirigami.ScrollablePage {
                     }
                     Controls.Label {
                         Kirigami.FormData.label: i18n("Estimated data added:")
-                        text: page.dryRunResult ? page.formatSize(page.dryRunResult.data_added) : "0 B"
+                        text: page.appBackend.formatBytes(page.dryRunResult ? page.dryRunResult.data_added : 0)
                     }
                 }
 
@@ -278,7 +271,7 @@ Kirigami.ScrollablePage {
                             Layout.fillWidth: true
                         }
                         Controls.Label {
-                            text: page.formatSize(modelData.bytes)
+                            text: page.appBackend.formatBytes(modelData.bytes || 0)
                             opacity: 0.8
                         }
                     }

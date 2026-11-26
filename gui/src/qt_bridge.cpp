@@ -253,6 +253,11 @@ rust::String format_count(std::int64_t n) {
     return rust::String(utf8.constData(), static_cast<size_t>(utf8.size()));
 }
 
+rust::String format_decimal(double value, std::int32_t decimals) {
+    const QByteArray utf8 = QLocale().toString(value, 'f', decimals).toUtf8();
+    return rust::String(utf8.constData(), static_cast<size_t>(utf8.size()));
+}
+
 std::int32_t local_offset_seconds(std::int64_t unix_secs) {
     const QDateTime dt = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(unix_secs)).toLocalTime();
     return static_cast<std::int32_t>(dt.offsetFromUtc());
