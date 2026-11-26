@@ -791,6 +791,30 @@ int scenario_generic_form(const Ctx& c) {
     scroll_into_view(w, remove);
     M3_CHECK(5555, click_ui_item(w, remove, "Remove Variable"), "click on «Remove Variable» failed");
     M3_CHECK(5556, wait_until([&] { return !env_error->isVisible() && test->isEnabled(); }, 2000), "removing the variable does not unlock the test");
+
+    // AC-M5-03-8 (a): an `azure:` or `gs:` destination without its credential variable keeps
+    // «Test Connection», and so adding it, locked, and the message names the variables.
+    set_text(w, "wizDestUrlField", QStringLiteral("azure:kestic-container:/laptop"));
+    M3_CHECK(5590, wait_until([&] { return env_error->isVisible() && !test->isEnabled(); }, 2000), "AC-M5-03-8 (a): azure: without a credential variable accepted");
+    M3_CHECK_EQ(5591, env_error->property("text").toString(),
+        loc(c.lang,
+            "Enter one of these variables in this destination: AZURE_ACCOUNT_KEY, AZURE_ACCOUNT_SAS, AZURE_FORCE_CLI_CREDENTIAL=true. Kestic uses no other access data.",
+            "Tragen Sie in diesem Ziel eine dieser Variablen ein: AZURE_ACCOUNT_KEY, AZURE_ACCOUNT_SAS, AZURE_FORCE_CLI_CREDENTIAL=true. Kestic verwendet keine anderen Zugangsdaten."),
+        "AC-M5-03-8 (a): message for azure:");
+    if (!c.out_path.isEmpty()) {
+        scroll_into_view(w, env_error);
+        wait_ms(300);
+        QString credentials_shot = c.out_path;
+        credentials_shot.replace(QStringLiteral("generic-form"), QStringLiteral("generic-credentials"));
+        M3_CHECK(5592, save_screenshot(w, credentials_shot), "screenshot failed");
+    }
+    set_text(w, "wizDestUrlField", QStringLiteral("gs:kestic-bucket:/laptop"));
+    M3_CHECK(5593, wait_until([&] { return env_error->property("text").toString().contains(QStringLiteral("GOOGLE_ACCESS_TOKEN, GOOGLE_APPLICATION_CREDENTIALS")); }, 2000), "AC-M5-03-8 (a): the message for gs: names its variables");
+    M3_CHECK(5594, !test->isEnabled(), "AC-M5-03-8 (a): gs: without a credential variable accepted");
+    set_text(w, "wizDestUrlField", QStringLiteral("azure:kestic-container:/laptop"));
+    QQuickItem* cli_secret = add_variable(w, 2, QStringLiteral("AZURE_FORCE_CLI_CREDENTIAL"), QStringLiteral("true"));
+    M3_CHECK(5595, cli_secret != nullptr, "variable row 2 missing");
+    M3_CHECK(5596, wait_until([&] { return !env_error->isVisible() && test->isEnabled(); }, 2000), "AC-M5-03-8 (a): AZURE_FORCE_CLI_CREDENTIAL=true does not unlock the test");
     return 0;
 }
 

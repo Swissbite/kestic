@@ -436,3 +436,156 @@ fn ac_m5_03_7_reserved_variable_is_refused_over_dbus() {
         },
     );
 }
+
+/// An `azure:` destination without a credential variable, saved before Kestic required one, and
+/// a manual backup on it, written into the daemon's `config.toml` before it starts.
+fn seed_azure_without_credentials(root: &Path, sub: &str) -> (Destination, BackupId) {
+    let dest = Destination::new(
+        "Old Azure",
+        DestinationKind::Generic {
+            url: "azure:kestic-container:/laptop".to_string(),
+            env: vec![EnvVar {
+                name: "AZURE_ACCOUNT_NAME".to_string(),
+                secret: false,
+                value: Some("kestic".to_string()),
+            }],
+        },
+    )
+    .expect("azure destination");
+    let src = root.join(sub).join("azure-src");
+    fs::create_dir_all(&src).expect("mkdir src");
+    fs::write(src.join("file.txt"), b"azure").expect("write source");
+    let mut backup =
+        Backup::new("Azure Docs", Source::folder(&src), dest.id.clone()).expect("valid backup");
+    backup.schedule = kestic_core::model::Schedule::ManualOnly;
+    let backup_id = backup.id.clone();
+    let mut config = kestic_core::config::AppConfig::default();
+    config.destinations.push(dest.clone());
+    config.backups.push(backup);
+    kestic_core::config::save_config(&common::m3::daemon_paths(root, sub).0, &config)
+        .expect("save config");
+    (dest, backup_id)
+}
+
+const AZURE_NEEDS: &str = "AZURE_ACCOUNT_KEY, AZURE_ACCOUNT_SAS, AZURE_FORCE_CLI_CREDENTIAL=true";
+const GS_NEEDS: &str = "GOOGLE_ACCESS_TOKEN, GOOGLE_APPLICATION_CREDENTIALS";
+
+/// AC-M5-03-8 (FR-01, NFR-02), D-Bus part: an `azure:` destination without `AZURE_ACCOUNT_KEY`,
+/// `AZURE_ACCOUNT_SAS` or `AZURE_FORCE_CLI_CREDENTIAL=true` and a `gs:` destination without
+/// `GOOGLE_ACCESS_TOKEN` or `GOOGLE_APPLICATION_CREDENTIALS`: (b) `AddDestination` and
+/// `UpdateDestination` fail with `InvalidInput`, (c) the connection test reports
+/// `credentials_not_entered` with the variables and a backup run ends with the message naming
+/// them, both without starting restic, and (d) a saved destination without them still loads.
+#[test]
+fn ac_m5_03_8_cloud_destination_without_credential_variable_is_refused_over_dbus() {
+    run_isolated_test(
+        "ac_m5_03_8_cloud_destination_without_credential_variable_is_refused_over_dbus",
+        "KESTIC_M5_03_8_INNER",
+        |root| {
+            let variant = latest_variant();
+            let (saved, backup_id) = seed_azure_without_credentials(root, &variant.sub("M5G8"));
+            let rig = start_rig(root, &variant, "M5G8", true);
+            let client = &rig.daemon.client;
+            let restic_before = rig.wrapper.started_repo_count();
+
+            // (d)
+            let state = client.get_state().expect("GetState");
+            assert_eq!(
+                dest_summary(&state, &saved.id).destination.name,
+                "Old Azure",
+                "(d) the saved destination is loaded"
+            );
+
+            let forced_off = EnvVar {
+                name: "AZURE_FORCE_CLI_CREDENTIAL".to_string(),
+                secret: false,
+                value: Some("false".to_string()),
+            };
+            let cases = [
+                ("azure:other:/laptop", vec![], AZURE_NEEDS),
+                ("azure:other:/laptop", vec![forced_off], AZURE_NEEDS),
+                ("gs:kestic-bucket:/laptop", vec![], GS_NEEDS),
+            ];
+            let config_before = fs::read(&rig.daemon.config_path).expect("read config");
+            for (url, env, needs) in cases {
+                let mut dest = rig.destination();
+                dest.kind = DestinationKind::Generic {
+                    url: url.to_string(),
+                    env,
+                };
+                // (c)
+                let tested = client
+                    .test_destination_connection(
+                        &dest,
+                        "init",
+                        &strong_password(),
+                        &BackendSecrets::default(),
+                    )
+                    .expect("TestDestinationConnection");
+                assert_eq!(
+                    tested.error_kind,
+                    Some(ConnectionTestCode::CredentialsNotEntered),
+                    "(c) {url}: {tested:?}"
+                );
+                assert_eq!(
+                    tested.detail, needs,
+                    "(c) {url}: the variables are the detail"
+                );
+                // (b)
+                let err = client
+                    .add_destination(
+                        &dest,
+                        "init",
+                        &strong_password(),
+                        &BackendSecrets::default(),
+                    )
+                    .expect_err("AddDestination without a credential variable");
+                assert_dbus_error_name(&err, "net.daester.Kestic.Error.InvalidInput");
+            }
+            let mut renamed = saved.clone();
+            renamed.name = "Renamed Azure".to_string();
+            let err = client
+                .update_destination(&renamed, "connect", "", &BackendSecrets::default(), false)
+                .expect_err("UpdateDestination without a credential variable");
+            // (b)
+            assert_dbus_error_name(&err, "net.daester.Kestic.Error.InvalidInput");
+            assert_eq!(
+                fs::read(&rig.daemon.config_path).expect("read config"),
+                config_before,
+                "(b) nothing saved"
+            );
+
+            client
+                .start_backup(backup_id.as_str())
+                .expect("StartBackup");
+            let state = wait_for_state(client, Duration::from_secs(60), "backup ended", |s| {
+                let b = backup_summary(s, &backup_id);
+                b.active_run.is_none() && b.last_run.is_some()
+            });
+            let last_run = backup_summary(&state, &backup_id)
+                .last_run
+                .clone()
+                .expect("last run");
+            // (c)
+            assert_eq!(last_run.status, RunStatus::Error, "(c) the run failed");
+            assert_eq!(
+                last_run.summary_message.as_deref(),
+                Some(
+                    format!(
+                        "Enter one of these variables in this destination: {AZURE_NEEDS}. \
+                         Kestic uses no other access data."
+                    )
+                    .as_str()
+                ),
+                "(c) the run names the variables"
+            );
+            assert_eq!(
+                rig.wrapper.started_repo_count(),
+                restic_before,
+                "(c) restic started: {:?}",
+                rig.wrapper.entries()
+            );
+            rig.daemon.stop();
+        },
+    );
+}

@@ -3706,6 +3706,10 @@ msgid "There is another backup destination at this address."
 msgstr "Unter dieser Adresse liegt ein anderes Backup-Ziel."
 
 #: i18n/src/messages.rs
+msgid "Enter one of these variables in this destination: %1. Kestic uses no other access data."
+msgstr "Tragen Sie in diesem Ziel eine dieser Variablen ein: %1. Kestic verwendet keine anderen Zugangsdaten."
+
+#: i18n/src/messages.rs
 msgid "Enter the access data again. Kestic uses saved access data only for the server they were entered for."
 msgstr "Geben Sie die Zugangsdaten erneut ein. Kestic verwendet gespeicherte Zugangsdaten nur für den Server, für den sie eingegeben wurden."
 

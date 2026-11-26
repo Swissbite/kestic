@@ -6,17 +6,19 @@
 //! Google Cloud Storage, `ST_` for Swift, `RESTIC_REST_` for REST, `AWS_` for rclone, `MINIO_`
 //! for S3) do not reach restic, neither in a run nor in the setup probe; a variable entered in
 //! the destination does. Each test re-runs itself with the inherited variables set, and a restic
-//! stand-in records its environment.
+//! stand-in records its environment. AC-M5-03-9 adds Azure's managed identity, the gcloud
+//! configuration and the TLS certificates; AC-M5-03-8 refuses `azure:` and `gs:` destinations
+//! without a credential variable entered in them.
 
 use kestic_core::backend_credentials::{
     BackendCredentials, SECRET_KIND_REST, SECRET_KIND_S3_ACCESS_KEY, SECRET_KIND_S3_SECRET_KEY,
 };
 use kestic_core::clock::FakeClock;
-use kestic_core::destination::{DestinationSetupMode, setup_destination};
+use kestic_core::destination::{DestinationError, DestinationSetupMode, setup_destination};
 use kestic_core::generic::{EnvVar, secret_kind};
 use kestic_core::model::{Destination, DestinationKind};
 use kestic_core::provider::ResolvedRestic;
-use kestic_core::restic::{ResticCommandSpec, ResticRuntime, run_restic};
+use kestic_core::restic::{ResticCommandSpec, ResticRunError, ResticRuntime, run_restic};
 use kestic_core::secrets::{InMemorySecretStore, SecretStore, SecretValue};
 use kestic_test_support::password::{s3_key, strong_password};
 use kestic_test_support::tools::write_executable;
@@ -400,5 +402,299 @@ fn m5_review_s3_inherited_minio_variables_do_not_reach_restic() {
     ];
     for (what, env) in observed_environments(&dest, &store, &creds) {
         assert_only_entered(what, &env, &foreign, &entered);
+    }
+}
+
+const FOREIGN_AZURE_IDENTITY: [&str; 6] = [
+    "IDENTITY_ENDPOINT",
+    "IDENTITY_HEADER",
+    "MSI_ENDPOINT",
+    "MSI_SECRET",
+    "IMDS_ENDPOINT",
+    "AZURE_ACCOUNT_KEY",
+];
+
+/// AC-M5-03-9 (NFR-02), Azure: (a) inherited managed-identity variables (`IDENTITY_*`, `MSI_*`,
+/// `IMDS_*`) and `AZURE_*` do not reach restic for an `azure:` destination, (b) the variables
+/// entered in the destination do, also one with such a prefix.
+#[test]
+fn ac_m5_03_9_azure_inherited_identity_variables_do_not_reach_restic() {
+    if !in_child_with_inherited(
+        "ac_m5_03_9_azure_inherited_identity_variables_do_not_reach_restic",
+        &FOREIGN_AZURE_IDENTITY,
+    ) {
+        return;
+    }
+    let foreign = inherited(&FOREIGN_AZURE_IDENTITY);
+    let key = strong_password();
+    let entered = [
+        ("AZURE_ACCOUNT_NAME", "kestic"),
+        ("IMDS_ENDPOINT", "http://127.0.0.1:9"),
+        ("AZURE_ACCOUNT_KEY", key.as_str()),
+    ];
+    let (dest, store, creds) =
+        generic_with_secret("azure:kestic-container:/laptop", &entered[..2], entered[2]);
+    for (what, env) in observed_environments(&dest, &store, &creds) {
+        assert_only_entered(what, &env, &foreign, &entered);
+    }
+}
+
+const FOREIGN_GCLOUD: [&str; 5] = [
+    "CLOUDSDK_CONFIG",
+    "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE",
+    "GCE_METADATA_HOST",
+    "GCE_METADATA_IP",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+];
+
+/// AC-M5-03-9 (NFR-02), Google Cloud Storage: (a) inherited gcloud and metadata server
+/// variables (`CLOUDSDK_*`, `GCE_*`) and `GOOGLE_*` do not reach restic for a `gs:` destination,
+/// (b) the variables entered in the destination do, also one with such a prefix.
+#[test]
+fn ac_m5_03_9_gs_inherited_gcloud_variables_do_not_reach_restic() {
+    if !in_child_with_inherited(
+        "ac_m5_03_9_gs_inherited_gcloud_variables_do_not_reach_restic",
+        &FOREIGN_GCLOUD,
+    ) {
+        return;
+    }
+    let foreign = inherited(&FOREIGN_GCLOUD);
+    let token = strong_password();
+    let entered = [
+        ("CLOUDSDK_CONFIG", "/nonexistent/kestic-gcloud"),
+        ("GOOGLE_ACCESS_TOKEN", token.as_str()),
+    ];
+    let (dest, store, creds) =
+        generic_with_secret("gs:kestic-bucket:/laptop", &entered[..1], entered[1]);
+    for (what, env) in observed_environments(&dest, &store, &creds) {
+        assert_only_entered(what, &env, &foreign, &entered);
+    }
+}
+
+const FOREIGN_TLS: [&str; 2] = ["RESTIC_TLS_CLIENT_CERT", "RESTIC_CACERT"];
+
+/// AC-M5-03-9 (NFR-02), TLS: (a) an inherited `RESTIC_TLS_CLIENT_CERT` and `RESTIC_CACERT` do
+/// not reach restic for any destination (REST and the generic form here), (b) the ones entered
+/// in a generic destination do.
+#[test]
+fn ac_m5_03_9_inherited_tls_certificates_do_not_reach_restic() {
+    if !in_child_with_inherited(
+        "ac_m5_03_9_inherited_tls_certificates_do_not_reach_restic",
+        &FOREIGN_TLS,
+    ) {
+        return;
+    }
+    let foreign = inherited(&FOREIGN_TLS);
+    let rest = rest_destination(&http_endpoint(), None);
+    for (what, env) in observed_environments(
+        &rest,
+        &InMemorySecretStore::new(),
+        &BackendCredentials::none(),
+    ) {
+        assert_only_entered(&format!("REST {what}"), &env, &foreign, &[]);
+    }
+
+    let key = strong_password();
+    let entered = [
+        ("RESTIC_CACERT", "/etc/kestic-test/ca.pem"),
+        ("RESTIC_TLS_CLIENT_CERT", "/etc/kestic-test/client.pem"),
+        ("B2_ACCOUNT_KEY", key.as_str()),
+    ];
+    let (dest, store, creds) =
+        generic_with_secret("b2:kestic-bucket:laptop", &entered[..2], entered[2]);
+    for (what, env) in observed_environments(&dest, &store, &creds) {
+        assert_only_entered(&format!("generic {what}"), &env, &foreign, &entered);
+    }
+}
+
+/// A generic destination at `url` with the plain `variables`, no secret one.
+fn generic_plain(url: &str, variables: &[(&str, &str)]) -> Destination {
+    Destination::new(
+        "Cloud",
+        DestinationKind::Generic {
+            url: url.to_string(),
+            env: variables
+                .iter()
+                .map(|(name, value)| var(name, false, Some(value)))
+                .collect(),
+        },
+    )
+    .expect("generic destination")
+}
+
+/// Runs restic for `dest` (credentials from `store`) and its setup probe (credentials `creds`):
+/// both must be refused for the credential variables `needs`, and restic must not start.
+fn assert_refused(
+    what: &str,
+    dest: &Destination,
+    store: &InMemorySecretStore,
+    creds: &BackendCredentials,
+    needs: &str,
+) {
+    let dir = TempDir::new().expect("tempdir");
+    let resolved = fake_restic(dir.path());
+    let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
+    let helper = dir.path().join("kestic");
+    let spec = ResticCommandSpec::for_destination(
+        &resolved.binary,
+        &helper,
+        dest,
+        vec!["snapshots".to_string()],
+    );
+    let run = run_restic(&spec, dest, Some(store), &clock, None, &[], |_| {});
+    assert!(
+        matches!(
+            &run,
+            Err(ResticRunError::CredentialsNotEntered { variables, .. }) if variables == needs
+        ),
+        "(a) {what}: the run is refused naming {needs}: {run:?}"
+    );
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: store,
+        clock: &clock,
+        cache_dir: None,
+    };
+    let probe = setup_destination(
+        dest,
+        DestinationSetupMode::ConnectExisting,
+        &SecretValue::from_str_secret(strong_password()),
+        creds,
+        &runtime,
+    );
+    assert!(
+        matches!(
+            &probe,
+            Err(DestinationError::Runner(ResticRunError::CredentialsNotEntered { variables, .. }))
+                if variables == needs
+        ),
+        "(a) {what}: the probe is refused naming {needs}: {probe:?}"
+    );
+    assert!(
+        !dir.path().join("env.log").exists(),
+        "(a) {what}: restic was started"
+    );
+}
+
+const AZURE_NEEDS: &str = "AZURE_ACCOUNT_KEY, AZURE_ACCOUNT_SAS, AZURE_FORCE_CLI_CREDENTIAL=true";
+const GS_NEEDS: &str = "GOOGLE_ACCESS_TOKEN, GOOGLE_APPLICATION_CREDENTIALS";
+
+/// AC-M5-03-8 (FR-01, NFR-02), core part: (a) a run and the setup probe of an `azure:`
+/// destination without `AZURE_ACCOUNT_KEY`, `AZURE_ACCOUNT_SAS` or
+/// `AZURE_FORCE_CLI_CREDENTIAL=true`, and of a `gs:` destination without `GOOGLE_ACCESS_TOKEN`
+/// or `GOOGLE_APPLICATION_CREDENTIALS`, are refused naming those variables without starting
+/// restic, also when the variable is declared but empty, has no saved secret value or
+/// `AZURE_FORCE_CLI_CREDENTIAL` is not true; (d) such a destination is still a valid
+/// configuration.
+#[test]
+fn ac_m5_03_8_cloud_destination_without_credential_variable_does_not_start_restic() {
+    let none = InMemorySecretStore::new();
+    let empty = BackendCredentials::none();
+    for (what, dest) in [
+        (
+            "azure without variables",
+            generic_plain("azure:kestic-container:/laptop", &[]),
+        ),
+        (
+            "azure with only the account name",
+            generic_plain(
+                "azure:kestic-container:/laptop",
+                &[("AZURE_ACCOUNT_NAME", "kestic")],
+            ),
+        ),
+        (
+            "azure with an empty key",
+            generic_plain(
+                "azure:kestic-container:/laptop",
+                &[("AZURE_ACCOUNT_KEY", " ")],
+            ),
+        ),
+        (
+            "azure with the CLI login switched off",
+            generic_plain(
+                "azure:kestic-container:/laptop",
+                &[("AZURE_FORCE_CLI_CREDENTIAL", "false")],
+            ),
+        ),
+    ] {
+        assert_refused(what, &dest, &none, &empty, AZURE_NEEDS);
+    }
+    assert_refused(
+        "gs without variables",
+        &generic_plain("gs:kestic-bucket:/laptop", &[("GOOGLE_PROJECT_ID", "p")]),
+        &none,
+        &empty,
+        GS_NEEDS,
+    );
+    let declared = Destination::new(
+        "Cloud",
+        DestinationKind::Generic {
+            url: "gs:kestic-bucket:/laptop".to_string(),
+            env: vec![var("GOOGLE_ACCESS_TOKEN", true, None)],
+        },
+    )
+    .expect("generic destination");
+    assert_refused(
+        "gs with a secret token without value",
+        &declared,
+        &none,
+        &empty,
+        GS_NEEDS,
+    );
+
+    // (d)
+    let mut config = kestic_core::config::AppConfig::default();
+    config
+        .destinations
+        .push(generic_plain("azure:old:/laptop", &[]));
+    config
+        .destinations
+        .push(generic_plain("gs:old:/laptop", &[]));
+    let raw = toml::to_string(&config).expect("serialize config");
+    let loaded = kestic_core::config::parse_config_str(&raw);
+    assert_eq!(
+        loaded.map(|c| c.destinations.len()).ok(),
+        Some(2),
+        "(d) the configuration still loads"
+    );
+}
+
+/// AC-M5-03-8 (FR-01, NFR-02), core part: (e) a credential variable entered in the destination
+/// reaches restic in a run and in the setup probe: `AZURE_FORCE_CLI_CREDENTIAL=true`, a secret
+/// `AZURE_ACCOUNT_SAS`, `GOOGLE_APPLICATION_CREDENTIALS`, a secret `GOOGLE_ACCESS_TOKEN`.
+#[test]
+fn ac_m5_03_8_credential_variable_entered_in_the_destination_reaches_restic() {
+    let cli = [("AZURE_FORCE_CLI_CREDENTIAL", "true")];
+    let file = [("GOOGLE_APPLICATION_CREDENTIALS", "/home/u/kestic-gcs.json")];
+    for (url, entered) in [
+        ("azure:kestic-container:/laptop", &cli[..]),
+        ("gs:kestic-bucket:/laptop", &file[..]),
+    ] {
+        let dest = generic_plain(url, entered);
+        for (what, env) in observed_environments(
+            &dest,
+            &InMemorySecretStore::new(),
+            &BackendCredentials::none(),
+        ) {
+            assert_only_entered(&format!("{url} {what}"), &env, &[], entered);
+        }
+    }
+    let sas = strong_password();
+    let token = strong_password();
+    for (url, secret) in [
+        (
+            "azure:kestic-container:/laptop",
+            ("AZURE_ACCOUNT_SAS", sas.as_str()),
+        ),
+        (
+            "gs:kestic-bucket:/laptop",
+            ("GOOGLE_ACCESS_TOKEN", token.as_str()),
+        ),
+    ] {
+        let (dest, store, creds) = generic_with_secret(url, &[], secret);
+        for (what, env) in observed_environments(&dest, &store, &creds) {
+            assert_only_entered(&format!("{url} {what}"), &env, &[], &[secret]);
+        }
     }
 }
