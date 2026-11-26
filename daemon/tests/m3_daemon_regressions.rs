@@ -1408,6 +1408,27 @@ fn detect_source_on_a_hung_mount_does_not_block_other_calls() {
     );
 }
 
+/// Issue #180, item 5: the child of an isolated test that hangs is killed after its limit:
+/// (a) the run is reported as timed out, (b) soon after the limit, (c) with the child's output.
+#[test]
+fn isolated_test_child_is_killed_after_its_limit() {
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "echo started; exec sleep 60"]);
+    let started = Instant::now();
+    let out = common::output_within(cmd, Duration::from_millis(500));
+    let elapsed = started.elapsed();
+    assert!(out.timed_out, "(a) the hung child is reported as timed out");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "(b) the child is killed soon after the limit: {elapsed:?}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "started\n",
+        "(c) the output up to the kill is kept"
+    );
+}
+
 /// Concurrent queue drains racing for the same destination must not drop a
 /// queued backup when its start loses the race (`AlreadyRunning`): every queued backup runs.
 #[test]
