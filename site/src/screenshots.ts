@@ -44,9 +44,9 @@ export const galleryShots: readonly Screenshot[] = [
   },
   {
     file: "m5-restic-source-dialog-wide-en.png",
-    crop: { x: 60, y: 160, width: 600, height: 400 },
+    crop: { x: 60, y: 72, width: 600, height: 400 },
     caption: "Choose where restic comes from: Automatic, System, Managed by Kestic, or a custom path.",
-    alt: "Dialog Change restic Source with the choices Automatic, System, Managed by Kestic and Custom path, each with a short explanation; Automatic is selected.",
+    alt: "Dialog Change restic Source with the choices Automatic, System and Managed by Kestic, each with a short explanation, and Custom path with a field for the path; Automatic is selected.",
     width: 720,
     height: 640,
   },
