@@ -496,8 +496,9 @@ fn ac_m5_09_3_stored_id_decides_when_old_address_is_gone() {
 }
 
 /// M5-S09: saving a changed connection keeps the destination's maintenance schedule, which
-/// `UpdateDestinationMaintenance` set before, and its recovery kit key, which the GUI's
-/// destination does not carry.
+/// `UpdateDestinationMaintenance` set before, and, for the same repository, its recovery kit
+/// key, which the GUI's destination does not carry; a repository created anew in place drops
+/// the key of the old one.
 #[test]
 fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
     run_isolated_test(
@@ -545,8 +546,21 @@ fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
             assert_eq!(
                 after.recovery_kit_key_id.as_deref(),
                 Some("KITKEY01"),
-                "the recovery kit key is kept"
+                "the recovery kit key is kept for the same repository"
             );
+
+            fs::remove_dir_all(&copy).expect("remove repository");
+            fs::create_dir_all(&copy).expect("mkdir");
+            let result = client
+                .update_destination(&moved, "init", "", &none(), true)
+                .expect("UpdateDestination init in place");
+            assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
+            let renewed = saved(&daemon, &dest);
+            assert_eq!(
+                renewed.recovery_kit_key_id, None,
+                "the key of the old repository is dropped"
+            );
+            assert_eq!(renewed.maintenance, schedule, "the schedule is kept");
             daemon.stop();
         },
     );
