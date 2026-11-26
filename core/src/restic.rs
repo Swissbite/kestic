@@ -608,7 +608,7 @@ pub struct ResticCommandSpec {
     pub backend_options: Vec<String>,
     pub subcommand_args: Vec<String>,
     /// Name prefixes of variables in the caller's environment restic must not see (inherited
-    /// AWS credentials and settings).
+    /// backend credentials and settings).
     pub backend_env_cleared_prefixes: Vec<&'static str>,
     /// Backend variables that are not secret (REST user name, S3 region).
     pub backend_env: Vec<(String, String)>,
