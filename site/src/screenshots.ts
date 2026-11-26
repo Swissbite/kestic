@@ -36,6 +36,21 @@ export const heroShot: Screenshot = {
 
 export const galleryShots: readonly Screenshot[] = [
   {
+    file: "m5-destination-types-wide-en.png",
+    crop: { x: 155, y: 55, width: 870, height: 580 },
+    caption: "Add Destination: the types that are ready, then those that need a program.",
+    alt: "First step of Add Destination listing External Drive / USB, Folder / Other Disk, NAS / Server via SSH, REST Server and Cloud Storage as ready, and Cloud Services via rclone under Needs Installation with the package rclone and the command sudo apt install rclone.",
+    ...wide,
+  },
+  {
+    file: "m5-restic-source-dialog-wide-en.png",
+    crop: { x: 60, y: 160, width: 600, height: 400 },
+    caption: "Choose where restic comes from: Automatic, System, Managed by Kestic, or a custom path.",
+    alt: "Dialog Change restic Source with the choices Automatic, System, Managed by Kestic and Custom path, each with a short explanation; Automatic is selected.",
+    width: 720,
+    height: 640,
+  },
+  {
     file: "m4-restore-snapshot-list-wide-en.png",
     crop: { x: 0, y: 62, width: 870, height: 580 },
     caption: "Restore: every backup with its snapshots, newest first.",
