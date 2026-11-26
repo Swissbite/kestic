@@ -149,7 +149,7 @@ pub fn i18np(
 
 /// Translates a [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
 /// daemon language (tray, notifications, run history); a percentage follows the language's
-/// pattern, like [`format_percent`].
+/// pattern.
 pub fn tr(message: &Message) -> String {
     let guard = translator_lock()
         .read()
@@ -162,14 +162,8 @@ pub fn tr(message: &Message) -> String {
     guard.translate_subs(message.msgid, &args)
 }
 
-/// `percent` in the daemon language («25%», German «25 %»).
-pub fn format_percent(percent: u8) -> String {
-    let guard = translator_lock()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    percent_text(guard.as_ref(), percent)
-}
-
+/// `percent` in the daemon language («25%», German «25 %»): the number from the translator's
+/// locale in the catalog's percent pattern.
 fn percent_text(translator: &dyn DaemonTranslator, percent: u8) -> String {
     translator.translate_subs(
         PERCENT_PATTERN,

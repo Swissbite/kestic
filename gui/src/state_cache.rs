@@ -47,7 +47,7 @@ pub fn tr(message: &Message) -> String {
 
 /// `percent` in the GUI language: the number from `QLocale`, the place of the percent sign and
 /// the space before it from the catalog («25%», German «25 %»); the one formatting path for
-/// percentages in models and QML.
+/// percentages in the GUI.
 pub fn format_percent(percent: u8) -> String {
     i18n(PERCENT_PATTERN).subs(&[&crate::qt_bridge::ffi::format_count(i64::from(percent))])
 }

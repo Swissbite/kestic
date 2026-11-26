@@ -5,7 +5,7 @@
 //! the GUI, with the number from the translator's locale and the percent pattern of the catalog.
 
 use kestic_daemon::i18n::{
-    CallbackSubsTranslator, PassthroughTranslator, format_percent, set_daemon_translator, tr,
+    CallbackSubsTranslator, PassthroughTranslator, set_daemon_translator, tr,
 };
 use kestic_i18n::codes::{PendingReasonCode, RunKindCode, RunProgressPhase};
 use kestic_i18n::messages::{ActiveRunInfo, active_run_message, substitute_placeholders};
@@ -57,7 +57,6 @@ fn m5_203_daemon_percent_follows_the_language() {
         },
     }));
     // (a)
-    assert_eq!(format_percent(7), "\u{667}\u{a0}%", "(a) format_percent");
     assert_eq!(
         tr(&backup),
         "Docs: sichert · \u{662}\u{665}\u{a0}%",
