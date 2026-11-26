@@ -815,6 +815,21 @@ int scenario_generic_form(const Ctx& c) {
     QQuickItem* cli_secret = add_variable(w, 2, QStringLiteral("AZURE_FORCE_CLI_CREDENTIAL"), QStringLiteral("true"));
     M3_CHECK(5595, cli_secret != nullptr, "variable row 2 missing");
     M3_CHECK(5596, wait_until([&] { return !env_error->isVisible() && test->isEnabled(); }, 2000), "AC-M5-03-8 (a): AZURE_FORCE_CLI_CREDENTIAL=true does not unlock the test");
+
+    // AC-M5-03-8 (a), editing: an empty secret row keeps a saved value only when the edited
+    // destination has one saved under its name, not when the row was added while editing.
+    QQuickItem* wizard = item_named(w, "addDestinationWizard");
+    QObject* draft = wizard ? qvariant_cast<QObject*>(wizard->property("draft")) : nullptr;
+    M3_CHECK(5597, draft != nullptr, "wizard draft missing");
+    draft->setProperty("destinationId", QStringLiteral("smoke-edited"));
+    set_text(w, env_name("Name", 2).constData(), QStringLiteral("AZURE_ACCOUNT_KEY"));
+    set_text(w, env_name("Value", 2).constData(), QString());
+    M3_CHECK(5598, wait_until([&] { return env_error->isVisible() && !test->isEnabled(); }, 2000),
+        "AC-M5-03-8 (a): an empty secret row added while editing counts as saved");
+    draft->setProperty("storedSecretNames", QVariantList{QStringLiteral("AZURE_ACCOUNT_KEY")});
+    M3_CHECK(5599, wait_until([&] { return !env_error->isVisible(); }, 2000),
+        "AC-M5-03-8 (a): a saved AZURE_ACCOUNT_KEY left empty while editing does not count");
+    draft->setProperty("destinationId", QString());
     return 0;
 }
 
