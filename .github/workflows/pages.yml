@@ -9,6 +9,8 @@
 # always carries the newest main with its own screenshots. Pull requests touching the
 # site only build it, with the screenshots of the latest successful main run; screenshots
 # the pull request adds to the manifest are not there yet, so they are only warnings.
+# Artifacts expire after a few days: then the screenshot bundle of the newest release
+# stands in, and the page names that release (.github/scripts/pages-screenshots.sh).
 #
 # The page names the newest final release (vX.Y.Z, no pre-release suffix) and offers its
 # .deb. The Release workflow starts this workflow on main after publishing a release, so
@@ -26,6 +28,7 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
+      - ".github/scripts/pages-screenshots.sh"
   workflow_dispatch:
 
 permissions:
@@ -50,30 +53,6 @@ jobs:
       contents: read
       actions: read
     steps:
-      - name: Find the Verify run that provides the screenshots
-        id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_run" ]; then
-            run_id="$RUN_ID"
-            sha="$RUN_SHA"
-          else
-            read -r run_id sha < <(gh run list --repo "$GITHUB_REPOSITORY" \
-              --workflow verify.yml --branch main --event push --status success \
-              --limit 1 --json databaseId,headSha --jq '.[0] | "\(.databaseId) \(.headSha)"')
-          fi
-          if [ -z "${run_id:-}" ] || [ -z "${sha:-}" ]; then
-            echo "::error::No successful Verify run on main found" >&2
-            exit 1
-          fi
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
       # Default ref only: main for workflow_run, the PR merge commit for pull
       # requests. Never a ref taken from event data, which would run untrusted
       # code with this workflow's privileges. If main moved on after the Verify
@@ -83,15 +62,17 @@ jobs:
         with:
           persist-credentials: false
 
-      # Downloaded outside the checkout; the build only copies the PNGs listed
-      # in site/src/screenshots.ts and executes nothing from the artifact.
-      - name: Download smoke screenshots
-        uses: actions/download-artifact@v8
-        with:
-          name: smoke-artifacts
-          path: ${{ runner.temp }}/smoke-artifacts
-          run-id: ${{ steps.source.outputs.run_id }}
-          github-token: ${{ github.token }}
+      # The newest screenshots: those of the Verify run, or of the newest release once
+      # the run's artifact has expired. Downloaded outside the checkout; the build only
+      # copies the PNGs listed in site/src/screenshots.ts and executes nothing from them.
+      - name: Download the screenshots
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: .github/scripts/pages-screenshots.sh "$RUNNER_TEMP/smoke-artifacts" >> "$GITHUB_OUTPUT"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -134,9 +115,13 @@ jobs:
         working-directory: site
         env:
           KESTIC_SCREENSHOTS_DIR: ${{ runner.temp }}/smoke-artifacts
-          KESTIC_SCREENSHOTS_ALLOW_MISSING: ${{ github.event_name == 'pull_request' }}
-          # The commit the screenshots were rendered from, shown on the page.
+          # Screenshots the manifest lists but the source lacks are only warnings for a pull
+          # request, and when they come from a release, which may be older than the manifest.
+          KESTIC_SCREENSHOTS_ALLOW_MISSING: ${{ github.event_name == 'pull_request' || steps.source.outputs.version != '' }}
+          # The commit the screenshots were rendered from, and the release they belong to
+          # when they come from a release, shown on the page.
           KESTIC_BUILD_SHA: ${{ steps.source.outputs.sha }}
+          KESTIC_SCREENSHOTS_VERSION: ${{ steps.source.outputs.version }}
           KESTIC_RELEASE_TAG: ${{ steps.release.outputs.tag }}
           KESTIC_RELEASE_DEB_URL: ${{ steps.release.outputs.deb-url }}
         run: pnpm build
