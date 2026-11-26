@@ -62,12 +62,26 @@ check() {
     fi
 }
 
-# A screenshot bundle as release.yml builds it: PNGs in a directory, plus a file that is no PNG.
+# A screenshot bundle as release.yml builds it: PNGs in a directory, plus a file that is no PNG and
+# a link named like a PNG that points at a file of the runner.
 make_bundle() {
+    python3 - "$1" <<'PY'
+import stat, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("screens/m4-s01-snapshots-wide-en.png", b"PNG")
+    z.writestr("README.txt", b"not a screenshot")
+    link = zipfile.ZipInfo("screens/link.png")
+    link.create_system = 3
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    z.writestr(link, "/etc/hostname")
+PY
+}
+
+# A bundle without any PNG.
+make_empty_bundle() {
     python3 - "$1" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
-    z.writestr("screens/m4-s01-snapshots-wide-en.png", b"PNG")
     z.writestr("README.txt", b"not a screenshot")
 PY
 }
@@ -124,6 +138,24 @@ check 0 "$status" "AC-M6-14-5 (c): expired: exit status"
 check true "$(grep -q '::warning::.*v0.5.0.*expired' <<< "$errors" && echo true || echo false)" \
     "AC-M6-14-5 (c): expired: warning names the release and the reason"
 
+check false "$([ -L "$tmp/expired/out/link.png" ] || [ -e "$tmp/expired/out/link.png" ] &&
+    echo true || echo false)" "AC-M6-14-5 (a): expired: no link from the bundle"
+
+# AC-M6-14-5 (a), (c): a newest bundle without screenshots is passed over for an older one.
+mkdir -p "$tmp/unusable"
+echo "101 aaaa111" > "$tmp/unusable/run"
+printf '%s\n' "smoke-artifacts true" > "$tmp/unusable/artifacts-101"
+printf '%s\n' v0.6.0 v0.5.0 > "$tmp/unusable/releases"
+printf '%s\n' kestic_0.6.0_screenshots.zip > "$tmp/unusable/assets-v0.6.0"
+cp "$tmp/expired/assets-v0.5.0" "$tmp/expired/commit-v0.5.0" "$tmp/expired/kestic_0.5.0_screenshots.zip" \
+    "$tmp/unusable/"
+make_empty_bundle "$tmp/unusable/kestic_0.6.0_screenshots.zip"
+run_scenario unusable workflow_dispatch
+check 0 "$status" "AC-M6-14-5 (c): unusable newest bundle: exit status"
+check v0.5.0 "$(output version)" "AC-M6-14-5 (a): unusable newest bundle: the older release is taken"
+check true "$(grep -q '::warning::kestic_0.6.0_screenshots.zip of release v0.6.0 has no usable screenshots' <<< "$errors" &&
+    echo true || echo false)" "AC-M6-14-5 (a): unusable newest bundle: warning"
+
 # AC-M6-14-5 (a): without any successful Verify run on main the release is taken as well.
 mkdir -p "$tmp/no-run"
 cp "$tmp/expired/releases" "$tmp/expired"/assets-* "$tmp/expired/commit-v0.5.0" \
@@ -160,6 +192,8 @@ check true "$(grep -qF '.github/scripts/pages-screenshots.sh "$RUNNER_TEMP/smoke
     echo true || echo false)" "AC-M6-14-5 (c): pages.yml runs pages-screenshots.sh"
 check true "$(grep -qF 'KESTIC_SCREENSHOTS_VERSION: ${{ steps.source.outputs.version }}' "$pages_yml" &&
     echo true || echo false)" "AC-M6-14-5 (b): pages.yml hands the release version to the site"
+check true "$(grep -qF "KESTIC_SCREENSHOTS_ALLOW_MISSING: \${{ github.event_name == 'pull_request' || steps.source.outputs.version != '' }}" "$pages_yml" &&
+    echo true || echo false)" "AC-M6-14-5 (c): a release bundle older than the manifest does not stop the deploy"
 check true "$(grep -qF 'KESTIC_BUILD_SHA: ${{ steps.source.outputs.sha }}' "$pages_yml" &&
     echo true || echo false)" "AC-M6-14-5 (b): pages.yml hands the commit to the site"
 check true "$(grep -qF 'process.env["KESTIC_SCREENSHOTS_VERSION"]' "$root/site/src/build-info.ts" &&

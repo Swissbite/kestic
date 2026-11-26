@@ -117,9 +117,10 @@ ci_verdict() {
 }
 
 # Files changed between $1 and $2, one per line. Renames count as a deletion and an addition, so a
-# file moved out of the code into docs/ still counts as a code change.
+# file moved out of the code into docs/ still counts as a code change. Names with control
+# characters or quotes stay quoted by git and therefore count as code.
 changed_files() {
-    git diff --name-only --no-renames "$1" "$2" --
+    git -c core.quotepath=false diff --name-only --no-renames "$1" "$2" --
 }
 
 # The $GITHUB_OUTPUT lines for scope $1.

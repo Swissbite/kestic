@@ -52,24 +52,44 @@ has_screenshot_artifact() {
     return 1
 }
 
-# "<tag> <asset>" of the newest published release with a screenshot bundle; empty when there is
-# none. `gh release list` lists the newest release first.
-release_bundle() {
-    local tags tag assets asset
-    tags="$(gh release list --repo "$repo" --limit 100 --json tagName,isDraft \
-        --jq '.[] | select(.isDraft | not) | .tagName')" ||
+# Published releases, newest first (the order of `gh release list`).
+release_tags() {
+    gh release list --repo "$repo" --limit 100 --json tagName,isDraft \
+        --jq '.[] | select(.isDraft | not) | .tagName' ||
         fail "Could not list the releases"
-    while read -r tag; do
-        [ -n "$tag" ] || continue
-        assets="$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name')" ||
-            fail "Could not list the assets of release $tag"
-        while read -r asset; do
-            if [[ "$asset" == kestic_*_screenshots.zip ]]; then
-                echo "$tag $asset"
-                return
-            fi
-        done <<< "$assets"
-    done <<< "$tags"
+}
+
+# The screenshot bundle among the assets of release $1; empty when it has none.
+release_bundle() {
+    local assets asset
+    assets="$(gh release view "$1" --repo "$repo" --json assets --jq '.assets[].name')" ||
+        fail "Could not list the assets of release $1"
+    while read -r asset; do
+        if [[ "$asset" == kestic_*_screenshots.zip ]]; then
+            echo "$asset"
+            return
+        fi
+    done <<< "$assets"
+}
+
+# Unpacks the PNG files of bundle $2 of release $1 into $out, without their directories; only
+# regular files, so a link in the bundle cannot point the site build at a file of the runner.
+# Fails when the bundle cannot be downloaded or unpacked or holds no PNG.
+take_bundle() {
+    local tag="$1" asset="$2" work file found=false
+    work="$(mktemp -d)"
+    mkdir "$work/zip" "$work/png"
+    if ! gh release download "$tag" --repo "$repo" --pattern "$asset" --dir "$work/zip" ||
+        ! unzip -q -j -o "$work/zip/$asset" '*.png' -d "$work/png"; then
+        rm -rf "$work"
+        return 1
+    fi
+    while IFS= read -r -d '' file; do
+        cp -- "$file" "$out/"
+        found=true
+    done < <(find "$work/png" -maxdepth 1 -type f -name '*.png' -print0)
+    rm -rf "$work"
+    [ "$found" = true ]
 }
 
 mkdir -p "$out"
@@ -86,18 +106,22 @@ else
     else
         reason="there is no successful Verify run on main"
     fi
-    bundle="$(release_bundle)"
-    read -r version asset <<< "$bundle" || true
-    if [ -z "${version:-}" ]; then
-        fail "No screenshots for the site: $reason, and no release has a kestic_<version>_screenshots.zip"
+    tags="$(release_tags)"
+    version=""
+    while read -r tag; do
+        [ -n "$tag" ] || continue
+        asset="$(release_bundle "$tag")"
+        [ -n "$asset" ] || continue
+        if take_bundle "$tag" "$asset"; then
+            version="$tag"
+            break
+        fi
+        echo "::warning::$asset of release $tag has no usable screenshots" >&2
+    done <<< "$tags"
+    if [ -z "$version" ]; then
+        fail "No screenshots for the site: $reason, and no release has a usable kestic_<version>_screenshots.zip"
     fi
     echo "::warning::Taking the screenshots of release $version: $reason" >&2
-    bundle_dir="$(mktemp -d)"
-    trap 'rm -rf "$bundle_dir"' EXIT
-    gh release download "$version" --repo "$repo" --pattern "$asset" --dir "$bundle_dir" ||
-        fail "Could not download $asset of release $version"
-    unzip -q -j -o "$bundle_dir/$asset" '*.png' -d "$out" ||
-        fail "$asset of release $version has no screenshots"
     sha="$(gh api "repos/$repo/commits/$version" --jq .sha)" ||
         fail "Could not find the commit of release $version"
     [ -n "$sha" ] || fail "Could not find the commit of release $version"

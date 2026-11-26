@@ -91,13 +91,13 @@ check pass "$(verdict_of spec "$(results_for spec)")" "AC-M6-14-2 (a): verdict o
 check fail "$(verdict_of spec "$(results_with spec spec-tests skipped)")" \
     "AC-M6-14-2 (a): spec-tests skipped in a spec run"
 
-# AC-M6-14-2 (a): every test that names a path under docs/spec/ is one of the spec tests, and
-# every spec test exists in its package.
+# AC-M6-14-2 (a): every Rust file that names docs/spec/ (or a path part "spec") in a string is a
+# spec test, one test binary in <crate>/tests/, and every spec test exists in its package.
 while IFS= read -r file; do
     binary="$(basename "$file" .rs)"
-    check true "$(grep -q " $binary\$" <<< "$CI_SPEC_TESTS" && echo true || echo false)" \
-        "AC-M6-14-2 (a): $file reads docs/spec/ and is in CI_SPEC_TESTS"
-done < <(cd "$root" && git grep -lE '"[^"]*docs/spec' -- '*/tests/*.rs' '*/tests/**/*.rs')
+    check true "$([[ "$file" == */tests/"$binary".rs ]] && grep -q " $binary\$" <<< "$CI_SPEC_TESTS" &&
+        echo true || echo false)" "AC-M6-14-2 (a): $file reads docs/spec/ and is in CI_SPEC_TESTS"
+done < <(cd "$root" && git grep -lE '"[^"]*docs/spec|"spec"' -- '*.rs')
 while read -r package binary; do
     file="$(cd "$root" && git ls-files -- "*/tests/$binary.rs")"
     crate="${file%%/*}"
@@ -149,6 +149,17 @@ check full "$(cd "$repo" && changed_files "$base" HEAD | ci_scope pull_request)"
     "AC-M6-14-2 (b): code renamed into docs/"
 check "scope=full" "$(cd "$repo" && ci_scope_main outputs pull_request "$base" HEAD 2> /dev/null |
     head -n 1)" "AC-M6-14-2 (b): outputs of the rename"
+
+# AC-M6-14-1 (a), AC-M6-14-2 (a): names outside ASCII keep their scope.
+mkdir -p "$repo/docs/spec"
+printf 'x\n' > "$repo/docs/spec/übersicht.md"
+printf 'x\n' > "$repo/docs/änderungen.md"
+git -C "$repo" add docs
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m umlauts
+check spec "$(cd "$repo" && changed_files HEAD^ HEAD | ci_scope pull_request)" \
+    "AC-M6-14-2 (a): docs/spec file with an umlaut"
+check docs "$(cd "$repo" && changed_files HEAD^ HEAD | grep -v '^docs/spec/' | ci_scope pull_request)" \
+    "AC-M6-14-1 (a): docs file with an umlaut"
 
 # AC-M6-14-3 (a), (b): pushes and other events run everything, whatever changed.
 for event in push workflow_dispatch workflow_run schedule; do
