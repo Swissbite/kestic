@@ -198,6 +198,11 @@ check true "$(grep -qF 'KESTIC_BUILD_SHA: ${{ steps.source.outputs.sha }}' "$pag
     echo true || echo false)" "AC-M6-14-5 (b): pages.yml hands the commit to the site"
 check true "$(grep -qF 'process.env["KESTIC_SCREENSHOTS_VERSION"]' "$root/site/src/build-info.ts" &&
     echo true || echo false)" "AC-M6-14-5 (b): the site reads the release version"
+index_astro="$root/site/src/pages/index.astro"
+check true "$(grep -qF 'Development preview · {screenshotsVersion ?? "main"} @ <a href={commitUrl}>{buildShaShort}</a>' "$index_astro" &&
+    echo true || echo false)" "AC-M6-14-5 (b): the preview bar shows the release and its commit"
+check true "$(grep -qF 'Rendered by the test suite at {screenshotsVersion ? `${screenshotsVersion} @ ` : ""}<a' "$index_astro" &&
+    echo true || echo false)" "AC-M6-14-5 (b): the screenshot note shows the release"
 
 if [ "$failures" -ne 0 ]; then
     echo "test-pages-screenshots.sh: $failures failure(s)" >&2

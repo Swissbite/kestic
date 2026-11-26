@@ -133,32 +133,40 @@ done
 check false "$(output_of full spec-tests)" "AC-M6-14-2 (b): the unit tests cover the spec tests"
 
 # AC-M6-14-2 (b): a file moved out of the code into docs/ still counts as a code change.
-repo="$(mktemp -d)"
-trap 'rm -rf "$repo"' EXIT
-git -C "$repo" init -q
-git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m base
+# The temporary repository uses neither the user's nor the system's git configuration.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+repo="$tmp/repo"
+mkdir -p "$repo" "$tmp/home"
+in_repo() {
+    (cd "$repo" && HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" GIT_CONFIG_GLOBAL=/dev/null \
+        GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid \
+        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid "$@")
+}
+in_repo git init -q
+in_repo git commit -q --allow-empty -m base
 mkdir -p "$repo/core/src"
 printf 'pub fn a() {}\n' > "$repo/core/src/a.rs"
-git -C "$repo" add core/src/a.rs
-git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m code
-base="$(git -C "$repo" rev-parse HEAD)"
+in_repo git add core/src/a.rs
+in_repo git commit -q -m code
+base="$(in_repo git rev-parse HEAD)"
 mkdir -p "$repo/docs"
-git -C "$repo" mv core/src/a.rs docs/a.md
-git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m move
-check full "$(cd "$repo" && changed_files "$base" HEAD | ci_scope pull_request)" \
+in_repo git mv core/src/a.rs docs/a.md
+in_repo git commit -q -m move
+check full "$(in_repo changed_files "$base" HEAD | ci_scope pull_request)" \
     "AC-M6-14-2 (b): code renamed into docs/"
-check "scope=full" "$(cd "$repo" && ci_scope_main outputs pull_request "$base" HEAD 2> /dev/null |
+check "scope=full" "$(in_repo ci_scope_main outputs pull_request "$base" HEAD 2> /dev/null |
     head -n 1)" "AC-M6-14-2 (b): outputs of the rename"
 
 # AC-M6-14-1 (a), AC-M6-14-2 (a): names outside ASCII keep their scope.
 mkdir -p "$repo/docs/spec"
 printf 'x\n' > "$repo/docs/spec/übersicht.md"
 printf 'x\n' > "$repo/docs/änderungen.md"
-git -C "$repo" add docs
-git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m umlauts
-check spec "$(cd "$repo" && changed_files HEAD^ HEAD | ci_scope pull_request)" \
+in_repo git add docs
+in_repo git commit -q -m umlauts
+check spec "$(in_repo changed_files HEAD^ HEAD | ci_scope pull_request)" \
     "AC-M6-14-2 (a): docs/spec file with an umlaut"
-check docs "$(cd "$repo" && changed_files HEAD^ HEAD | grep -v '^docs/spec/' | ci_scope pull_request)" \
+check docs "$(in_repo changed_files HEAD^ HEAD | grep -v '^docs/spec/' | ci_scope pull_request)" \
     "AC-M6-14-1 (a): docs file with an umlaut"
 
 # AC-M6-14-3 (a), (b): pushes and other events run everything, whatever changed.
@@ -219,6 +227,8 @@ verify_job="$(sed -n '/^  verify:/,$p' "$verify_yml")"
 verify_needs="$(sed -n 's/^    needs: \[\(.*\)\]$/\1/p' <<< "$verify_job" | tr -d ' ' | tr ',' '\n' | sort)"
 check "$(printf '%s\n' $CI_ALWAYS_JOBS $CI_GATED_JOBS | sort)" "$verify_needs" \
     "AC-M6-14-4 (c): verify needs every job"
+check true "$(grep -qx '    if: always()' <<< "$verify_job" && echo true || echo false)" \
+    "AC-M6-14-4 (b): verify reports even when a job failed or was skipped"
 check true "$(grep -qF '.github/scripts/ci-scope.sh verdict "$SCOPE"' <<< "$verify_job" && echo true || echo false)" \
     "AC-M6-14-4 (c): verify decides with ci-scope.sh"
 check true "$(grep -qF 'ci-scope.sh outputs "$EVENT_NAME"' "$verify_yml" && echo true || echo false)" \
