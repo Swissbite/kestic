@@ -350,11 +350,12 @@ fn m5_02_3_gui_s3_form_wrong_secret_key_shows_action() {
     );
 }
 
-/// M5-S03 (GUI parts of AC-M5-03-1 (c), AC-M5-03-4 and AC-M5-03-7 (b)): «Cloud Storage» offers
-/// B2, Azure, Google Cloud and Swift; B2 opens the generic form with `b2:`; an unknown scheme and
-/// a reserved variable keep «Test Connection» locked with `core`'s message; «Geheim» starts as the
-/// name suggests and can be switched. No destination is saved. Screenshots of the filled form and
-/// of the refused variable in English and German, wide and narrow.
+/// M5-S03 (GUI parts of AC-M5-03-1 (c), AC-M5-03-4, AC-M5-03-7 (b) and AC-M5-03-8 (a)): «Cloud
+/// Storage» offers B2, Azure, Google Cloud and Swift; B2 opens the generic form with `b2:`; an
+/// unknown scheme, a reserved variable and an `azure:` or `gs:` URL without a credential variable
+/// keep «Test Connection» locked with `core`'s message; «Geheim» starts as the name suggests and
+/// can be switched. No destination is saved. Screenshots of the filled form, of the refused
+/// variable and of the missing credential variable in English and German, wide and narrow.
 #[test]
 fn m5_03_gui_generic_form() {
     run_isolated_test(

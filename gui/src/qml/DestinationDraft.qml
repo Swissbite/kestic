@@ -36,6 +36,9 @@ QtObject {
     // `secretTouched`: «Geheim» was switched by hand and no longer follows the name.
     property ListModel envModel: ListModel {}
     property int envRevision: 0
+    // Names of the secret variables whose value the password store holds for `destinationId`:
+    // only such a row, left empty, keeps a saved value.
+    property var storedSecretNames: []
     property string repoPassword: ""
     property string repoPasswordConfirm: ""
     property bool connectionVerified: false
@@ -56,9 +59,9 @@ QtObject {
     // The rclone card asks for the remote only; the URL is `rclone:` and the remote.
     readonly property bool asksRcloneRemote: kindIsGeneric && typeCard === "rclone"
     // Why `core` refuses the URL and the variables of the generic form (`{url, env}`, each empty
-    // when accepted).
+    // when accepted), also when an `azure:` or `gs:` destination lacks its credential variable.
     readonly property var genericErrors: kindIsGeneric
-        ? JSON.parse(appBackend.genericFieldsErrors(location, JSON.stringify(envFields())))
+        ? JSON.parse(appBackend.genericFieldsErrors(location, JSON.stringify(envChecks())))
         : ({ url: "", env: "" })
     readonly property bool nameValid: name.trim().length > 0
     readonly property bool locationValid: kindIsS3
@@ -113,6 +116,19 @@ QtObject {
     function envFields() {
         return envList().map(function(v) {
             return { name: v.name.trim(), secret: v.secret, value: v.secret ? "" : v.value };
+        });
+    }
+
+    // The variables for `genericErrors`, with the typed values of the secret ones; an empty
+    // secret value keeps the saved one when editing, if one is saved under that name.
+    function envChecks() {
+        return envList().map(function(v) {
+            var name = v.name.trim();
+            return {
+                name: name, secret: v.secret, value: v.value,
+                saved: v.secret && v.value.length === 0 && destinationId !== ""
+                    && storedSecretNames.indexOf(name) >= 0
+            };
         });
     }
 
@@ -212,6 +228,10 @@ QtObject {
         restPassword = "";
         accessKeyId = "";
         secretAccessKey = "";
+        storedSecretNames = envList().filter(function(v) {
+            var name = v.name.trim();
+            return v.secret && (v.value.length > 0 || storedSecretNames.indexOf(name) >= 0);
+        }).map(function(v) { return v.name.trim(); });
         setEnvVars(envList().map(function(v) {
             return { name: v.name, secret: v.secret, value: v.secret ? "" : v.value };
         }));
@@ -236,6 +256,8 @@ QtObject {
         host = detail.host || "";
         port = String(detail.port || 22);
         region = detail.region || "";
+        storedSecretNames = (detail.env || []).filter(function(v) { return !!v.secret; })
+            .map(function(v) { return v.name; });
         setEnvVars((detail.env || []).map(function(v) {
             return { name: v.name, secret: !!v.secret, value: v.secret ? "" : (v.value || "") };
         }));
@@ -280,6 +302,7 @@ QtObject {
         host = data.host;
         port = data.port;
         sftpPath = data.sftpPath;
+        storedSecretNames = [];
         setEnvVars(data.env);
         connectionVerified = false;
     }

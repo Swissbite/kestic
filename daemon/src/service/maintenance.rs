@@ -12,7 +12,7 @@ use super::backup_runner::{
 };
 use super::error::{
     KesticServiceErr, localized_backup_run_error, localized_source_check_reason,
-    manual_run_blocked_reason, service_error_kind,
+    manual_run_blocked_reason, run_error_detail, service_error_kind,
 };
 use super::restore_runner::start_pending_restores;
 use super::run_errors::{destination_transport, run_blocks_schedule};
@@ -481,7 +481,7 @@ fn run_maintenance_operations(
             Err(err) => {
                 out.forget_failed = true;
                 out.last_exit = 1;
-                let msg = redact_secrets(&err.to_string(), secret_strs);
+                let msg = redact_secrets(&run_error_detail(&err), secret_strs);
                 out.failure_detail = Some(msg.clone());
                 out.combined_logs.push(msg);
             }
@@ -554,7 +554,7 @@ fn run_single_maintenance_step(
             if !input.cancel.is_cancelled() {
                 out.prune_or_check_failed = true;
                 out.last_exit = 1;
-                let msg = redact_secrets(&err.to_string(), input.secret_strs);
+                let msg = redact_secrets(&run_error_detail(&err), input.secret_strs);
                 out.failure_detail = Some(msg.clone());
                 out.combined_logs.push(msg);
             }

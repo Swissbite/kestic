@@ -591,6 +591,13 @@ pub enum ResticRunError {
         destination: DestinationId,
         kind: String,
     },
+    /// The destination's backend needs one of the credential variables `variables` entered in
+    /// the destination itself, and none is (an `azure:` or `gs:` destination).
+    #[error("destination `{destination}` needs one of these variables entered in it: {variables}")]
+    CredentialsNotEntered {
+        destination: DestinationId,
+        variables: String,
+    },
     #[error("failed to spawn restic command: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -904,11 +911,15 @@ fn send_signal_to_tree(pid: u32, signal: &str) {
 
 /// Removes the password and repository file restic would take from the caller's environment:
 /// restic refuses a password file next to Kestic's password and a repository file next to `-r`,
-/// so inherited ones would make every call fail.
+/// so inherited ones would make every call fail. Also removes the inherited TLS client
+/// certificate and CA certificate, which would send a key to, or trust, a server the user did
+/// not set up for this destination; a generic destination can set them itself.
 pub(crate) fn remove_inherited_restic_access(cmd: &mut Command) {
     cmd.env_remove("RESTIC_PASSWORD")
         .env_remove("RESTIC_PASSWORD_FILE")
-        .env_remove("RESTIC_REPOSITORY_FILE");
+        .env_remove("RESTIC_REPOSITORY_FILE")
+        .env_remove("RESTIC_TLS_CLIENT_CERT")
+        .env_remove("RESTIC_CACERT");
 }
 
 /// Result of executing a restic command via [`run_restic`].
@@ -943,6 +954,22 @@ struct ResolvedRunSecrets {
     repo_password_for_redaction: Option<SecretValue>,
 }
 
+/// Refuses to start restic for `destination` when its backend needs a credential variable
+/// entered in the destination and none is (with the secret values in `backend`): restic would
+/// otherwise log in with credentials it finds on the machine.
+pub fn refuse_credentials_not_entered(
+    destination: &Destination,
+    backend: &BackendCredentials,
+) -> Result<(), ResticRunError> {
+    match destination.kind.missing_credential_variables(backend) {
+        Some(variables) => Err(ResticRunError::CredentialsNotEntered {
+            destination: destination.id.clone(),
+            variables,
+        }),
+        None => Ok(()),
+    }
+}
+
 fn resolve_restic_secrets(
     destination: &Destination,
     secret_store: Option<&dyn SecretStore>,
@@ -954,12 +981,15 @@ fn resolve_restic_secrets(
             repo_password_for_redaction = Some(pw);
         }
         backend = BackendCredentials::load_stored(destination, store)?;
-        if let Some(kind) = backend.first_missing(&destination.kind) {
-            return Err(ResticRunError::MissingBackendSecret {
-                destination: destination.id.clone(),
-                kind,
-            });
-        }
+    }
+    refuse_credentials_not_entered(destination, &backend)?;
+    if secret_store.is_some()
+        && let Some(kind) = backend.first_missing(&destination.kind)
+    {
+        return Err(ResticRunError::MissingBackendSecret {
+            destination: destination.id.clone(),
+            kind,
+        });
     }
     Ok(ResolvedRunSecrets {
         backend,

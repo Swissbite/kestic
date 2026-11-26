@@ -27,7 +27,9 @@ use kestic_core::model::{
 };
 use kestic_core::provider::resolve_and_check;
 use kestic_core::repo_identity::connection_changed;
-use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO};
+use kestic_core::restic::{
+    ResticRunError, ResticRuntime, SECRET_KIND_REPO, refuse_credentials_not_entered,
+};
 use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretStore, SecretValue};
 use kestic_core::sync::LockUnpoisoned;
@@ -279,6 +281,16 @@ fn check_login_before_init(inputs: &DestinationTestInputs<'_>) -> ConnectionTest
     }
 }
 
+/// Refuses `dest` when its backend needs a credential variable entered in the destination and
+/// `creds` (entered, and saved when editing) hold none.
+pub(super) fn refuse_missing_credentials(
+    dest: &Destination,
+    creds: &BackendCredentials,
+) -> Result<(), KesticServiceErr> {
+    refuse_credentials_not_entered(dest, creds)
+        .map_err(|err| KesticServiceErr::InvalidInput(err.to_string()))
+}
+
 /// The first S3 key or secret variable that is missing; the REST password stays optional because a REST server may
 /// accept a user name without one.
 fn missing_login(creds: &BackendCredentials, kind: &DestinationKind) -> Option<String> {
@@ -311,6 +323,9 @@ pub(super) fn destination_error_result(
                 file.to_string_lossy().into_owned(),
             );
         }
+        DestinationError::Runner(ResticRunError::CredentialsNotEntered { variables, .. }) => {
+            return test_failure(ConnectionTestCode::CredentialsNotEntered, variables);
+        }
         DestinationError::HostKeyCheck(HostKeyError::JumpHost(_)) => {
             ConnectionTestCode::JumpHostUnsupported
         }
@@ -338,6 +353,14 @@ fn resolve_backend_credentials(
         creds = creds
             .or_stored(inputs.dest, inputs.secret_store)
             .map_err(secret_error_result)?;
+    }
+    if let Err(ResticRunError::CredentialsNotEntered { variables, .. }) =
+        refuse_credentials_not_entered(inputs.dest, &creds)
+    {
+        return Err(test_failure(
+            ConnectionTestCode::CredentialsNotEntered,
+            variables,
+        ));
     }
     if let Some(kind) = missing_login(&creds, &inputs.dest.kind) {
         return Err(test_failure(
@@ -502,6 +525,7 @@ pub(crate) fn add_destination_unlocked(
     let backend = BackendSecrets::parse(backend_secrets_json)
         .map_err(KesticServiceErr::InvalidInput)?
         .credentials();
+    refuse_missing_credentials(&dest, &backend)?;
     if let Some(kind) = missing_login(&backend, &dest.kind) {
         return Err(KesticServiceErr::InvalidInput(format!(
             "missing backend credential `{kind}`"

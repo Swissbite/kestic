@@ -507,6 +507,12 @@ fn every_connection_test_and_note_code_maps_to_its_msgid() {
                 "The repository URL contains the secret parameter '%1'. Enter it as a secret variable instead.",
             ),
         ),
+        (
+            C::CredentialsNotEntered,
+            Some(
+                "Enter one of these variables in this destination: %1. Kestic uses no other access data.",
+            ),
+        ),
     ];
     assert_table(&C::ALL, &connection, |c| c.text("x"));
 

@@ -369,6 +369,20 @@ pub(crate) fn update_destination_unlocked(
         let setup = changed.then(|| SftpSetupGuard::begin(shared, &mut guard, &updated));
         (saved, stored_id, guard.restic_deps(), changed, setup)
     };
+    // Also a new name alone is refused, so a destination that would log in with credentials
+    // found on the machine is not saved again unchanged. The password store is read only when
+    // the entered values do not settle it.
+    if updated
+        .kind
+        .missing_credential_variables(&entered)
+        .is_some()
+    {
+        let with_saved = entered
+            .clone()
+            .or_stored(&updated, deps.secret_store.as_ref())
+            .map_err(map_secret_err)?;
+        super::destinations::refuse_missing_credentials(&updated, &with_saved)?;
+    }
 
     let accepted = if setup_mode == DestinationSetupMode::InitNew {
         if changed {

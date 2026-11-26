@@ -250,6 +250,9 @@ code_enum! {
         CredentialsRequired => "credentials_required",
         /// An `rclone:` URL with a secret parameter; `detail` = the parameter name.
         SecretInUrl => "secret_in_url",
+        /// An `azure:` or `gs:` destination without one of the credential variables its backend
+        /// needs entered in the destination; `detail` = those variables.
+        CredentialsNotEntered => "credentials_not_entered",
     }
 }
 

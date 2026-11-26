@@ -566,6 +566,8 @@ fn run_with_temp_repo_password_file(
     backend: &BackendCredentials,
     probe: ProbeRuntime<'_>,
 ) -> Result<ProbeOutput, DestinationError> {
+    crate::restic::refuse_credentials_not_entered(dest, backend)
+        .map_err(DestinationError::Runner)?;
     // Without Kestic's own credentials restic would fall back to the user's credential files
     // and send their keys to this endpoint.
     if dest.kind.falls_back_to_user_credentials()

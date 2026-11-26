@@ -11,9 +11,10 @@ use kestic_core::destination::{DestinationError, DestinationSetupMode};
 use kestic_core::model::BackupId;
 use kestic_core::mount::SourceCheckResult;
 use kestic_core::provider::ResticProviderError;
-use kestic_core::restic::ResticFailureKind;
+use kestic_core::restic::{ResticFailureKind, ResticRunError};
 use kestic_core::secrets::SecretError;
 use kestic_i18n::codes::{BlockedReason, ErrorKind, SourceStatus};
+use kestic_i18n::messages::credentials_not_entered_message;
 
 /// Daemon-language summary of a classified restic failure (notifications, run history).
 pub(crate) fn localized_failure_summary(kind: &ResticFailureKind) -> String {
@@ -242,6 +243,27 @@ pub(super) fn backup_run_error_kind(err: &BackupRunError) -> ErrorKind {
     }
 }
 
+/// The variables named by a run refused before restic started because the destination needs a
+/// credential variable entered in it.
+fn credentials_not_entered(err: &BackupRunError) -> Option<&str> {
+    match err {
+        BackupRunError::Runner(ResticRunError::CredentialsNotEntered { variables, .. })
+        | BackupRunError::Destination(DestinationError::Runner(
+            ResticRunError::CredentialsNotEntered { variables, .. },
+        )) => Some(variables),
+        _ => None,
+    }
+}
+
+/// Detail of a failed restic step: the daemon-language text where Kestic refused to start
+/// restic for a credential variable not entered in the destination, otherwise the raw error.
+pub(super) fn run_error_detail(err: &BackupRunError) -> String {
+    credentials_not_entered(err).map_or_else(
+        || err.to_string(),
+        |variables| tr(&credentials_not_entered_message(variables)),
+    )
+}
+
 pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
     match err {
         BackupRunError::SourceUnavailable(status) => localized_source_check_reason(status),
@@ -254,6 +276,7 @@ pub(super) fn localized_backup_run_error(err: &BackupRunError) -> String {
             || dest_err.to_string(),
             |kind| format!("{dest_err} ({})", localized_failure_summary(&kind)),
         ),
+        err if credentials_not_entered(err).is_some() => run_error_detail(err),
         BackupRunError::Destination(dest_err) => destination_failure(dest_err).map_or_else(
             || dest_err.to_string(),
             |kind| localized_failure_summary(&kind),

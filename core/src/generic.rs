@@ -193,6 +193,85 @@ pub fn missing_program(
         .filter(|p| !crate::destination_types::program_in_path(p.executable(), search_path))
 }
 
+/// Variables of which an `azure:` destination needs one: without them restic would log in with
+/// the user's Azure CLI login or a managed identity it finds by itself.
+const AZURE_CREDENTIALS: [&str; 3] = [
+    "AZURE_ACCOUNT_KEY",
+    "AZURE_ACCOUNT_SAS",
+    AZURE_FORCE_CLI_CREDENTIAL,
+];
+
+/// With the value `true`, restic logs in to Azure with the user's Azure CLI login; any other
+/// value lets it search for credentials by itself.
+const AZURE_FORCE_CLI_CREDENTIAL: &str = "AZURE_FORCE_CLI_CREDENTIAL";
+
+/// Variables of which a `gs:` destination needs one: without them restic would use the user's
+/// gcloud login or the metadata server of the machine.
+const GS_CREDENTIALS: [&str; 2] = ["GOOGLE_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS"];
+
+/// The value of a secret variable, as far as it is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnteredSecret<'a> {
+    /// No value.
+    Missing,
+    /// A value is saved in the password store, but not at hand (editing in the form).
+    Saved,
+    Value(&'a str),
+}
+
+/// The credential variables a destination at `url` lacks, as the text that names them
+/// (`AZURE_ACCOUNT_KEY, AZURE_ACCOUNT_SAS, AZURE_FORCE_CLI_CREDENTIAL=true`), when its backend
+/// needs one of them entered in the destination and none of them is; `None` otherwise.
+/// `secret` gives the value of a secret variable.
+pub fn missing_credentials<'a>(
+    url: &str,
+    env: &[EnvVar],
+    secret: impl Fn(&str) -> EnteredSecret<'a>,
+) -> Option<String> {
+    let names: &[&str] = match scheme(url)? {
+        "azure" => &AZURE_CREDENTIALS,
+        "gs" => &GS_CREDENTIALS,
+        _ => return None,
+    };
+    let entered = |name: &str| {
+        let Some(var) = allowed(env).find(|v| v.name == name) else {
+            return false;
+        };
+        let value = if var.secret {
+            secret(name)
+        } else {
+            var.value
+                .as_deref()
+                .map_or(EnteredSecret::Missing, EnteredSecret::Value)
+        };
+        match value {
+            EnteredSecret::Missing => false,
+            EnteredSecret::Saved => true,
+            EnteredSecret::Value(v) if name == AZURE_FORCE_CLI_CREDENTIAL => parses_as_true(v),
+            EnteredSecret::Value(v) => !v.trim().is_empty(),
+        }
+    };
+    if names.iter().any(|name| entered(name)) {
+        return None;
+    }
+    let listed: Vec<String> = names
+        .iter()
+        .map(|name| {
+            if *name == AZURE_FORCE_CLI_CREDENTIAL {
+                format!("{name}=true")
+            } else {
+                (*name).to_string()
+            }
+        })
+        .collect();
+    Some(listed.join(", "))
+}
+
+/// Whether restic reads `value` as true (Go's `strconv.ParseBool`).
+fn parses_as_true(value: &str) -> bool {
+    ["1", "t", "T", "TRUE", "true", "True"].contains(&value)
+}
+
 /// The variables that may reach restic: a hand-edited configuration with a reserved name is
 /// refused when loaded, and this filter keeps such a name out of the process even so.
 pub(crate) fn allowed(vars: &[EnvVar]) -> impl Iterator<Item = &EnvVar> {

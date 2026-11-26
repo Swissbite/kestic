@@ -189,6 +189,17 @@ impl ErrorKind {
     }
 }
 
+/// A destination whose backend needs one of the credential `variables` entered in it, and none
+/// is: the form, the connection test and a refused run say the same.
+pub fn credentials_not_entered_message(variables: &str) -> Message {
+    Message::with_args(
+        i18n_noop(
+            "Enter one of these variables in this destination: %1. Kestic uses no other access data.",
+        ),
+        &[variables],
+    )
+}
+
 /// «Completed»: a run that ended without error.
 pub fn completed_message() -> Message {
     Message::new(i18n_noop("Completed"))
@@ -491,6 +502,7 @@ impl ConnectionTestCode {
                 ),
                 &[detail],
             ),
+            Self::CredentialsNotEntered => credentials_not_entered_message(detail),
             Self::InvalidInput | Self::Internal | Self::CommandFailed | Self::DaemonUnreachable => {
                 return UiText::Raw(detail.to_string());
             }

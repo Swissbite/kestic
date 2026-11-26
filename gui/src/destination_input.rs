@@ -5,7 +5,7 @@
 
 use crate::state_cache::{dbus_error_text, i18n, make_client, tr_text};
 use crate::ui_texts::GuiText;
-use kestic_core::generic::{EnvVar, GenericInputError};
+use kestic_core::generic::{EnteredSecret, EnvVar, GenericInputError};
 use kestic_core::local_path::NotALocalPath;
 use kestic_core::model::{Destination, DestinationId, DestinationKind, ModelError};
 use kestic_daemon::dbus_api::{BackendSecrets, ConnectionTestResultDto};
@@ -44,8 +44,13 @@ struct EnvFieldInput {
     name: String,
     #[serde(default)]
     secret: bool,
+    /// For a secret variable only in the check of the credential variables
+    /// ([`generic_credentials_error`]); it never goes into the destination.
     #[serde(default)]
     value: String,
+    /// A secret variable left empty while editing keeps its saved value.
+    #[serde(default)]
+    saved: bool,
 }
 
 impl EnvFieldInput {
@@ -153,6 +158,36 @@ pub fn generic_env_error(env_json: &str) -> Option<DestinationInputError> {
     kestic_core::generic::validate_env(&env)
         .err()
         .map(generic_error)
+}
+
+/// Why the generic form lacks a credential variable its backend needs (an `azure:` or `gs:`
+/// destination, see [`kestic_core::generic::missing_credentials`]), naming the variables;
+/// `env_json` holds the variables with the values of the secret ones as typed. `None` when one
+/// is entered or the backend needs none.
+pub fn generic_credentials_error(url: &str, env_json: &str) -> Option<DestinationInputError> {
+    let fields: Vec<EnvFieldInput> = serde_json::from_str(env_json).ok()?;
+    let secrets: Vec<(String, EnvFieldInput)> = fields
+        .into_iter()
+        .map(|f| (f.name.trim().to_string(), f))
+        .collect();
+    let env: Vec<EnvVar> = secrets
+        .iter()
+        .map(|(name, f)| EnvVar {
+            name: name.clone(),
+            secret: f.secret,
+            value: (!f.secret).then(|| f.value.clone()),
+        })
+        .collect();
+    kestic_core::generic::missing_credentials(url, &env, |name| {
+        match secrets.iter().find(|(n, _)| n == name) {
+            Some((_, f)) if !f.value.is_empty() => EnteredSecret::Value(&f.value),
+            Some((_, f)) if f.saved => EnteredSecret::Saved,
+            _ => EnteredSecret::Missing,
+        }
+    })
+    .map(|variables| {
+        DestinationInputError::Coded(ConnectionTestCode::CredentialsNotEntered, variables)
+    })
 }
 
 pub fn test_destination_connection(
@@ -335,6 +370,53 @@ mod tests {
         assert!(
             generic_url_error("gs:bucket:/laptop").is_none(),
             "(c) known scheme"
+        );
+    }
+
+    /// AC-M5-03-8 (a): the form check behind «Test Connection» (and so «Anlegen») refuses an
+    /// `azure:` or `gs:` destination without a credential variable with the code that names the
+    /// variables, and accepts one entered as plain value, as typed secret or as saved secret.
+    #[test]
+    fn ac_m5_03_8_missing_credential_variable_keeps_adding_locked() {
+        let azure = "azure:kestic-container:/laptop";
+        let azure_needs = Some((
+            ConnectionTestCode::CredentialsNotEntered,
+            "AZURE_ACCOUNT_KEY, AZURE_ACCOUNT_SAS, AZURE_FORCE_CLI_CREDENTIAL=true".to_string(),
+        ));
+        for env in [
+            r#"[]"#,
+            r#"[{"name":"AZURE_ACCOUNT_NAME","secret":false,"value":"kestic"}]"#,
+            r#"[{"name":"AZURE_ACCOUNT_KEY","secret":true,"value":""}]"#,
+            r#"[{"name":"AZURE_FORCE_CLI_CREDENTIAL","secret":true,"value":"false"}]"#,
+        ] {
+            assert_eq!(
+                code_of(generic_credentials_error(azure, env)),
+                azure_needs,
+                "(a) refused: {env}"
+            );
+        }
+        assert_eq!(
+            code_of(generic_credentials_error("gs:bucket:/laptop", "[]")),
+            Some((
+                ConnectionTestCode::CredentialsNotEntered,
+                "GOOGLE_ACCESS_TOKEN, GOOGLE_APPLICATION_CREDENTIALS".to_string()
+            )),
+            "(a) gs: names its variables"
+        );
+        for env in [
+            r#"[{"name":"AZURE_FORCE_CLI_CREDENTIAL","secret":false,"value":"true"}]"#,
+            r#"[{"name":"AZURE_FORCE_CLI_CREDENTIAL","secret":true,"value":"true"}]"#,
+            r#"[{"name":"AZURE_ACCOUNT_SAS","secret":true,"value":"sv=2024"}]"#,
+            r#"[{"name":"AZURE_ACCOUNT_KEY","secret":true,"value":"","saved":true}]"#,
+        ] {
+            assert!(
+                generic_credentials_error(azure, env).is_none(),
+                "(a) accepted: {env}"
+            );
+        }
+        assert!(
+            generic_credentials_error("b2:bucket:laptop", "[]").is_none(),
+            "(a) other schemes need no such variable"
         );
     }
 

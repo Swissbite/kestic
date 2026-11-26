@@ -11,8 +11,8 @@ use kestic_core::config::{AppConfig, save_config};
 use kestic_core::destination::{DestinationSetupMode, setup_destination};
 use kestic_core::destination_types::RequiredProgram;
 use kestic_core::generic::{
-    EnvVar, GenericInputError, missing_program, secret_by_default, secret_kind,
-    validate_variable_name,
+    EnteredSecret, EnvVar, GenericInputError, missing_credentials, missing_program,
+    secret_by_default, secret_kind, validate_variable_name,
 };
 use kestic_core::model::{Destination, DestinationKind, ModelError};
 use kestic_core::provider::ResolvedRestic;
@@ -549,4 +549,36 @@ fn m5_03_trailing_slash_is_the_same_location() {
         !kind("rclone:nas:").same_location(&kind("rclone:nas:/")),
         "the remote's own folder is not its root"
     );
+}
+
+/// AC-M5-03-8 (a), (e): `AZURE_FORCE_CLI_CREDENTIAL` counts as entered only with a value restic
+/// reads as true (Go's `strconv.ParseBool`, without trimming), as a plain value and as a typed
+/// secret; any other value leaves the `azure:` destination without a credential variable.
+#[test]
+fn ac_m5_03_8_force_cli_credential_counts_only_when_restic_reads_it_as_true() {
+    let url = "azure:kestic-container:/laptop";
+    let check = |value: &str, secret: bool| {
+        let env = [var(
+            "AZURE_FORCE_CLI_CREDENTIAL",
+            secret,
+            (!secret).then_some(value),
+        )];
+        missing_credentials(url, &env, |_| EnteredSecret::Value(value))
+    };
+    for secret in [false, true] {
+        for value in ["1", "t", "T", "TRUE", "true", "True"] {
+            assert_eq!(
+                check(value, secret),
+                None,
+                "(e) {value:?} (secret: {secret}) is read as true"
+            );
+        }
+        for value in ["0", "false", "yes", " true", "true ", "tRUE", "on", ""] {
+            assert_eq!(
+                check(value, secret).as_deref(),
+                Some("AZURE_ACCOUNT_KEY, AZURE_ACCOUNT_SAS, AZURE_FORCE_CLI_CREDENTIAL=true"),
+                "(a) {value:?} (secret: {secret}) is not read as true"
+            );
+        }
+    }
 }

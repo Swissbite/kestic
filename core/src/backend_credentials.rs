@@ -5,6 +5,7 @@
 //! form): kept only in the password store and handed to restic only as environment variables,
 //! never as arguments.
 
+use crate::generic::EnteredSecret;
 use crate::model::{Destination, DestinationKind};
 use crate::secrets::{SecretError, SecretStore, SecretValue};
 use std::collections::BTreeMap;
@@ -42,11 +43,24 @@ const INHERITED_S3_PREFIXES: [&str; 3] = ["AWS_", "RESTIC_AWS_", "MINIO_"];
 const INHERITED_REST_PREFIXES: [&str; 1] = ["RESTIC_REST_"];
 
 /// Prefixes of the variables in the caller's environment that the backends of the generic form
-/// read: B2, Azure, Google Cloud Storage, Swift (`OS_`, and `ST_` for its v1 login), rclone, and
-/// the AWS variables rclone reads for an S3 remote; a destination gets only the variables
-/// configured for it.
-const INHERITED_GENERIC_PREFIXES: [&str; 7] =
-    ["B2_", "AZURE_", "GOOGLE_", "OS_", "ST_", "RCLONE_", "AWS_"];
+/// read: B2, Azure (and its managed identity: `IDENTITY_`, `MSI_`, `IMDS_`), Google Cloud
+/// Storage (and the gcloud configuration and metadata server: `CLOUDSDK_`, `GCE_`), Swift
+/// (`OS_`, and `ST_` for its v1 login), rclone, and the AWS variables rclone reads for an S3
+/// remote; a destination gets only the variables configured for it.
+const INHERITED_GENERIC_PREFIXES: [&str; 12] = [
+    "B2_",
+    "AZURE_",
+    "IDENTITY_",
+    "MSI_",
+    "IMDS_",
+    "GOOGLE_",
+    "CLOUDSDK_",
+    "GCE_",
+    "OS_",
+    "ST_",
+    "RCLONE_",
+    "AWS_",
+];
 
 /// The kinds of the fixed credentials, for removing a destination's credentials whatever its
 /// kind was.
@@ -92,8 +106,8 @@ impl DestinationKind {
 
     /// Name prefixes of the variables in the caller's environment that are removed before
     /// restic starts, so the backend gets credentials only from Kestic: `AWS_`, `RESTIC_AWS_`
-    /// and `MINIO_` for S3; `RESTIC_REST_` for REST; `B2_`, `AZURE_`, `GOOGLE_`, `OS_`, `ST_`,
-    /// `RCLONE_` and `AWS_` for the generic form, whose own variables are set afterwards.
+    /// and `MINIO_` for S3; `RESTIC_REST_` for REST; the backend prefixes of the generic form
+    /// (`B2_`, `AZURE_`, `GOOGLE_`, …), whose own variables are set afterwards.
     pub fn backend_env_cleared_prefixes(&self) -> Vec<&'static str> {
         match self {
             Self::S3 { .. } => INHERITED_S3_PREFIXES.to_vec(),
@@ -101,6 +115,23 @@ impl DestinationKind {
             Self::Generic { .. } => INHERITED_GENERIC_PREFIXES.to_vec(),
             Self::Local { .. } | Self::Sftp { .. } => Vec::new(),
         }
+    }
+
+    /// The credential variables a generic destination lacks (see
+    /// [`crate::generic::missing_credentials`]), with the secret values from `creds`; `None`
+    /// for every other kind.
+    pub fn missing_credential_variables(&self, creds: &BackendCredentials) -> Option<String> {
+        let Self::Generic { url, env } = self else {
+            return None;
+        };
+        crate::generic::missing_credentials(url, env, |name| {
+            match creds.get(&crate::generic::secret_kind(name)) {
+                None => EnteredSecret::Missing,
+                Some(value) => value
+                    .as_str()
+                    .map_or(EnteredSecret::Saved, EnteredSecret::Value),
+            }
+        })
     }
 
     /// Whether restic, missing a credential Kestic would set, falls back to credential files or
