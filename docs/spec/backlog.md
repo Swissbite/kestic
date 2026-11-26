@@ -30,7 +30,7 @@ M0 → M1 → M2 → M3; M4 und M5 hängen nur von M1 ab und können parallel zu
 | M6 Onboarding und Sicherheit | Ein Endnutzer richtet sein erstes Backup in 5 Schritten ein, sichert sein Passwort und kommt auf einem neuen Rechner wieder an seine Daten. Abschluss des MVP. | 12 | 61 | [milestones/m6-onboarding-und-sicherheit.md](milestones/m6-onboarding-und-sicherheit.md) |
 | **Total** | | **89** | **474** | |
 
-**Stand 2026-11-25:** M0 bis M4 abgeschlossen und manuell abgenommen; M4 ist als `v0.4.0` veröffentlicht. M5 in Arbeit auf `m5`, M6 offen.
+**Stand 2026-11-26:** M0 bis M4 abgeschlossen und manuell abgenommen; M4 ist als `v0.4.0` veröffentlicht. M5 abgeschlossen auf `m5` (Abschluss-PR nach `main` folgt, manuelle Abnahme offen), M6 offen.
 
 Nach dem MVP: [milestones/nach-mvp.md](milestones/nach-mvp.md) (Phase 2, Luxus, P3). Versionen und Releases: ein Release pro Meilenstein ab M4 (`v0.4.0`), `v1.0.0` nach M6, dazwischen ein Pre-Release pro Merge in `m<n>`; Ablauf in [architecture.md](architecture.md) §Release (Q7).
 
