@@ -208,7 +208,10 @@ impl KnownHostsPaths {
     ) -> Result<Self, KnownHostsPathError> {
         let data = crate::restic_install::kestic_data_dir(home, xdg_data_home)
             .ok_or(KnownHostsPathError::NoHome)?;
-        let home = PathBuf::from(home.ok_or(KnownHostsPathError::NoHome)?);
+        let home = home
+            .map(PathBuf::from)
+            .filter(|home| home.is_absolute())
+            .ok_or(KnownHostsPathError::NoHome)?;
         let paths = Self {
             kestic: data.join("known_hosts"),
             user: home.join(".ssh").join("known_hosts"),
@@ -692,6 +695,9 @@ mod tests {
             KnownHostsPaths::from_vars(Some(home), Some(OsStr::new("/data"))).expect("paths");
         assert_eq!(paths.kestic, PathBuf::from("/data/kestic/known_hosts"));
         assert!(KnownHostsPaths::from_vars(None, Some(OsStr::new("/data"))).is_err());
+        assert!(
+            KnownHostsPaths::from_vars(Some(OsStr::new("")), Some(OsStr::new("/data"))).is_err()
+        );
     }
 
     #[test]

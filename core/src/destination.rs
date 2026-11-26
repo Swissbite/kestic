@@ -85,6 +85,17 @@ impl DestinationError {
     pub fn is_host_key_problem(&self) -> bool {
         matches!(self, Self::HostKeyUnknown(_) | Self::HostKeyChanged(_))
     }
+
+    /// Whether the server answered but restic must not connect: an unknown or changed host key,
+    /// or a host key that could not be checked for another reason than a missing answer (a jump
+    /// host in the ssh configuration, a failing tool). The run stops at the key and says why.
+    pub fn stops_at_host_key(&self) -> bool {
+        match self {
+            Self::HostKeyCheck(HostKeyError::NoAnswer { .. }) => false,
+            Self::HostKeyCheck(_) => true,
+            other => other.is_host_key_problem(),
+        }
+    }
 }
 
 /// The result of [`preflight_check_with_restic`] as reachability: a server with an unknown or
@@ -92,11 +103,12 @@ impl DestinationError {
 /// reason than a missing answer (a jump host in the ssh configuration, a failing tool); the run
 /// itself stops at the key and reports why.
 pub fn reachability(result: Result<(), DestinationError>) -> Result<(), DestinationError> {
-    result.or_else(|err| match err {
-        DestinationError::HostKeyCheck(HostKeyError::NoAnswer { .. }) => Err(err),
-        DestinationError::HostKeyCheck(_) => Ok(()),
-        err if err.is_host_key_problem() => Ok(()),
-        err => Err(err),
+    result.or_else(|err| {
+        if err.stops_at_host_key() {
+            Ok(())
+        } else {
+            Err(err)
+        }
     })
 }
 

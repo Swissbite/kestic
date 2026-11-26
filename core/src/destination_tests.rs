@@ -787,3 +787,27 @@ fn uncheckable_host_key_stops_restic_but_is_reachable() {
     assert!(reachable.is_ok(), "reachable: {reachable:?}");
     crate::sftp::set_test_ssh_config(None);
 }
+
+/// Which errors of the pre-check mean «the server answered, restic must not connect»: the
+/// maintenance start and the availability probe both count them as reachable.
+#[test]
+fn host_key_errors_that_stop_at_the_key() {
+    let jump = DestinationError::HostKeyCheck(HostKeyError::JumpHost("nas".to_string()));
+    let tool = DestinationError::HostKeyCheck(HostKeyError::Tool {
+        program: "ssh".to_string(),
+        detail: "x".to_string(),
+    });
+    let no_answer = DestinationError::HostKeyCheck(HostKeyError::NoAnswer {
+        program: "ssh-keyscan".to_string(),
+        secs: 10,
+    });
+    let changed = DestinationError::HostKeyChanged(PathBuf::from("/home/u/.ssh/known_hosts"));
+    assert!(jump.stops_at_host_key(), "jump host");
+    assert!(tool.stops_at_host_key(), "failing tool");
+    assert!(changed.stops_at_host_key(), "changed key");
+    assert!(!no_answer.stops_at_host_key(), "no answer is unreachable");
+    assert!(
+        !DestinationError::Unreachable("x".to_string()).stops_at_host_key(),
+        "unreachable"
+    );
+}

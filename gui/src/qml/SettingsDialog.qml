@@ -452,16 +452,18 @@ Kirigami.ApplicationWindow {
                         Layout.fillWidth: true
                     }
 
-                    Controls.Button {
-                        objectName: "resticProblemDetailsButton"
-                        visible: appBackend.restic_problem_detail !== ""
-                        flat: true
-                        icon.name: resticProblemPanel.detailsExpanded ? "go-up" : "go-down"
-                        text: resticProblemPanel.detailsExpanded ? Texts.label("hide_details") : Texts.label("details")
-                        Accessible.name: text
-                        Layout.alignment: Qt.AlignTop
-                        onClicked: resticProblemPanel.detailsExpanded = !resticProblemPanel.detailsExpanded
-                    }
+                }
+
+                // Below the message, so a long message keeps the width of the section.
+                Controls.Button {
+                    objectName: "resticProblemDetailsButton"
+                    visible: appBackend.restic_problem_detail !== ""
+                    flat: true
+                    icon.name: resticProblemPanel.detailsExpanded ? "go-up" : "go-down"
+                    text: resticProblemPanel.detailsExpanded ? Texts.label("hide_details") : Texts.label("details")
+                    Accessible.name: text
+                    Layout.leftMargin: resticProblemIcon.width + resticProblemRow.spacing
+                    onClicked: resticProblemPanel.detailsExpanded = !resticProblemPanel.detailsExpanded
                 }
 
                 // Raw text of the operating system: shown as plain text, never as markup.

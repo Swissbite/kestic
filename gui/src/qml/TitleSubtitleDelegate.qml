@@ -27,11 +27,12 @@ KD.SubtitleDelegate {
     contentItem: RowLayout {
         spacing: Kirigami.Units.mediumSpacing
 
-        Kirigami.Icon {
+        // A coloured icon keeps its body on the selected row (see RowIcon).
+        RowIcon {
             source: row.icon.name.length > 0 ? row.icon.name : row.icon.source
-            selected: row.shownSelected
-            implicitWidth: row.subtitle.length > 0 ? Kirigami.Units.iconSizes.medium : Kirigami.Units.iconSizes.smallMedium
-            implicitHeight: implicitWidth
+            iconSize: row.subtitle.length > 0 ? Kirigami.Units.iconSizes.medium : Kirigami.Units.iconSizes.smallMedium
+            onSelection: row.shownSelected
+            backdropObjectName: row.objectName + "IconBackdrop"
             Layout.alignment: Qt.AlignVCenter
         }
 

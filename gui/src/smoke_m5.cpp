@@ -137,6 +137,10 @@ int scenario_destination_types(const Ctx& c) {
     for (const char* each : {"drive", "folder", "sftp", "rest", "cloud", "rclone"}) {
         M3_CHECK(5062, title_not_smaller_than_subtitle(card_item(w, each)), card_name(each).constData());
     }
+    // The chosen card's coloured icon sits on its backdrop, so it keeps its body on the selection.
+    QQuickItem* chosen = card_item(w, "folder");
+    M3_CHECK(5063, chosen->property("checked").toBool(), "the folder card is not chosen");
+    M3_CHECK(5064, count_visible(w, "wizDestTypeCard_folderIconBackdrop") == 1, "no icon backdrop on the chosen card");
 
     if (const int rc = open_rclone_entry(w)) {
         return rc;

@@ -145,6 +145,8 @@ ColumnLayout {
             : Kirigami.MessageType.Error
         visible: form.draft.testFeedback !== ""
         text: form.draft.testFeedback
+        // «Reachable» has its fixed icon; the other results keep the icon of their type.
+        icon.name: form.draft.testFeedbackOk ? "network-connect" : ""
         actions: [
             Kirigami.Action {
                 objectName: form.namePrefix + "ShowHostKeyAction"
