@@ -194,11 +194,21 @@ pub enum KnownHostsPathError {
 impl KnownHostsPaths {
     /// Paths from the environment of this process.
     pub fn from_env() -> Result<Self, KnownHostsPathError> {
-        let home = std::env::var_os("HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
+        Self::from_vars(
+            std::env::var_os("HOME").as_deref(),
+            std::env::var_os("XDG_DATA_HOME").as_deref(),
+        )
+    }
+
+    /// Paths for the values of `HOME` and `XDG_DATA_HOME`; Kestic's file lies in its data folder
+    /// ([`crate::restic_install::kestic_data_dir`]).
+    pub fn from_vars(
+        home: Option<&std::ffi::OsStr>,
+        xdg_data_home: Option<&std::ffi::OsStr>,
+    ) -> Result<Self, KnownHostsPathError> {
+        let data = crate::restic_install::kestic_data_dir(home, xdg_data_home)
             .ok_or(KnownHostsPathError::NoHome)?;
-        let data = crate::config::default_data_dir().ok_or(KnownHostsPathError::NoHome)?;
+        let home = PathBuf::from(home.ok_or(KnownHostsPathError::NoHome)?);
         let paths = Self {
             kestic: data.join("known_hosts"),
             user: home.join(".ssh").join("known_hosts"),
@@ -663,6 +673,25 @@ mod tests {
             classify_exit_for(Transport::Sftp, 1, None, Vec::new(), late).kind,
             ResticFailureKind::HostKeyUnknown
         );
+    }
+
+    /// Kestic's `known_hosts` lies in the data folder of the app-managed restic, also for a
+    /// relative `XDG_DATA_HOME`, which the XDG rules ignore.
+    #[test]
+    fn kestic_known_hosts_lies_in_the_data_folder() {
+        use std::ffi::OsStr;
+        let home = OsStr::new("/home/anna");
+        let paths =
+            KnownHostsPaths::from_vars(Some(home), Some(OsStr::new("relative"))).expect("paths");
+        assert_eq!(
+            paths.kestic,
+            PathBuf::from("/home/anna/.local/share/kestic/known_hosts")
+        );
+        assert_eq!(paths.user, PathBuf::from("/home/anna/.ssh/known_hosts"));
+        let paths =
+            KnownHostsPaths::from_vars(Some(home), Some(OsStr::new("/data"))).expect("paths");
+        assert_eq!(paths.kestic, PathBuf::from("/data/kestic/known_hosts"));
+        assert!(KnownHostsPaths::from_vars(None, Some(OsStr::new("/data"))).is_err());
     }
 
     #[test]

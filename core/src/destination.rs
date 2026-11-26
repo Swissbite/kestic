@@ -88,14 +88,15 @@ impl DestinationError {
 }
 
 /// The result of [`preflight_check_with_restic`] as reachability: a server with an unknown or
-/// changed host key is reachable; the run itself stops at that key and reports it.
+/// changed host key is reachable, and so is one whose key could not be checked for another
+/// reason than a missing answer (a jump host in the ssh configuration, a failing tool); the run
+/// itself stops at the key and reports why.
 pub fn reachability(result: Result<(), DestinationError>) -> Result<(), DestinationError> {
-    result.or_else(|err| {
-        if err.is_host_key_problem() {
-            Ok(())
-        } else {
-            Err(err)
-        }
+    result.or_else(|err| match err {
+        DestinationError::HostKeyCheck(HostKeyError::NoAnswer { .. }) => Err(err),
+        DestinationError::HostKeyCheck(_) => Ok(()),
+        err if err.is_host_key_problem() => Ok(()),
+        err => Err(err),
     })
 }
 
@@ -154,8 +155,9 @@ pub fn preflight_check_destination(
 /// credentials; for SFTP the host key check comes first, and both together stop after
 /// [`CONNECTION_TEST_TIMEOUT`]. A destination that does not answer or cannot be reached fails,
 /// and so does an unknown or changed SFTP host key (restic does not start); every other answer
-/// (no repository, wrong password, refused login, a host key that could not be checked) is left
-/// to the run, which reports it.
+/// (no repository, wrong password, refused login) is left to the run, which reports it. A host
+/// key that could not be checked stops restic too; [`reachability`] tells it from a server that
+/// cannot be reached.
 pub fn preflight_check_with_restic(
     dest: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -165,17 +167,7 @@ pub fn preflight_check_with_restic(
         return Ok(());
     }
     let started = Instant::now();
-    match verify_sftp_host_key(dest) {
-        // A server that does not answer in time is not reachable.
-        Err(err @ DestinationError::HostKeyCheck(HostKeyError::NoAnswer { .. })) => {
-            return Err(err);
-        }
-        // The key could not be checked for another reason (a jump host in the ssh
-        // configuration, a failing tool): the run checks again, does not start restic and
-        // reports that reason.
-        Err(DestinationError::HostKeyCheck(_)) => return Ok(()),
-        other => other?,
-    }
+    verify_sftp_host_key(dest)?;
     // A locked password store says nothing about the destination; the run reports it.
     let Ok(backend) = BackendCredentials::load_stored(dest, runtime.secret_store) else {
         return Ok(());

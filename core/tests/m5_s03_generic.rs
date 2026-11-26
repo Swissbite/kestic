@@ -542,5 +542,11 @@ fn m5_03_trailing_slash_is_the_same_location() {
         env: Vec::new(),
     };
     assert!(kind("b2:bucket:laptop").same_location(&kind("b2:bucket:laptop/")));
+    assert!(kind("rclone:nas:/srv").same_location(&kind("rclone:nas:/srv/")));
+    assert!(kind("rclone:nas:/").same_location(&kind("rclone:nas://")));
     assert!(!kind("b2:bucket:laptop").same_location(&kind("b2:bucket:desktop")));
+    assert!(
+        !kind("rclone:nas:").same_location(&kind("rclone:nas:/")),
+        "the remote's own folder is not its root"
+    );
 }

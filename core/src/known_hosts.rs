@@ -5,7 +5,7 @@
 //! `known_hosts` files say about it (`ssh-keygen -F`), which keys the server shows
 //! (`ssh-keyscan`), and Kestic's own `known_hosts` file, the only one Kestic writes.
 
-use crate::bounded_command::{Bounds, output_bounded};
+use crate::bounded_command::output_with_stdin;
 use crate::sftp::{DEFAULT_PORT, KnownHostsPaths, ssh_config_args, ssh_host};
 use crate::sync::LockUnpoisoned;
 use std::fs;
@@ -127,13 +127,9 @@ fn run_tool_within(
     let mut cmd = Command::new(program);
     cmd.args(args);
     // ssh reads the user's configuration (`Match exec`) and resolves names; none of that may hold
-    // up a connection test or the check before a run. Its own process group: at the time limit
-    // the commands ssh started for the configuration end with it.
-    let bounds = Bounds {
-        stdin: stdin.map(str::as_bytes),
-        own_group: true,
-    };
-    output_bounded(cmd, limit, bounds).map_err(|err| match err.kind() {
+    // up a connection test or the check before a run. At the time limit the commands ssh started
+    // for the configuration end with it.
+    output_with_stdin(cmd, limit, stdin.map(str::as_bytes)).map_err(|err| match err.kind() {
         std::io::ErrorKind::TimedOut => HostKeyError::NoAnswer {
             program: program.to_string(),
             secs: limit.as_secs(),

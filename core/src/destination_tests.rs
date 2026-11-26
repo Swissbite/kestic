@@ -728,10 +728,10 @@ fn host_key_error_texts_start_with_their_markers() {
 }
 
 /// A host key that cannot be checked for another reason than a server that does not answer
-/// (here a jump host in the ssh configuration) does not make the destination unreachable: the
-/// check before a run leaves it to the run, which checks again and names the reason.
+/// (here a jump host in the ssh configuration) stops restic before every access, with the
+/// reason, but does not make the destination unreachable.
 #[test]
-fn preflight_leaves_an_uncheckable_host_key_to_the_run() {
+fn uncheckable_host_key_stops_restic_but_is_reachable() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let config = dir.path().join("ssh_config");
     fs::write(
@@ -777,8 +777,13 @@ fn preflight_leaves_an_uncheckable_host_key_to_the_run() {
     );
     let preflight = preflight_check_with_restic(&dest, &runtime);
     assert!(
-        preflight.is_ok(),
-        "reachable for the pre-check: {preflight:?}"
+        matches!(
+            preflight,
+            Err(DestinationError::HostKeyCheck(HostKeyError::JumpHost(_)))
+        ),
+        "the pre-check stops restic with the reason: {preflight:?}"
     );
+    let reachable = reachability(preflight_check_with_restic(&dest, &runtime));
+    assert!(reachable.is_ok(), "reachable: {reachable:?}");
     crate::sftp::set_test_ssh_config(None);
 }

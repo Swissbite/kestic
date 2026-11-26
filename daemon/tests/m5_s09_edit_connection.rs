@@ -496,7 +496,8 @@ fn ac_m5_09_3_stored_id_decides_when_old_address_is_gone() {
 }
 
 /// M5-S09: saving a changed connection keeps the destination's maintenance schedule, which
-/// `UpdateDestinationMaintenance` set before.
+/// `UpdateDestinationMaintenance` set before, and its recovery kit key, which the GUI's
+/// destination does not carry.
 #[test]
 fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
     run_isolated_test(
@@ -515,6 +516,20 @@ fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
             client
                 .update_destination_maintenance(dest.id.as_str(), &schedule)
                 .expect("UpdateDestinationMaintenance");
+            // No call sets the recovery kit key yet: it is written into the config of a stopped
+            // daemon.
+            let config_path = daemon.config_path.clone();
+            daemon.stop();
+            let mut config = load_config(&config_path).expect("config");
+            config
+                .destinations
+                .iter_mut()
+                .find(|d| d.id == dest.id)
+                .expect("destination")
+                .recovery_kit_key_id = Some("KITKEY01".to_string());
+            kestic_core::config::save_config(&config_path, &config).expect("save config");
+            let (daemon, _wrapper, _) = spawn(root, &variant, "M5EMNT");
+            let client = &daemon.client;
 
             let copy = dir.join("copy");
             copy_dir(&dir.join("repo"), &copy);
@@ -527,6 +542,11 @@ fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
             let after = saved(&daemon, &dest);
             assert_eq!(after.name, "Disk copy", "the name is saved");
             assert_eq!(after.maintenance, schedule, "the schedule is kept");
+            assert_eq!(
+                after.recovery_kit_key_id.as_deref(),
+                Some("KITKEY01"),
+                "the recovery kit key is kept"
+            );
             daemon.stop();
         },
     );

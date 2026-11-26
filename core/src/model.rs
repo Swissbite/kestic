@@ -272,10 +272,7 @@ impl DestinationKind {
                 path,
                 ..
             } => crate::s3::location_key(endpoint, bucket, path.as_deref()),
-            // A trailing slash names the same folder.
-            Self::Generic { url, .. } => {
-                format!("generic:{}", url.trim().trim_end_matches('/'))
-            }
+            Self::Generic { url, .. } => format!("generic:{}", generic_location(url)),
         }
     }
 
@@ -630,6 +627,19 @@ impl MaintenanceSchedule {
 pub enum Maintenance {
     Prune,
     Check,
+}
+
+/// The location part of a generic repository URL for comparing: without trailing slashes,
+/// except one right after a colon, where `remote:/` (the root) and `remote:` (the remote's own
+/// folder) are different folders.
+fn generic_location(url: &str) -> String {
+    let url = url.trim();
+    let trimmed = url.trim_end_matches('/');
+    if trimmed.ends_with(':') && trimmed.len() < url.len() {
+        format!("{trimmed}/")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Configured backup repository (glossary: `Destination`).

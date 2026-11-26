@@ -13,32 +13,22 @@ use std::time::{Duration, Instant};
 /// The most bytes kept of stdout and of stderr.
 pub(crate) const OUTPUT_LIMIT: u64 = 1 << 20;
 
-/// How the program runs.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct Bounds<'a> {
-    /// Text written to the program's stdin; without it stdin is empty.
-    pub stdin: Option<&'a [u8]>,
-    /// The program gets a process group of its own, and the whole group ends at the time limit:
-    /// commands it started (ssh's `Match exec`) do not outlive it.
-    pub own_group: bool,
-}
-
 /// Runs `cmd` with stdout and stderr captured and kills it after `limit`.
 pub(crate) fn output_within(cmd: Command, limit: Duration) -> std::io::Result<Output> {
-    output_bounded(cmd, limit, Bounds::default())
+    output_with_stdin(cmd, limit, None)
 }
 
-/// [`output_within`] with stdin and process group as `bounds` says.
-pub(crate) fn output_bounded(
+/// [`output_within`] that writes `stdin` to the program's stdin (empty without it). The program
+/// gets a process group of its own, and the whole group ends at the time limit: commands it
+/// started (ssh's `Match exec`, a wrapper's background process) do not outlive it.
+pub(crate) fn output_with_stdin(
     mut cmd: Command,
     limit: Duration,
-    bounds: Bounds<'_>,
+    stdin: Option<&[u8]>,
 ) -> std::io::Result<Output> {
-    if bounds.own_group {
-        cmd.process_group(0);
-    }
+    cmd.process_group(0);
     let mut child = cmd
-        .stdin(if bounds.stdin.is_some() {
+        .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
             Stdio::null()
@@ -46,8 +36,13 @@ pub(crate) fn output_bounded(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    if let (Some(text), Some(mut pipe)) = (bounds.stdin, child.stdin.take()) {
-        pipe.write_all(text)?;
+    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        let text = text.to_vec();
+        // On its own thread, so a program that does not read stdin cannot hold up the deadline.
+        // A program that ends before reading all of it says itself what went wrong.
+        std::thread::spawn(move || {
+            let _ = pipe.write_all(&text);
+        });
     }
     // Each pipe is read on its own thread. A process the child left in the background may keep
     // a pipe open; the reader then never finishes, so the result is awaited only until the
@@ -62,14 +57,20 @@ pub(crate) fn output_bounded(
         )
     };
     let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => {
+                stop(&mut child);
+                return Err(timed_out("no answer"));
+            }
+            Err(err) => {
+                stop(&mut child);
+                return Err(err);
+            }
         }
-        if Instant::now() >= deadline {
-            stop(&mut child, bounds.own_group);
-            return Err(timed_out("no answer"));
-        }
-        std::thread::sleep(Duration::from_millis(10));
     };
     // The child is reaped: its PID may belong to another process by now. Its process group
     // number stays reserved while a member lives, so only the group may still be signalled.
@@ -77,9 +78,7 @@ pub(crate) fn output_bounded(
         receiver
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .map_err(|_| {
-                if bounds.own_group {
-                    kill_group(child.id());
-                }
+                kill_group(child.id());
                 timed_out("output not closed")
             })
     };
@@ -104,11 +103,9 @@ fn read_on_thread(pipe: Option<Box<dyn Read + Send>>) -> Receiver<Vec<u8>> {
     receiver
 }
 
-/// Ends the child that has not been reaped yet, with its group if it has one of its own.
-fn stop(child: &mut Child, own_group: bool) {
-    if own_group {
-        kill_group(child.id());
-    }
+/// Ends the child that has not been reaped yet, with its process group.
+fn stop(child: &mut Child) {
+    kill_group(child.id());
     // Already gone or never reachable: `wait` below reaps it either way.
     let _ = child.kill();
     let _ = child.wait();
@@ -146,9 +143,9 @@ mod tests {
         );
     }
 
-    /// In a group of its own, the background process that holds the pipes ends with the group.
+    /// The background process that holds the pipes ends with the program's process group.
     #[test]
-    fn own_group_ends_the_background_process_too() {
+    fn the_background_process_ends_with_the_group() {
         let dir = tempfile::tempdir().expect("dir");
         let marker = dir.path().join("still-running");
         let mut cmd = Command::new("sh");
@@ -156,14 +153,7 @@ mod tests {
             "(sleep 1; touch '{}') & echo started",
             marker.display()
         ));
-        let result = output_bounded(
-            cmd,
-            Duration::from_millis(300),
-            Bounds {
-                stdin: None,
-                own_group: true,
-            },
-        );
+        let result = output_within(cmd, Duration::from_millis(300));
         assert!(
             matches!(&result, Err(err) if err.kind() == std::io::ErrorKind::TimedOut),
             "{result:?}"
@@ -178,13 +168,10 @@ mod tests {
     /// Stdin reaches the program; output beyond the limit is cut.
     #[test]
     fn stdin_is_passed_and_output_is_capped() {
-        let out = output_bounded(
+        let out = output_with_stdin(
             Command::new("cat"),
             Duration::from_secs(5),
-            Bounds {
-                stdin: Some(b"host key\n"),
-                own_group: false,
-            },
+            Some(b"host key\n"),
         )
         .expect("cat");
         assert_eq!(out.stdout, b"host key\n");
@@ -192,5 +179,16 @@ mod tests {
         cmd.args(["-c", "2000000", "/dev/zero"]);
         let out = output_within(cmd, Duration::from_secs(5)).expect("head");
         assert_eq!(u64::try_from(out.stdout.len()).ok(), Some(OUTPUT_LIMIT));
+    }
+
+    /// A program that ends without reading its stdin gives its own result, not a write error.
+    #[test]
+    fn a_program_that_ignores_stdin_gives_its_own_result() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo refused >&2; exit 3"]);
+        let input = vec![b'x'; 1 << 20];
+        let out = output_with_stdin(cmd, Duration::from_secs(5), Some(&input)).expect("sh");
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!(out.stderr, b"refused\n");
     }
 }

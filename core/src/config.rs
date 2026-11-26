@@ -329,17 +329,43 @@ fn migrate(config: &mut AppConfig, legacy_app_managed_path: Option<PathBuf>) {
         }
         // «Managed by Kestic» now always means Kestic's own place; a binary elsewhere keeps
         // running as a custom path.
+        // Without a home folder Kestic's own place is unknown and the source stays as it is.
         if let Some(path) = legacy_app_managed_path
             && config.restic_provider == ResticProvider::AppManaged
-            && Some(path.as_path())
-                != default_data_dir()
-                    .map(|dir| crate::restic_install::app_managed_binary(&dir))
-                    .as_deref()
+            && let Some(own) =
+                default_data_dir().map(|dir| crate::restic_install::app_managed_binary(&dir))
+            && !same_place(&path, &own)
         {
             config.restic_provider = ResticProvider::Custom { path };
         }
         config.config_version = 4;
     }
+}
+
+/// Whether `a` and `b` name the same file: equal after removing `.`, `..` and repeated
+/// slashes, or the same file through links.
+fn same_place(a: &Path, b: &Path) -> bool {
+    lexically_normal(a) == lexically_normal(b)
+        || matches!(
+            (fs::canonicalize(a), fs::canonicalize(b)),
+            (Ok(x), Ok(y)) if x == y
+        )
+}
+
+/// `path` with `.` removed and `..` applied to the part before it, without asking the file
+/// system.
+fn lexically_normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Loads `config.toml` if it exists, returning `Ok(None)` if the file does not exist.

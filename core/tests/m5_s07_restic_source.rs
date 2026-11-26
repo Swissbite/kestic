@@ -406,6 +406,24 @@ fn ac_m5_07_10_migrates_config_3_to_4() {
     ))
     .expect("v3 app-managed");
     assert_eq!(app.restic_provider, ResticProvider::AppManaged);
+    let spelled = own
+        .parent()
+        .expect("data dir")
+        .join("..")
+        .join("kestic")
+        .join(".")
+        .join("restic");
+    let app = parse_config_str(&format!(
+        "config_version = 3\n\n[restic_provider]\nkind = \"app_managed\"\npath = \"{}\"\n",
+        spelled.display()
+    ))
+    .expect("v3 app-managed spelled differently");
+    assert_eq!(
+        app.restic_provider,
+        ResticProvider::AppManaged,
+        "{}",
+        spelled.display()
+    );
     let elsewhere = parse_config_str(
         "config_version = 3\n\n[restic_provider]\nkind = \"app_managed\"\npath = \"/opt/kestic/restic\"\n",
     )
