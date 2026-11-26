@@ -7,7 +7,7 @@ description: Rules for running a whole Kestic milestone (M4–M6) largely on you
 
 A milestone agent implements a whole milestone with few check-ins of the maintainer: the
 kickoff (issues, this skill and spec changes approved), questions on the story's issue as they arise,
-the halt before a risky write path (M4: before S05; M5: before S01, S09 and the restic download),
+the halt before a risky write path (M4: before S05; M5: before S01, S09 and the restic download; M6: before S02, the key write path),
 reviews of the write-path stories and the closing pull request. Precedence: `AGENTS.md` > this skill > the issue > the start prompt of the
 agent container > the agent's own judgement. How a single story is done (research, inner loop,
 `just verify`) is in [kestic-story-execution](../kestic-story-execution/SKILL.md) and
@@ -16,7 +16,7 @@ the kickoff; changing them is level 3.
 
 ## 1. Milestone, issues and branches
 
-- **GitHub milestone** `M<n> <name>` (M4: «M4 Restore», M5: «M5 Targets and restic») with one
+- **GitHub milestone** `M<n> <name>` (M4: «M4 Restore», M5: «M5 Targets and restic», M6: «M6 Onboarding and security») with one
   issue per story, titled `M<n>-S<NN>: …`, plus milestone issues titled `M<n>: …` (halt, milestone review, closing).
   Issues are in English. An issue is the assignment: it links the story's ACs in
   `docs/spec/milestones/` as a checklist and never copies the spec, which stays the source.
@@ -168,6 +168,12 @@ M5: S01 (it writes `known_hosts` and decides which server to trust), S09 (it cha
 connection of an existing destination; a wrong repository would get the next backup and the
 retention's `forget`) and S06, S07, S08 (they download, check, choose, replace or delete the
 restic binary that Kestic runs).
+M6: S02, S03, S06, S10 and every story that changes a password (they add and remove restic keys;
+a wrong `key remove` loses access to the backups), S04 and S05 (they write metadata snapshots and
+replace snapshot tags) and the story for #152 (it changes which snapshots the retention's `forget`
+removes). In M6 the coordinating session reviews the halt in the maintainer role and sends the
+maintainer a short summary; while the first key story waits for that approval, continue with the
+other open issues.
 
 ## 6. Sync `main` → `m<n>`
 
