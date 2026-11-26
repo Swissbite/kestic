@@ -32,7 +32,7 @@ KD.SubtitleDelegate {
             source: row.icon.name.length > 0 ? row.icon.name : row.icon.source
             iconSize: row.subtitle.length > 0 ? Kirigami.Units.iconSizes.medium : Kirigami.Units.iconSizes.smallMedium
             onSelection: row.shownSelected
-            backdropObjectName: row.objectName + "IconBackdrop"
+            backdropObjectName: "iconBackdrop_" + row.objectName
             Layout.alignment: Qt.AlignVCenter
         }
 

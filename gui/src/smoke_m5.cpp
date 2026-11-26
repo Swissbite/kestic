@@ -140,7 +140,7 @@ int scenario_destination_types(const Ctx& c) {
     // The chosen card's coloured icon sits on its backdrop, so it keeps its body on the selection.
     QQuickItem* chosen = card_item(w, "folder");
     M3_CHECK(5063, chosen->property("checked").toBool(), "the folder card is not chosen");
-    M3_CHECK(5064, count_visible(w, "wizDestTypeCard_folderIconBackdrop") == 1, "no icon backdrop on the chosen card");
+    M3_CHECK(5064, count_visible(w, "iconBackdrop_wizDestTypeCard_folder") == 1, "no icon backdrop on the chosen card");
 
     if (const int rc = open_rclone_entry(w)) {
         return rc;
