@@ -32,9 +32,7 @@ use kestic_core::backup::{
 };
 use kestic_core::backup_progress::BackupProgressTracker;
 use kestic_core::clock::Clock;
-use kestic_core::destination::{
-    DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
-};
+use kestic_core::destination::{DestinationError, preflight_check_with_restic, reachability};
 use kestic_core::history::BackoffKind;
 use kestic_core::maintenance::detect_stale_locks;
 use kestic_core::model::{
@@ -44,8 +42,9 @@ use kestic_core::mount::{MountInspector, SourceCheckResult, current_home_dir};
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::{
     CancelHandle, ResticExecutionResult, ResticFailureKind, ResticRuntime, ResticStatusMessage,
-    ResticStreamEvent, SECRET_KIND_REPO, SECRET_KIND_REST, redact_secrets,
+    ResticStreamEvent, SECRET_KIND_REPO, Transport, redact_secrets,
 };
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::scheduler::{
     SystemEnvironment, UnmetPrecondition, evaluate_run_conditions, format_local_slot_hint,
     mark_backup_slot_handled, record_backup_backoff_failure,
@@ -312,6 +311,9 @@ fn start_backup_internal(
     is_scheduled: bool,
 ) -> Result<String, KesticServiceErr> {
     let b_id = parse_backup_id(backup_id)?;
+    // Held until the run has ended, so the app-managed restic is not replaced between its
+    // restic processes.
+    let mut run_lease = ResticBinaryGate::global().read();
 
     let mut ctx = claim_backup_destination(shared, &b_id, is_scheduled)?;
 
@@ -322,6 +324,7 @@ fn start_backup_internal(
         &ctx.dest.id,
         &mut ctx.claim_guard,
     )?;
+    run_lease.bind(&resolved.binary);
     let source_status = check_source_status_bounded(
         &ctx.backup,
         current_home_dir().as_deref(),
@@ -329,7 +332,10 @@ fn start_backup_internal(
     );
     let source_ok = source_status.is_ok();
     let dest_res = if source_ok {
-        preflight_check_destination(&ctx.dest, DEFAULT_CONNECT_TIMEOUT)
+        reachability(preflight_check_with_restic(
+            &ctx.dest,
+            &ctx.deps.runtime(&resolved),
+        ))
     } else {
         Ok(())
     };
@@ -389,6 +395,7 @@ fn start_backup_internal(
     let run_id_str = launched.run.id.as_str().to_string();
     let shared_worker = Arc::clone(shared);
     thread::spawn(move || {
+        let _run_lease = run_lease;
         execute_backup_worker(BackupWorkerArgs {
             shared_worker,
             ctx,
@@ -602,10 +609,10 @@ pub(super) fn load_dest_secrets(
     if let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REPO) {
         secrets_owned.push(s);
     }
-    if dest.kind.uses_rest_credentials()
-        && let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), SECRET_KIND_REST)
-    {
-        secrets_owned.push(s);
+    for slot in dest.kind.backend_secret_slots() {
+        if let Ok(Some(s)) = secret_store.get_secret(dest.id.as_str(), &slot.kind) {
+            secrets_owned.push(s);
+        }
     }
     secrets_owned
 }
@@ -681,6 +688,17 @@ fn process_backup_success_result(
             .map_or_default(|d| redact_secrets(d, secret_strs));
         Some(if raw.is_empty() {
             base
+        } else if raw.starts_with("subprocess ssh: ")
+            && matches!(
+                res.presentation.kind,
+                ResticFailureKind::BackendAuthFailed
+                    | ResticFailureKind::HostKeyUnknown
+                    | ResticFailureKind::HostKeyChanged
+            )
+        {
+            // ssh's line starts the summary: the run's error kind is read back only from a
+            // summary that starts with it, never from a file name or banner after other text.
+            format!("{raw} ({base})")
         } else {
             format!("{base}: {raw}")
         })
@@ -965,7 +983,7 @@ fn finalize_backup_run_state(
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);
         } else if (outcome.final_status == RunStatus::Error
             && outcome.exit_code.is_some()
-            && !run_blocks_schedule(&run))
+            && !run_blocks_schedule(&run, Transport::of(&ctx.dest.kind)))
             || (outcome.final_status == RunStatus::Cancelled
                 && !guard.shutdown_flag.load(Ordering::SeqCst))
         {

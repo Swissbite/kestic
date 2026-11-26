@@ -29,7 +29,7 @@ Teil von [index.md](index.md) (§11–§13). Verbindlichkeit, Referenz-Datensatz
 | --- | --- |
 | Datei-/Ordnerauswahl | KDE-Dateidialog (Portal), Start `~`, nur lokale Pfade |
 | Ordner öffnen | `Qt.openUrlExternally(file://…)` → Dolphin |
-| Fehlende Programme | `appstream://<id>` → Discover |
+| Fehlende Programme | Paketname und `sudo apt install <Paket>` zum Kopieren; `appstream://<id>` → Discover nur bei Paketen mit AppStream-Komponente |
 | Systemeinstellungen | Autostart- und Benachrichtigungs-Modul direkt öffnen **[verifiziert (M0-S11): `kcm_autostart`, `kcm_notifications`]** |
 | Ruhezustand | Inhibit über Portal sichtbar in Plasma (F9) |
 | Task-Manager | Prozent bei manuell gestartetem Lauf (FR-54, P2) |
@@ -131,7 +131,7 @@ Ctrl+Q und das Fenster-Kreuz beenden die **GUI**; der Daemon läuft weiter (getr
 
 - Jedes interaktive Element mit `Accessible.name`; Icon-only-Knöpfe mit Text (`display: IconOnly`) und Tooltip, auch bei Tastaturfokus (HIG). Status-Icons mit `Accessible.description` = Statustext.
 - Vollständige Tab-Reihenfolge, sinnvoller Default-Fokus (z. B. «Jetzt sichern» im Backup-Detail, erstes Feld im Assistenten), Fokus ≠ Auswahl, Kontextmenü per Menü-Taste/Shift+F10.
-- Eine Liste ist ein Tab-Halt, in der ganzen App: Tab führt auf ihren aktuellen Eintrag (beim ersten Mal den ersten), Hoch/Runter, Pos1/Ende und Bild auf/ab bewegen innerhalb, Leertaste setzt ein Kästchen, Enter öffnet, der nächste Tab bzw. Umschalt+Tab verlässt die Liste; Esc bleibt «eine Ebene zurück» (AC-M4-01-7). Ausgenommen sind die Backup-Karten in «Übersicht» (ein Kartenraster, keine Liste) und die Karten der Befehle eines Laufs; jede Karte ist ein eigener Tab-Halt. Ebenso keine Listen sind Knopfreihen und Formularzeilen (Breadcrumb, Pfadzeile, Wochentage, Zeilen der Ausschluss-Regeln, Kästchen der bekannten Netzwerke). Ein Kontextmenü öffnet beim Drücken der rechten Maustaste an der Zeigerposition und ist nie der einzige Weg zu einer Aktion (HIG).
+- Eine Liste ist ein Tab-Halt, in der ganzen App: Tab führt auf ihren aktuellen Eintrag (beim ersten Mal den ersten), Hoch/Runter, Pos1/Ende und Bild auf/ab bewegen innerhalb, Leertaste setzt ein Kästchen, Enter öffnet, der nächste Tab bzw. Umschalt+Tab verlässt die Liste; Esc bleibt «eine Ebene zurück» (AC-M4-01-7). Ausgenommen sind die Backup-Karten in «Übersicht» (ein Kartenraster, keine Liste), die Karten der Befehle eines Laufs und die Karten der Ziel-Typen; jede Karte ist ein eigener Tab-Halt. Ebenso keine Listen sind Knopfreihen und Formularzeilen (Breadcrumb, Pfadzeile, Wochentage, Filter-Chips nach Art bei Unterschieden und Vorschau, Auswahl des Cloud-Dienstes, Zeilen der Ausschluss-Regeln, Zeilen der Umgebungsvariablen, Kästchen der bekannten Netzwerke). Ein Kontextmenü öffnet beim Drücken der rechten Maustaste an der Zeigerposition und ist nie der einzige Weg zu einer Aktion (HIG).
 - Keine Information nur über Farbe (unterschiedliche Icons je Zustand, §6.2), nur im Tooltip oder nur in `showPassiveNotification`; keine gleichen Beschriftungen zweimal in einem Fenster.
 - Fortschritt mit `Accessible.role: ProgressBar` und Textwert.
 - Abnahme pro Screen (M6-S09): Tastatur-Durchlauf, Orca liest Status, Screenshot Hoher Kontrast und RTL.

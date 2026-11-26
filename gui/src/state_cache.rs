@@ -39,9 +39,17 @@ pub fn tr(message: &Message) -> String {
     if message.args.is_empty() {
         i18n(message.msgid).to_string()
     } else {
-        let args: Vec<&str> = message.args.iter().map(String::as_str).collect();
+        let args = message.rendered_args(format_percent);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
         i18n(message.msgid).subs(&args)
     }
+}
+
+/// `percent` in the GUI language: the number from `QLocale`, the place of the percent sign and
+/// the space before it from the catalog («25%», German «25 %»); the one formatting path for
+/// percentages in the GUI.
+pub fn format_percent(percent: u8) -> String {
+    i18n(PERCENT_PATTERN).subs(&[&crate::qt_bridge::ffi::format_count(i64::from(percent))])
 }
 
 /// Translates a [`UiText`]: messages via [`tr`], raw detail unchanged.
@@ -68,7 +76,7 @@ use crate::time_texts::{format_datetime_display, format_time_short};
 use crate::ui_texts::GuiText;
 use kestic_core::backup::{default_state_dir, exclude_file_path};
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, DestinationKind, ExcludeRules, KeepCount,
+    Backup, BackupId, DestinationId, DestinationKind, ExcludeRules, KeepCount,
     MaintenanceEntrySchedule, MaintenanceSchedule, NthWeekday, ResticProvider, RetentionPeriod,
     RetentionPolicy, RetentionPreset, Run, RunConditions, RunKind, RunStatus, Schedule, Source,
     SourceKind, Weekday,
@@ -77,15 +85,14 @@ use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_s
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSnapshotsDto, BackupSummaryDto,
-    ConnectionTestResultDto, DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME,
-    KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto,
-    StartAllResultDto,
+    DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME, KESTIC_INTERFACE_V1,
+    KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto, StartAllResultDto,
 };
-use kestic_i18n::codes::{BlockedReason, ConnectionTestCode, PendingReasonCode, RunProgressPhase};
+use kestic_i18n::codes::{BlockedReason, PendingReasonCode, RunProgressPhase};
 use kestic_i18n::codes::{ErrorKind, ServiceErrorCode};
 use kestic_i18n::messages::{
-    Message, UiText, completed_message, interrupted_by_sleep_message, not_backed_up_message,
-    pause_message, unmet_conditions_message,
+    Message, PERCENT_PATTERN, UiText, completed_message, interrupted_by_sleep_message,
+    not_backed_up_message, pause_message, unmet_conditions_message,
 };
 
 /// «Background service unavailable.» (text of `ServiceErrorCode::DaemonUnreachable`).
@@ -470,88 +477,6 @@ fn spawn_signal_listener(bus_name: String, object_path: String) {
     });
 }
 
-#[derive(serde::Deserialize)]
-struct DestinationFieldsInput {
-    #[serde(default)]
-    id: Option<String>,
-    kind: String,
-    name: String,
-    location: String,
-    #[serde(default)]
-    username: String,
-}
-
-pub fn test_destination_connection(
-    fields_json: &str,
-    mode: &str,
-    repo_pw: &str,
-    rest_pw: &str,
-) -> ConnectionTestResultDto {
-    let dest = match build_destination(None, fields_json) {
-        Ok(d) => d,
-        Err(err) => {
-            return ConnectionTestResultDto {
-                ok: false,
-                error_kind: Some(ConnectionTestCode::InvalidInput),
-                detail: if err.is_empty() {
-                    GuiText::FillRequiredFields.text()
-                } else {
-                    err
-                },
-            };
-        }
-    };
-    let client = match make_client() {
-        Ok(c) => c,
-        Err(err) => {
-            return ConnectionTestResultDto {
-                ok: false,
-                error_kind: Some(ConnectionTestCode::DaemonUnreachable),
-                detail: err,
-            };
-        }
-    };
-    match client.test_destination_connection(&dest, mode, repo_pw, rest_pw) {
-        Ok(res) => res,
-        // Already translated: the text of the D-Bus error name.
-        Err(err) => ConnectionTestResultDto {
-            ok: false,
-            error_kind: Some(ConnectionTestCode::Internal),
-            detail: dbus_error_text(&err),
-        },
-    }
-}
-
-pub fn build_destination(
-    existing_id: Option<&str>,
-    fields_json: &str,
-) -> Result<Destination, String> {
-    let fields: DestinationFieldsInput =
-        serde_json::from_str(fields_json).map_err(|e| e.to_string())?;
-    let trimmed_loc = fields.location.trim();
-    let trimmed_name = fields.name.trim();
-    let trimmed_user = fields.username.trim();
-    let dest_kind = match fields.kind.as_str() {
-        "rest" => DestinationKind::Rest {
-            url: trimmed_loc.to_string(),
-            username: (!trimmed_user.is_empty()).then(|| trimmed_user.to_string()),
-        },
-        _ => DestinationKind::Local {
-            path: PathBuf::from(trimmed_loc),
-        },
-    };
-    let id_opt = existing_id
-        .filter(|s| !s.is_empty())
-        .or_else(|| fields.id.as_deref().filter(|s| !s.is_empty()));
-    let dest = if let Some(raw_id) = id_opt {
-        let id = DestinationId::parse(raw_id).map_err(|e| e.to_string())?;
-        Destination::with_id(id, trimmed_name, dest_kind).map_err(|e| e.to_string())?
-    } else {
-        Destination::new(trimmed_name, dest_kind).map_err(|e| e.to_string())?
-    };
-    Ok(dest)
-}
-
 /// Kind of the cached destination `dest_id`, if the daemon state knows it.
 pub fn cached_destination_kind(dest_id: &str) -> Option<DestinationKind> {
     let guard = shared_state().lock_unpoisoned();
@@ -583,37 +508,6 @@ pub fn build_new_backup(
     backup.schedule = Schedule::default_scheduled();
     backup.excludes = ExcludeRules::from_text(excludes_text);
     Ok(backup)
-}
-
-pub fn clone_updated_backup(
-    existing: &Backup,
-    name: &str,
-    source_path: &str,
-    dest_id: &str,
-    excludes_text: &str,
-    exclude_caches: bool,
-    detected_source: Option<Source>,
-) -> Result<Backup, String> {
-    let mut updated = existing.clone();
-    updated.rename(name.trim()).map_err(|e| e.to_string())?;
-    let trimmed_source = source_path.trim();
-    if trimmed_source != existing.source.path.to_string_lossy().as_ref() {
-        let new_src =
-            detected_source.unwrap_or_else(|| Source::folder(PathBuf::from(trimmed_source)));
-        updated.set_source(new_src).map_err(|e| e.to_string())?;
-    } else if let Some(det) = detected_source {
-        updated.set_source(det).map_err(|e| e.to_string())?;
-    }
-    if !dest_id.trim().is_empty() {
-        let d_id = DestinationId::parse(dest_id.trim()).map_err(|e| e.to_string())?;
-        updated.reassign_destination(d_id);
-    }
-    let mut excludes = existing.excludes.clone();
-    excludes.lines = excludes_text.lines().map(|l| l.to_string()).collect();
-    excludes.exclude_caches = exclude_caches;
-    updated.excludes = excludes;
-    updated.validate().map_err(|e| e.to_string())?;
-    Ok(updated)
 }
 
 pub fn clone_updated_backup_excludes(
@@ -809,7 +703,10 @@ pub fn build_provider(kind: &str, custom_path: &str) -> Result<ResticProvider, S
                 path: PathBuf::from(trimmed),
             })
         }
-        _ => Ok(ResticProvider::System),
+        "automatic" => Ok(ResticProvider::Automatic),
+        "app_managed" => Ok(ResticProvider::AppManaged),
+        "system" => Ok(ResticProvider::System),
+        other => Err(format!("unknown restic source '{other}'")),
     }
 }
 
@@ -847,17 +744,20 @@ pub fn format_duration_ms(ms: u64) -> String {
     i18n("%1 h %2 min").subs(&[&hours.to_string(), &rem_mins.to_string()])
 }
 
+/// A size in decimal units (B, KB, MB, GB) with the decimal separator of the locale; the one
+/// formatting path for sizes in models and QML.
 pub fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1000.0;
     const MB: f64 = 1_000_000.0;
     const GB: f64 = 1_000_000_000.0;
     let b = bytes as f64;
+    let decimal = crate::qt_bridge::ffi::format_decimal;
     if b >= GB {
-        format!("{:.1} GB", b / GB)
+        format!("{} GB", decimal(b / GB, 1))
     } else if b >= MB {
-        format!("{:.1} MB", b / MB)
+        format!("{} MB", decimal(b / MB, 1))
     } else if b >= KB {
-        format!("{:.0} KB", b / KB)
+        format!("{} KB", decimal(b / KB, 0))
     } else {
         format!("{bytes} B")
     }
@@ -1131,7 +1031,7 @@ pub fn format_backup_status(
         let text = match active_progress {
             Some(p) if p.phase == RunProgressPhase::ScanFinished => {
                 let pct = kestic_i18n::messages::rounded_percent(p.percent_done);
-                i18n("Backing up · %1%").subs(&[&pct.to_string()])
+                i18n("Backing up · %1").subs(&[&format_percent(pct)])
             }
             _ => i18n("Backing up · looking through files").to_string(),
         };
@@ -1227,7 +1127,7 @@ pub fn format_backup_status(
             }
             RunStatus::Running => {
                 return (
-                    i18n("Backing up · %1%").subs(&["0"]),
+                    i18n("Backing up · %1").subs(&[&format_percent(0)]),
                     "state-sync".to_string(),
                     "highlight".to_string(),
                 );

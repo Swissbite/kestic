@@ -247,7 +247,7 @@ Kirigami.ScrollablePage {
                         },
                         Kirigami.Action {
                             visible: appBackend.selected_run_error_raw !== ""
-                            text: page.rawErrorExpanded ? i18n("Hide Details") : i18n("Details")
+                            text: page.rawErrorExpanded ? Texts.label("hide_details") : Texts.label("details")
                             onTriggered: page.rawErrorExpanded = !page.rawErrorExpanded
                         }
                     ]

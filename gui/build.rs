@@ -106,6 +106,8 @@ fn main() {
         "src/qml/FocusRing.qml",
         "src/qml/KeyboardList.qml",
         "src/qml/RowIcon.qml",
+        "src/qml/FieldError.qml",
+        "src/qml/TitleSubtitleDelegate.qml",
         "src/qml/QueryStatus.qml",
         "src/qml/FilterField.qml",
         "src/qml/KindChips.qml",
@@ -133,6 +135,7 @@ fn main() {
         "src/smoke_m3_pages.cpp",
         "src/smoke_m4.cpp",
         "src/smoke_main_menu.cpp",
+        "src/smoke_m5.cpp",
         "src/smoke_m3_util.h",
     ] {
         println!("cargo:rerun-if-changed={cpp}");
@@ -159,13 +162,15 @@ fn main() {
             .cpp_file("src/smoke_m3_editors.cpp")
             .cpp_file("src/smoke_m3_pages.cpp")
             .cpp_file("src/smoke_m4.cpp")
-            .cpp_file("src/smoke_main_menu.cpp");
+            .cpp_file("src/smoke_main_menu.cpp")
+            .cpp_file("src/smoke_m5.cpp");
     }
 
     // SAFETY: Configures an additional C++ include path during build-script compilation.
     let builder = unsafe {
         builder.cc_builder(|cc| {
             cc.flag("-isystem/usr/include/KF6/KI18n");
+            cc.warnings_into_errors(true);
         })
     };
     builder.build();

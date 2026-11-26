@@ -397,7 +397,7 @@ Kirigami.ScrollablePage {
                 Controls.Label {
                     objectName: "browseNameHeading"
                     Layout.fillWidth: true
-                    text: i18n("Name")
+                    text: Texts.label("name")
                     font.bold: true
                 }
                 Controls.Label {

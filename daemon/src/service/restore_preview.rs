@@ -136,7 +136,10 @@ impl RestoreContext {
                 .chain(std::iter::once(&destination))
                 .filter_map(|d| match &d.kind {
                     DestinationKind::Local { path } => Some(path.clone()),
-                    DestinationKind::Rest { .. } => None,
+                    DestinationKind::Rest { .. }
+                    | DestinationKind::Sftp { .. }
+                    | DestinationKind::S3 { .. }
+                    | DestinationKind::Generic { .. } => None,
                 })
                 .collect(),
             destination,

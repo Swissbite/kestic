@@ -42,4 +42,5 @@ Verbindliche Begriffe für UI, Spec und Code. Nicht verwenden: «Profil», «Job
 | verwaist | orphaned | – | Snapshots mit Tag `kestic:<id>`, deren Backup-ID weder in der Config noch in einem Metadaten-Snapshot des Ziels vorkommt (eine Definition für FR-49, M4, M6) |
 | Lauf-Arten | Run kinds | `RunKind` (einziger Bezeichner im Code; UI-Wörter: Backup, Wartung, Wiederherstellen, Metadaten) | `Backup` (backup → forget), `Maintenance` (offene forget → prune → check), `Restore`, `Meta` (Metadaten-Snapshot); Regeln [domain-model.md](domain-model.md) (P38) |
 | Wartungslauf | Maintenance run | `Run` (Art `Maintenance`) | Lauf auf einem Ziel: offene `forget` → `prune` → `check` |
-| restic-Quelle | restic source | `ResticProvider` | – (System / App-verwaltet / eigener Pfad) |
+| restic-Quelle | restic source | `ResticProvider` | – (Automatisch / System / Von Kestic verwaltet / Eigener Pfad; «Automatisch» = System-restic ab 0.18.0, sonst das von Kestic verwaltete) |
+| Von Kestic verwaltet | Managed by Kestic | `ResticProvider::AppManaged` | offizielles restic-Release, das Kestic unter `~/.local/share/kestic/` ablegt und aktualisiert (in der Spec auch «App-verwaltet») |

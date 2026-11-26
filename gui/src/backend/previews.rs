@@ -7,7 +7,7 @@
 use super::{dbus_error_text, qobject};
 use crate::retention_texts::retention_preview_view;
 use crate::state_cache::{
-    daemon_unavailable_text, format_retention_summary, json_or, make_client, shared_state, tr_text,
+    daemon_unavailable_text, format_bytes, json_or, make_client, shared_state, tr_text,
 };
 use cxx_qt_lib::QString;
 use kestic_core::model::{ExcludeRules, RetentionPolicy, normalize_folder_rule};
@@ -110,6 +110,11 @@ impl qobject::KesticApp {
 }
 
 impl qobject::KesticApp {
+    /// A size as the models show it, for the sizes QML gets as numbers.
+    pub fn format_bytes(&self, bytes: i64) -> QString {
+        QString::from(&format_bytes(u64::try_from(bytes).unwrap_or(0)))
+    }
+
     pub fn format_exclude_rule_for_item(&self, item_path: &QString) -> QString {
         let Ok(client) = make_client() else {
             return QString::from("");
@@ -155,13 +160,6 @@ impl qobject::KesticApp {
         let home = env::var_os("HOME").map(PathBuf::from);
         let normalized = normalize_folder_rule(&folder_path.to_string(), home.as_deref());
         QString::from(&normalized)
-    }
-
-    pub fn build_exclude_file_preview(&self, excludes_json: &QString) -> QString {
-        let Ok(excludes) = serde_json::from_str::<ExcludeRules>(&excludes_json.to_string()) else {
-            return QString::from("");
-        };
-        QString::from(&excludes.to_exclude_file_contents())
     }
 
     pub fn start_backup_dry_run(
@@ -211,14 +209,6 @@ impl qobject::KesticApp {
             _ => RetentionPolicy::standard(),
         };
         QString::from(&json_or(&policy, "{}"))
-    }
-
-    pub fn format_retention_summary_json(&self, retention_json: &QString) -> QString {
-        let Ok(policy) = serde_json::from_str::<RetentionPolicy>(&retention_json.to_string())
-        else {
-            return QString::from("");
-        };
-        QString::from(&format_retention_summary(&policy))
     }
 
     pub fn start_retention_preview(

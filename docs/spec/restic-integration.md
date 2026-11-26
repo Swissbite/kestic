@@ -14,7 +14,7 @@ Folgen für Kestic:
 - **Backends & Releases:** Grundlage für Onboarding ([architecture.md](architecture.md)) und Download inkl. Signaturprüfung (FR-33).
 - **Mindestversion 0.18.0** (Fehler als JSON, Exit-Codes 10–12, `check --json`). Ubuntu 24.04 und Derivate (inkl. TUXEDO OS, KDE neon) liefern 0.16.4 → FR-33 ist MVP.
 - **Getestete Versionen:** 0.18.0 (Mindestversion) und 0.20.0 (aktuell, `RESTIC_LATEST_VERSION` in `scripts/bootstrap.sh`); `just verify` führt die Integrationstests gegen beide aus.
-- **Fehler älterer restic-Versionen** behebt restic, nicht Kestic. Ein Beispiel ist restic/restic#22180, behoben in 0.20.0: Ein präparierter Snapshot mit Symlink und Ordner gleichen Namens lässt `restore` ausserhalb des Ziels schreiben. Kestic fängt solche Fehler nicht ab; jede unterstützte Version ab 0.18.0 sichert und stellt wieder her, ohne Sperre, Warnung oder Download-Pflicht. Ist die verwendete Version älter als die aktuell getestete, zeigt die Einstellung «restic-Quelle» nur den Zusatz «(veraltet)» (AC-M4-05-22).
+- **Fehler älterer restic-Versionen** behebt restic, nicht Kestic. Ein Beispiel ist restic/restic#22180, behoben in 0.20.0: Ein präparierter Snapshot mit Symlink und Ordner gleichen Namens lässt `restore` ausserhalb des Ziels schreiben. Kestic fängt solche Fehler nicht ab; jede unterstützte Version ab 0.18.0 sichert und stellt wieder her, ohne Sperre, Warnung oder Download-Pflicht. Ist die verwendete Version älter als die aktuell getestete, zeigt die Einstellung «restic-Quelle» nur den Zusatz «· empfohlen: <getestete aktuelle Version>» (AC-M4-05-22).
 - **Fortschritt beim Sichern:** Die Prozentzahl gilt erst, wenn restic mit der Suche fertig ist; bis dahin zeigt Kestic keine Prozentzahl (Abschnitt «Fortschritt beim Sichern»).
 - **Ergebnis eines Wartungslaufs:** entfernte Snapshots aus `forget --json`, freigegebener Platz ab restic 0.20.0 aus `prune --json`, bei älteren Versionen aus der Textzeile `total prune:` (einzige Ausnahme von «nur JSON», tolerant ausgewertet), Fehlerzahl aus `check --json` (Abschnitt «Wartung»).
 - **Source of Truth (E14):** Dieses Dokument ist Besitzer aller restic-Fakten, die Kestic nutzt (Exit-Codes, Ausschluss-Semantik, Versionen), jeweils mit Datum.
@@ -31,8 +31,17 @@ Folgen für Kestic:
 
 ### Credentials
 
-- `RESTIC_REST_USERNAME`/`RESTIC_REST_PASSWORD` → REST-Zugang muss nicht in die Repo-URL.
+- `RESTIC_REST_USERNAME`/`RESTIC_REST_PASSWORD` → REST-Zugang muss nicht in die Repo-URL. Für REST-Ziele entfernt Kestic geerbte Variablen, deren Name mit `RESTIC_REST_` beginnt, aus der Umgebung von restic: Benutzername und Passwort kommen nur aus dem Ziel.
 - `RESTIC_PASSWORD_COMMAND` holt das Repo-Passwort aus einem beliebigen Programm (Secret-Store, Passwortmanager). Für Backend-Credentials gibt es keine `_COMMAND`-Variante.
+- S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_DEFAULT_REGION`; Repository `s3:<endpoint mit Schema>/<bucket>[/<pfad>]`, z. B. `s3:https://s3.example.com:9000/backup`. Vor dem Setzen eigener Werte entfernt Kestic jede geerbte Variable, deren Name mit `AWS_`, `RESTIC_AWS_` oder `MINIO_` beginnt (Zugangsdaten, Profil, Rolle, Region; restic liest auch die Variablen von MinIO), aus der Umgebung von restic, bei Läufen wie beim Verbindungstest: Zugangsdaten kommen nur aus dem Passwortspeicher (FR-08). Fehlt der Bucket, meldet der Verbindungstest das mit Namen («Bucket ‹name› gibt es noch nicht; Kestic legt ihn beim Anlegen des Ziels an.», Hinweis `bucket_missing`); `init` legt ihn beim Anlegen an. Der Pfad im Bucket enthält keine Leerzeichen, Anführungszeichen, `#`, `?` oder `%`: restic liest die Adresse als URL und wiederholt sie ungequotet in den Meldungen, die Kestic auswertet; das Formular weist darauf hin.
+- SFTP: Repository `sftp://<benutzer>@<host>:<port>/<pfad>`; ein Schrägstrich nach dem Host heisst «relativ zum Heimordner», ein absoluter Pfad braucht zwei (`sftp://u@h:22//srv/repo`) **[angenommen, prüft M5-S01 an der restic-Doku und im Test]**. Den Port gibt restic selbst an ssh weiter. ssh-Optionen über `-o sftp.args="…"` (Kestics Werte: [architecture.md](architecture.md) «SFTP und Host-Schlüssel»).
+- Kestic setzt `RESTIC_PASSWORD_COMMAND`, `RESTIC_REPOSITORY` und die Backend-Variablen selbst. Benutzer-Variablen des generischen Formulars, die damit kollidieren (`RESTIC_PASSWORD*`, `RESTIC_REPOSITORY*`) oder den Prozess umlenken (`PATH`, `HOME`, `LD_*`), weist `core` ab (AC-M5-03-7).
+- Ebenso weist `core` Variablen ab, die das Programm hinter `RESTIC_PASSWORD_COMMAND` (`kestic secret get`) umlenken würden: `XDG_*`, `DBUS_SESSION_BUS_ADDRESS`, `GCONV_PATH` und `TMPDIR`.
+- Für Ziele des generischen Formulars entfernt Kestic geerbte Variablen, deren Name mit `B2_`, `AZURE_`, `IDENTITY_`, `MSI_`, `IMDS_` (verwaltete Identität von Azure), `GOOGLE_`, `CLOUDSDK_`, `GCE_` (gcloud-Konfiguration und Metadaten-Server), `OS_`, `ST_` (Swift), `RCLONE_` oder `AWS_` (rclone liest sie für einen S3-Remote) beginnt, aus der Umgebung von restic, wie bei S3; die erfassten Variablen des Ziels setzt es danach.
+- Ein `azure:`-Ziel braucht `AZURE_ACCOUNT_KEY`, `AZURE_ACCOUNT_SAS` oder `AZURE_FORCE_CLI_CREDENTIAL=true` (ausdrücklich die Anmeldung der Azure-CLI des Benutzers), ein `gs:`-Ziel `GOOGLE_ACCESS_TOKEN` oder `GOOGLE_APPLICATION_CREDENTIALS`, jeweils im Ziel selbst erfasst (als Wert oder geheim). Sonst sucht restic selbst nach Zugangsdaten (verwaltete Identität, Azure-CLI, gcloud-Anmeldung, Metadaten-Server). Ohne eine davon weisen Formular, `AddDestination` und `UpdateDestination` das Ziel ab; Verbindungstest (`credentials_not_entered`) und Lauf enden mit derselben Meldung, die die Variablen nennt, ohne restic zu starten. Eine bestehende Config mit einem solchen Ziel lädt weiterhin (AC-M5-03-8).
+- Für jedes Ziel entfernt Kestic geerbte `RESTIC_TLS_CLIENT_CERT` und `RESTIC_CACERT` (Client-Zertifikat mit Schlüssel bzw. CA-Zertifikat) aus der Umgebung von restic, wie `RESTIC_PASSWORD_FILE`; ein Ziel des generischen Formulars kann sie selbst erfassen (AC-M5-03-9).
+- «Geheim» ist für eine neue Variable vorausgewählt, wenn ihr Name `KEY`, `SECRET`, `TOKEN`, `PASS` (auch `PASSWORD`), `SAS` oder `CREDENTIAL` enthält (P22).
+- Eine `rclone:`-URL mit einem geheimen Parameter (Name wie bei «Geheim», ausser Dateipfaden `*_file`, z. B. `pass=`, `token=`) weist `core` ab, mit dem Hinweis, den Wert als geheime Variable zu erfassen (`secret_in_url`): die URL steht in der Config und im Befehl.
 
 ### Integration & Locks
 
@@ -87,7 +96,8 @@ _Geprüft 2026-11-15, restic 0.19.1._
 
 - Release-Assets: `restic_<v>_linux_amd64.bz2`, `restic_<v>_linux_arm64.bz2`, `SHA256SUMS`, `SHA256SUMS.asc`.
 - Signatur-Key-Fingerprint: `CF8F 18F2 8445 7597 3F79 D4E1 91A6 868B D3F7 A907` ([020_installation](https://restic.readthedocs.io/en/stable/020_installation.html)).
-- `self-update` nur bei offiziellen Release-Builds.
+- `self-update` nur bei offiziellen Release-Builds. Kestic nutzt es nicht: Updates des App-verwalteten restic laufen über denselben Download wie die Erstinstallation, damit es einen Vertrauensanker und einen testbaren Weg gibt ([architecture.md](architecture.md) «restic-Bereitstellung»).
+- **[verifiziert: 2026-11-23, restic 0.20.0, gpgv 2.4.8]** `releases/latest` der GitHub-API nennt nur veröffentlichte Releases ohne Entwürfe und Vorabversionen (GitHub-Dokumentation «Get the latest release»; die Antwort für v0.20.0 trug `draft: false` und `prerelease: false`). Asset-Downloads leiten weiter: `github.com/restic/restic/releases/download/v0.20.0/SHA256SUMS` antwortet mit `302` auf `release-assets.githubusercontent.com`. `gpgv --keyring <Export des Schlüssels> --status-fd 1 SHA256SUMS.asc SHA256SUMS` meldet `[GNUPG:] VALIDSIG CF8F18F2844575973F79D4E191A6868BD3F7A907 2026-11-19 … CF8F18F2844575973F79D4E191A6868BD3F7A907`; das letzte Feld ist der Fingerprint des Primärschlüssels. `SHA256SUMS` und `SHA256SUMS.asc` von 0.20.0 liegen als Fixture in `core/tests/fixtures/m5/`.
 
 ### Fortschritt beim Sichern (`backup --json`)
 
@@ -207,6 +217,8 @@ Gerüst; wächst je Meilenstein, vollständig in M6-S11. Unbekannte Exit-Codes g
 | Exit 12 | `Fehler` (dauerhaft, sofort Alert, F2) | «Gespeichertes Passwort passt nicht» | «Gespeichertes Passwort aktualisieren…» ersetzt «Jetzt sichern»; «Trotzdem jetzt sichern» im ⋮-Menü |
 | unbekannter Code n | `Fehler` | «Unbekannter Fehler (Exit n)» + Rohmeldung (P6) | – |
 | JSON `exit_error` (ab 0.18.0) | wie Exit-Code | Meldung aus `exit_error` | je Fall |
+| SFTP: `Host key verification failed` | `Fehler` (dauerhaft, F2) | Kestic prüft selbst nach (`ssh-keygen -F`, `ssh-keyscan`): «Unbekannter Server» bzw. «Der Server meldet sich anders als bisher» (AC-M5-01-4, AC-M5-01-7) | Verbindung prüfen; bei geändertem Schlüssel keine |
+| SFTP: `Permission denied (publickey…)` | `Fehler` (dauerhaft, F2) | Anmeldung mit SSH-Schlüssel abgelehnt (`ssh_key_rejected`, AC-M5-01-3) | Hinweis auf `ssh-copy-id` und ssh-agent |
 | restic zu alt / nicht gefunden | blockierend | «restic x ist zu alt, mindestens 0.18.0 nötig» bzw. «restic nicht gefunden» (FR-33, P31) | Einstellung «restic-Quelle» |
 | Passwortspeicher gesperrt | blockierend | in M6-S11 festzulegen | in M6-S11 festzulegen |
 

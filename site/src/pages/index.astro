@@ -61,8 +61,28 @@ const features = [
     text: "Snapshots made with plain restic show up as unassigned, those of backups no longer known as orphaned. You can browse and restore them; Kestic only reads them.",
   },
   {
+    term: "Destinations",
+    text: "A local folder, an external drive (plugged-in drives are listed), a REST server, an SSH server (SFTP), S3-compatible storage, and Backblaze B2, Azure, Google Cloud, Swift, or any rclone remote. Types that need a program you have not installed name the package to install.",
+  },
+  {
+    term: "SSH servers",
+    text: "Kestic logs in with your SSH key or ssh-agent. It shows an unknown server's key fingerprint and keeps the key only after you trust it, and stops if a known server shows another key.",
+  },
+  {
+    term: "Edit a connection",
+    text: "Move a destination to another address or path, or change its credentials. Kestic checks that it is the same repository before it saves; another repository can be added as a new destination.",
+  },
+  {
+    term: "Access data",
+    text: "A destination uses only the access data entered for it, never cloud credentials, certificates, or logins found in the environment. Azure and Google Cloud need their own key or token, or an Azure CLI login you choose explicitly.",
+  },
+  {
+    term: "restic source",
+    text: "Automatic uses the system restic if it is 0.18.0 or newer, otherwise one managed by Kestic: the official release, downloaded only when you ask, checked against restic's signature, and never replaced while a run uses it. You can also pick the system restic or a path of your own.",
+  },
+  {
     term: "Native on Plasma",
-    text: "A tray entry with Restore Files…, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store.",
+    text: "A tray entry with Restore Files…, notifications, and progress in Plasma's notification area. Passwords stay in KWallet or another Secret Service password store. Sizes and percentages follow your locale.",
   },
 ] as const;
 
@@ -100,8 +120,8 @@ const milestones = [
   {
     id: "M5",
     name: "Destinations and restic provisioning",
-    scope: "SFTP, S3, and the other restic backends, and a bundled restic where the system one is too old.",
-    done: false,
+    scope: "SFTP, S3, and the other restic backends, and a restic managed by Kestic where the system one is too old.",
+    done: true,
   },
   {
     id: "M6",
@@ -182,13 +202,14 @@ const requirements =
         </div>
         <dl class="mono facts">
           <dt>Today</dt>
-          <dd>Back up to a local folder or drive, or a REST server, and restore from your snapshots.</dd>
+          <dd>Back up to a local folder or drive, a REST or SSH server, S3 or another restic backend, and restore from your snapshots.</dd>
           <dt>Not yet</dt>
-          <dd>SFTP, S3 and other backends, guided first-run setup.</dd>
+          <dd>Guided first-run setup and a recovery kit.</dd>
           <dt>Runs on</dt>
           <dd>
             Debian- and Ubuntu-based amd64 systems with Plasma 6, KDE Frameworks 6.24 or newer,
-            and Qt 6.10.2. Tested on TUXEDO OS 24.04. Needs restic 0.18.0 or newer.
+            and Qt 6.10.2. Tested on TUXEDO OS 24.04. Uses restic 0.18.0 or newer from the system,
+            or downloads it for you.
           </dd>
         </dl>
       </section>
@@ -213,8 +234,7 @@ const requirements =
         <div class="section-head">
           <h2>What it does</h2>
           <p>
-            All of this works today. Still missing: backends beyond local and REST, and a guided
-            first-run setup.
+            All of this works today. Still missing: a guided first-run setup and a recovery kit.
           </p>
         </div>
         <ol class="features">
@@ -310,12 +330,12 @@ RESTIC_PASSWORD_COMMAND='kestic secret get k3n8x2qd' \
           <li>
             <span class="mono accent">Process</span>
             <strong>restic</strong>
-            <span>System restic 0.18.0 or newer does the actual work.</span>
+            <span>restic 0.18.0 or newer does the actual work: the system one, or the one Kestic downloaded and checked.</span>
           </li>
           <li>
             <span class="mono accent">Repository</span>
             <strong>Destination</strong>
-            <span>A local folder or drive, or a REST server. SFTP, S3, and the other restic backends follow later.</span>
+            <span>A local folder or drive, a REST or SSH server, S3-compatible storage, or another restic backend.</span>
           </li>
         </ol>
       </section>
@@ -328,7 +348,8 @@ RESTIC_PASSWORD_COMMAND='kestic secret get k3n8x2qd' \
                 <h2>Try it</h2>
                 <p>
                   Download the package of <a href={release.url}>{release.tag}</a> and install it
-                  with apt. {requirements} Kestic needs restic 0.18.0 or newer.
+                  with apt. {requirements} Kestic uses restic 0.18.0 or newer; without one on the
+                  system, it offers to download it.
                 </p>
               </div>
               <pre class="command mono" aria-label="Commands to download and install Kestic"><code>wget {release.debUrl}

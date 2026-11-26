@@ -7,7 +7,7 @@
 //! daemon tray, notification, and error string into `po/de/kestic.po`, while
 //! allowing `gui` (`cxx-kde-frameworks`) or test doubles to supply translations.
 
-use kestic_i18n::messages::{Message, UiText, substitute_placeholders};
+use kestic_i18n::messages::{Message, PERCENT_PATTERN, UiText, substitute_placeholders};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use std::fmt;
@@ -29,6 +29,11 @@ pub trait DaemonTranslator: Send + Sync {
         all.extend_from_slice(args);
         self.translate_subs(if n == 1 { singular } else { plural }, &all)
     }
+
+    /// `n` with the digits and grouping of the language; without a locale as plain digits.
+    fn format_count(&self, n: i64) -> String {
+        n.to_string()
+    }
 }
 
 /// Identity fallback translator returning the English source string verbatim.
@@ -42,18 +47,20 @@ impl DaemonTranslator for PassthroughTranslator {
 }
 
 /// Callback-backed translator used by `kestic daemon` to delegate plain lookups,
-/// `.subs(...)` formatting and plural forms directly to KI18n.
-pub struct CallbackSubsTranslator<F0, F1, F2> {
+/// `.subs(...)` formatting and plural forms directly to KI18n, and numbers to `QLocale`.
+pub struct CallbackSubsTranslator<F0, F1, F2, F3> {
     pub translate_fn: F0,
     pub translate_subs_fn: F1,
     pub translate_plural_fn: F2,
+    pub format_count_fn: F3,
 }
 
-impl<F0, F1, F2> DaemonTranslator for CallbackSubsTranslator<F0, F1, F2>
+impl<F0, F1, F2, F3> DaemonTranslator for CallbackSubsTranslator<F0, F1, F2, F3>
 where
     F0: Fn(&str) -> String + Send + Sync,
     F1: Fn(&str, &[&str]) -> String + Send + Sync,
     F2: Fn(&str, &str, u64, &[&str]) -> String + Send + Sync,
+    F3: Fn(i64) -> String + Send + Sync,
 {
     fn translate(&self, msgid: &str) -> String {
         (self.translate_fn)(msgid)
@@ -65,6 +72,10 @@ where
 
     fn translate_plural(&self, singular: &str, plural: &str, n: u64, args: &[&str]) -> String {
         (self.translate_plural_fn)(singular, plural, n, args)
+    }
+
+    fn format_count(&self, n: i64) -> String {
+        (self.format_count_fn)(n)
     }
 }
 
@@ -137,17 +148,27 @@ pub fn i18np(
 }
 
 /// Translates a [`Message`] (code → msgid mapping in `kestic_i18n::messages`) in the
-/// daemon language (tray, notifications, run history).
+/// daemon language (tray, notifications, run history); a percentage follows the language's
+/// pattern.
 pub fn tr(message: &Message) -> String {
     let guard = translator_lock()
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if message.args.is_empty() {
-        guard.translate(message.msgid)
-    } else {
-        let args: Vec<&str> = message.args.iter().map(String::as_str).collect();
-        guard.translate_subs(message.msgid, &args)
+        return guard.translate(message.msgid);
     }
+    let args = message.rendered_args(|p| percent_text(guard.as_ref(), p));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    guard.translate_subs(message.msgid, &args)
+}
+
+/// `percent` in the daemon language («25%», German «25 %»): the number from the translator's
+/// locale in the catalog's percent pattern.
+fn percent_text(translator: &dyn DaemonTranslator, percent: u8) -> String {
+    translator.translate_subs(
+        PERCENT_PATTERN,
+        &[&translator.format_count(i64::from(percent))],
+    )
 }
 
 /// Translates a [`UiText`]: messages via [`tr`], raw detail unchanged.

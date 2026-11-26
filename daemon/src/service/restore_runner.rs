@@ -29,6 +29,7 @@ use kestic_core::model::{
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::query_list::QueryState;
 use kestic_core::restic::{CancelHandle, ResticStatusMessage, redact_secrets};
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::restore::{RestorePlan, RestoreRun, RestoreTarget, execute_restore, resolve_plan};
 use kestic_core::restore_preview::{
     blocked_above_selection, selection_reaches_folder, special_file_in_selection,
@@ -868,6 +869,9 @@ fn update_job_view(jv: &JobViewHandle, p: &ActiveRunProgressDto, status: &Restic
 }
 
 fn restore_worker(mut worker: RestoreWorker) {
+    // Held until the restore has ended, so the app-managed restic is not replaced between its
+    // restic processes.
+    let _run_lease = ResticBinaryGate::global().read_for(&worker.resolved.binary);
     let mut supervision = RunSupervision::start(
         &worker.supervision,
         &i18n("Restoring from %1").subs(&[&worker.setup.ctx.destination.name]),

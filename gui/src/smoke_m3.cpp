@@ -246,6 +246,10 @@ int scenario_backup_progress(const Ctx& c, bool scanning) {
     const QString status = role_value(bm, 0, "statusText").toString();
     const QString line = role_value(bm, 0, "activeProgressText").toString();
     const QString headline = c.backend->property("overall_headline").toString();
+    // Sizes QML gets as numbers go through the same formatting as the models' texts.
+    QString qml_size;
+    QMetaObject::invokeMethod(c.backend, "formatBytes", Q_RETURN_ARG(QString, qml_size), Q_ARG(::std::int64_t, 1500000000));
+    M3_CHECK_EQ(3890, qml_size, loc(c.lang, "1.5 GB", "1,5 GB"), "formatBytes uses the locale's decimal separator");
     QQuickItem* bar = item_named(w, "backupCardProgressBar");
     M3_CHECK(3862, bar != nullptr, "card progress bar missing");
     M3_CHECK(3879, bar->isVisible(), "card progress bar must be visible");
@@ -256,16 +260,17 @@ int scenario_backup_progress(const Ctx& c, bool scanning) {
     if (scanning) {
         // (a) status line, (b) amount looked through, (c) headline, (d) bar without end point
         M3_CHECK_EQ(3863, status, loc(c.lang, "Backing up · looking through files", "Sichert · Dateien werden durchgesehen"), "status while scanning");
-        M3_CHECK_STARTS(3864, line, QStringLiteral("4.9 GB · "), "amount looked through");
+        M3_CHECK_STARTS(3864, line, loc(c.lang, "4.9 GB · ", "4,9 GB · "), "amount looked through");
         M3_CHECK(3865, line.endsWith(loc(c.lang, " files so far", " Dateien bisher")), "number of files looked through");
         M3_CHECK(3866, !line.contains(QLatin1Char('%')), "no percentage while scanning");
         M3_CHECK_EQ(3867, headline, loc(c.lang, "Docs: backing up · looking through files", "Docs: sichert · Dateien werden durchgesehen"), "headline while scanning");
         M3_CHECK(3868, bar->property("indeterminate").toBool(), "bar must have no end point while scanning");
         M3_CHECK(3869, role_value(bm, 0, "activeScanning").toBool(), "activeScanning role");
     } else {
-        M3_CHECK_EQ(3870, status, loc(c.lang, "Backing up · 25%", "Sichert · 25%"), "status after the scan");
-        M3_CHECK_EQ(3871, line, loc(c.lang, "25% · 1.0 MB of 4.2 MB · about 30 s left", "25% · 1.0 MB von 4.2 MB · noch etwa 30 s"), "percentage, amount and time left");
-        M3_CHECK_EQ(3872, headline, loc(c.lang, "Docs: backing up · 25%", "Docs: sichert · 25%"), "headline after the scan");
+        // German puts a no-break space before the percent sign, English none.
+        M3_CHECK_EQ(3870, status, loc(c.lang, "Backing up · 25%", "Sichert · 25\u00a0%"), "status after the scan");
+        M3_CHECK_EQ(3871, line, loc(c.lang, "25% · 1.0 MB of 4.2 MB · about 30 s left", "25\u00a0% · 1,0 MB von 4,2 MB · noch etwa 30 s"), "percentage, amount and time left");
+        M3_CHECK_EQ(3872, headline, loc(c.lang, "Docs: backing up · 25%", "Docs: sichert · 25\u00a0%"), "headline after the scan");
         M3_CHECK(3873, !bar->property("indeterminate").toBool(), "bar must have an end point after the scan");
         M3_CHECK(3874, !role_value(bm, 0, "activeScanning").toBool(), "activeScanning role");
     }

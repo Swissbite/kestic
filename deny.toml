@@ -22,6 +22,8 @@ allow = [
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    # libbzip2 licence (BSD-style, GPL-compatible), from libbz2-rs-sys through bzip2
+    "bzip2-1.0.6",
     "GPL-3.0-or-later",
     "ISC",
     "MIT",

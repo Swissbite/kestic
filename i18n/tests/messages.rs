@@ -4,13 +4,13 @@
 //! Tests of the code → msgid mapping (`kestic_i18n::messages`).
 
 use kestic_i18n::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RunKindCode, RunProgressPhase,
-    ServiceErrorCode, SkipReason, SourceStatus,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
+    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticStatusCode, RunKindCode,
+    RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
-    connection_test_text, overall_headline, overall_subtitle, restic_status_text, rounded_percent,
+    connection_test_text, overall_headline, overall_subtitle, rounded_percent,
 };
 
 /// `unknown` depends on exit code and warning; all other kinds ignore both
@@ -94,10 +94,6 @@ fn restic_blocking_and_connection_texts() {
             })
             .english(),
         "restic 0.17.3 is too old; Kestic needs at least 0.18.0"
-    );
-    assert_eq!(
-        restic_status_text(None, Some("0.18.0"), &ResticStatusParams::default()),
-        UiText::Raw("restic 0.18.0".to_string())
     );
     assert_eq!(
         connection_test_text(false, Some(ConnectionTestCode::DuplicateLocation), "NAS"),
@@ -256,6 +252,11 @@ fn every_error_kind_maps_to_its_msgid() {
             E::ResticUnavailable,
             Some("restic is unavailable or too old."),
         ),
+        (E::HostKeyUnknown, Some("Unknown server")),
+        (
+            E::HostKeyChanged,
+            Some("The server identifies itself differently than before"),
+        ),
         (
             E::PathNotInSnapshot,
             Some("The chosen folder does not exist in the snapshot"),
@@ -361,7 +362,7 @@ fn every_source_blocked_and_skip_code_maps_to_its_msgid() {
 }
 
 #[test]
-fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
+fn every_restic_blocking_and_action_code_maps_to_its_msgid() {
     use ResticStatusCode as R;
     let restic = [
         (R::NotFound, Some("restic not found; at least %1 required")),
@@ -396,6 +397,18 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
     ];
     assert_table(&BlockingKind::ALL, &blocking, |k| msg(k.message(None)));
 
+    use RecoveryAction as A;
+    let actions = [
+        (A::UpdateStoredPassword, Some("Update Saved Password…")),
+        (A::AddToExcludes, Some("Add to Exclude Rules…")),
+        (A::CheckResticSource, Some("Configure restic Source…")),
+        (A::UnlockRepository, Some("Release Lock…")),
+    ];
+    assert_table(&A::ALL, &actions, |a| msg(a.label_message()));
+}
+
+#[test]
+fn every_connection_test_and_note_code_maps_to_its_msgid() {
     use ConnectionTestCode as C;
     let connection = [
         (C::InvalidInput, None),
@@ -425,21 +438,101 @@ fn every_restic_blocking_connection_and_action_code_maps_to_its_msgid() {
             Some("restic is unavailable or too old."),
         ),
         (C::WrongPassword, Some("Saved password does not match")),
-        (C::AuthFailed, Some("Login to the destination failed")),
+        (
+            C::AuthFailed,
+            Some("The destination rejected the login. Check the access data and test again."),
+        ),
         (C::RepositoryMissing, Some("Repository is missing")),
         (C::CommandFailed, None),
         (C::DaemonUnreachable, None),
+        (
+            C::NotALocalPath,
+            Some(
+                "'%1' is a network address, not a folder on this computer. restic cannot use it; choose a local or mounted folder.",
+            ),
+        ),
+        (
+            C::NotResponding,
+            Some("The server does not respond. Check the address and test again."),
+        ),
+        (
+            C::UnsupportedScheme,
+            Some("The repository URL must start with b2:, azure:, gs:, swift: or rclone:."),
+        ),
+        (
+            C::ReservedVariable,
+            Some(
+                "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY, LD_ or XDG_ are not allowed. Neither are PATH, HOME, TMPDIR, GCONV_PATH and the address of the session bus.",
+            ),
+        ),
+        (
+            C::ProgramMissing,
+            Some(
+                "This destination needs the program '%1', which is not installed. Install it with 'sudo apt install %1' and test again.",
+            ),
+        ),
+        (
+            C::UnknownHostKey,
+            Some("Unknown server. Compare its fingerprint and trust it to continue."),
+        ),
+        (
+            C::HostKeyChanged,
+            Some(
+                "The server identifies itself differently than before. This can be an attack. Ask the operator of the server. Old entry: %1",
+            ),
+        ),
+        (
+            C::SshKeyRejected,
+            Some(
+                "The server rejected the login with your SSH key. Copy your public key to the server with ssh-copy-id, or load the key into the ssh-agent. Then test again.",
+            ),
+        ),
+        (
+            C::JumpHostUnsupported,
+            Some("Servers behind a jump host are not supported yet."),
+        ),
+        (
+            C::OtherRepository,
+            Some("There is another backup destination at this address."),
+        ),
+        (
+            C::CredentialsRequired,
+            Some(
+                "Enter the access data again. Kestic uses saved access data only for the server they were entered for.",
+            ),
+        ),
+        (
+            C::SecretInUrl,
+            Some(
+                "The repository URL contains the secret parameter '%1'. Enter it as a secret variable instead.",
+            ),
+        ),
+        (
+            C::CredentialsNotEntered,
+            Some(
+                "Enter one of these variables in this destination: %1. Kestic uses no other access data.",
+            ),
+        ),
     ];
     assert_table(&C::ALL, &connection, |c| c.text("x"));
 
-    use RecoveryAction as A;
-    let actions = [
-        (A::UpdateStoredPassword, Some("Update Saved Password…")),
-        (A::AddToExcludes, Some("Add to Exclude Rules…")),
-        (A::CheckResticSource, Some("Configure restic Source…")),
-        (A::UnlockRepository, Some("Release Lock…")),
+    let notes = [
+        (
+            ConnectionNoteCode::CifsShare,
+            Some(
+                "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
+            ),
+        ),
+        (
+            ConnectionNoteCode::BucketMissing,
+            Some(
+                "Bucket '%1' does not exist yet. Kestic creates it when the destination is added.",
+            ),
+        ),
     ];
-    assert_table(&A::ALL, &actions, |a| msg(a.label_message()));
+    assert_table(&ConnectionNoteCode::ALL, &notes, |n| {
+        UiText::Message(n.message("x"))
+    });
 }
 
 #[test]
@@ -478,6 +571,14 @@ fn every_service_error_code_maps_to_its_msgid() {
         (
             S::DuplicateLocation,
             Some("This location is already used by another destination."),
+        ),
+        (
+            S::HostKeyUnknown,
+            Some("Unknown server: test the connection and trust the server first."),
+        ),
+        (
+            S::HostKeyChanged,
+            Some("The server identifies itself differently than before"),
         ),
         (
             S::PreviewRequired,

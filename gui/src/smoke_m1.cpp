@@ -4,6 +4,7 @@
 #include "src/smoke_helper.h"
 #include "src/smoke_common.h"
 #include <QColor>
+#include <QLocale>
 
 namespace kestic::smoke {
 
@@ -485,6 +486,9 @@ void install_m1_smoke_check(
     const QString out_path = QString::fromUtf8(screenshot_path.data(), static_cast<qsizetype>(screenshot_path.size()));
     const QString mode = QString::fromUtf8(layout_mode.data(), static_cast<qsizetype>(layout_mode.size()));
     const QString lang = QString::fromUtf8(expected_lang.data(), static_cast<qsizetype>(expected_lang.size()));
+    // Numbers and sizes follow the formats locale; the smoke stands in for a system whose formats
+    // match its language, because the test image has only the en_US glibc locale.
+    QLocale::setDefault(QLocale(lang));
     auto warnings = std::make_shared<QStringList>();
     finish_incubation_on_quit(engine);
 
@@ -647,6 +651,9 @@ void install_m1_smoke_check(
             } else if (scen.startsWith(QLatin1String("m4-"))) {
                 run_m4_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
                 return;
+            } else if (scen.startsWith(QLatin1String("m5-"))) {
+                run_m5_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
+                return;
             } else if (scen == QLatin1String("welcome")) {
                 QQuickItem* wv = child_item(window, "welcomeView");
                 SMOKE_CHECK_VISIBLE("M1", 20, wv, "welcomeView should be visible when unconfigured");
@@ -659,8 +666,8 @@ void install_m1_smoke_check(
                 SMOKE_CHECK("M1", 22, actual_kind == expected_kind,
                     QStringLiteral("expected blocking_kind='%1', got '%2'").arg(expected_kind, actual_kind));
                 if (expected_kind == QLatin1String("restic_unavailable")) {
-                    QObject* dl_action = child_object(window, "downloadResticDisabledAction");
-                    SMOKE_CHECK_DISABLED("M1", 23, dl_action, "Download restic action must be present and disabled in M1");
+                    QObject* dl_action = child_object(window, "downloadResticAction");
+                    SMOKE_CHECK_ENABLED("M1", 23, dl_action, "Download restic action must be offered while restic is unusable");
                 }
             } else if (scen == QLatin1String("backups-detail-show-cmd")) {
                 QObject* show_cmd = child_object(window, "backupDetailShowCommandAction");
@@ -720,8 +727,9 @@ void install_m1_smoke_check(
             } else if (scen == QLatin1String("settings")) {
                 auto* sw = window->findChild<QQuickWindow*>(QStringLiteral("settingsWindow"));
                 SMOKE_CHECK_VISIBLE("M1", 34, sw, "settingsWindow not visible");
-                QObject* upd_btn = child_object(sw, "updateResticButton");
-                SMOKE_CHECK_DISABLED("M1", 35, upd_btn, "Update Now button must be disabled in M1");
+                QObject* dl_btn = child_object(sw, "downloadResticButton");
+                SMOKE_CHECK_VISIBLE("M1", 35, dl_btn, "Download restic button must be offered while restic is unusable");
+                SMOKE_CHECK_ENABLED("M1", 157, dl_btn, "Download restic button must be enabled while restic is unusable");
                 screenshot_target = sw;
             } else if (scen == QLatin1String("destinations-empty")) {
                 scene_destinations_empty({window, backend, top_nav, warnings, out_path});

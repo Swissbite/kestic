@@ -21,7 +21,12 @@ use thiserror::Error;
 ///   «no rule set»).
 /// - `2`: every backup needs at least one active keep rule.
 /// - `3`: network run conditions only for network destinations.
-pub const CURRENT_CONFIG_VERSION: u32 = 3;
+/// - `4`: restic source «Automatic».
+pub const CURRENT_CONFIG_VERSION: u32 = 4;
+
+fn default_restic_release_check() -> bool {
+    true
+}
 
 fn default_overdue_threshold() -> u32 {
     DEFAULT_OVERDUE_THRESHOLD
@@ -55,6 +60,18 @@ struct ConfigHeader {
     config_version: Option<u32>,
 }
 
+/// `restic_provider` as Kestic wrote it before version 4: `app_managed` still named its binary.
+#[derive(Deserialize)]
+struct LegacyProviderHeader {
+    restic_provider: Option<LegacyProvider>,
+}
+
+#[derive(Deserialize)]
+struct LegacyProvider {
+    kind: String,
+    path: Option<PathBuf>,
+}
+
 /// Top-level persisted configuration (`$XDG_CONFIG_HOME/kestic/config.toml`).
 ///
 /// Must never store secret values — only Secret Service references.
@@ -63,6 +80,9 @@ pub struct AppConfig {
     pub config_version: u32,
     #[serde(default)]
     pub restic_provider: ResticProvider,
+    /// Look for new restic releases once a week; nothing reads it yet.
+    #[serde(default = "default_restic_release_check")]
+    pub restic_release_check: bool,
     #[serde(default)]
     pub expert_mode: bool,
     #[serde(default = "default_overdue_threshold")]
@@ -80,6 +100,7 @@ impl Default for AppConfig {
         Self {
             config_version: CURRENT_CONFIG_VERSION,
             restic_provider: ResticProvider::default(),
+            restic_release_check: true,
             expert_mode: false,
             default_overdue_threshold: DEFAULT_OVERDUE_THRESHOLD,
             notifications: NotificationSettings::default(),
@@ -221,18 +242,14 @@ pub fn backup_toml_snippet(backup: &crate::model::Backup) -> String {
     toml::to_string_pretty(backup).unwrap_or_default()
 }
 
-/// Kestic's data folder (`$XDG_DATA_HOME/kestic`, by default `~/.local/share/kestic`), where
-/// it keeps a restic it manages; `None` without `XDG_DATA_HOME` and `HOME`.
+/// Kestic's data folder from this process's environment (`$XDG_DATA_HOME/kestic`, by default
+/// `~/.local/share/kestic`; see [`crate::restic_install::kestic_data_dir`]), where it keeps the
+/// restic it manages and its `known_hosts`; `None` without an absolute `HOME`.
 pub fn default_data_dir() -> Option<PathBuf> {
-    let base = env::var_os("XDG_DATA_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("HOME")
-                .filter(|v| !v.is_empty())
-                .map(|home| PathBuf::from(home).join(".local").join("share"))
-        })?;
-    Some(base.join("kestic"))
+    crate::restic_install::kestic_data_dir(
+        env::var_os("HOME").as_deref(),
+        env::var_os("XDG_DATA_HOME").as_deref(),
+    )
 }
 
 /// Resolves the canonical configuration file path (`$XDG_CONFIG_HOME/kestic/config.toml`).
@@ -258,7 +275,25 @@ pub fn parse_config_str(raw: &str) -> Result<AppConfig, ConfigError> {
         });
     }
     let mut config: AppConfig = toml::from_str(raw)?;
-    migrate(&mut config);
+    let legacy_app_managed_path = if version < 4 {
+        toml::from_str::<LegacyProviderHeader>(raw)
+            .ok()
+            .and_then(|header| header.restic_provider)
+            .filter(|provider| provider.kind == "app_managed")
+            .and_then(|provider| provider.path)
+    } else {
+        None
+    };
+    // Only an old app-managed path needs Kestic's own place, which comes from the environment.
+    let own_app_managed = legacy_app_managed_path
+        .as_ref()
+        .and_then(|_| default_data_dir())
+        .map(|dir| crate::restic_install::app_managed_binary(&dir));
+    migrate(
+        &mut config,
+        legacy_app_managed_path,
+        own_app_managed.as_deref(),
+    );
     config.validate()?;
     Ok(config)
 }
@@ -266,7 +301,14 @@ pub fn parse_config_str(raw: &str) -> Result<AppConfig, ConfigError> {
 /// Upgrades an older configuration in memory to [`CURRENT_CONFIG_VERSION`].
 ///
 /// The next save writes the migrated file; the file on disk stays untouched until then.
-fn migrate(config: &mut AppConfig) {
+///
+/// `legacy_app_managed_path` is the binary a version-3 `app_managed` source named,
+/// `own_app_managed` Kestic's own place of it (unknown without a home folder).
+fn migrate(
+    config: &mut AppConfig,
+    legacy_app_managed_path: Option<PathBuf>,
+    own_app_managed: Option<&Path>,
+) {
     if config.config_version < 2 {
         // Version 1 never ran `forget`: an empty retention meant «keep every snapshot».
         // Keep that behaviour explicitly instead of silently applying a preset that
@@ -293,6 +335,55 @@ fn migrate(config: &mut AppConfig) {
         }
         config.config_version = 3;
     }
+    if config.config_version < 4 {
+        // «Automatic» did not exist before: nobody chose «System» over it, so «System» becomes
+        // the new default.
+        if config.restic_provider == ResticProvider::System {
+            config.restic_provider = ResticProvider::Automatic;
+        }
+        // «Managed by Kestic» now always means Kestic's own place; a binary elsewhere keeps
+        // running as a custom path.
+        // Without a home folder Kestic's own place is unknown, and a relative path names no
+        // place at all: the source then stays as it is.
+        if let Some(path) = legacy_app_managed_path
+            && path.is_absolute()
+            && config.restic_provider == ResticProvider::AppManaged
+            && let Some(own) = own_app_managed
+            && !same_place(&path, own)
+        {
+            config.restic_provider = ResticProvider::Custom { path };
+        }
+        config.config_version = 4;
+    }
+}
+
+/// Whether `a` and `b` name the same file: equal after removing `.`, `..` and repeated
+/// slashes, the same file through links, or the same name in the same folder through links (the
+/// file itself may be missing).
+fn same_place(a: &Path, b: &Path) -> bool {
+    let folder = |p: &Path| p.parent().and_then(|dir| fs::canonicalize(dir).ok());
+    lexically_normal(a) == lexically_normal(b)
+        || matches!(
+            (fs::canonicalize(a), fs::canonicalize(b)),
+            (Ok(x), Ok(y)) if x == y
+        )
+        || (a.file_name() == b.file_name() && folder(a).is_some() && folder(a) == folder(b))
+}
+
+/// `path` with `.` removed and `..` applied to the part before it, without asking the file
+/// system.
+fn lexically_normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Loads `config.toml` if it exists, returning `Ok(None)` if the file does not exist.
@@ -339,4 +430,62 @@ pub fn save_config(path: &Path, config: &AppConfig) -> Result<(), ConfigError> {
     }
     write_res?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v3_app_managed() -> AppConfig {
+        AppConfig {
+            config_version: 3,
+            restic_provider: ResticProvider::AppManaged,
+            ..AppConfig::default()
+        }
+    }
+
+    /// AC-M5-07-10 (Q5 on the halt issue): the own binary through a linked data folder stays
+    /// app-managed also when it is not installed; a relative legacy path stays app-managed; a
+    /// binary elsewhere becomes a custom path.
+    #[test]
+    fn ac_m5_07_10_legacy_app_managed_path_through_links_and_relative() {
+        let dir = tempfile::tempdir().expect("dir");
+        let real = dir.path().join("real");
+        fs::create_dir_all(real.join("kestic")).expect("data dir");
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        let own = real.join("kestic").join("restic");
+        let migrated = |legacy: &str| {
+            let mut config = v3_app_managed();
+            migrate(&mut config, Some(PathBuf::from(legacy)), Some(&own));
+            config.restic_provider
+        };
+
+        let through_link = link.join("kestic").join("restic");
+        assert!(!through_link.exists(), "no binary installed");
+        assert_eq!(
+            migrated(&through_link.to_string_lossy()),
+            ResticProvider::AppManaged,
+            "linked data folder, no binary"
+        );
+        assert_eq!(
+            migrated("kestic/restic"),
+            ResticProvider::AppManaged,
+            "relative legacy path"
+        );
+        assert_eq!(
+            migrated("/opt/kestic/restic"),
+            ResticProvider::Custom {
+                path: PathBuf::from("/opt/kestic/restic")
+            },
+            "elsewhere"
+        );
+        let mut config = v3_app_managed();
+        migrate(&mut config, Some(PathBuf::from("/opt/kestic/restic")), None);
+        assert_eq!(
+            config.restic_provider,
+            ResticProvider::AppManaged,
+            "own place unknown without a home folder"
+        );
+    }
 }

@@ -45,8 +45,9 @@ maintainer = "David Däster <david@daester.net>"
 copyright = "2026 David Däster <david@daester.net>"
 license-file = ["../LICENSES/GPL-3.0-or-later.txt", "0"]
 extended-description = "Kestic is a native KDE Plasma desktop application that makes restic backups easy while preserving full restic configuration power."
-depends = "$auto, qml6-module-org-kde-kirigami (>= 6.24), qml6-module-org-kde-kirigamiaddons-datetime (>= 1.11), qml6-module-org-kde-kirigamiaddons-tableview (>= 1.11)"
+depends = "$auto, gpgv, qml6-module-org-kde-kirigami (>= 6.24), qml6-module-org-kde-kirigamiaddons-datetime (>= 1.11), qml6-module-org-kde-kirigamiaddons-tableview (>= 1.11)"
 recommends = "restic (>= 0.18.0)"
+suggests = "rclone, openssh-client"
 assets = [
     ["target/release/kestic", "usr/bin/kestic", "755"],
     ["../packaging/net.daester.Kestic.desktop", "usr/share/applications/net.daester.Kestic.desktop", "644"],

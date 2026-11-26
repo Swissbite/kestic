@@ -19,6 +19,7 @@ use kestic_core::query_list::QueryLimits;
 use kestic_core::restic::ResticRuntime;
 use kestic_core::scheduler::TimezoneSpec;
 use kestic_core::secrets::{SecretError, SecretStore, SecretValue};
+use kestic_daemon::dbus_api::BackendSecrets;
 use kestic_daemon::dbus_api::{
     BackupSummaryDto, DaemonStateDto, DestinationSummaryDto, KESTIC_OBJECT_PATH, KesticClient,
 };
@@ -97,6 +98,11 @@ pub struct M3DaemonOpts<'a> {
     pub enable_portal_inhibit: bool,
     /// Skip the StatusNotifierWatcher check at startup.
     pub assume_sni_available: bool,
+    /// `PATH` the daemon searches for `ssh` and `rclone`; `None` uses the test's own.
+    pub program_search_path: Option<std::ffi::OsString>,
+    /// Sets `restic_bin` as the custom restic source after the start (default); off keeps the
+    /// source of an existing `config.toml`.
+    pub set_restic_provider: bool,
     /// Memory limits for the lists of snapshot queries.
     pub query_limits: QueryLimits,
 }
@@ -122,6 +128,8 @@ impl<'a> M3DaemonOpts<'a> {
             enable_job_view: false,
             enable_portal_inhibit: false,
             assume_sni_available: true,
+            program_search_path: None,
+            set_restic_provider: true,
             query_limits: QueryLimits::default(),
         }
     }
@@ -194,6 +202,7 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
         },
         enable_system_monitors: opts.enable_monitors,
         enable_scheduler: opts.enable_scheduler,
+        program_search_path: opts.program_search_path,
         query_limits: opts.query_limits,
         ..Default::default()
     };
@@ -203,12 +212,14 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
 
     let client =
         KesticClient::connect(opts.bus_name, KESTIC_OBJECT_PATH).expect("connect KesticClient");
-    let prov = client
-        .set_restic_provider(&ResticProvider::Custom {
-            path: opts.restic_bin.to_path_buf(),
-        })
-        .expect("set restic provider");
-    assert!(prov.valid, "restic provider must be valid: {prov:?}");
+    if opts.set_restic_provider {
+        let prov = client
+            .set_restic_provider(&ResticProvider::Custom {
+                path: opts.restic_bin.to_path_buf(),
+            })
+            .expect("set restic provider");
+        assert!(prov.valid, "restic provider must be valid: {prov:?}");
+    }
     M3Daemon {
         client,
         state_dir,
@@ -583,7 +594,7 @@ pub fn seed_local_destination(
         &dest,
         DestinationSetupMode::ConnectExisting,
         &SecretValue::from_str_secret(&repo.password),
-        None,
+        &kestic_core::backend_credentials::BackendCredentials::none(),
         &runtime,
     )
     .expect("connect repo");
@@ -702,7 +713,7 @@ pub fn add_local_destination(
     .expect("dest");
     configure(&mut dest);
     client
-        .add_destination(&dest, "connect", &repo.password, "")
+        .add_destination(&dest, "connect", &repo.password, &BackendSecrets::default())
         .expect("add destination");
     (dest, repo.password)
 }
@@ -715,7 +726,7 @@ pub fn connect_local_repo(client: &KesticClient, restic: &Path, dest: &Destinati
     };
     let repo = copy_template_repo(restic, path);
     client
-        .add_destination(dest, "connect", &repo.password, "")
+        .add_destination(dest, "connect", &repo.password, &BackendSecrets::default())
         .expect("add local destination");
     repo.password
 }
@@ -730,9 +741,13 @@ pub fn connect_rest_repo(
     dest: &Destination,
 ) -> String {
     let repo = copy_template_repo(restic, &server.repo_dir());
-    let backend_password = server.auth().map_or("", |(_, password)| password);
+    let backend = server
+        .auth()
+        .map_or_else(BackendSecrets::default, |(_, password)| {
+            BackendSecrets::rest(password)
+        });
     client
-        .add_destination(dest, "connect", &repo.password, backend_password)
+        .add_destination(dest, "connect", &repo.password, &backend)
         .expect("add REST destination");
     repo.password
 }

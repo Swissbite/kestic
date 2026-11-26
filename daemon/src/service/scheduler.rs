@@ -8,15 +8,17 @@ use super::backup_runner::{start_scheduled_backup_async, upsert_pending_run_entr
 use super::error::KesticServiceErr;
 use super::error::parse_backup_id;
 use super::maintenance::run_scheduled_maintenance_async;
-use super::run_errors::run_blocks_schedule;
+use super::run_errors::{destination_transport, error_run_kind, run_blocks_schedule};
 use super::state::DaemonCore;
 use crate::dbus_server::emit_status_changed;
 use crate::i18n::{i18n, i18np};
 use crate::notifications::{KesticEvent, send_configured_notification};
 use kestic_core::history::PauseState;
 use kestic_core::model::{
-    Backup, BackupId, Destination, DestinationId, NotificationSettings, RunStatus, Schedule,
+    Backup, BackupId, Destination, DestinationId, NotificationSettings, RunKind, RunStatus,
+    Schedule,
 };
+use kestic_core::restic::Transport;
 use kestic_core::scheduler::{
     BackupScheduleEvalInput, BackupScheduleEvaluation, DestinationMaintenanceEvalInput,
     DestinationMaintenanceNeed, DestinationTickAction, PauseDuration, backup_slots_between,
@@ -25,6 +27,7 @@ use kestic_core::scheduler::{
     maintenance_slots_between, plan_destination_actions, validate_pause_duration,
 };
 use kestic_core::sync::LockUnpoisoned;
+use kestic_i18n::codes::ErrorKind;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -378,7 +381,12 @@ fn evaluate_single_backup_tick(
             r.is_backup_run_of(&backup.id)
                 && !matches!(r.status, RunStatus::Pending | RunStatus::Running)
         })
-        .is_some_and(run_blocks_schedule);
+        .is_some_and(|r| {
+            run_blocks_schedule(
+                r,
+                destination_transport(&guard.config, &backup.destination_id),
+            )
+        });
     let source_ok = guard
         .source_availability
         .get(&backup.id)
@@ -497,7 +505,20 @@ fn evaluate_scheduled_maintenance_tick(
         .dest_availability
         .get(&dest.id)
         .is_none_or(|d| d.reachable);
-    evaluate_destination_maintenance(
+    // A maintenance run stopped at an unknown or changed SFTP host key is a permanent error:
+    // scheduled maintenance waits until a run ends without it.
+    let stopped_at_host_key = guard
+        .runs_cache
+        .iter()
+        .find(|r| r.destination_id == dest.id && matches!(r.kind, RunKind::Maintenance))
+        .is_some_and(|r| {
+            r.status == RunStatus::Error
+                && matches!(
+                    error_run_kind(r, Transport::of(&dest.kind)),
+                    ErrorKind::HostKeyUnknown | ErrorKind::HostKeyChanged
+                )
+        });
+    let mut need = evaluate_destination_maintenance(
         &DestinationMaintenanceEvalInput {
             destination: dest,
             state: &ds,
@@ -509,7 +530,11 @@ fn evaluate_scheduled_maintenance_tick(
         &guard.system_env,
         now,
         &guard.timezone,
-    )
+    );
+    if stopped_at_host_key {
+        need.due_now = false;
+    }
+    need
 }
 
 /// Removes a destination from [`DaemonCore::scheduled_dispatch`] when its worker finishes.

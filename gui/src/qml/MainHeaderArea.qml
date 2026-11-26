@@ -53,12 +53,13 @@ ColumnLayout {
                 onTriggered: headerArea.appBackend.checkAvailability(true)
             },
             Kirigami.Action {
-                id: downloadResticDisabledAction
-                objectName: "downloadResticDisabledAction"
+                id: downloadResticAction
+                objectName: "downloadResticAction"
                 visible: headerArea.appBackend.blocking_kind === "restic_unavailable"
+                icon.name: "download"
                 text: i18n("Download restic…")
-                enabled: false
-                tooltip: i18n("Automatic restic download will be added in a future release.")
+                enabled: headerArea.appBackend.restic_offer_download && headerArea.appBackend.restic_offer_enabled
+                onTriggered: headerArea.rootWindow.showResticDownload()
             },
             Kirigami.Action {
                 id: openResticSettingsAction

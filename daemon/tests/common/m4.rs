@@ -58,8 +58,8 @@ pub fn wait_query(
     }
 }
 
-/// A snapshot to write with restic: tag (empty: none), time (restic format «2026-11-15
-/// 12:00:00») and host.
+/// A snapshot to write with restic: tag (empty: none), time in UTC (restic format «2026-11-15
+/// 12:00:00», which restic reads in the time zone of `TZ`) and host.
 pub struct RawSnapshot<'a> {
     pub tag: &'a str,
     pub time: &'a str,
@@ -95,6 +95,7 @@ pub fn write_snapshot(
         .args(["backup", "--no-cache", "--json"])
         .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
+        .env("TZ", "UTC")
         .arg(&src)
         .output()
         .expect("run restic backup");
@@ -119,6 +120,7 @@ pub fn backup_dir(
         .args(["backup", "--no-cache", "--json"])
         .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
+        .env("TZ", "UTC")
         .arg(src)
         .output()
         .expect("run restic backup");
@@ -247,6 +249,7 @@ pub fn backup_stdin(
         .args(["backup", "--no-cache", "--json"])
         .args(tag_args(snap.tag))
         .args(["--time", snap.time, "--host", snap.host])
+        .env("TZ", "UTC")
         .args(["--stdin", "--stdin-filename", path])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

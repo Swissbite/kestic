@@ -100,7 +100,7 @@ Kirigami.ScrollablePage {
 
                 RowIcon {
                     iconSize: Kirigami.Units.iconSizes.medium
-                    source: row.kindName === "rest" ? "network-server" : "folder"
+                    source: row.kindName === "rest" ? "network-server" : (row.kindName === "s3" || row.kindName === "generic") ? "folder-cloud" : "folder"
                     onSelection: row.highlighted
                     backdropObjectName: "destinationRowIconBackdrop"
                 }

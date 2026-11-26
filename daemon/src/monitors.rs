@@ -61,7 +61,7 @@ pub enum SystemMonitorEvent {
     PrepareForSleep(bool),
 }
 
-async fn connect_target_bus(cfg: &MonitorBusConfig) -> zbus::Result<Connection> {
+pub(crate) async fn connect_target_bus(cfg: &MonitorBusConfig) -> zbus::Result<Connection> {
     let res = if cfg.use_session_bus {
         Connection::session().await
     } else {
@@ -80,7 +80,7 @@ async fn connect_target_bus(cfg: &MonitorBusConfig) -> zbus::Result<Connection> 
     res
 }
 
-async fn name_has_owner(conn: &Connection, dest: &str) -> bool {
+pub(crate) async fn name_has_owner(conn: &Connection, dest: &str) -> bool {
     let dbus = match zbus::fdo::DBusProxy::new(conn).await {
         Ok(p) => p,
         Err(err) => {

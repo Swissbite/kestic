@@ -54,7 +54,9 @@ Regeln: Übernommene Backups behalten ihre IDs; die Quelle wird ggf. auf den Hei
 
 ### 8.7 SFTP: unbekannter Host-Schlüssel (P24)
 
-`PromptDialog` «Diesem Server vertrauen?»: Server, Schlüsseltyp, Fingerprint (Monospace), «Vergleichen Sie den Fingerprint mit dem des Servers. Danach wird er in ~/.ssh/known_hosts gespeichert.» `[Abbrechen]` `[Server vertrauen]`.
+`PromptDialog` «Diesem Server vertrauen?»: Server, Schlüsseltyp, Fingerprint (SHA256, Monospace), «Vergleichen Sie den Fingerprint mit dem des Servers. Danach merkt sich Kestic den Server.» `[Abbrechen]` `[Server vertrauen]`. Kestic speichert den Schlüssel nur in seiner eigenen Datei (`~/.local/share/kestic/known_hosts`), nie in `~/.ssh/known_hosts`.
+
+Hat sich der Schlüssel eines bekannten Servers geändert: kein Dialog, sondern `InlineMessage` (Error) «Der Server meldet sich anders als bisher. Das kann ein Angriff sein. Fragen Sie den Betreiber des Servers.» mit der Datei, die den alten Eintrag enthält, als Detail. Kestic bietet kein Übernehmen an (AC-M5-01-7).
 
 ### 8.8 Backup einem anderen Ziel zuweisen (FR-56, M1-S22)
 
@@ -86,15 +88,15 @@ Formular wie im Assistenten Schritt 3 (§9.1), je Ziel-Typ. `[Speichern]` (= `Up
 | S3-kompatibel | Name, **Endpoint**, **Bucket**, Pfad, Region, **Access-Key**, **Secret-Key** | Bucket-Name gültig |
 | Generisch | Name, **Repository-URL** (`b2:`, `azure:`, `gs:`, `swift:`, `rclone:`), Umgebungsvariablen (Name, Wert, Schalter «Geheim», P22) | bekanntes Schema; geheime Werte nur im Passwortspeicher |
 
-Das gespeicherte Repo-Passwort wird hier nur geändert, wenn Adresse oder Pfad geändert wurden und am neuen Ort ein anderes Passwort gilt (siehe unten); ein abgelehntes Passwort bei unveränderter Adresse wird über §8.4 aktualisiert (FR-57).
+Das gespeicherte Repo-Passwort wird hier nicht geändert; ein abgelehntes Passwort wird über §8.4 aktualisiert (FR-57).
 
-- Prüfung: erreichbar, Zugangsdaten gültig, Repo-Passwort passt; danach Abgleich der Repo-ID (`restic cat config`, Feld `id`) und der Snapshots (FR-56, P42, AC-M5-05-5 bis -7):
-  1. **Gleiche Repo-ID** (neue URL, neuer Pfad, kopiertes Verzeichnis): Speichern ohne Rückfrage, alles läuft weiter.
-  2. **Neue Repo-ID, alle bekannten Snapshots vorhanden** (Abgleich über das Snapshot-Feld `original`, z. B. nach `restic copy`): `InlineMessage` (Information) «Umgezogenes Repository erkannt: 46 von 46 Snapshots vorhanden»; `[Speichern]` erst nach Bestätigung (`PromptDialog` «Umgezogenes Repository übernehmen?» – «Die Historie bleibt erhalten. Danach muss ein neues Wiederherstellungs-Kit erzeugt werden.»). Anschliessend startet der Ablauf «Kit erzeugen» (§8.2); bis dahin gilt der Ziel-Zustand «Kit fehlt».
-  3. **Neue Repo-ID, Snapshots fehlen ganz oder teilweise:** `InlineMessage` (Error) «Unter dieser Adresse liegt ein anderes Backup-Ziel.», bei Teilbestand mit Zahl («40 von 46 Snapshots vorhanden»). `[Speichern]` bleibt gesperrt; Aktion `[Als neues Ziel hinzufügen…]` öffnet den Assistenten «Ziel hinzufügen» mit den eingegebenen Werten vorausgefüllt.
-- **Anderes Passwort am neuen Ort:** Wurden Adresse oder Pfad geändert und scheitert die Prüfung nur am Repo-Passwort (z. B. nach `restic copy` in ein Repo mit eigenem Passwort), erscheint das Feld «Passwort des neuen Repositorys»; damit wird erneut geprüft und danach Fall 2 oder 3 bestimmt (die Repo-ID ist erst mit gültigem Passwort lesbar). Bei unveränderter Adresse erscheint statt des Felds die Zeile «Zuerst gespeichertes Passwort aktualisieren» mit Link auf §8.4.
+- Prüfung: erreichbar, Zugangsdaten gültig, Repo-Passwort passt; danach Vergleich der Repo-ID (`restic cat config`, Feld `id`) mit der gespeicherten ID des Ziels (FR-56, P42, AC-M5-05-5, -05-7):
+  1. **Gleiche Repo-ID** (neue URL, neuer Host oder Port, neuer Pfad, verschobenes oder kopiertes Verzeichnis): Speichern ohne Rückfrage, alles läuft weiter.
+  2. **Andere Repo-ID:** `InlineMessage` (Error) «Unter dieser Adresse liegt ein anderes Backup-Ziel.». `[Speichern]` bleibt gesperrt; Aktion `[Als neues Ziel hinzufügen…]` öffnet den Assistenten «Ziel hinzufügen» mit den eingegebenen Werten vorausgefüllt.
+
+  Ein Repo, in das die Snapshots per `restic copy` übertragen wurden, hat eine neue ID und gilt im MVP als anderes Backup-Ziel; das Übernehmen eines solchen Repos kommt nach dem MVP mit FR-14 ([nach-mvp.md](../milestones/nach-mvp.md)).
+- **Repo-Passwort passt am neuen Ort nicht:** Meldung «Das Repo-Passwort passt nicht.» Bei unveränderter Adresse dazu die Zeile «Zuerst gespeichertes Passwort aktualisieren» mit Link auf §8.4; bei geänderter Adresse ist es ein anderes Repo oder die falsche Adresse.
 - Geänderte Secrets (Passwörter, Keys) werden erst nach erfolgreicher Prüfung im Passwortspeicher ersetzt.
-- Neues Kit nach Fall 2 ist Pflicht (alte Schlüssel gelten im neuen Repo nicht): Der Ablauf «Kit erzeugen» startet direkt; bricht der Benutzer ab, bleibt der Ziel-Zustand «Kit fehlt» mit Tab-Emblem und Hinweis in der Übersicht; dieser Hinweis hat kein «Später» und kein «×» ([requirements.md](../requirements.md) FR-56/P42, AC-M5-09-6).
 - SFTP mit neuem Host → Host-Schlüssel-Dialog (§8.7).
 - Ohne Verbindung (z. B. Laufwerk nicht eingesteckt) lässt sich nur der Anzeigename ändern; Hinweis «Zum Ändern der Verbindung das Ziel erreichbar machen».
 - **Eindeutigkeit pro Speicherort:** Jede normalisierte Repository-Adresse (lokaler Pfad inkl. Symlink-/`.`/`..`-Auflösung bzw. REST-URL) darf höchstens von **einem** angelegten Ziel verwendet werden; beim Anlegen, Prüfen oder Bearbeiten wird eine Doppelbelegung unter Verweis auf das bestehende Ziel abgewiesen.
@@ -143,4 +145,4 @@ M1 baut die Assistenten bereits in reduzierter Form, damit Struktur und Texte ni
 - **Ziel hinzufügen (M1):** Ziel-Typ (nur Lokal und REST) → Ziel-Details mit Prüfung (Felder §8.9) → Backup-Passwort (bei neuem Repo; bei «Vorhandenes verbinden» entfällt dieser Schritt). Kit (4b) kommt mit M6.
 - **Erstes Backup anlegen / Neues Backup ohne vorhandenes Ziel (M1):** Ein durchgängiger linearer Assistent ohne verschachtelten Unter-Assistenten: Quelle (§8.10) → Ziel-Typ → Ziel-Details mit Prüfung → Backup-Passwort (bei neuem Repo) → Zusammenfassung mit Ausschluss-Textfeld in restic-Syntax; Ziel und Backup werden erst beim Abschluss angelegt.
 - **Neues Backup mit vorhandenem Ziel (M1):** Quelle (§8.10) → Ziel wählen (oder «Neues Ziel hinzufügen…» auf demselben `layers`-Stapel) → Zusammenfassung mit Ausschluss-Textfeld in restic-Syntax (wie Expertenabschnitt §7.3, ohne Linter); einfacher Editor, Zeitplan und Aufbewahrung kommen mit M2/M3, bis dahin Defaults.
-- Bearbeiten in M1: Name (Umbenennen-Dialog), Quelle (§8.10), Ausschluss-Textfeld, Verbindung (§8.9 für Lokal und REST; Repo-ID-Abgleich mit Fall 1–3 ab M5).
+- Bearbeiten in M1: Name (Umbenennen-Dialog), Quelle (§8.10), Ausschluss-Textfeld, Verbindung (§8.9 für Lokal und REST; Repo-ID-Abgleich ab M5).

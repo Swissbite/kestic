@@ -660,13 +660,24 @@ Kirigami.ApplicationWindow {
     }
 
     function openAddDestinationWizard(callback, initialSetupMode) {
+        pushAddDestinationWizard(callback, initialSetupMode, null);
+    }
+
+    // Opens «Add Destination» at its details with `prefill` (`DestinationDraft.prefillData()` of
+    // an edited connection).
+    function openAddDestinationWizardWith(prefill) {
+        pushAddDestinationWizard(null, prefill.setupMode, prefill);
+    }
+
+    function pushAddDestinationWizard(callback, initialSetupMode, prefill) {
         var topLayer = wizardPageStack.currentItem;
         if (topLayer && topLayer.objectName === "addDestinationWizard") {
             return;
         }
         wizardPageStack.push(addDestinationWizardComponent.createObject(wizardPageStack, {
             destinationCreatedCallback: callback || null,
-            setupMode: initialSetupMode || "init"
+            setupMode: initialSetupMode || "init",
+            prefill: prefill
         }));
     }
 
@@ -704,6 +715,10 @@ Kirigami.ApplicationWindow {
 
     function openSettingsWindow() {
         settingsWindow.openWindow();
+    }
+
+    function showResticDownload() {
+        settingsWindow.showResticDownload();
     }
 
     function resizeToMinWidthForSmoke() {

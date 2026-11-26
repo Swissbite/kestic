@@ -3,10 +3,10 @@
 
 //! Restic command construction, tolerant `--json` stream parsing, execution, and error mapping.
 
+use crate::backend_credentials::{BackendCredentials, BackendSecretSlot};
+use crate::child_guard::ChildGuard;
 use crate::clock::Clock;
-use crate::model::{
-    CommandRecord, Destination, DestinationId, DestinationKind, RunStats, RunStatus,
-};
+use crate::model::{CommandRecord, Destination, DestinationId, RunStats, RunStatus};
 use crate::provider::ResolvedRestic;
 use crate::secrets::{SecretError, SecretStore, SecretValue};
 use crate::sync::LockUnpoisoned;
@@ -15,7 +15,7 @@ use kestic_i18n::messages::{Message, completed_message, dns_failed_message};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -23,7 +23,7 @@ use thiserror::Error;
 
 /// Secret kind selector passed to `kestic secret get <dest-id> [kind]`.
 pub const SECRET_KIND_REPO: &str = "repo";
-pub const SECRET_KIND_REST: &str = "rest";
+pub use crate::backend_credentials::SECRET_KIND_REST;
 
 /// Shared runtime dependencies required to execute `restic` commands cleanly.
 #[derive(Clone, Copy)]
@@ -69,7 +69,9 @@ pub use kestic_i18n::codes::RecoveryAction;
 pub enum ResticFailureKind {
     None,
     Cancelled,
-    IncompleteSnapshot { unreadable_items: Vec<String> },
+    IncompleteSnapshot {
+        unreadable_items: Vec<String>,
+    },
     DestinationUnreachable,
     DnsResolutionFailed,
     BackendAuthFailed,
@@ -77,7 +79,13 @@ pub enum ResticFailureKind {
     RepositoryMissing,
     RepositoryLocked,
     WrongPassword,
-    Unknown { exit_code: i32 },
+    /// SFTP: the server's host key is not in any `known_hosts` file.
+    HostKeyUnknown,
+    /// SFTP: a `known_hosts` file has another host key of the same type for the server.
+    HostKeyChanged,
+    Unknown {
+        exit_code: i32,
+    },
 }
 
 impl ResticFailureKind {
@@ -88,7 +96,11 @@ impl ResticFailureKind {
     pub fn is_permanent(&self) -> bool {
         matches!(
             self,
-            Self::WrongPassword | Self::RepositoryMissing | Self::BackendAuthFailed
+            Self::WrongPassword
+                | Self::RepositoryMissing
+                | Self::BackendAuthFailed
+                | Self::HostKeyUnknown
+                | Self::HostKeyChanged
         )
     }
 
@@ -105,6 +117,8 @@ impl ResticFailureKind {
                 ErrorKind::DestinationUnreachable
             }
             Self::BackendAuthFailed => ErrorKind::AuthFailed,
+            Self::HostKeyUnknown => ErrorKind::HostKeyUnknown,
+            Self::HostKeyChanged => ErrorKind::HostKeyChanged,
             Self::IncompleteSnapshot { .. } => ErrorKind::IncompleteSnapshot,
             Self::Cancelled => ErrorKind::Cancelled,
             Self::None | Self::GenericFailure | Self::Unknown { .. } => ErrorKind::Unknown,
@@ -264,8 +278,46 @@ pub fn parse_json_line(line: &str) -> Result<ResticStreamEvent, serde_json::Erro
     }
 }
 
-/// Maps restic exit code and error output into [`ErrorPresentation`].
+/// How restic reaches a destination, as far as it decides what its error output can mean: only
+/// an SFTP destination has lines of ssh and Kestic's own host key check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    Sftp,
+    Other,
+}
+
+impl Transport {
+    pub fn of(kind: &crate::model::DestinationKind) -> Self {
+        if matches!(kind, crate::model::DestinationKind::Sftp { .. }) {
+            Self::Sftp
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// Maps restic exit code and error output of a destination that is not SFTP into
+/// [`ErrorPresentation`].
 pub fn classify_exit(
+    exit_code: i32,
+    exit_error_msg: Option<&str>,
+    unreadable_items: Vec<String>,
+    raw_stderr: &str,
+) -> ErrorPresentation {
+    classify_exit_for(
+        Transport::Other,
+        exit_code,
+        exit_error_msg,
+        unreadable_items,
+        raw_stderr,
+    )
+}
+
+/// Maps restic exit code and error output into [`ErrorPresentation`]. Lines of ssh and Kestic's
+/// host key markers count only for [`Transport::Sftp`]: elsewhere they can only come from file
+/// names or server texts.
+pub fn classify_exit_for(
+    transport: Transport,
     exit_code: i32,
     exit_error_msg: Option<&str>,
     unreadable_items: Vec<String>,
@@ -280,7 +332,45 @@ pub fn classify_exit(
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         });
 
+    // restic only says the SFTP session ended; the reason is in the line of ssh.
+    let sftp_failure = exit_code == 1 && transport == Transport::Sftp;
+    // ssh's lines name a failure only when the SFTP session never started: after a login the
+    // server's banner, shown with the same prefix, can say anything.
+    // restic's own message, not its error lines, which carry file names: without the JSON
+    // message it is restic's last line, after any line a file name with line breaks may have
+    // added. ssh's lines are passed on by another thread of restic and may still follow it.
+    let session_not_started = exit_error_msg.map_or_else(
+        || {
+            raw_stderr
+                .lines()
+                .rfind(|l| !l.trim().is_empty() && !l.starts_with("subprocess ssh: "))
+                .is_some_and(|l| l.starts_with("Fatal: ") && l.contains(SFTP_SESSION_NOT_STARTED))
+        },
+        |msg| msg.contains(SFTP_SESSION_NOT_STARTED),
+    );
+    let ssh_failure =
+        crate::sftp::ssh_failure(raw_stderr).filter(|_| sftp_failure && session_not_started);
+    let raw_detail = ssh_failure
+        .as_ref()
+        .map_or(raw_detail, |failure| Some(failure.line().to_string()));
     let detail_lower = raw_detail.as_deref().unwrap_or_default().to_lowercase();
+    let ssh_kind = ssh_failure.map(|failure| match failure {
+        crate::sftp::SshFailure::KeyRejected(_) => ResticFailureKind::BackendAuthFailed,
+        crate::sftp::SshFailure::HostKeyVerificationFailed(_) => ResticFailureKind::HostKeyUnknown,
+        crate::sftp::SshFailure::HostKeyChanged(_) => ResticFailureKind::HostKeyChanged,
+    });
+    if let Some(kind) = ssh_kind.or_else(|| {
+        sftp_failure
+            .then(|| host_key_failure(&detail_lower))
+            .flatten()
+    }) {
+        return ErrorPresentation {
+            status: RunStatus::Error,
+            kind,
+            action: None,
+            raw_detail,
+        };
+    }
 
     match exit_code {
         0 => ErrorPresentation {
@@ -325,11 +415,8 @@ pub fn classify_exit(
                     action: None,
                     raw_detail,
                 }
-            } else if detail_lower.contains("401")
-                || detail_lower.contains("403")
-                || detail_lower.contains("unauthorized")
-                || detail_lower.contains("forbidden")
-                || detail_lower.contains("authentication")
+            } else if is_backend_auth_failure(&detail_lower)
+                || transport == Transport::Sftp && ssh_rejected_key(&detail_lower)
             {
                 ErrorPresentation {
                     status: RunStatus::Error,
@@ -349,6 +436,10 @@ pub fn classify_exit(
                 || detail_lower.contains("timed out")
                 || detail_lower.contains("handshake timeout")
                 || detail_lower.contains("context deadline exceeded")
+                // ssh ended before the SFTP session started and named no login or host key
+                // failure: the server was not reached.
+                || transport == Transport::Sftp
+                    && detail_lower.contains(SFTP_SESSION_NOT_STARTED)
             {
                 ErrorPresentation {
                     status: RunStatus::Error,
@@ -374,13 +465,118 @@ pub fn classify_exit(
     }
 }
 
+/// Text Kestic records when its own host key check stops an SFTP run before restic starts
+/// (see `DestinationError`); a run's error kind is read back from it.
+pub const HOST_KEY_UNKNOWN_MARKER: &str = "unknown ssh host key of ";
+/// See [`HOST_KEY_UNKNOWN_MARKER`].
+pub const HOST_KEY_CHANGED_MARKER: &str = "ssh host key changed; the old entry is in ";
+
+/// The host key failure a lowercase message of an SFTP destination names: Kestic's own check,
+/// whose text starts the message, or a line of ssh (see [`ssh_lines`]). A marker elsewhere is
+/// part of a file name or a server text.
+fn host_key_failure(detail_lower: &str) -> Option<ResticFailureKind> {
+    let detail = detail_lower.trim_start();
+    let ssh_line = |test: &dyn Fn(&str) -> bool| ssh_lines(detail).any(test);
+    if detail.starts_with(HOST_KEY_CHANGED_MARKER)
+        || ssh_line(&|rest| {
+            rest.starts_with("host key for") && rest.contains("has changed and you have requested")
+        })
+    {
+        Some(ResticFailureKind::HostKeyChanged)
+    } else if detail.starts_with(HOST_KEY_UNKNOWN_MARKER)
+        || ssh_line(&|rest| rest.starts_with("host key verification failed"))
+    {
+        Some(ResticFailureKind::HostKeyUnknown)
+    } else {
+        None
+    }
+}
+
+/// What restic says when ssh ended before the SFTP session started.
+pub(crate) const SFTP_SESSION_NOT_STARTED: &str = "unable to start the sftp session";
+
+/// The line of ssh that a lowercase message is: the detail of an ssh failure, and a run's
+/// stored summary of one, is ssh's single line (restic starts it with `subprocess ssh: `).
+/// restic's own output around a banner has more lines.
+fn ssh_lines(detail_lower: &str) -> impl Iterator<Item = &str> {
+    let detail = detail_lower.trim();
+    (!detail.contains('\n'))
+        .then(|| detail.strip_prefix("subprocess ssh: "))
+        .flatten()
+        .into_iter()
+}
+
+/// Whether a lowercase message is a line of ssh saying that the SFTP server refused the login,
+/// as [`crate::sftp::ssh_failure`] reads it.
+fn ssh_rejected_key(detail_lower: &str) -> bool {
+    ssh_lines(detail_lower).any(|rest| {
+        rest.contains("permission denied (") || rest.contains("too many authentication failures")
+    })
+}
+
+/// Whether the lowercase restic message says the backend rejected the login: HTTP 401/403 or
+/// the S3 errors for a wrong access key or secret key.
+fn is_backend_auth_failure(detail_lower: &str) -> bool {
+    let text = without_locations(detail_lower);
+    // A status code counts only as a word of its own, apart from surrounding punctuation:
+    // ports (`:40312`), durations (`403.2ms`, `1.403s`), path parts (`/srv/403`) and ids in the
+    // same message must not look like one.
+    let status = text
+        .split_whitespace()
+        .filter(|word| !word.contains('/'))
+        .map(|word| word.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
+        .any(|token| token == "401" || token == "403");
+    status
+        || [
+            "unauthorized",
+            "forbidden",
+            "authentication",
+            "access denied",
+            "signature we calculated does not match",
+            "signaturedoesnotmatch",
+            "access key id you provided does not exist",
+            "invalidaccesskeyid",
+        ]
+        .iter()
+        .any(|needle| text.contains(needle))
+}
+
+/// `message` without the places it names: quoted URLs (`Get "http://host/bucket/…"`) and
+/// addresses (`127.0.0.1:9000`, `[fd00::403]:9000`). A bucket, path or host name there must not
+/// read as a login error.
+pub(crate) fn without_locations(message: &str) -> String {
+    let unquoted: String = message
+        .split('"')
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 0)
+        .map(|(_, part)| part)
+        .collect::<Vec<_>>()
+        .join(" ");
+    unquoted
+        .split_whitespace()
+        .filter(|word| !is_location(word))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A URL, an IPv6 address or a `host:port` address.
+fn is_location(word: &str) -> bool {
+    let has_port = |w: &str| {
+        w.trim_end_matches(':')
+            .rsplit_once(':')
+            .is_some_and(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+    };
+    word.contains("://") || word.contains('[') || has_port(word)
+}
+
 /// Replaces any known secret values in `text` with `***REDACTED***`.
 pub fn redact_secrets(text: &str, secrets: &[&str]) -> String {
+    // Longest first: a secret that contains a shorter one must not be cut apart before its turn.
+    let mut ordered: Vec<&str> = secrets.iter().copied().filter(|s| !s.is_empty()).collect();
+    ordered.sort_by_key(|s| std::cmp::Reverse(s.len()));
     let mut out = text.to_string();
-    for secret in secrets {
-        if !secret.is_empty() {
-            out = out.replace(secret, "***REDACTED***");
-        }
+    for secret in ordered {
+        out = out.replace(secret, "***REDACTED***");
     }
     out
 }
@@ -390,8 +586,18 @@ pub fn redact_secrets(text: &str, secrets: &[&str]) -> String {
 pub enum ResticRunError {
     #[error("failed to read repository secret: {0}")]
     Secret(#[from] SecretError),
-    #[error("missing REST password in secret store for destination `{0}`")]
-    MissingRestPassword(DestinationId),
+    #[error("missing backend credential `{kind}` in secret store for destination `{destination}`")]
+    MissingBackendSecret {
+        destination: DestinationId,
+        kind: String,
+    },
+    /// The destination's backend needs one of the credential variables `variables` entered in
+    /// the destination itself, and none is (an `azure:` or `gs:` destination).
+    #[error("destination `{destination}` needs one of these variables entered in it: {variables}")]
+    CredentialsNotEntered {
+        destination: DestinationId,
+        variables: String,
+    },
     #[error("failed to spawn restic command: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -403,8 +609,18 @@ pub struct ResticCommandSpec {
     pub kestic_binary: PathBuf,
     pub destination_id: DestinationId,
     pub repository_uri: String,
+    /// How restic reaches the destination (which error output can name ssh or a host key).
+    pub transport: Transport,
+    /// Backend options (`-o key=value`) after the repository: `sftp.args` for SFTP.
+    pub backend_options: Vec<String>,
     pub subcommand_args: Vec<String>,
-    pub rest_username: Option<String>,
+    /// Name prefixes of variables in the caller's environment restic must not see (inherited
+    /// backend credentials and settings).
+    pub backend_env_cleared_prefixes: Vec<&'static str>,
+    /// Backend variables that are not secret (REST user name, S3 region).
+    pub backend_env: Vec<(String, String)>,
+    /// Backend credentials restic reads from the environment.
+    pub backend_secret_slots: Vec<BackendSecretSlot>,
     pub low_priority: bool,
     pub json_output: bool,
     pub password_command_override: Option<String>,
@@ -419,17 +635,17 @@ impl ResticCommandSpec {
         destination: &Destination,
         subcommand_args: Vec<String>,
     ) -> Self {
-        let rest_username = match &destination.kind {
-            DestinationKind::Rest { username, .. } => username.clone(),
-            DestinationKind::Local { .. } => None,
-        };
         Self {
             restic_binary: restic_binary.into(),
             kestic_binary: kestic_binary.into(),
             destination_id: destination.id.clone(),
             repository_uri: destination.kind.repository_uri(),
+            transport: Transport::of(&destination.kind),
+            backend_options: destination.kind.restic_backend_options(),
             subcommand_args,
-            rest_username,
+            backend_env_cleared_prefixes: destination.kind.backend_env_cleared_prefixes(),
+            backend_env: destination.kind.backend_plain_env(),
+            backend_secret_slots: destination.kind.backend_secret_slots(),
             low_priority: true,
             json_output: true,
             password_command_override: None,
@@ -470,11 +686,13 @@ impl ResticCommandSpec {
             .unwrap_or_else(|| format!("kestic secret get {}", self.destination_id));
         parts.push(format!("RESTIC_PASSWORD_COMMAND={}", quote_shell(&pw_cmd)));
 
-        if let Some(user) = self.rest_username.as_deref().filter(|u| !u.is_empty()) {
-            parts.push(format!("RESTIC_REST_USERNAME={}", quote_shell(user)));
+        for (name, value) in &self.backend_env {
+            parts.push(format!("{name}={}", quote_shell(value)));
+        }
+        for slot in &self.backend_secret_slots {
             parts.push(format!(
-                "RESTIC_REST_PASSWORD=\"$(kestic secret get {} {SECRET_KIND_REST})\"",
-                self.destination_id
+                "{}=\"$(kestic secret get {} {})\"",
+                slot.env_name, self.destination_id, slot.kind
             ));
         }
 
@@ -497,6 +715,7 @@ impl ResticCommandSpec {
     /// Returns the argument vector passed directly to `restic`.
     pub fn restic_argv(&self) -> Vec<String> {
         let mut args = vec!["-r".to_string(), self.repository_uri.clone()];
+        args.extend(self.backend_options.iter().cloned());
         if self.json_output && !self.subcommand_args.iter().any(|a| a == "--json") {
             args.push("--json".to_string());
         }
@@ -551,7 +770,7 @@ impl ResticCommandSpec {
 
 /// A recorded restic invocation split back into its parts: the inverse of the low-priority
 /// wrapper `ionice -c 3 [nice -n 10] <restic>` / `nice -n 10 <restic>` that
-/// [`ResticCommandSpec`] adds when it runs restic, and of `-r <repo> [--json]`.
+/// [`ResticCommandSpec`] adds when it runs restic, and of `-r <repo> [-o <option>…] [--json]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedInvocation {
     pub restic_binary: String,
@@ -587,6 +806,9 @@ pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedI
     if rest.first() == Some(&"-r") && rest.len() >= 2 {
         rest = &rest[2..];
     }
+    while rest.first() == Some(&"-o") && rest.len() >= 2 {
+        rest = &rest[2..];
+    }
     let json_output = rest.first() == Some(&"--json");
     if json_output {
         rest = &rest[1..];
@@ -600,7 +822,11 @@ pub fn parse_recorded_invocation(executable: &str, args: &[String]) -> RecordedI
 }
 
 fn quote_shell(raw: &str) -> String {
-    shlex::try_quote(raw).map_or_else(|_| format!("'{raw}'"), |cow| cow.into_owned())
+    // `try_quote` refuses a NUL byte; single quotes with every `'` escaped keep the rest inert.
+    shlex::try_quote(raw).map_or_else(
+        |_| format!("'{}'", raw.replace('\'', "'\\''")),
+        |cow| cow.into_owned(),
+    )
 }
 
 /// Handle allowing another thread to request graceful cancellation (`SIGTERM`).
@@ -608,6 +834,17 @@ fn quote_shell(raw: &str) -> String {
 pub struct CancelHandle {
     cancelled: Arc<AtomicBool>,
     child_pid: Arc<Mutex<Option<u32>>>,
+}
+
+/// Clears the child pid of a [`CancelHandle`] when dropped, also on an early return or a panic.
+struct PidRegistration<'a>(Option<&'a CancelHandle>);
+
+impl Drop for PidRegistration<'_> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0 {
+            handle.set_pid(None);
+        }
+    }
 }
 
 impl CancelHandle {
@@ -637,15 +874,52 @@ impl CancelHandle {
     }
 }
 
-fn send_sigterm_to_tree(pid: u32) {
+/// Sends `SIGTERM` to the children of `pid` (restic behind a wrapper) and to `pid` itself.
+pub(crate) fn send_sigterm_to_tree(pid: u32) {
+    send_signal_to_tree(pid, "-TERM");
+}
+
+/// Sends `SIGTERM` to the process group led by `pid` (a process started with its own group) and
+/// to the direct children of `pid`, which may have a group of their own (restic starts `rclone`
+/// so).
+pub(crate) fn send_sigterm_to_group(pid: u32) {
+    send_signal_to_group(pid, "-TERM");
+}
+
+/// Like [`send_sigterm_to_group`] with `SIGKILL`, for processes that ignored `SIGTERM`.
+pub(crate) fn send_sigkill_to_group(pid: u32) {
+    send_signal_to_group(pid, "-KILL");
+}
+
+fn send_signal_to_group(pid: u32, signal: &str) {
+    let _ = Command::new("kill")
+        .args([signal, "--", &format!("-{pid}")])
+        .status();
+    send_signal_to_tree(pid, signal);
+}
+
+fn send_signal_to_tree(pid: u32, signal: &str) {
     // `nice`/`ionice` exec into restic directly on Linux (`execve`), so `pid` IS restic,
-    // but sending SIGTERM via `pkill -TERM -P <pid>` first handles wrapper shells too.
+    // but signalling its children (`pkill -P <pid>`) first handles wrapper shells too.
     let _ = Command::new("pkill")
-        .args(["-TERM", "-P", &pid.to_string()])
+        .args([signal, "-P", &pid.to_string()])
         .status();
     let _ = Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
+        .args([signal, &pid.to_string()])
         .status();
+}
+
+/// Removes the password and repository file restic would take from the caller's environment:
+/// restic refuses a password file next to Kestic's password and a repository file next to `-r`,
+/// so inherited ones would make every call fail. Also removes the inherited TLS client
+/// certificate and CA certificate, which would send a key to, or trust, a server the user did
+/// not set up for this destination; a generic destination can set them itself.
+pub(crate) fn remove_inherited_restic_access(cmd: &mut Command) {
+    cmd.env_remove("RESTIC_PASSWORD")
+        .env_remove("RESTIC_PASSWORD_FILE")
+        .env_remove("RESTIC_REPOSITORY_FILE")
+        .env_remove("RESTIC_TLS_CLIENT_CERT")
+        .env_remove("RESTIC_CACERT");
 }
 
 /// Result of executing a restic command via [`run_restic`].
@@ -676,30 +950,49 @@ impl std::fmt::Debug for UnredactedLine {
 }
 
 struct ResolvedRunSecrets {
-    rest_password: Option<SecretValue>,
+    backend: BackendCredentials,
     repo_password_for_redaction: Option<SecretValue>,
+}
+
+/// Refuses to start restic for `destination` when its backend needs a credential variable
+/// entered in the destination and none is (with the secret values in `backend`): restic would
+/// otherwise log in with credentials it finds on the machine.
+pub fn refuse_credentials_not_entered(
+    destination: &Destination,
+    backend: &BackendCredentials,
+) -> Result<(), ResticRunError> {
+    match destination.kind.missing_credential_variables(backend) {
+        Some(variables) => Err(ResticRunError::CredentialsNotEntered {
+            destination: destination.id.clone(),
+            variables,
+        }),
+        None => Ok(()),
+    }
 }
 
 fn resolve_restic_secrets(
     destination: &Destination,
     secret_store: Option<&dyn SecretStore>,
 ) -> Result<ResolvedRunSecrets, ResticRunError> {
-    let mut rest_password: Option<SecretValue> = None;
+    let mut backend = BackendCredentials::none();
     let mut repo_password_for_redaction: Option<SecretValue> = None;
     if let Some(store) = secret_store {
         if let Some(pw) = store.get_secret(destination.id.as_str(), SECRET_KIND_REPO)? {
             repo_password_for_redaction = Some(pw);
         }
-        if destination.kind.uses_rest_credentials() {
-            rest_password = Some(
-                store
-                    .get_secret(destination.id.as_str(), SECRET_KIND_REST)?
-                    .ok_or_else(|| ResticRunError::MissingRestPassword(destination.id.clone()))?,
-            );
-        }
+        backend = BackendCredentials::load_stored(destination, store)?;
+    }
+    refuse_credentials_not_entered(destination, &backend)?;
+    if secret_store.is_some()
+        && let Some(kind) = backend.first_missing(&destination.kind)
+    {
+        return Err(ResticRunError::MissingBackendSecret {
+            destination: destination.id.clone(),
+            kind,
+        });
     }
     Ok(ResolvedRunSecrets {
-        rest_password,
+        backend,
         repo_password_for_redaction,
     })
 }
@@ -711,32 +1004,43 @@ struct PreparedCommand {
     env_keys: Vec<String>,
 }
 
-/// Sets the cache directory and the REST credentials of `spec` on `cmd`; returns the names of
-/// the variables set so a command record can list them without values.
+/// Sets the cache directory and the backend variables of `spec` (credentials from `backend`) on
+/// `cmd`; returns the names of the variables set so a command record can list them without
+/// values.
 pub(crate) fn apply_backend_env(
     cmd: &mut Command,
     spec: &ResticCommandSpec,
-    rest_password: Option<&SecretValue>,
+    backend: &BackendCredentials,
 ) -> Result<Vec<String>, SecretError> {
     let mut env_keys = Vec::new();
+    if !spec.backend_env_cleared_prefixes.is_empty() {
+        for (name, _) in std::env::vars_os() {
+            let bytes = name.as_encoded_bytes();
+            if spec
+                .backend_env_cleared_prefixes
+                .iter()
+                .any(|prefix| bytes.starts_with(prefix.as_bytes()))
+            {
+                cmd.env_remove(&name);
+            }
+        }
+    }
+    for (name, value) in &spec.backend_env {
+        cmd.env(name, value);
+        env_keys.push(name.clone());
+    }
+    env_keys.extend(backend.apply_env(cmd, &spec.backend_secret_slots)?);
+    // Set last, so a variable of a generic destination cannot move Kestic's own cache.
     if let Some(ref cache_dir) = spec.cache_dir {
         cmd.env("RESTIC_CACHE_DIR", cache_dir);
         env_keys.push("RESTIC_CACHE_DIR".to_string());
-    }
-    if let Some(user) = spec.rest_username.as_deref().filter(|u| !u.is_empty()) {
-        cmd.env("RESTIC_REST_USERNAME", user);
-        env_keys.push("RESTIC_REST_USERNAME".to_string());
-    }
-    if let Some(rest_pw) = rest_password {
-        cmd.env("RESTIC_REST_PASSWORD", rest_pw.as_str()?);
-        env_keys.push("RESTIC_REST_PASSWORD".to_string());
     }
     Ok(env_keys)
 }
 
 fn build_restic_command(
     spec: &ResticCommandSpec,
-    rest_password: Option<&SecretValue>,
+    backend: &BackendCredentials,
     extra_env: &[(&str, &str)],
 ) -> Result<PreparedCommand, ResticRunError> {
     let pw_command = spec.password_command_override.clone().unwrap_or_else(|| {
@@ -753,12 +1057,12 @@ fn build_restic_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env_remove("RESTIC_PASSWORD")
         .env("RESTIC_PASSWORD_COMMAND", &pw_command);
+    remove_inherited_restic_access(&mut cmd);
 
     let mut env_keys = vec!["RESTIC_PASSWORD_COMMAND".to_string()];
 
-    env_keys.extend(apply_backend_env(&mut cmd, spec, rest_password)?);
+    env_keys.extend(apply_backend_env(&mut cmd, spec, backend)?);
     for (k, v) in extra_env {
         cmd.env(k, v);
         env_keys.push((*k).to_string());
@@ -804,9 +1108,8 @@ where
 
 /// Executes `spec` with environment isolation (`RESTIC_PASSWORD_COMMAND`, `RESTIC_PASSWORD` unset).
 ///
-/// If `secret_store` is provided and `spec.rest_username` is set, looks up the optional REST backend
-/// password from `secret_store` (`<dest-id>`, `rest`) and passes it via `RESTIC_REST_PASSWORD`
-/// (never on CLI arguments).
+/// If `secret_store` is provided, looks up the backend credentials of `destination` (REST
+/// password, S3 keys) and passes them as environment variables (never as arguments).
 pub fn run_restic<F>(
     spec: &ResticCommandSpec,
     destination: &Destination,
@@ -910,26 +1213,31 @@ where
     } = *access;
     let started_at = clock.now_utc();
     let secrets = resolve_restic_secrets(destination, secret_store)?;
-    let mut prepared = build_restic_command(spec, secrets.rest_password.as_ref(), extra_env)?;
-
-    let mut child: Child = prepared.cmd.spawn()?;
-    if let Some(handle) = cancel {
-        handle.set_pid(Some(child.id()));
-        if handle.is_cancelled() {
-            handle.cancel();
-        }
-    }
-
-    let mut stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    let mut prepared = build_restic_command(spec, &secrets.backend, extra_env)?;
 
     let mut secrets_to_redact: Vec<&str> = Vec::new();
     if let Some(s) = secrets.repo_password_for_redaction.as_ref() {
         secrets_to_redact.push(s.as_str()?);
     }
-    if let Some(s) = secrets.rest_password.as_ref() {
-        secrets_to_redact.push(s.as_str()?);
-    }
+    secrets_to_redact.extend(secrets.backend.redaction_values());
+
+    // Held until restic has ended, so the app-managed binary is not replaced meanwhile; an
+    // early return stops restic before the lease ends.
+    let _lease = crate::restic_gate::ResticBinaryGate::global().read_for(&spec.restic_binary);
+    let mut child = ChildGuard::new(prepared.cmd.spawn()?);
+    // On an early return or a panic it is dropped before `child`, so the pid is forgotten
+    // before the process is reaped and its pid can be reused.
+    let registration = PidRegistration(cancel);
+    let (mut stdout, stderr) = {
+        let mut started = child.lock();
+        if let Some(handle) = cancel {
+            handle.set_pid(Some(started.id()));
+            if handle.is_cancelled() {
+                handle.cancel();
+            }
+        }
+        (started.stdout.take(), started.stderr.take())
+    };
 
     let stderr_handle = thread::spawn(move || -> Vec<String> {
         let mut lines = Vec::new();
@@ -989,10 +1297,9 @@ where
         log_lines.push(redacted);
     }
 
-    let status = child.wait()?;
-    if let Some(handle) = cancel {
-        handle.set_pid(None);
-    }
+    let status = child.wait();
+    drop(registration);
+    let status = status?;
 
     let finished_at = clock.now_utc();
     let duration_ms = crate::clock::elapsed_ms(started_at, finished_at);
@@ -1004,7 +1311,8 @@ where
         .iter()
         .filter_map(|e| e.item.clone())
         .collect();
-    let mut presentation = classify_exit(
+    let mut presentation = classify_exit_for(
+        Transport::of(&destination.kind),
         exit_code,
         exit_error_msg.as_deref(),
         unreadable_items,
@@ -1033,4 +1341,17 @@ where
         errors: error_messages,
         stdout_json_array,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_shell;
+
+    /// A value `shlex` cannot quote (a NUL byte) is still quoted so that a `'` in it cannot end
+    /// the quotes in the shown command.
+    #[test]
+    fn quote_shell_escapes_quotes_when_shlex_refuses() {
+        let quoted = quote_shell("x\u{0}';id;'");
+        assert_eq!(quoted, "'x\u{0}'\\'';id;'\\'''");
+    }
 }

@@ -14,8 +14,8 @@ use common::m4_restore::{RestoreFixture, for_each_variant, set_mtime, tree_conte
 use common::run_isolated_test;
 use kestic_core::model::{RunKind, RunStatus};
 use kestic_daemon::dbus_api::{
-    KesticDbusError, PageFilter, RestoreOutcome, RestoreOverwrite, RestorePreviewResultDto,
-    RestoreRequest, RestoreTarget, RestoreTargetCode, SnapshotQueryPage,
+    BackendSecrets, KesticDbusError, PageFilter, RestoreOutcome, RestoreOverwrite,
+    RestorePreviewResultDto, RestoreRequest, RestoreTarget, RestoreTargetCode, SnapshotQueryPage,
 };
 use kestic_test_support::tools::find_lock_file;
 use std::collections::BTreeMap;
@@ -2937,7 +2937,7 @@ fn m4_s05_destination_of_a_running_restore_cannot_change() {
                 .rig
                 .daemon
                 .client
-                .update_destination(&renamed, "connect", "", "", false)
+                .update_destination(&renamed, "connect", "", &BackendSecrets::default(), false)
                 .expect_err("(b) UpdateDestination refused");
             common::m3::assert_dbus_error_name(&updated, "net.daester.Kestic.Error.RestoreRunning");
             fx.rig.wrapper.release("restore");
@@ -3252,12 +3252,18 @@ fn m4_s05_destination_of_a_waiting_restore_cannot_change() {
                 .expect_err("(a) RemoveDestination refused");
             common::m3::assert_dbus_error_name(&removed, "net.daester.Kestic.Error.RestoreRunning");
             let updated = client
-                .update_destination(&fx.dest, "connect", "", "", false)
+                .update_destination(&fx.dest, "connect", "", &BackendSecrets::default(), false)
                 .expect_err("(b) UpdateDestination refused");
             common::m3::assert_dbus_error_name(&updated, "net.daester.Kestic.Error.RestoreRunning");
             client.cancel_run(&run_id).expect("CancelRun");
             assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Cancelled);
-            let renamed = client.update_destination(&fx.dest, "connect", "", "", false);
+            let renamed = client.update_destination(
+                &fx.dest,
+                "connect",
+                "",
+                &BackendSecrets::default(),
+                false,
+            );
             assert!(renamed.is_ok(), "(c) {renamed:?}");
             fx.rig.wrapper.release("prune");
             fx.rig.daemon.stop();
@@ -3294,7 +3300,7 @@ fn m4_s05_update_racing_a_restore_keeps_the_stored_password() {
                         &fx.dest,
                         "connect",
                         "second key",
-                        "",
+                        &BackendSecrets::default(),
                         true,
                     )
                 });

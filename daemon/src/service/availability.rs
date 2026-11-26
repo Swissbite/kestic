@@ -5,16 +5,23 @@
 
 use super::backup_runner::start_backup_async;
 use super::error::{KesticServiceErr, map_destination_err};
-use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, probe_for_run};
+use super::state::{
+    AVAILABILITY_CACHE_TTL_SECS, DaemonCore, ResticDeps, probe_for_run,
+    refresh_restic_probe_unlocked,
+};
 use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto};
 use crate::dbus_server::emit_status_changed;
 use kestic_core::backup::BackupRunError;
-use kestic_core::destination::{DEFAULT_CONNECT_TIMEOUT, preflight_check_destination};
+use kestic_core::destination::{
+    DEFAULT_CONNECT_TIMEOUT, preflight_check_destination, preflight_check_with_restic, reachability,
+};
 use kestic_core::maintenance::{LockClassification, detect_stale_locks, execute_unlock};
 use kestic_core::model::{Backup, Destination, DestinationId};
 use kestic_core::mount::{
     MountInspector, SourceCheckResult, check_source_status_with, current_home_dir,
 };
+use kestic_core::provider::resolve_and_check;
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::path::Path;
@@ -34,7 +41,14 @@ impl DaemonCore {
 
         if should_run {
             let now_unix = now.unix_timestamp();
-            for dest in &self.config.destinations {
+            // A destination that only restic can check is left to the background refresh: restic
+            // may take up to 15 s, too long while the daemon state is locked.
+            for dest in self
+                .config
+                .destinations
+                .iter()
+                .filter(|d| !d.kind.needs_restic_preflight())
+            {
                 let res = preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT);
                 self.availability_probe_count += 1;
                 let dto = DestinationAvailabilityDto::from_probe(&dest.id, &res, now_unix);
@@ -188,11 +202,14 @@ impl Drop for DestinationClaimGuard {
     }
 }
 
+/// Refreshes the availability of all destinations and sources. The destinations only restic can
+/// reach (up to 15 s each) are checked afterwards in the background by
+/// [`spawn_restic_availability_checks`], so no caller waits for them.
 pub(crate) fn refresh_availability_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     force: bool,
 ) -> AvailabilitySnapshotDto {
-    let (should_run, destinations, backups, mount_inspector, clock, current_snapshot) = {
+    let (should_run, destinations, backups, mount_inspector, clock, current_snapshot, deps, busy) = {
         let guard = shared.lock_unpoisoned();
         let now = guard.clock.now_utc();
         let should_run = force
@@ -207,18 +224,31 @@ pub(crate) fn refresh_availability_unlocked(
             Arc::clone(&guard.mount_inspector),
             Arc::clone(&guard.clock),
             guard.current_availability_snapshot(),
+            guard.restic_deps(),
+            guard.claiming_destinations.clone(),
         )
     };
 
     if !should_run {
         return current_snapshot;
     }
+    // A system restic updated meanwhile may now be recent enough (or an app-managed one gone).
+    refresh_restic_probe_unlocked(shared);
 
     let now = clock.now_utc();
     let now_unix = now.unix_timestamp();
     let home = current_home_dir();
     let mut dest_updates = Vec::with_capacity(destinations.len());
+    let mut restic_checks = Vec::new();
     for dest in &destinations {
+        if dest.kind.needs_restic_preflight() {
+            // A destination in a run is being written to: restic needs no second connection,
+            // and a busy uplink must not make it look unreachable.
+            if !busy.contains(&dest.id) {
+                restic_checks.push(dest.clone());
+            }
+            continue;
+        }
         let res = preflight_check_destination(dest, DEFAULT_CONNECT_TIMEOUT);
         let dto = DestinationAvailabilityDto::from_probe(&dest.id, &res, now_unix);
         dest_updates.push((dest.id.clone(), dto));
@@ -240,7 +270,53 @@ pub(crate) fn refresh_availability_unlocked(
     }
     guard.availability_probe_count += dest_count;
     guard.last_availability_check = Some(now);
-    guard.current_availability_snapshot()
+    let snapshot = guard.current_availability_snapshot();
+    if !restic_checks.is_empty() && !guard.restic_availability_in_flight {
+        guard.restic_availability_in_flight = true;
+        drop(guard);
+        spawn_restic_availability_checks(Arc::clone(shared), restic_checks, deps);
+    }
+    snapshot
+}
+
+/// Checks `destinations` with `restic cat config` on a background thread, one after the other,
+/// then stores their availability and publishes the state. One such thread runs at a time.
+fn spawn_restic_availability_checks(
+    shared: Arc<Mutex<DaemonCore>>,
+    destinations: Vec<Destination>,
+    deps: ResticDeps,
+) {
+    thread::spawn(move || {
+        let mut run_lease = ResticBinaryGate::global().read();
+        // Without a usable restic the destinations keep their last status.
+        let resolved = resolve_and_check(&deps.provider).ok();
+        if let Some(restic) = &resolved {
+            run_lease.bind(&restic.binary);
+        }
+        let mut updates = Vec::new();
+        if let Some(restic) = resolved.as_ref() {
+            for dest in &destinations {
+                let res = reachability(preflight_check_with_restic(dest, &deps.runtime(restic)));
+                let checked_at = deps.clock.now_utc().unix_timestamp();
+                updates.push(DestinationAvailabilityDto::from_probe(
+                    &dest.id, &res, checked_at,
+                ));
+            }
+        }
+        let publication = {
+            let mut guard = shared.lock_unpoisoned();
+            guard.restic_availability_in_flight = false;
+            guard.availability_probe_count += updates.len() as u64;
+            for (dest, dto) in destinations.iter().zip(updates) {
+                // A run that started meanwhile has its own, newer result.
+                if !guard.claiming_destinations.contains(&dest.id) {
+                    guard.dest_availability.insert(dest.id.clone(), dto);
+                }
+            }
+            guard.state_publication()
+        };
+        publication.publish();
+    });
 }
 
 /// A background availability probe running longer than this is treated as hung (e.g. a local
@@ -296,26 +372,15 @@ pub(crate) fn trigger_background_availability_probe(shared: Arc<Mutex<DaemonCore
 
     thread::spawn(move || {
         let _ = refresh_availability_unlocked(&shared, false);
-        let (conn_opt, state_dto, tray_opt, tray_state) = {
+        let publication = {
             let mut guard = shared.lock_unpoisoned();
             if guard.availability_probe_generation == generation {
                 guard.availability_probe_in_flight = false;
                 guard.availability_probe_started_at = None;
             }
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (
-                guard.conn.clone(),
-                state_dto,
-                guard.tray.clone(),
-                tray_state,
-            )
+            guard.state_publication()
         };
-        if let Some(tray) = tray_opt {
-            tray.set_full_state(tray_state);
-        }
-        if let Some(conn) = &conn_opt {
-            emit_status_changed(conn, &state_dto);
-        }
+        publication.publish();
     });
 }
 
@@ -459,7 +524,11 @@ pub fn unlock_destination_async(
         )
     };
 
+    // Held for the whole call, so the app-managed restic is not replaced between its restic
+    // processes.
+    let mut run_lease = ResticBinaryGate::global().read();
     let resolved_bin = probe_for_run(&deps.provider, deps.secret_store.as_ref()).1?;
+    run_lease.bind(&resolved_bin.binary);
     let runtime = deps.runtime(&resolved_bin);
 
     let classification = detect_stale_locks(&dest, &runtime, &[]).map_err(|err| match err {

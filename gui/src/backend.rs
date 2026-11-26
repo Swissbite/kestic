@@ -23,10 +23,29 @@ pub mod qobject {
         #[qproperty(bool, daemon_reachable)]
         #[qproperty(bool, restic_valid)]
         #[qproperty(QString, restic_version)]
-        #[qproperty(bool, restic_outdated)]
         #[qproperty(QString, restic_binary_path)]
         #[qproperty(QString, restic_provider_kind)]
-        #[qproperty(QString, restic_message)]
+        #[qproperty(QString, restic_source_text)]
+        #[qproperty(QString, restic_version_text)]
+        #[qproperty(QString, restic_program_text)]
+        #[qproperty(QString, restic_available_text)]
+        #[qproperty(QString, restic_problem_text)]
+        #[qproperty(QString, restic_problem_detail)]
+        #[qproperty(bool, restic_explain_minimum)]
+        #[qproperty(bool, restic_offer_switch)]
+        #[qproperty(bool, restic_offer_remove)]
+        #[qproperty(bool, restic_app_managed_installed)]
+        #[qproperty(QString, restic_action_error)]
+        #[qproperty(bool, restic_offer_download)]
+        #[qproperty(bool, restic_offer_update)]
+        #[qproperty(bool, restic_offer_enabled)]
+        #[qproperty(QString, restic_install_state)]
+        #[qproperty(QString, restic_install_phase_text)]
+        #[qproperty(f64, restic_install_progress)]
+        #[qproperty(bool, restic_install_cancellable)]
+        #[qproperty(QString, restic_install_result)]
+        #[qproperty(QString, restic_install_error)]
+        #[qproperty(QString, restic_install_error_detail)]
         #[qproperty(QString, blocking_kind)]
         #[qproperty(QString, blocking_message)]
         #[qproperty(QString, overall_headline)]
@@ -45,6 +64,8 @@ pub mod qobject {
         #[qproperty(bool, connection_test_ok)]
         #[qproperty(QString, connection_test_message)]
         #[qproperty(QString, connection_test_error_kind)]
+        #[qproperty(QString, connection_test_note)]
+        #[qproperty(QString, connection_test_host_key)]
         #[qproperty(bool, snapshots_loading)]
         #[qproperty(QString, snapshots_error)]
         #[qproperty(bool, snapshots_has_previous)]
@@ -194,13 +215,37 @@ pub mod qobject {
         fn dismiss_manual_run_blocked(self: Pin<&mut KesticApp>);
 
         #[qinvokable]
+        #[cxx_name = "destinationTypeCardsJson"]
+        fn destination_type_cards_json(self: &KesticApp) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "removableDrivesJson"]
+        fn removable_drives_json(self: &KesticApp) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "localFolderFromUrl"]
+        fn local_folder_from_url(self: &KesticApp, url: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "genericFieldsErrors"]
+        fn generic_fields_errors(self: &KesticApp, url: &QString, env_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "envVarSecretByDefault"]
+        fn env_var_secret_by_default(self: &KesticApp, name: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "destinationFieldChecks"]
+        fn destination_field_checks(self: &KesticApp, fields_json: &QString) -> QString;
+
+        #[qinvokable]
         #[cxx_name = "testDestination"]
         fn test_destination(
             self: Pin<&mut KesticApp>,
             fields_json: &QString,
             mode: &QString,
             repo_pw: &QString,
-            rest_pw: &QString,
+            backend_secrets_json: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -210,7 +255,7 @@ pub mod qobject {
             fields_json: &QString,
             mode: &QString,
             repo_pw: &QString,
-            rest_pw: &QString,
+            backend_secrets_json: &QString,
         ) -> QString;
 
         #[qinvokable]
@@ -221,7 +266,7 @@ pub mod qobject {
             fields_json: &QString,
             mode: &QString,
             repo_pw: &QString,
-            rest_pw: &QString,
+            backend_secrets_json: &QString,
             verify_connection: bool,
         ) -> bool;
 
@@ -232,6 +277,10 @@ pub mod qobject {
             dest_id: &QString,
             new_pw: &QString,
         ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "trustHostKey"]
+        fn trust_host_key(self: Pin<&mut KesticApp>, host_key_id: &QString) -> bool;
 
         #[qinvokable]
         #[cxx_name = "removeDestination"]
@@ -246,18 +295,6 @@ pub mod qobject {
             dest_id: &QString,
             excludes_text: &QString,
         ) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "updateBackup"]
-        fn update_backup(
-            self: Pin<&mut KesticApp>,
-            id: &QString,
-            name: &QString,
-            source_path: &QString,
-            dest_id: &QString,
-            excludes_text: &QString,
-            exclude_caches: bool,
-        ) -> bool;
 
         #[qinvokable]
         #[cxx_name = "updateBackupExcludes"]
@@ -312,6 +349,10 @@ pub mod qobject {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "formatBytes"]
+        fn format_bytes(self: &KesticApp, bytes: i64) -> QString;
+
+        #[qinvokable]
         #[cxx_name = "formatExcludeRuleForItem"]
         fn format_exclude_rule_for_item(self: &KesticApp, item_path: &QString) -> QString;
 
@@ -333,10 +374,6 @@ pub mod qobject {
         fn normalize_exclude_folder(self: &KesticApp, folder_path: &QString) -> QString;
 
         #[qinvokable]
-        #[cxx_name = "buildExcludeFilePreview"]
-        fn build_exclude_file_preview(self: &KesticApp, excludes_json: &QString) -> QString;
-
-        #[qinvokable]
         #[cxx_name = "startBackupDryRun"]
         fn start_backup_dry_run(
             self: Pin<&mut KesticApp>,
@@ -355,10 +392,6 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "retentionPresetJson"]
         fn retention_preset_json(self: &KesticApp, preset_name: &QString) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "formatRetentionSummaryJson"]
-        fn format_retention_summary_json(self: &KesticApp, retention_json: &QString) -> QString;
 
         #[qinvokable]
         #[cxx_name = "startRetentionPreview"]
@@ -417,12 +450,36 @@ pub mod qobject {
         fn load_restore_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString);
 
         #[qinvokable]
-        #[cxx_name = "setResticProvider"]
-        fn set_restic_provider(
+        #[cxx_name = "resticMinimumVersion"]
+        fn restic_minimum_version(self: &KesticApp) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "applyResticSource"]
+        fn apply_restic_source(
             self: Pin<&mut KesticApp>,
             kind: &QString,
             custom_path: &QString,
         ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "switchResticToAutomatic"]
+        fn switch_restic_to_automatic(self: Pin<&mut KesticApp>) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "removeAppManagedRestic"]
+        fn remove_app_managed_restic(self: Pin<&mut KesticApp>) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "startResticInstall"]
+        fn start_restic_install(self: Pin<&mut KesticApp>) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "pollResticInstall"]
+        fn poll_restic_install(self: Pin<&mut KesticApp>);
+
+        #[qinvokable]
+        #[cxx_name = "cancelResticInstall"]
+        fn cancel_restic_install(self: Pin<&mut KesticApp>);
 
         #[qinvokable]
         #[cxx_name = "updateExpertMode"]
@@ -538,14 +595,6 @@ pub mod qobject {
         fn preview_schedule_slots_json(self: &KesticApp, schedule_json: &QString) -> QString;
 
         #[qinvokable]
-        #[cxx_name = "formatScheduleSummaryJson"]
-        fn format_schedule_summary_json(self: &KesticApp, schedule_json: &QString) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "formatConditionsSummaryJson"]
-        fn format_conditions_summary_json(self: &KesticApp, conditions_json: &QString) -> QString;
-
-        #[qinvokable]
         #[cxx_name = "formatMaintenanceSummaryJson"]
         fn format_maintenance_summary_json(self: &KesticApp, maintenance_json: &QString)
         -> QString;
@@ -555,6 +604,7 @@ pub mod qobject {
 mod backups;
 mod destinations;
 mod previews;
+mod restic_install;
 pub(crate) mod restore;
 mod schedules;
 mod state;
@@ -578,10 +628,37 @@ pub struct KesticAppRust {
     daemon_reachable: bool,
     restic_valid: bool,
     restic_version: QString,
-    restic_outdated: bool,
     restic_binary_path: QString,
     restic_provider_kind: QString,
-    restic_message: QString,
+    restic_source_text: QString,
+    restic_version_text: QString,
+    restic_program_text: QString,
+    restic_available_text: QString,
+    restic_problem_text: QString,
+    restic_problem_detail: QString,
+    restic_explain_minimum: bool,
+    restic_offer_switch: bool,
+    restic_offer_remove: bool,
+    restic_uses_app_managed: bool,
+    restic_app_managed_installed: bool,
+    /// Why the last switch or removal in the restic section failed.
+    restic_action_error: QString,
+    restic_offer_download: bool,
+    restic_offer_update: bool,
+    restic_offer_enabled: bool,
+    /// `""` before the first installation of this session, else the state of the last one.
+    restic_install_state: QString,
+    restic_install_phase_text: QString,
+    restic_install_progress: f64,
+    restic_install_cancellable: bool,
+    restic_install_result: QString,
+    restic_install_error: QString,
+    restic_install_error_detail: QString,
+    /// `install_id` of the last installation started from this GUI.
+    restic_install_id: String,
+    /// The switch to «Managed by Kestic» that waits for the installation the source dialog
+    /// started.
+    restic_switch_after_install: crate::restic_section_view::PendingSwitch,
     blocking_kind: QString,
     blocking_message: QString,
     overall_headline: QString,
@@ -600,6 +677,10 @@ pub struct KesticAppRust {
     connection_test_ok: bool,
     connection_test_message: QString,
     connection_test_error_kind: QString,
+    connection_test_note: QString,
+    /// `HostKeyDto` as JSON when the last connection test reported `unknown_host_key`, else
+    /// empty.
+    connection_test_host_key: QString,
     snapshots_loading: bool,
     snapshots_error: QString,
     snapshots_has_previous: bool,

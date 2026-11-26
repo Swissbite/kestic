@@ -5,10 +5,15 @@
 //! inspection/unlock.
 
 use crate::backup::{BackupRunError, check_command_succeeded};
-use crate::destination::{DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination};
+use crate::destination::{
+    DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
+    preflight_check_with_restic, verify_sftp_host_key,
+};
 use crate::model::{CheckSummary, Destination, RunStatus};
 use crate::provider::ResolvedRestic;
-use crate::restic::{CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticRuntime};
+use crate::restic::{
+    CancelHandle, ResticCommandSpec, ResticExecutionResult, ResticFailureKind, ResticRuntime,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -197,7 +202,7 @@ pub fn execute_prune_dry_run(
     cancel: Option<&CancelHandle>,
     extra_env: &[(&str, &str)],
 ) -> Result<PrunePreviewSummary, BackupRunError> {
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    preflight_check_with_restic(destination, runtime)?;
     let spec = build_prune_command_spec(
         destination,
         true,
@@ -229,6 +234,7 @@ pub fn execute_prune(
     extra_env: &[(&str, &str)],
 ) -> Result<ResticExecutionResult, BackupRunError> {
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    verify_sftp_host_key(destination)?;
     let spec = build_prune_command_spec(
         destination,
         false,
@@ -248,6 +254,7 @@ pub fn execute_check(
     extra_env: &[(&str, &str)],
 ) -> Result<ResticExecutionResult, BackupRunError> {
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    verify_sftp_host_key(destination)?;
     let spec = build_check_command_spec(destination, runtime.resolved, runtime.kestic_binary)
         .with_cache_dir(runtime.cache_dir);
     Ok(runtime.run(&spec, destination, cancel, extra_env, |_| {})?)
@@ -343,7 +350,7 @@ pub fn list_and_inspect_locks(
     runtime: &ResticRuntime<'_>,
     extra_env: &[(&str, &str)],
 ) -> Result<Vec<RepoLockInfo>, BackupRunError> {
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    preflight_check_with_restic(destination, runtime)?;
     let mut list_spec = ResticCommandSpec::for_destination(
         &runtime.resolved.binary,
         runtime.kestic_binary,
@@ -457,6 +464,7 @@ where
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
+                kind: ResticFailureKind::RepositoryLocked,
             },
         ));
     }
@@ -465,6 +473,7 @@ where
             DestinationError::CommandFailed {
                 exit_code: 11,
                 message: "refusing unlock: active local process lock present".to_string(),
+                kind: ResticFailureKind::RepositoryLocked,
             },
         ));
     }
@@ -473,6 +482,7 @@ where
             DestinationError::CommandFailed {
                 exit_code: 11,
                 message: "no stale local lock found".to_string(),
+                kind: ResticFailureKind::RepositoryLocked,
             },
         ));
     }

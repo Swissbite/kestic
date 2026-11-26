@@ -8,6 +8,7 @@ pub mod m3;
 pub mod m4;
 pub mod m4_restore;
 pub mod po_translator;
+pub mod release;
 
 pub use kestic_test_support::bus::PrivateDbusGuard;
 pub use kestic_test_support::workspace::find_kestic_binary;
@@ -56,6 +57,29 @@ pub fn restic_test_binaries() -> Vec<(&'static str, PathBuf)> {
 ///
 /// This guarantees zero process-global environment races across parallel Cargo test threads (`AC-M1-Q-1`).
 pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Path)) {
+    run_isolated(test_name, inner_env, false, body);
+}
+
+/// Name of the folder below the test root that [`run_isolated_test_with_system_programs`]
+/// puts first in `PATH`.
+pub const SYSTEM_PROGRAMS_DIR: &str = "system-programs";
+
+/// [`run_isolated_test`] with `<root>/system-programs` first in the child's `PATH`, so programs
+/// written there (a system restic of another version) are the ones the daemon finds.
+pub fn run_isolated_test_with_system_programs(
+    test_name: &str,
+    inner_env: &str,
+    body: impl FnOnce(&Path),
+) {
+    run_isolated(test_name, inner_env, true, body);
+}
+
+fn run_isolated(
+    test_name: &str,
+    inner_env: &str,
+    system_programs_first: bool,
+    body: impl FnOnce(&Path),
+) {
     if env::var_os(inner_env).as_deref() == Some("1".as_ref()) {
         let root = PathBuf::from(env::var_os("KESTIC_TEST_ROOT").expect("KESTIC_TEST_ROOT set"));
         body(&root);
@@ -101,10 +125,21 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         .env("LC_ALL", "C.UTF-8")
         .env("LANG", "C.UTF-8")
         .env("LANGUAGE", "en");
+    if system_programs_first {
+        let programs = dirs.root.join(SYSTEM_PROGRAMS_DIR);
+        std::fs::create_dir_all(&programs).expect("mkdir system programs");
+        let mut path = vec![programs];
+        path.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+        cmd.env("PATH", env::join_paths(path).expect("PATH"));
+    }
 
-    let out = cmd.output().expect("run isolated test child");
+    let out = output_within(cmd, ISOLATED_TEST_LIMIT);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.timed_out,
+        "isolated test `{test_name}` did not end within {ISOLATED_TEST_LIMIT:?} and was killed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
     assert!(
         out.status.success(),
         "isolated test `{test_name}` failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
@@ -113,6 +148,108 @@ pub fn run_isolated_test(test_name: &str, inner_env: &str, body: impl FnOnce(&Pa
         stdout.contains("1 passed"),
         "isolated test `{test_name}` did not match/execute exactly 1 test:\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
+}
+
+/// Longest time the child of [`run_isolated_test`] may run. It lies below the limit of nextest
+/// (`.config/nextest.toml`), so a hang fails with the child's output instead of a bare timeout.
+pub const ISOLATED_TEST_LIMIT: Duration = Duration::from_mins(9);
+
+/// Output of a child run by [`output_within`].
+pub struct LimitedOutput {
+    pub status: std::process::ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub timed_out: bool,
+}
+
+/// Runs `cmd` and collects its output; after `limit` the child and every process it started
+/// (daemons, restic, test servers) are killed. The child stays in the test's process group, so
+/// an interrupt or a timeout of nextest still reaches it.
+pub fn output_within(mut cmd: Command, limit: Duration) -> LimitedOutput {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("run isolated test child");
+    let read_all = |mut pipe: Box<dyn Read + Send>| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            // A read error only shortens the output shown in the failure message.
+            pipe.read_to_end(&mut buf).ok();
+            tx.send(buf).ok();
+        });
+        rx
+    };
+    let stdout_rx = read_all(Box::new(child.stdout.take().expect("child stdout")));
+    let stderr_rx = read_all(Box::new(child.stderr.take().expect("child stderr")));
+
+    let deadline = Instant::now() + limit;
+    let mut timed_out = false;
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll isolated test child") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            timed_out = true;
+            kill_descendants(child.id());
+            // The child may have ended right now; `wait` reports its status either way.
+            child.kill().ok();
+            break child.wait().expect("wait for killed isolated test child");
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    // A process the killed child started may still hold a pipe open; it is not waited for.
+    let collect = |rx: std::sync::mpsc::Receiver<Vec<u8>>| {
+        rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
+    };
+    LimitedOutput {
+        status,
+        stdout: collect(stdout_rx),
+        stderr: collect(stderr_rx),
+        timed_out,
+    }
+}
+
+/// Kills every process below `root` (its children, their children, …) with `SIGKILL`.
+fn kill_descendants(root: u32) {
+    let parents: Vec<(u32, u32)> = std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+            // `pid (comm) state ppid …`; `comm` may contain spaces and parentheses.
+            let ppid = stat
+                .rsplit_once(')')?
+                .1
+                .split_whitespace()
+                .nth(1)?
+                .parse()
+                .ok()?;
+            Some((pid, ppid))
+        })
+        .collect();
+    let mut found = vec![root];
+    let mut idx = 0;
+    while idx < found.len() {
+        let parent = found[idx];
+        found.extend(
+            parents
+                .iter()
+                .filter(|(_, pp)| *pp == parent)
+                .map(|(pid, _)| *pid),
+        );
+        idx += 1;
+    }
+    let pids: Vec<String> = found[1..].iter().map(u32::to_string).collect();
+    if !pids.is_empty() {
+        // A process that ended in the meantime makes `kill` fail for that pid only.
+        Command::new("kill").arg("-KILL").args(&pids).status().ok();
+    }
 }
 
 /// Private session bus address of the isolated test, as handed to the re-exec'd child.

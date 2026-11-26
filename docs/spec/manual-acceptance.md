@@ -98,7 +98,25 @@ Vorbereitung für alle Punkte: `.deb` aus dem Abschluss-PR installieren (`just d
 
 Quelle: [milestones/m5-ziele-und-restic.md](milestones/m5-ziele-und-restic.md)
 
-- [ ] **Exit-Kriterium** – Manuelle Abnahme: echtes Netzwerk-Ziel (z. B. NAS) (REST oder SFTP).
+Vorbereitung für alle Punkte: `.deb` aus dem Abschluss-PR installieren (`just deb`, dann `sudo apt install ./target/debian/kestic_*.deb`), Plasma-Sitzung neu starten. Nur Test-Ziele und Test-Repositorys verwenden, nie ein produktives Repository. Das Exit-Kriterium «Ziele Lokal, REST, SFTP, S3 getestet; übrige über generisches Formular» belegen die Integrationstests in `just verify`.
+
+- [x] **Exit-Kriterium** – Auf TUXEDO ohne System-restic: Kestic lädt restic geprüft herunter und sichert.
+  1. Das System-restic für den Test entfernen: `sudo apt remove restic` (danach `which restic` ohne Ausgabe). Ein vorhandenes `~/.local/share/kestic/restic` vorher wegschieben: `mv ~/.local/share/kestic/restic ~/kestic-restic-backup` (falls vorhanden).
+  2. Kestic öffnen. Erwartet: die Meldung «restic nicht gefunden; mindestens 0.18.0 erforderlich» mit «restic herunterladen»; vor dem Klick fragt Kestic nichts im Netz an.
+  3. «restic herunterladen» klicken. Erwartet: in «Kestic einrichten» → «restic» erscheinen die Schritte (herunterladen, prüfen, installieren) mit Fortschrittsbalken und «Abbrechen»; danach «Quelle: Automatisch (Von Kestic verwaltet)», die Version des neuesten restic-Releases und «Programm: ~/.local/share/kestic/restic».
+  4. Im Terminal: `~/.local/share/kestic/restic version` nennt dieselbe Version; `ls -l ~/.local/share/kestic/` zeigt `restic` mit `-rwxr-xr-x` und keine `.restic-download-*`-Datei.
+  5. Ein Test-Backup (z. B. ein Ordner `~/kestic-m5-test` mit einigen Dateien) auf ein lokales Test-Ziel anlegen und «Jetzt sichern». Erwartet: der Lauf endet ohne Fehler; unter «Verlauf» → Lauf → «Befehle» steht `/home/<Benutzer>/.local/share/kestic/restic` als Programm.
+  6. Aufräumen: `sudo apt install restic`, gegebenenfalls `mv ~/kestic-restic-backup ~/.local/share/kestic/restic` zurück; Test-Backup, Test-Ziel und `~/kestic-m5-test` löschen. In «Kestic einrichten» → «restic» zeigt «Vorhanden:» danach beide Versionen.
+  7. Rückmeldung: «geht» je Schritt oder der Schritt, an dem es hängt, mit Bildschirmfoto.
+- [x] **Exit-Kriterium** – Manuelle Abnahme: echtes Netzwerk-Ziel (z. B. NAS) (REST oder SFTP).
+  1. Auf dem NAS ein leeres Test-Verzeichnis anlegen, das per SSH erreichbar ist (z. B. `/volume1/kestic-m5-test`), und prüfen, dass `ssh <Benutzer>@<NAS>` mit dem SSH-Schlüssel ohne Passwort anmeldet.
+  2. «Ziel hinzufügen» → «NAS / Server per SSH»: Host, Port, Benutzer und Pfad eintragen, «Verbindung testen». Erwartet: kennt Kestic den Server noch nicht (weder in `~/.ssh/known_hosts` noch in `~/.local/share/kestic/known_hosts`), erscheint «Diesem Server vertrauen?» mit Server, Schlüsseltyp und Fingerprint. Den Fingerprint mit dem auf dem NAS vergleichen (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` auf dem NAS), «Server vertrauen». Danach «Erreichbar».
+  3. «Weiter», ein Repository-Passwort wählen, anlegen. Ein Test-Backup (`~/kestic-m5-test`) auf dieses Ziel anlegen und «Jetzt sichern». Erwartet: der Lauf endet ohne Fehler; `~/.ssh/known_hosts` ist unverändert (`ls -l --time-style=full-iso ~/.ssh/known_hosts` vor und nach dem Test vergleichen).
+  4. Auf dem NAS den SSH-Dienst kurz stoppen oder das Netzwerkkabel des Laptops ziehen und «Jetzt sichern». Erwartet: nach spätestens 15 Sekunden «Ziel nicht erreichbar», kein Lauf mit restic-Fehlertext. Danach den Dienst wieder starten bzw. das Kabel einstecken.
+  5. Ziel bearbeiten: den Host durch die IP-Adresse des NAS ersetzen, «Verbindung testen». Erwartet: erneut «Diesem Server vertrauen?» (anderer Name), nach dem Vertrauen «Erreichbar», Speichern ohne weitere Rückfrage; das nächste «Jetzt sichern» findet seinen vorherigen Snapshot (im Restore-Tab erscheinen beide Snapshots unter demselben Backup).
+  6. Darstellung unter Breeze hell und dunkel: im Schritt «Ziel-Typ» und in der Laufwerksliste (USB-Stick einstecken, «Externes Laufwerk / USB») ist der Titel jeder Zeile nicht kleiner als die Zeile darunter, und das Symbol der gewählten Zeile bleibt erkennbar.
+  7. Aufräumen: Test-Backup und Ziel in Kestic entfernen («Aus Kestic entfernen…»), das Test-Verzeichnis auf dem NAS und `~/kestic-m5-test` von Hand löschen.
+  8. Rückmeldung: «geht» je Schritt oder der Schritt, an dem es hängt, mit Bildschirmfoto.
 
 ## M6 Onboarding und Sicherheit
 

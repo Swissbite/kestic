@@ -18,6 +18,7 @@ use kestic_core::backup::{BackupRunError, SnapshotListAccess};
 use kestic_core::model::{DestinationId, RunId};
 use kestic_core::query_list::{HeldResult, PageRequest, QueryOutcome};
 use kestic_core::restic::CancelHandle;
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::snapshot_diff::{DiffResult, execute_diff};
 use kestic_core::snapshot_find::{
     FindRequest, FindResult, FindScope, execute_find, validate_search_text,
@@ -238,6 +239,9 @@ pub fn start_snapshot_query_async(
     request_json: &str,
 ) -> Result<String, KesticServiceErr> {
     let query = parse_request(request_json)?;
+    // Held until the query has ended, so the app-managed restic is not replaced between its
+    // restic processes.
+    let mut run_lease = ResticBinaryGate::global().read();
     let query_id = RunId::generate()
         .map(|r| r.as_str().to_string())
         .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
@@ -278,10 +282,12 @@ pub fn start_snapshot_query_async(
             return Err(err);
         }
     };
+    run_lease.bind(&resolved.binary);
 
     let shared_worker = Arc::clone(shared);
     let id = query_id.clone();
     thread::spawn(move || {
+        let _run_lease = run_lease;
         let access = SnapshotListAccess {
             destination: &dest,
             resolved: &resolved,

@@ -859,16 +859,17 @@ fn ac_m4_06_1_restore_dialog_shows_the_mapping() {
     );
 }
 
-/// AC-M4-05-22 (b, c): the setting «restic source» marks restic 0.18.0 «(outdated)» and the
-/// newest tested version not (scene `m4-restic-outdated`).
+/// AC-M4-05-22 (b, c): the setting «restic source» shows «· recommended: 0.20.0» behind
+/// restic 0.18.0 and no such note behind the newest tested version (scene
+/// `m4-restic-recommended`).
 #[test]
-fn ac_m4_05_22_settings_mark_outdated_restic() {
+fn ac_m4_05_22_settings_recommend_the_tested_restic() {
     run_isolated_test(
-        "ac_m4_05_22_settings_mark_outdated_restic",
+        "ac_m4_05_22_settings_recommend_the_tested_restic",
         "KESTIC_AC_M4_05_22_SMOKE_INNER",
         |root| {
             for variant in common::m3::restic_variants() {
-                let outdated = if variant.label.contains("0.18.0") {
+                let recommended = if variant.label.contains("0.18.0") {
                     "1"
                 } else {
                     "0"
@@ -879,7 +880,7 @@ fn ac_m4_05_22_settings_mark_outdated_restic() {
                     let (rig, _fakes, _) = restore_dialog_env(&sub, &variant);
                     run_m4_gui_smoke_env(
                         root,
-                        "m4-restic-outdated",
+                        "m4-restic-recommended",
                         "wide",
                         lang,
                         &smoke_artifact(
@@ -887,7 +888,7 @@ fn ac_m4_05_22_settings_mark_outdated_restic() {
                             "wide",
                             lang,
                         ),
-                        &[("KESTIC_SMOKE_EXPECT_OUTDATED", outdated)],
+                        &[("KESTIC_SMOKE_EXPECT_RECOMMENDED", recommended)],
                     );
                     rig.daemon.stop();
                 }

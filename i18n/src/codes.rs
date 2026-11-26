@@ -71,6 +71,10 @@ code_enum! {
         SecretStoreLocked => "secret_store_locked",
         /// Only for skipped backups (`SkippedBackupDto`): restic is missing or too old.
         ResticUnavailable => "restic_unavailable",
+        /// SFTP: no `known_hosts` file knows the server's host key.
+        HostKeyUnknown => "host_key_unknown",
+        /// SFTP: a `known_hosts` file has another host key of the same type for the server.
+        HostKeyChanged => "host_key_changed",
         /// A folder chosen for a restore does not exist in the snapshot.
         PathNotInSnapshot => "path_not_in_snapshot",
         /// A restore preview refused its target (`error_detail` is the folder concerned): restic
@@ -170,6 +174,28 @@ code_enum! {
 }
 
 code_enum! {
+    /// Why a restic path cannot be used (`ResticStatusDto.path_problem`, with
+    /// `invalid_custom_path`).
+    ResticPathProblem {
+        NotFound => "not_found",
+        PermissionDenied => "permission_denied",
+        NotExecutable => "not_executable",
+        NotAFile => "not_a_file",
+        Other => "other",
+    }
+}
+
+code_enum! {
+    /// The configured restic source (`ResticStatusDto.source`).
+    ResticSourceCode {
+        Automatic => "automatic",
+        System => "system",
+        AppManaged => "app_managed",
+        Custom => "custom",
+    }
+}
+
+code_enum! {
     /// Blocking state of the whole app (`BlockingStateDto.kind`).
     BlockingKind {
         SecretStoreLocked => "secret_store_locked",
@@ -196,6 +222,77 @@ code_enum! {
         CommandFailed => "command_failed",
         /// Set by the GUI when the daemon cannot be reached.
         DaemonUnreachable => "daemon_unreachable",
+        /// A network address of the file dialog (KIO, e.g. `smb://…`) instead of a local path;
+        /// `detail` = the address.
+        NotALocalPath => "not_a_local_path",
+        /// restic got no answer from the server within the time limit of the connection test.
+        NotResponding => "not_responding",
+        /// The repository URL of the generic form has no known scheme.
+        UnsupportedScheme => "unsupported_scheme",
+        /// A variable of the generic form would override Kestic's own environment or is no valid
+        /// name; `detail` = the name.
+        ReservedVariable => "reserved_variable",
+        /// The backend needs a program that is not installed (`rclone`); `detail` = the program.
+        ProgramMissing => "program_missing",
+        /// SFTP: no `known_hosts` file knows the server; the result carries the key to confirm.
+        UnknownHostKey => "unknown_host_key",
+        /// SFTP: the server shows another key than a `known_hosts` file has; `detail` = that
+        /// file.
+        HostKeyChanged => "host_key_changed",
+        /// SFTP: the server rejected the SSH key.
+        SshKeyRejected => "ssh_key_rejected",
+        /// SFTP: ssh reaches the server through a jump host (`ProxyJump`, `ProxyCommand`).
+        JumpHostUnsupported => "jump_host_unsupported",
+        /// Edited connection: the repository there has another ID than the destination's.
+        OtherRepository => "other_repository",
+        /// Edited connection: a credential is needed that is neither entered nor saved for this
+        /// server; `detail` = the variable restic reads it from.
+        CredentialsRequired => "credentials_required",
+        /// An `rclone:` URL with a secret parameter; `detail` = the parameter name.
+        SecretInUrl => "secret_in_url",
+        /// An `azure:` or `gs:` destination without one of the credential variables its backend
+        /// needs entered in the destination; `detail` = those variables.
+        CredentialsNotEntered => "credentials_not_entered",
+    }
+}
+
+code_enum! {
+    /// Result of `UpdateDestination` (`DestinationUpdateResultDto.outcome`).
+    DestinationUpdateOutcome {
+        /// Saved: the same repository ID, or the connection did not change.
+        Saved => "saved",
+        /// Another repository ID at the edited connection: nothing saved.
+        OtherRepository => "other_repository",
+    }
+}
+
+code_enum! {
+    /// Note of a successful connection test that the user confirms before the destination is
+    /// added (`ConnectionTestResultDto.notes`).
+    ConnectionNoteCode {
+        /// The folder is on a CIFS/SMB share, which restic advises against for repositories.
+        CifsShare => "cifs_share",
+        /// The S3 bucket does not exist yet; adding the destination creates it.
+        BucketMissing => "bucket_missing",
+    }
+}
+
+code_enum! {
+    /// Destination type offered by the wizard (`DestinationTypeDto.kind`), in the order of the
+    /// cards: each maps to one restic backend.
+    DestinationTypeCode {
+        /// A local repository on a removable drive.
+        Drive => "drive",
+        /// A local repository in a folder or on another internal disk.
+        Folder => "folder",
+        Sftp => "sftp",
+        Rest => "rest",
+        S3 => "s3",
+        B2 => "b2",
+        Azure => "azure",
+        Gs => "gs",
+        Swift => "swift",
+        Rclone => "rclone",
     }
 }
 
@@ -217,6 +314,10 @@ code_enum! {
         LockInUse => "LockInUse",
         /// The repository location is already used by another destination.
         DuplicateLocation => "DuplicateLocation",
+        /// SFTP: the server's host key is not known yet.
+        HostKeyUnknown => "HostKeyUnknown",
+        /// SFTP: the server shows another host key than before; the message is the file.
+        HostKeyChanged => "HostKeyChanged",
         /// A restore to the original location or into a folder with content needs a finished,
         /// fresh preview with the same parameters.
         PreviewRequired => "PreviewRequired",
@@ -226,6 +327,49 @@ code_enum! {
         Internal => "Internal",
         /// No D-Bus error name: the daemon could not be reached (transport error, set by the GUI).
         DaemonUnreachable => "DaemonUnreachable",
+    }
+}
+
+code_enum! {
+    /// Why installing the app-managed restic failed (`ResticInstallStatusDto.error_kind`).
+    ResticInstallCode {
+        /// No answer, a failed transfer, or an answer larger than its limit.
+        Network => "network",
+        /// A request or redirect left the allowed restic release hosts.
+        HostNotAllowed => "host_not_allowed",
+        /// The release or one of its files is missing or not in the expected form.
+        AssetMissing => "asset_missing",
+        UnsupportedArchitecture => "unsupported_architecture",
+        GpgvMissing => "gpgv_missing",
+        SignatureInvalid => "signature_invalid",
+        ChecksumMismatch => "checksum_mismatch",
+        /// The new binary reports another version than the release.
+        VersionMismatch => "version_mismatch",
+        /// The release or the new binary is older than the minimum restic version, or the
+        /// release is older than the installed restic managed by Kestic.
+        TooOld => "too_old",
+        WriteFailed => "write_failed",
+    }
+}
+
+code_enum! {
+    /// Step of a running installation of the app-managed restic (`ResticInstallStatusDto.phase`).
+    ResticInstallPhase {
+        FetchingRelease => "fetching_release",
+        Downloading => "downloading",
+        Verifying => "verifying",
+        /// Downloaded and checked; the binary is replaced once no restic runs.
+        WaitingForRuns => "waiting_for_runs",
+        Replacing => "replacing",
+    }
+}
+
+code_enum! {
+    /// Result of a finished installation (`ResticInstallStatusDto.outcome`).
+    ResticInstallOutcome {
+        Installed => "installed",
+        /// The app-managed restic already was the latest release; nothing was downloaded.
+        AlreadyCurrent => "already_current",
     }
 }
 
@@ -438,6 +582,14 @@ mod tests {
         for v in ConnectionTestCode::ALL {
             assert_eq!(ConnectionTestCode::parse(v.as_str()), Some(v));
             assert_eq!(ConnectionTestCode::parse("nope"), None);
+        }
+        for v in ConnectionNoteCode::ALL {
+            assert_eq!(ConnectionNoteCode::parse(v.as_str()), Some(v));
+            assert_eq!(ConnectionNoteCode::parse("nope"), None);
+        }
+        for v in DestinationTypeCode::ALL {
+            assert_eq!(DestinationTypeCode::parse(v.as_str()), Some(v));
+            assert_eq!(DestinationTypeCode::parse("nope"), None);
         }
         for v in SnapshotQueryKind::ALL {
             assert_eq!(SnapshotQueryKind::parse(v.as_str()), Some(v));

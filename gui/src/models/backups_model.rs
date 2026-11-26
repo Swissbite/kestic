@@ -9,8 +9,8 @@ use crate::overall_text::localized_availability_reason;
 use crate::state_cache::{
     backup_exclude_file_path_str, format_backup_status, format_bytes, format_conditions_summary,
     format_duration_ms, format_exclude_summary, format_next_scheduled_line, format_pause_line,
-    format_retention_summary, format_schedule_summary, format_source_kind_label, i18n, i18np,
-    json_or, localized_last_error, pending_reason_line, shared_state,
+    format_percent, format_retention_summary, format_schedule_summary, format_source_kind_label,
+    i18n, i18np, json_or, localized_last_error, pending_reason_line, shared_state,
 };
 use crate::time_texts::daemon_now;
 use cxx_qt::CxxQtType;
@@ -87,21 +87,16 @@ fn format_active_progress_text(active_progress: Option<&ActiveRunProgressDto>) -
             &[&done_str],
         );
     }
-    let pct = kestic_i18n::messages::rounded_percent(p.percent_done);
+    let pct = format_percent(kestic_i18n::messages::rounded_percent(p.percent_done));
     let total_str = format_bytes(p.total_bytes);
     if p.total_bytes == 0 {
-        return i18n("%1%").subs(&[&pct.to_string()]);
+        return pct;
     }
     if p.seconds_remaining > 0 {
         let left = format_duration_ms(p.seconds_remaining.saturating_mul(1000));
-        return i18n("%1% · %2 of %3 · about %4 left").subs(&[
-            &pct.to_string(),
-            &done_str,
-            &total_str,
-            &left,
-        ]);
+        return i18n("%1 · %2 of %3 · about %4 left").subs(&[&pct, &done_str, &total_str, &left]);
     }
-    i18n("%1% · %2 of %3").subs(&[&pct.to_string(), &done_str, &total_str])
+    i18n("%1 · %2 of %3").subs(&[&pct, &done_str, &total_str])
 }
 
 fn format_last_run_summary(last_run: Option<&Run>) -> String {

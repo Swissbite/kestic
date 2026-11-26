@@ -11,6 +11,7 @@ pub mod inhibit;
 pub mod job_view;
 pub mod monitors;
 pub mod notifications;
+pub mod removable_drives;
 pub mod secrets;
 pub mod service;
 pub mod single_instance;

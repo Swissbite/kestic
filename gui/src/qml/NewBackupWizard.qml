@@ -89,7 +89,7 @@ WizardPage {
     readonly property bool summaryValid: {
         if (backupName.trim().length === 0 || !sourceValid) return false;
         if (integratedDestFlow) {
-            return destDetailsValid && destDraft.connectionVerified && destDraft.passwordsMatch;
+            return destDetailsValid && destDraft.connectionAccepted && destDraft.passwordsMatch;
         }
         return destValid;
     }
@@ -101,9 +101,9 @@ WizardPage {
         case "choose_dest":
             return destValid;
         case "dest_type":
-            return true;
+            return typeChooser.choiceValid;
         case "dest_details":
-            return destDetailsValid && destDraft.connectionVerified;
+            return destDetailsValid && destDraft.connectionAccepted;
         case "dest_password":
             return destDraft.passwordsMatch;
         default:
@@ -136,7 +136,7 @@ WizardPage {
                     destDraft.fieldsJson(),
                     destDraft.setupMode,
                     destDraft.repoPassword,
-                    destDraft.restPassword
+                    destDraft.backendSecretsJson()
                 );
                 if (newDestId === "") {
                     saveErrorText = appBackend.last_action_error;
@@ -349,6 +349,7 @@ WizardPage {
             }
 
             DestinationTypeChooser {
+                id: typeChooser
                 visible: page.currentStage === "dest_type"
                 Layout.fillWidth: true
                 draft: destDraft
@@ -416,7 +417,7 @@ WizardPage {
                     }
 
                     Controls.Label {
-                        Kirigami.FormData.label: i18n("Source:")
+                        Kirigami.FormData.label: Texts.label("source_label")
                         text: page.sourcePath
                         wrapMode: Text.WordWrap
                     }

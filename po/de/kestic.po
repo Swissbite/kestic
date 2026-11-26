@@ -232,8 +232,8 @@ msgid "Paused since %1"
 msgstr "Pausiert seit %1"
 
 #: daemon/src/service/state.rs:433
-msgid "AC power (battery %1%)"
-msgstr "Netzstrom (Akku %1%)"
+msgid "AC power (battery %1)"
+msgstr "Netzstrom (Akku %1)"
 
 #: daemon/src/service/state.rs:435
 msgid "AC power"
@@ -309,6 +309,22 @@ msgstr "restic %1 ist zu alt; Kestic benötigt mindestens %2"
 msgid "Custom restic path is invalid (%1): %2"
 msgstr "Eigener restic-Pfad ist ungültig (%1): %2"
 
+#: i18n/src/messages.rs
+msgid "Custom restic path is invalid: %1 does not exist"
+msgstr "Eigener restic-Pfad ist ungültig: %1 existiert nicht"
+
+#: i18n/src/messages.rs
+msgid "Custom restic path is invalid: no permission to access %1"
+msgstr "Eigener restic-Pfad ist ungültig: kein Zugriff auf %1"
+
+#: i18n/src/messages.rs
+msgid "Custom restic path is invalid: %1 cannot be started"
+msgstr "Eigener restic-Pfad ist ungültig: %1 kann nicht gestartet werden"
+
+#: i18n/src/messages.rs
+msgid "Custom restic path is invalid: %1 is not a file"
+msgstr "Eigener restic-Pfad ist ungültig: %1 ist keine Datei"
+
 #: daemon/src/service/state.rs:627
 msgid "Cannot read the restic version (%1)"
 msgstr "restic-Version kann nicht gelesen werden (%1)"
@@ -326,8 +342,8 @@ msgid "Next backup: %1 (%2)"
 msgstr "Nächstes Backup: %1 (%2)"
 
 #: daemon/src/service/state_summary.rs:546 gui/src/overall_text.rs:84
-msgid "Currently running: %1 (%2%)"
-msgstr "Läuft gerade: %1 (%2%)"
+msgid "Currently running: %1 (%2)"
+msgstr "Läuft gerade: %1 (%2)"
 
 #: i18n/src/messages.rs
 msgid "Currently running: %1"
@@ -384,8 +400,8 @@ msgstr "%1 Backups mit Warnungen abgeschlossen"
 
 #: daemon/src/service/state_summary.rs:817 daemon/src/tray.rs:172
 #: gui/src/overall_text.rs:41
-msgid "%1: backing up · %2%"
-msgstr "%1: sichert · %2%"
+msgid "%1: backing up · %2"
+msgstr "%1: sichert · %2"
 
 #: i18n/src/messages.rs
 msgid "%1: backing up · looking through files"
@@ -565,12 +581,12 @@ msgid "Personal folder"
 msgstr "Persönlicher Ordner"
 
 #: gui/src/models/backups_model.rs:92
-msgid "%1% · %2 of %3"
-msgstr "%1% · %2 von %3"
+msgid "%1 · %2 of %3"
+msgstr "%1 · %2 von %3"
 
 #: gui/src/models/backups_model.rs
-msgid "%1% · %2 of %3 · about %4 left"
-msgstr "%1% · %2 von %3 · noch etwa %4"
+msgid "%1 · %2 of %3 · about %4 left"
+msgstr "%1 · %2 von %3 · noch etwa %4"
 
 #: gui/src/models/backups_model.rs
 msgid "%2 · %1 file so far"
@@ -578,9 +594,9 @@ msgid_plural "%2 · %1 files so far"
 msgstr[0] "%2 · %1 Datei bisher"
 msgstr[1] "%2 · %1 Dateien bisher"
 
-#: gui/src/models/backups_model.rs:94
+#: gui/src/state_cache.rs i18n/src/messages.rs
 msgid "%1%"
-msgstr "%1%"
+msgstr "%1 %"
 
 #: gui/src/models/backups_model.rs:101
 msgid "No runs yet"
@@ -930,8 +946,8 @@ msgid "Schedule: Manual only"
 msgstr "Zeitplan: Nur manuell"
 
 #: gui/src/state_cache.rs:1018
-msgid "Backing up · %1%"
-msgstr "Sichert · %1%"
+msgid "Backing up · %1"
+msgstr "Sichert · %1"
 
 #: gui/src/state_cache.rs
 msgid "Backing up · looking through files"
@@ -1101,17 +1117,81 @@ msgstr "Schritt %1 von %2"
 msgid "Where should encrypted backups be stored?"
 msgstr "Wo sollen verschlüsselte Backups gespeichert werden?"
 
-#: gui/src/qml/AddDestinationWizard.qml:178 gui/src/qml/NewBackupWizard.qml:478
-msgid "Local Folder or External Drive"
-msgstr "Lokaler Ordner oder externes Laufwerk"
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "External Drive / USB"
+msgstr "Externes Laufwerk / USB"
 
-#: gui/src/qml/AddDestinationWizard.qml:188 gui/src/qml/NewBackupWizard.qml:488
-msgid "Store snapshots in a local folder or on a connected drive."
-msgstr "Snapshots in einem lokalen Ordner oder auf einem angeschlossenen Laufwerk speichern."
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Folder / Other Disk"
+msgstr "Ordner / anderer Datenträger"
 
-#: gui/src/qml/AddDestinationWizard.qml:208 gui/src/qml/NewBackupWizard.qml:507
-msgid "Connect to a restic REST server over HTTPS or HTTP."
-msgstr "Mit einem restic-REST-Server über HTTPS oder HTTP verbinden."
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "NAS / Server via SSH"
+msgstr "NAS / Server per SSH"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Cloud Storage"
+msgstr "Cloud-Speicher"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Cloud Services via rclone"
+msgstr "Cloud-Dienste über rclone"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "A drive you plug in"
+msgstr "Ein Laufwerk, das Sie einstecken"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Local folder, for example on a second hard disk"
+msgstr "Lokaler Ordner, z. B. auf einer zweiten Festplatte"
+
+#: gui/src/ui_texts.rs
+msgid "SFTP"
+msgstr "SFTP"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "For example on the NAS"
+msgstr "Z. B. auf dem NAS"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "S3-compatible, Backblaze B2, Azure, Google Cloud, Swift"
+msgstr "S3-kompatibel, Backblaze B2, Azure, Google Cloud, Swift"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Google Drive, OneDrive, Dropbox …"
+msgstr "Google Drive, OneDrive, Dropbox …"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Check Again"
+msgstr "Erneut prüfen"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Ready"
+msgstr "Bereit"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Needs Installation"
+msgstr "Braucht Installation"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "needs the program '%1'"
+msgstr "braucht das Programm «%1»"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Install the program '%1', then check again."
+msgstr "Installieren Sie das Programm «%1» und prüfen Sie dann erneut."
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Package: %1"
+msgstr "Paket: %1"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Install it in a terminal:"
+msgstr "Im Terminal installieren:"
+
+#: gui/src/qml/DestinationTypeChooser.qml
+msgid "Install command"
+msgstr "Befehl zum Installieren"
 
 #: gui/src/qml/AddDestinationWizard.qml:224 gui/src/qml/NewBackupWizard.qml:523
 msgid "Where is the REST server located?"
@@ -2675,10 +2755,6 @@ msgstr "Verschlüsselte Backup-Verwaltung für Plasma auf Basis von restic (%1)"
 msgid "Download restic…"
 msgstr "restic herunterladen…"
 
-#: gui/src/qml/MainHeaderArea.qml:58
-msgid "Automatic restic download will be added in a future release."
-msgstr "Kestic kann restic später selbst herunterladen."
-
 #: gui/src/qml/Main.qml:533 gui/src/qml/OverviewPage.qml:124
 #: gui/src/qml/OverviewPage.qml:128
 msgid "Set Up First Backup"
@@ -3038,12 +3114,8 @@ msgid "Apply"
 msgstr "Übernehmen"
 
 #: gui/src/qml/SettingsDialog.qml:113
-msgid "System restic (from PATH)"
-msgstr "System-restic (aus PATH)"
-
-#: gui/src/qml/SettingsDialog.qml:120
-msgid "Custom program path"
-msgstr "Eigener Programmpfad"
+msgid "Automatic"
+msgstr "Automatisch"
 
 #: gui/src/qml/SettingsDialog.qml:140
 msgid "Custom restic program path"
@@ -3113,14 +3185,6 @@ msgstr "Bei Wartungsfehlern benachrichtigen:"
 msgid "Notify on maintenance failures"
 msgstr "Bei Wartungsfehlern benachrichtigen"
 
-#: gui/src/qml/SettingsDialog.qml:243
-msgid "Notify on restic updates:"
-msgstr "Bei restic-Aktualisierungen benachrichtigen:"
-
-#: gui/src/qml/SettingsDialog.qml:245
-msgid "Notify on restic updates"
-msgstr "Bei restic-Aktualisierungen benachrichtigen"
-
 #: gui/src/qml/SettingsDialog.qml:251
 msgid "Background Service"
 msgstr "Hintergrunddienst"
@@ -3145,14 +3209,6 @@ msgstr "Wenn Sie das Fenster schliessen, läuft Kestic weiter, auch die Backups.
 msgid "restic"
 msgstr "restic"
 
-#: gui/src/qml/SettingsDialog.qml:278
-msgid "restic source:"
-msgstr "restic-Quelle:"
-
-#: gui/src/qml/SettingsDialog.qml:288
-msgid "Kestic needs restic 0.18.0 or newer."
-msgstr "Kestic benötigt restic 0.18.0 oder neuer."
-
 #: gui/src/qml/SettingsDialog.qml:301
 msgid "Change restic Source…"
 msgstr "restic-Quelle ändern…"
@@ -3165,9 +3221,13 @@ msgstr "Jetzt aktualisieren"
 msgid "Update restic now"
 msgstr "restic jetzt aktualisieren"
 
-#: gui/src/qml/SettingsDialog.qml:317
-msgid "Kestic will update restic itself in a future version."
-msgstr "Kestic wird restic in einer zukünftigen Version selbst aktualisieren."
+#: gui/src/qml/SettingsDialog.qml
+msgid "Download restic"
+msgstr "restic herunterladen"
+
+#: gui/src/restic_install_view.rs
+msgid "A restic installation is already running."
+msgstr "Eine Installation von restic läuft bereits."
 
 #: gui/src/qml/ShowCommandDialog.qml:12
 msgid "Command · %1"
@@ -3368,6 +3428,529 @@ msgstr[1] "%1 geplante Backups verpasst"
 msgid "Clean up: %1 freed"
 msgstr "Aufräumen: %1 freigegeben"
 
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Removable Drives"
+msgstr "Wechseldatenträger"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "No removable drive is plugged in."
+msgstr "Es ist kein Wechseldatenträger eingesteckt."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use this folder anyway"
+msgstr "Diesen Ordner trotzdem verwenden"
+
+#: i18n/src/messages.rs
+msgid ""
+"'%1' is a network address, not a folder on this computer. restic cannot use "
+"it; choose a local or mounted folder."
+msgstr ""
+"«%1» ist eine Netzwerkadresse, kein Ordner auf diesem Computer. restic kann "
+"sie nicht verwenden; wählen Sie einen lokalen oder eingehängten Ordner."
+
+#: i18n/src/messages.rs
+msgid ""
+"This folder is on a CIFS/SMB network share. restic advises against "
+"repositories on such shares."
+msgstr ""
+"Dieser Ordner liegt auf einer CIFS/SMB-Netzwerkfreigabe. restic rät von "
+"Repositorys auf solchen Freigaben ab."
+
+#: gui/src/ui_texts.rs
+msgid "S3-Compatible Storage"
+msgstr "S3-kompatibler Speicher"
+
+#: i18n/src/messages.rs
+msgid ""
+"The destination rejected the login. Check the access data and test again."
+msgstr ""
+"Das Ziel hat die Anmeldung abgelehnt. Prüfen Sie die Zugangsdaten und testen "
+"Sie erneut."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Which S3-compatible storage should be used?"
+msgstr "Welcher S3-kompatible Speicher soll verwendet werden?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Check Keys"
+msgstr "Schlüssel prüfen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Cloud Backup"
+msgstr "Cloud-Backup"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Endpoint:"
+msgstr "Endpoint:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Endpoint*:"
+msgstr "Endpoint*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 endpoint"
+msgstr "S3-Endpoint"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter the address with http:// or https://, without a path."
+msgstr "Geben Sie die Adresse mit http:// oder https:// ein, ohne Pfad."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Bucket:"
+msgstr "Bucket:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Bucket*:"
+msgstr "Bucket*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 bucket"
+msgstr "S3-Bucket"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use 3 to 63 lowercase letters, digits, dots or hyphens."
+msgstr "Verwenden Sie 3 bis 63 Kleinbuchstaben, Ziffern, Punkte oder Bindestriche."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use no spaces, quotes, #, ? or %, and no empty, . or .. parts."
+msgstr ""
+"Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder % und keine "
+"leeren, «.»- oder «..»-Teile."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use no spaces in the region."
+msgstr "Verwenden Sie keine Leerzeichen in der Region."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter the access key and the secret key."
+msgstr "Geben Sie den Access-Key und den Secret-Key ein."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Which rclone remote should be used?"
+msgstr "Welches rclone-Remote soll verwendet werden?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Where on %1 is the repository?"
+msgstr "Wo bei %1 liegt das Repository?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "rclone remote:"
+msgstr "rclone-Remote:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "rclone remote*:"
+msgstr "rclone-Remote*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Repository URL:"
+msgstr "Repository-URL:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Repository URL*:"
+msgstr "Repository-URL*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "rclone remote"
+msgstr "rclone-Remote"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Repository URL"
+msgstr "Repository-URL"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Environment Variables"
+msgstr "Umgebungsvariablen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "NAME"
+msgstr "NAME"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Variable name"
+msgstr "Name der Variable"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Leave empty to keep the saved value"
+msgstr "Leer lassen, um den gespeicherten Wert zu behalten"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Value"
+msgstr "Wert"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Variable value"
+msgstr "Wert der Variable"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Secret"
+msgstr "Geheim"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Secret: keep the value only in the password store"
+msgstr "Geheim: Wert nur im Passwortspeicher aufbewahren"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Remove Variable"
+msgstr "Variable entfernen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Add Variable"
+msgstr "Variable hinzufügen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter a value for every secret variable."
+msgstr "Geben Sie für jede geheime Variable einen Wert ein."
+
+#: gui/src/ui_texts.rs
+msgid "Name"
+msgstr "Name"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Settings the storage service reads, for example its account ID and key. Secret values are kept only in the password store."
+msgstr "Einstellungen, die der Speicherdienst liest, zum Beispiel seine Konto-ID und sein Schlüssel. Geheime Werte bleiben nur im Passwortspeicher."
+
+#: gui/src/destination_input.rs
+msgid "Enter the address of the storage after the scheme."
+msgstr "Geben Sie nach dem Schema die Adresse des Speichers ein."
+
+#: gui/src/destination_input.rs
+msgid "The address after the scheme must not start with '-'."
+msgstr "Die Adresse nach dem Schema darf nicht mit «-» beginnen."
+
+#: gui/src/destination_input.rs
+msgid "Enter a name for every variable."
+msgstr "Geben Sie jeder Variable einen Namen."
+
+#: gui/src/destination_input.rs
+msgid "The variable '%1' is given twice."
+msgstr "Die Variable «%1» ist doppelt angegeben."
+
+#: gui/src/destination_input.rs
+msgid "The value of '%1' contains a character that cannot be passed on."
+msgstr "Der Wert von «%1» enthält ein Zeichen, das sich nicht weitergeben lässt."
+
+#: gui/src/ui_texts.rs
+msgid "Backblaze B2"
+msgstr "Backblaze B2"
+
+#: gui/src/ui_texts.rs
+msgid "Azure"
+msgstr "Azure"
+
+#: gui/src/ui_texts.rs
+msgid "Google Cloud"
+msgstr "Google Cloud"
+
+#: gui/src/ui_texts.rs
+msgid "Swift"
+msgstr "Swift"
+
+#: gui/src/ui_texts.rs
+msgid "rclone"
+msgstr "rclone"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Path in the bucket"
+msgstr "Pfad im Bucket"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Region:"
+msgstr "Region:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 region"
+msgstr "S3-Region"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Access key:"
+msgstr "Access-Key:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Access key*:"
+msgstr "Access-Key*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Leave empty to keep the saved key"
+msgstr "Leer lassen, um den gespeicherten Schlüssel zu behalten"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 access key"
+msgstr "S3-Access-Key"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Secret key:"
+msgstr "Secret-Key:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Secret key*:"
+msgstr "Secret-Key*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "S3 secret key"
+msgstr "S3-Secret-Key"
+
+#: i18n/src/messages.rs
+msgid "The server does not respond. Check the address and test again."
+msgstr "Der Server antwortet nicht. Prüfen Sie die Adresse und testen Sie erneut."
+
+#: i18n/src/messages.rs
+msgid "The repository URL must start with b2:, azure:, gs:, swift: or rclone:."
+msgstr "Die Repository-URL muss mit b2:, azure:, gs:, swift: oder rclone: beginnen."
+
+#: i18n/src/messages.rs
+msgid "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY, LD_ or XDG_ are not allowed. Neither are PATH, HOME, TMPDIR, GCONV_PATH and the address of the session bus."
+msgstr "Kestic gibt die Variable «%1» nicht an restic weiter. Verwenden Sie nur Grossbuchstaben, Ziffern und Unterstriche. Namen, die mit RESTIC_PASSWORD, RESTIC_REPOSITORY, LD_ oder XDG_ beginnen, sind nicht erlaubt. Ebenso PATH, HOME, TMPDIR, GCONV_PATH und die Adresse des Sitzungsbusses."
+
+#: i18n/src/messages.rs
+msgid "There is another backup destination at this address."
+msgstr "Unter dieser Adresse liegt ein anderes Backup-Ziel."
+
+#: i18n/src/messages.rs
+msgid "Enter one of these variables in this destination: %1. Kestic uses no other access data."
+msgstr "Tragen Sie in diesem Ziel eine dieser Variablen ein: %1. Kestic verwendet keine anderen Zugangsdaten."
+
+#: i18n/src/messages.rs
+msgid "Enter the access data again. Kestic uses saved access data only for the server they were entered for."
+msgstr "Geben Sie die Zugangsdaten erneut ein. Kestic verwendet gespeicherte Zugangsdaten nur für den Server, für den sie eingegeben wurden."
+
+#: i18n/src/messages.rs
+msgid "The repository URL contains the secret parameter '%1'. Enter it as a secret variable instead."
+msgstr "Die Repository-URL enthält den geheimen Parameter «%1». Erfassen Sie ihn stattdessen als geheime Variable."
+
+#: i18n/src/messages.rs
+msgid "This destination needs the program '%1', which is not installed. Install it with 'sudo apt install %1' and test again."
+msgstr "Dieses Ziel braucht das Programm «%1», das nicht installiert ist. Installieren Sie es mit «sudo apt install %1» und testen Sie erneut."
+
+#: i18n/src/messages.rs
+msgid ""
+"Bucket '%1' does not exist yet. Kestic creates it when the destination is "
+"added."
+msgstr "Bucket «%1» gibt es noch nicht; Kestic legt ihn beim Anlegen des Ziels an."
+
+#: i18n/src/messages.rs
+msgid "Unknown server"
+msgstr "Unbekannter Server"
+
+#: i18n/src/messages.rs
+msgid "The server identifies itself differently than before"
+msgstr "Der Server meldet sich anders als bisher"
+
+#: i18n/src/messages.rs
+msgid "Unknown server. Compare its fingerprint and trust it to continue."
+msgstr "Unbekannter Server. Vergleichen Sie seinen Fingerprint und vertrauen Sie ihm, um fortzufahren."
+
+#: i18n/src/messages.rs
+msgid "The server identifies itself differently than before. This can be an attack. Ask the operator of the server. Old entry: %1"
+msgstr "Der Server meldet sich anders als bisher. Das kann ein Angriff sein. Fragen Sie den Betreiber des Servers. Alter Eintrag: %1"
+
+#: i18n/src/messages.rs
+msgid "The server rejected the login with your SSH key. Copy your public key to the server with ssh-copy-id, or load the key into the ssh-agent. Then test again."
+msgstr "Der Server hat die Anmeldung mit Ihrem SSH-Schlüssel abgelehnt. Kopieren Sie Ihren öffentlichen Schlüssel mit ssh-copy-id auf den Server oder laden Sie den Schlüssel in den ssh-agent. Testen Sie danach erneut."
+
+#: i18n/src/messages.rs
+msgid "Servers behind a jump host are not supported yet."
+msgstr "Server über Sprungserver werden noch nicht unterstützt."
+
+#: i18n/src/messages.rs
+msgid "Unknown server: test the connection and trust the server first."
+msgstr "Unbekannter Server: Testen Sie zuerst die Verbindung und vertrauen Sie dem Server."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Which SSH server should be used?"
+msgstr "Welcher SSH-Server soll verwendet werden?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Host:"
+msgstr "Host:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Host*:"
+msgstr "Host*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "SSH server"
+msgstr "SSH-Server"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter a host name or an IP address."
+msgstr "Geben Sie einen Hostnamen oder eine IP-Adresse ein."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Port:"
+msgstr "Port:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "SSH port"
+msgstr "SSH-Port"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter a port from 1 to 65535."
+msgstr "Geben Sie einen Port von 1 bis 65535 ein."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "User:"
+msgstr "Benutzer:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "User*:"
+msgstr "Benutzer*:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "SSH user"
+msgstr "SSH-Benutzer"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Enter the user name on the server: only letters, digits, '.', '_' and '-'."
+msgstr "Geben Sie den Benutzernamen auf dem Server ein: nur Buchstaben, Ziffern, «.», «_» und «-»."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Repository path on the server"
+msgstr "Repository-Pfad auf dem Server"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid ""
+"Enter an absolute path or one relative to the home folder, not starting with "
+"'~'."
+msgstr "Geben Sie einen absoluten Pfad oder einen Pfad relativ zum persönlichen Ordner ein, nicht mit «~» am Anfang."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Login:"
+msgstr "Anmeldung:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid ""
+"With your SSH key or the ssh-agent. Copy your public key to the server first, "
+"for example with ssh-copy-id."
+msgstr "Mit Ihrem SSH-Schlüssel oder dem ssh-agent. Kopieren Sie Ihren öffentlichen Schlüssel zuerst auf den Server, zum Beispiel mit ssh-copy-id."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Trust This Server?"
+msgstr "Diesem Server vertrauen?"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Trust Server"
+msgstr "Server vertrauen"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Server:"
+msgstr "Server:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Key type:"
+msgstr "Schlüsseltyp:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Fingerprint:"
+msgstr "Fingerprint:"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid ""
+"Compare the fingerprint with the server's. Kestic then remembers the server."
+msgstr "Vergleichen Sie den Fingerprint mit dem des Servers. Danach merkt sich Kestic den Server."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Trust Server…"
+msgstr "Server vertrauen…"
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Add as New Destination…"
+msgstr "Als neues Ziel hinzufügen…"
+
+#: i18n/src/messages.rs:515
+msgid "Looking for the latest restic release…"
+msgstr "Neuestes restic-Release wird gesucht…"
+
+#: i18n/src/messages.rs:516
+msgid "Downloading restic…"
+msgstr "restic wird heruntergeladen…"
+
+#: i18n/src/messages.rs:517
+msgid "Checking the signature and checksum of restic…"
+msgstr "Signatur und Prüfsumme von restic werden geprüft…"
+
+#: i18n/src/messages.rs:519
+msgid "Waiting until no run or preview uses restic any more…"
+msgstr "Warten, bis kein Lauf und keine Vorschau restic mehr nutzt…"
+
+#: i18n/src/messages.rs:521
+msgid "Installing restic…"
+msgstr "restic wird installiert…"
+
+#: i18n/src/messages.rs:531
+msgid "restic %1 is installed."
+msgstr "restic %1 ist installiert."
+
+#: i18n/src/messages.rs:532
+msgid "restic %1 is already the latest version."
+msgstr "restic %1 ist bereits die neueste Version."
+
+#: i18n/src/messages.rs:544
+msgid "Could not download restic. Check the internet connection and try again."
+msgstr ""
+"restic konnte nicht heruntergeladen werden. Prüfen Sie die "
+"Internetverbindung und versuchen Sie es erneut."
+
+#: i18n/src/messages.rs:547
+msgid ""
+"The download was redirected to a server that does not belong to restic's "
+"releases. Nothing was installed."
+msgstr ""
+"Der Download wurde auf einen Server umgeleitet, der nicht zu den Releases von "
+"restic gehört. Es wurde nichts installiert."
+
+#: i18n/src/messages.rs:550
+msgid ""
+"The restic release is incomplete or not in the expected form. Nothing was "
+"installed."
+msgstr ""
+"Das restic-Release ist unvollständig oder nicht in der erwarteten Form. Es "
+"wurde nichts installiert."
+
+#: i18n/src/messages.rs:553
+msgid "restic offers no Linux build for this processor."
+msgstr "restic bietet für diesen Prozessor kein Linux-Programm an."
+
+#: i18n/src/messages.rs:556
+msgid ""
+"gpgv is missing. Kestic needs it to check the signature of restic. Install "
+"the package gpgv."
+msgstr ""
+"gpgv fehlt. Kestic braucht es, um die Signatur von restic zu prüfen. "
+"Installieren Sie das Paket gpgv."
+
+#: i18n/src/messages.rs:559
+msgid ""
+"The signature of the restic release is not valid. Nothing was installed."
+msgstr ""
+"Die Signatur des restic-Release ist nicht gültig. Es wurde nichts installiert."
+
+#: i18n/src/messages.rs:562
+msgid ""
+"The downloaded restic does not match its checksum. Nothing was installed."
+msgstr ""
+"Das heruntergeladene restic passt nicht zu seiner Prüfsumme. Es wurde nichts "
+"installiert."
+
+#: i18n/src/messages.rs:565
+msgid ""
+"The downloaded restic reports another version than its release. Nothing was "
+"installed."
+msgstr ""
+"Das heruntergeladene restic meldet eine andere Version als sein Release. Es "
+"wurde nichts installiert."
+
+#: i18n/src/messages.rs:568
+msgid ""
+"The restic release is older than the version Kestic needs or already has. "
+"Nothing was installed."
+msgstr ""
+"Das restic-Release ist älter als die Version, die Kestic braucht oder schon "
+"hat. Es wurde nichts installiert."
+
+#: i18n/src/messages.rs:570
+msgid "Could not save restic in the data folder of Kestic."
+msgstr "restic konnte nicht im Datenordner von Kestic gespeichert werden."
+
 #: gui/src/ui_texts.rs
 msgid "Restore"
 msgstr "Wiederherstellen"
@@ -3473,10 +4056,6 @@ msgstr "Auswahl anzeigen"
 #: gui/src/qml/RestoreBrowsePage.qml
 msgid "Clear Selection"
 msgstr "Auswahl aufheben"
-
-#: gui/src/qml/RestoreBrowsePage.qml
-msgid "Name"
-msgstr "Name"
 
 #: gui/src/qml/RestoreBrowsePage.qml
 msgid "Size"
@@ -3652,8 +4231,8 @@ msgstr "Ein Restore von diesem Ziel läuft oder wartet."
 msgid "%1: restoring"
 msgstr "%1: stellt wieder her"
 
-msgid "%1: restoring · %2%"
-msgstr "%1: stellt wieder her · %2%"
+msgid "%1: restoring · %2"
+msgstr "%1: stellt wieder her · %2"
 
 msgid "Overwritten"
 msgstr "Überschrieben"
@@ -3799,9 +4378,6 @@ msgstr "Alles wird in diesen Ordner wiederhergestellt; nichts wird überschriebe
 
 msgid "List"
 msgstr "Liste"
-
-msgid "%1 (outdated)"
-msgstr "%1 (veraltet)"
 
 msgid "Restored %1 file"
 msgid_plural "Restored %1 files"
@@ -3960,3 +4536,60 @@ msgstr "Keine verwaisten Backups"
 #: gui/src/models/restore_snapshots_model.rs
 msgid "ID %1"
 msgstr "ID %1"
+
+msgid "System"
+msgstr "System"
+
+msgid "Custom path"
+msgstr "Eigener Pfad"
+
+msgid "Automatic (%1)"
+msgstr "Automatisch (%1)"
+
+msgid "%1 · recommended: %2"
+msgstr "%1 · empfohlen: %2"
+
+msgid "%1 · too old, at least %2"
+msgstr "%1 · zu alt, mindestens %2"
+
+msgid "System %1 · Managed by Kestic %2"
+msgstr "System %1 · Von Kestic verwaltet %2"
+
+msgid "unknown version"
+msgstr "unbekannte Version"
+
+msgid "The restic managed by Kestic is still in use and cannot be deleted now."
+msgstr "Das von Kestic verwaltete restic wird noch verwendet und kann jetzt nicht gelöscht werden."
+
+msgid "The system restic from %1 on, otherwise the restic managed by Kestic."
+msgstr "Das System-restic ab %1, sonst das von Kestic verwaltete restic."
+
+msgid "The restic installed on the system (from PATH)."
+msgstr "Das auf dem System installierte restic (aus PATH)."
+
+msgid "The official restic release that Kestic downloaded and checked."
+msgstr "Das offizielle restic-Release, das Kestic heruntergeladen und geprüft hat."
+
+msgid "Not installed yet: Apply downloads and checks the official restic release first."
+msgstr "Noch nicht installiert: «Übernehmen» lädt zuerst das offizielle restic-Release herunter und prüft es."
+
+msgid "Version:"
+msgstr "Version:"
+
+msgid "Program:"
+msgstr "Programm:"
+
+msgid "Available:"
+msgstr "Vorhanden:"
+
+msgid "Kestic needs restic %1 or newer: older versions do not report errors and check results in a form Kestic can read."
+msgstr "Kestic benötigt restic %1 oder neuer: Ältere Versionen melden Fehler und Prüfergebnisse nicht in einer Form, die Kestic auswerten kann."
+
+msgid "System restic is now recent enough – switch?"
+msgstr "System-restic ist jetzt aktuell genug – umstellen?"
+
+msgid "The restic managed by Kestic is no longer used."
+msgstr "Das von Kestic verwaltete restic wird nicht mehr verwendet."
+
+msgid "Delete"
+msgstr "Löschen"

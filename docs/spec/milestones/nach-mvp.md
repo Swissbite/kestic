@@ -8,7 +8,7 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 
 | ID | Anforderung |
 | --- | --- |
-| FR-14 | `restic copy` zwischen Zielen |
+| FR-14 | `restic copy` zwischen Zielen; dazu ein umgezogenes Repo mit neuer Repo-ID übernehmen (Abgleich der Snapshots über `original`, Bestätigung, neues Kit; früher M5-S09) |
 | FR-16 | Ausschluss-Regeln rückwirkend anwenden (`rewrite --forget`) |
 | FR-20 | Pre/Post-Hooks |
 | FR-22 | Trigger «externe Disk eingesteckt» |
@@ -18,12 +18,14 @@ Noch nicht in Meilensteine geschnitten. Reihenfolge innerhalb der Gruppen offen.
 | FR-40 | `check --read-data-subset` |
 | FR-41 | Key-Management im GUI |
 | FR-43 | Bandbreitenlimits |
+| FR-51 | Wöchentliche Prüfung auf neue restic-Releases mit Hinweis im Tray (früher M5-S08); im MVP aktualisiert `[Jetzt aktualisieren]` |
 | FR-44 | Fremde Snapshots einem Backup zuordnen |
 | FR-46 | Snapshot dauerhaft behalten |
 | FR-47 | Expertenoptionen für `prune` |
 | FR-50 | Diagnose-Export |
 | FR-54 | Fortschritt in der Taskleiste |
 | FR-55 | Keine Systembenachrichtigung bei aktivem Fenster |
+| – | SFTP mit SSH-Schlüssel, der eine Passphrase hat, ohne ssh-agent: Passphrase im Passwortspeicher (im MVP nur Schlüssel ohne Passphrase oder ssh-agent, [architecture.md](../architecture.md) «Secrets») |
 | – | Flatpak ([architecture.md](../architecture.md) «Packaging», «Secrets») |
 | – | Projekt-Website auf GitHub Pages (inkl. automatisch generierter & aktualisierter GUI-Screenshots aus den QML-Offscreen-Smoke-Tests, optional über `kestic.daester.net` / GitHub Pages) |
 | – | «Tastenkürzel einrichten…» im Hauptmenü: Editor für alle Tastenkürzel ([ui/stil-und-texte.md](../ui/stil-und-texte.md) §13.1) |

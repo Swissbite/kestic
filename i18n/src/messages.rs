@@ -10,8 +10,9 @@
 //! `xgettext --keyword=i18n_noop:1` extracts it.
 
 use crate::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RestoreNoteCode, RestoreOutcome,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
+    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticInstallCode, ResticInstallOutcome,
+    ResticInstallPhase, ResticPathProblem, ResticStatusCode, RestoreNoteCode, RestoreOutcome,
     RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus,
     code_enum,
 };
@@ -21,11 +22,23 @@ pub const fn i18n_noop(msgid: &'static str) -> &'static str {
     msgid
 }
 
+/// Pattern of a percentage: the place of the number and the percent sign differ between
+/// languages («25%», «25 %»), so the catalog holds it, as in KDE's own catalogs.
+pub const PERCENT_PATTERN: &str = i18n_noop("%1%");
+
+/// An argument of a [`Message`]: text as it is, or a percentage that each side formats for its
+/// own language with [`PERCENT_PATTERN`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageArg {
+    Text(String),
+    Percent(u8),
+}
+
 /// Translatable text: English msgid with `%1`… placeholders and their arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     pub msgid: &'static str,
-    pub args: Vec<String>,
+    pub args: Vec<MessageArg>,
 }
 
 impl Message {
@@ -41,14 +54,40 @@ impl Message {
     pub fn with_args(msgid: &'static str, args: &[&str]) -> Self {
         Self {
             msgid,
-            args: args.iter().map(|a| (*a).to_string()).collect(),
+            args: args
+                .iter()
+                .map(|a| MessageArg::Text((*a).to_string()))
+                .collect(),
         }
+    }
+
+    /// Adds `percent` as the next argument.
+    #[must_use]
+    pub fn with_percent(mut self, percent: u8) -> Self {
+        self.args.push(MessageArg::Percent(percent));
+        self
+    }
+
+    /// The arguments as text, percentages formatted by `format_percent`.
+    pub fn rendered_args(&self, format_percent: impl Fn(u8) -> String) -> Vec<String> {
+        self.args
+            .iter()
+            .map(|arg| match arg {
+                MessageArg::Text(text) => text.clone(),
+                MessageArg::Percent(p) => format_percent(*p),
+            })
+            .collect()
     }
 
     /// Untranslated English text (msgid with substituted arguments), for logs and fallbacks.
     pub fn english(&self) -> String {
-        substitute_placeholders(self.msgid, &self.args)
+        substitute_placeholders(self.msgid, &self.rendered_args(english_percent))
     }
+}
+
+/// `percent` in English («25%»).
+pub fn english_percent(percent: u8) -> String {
+    substitute_placeholders(PERCENT_PATTERN, &[percent.to_string()])
 }
 
 /// Single-pass `%1`..`%9` substitution (a `%` not followed by a used digit stays as it is).
@@ -89,11 +128,6 @@ pub fn rounded_percent(value: f64) -> u8 {
         .unwrap_or(0)
 }
 
-/// Rounded percentage (0–100) for progress lines.
-fn percent(percent_done: f64) -> String {
-    rounded_percent(percent_done).to_string()
-}
-
 impl ErrorKind {
     /// Cause of a failed run or a run with warning. `exit_code` only matters for `unknown`
     /// errors; an `unknown` warning is «Backed up with warning».
@@ -112,6 +146,10 @@ impl ErrorKind {
             Self::Cancelled => i18n_noop("Cancelled by user"),
             Self::SecretStoreLocked => i18n_noop("Password store is locked"),
             Self::ResticUnavailable => i18n_noop("restic is unavailable or too old."),
+            Self::HostKeyUnknown => i18n_noop("Unknown server"),
+            Self::HostKeyChanged => {
+                i18n_noop("The server identifies itself differently than before")
+            }
             Self::PathNotInSnapshot => {
                 i18n_noop("The chosen folder does not exist in the snapshot")
             }
@@ -149,6 +187,17 @@ impl ErrorKind {
             _ => UiText::Message(self.message(None, false)),
         }
     }
+}
+
+/// A destination whose backend needs one of the credential `variables` entered in it, and none
+/// is: the form, the connection test and a refused run say the same.
+pub fn credentials_not_entered_message(variables: &str) -> Message {
+    Message::with_args(
+        i18n_noop(
+            "Enter one of these variables in this destination: %1. Kestic uses no other access data.",
+        ),
+        &[variables],
+    )
 }
 
 /// «Completed»: a run that ended without error.
@@ -207,9 +256,7 @@ impl PendingReasonCode {
         let msgid = match self {
             Self::OnBattery => {
                 return match battery_percent {
-                    Some(pct) => {
-                        Message::with_args(i18n_noop("AC power (battery %1%)"), &[&pct.to_string()])
-                    }
+                    Some(pct) => Message::new(i18n_noop("AC power (battery %1)")).with_percent(pct),
                     None => Message::new(i18n_noop("AC power")),
                 };
             }
@@ -308,8 +355,27 @@ pub struct ResticStatusParams<'a> {
     pub found_version: Option<&'a str>,
     /// Raw reason for `invalid_custom_path`, raw detail for `unreadable_version`.
     pub detail: Option<&'a str>,
+    /// Why the path of `invalid_custom_path` cannot be used; `None` or `other` shows `detail`.
+    pub path_problem: Option<ResticPathProblem>,
     /// Minimum restic version Kestic needs.
     pub min_version: &'a str,
+}
+
+impl ResticPathProblem {
+    /// Why the restic path `path` cannot be used; `None` for `other`, whose raw detail is the
+    /// information.
+    pub fn message(self, path: &str) -> Option<Message> {
+        let msgid = match self {
+            Self::NotFound => i18n_noop("Custom restic path is invalid: %1 does not exist"),
+            Self::PermissionDenied => {
+                i18n_noop("Custom restic path is invalid: no permission to access %1")
+            }
+            Self::NotExecutable => i18n_noop("Custom restic path is invalid: %1 cannot be started"),
+            Self::NotAFile => i18n_noop("Custom restic path is invalid: %1 is not a file"),
+            Self::Other => return None,
+        };
+        Some(Message::with_args(msgid, &[path]))
+    }
 }
 
 impl ResticStatusCode {
@@ -324,30 +390,23 @@ impl ResticStatusCode {
                 i18n_noop("restic %1 is too old; Kestic needs at least %2"),
                 &[params.found_version.unwrap_or_default(), min],
             ),
-            Self::InvalidCustomPath => Message::with_args(
-                i18n_noop("Custom restic path is invalid (%1): %2"),
-                &[
-                    params.binary_path.unwrap_or_default(),
-                    params.detail.unwrap_or_default(),
-                ],
-            ),
+            Self::InvalidCustomPath => {
+                let path = params.binary_path.unwrap_or_default();
+                params
+                    .path_problem
+                    .and_then(|problem| problem.message(path))
+                    .unwrap_or_else(|| {
+                        Message::with_args(
+                            i18n_noop("Custom restic path is invalid (%1): %2"),
+                            &[path, params.detail.unwrap_or_default()],
+                        )
+                    })
+            }
             Self::UnreadableVersion => Message::with_args(
                 i18n_noop("Cannot read the restic version (%1)"),
                 &[params.detail.unwrap_or_default()],
             ),
         }
-    }
-}
-
-/// Restic status line: «restic ‹version›» when usable, otherwise the reason.
-pub fn restic_status_text(
-    error_kind: Option<ResticStatusCode>,
-    version: Option<&str>,
-    params: &ResticStatusParams<'_>,
-) -> UiText {
-    match error_kind {
-        Some(code) => UiText::Message(code.message(params)),
-        None => UiText::Raw(format!("restic {}", version.unwrap_or_default())),
     }
 }
 
@@ -388,13 +447,93 @@ impl ConnectionTestCode {
             Self::SecretStoreLocked => ErrorKind::SecretStoreLocked.message(None, false),
             Self::ResticUnavailable => ErrorKind::ResticUnavailable.message(None, false),
             Self::WrongPassword => ErrorKind::WrongPassword.message(None, false),
-            Self::AuthFailed => ErrorKind::AuthFailed.message(None, false),
+            Self::AuthFailed => Message::new(i18n_noop(
+                "The destination rejected the login. Check the access data and test again.",
+            )),
             Self::RepositoryMissing => ErrorKind::RepoMissing.message(None, false),
+            Self::NotALocalPath => Message::with_args(
+                i18n_noop(
+                    "'%1' is a network address, not a folder on this computer. restic cannot use it; choose a local or mounted folder.",
+                ),
+                &[detail],
+            ),
+            Self::NotResponding => Message::new(i18n_noop(
+                "The server does not respond. Check the address and test again.",
+            )),
+            Self::UnsupportedScheme => Message::new(i18n_noop(
+                "The repository URL must start with b2:, azure:, gs:, swift: or rclone:.",
+            )),
+            Self::ReservedVariable => Message::with_args(
+                i18n_noop(
+                    "Kestic does not pass the variable '%1' to restic. Use only capital letters, digits and underscores. Names starting with RESTIC_PASSWORD, RESTIC_REPOSITORY, LD_ or XDG_ are not allowed. Neither are PATH, HOME, TMPDIR, GCONV_PATH and the address of the session bus.",
+                ),
+                &[detail],
+            ),
+            Self::ProgramMissing => Message::with_args(
+                i18n_noop(
+                    "This destination needs the program '%1', which is not installed. Install it with 'sudo apt install %1' and test again.",
+                ),
+                &[detail],
+            ),
+            Self::UnknownHostKey => Message::new(i18n_noop(
+                "Unknown server. Compare its fingerprint and trust it to continue.",
+            )),
+            Self::HostKeyChanged => Message::with_args(
+                i18n_noop(
+                    "The server identifies itself differently than before. This can be an attack. Ask the operator of the server. Old entry: %1",
+                ),
+                &[detail],
+            ),
+            Self::SshKeyRejected => Message::new(i18n_noop(
+                "The server rejected the login with your SSH key. Copy your public key to the server with ssh-copy-id, or load the key into the ssh-agent. Then test again.",
+            )),
+            Self::JumpHostUnsupported => Message::new(i18n_noop(
+                "Servers behind a jump host are not supported yet.",
+            )),
+            Self::OtherRepository => Message::new(i18n_noop(
+                "There is another backup destination at this address.",
+            )),
+            Self::CredentialsRequired => Message::new(i18n_noop(
+                "Enter the access data again. Kestic uses saved access data only for the server they were entered for.",
+            )),
+            Self::SecretInUrl => Message::with_args(
+                i18n_noop(
+                    "The repository URL contains the secret parameter '%1'. Enter it as a secret variable instead.",
+                ),
+                &[detail],
+            ),
+            Self::CredentialsNotEntered => credentials_not_entered_message(detail),
             Self::InvalidInput | Self::Internal | Self::CommandFailed | Self::DaemonUnreachable => {
                 return UiText::Raw(detail.to_string());
             }
         };
         UiText::Message(message)
+    }
+}
+
+impl ConnectionNoteCode {
+    /// Text shown with a successful connection test; `bucket` names the S3 bucket.
+    pub fn message(self, bucket: &str) -> Message {
+        match self {
+            Self::CifsShare => Message::new(i18n_noop(
+                "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
+            )),
+            Self::BucketMissing => Message::with_args(
+                i18n_noop(
+                    "Bucket '%1' does not exist yet. Kestic creates it when the destination is added.",
+                ),
+                &[bucket],
+            ),
+        }
+    }
+
+    /// Whether the user has to confirm the note before the destination can be added; otherwise
+    /// it is part of the test result.
+    pub fn needs_confirmation(self) -> bool {
+        match self {
+            Self::CifsShare => true,
+            Self::BucketMissing => false,
+        }
     }
 }
 
@@ -425,6 +564,10 @@ impl ServiceErrorCode {
             Self::DuplicateLocation => {
                 i18n_noop("This location is already used by another destination.")
             }
+            Self::HostKeyUnknown => {
+                i18n_noop("Unknown server: test the connection and trust the server first.")
+            }
+            Self::HostKeyChanged => return ErrorKind::HostKeyChanged.message(None, false),
             Self::PreviewRequired => {
                 i18n_noop("Check the preview again before restoring; it is missing or outdated.")
             }
@@ -433,6 +576,71 @@ impl ServiceErrorCode {
             }
             Self::Internal => i18n_noop("Internal error in the background service."),
             Self::DaemonUnreachable => i18n_noop("Background service unavailable."),
+        };
+        Message::new(msgid)
+    }
+}
+
+impl ResticInstallPhase {
+    /// Progress line of a running installation of the restic managed by Kestic.
+    pub fn message(self) -> Message {
+        let msgid = match self {
+            Self::FetchingRelease => i18n_noop("Looking for the latest restic release…"),
+            Self::Downloading => i18n_noop("Downloading restic…"),
+            Self::Verifying => i18n_noop("Checking the signature and checksum of restic…"),
+            Self::WaitingForRuns => {
+                i18n_noop("Waiting until no run or preview uses restic any more…")
+            }
+            Self::Replacing => i18n_noop("Installing restic…"),
+        };
+        Message::new(msgid)
+    }
+}
+
+impl ResticInstallOutcome {
+    /// Result line of a finished installation; `version` is the installed restic version.
+    pub fn message(self, version: &str) -> Message {
+        let msgid = match self {
+            Self::Installed => i18n_noop("restic %1 is installed."),
+            Self::AlreadyCurrent => i18n_noop("restic %1 is already the latest version."),
+        };
+        Message::with_args(msgid, &[version])
+    }
+}
+
+impl ResticInstallCode {
+    /// Why an installation of the restic managed by Kestic failed; the installed restic stays
+    /// as it was.
+    pub fn message(self) -> Message {
+        let msgid = match self {
+            Self::Network => {
+                i18n_noop("Could not download restic. Check the internet connection and try again.")
+            }
+            Self::HostNotAllowed => i18n_noop(
+                "The download was redirected to a server that does not belong to restic's releases. Nothing was installed.",
+            ),
+            Self::AssetMissing => i18n_noop(
+                "The restic release is incomplete or not in the expected form. Nothing was installed.",
+            ),
+            Self::UnsupportedArchitecture => {
+                i18n_noop("restic offers no Linux build for this processor.")
+            }
+            Self::GpgvMissing => i18n_noop(
+                "gpgv is missing. Kestic needs it to check the signature of restic. Install the package gpgv.",
+            ),
+            Self::SignatureInvalid => i18n_noop(
+                "The signature of the restic release is not valid. Nothing was installed.",
+            ),
+            Self::ChecksumMismatch => i18n_noop(
+                "The downloaded restic does not match its checksum. Nothing was installed.",
+            ),
+            Self::VersionMismatch => i18n_noop(
+                "The downloaded restic reports another version than its release. Nothing was installed.",
+            ),
+            Self::TooOld => i18n_noop(
+                "The restic release is older than the version Kestic needs or already has. Nothing was installed.",
+            ),
+            Self::WriteFailed => i18n_noop("Could not save restic in the data folder of Kestic."),
         };
         Message::new(msgid)
     }
@@ -554,10 +762,10 @@ pub fn active_run_message(run: &ActiveRunInfo<'_>) -> Message {
                 RunProgressPhase::Scanning => {
                     Message::with_args(i18n_noop("%1: restoring"), &[run.name])
                 }
-                RunProgressPhase::ScanFinished => Message::with_args(
-                    i18n_noop("%1: restoring · %2%"),
-                    &[run.name, &percent(run.percent_done)],
-                ),
+                RunProgressPhase::ScanFinished => {
+                    Message::with_args(i18n_noop("%1: restoring · %2"), &[run.name])
+                        .with_percent(rounded_percent(run.percent_done))
+                }
             };
         }
         RunKindCode::Backup | RunKindCode::Meta => {}
@@ -567,10 +775,10 @@ pub fn active_run_message(run: &ActiveRunInfo<'_>) -> Message {
             i18n_noop("%1: backing up · looking through files"),
             &[run.name],
         ),
-        RunProgressPhase::ScanFinished => Message::with_args(
-            i18n_noop("%1: backing up · %2%"),
-            &[run.name, &percent(run.percent_done)],
-        ),
+        RunProgressPhase::ScanFinished => {
+            Message::with_args(i18n_noop("%1: backing up · %2"), &[run.name])
+                .with_percent(rounded_percent(run.percent_done))
+        }
     }
 }
 
@@ -669,10 +877,10 @@ pub fn overall_subtitle(
         RunProgressPhase::Scanning => {
             Message::with_args(i18n_noop("Currently running: %1"), &[active.name])
         }
-        RunProgressPhase::ScanFinished => Message::with_args(
-            i18n_noop("Currently running: %1 (%2%)"),
-            &[active.name, &percent(active.percent_done)],
-        ),
+        RunProgressPhase::ScanFinished => {
+            Message::with_args(i18n_noop("Currently running: %1 (%2)"), &[active.name])
+                .with_percent(rounded_percent(active.percent_done))
+        }
     })
 }
 

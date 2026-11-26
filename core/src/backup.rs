@@ -5,7 +5,10 @@
 //! dry-run previews, and retention (`forget`) execution.
 
 use crate::clock::Clock;
-use crate::destination::{DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination};
+use crate::destination::{
+    DEFAULT_CONNECT_TIMEOUT, DestinationError, preflight_check_destination,
+    preflight_check_with_restic, verify_sftp_host_key,
+};
 use crate::model::{
     Backup, BackupId, Destination, ModelError, RunId, RunStatus, evaluate_exclude_path,
 };
@@ -250,6 +253,7 @@ pub(crate) fn check_command_succeeded(res: &ResticExecutionResult) -> Result<(),
             DestinationError::CommandFailed {
                 exit_code: res.exit_code,
                 message: res.presentation.detail_or_summary(),
+                kind: res.presentation.kind.clone(),
             },
         ));
     }
@@ -269,6 +273,7 @@ where
 {
     check_source_available_with(backup, ctx.home_dir, ctx.inspector)?;
     preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    verify_sftp_host_key(destination)?;
 
     let spec = build_backup_command_spec_with_home(
         backup,
@@ -280,7 +285,7 @@ where
     )?
     .with_cache_dir(runtime.cache_dir);
     let res = runtime.run(&spec, destination, ctx.cancel, ctx.extra_env, on_event)?;
-    Ok(res)
+    Ok(crate::destination::explain_sftp_failure(destination, res))
 }
 
 /// Size estimate for one excluded folder reported alongside backup dry-run preview.
@@ -397,7 +402,7 @@ where
     F: FnMut(&ResticStreamEvent) + Send,
 {
     check_source_available_with(backup, ctx.home_dir, ctx.inspector)?;
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    preflight_check_with_restic(destination, runtime)?;
     backup.excludes.validate()?;
 
     let preview_nonce = RunId::generate().map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -671,7 +676,7 @@ pub fn execute_forget_dry_run_with(
     cancel: Option<&CancelHandle>,
     extra_env: &[(&str, &str)],
 ) -> Result<ForgetPreviewResult, BackupRunError> {
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    preflight_check_with_restic(destination, runtime)?;
     let spec = build_forget_command_spec(
         backup,
         destination,
@@ -877,7 +882,16 @@ fn run_snapshots_listing(
     access: &SnapshotListAccess<'_>,
     filter: &[String],
 ) -> Result<Vec<ResticSnapshot>, BackupRunError> {
-    preflight_check_destination(access.destination, DEFAULT_CONNECT_TIMEOUT)?;
+    preflight_check_with_restic(
+        access.destination,
+        &ResticRuntime {
+            resolved: access.resolved,
+            kestic_binary: access.kestic_binary,
+            secret_store: access.secret_store,
+            clock: access.clock,
+            cache_dir: None,
+        },
+    )?;
 
     let mut args = vec!["snapshots".to_string(), "--no-lock".to_string()];
     args.extend(filter.iter().cloned());

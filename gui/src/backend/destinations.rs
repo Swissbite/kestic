@@ -5,39 +5,162 @@
 //! for [`super::qobject::KesticApp`].
 
 use super::{Finish, dbus_error_text, qobject};
+use crate::destination_input::{
+    build_destination, generic_credentials_error, generic_env_error, generic_url_error,
+    test_destination_connection,
+};
 use crate::state_cache::{
-    build_destination, daemon_unavailable_text, i18n, i18np, make_client, refresh_state_now,
-    shared_state, test_destination_connection, tr_text,
+    daemon_unavailable_text, i18n, i18np, make_client, refresh_state_now, shared_state, tr, tr_text,
 };
 use cxx_qt_lib::QString;
+use kestic_core::destination_types::cards_ready_first;
+use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};
+use kestic_core::model::DestinationKind;
 use kestic_core::sync::LockUnpoisoned;
-use kestic_daemon::dbus_api::KesticDbusError;
-use kestic_i18n::codes::ServiceErrorCode;
+use kestic_daemon::dbus_api::{BackendSecrets, KesticDbusError};
+use kestic_i18n::codes::{
+    ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome, ServiceErrorCode,
+};
 use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
+    /// Cards of the wizard step «destination type», ready ones first, as
+    /// `{"cards": [DestinationTypeCardStatus…], "error": "<text or empty>"}`. The daemon checks
+    /// the programs anew on every call («Check Again»).
+    pub fn destination_type_cards_json(&self) -> QString {
+        let listed = make_client()
+            .map_err(|_| daemon_unavailable_text())
+            .and_then(|client| {
+                client
+                    .list_destination_types()
+                    .map_err(|e| dbus_error_text(&e))
+            });
+        let (cards, error) = match listed {
+            Ok(types) => (cards_ready_first(&types), String::new()),
+            Err(text) => (Vec::new(), text),
+        };
+        let reply = serde_json::json!({ "cards": cards, "error": error });
+        QString::from(&reply.to_string())
+    }
+
+    /// Mounted removable drives for the destination type «External Drive / USB», as
+    /// `{"drives": [RemovableDriveDto…], "error": "<text or empty>"}`; every call asks anew.
+    pub fn removable_drives_json(&self) -> QString {
+        let listed = make_client()
+            .map_err(|_| daemon_unavailable_text())
+            .and_then(|client| {
+                client
+                    .list_removable_drives()
+                    .map_err(|e| dbus_error_text(&e))
+            });
+        let (drives, error) = match listed {
+            Ok(drives) => (drives, String::new()),
+            Err(text) => (Vec::new(), text),
+        };
+        let reply = serde_json::json!({ "drives": drives, "error": error });
+        QString::from(&reply.to_string())
+    }
+
+    /// Folder chosen in the folder dialog as `{"path": "…", "error": "…"}`: a `file://` URL
+    /// becomes its local path; a network address (e.g. `smb://…`) is rejected with a hint.
+    pub fn local_folder_from_url(&self, url: &QString) -> QString {
+        let reply = match local_path_from_dialog_url(&url.to_string()) {
+            Ok(path) => serde_json::json!({ "path": path.to_string_lossy(), "error": "" }),
+            Err(NotALocalPath(address)) => serde_json::json!({
+                "path": "",
+                "error": tr_text(&ConnectionTestCode::NotALocalPath.text(&address)),
+            }),
+        };
+        QString::from(&reply.to_string())
+    }
+
+    /// Why the repository URL and the variables of the generic form are refused, in the GUI
+    /// language, as `{"url": "<text or empty>", "env": "<text or empty>"}`; `env_json` holds the
+    /// variables with the typed values of the secret ones, for the check of the credential
+    /// variables an `azure:` or `gs:` destination needs.
+    pub fn generic_fields_errors(&self, url: &QString, env_json: &QString) -> QString {
+        let text = |err: Option<crate::destination_input::DestinationInputError>| {
+            err.map_or_else(String::new, |e| e.text())
+        };
+        let (url, env_json) = (url.to_string(), env_json.to_string());
+        let env_error =
+            generic_env_error(&env_json).or_else(|| generic_credentials_error(&url, &env_json));
+        let reply = serde_json::json!({
+            "url": text(generic_url_error(&url)),
+            "env": text(env_error),
+        });
+        QString::from(&reply.to_string())
+    }
+
+    /// Which S3 and SFTP fields of `fields_json` `core` accepts (JSON object of booleans).
+    pub fn destination_field_checks(&self, fields_json: &QString) -> QString {
+        QString::from(&crate::destination_input::field_checks(&fields_json.to_string()).to_string())
+    }
+
+    /// Whether «Geheim» starts switched on for a new variable named `name`.
+    pub fn env_var_secret_by_default(&self, name: &QString) -> bool {
+        kestic_core::generic::secret_by_default(&name.to_string())
+    }
+
     pub fn test_destination(
         mut self: Pin<&mut Self>,
         fields_json: &QString,
         mode: &QString,
         repo_pw: &QString,
-        rest_pw: &QString,
+        backend_secrets_json: &QString,
     ) -> bool {
         let res = test_destination_connection(
             &fields_json.to_string(),
             &mode.to_string(),
             &repo_pw.to_string(),
-            &rest_pw.to_string(),
+            &backend_secrets_json.to_string(),
         );
         self.as_mut().set_connection_test_ok(res.ok);
-        let text = connection_test_text(res.ok, res.error_kind, &res.detail);
+        let bucket = match build_destination(None, &fields_json.to_string()).map(|d| d.kind) {
+            Ok(DestinationKind::S3 { bucket, .. }) => bucket,
+            _ => String::new(),
+        };
+        // Notes without confirmation belong to the result line; the others need a confirmation.
+        let (to_confirm, informational): (Vec<ConnectionNoteCode>, Vec<ConnectionNoteCode>) =
+            res.notes.iter().partition(|n| n.needs_confirmation());
+        let mut lines = vec![tr_text(&connection_test_text(
+            res.ok,
+            res.error_kind,
+            &res.detail,
+        ))];
+        lines.extend(informational.iter().map(|n| tr(&n.message(&bucket))));
         self.as_mut()
-            .set_connection_test_message(QString::from(&tr_text(&text)));
+            .set_connection_test_message(QString::from(&lines.join("\n")));
         self.as_mut().set_connection_test_error_kind(QString::from(
             res.error_kind.map_or("", |k| k.as_str()),
         ));
+        let note = to_confirm
+            .iter()
+            .map(|n| tr(&n.message(&bucket)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.as_mut().set_connection_test_note(QString::from(&note));
+        let host_key = res
+            .host_key
+            .as_ref()
+            .and_then(|key| serde_json::to_string(key).ok())
+            .unwrap_or_default();
+        self.as_mut()
+            .set_connection_test_host_key(QString::from(&host_key));
         res.ok
+    }
+
+    /// Trusts the SFTP host key the last connection test showed (`TrustHostKey`).
+    pub fn trust_host_key(self: Pin<&mut Self>, host_key_id: &QString) -> bool {
+        let Ok(client) = make_client() else {
+            return false;
+        };
+        self.finish_action(
+            client.trust_host_key(&host_key_id.to_string()),
+            Finish::Plain,
+        )
+        .is_some()
     }
 
     pub fn add_destination(
@@ -45,7 +168,7 @@ impl qobject::KesticApp {
         fields_json: &QString,
         mode: &QString,
         repo_pw: &QString,
-        rest_pw: &QString,
+        backend_secrets_json: &QString,
     ) -> QString {
         let Some(dest) = self
             .as_mut()
@@ -53,16 +176,18 @@ impl qobject::KesticApp {
         else {
             return QString::from("");
         };
+        let Some(backend) = self
+            .as_mut()
+            .ok_or_show(BackendSecrets::parse(&backend_secrets_json.to_string()))
+        else {
+            return QString::from("");
+        };
         let Ok(client) = make_client() else {
             self.as_mut().show_action_error(&daemon_unavailable_text());
             return QString::from("");
         };
-        let result = client.add_destination(
-            &dest,
-            &mode.to_string(),
-            &repo_pw.to_string(),
-            &rest_pw.to_string(),
-        );
+        let result =
+            client.add_destination(&dest, &mode.to_string(), &repo_pw.to_string(), &backend);
         let secret_store_locked = result.as_ref().err().is_some_and(|err| {
             KesticDbusError::from(err.clone()).code() == ServiceErrorCode::SecretStoreLocked
         });
@@ -80,7 +205,7 @@ impl qobject::KesticApp {
         fields_json: &QString,
         mode: &QString,
         repo_pw: &QString,
-        rest_pw: &QString,
+        backend_secrets_json: &QString,
         verify_connection: bool,
     ) -> bool {
         let Some(dest) = self.as_mut().ok_or_show(build_destination(
@@ -89,20 +214,40 @@ impl qobject::KesticApp {
         )) else {
             return false;
         };
+        let Some(backend) = self
+            .as_mut()
+            .ok_or_show(BackendSecrets::parse(&backend_secrets_json.to_string()))
+        else {
+            return false;
+        };
         let Ok(client) = make_client() else {
             return false;
         };
-        self.finish_action(
+        let Some(result) = self.as_mut().finish_action(
             client.update_destination(
                 &dest,
                 &mode.to_string(),
                 &repo_pw.to_string(),
-                &rest_pw.to_string(),
+                &backend,
                 verify_connection,
             ),
-            Finish::Saved,
-        )
-        .is_some()
+            Finish::Plain,
+        ) else {
+            return false;
+        };
+        match update_refusal(result.outcome) {
+            None => {
+                self.as_mut().set_has_unsaved_changes(false);
+                true
+            }
+            Some(code) => {
+                // The edit page shows it like the connection test, with its action.
+                self.as_mut().show_action_error(&tr_text(&code.text("")));
+                self.as_mut()
+                    .set_connection_test_error_kind(QString::from(code.as_str()));
+                false
+            }
+        }
     }
 
     pub fn update_destination_password(
@@ -189,5 +334,30 @@ impl qobject::KesticApp {
                 false
             }
         }
+    }
+}
+
+/// The connection-test code under which the edit page shows a refused `UpdateDestination`, or
+/// `None` when it was saved.
+fn update_refusal(outcome: DestinationUpdateOutcome) -> Option<ConnectionTestCode> {
+    match outcome {
+        DestinationUpdateOutcome::Saved => None,
+        DestinationUpdateOutcome::OtherRepository => Some(ConnectionTestCode::OtherRepository),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AC-M5-05-7 (a), (b): an `UpdateDestination` that found another repository after a passed
+    /// test is not «saved» but shown as another backup destination.
+    #[test]
+    fn ac_m5_05_7_refused_update_is_shown_as_other_repository() {
+        assert_eq!(update_refusal(DestinationUpdateOutcome::Saved), None);
+        assert_eq!(
+            update_refusal(DestinationUpdateOutcome::OtherRepository),
+            Some(ConnectionTestCode::OtherRepository)
+        );
     }
 }

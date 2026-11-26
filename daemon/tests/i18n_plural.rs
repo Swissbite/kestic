@@ -45,6 +45,7 @@ fn finding2_daemon_i18np_uses_singular_for_one() {
         translate_plural_fn: |singular: &str, plural: &str, n: u64, _args: &[&str]| {
             format!("{singular}|{plural}|{n}")
         },
+        format_count_fn: |n: i64| n.to_string(),
     }));
     assert_eq!(
         i18np(

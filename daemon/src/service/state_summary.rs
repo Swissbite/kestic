@@ -94,7 +94,39 @@ struct BackupPendingSummaryInput<'a> {
     dest_busy: bool,
 }
 
+/// The state snapshot taken under the daemon lock, published (tray and `StatusChanged`) after
+/// the lock is released.
+pub(super) struct StatePublication {
+    conn: Option<Connection>,
+    state_dto: DaemonStateDto,
+    tray: Option<Arc<TrayHandle>>,
+    tray_state: KesticTrayState,
+}
+
+impl StatePublication {
+    /// Pushes the snapshot to the tray and emits `StatusChanged`.
+    pub(super) fn publish(self) {
+        if let Some(tray) = self.tray {
+            tray.set_full_state(self.tray_state);
+        }
+        if let Some(conn) = &self.conn {
+            emit_status_changed(conn, &self.state_dto);
+        }
+    }
+}
+
 impl DaemonCore {
+    /// The state snapshot to publish once the lock is released.
+    pub(super) fn state_publication(&self) -> StatePublication {
+        let (state_dto, tray_state) = self.build_state_and_tray();
+        StatePublication {
+            conn: self.conn.clone(),
+            state_dto,
+            tray: self.tray.clone(),
+            tray_state,
+        }
+    }
+
     /// Rebuilds the state snapshot, pushes it to the tray and returns it for the
     /// `StatusChanged` signal.
     pub(super) fn push_tray_state(&self) -> DaemonStateDto {
@@ -182,7 +214,8 @@ impl DaemonCore {
     /// Computes full state snapshot (`DaemonStateDto`) and synchronized `KesticTrayState`.
     pub fn build_state_and_tray(&self) -> (DaemonStateDto, KesticTrayState) {
         let now = self.clock.now_utc();
-        let (restic_status, secret_store_status, blocking) = self.cached_probe.clone();
+        let (mut restic_status, secret_store_status, blocking) = self.cached_probe.clone();
+        restic_status.install_id = self.running_restic_install();
         let nested_map = find_nested_source_warnings(&self.config.backups);
         let global_pause_raw = self.global_pause_cached();
         let global_paused = is_pause_active(global_pause_raw.as_ref(), now);
@@ -298,6 +331,7 @@ impl DaemonCore {
         let pending_forget = self.is_pending_forget_cached(&backup.id);
         let err_info = extract_last_run_error_info(
             last_run.as_ref(),
+            super::run_errors::destination_transport(&self.config, &backup.destination_id),
             pending_forget,
             last_run
                 .as_ref()

@@ -8,8 +8,9 @@ use super::error::{KesticServiceErr, map_config_err};
 use super::restore_runner::restore_error_kind;
 use super::run_errors::{error_run_kind, unreadable_items_from_lines};
 use super::state::DaemonCore;
-use crate::dbus_api::{ExcludeRulePreviewDto, RunDetailDto};
+use crate::dbus_api::{DaemonStateDto, ExcludeRulePreviewDto, RunDetailDto};
 use crate::i18n::tr;
+use crate::tray::KesticTrayState;
 use kestic_core::backup::{exclude_file_path, write_exclude_file};
 use kestic_core::config::ConfigError;
 use kestic_core::model::{
@@ -20,13 +21,16 @@ use kestic_core::model::{
 };
 use kestic_core::mount::{current_home_dir, detect_source_with};
 use kestic_core::provider::resolve_and_check;
-use kestic_core::restic::{ResticCommandSpec, classify_exit, parse_recorded_invocation};
+use kestic_core::restic::{
+    ResticCommandSpec, Transport, classify_exit_for, parse_recorded_invocation,
+};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::ErrorKind;
 use kestic_i18n::messages::deleted_destination_message;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use zbus::Connection;
 
 impl DaemonCore {
     pub fn add_backup(&mut self, backup_json: &str) -> Result<String, KesticServiceErr> {
@@ -220,21 +224,6 @@ impl DaemonCore {
         })
     }
 
-    pub fn detect_source(&self, path: &str) -> Result<Source, KesticServiceErr> {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            return Err(KesticServiceErr::InvalidInput(
-                "source path must not be empty".to_string(),
-            ));
-        }
-        let home = current_home_dir();
-        Ok(detect_source_with(
-            std::path::Path::new(trimmed),
-            home.as_deref(),
-            self.mount_inspector.as_ref(),
-        ))
-    }
-
     pub fn check_nested_sources(
         &self,
         candidate_id: &str,
@@ -290,39 +279,13 @@ impl DaemonCore {
         ))
     }
 
-    pub fn format_exclude_rule_for_item(
-        &self,
-        item_path: &str,
-    ) -> Result<ExcludeRulePreviewDto, KesticServiceErr> {
-        let trimmed = item_path.trim();
-        if trimmed.is_empty() {
-            return Err(KesticServiceErr::InvalidInput(
-                "item path must not be empty".to_string(),
-            ));
-        }
-        let is_dir = fs::metadata(trimmed).is_ok_and(|m| m.is_dir());
-        if is_dir {
-            let rule = normalize_folder_rule(trimmed, current_home_dir().as_deref());
-            Ok(ExcludeRulePreviewDto {
-                is_dir: true,
-                rule,
-                is_expert_rule: false,
-            })
-        } else {
-            Ok(ExcludeRulePreviewDto {
-                is_dir: false,
-                rule: trimmed.to_string(),
-                is_expert_rule: true,
-            })
-        }
-    }
-
-    pub fn add_exclude_rule_for_item(
+    /// Adds the rule `preview` (from [`format_exclude_rule_for_item`]) to the backup's
+    /// exclusion rules, unless it is there already.
+    fn add_exclude_rule(
         &mut self,
         backup_id: &str,
-        item_path: &str,
-    ) -> Result<ExcludeRulePreviewDto, KesticServiceErr> {
-        let preview = self.format_exclude_rule_for_item(item_path)?;
+        preview: &ExcludeRulePreviewDto,
+    ) -> Result<(), KesticServiceErr> {
         let b_id = parse_backup_id(backup_id)?;
         let idx = self
             .config
@@ -349,8 +312,79 @@ impl DaemonCore {
         self.persist_config(next)?;
         write_exclude_file(&self.state_dir, &updated_for_file)
             .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
-        Ok(preview)
+        Ok(())
     }
+}
+
+/// Detects whether `path` is a folder or a drive. The mount table is read without the core's
+/// lock, so a hanging mount blocks only this call.
+pub(crate) fn detect_source_unlocked(
+    shared: &Arc<Mutex<DaemonCore>>,
+    path: &str,
+) -> Result<Source, KesticServiceErr> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(KesticServiceErr::InvalidInput(
+            "source path must not be empty".to_string(),
+        ));
+    }
+    let inspector = Arc::clone(&shared.lock_unpoisoned().mount_inspector);
+    let home = current_home_dir();
+    Ok(detect_source_with(
+        std::path::Path::new(trimmed),
+        home.as_deref(),
+        inspector.as_ref(),
+    ))
+}
+
+/// The exclusion rule for `item_path`: a folder rule for a directory, an expert rule line
+/// otherwise. Looks at the item on disk, so callers run it without the core's lock.
+pub(crate) fn format_exclude_rule_for_item(
+    item_path: &str,
+) -> Result<ExcludeRulePreviewDto, KesticServiceErr> {
+    let trimmed = item_path.trim();
+    if trimmed.is_empty() {
+        return Err(KesticServiceErr::InvalidInput(
+            "item path must not be empty".to_string(),
+        ));
+    }
+    let is_dir = fs::metadata(trimmed).is_ok_and(|m| m.is_dir());
+    if is_dir {
+        let rule = normalize_folder_rule(trimmed, current_home_dir().as_deref());
+        Ok(ExcludeRulePreviewDto {
+            is_dir: true,
+            rule,
+            is_expert_rule: false,
+        })
+    } else {
+        Ok(ExcludeRulePreviewDto {
+            is_dir: false,
+            rule: trimmed.to_string(),
+            is_expert_rule: true,
+        })
+    }
+}
+
+/// Adds the exclusion rule for `item_path` to the backup `backup_id`. The item is looked at on
+/// disk before the core's lock is taken; the lock is held only to change the config.
+pub(crate) fn add_exclude_rule_for_item_unlocked(
+    shared: &Arc<Mutex<DaemonCore>>,
+    backup_id: &str,
+    item_path: &str,
+) -> Result<
+    (
+        ExcludeRulePreviewDto,
+        Option<Connection>,
+        DaemonStateDto,
+        KesticTrayState,
+    ),
+    KesticServiceErr,
+> {
+    let preview = format_exclude_rule_for_item(item_path)?;
+    let mut guard = shared.lock_unpoisoned();
+    guard.add_exclude_rule(backup_id, &preview)?;
+    let (state_dto, tray_state) = guard.build_state_and_tray();
+    Ok((preview, guard.conn.clone(), state_dto, tray_state))
 }
 
 /// Run detail inputs captured under the `DaemonCore` lock.
@@ -397,7 +431,12 @@ pub(crate) fn get_run_detail_unlocked(
             || run.exit_code == Some(3)
             || !unreadable_files.is_empty()
         {
-            let pres = classify_exit(
+            let transport = snap
+                .destination
+                .as_ref()
+                .map_or(Transport::Other, |d| Transport::of(&d.kind));
+            let pres = classify_exit_for(
+                transport,
                 run.exit_code.unwrap_or(1),
                 run.summary_message.as_deref(),
                 unreadable_files.clone(),
@@ -405,7 +444,7 @@ pub(crate) fn get_run_detail_unlocked(
             );
             error_action = pres.action;
             error_kind = Some(if run.status == RunStatus::Error {
-                error_run_kind(&run)
+                error_run_kind(&run, transport)
             } else {
                 ErrorKind::IncompleteSnapshot
             });

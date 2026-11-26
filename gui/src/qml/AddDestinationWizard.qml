@@ -28,14 +28,26 @@ WizardPage {
     readonly property int totalSteps: destDraft.setupMode === "connect" ? 2 : 3
     readonly property bool isFinalStep: step === totalSteps
     readonly property bool canAdvance: {
-        if (step === 1) return true;
-        if (step === 2) return destDraft.detailsValid && destDraft.connectionVerified && (destDraft.setupMode !== "connect" || destDraft.repoPassword.length > 0);
+        if (step === 1) return typeChooser.choiceValid;
+        if (step === 2) return destDraft.detailsValid && destDraft.connectionAccepted && (destDraft.setupMode !== "connect" || destDraft.repoPassword.length > 0);
         return destDraft.detailsValid && destDraft.passwordsMatch && appBackend.blocking_kind === "";
     }
+
+    // Fields of an edited connection to add as a new destination (`DestinationDraft.prefillData()`).
+    property var prefill: null
+    // Read by the offscreen smoke.
+    readonly property alias draft: destDraft
 
     DestinationDraft {
         id: destDraft
         appBackend: page.appBackend
+    }
+
+    Component.onCompleted: {
+        if (prefill) {
+            destDraft.loadPrefill(prefill);
+            step = 2;
+        }
     }
 
     function finishWizard() {
@@ -44,7 +56,7 @@ WizardPage {
             destDraft.fieldsJson(),
             destDraft.setupMode,
             destDraft.repoPassword,
-            destDraft.restPassword
+            destDraft.backendSecretsJson()
         );
         if (createdId !== "") {
             rootWindow.showPassiveNotification(Texts.label("destination_saved"));
@@ -72,6 +84,7 @@ WizardPage {
             }
 
             DestinationTypeChooser {
+                id: typeChooser
                 visible: page.step === 1
                 Layout.fillWidth: true
                 draft: destDraft

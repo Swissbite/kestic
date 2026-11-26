@@ -15,6 +15,8 @@ EditorPage {
     required property string destinationId
 
     property var initialData: null
+    // `connectionKey()` of the saved destination.
+    property string initialConnection: ""
     // Read by the offscreen smoke.
     property alias setupMode: destDraft.setupMode
 
@@ -29,26 +31,26 @@ EditorPage {
         var data = rootWindow.findDestinationData(destinationId);
         initialData = data;
         if (data) {
-            destDraft.kind = data.kindName;
-            destDraft.name = data.name;
-            destDraft.location = data.location;
-            destDraft.username = data.username;
+            destDraft.loadFromRow(data);
+            initialConnection = destDraft.connectionKey();
         }
     }
 
     Component.onCompleted: loadInitialData()
 
     readonly property bool locationChanged: initialData !== null && (
-        destDraft.location.trim() !== initialData.location
-        || destDraft.username.trim() !== initialData.username
+        destDraft.connectionKey() !== initialConnection
         || destDraft.repoPassword.length > 0
         || destDraft.restPassword.length > 0
+        || destDraft.accessKeyId.length > 0
+        || destDraft.secretAccessKey.length > 0
+        || destDraft.envList().some(function(v) { return v.secret && v.value.length > 0; })
     )
     readonly property bool needsVerification: locationChanged || destDraft.setupMode === "init"
     dirty: initialData !== null && (
         destDraft.name.trim() !== initialData.name || needsVerification
     )
-    readonly property bool canSave: dirty && destDraft.detailsValid && (!needsVerification || destDraft.connectionVerified) && appBackend.blocking_kind === ""
+    readonly property bool canSave: dirty && destDraft.detailsValid && (!needsVerification || destDraft.connectionAccepted) && appBackend.blocking_kind === ""
 
     function saveForGuard() {
         if (!canSave || !initialData) return false;
@@ -57,13 +59,13 @@ EditorPage {
                 destDraft.fieldsJson(),
                 destDraft.setupMode,
                 destDraft.repoPassword,
-                destDraft.restPassword,
+                destDraft.backendSecretsJson(),
                 page.needsVerification
             )) {
             initialData = rootWindow.findDestinationData(destinationId);
+            initialConnection = destDraft.connectionKey();
             destDraft.setupMode = "connect";
-            destDraft.repoPassword = "";
-            destDraft.restPassword = "";
+            destDraft.clearSecrets();
             destDraft.connectionVerified = false;
             destDraft.testFeedback = "";
             destDraft.testFeedbackOk = false;
@@ -71,6 +73,9 @@ EditorPage {
             return true;
         }
         destDraft.showError(appBackend.last_action_error);
+        if (appBackend.connection_test_error_kind === "other_repository") {
+            destDraft.connectionVerified = false;
+        }
         return false;
     }
 
@@ -110,5 +115,6 @@ EditorPage {
         namePrefix: "destEdit"
         editing: true
         setupModes: ["connect", "init"]
+        onAddAsNewRequested: rootWindow.openAddDestinationWizardWith(destDraft.prefillData())
     }
 }

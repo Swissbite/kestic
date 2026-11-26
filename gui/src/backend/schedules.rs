@@ -9,12 +9,12 @@ use crate::qt_bridge;
 use crate::run_texts::{run_detail_subtitle, run_detail_title, run_result_summary, run_status};
 use crate::state_cache::{
     build_provider, cached_destination_kind, clone_updated_backup_conditions,
-    clone_updated_backup_schedule, format_conditions_summary, format_duration_ms,
-    format_maintenance_summary, format_schedule_summary, i18n, json_or, make_client,
-    preview_next_schedule_slots, shared_state,
+    clone_updated_backup_schedule, format_duration_ms, format_maintenance_summary, i18n, json_or,
+    make_client, preview_next_schedule_slots, shared_state,
 };
 use crate::time_texts::{cached_daemon_now, cached_today_iso_date};
 use crate::ui_texts::GuiText;
+use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use kestic_core::model::{
     BackupId, MaintenanceSchedule, NotificationSettings, RunConditions, Schedule,
@@ -169,6 +169,12 @@ impl qobject::KesticApp {
         kind: &QString,
         custom_path: &QString,
     ) -> bool {
+        // A source chosen now wins over a switch that waits for a download.
+        self.as_mut()
+            .rust_mut()
+            .restic_switch_after_install
+            .cancel();
+        self.as_mut().set_restic_action_error(QString::from(""));
         let Some(provider) = self
             .as_mut()
             .ok_or_show(build_provider(&kind.to_string(), &custom_path.to_string()))
@@ -421,21 +427,6 @@ impl qobject::KesticApp {
         }
         let slots = preview_next_schedule_slots(&schedule, cached_daemon_now());
         QString::from(&json_or(&slots, "[]"))
-    }
-
-    pub fn format_schedule_summary_json(&self, schedule_json: &QString) -> QString {
-        let Ok(schedule) = serde_json::from_str::<Schedule>(&schedule_json.to_string()) else {
-            return QString::from("");
-        };
-        QString::from(&format_schedule_summary(&schedule))
-    }
-
-    pub fn format_conditions_summary_json(&self, conditions_json: &QString) -> QString {
-        let Ok(conditions) = serde_json::from_str::<RunConditions>(&conditions_json.to_string())
-        else {
-            return QString::from("");
-        };
-        QString::from(&format_conditions_summary(&conditions))
     }
 
     pub fn format_maintenance_summary_json(&self, maintenance_json: &QString) -> QString {

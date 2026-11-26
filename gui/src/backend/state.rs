@@ -8,11 +8,12 @@ use super::qobject;
 use crate::overall_text::{
     back_up_all_availability, localized_blocking_message, overall_headline, overall_subtitle,
 };
+use crate::restic_section_view::restic_section_view;
 use crate::state_cache::{
     daemon_unavailable_text, ensure_daemon_and_refresh, format_overall_visual, format_pause_line,
     i18n, initialize_and_sync, localized_condition_override_message,
     localized_manual_block_message, localized_unmet_conditions, lookup_backup_summary, make_client,
-    refresh_state_now, shared_state, tr_text,
+    refresh_state_now, shared_state,
 };
 use crate::time_texts::daemon_now;
 use cxx_qt_lib::QString;
@@ -209,6 +210,9 @@ impl qobject::KesticApp {
         self.as_mut().set_notif_on_overdue(true);
         self.as_mut().set_notif_on_maintenance_failed(true);
         self.as_mut().set_notif_on_restic_update(false);
+        self.as_mut().set_restic_offer_switch(false);
+        self.as_mut().set_restic_offer_remove(false);
+        self.as_mut().update_restic_offer();
         self.as_mut().models_updated();
     }
 
@@ -257,24 +261,20 @@ impl qobject::KesticApp {
         self.as_mut().set_restic_version(QString::from(
             state.restic_status.version.as_deref().unwrap_or(""),
         ));
-        let outdated = state
-            .restic_status
-            .version
-            .as_deref()
-            .is_some_and(kestic_core::provider::is_outdated_text);
-        self.as_mut().set_restic_outdated(outdated);
         self.as_mut().set_restic_binary_path(QString::from(
             state.restic_status.binary_path.as_deref().unwrap_or(""),
         ));
         let provider_kind = match &state.config.restic_provider {
+            ResticProvider::Automatic => "automatic",
             ResticProvider::System => "system",
-            ResticProvider::AppManaged { .. } => "app_managed",
+            ResticProvider::AppManaged => "app_managed",
             ResticProvider::Custom { .. } => "custom",
         };
         self.as_mut()
             .set_restic_provider_kind(QString::from(provider_kind));
         self.as_mut()
-            .set_restic_message(QString::from(&tr_text(&state.restic_status.status_text())));
+            .show_restic_section(&restic_section_view(&state.restic_status));
+        self.as_mut().update_restic_offer();
 
         // Blocking order: Daemon -> SecretStore -> restic (Daemon checked above)
         if let Some(b) = &state.blocking {

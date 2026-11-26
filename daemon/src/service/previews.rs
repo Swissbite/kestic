@@ -14,6 +14,7 @@ use kestic_core::maintenance::{PrunePreviewSummary, execute_prune_dry_run};
 use kestic_core::model::{DestinationId, ExcludeRules, RetentionPolicy, RunId};
 use kestic_core::mount::current_home_dir;
 use kestic_core::restic::{CancelHandle, ResticRuntime};
+use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::ErrorKind;
 use std::collections::HashMap;
@@ -175,6 +176,9 @@ where
         work,
         finish,
     } = launch;
+    // Held until the preview has ended, so the app-managed restic is not replaced between its
+    // restic processes.
+    let mut run_lease = ResticBinaryGate::global().read();
     let resolved = match probe_for_run(&deps.provider, deps.secret_store.as_ref()).1 {
         Ok(resolved) => resolved,
         Err(err) => {
@@ -182,10 +186,12 @@ where
             return Err(err);
         }
     };
+    run_lease.bind(&resolved.binary);
 
     let id_for_caller = preview_id.clone();
     let shared_worker = Arc::clone(shared);
     thread::spawn(move || {
+        let _run_lease = run_lease;
         let res = work(&deps.runtime(&resolved), &cancel);
         let mut guard = shared_worker.lock_unpoisoned();
         if let Some(entry) = previews(&mut guard).get_mut(&preview_id) {
@@ -317,6 +323,10 @@ pub(crate) fn preview_destination_maintenance_unlocked(
         (dest, guard.restic_deps())
     };
 
+    // Held for the whole call, so the app-managed restic is not replaced between its restic
+    // processes.
+    let mut run_lease = ResticBinaryGate::global().read();
     let resolved = resolve_restic_recording_probe(shared, &deps)?;
+    run_lease.bind(&resolved.binary);
     execute_prune_dry_run(&dest, &deps.runtime(&resolved), None, &[]).map_err(map_backup_run_err)
 }

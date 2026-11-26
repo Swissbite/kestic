@@ -5,9 +5,12 @@
 
 mod backend;
 mod build_info;
+mod destination_input;
 mod models;
 mod overall_text;
 mod qt_bridge;
+mod restic_install_view;
+mod restic_section_view;
 mod retention_texts;
 mod run_texts;
 #[cfg(feature = "test-harness")]
@@ -199,6 +202,7 @@ fn install_daemon_ki18n() {
     let qt_lock = Arc::new(Mutex::new(()));
     let qt_lock_subs = Arc::clone(&qt_lock);
     let qt_lock_plural = Arc::clone(&qt_lock);
+    let qt_lock_count = Arc::clone(&qt_lock);
     let translator = Arc::new(kestic_daemon::i18n::CallbackSubsTranslator {
         translate_fn: move |msgid: &str| {
             let _g = qt_lock.lock_unpoisoned();
@@ -212,6 +216,10 @@ fn install_daemon_ki18n() {
             let _g = qt_lock_plural.lock_unpoisoned();
             let n = i64::try_from(n).unwrap_or(i64::MAX);
             crate::qt_bridge::ffi::i18np_subs(singular, plural, n, args)
+        },
+        format_count_fn: move |n: i64| {
+            let _g = qt_lock_count.lock_unpoisoned();
+            crate::qt_bridge::ffi::format_count(n)
         },
     });
     kestic_daemon::i18n::set_daemon_translator(translator);
@@ -315,6 +323,13 @@ fn run_secret_subcommand(args: &[String]) -> ExitCode {
 
 fn main() -> ExitCode {
     let raw_args: Vec<String> = env::args().skip(1).collect();
+    // Tests point every ssh call at their own configuration instead of the user's `~/.ssh`.
+    #[cfg(feature = "test-harness")]
+    kestic_core::sftp::set_test_ssh_config(
+        env::var_os("KESTIC_TEST_SSH_CONFIG")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from),
+    );
     if let Some(subcmd) = raw_args.first().map(String::as_str) {
         match subcmd {
             "daemon" => return run_daemon_subcommand(&raw_args[1..]),

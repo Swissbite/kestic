@@ -4,6 +4,9 @@
 //! Versioned D-Bus API v1 (`net.daester.Kestic1`) shared DTOs, error types, and client proxy
 //! (`docs/spec/dbus-api.md`).
 
+use kestic_core::backend_credentials::{
+    BackendCredentials, SECRET_KIND_REST, SECRET_KIND_S3_ACCESS_KEY, SECRET_KIND_S3_SECRET_KEY,
+};
 use kestic_core::backup::{BackupDryRunResult, ForgetPreviewResult};
 use kestic_core::config::AppConfig;
 use kestic_core::maintenance::PrunePreviewSummary;
@@ -18,21 +21,22 @@ pub use kestic_core::restore::RestoreTarget;
 pub use kestic_core::restore_preview::RestorePreviewEntry as RestorePreviewEntryDto;
 pub use kestic_core::restore_target::OriginalLocation as RestoreOriginalDto;
 use kestic_core::scheduler::PauseDuration;
+use kestic_core::secrets::SecretValue;
 use kestic_core::snapshot::ResticSnapshot;
 pub use kestic_core::snapshot_diff::DiffChange as DiffChangeDto;
 pub use kestic_core::snapshot_find::{FindHit as FindHitDto, FindScope};
 pub use kestic_core::snapshot_ls::LsEntry as LsEntryDto;
 use kestic_i18n::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, PendingReasonCode,
-    ResticStatusCode, ServiceErrorCode, SkipReason, SourceStatus,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome,
+    ErrorKind, PendingReasonCode, ResticInstallCode, ResticInstallOutcome, ResticInstallPhase,
+    ResticPathProblem, ResticSourceCode, ResticStatusCode, ServiceErrorCode, SkipReason,
+    SourceStatus,
 };
 pub use kestic_i18n::codes::{
     OverallStatusKind, RestoreNoteCode, RestoreOutcome, RestoreOverwrite, RestoreTargetCode,
     RunKindCode, RunProgressPhase, SnapshotChange, SnapshotQueryKind,
 };
-use kestic_i18n::messages::{
-    ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, restic_status_text,
-};
+use kestic_i18n::messages::{ActiveRunInfo, Message, OverallCounts, ResticStatusParams};
 
 use crate::tray::TrayStatus;
 use serde::de::DeserializeOwned;
@@ -48,6 +52,10 @@ pub const KESTIC_OBJECT_PATH: &str = "/net/daester/Kestic";
 
 /// Versioned v1 D-Bus interface name.
 pub const KESTIC_INTERFACE_V1: &str = "net.daester.Kestic1";
+
+mod client;
+pub use client::KesticClient;
+pub(crate) use client::to_json_arg;
 
 /// D-Bus error hierarchy under `net.daester.Kestic.Error.*`.
 #[derive(DBusError, Debug, Clone)]
@@ -67,6 +75,8 @@ pub enum KesticDbusError {
     AlreadyRunning(String),
     LockInUse(String),
     DuplicateLocation(String),
+    HostKeyUnknown(String),
+    HostKeyChanged(String),
     PreviewRequired(String),
     RestoreRunning(String),
     Internal(String),
@@ -89,6 +99,8 @@ impl KesticDbusError {
             Self::AlreadyRunning(_) => ServiceErrorCode::AlreadyRunning,
             Self::LockInUse(_) => ServiceErrorCode::LockInUse,
             Self::DuplicateLocation(_) => ServiceErrorCode::DuplicateLocation,
+            Self::HostKeyUnknown(_) => ServiceErrorCode::HostKeyUnknown,
+            Self::HostKeyChanged(_) => ServiceErrorCode::HostKeyChanged,
             Self::PreviewRequired(_) => ServiceErrorCode::PreviewRequired,
             Self::RestoreRunning(_) => ServiceErrorCode::RestoreRunning,
             Self::Internal(_) => ServiceErrorCode::Internal,
@@ -116,6 +128,38 @@ pub struct ResticStatusDto {
     /// Raw reason for `invalid_custom_path` / detail for `unreadable_version`.
     #[serde(default)]
     pub detail: Option<String>,
+    /// Why the path of `invalid_custom_path` cannot be used.
+    #[serde(default)]
+    pub path_problem: Option<ResticPathProblem>,
+    /// The configured restic source.
+    #[serde(default = "default_restic_source")]
+    pub source: ResticSourceCode,
+    /// The restic in `PATH`, `None` when there is none.
+    #[serde(default)]
+    pub system: Option<ResticBinaryDto>,
+    /// The restic managed by Kestic, `None` when it is not installed.
+    #[serde(default)]
+    pub app_managed: Option<ResticBinaryDto>,
+    /// The app-managed restic is the source, but the system restic is now recent enough.
+    #[serde(default)]
+    pub offer_switch_to_system: bool,
+    /// The installation of the app-managed restic that is running.
+    #[serde(default)]
+    pub install_id: Option<String>,
+}
+
+fn default_restic_source() -> ResticSourceCode {
+    ResticSourceCode::Automatic
+}
+
+/// One restic binary Kestic found (`ResticStatusDto.system`, `.app_managed`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResticBinaryDto {
+    pub path: String,
+    /// The version it reports, also when it is too old; `None` when it cannot be read.
+    pub version: Option<String>,
+    /// It reports a version below the minimum.
+    pub too_old: bool,
 }
 
 /// Secret store probe state reported to GUI.
@@ -452,6 +496,9 @@ pub struct BackupSnapshotsDto {
     pub previous_destinations: Vec<PreviousDestinationSnapshotsDto>,
 }
 
+/// Entry of `ListDestinationTypes`: a destination type and whether it is ready.
+pub type DestinationTypeDto = kestic_core::destination_types::DestinationTypeStatus;
+
 /// Request of `StartSnapshotQuery`: the kind, the destination and the fields of that kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotQueryRequest {
@@ -684,6 +731,131 @@ pub struct ConnectionTestResultDto {
     /// Raw error detail, or the parameter of the code's text (e.g. the destination name for
     /// `duplicate_location`).
     pub detail: String,
+    /// Warnings of a successful test that the user confirms before adding the destination.
+    #[serde(default)]
+    pub notes: Vec<ConnectionNoteCode>,
+    /// The program that is not installed, with `program_missing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
+    /// The host key to confirm, with `unknown_host_key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_key: Option<Box<HostKeyDto>>,
+}
+
+/// Result of `UpdateDestination`: saved, or another repository at the edited connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DestinationUpdateResultDto {
+    pub outcome: DestinationUpdateOutcome,
+}
+
+/// Host key of an SFTP server that no `known_hosts` file knows yet (`unknown_host_key`);
+/// `TrustHostKey(host_key_id)` adds exactly this key to Kestic's `known_hosts`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostKeyDto {
+    pub host_key_id: String,
+    pub host: String,
+    pub port: u16,
+    pub key_type: String,
+    pub fingerprint_sha256: String,
+}
+
+/// `backend_secrets_json` of `TestDestinationConnection`, `AddDestination` and
+/// `UpdateDestination`: the backend credentials entered in the form. An empty field keeps the
+/// saved value when editing. The values go only into the password store and into the
+/// environment of restic.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackendSecrets {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub rest_password: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub s3_access_key_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub s3_secret_access_key: String,
+    /// Values of the secret variables of a generic destination, by variable name.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for BackendSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BackendSecrets([REDACTED])")
+    }
+}
+
+impl BackendSecrets {
+    /// Only the REST server password.
+    pub fn rest(password: &str) -> Self {
+        Self {
+            rest_password: password.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Only the secret variables of a generic destination.
+    pub fn env(values: &[(&str, &str)]) -> Self {
+        Self {
+            env: values
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect(),
+            ..Self::default()
+        }
+    }
+
+    /// Only the S3 keys.
+    pub fn s3(access_key_id: &str, secret_access_key: &str) -> Self {
+        Self {
+            s3_access_key_id: access_key_id.to_string(),
+            s3_secret_access_key: secret_access_key.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Parses `backend_secrets_json`; an empty string means no credentials.
+    pub fn parse(json: &str) -> Result<Self, String> {
+        if json.trim().is_empty() {
+            return Ok(Self::default());
+        }
+        // serde's message can quote the input, which holds secrets: only say where it failed.
+        serde_json::from_str(json).map_err(|e| {
+            format!(
+                "invalid backend secrets JSON ({:?} error at line {} column {})",
+                e.classify(),
+                e.line(),
+                e.column()
+            )
+        })
+    }
+
+    /// The entered values by password store kind; empty fields are left out.
+    pub fn credentials(&self) -> BackendCredentials {
+        let mut creds = BackendCredentials::none();
+        for (kind, value) in [
+            (SECRET_KIND_REST, &self.rest_password),
+            (SECRET_KIND_S3_ACCESS_KEY, &self.s3_access_key_id),
+            (SECRET_KIND_S3_SECRET_KEY, &self.s3_secret_access_key),
+        ] {
+            creds.set(kind, Some(SecretValue::from_str_secret(value.as_str())));
+        }
+        for (name, value) in &self.env {
+            creds.set(
+                &kestic_core::generic::secret_kind(name),
+                Some(SecretValue::from_str_secret(value.as_str())),
+            );
+        }
+        creds
+    }
+}
+
+/// Entry of `ListRemovableDrives`: a mounted removable drive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemovableDriveDto {
+    /// Filesystem label; empty when the filesystem has none.
+    pub label: String,
+    pub mount_point: String,
+    /// Filesystem UUID; empty when unknown.
+    pub fs_uuid: String,
+    pub size_bytes: u64,
 }
 
 /// Skipped backup reason returned by `StartAllBackups`.
@@ -761,6 +933,7 @@ impl ResticStatusDto {
             binary_path: self.binary_path.as_deref(),
             found_version: self.found_version.as_deref(),
             detail: self.detail.as_deref(),
+            path_problem: self.path_problem,
             min_version,
         }
     }
@@ -771,16 +944,6 @@ impl ResticStatusDto {
         self.error_kind
             .map(|code| code.message(&self.text_params(&min)))
     }
-
-    /// Status line: «restic ‹version›» or the reason restic is unusable.
-    pub fn status_text(&self) -> UiText {
-        let min = MIN_RESTIC_VERSION.to_string();
-        restic_status_text(
-            self.error_kind,
-            self.version.as_deref(),
-            &self.text_params(&min),
-        )
-    }
 }
 
 /// Blocking-state text from `BlockingStateDto.kind` and the `ResticStatusDto` parameters.
@@ -789,432 +952,6 @@ pub fn blocking_message(
     restic: &ResticStatusDto,
 ) -> Option<Message> {
     blocking.map(|b| b.kind.message(restic.error_message()))
-}
-
-/// Synchronous D-Bus client for `net.daester.Kestic1` used by the GUI and D-Bus integration tests.
-#[derive(Clone)]
-pub struct KesticClient {
-    conn: Connection,
-    bus_name: String,
-    object_path: String,
-}
-
-impl KesticClient {
-    /// Connects targeting custom bus name and object path.
-    pub fn connect(bus_name: &str, object_path: &str) -> zbus::Result<Self> {
-        let conn = block_on(Connection::session())?;
-        Ok(Self {
-            conn,
-            bus_name: bus_name.to_string(),
-            object_path: object_path.to_string(),
-        })
-    }
-
-    /// Wraps an already open `zbus::Connection` (used by persistent GUI signal listener).
-    pub fn from_connection(conn: Connection, bus_name: &str, object_path: &str) -> Self {
-        Self {
-            conn,
-            bus_name: bus_name.to_string(),
-            object_path: object_path.to_string(),
-        }
-    }
-
-    /// Returns underlying `zbus::Connection` for receiving signals.
-    pub fn connection(&self) -> &Connection {
-        &self.conn
-    }
-
-    /// Checks if the daemon well-known name currently has an owner on the session bus.
-    pub fn is_bus_owned(&self) -> zbus::Result<bool> {
-        let conn = self.conn.clone();
-        let bus = self.bus_name.clone();
-        block_on(async move {
-            let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
-            dbus.name_has_owner(bus.as_str().try_into()?).await
-        })
-        .map_err(Into::into)
-    }
-
-    async fn proxy(&self) -> zbus::Result<Proxy<'_>> {
-        Proxy::new(
-            &self.conn,
-            self.bus_name.as_str(),
-            self.object_path.as_str(),
-            KESTIC_INTERFACE_V1,
-        )
-        .await
-    }
-
-    /// Calls `method` on the daemon interface and blocks for the reply.
-    fn call<B, R>(&self, method: &'static str, body: &B) -> zbus::Result<R>
-    where
-        B: Serialize + DynamicType,
-        R: for<'d> DynamicDeserialize<'d>,
-    {
-        block_on(async { self.proxy().await?.call(method, body).await })
-    }
-
-    /// Calls a method that replies with a JSON string and parses the reply into `T`.
-    fn call_json<B, T>(&self, method: &'static str, body: &B) -> Result<T, KesticDbusError>
-    where
-        B: Serialize + DynamicType,
-        T: DeserializeOwned,
-    {
-        let raw: String = self.call(method, body).map_err(KesticDbusError::from)?;
-        serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
-    }
-
-    pub fn daemon_version(&self) -> zbus::Result<String> {
-        self.call("DaemonVersion", &())
-    }
-
-    pub fn get_state(&self) -> Result<DaemonStateDto, KesticDbusError> {
-        self.call_json("GetState", &())
-    }
-
-    pub fn get_run_detail(&self, run_id: &str) -> Result<RunDetailDto, KesticDbusError> {
-        self.call_json("GetRunDetail", &(run_id,))
-    }
-
-    pub fn list_backup_snapshots(
-        &self,
-        backup_id: &str,
-    ) -> Result<BackupSnapshotsDto, KesticDbusError> {
-        self.call_json("ListBackupSnapshots", &(backup_id,))
-    }
-
-    pub fn list_destination_snapshots(
-        &self,
-        destination_id: &str,
-    ) -> Result<DestinationSnapshotsDto, KesticDbusError> {
-        self.call_json("ListDestinationSnapshots", &(destination_id,))
-    }
-
-    pub fn start_snapshot_query(
-        &self,
-        request: &SnapshotQueryRequest,
-    ) -> Result<String, KesticDbusError> {
-        let json = to_json_arg(request)?;
-        self.call("StartSnapshotQuery", &(json.as_str(),))
-            .map_err(KesticDbusError::from)
-    }
-
-    pub fn get_snapshot_query_status(
-        &self,
-        query_id: &str,
-        page: &SnapshotQueryPage,
-    ) -> Result<SnapshotQueryStatusDto, KesticDbusError> {
-        let json = to_json_arg(page)?;
-        self.call_json("GetSnapshotQueryStatus", &(query_id, json.as_str()))
-    }
-
-    pub fn cancel_snapshot_query(&self, query_id: &str) -> zbus::Result<()> {
-        self.call("CancelSnapshotQuery", &(query_id,))
-    }
-
-    /// Starts a restore run; returns its run ID.
-    pub fn start_restore(&self, request: &RestoreRequest) -> Result<String, KesticDbusError> {
-        let json = to_json_arg(request)?;
-        self.call("StartRestore", &(json.as_str(),))
-            .map_err(KesticDbusError::from)
-    }
-
-    pub fn test_destination_connection(
-        &self,
-        dest: &Destination,
-        mode: &str,
-        repo_password: &str,
-        rest_password: &str,
-    ) -> Result<ConnectionTestResultDto, KesticDbusError> {
-        let json = to_json_arg(dest)?;
-        self.call_json(
-            "TestDestinationConnection",
-            &(json.as_str(), mode, repo_password, rest_password),
-        )
-    }
-
-    pub fn add_destination(
-        &self,
-        dest: &Destination,
-        mode: &str,
-        repo_password: &str,
-        rest_password: &str,
-    ) -> zbus::Result<String> {
-        let json = to_failure_arg("dest", dest)?;
-        self.call(
-            "AddDestination",
-            &(json.as_str(), mode, repo_password, rest_password),
-        )
-    }
-
-    pub fn update_destination(
-        &self,
-        dest: &Destination,
-        mode: &str,
-        repo_password: &str,
-        rest_password: &str,
-        verify_connection: bool,
-    ) -> zbus::Result<()> {
-        let json = to_failure_arg("dest", dest)?;
-        self.call(
-            "UpdateDestination",
-            &(
-                json.as_str(),
-                mode,
-                repo_password,
-                rest_password,
-                verify_connection,
-            ),
-        )
-    }
-
-    pub fn update_destination_password(
-        &self,
-        dest_id: &str,
-        new_password: &str,
-    ) -> zbus::Result<()> {
-        self.call("UpdateDestinationPassword", &(dest_id, new_password))
-    }
-
-    pub fn remove_destination(&self, dest_id: &str) -> zbus::Result<()> {
-        self.call("RemoveDestination", &(dest_id,))
-    }
-
-    pub fn add_backup(&self, backup: &Backup) -> zbus::Result<String> {
-        let json = to_failure_arg("backup", backup)?;
-        self.call("AddBackup", &(json.as_str(),))
-    }
-
-    pub fn update_backup(&self, backup: &Backup) -> zbus::Result<()> {
-        let json = to_failure_arg("backup", backup)?;
-        self.call("UpdateBackup", &(json.as_str(),))
-    }
-
-    pub fn rename_backup(&self, backup_id: &str, new_name: &str) -> zbus::Result<()> {
-        self.call("RenameBackup", &(backup_id, new_name))
-    }
-
-    pub fn reassign_backup(&self, backup_id: &str, new_dest_id: &str) -> zbus::Result<()> {
-        self.call("ReassignBackup", &(backup_id, new_dest_id))
-    }
-
-    pub fn remove_backup(&self, backup_id: &str) -> zbus::Result<()> {
-        self.call("RemoveBackup", &(backup_id,))
-    }
-
-    pub fn set_restic_provider(
-        &self,
-        provider: &kestic_core::model::ResticProvider,
-    ) -> Result<ResticStatusDto, KesticDbusError> {
-        let json = to_json_arg(provider)?;
-        self.call_json("SetResticProvider", &(json.as_str(),))
-    }
-
-    pub fn set_expert_mode(&self, enabled: bool) -> zbus::Result<()> {
-        self.call("SetExpertMode", &(enabled,))
-    }
-
-    pub fn start_backup(&self, backup_id: &str) -> zbus::Result<String> {
-        self.call("StartBackup", &(backup_id,))
-    }
-
-    pub fn start_all_backups(&self) -> Result<StartAllResultDto, KesticDbusError> {
-        self.call_json("StartAllBackups", &())
-    }
-
-    pub fn cancel_run(&self, run_id: &str) -> zbus::Result<()> {
-        self.call("CancelRun", &(run_id,))
-    }
-
-    pub fn check_availability(
-        &self,
-        force: bool,
-    ) -> Result<AvailabilitySnapshotDto, KesticDbusError> {
-        self.call_json("CheckAvailability", &(force,))
-    }
-
-    pub fn window_active(&self, active: bool, page: &str) -> zbus::Result<()> {
-        self.call("WindowActive", &(active, page))
-    }
-
-    pub fn register_gui(&self) -> zbus::Result<()> {
-        self.call("RegisterGui", &())
-    }
-
-    pub fn confirm_quit(&self) -> zbus::Result<()> {
-        self.call("ConfirmQuit", &())
-    }
-
-    pub fn unlock_secret_store(&self) -> zbus::Result<bool> {
-        self.call("UnlockSecretStore", &())
-    }
-
-    pub fn detect_source(&self, path: &str) -> Result<Source, KesticDbusError> {
-        self.call_json("DetectSource", &(path,))
-    }
-
-    pub fn check_nested_sources(
-        &self,
-        candidate_id: &str,
-        candidate_path: &str,
-        destination_id: &str,
-    ) -> Result<Vec<NestedSourceConflict>, KesticDbusError> {
-        self.call_json(
-            "CheckNestedSources",
-            &(candidate_id, candidate_path, destination_id),
-        )
-    }
-
-    pub fn lint_excludes(
-        &self,
-        excludes: &ExcludeRules,
-    ) -> Result<Vec<ExcludeLintWarning>, KesticDbusError> {
-        let json = to_json_arg(excludes)?;
-        self.call_json("LintExcludes", &(json.as_str(),))
-    }
-
-    pub fn test_exclude_path(
-        &self,
-        backup_id: &str,
-        excludes: &ExcludeRules,
-        test_path: &str,
-    ) -> Result<ExcludePathTestResult, KesticDbusError> {
-        let json = to_json_arg(excludes)?;
-        self.call_json("TestExcludePath", &(backup_id, json.as_str(), test_path))
-    }
-
-    pub fn start_retention_preview(
-        &self,
-        backup_id: &str,
-        retention: &RetentionPolicy,
-    ) -> zbus::Result<String> {
-        let json = to_failure_arg("retention", retention)?;
-        self.call("StartRetentionPreview", &(backup_id, json.as_str()))
-    }
-
-    pub fn cancel_retention_preview(&self, preview_id: &str) -> zbus::Result<()> {
-        self.call("CancelRetentionPreview", &(preview_id,))
-    }
-
-    pub fn get_retention_preview_status(
-        &self,
-        preview_id: &str,
-    ) -> Result<RetentionPreviewStatusDto, KesticDbusError> {
-        self.call_json("GetRetentionPreviewStatus", &(preview_id,))
-    }
-
-    pub fn start_backup_dry_run(
-        &self,
-        backup_id: &str,
-        excludes: Option<&ExcludeRules>,
-    ) -> zbus::Result<String> {
-        let json = match excludes {
-            Some(ex) => to_failure_arg("excludes", ex)?,
-            None => String::new(),
-        };
-        self.call("StartBackupDryRun", &(backup_id, json.as_str()))
-    }
-
-    pub fn cancel_backup_dry_run(&self, preview_id: &str) -> zbus::Result<()> {
-        self.call("CancelBackupDryRun", &(preview_id,))
-    }
-
-    pub fn get_backup_dry_run_status(
-        &self,
-        preview_id: &str,
-    ) -> Result<BackupDryRunStatusDto, KesticDbusError> {
-        self.call_json("GetBackupDryRunStatus", &(preview_id,))
-    }
-
-    pub fn format_exclude_rule_for_item(
-        &self,
-        item_path: &str,
-    ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
-        self.call_json("FormatExcludeRuleForItem", &(item_path,))
-    }
-
-    pub fn add_exclude_rule_for_item(
-        &self,
-        backup_id: &str,
-        item_path: &str,
-    ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
-        self.call_json("AddExcludeRuleForItem", &(backup_id, item_path))
-    }
-
-    pub fn run_destination_maintenance(&self, destination_id: &str) -> zbus::Result<String> {
-        self.call("RunDestinationMaintenance", &(destination_id,))
-    }
-
-    pub fn pause_global(&self, duration: &PauseDuration) -> zbus::Result<()> {
-        let json = to_failure_arg("duration", duration)?;
-        self.call("PauseGlobal", &(json.as_str(),))
-    }
-
-    pub fn resume_global(&self) -> zbus::Result<()> {
-        self.call("ResumeGlobal", &())
-    }
-
-    pub fn pause_backup(&self, backup_id: &str, duration: &PauseDuration) -> zbus::Result<()> {
-        let json = to_failure_arg("duration", duration)?;
-        self.call("PauseBackup", &(backup_id, json.as_str()))
-    }
-
-    pub fn resume_backup(&self, backup_id: &str) -> zbus::Result<()> {
-        self.call("ResumeBackup", &(backup_id,))
-    }
-
-    pub fn start_backup_override(&self, backup_id: &str) -> zbus::Result<String> {
-        self.call("StartBackupOverride", &(backup_id,))
-    }
-
-    pub fn unlock_destination(&self, destination_id: &str) -> zbus::Result<u32> {
-        self.call("UnlockDestination", &(destination_id,))
-    }
-
-    pub fn preview_destination_maintenance(
-        &self,
-        destination_id: &str,
-    ) -> Result<PrunePreviewSummary, KesticDbusError> {
-        self.call_json("PreviewDestinationMaintenance", &(destination_id,))
-    }
-
-    pub fn update_destination_maintenance(
-        &self,
-        destination_id: &str,
-        maintenance: &MaintenanceSchedule,
-    ) -> zbus::Result<()> {
-        let json = to_failure_arg("maintenance", maintenance)?;
-        self.call(
-            "UpdateDestinationMaintenance",
-            &(destination_id, json.as_str()),
-        )
-    }
-
-    pub fn update_settings(
-        &self,
-        default_overdue_threshold: u32,
-        notifications: &NotificationSettings,
-    ) -> zbus::Result<()> {
-        let json = to_failure_arg("notifications", notifications)?;
-        self.call(
-            "UpdateSettings",
-            &(default_overdue_threshold, json.as_str()),
-        )
-    }
-
-    pub fn list_known_networks(&self) -> Result<Vec<String>, KesticDbusError> {
-        self.call_json("ListKnownNetworks", &())
-    }
-}
-
-/// Serializes a method argument for a call whose error type is `KesticDbusError`.
-pub(crate) fn to_json_arg<T: Serialize>(value: &T) -> Result<String, KesticDbusError> {
-    serde_json::to_string(value).map_err(|e| KesticDbusError::Internal(e.to_string()))
-}
-
-/// Serializes a method argument for a call whose error type is `zbus::Error`.
-fn to_failure_arg<T: Serialize>(what: &str, value: &T) -> zbus::Result<String> {
-    serde_json::to_string(value).map_err(|e| zbus::Error::Failure(format!("serialize {what}: {e}")))
 }
 
 /// Status of an asynchronous preview (`GetBackupDryRunStatus`, `GetRetentionPreviewStatus`);
@@ -1231,6 +968,27 @@ pub struct PreviewStatusDto<T> {
     pub error_detail: Option<String>,
 }
 
+/// Status of an installation of the restic managed by Kestic (`GetResticInstallStatus`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResticInstallStatusDto {
+    /// `"running"` | `"done"` | `"cancelled"` | `"error"`
+    pub state: String,
+    /// The last step reached (also after the end).
+    pub phase: ResticInstallPhase,
+    /// Release version, once known.
+    pub version: Option<String>,
+    /// Bytes of the file being downloaded so far.
+    pub bytes_done: u64,
+    /// Size of that file, if the server says.
+    pub total_bytes: Option<u64>,
+    /// Set while `state == "done"`.
+    pub outcome: Option<ResticInstallOutcome>,
+    /// Cause while `state == "error"`.
+    pub error_kind: Option<ResticInstallCode>,
+    /// Raw error text (English).
+    pub error_detail: Option<String>,
+}
+
 /// Dry-run preview status returned by `GetBackupDryRunStatus`.
 pub type BackupDryRunStatusDto = PreviewStatusDto<BackupDryRunResult>;
 
@@ -1243,4 +1001,26 @@ pub struct ExcludeRulePreviewDto {
     pub is_dir: bool,
     pub rule: String,
     pub is_expert_rule: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A malformed `backend_secrets_json` (an old GUI sent the REST password as a bare string)
+    /// is refused without quoting the value in the error.
+    #[test]
+    fn invalid_backend_secrets_error_does_not_quote_the_input() {
+        for (input, value) in [
+            ("\"hunter2-secret\"", "hunter2-secret"),
+            ("{\"rest_password\": 4711}", "4711"),
+        ] {
+            let err = BackendSecrets::parse(input).expect_err("malformed input is refused");
+            assert!(
+                err.starts_with("invalid backend secrets JSON"),
+                "the error says what failed"
+            );
+            assert!(!err.contains(value), "the error repeats the input");
+        }
+    }
 }

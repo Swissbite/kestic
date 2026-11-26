@@ -26,6 +26,7 @@ model_row!(DestinationRow {
     kind_label: String => "kindLabel",
     location: String => "location",
     username: String => "username",
+    kind_json: String => "kindJson",
     backup_count: i32 => "backupCount",
     status_text: String => "statusText",
     status_icon: String => "statusIcon",
@@ -48,11 +49,36 @@ pub struct DestinationsModelRust {
     rows: Vec<DestinationRow>,
 }
 
-/// Where the repository of a destination lies, as the user entered it: the folder or the URL.
+/// The backend name of a generic destination, from the scheme of its repository URL.
+fn generic_label(url: &str) -> String {
+    match kestic_core::generic::scheme(url) {
+        Some("b2") => GuiText::BackblazeB2.text(),
+        Some("azure") => GuiText::Azure.text(),
+        Some("gs") => GuiText::GoogleCloud.text(),
+        Some("swift") => GuiText::Swift.text(),
+        _ => GuiText::Rclone.text(),
+    }
+}
+
+/// Where the repository of a destination lies, as the user entered it: the folder, the URL or
+/// the address of the server.
 pub(crate) fn location_text(kind: &DestinationKind) -> String {
     match kind {
         DestinationKind::Local { path } => path.to_string_lossy().into_owned(),
         DestinationKind::Rest { url, .. } => url.clone(),
+        DestinationKind::Sftp {
+            host,
+            port,
+            user,
+            path,
+        } => kestic_core::sftp::display_location(host, *port, user, path),
+        DestinationKind::S3 {
+            endpoint,
+            bucket,
+            path,
+            ..
+        } => kestic_core::s3::display_location(endpoint, bucket, path.as_deref()),
+        DestinationKind::Generic { url, .. } => url.trim().to_string(),
     }
 }
 
@@ -72,8 +98,20 @@ fn build_destination_row(
             GuiText::RestServer.text(),
             username.clone().unwrap_or_default(),
         ),
+        DestinationKind::Sftp { user, .. } => {
+            ("sftp".to_string(), GuiText::Sftp.text(), user.clone())
+        }
+        DestinationKind::S3 { .. } => (
+            "s3".to_string(),
+            GuiText::S3Compatible.text(),
+            String::new(),
+        ),
+        DestinationKind::Generic { url, .. } => {
+            ("generic".to_string(), generic_label(url), String::new())
+        }
     };
     let location = location_text(&d.destination.kind);
+    let kind_json = json_or(&d.destination.kind, "{}");
     let (status_text, status_icon) = format_destination_status(d, now);
     let pending_forget_count = backups
         .iter()
@@ -95,6 +133,7 @@ fn build_destination_row(
         kind_label,
         location,
         username,
+        kind_json,
         backup_count: i32::try_from(d.backup_count).unwrap_or(i32::MAX),
         status_text,
         status_icon,

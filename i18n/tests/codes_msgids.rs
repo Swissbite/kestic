@@ -8,8 +8,9 @@
 //! fills exactly the placeholders of its msgid.
 
 use kestic_i18n::codes::{
-    BlockedReason, BlockingKind, ConnectionTestCode, ErrorKind, OverallStatusKind,
-    PendingReasonCode, RecoveryAction, ResticStatusCode, RestoreNoteCode, RestoreOutcome,
+    BlockedReason, BlockingKind, ConnectionNoteCode, ConnectionTestCode, ErrorKind,
+    OverallStatusKind, PendingReasonCode, RecoveryAction, ResticInstallCode, ResticInstallOutcome,
+    ResticInstallPhase, ResticPathProblem, ResticStatusCode, RestoreNoteCode, RestoreOutcome,
     RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode, SkipReason, SourceStatus,
 };
 use kestic_i18n::messages::{
@@ -58,6 +59,15 @@ fn all_messages() -> Vec<(String, Message)> {
         }
     }
     push("completed".into(), completed_message());
+    for phase in ResticInstallPhase::ALL {
+        push(format!("{phase:?}"), phase.message());
+    }
+    for outcome in ResticInstallOutcome::ALL {
+        push(format!("{outcome:?}"), outcome.message("0.20.0"));
+    }
+    for code in ResticInstallCode::ALL {
+        push(format!("install/{code:?}"), code.message());
+    }
     push("dns".into(), dns_failed_message());
     for action in RecoveryAction::ALL {
         push(format!("{action:?}"), action.label_message());
@@ -109,9 +119,15 @@ fn all_messages() -> Vec<(String, Message)> {
                 binary_path: Some("/p"),
                 found_version: Some("0.1"),
                 detail: Some("d"),
+                path_problem: None,
                 min_version: "0.18.0",
             }),
         );
+    }
+    for problem in ResticPathProblem::ALL {
+        if let Some(m) = problem.message("/p") {
+            push(format!("{problem:?}"), m);
+        }
     }
     for kind in BlockingKind::ALL {
         push(format!("{kind:?}"), kind.message(None));
@@ -128,6 +144,9 @@ fn all_messages() -> Vec<(String, Message)> {
             UiText::Message(m) => push(format!("{code:?}"), m),
             UiText::Raw(_) => assert!(raw_codes.contains(&code), "{code:?} must be translated"),
         }
+    }
+    for note in ConnectionNoteCode::ALL {
+        push(format!("{note:?}"), note.message("x"));
     }
     if let UiText::Message(m) = connection_test_text(true, None, "") {
         push("reachable".into(), m);

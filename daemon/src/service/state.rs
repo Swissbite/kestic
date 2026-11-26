@@ -5,6 +5,7 @@
 
 use super::error::{KesticServiceErr, map_provider_err};
 use super::previews::PreviewEntry;
+use super::restic_status::restic_status_with;
 use super::restore_runner::{PendingRestore, RestoreClaim};
 use super::run_errors::unreadable_items_from_lines;
 use super::snapshot_queries::SharedResult;
@@ -29,7 +30,7 @@ use kestic_core::model::{
     Backup, BackupId, Destination, DestinationId, ResticProvider, Run, RunId, RunKind, RunStatus,
 };
 use kestic_core::mount::{MountInspector, SourceCheckResult, SystemMountInspector};
-use kestic_core::provider::{ResolvedRestic, ResticProviderError, resolve_and_check};
+use kestic_core::provider::{ResolvedRestic, ResticLocations, ResticProviderError};
 use kestic_core::query_list::{QueryLimits, QueryStore};
 use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_core::scheduler::{
@@ -37,10 +38,11 @@ use kestic_core::scheduler::{
 };
 use kestic_core::secrets::{SecretError, SecretStore};
 use kestic_core::sync::LockUnpoisoned;
-use kestic_i18n::codes::{BlockingKind, PendingReasonCode, ResticStatusCode};
+use kestic_i18n::codes::{BlockingKind, PendingReasonCode};
 use kestic_i18n::messages::{pause_message, unmet_conditions_message};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -120,6 +122,9 @@ pub struct DaemonRunConfig {
     pub enable_scheduler: bool,
     pub enable_binary_watch: bool,
     pub binary_watch_args: Option<Vec<String>>,
+    /// `PATH` searched for the programs of the destination types (`ListDestinationTypes`);
+    /// `None` uses the daemon's own `PATH`.
+    pub program_search_path: Option<OsString>,
     /// Memory limits for the lists of snapshot queries.
     pub query_limits: QueryLimits,
 }
@@ -152,6 +157,7 @@ impl Default for DaemonRunConfig {
             enable_scheduler: false,
             enable_binary_watch: false,
             binary_watch_args: None,
+            program_search_path: None,
             query_limits: QueryLimits::default(),
         }
     }
@@ -201,6 +207,8 @@ pub struct DaemonCore {
     pub(super) source_availability: HashMap<BackupId, SourceCheckResult>,
     pub(super) availability_probe_count: u64,
     pub(super) availability_probe_in_flight: bool,
+    /// The background check of the destinations only restic can reach is running.
+    pub(super) restic_availability_in_flight: bool,
     pub(super) availability_probe_started_at: Option<OffsetDateTime>,
     pub(super) availability_probe_generation: u64,
     pub(super) source_probe_in_flight: bool,
@@ -228,6 +236,12 @@ pub struct DaemonCore {
     pub(super) sleep_in_progress: bool,
     pub(super) dry_runs: HashMap<String, PreviewEntry<BackupDryRunResult>>,
     pub(super) retention_previews: HashMap<String, PreviewEntry<ForgetPreviewResult>>,
+    /// Installations of the restic managed by Kestic by `install_id`.
+    pub(super) restic_installs: super::restic_install::InstallMap,
+    /// Removal of what an interrupted installation of an earlier daemon left behind.
+    pub(super) install_leftovers: super::restic_install::LeftoverSweep,
+    /// SFTP destinations being added or moved to another server right now.
+    pub(super) sftp_setups: super::host_keys::SftpSetups,
     pub(super) snapshot_queries: QueryStore<SharedResult>,
     pub(super) window_active: bool,
     pub(super) window_page: String,
@@ -240,6 +254,7 @@ pub struct DaemonCore {
     pub(super) suppress_ui_spawn: bool,
     pub(super) timezone: TimezoneSpec,
     pub(crate) monitor_bus: MonitorBusConfig,
+    pub(crate) program_search_path: Option<OsString>,
     pub(super) enable_system_monitors: bool,
     pub(super) system_env: SystemEnvironment,
     pub(super) dest_stale_locks: HashMap<DestinationId, usize>,
@@ -323,6 +338,7 @@ impl DaemonCore {
             source_availability: HashMap::new(),
             availability_probe_count: 0,
             availability_probe_in_flight: false,
+            restic_availability_in_flight: false,
             availability_probe_started_at: None,
             availability_probe_generation: 0,
             source_probe_in_flight: false,
@@ -343,6 +359,9 @@ impl DaemonCore {
             sleep_in_progress: false,
             dry_runs: HashMap::new(),
             retention_previews: HashMap::new(),
+            restic_installs: HashMap::new(),
+            install_leftovers: super::restic_install::LeftoverSweep::default(),
+            sftp_setups: super::host_keys::SftpSetups::default(),
             snapshot_queries: QueryStore::new(run_config.query_limits),
             window_active: false,
             window_page: String::new(),
@@ -355,6 +374,7 @@ impl DaemonCore {
             suppress_ui_spawn: run_config.suppress_ui_spawn,
             timezone: run_config.timezone.clone(),
             monitor_bus: run_config.monitor_bus.clone(),
+            program_search_path: run_config.program_search_path.clone(),
             enable_system_monitors: run_config.enable_system_monitors,
             system_env,
             dest_stale_locks: HashMap::new(),
@@ -397,6 +417,13 @@ impl DaemonCore {
             .cloned()
             .ok_or_else(|| KesticServiceErr::NotFound(id.as_str().to_string()))?;
         Ok((backup, dest))
+    }
+
+    /// The `PATH` the daemon starts restic with: the configured one, else its own.
+    pub(crate) fn program_search_path(&self) -> Option<OsString> {
+        self.program_search_path
+            .clone()
+            .or_else(|| std::env::var_os("PATH"))
     }
 
     pub(super) fn restic_deps(&self) -> ResticDeps {
@@ -691,54 +718,22 @@ pub(super) fn probe_restic_and_secrets_raw(
 }
 
 /// Probes restic and the password store once, returning the probe tuple and, if usable,
-/// the resolved restic binary (single `restic version` call per start).
+/// the resolved restic binary.
 pub(super) fn probe_restic_and_secrets_resolved(
     provider: &ResticProvider,
     secret_store: &dyn SecretStore,
 ) -> (ProbeTuple, Result<ResolvedRestic, ResticProviderError>) {
-    let resolved_res = resolve_and_check(provider);
-    let restic_status = match &resolved_res {
-        Ok(resolved) => ResticStatusDto {
-            valid: true,
-            binary_path: Some(resolved.binary.to_string_lossy().into_owned()),
-            version: Some(resolved.version.to_string()),
-            error_kind: None,
-            found_version: Some(resolved.version.to_string()),
-            detail: None,
-        },
-        Err(ResticProviderError::NotFound { .. }) => ResticStatusDto {
-            valid: false,
-            binary_path: None,
-            version: None,
-            error_kind: Some(ResticStatusCode::NotFound),
-            found_version: None,
-            detail: None,
-        },
-        Err(ResticProviderError::TooOld { binary, found, .. }) => ResticStatusDto {
-            valid: false,
-            binary_path: Some(binary.to_string_lossy().into_owned()),
-            version: None,
-            error_kind: Some(ResticStatusCode::TooOld),
-            found_version: Some(found.to_string()),
-            detail: None,
-        },
-        Err(ResticProviderError::InvalidCustomPath { path, reason }) => ResticStatusDto {
-            valid: false,
-            binary_path: Some(path.to_string_lossy().into_owned()),
-            version: None,
-            error_kind: Some(ResticStatusCode::InvalidCustomPath),
-            found_version: None,
-            detail: Some(reason.clone()),
-        },
-        Err(ResticProviderError::UnreadableVersion { binary, detail }) => ResticStatusDto {
-            valid: false,
-            binary_path: Some(binary.to_string_lossy().into_owned()),
-            version: None,
-            error_kind: Some(ResticStatusCode::UnreadableVersion),
-            found_version: None,
-            detail: Some(detail.clone()),
-        },
-    };
+    probe_restic_and_secrets_with(provider, &ResticLocations::from_env(), secret_store)
+}
+
+/// [`probe_restic_and_secrets_resolved`] with the system and the app-managed restic at
+/// `locations`.
+pub(super) fn probe_restic_and_secrets_with(
+    provider: &ResticProvider,
+    locations: &ResticLocations,
+    secret_store: &dyn SecretStore,
+) -> (ProbeTuple, Result<ResolvedRestic, ResticProviderError>) {
+    let (restic_status, resolved_res) = restic_status_with(provider, locations);
 
     let secret_status = match secret_store.check_availability() {
         Ok(()) => SecretStoreStatusDto {
@@ -758,19 +753,39 @@ pub(super) fn probe_restic_and_secrets_resolved(
         },
     };
 
-    let blocking = if !secret_status.available {
-        Some(BlockingStateDto {
-            kind: BlockingKind::SecretStoreLocked,
-        })
-    } else if !restic_status.valid {
-        Some(BlockingStateDto {
-            kind: BlockingKind::ResticUnavailable,
-        })
-    } else {
-        None
-    };
+    let blocking = blocking_state(&restic_status, &secret_status);
 
     ((restic_status, secret_status, blocking), resolved_res)
+}
+
+/// The blocking state: a locked password store first, then an unusable restic.
+fn blocking_state(
+    restic_status: &ResticStatusDto,
+    secret_status: &SecretStoreStatusDto,
+) -> Option<BlockingStateDto> {
+    let kind = if !secret_status.available {
+        BlockingKind::SecretStoreLocked
+    } else if !restic_status.valid {
+        BlockingKind::ResticUnavailable
+    } else {
+        return None;
+    };
+    Some(BlockingStateDto { kind })
+}
+
+/// Checks the system and the app-managed restic again and stores the new restic status; the
+/// password store keeps its last status.
+pub(super) fn refresh_restic_probe_unlocked(shared: &Arc<Mutex<DaemonCore>>) {
+    let provider = shared.lock_unpoisoned().config.restic_provider.clone();
+    let (restic_status, _) = restic_status_with(&provider, &ResticLocations::from_env());
+    let mut guard = shared.lock_unpoisoned();
+    // A source set meanwhile was checked by its own call.
+    if guard.config.restic_provider != provider {
+        return;
+    }
+    let secret_status = guard.cached_probe.1.clone();
+    let blocking = blocking_state(&restic_status, &secret_status);
+    guard.record_probe((restic_status, secret_status, blocking));
 }
 
 /// Error for a locked password store; `detail` is the reason the probe reported.
@@ -857,19 +872,40 @@ pub(crate) fn set_restic_provider_unlocked(
 > {
     let provider: ResticProvider = serde_json::from_str(provider_json)
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid provider JSON: {e}")))?;
-    let _ = resolve_and_check(&provider).map_err(map_provider_err)?;
     let secret_store = {
         let guard = shared.lock_unpoisoned();
         Arc::clone(&guard.secret_store)
     };
-    let probe = probe_restic_and_secrets_raw(&provider, secret_store.as_ref());
-    let restic_status = probe.0.clone();
+    let locations = ResticLocations::from_env();
+    let (probe, resolved) =
+        probe_restic_and_secrets_with(&provider, &locations, secret_store.as_ref());
+    let not_installed = || {
+        KesticServiceErr::InvalidInput("the restic managed by Kestic is not installed".to_string())
+    };
+    let binary = match resolved {
+        Ok(resolved) => resolved.binary,
+        Err(_) if provider == ResticProvider::AppManaged && probe.0.app_managed.is_none() => {
+            return Err(not_installed());
+        }
+        Err(err) => return Err(map_provider_err(err)),
+    };
+    let mut restic_status = probe.0.clone();
 
     let mut guard = shared.lock_unpoisoned();
+    // `RemoveAppManagedRestic` deletes under this lock, so a binary removed since the check
+    // above is gone by now; a link to it then points nowhere.
+    if !binary.exists() {
+        return Err(if provider == ResticProvider::AppManaged {
+            not_installed()
+        } else {
+            KesticServiceErr::ResticUnavailable(format!("{} was removed", binary.display()))
+        });
+    }
     let mut next = guard.config.clone();
     next.restic_provider = provider;
     guard.persist_config(next)?;
     guard.record_probe(probe);
+    restic_status.install_id = guard.running_restic_install();
     let (state_dto, tray_state) = guard.build_state_and_tray();
     Ok((restic_status, guard.conn.clone(), state_dto, tray_state))
 }

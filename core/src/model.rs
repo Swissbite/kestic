@@ -31,8 +31,14 @@ pub enum ModelError {
     Entropy(String),
     #[error("invalid destination configuration: {0}")]
     InvalidDestination(String),
+    /// A network address (e.g. `smb://…`) given as the path of a local destination.
+    #[error("invalid destination configuration: {0}")]
+    NotALocalPath(#[from] crate::local_path::NotALocalPath),
     #[error("invalid backup configuration: {0}")]
     InvalidBackup(String),
+    /// The repository URL or a variable of a generic destination is refused.
+    #[error("invalid destination configuration: {0}")]
+    Generic(#[from] crate::generic::GenericInputError),
 }
 
 fn is_valid_base32_id(raw: &str) -> bool {
@@ -134,11 +140,14 @@ define_entity_id!(RunId, "Unique 8-char Base32 identifier for a [`Run`].");
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResticProvider {
-    /// System `restic` resolved from `$PATH`.
+    /// The system `restic` if it is at least the minimum version, otherwise the app-managed one.
     #[default]
+    Automatic,
+    /// System `restic` resolved from `$PATH`.
     System,
-    /// App-managed download under `$XDG_DATA_HOME/kestic/`.
-    AppManaged { path: PathBuf },
+    /// The restic Kestic downloads to its fixed place `$XDG_DATA_HOME/kestic/restic`. A `path`
+    /// elsewhere, written by an older Kestic, becomes [`ResticProvider::Custom`] on loading.
+    AppManaged,
     /// User-configured explicit binary path.
     Custom { path: PathBuf },
 }
@@ -155,6 +164,36 @@ pub enum DestinationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         username: Option<String>,
     },
+    /// SFTP server reached with ssh; the login uses an SSH key or the ssh-agent.
+    Sftp {
+        host: String,
+        #[serde(default = "default_sftp_port")]
+        port: u16,
+        user: String,
+        /// Absolute, or relative to the user's home folder on the server.
+        path: String,
+    },
+    /// S3-compatible object storage; the keys are only in the password store.
+    S3 {
+        /// URL with scheme, e.g. `https://s3.example.com:9000`.
+        endpoint: String,
+        bucket: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        region: Option<String>,
+    },
+    /// A backend of the generic form (B2, Azure, Google Cloud, Swift, rclone): repository URL and
+    /// the environment variables it reads; secret values are only in the password store.
+    Generic {
+        url: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        env: Vec<crate::generic::EnvVar>,
+    },
+}
+
+fn default_sftp_port() -> u16 {
+    crate::sftp::DEFAULT_PORT
 }
 
 impl DestinationKind {
@@ -175,7 +214,37 @@ impl DestinationKind {
                     normalize_rest_url_to_ascii(url).unwrap_or_else(|_| url.trim().to_string());
                 format!("rest:{normalized}")
             }
+            Self::Sftp {
+                host,
+                port,
+                user,
+                path,
+            } => crate::sftp::repository_uri(host, *port, user, path),
+            Self::S3 {
+                endpoint,
+                bucket,
+                path,
+                ..
+            } => crate::s3::repository_uri(endpoint, bucket, path.as_deref()),
+            Self::Generic { url, .. } => url.trim().to_string(),
         }
+    }
+
+    /// Whether the connection test of a new repository checks the login with restic first: a
+    /// wrong S3 key, backend variable or SSH key would otherwise only show when the repository
+    /// is created.
+    pub fn probes_login_before_init(&self) -> bool {
+        matches!(
+            self,
+            Self::Sftp { .. } | Self::S3 { .. } | Self::Generic { .. }
+        )
+    }
+
+    /// Whether only restic itself can tell if the destination is reachable: the generic backends
+    /// have no address Kestic could check on its own, and an SFTP server may allow no command
+    /// but SFTP.
+    pub fn needs_restic_preflight(&self) -> bool {
+        matches!(self, Self::Sftp { .. } | Self::Generic { .. })
     }
 
     /// Whether this destination uses separate REST backend credentials.
@@ -191,6 +260,19 @@ impl DestinationKind {
                 format!("local:{}", normalize_local_path(path).to_string_lossy())
             }
             Self::Rest { url, .. } => format!("rest:{}", normalize_rest_url(url)),
+            Self::Sftp {
+                host,
+                port,
+                user,
+                path,
+            } => crate::sftp::location_key(host, *port, user, path),
+            Self::S3 {
+                endpoint,
+                bucket,
+                path,
+                ..
+            } => crate::s3::location_key(endpoint, bucket, path.as_deref()),
+            Self::Generic { url, .. } => format!("generic:{}", generic_location(url)),
         }
     }
 
@@ -345,14 +427,42 @@ pub struct DestinationSecretRefs {
     /// Optional reference key for REST server password in [`crate::secrets::SecretStore`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rest_password_ref: Option<String>,
+    /// Reference key for the S3 access key ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_access_key_ref: Option<String>,
+    /// Reference key for the S3 secret access key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_secret_key_ref: Option<String>,
+    /// Reference keys of the secret variables of a generic destination, by variable name.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env_refs: std::collections::BTreeMap<String, String>,
 }
 
 impl DestinationSecretRefs {
-    /// Derives canonical Secret Service reference keys for a destination ID.
-    pub fn for_destination(id: &DestinationId, with_rest_auth: bool) -> Self {
+    /// Derives canonical Secret Service reference keys for a destination of `kind`.
+    pub fn for_destination(id: &DestinationId, kind: &DestinationKind) -> Self {
+        let slot_ref = |wanted: &str| {
+            kind.backend_secret_slots()
+                .iter()
+                .any(|s| s.kind == wanted)
+                .then(|| format!("kestic:dest:{id}:{wanted}"))
+        };
         Self {
             repo_password_ref: format!("kestic:dest:{id}:repo"),
-            rest_password_ref: with_rest_auth.then(|| format!("kestic:dest:{id}:rest")),
+            rest_password_ref: slot_ref(crate::backend_credentials::SECRET_KIND_REST),
+            s3_access_key_ref: slot_ref(crate::backend_credentials::SECRET_KIND_S3_ACCESS_KEY),
+            s3_secret_key_ref: slot_ref(crate::backend_credentials::SECRET_KIND_S3_SECRET_KEY),
+            env_refs: match kind {
+                DestinationKind::Generic { env, .. } => env
+                    .iter()
+                    .filter(|v| v.secret)
+                    .map(|v| {
+                        let kind = crate::generic::secret_kind(&v.name);
+                        (v.name.clone(), format!("kestic:dest:{id}:{kind}"))
+                    })
+                    .collect(),
+                _ => std::collections::BTreeMap::new(),
+            },
         }
     }
 }
@@ -519,6 +629,19 @@ pub enum Maintenance {
     Check,
 }
 
+/// The location part of a generic repository URL for comparing: without trailing slashes,
+/// except one right after a colon, where `remote:/` (the root) and `remote:` (the remote's own
+/// folder) are different folders.
+fn generic_location(url: &str) -> String {
+    let url = url.trim();
+    let trimmed = url.trim_end_matches('/');
+    if trimmed.ends_with(':') && trimmed.len() < url.len() {
+        format!("{trimmed}/")
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Configured backup repository (glossary: `Destination`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Destination {
@@ -546,9 +669,8 @@ impl Destination {
         kind: DestinationKind,
     ) -> Result<Self, ModelError> {
         let name = name.into();
-        let uses_rest_auth = kind.uses_rest_credentials();
         let dest = Self {
-            secrets: DestinationSecretRefs::for_destination(&id, uses_rest_auth),
+            secrets: DestinationSecretRefs::for_destination(&id, &kind),
             id,
             name,
             kind,
@@ -573,6 +695,19 @@ impl Destination {
                         "local destination path must not be empty".to_string(),
                     ));
                 }
+                // restic gets the path as text: another path would be written to.
+                let Some(text) = path.to_str().filter(|t| !t.contains('\0')) else {
+                    return Err(ModelError::InvalidDestination(format!(
+                        "local destination path must be valid UTF-8 without NUL characters: '{}'",
+                        path.display()
+                    )));
+                };
+                if crate::local_path::kio_address_scheme(text).is_some() {
+                    return Err(crate::local_path::NotALocalPath(
+                        crate::local_path::address_for_display(text),
+                    )
+                    .into());
+                }
                 if !path.is_absolute() {
                     return Err(ModelError::InvalidDestination(format!(
                         "local destination path must be absolute: '{}'",
@@ -582,6 +717,25 @@ impl Destination {
             }
             DestinationKind::Rest { url, .. } => {
                 normalize_rest_url_to_ascii(url)?;
+            }
+            DestinationKind::Sftp {
+                host,
+                port,
+                user,
+                path,
+            } => crate::sftp::validate(host, *port, user, path)?,
+            DestinationKind::S3 {
+                endpoint,
+                bucket,
+                path,
+                region,
+            } => {
+                crate::s3::validate(endpoint, bucket, path.as_deref())?;
+                crate::s3::validate_region(region.as_deref())?;
+            }
+            DestinationKind::Generic { url, env } => {
+                crate::generic::validate_url(url)?;
+                crate::generic::validate_env(env)?;
             }
         }
         if self.secrets.repo_password_ref.trim().is_empty() {

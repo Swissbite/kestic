@@ -6,9 +6,9 @@ description: Rules for running a whole Kestic milestone (M4–M6) largely on you
 # Kestic Milestone Autonomy
 
 A milestone agent implements a whole milestone with few check-ins of the maintainer: the
-kickoff (issues, this skill and spec changes approved), questions collected at most once a day,
-the halt before a risky write path (M4: before S05), reviews of the write-path stories and the
-closing pull request. Precedence: `AGENTS.md` > this skill > the issue > the start prompt of the
+kickoff (issues, this skill and spec changes approved), questions on the story's issue as they arise,
+the halt before a risky write path (M4: before S05; M5: before S01, S09 and the restic download),
+reviews of the write-path stories and the closing pull request. Precedence: `AGENTS.md` > this skill > the issue > the start prompt of the
 agent container > the agent's own judgement. How a single story is done (research, inner loop,
 `just verify`) is in [kestic-story-execution](../kestic-story-execution/SKILL.md) and
 `AGENTS.md`; this skill adds what a whole milestone needs. It and `prompts/` are frozen after
@@ -16,8 +16,8 @@ the kickoff; changing them is level 3.
 
 ## 1. Milestone, issues and branches
 
-- **GitHub milestone** `M<n> <name>` (M4: «M4 Restore») with one issue per story, titled
-  `M<n>-S<NN>: …`, plus milestone issues titled `M<n>: …` (halt, milestone review, closing).
+- **GitHub milestone** `M<n> <name>` (M4: «M4 Restore», M5: «M5 Targets and restic») with one
+  issue per story, titled `M<n>-S<NN>: …`, plus milestone issues titled `M<n>: …` (halt, milestone review, closing).
   Issues are in English. An issue is the assignment: it links the story's ACs in
   `docs/spec/milestones/` as a checklist and never copies the spec, which stays the source.
 - **Order:** the issue number. Dependencies are GitHub «blocked by» links. The watcher
@@ -41,6 +41,13 @@ the kickoff; changing them is level 3.
   or NFR; a visible text that states behaviour or a promise the spec does not give;
 - writing, overwriting, deleting or changing permissions outside a fresh temp directory or the
   default «new folder» of a restore;
+- which restic binary runs, where it comes from and how it is checked (release source, signing
+  key, checksums, signature, version check), and replacing or deleting it, in a way the spec
+  does not fix;
+- trusting an SSH host key, or SSH options, `known_hosts` paths and backend credentials (config,
+  Secret Service, environment of the child) in a way the spec does not fix;
+- changing the connection of an existing destination other than after the repository-ID check
+  the spec fixes;
 - restic flags `--overwrite`, `--delete`, `--target`, `--include`, `--exclude`, `--host`,
   `--path`, `--sparse`, `--verify` used in a way the spec does not fix;
 - mapping paths or users; touching snapshots of other hosts or users;
@@ -71,8 +78,10 @@ and new visible texts that only name what the spec defines (a column header, an 
 1. `git fetch`, a clean working tree, then read `AGENTS.md`, this skill (from `origin/m<n>`),
    the issue with its comments and the linked ACs. If the branch `agent/issue-<issue>` or its
    pull request exists, continue there.
-2. Implement per `kestic-story-execution`. In the inner loop run only targeted checks: the
-   tests of the changed crates and ACs, clippy, and the smoke scenes of the screens you changed.
+2. **Read [story-contract.md](story-contract.md) now** and follow it: story contract on the
+   issue, open questions, contract review (§5 stories), tests first. Then implement per
+   `kestic-story-execution`. In the inner loop run only targeted checks: the tests of the
+   changed crates and ACs, clippy, and the smoke scenes of the screens you changed.
 3. **First full check, in parallel.** Commit, then start at the same time:
    - `just verify` in the background, output to a log file;
    - the two reviews with the frozen prompts (`prompts/README.md`): **correctness and spec**, and
@@ -97,7 +106,8 @@ and new visible texts that only name what the spec defines (a column header, an 
    `.config/nextest.toml` or packaging. Merging `origin/m<n>` into the branch needs no new
    reviews and no local `just verify`; CI checks the pushed merge.
 5. When all reviews report `must_fix: 0`, complete the body: it maps each AC to its test, names
-   level-2 decisions with `Rückbau-Kosten` and ends with every reviewer's verdict JSON block as it
+   level-2 decisions with `Rückbau-Kosten`, lists **Prevention**
+   ([story-contract.md](story-contract.md) §4) and ends with every reviewer's verdict JSON block as it
    was returned. Then `gh pr ready <pr>` and wait for CI with `gh pr checks <pr> --watch` (Bash
    timeout 40 minutes). The result counts only from
    `gh pr view <pr> --json headRefOid,statusCheckRollup`: `verify` is `SUCCESS` for exactly that
@@ -118,8 +128,8 @@ and new visible texts that only name what the spec defines (a column header, an 
    Otherwise add `needs-maintainer` to the issue, say what the maintainer has to review, and
    end the turn. The maintainer merges or comments; either continues the session.
 7. After the merge, by you or the maintainer: tick the AC checklist in the issue, close it with
-   a comment naming the pull request (a pull request into `m<n>` does not close issues), and
-   end the session.
+   a comment naming the pull request and the numbers of [story-contract.md](story-contract.md)
+   §4 (a pull request into `m<n>` does not close issues), and end the session.
 
 ## 4. Budgets and flakes
 
@@ -154,6 +164,10 @@ change only through the closing issue.
 S05, S06, S07) and of the milestone review's clean-up. The write path spreads over restic
 arguments, path mapping, glob escaping, the preview check and the dialog, so a path list cannot
 catch it.
+M5: S01 (it writes `known_hosts` and decides which server to trust), S09 (it changes the
+connection of an existing destination; a wrong repository would get the next backup and the
+retention's `forget`) and S06, S07, S08 (they download, check, choose, replace or delete the
+restic binary that Kestic runs).
 
 ## 6. Sync `main` → `m<n>`
 
@@ -174,7 +188,7 @@ are absolute; no secrets and no paths of real data in issues, comments or pull r
 | Moment | How |
 | --- | --- |
 | Kickoff | the maintainer approves the issues, this skill and the spec changes, sets the tag `m<n>-start` and removes `needs-maintainer` from the first story |
-| Questions | issues labelled `needs-maintainer`; the maintainer looks at most once a day |
+| Questions | issues labelled `needs-maintainer` |
 | Halt | the issue «M<n>: halt …» runs before the write path: auditor report (`prompts/auditor.md`), level-2 list and the design of the write path as comments on that issue, then `needs-maintainer`. The first write-path story starts labelled `needs-maintainer`; the maintainer approves by removing that label and closing the halt issue. |
 | Closing | the issue «M<n>: closing …»: the closing pull request `gh pr create --base main --head m<n>` with auditor report, the write-path diff for line-by-line review, level-2 and level-3 log, test deltas and manual acceptance cards (`kestic-manual-acceptance`), then `needs-maintainer`. The maintainer merges it as a merge commit. |
 
@@ -198,7 +212,7 @@ Only this section is specific to the tooling (`.devcontainer/README.md`).
 - The watcher starts and continues sessions; the agent never polls for comments. When it waits
   for the maintainer, it ends its turn; a new comment, review, merge or label removal by the
   maintainer continues the session.
-- Reviews run as two sub-agents that change nothing in the worktree (temp directories and temp
-  repositories are fine); the model is set per review (§3).
+- Reviews run as sub-agents that change nothing in the worktree (temp directories and temp
+  repositories are fine).
 - Commits, pull requests and comments carry no AI co-author trailers and no «Generated with»
   lines.
