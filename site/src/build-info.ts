@@ -3,6 +3,8 @@
 
 // Build metadata shown on the page. CI passes the commit the screenshots were
 // rendered from in KESTIC_BUILD_SHA; locally the checked-out commit is used.
+// When the screenshots come from a release because the Verify artifact has
+// expired, CI passes that release's tag in KESTIC_SCREENSHOTS_VERSION.
 // CI also passes the newest final release (KESTIC_RELEASE_TAG,
 // KESTIC_RELEASE_DEB_URL); without them the page says there is no release yet.
 
@@ -24,6 +26,12 @@ export const buildSha: string = resolveSha();
 export const buildShaShort: string = buildSha.slice(0, 7);
 export const repoUrl = "https://github.com/Swissbite/kestic";
 export const commitUrl = `${repoUrl}/commit/${buildSha}`;
+
+/** Tag of the release the screenshots come from; null when they come from the commit itself. */
+export const screenshotsVersion: string | null = (() => {
+  const tag = (process.env["KESTIC_SCREENSHOTS_VERSION"] ?? "").trim();
+  return tag === "" ? null : tag;
+})();
 
 export interface Release {
   /** Tag of the release, e.g. `v0.4.0`. */
