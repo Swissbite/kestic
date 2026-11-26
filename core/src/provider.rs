@@ -3,6 +3,7 @@
 
 //! Restic binary discovery and version checking (`ResticProvider`).
 
+use crate::bounded_command::output_within;
 use crate::model::ResticProvider;
 use crate::restic_gate::ResticBinaryGate;
 use kestic_i18n::codes::ResticPathProblem;
@@ -12,6 +13,7 @@ use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 use thiserror::Error;
 
 /// Minimum supported restic version.
@@ -88,11 +90,8 @@ impl ResticLocations {
     /// The locations seen from this process: `restic` in its `PATH` and the app-managed binary
     /// below its `XDG_DATA_HOME`.
     pub fn from_env() -> Self {
-        let app_managed = crate::restic_install::kestic_data_dir(
-            std::env::var_os("HOME").as_deref(),
-            std::env::var_os("XDG_DATA_HOME").as_deref(),
-        )
-        .map(|dir| crate::restic_install::app_managed_binary(&dir));
+        let app_managed = crate::config::default_data_dir()
+            .map(|dir| crate::restic_install::app_managed_binary(&dir));
         Self {
             system: which::which("restic").ok(),
             app_managed,
@@ -267,12 +266,15 @@ pub fn check_binary_version(binary: &Path) -> Result<ResolvedRestic, ResticProvi
     let _lease = ResticBinaryGate::global().read_for(binary);
     validate_executable_path(binary)?;
 
-    let version = probe_version_json(binary)
-        .or_else(|_| probe_version_text(binary))
-        .map_err(|detail| ResticProviderError::UnreadableVersion {
-            binary: binary.to_path_buf(),
-            detail,
-        })?;
+    // A program that does not answer `version --json` in time is not asked a second time.
+    let version = match probe_version_json(binary) {
+        Err(Probe::Failed(_)) => probe_version_text(binary),
+        other => other.map_err(Probe::into_detail),
+    }
+    .map_err(|detail| ResticProviderError::UnreadableVersion {
+        binary: binary.to_path_buf(),
+        detail,
+    })?;
 
     if version < MIN_RESTIC_VERSION {
         return Err(ResticProviderError::TooOld {
@@ -288,20 +290,54 @@ pub fn check_binary_version(binary: &Path) -> Result<ResolvedRestic, ResticProvi
     })
 }
 
-fn probe_version_json(binary: &Path) -> Result<Version, String> {
-    let out = Command::new(binary)
-        .args(["version", "--json"])
-        .output()
-        .map_err(|err| format!("failed to execute `{}`: {err}", binary.display()))?;
+/// How long `restic version` may take; a program that does not end is no usable restic.
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Why a version probe found no version.
+enum Probe {
+    /// The program did not end within [`VERSION_PROBE_TIMEOUT`].
+    NoAnswer(String),
+    Failed(String),
+}
+
+impl Probe {
+    fn into_detail(self) -> String {
+        match self {
+            Self::NoAnswer(detail) | Self::Failed(detail) => detail,
+        }
+    }
+}
+
+/// Runs `binary` with `args`, at most [`VERSION_PROBE_TIMEOUT`] and with bounded output.
+fn probe(binary: &Path, args: &[&str]) -> Result<std::process::Output, Probe> {
+    let mut cmd = Command::new(binary);
+    cmd.args(args);
+    output_within(cmd, VERSION_PROBE_TIMEOUT).map_err(|err| {
+        let detail = format!("failed to execute `{}`: {err}", binary.display());
+        if err.kind() == ErrorKind::TimedOut {
+            Probe::NoAnswer(detail)
+        } else {
+            Probe::Failed(detail)
+        }
+    })
+}
+
+fn probe_version_json(binary: &Path) -> Result<Version, Probe> {
+    let out = probe(binary, &["version", "--json"])?;
 
     if !out.status.success() {
-        return Err(format!(
+        return Err(Probe::Failed(format!(
             "`restic version --json` exited with {}",
             out.status
-        ));
+        )));
     }
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    parse_version_json(&out.stdout).map_err(Probe::Failed)
+}
+
+/// The version in the output of `restic version --json`: one message of type `version`.
+pub(crate) fn parse_version_json(stdout: &[u8]) -> Result<Version, String> {
+    let stdout = String::from_utf8_lossy(stdout);
     let parsed: ResticVersionJson =
         serde_json::from_str(stdout.trim()).map_err(|err| format!("invalid JSON: {err}"))?;
     if parsed.message_type.as_deref() != Some("version") {
@@ -314,10 +350,7 @@ fn probe_version_json(binary: &Path) -> Result<Version, String> {
 }
 
 fn probe_version_text(binary: &Path) -> Result<Version, String> {
-    let out = Command::new(binary)
-        .arg("version")
-        .output()
-        .map_err(|err| format!("failed to execute `{}`: {err}", binary.display()))?;
+    let out = probe(binary, &["version"]).map_err(Probe::into_detail)?;
 
     if !out.status.success() {
         return Err(format!("`restic version` exited with {}", out.status));

@@ -114,23 +114,25 @@ fn opens(code: &str, type_name: &str) -> bool {
 /// Endings of the type names of controls that are Tab stops unless they say otherwise: every
 /// button, delegate, list item, field and slider, and the controls named here.
 const TAB_STOP_CONTROLS: [&str; 12] = [
-    "Button {",
-    "Delegate {",
-    "ListItem {",
-    "Field {",
-    "Slider {",
-    "CheckBox {",
-    "Switch {",
-    "TextArea {",
-    "ComboBox {",
-    "SpinBox {",
-    "Card {",
-    "Chip {",
+    "Button{",
+    "Delegate{",
+    "ListItem{",
+    "Field{",
+    "Slider{",
+    "CheckBox{",
+    "Switch{",
+    "TextArea{",
+    "ComboBox{",
+    "SpinBox{",
+    "Card{",
+    "Chip{",
 ];
 
-/// Whether the code `code` opens a control of [`TAB_STOP_CONTROLS`].
+/// Whether the code `code` opens a control of [`TAB_STOP_CONTROLS`], with or without space
+/// before its brace.
 fn opens_tab_stop_control(code: &str) -> bool {
-    TAB_STOP_CONTROLS.iter().any(|c| code.contains(c))
+    let compact: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+    TAB_STOP_CONTROLS.iter().any(|c| compact.contains(c))
 }
 
 /// The indexes of the lines of `block` that open a Tab stop: a control of [`TAB_STOP_CONTROLS`]
@@ -291,6 +293,17 @@ fn ac_m4_01_7_every_tab_stop_control_counts_as_tab_stop_row() {
     assert!(
         repeats_tab_stops(&commented_policy, 0),
         "a commented-out focus policy"
+    );
+    let no_space = [
+        "Repeater {",
+        "    delegate: Controls.CheckBox{",
+        "        text: \"x\"",
+        "    }",
+        "}",
+    ];
+    assert!(
+        repeats_tab_stops(&no_space, 0),
+        "a control without a space before its brace"
     );
     assert!(
         opens(&code_of("Repeater{"), "Repeater"),

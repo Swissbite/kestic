@@ -216,16 +216,17 @@ fn run_destination_maintenance_internal(
         }
         let now = guard.clock.now_utc();
         guard.availability_probe_count += 1;
-        // A server with an unknown or changed host key is reachable; maintenance stops at the key.
+        // A server whose host key is unknown, changed or cannot be checked is reachable;
+        // maintenance stops at the key and says why.
         let reachable: Result<(), &DestinationError> = match &preflight_res {
-            Err(err) if !err.is_host_key_problem() => Err(err),
+            Err(err) if !err.stops_at_host_key() => Err(err),
             _ => Ok(()),
         };
         let dto = DestinationAvailabilityDto::from_probe(&d_id, &reachable, now.unix_timestamp());
         guard.dest_availability.insert(d_id.clone(), dto);
 
         let host_key_failure = match preflight_res {
-            Err(err) if err.is_host_key_problem() => Some(localized_backup_run_error(
+            Err(err) if err.stops_at_host_key() => Some(localized_backup_run_error(
                 &BackupRunError::Destination(err),
             )),
             Err(err) => {

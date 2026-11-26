@@ -263,3 +263,25 @@ fn m4_s05_restore_progress_survives_a_state_refresh_beside_a_backup() {
     );
     assert!(!progress.contains_key(ended.id.as_str()), "(c)");
 }
+
+/// The restic source from the settings: every known kind, and an unknown one is refused instead
+/// of silently becoming «System».
+#[test]
+fn restic_source_kinds_are_parsed_and_unknown_ones_refused() {
+    assert_eq!(
+        build_provider("automatic", ""),
+        Ok(ResticProvider::Automatic)
+    );
+    assert_eq!(build_provider("system", ""), Ok(ResticProvider::System));
+    assert_eq!(
+        build_provider("app_managed", ""),
+        Ok(ResticProvider::AppManaged)
+    );
+    assert_eq!(
+        build_provider("custom", " /opt/restic "),
+        Ok(ResticProvider::Custom {
+            path: PathBuf::from("/opt/restic")
+        })
+    );
+    assert!(build_provider("apm_managed", "").is_err());
+}

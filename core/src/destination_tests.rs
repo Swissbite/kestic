@@ -697,3 +697,117 @@ fn probe_password_file_is_private() {
         "password file content differs"
     );
 }
+
+/// A run stopped by Kestic's own host key check records the error's text; its kind is read back
+/// through the markers, so each text starts with its marker.
+#[test]
+fn host_key_error_texts_start_with_their_markers() {
+    let unknown = DestinationError::HostKeyUnknown(Box::new(crate::known_hosts::ScannedHostKey {
+        name: "[nas.local]:2222".to_string(),
+        host: "nas.local".to_string(),
+        port: 2222,
+        key_type: "ssh-ed25519".to_string(),
+        key: "AAAA".to_string(),
+        fingerprint_sha256: "SHA256:x".to_string(),
+    }));
+    assert!(
+        unknown
+            .to_string()
+            .to_lowercase()
+            .starts_with(crate::restic::HOST_KEY_UNKNOWN_MARKER),
+        "{unknown}"
+    );
+    let changed = DestinationError::HostKeyChanged(PathBuf::from("/home/u/.ssh/known_hosts"));
+    assert!(
+        changed
+            .to_string()
+            .to_lowercase()
+            .starts_with(crate::restic::HOST_KEY_CHANGED_MARKER),
+        "{changed}"
+    );
+}
+
+/// A host key that cannot be checked for another reason than a server that does not answer
+/// (here a jump host in the ssh configuration) stops restic before every access, with the
+/// reason, but does not make the destination unreachable.
+#[test]
+fn uncheckable_host_key_stops_restic_but_is_reachable() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let config = dir.path().join("ssh_config");
+    fs::write(
+        &config,
+        "Host behind-gateway\n  ProxyJump gateway.invalid\n",
+    )
+    .expect("config");
+    crate::sftp::set_test_ssh_config(Some(config));
+    let script = dir.path().join("restic");
+    kestic_test_support::tools::write_executable(&script, "#!/bin/sh\nexit 0\n");
+    let resolved = ResolvedRestic {
+        binary: script,
+        version: semver::Version::new(0, 18, 0),
+    };
+    let dest = Destination::new(
+        "Behind",
+        DestinationKind::Sftp {
+            host: "behind-gateway".to_string(),
+            port: 22,
+            user: "anna".to_string(),
+            path: "/srv/backups".to_string(),
+        },
+    )
+    .expect("destination");
+    let store = crate::secrets::InMemorySecretStore::new();
+    let clock = crate::clock::FakeClock::new(time::macros::datetime!(2026-12-01 10:00 UTC));
+    let helper = dir.path().join("kestic");
+    let runtime = ResticRuntime {
+        resolved: &resolved,
+        kestic_binary: &helper,
+        secret_store: &store,
+        clock: &clock,
+        cache_dir: None,
+    };
+
+    let checked = verify_sftp_host_key(&dest);
+    assert!(
+        matches!(
+            checked,
+            Err(DestinationError::HostKeyCheck(HostKeyError::JumpHost(_)))
+        ),
+        "the run's own check names the jump host: {checked:?}"
+    );
+    let preflight = preflight_check_with_restic(&dest, &runtime);
+    assert!(
+        matches!(
+            preflight,
+            Err(DestinationError::HostKeyCheck(HostKeyError::JumpHost(_)))
+        ),
+        "the pre-check stops restic with the reason: {preflight:?}"
+    );
+    let reachable = reachability(preflight_check_with_restic(&dest, &runtime));
+    assert!(reachable.is_ok(), "reachable: {reachable:?}");
+    crate::sftp::set_test_ssh_config(None);
+}
+
+/// Which errors of the pre-check mean «the server answered, restic must not connect»: the
+/// maintenance start and the availability probe both count them as reachable.
+#[test]
+fn host_key_errors_that_stop_at_the_key() {
+    let jump = DestinationError::HostKeyCheck(HostKeyError::JumpHost("nas".to_string()));
+    let tool = DestinationError::HostKeyCheck(HostKeyError::Tool {
+        program: "ssh".to_string(),
+        detail: "x".to_string(),
+    });
+    let no_answer = DestinationError::HostKeyCheck(HostKeyError::NoAnswer {
+        program: "ssh-keyscan".to_string(),
+        secs: 10,
+    });
+    let changed = DestinationError::HostKeyChanged(PathBuf::from("/home/u/.ssh/known_hosts"));
+    assert!(jump.stops_at_host_key(), "jump host");
+    assert!(tool.stops_at_host_key(), "failing tool");
+    assert!(changed.stops_at_host_key(), "changed key");
+    assert!(!no_answer.stops_at_host_key(), "no answer is unreachable");
+    assert!(
+        !DestinationError::Unreachable("x".to_string()).stops_at_host_key(),
+        "unreachable"
+    );
+}

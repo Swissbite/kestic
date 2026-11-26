@@ -195,6 +195,39 @@ fn non_empty(raw: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+/// The S3 and SFTP fields of the destination form as QML has them (`fieldChecks` in
+/// `DestinationDraft.qml`).
+#[derive(serde::Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct FieldsToCheck {
+    endpoint: String,
+    bucket: String,
+    s3_path: String,
+    region: String,
+    host: String,
+    port: String,
+    username: String,
+    sftp_path: String,
+}
+
+/// Which S3 and SFTP fields `core` accepts, each as a boolean of the same name, for the form's
+/// messages next to the fields; unreadable input accepts nothing.
+pub fn field_checks(fields_json: &str) -> serde_json::Value {
+    use kestic_core::{s3, sftp};
+    let f: FieldsToCheck = serde_json::from_str(fields_json).unwrap_or_default();
+    let s3_path = f.s3_path.trim();
+    serde_json::json!({
+        "endpoint": s3::normalized_endpoint(&f.endpoint).is_ok(),
+        "bucket": s3::is_valid_bucket_name(f.bucket.trim()),
+        "s3Path": s3_path.is_empty() || s3::check_path(s3_path).is_ok(),
+        "region": s3::validate_region(Some(&f.region)).is_ok(),
+        "host": sftp::is_valid_host(&f.host),
+        "port": sftp::parse_port(&f.port).is_some(),
+        "username": sftp::is_valid_user(&f.username),
+        "sftpPath": sftp::check_path(&f.sftp_path).is_ok(),
+    })
+}
+
 /// [`destination_from_fields`] with the error as text in the GUI language.
 pub fn build_destination(
     existing_id: Option<&str>,
@@ -264,6 +297,27 @@ mod tests {
             Some(DestinationInputError::Coded(code, detail)) => Some((code, detail)),
             _ => None,
         }
+    }
+
+    /// The form checks the S3 and SFTP fields with `core`'s rules.
+    #[test]
+    fn field_checks_follow_core() {
+        let good = r#"{"endpoint":"https://s3.example.com","bucket":"kestic-backups","s3Path":"laptop/home","region":"eu-west-1","host":"[::1]","port":"22","username":"anna","sftpPath":"backups"}"#;
+        let checks = field_checks(good);
+        for field in [
+            "endpoint", "bucket", "s3Path", "region", "host", "port", "username", "sftpPath",
+        ] {
+            assert_eq!(checks[field], true, "{field} accepted");
+        }
+        let bad = r#"{"endpoint":"https://h/x?y","bucket":"192.168.1.1","s3Path":"a/../b","region":"eu west","host":"dead:beef","port":"+22","username":"-o","sftpPath":"~/backups"}"#;
+        let checks = field_checks(bad);
+        for field in [
+            "endpoint", "bucket", "s3Path", "region", "host", "port", "username", "sftpPath",
+        ] {
+            assert_eq!(checks[field], false, "{field} refused");
+        }
+        assert_eq!(field_checks(r#"{"s3Path":""}"#)["s3Path"], true, "no path");
+        assert_eq!(field_checks("not json")["port"], false, "unreadable");
     }
 
     /// AC-M5-03-1 (c): the form check behind «Test Connection» (and so «Anlegen») refuses an

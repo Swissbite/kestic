@@ -532,3 +532,21 @@ fn m5_03_rclone_connection_error_fails_the_pre_check() {
         "the remote rclone cannot reach makes the destination unreachable"
     );
 }
+
+/// M5-S03: a repository URL with a trailing slash names the same location, so a second
+/// destination on it counts as a duplicate.
+#[test]
+fn m5_03_trailing_slash_is_the_same_location() {
+    let kind = |url: &str| DestinationKind::Generic {
+        url: url.to_string(),
+        env: Vec::new(),
+    };
+    assert!(kind("b2:bucket:laptop").same_location(&kind("b2:bucket:laptop/")));
+    assert!(kind("rclone:nas:/srv").same_location(&kind("rclone:nas:/srv/")));
+    assert!(kind("rclone:nas:/").same_location(&kind("rclone:nas://")));
+    assert!(!kind("b2:bucket:laptop").same_location(&kind("b2:bucket:desktop")));
+    assert!(
+        !kind("rclone:nas:").same_location(&kind("rclone:nas:/")),
+        "the remote's own folder is not its root"
+    );
+}

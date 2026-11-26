@@ -12,17 +12,16 @@ mod common;
 use common::m3::{
     M3Rig, assert_dbus_error_name, latest_variant, restic_variants, wait_for_state, wait_until,
 };
+use common::release::{serve, trust};
 use common::{load_config, run_isolated_test};
 use kestic_core::model::ResticProvider;
 use kestic_core::restic_install::{TEMP_PREFIX, app_managed_binary, kestic_data_dir};
-use kestic_core::restic_release::{TrustAnchor, set_test_anchor};
 use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient, ResticInstallStatusDto};
 use kestic_i18n::codes::{
     ResticInstallCode, ResticInstallOutcome, ResticInstallPhase, ServiceErrorCode,
 };
 use kestic_test_support::release_mock::{
-    LATEST_PATH, ReleaseFiles, ReleaseMock, Route, TestSigningKey, asset_path,
-    restic_stand_in_archive,
+    LATEST_PATH, ReleaseFiles, Route, TestSigningKey, asset_path, restic_stand_in_archive,
 };
 use kestic_test_support::tools::{free_loopback_port, write_executable};
 use std::fs;
@@ -45,27 +44,6 @@ fn data_dir() -> PathBuf {
         std::env::var_os("XDG_DATA_HOME").as_deref(),
     )
     .expect("data dir")
-}
-
-/// Makes the daemon of this process trust `key` and download from `base_url`.
-fn trust(base_url: &str, key: &TestSigningKey) {
-    let key_path = key.public_key_file().to_string_lossy().into_owned();
-    let fpr = key.fingerprint().to_string();
-    let anchor = TrustAnchor::from_lookup(|name| match name {
-        "KESTIC_TEST_RELEASE_URL" => Some(base_url.to_string()),
-        "KESTIC_TEST_SIGNING_KEY" => Some(key_path.clone()),
-        "KESTIC_TEST_SIGNING_FPR" => Some(fpr.clone()),
-        _ => None,
-    })
-    .expect("test anchor");
-    set_test_anchor(Some(anchor));
-}
-
-/// A release mock for `files`, trusted by the daemon of this process.
-fn serve(files: &ReleaseFiles, key: &TestSigningKey, routes: Vec<(String, Route)>) -> ReleaseMock {
-    let mock = ReleaseMock::start_with(files, routes);
-    trust(&mock.base_url(), key);
-    mock
 }
 
 fn version_script(version: &str) -> String {
@@ -416,7 +394,7 @@ fn ac_m5_06_12_no_release_access_before_start() {
     );
 }
 
-/// One installation at a time; a cancel during a stalled download ends the installation at once
+/// M5-S06: one installation at a time; a cancel during a stalled download ends the installation at once
 /// (its worker can no longer replace the binary); finished installations stay readable for ten
 /// minutes after their end; unknown ids are `NotFound`.
 #[test]
@@ -482,7 +460,7 @@ fn restic_install_cancel_already_running_and_expiry() {
     );
 }
 
-/// `already_current` and the errors after a download (another version, an older release) keep
+/// M5-S06: `already_current` and the errors after a download (another version, an older release) keep
 /// the binary and leave nothing behind.
 #[test]
 fn restic_install_outcomes_and_errors_after_download() {
@@ -538,8 +516,8 @@ fn restic_install_outcomes_and_errors_after_download() {
     );
 }
 
-/// What an interrupted installation left in the data folder is removed when the daemon starts;
-/// everything else stays.
+/// M5-S06: what an interrupted installation left in the data folder is removed when the daemon
+/// starts; everything else stays.
 #[test]
 fn leftovers_removed_at_daemon_start() {
     run_isolated_test(
@@ -622,7 +600,7 @@ fn ac_m5_06_8_install_waits_for_running_preview() {
     );
 }
 
-/// After an installation the daemon checks restic again: with the app-managed restic as the
+/// M5-S06: after an installation the daemon checks restic again: with the app-managed restic as the
 /// source and its binary missing, (a) the state first reports restic unusable and (b) after the
 /// installation reports the installed version, without a run or another call in between.
 #[test]

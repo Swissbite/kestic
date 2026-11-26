@@ -8,11 +8,9 @@ use crate::password::s3_key;
 use crate::tools::{dev_tools_bin_dir, free_loopback_port};
 use std::env;
 use std::fs;
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Resolves the `rclone` binary installed by `scripts/bootstrap.sh` (`KESTIC_RCLONE` overrides).
 pub fn rclone_binary() -> PathBuf {
@@ -74,25 +72,13 @@ impl S3ServerGuard {
     }
 
     fn wait_ready(&mut self) {
-        let addr = format!("127.0.0.1:{}", self.port);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            if let Some(ref mut child) = self.child
-                && let Some(status) = child.try_wait().expect("try_wait rclone")
-            {
-                panic!("rclone serve s3 exited prematurely: {status}");
-            }
-            if TcpStream::connect_timeout(
-                &addr.parse().expect("socket addr"),
-                Duration::from_millis(100),
-            )
-            .is_ok()
-            {
-                return;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-        panic!("rclone serve s3 did not start listening on {addr} in time");
+        crate::tools::wait_listening(
+            self.child.as_mut(),
+            self.port,
+            Duration::from_secs(10),
+            "rclone serve s3",
+            String::new,
+        );
     }
 
     /// Directory behind bucket `bucket`.

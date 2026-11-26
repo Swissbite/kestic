@@ -226,7 +226,7 @@ fn ac_m5_07_5_remove_refused_while_a_run_uses_app_managed() {
     );
 }
 
-/// `ResticStatusDto.install_id` names the installation of the app-managed restic while it runs.
+/// M5-S07: `ResticStatusDto.install_id` names the installation of the app-managed restic while it runs.
 #[test]
 fn restic_status_names_the_running_installation() {
     run_isolated_test_with_system_programs(

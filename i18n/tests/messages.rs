@@ -10,7 +10,7 @@ use kestic_i18n::codes::{
 };
 use kestic_i18n::messages::{
     ActiveRunInfo, Message, OverallCounts, ResticStatusParams, UiText, active_run_message,
-    connection_test_text, overall_headline, overall_subtitle, restic_status_text, rounded_percent,
+    connection_test_text, overall_headline, overall_subtitle, rounded_percent,
 };
 
 /// `unknown` depends on exit code and warning; all other kinds ignore both
@@ -94,10 +94,6 @@ fn restic_blocking_and_connection_texts() {
             })
             .english(),
         "restic 0.17.3 is too old; Kestic needs at least 0.18.0"
-    );
-    assert_eq!(
-        restic_status_text(None, Some("0.18.0"), &ResticStatusParams::default()),
-        UiText::Raw("restic 0.18.0".to_string())
     );
     assert_eq!(
         connection_test_text(false, Some(ConnectionTestCode::DuplicateLocation), "NAS"),

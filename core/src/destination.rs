@@ -85,13 +85,26 @@ impl DestinationError {
     pub fn is_host_key_problem(&self) -> bool {
         matches!(self, Self::HostKeyUnknown(_) | Self::HostKeyChanged(_))
     }
+
+    /// Whether the server answered but restic must not connect: an unknown or changed host key,
+    /// or a host key that could not be checked for another reason than a missing answer (a jump
+    /// host in the ssh configuration, a failing tool). The run stops at the key and says why.
+    pub fn stops_at_host_key(&self) -> bool {
+        match self {
+            Self::HostKeyCheck(HostKeyError::NoAnswer { .. }) => false,
+            Self::HostKeyCheck(_) => true,
+            other => other.is_host_key_problem(),
+        }
+    }
 }
 
 /// The result of [`preflight_check_with_restic`] as reachability: a server with an unknown or
-/// changed host key is reachable; the run itself stops at that key and reports it.
+/// changed host key is reachable, and so is one whose key could not be checked for another
+/// reason than a missing answer (a jump host in the ssh configuration, a failing tool); the run
+/// itself stops at the key and reports why.
 pub fn reachability(result: Result<(), DestinationError>) -> Result<(), DestinationError> {
     result.or_else(|err| {
-        if err.is_host_key_problem() {
+        if err.stops_at_host_key() {
             Ok(())
         } else {
             Err(err)
@@ -154,7 +167,9 @@ pub fn preflight_check_destination(
 /// credentials; for SFTP the host key check comes first, and both together stop after
 /// [`CONNECTION_TEST_TIMEOUT`]. A destination that does not answer or cannot be reached fails,
 /// and so does an unknown or changed SFTP host key (restic does not start); every other answer
-/// (no repository, wrong password, refused login) is left to the run, which reports it.
+/// (no repository, wrong password, refused login) is left to the run, which reports it. A host
+/// key that could not be checked stops restic too; [`reachability`] tells it from a server that
+/// cannot be reached.
 pub fn preflight_check_with_restic(
     dest: &Destination,
     runtime: &ResticRuntime<'_>,
@@ -577,19 +592,16 @@ fn run_with_temp_repo_password_file(
         args.push("--password-file".to_string());
         args.push(pw_file.to_string_lossy().into_owned());
 
-        let mut spec = ResticCommandSpec::for_destination(
+        let spec = ResticCommandSpec::for_destination(
             &probe.resolved.binary,
             probe.kestic_binary,
             dest,
             args,
         )
         .with_cache_dir(probe.cache_dir);
-        spec.low_priority = false;
-        // Override password command to empty/unused since `--password-file` is passed for pre-save probe.
-        spec.password_command_override = Some(String::new());
 
-        // The probe runs restic directly with `--password-file`: restic rejects an empty
-        // `RESTIC_PASSWORD_COMMAND` next to a password file, so the runner is bypassed.
+        // The probe runs restic directly with `--password-file`, without the runner's
+        // `RESTIC_PASSWORD_COMMAND` (restic refuses both together) and without `nice`.
 
         execute_probe_command(
             &spec,
@@ -696,10 +708,8 @@ fn execute_probe_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env_remove("RESTIC_PASSWORD")
-        .env_remove("RESTIC_PASSWORD_COMMAND")
-        .env_remove("RESTIC_PASSWORD_FILE")
-        .env_remove("RESTIC_REPOSITORY_FILE");
+        .env_remove("RESTIC_PASSWORD_COMMAND");
+    crate::restic::remove_inherited_restic_access(&mut cmd);
 
     let env_keys = crate::restic::apply_backend_env(&mut cmd, spec, backend)?;
 
@@ -987,9 +997,6 @@ impl Watchdog {
     }
 }
 
-/// The error of a restic line that announces a retry of an error that will not go away by
-/// waiting: the backend rejected the login, the bucket does not exist or the server cannot be
-/// reached.
 /// Whether `error` (from [`conclusive_retry_error`]) says the server could not be reached, as
 /// opposed to a refused login or a missing repository.
 fn is_connection_error(error: &str) -> bool {
@@ -999,6 +1006,9 @@ fn is_connection_error(error: &str) -> bool {
     )
 }
 
+/// The error of a restic line that announces a retry of an error that will not go away by
+/// waiting: the backend rejected the login, the bucket does not exist or the server cannot be
+/// reached.
 fn conclusive_retry_error(line: &str) -> Option<&str> {
     // A line of ssh, such as the server's banner, is no retry of restic.
     if line.trim_start().starts_with("subprocess ") {

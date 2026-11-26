@@ -5,6 +5,7 @@
 //! GitHub releases only, redirects only to GitHub's download hosts, `SHA256SUMS` signed by
 //! restic's key (checked with `gpgv` against the key embedded here) and the archive's SHA-256.
 
+use crate::bounded_command::output_within;
 use crate::provider::MIN_RESTIC_VERSION;
 use kestic_i18n::codes::ResticInstallCode;
 use semver::Version;
@@ -13,8 +14,8 @@ use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 use url::Url;
 
 const RELEASE_API_URL: &str = "https://api.github.com/repos/restic/restic/releases/latest";
@@ -34,8 +35,6 @@ pub const ARCHIVE_LIMIT: u64 = 64 << 20;
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_REDIRECTS: usize = 5;
 const GPGV_TIMEOUT: Duration = Duration::from_secs(30);
-/// Most bytes kept of a helper's stdout or stderr (`gpgv`, `restic version --json`).
-const OUTPUT_LIMIT: u64 = 1 << 20;
 /// The `gpgv` of the system, which the .deb depends on.
 pub const SYSTEM_GPGV: &str = "/usr/bin/gpgv";
 /// Most characters of text from the network or from `gpgv` kept in an error detail.
@@ -383,12 +382,12 @@ impl UreqTransport {
     ) -> Result<HttpAnswer, InstallError> {
         let network =
             |err: &dyn std::fmt::Display| InstallError::Network(clip(&format!("{url}: {err}")));
-        let mut response = self
-            .agent
-            .get(url.as_str())
-            .header("Accept", "application/vnd.github+json")
-            .call()
-            .map_err(|err| network(&err))?;
+        let mut request = self.agent.get(url.as_str());
+        // Only GitHub's API answers in its JSON media type; asset downloads get no such wish.
+        if url.path().starts_with("/repos/") {
+            request = request.header("Accept", "application/vnd.github+json");
+        }
+        let mut response = request.call().map_err(|err| network(&err))?;
         let status = response.status().as_u16();
         let location = response
             .headers()
@@ -763,63 +762,6 @@ fn is_hidden(c: char) -> bool {
                 | '\u{E0000}'..='\u{E007F}'
                 | '\u{E0100}'..='\u{E01EF}'
         )
-}
-
-/// Runs `cmd` with stdout and stderr captured and kills it after `limit`.
-pub(crate) fn output_within(mut cmd: Command, limit: Duration) -> std::io::Result<Output> {
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    // Each pipe is read on its own thread, at most OUTPUT_LIMIT bytes. A process the child left
-    // in the background may keep a pipe open; the reader then never finishes, so the result is
-    // awaited only until the deadline.
-    let read = |pipe: Option<Box<dyn Read + Send>>| {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(pipe) = pipe {
-                // Whatever arrived before an error is all there is.
-                let _ = pipe.take(OUTPUT_LIMIT).read_to_end(&mut buf);
-            }
-            // The receiver is gone once the deadline has passed.
-            let _ = sender.send(buf);
-        });
-        receiver
-    };
-    let stdout = read(child.stdout.take().map(|p| Box::new(p) as _));
-    let stderr = read(child.stderr.take().map(|p| Box::new(p) as _));
-    let deadline = Instant::now() + limit;
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            child.kill()?;
-            child.wait()?;
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                format!("no answer within {} s", limit.as_secs_f32()),
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    let collected = |receiver: std::sync::mpsc::Receiver<Vec<u8>>| {
-        receiver
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    format!("output not closed within {} s", limit.as_secs_f32()),
-                )
-            })
-    };
-    Ok(Output {
-        status,
-        stdout: collected(stdout)?,
-        stderr: collected(stderr)?,
-    })
 }
 
 #[cfg(test)]

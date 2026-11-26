@@ -87,9 +87,9 @@ impl qobject::KesticApp {
         QString::from(&reply.to_string())
     }
 
-    /// Whether `user` is a user name of an SFTP destination as `core` checks it.
-    pub fn sftp_user_valid(&self, user: &QString) -> bool {
-        kestic_core::sftp::is_valid_user(&user.to_string())
+    /// Which S3 and SFTP fields of `fields_json` `core` accepts (JSON object of booleans).
+    pub fn destination_field_checks(&self, fields_json: &QString) -> QString {
+        QString::from(&crate::destination_input::field_checks(&fields_json.to_string()).to_string())
     }
 
     /// Whether «Geheim» starts switched on for a new variable named `name`.

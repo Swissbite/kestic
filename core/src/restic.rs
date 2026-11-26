@@ -902,6 +902,15 @@ fn send_signal_to_tree(pid: u32, signal: &str) {
         .status();
 }
 
+/// Removes the password and repository file restic would take from the caller's environment:
+/// restic refuses a password file next to Kestic's password and a repository file next to `-r`,
+/// so inherited ones would make every call fail.
+pub(crate) fn remove_inherited_restic_access(cmd: &mut Command) {
+    cmd.env_remove("RESTIC_PASSWORD")
+        .env_remove("RESTIC_PASSWORD_FILE")
+        .env_remove("RESTIC_REPOSITORY_FILE");
+}
+
 /// Result of executing a restic command via [`run_restic`].
 #[derive(Debug, Clone)]
 pub struct ResticExecutionResult {
@@ -1018,12 +1027,8 @@ fn build_restic_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        // restic refuses a password file next to the command and a repository file next to
-        // `-r`, so inherited ones would make every call fail.
-        .env_remove("RESTIC_PASSWORD")
-        .env_remove("RESTIC_PASSWORD_FILE")
-        .env_remove("RESTIC_REPOSITORY_FILE")
         .env("RESTIC_PASSWORD_COMMAND", &pw_command);
+    remove_inherited_restic_access(&mut cmd);
 
     let mut env_keys = vec!["RESTIC_PASSWORD_COMMAND".to_string()];
 

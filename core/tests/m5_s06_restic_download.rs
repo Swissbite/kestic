@@ -200,6 +200,25 @@ fn ac_m5_06_1_download_installs_verified_binary() {
     assert_eq!(reported_version(&binary), RELEASE);
 }
 
+/// M5-S06: only the request for the release information asks for GitHub's JSON media type; the
+/// downloads of the release's files do not.
+#[test]
+fn m5_06_only_the_release_information_asks_for_json() {
+    let setup = Setup::new(None);
+    let path = path_env();
+    install_latest_with_anchor(&setup.request(&path), &setup.anchor())
+        .expect("install from the release mock");
+    assert_eq!(
+        setup.mock.json_requests(),
+        vec!["/repos/restic/restic/releases/latest".to_string()]
+    );
+    assert!(
+        setup.mock.requests().len() > 1,
+        "{:?}",
+        setup.mock.requests()
+    );
+}
+
 /// AC-M5-06-4: `SHA256SUMS.asc` signed by another key stops the download, whether that key is
 /// unknown to `gpgv` or in the keyring with a valid signature.
 #[test]

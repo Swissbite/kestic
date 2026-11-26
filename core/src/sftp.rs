@@ -38,21 +38,35 @@ pub fn validate(host: &str, port: u16, user: &str, path: &str) -> Result<(), Mod
             user.escape_default()
         ));
     }
+    check_path(path)
+}
+
+/// Checks the path on the server: not empty, no control characters and not starting with `~`.
+pub fn check_path(path: &str) -> Result<(), ModelError> {
+    let invalid = |msg: &str| Err(ModelError::InvalidDestination(msg.to_string()));
     let path = path.trim();
     if path.is_empty() {
-        return invalid("SFTP path must not be empty".to_string());
+        return invalid("SFTP path must not be empty");
     }
     if path.chars().any(char::is_control) {
-        return invalid("SFTP path must not contain control characters".to_string());
+        return invalid("SFTP path must not contain control characters");
     }
     // restic refuses a path starting with `~`: it would not be expanded on the server.
     if path.starts_with('~') {
         return invalid(
-            "SFTP path must not start with '~'; enter it relative to the home folder instead"
-                .to_string(),
+            "SFTP path must not start with '~'; enter it relative to the home folder instead",
         );
     }
     Ok(())
+}
+
+/// The port in `text`: only digits, 1 to 65535.
+pub fn parse_port(text: &str) -> Option<u16> {
+    let text = text.trim();
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok().filter(|port| *port > 0)
 }
 
 /// Whether `user` (trimmed) is a user name Kestic hands to ssh: letters (also non-ASCII),
@@ -66,7 +80,8 @@ pub fn is_valid_user(user: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c.is_alphabetic() || matches!(c, '.' | '_' | '-'))
 }
 
-fn is_valid_host(host: &str) -> bool {
+/// Whether `host` is a host name or an IP address (`::1` or `[::1]`) Kestic passes to ssh.
+pub fn is_valid_host(host: &str) -> bool {
     let host = host.trim();
     if bare_ipv6(host).is_some() {
         return true;
@@ -179,15 +194,26 @@ pub enum KnownHostsPathError {
 impl KnownHostsPaths {
     /// Paths from the environment of this process.
     pub fn from_env() -> Result<Self, KnownHostsPathError> {
-        let home = std::env::var_os("HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
+        Self::from_vars(
+            std::env::var_os("HOME").as_deref(),
+            std::env::var_os("XDG_DATA_HOME").as_deref(),
+        )
+    }
+
+    /// Paths for the values of `HOME` and `XDG_DATA_HOME`; Kestic's file lies in its data folder
+    /// ([`crate::restic_install::kestic_data_dir`]).
+    pub fn from_vars(
+        home: Option<&std::ffi::OsStr>,
+        xdg_data_home: Option<&std::ffi::OsStr>,
+    ) -> Result<Self, KnownHostsPathError> {
+        let data = crate::restic_install::kestic_data_dir(home, xdg_data_home)
             .ok_or(KnownHostsPathError::NoHome)?;
-        let data = std::env::var_os("XDG_DATA_HOME")
-            .filter(|v| !v.is_empty())
-            .map_or_else(|| home.join(".local").join("share"), PathBuf::from);
+        let home = home
+            .map(PathBuf::from)
+            .filter(|home| home.is_absolute())
+            .ok_or(KnownHostsPathError::NoHome)?;
         let paths = Self {
-            kestic: data.join("kestic").join("known_hosts"),
+            kestic: data.join("known_hosts"),
             user: home.join(".ssh").join("known_hosts"),
             system: PathBuf::from("/etc/ssh/ssh_known_hosts"),
         };
@@ -245,6 +271,17 @@ pub fn ssh_config_args() -> Vec<String> {
     }
 }
 
+/// The ssh options of every connection Kestic makes or lets restic make: strict host key
+/// checking without any write by ssh, no prompts, and a connect time limit.
+pub(crate) fn strict_ssh_options() -> [String; 4] {
+    [
+        "StrictHostKeyChecking=yes".to_string(),
+        "UpdateHostKeys=no".to_string(),
+        "BatchMode=yes".to_string(),
+        format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"),
+    ]
+}
+
 /// The value of restic's `sftp.args`: both `known_hosts` paths explicitly, strict host key
 /// checking without any write by ssh, no prompts, and a connect time limit. restic splits it like
 /// a shell (single quotes keep the spaces), ssh reads the double-quoted paths of
@@ -257,10 +294,8 @@ pub fn sftp_args(paths: &KnownHostsPaths) -> Result<String, KnownHostsPathError>
         let config = quotable(&config)?;
         parts.push(format!("-F '{config}' -o IdentitiesOnly=yes"));
     }
-    parts.push(format!(
-        "-o 'UserKnownHostsFile=\"{kestic}\" \"{user}\"' -o StrictHostKeyChecking=yes \
-         -o UpdateHostKeys=no -o BatchMode=yes -o ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"
-    ));
+    parts.push(format!("-o 'UserKnownHostsFile=\"{kestic}\" \"{user}\"'"));
+    parts.extend(strict_ssh_options().map(|option| format!("-o {option}")));
     Ok(parts.join(" "))
 }
 
@@ -643,6 +678,37 @@ mod tests {
         );
     }
 
+    /// Kestic's `known_hosts` lies in the data folder of the app-managed restic, also for a
+    /// relative `XDG_DATA_HOME`, which the XDG rules ignore.
+    #[test]
+    fn kestic_known_hosts_lies_in_the_data_folder() {
+        use std::ffi::OsStr;
+        let home = OsStr::new("/home/anna");
+        let paths =
+            KnownHostsPaths::from_vars(Some(home), Some(OsStr::new("relative"))).expect("paths");
+        assert_eq!(
+            paths.kestic,
+            PathBuf::from("/home/anna/.local/share/kestic/known_hosts")
+        );
+        assert_eq!(paths.user, PathBuf::from("/home/anna/.ssh/known_hosts"));
+        let paths =
+            KnownHostsPaths::from_vars(Some(home), Some(OsStr::new("/data"))).expect("paths");
+        assert_eq!(paths.kestic, PathBuf::from("/data/kestic/known_hosts"));
+        assert!(KnownHostsPaths::from_vars(None, Some(OsStr::new("/data"))).is_err());
+        assert!(
+            KnownHostsPaths::from_vars(Some(OsStr::new("")), Some(OsStr::new("/data"))).is_err()
+        );
+    }
+
+    #[test]
+    fn ports_are_digits_from_1_to_65535() {
+        assert_eq!(parse_port(" 22 "), Some(22));
+        assert_eq!(parse_port("65535"), Some(65535));
+        for text in ["", "0", "65536", "+22", "-1", "2 2", "22a"] {
+            assert_eq!(parse_port(text), None, "{text:?}");
+        }
+    }
+
     #[test]
     fn options_and_odd_fields_are_refused() {
         assert!(validate("nas.local", 22, "anna", "/srv").is_ok());
@@ -650,6 +716,8 @@ mod tests {
         for (host, port, user, path) in [
             ("-oProxyCommand=x", 22, "anna", "/srv"),
             ("nas local", 22, "anna", "/srv"),
+            ("dead:beef", 22, "anna", "/srv"),
+            ("[nas.local]", 22, "anna", "/srv"),
             ("nas.local", 0, "anna", "/srv"),
             ("nas.local", 22, "-oProxyCommand=x", "/srv"),
             ("nas.local", 22, "an na", "/srv"),

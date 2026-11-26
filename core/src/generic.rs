@@ -151,7 +151,13 @@ pub fn secret_by_default(name: &str) -> bool {
 /// `rclone::backend,param=value:path`) whose name marks a secret, like [`secret_by_default`].
 fn secret_parameter(url: &str) -> Option<String> {
     let rest = url.strip_prefix("rclone:")?;
-    let remote = rest.rsplit_once(':').map_or(rest, |(remote, _)| remote);
+    // Without a path after the remote (`rclone::backend,param=value`), the last colon is the
+    // one that opens the remote.
+    let remote = rest
+        .rsplit_once(':')
+        .map(|(remote, _)| remote)
+        .filter(|remote| !remote.is_empty())
+        .unwrap_or(rest);
     remote
         .split(',')
         .skip(1)

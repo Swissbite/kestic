@@ -6,12 +6,13 @@
 //! version it reports, then `rename` it over the old binary. Until that `rename` the old binary
 //! is never touched, and every error removes the temporary file.
 
-use crate::provider::MIN_RESTIC_VERSION;
+use crate::bounded_command::output_within;
+use crate::provider::{MIN_RESTIC_VERSION, parse_version_json};
 use crate::restic_gate::ResticBinaryGate;
 use crate::restic_release::{
     ARCHIVE_LIMIT, Arch, DownloadPlan, HttpAnswer, InstallError, RELEASE_INFO_LIMIT,
     SIGNATURE_LIMIT, Transport, TrustAnchor, UreqTransport, check_sha256, expected_sha256,
-    fetch_asset, fetch_release, find_gpgv, output_within, verify_signature,
+    fetch_asset, fetch_release, find_gpgv, verify_signature,
 };
 use kestic_i18n::codes::ResticInstallPhase;
 use semver::Version;
@@ -58,7 +59,7 @@ pub fn kestic_data_dir(home: Option<&OsStr>, xdg_data_home: Option<&OsStr>) -> O
     Some(base.join("kestic"))
 }
 
-/// Result of [`prepare_install`].
+/// Result of preparing an installation.
 #[derive(Debug)]
 pub enum Preparation {
     /// The app-managed binary already is the release's version; nothing was downloaded.
@@ -77,7 +78,7 @@ impl Preparation {
     }
 }
 
-/// Result of [`install_latest`].
+/// Result of an installation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallOutcome {
     Installed(Version),
@@ -160,27 +161,13 @@ impl Drop for PreparedInstall {
     }
 }
 
-/// Downloads the latest restic release, checks it and writes it to a temporary file in
-/// `request.data_dir`; the app-managed binary stays as it is.
-pub fn prepare_install(request: &InstallRequest<'_>) -> Result<Preparation, InstallError> {
-    let anchor = TrustAnchor::for_this_build()?;
-    prepare_with(
-        request,
-        &anchor,
-        &crate::restic_release::UreqTransport::new(),
-    )
-}
-
-/// Downloads, checks and installs the latest restic release.
-pub fn install_latest(request: &InstallRequest<'_>) -> Result<InstallOutcome, InstallError> {
-    finish(prepare_install(request)?)
-}
-
+#[cfg(any(test, feature = "test-trust-anchor"))]
 fn finish(preparation: Preparation) -> Result<InstallOutcome, InstallError> {
     replace_when_idle(preparation, ResticBinaryGate::global(), &Unobserved)
 }
 
-/// [`prepare_install`] with an anchor of the test build.
+/// Downloads the latest restic release with an anchor of the test build, checks it and writes
+/// it to a temporary file in `request.data_dir`; the app-managed binary stays as it is.
 #[cfg(feature = "test-trust-anchor")]
 pub fn prepare_install_with_anchor(
     request: &InstallRequest<'_>,
@@ -193,7 +180,7 @@ pub fn prepare_install_with_anchor(
     )
 }
 
-/// [`install_latest`] with an anchor of the test build.
+/// Downloads, checks and installs the latest restic release with an anchor of the test build.
 #[cfg(feature = "test-trust-anchor")]
 pub fn install_latest_with_anchor(
     request: &InstallRequest<'_>,
@@ -218,8 +205,10 @@ pub trait InstallObserver: Sync {
     fn begin_replace(&self) -> bool;
 }
 
+#[cfg(any(test, feature = "test-trust-anchor"))]
 struct Unobserved;
 
+#[cfg(any(test, feature = "test-trust-anchor"))]
 impl InstallObserver for Unobserved {
     fn phase(&self, _phase: ResticInstallPhase) {}
     fn version(&self, _version: &str) {}
@@ -290,6 +279,7 @@ pub(crate) fn replace_when_idle(
     Ok(InstallOutcome::Installed(version))
 }
 
+#[cfg(any(test, feature = "test-trust-anchor"))]
 pub(crate) fn prepare_with(
     request: &InstallRequest<'_>,
     anchor: &TrustAnchor,
@@ -499,13 +489,7 @@ fn reported_version(binary: &Path, limit: Duration) -> Result<Version, String> {
     if !out.status.success() {
         return Err(format!("`version --json` ended with {}", out.status));
     }
-    #[derive(serde::Deserialize)]
-    struct VersionJson {
-        version: String,
-    }
-    let parsed: VersionJson =
-        serde_json::from_slice(&out.stdout).map_err(|err| format!("no version JSON: {err}"))?;
-    Version::parse(parsed.version.trim()).map_err(|err| format!("{}: {err}", parsed.version))
+    parse_version_json(&out.stdout)
 }
 
 /// Runs `binary version --json` (at most `limit`) and checks the version against `release`.

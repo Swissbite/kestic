@@ -62,30 +62,26 @@ QtObject {
         : ({ url: "", env: "" })
     readonly property bool nameValid: name.trim().length > 0
     readonly property bool locationValid: kindIsS3
-        ? endpointValid && bucketValid && s3PathValid
+        ? endpointValid && bucketValid && s3PathValid && regionValid
         : kindIsSftp ? hostValid && portValid && sftpUserValid && sftpPathValid
         : kindIsGeneric
             ? genericErrors.url === "" && genericErrors.env === ""
             : kindIsRest
                 ? /^https?:\/\//i.test(location.trim())
                 : location.trim().length > 0
-    readonly property bool endpointValid: /^https?:\/\/[^\/@]+\/?$/i.test(endpoint.trim())
-    // S3 bucket naming rules: 3 to 63 lowercase letters, digits, dots or hyphens, starting and
-    // ending with a letter or digit, no two dots in a row.
-    readonly property bool bucketValid: /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket.trim())
-        && bucket.indexOf("..") < 0
-        && !/^\d+\.\d+\.\d+\.\d+$/.test(bucket.trim())
-    // restic reads the S3 address as URL (`#` and `?` cut it, `%` decodes) and repeats it unquoted
-    // in the messages Kestic reads, so the path has no such characters, spaces or quotes.
-    readonly property bool s3PathValid: !/[\s"#?%\x00-\x1f\x7f]/.test(s3Path.trim())
-    // SFTP: a host name or IP address, a port, a user and a path as `core` checks them; a host or
-    // user starting with `-` would reach ssh as an option.
-    readonly property bool hostValid: /^(\[[0-9a-fA-F:.]+\]|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*|[A-Za-z0-9_][A-Za-z0-9._-]*)$/.test(host.trim())
-    readonly property bool portValid: /^[0-9]{1,5}$/.test(port.trim()) && Number(port) >= 1 && Number(port) <= 65535
-    // As core checks it: letters (also non-ASCII), digits, '.', '_' and '-', not starting with '-'.
-    readonly property bool sftpUserValid: appBackend.sftpUserValid(username)
-    readonly property bool sftpPathValid: sftpPath.trim().length > 0 && sftpPath.trim()[0] !== "~"
-        && !/[\x00-\x1f\x7f]/.test(sftpPath)
+    // Which S3 and SFTP fields `core` accepts.
+    readonly property var fieldChecks: JSON.parse(appBackend.destinationFieldChecks(JSON.stringify({
+        endpoint: endpoint, bucket: bucket, s3Path: s3Path, region: region,
+        host: host, port: port, username: username, sftpPath: sftpPath
+    })))
+    readonly property bool endpointValid: fieldChecks.endpoint
+    readonly property bool bucketValid: fieldChecks.bucket
+    readonly property bool s3PathValid: fieldChecks.s3Path
+    readonly property bool regionValid: fieldChecks.region
+    readonly property bool hostValid: fieldChecks.host
+    readonly property bool portValid: fieldChecks.port
+    readonly property bool sftpUserValid: fieldChecks.username
+    readonly property bool sftpPathValid: fieldChecks.sftpPath
     // A new S3 destination needs both keys; when editing, empty keys keep the saved ones.
     readonly property bool keysValid: kindIsGeneric
         ? destinationId !== "" || envList().every(function(v) { return !v.secret || v.value.length > 0; })

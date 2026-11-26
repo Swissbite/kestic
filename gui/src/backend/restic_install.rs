@@ -55,8 +55,7 @@ impl qobject::KesticApp {
             .set_restic_explain_minimum(view.explain_minimum);
         self.as_mut().set_restic_offer_switch(view.offer_switch);
         self.as_mut().set_restic_offer_remove(view.offer_remove);
-        self.as_mut()
-            .set_restic_uses_app_managed(view.uses_app_managed);
+        self.as_mut().rust_mut().restic_uses_app_managed = view.uses_app_managed;
         self.as_mut()
             .set_restic_app_managed_installed(view.app_managed_installed);
     }
@@ -66,12 +65,22 @@ impl qobject::KesticApp {
         let offer = restic_offer(OfferInput {
             daemon_reachable: *self.daemon_reachable(),
             restic_valid: *self.restic_valid(),
-            uses_app_managed: *self.restic_uses_app_managed(),
-            installing: self.restic_install_state().to_string() == "running",
+            uses_app_managed: self.restic_uses_app_managed,
+            installing: self.installing_restic(),
         });
         self.as_mut().set_restic_offer_download(offer.download);
         self.as_mut().set_restic_offer_update(offer.update);
         self.as_mut().set_restic_offer_enabled(offer.enabled);
+    }
+
+    /// Whether an installation of restic runs (the `state` of its status is `running`).
+    fn installing_restic(&self) -> bool {
+        self.restic_install_state().to_string() == "running"
+    }
+
+    /// The oldest restic Kestic runs, for the texts of the settings.
+    pub fn restic_minimum_version(&self) -> QString {
+        QString::from(&kestic_core::provider::MIN_RESTIC_VERSION.to_string())
     }
 
     /// Applies the source `kind` of the source dialog. «Managed by Kestic» that is not installed
@@ -85,7 +94,7 @@ impl qobject::KesticApp {
         if !needs_install_first(&kind, *self.restic_app_managed_installed()) {
             return self.set_restic_provider(&QString::from(&kind), custom_path);
         }
-        if self.restic_install_state().to_string() == "running" {
+        if self.installing_restic() {
             self.as_mut()
                 .show_action_error(&start_failure_text(ServiceErrorCode::AlreadyRunning));
             return false;
@@ -149,7 +158,7 @@ impl qobject::KesticApp {
     }
 
     pub fn start_restic_install(self: Pin<&mut Self>) -> bool {
-        if self.restic_install_state().to_string() == "running" {
+        if self.installing_restic() {
             return false;
         }
         match request_restic_install() {

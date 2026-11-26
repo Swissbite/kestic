@@ -9,48 +9,30 @@
 use super::error::KesticServiceErr;
 use super::state::{DaemonCore, refresh_probe_unlocked};
 use crate::dbus_api::ResticInstallStatusDto;
-use crate::dbus_server::emit_status_changed;
 use kestic_core::clock::Clock;
+use kestic_core::config::default_data_dir;
 use kestic_core::model::ResticProvider;
 use kestic_core::model::RunId;
 use kestic_core::provider::{ResticLocations, resolve_with, same_binary};
+// An installation has the states of a list query.
+use kestic_core::query_list::QueryState as InstallState;
 use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::restic_install::{
     InstallObserver, InstallOutcome, InstallRequest, RemoveError, app_managed_binary,
-    install_latest_observed, kestic_data_dir, remove_app_managed, remove_leftovers,
+    install_latest_observed, remove_app_managed, remove_leftovers,
 };
 use kestic_core::restic_release::{Arch, InstallError};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ResticInstallCode, ResticInstallOutcome, ResticInstallPhase};
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use time::OffsetDateTime;
 
 /// How long a finished installation stays readable.
 const KEEP_FINISHED: time::Duration = time::Duration::minutes(10);
-
-/// `state` of [`ResticInstallStatusDto`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InstallState {
-    Running,
-    Done,
-    Cancelled,
-    Error,
-}
-
-impl InstallState {
-    fn wire_name(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Done => "done",
-            Self::Cancelled => "cancelled",
-            Self::Error => "error",
-        }
-    }
-}
 
 /// What an installation reported so far. While it installs, the worker locks only this, never
 /// `DaemonCore`, so it can report while it holds the replace lease and restic processes wait
@@ -200,14 +182,6 @@ impl Drop for FinishGuard {
     }
 }
 
-/// Kestic's data folder from this process's environment.
-fn data_dir() -> Option<PathBuf> {
-    kestic_data_dir(
-        std::env::var_os("HOME").as_deref(),
-        std::env::var_os("XDG_DATA_HOME").as_deref(),
-    )
-}
-
 /// Removes the leftovers of an installation that was interrupted when an earlier daemon ended,
 /// once: at the start or before this daemon's first installation, whichever comes first. Both
 /// run under the `DaemonCore` lock, so the sweep never meets the temp file of a running
@@ -223,7 +197,7 @@ pub(crate) fn remove_install_leftovers(shared: &Arc<Mutex<DaemonCore>>) {
     shared
         .lock_unpoisoned()
         .install_leftovers
-        .run_once(data_dir().as_deref());
+        .run_once(default_data_dir().as_deref());
 }
 
 impl LeftoverSweep {
@@ -288,7 +262,7 @@ impl DaemonCore {
 }
 
 /// What the worker needs.
-struct InstallJob {
+struct InstallWorker {
     shared: Arc<Mutex<DaemonCore>>,
     progress: Arc<Mutex<InstallProgress>>,
     clock: Arc<dyn Clock>,
@@ -300,12 +274,14 @@ struct InstallJob {
 pub fn start_restic_install_async(
     shared: &Arc<Mutex<DaemonCore>>,
 ) -> Result<String, KesticServiceErr> {
-    let (install_id, job) = {
+    let (install_id, worker) = {
         let mut guard = shared.lock_unpoisoned();
         guard.forget_expired_installs();
         // A call that arrives right after the bus name was taken may come before the sweep at
         // the start; then it sweeps here, before its worker writes a temp file.
-        guard.install_leftovers.run_once(data_dir().as_deref());
+        guard
+            .install_leftovers
+            .run_once(default_data_dir().as_deref());
         let running = guard
             .restic_installs
             .values()
@@ -322,34 +298,34 @@ pub fn start_restic_install_async(
         guard
             .restic_installs
             .insert(install_id.clone(), Arc::clone(&progress));
-        let job = InstallJob {
+        let worker = InstallWorker {
             shared: Arc::clone(shared),
             progress,
             clock: Arc::clone(&guard.clock),
             search_path: guard.program_search_path(),
         };
-        (install_id, job)
+        (install_id, worker)
     };
-    thread::spawn(move || run_install(job));
+    thread::spawn(move || run_install(worker));
     Ok(install_id)
 }
 
-fn run_install(job: InstallJob) {
+fn run_install(worker: InstallWorker) {
     let _guard = FinishGuard {
-        progress: Arc::clone(&job.progress),
-        clock: Arc::clone(&job.clock),
+        progress: Arc::clone(&worker.progress),
+        clock: Arc::clone(&worker.clock),
     };
     let result = Arch::host().and_then(|arch| {
-        let dir = data_dir().ok_or_else(|| {
+        let dir = default_data_dir().ok_or_else(|| {
             InstallError::WriteFailed("neither XDG_DATA_HOME nor HOME is set".to_string())
         })?;
         let request = InstallRequest {
             data_dir: &dir,
             arch,
-            search_path: job.search_path.as_deref(),
+            search_path: worker.search_path.as_deref(),
         };
         let observer = Observer {
-            progress: Arc::clone(&job.progress),
+            progress: Arc::clone(&worker.progress),
         };
         install_latest_observed(&request, ResticBinaryGate::global(), &observer)
     });
@@ -360,13 +336,14 @@ fn run_install(job: InstallJob) {
     if installed {
         // The restic in use may be the one just installed: check it again before the
         // installation reports its end, so a GUI that reads the state then sees the new one.
-        refresh_probe_unlocked(&job.shared);
+        refresh_probe_unlocked(&worker.shared);
     }
-    job.progress
+    worker
+        .progress
         .lock_unpoisoned()
-        .finish(result, job.clock.now_utc());
+        .finish(result, worker.clock.now_utc());
     if installed {
-        publish_state(&job.shared);
+        publish_state(&worker.shared);
     }
 }
 
@@ -375,7 +352,7 @@ fn run_install(job: InstallJob) {
 /// restic that links to it, or a custom path to it) or a restic process may run it; removing a
 /// missing binary changes nothing.
 pub fn remove_app_managed_restic(shared: &Arc<Mutex<DaemonCore>>) -> Result<(), KesticServiceErr> {
-    let Some(dir) = data_dir() else {
+    let Some(dir) = default_data_dir() else {
         return Ok(());
     };
     let binary = app_managed_binary(&dir);
@@ -435,22 +412,8 @@ fn is_active_source(provider: &ResticProvider, binary: &Path, locations: &Restic
 
 /// Sends the current state to the tray and as `StatusChanged`.
 fn publish_state(shared: &Arc<Mutex<DaemonCore>>) {
-    let (conn, state_dto, tray, tray_state) = {
-        let guard = shared.lock_unpoisoned();
-        let (state_dto, tray_state) = guard.build_state_and_tray();
-        (
-            guard.conn.clone(),
-            state_dto,
-            guard.tray.clone(),
-            tray_state,
-        )
-    };
-    if let Some(tray) = tray {
-        tray.set_full_state(tray_state);
-    }
-    if let Some(conn) = &conn {
-        emit_status_changed(conn, &state_dto);
-    }
+    let publication = shared.lock_unpoisoned().state_publication();
+    publication.publish();
 }
 
 #[cfg(test)]

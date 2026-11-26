@@ -5,7 +5,6 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
-import org.kde.kirigami.delegates as KD
 import net.daester.kestic 1.0
 
 // Wizard step «destination type»: the cards that are ready, then those that need a program to
@@ -25,8 +24,6 @@ ColumnLayout {
     // The card that needs installation and is opened.
     property string openedCard: ""
     property bool commandCopied: false
-    // Cards whose details form exists; the other ready cards can not be chosen yet.
-    readonly property var cardsWithForm: ["drive", "folder", "sftp", "rest", "cloud", "rclone"]
     // Choices under «Cloud Storage»: S3 has its own form, the others the generic form with the
     // scheme filled in.
     readonly property var cloudServices: [
@@ -38,9 +35,9 @@ ColumnLayout {
     ]
     readonly property var readyCards: cards.filter(function(c) { return c.ready; })
     readonly property var cardsNeedingInstallation: cards.filter(function(c) { return !c.ready; })
-    // The chosen card is shown, ready and has a form.
+    // The chosen card is shown and ready.
     readonly property bool choiceValid: readyCards.some(function(c) {
-        return c.card === chooser.draft.typeCard && chooser.cardsWithForm.indexOf(c.card) >= 0;
+        return c.card === chooser.draft.typeCard;
     })
 
     spacing: Kirigami.Units.mediumSpacing
@@ -158,16 +155,14 @@ ColumnLayout {
     Repeater {
         model: chooser.readyCards
 
-        delegate: KD.SubtitleDelegate {
+        delegate: TitleSubtitleDelegate {
             required property var modelData
-            readonly property bool hasForm: chooser.cardsWithForm.indexOf(modelData.card) >= 0
 
             objectName: chooser.namePrefix + "TypeCard_" + modelData.card
             Layout.fillWidth: true
             text: chooser.cardTitle(modelData.card)
             subtitle: chooser.cardDescription(modelData.card)
             icon.name: chooser.cardIcon(modelData.card)
-            enabled: hasForm
             checkable: true
             checked: chooser.draft.typeCard === modelData.card
             highlighted: checked
@@ -228,14 +223,13 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
 
-            KD.SubtitleDelegate {
+            TitleSubtitleDelegate {
                 objectName: chooser.namePrefix + "TypeCard_" + missingEntry.modelData.card
                 Layout.fillWidth: true
                 text: chooser.cardTitle(missingEntry.modelData.card)
                 subtitle: chooser.cardDescription(missingEntry.modelData.card) + " · "
                     + i18n("needs the program '%1'", missingEntry.modelData.missing_program)
                 icon.name: chooser.cardIcon(missingEntry.modelData.card)
-                highlighted: missingEntry.opened
                 Accessible.name: text
                 Accessible.description: subtitle
                 onClicked: {

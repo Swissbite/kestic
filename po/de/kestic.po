@@ -3185,14 +3185,6 @@ msgstr "Bei Wartungsfehlern benachrichtigen:"
 msgid "Notify on maintenance failures"
 msgstr "Bei Wartungsfehlern benachrichtigen"
 
-#: gui/src/qml/SettingsDialog.qml:243
-msgid "Notify on restic updates:"
-msgstr "Bei restic-Aktualisierungen benachrichtigen:"
-
-#: gui/src/qml/SettingsDialog.qml:245
-msgid "Notify on restic updates"
-msgstr "Bei restic-Aktualisierungen benachrichtigen"
-
 #: gui/src/qml/SettingsDialog.qml:251
 msgid "Background Service"
 msgstr "Hintergrunddienst"
@@ -3520,8 +3512,14 @@ msgid "Use 3 to 63 lowercase letters, digits, dots or hyphens."
 msgstr "Verwenden Sie 3 bis 63 Kleinbuchstaben, Ziffern, Punkte oder Bindestriche."
 
 #: gui/src/qml/DestinationDetailsForm.qml
-msgid "Use no spaces, quotes, #, ? or %."
-msgstr "Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder %."
+msgid "Use no spaces, quotes, #, ? or %, and no empty, . or .. parts."
+msgstr ""
+"Verwenden Sie keine Leerzeichen, Anführungszeichen, #, ? oder % und keine "
+"leeren, «.»- oder «..»-Teile."
+
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Use no spaces in the region."
+msgstr "Verwenden Sie keine Leerzeichen in der Region."
 
 #: gui/src/qml/DestinationDetailsForm.qml
 msgid "Enter the access key and the secret key."
@@ -3843,8 +3841,7 @@ msgstr "Fingerprint:"
 
 #: gui/src/qml/DestinationDetailsForm.qml
 msgid ""
-"Compare the fingerprint with the one of the server. Kestic then remembers the "
-"server."
+"Compare the fingerprint with the server's. Kestic then remembers the server."
 msgstr "Vergleichen Sie den Fingerprint mit dem des Servers. Danach merkt sich Kestic den Server."
 
 #: gui/src/qml/DestinationDetailsForm.qml
@@ -4560,8 +4557,8 @@ msgstr "unbekannte Version"
 msgid "The restic managed by Kestic is still in use and cannot be deleted now."
 msgstr "Das von Kestic verwaltete restic wird noch verwendet und kann jetzt nicht gelöscht werden."
 
-msgid "The system restic from 0.18.0 on, otherwise the restic managed by Kestic."
-msgstr "Das System-restic ab 0.18.0, sonst das von Kestic verwaltete restic."
+msgid "The system restic from %1 on, otherwise the restic managed by Kestic."
+msgstr "Das System-restic ab %1, sonst das von Kestic verwaltete restic."
 
 msgid "The restic installed on the system (from PATH)."
 msgstr "Das auf dem System installierte restic (aus PATH)."
@@ -4581,8 +4578,8 @@ msgstr "Programm:"
 msgid "Available:"
 msgstr "Vorhanden:"
 
-msgid "Kestic needs restic 0.18.0 or newer: older versions do not report errors and check results in a form Kestic can read."
-msgstr "Kestic benötigt restic 0.18.0 oder neuer: Ältere Versionen melden Fehler und Prüfergebnisse nicht in einer Form, die Kestic auswerten kann."
+msgid "Kestic needs restic %1 or newer: older versions do not report errors and check results in a form Kestic can read."
+msgstr "Kestic benötigt restic %1 oder neuer: Ältere Versionen melden Fehler und Prüfergebnisse nicht in einer Form, die Kestic auswerten kann."
 
 msgid "System restic is now recent enough – switch?"
 msgstr "System-restic ist jetzt aktuell genug – umstellen?"

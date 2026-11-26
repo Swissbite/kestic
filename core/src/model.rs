@@ -146,7 +146,7 @@ pub enum ResticProvider {
     /// System `restic` resolved from `$PATH`.
     System,
     /// The restic Kestic downloads to its fixed place `$XDG_DATA_HOME/kestic/restic`. A `path`
-    /// written by an older Kestic is ignored.
+    /// elsewhere, written by an older Kestic, becomes [`ResticProvider::Custom`] on loading.
     AppManaged,
     /// User-configured explicit binary path.
     Custom { path: PathBuf },
@@ -272,7 +272,7 @@ impl DestinationKind {
                 path,
                 ..
             } => crate::s3::location_key(endpoint, bucket, path.as_deref()),
-            Self::Generic { url, .. } => format!("generic:{}", url.trim()),
+            Self::Generic { url, .. } => format!("generic:{}", generic_location(url)),
         }
     }
 
@@ -629,6 +629,19 @@ pub enum Maintenance {
     Check,
 }
 
+/// The location part of a generic repository URL for comparing: without trailing slashes,
+/// except one right after a colon, where `remote:/` (the root) and `remote:` (the remote's own
+/// folder) are different folders.
+fn generic_location(url: &str) -> String {
+    let url = url.trim();
+    let trimmed = url.trim_end_matches('/');
+    if trimmed.ends_with(':') && trimmed.len() < url.len() {
+        format!("{trimmed}/")
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Configured backup repository (glossary: `Destination`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Destination {
@@ -682,10 +695,16 @@ impl Destination {
                         "local destination path must not be empty".to_string(),
                     ));
                 }
-                let text = path.to_string_lossy();
-                if crate::local_path::kio_address_scheme(&text).is_some() {
+                // restic gets the path as text: another path would be written to.
+                let Some(text) = path.to_str().filter(|t| !t.contains('\0')) else {
+                    return Err(ModelError::InvalidDestination(format!(
+                        "local destination path must be valid UTF-8 without NUL characters: '{}'",
+                        path.display()
+                    )));
+                };
+                if crate::local_path::kio_address_scheme(text).is_some() {
                     return Err(crate::local_path::NotALocalPath(
-                        crate::local_path::address_for_display(&text),
+                        crate::local_path::address_for_display(text),
                     )
                     .into());
                 }

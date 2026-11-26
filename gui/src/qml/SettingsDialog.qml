@@ -40,7 +40,7 @@ Kirigami.ApplicationWindow {
             notifWarningSwitch.checked,
             notifOverdueSwitch.checked,
             notifMaintenanceSwitch.checked,
-            notifResticUpdateSwitch.checked
+            appBackend.notif_on_restic_update
         );
     }
 
@@ -176,7 +176,7 @@ Kirigami.ApplicationWindow {
 
             Controls.Label {
                 id: automaticHint
-                text: i18n("The system restic from 0.18.0 on, otherwise the restic managed by Kestic.")
+                text: i18n("The system restic from %1 on, otherwise the restic managed by Kestic.", appBackend.resticMinimumVersion())
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -347,15 +347,6 @@ Kirigami.ApplicationWindow {
                 onToggled: settingsWindow.saveSettingsFromUi()
             }
 
-            Controls.Switch {
-                id: notifResticUpdateSwitch
-                objectName: "notifResticUpdateSwitch"
-                Kirigami.FormData.label: i18n("Notify on restic updates:")
-                checked: appBackend.notif_on_restic_update
-                Accessible.name: i18n("Notify on restic updates")
-                onToggled: settingsWindow.saveSettingsFromUi()
-            }
-
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
                 Kirigami.FormData.label: i18n("Background Service")
@@ -461,16 +452,18 @@ Kirigami.ApplicationWindow {
                         Layout.fillWidth: true
                     }
 
-                    Controls.Button {
-                        objectName: "resticProblemDetailsButton"
-                        visible: appBackend.restic_problem_detail !== ""
-                        flat: true
-                        icon.name: resticProblemPanel.detailsExpanded ? "go-up" : "go-down"
-                        text: resticProblemPanel.detailsExpanded ? Texts.label("hide_details") : Texts.label("details")
-                        Accessible.name: text
-                        Layout.alignment: Qt.AlignTop
-                        onClicked: resticProblemPanel.detailsExpanded = !resticProblemPanel.detailsExpanded
-                    }
+                }
+
+                // Below the message, so a long message keeps the width of the section.
+                Controls.Button {
+                    objectName: "resticProblemDetailsButton"
+                    visible: appBackend.restic_problem_detail !== ""
+                    flat: true
+                    icon.name: resticProblemPanel.detailsExpanded ? "go-up" : "go-down"
+                    text: resticProblemPanel.detailsExpanded ? Texts.label("hide_details") : Texts.label("details")
+                    Accessible.name: text
+                    Layout.leftMargin: resticProblemIcon.width + resticProblemRow.spacing
+                    onClicked: resticProblemPanel.detailsExpanded = !resticProblemPanel.detailsExpanded
                 }
 
                 // Raw text of the operating system: shown as plain text, never as markup.
@@ -489,7 +482,7 @@ Kirigami.ApplicationWindow {
             Controls.Label {
                 objectName: "resticMinimumLabel"
                 visible: appBackend.restic_explain_minimum
-                text: i18n("Kestic needs restic 0.18.0 or newer: older versions do not report errors and check results in a form Kestic can read.")
+                text: i18n("Kestic needs restic %1 or newer: older versions do not report errors and check results in a form Kestic can read.", appBackend.resticMinimumVersion())
                 opacity: 0.75
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -620,6 +613,7 @@ Kirigami.ApplicationWindow {
 
                     Controls.ProgressBar {
                         objectName: "resticInstallProgressBar"
+                        Layout.minimumHeight: topInset + bottomInset + Math.round(Kirigami.Units.smallSpacing * 1.5)
                         from: 0
                         to: 1
                         indeterminate: appBackend.restic_install_progress < 0

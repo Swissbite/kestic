@@ -301,10 +301,17 @@ fn ac_m5_05_5_copied_repository_keeps_its_id_and_parent() {
                 copy_dir(&dir.join("repo"), &copy);
                 let moved = local(&dest, &copy);
                 // (a)
+                let calls_before_test = wrapper.entries().len();
                 let tested = client
                     .test_destination_connection(&moved, "connect", "", &none())
                     .expect("TestDestinationConnection");
                 assert!(tested.ok, "(a) the same repository: {tested:?}");
+                assert!(
+                    wrapper.entries()[calls_before_test..]
+                        .iter()
+                        .any(|e| e.kind == 'S' && e.sub == "cat"),
+                    "(a) the repository ID comes from `restic cat config`"
+                );
                 // (b)
                 let calls_before = wrapper.entries().len();
                 let result = client
@@ -484,6 +491,77 @@ fn ac_m5_09_3_stored_id_decides_when_old_address_is_gone() {
                 );
                 daemon.stop();
             }
+        },
+    );
+}
+
+/// M5-S09: saving a changed connection keeps the destination's maintenance schedule, which
+/// `UpdateDestinationMaintenance` set before, and, for the same repository, its recovery kit
+/// key, which the GUI's destination does not carry; a repository created anew in place drops
+/// the key of the old one.
+#[test]
+fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
+    run_isolated_test(
+        "m5_09_saving_a_connection_keeps_the_maintenance_schedule",
+        "KESTIC_M5_09_MAINT_INNER",
+        |root| {
+            let variant = latest_variant();
+            let (daemon, _wrapper, sub) = spawn(root, &variant, "M5EMNT");
+            let dir = root.join(&sub);
+            let client = &daemon.client;
+            let (dest, _) =
+                add_local_destination(client, &variant.bin, &dir.join("repo"), "Disk", |_| {});
+            let mut schedule = saved(&daemon, &dest).maintenance;
+            schedule.prune_interval_days = Some(60);
+            schedule.check_interval_days = Some(90);
+            client
+                .update_destination_maintenance(dest.id.as_str(), &schedule)
+                .expect("UpdateDestinationMaintenance");
+            // No call sets the recovery kit key yet: it is written into the config of a stopped
+            // daemon.
+            let config_path = daemon.config_path.clone();
+            daemon.stop();
+            let mut config = load_config(&config_path).expect("config");
+            config
+                .destinations
+                .iter_mut()
+                .find(|d| d.id == dest.id)
+                .expect("destination")
+                .recovery_kit_key_id = Some("KITKEY01".to_string());
+            kestic_core::config::save_config(&config_path, &config).expect("save config");
+            let (daemon, _wrapper, _) = spawn(root, &variant, "M5EMNT");
+            let client = &daemon.client;
+
+            let copy = dir.join("copy");
+            copy_dir(&dir.join("repo"), &copy);
+            let mut moved = local(&dest, &copy);
+            moved.name = "Disk copy".to_string();
+            let result = client
+                .update_destination(&moved, "connect", "", &none(), true)
+                .expect("UpdateDestination");
+            assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
+            let after = saved(&daemon, &dest);
+            assert_eq!(after.name, "Disk copy", "the name is saved");
+            assert_eq!(after.maintenance, schedule, "the schedule is kept");
+            assert_eq!(
+                after.recovery_kit_key_id.as_deref(),
+                Some("KITKEY01"),
+                "the recovery kit key is kept for the same repository"
+            );
+
+            fs::remove_dir_all(&copy).expect("remove repository");
+            fs::create_dir_all(&copy).expect("mkdir");
+            let result = client
+                .update_destination(&moved, "init", "", &none(), true)
+                .expect("UpdateDestination init in place");
+            assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
+            let renewed = saved(&daemon, &dest);
+            assert_eq!(
+                renewed.recovery_kit_key_id, None,
+                "the key of the old repository is dropped"
+            );
+            assert_eq!(renewed.maintenance, schedule, "the schedule is kept");
+            daemon.stop();
         },
     );
 }
