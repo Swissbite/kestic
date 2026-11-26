@@ -16,7 +16,7 @@ RESTIC_MIN_VERSION="0.18.0"
 # renovate: datasource=github-releases depName=restic/restic
 RESTIC_LATEST_VERSION="0.20.0"
 # renovate: datasource=github-releases depName=restic/rest-server
-REST_SERVER_VERSION="0.14.0"
+REST_SERVER_VERSION="0.15.0"
 # renovate: datasource=github-releases depName=rclone/rclone
 RCLONE_VERSION="1.76.0"
 # renovate: datasource=crate depName=cargo-deny
