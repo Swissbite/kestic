@@ -5,12 +5,13 @@
 //! for [`super::qobject::KesticApp`].
 
 use super::{Finish, dbus_error_text, qobject};
+use crate::daemon_events::request_refresh;
 use crate::state_cache::{
     build_new_backup, cached_destination_kind, clone_updated_backup_excludes,
-    clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text, i18n,
+    clone_updated_backup_retention, clone_updated_backup_source, i18n,
     localized_condition_override_message, localized_manual_block_message,
     localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, make_client,
-    refresh_state_now, shared_state,
+    shared_state,
 };
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
@@ -25,32 +26,30 @@ use std::path::PathBuf;
 use std::pin::Pin;
 
 impl qobject::KesticApp {
-    pub fn start_backup(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
+    pub fn start_backup(self: Pin<&mut Self>, backup_id: &QString) {
         let b_id = backup_id.to_string();
-        let Ok(client) = make_client() else {
-            self.as_mut().show_action_error(&daemon_unavailable_text());
-            return false;
-        };
-        match client.start_backup(&b_id) {
-            Ok(_) => {
-                self.as_mut()
-                    .set_manual_run_blocked_message(QString::from(""));
-                self.finish_action(Ok::<_, zbus::Error>(()), Finish::Plain);
-                true
-            }
-            Err(err) => {
-                self.as_mut().handle_start_backup_error(&b_id, &err);
-                false
-            }
-        }
+        self.call_daemon(
+            move |client| {
+                let result = client.start_backup(&b_id);
+                (b_id, result)
+            },
+            |mut app, outcome| match outcome {
+                Ok((_, Ok(_))) => {
+                    app.as_mut()
+                        .set_manual_run_blocked_message(QString::from(""));
+                    app.finish_daemon_action(Ok(Ok::<_, zbus::Error>(())), Finish::Plain);
+                }
+                Ok((b_id, Err(err))) => app.handle_start_backup_error(&b_id, &err),
+                Err(no_bus) => app.show_action_error(&no_bus),
+            },
+        );
     }
 
     fn handle_start_backup_error(mut self: Pin<&mut Self>, b_id: &str, err: &zbus::Error) {
         let typed = KesticDbusError::from(err.clone());
         let is_blocked = typed.code() == ServiceErrorCode::ManualRunBlocked;
         let err_is_condition = typed.blocked_reason() == Some(BlockedReason::ConditionNotMet);
-        refresh_state_now();
-        self.as_mut().apply_cached_state();
+        request_refresh();
         if !is_blocked {
             let msg = dbus_error_text(err);
             self.as_mut().show_action_error(&msg);
@@ -117,44 +116,43 @@ impl qobject::KesticApp {
         }
     }
 
-    pub fn start_backup_override(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        let result = client.start_backup_override(&backup_id.to_string());
-        if result.is_ok() {
-            self.as_mut()
-                .set_condition_override_backup_id(QString::from(""));
-            self.as_mut()
-                .set_condition_override_backup_name(QString::from(""));
-            self.as_mut()
-                .set_condition_override_message(QString::from(""));
-        }
-        self.finish_action(result, Finish::NotifyOnError).is_some()
+    pub fn start_backup_override(self: Pin<&mut Self>, backup_id: &QString) {
+        let b_id = backup_id.to_string();
+        self.call_daemon(
+            move |client| client.start_backup_override(&b_id),
+            |mut app, result| {
+                if matches!(result, Ok(Ok(_))) {
+                    app.as_mut()
+                        .set_condition_override_backup_id(QString::from(""));
+                    app.as_mut()
+                        .set_condition_override_backup_name(QString::from(""));
+                    app.as_mut()
+                        .set_condition_override_message(QString::from(""));
+                }
+                app.finish_daemon_action(result, Finish::NotifyOnError);
+            },
+        );
     }
 
-    pub fn start_all_backups(mut self: Pin<&mut Self>) {
-        let Ok(client) = make_client() else {
-            return;
-        };
-        match client.start_all_backups() {
-            Ok(res) => {
-                if let Some(msg) = localized_start_all_summary(&res) {
-                    self.as_mut()
+    pub fn start_all_backups(self: Pin<&mut Self>) {
+        self.call_daemon(
+            |client| client.start_all_backups(),
+            |mut app, result| match result {
+                Ok(Ok(res)) => {
+                    let msg = localized_start_all_summary(&res).unwrap_or_default();
+                    app.as_mut()
                         .set_start_all_skipped_message(QString::from(&msg));
-                    self.as_mut().passive_notification(QString::from(&msg));
-                } else {
-                    self.as_mut()
-                        .set_start_all_skipped_message(QString::from(""));
+                    if !msg.is_empty() {
+                        app.as_mut().passive_notification(QString::from(&msg));
+                    }
+                    request_refresh();
                 }
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-            }
-            Err(err) => {
-                self.as_mut()
-                    .passive_notification(QString::from(&dbus_error_text(&err)));
-            }
-        }
+                Ok(Err(err)) => app
+                    .as_mut()
+                    .passive_notification(QString::from(&dbus_error_text(&err))),
+                Err(no_bus) => app.as_mut().passive_notification(QString::from(&no_bus)),
+            },
+        );
     }
 
     pub fn dismiss_start_all_skipped(mut self: Pin<&mut Self>) {
@@ -162,12 +160,13 @@ impl qobject::KesticApp {
             .set_start_all_skipped_message(QString::from(""));
     }
 
-    pub fn cancel_run(mut self: Pin<&mut Self>, run_id: &QString) {
-        if let Ok(client) = make_client() {
-            let _ = client.cancel_run(&run_id.to_string());
-            refresh_state_now();
-            self.as_mut().apply_cached_state();
-        }
+    pub fn cancel_run(self: Pin<&mut Self>, run_id: &QString) {
+        let run_id = run_id.to_string();
+        // A run that ended meanwhile cannot be cancelled any more; the state shows how it ended.
+        self.call_daemon(
+            move |client| client.cancel_run(&run_id).is_ok(),
+            |_, _| request_refresh(),
+        );
     }
 
     pub fn dismiss_manual_run_blocked(mut self: Pin<&mut Self>) {

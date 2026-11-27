@@ -46,15 +46,14 @@ fn parse_pause_duration(kind: &str) -> PauseDuration {
 }
 
 impl qobject::KesticApp {
-    pub fn run_destination_maintenance(self: Pin<&mut Self>, destination_id: &QString) -> QString {
-        let Ok(client) = make_client() else {
-            return QString::from("");
-        };
-        self.finish_action(
-            client.run_destination_maintenance(&destination_id.to_string()),
-            Finish::Plain,
-        )
-        .map_or_else(QString::default, |run_id| QString::from(&run_id))
+    pub fn run_destination_maintenance(self: Pin<&mut Self>, destination_id: &QString) {
+        let dest_id = destination_id.to_string();
+        self.call_daemon(
+            move |client| client.run_destination_maintenance(&dest_id),
+            |app, result| {
+                app.finish_daemon_action(result, Finish::Plain);
+            },
+        );
     }
 
     pub fn update_destination_maintenance(
@@ -188,56 +187,53 @@ impl qobject::KesticApp {
             .is_some()
     }
 
-    pub fn update_expert_mode(self: Pin<&mut Self>, enabled: bool) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(client.set_expert_mode(enabled), Finish::Plain)
-            .is_some()
+    pub fn update_expert_mode(self: Pin<&mut Self>, enabled: bool) {
+        self.call_daemon(
+            move |client| client.set_expert_mode(enabled),
+            |app, result| {
+                app.finish_daemon_action(result, Finish::Plain);
+            },
+        );
     }
 
-    pub fn pause_global(self: Pin<&mut Self>, duration_kind: &QString) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
+    pub fn pause_global(self: Pin<&mut Self>, duration_kind: &QString) {
         let duration = parse_pause_duration(&duration_kind.to_string());
-        self.finish_action(client.pause_global(&duration), Finish::NotifyOnError)
-            .is_some()
+        self.call_daemon(
+            move |client| client.pause_global(&duration),
+            |app, result| {
+                app.finish_daemon_action(result, Finish::NotifyOnError);
+            },
+        );
     }
 
-    pub fn resume_global(self: Pin<&mut Self>) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(client.resume_global(), Finish::NotifyOnError)
-            .is_some()
+    pub fn resume_global(self: Pin<&mut Self>) {
+        self.call_daemon(
+            |client| client.resume_global(),
+            |app, result| {
+                app.finish_daemon_action(result, Finish::NotifyOnError);
+            },
+        );
     }
 
-    pub fn pause_backup(
-        self: Pin<&mut Self>,
-        backup_id: &QString,
-        duration_kind: &QString,
-    ) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
+    pub fn pause_backup(self: Pin<&mut Self>, backup_id: &QString, duration_kind: &QString) {
+        let b_id = backup_id.to_string();
         let duration = parse_pause_duration(&duration_kind.to_string());
-        self.finish_action(
-            client.pause_backup(&backup_id.to_string(), &duration),
-            Finish::NotifyOnError,
-        )
-        .is_some()
+        self.call_daemon(
+            move |client| client.pause_backup(&b_id, &duration),
+            |app, result| {
+                app.finish_daemon_action(result, Finish::NotifyOnError);
+            },
+        );
     }
 
-    pub fn resume_backup(self: Pin<&mut Self>, backup_id: &QString) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(
-            client.resume_backup(&backup_id.to_string()),
-            Finish::NotifyOnError,
-        )
-        .is_some()
+    pub fn resume_backup(self: Pin<&mut Self>, backup_id: &QString) {
+        let b_id = backup_id.to_string();
+        self.call_daemon(
+            move |client| client.resume_backup(&b_id),
+            |app, result| {
+                app.finish_daemon_action(result, Finish::NotifyOnError);
+            },
+        );
     }
 
     pub fn load_run_detail(mut self: Pin<&mut Self>, run_id: &QString) -> bool {

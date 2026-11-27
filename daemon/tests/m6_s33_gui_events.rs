@@ -10,6 +10,7 @@ use common::m3::{M3Rig, StdFakes, latest_variant, wait_until_within};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient};
 use kestic_test_support::bus::PrivateDbusGuard;
+use kestic_test_support::delayed_daemon::DelayedDaemon;
 use kestic_test_support::gui::{IsolatedEnv, SmokeContext};
 use kestic_test_support::workspace::workspace_root;
 use std::fs;
@@ -132,6 +133,54 @@ fn owner_pid(conn: &zbus::Connection, bus: &str) -> Option<u32> {
         let name = zbus::names::BusName::try_from(bus).ok()?;
         dbus.get_connection_unix_process_id(name).await.ok()
     })
+}
+
+/// How late the daemon stand-in answers every call (`AC-M6-33-1`).
+const SLOW_REPLY: Duration = Duration::from_secs(5);
+
+/// AC-M6-33-1: a daemon stand-in answers every call 5 s late. (a) The Qt main thread never
+/// blocks longer than 100 ms: the window is up at once, each action returns at once, a 20 ms
+/// timer never pauses longer than 100 ms; (b) the window stays usable: it shows that it loads,
+/// switches tabs while calls are pending, and the results arrive. The smoke scene
+/// `m6-slow-daemon` checks this inside the GUI.
+#[test]
+fn ac_m6_33_1_window_does_not_wait_for_a_slow_daemon() {
+    run_isolated_test(
+        "ac_m6_33_1_window_does_not_wait_for_a_slow_daemon",
+        "KESTIC_M6_S33_SLOW_DAEMON_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let variant = latest_variant();
+            let back = "net.daester.KesticSlowBack";
+            let front = "net.daester.KesticSlowFront";
+            let rig = M3Rig::start_on(
+                root,
+                &variant,
+                &variant.sub("SlowDaemon"),
+                back,
+                datetime!(2026-12-01 09:00:00 UTC),
+                |opts| opts.enable_scheduler = false,
+            );
+            let dest = rig.add_destination("Slow Vault", |_| {});
+            rig.add_backup_to(&dest, "Documents", |_| {});
+            let _stand_in = DelayedDaemon::start(&session_address(), front, back, SLOW_REPLY);
+
+            SmokeContext {
+                kestic_bin: &find_kestic_binary(),
+                iso: &IsolatedEnv::adopt(root),
+                dbus_addr: &session_address(),
+            }
+            .run_with_env(
+                "m6-slow-daemon",
+                "wide",
+                "en",
+                "target/smoke-artifacts/m6-slow-daemon-wide-en.png",
+                &["--bus-name", front, "--no-autostart"],
+                &[],
+            );
+            rig.daemon.stop();
+        },
+    );
 }
 
 /// AC-M6-33-3: the daemon is not running when the GUI starts and takes 6 s to come up; the GUI

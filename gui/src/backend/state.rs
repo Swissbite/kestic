@@ -13,8 +13,7 @@ use crate::restic_section_view::restic_section_view;
 use crate::state_cache::{
     daemon_unavailable_text, format_overall_visual, format_pause_line, i18n, initialize_and_sync,
     localized_condition_override_message, localized_manual_block_message,
-    localized_unmet_conditions, lookup_backup_summary, make_client, refresh_state_now,
-    shared_state,
+    localized_unmet_conditions, lookup_backup_summary, shared_state,
 };
 use crate::time_texts::daemon_now;
 use cxx_qt::Threading;
@@ -163,8 +162,18 @@ impl qobject::KesticApp {
     }
 
     fn apply_unreachable_state(mut self: Pin<&mut Self>) {
-        let starting = shared_state().lock_unpoisoned().daemon_starting;
-        if starting {
+        let (starting, first_fetch) = {
+            let guard = shared_state().lock_unpoisoned();
+            (guard.daemon_starting, guard.first_fetch_pending)
+        };
+        if first_fetch && !starting {
+            // The daemon runs; its first state is still on its way.
+            self.as_mut().set_blocking_kind(QString::from(""));
+            self.as_mut().set_blocking_message(QString::from(""));
+            self.as_mut().set_overall_headline(QString::from(""));
+            self.as_mut().set_overall_icon(QString::from(""));
+            self.as_mut().set_overall_color_kind(QString::from("text"));
+        } else if starting {
             let text = i18n("Starting the background service…").to_string();
             self.as_mut()
                 .set_blocking_kind(QString::from("daemon_starting"));
@@ -228,12 +237,17 @@ impl qobject::KesticApp {
     }
 
     pub(super) fn apply_cached_state(mut self: Pin<&mut Self>) {
-        let (reachable, state_opt) = {
+        let (reachable, state_opt, loading) = {
             let guard = shared_state().lock_unpoisoned();
-            (guard.daemon_reachable, guard.state.clone())
+            (
+                guard.daemon_reachable,
+                guard.state.clone(),
+                !guard.daemon_reachable && (guard.daemon_starting || guard.first_fetch_pending),
+            )
         };
 
         self.as_mut().set_daemon_reachable(reachable);
+        self.as_mut().set_state_loading(loading);
 
         let Some(state) = state_opt.filter(|_| reachable) else {
             self.as_mut().apply_unreachable_state();
@@ -339,29 +353,31 @@ impl qobject::KesticApp {
     }
 
     pub fn unlock_secret_store(self: Pin<&mut Self>) {
-        std::thread::spawn(|| {
-            if let Ok(client) = make_client() {
-                let _ = client.unlock_secret_store();
-            }
-            request_refresh();
-        });
+        // Whether the user unlocked shows in the state the daemon publishes.
+        self.call_daemon(
+            |client| client.unlock_secret_store().is_ok(),
+            |_, _| request_refresh(),
+        );
     }
 
-    pub fn window_active(mut self: Pin<&mut Self>, active: bool, page: &QString) {
-        if let Ok(client) = make_client() {
-            let _ = client.window_active(active, &page.to_string());
-            if active {
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-            }
-        }
+    pub fn window_active(self: Pin<&mut Self>, active: bool, page: &QString) {
+        let page = page.to_string();
+        // The daemon only notes the window; an activated window shows the state anew.
+        self.call_daemon(
+            move |client| client.window_active(active, &page).is_ok(),
+            move |_, _| {
+                if active {
+                    request_refresh();
+                }
+            },
+        );
     }
 
-    pub fn check_availability(mut self: Pin<&mut Self>, force: bool) {
-        if let Ok(client) = make_client() {
-            let _ = client.check_availability(force);
-            refresh_state_now();
-            self.as_mut().apply_cached_state();
-        }
+    pub fn check_availability(self: Pin<&mut Self>, force: bool) {
+        // The result of the check arrives with the state.
+        self.call_daemon(
+            move |client| client.check_availability(force).is_ok(),
+            |_, _| request_refresh(),
+        );
     }
 }

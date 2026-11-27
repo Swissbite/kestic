@@ -5,6 +5,7 @@
 #include "src/smoke_common.h"
 #include <QColor>
 #include <QElapsedTimer>
+#include <functional>
 #include <QFile>
 #include <QLocale>
 
@@ -311,7 +312,8 @@ void scene_keyboard_navigation(const Scene& s) {
     const bool prev_expert_mode = backend->property("expert_mode").toBool();
     if (!prev_expert_mode) {
         QMetaObject::invokeMethod(backend, "updateExpertMode", Q_ARG(bool, true));
-        wait_ms(80);
+        SMOKE_CHECK("M1 keyboard", 163, wait_until([&] { return backend->property("expert_mode").toBool(); }, 15000),
+            "Expert mode did not switch on");
     }
     QQuickItem* excl_area = tab_to(window, "excludesTextArea", 20);
     SMOKE_CHECK("M1 keyboard", 109, excl_area, "Tab did not reach excludesTextArea");
@@ -322,7 +324,8 @@ void scene_keyboard_navigation(const Scene& s) {
         "Tab inserted a character into excludesTextArea");
     if (!prev_expert_mode) {
         QMetaObject::invokeMethod(backend, "updateExpertMode", Q_ARG(bool, false));
-        wait_ms(80);
+        SMOKE_CHECK("M1 keyboard", 164, wait_until([&] { return !backend->property("expert_mode").toBool(); }, 15000),
+            "Expert mode did not switch off");
     }
     press_and_wait(window, Qt::Key_Escape, 120);
     SMOKE_CHECK("M1 keyboard", 118, !child_item(window, "backupExcludesEditPage"),
@@ -516,7 +519,7 @@ void run_daemon_starting_scene(
     QQuickItem* welcome = child_item(window, "welcomeView");
     SMOKE_CHECK2("M6", 5, welcome, !welcome->property("visible").toBool(),
         "no welcome view before the daemon said whether a configuration exists");
-    QQuickItem* placeholder = child_item(window, "daemonStartingPlaceholder");
+    QQuickItem* placeholder = child_item(window, "stateLoadingPlaceholder");
     SMOKE_CHECK_VISIBLE("M6", 9, placeholder, "(b) the overview shows the loading state while the service starts");
     SMOKE_CHECK("M6", 6, save_screenshot(window, out_path), "screenshot of the starting state");
 
@@ -565,6 +568,104 @@ void run_transparent_command_scene(
     SMOKE_CHECK("M6", 22, command.contains(QStringLiteral("restic-wrapper.sh")),
         QStringLiteral("the command names the configured restic: %1").arg(command));
     smoke_finish("M6", warnings.get(), window, out_path);
+}
+
+// Calls `method` on the backend and fails the scene unless it returns within 100 ms (AC-M6-33-1 (a)).
+bool returns_at_once(int code, const char* method, const std::function<bool()>& call) {
+    QElapsedTimer took;
+    took.start();
+    const bool invoked = call();
+    const qint64 ms = took.elapsed();
+    if (!invoked) {
+        smoke_fail("M6", code, QStringLiteral("could not call %1").arg(QLatin1String(method)));
+        return false;
+    }
+    if (ms >= 100) {
+        smoke_fail("M6", code, QStringLiteral("(a) %1 kept the main thread for %2 ms").arg(QLatin1String(method)).arg(ms));
+        return false;
+    }
+    return true;
+}
+
+// AC-M6-33-1: every daemon reply comes 5 s late. The window is up at once and shows that it
+// loads; the actions return at once and their results arrive later; the main thread never
+// pauses longer than 100 ms meanwhile, and the window switches tabs while calls are pending.
+void run_slow_daemon_scene(
+    QQuickWindow* window,
+    QObject* backend,
+    const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path,
+    qint64 since_load_ms
+) {
+    SMOKE_CHECK("M6", 40, since_load_ms < 3000,
+        QStringLiteral("(a) the window answered %1 ms after loading: the main thread waited for the daemon").arg(since_load_ms));
+    SMOKE_CHECK("M6", 41, !backend->property("daemon_reachable").toBool(),
+        "precondition: the first state is still on its way");
+    const QString kind = backend->property("blocking_kind").toString();
+    SMOKE_CHECK("M6", 42, kind.isEmpty(),
+        QStringLiteral("(b) while the first state loads, no blocking state is shown: '%1'").arg(kind));
+    QQuickItem* loading = child_item(window, "stateLoadingPlaceholder");
+    SMOKE_CHECK_VISIBLE("M6", 43, loading, "(b) the overview shows that it loads");
+
+    auto stop = std::make_shared<bool>(false);
+    auto largest_gap = watch_main_thread_gaps(window, stop);
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto stage = std::make_shared<int>(0);
+    auto expert_before = std::make_shared<bool>(false);
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (waited->elapsed() > 90000) {
+            poll->stop();
+            smoke_fail("M6", 44, QStringLiteral("timed out in stage %1").arg(*stage));
+            return;
+        }
+        if (*stage == 0) {
+            if (!backend->property("daemon_reachable").toBool()) {
+                return;
+            }
+            *stage = 1;
+            *expert_before = backend->property("expert_mode").toBool();
+            const QString bid = backup_id_at(window, 0);
+            const bool ok = !bid.isEmpty()
+                && returns_at_once(45, "windowActive", [&]() {
+                       return QMetaObject::invokeMethod(backend, "windowActive",
+                           Q_ARG(bool, true), Q_ARG(QString, QStringLiteral("overview")));
+                   })
+                && returns_at_once(46, "checkAvailability", [&]() {
+                       return QMetaObject::invokeMethod(backend, "checkAvailability", Q_ARG(bool, false));
+                   })
+                && returns_at_once(47, "pauseGlobal", [&]() {
+                       return QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
+                   })
+                && returns_at_once(48, "updateExpertMode", [&]() {
+                       return QMetaObject::invokeMethod(backend, "updateExpertMode", Q_ARG(bool, !*expert_before));
+                   })
+                && returns_at_once(49, "startBackup", [&]() {
+                       return QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
+                   });
+            if (!ok) {
+                poll->stop();
+                return;
+            }
+            QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 2));
+            const int tab = window->property("activeTab").toInt();
+            if (tab != 2) {
+                poll->stop();
+                smoke_fail("M6", 50, QStringLiteral("(b) the window did not switch tabs while calls were pending: %1").arg(tab));
+            }
+            return;
+        }
+        if (backend->property("global_paused").toBool()
+                && backend->property("expert_mode").toBool() != *expert_before) {
+            poll->stop();
+            *stop = true;
+            SMOKE_CHECK("M6", 51, *largest_gap <= 100,
+                QStringLiteral("(a) the main thread paused %1 ms while the daemon was slow").arg(*largest_gap));
+            smoke_finish("M6", warnings.get(), window, out_path);
+        }
+    });
+    poll->start(50);
 }
 
 // AC-M6-33-4 (a): the test changes the daemon state; the window shows it within 1 s, with no
@@ -625,6 +726,8 @@ void run_m6_smoke_scenario(
         run_transparent_command_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-state-change")) {
         run_state_change_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-daemon")) {
+        run_slow_daemon_scene(window, backend, warnings, out_path, since_load_ms);
     } else {
         smoke_fail("M6", 99, QStringLiteral("unknown scenario %1").arg(scen));
     }

@@ -75,22 +75,22 @@ Kirigami.ScrollablePage {
         width: parent.width
         spacing: Kirigami.Units.largeSpacing
 
-        // The first state of a daemon the window started is still on its way.
+        // The first state of the daemon is still on its way, or the daemon is still starting.
         Kirigami.LoadingPlaceholder {
-            objectName: "daemonStartingPlaceholder"
+            objectName: "stateLoadingPlaceholder"
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
-            visible: appBackend.blocking_kind === "daemon_starting"
-            text: appBackend.blocking_message
+            visible: appBackend.state_loading
+            text: appBackend.blocking_kind === "daemon_starting" ? appBackend.blocking_message : i18n("Loading…")
         }
 
         // Welcome view when no config exists
         ColumnLayout {
             id: welcomeView
             objectName: "welcomeView"
-            // While the daemon starts, nothing is known about a configuration yet.
+            // While the state loads, nothing is known about a configuration yet.
             visible: (!appBackend.has_config_file || appBackend.backups_count === 0)
-                && appBackend.blocking_kind !== "daemon_starting"
+                && !appBackend.state_loading
             Layout.fillWidth: true
             Layout.topMargin: rootWindow.narrowMode ? Kirigami.Units.smallSpacing : Kirigami.Units.gridUnit * 2
             spacing: rootWindow.narrowMode ? Kirigami.Units.mediumSpacing : Kirigami.Units.largeSpacing

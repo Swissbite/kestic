@@ -278,27 +278,30 @@ impl qobject::KesticApp {
         .is_some()
     }
 
-    pub fn unlock_destination(mut self: Pin<&mut Self>, dest_id: &QString) -> i32 {
-        let Ok(client) = make_client() else {
-            self.as_mut().show_action_error(&daemon_unavailable_text());
-            return -1;
-        };
-        let result = client.unlock_destination(&dest_id.to_string());
-        let Some(count) = self.as_mut().finish_action(result, Finish::NotifyOnError) else {
-            return -1;
-        };
-        let msg = if count == 0 {
-            i18n("No stale locks found.").to_string()
-        } else {
-            i18np(
-                "%1 stale lock removed.",
-                "%1 stale locks removed.",
-                count,
-                &[],
-            )
-        };
-        self.as_mut().passive_notification(QString::from(&msg));
-        i32::try_from(count).unwrap_or(0)
+    pub fn unlock_destination(self: Pin<&mut Self>, dest_id: &QString) {
+        let dest_id = dest_id.to_string();
+        self.call_daemon(
+            move |client| client.unlock_destination(&dest_id),
+            |mut app, result| {
+                let Some(count) = app
+                    .as_mut()
+                    .finish_daemon_action(result, Finish::NotifyOnError)
+                else {
+                    return;
+                };
+                let msg = if count == 0 {
+                    i18n("No stale locks found.").to_string()
+                } else {
+                    i18np(
+                        "%1 stale lock removed.",
+                        "%1 stale locks removed.",
+                        count,
+                        &[],
+                    )
+                };
+                app.as_mut().passive_notification(QString::from(&msg));
+            },
+        );
     }
 
     pub fn load_backup_snapshots(mut self: Pin<&mut Self>, backup_id: &QString) -> bool {
