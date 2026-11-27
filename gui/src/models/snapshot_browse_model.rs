@@ -25,10 +25,6 @@ use std::pin::Pin;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-/// Pages [`qobject::SnapshotBrowseModel::row_of_path`] fetches at most; each page is one call to
-/// the daemon while the window waits.
-const FIND_ROW_PAGES: usize = 10;
-
 model_row!(BrowseRow {
     path: String => "path",
     name: String => "name",
@@ -295,21 +291,10 @@ impl qobject::SnapshotBrowseModel {
         self.as_mut().start_query(request);
     }
 
-    /// The row of the entry at `path`, fetching at most [`FIND_ROW_PAGES`] further pages while it
-    /// is not loaded yet; -1 when the folder does not list it there.
-    pub fn row_of_path(mut self: Pin<&mut Self>, path: &QString) -> i32 {
+    /// The row of the loaded entry at `path`; -1 when it is not loaded (the page that looks for
+    /// it loads further pages).
+    pub fn row_of_path(&self, path: &QString) -> i32 {
         let path = path.to_string();
-        let parent = QModelIndex::default();
-        for _ in 0..FIND_ROW_PAGES {
-            if self.list.rows.iter().any(|r| r.path == path) || !self.can_fetch_more(&parent) {
-                break;
-            }
-            let before = self.list.rows.len();
-            self.as_mut().fetch_more(&parent);
-            if self.list.rows.len() == before {
-                break;
-            }
-        }
         self.list
             .rows
             .iter()

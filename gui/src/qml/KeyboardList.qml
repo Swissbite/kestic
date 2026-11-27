@@ -18,7 +18,11 @@ ListView {
     // Without a current row the list holds the focus itself; the first row takes it then, also
     // when the rows arrive while the list has the focus. Runs after the list's own handler,
     // which may choose another row first.
-    onActiveFocusChanged: if (activeFocus) Qt.callLater(list.enterFirstRowIfNone)
+    // Leaving the list drops a move still waiting for rows.
+    onActiveFocusChanged: {
+        if (activeFocus) Qt.callLater(list.enterFirstRowIfNone);
+        else pendingRow = -1;
+    }
     // A page asked for by a key arrived: on to the next one, or to the row.
     onCountChanged: {
         if (activeFocus) Qt.callLater(list.enterFirstRowIfNone);
@@ -48,7 +52,9 @@ ListView {
             while (i >= 0 && i < count && !canBeCurrent(i)) i -= dir;
         }
         if (i < 0 || i >= count) return;
+        movingForKey = true;
         currentIndex = i;
+        movingForKey = false;
         positionViewAtIndex(currentIndex, ListView.Contain);
         keepCurrentRowInOuterView();
     }
@@ -81,6 +87,9 @@ ListView {
     // the list moves there once the rows have arrived.
     property real pendingRow: -1
     property int pendingStep: 1
+    // The current row changes for a key (not a click); another change drops a waiting move.
+    property bool movingForKey: false
+    onCurrentIndexChanged: if (!movingForKey) pendingRow = -1
 
     // Loads further rows of a model that holds them in pages, one page after the other, until
     // row `index` is loaded or the model has none left; then the list moves there (`step`: the
@@ -117,6 +126,10 @@ ListView {
 
     Keys.onPressed: function(event) {
         if (event.modifiers !== Qt.NoModifier && event.modifiers !== Qt.KeypadModifier) return;
+        // Another key than one that waits for rows drops a move still waiting for them.
+        if (event.key !== Qt.Key_Down && event.key !== Qt.Key_End && event.key !== Qt.Key_PageDown) {
+            list.pendingRow = -1;
+        }
         // Up and Down move here rather than by the view's own key navigation, which does not
         // keep the row clear of a header that stays above the rows; at the first or last row
         // the key passes on.

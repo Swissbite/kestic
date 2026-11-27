@@ -80,7 +80,9 @@ int rows_of(QObject* model) {
 // AC-M6-33-1: every reply comes 5 s late. Answers that arrive after the window moved on do not
 // count: (a) a connection test answered after the form changed leaves the form untested; (b) a
 // dry run whose page closed before it started is cancelled (the test watches for the cancel);
-// (c) a further page answered after the filter changed does not stop the list from loading more.
+// (c) a further page answered after the filter changed does not stop the list from loading more;
+// (d) a search hit beyond the first page of its folder becomes the current row once its page
+// arrived.
 void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP");
@@ -100,10 +102,10 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
     waited->start();
     auto* poll = new QTimer(window);
     QObject::connect(poll, &QTimer::timeout, window, [=]() {
-        if (waited->elapsed() > 120000) {
+        if (waited->elapsed() > 180000) {
             poll->stop();
-            smoke_fail("M6", 121, *step == 4
-                ? QStringLiteral("(c) the list loads no further pages after a further page arrived for an old filter")
+            smoke_fail("M6", 121, *step == 4 ? QStringLiteral("(c) the list loads no further pages after a further page arrived for an old filter")
+                : *step == 5 ? QStringLiteral("(d) a search hit beyond the first page of its folder never became the current row")
                 : QStringLiteral("timed out at step %1").arg(*step));
             return;
         }
@@ -151,9 +153,18 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
         case 4:
             // The timeout fails the scene when no further page arrives.
             if (rows_of(browse) <= 200) return;
+            // (d) A search hit beyond the first page of its folder.
+            QMetaObject::invokeMethod(window, "openSearchHit", Q_ARG(QVariant, dest), Q_ARG(QVariant, snapshot),
+                Q_ARG(QVariant, source), Q_ARG(QVariant, source + QStringLiteral("/file-99")), Q_ARG(QVariant, false),
+                Q_ARG(QVariant, QString()));
+            break;
+        case 5: {
+            QQuickItem* list = child_item(window, "browseListView");
+            if (!list || list->property("currentIndex").toInt() < 200) return;
             poll->stop();
             smoke_finish("M6", warnings.get(), window, out_path);
             return;
+        }
         }
         ++*step;
     });

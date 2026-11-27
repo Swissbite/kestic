@@ -345,7 +345,8 @@ fn ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon() {
 /// AC-M6-33-1 (b): every reply comes 5 s late; answers that arrive after the window moved on do
 /// not count. (a) A connection test answered after the location changed leaves the form untested;
 /// (b) a dry run whose page closed before it started is cancelled; (c) a further page answered
-/// after the filter changed does not stop the folder list from loading more.
+/// after the filter changed does not stop the folder list from loading more; (d) a search hit
+/// beyond the first page of its folder becomes the current row.
 #[test]
 fn ac_m6_33_1_late_answers_do_not_count_after_the_window_moved_on() {
     run_isolated_test(

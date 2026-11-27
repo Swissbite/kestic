@@ -692,7 +692,7 @@ pub mod qobject {
         fn segment_paths(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
         #[qinvokable]
         #[cxx_name = "rowOfPath"]
-        fn row_of_path(self: Pin<&mut SnapshotBrowseModel>, path: &QString) -> i32;
+        fn row_of_path(self: &SnapshotBrowseModel, path: &QString) -> i32;
 
         // SnapshotSearchModel
         #[qinvokable]

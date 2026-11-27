@@ -126,14 +126,37 @@ Kirigami.ScrollablePage {
                 if (snapshotBrowseModel.top_dir === page.startDir) snapshotBrowseModel.top_dir = "/";
                 page.openDir("/");
             } else if (page.focusPath !== "") {
-                var row = snapshotBrowseModel.rowOfPath(page.focusPath);
-                page.focusPath = "";
-                if (row >= 0) {
-                    browseListView.currentIndex = row;
-                    browseListView.positionViewAtIndex(row, ListView.Center);
-                }
+                page.focusPages = 0;
+                page.focusOnPath();
             }
         }
+        // A page asked for to find the entry to focus has arrived.
+        function onRowsInserted() {
+            if (page.focusPath !== "" && page.focusPages > 0) page.focusOnPath();
+        }
+    }
+
+    // Further pages the page loads at most to find the entry to focus.
+    readonly property int maxFocusPages: 10
+    property int focusPages: 0
+
+    // Makes the entry at `focusPath` the current row once it is loaded, loading further pages
+    // (at most `maxFocusPages`) until it is; gives up when the folder does not list it.
+    function focusOnPath() {
+        var row = snapshotBrowseModel.rowOfPath(page.focusPath);
+        if (row < 0) {
+            var root = snapshotBrowseModel.index(-1, 0);
+            if (page.focusPages < page.maxFocusPages && snapshotBrowseModel.canFetchMore(root)) {
+                page.focusPages += 1;
+                snapshotBrowseModel.fetchMore(root);
+                return;
+            }
+            page.focusPath = "";
+            return;
+        }
+        page.focusPath = "";
+        browseListView.currentIndex = row;
+        browseListView.positionViewAtIndex(row, ListView.Center);
     }
     Component.onDestruction: snapshotBrowseModel.cancel()
     // A page taken off the stack is hidden, not destroyed: stop listing there, too.
