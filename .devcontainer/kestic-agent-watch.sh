@@ -13,15 +13,18 @@
 # - The container is off or the agent is busy: nothing. The watcher never
 #   starts the container: switching it off pauses the milestone.
 # - The agent's current issue is open and not labelled needs-maintainer: it
-#   stays the only story. Something the maintainer did after the agent's last
-#   turn started (a comment or review on the issue or on a pull request from its
-#   branch, merging that pull request, removing needs-maintainer) continues the
-#   idle session; a session that is gone is resumed, twice at most until it
-#   reaches a turn again. An idle session that stopped at a usage limit is
-#   continued once the limit has reset.
+#   stays the only story. Something the maintainer (by user ID, github-trust.jq)
+#   did after the agent's last turn started (a comment or review on the issue or
+#   on a pull request the App opened from its branch, merging that pull request,
+#   removing needs-maintainer) continues the idle session; a session that is
+#   gone is resumed, twice at most until it reaches a turn again. An idle
+#   session that stopped at a usage limit is continued once the limit has reset.
 # - Otherwise the open issue of the milestone with the lowest number that is not
 #   labelled needs-maintainer and has no open "blocked by" issue starts in a
 #   fresh session. Issue numbers give the order, so new issues queue at the end.
+# - An issue opened by someone other than the maintainer or the App is skipped
+#   and reported once, unless the maintainer added the label `adopted` and
+#   neither title nor body changed afterwards (github-thread.sh --issue-status).
 # - With KESTIC_AGENT_LANE set to a label (for example lane:core), only issues
 #   with that label are started. Two agents on one milestone each get their own
 #   lane, so they never start the same issue.
@@ -35,8 +38,10 @@
 
 set -euo pipefail
 
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${KESTIC_AGENT_REPO:-Swissbite/kestic}"
-AGENT="${KESTIC_AGENT_SH:-$(dirname -- "${BASH_SOURCE[0]}")/kestic-agent.sh}"
+AGENT="${KESTIC_AGENT_SH:-$here/kestic-agent.sh}"
+THREAD="$here/github-thread.sh"
 HOLD=needs-maintainer
 # An idle agent without a result for this long is reported once.
 IDLE_ALERT=14400
@@ -72,33 +77,39 @@ notify() {
     fi
 }
 
-# `<epoch> <user type> <author association>` per comment or submitted review.
-COMMENT_JQ='.[] | select((.created_at // .submitted_at) != null)
-    | "\((.created_at // .submitted_at) | fromdateiso8601) \(.user.type) \(.author_association)"'
-# The same for removals of the label, by whoever has the rights to do that.
-UNLABEL_JQ=".[] | select(.event == \"unlabeled\" and .label.name == \"$HOLD\")
-    | \"\(.created_at | fromdateiso8601) \(.actor.type) OWNER\""
-# `<number> <merged epoch or 0> <User|Bot>` per pull request from the issue's branch.
-PR_JQ='.[] | "\(.number) \(if .mergedAt then (.mergedAt | fromdateiso8601) else 0 end) \(if (.mergedBy.is_bot // false) then "Bot" else "User" end)"'
+# Whose activity counts and whose issues start: github-trust.jq (by numeric
+# user ID); prepended to the --jq filters below.
+TRUST="$(<"${KESTIC_TRUST_JQ:-$here/github-trust.jq}")"
+# `<epoch> <trust class>` per comment or submitted review.
+COMMENT_JQ="$TRUST"' .[] | select((.created_at // .submitted_at) != null)
+    | "\((.created_at // .submitted_at) | fromdateiso8601) \(.user | trust_class)"'
+# The same for removals of the label.
+UNLABEL_JQ="$TRUST .[] | select(.event == \"unlabeled\" and .label.name == \"$HOLD\")
+    | \"\(.created_at | fromdateiso8601) \(.actor | trust_class)\""
 
 # Newest thing the maintainer did on the issue or its pull requests (epoch
-# seconds); empty if nothing. Only people (no bots, no apps) with write access
-# to the repository count; outsiders' comments never wake the agent.
+# seconds); empty if nothing. Only the maintainer's user ID counts: comments
+# by outsiders, other collaborators, bots and the agent itself never wake the
+# agent. Pull requests count only when the App opened them in this repository:
+# a fork's branch may carry the same name.
 latest_event() {
     local issue="$1" events prs pr merged by
     events="$(gh api "repos/$REPO/issues/$issue/comments" --paginate --jq "$COMMENT_JQ")" || return 1
     events+=$'\n'"$(gh api "repos/$REPO/issues/$issue/events" --paginate --jq "$UNLABEL_JQ")" || return 1
-    prs="$(gh pr list --repo "$REPO" --head "agent/issue-$issue" --state all \
-        --json number,mergedAt,mergedBy --jq "$PR_JQ")" || return 1
-    while read -r pr merged by; do
+    prs="$(gh api --paginate "repos/$REPO/pulls?state=all&head=${REPO%%/*}:agent/issue-$issue&per_page=100" \
+        --jq "$TRUST .[] | select(.head.ref == \"agent/issue-$issue\" and agent_pull)
+            | \"\(.number) \(if .merged_at then (.merged_at | fromdateiso8601) else 0 end)\"")" || return 1
+    while read -r pr merged; do
         [[ "$pr" =~ ^[0-9]+$ ]] || continue
-        if [[ "$merged" != 0 ]]; then events+=$'\n'"$merged $by OWNER"; fi
+        if [[ "$merged" =~ ^[1-9][0-9]*$ ]]; then
+            by="$(gh api "repos/$REPO/pulls/$pr" --jq "$TRUST .merged_by | trust_class")" || return 1
+            events+=$'\n'"$merged $by"
+        fi
         events+=$'\n'"$(gh api "repos/$REPO/issues/$pr/comments" --paginate --jq "$COMMENT_JQ")" || return 1
         events+=$'\n'"$(gh api "repos/$REPO/pulls/$pr/comments" --paginate --jq "$COMMENT_JQ")" || return 1
         events+=$'\n'"$(gh api "repos/$REPO/pulls/$pr/reviews" --paginate --jq "$COMMENT_JQ")" || return 1
     done <<< "$prs"
-    awk '$1 ~ /^[0-9]+$/ && $2 == "User" && $3 ~ /^(OWNER|MEMBER|COLLABORATOR)$/ { print $1 }' <<< "$events" |
-        sort -n | tail -n 1
+    awk '$1 ~ /^[0-9]+$/ && $2 == "maintainer" { print $1 }' <<< "$events" | sort -n | tail -n 1
 }
 
 read -r state issue turn token reset _ < <("$AGENT" agent-state) || true
@@ -185,9 +196,26 @@ for next in $candidates; do
         log "cannot read the blockers of #$next, skipping it this time"
         continue
     fi
-    if [[ -z "$open_blockers" ]]; then
-        log "starting #$next on $base"
-        "$AGENT" start "$next" "$base"
-        exit 0
+    if [[ -n "$open_blockers" ]]; then
+        continue
     fi
+    # Issues by someone else start only once the maintainer adopted them.
+    if ! status="$(KESTIC_AGENT_REPO="$REPO" "$THREAD" --issue-status "$next")"; then
+        log "cannot read who wrote #$next, skipping it this time"
+        continue
+    fi
+    case "$status" in
+        trusted | adopted) ;;
+        edited)
+            notify "edited-$next" "#$next was edited after it was adopted; check it and adopt it again (remove and add the label adopted)"
+            continue
+            ;;
+        *)
+            notify "outsider-$next" "#$next was opened by an outsider; restate the task, or adopt it with the label adopted"
+            continue
+            ;;
+    esac
+    log "starting #$next on $base"
+    "$AGENT" start "$next" "$base"
+    exit 0
 done
