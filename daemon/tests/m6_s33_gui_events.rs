@@ -13,7 +13,6 @@ use kestic_test_support::bus::PrivateDbusGuard;
 use kestic_test_support::gui::{IsolatedEnv, SmokeContext};
 use kestic_test_support::workspace::workspace_root;
 use std::fs;
-use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -355,6 +354,16 @@ fn idle_gui_follows_a_replaced_daemon() {
     );
 }
 
+/// Whether process `pid` has ended. A process that ended but was not reaped (a zombie: in a
+/// container nobody may reap the forked bus) counts as ended.
+fn process_gone(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
+        stat.rsplit_once(") ")
+            .and_then(|(_, rest)| rest.chars().next())
+            .is_some_and(|state| state == 'Z' || state == 'X')
+    })
+}
+
 /// The session bus goes away while the GUI is idle, and a new one starts at the same address:
 /// the GUI opens a new connection, registers with the new daemon and receives its changes.
 #[test]
@@ -376,10 +385,10 @@ fn idle_gui_reconnects_after_the_session_bus_restarts() {
                 || !calls_of(&seen, "RegisterGui", "").is_empty(),
             );
 
-            let old_bus = Path::new("/proc").join(first_bus.pid.to_string());
+            let old_bus = first_bus.pid;
             drop(first_bus);
             wait_until_within(Duration::from_secs(10), "the first bus is gone", || {
-                !old_bus.exists()
+                process_gone(old_bus)
             });
             drop(first);
             let _second_bus = PrivateDbusGuard::start_at(&address);
