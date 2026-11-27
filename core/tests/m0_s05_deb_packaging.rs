@@ -425,7 +425,7 @@ fn deb_control() -> String {
 /// AC-M6-22-1: the `.deb` installs next to any Qt from 6.10 on: (a) `Depends` names no
 /// `qt6-*-private-abi` package (they pin one exact Qt patch version), (b) the shipped binary
 /// imports no symbol of Qt's private API, and (c) the Qt libraries are bounded only from below,
-/// Qt core and QML with at least 6.10.
+/// Qt core and QML from exactly 6.10 on, the requirement of NFR-01.
 #[test]
 fn ac_m6_22_1_deb_needs_qt_6_10_without_private_abi() {
     let control = deb_control();
@@ -473,7 +473,7 @@ fn ac_m6_22_1_deb_needs_qt_6_10_without_private_abi() {
         bounded_above.is_empty(),
         "Qt packages with an upper bound or exact version {bounded_above:?}:\n{control}"
     );
-    // (c) Qt core and QML from 6.10 on
+    // (c) Qt core and QML from 6.10 on: the highest lower bound, manual or from shlibdeps
     for library in ["libqt6core6", "libqt6qml6"] {
         let floor = qt
             .iter()
@@ -482,11 +482,10 @@ fn ac_m6_22_1_deb_needs_qt_6_10_without_private_abi() {
             .filter(|(op, _)| op == ">=")
             .map(|(_, v)| version_parts(v))
             .max();
-        assert!(
-            floor
-                .as_ref()
-                .is_some_and(|f| f.as_slice() >= [6, 10].as_slice()),
-            "Depends does not require {library}* (>= 6.10), lower bound {floor:?}:\n{control}"
+        assert_eq!(
+            floor,
+            Some(vec![6, 10]),
+            "Depends must require {library}* from 6.10 on, no lower or higher:\n{control}"
         );
     }
 }

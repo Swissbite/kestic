@@ -218,6 +218,11 @@ fn compile_qml_to_bytecode_only(out_dir: &Path) {
     }
 
     let qmlcachegen = libexecs.join("qmlcachegen");
+    assert!(
+        qmlcachegen.is_file(),
+        "no qmlcachegen in QT_HOST_LIBEXECS {}",
+        libexecs.display()
+    );
     write_script(
         &tools.join("qmlcachegen"),
         &format!(
