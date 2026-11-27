@@ -4,6 +4,7 @@
 //! Runs a short helper program (`ssh -G`, `ssh-keygen`, `ssh-keyscan`, `gpgv`, `restic version`)
 //! with a time limit and at most [`OUTPUT_LIMIT`] bytes of each output.
 
+use crate::child_registry::ChildRegistry;
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Output, Stdio};
@@ -27,15 +28,15 @@ pub(crate) fn output_with_stdin(
     stdin: Option<&[u8]>,
 ) -> std::io::Result<Output> {
     cmd.process_group(0);
-    let mut child = cmd
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    cmd.stdin(if stdin.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    // Registered until it is reaped below, so the daemon can stop it when it ends.
+    let (mut child, registration) = ChildRegistry::global().spawn(&mut cmd)?;
     if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
         let text = text.to_vec();
         // On its own thread, so a program that does not read stdin cannot hold up the deadline.
@@ -72,6 +73,7 @@ pub(crate) fn output_with_stdin(
             }
         }
     };
+    drop(registration);
     // The child is reaped: its PID may belong to another process by now. Its process group
     // number stays reserved while a member lives, so only the group may still be signalled.
     let collected = |receiver: Receiver<Vec<u8>>| {

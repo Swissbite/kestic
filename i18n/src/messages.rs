@@ -695,6 +695,11 @@ pub fn interrupted_by_sleep_message() -> Message {
     Message::new(i18n_noop("Interrupted by system sleep"))
 }
 
+/// Summary of a run the daemon stopped because it was ended itself (logout, shutdown).
+pub fn interrupted_by_stop_message() -> Message {
+    Message::new(i18n_noop("Interrupted because Kestic was stopped"))
+}
+
 /// Pause line: `since` and `until` are already formatted times.
 pub fn pause_message(since: &str, until: Option<&str>) -> Message {
     match until {

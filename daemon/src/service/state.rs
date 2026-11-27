@@ -39,6 +39,7 @@ use kestic_core::scheduler::{
 use kestic_core::secrets::{SecretError, SecretStore};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{BlockingKind, PendingReasonCode};
+use kestic_i18n::messages::{interrupted_by_sleep_message, interrupted_by_stop_message};
 use kestic_i18n::messages::{pause_message, unmet_conditions_message};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
@@ -127,6 +128,9 @@ pub struct DaemonRunConfig {
     pub program_search_path: Option<OsString>,
     /// Memory limits for the lists of snapshot queries.
     pub query_limits: QueryLimits,
+    /// Set on `SIGTERM` ([`super::install_stop_signal`]); the daemon then stops its runs and
+    /// ends. `None` without a handler.
+    pub stop_signal: Option<Arc<AtomicBool>>,
 }
 
 impl Default for DaemonRunConfig {
@@ -159,6 +163,7 @@ impl Default for DaemonRunConfig {
             binary_watch_args: None,
             program_search_path: None,
             query_limits: QueryLimits::default(),
+            stop_signal: None,
         }
     }
 }
@@ -172,13 +177,36 @@ pub enum DaemonOutcome {
     RanAndStopped,
 }
 
+/// The detail of a request refused because the daemon is stopping.
+pub(super) const STOPPING: &str = "the daemon is stopping";
+
+/// Why the daemon stopped a run: it ends as `Interrupted`, not as cancelled by the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Interruption {
+    /// The system goes to sleep.
+    Sleep,
+    /// The daemon got `SIGTERM` (logout, shutdown).
+    Stop,
+}
+
+impl Interruption {
+    /// The run's summary, in the daemon's language.
+    pub(super) fn summary(self) -> String {
+        match self {
+            Self::Sleep => tr(&interrupted_by_sleep_message()),
+            Self::Stop => tr(&interrupted_by_stop_message()),
+        }
+    }
+}
+
 pub(super) struct ActiveRunEntry {
     pub(super) run: Run,
     pub(super) backup_id: Option<BackupId>,
     pub(super) backup_name: String,
     pub(super) progress: ActiveRunProgressDto,
     pub(super) cancel: CancelHandle,
-    pub(super) sleep_interrupted: bool,
+    /// Why the run was stopped by the daemon, not the user (it ends as `Interrupted`).
+    pub(super) interruption: Option<Interruption>,
     /// The run holds the exclusive repository lock (a backup's `forget`).
     pub(super) exclusive: bool,
 }

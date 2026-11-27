@@ -5,7 +5,7 @@
 
 use super::availability::DestinationClaimGuard;
 use super::run_errors::extract_last_run_error_info;
-use super::state::{ActiveRunEntry, DaemonCore, SimulatedOverallStatus};
+use super::state::{ActiveRunEntry, DaemonCore, Interruption, SimulatedOverallStatus};
 use crate::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSummaryDto, BlockingStateDto,
     DaemonStateDto, DestinationSummaryDto, OverallStatusDto, OverallStatusKind, ResticStatusDto,
@@ -182,7 +182,7 @@ impl DaemonCore {
                 seconds_remaining: 0,
             },
             cancel: cancel.clone(),
-            sleep_interrupted: false,
+            interruption: None,
             exclusive: false,
         };
         self.active_runs.insert(new.run.id.clone(), entry);
@@ -204,11 +204,9 @@ impl DaemonCore {
         }
     }
 
-    /// Whether the active run `run_id` was interrupted because the system goes to sleep.
-    pub(super) fn run_sleep_interrupted(&self, run_id: &RunId) -> bool {
-        self.active_runs
-            .get(run_id)
-            .is_some_and(|e| e.sleep_interrupted)
+    /// Why the daemon stopped the active run `run_id`, if it did (sleep or `SIGTERM`).
+    pub(super) fn run_interruption(&self, run_id: &RunId) -> Option<Interruption> {
+        self.active_runs.get(run_id).and_then(|e| e.interruption)
     }
 
     /// Computes full state snapshot (`DaemonStateDto`) and synchronized `KesticTrayState`.

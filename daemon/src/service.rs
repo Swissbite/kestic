@@ -21,6 +21,7 @@ mod restore_runner;
 mod run_errors;
 mod runtime;
 mod scheduler;
+mod shutdown;
 mod snapshot_queries;
 mod snapshots;
 mod state;
@@ -53,6 +54,7 @@ pub use restic_install::{remove_app_managed_restic, start_restic_install_async};
 pub use restore_runner::start_restore_async;
 pub use runtime::run_daemon;
 pub use scheduler::tick_scheduler_async;
+pub use shutdown::install_stop_signal;
 pub use snapshot_queries::start_snapshot_query_async;
 pub(crate) use snapshots::{list_backup_snapshots_unlocked, list_destination_snapshots_unlocked};
 pub use state::{

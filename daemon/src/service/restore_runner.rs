@@ -13,7 +13,7 @@ use super::error::{
 };
 use super::restore_preview::{RestoreContext, RestoreParams, check_params, fingerprint};
 use super::snapshot_queries::QueryResult;
-use super::state::{DaemonCore, ResticDeps, probe_for_run};
+use super::state::{DaemonCore, Interruption, ResticDeps, STOPPING, probe_for_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
 use crate::dbus_api::{ActiveRunProgressDto, RestoreRequest};
@@ -44,8 +44,7 @@ use kestic_i18n::codes::{
     ErrorKind, RestoreTargetCode, RunKindCode, RunProgressPhase, ServiceErrorCode,
 };
 use kestic_i18n::messages::{
-    ActiveRunInfo, active_run_message, interrupted_by_sleep_message, nothing_restored_message,
-    rounded_percent,
+    ActiveRunInfo, active_run_message, nothing_restored_message, rounded_percent,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -344,9 +343,7 @@ pub fn start_restore_async(
     if guard.stopping() {
         remove_created_if_empty(&setup);
         guard.release_restore(&run.id);
-        return Err(KesticServiceErr::Internal(
-            "the daemon is stopping".to_string(),
-        ));
+        return Err(KesticServiceErr::Internal(STOPPING.to_string()));
     }
     // A preview shows what one restore would do; a second restore with it could overwrite
     // what the user changed after the first.
@@ -948,10 +945,12 @@ fn record_outcome(
         Err(err) => (err, Vec::new()),
     };
     let had_plan = outcome.plan.is_some();
+    let interruption = shared.lock_unpoisoned().run_interruption(&run.id);
     match failure {
-        // Stopped because the system goes to sleep: interrupted, not cancelled by the user.
-        BackupRunError::Cancelled if shared.lock_unpoisoned().run_sleep_interrupted(&run.id) => {
-            run.summary_message = Some(tr(&interrupted_by_sleep_message()));
+        // Stopped because the system goes to sleep or the daemon ends: interrupted, not
+        // cancelled by the user. A restic the stopping daemon no longer starts ends so too.
+        _ if interruption.is_some() => {
+            run.summary_message = interruption.map(Interruption::summary);
             run.restore = had_plan.then_some(stats);
             RunStatus::Interrupted
         }

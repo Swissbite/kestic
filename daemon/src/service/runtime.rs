@@ -10,7 +10,10 @@ use super::availability::{
 use super::backup_runner::start_backup_async;
 use super::maintenance::start_all_backups_async;
 use super::scheduler::tick_scheduler_async;
-use super::state::{AVAILABILITY_CACHE_TTL_SECS, DaemonCore, DaemonOutcome, DaemonRunConfig};
+use super::shutdown::{stop_after_signal, stop_requested};
+use super::state::{
+    AVAILABILITY_CACHE_TTL_SECS, DaemonCore, DaemonOutcome, DaemonRunConfig, Interruption,
+};
 use crate::binary_watch::{BinaryIdentity, BinaryStatus};
 use crate::dbus_api::{DestinationAvailabilityDto, KESTIC_BUS_NAME};
 use crate::dbus_server::{
@@ -45,6 +48,11 @@ const PENDING_REPLY_LIMIT: Duration = Duration::from_secs(2);
 /// Runs the Kestic daemon service loop (`SingleInstanceLock` + `net.daester.Kestic1` + `TrayHandle`).
 pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     let core = Arc::new(Mutex::new(DaemonCore::new(&config)?));
+    // `SIGTERM` during the start: nothing runs yet, so there is nothing to stop.
+    if stop_requested(config.stop_signal.as_ref()) {
+        eprintln!("kestic-daemon: SIGTERM before the start completed; exiting");
+        return Ok(DaemonOutcome::RanAndStopped);
+    }
     let (quit_tx, quit_rx) = mpsc::channel();
     let (action_tx, action_rx) = mpsc::channel();
 
@@ -124,7 +132,7 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
         tick_scheduler_async(&core);
     }
 
-    let pending_exec_path = run_daemon_event_loop(DaemonLoopContext {
+    let loop_exit = run_daemon_event_loop(DaemonLoopContext {
         core: &core,
         conn: &conn,
         tray: &tray,
@@ -143,7 +151,25 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
         handle.stop();
     }
 
+    let pending_exec_path = match loop_exit {
+        LoopExit::Signal(signal_at) => {
+            stop_after_signal(&core, signal_at);
+            None
+        }
+        LoopExit::Reexec(path) => Some(path),
+        LoopExit::Stop => None,
+    };
     shutdown_daemon_and_maybe_reexec(&core, lock, conn, tray, &config, pending_exec_path)
+}
+
+/// Why the event loop ended.
+enum LoopExit {
+    /// Quit, the run duration, or the shutdown flag.
+    Stop,
+    /// The binary was replaced; the daemon starts the new one.
+    Reexec(PathBuf),
+    /// `SIGTERM`, noticed at this instant.
+    Signal(Instant),
 }
 
 struct DaemonLoopContext<'a> {
@@ -164,7 +190,7 @@ struct DaemonLoopState {
     last_network_reconnect_probe: Option<time::OffsetDateTime>,
 }
 
-fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
+fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> LoopExit {
     let DaemonLoopContext {
         core,
         conn,
@@ -183,6 +209,11 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
     };
 
     loop {
+        // Checked first, so a replaced binary is not started after the signal.
+        if stop_requested(config.stop_signal.as_ref()) {
+            eprintln!("kestic-daemon: event loop ends: SIGTERM received");
+            return LoopExit::Signal(Instant::now());
+        }
         while let Ok(action) = action_rx.try_recv() {
             handle_tray_action(core, conn, config, action);
         }
@@ -220,14 +251,14 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
                         crate::log_label(),
                         reason.as_str()
                     );
-                    return Some(bin_id.exe_path().to_path_buf());
+                    return LoopExit::Reexec(bin_id.exe_path().to_path_buf());
                 }
             }
         }
 
         if core.lock_unpoisoned().shutdown_flag.load(Ordering::SeqCst) {
             eprintln!("kestic-daemon: event loop ends: shutdown requested");
-            return None;
+            return LoopExit::Stop;
         }
 
         let step_wait = if monitor_rx.is_some() || bin_identity.is_some() {
@@ -240,16 +271,16 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> Option<PathBuf> {
             let now = Instant::now();
             if now >= end {
                 eprintln!("kestic-daemon: event loop ends: run duration elapsed");
-                return None;
+                return LoopExit::Stop;
             }
             let wait = (end - now).min(step_wait);
             if quit_rx.recv_timeout(wait).is_ok() {
                 eprintln!("kestic-daemon: event loop ends: quit requested");
-                return None;
+                return LoopExit::Stop;
             }
         } else if quit_rx.recv_timeout(step_wait).is_ok() {
             eprintln!("kestic-daemon: event loop ends: quit requested");
-            return None;
+            return LoopExit::Stop;
         }
     }
 }
@@ -284,7 +315,10 @@ fn shutdown_daemon_and_maybe_reexec(
         );
     }
 
-    if let Some(exe_path) = pending_exec_path {
+    // A `SIGTERM` that arrived after the loop ended still wins over the restart.
+    if let Some(exe_path) =
+        pending_exec_path.filter(|_| !stop_requested(config.stop_signal.as_ref()))
+    {
         use std::os::unix::process::CommandExt;
         let mut cmd = Command::new(&exe_path);
         if let Some(args) = &config.binary_watch_args {
@@ -478,7 +512,7 @@ fn handle_prepare_for_sleep(
                 .collect();
             let queued_ids: Vec<BackupId> = guard.queued_backups.iter().cloned().collect();
             for entry in guard.active_runs.values_mut() {
-                entry.sleep_interrupted = true;
+                entry.interruption = Some(Interruption::Sleep);
             }
             for bid in running_ids.into_iter().chain(queued_ids) {
                 guard.sleep_interrupted_backups.insert(bid);
