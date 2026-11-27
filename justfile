@@ -23,12 +23,15 @@ verify:
     just _nextest
 
 # Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE, the merge
-# rule, the watcher and the GitHub token of the agent container, the release version arithmetic
+# rule, the watcher and the GitHub token of the agent container, the release version arithmetic,
+# hidden Unicode characters in tracked files
 _static-checks:
     cargo fmt --all -- --check
     just _check-file-sizes
     cargo deny check
     reuse lint
+    .github/scripts/check-hidden-unicode.sh
+    .github/scripts/test-check-hidden-unicode.sh
     .devcontainer/test-gh-wrapper.sh
     .devcontainer/test-kestic-agent-watch.sh
     .devcontainer/test-kestic-agent-token.sh
