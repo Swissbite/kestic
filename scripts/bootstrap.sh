@@ -75,6 +75,7 @@ APT_PACKAGES=(
     openssh-server
     dbus-x11
     curl
+    jq
     bzip2
     gnupg
     unzip
