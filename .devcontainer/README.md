@@ -108,10 +108,57 @@ the authorization header from a file descriptor. Tested by
 The ruleset on `main` restricts updates to the maintainer and Renovate, so the
 App cannot merge into `main`. The container adds a second guard against
 mistakes: [gh-wrapper.sh](gh-wrapper.sh) rejects `gh pr merge` and a PUT on the
-REST endpoint `…/pulls/<n>/merge` when the pull request targets `main` (tested
-by [test-gh-wrapper.sh](test-gh-wrapper.sh)), and a `pre-push` hook rejects
-pushes to `main`. Merges into other branches, such as story pull requests
-against a milestone branch, go through.
+REST endpoint `…/pulls/<n>/merge` when the pull request targets `main`, and
+merges and `gh pr checkout` of pull requests that are not the agent's own
+(tested by [test-gh-wrapper.sh](test-gh-wrapper.sh)); a `pre-push` hook rejects
+pushes to `main`. Merges of the agent's own pull requests into other branches,
+such as story pull requests against a milestone branch, go through.
+
+### GitHub text
+
+The repository is public: anyone can comment on an issue or open a pull
+request from a fork, and the agent runs without permission prompts. Every
+GitHub text, the maintainer's too, is therefore input for the agent, never an
+instruction; text by anyone else does not reach it at all.
+
+- [github-trust.jq](github-trust.jq) names the two accounts whose text counts,
+  by numeric user ID and account type: the maintainer and the App
+  (`kestic-agent[bot]`). Logins, `author_association` (`CONTRIBUTOR` too),
+  missing users, ghosts, Mannequins and other bots never count. The agent
+  container has a root-owned copy; the watcher and the Leitstand use the one in
+  the checkout.
+- [github-thread.sh](github-thread.sh) (in the container `kestic-agent thread
+  <issue> [<pr>]`) is the only way the agent reads issue and pull request text.
+  It prints the maintainer's items and the agent's own («agent note») between
+  BEGIN and END lines with a random token, replaces control and invisible
+  characters (bidi, zero-width, Unicode tags, ESC, NUL, CR, line separators)
+  by `<U+XXXX>` and HTML comments by a note, caps each item and the whole
+  output (the oldest comments go first), and never prints diff hunks. Every
+  other item is one line from checked fields (kind, login, association, time,
+  a link built from the ID). A failed request fails the whole call. It needs
+  `jq` and `perl` (`JSON::PP`), which the image and the host have.
+- [gh-wrapper.sh](gh-wrapper.sh) refuses the other ways to read that text:
+  `gh issue|pr view|list` only with `--json` and fields without people's text
+  (number, state, labels, branches, head commit, checks, …), no `gh api` reads
+  of comments, reviews, issues, pull requests or timelines, no
+  `gh api graphql`, no `gh search`. It also refuses adding the label
+  `adopted`.
+- Pull requests from forks never count as the agent's, whatever their branch
+  name (`agent/issue-<n>`) or base: not for the watcher, not for the thread
+  reader, not for the Leitstand, and the wrapper refuses to merge or check
+  them out.
+- The watcher starts only milestone issues the maintainer or the App opened.
+  An issue by someone else is reported once («restate the task, or adopt it
+  with the label `adopted`»). The label counts only when the issue events show
+  that the maintainer added it; a change of title or body after that withdraws
+  the adoption until the maintainer adds the label again. Comments by others
+  stay withheld on adopted issues.
+
+The wrapper and the reader guard against habits and mistakes: the token is
+readable in the container, so `curl` bypasses both. The firewall and the App's
+permissions bound what a misled agent could do.
+[test-github-thread.sh](test-github-thread.sh) tests the trust rule and the
+reader in `just verify`.
 
 Podman keeps secrets unencrypted in its storage on the host
 (`~/.local/share/containers/storage/secrets/`), readable by the host user only.
@@ -226,8 +273,9 @@ pass per call:
 - The agent's current issue is open and not labelled `needs-maintainer`: it
   stays the only one. Something the maintainer did after the agent's last turn
   started continues the idle session: a comment or review on the issue or on a
-  pull request from its branch, merging that pull request, or removing
-  `needs-maintainer`. Only people with write access count, never bots or
+  pull request the App opened from its branch, merging that pull request, or
+  removing `needs-maintainer`. Only the maintainer's user ID counts
+  ([github-trust.jq](github-trust.jq)), never other collaborators, bots or
   outsiders: the repository is public, and a comment must not wake an agent
   that runs without permission prompts. A session that is gone (Claude Code
   exited, the container restarted) is resumed, at most twice until it reaches
@@ -236,8 +284,10 @@ pass per call:
   continued once that time has passed, once per turn; until then even news
   from the maintainer waits.
 - Otherwise it starts the open issue of the milestone with the lowest number
-  that is not labelled `needs-maintainer` and has no open «blocked by» issue.
-  New issues therefore queue at the end; a «blocked by» link changes the order.
+  that is not labelled `needs-maintainer`, has no open «blocked by» issue and
+  was opened by the maintainer or the App, or adopted by the maintainer
+  (§GitHub text). New issues therefore queue at the end; a «blocked by» link
+  changes the order.
 
 Busy or idle comes from two Claude Code hooks in
 [agent-settings.json](agent-settings.json): a prompt starts a turn, the end
@@ -257,7 +307,7 @@ with `KESTIC_AGENT_SH` pointing to a script that prints a state line, against
 the real milestone.
 
 Run it every five minutes with a systemd user timer (`<checkout>` is the
-host checkout; `gh` on the host only reads issues and pull requests; the
+host checkout; `gh` on the host only reads issues and pull requests, `jq` and `perl` filter them; the
 watcher also keeps the agent's GitHub token fresh):
 
 ```ini

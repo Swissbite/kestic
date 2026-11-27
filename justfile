@@ -23,7 +23,8 @@ verify:
     just _nextest
 
 # Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE, the merge
-# rule, the watcher and the GitHub token of the agent container, the release version arithmetic
+# rule, the watcher, the GitHub token and the GitHub text rules of the agent container, the
+# Leitstand watch loop, the release version arithmetic
 _static-checks:
     cargo fmt --all -- --check
     just _check-file-sizes
@@ -32,6 +33,8 @@ _static-checks:
     .devcontainer/test-gh-wrapper.sh
     .devcontainer/test-kestic-agent-watch.sh
     .devcontainer/test-kestic-agent-token.sh
+    .devcontainer/test-github-thread.sh
+    .agents/skills/leitstand/test-watch.sh .devcontainer/github-trust.jq
     .github/scripts/test-release-version.sh
 
 # clippy without and with the test harness

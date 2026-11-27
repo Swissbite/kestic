@@ -5,9 +5,12 @@
 # Tests the decisions of kestic-agent-watch.sh against a fake gh, a fake
 # kestic-agent.sh and a fake notify-send: which issue starts, when a session is
 # continued or resumed, whose activity counts, what is reported to the
-# maintainer, and that the agent's state line cannot run code on the host. The
-# fake gh prints what the real one prints after its --jq filter; the filters are
-# checked against the real GitHub API by hand (README.md).
+# maintainer, which issues are skipped as written by outsiders, and that the
+# agent's state line cannot run code on the host. For comments, events, pull
+# requests and issues the fake gh runs the watcher's real --jq filter over raw
+# GitHub JSON (fixtures <name>.json); other fixtures hold what the real gh
+# prints after its --jq filter, checked against the real GitHub API by hand
+# (README.md).
 
 set -euo pipefail
 
@@ -17,27 +20,42 @@ trap 'rm -rf "$tmp"' EXIT
 fix="$tmp/fixtures"
 
 # Fake gh: prints the fixture file named after the call, or nothing; fails if a
-# file <name>.fail exists.
+# file <name>.fail exists. For `api`, a fixture <name>.json is raw GitHub JSON:
+# the call's --jq filter runs over it with jq, or it is printed as it is.
 #   issue view <n>                  -> issue-<n>   ("OPEN false|true" or "CLOSED false")
-#   pr list --head agent/issue-<n>  -> prs-<n>     ("<pr> <merged epoch|0> <User|Bot>")
 #   issue list --milestone <m>      -> open-<m>    ("<n> false|true" per open issue)
-#   api repos/<o>/<r>/<rest>        -> <rest> with / replaced by _
+#   api [--paginate] repos/<o>/<r>/<rest>
+#                                   -> <rest> with / ? & = : replaced by _
+#   api graphql … -F number=<n>     -> graphql-<n>
+# An issue without a fixture (api repos/<o>/<r>/issues/<n>) is the maintainer's.
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
-key=
+key= filter=
 case "$1 $2" in
     "issue view") key="issue-$3" ;;
-    "pr list")
-        while [[ $# -gt 0 ]]; do [[ "$1" == --head ]] && key="prs-${2#agent/issue-}"; shift; done ;;
     "issue list")
         while [[ $# -gt 0 ]]; do [[ "$1" == --milestone ]] && key="open-$2"; shift; done ;;
     api*)
-        rest="${2#repos/*/*/}"
-        key="${rest//\//_}" ;;
+        shift
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --jq) filter="$2"; shift ;;
+                graphql) key=graphql ;;
+                number=*) [[ "$key" == graphql ]] && key="graphql-${1#number=}" ;;
+                repos/*) [[ -z "$key" ]] && key="$(tr '/?&=:' '_____' <<< "${1#repos/*/*/}")" ;;
+            esac
+            shift
+        done ;;
 esac
 [[ -n "$key" && -f "$FAKE_FIXTURES/$key.fail" ]] && exit 1
-if [[ -n "$key" && -f "$FAKE_FIXTURES/$key" ]]; then cat "$FAKE_FIXTURES/$key"; fi
+if [[ -n "$key" && -f "$FAKE_FIXTURES/$key.json" ]]; then
+    if [[ -n "$filter" ]]; then jq -r "$filter" "$FAKE_FIXTURES/$key.json"; else cat "$FAKE_FIXTURES/$key.json"; fi
+elif [[ -n "$key" && -f "$FAKE_FIXTURES/$key" ]]; then
+    cat "$FAKE_FIXTURES/$key"
+elif [[ "$key" =~ ^issues_([0-9]+)$ ]]; then
+    printf '{"number":%s,"user":{"login":"Swissbite","id":205621,"type":"User"},"labels":[]}\n' "${BASH_REMATCH[1]}"
+fi
 FAKE
 cat > "$tmp/bin/agent" <<'FAKE'
 #!/usr/bin/env bash
@@ -64,6 +82,83 @@ fixture() {
     local name="$1"
     shift
     printf '%s\n' "$@" > "$fix/$name"
+}
+
+# Users by numeric ID: the maintainer, the App, an outsider, a collaborator who
+# is not the maintainer, another bot, and someone with the maintainer's login
+# but another ID.
+M='{"login":"Swissbite","id":205621,"type":"User"}'
+A='{"login":"kestic-agent[bot]","id":359840804,"type":"Bot"}'
+O='{"login":"mallory","id":4242,"type":"User"}'
+C='{"login":"helper","id":777,"type":"User"}'
+R='{"login":"renovate[bot]","id":29139614,"type":"Bot"}'
+F='{"login":"Swissbite","id":1,"type":"User"}'
+
+iso() {
+    date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# comments <name> "<epoch> <user variable>"…: raw comments (or reviews with
+# created_at, the filter takes either) by those users at those times
+comments() {
+    local name="$1" items=() e u
+    shift
+    for entry in "$@"; do
+        read -r e u <<< "$entry"
+        items+=("{\"created_at\":\"$(iso "$e")\",\"user\":${!u},\"author_association\":\"OWNER\"}")
+    done
+    (IFS=,; echo "[${items[*]}]") > "$fix/$name.json"
+}
+
+# reviews <name> "<epoch> <user variable>"…: submitted reviews
+reviews() {
+    local name="$1" items=() e u
+    shift
+    for entry in "$@"; do
+        read -r e u <<< "$entry"
+        items+=("{\"submitted_at\":\"$(iso "$e")\",\"user\":${!u},\"state\":\"COMMENTED\"}")
+    done
+    (IFS=,; echo "[${items[*]}]") > "$fix/$name.json"
+}
+
+# unlabel <issue> <epoch> <user variable>: needs-maintainer removed
+unlabel() {
+    echo "[{\"event\":\"unlabeled\",\"label\":{\"name\":\"needs-maintainer\"},\"actor\":${!3},\"created_at\":\"$(iso "$2")\"}]" \
+        > "$fix/issues_$1_events.json"
+}
+
+# prs <issue> "<pr> <merged epoch|0> <author variable> <head repository>"…:
+# pull requests from the branch agent/issue-<issue>
+prs() {
+    local issue="$1" items=() n m u r merged
+    shift
+    for entry in "$@"; do
+        read -r n m u r <<< "$entry"
+        merged=null
+        [[ "$m" != 0 ]] && merged="\"$(iso "$m")\""
+        items+=("{\"number\":$n,\"merged_at\":$merged,\"user\":${!u},\"head\":{\"ref\":\"agent/issue-$issue\",\"repo\":{\"full_name\":\"$r\"}},\"base\":{\"repo\":{\"full_name\":\"Swissbite/kestic\"}}}")
+    done
+    (IFS=,; echo "[${items[*]}]") > "$fix/pulls_state_all_head_Swissbite_agent_issue-${issue}_per_page_100.json"
+}
+
+# merged_by <pr> <user variable>
+merged_by() {
+    echo "{\"number\":$1,\"merged_by\":${!2}}" > "$fix/pulls_$1.json"
+}
+
+# issue_by <n> <user variable> [<labels json>]: who opened issue <n>
+issue_by() {
+    echo "{\"number\":$1,\"user\":${!2},\"labels\":${3:-[]},\"title\":\"t\",\"body\":\"b\"}" > "$fix/issues_$1.json"
+}
+
+# adopted <n> <user variable> <epoch> [<last edit epoch>]: label adopted
+# added, and when the body was last edited
+adopted() {
+    echo "[{\"event\":\"labeled\",\"label\":{\"name\":\"adopted\"},\"actor\":${!2},\"created_at\":\"$(iso "$3")\"}]" \
+        > "$fix/issues_$1_events.json"
+    local edited=null
+    [[ -n "${4:-}" ]] && edited="\"$(iso "$4")\""
+    echo "{\"data\":{\"repository\":{\"issue\":{\"lastEditedAt\":$edited}}}}" > "$fix/graphql-$1.json"
 }
 
 # pass <agent state>: one watcher pass; the agent calls land in $FAKE_LOG.
@@ -124,41 +219,66 @@ out="$(KESTIC_AGENT_LANE='x" or true' "$here/kestic-agent-watch.sh" "M4 Restore"
 # activity after the turn started continues the session.
 fixture issue-5 "OPEN false"
 fixture "open-M4 Restore" "5 false" "6 false"
-fixture issues_5_comments "90 User OWNER"
+comments issues_5_comments "90 M"
 expect "idle, nothing new" "idle 5 100" ""
 fixture issue-5 "OPEN false"
-fixture issues_5_comments "90 User OWNER" "150 User OWNER"
+comments issues_5_comments "90 M" "150 M"
 expect "idle, maintainer comment on the issue" "idle 5 100" "$NUDGE"
 fixture issue-5 "OPEN false"
-fixture issues_5_comments "150 User NONE" "160 User CONTRIBUTOR"
-expect "idle, outsiders' comments do not count" "idle 5 100" ""
+comments issues_5_comments "150 O" "160 C"
+expect "idle, outsiders' and other collaborators' comments do not count" "idle 5 100" ""
 fixture issue-5 "OPEN false"
-fixture issues_5_comments "150 Bot OWNER" "160 Bot NONE"
+comments issues_5_comments "150 A" "160 R"
 expect "idle, bot comments (the agent itself) do not count" "idle 5 100" ""
 fixture issue-5 "OPEN false"
-fixture prs-5 "21 0 User"
-fixture pulls_21_reviews "130 User COLLABORATOR"
+comments issues_5_comments "150 F"
+expect "idle, the maintainer's login with another ID does not count" "idle 5 100" ""
+fixture issue-5 "OPEN false"
+echo '[{"created_at":"1970-01-01T00:02:30Z","user":null}]' > "$fix/issues_5_comments.json"
+expect "idle, a comment without user does not count" "idle 5 100" ""
+fixture issue-5 "OPEN false"
+prs 5 "21 0 A Swissbite/kestic"
+reviews pulls_21_reviews "130 M"
 expect "idle, review on its pull request" "idle 5 100" "$NUDGE"
 fixture issue-5 "OPEN false"
-fixture prs-5 "21 0 User"
-fixture pulls_21_comments "160 User MEMBER"
+prs 5 "21 0 A Swissbite/kestic"
+comments pulls_21_comments "160 M"
 expect "idle, review comment on its pull request" "idle 5 100" "$NUDGE"
 fixture issue-5 "OPEN false"
-fixture prs-5 "21 150 User"
+prs 5 "21 0 A Swissbite/kestic"
+comments issues_21_comments "160 M"
+expect "idle, comment on its pull request" "idle 5 100" "$NUDGE"
+fixture issue-5 "OPEN false"
+prs 5 "21 150 A Swissbite/kestic"
+merged_by 21 M
 expect "idle, maintainer merged its pull request" "idle 5 100" "$NUDGE"
 fixture issue-5 "OPEN false"
-fixture prs-5 "21 150 Bot"
+prs 5 "21 150 A Swissbite/kestic"
+merged_by 21 A
 expect "idle, the agent merged its pull request itself" "idle 5 100" ""
 fixture issue-5 "OPEN false"
-fixture issues_5_events "150 User OWNER"
+prs 5 "22 0 A mallory/kestic" "23 0 O Swissbite/kestic"
+reviews pulls_22_reviews "130 M"
+comments issues_22_comments "140 M"
+reviews pulls_23_reviews "130 M"
+expect "idle, a fork's or someone else's pull request named agent/issue-5 does not count" "idle 5 100" ""
+fixture issue-5 "OPEN false"
+prs 5 "22 150 A mallory/kestic"
+merged_by 22 M
+expect "idle, merging a fork's pull request named agent/issue-5 does not count" "idle 5 100" ""
+fixture issue-5 "OPEN false"
+unlabel 5 150 M
 expect "idle, maintainer removed the label" "idle 5 100" "$NUDGE"
 fixture issue-5 "OPEN false"
 fixture issues_5_comments.fail
-fixture issues_5_events "150 User OWNER"
+unlabel 5 150 M
 expect "idle, activity unreadable: no decision on a partial read" "idle 5 100" ""
 fixture issue-5 "OPEN false"
-fixture issues_5_events "150 Bot OWNER"
+unlabel 5 150 A
 expect "idle, the agent removed the label itself" "idle 5 100" ""
+fixture issue-5 "OPEN false"
+unlabel 5 150 C
+expect "idle, another collaborator removed the label" "idle 5 100" ""
 fixture issue-5.fail
 fixture "open-M4 Restore" "6 false"
 expect "current issue unreadable" "idle 5 100" ""
@@ -206,7 +326,7 @@ fixture "open-M4 Restore" "6 false"
 expect "current story closed" "idle 5 100" "start 6 m4"
 fixture issue-5 "OPEN true"
 fixture "open-M4 Restore" "5 true" "6 false"
-fixture issues_5_comments "150 User OWNER"
+comments issues_5_comments "150 M"
 pass "idle 5 100"
 [[ "$(cat "$FAKE_LOG")" == "start 6 m4" ]] || fail "current story held: '$(cat "$FAKE_LOG")'"
 pass "idle 5 100"
@@ -223,7 +343,7 @@ reset
 
 # The state line comes from the container: it must not run code on the host.
 fixture issue-5 "OPEN false"
-fixture issues_5_comments "150 User OWNER"
+comments issues_5_comments "150 M"
 pass 'idle 5 base[$(touch '"$tmp"'/pwned)]'
 [[ ! -e "$tmp/pwned" ]] || fail "turn from the container ran a command on the host"
 reset
@@ -266,8 +386,7 @@ reset
 # While the limit has not reset, the maintainer's news waits too; afterwards it
 # continues the session as usual.
 fixture issue-5 "OPEN false"
-fixture prs-5 ""
-fixture issues_5_comments "150 User OWNER"
+comments issues_5_comments "150 M"
 pass "idle 5 100 ok $(($(date +%s) + 3600))"
 [[ ! -s "$FAKE_LOG" ]] || fail "news during a limit: agent called with '$(cat "$FAKE_LOG")'"
 pass "idle 5 100 ok 200"
@@ -287,6 +406,47 @@ fixture issue-5 "OPEN false"
 pass "idle 5 100 ok 0200" || fail "reset time 0200: watcher failed"
 [[ "$(cat "$FAKE_LOG")" == "$LIMIT_NUDGE" ]] || fail "reset time 0200: agent called with '$(cat "$FAKE_LOG")'"
 reset
+
+# Issues opened by someone other than the maintainer or the App are skipped and
+# reported once; the maintainer's label adopted starts them, unless the text
+# changed afterwards.
+fixture "open-M4 Restore" "6 false" "7 false"
+issue_by 6 O
+echo '[]' > "$fix/issues_6_events.json"
+pass "none 0 0"
+[[ "$(cat "$FAKE_LOG")" == "start 7 m4" ]] || fail "outsider's issue: agent called with '$(cat "$FAKE_LOG")'"
+pass "none 0 0"
+[[ "$(grep -c '#6 was opened by an outsider' "$FAKE_NOTES")" == 1 ]] || fail "outsider's issue not reported exactly once"
+reset
+fixture "open-M4 Restore" "6 false"
+issue_by 6 R
+echo '[]' > "$fix/issues_6_events.json"
+expect "another bot's issue is skipped" "none 0 0" ""
+fixture "open-M4 Restore" "6 false"
+issue_by 6 A
+expect "the App's own issue starts" "none 0 0" "start 6 m4"
+fixture "open-M4 Restore" "6 false"
+issue_by 6 O '[{"name":"adopted"}]'
+adopted 6 M 1000
+expect "issue adopted by the maintainer starts" "none 0 0" "start 6 m4"
+fixture "open-M4 Restore" "6 false"
+issue_by 6 O '[{"name":"adopted"}]'
+adopted 6 A 1000
+expect "label adopted added by the App does not count" "none 0 0" ""
+fixture "open-M4 Restore" "6 false"
+issue_by 6 O '[{"name":"adopted"}]'
+adopted 6 C 1000
+expect "label adopted added by another collaborator does not count" "none 0 0" ""
+fixture "open-M4 Restore" "6 false" "7 false"
+issue_by 6 O '[{"name":"adopted"}]'
+adopted 6 M 1000 2000
+pass "none 0 0"
+[[ "$(cat "$FAKE_LOG")" == "start 7 m4" ]] || fail "edited after adoption: agent called with '$(cat "$FAKE_LOG")'"
+grep -q '#6 was edited after it was adopted' "$FAKE_NOTES" || fail "edited after adoption: not reported"
+reset
+fixture "open-M4 Restore" "6 false" "7 false"
+fixture issues_6.fail
+expect "author unreadable: that issue is skipped" "none 0 0" "start 7 m4"
 
 # A container that is not running is reported once per hour, nothing is started.
 fixture "open-M4 Restore" "6 false"
