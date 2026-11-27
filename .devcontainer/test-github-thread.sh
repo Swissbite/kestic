@@ -158,7 +158,8 @@ grep -qF "visible [html comment removed, 20 chars] after" <<< "$out" || fail "sa
 grep -qF "open [html comment removed," <<< "$out" || fail "sanitising: unclosed HTML comment not replaced"
 ! grep -q "hidden instruction\|never closed" <<< "$out" || fail "sanitising: HTML comment text printed"
 ! LC_ALL=C grep -q $'\x1b\|\r' <<< "$out" || fail "sanitising: raw ESC or CR printed"
-! grep -qP '[\x{200B}\x{202E}\x{2028}\x{E0041}]' <<< "$out" || fail "sanitising: raw invisible character printed"
+perl -CS -ne '$found = 1 if /[\x{200B}\x{202E}\x{2028}\x{E0041}]/; END { exit($found ? 1 : 0) }' <<< "$out" ||
+    fail "sanitising: raw invisible character printed"
 
 # ---- Caps: per item and in total; the oldest comments go first.
 reset
