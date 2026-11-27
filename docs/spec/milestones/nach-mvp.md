@@ -67,3 +67,15 @@ Nach M6 bzw. nach `v0.6.0` geplant; Details im jeweiligen Issue.
 | – (FR-38) | «Erwartung für das erste Backup kommunizieren»: Dauer und Fortsetzen nach Unterbrechung (die Grössenschätzung hat AC-M6-01-5) |
 | – (FR-14) | Erkennung umgezogener Repos beim Bearbeiten einer Verbindung (Abgleich der bekannten Snapshots, Hinweis «Umgezogenes Repository erkannt», Zustand «Kit fehlt» nach dem Umzug, Feld «Passwort des neuen Repositorys»): im MVP vergleicht Kestic nur die Repo-ID (FR-56) |
 | – (U-Tasten) | Ctrl+R und F5 (Aktualisieren): die GUI aktualisiert über Signale des Daemons |
+
+## Zurückgestellt aus dem UX-Review (M6-S24, #107)
+
+Entscheide des Maintainers vom 2026-11-27 (Kommentar auf #107); die Kennungen verweisen auf den Kommentar «consolidated decisions».
+
+| Kennung | Inhalt |
+| --- | --- |
+| B13 (ii) | «Mit restic prüfen» bei «Pfad testen»: `backup --dry-run -vv` auf genau diesen Pfad, damit auch Marker-Dateien und Grössenregeln geprüft sind (in M6 nennt «Pfad testen» nur, was es nicht prüft, AC-M6-47-3) |
+| B13 (iii) | Ziele, die nur Anhängen erlauben (append-only, unveränderlich): ein Schalter, der `forget` und `prune` auslässt (in M6 eine bekannte Einschränkung im Handbuch, AC-M6-13-7) |
+| B13 (iv) | `--iexclude` je Regel (Gross- und Kleinschreibung ignorieren); mehrere Marker-Dateien je Backup |
+| B15 | Grund verpasster Termine (Rechner aus, Ruhezustand, Ziel nicht erreichbar, Laufbedingungen) auf der Karte und in der Benachrichtigung «überfällig» («4 Termine verpasst – Rechner war aus»); braucht eine Aufzeichnung je Termin im Planer (in M6 nur «Zuletzt erfolgreich», S42) |
+| B19 | Filter «Gelöschte Dateien» im Bereich «Wiederherstellen»: vergleicht den neuesten Snapshot mit der Platte und listet, was dort fehlt |
