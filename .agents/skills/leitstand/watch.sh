@@ -17,7 +17,12 @@ env_file="${XDG_CONFIG_HOME:-$HOME/.config}/leitstand/$project.env"
 : "${LEITSTAND_REPO:?}" "${LEITSTAND_AGENTS:?}" "${LEITSTAND_MAINTAINER:?}"
 : "${LEITSTAND_AGENT_STATE:=}" "${LEITSTAND_AGENT_PANE:=}"
 : "${LEITSTAND_CHECKS:=verify CodeQL}" "${LEITSTAND_MAIN_PRS:=}"
-: "${LEITSTAND_SUBAGENT_MAX_MIN:=25}" "${LEITSTAND_DISK_MIN_GB:=25}"
+: "${LEITSTAND_SUBAGENT_MAX_MIN:=25}" "${LEITSTAND_DISK_MIN_GB:=25}" "${LEITSTAND_IDLE_MAX_MIN:=30}"
+# Console patterns; the defaults match Claude Code. An empty pattern disables its check.
+: "${LEITSTAND_PROMPT_PATTERN=Do you want to proceed}"
+: "${LEITSTAND_LIMIT_PATTERN=hit your .*limit}"
+: "${LEITSTAND_LIMIT_RESET_PATTERN=resets [0-9:apm]* ([^)]*)}"
+: "${LEITSTAND_SUBAGENT_PATTERN=◯ .* [0-9]+m [0-9]+s}"
 
 cd "$LEITSTAND_REPO" || exit 1
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/leitstand/$project"
@@ -40,6 +45,22 @@ pr_filter="$checks_json as \$checks | "'. as $p | ($p.statusCheckRollup | map(se
       then "ready:\($p.number):\($p.headRefOid[0:7])"
       else empty end'
 
+# Remembers since when agent $1 has been idle ($2 is its state) and reports `idle:<agent>:<since>`
+# once it stays idle longer than LEITSTAND_IDLE_MAX_MIN. An idle agent with open work is stuck;
+# an idle agent with nothing left to do is reported once per idle period.
+idle_since() {
+    local file="$state_dir/idle-$1" now since
+    if [[ "$2" != idle ]]; then
+        rm -f -- "$file"
+        return 0
+    fi
+    now=$(date +%s)
+    [[ -s "$file" ]] || echo "$now" >"$file"
+    since=$(<"$file")
+    (( now - since >= LEITSTAND_IDLE_MAX_MIN * 60 )) && echo "idle:$1:$(date -d "@$since" +%Y%m%d%H%M)"
+    return 0
+}
+
 events() {
     local entry agent branch milestone st pane
     IFS=';' read -ra entries <<<"$LEITSTAND_AGENTS"
@@ -51,12 +72,14 @@ events() {
                 busy|idle) ;;
                 *) echo "state:$agent:${st// /_}" ;;
             esac
+            idle_since "$agent" "${st%% *}"
         fi
         pane=$(for_agent "$LEITSTAND_AGENT_PANE" "$agent" | grep -v '^[[:space:]]*$' | tail -n 25)
-        grep -q 'Do you want to proceed' <<<"$pane" && echo "prompt:$agent:$(date +%H)"
-        grep -q 'hit your .*limit' <<<"$pane" \
-            && echo "limit:$agent:$(grep -o 'resets [0-9:apm]* ([A-Z]*)' <<<"$pane" | tail -1 | tr ' ' _)"
-        grep -E '◯ .* [0-9]+m [0-9]+s' <<<"$pane" | while read -r line; do
+        [[ -n "$LEITSTAND_PROMPT_PATTERN" ]] && grep -q -- "$LEITSTAND_PROMPT_PATTERN" <<<"$pane" \
+            && echo "prompt:$agent:$(date +%H)"
+        [[ -n "$LEITSTAND_LIMIT_PATTERN" ]] && grep -q -- "$LEITSTAND_LIMIT_PATTERN" <<<"$pane" \
+            && echo "limit:$agent:$(grep -o -- "${LEITSTAND_LIMIT_RESET_PATTERN:-.^}" <<<"$pane" | tail -1 | tr ' ' _)"
+        [[ -n "$LEITSTAND_SUBAGENT_PATTERN" ]] && grep -E -- "$LEITSTAND_SUBAGENT_PATTERN" <<<"$pane" | while read -r line; do
             m=$(grep -oE '[0-9]+m [0-9]+s' <<<"$line" | head -1 | cut -dm -f1)
             (( m >= LEITSTAND_SUBAGENT_MAX_MIN )) \
                 && echo "subagent:$agent:over-${LEITSTAND_SUBAGENT_MAX_MIN}min:$(date +%Y%m%d%H)"
