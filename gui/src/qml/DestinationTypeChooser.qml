@@ -161,6 +161,14 @@ ColumnLayout {
         ]
     }
 
+    // The daemon has not answered with the destination types yet.
+    Kirigami.LoadingPlaceholder {
+        objectName: chooser.namePrefix + "CardsLoading"
+        Layout.fillWidth: true
+        visible: chooser.pendingCards !== 0 && chooser.cards.length === 0
+        text: i18n("Loading…")
+    }
+
     Kirigami.ListSectionHeader {
         objectName: chooser.namePrefix + "ReadySection"
         Layout.fillWidth: true

@@ -295,11 +295,19 @@ ColumnLayout {
             }
         }
 
+        Kirigami.LoadingPlaceholder {
+            objectName: form.namePrefix + "DrivesLoading"
+            Layout.fillWidth: true
+            visible: drivePicker.drives.length === 0 && drivePicker.pendingDrives !== 0
+            text: i18n("Loading…")
+        }
+
         Kirigami.InlineMessage {
             objectName: form.namePrefix + "NoDriveMessage"
             Layout.fillWidth: true
             type: drivePicker.loadError !== "" ? Kirigami.MessageType.Error : Kirigami.MessageType.Information
-            visible: drivePicker.drives.length === 0
+            // Only once the daemon has answered: until then nobody knows whether a drive is there.
+            visible: drivePicker.drives.length === 0 && drivePicker.pendingDrives === 0
             text: drivePicker.loadError !== "" ? drivePicker.loadError : i18n("No removable drive is plugged in.")
         }
 

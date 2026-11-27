@@ -828,7 +828,8 @@ bool requests_at_once(int code, const char* method, const std::function<int()>& 
 void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     auto stop = std::make_shared<bool>(false);
-    auto largest_gap = watch_main_thread_gaps(window, stop);
+    auto building_page = std::make_shared<bool>(false);
+    auto largest_gap = watch_main_thread_gaps(window, stop, building_page);
     auto step = std::make_shared<int>(-1);
     auto waited = std::make_shared<QElapsedTimer>();
     waited->start();
@@ -898,11 +899,51 @@ void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
             }
             break;
         }
+        case 6:
+            // Building the wizard is QML work, not a wait for the daemon.
+            *building_page = true;
+            QMetaObject::invokeMethod(window, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QStringLiteral("init")));
+            break;
+        case 7: {
+            // The destination types are still on their way: the step says so instead of showing nothing.
+            QQuickItem* loading = child_item(window, "wizDestCardsLoading");
+            QQuickItem* ready = child_item(window, "wizDestReadySection");
+            SMOKE_CHECK3("M6", 78, loading, loading->isVisible(), ready && !ready->isVisible(),
+                "(b) the destination types show no loading state while they are on their way");
+            break;
+        }
+        case 8: {
+            QQuickItem* ready = child_item(window, "wizDestReadySection");
+            if (!ready || !ready->isVisible()) {
+                --*step;
+                return;
+            }
+            QQuickItem* loading = child_item(window, "wizDestCardsLoading");
+            SMOKE_CHECK2("M6", 78, loading, !loading->isVisible(), "(b) the loading state stays after the destination types arrived");
+            QObject* wizard = child_object(window, "addDestinationWizard");
+            SMOKE_CHECK("M6", 78, wizard, "addDestinationWizard missing");
+            auto* draft = wizard->property("draft").value<QObject*>();
+            SMOKE_CHECK("M6", 78, draft, "the wizard's draft missing");
+            *building_page = true;
+            draft->setProperty("typeCard", QStringLiteral("drive"));
+            wizard->setProperty("step", 2);
+            break;
+        }
+        case 9: {
+            // The drives are still on their way: no claim that none is plugged in.
+            QQuickItem* loading = child_item(window, "wizDestDrivesLoading");
+            QQuickItem* none = child_item(window, "wizDestNoDriveMessage");
+            SMOKE_CHECK3("M6", 79, loading, loading->isVisible(), none && !none->isVisible(),
+                "(b) the drive list shows no loading state or claims that no drive is plugged in");
+            break;
+        }
         default: {
+            QQuickItem* drives_loading = child_item(window, "wizDestDrivesLoading");
             const bool arrived = role_value(model_named(window, "backupsModel"), 0, "name").toString() == QLatin1String("Renamed Documents")
                 && backend->property("default_overdue_threshold").toInt() == 5
                 && !backend->property("selected_run_title").toString().isEmpty()
-                && !backend->property("snapshots_loading").toBool();
+                && !backend->property("snapshots_loading").toBool()
+                && drives_loading && !drives_loading->isVisible();
             if (!arrived) {
                 return;
             }
@@ -910,7 +951,8 @@ void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
             *stop = true;
             SMOKE_CHECK("M6", 77, *largest_gap <= 100,
                 QStringLiteral("(a) the main thread paused %1 ms while the daemon was slow").arg(*largest_gap));
-            smoke_finish("M6", warnings.get(), window, out_path);
+            // The drive message fades in; the screenshot shows it once it is there.
+            QTimer::singleShot(600, window, [=]() { smoke_finish("M6", warnings.get(), window, out_path); });
             return;
         }
         }
