@@ -14,7 +14,7 @@ This skill holds only the method. The project knowledge (mandate, project rules,
 1. **Instance file.** Read `${XDG_CONFIG_HOME:-~/.config}/leitstand/<project>.env`. Its template is named in the project's `AGENTS.md` (Skills table). If the file is missing, copy the template, ask the human for every value marked `ask`, and write it. Never commit this file: it holds private paths.
 2. **Knowledge.** Read everything under `LEITSTAND_KNOWLEDGE`: the instance note (mandate, rules, adapters), the lessons, and the state note of the current milestone. The mandate is binding; anything not in it is the human's call.
 3. **State from the forge.** For each pair in `LEITSTAND_AGENTS`: the milestone's open issues with labels and «blocked by», issues labelled `needs-maintainer` with their last comment, open pull requests into the branch with their checks, and the agent's state through `LEITSTAND_AGENT_STATE`.
-4. **Watch loop.** Start `.agents/skills/leitstand/watch.sh <project>` in the background (§2). Report the state to the human in a few lines.
+4. **Watch loop.** Start `.agents/skills/leitstand/watch.sh <project>` in the background (§2). If it exits with «another watch loop runs», another Leitstand session is active: take over only after the human or that session agrees, and only once its loop is stopped. Report the state to the human in a few lines.
 
 ## 2. Watch loop
 

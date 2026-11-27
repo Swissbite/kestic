@@ -27,6 +27,14 @@ env_file="${XDG_CONFIG_HOME:-$HOME/.config}/leitstand/$project.env"
 cd "$LEITSTAND_REPO" || exit 1
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/leitstand/$project"
 mkdir -p "$state_dir"
+# One loop per project: two loops share the seen file, and the second would swallow events the
+# first never reports. The lock is released when this process exits.
+exec 9>>"$state_dir/lock"
+if ! flock -n 9; then
+    echo "another watch loop runs for $project (pid $(<"$state_dir/pid")); stop it or ask its session first" >&2
+    exit 3
+fi
+echo $$ >"$state_dir/pid"
 SEEN="$state_dir/seen"
 touch "$SEEN"
 end=$(( $(date +%s) + ${2:-36000} ))
@@ -35,7 +43,7 @@ checks_json=$(printf '%s\n' $LEITSTAND_CHECKS | jq -R . | jq -sc .)
 # Runs command template $1 for agent $2.
 for_agent() {
     [[ -n "$1" ]] || return 0
-    bash -c "${1//\{agent\}/$2}" 2>/dev/null
+    bash -c "${1//\{agent\}/$2}" 2>/dev/null 9>&-
 }
 
 # A pull request as `red:<n>:<sha>` or `ready:<n>:<sha>`, judged by the required checks only.
@@ -106,13 +114,14 @@ events() {
 }
 
 while (( $(date +%s) < end )); do
-    new=$(events | sort -u | grep -vxF -f "$SEEN" || true)
+    # Children never inherit the lock, so a stopped loop does not leave it held by a straggler.
+    new=$(events 9>&- | sort -u | grep -vxF -f "$SEEN" || true)
     if [[ -n "$new" ]]; then
         printf '%s\n' "$new" >>"$SEEN"
         echo "$(date +%H:%M) events:"
         printf '%s\n' "$new"
         exit 0
     fi
-    sleep 120
+    sleep 120 9>&-
 done
 echo "$(date +%H:%M) no events"
