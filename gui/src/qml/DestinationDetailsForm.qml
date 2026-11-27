@@ -299,7 +299,7 @@ ColumnLayout {
             objectName: form.namePrefix + "DrivesLoading"
             Layout.fillWidth: true
             visible: drivePicker.drives.length === 0 && drivePicker.pendingDrives !== 0
-            text: i18n("Loading…")
+            text: Texts.label("loading")
         }
 
         Kirigami.InlineMessage {

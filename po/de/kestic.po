@@ -580,7 +580,7 @@ msgstr "Der Hintergrunddienst läuft nicht. Geplante Backups laufen nicht."
 msgid "Starting the background service…"
 msgstr "Hintergrunddienst startet…"
 
-#: gui/src/qml/OverviewPage.qml
+#: gui/src/ui_texts.rs
 msgid "Loading…"
 msgstr "Wird geladen…"
 

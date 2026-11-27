@@ -81,7 +81,7 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             visible: appBackend.state_loading
-            text: appBackend.blocking_kind === "daemon_starting" ? appBackend.blocking_message : i18n("Loading…")
+            text: appBackend.blocking_kind === "daemon_starting" ? appBackend.blocking_message : Texts.label("loading")
         }
 
         // Welcome view when no config exists
