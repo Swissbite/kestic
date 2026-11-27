@@ -51,9 +51,11 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.PlaceholderMessage {
+            objectName: "destinationsEmptyPlaceholder"
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: destinationsListView.count === 0
+            // Nothing is known before the first state arrived.
+            visible: destinationsListView.count === 0 && !appBackend.state_loading
             icon.name: "network-server"
             text: i18n("No destinations configured yet")
             explanation: i18n("Add a local folder or REST server destination to store encrypted backups.")

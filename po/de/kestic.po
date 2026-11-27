@@ -580,6 +580,10 @@ msgstr "Der Hintergrunddienst läuft nicht. Geplante Backups laufen nicht."
 msgid "Starting the background service…"
 msgstr "Hintergrunddienst startet…"
 
+#: gui/src/qml/OverviewPage.qml
+msgid "Loading…"
+msgstr "Wird geladen…"
+
 #: gui/src/list_model.rs:40 gui/src/qml/NewBackupWizard.qml:154
 msgid "Personal folder"
 msgstr "Persönlicher Ordner"

@@ -53,9 +53,11 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.PlaceholderMessage {
+            objectName: "backupsEmptyPlaceholder"
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: backupsListView.count === 0
+            // Nothing is known before the first state arrived.
+            visible: backupsListView.count === 0 && !appBackend.state_loading
             icon.name: "folder-sync"
             text: Texts.label("no_backups")
             explanation: i18n("Create a backup to define what folder to back up and where to store it.")

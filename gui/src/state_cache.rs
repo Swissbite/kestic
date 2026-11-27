@@ -152,6 +152,11 @@ pub struct SharedGuiState {
     pub progress_dirty: bool,
     /// The GUI started the daemon and waits for it to take its bus name.
     pub daemon_starting: bool,
+    /// The first state of the daemon is still on its way.
+    pub first_fetch_pending: bool,
+    /// The quit dialog opened before the first state arrived; that state names the running
+    /// backup.
+    pub quit_dialog_waits_for_state: bool,
     pub pending_blocked: Option<(String, BlockedReason)>,
     /// A blocked manual run whose message waits for the state fetched after it, so the message
     /// names the backup and its unmet conditions as they are now.
@@ -178,6 +183,8 @@ impl SharedGuiState {
             state_fetched: false,
             progress_dirty: false,
             daemon_starting: false,
+            first_fetch_pending: true,
+            quit_dialog_waits_for_state: false,
             pending_blocked: None,
             blocked_after_refresh: None,
             pending_show_window: false,
@@ -246,14 +253,16 @@ pub fn make_client() -> Result<KesticClient, String> {
     ))
 }
 
-/// Starts the background threads that follow the daemon and loads its state. A daemon that is
-/// not running yet is started in the background, so the window shows at once.
+/// Starts the background threads that follow the daemon and has its state loaded in the
+/// background. A daemon that is not running yet is started in the background too, so the window
+/// shows at once.
 pub fn initialize_and_sync() {
     daemon_events::start();
     let no_autostart = shared_state().lock_unpoisoned().launch.no_autostart_daemon;
     let owned = make_client().is_ok_and(|c| c.is_bus_owned().unwrap_or(false));
     if owned {
-        refresh_state_now();
+        // The refresher fetches the first state; meanwhile the window shows that it loads.
+        daemon_events::request_refresh();
     } else if no_autostart {
         // Nothing to start: this only reports that the daemon is missing.
         ensure_daemon_and_refresh();
@@ -277,6 +286,7 @@ pub fn ensure_daemon_and_refresh() {
             let mut guard = shared_state().lock_unpoisoned();
             guard.daemon_reachable = false;
             guard.daemon_error = Some(err);
+            guard.first_fetch_pending = false;
             guard.state_fetched = true;
             return;
         }
@@ -301,6 +311,7 @@ pub fn ensure_daemon_and_refresh() {
                 let mut guard = shared_state().lock_unpoisoned();
                 guard.daemon_reachable = false;
                 guard.daemon_error = Some(err.to_string());
+                guard.first_fetch_pending = false;
                 guard.state_fetched = true;
                 return;
             }
@@ -311,6 +322,7 @@ pub fn ensure_daemon_and_refresh() {
         let mut guard = shared_state().lock_unpoisoned();
         guard.daemon_reachable = false;
         guard.daemon_error = Some(i18n("The background service did not start.").to_string());
+        guard.first_fetch_pending = false;
         guard.state_fetched = true;
         return;
     }
@@ -376,6 +388,7 @@ pub fn refresh_state_now() {
             let mut guard = shared_state().lock_unpoisoned();
             guard.daemon_reachable = false;
             guard.daemon_error = Some(err);
+            guard.first_fetch_pending = false;
             guard.state_fetched = true;
             return;
         }
@@ -395,6 +408,7 @@ pub fn refresh_state_now() {
                     state.overall.active_run_progress.as_ref(),
                 );
                 guard.state = Some(state);
+                guard.first_fetch_pending = false;
                 guard.state_fetched = true;
                 (!was_reachable, guard.listening)
             };
@@ -409,6 +423,7 @@ pub fn refresh_state_now() {
                 let mut guard = shared_state().lock_unpoisoned();
                 guard.daemon_reachable = false;
                 guard.daemon_error = Some(err.to_string());
+                guard.first_fetch_pending = false;
                 guard.state_fetched = true;
             }
             daemon_events::retry_while_unreachable();

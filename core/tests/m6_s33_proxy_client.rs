@@ -123,3 +123,87 @@ fn ac_m6_33_2b_daemon_calls_go_through_generated_proxy() {
         "(b) the client is built on a `#[proxy]` trait for net.daester.Kestic1"
     );
 }
+
+/// Code that reaches the daemon synchronously; outside the daemon modules the Qt thread must
+/// not run it.
+const BLOCKING_DAEMON_CALLS: [&str; 5] = [
+    "make_client(",
+    "refresh_state_now(",
+    "ensure_daemon_and_refresh(",
+    "gui_connection(",
+    "block_on(",
+];
+
+/// The modules that call the daemon off the Qt thread: the state cache and its background
+/// threads, and the worker for the window's actions.
+const DAEMON_MODULES: [&str; 3] = [
+    "gui/src/state_cache.rs",
+    "gui/src/daemon_events.rs",
+    "gui/src/backend/daemon_call.rs",
+];
+
+/// Daemon calls whose result QML uses at once; they still run on the Qt thread. Per file.
+const NOT_YET_OFF_THE_QT_THREAD: [(&str, usize); 10] = [
+    ("gui/src/backend.rs", 1),
+    ("gui/src/backend/backups.rs", 8),
+    ("gui/src/backend/destinations.rs", 9),
+    ("gui/src/backend/previews.rs", 10),
+    ("gui/src/backend/restic_install.rs", 8),
+    ("gui/src/backend/restore.rs", 2),
+    ("gui/src/backend/schedules.rs", 8),
+    ("gui/src/destination_input.rs", 1),
+    ("gui/src/models/restore_preview_model.rs", 3),
+    ("gui/src/models/snapshot_query.rs", 2),
+];
+
+/// AC-M6-33-1 (a), source side: outside the daemon modules, no GUI code reaches the daemon
+/// synchronously, apart from the listed calls whose result QML uses at once.
+#[test]
+fn ac_m6_33_1_gui_reaches_the_daemon_only_off_the_qt_thread() {
+    let root = workspace_root();
+    let mut files = Vec::new();
+    rust_files(&root.join("gui/src"), &mut files);
+    let mut found = Vec::new();
+    for file in &files {
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(file)
+            .display()
+            .to_string();
+        if DAEMON_MODULES.contains(&rel.as_str()) || rel.ends_with("_tests.rs") {
+            continue;
+        }
+        let source: String = fs::read_to_string(file)
+            .expect("read source")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let count: usize = BLOCKING_DAEMON_CALLS
+            .iter()
+            .map(|pattern| {
+                source
+                    .match_indices(pattern)
+                    .filter(|(at, _)| {
+                        !source[..*at]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+                    })
+                    .count()
+            })
+            .sum();
+        if count > 0 {
+            found.push((rel, count));
+        }
+    }
+    found.sort();
+    let expected: Vec<(String, usize)> = NOT_YET_OFF_THE_QT_THREAD
+        .iter()
+        .map(|(file, count)| ((*file).to_string(), *count))
+        .collect();
+    assert_eq!(
+        found, expected,
+        "(a) GUI code outside the daemon modules that reaches the daemon synchronously"
+    );
+}

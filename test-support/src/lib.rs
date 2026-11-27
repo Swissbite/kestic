@@ -8,6 +8,7 @@
 //! dev-dependency; never part of a shipped binary.
 
 pub mod bus;
+pub mod delayed_daemon;
 pub mod gui;
 pub mod keyring;
 pub mod password;

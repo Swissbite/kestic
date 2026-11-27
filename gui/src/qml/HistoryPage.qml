@@ -121,9 +121,11 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.PlaceholderMessage {
+            objectName: "historyEmptyPlaceholder"
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.largeSpacing * 4
-            visible: runsListView.count === 0
+            // Nothing is known before the first state arrived.
+            visible: runsListView.count === 0 && !appBackend.state_loading
             icon.name: "view-history"
             text: i18n("No matching runs found")
             explanation: i18n("Completed, failed, and active backup runs appear here.")

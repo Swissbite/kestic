@@ -4,6 +4,7 @@
 //! Daemon connection, state synchronization, event polling, and availability checks
 //! for [`super::qobject::KesticApp`].
 
+use super::daemon_call::Lane;
 use super::qobject;
 use crate::daemon_events::{attach_gui_thread, request_refresh, start_daemon_in_background};
 use crate::overall_text::{
@@ -13,8 +14,7 @@ use crate::restic_section_view::restic_section_view;
 use crate::state_cache::{
     daemon_unavailable_text, format_overall_visual, format_pause_line, i18n, initialize_and_sync,
     localized_condition_override_message, localized_manual_block_message,
-    localized_unmet_conditions, lookup_backup_summary, make_client, refresh_state_now,
-    shared_state,
+    localized_unmet_conditions, lookup_backup_summary, shared_state,
 };
 use crate::time_texts::daemon_now;
 use cxx_qt::Threading;
@@ -23,6 +23,10 @@ use kestic_core::model::ResticProvider;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Counts the calls of `window_active`, so a queued call knows whether a newer one came.
+static WINDOW_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 impl qobject::KesticApp {
     pub fn initialize(mut self: Pin<&mut Self>) {
@@ -42,15 +46,10 @@ impl qobject::KesticApp {
         self.as_mut().set_show_restore_on_start(show_restore);
         if show_quit {
             let (has_running, running_name) = {
-                let guard = shared_state().lock_unpoisoned();
-                let active = guard
-                    .state
-                    .as_ref()
-                    .and_then(|s| s.overall.active_run_progress.as_ref());
-                (
-                    active.is_some(),
-                    active.map_or_default(|a| a.backup_name.clone()),
-                )
+                let mut guard = shared_state().lock_unpoisoned();
+                // The first state may still be on its way; it fills in the running backup.
+                guard.quit_dialog_waits_for_state = guard.state.is_none();
+                running_backup(guard.state.as_ref())
             };
             self.as_mut().set_quit_has_running_run(has_running);
             self.as_mut()
@@ -163,8 +162,18 @@ impl qobject::KesticApp {
     }
 
     fn apply_unreachable_state(mut self: Pin<&mut Self>) {
-        let starting = shared_state().lock_unpoisoned().daemon_starting;
-        if starting {
+        let (starting, first_fetch) = {
+            let guard = shared_state().lock_unpoisoned();
+            (guard.daemon_starting, guard.first_fetch_pending)
+        };
+        if first_fetch && !starting {
+            // The daemon runs; its first state is still on its way.
+            self.as_mut().set_blocking_kind(QString::from(""));
+            self.as_mut().set_blocking_message(QString::from(""));
+            self.as_mut().set_overall_headline(QString::from(""));
+            self.as_mut().set_overall_icon(QString::from(""));
+            self.as_mut().set_overall_color_kind(QString::from("text"));
+        } else if starting {
             let text = i18n("Starting the background service…").to_string();
             self.as_mut()
                 .set_blocking_kind(QString::from("daemon_starting"));
@@ -228,17 +237,30 @@ impl qobject::KesticApp {
     }
 
     pub(super) fn apply_cached_state(mut self: Pin<&mut Self>) {
-        let (reachable, state_opt) = {
+        let (reachable, state_opt, loading) = {
             let guard = shared_state().lock_unpoisoned();
-            (guard.daemon_reachable, guard.state.clone())
+            (
+                guard.daemon_reachable,
+                guard.state.clone(),
+                !guard.daemon_reachable && (guard.daemon_starting || guard.first_fetch_pending),
+            )
         };
 
         self.as_mut().set_daemon_reachable(reachable);
+        self.as_mut().set_state_loading(loading);
 
         let Some(state) = state_opt.filter(|_| reachable) else {
             self.as_mut().apply_unreachable_state();
             return;
         };
+        let quit_waits =
+            std::mem::take(&mut shared_state().lock_unpoisoned().quit_dialog_waits_for_state);
+        if quit_waits {
+            let (has_running, running_name) = running_backup(Some(&state));
+            self.as_mut().set_quit_has_running_run(has_running);
+            self.as_mut()
+                .set_quit_running_backup_name(QString::from(&running_name));
+        }
 
         let now = daemon_now(&state);
         self.as_mut().set_has_config_file(state.has_config_file);
@@ -339,29 +361,54 @@ impl qobject::KesticApp {
     }
 
     pub fn unlock_secret_store(self: Pin<&mut Self>) {
-        std::thread::spawn(|| {
-            if let Ok(client) = make_client() {
-                let _ = client.unlock_secret_store();
-            }
-            request_refresh();
-        });
+        // Whether the user unlocked shows in the state the daemon publishes.
+        // The daemon waits for the user to answer the password prompt.
+        self.call_daemon_with(
+            Lane::slow("unlock-password-store"),
+            |client| client.unlock_secret_store().is_ok(),
+            |_| false,
+            |_, _| request_refresh(),
+        );
     }
 
-    pub fn window_active(mut self: Pin<&mut Self>, active: bool, page: &QString) {
-        if let Ok(client) = make_client() {
-            let _ = client.window_active(active, &page.to_string());
-            if active {
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-            }
-        }
+    pub fn window_active(self: Pin<&mut Self>, active: bool, page: &QString) {
+        let page = page.to_string();
+        let generation = WINDOW_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        // The daemon only notes the window; an activated window shows the state anew. Only the
+        // newest state of the window counts: a call still queued when a newer one came is not
+        // sent. A window that closes says so at once, ahead of calls still on their way.
+        let lane = if active { Lane::window() } else { Lane::Alone };
+        self.call_daemon(
+            lane,
+            move |client| {
+                WINDOW_GENERATION.load(Ordering::SeqCst) == generation
+                    && client.window_active(active, &page).is_ok()
+            },
+            move |_, _| {
+                if active {
+                    request_refresh();
+                }
+            },
+        );
     }
 
-    pub fn check_availability(mut self: Pin<&mut Self>, force: bool) {
-        if let Ok(client) = make_client() {
-            let _ = client.check_availability(force);
-            refresh_state_now();
-            self.as_mut().apply_cached_state();
-        }
+    pub fn check_availability(self: Pin<&mut Self>, force: bool) {
+        // The result of the check arrives with the state. A forced check probes every
+        // destination and may take a while; other actions do not wait for it.
+        self.call_daemon_with(
+            Lane::slow("availability"),
+            move |client| client.check_availability(force).is_ok(),
+            |_| false,
+            |_, _| request_refresh(),
+        );
     }
+}
+
+/// Whether a backup runs according to `state`, and its name, for the quit dialog.
+fn running_backup(state: Option<&kestic_daemon::dbus_api::DaemonStateDto>) -> (bool, String) {
+    let active = state.and_then(|s| s.overall.active_run_progress.as_ref());
+    (
+        active.is_some(),
+        active.map_or_default(|a| a.backup_name.clone()),
+    )
 }

@@ -21,6 +21,7 @@ pub mod qobject {
         #[qproperty(QString, daemon_version)]
         #[qproperty(QString, daemon_build_commit)]
         #[qproperty(bool, daemon_reachable)]
+        #[qproperty(bool, state_loading)]
         #[qproperty(bool, restic_valid)]
         #[qproperty(QString, restic_version)]
         #[qproperty(QString, restic_binary_path)]
@@ -200,7 +201,7 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "startBackup"]
-        fn start_backup(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
+        fn start_backup(self: Pin<&mut KesticApp>, backup_id: &QString);
 
         #[qinvokable]
         #[cxx_name = "startAllBackups"]
@@ -424,10 +425,7 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "runDestinationMaintenance"]
-        fn run_destination_maintenance(
-            self: Pin<&mut KesticApp>,
-            destination_id: &QString,
-        ) -> QString;
+        fn run_destination_maintenance(self: Pin<&mut KesticApp>, destination_id: &QString);
 
         #[qinvokable]
         #[cxx_name = "loadRunDetail"]
@@ -483,7 +481,7 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "updateExpertMode"]
-        fn update_expert_mode(self: Pin<&mut KesticApp>, enabled: bool) -> bool;
+        fn update_expert_mode(self: Pin<&mut KesticApp>, enabled: bool);
 
         #[qinvokable]
         #[cxx_name = "copyToClipboard"]
@@ -507,27 +505,23 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "pauseGlobal"]
-        fn pause_global(self: Pin<&mut KesticApp>, duration_kind: &QString) -> bool;
+        fn pause_global(self: Pin<&mut KesticApp>, duration_kind: &QString);
 
         #[qinvokable]
         #[cxx_name = "resumeGlobal"]
-        fn resume_global(self: Pin<&mut KesticApp>) -> bool;
+        fn resume_global(self: Pin<&mut KesticApp>);
 
         #[qinvokable]
         #[cxx_name = "pauseBackup"]
-        fn pause_backup(
-            self: Pin<&mut KesticApp>,
-            backup_id: &QString,
-            duration_kind: &QString,
-        ) -> bool;
+        fn pause_backup(self: Pin<&mut KesticApp>, backup_id: &QString, duration_kind: &QString);
 
         #[qinvokable]
         #[cxx_name = "resumeBackup"]
-        fn resume_backup(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
+        fn resume_backup(self: Pin<&mut KesticApp>, backup_id: &QString);
 
         #[qinvokable]
         #[cxx_name = "startBackupOverride"]
-        fn start_backup_override(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
+        fn start_backup_override(self: Pin<&mut KesticApp>, backup_id: &QString);
 
         #[qinvokable]
         #[cxx_name = "dismissStartAllSkipped"]
@@ -535,7 +529,7 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "unlockDestination"]
-        fn unlock_destination(self: Pin<&mut KesticApp>, dest_id: &QString) -> i32;
+        fn unlock_destination(self: Pin<&mut KesticApp>, dest_id: &QString);
 
         #[qinvokable]
         #[cxx_name = "previewDestinationMaintenance"]
@@ -605,6 +599,8 @@ pub mod qobject {
 }
 
 mod backups;
+mod daemon_call;
+pub use daemon_call::finish_pending_calls;
 mod destinations;
 mod previews;
 mod restic_install;
@@ -629,6 +625,7 @@ pub struct KesticAppRust {
     daemon_version: QString,
     daemon_build_commit: QString,
     daemon_reachable: bool,
+    state_loading: bool,
     restic_valid: bool,
     restic_version: QString,
     restic_binary_path: QString,

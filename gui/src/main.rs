@@ -386,6 +386,8 @@ fn main() -> ExitCode {
     } else {
         1
     };
+    // The daemon still learns what the window did last (it closed).
+    backend::finish_pending_calls(Duration::from_secs(3));
 
     ExitCode::from(u8::try_from(code).unwrap_or(1))
 }
