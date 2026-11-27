@@ -8,7 +8,8 @@ mod common;
 
 use common::m3::{M3Rig, StdFakes, latest_variant, wait_until_within};
 use common::{find_kestic_binary, run_isolated_test};
-use kestic_daemon::dbus_api::KESTIC_INTERFACE_V1;
+use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient};
+use kestic_test_support::bus::PrivateDbusGuard;
 use kestic_test_support::gui::{IsolatedEnv, SmokeContext};
 use kestic_test_support::workspace::workspace_root;
 use std::fs;
@@ -49,18 +50,26 @@ struct Call {
     at: Instant,
 }
 
-/// Records every `Kestic1` method call on the session bus with a monitor connection.
-fn monitor_kestic_calls() -> Arc<Mutex<Vec<Call>>> {
+/// The address of the test's own session bus.
+fn session_address() -> String {
+    std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus")
+}
+
+/// A new connection to the bus at `address`.
+fn connect(address: &str) -> zbus::Connection {
+    zbus::block_on(zbus::connection::Builder::address(address).build()).expect("connect to the bus")
+}
+
+/// Records every `Kestic1` method call on the bus at `address` with a monitor connection.
+fn monitor_kestic_calls(address: &str) -> Arc<Mutex<Vec<Call>>> {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let ready = Arc::new(Mutex::new(false));
     {
         let seen = Arc::clone(&seen);
         let ready = Arc::clone(&ready);
+        let conn = connect(address);
         thread::spawn(move || {
             zbus::block_on(async move {
-                let conn = zbus::Connection::session()
-                    .await
-                    .expect("monitor connection");
                 let rule = format!("type='method_call',interface='{KESTIC_INTERFACE_V1}'");
                 conn.call_method(
                     Some("org.freedesktop.DBus"),
@@ -101,12 +110,14 @@ fn calls_of(seen: &Mutex<Vec<Call>>, member: &str, except: &str) -> Vec<Call> {
         .collect()
 }
 
-/// Starts the GUI offscreen on `bus`, without starting a daemon of its own.
-fn start_gui(bus: &str) -> GuiProcess {
+/// Starts the GUI offscreen on `bus` of the session bus at `address`, without starting a daemon
+/// of its own.
+fn start_gui(bus: &str, address: &str) -> GuiProcess {
     GuiProcess(
         Command::new(find_kestic_binary())
             .args(["--bus-name", bus, "--no-autostart"])
             .env("QT_QPA_PLATFORM", "offscreen")
+            .env("DBUS_SESSION_BUS_ADDRESS", address)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -124,27 +135,6 @@ fn owner_pid(conn: &zbus::Connection, bus: &str) -> Option<u32> {
     })
 }
 
-/// Runs the offscreen smoke `scenario` of this story in German and English.
-fn run_smoke(root: &Path, scenario: &str, extra_args: &[&str], extra_env: &[(&str, &str)]) {
-    let iso = IsolatedEnv::adopt(root);
-    let dbus_addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
-    for lang in ["de", "en"] {
-        SmokeContext {
-            kestic_bin: &find_kestic_binary(),
-            iso: &iso,
-            dbus_addr: &dbus_addr,
-        }
-        .run_with_env(
-            scenario,
-            "wide",
-            lang,
-            &format!("target/smoke-artifacts/{scenario}-wide-{lang}.png"),
-            extra_args,
-            extra_env,
-        );
-    }
-}
-
 /// AC-M6-33-3: the daemon is not running when the GUI starts and takes 6 s to come up; the GUI
 /// starts it and (a) does not wait for it in the main thread, (b) shows «Hintergrunddienst
 /// startet…» meanwhile. The smoke scene `m6-daemon-starting` checks both inside the GUI.
@@ -157,8 +147,7 @@ fn ac_m6_33_3_gui_starts_daemon_without_waiting() {
             let fakes = StdFakes::start();
             let bus = "net.daester.KesticDaemonStarting";
             let iso = IsolatedEnv::adopt(root);
-            let dbus_addr =
-                std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("isolated session bus");
+            let dbus_addr = session_address();
             for lang in ["de", "en"] {
                 SmokeContext {
                     kestic_bin: &find_kestic_binary(),
@@ -210,8 +199,8 @@ fn ac_m6_33_4_changes_arrive_by_signal_without_polling() {
                 .unique_name()
                 .expect("test client name")
                 .to_string();
-            let seen = monitor_kestic_calls();
-            let _gui = start_gui(bus);
+            let seen = monitor_kestic_calls(&session_address());
+            let _gui = start_gui(bus, &session_address());
             wait_until_within(
                 Duration::from_secs(40),
                 "precondition: the GUI registered and loaded the state",
@@ -261,11 +250,13 @@ fn ac_m6_33_4_changes_arrive_by_signal_without_polling() {
     );
 }
 
-/// Starts `kestic daemon` as a process of its own on `bus` and waits until it owns the name.
-fn start_daemon_process(conn: &zbus::Connection, bus: &str) -> GuiProcess {
+/// Starts `kestic daemon` as a process of its own on `bus` of the session bus that `conn` is
+/// connected to (at `address`) and waits until it owns the name.
+fn start_daemon_process(conn: &zbus::Connection, bus: &str, address: &str) -> GuiProcess {
     let daemon = GuiProcess(
         Command::new(find_kestic_binary())
             .args(["daemon", "--bus-name", bus])
+            .env("DBUS_SESSION_BUS_ADDRESS", address)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -288,9 +279,10 @@ fn idle_gui_follows_a_replaced_daemon() {
         |_root| {
             let fakes = StdFakes::start();
             let bus = "net.daester.KesticReplaced";
-            let seen = monitor_kestic_calls();
-            let mut first = start_daemon_process(&fakes.sni_conn, bus);
-            let _gui = start_gui(bus);
+            let address = session_address();
+            let seen = monitor_kestic_calls(&address);
+            let mut first = start_daemon_process(&fakes.sni_conn, bus, &address);
+            let _gui = start_gui(bus, &address);
             wait_until_within(
                 Duration::from_secs(40),
                 "precondition: the GUI registered with the first daemon",
@@ -304,18 +296,15 @@ fn idle_gui_follows_a_replaced_daemon() {
                 owner_pid(&fakes.sni_conn, bus).is_none()
             });
             let registered_before = calls_of(&seen, "RegisterGui", "").len();
-            let _second = start_daemon_process(&fakes.sni_conn, bus);
+            let _second = start_daemon_process(&fakes.sni_conn, bus, &address);
             wait_until_within(
                 Duration::from_secs(10),
                 "the GUI registers with the new daemon",
                 || calls_of(&seen, "RegisterGui", "").len() > registered_before,
             );
 
-            let client = kestic_daemon::dbus_api::KesticClient::connect(
-                bus,
-                kestic_daemon::dbus_api::KESTIC_OBJECT_PATH,
-            )
-            .expect("client of the new daemon");
+            let client =
+                KesticClient::connect(bus, KESTIC_OBJECT_PATH).expect("client of the new daemon");
             let me = client
                 .connection()
                 .unique_name()
@@ -327,6 +316,60 @@ fn idle_gui_follows_a_replaced_daemon() {
             wait_until_within(
                 Duration::from_secs(5),
                 "the GUI fetches the new daemon's state after a change",
+                || calls_of(&seen, "GetState", &me).len() > before,
+            );
+        },
+    );
+}
+
+/// The session bus goes away while the GUI is idle, and a new one starts at the same address:
+/// the GUI opens a new connection, registers with the new daemon and receives its changes.
+#[test]
+fn idle_gui_reconnects_after_the_session_bus_restarts() {
+    run_isolated_test(
+        "idle_gui_reconnects_after_the_session_bus_restarts",
+        "KESTIC_M6_S33_BUS_RESTART_INNER",
+        |root| {
+            let address = format!("unix:path={}", root.join("restartable-bus").display());
+            let bus = "net.daester.KesticBusRestart";
+            let first_bus = PrivateDbusGuard::start_at(&address);
+            let first_conn = connect(&address);
+            let seen = monitor_kestic_calls(&address);
+            let first = start_daemon_process(&first_conn, bus, &address);
+            let _gui = start_gui(bus, &address);
+            wait_until_within(
+                Duration::from_secs(40),
+                "precondition: the GUI registered with the daemon",
+                || !calls_of(&seen, "RegisterGui", "").is_empty(),
+            );
+
+            let old_bus = Path::new("/proc").join(first_bus.pid.to_string());
+            drop(first_bus);
+            wait_until_within(Duration::from_secs(10), "the first bus is gone", || {
+                !old_bus.exists()
+            });
+            drop(first);
+            let _second_bus = PrivateDbusGuard::start_at(&address);
+            let conn = connect(&address);
+            let seen = monitor_kestic_calls(&address);
+            let _second = start_daemon_process(&conn, bus, &address);
+            wait_until_within(
+                Duration::from_secs(15),
+                "the GUI registers on the new bus",
+                || !calls_of(&seen, "RegisterGui", "").is_empty(),
+            );
+
+            let client = KesticClient::from_connection(conn, bus, KESTIC_OBJECT_PATH);
+            let me = client
+                .connection()
+                .unique_name()
+                .expect("test client name")
+                .to_string();
+            let before = calls_of(&seen, "GetState", &me).len();
+            client.set_expert_mode(true).expect("SetExpertMode");
+            wait_until_within(
+                Duration::from_secs(5),
+                "the GUI fetches the state on the new bus after a change",
                 || calls_of(&seen, "GetState", &me).len() > before,
             );
         },
@@ -356,21 +399,32 @@ fn ac_m6_33_5_shown_command_does_not_run_restic_in_main_thread() {
             let dest = rig.add_destination("Command Vault", |_| {});
             rig.add_backup_to(&dest, "Documents", |_| {});
 
-            rig.wrapper.hold("version");
-            let releaser = {
-                let wrapper_hold = rig.wrapper.hold.clone();
-                thread::spawn(move || {
-                    thread::sleep(VERSION_HOLD);
-                    let _ = fs::remove_file(format!("{}.version", wrapper_hold.display()));
-                })
-            };
-            run_smoke(
-                root,
-                "m6-transparent-command",
-                &["--bus-name", bus, "--no-autostart"],
-                &[],
-            );
-            releaser.join().expect("release thread");
+            // Each language gets its own hold, released 8 s after its GUI started.
+            let iso = IsolatedEnv::adopt(root);
+            for lang in ["de", "en"] {
+                rig.wrapper.hold("version");
+                let releaser = {
+                    let marker = format!("{}.version", rig.wrapper.hold.display());
+                    thread::spawn(move || {
+                        thread::sleep(VERSION_HOLD);
+                        let _ = fs::remove_file(marker);
+                    })
+                };
+                SmokeContext {
+                    kestic_bin: &find_kestic_binary(),
+                    iso: &iso,
+                    dbus_addr: &session_address(),
+                }
+                .run_with_env(
+                    "m6-transparent-command",
+                    "wide",
+                    lang,
+                    &format!("target/smoke-artifacts/m6-transparent-command-wide-{lang}.png"),
+                    &["--bus-name", bus, "--no-autostart"],
+                    &[],
+                );
+                releaser.join().expect("release thread");
+            }
             rig.daemon.stop();
         },
     );

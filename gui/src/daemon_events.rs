@@ -127,6 +127,12 @@ fn refresh_loop() {
             *wanted = false;
         }
         refresh_state_now();
+        {
+            let mut guard = shared_state().lock_unpoisoned();
+            if let Some(blocked) = guard.blocked_after_refresh.take() {
+                guard.pending_blocked = Some(blocked);
+            }
+        }
         wake_gui();
     }
 }
@@ -140,6 +146,7 @@ fn session_loop(bus_name: &str, object_path: &str) {
             zbus::block_on(listen(conn, bus_name, object_path));
         }
         drop_gui_connection();
+        shared_state().lock_unpoisoned().listening = false;
         mark_unreachable();
         thread::sleep(RECONNECT_AFTER);
     }
@@ -149,12 +156,15 @@ fn session_loop(bus_name: &str, object_path: &str) {
 fn mark_unreachable() {
     {
         let mut guard = shared_state().lock_unpoisoned();
-        guard.listening = false;
         guard.daemon_reachable = false;
         guard.daemon_error = Some(daemon_unavailable_text());
         guard.state_fetched = true;
     }
+    // Under the refresher's lock, so the refresher cannot miss it between its check of the
+    // reachability and its wait.
+    let _wanted = REFRESH_WANTED.lock_unpoisoned();
     REFRESH_CHANGED.notify_one();
+    drop(_wanted);
     wake_gui();
 }
 
@@ -191,10 +201,10 @@ async fn listen(conn: zbus::Connection, bus_name: &str, object_path: &str) {
     request_refresh();
     let mut messages = ordered_stream::join(signals, owners);
     while let Some(msg_res) = messages.next().await {
-        if let Ok(msg) = msg_res {
-            if !note_owner_change(&client, &msg).await {
-                note_signal(msg);
-            }
+        if let Ok(msg) = msg_res
+            && !note_owner_change(&client, &msg).await
+        {
+            note_signal(msg);
         }
     }
 }
@@ -210,11 +220,16 @@ async fn register(client: &KesticClient) {
 /// learns that this GUI is open and its state is fetched; a daemon that went away is shown as
 /// unreachable at once.
 async fn note_owner_change(client: &KesticClient, msg: &zbus::Message) -> bool {
-    if msg
-        .header()
-        .member()
-        .is_none_or(|m| m.as_str() != "NameOwnerChanged")
-    {
+    // Only the bus itself sends this interface: the match rule for it names the bus as sender,
+    // and the rule for the daemon's signals admits its own interface only.
+    let header = msg.header();
+    let from_bus = header
+        .interface()
+        .is_some_and(|i| i.as_str() == "org.freedesktop.DBus")
+        && header
+            .member()
+            .is_some_and(|m| m.as_str() == "NameOwnerChanged");
+    if !from_bus {
         return false;
     }
     if let Ok((_, _, new_owner)) = msg.body().deserialize::<(String, String, String)>() {
@@ -251,7 +266,7 @@ fn note_signal(msg: zbus::Message) {
         if let Ok(args) = signal.args()
             && let Some(reason) = BlockedReason::parse(args.reason)
         {
-            shared_state().lock_unpoisoned().pending_blocked =
+            shared_state().lock_unpoisoned().blocked_after_refresh =
                 Some((args.backup_id.to_string(), reason));
             request_refresh();
         }

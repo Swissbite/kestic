@@ -515,6 +515,8 @@ void run_daemon_starting_scene(
     QQuickItem* welcome = child_item(window, "welcomeView");
     SMOKE_CHECK2("M6", 5, welcome, !welcome->property("visible").toBool(),
         "no welcome view before the daemon said whether a configuration exists");
+    QQuickItem* placeholder = child_item(window, "daemonStartingPlaceholder");
+    SMOKE_CHECK_VISIBLE("M6", 9, placeholder, "(b) the overview shows the loading state while the service starts");
     SMOKE_CHECK("M6", 6, save_screenshot(window, out_path), "screenshot of the starting state");
 
     auto stop = std::make_shared<bool>(false);
@@ -532,6 +534,10 @@ void run_daemon_starting_scene(
         } else if (waited->elapsed() > 30000) {
             poll->stop();
             smoke_fail("M6", 8, QStringLiteral("the daemon the GUI started never became reachable"));
+        } else if (backend->property("blocking_kind").toString() != QLatin1String("daemon_starting")) {
+            poll->stop();
+            smoke_fail("M6", 10, QStringLiteral("(b) after %1 ms the window no longer says that the service starts: '%2'")
+                .arg(waited->elapsed()).arg(backend->property("blocking_message").toString()));
         }
     });
     poll->start(100);

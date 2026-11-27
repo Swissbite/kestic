@@ -153,6 +153,9 @@ pub struct SharedGuiState {
     /// The GUI started the daemon and waits for it to take its bus name.
     pub daemon_starting: bool,
     pub pending_blocked: Option<(String, BlockedReason)>,
+    /// A blocked manual run whose message waits for the state fetched after it, so the message
+    /// names the backup and its unmet conditions as they are now.
+    pub blocked_after_refresh: Option<(String, BlockedReason)>,
     pub pending_show_window: bool,
     pub pending_show_about: bool,
     pub pending_show_restore: bool,
@@ -176,6 +179,7 @@ impl SharedGuiState {
             progress_dirty: false,
             daemon_starting: false,
             pending_blocked: None,
+            blocked_after_refresh: None,
             pending_show_window: false,
             pending_show_about: false,
             pending_show_restore: false,
@@ -289,16 +293,7 @@ pub fn ensure_daemon_and_refresh() {
             .stderr(Stdio::inherit());
 
         match cmd.spawn() {
-            Ok(_child) => {
-                let deadline = Instant::now() + Duration::from_millis(4500);
-                while Instant::now() < deadline {
-                    if client.is_bus_owned().unwrap_or(false) {
-                        owned = true;
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(50));
-                }
-            }
+            Ok(mut child) => owned = wait_for_daemon(&client, &mut child),
             Err(err) => {
                 let mut guard = shared_state().lock_unpoisoned();
                 guard.daemon_reachable = false;
@@ -318,6 +313,29 @@ pub fn ensure_daemon_and_refresh() {
     }
 
     refresh_state_now();
+}
+
+/// Longest wait for a started daemon to take its bus name; a slow disk or a busy machine may
+/// need seconds.
+const DAEMON_START_LIMIT: Duration = Duration::from_secs(60);
+
+/// Waits until the started daemon owns its bus name (`true`), or until it exited or the limit
+/// passed (`false`). A daemon that ended because another one took the name in the meantime
+/// counts as started.
+fn wait_for_daemon(client: &KesticClient, child: &mut std::process::Child) -> bool {
+    let deadline = Instant::now() + DAEMON_START_LIMIT;
+    loop {
+        if client.is_bus_owned().unwrap_or(false) {
+            return true;
+        }
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return client.is_bus_owned().unwrap_or(false);
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Drops the progress of runs that ended. Still active are the run of each backup and every run

@@ -75,6 +75,15 @@ Kirigami.ScrollablePage {
         width: parent.width
         spacing: Kirigami.Units.largeSpacing
 
+        // The first state of a daemon the window started is still on its way.
+        Kirigami.LoadingPlaceholder {
+            objectName: "daemonStartingPlaceholder"
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.gridUnit * 4
+            visible: appBackend.blocking_kind === "daemon_starting"
+            text: appBackend.blocking_message
+        }
+
         // Welcome view when no config exists
         ColumnLayout {
             id: welcomeView
