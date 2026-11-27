@@ -364,7 +364,7 @@ impl qobject::KesticApp {
         // Whether the user unlocked shows in the state the daemon publishes.
         // The daemon waits for the user to answer the password prompt.
         self.call_daemon_with(
-            Lane::settings(),
+            Lane::slow("unlock-password-store"),
             |client| client.unlock_secret_store().is_ok(),
             |_| false,
             |_, _| request_refresh(),
@@ -396,7 +396,7 @@ impl qobject::KesticApp {
         // The result of the check arrives with the state. A forced check probes every
         // destination and may take a while; other actions do not wait for it.
         self.call_daemon_with(
-            Lane::availability(),
+            Lane::slow("availability"),
             move |client| client.check_availability(force).is_ok(),
             |_| false,
             |_, _| request_refresh(),

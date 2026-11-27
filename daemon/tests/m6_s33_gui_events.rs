@@ -335,7 +335,7 @@ fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
                 front,
                 |member| {
                     if member == "WindowActive" {
-                        Duration::from_secs(2)
+                        Duration::from_secs(4)
                     } else {
                         Duration::ZERO
                     }
@@ -365,8 +365,8 @@ fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
     );
 }
 
-/// AC-M6-33-1 (b): «Back Up Now» for a backup whose destination answers late (`StartBackup`
-/// held back 30 s) does not hold back pausing all backups.
+/// AC-M6-33-1 (b): «Back Up Now» and «Back Up All Now» answered late (`StartBackup` and
+/// `StartAllBackups` held back 30 s) do not hold back pausing that backup or all backups.
 #[test]
 fn ac_m6_33_1_slow_start_does_not_hold_back_pausing() {
     run_isolated_test(
@@ -381,7 +381,7 @@ fn ac_m6_33_1_slow_start_does_not_hold_back_pausing() {
                 "net.daester.KesticSlowStartBack",
                 front,
                 |member| {
-                    if member == "StartBackup" {
+                    if member == "StartBackup" || member == "StartAllBackups" {
                         Duration::from_secs(30)
                     } else {
                         Duration::ZERO

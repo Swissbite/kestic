@@ -692,7 +692,15 @@ void run_slow_daemon_scene(
                 // Building the tab's page is QML work of its own, the same with any daemon; the
                 // pause it causes is not a wait for the daemon and is not counted.
                 *building_page = true;
+                QElapsedTimer switching;
+                switching.start();
                 QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 2));
+                const qint64 switch_ms = switching.elapsed();
+                if (switch_ms >= 1000) {
+                    poll->stop();
+                    smoke_fail("M6", 55, QStringLiteral("(a) switching tabs took %1 ms: it waited for the daemon").arg(switch_ms));
+                    return;
+                }
                 const int tab = window->property("activeTab").toInt();
                 if (tab != 2) {
                     poll->stop();
@@ -750,23 +758,28 @@ void run_quit_running_scene(QQuickWindow* window, QObject* backend,
 }
 
 // AC-M6-33-1: the password prompt of the daemon (UnlockSecretStore, held back 30 s) does not hold
-// back the user's other actions.
+// back the user's other actions: pausing and switching expert mode.
 void run_prompt_alone_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     wait_then(window, 30000, 61, QStringLiteral("the state never arrived"),
         [=]() { return backend->property("daemon_reachable").toBool(); },
         [=]() {
+            const bool expert = backend->property("expert_mode").toBool();
             QMetaObject::invokeMethod(backend, "unlockSecretStore");
             QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
-            wait_then(window, 5000, 62, QStringLiteral("pausing waited for the password prompt"),
-                [=]() { return backend->property("global_paused").toBool(); },
+            QMetaObject::invokeMethod(backend, "updateExpertMode", Q_ARG(bool, !expert));
+            wait_then(window, 5000, 62, QStringLiteral("pausing or expert mode waited for the password prompt"),
+                [=]() {
+                    return backend->property("global_paused").toBool()
+                        && backend->property("expert_mode").toBool() != expert;
+                },
                 [=]() { smoke_finish("M6", warnings.get(), window, out_path); });
         });
 }
 
 // AC-M6-33-1: the window closes while an earlier WindowActive is still on its way (the test delays
-// it 2 s); the daemon still learns that the window closed (the test watches for
-// WindowActive(false)).
+// each by 4 s, longer than the process waits at exit); the daemon still learns that the window
+// closed (the test watches for WindowActive(false)).
 void run_close_window_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     wait_then(window, 30000, 63, QStringLiteral("the state never arrived"),
@@ -782,17 +795,23 @@ void run_close_window_scene(QQuickWindow* window, QObject* backend,
         });
 }
 
-// AC-M6-33-1: «Back Up Now» for a backup whose destination answers late (the test holds StartBackup
-// back 30 s) does not hold back pausing all backups.
+// AC-M6-33-1: «Back Up Now» and «Back Up All Now» answered late (the test holds StartBackup and
+// StartAllBackups back 30 s) do not hold back pausing that backup or all backups.
 void run_slow_start_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     wait_then(window, 30000, 67, QStringLiteral("the state never arrived"),
         [=]() { return backend->property("daemon_reachable").toBool(); },
         [=]() {
-            QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, backup_id_at(window, 0)));
+            const QString bid = backup_id_at(window, 0);
+            QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
+            QMetaObject::invokeMethod(backend, "startAllBackups");
+            QMetaObject::invokeMethod(backend, "pauseBackup", Q_ARG(QString, bid), Q_ARG(QString, QStringLiteral("1h")));
             QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
-            wait_then(window, 5000, 68, QStringLiteral("pausing waited for the slow start"),
-                [=]() { return backend->property("global_paused").toBool(); },
+            wait_then(window, 5000, 68, QStringLiteral("pausing waited for the slow starts"),
+                [=]() {
+                    return backend->property("global_paused").toBool()
+                        && role_value(model_named(window, "backupsModel"), 0, "isPaused").toBool();
+                },
                 [=]() { smoke_finish("M6", warnings.get(), window, out_path); });
         });
 }

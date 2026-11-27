@@ -73,8 +73,9 @@ pub fn finish_pending_calls(limit: Duration) {
 }
 
 /// Where a call runs. Calls on the same lane run one after the other, in the order the user made
-/// them; calls on different lanes do not wait for each other, so a slow call (a backup whose
-/// destination answers late, a password prompt) holds back only the calls about the same thing.
+/// them; calls on different lanes do not wait for each other. A call the daemon may answer only
+/// after a while (it checks destinations first or waits for the user) has a lane of its own, so
+/// the user's quick calls (pause, resume, settings, the window) never wait for it.
 pub(super) enum Lane {
     /// After the earlier calls with the same key.
     After(String),
@@ -88,29 +89,25 @@ impl Lane {
         Self::After("window".into())
     }
 
-    /// Everything that concerns all backups (pause, resume, start all).
+    /// The quick calls about all backups (pause, resume).
     pub(super) fn all_backups() -> Self {
         Self::After("all-backups".into())
     }
 
-    /// Everything that concerns the backup `id`.
+    /// The quick calls about the backup `id` (pause, resume).
     pub(super) fn backup(id: &str) -> Self {
         Self::After(format!("backup:{id}"))
     }
 
-    /// Everything that concerns the destination `id`.
-    pub(super) fn destination(id: &str) -> Self {
-        Self::After(format!("destination:{id}"))
-    }
-
-    /// Settings and the password store.
+    /// The settings.
     pub(super) fn settings() -> Self {
         Self::After("settings".into())
     }
 
-    /// The availability checks.
-    pub(super) fn availability() -> Self {
-        Self::After("availability".into())
+    /// A call the daemon may answer only after a while, `what` naming the kind of call and its
+    /// target: only calls of the same kind about the same thing wait for each other.
+    pub(super) fn slow(what: &str) -> Self {
+        Self::After(format!("slow:{what}"))
     }
 }
 

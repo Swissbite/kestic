@@ -50,7 +50,7 @@ impl qobject::KesticApp {
     pub fn run_destination_maintenance(self: Pin<&mut Self>, destination_id: &QString) {
         let dest_id = destination_id.to_string();
         self.call_daemon(
-            Lane::destination(&dest_id),
+            Lane::slow(&format!("maintenance:{dest_id}")),
             move |client| client.run_destination_maintenance(&dest_id),
             |app, result| {
                 app.finish_daemon_action(result, Finish::Plain);

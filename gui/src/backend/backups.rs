@@ -31,7 +31,7 @@ impl qobject::KesticApp {
         let b_id = backup_id.to_string();
         // A refused start is explained from the state as it is after the refusal.
         self.call_daemon_with(
-            Lane::backup(&b_id),
+            Lane::slow(&format!("start:{b_id}")),
             move |client| {
                 let result = client.start_backup(&b_id);
                 (b_id, result)
@@ -124,7 +124,7 @@ impl qobject::KesticApp {
     pub fn start_backup_override(self: Pin<&mut Self>, backup_id: &QString) {
         let b_id = backup_id.to_string();
         self.call_daemon(
-            Lane::backup(&b_id),
+            Lane::slow(&format!("start:{b_id}")),
             move |client| client.start_backup_override(&b_id),
             |mut app, result| {
                 if matches!(result, Ok(Ok(_))) {
@@ -142,7 +142,7 @@ impl qobject::KesticApp {
 
     pub fn start_all_backups(self: Pin<&mut Self>) {
         self.call_daemon(
-            Lane::all_backups(),
+            Lane::slow("start-all"),
             |client| client.start_all_backups(),
             |mut app, result| match result {
                 Ok(Ok(res)) => {
