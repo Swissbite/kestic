@@ -143,14 +143,7 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
         bin_identity: bin_identity.as_ref(),
     });
 
-    while let Ok(action) = action_rx.try_recv() {
-        handle_tray_action(&core, &conn, &config, action);
-    }
-
-    if let Some((_, handle)) = monitor_rx_and_handle.take() {
-        handle.stop();
-    }
-
+    // After `SIGTERM` restic is stopped first: the deadline counts from the signal.
     let pending_exec_path = match loop_exit {
         LoopExit::Signal(signal_at) => {
             stop_after_signal(&core, signal_at);
@@ -159,6 +152,15 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
         LoopExit::Reexec(path) => Some(path),
         LoopExit::Stop => None,
     };
+
+    while let Ok(action) = action_rx.try_recv() {
+        handle_tray_action(&core, &conn, &config, action);
+    }
+
+    if let Some((_, handle)) = monitor_rx_and_handle.take() {
+        handle.stop();
+    }
+
     shutdown_daemon_and_maybe_reexec(&core, lock, conn, tray, &config, pending_exec_path)
 }
 
@@ -512,7 +514,7 @@ fn handle_prepare_for_sleep(
                 .collect();
             let queued_ids: Vec<BackupId> = guard.queued_backups.iter().cloned().collect();
             for entry in guard.active_runs.values_mut() {
-                entry.interruption = Some(Interruption::Sleep);
+                entry.interruption.get_or_insert(Interruption::Sleep);
             }
             for bid in running_ids.into_iter().chain(queued_ids) {
                 guard.sleep_interrupted_backups.insert(bid);

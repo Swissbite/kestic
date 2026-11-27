@@ -143,6 +143,40 @@ fn ac_m6_36_3_kill_remaining_ends_the_whole_tree() {
     });
 }
 
+/// AC-M6-36-3 (c): a process that was below a child at `close` is killed after the child ended
+/// and left it to another parent.
+#[test]
+fn ac_m6_36_3_kill_remaining_reaches_a_left_behind_descendant() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let grandchild_pid = dir.path().join("grandchild.pid");
+    let script = format!(
+        "sh -c 'trap \"\" TERM; echo $$ > {pidfile}; while :; do sleep 0.05; done' & \
+         trap 'exit 0' TERM; while :; do sleep 0.05; done",
+        pidfile = grandchild_pid.display()
+    );
+    let registry = ChildRegistry::new();
+    let (mut child, reg) = registry.spawn(&mut shell(&script)).expect("spawn");
+    let grandchild = read_pid(&grandchild_pid);
+    registry.close();
+    wait_for("the child ends on SIGTERM", Duration::from_secs(5), || {
+        !alive(child.id())
+    });
+    assert!(
+        alive(grandchild),
+        "precondition: the left-behind process runs"
+    );
+
+    assert!(
+        registry.kill_remaining() >= 1,
+        "the left-behind process gets SIGKILL"
+    );
+    wait_for("left-behind process gone", Duration::from_secs(5), || {
+        !alive(grandchild)
+    });
+    child.wait().expect("reap child");
+    drop(reg);
+}
+
 /// AC-M6-36-3 (b): a reaped child is no target any more, so a reused number is never hit.
 #[test]
 fn ac_m6_36_3_kill_remaining_skips_reaped_children() {

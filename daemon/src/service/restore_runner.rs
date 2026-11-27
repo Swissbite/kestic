@@ -948,8 +948,11 @@ fn record_outcome(
     let interruption = shared.lock_unpoisoned().run_interruption(&run.id);
     match failure {
         // Stopped because the system goes to sleep or the daemon ends: interrupted, not
-        // cancelled by the user. A restic the stopping daemon no longer starts ends so too.
-        _ if interruption.is_some() => {
+        // cancelled by the user.
+        // Sleep turns only the cancel into it; the stop also a restic it no longer starts.
+        _ if interruption == Some(Interruption::Stop)
+            || (interruption.is_some() && matches!(failure, BackupRunError::Cancelled)) =>
+        {
             run.summary_message = interruption.map(Interruption::summary);
             run.restore = had_plan.then_some(stats);
             RunStatus::Interrupted

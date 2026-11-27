@@ -205,8 +205,13 @@ impl DaemonCore {
     }
 
     /// Why the daemon stopped the active run `run_id`, if it did (sleep or `SIGTERM`).
+    /// A run that ends after `SIGTERM` counts as stopped by it, also one that started in the
+    /// moment before the daemon marked the running ones.
     pub(super) fn run_interruption(&self, run_id: &RunId) -> Option<Interruption> {
-        self.active_runs.get(run_id).and_then(|e| e.interruption)
+        self.active_runs
+            .get(run_id)
+            .and_then(|e| e.interruption)
+            .or_else(|| self.signal_received().then_some(Interruption::Stop))
     }
 
     /// Computes full state snapshot (`DaemonStateDto`) and synchronized `KesticTrayState`.

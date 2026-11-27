@@ -14,7 +14,7 @@ use super::error::{
 };
 use super::restore_runner::start_pending_restores;
 use super::run_errors::{run_blocks_schedule, unreadable_items_from_lines};
-use super::state::{DaemonCore, Interruption, ResticDeps, probe_before_run};
+use super::state::{DaemonCore, Interruption, ResticDeps, STOPPING, probe_before_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
 use crate::dbus_api::DestinationAvailabilityDto;
@@ -260,6 +260,11 @@ fn launch_backup_run_record(
     backup: &Backup,
     dest: &Destination,
 ) -> Result<LaunchedBackupRun, KesticServiceErr> {
+    // The checks before the start may take seconds; the daemon may have begun to stop meanwhile.
+    if guard.stopping() {
+        guard.release_claim(&dest.id, claim_guard);
+        return Err(KesticServiceErr::Internal(STOPPING.to_string()));
+    }
     let _ = guard.delete_pending_runs_cached(&backup.id);
     guard.sleep_interrupted_backups.remove(&backup.id);
     guard.queued_backups.retain(|id| id != &backup.id);
@@ -573,10 +578,13 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         &mut run,
         exec_res,
     );
-    // The daemon may have been stopped during the backup's `forget`, after the check above.
+    // The daemon may have been stopped during the backup's `forget`, after the check above. A
+    // backup that finished with its `forget` keeps its result.
     let stopped =
         shared_worker.lock_unpoisoned().run_interruption(&run_id) == Some(Interruption::Stop);
-    if stopped {
+    let completed = matches!(outcome.final_status, RunStatus::Ok | RunStatus::Warning)
+        && outcome.primary_forget_state == Some(false);
+    if stopped && !completed {
         mark_stopped(&mut outcome, &mut run);
     }
 

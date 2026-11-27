@@ -290,6 +290,8 @@ pub struct DaemonCore {
     pub(crate) conn: Option<Connection>,
     pub(crate) tray: Option<Arc<TrayHandle>>,
     pub(super) shutdown_flag: Arc<AtomicBool>,
+    /// The flag of the `SIGTERM` handler, if one is installed.
+    pub(super) stop_signal: Option<Arc<AtomicBool>>,
     pub(super) quit_tx: Option<mpsc::Sender<()>>,
 }
 
@@ -410,6 +412,7 @@ impl DaemonCore {
             conn: None,
             tray: None,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            stop_signal: run_config.stop_signal.clone(),
             quit_tx: None,
         };
         core.load_state_caches();
@@ -703,9 +706,17 @@ impl DaemonCore {
         any
     }
 
-    /// Whether the daemon is stopping: nothing new starts.
+    /// Whether the daemon is stopping: nothing new starts. Also true from the moment `SIGTERM`
+    /// arrives, before the event loop notices it.
     pub(super) fn stopping(&self) -> bool {
-        self.shutdown_flag.load(Ordering::SeqCst)
+        self.shutdown_flag.load(Ordering::SeqCst) || self.signal_received()
+    }
+
+    /// Whether `SIGTERM` has arrived.
+    pub(super) fn signal_received(&self) -> bool {
+        self.stop_signal
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
     }
 
     pub fn request_shutdown(&self) {

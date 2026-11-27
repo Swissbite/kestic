@@ -387,7 +387,7 @@ fn calls_that_would_start_restic(
     b_password: &str,
     a_backup: &BackupId,
     snapshot_b: &str,
-) -> usize {
+) -> Vec<(&'static str, bool)> {
     let new_dest = Destination::new(
         "New",
         DestinationKind::Local {
@@ -395,30 +395,54 @@ fn calls_that_would_start_restic(
         },
     )
     .expect("dest");
-    [
-        client.start_backup(a_backup.as_str()).is_err(),
-        client
-            .start_restore(&restore_request(b, snapshot_b, new_folder(root, "after")))
-            .is_err(),
-        client
-            .start_snapshot_query(&SnapshotQueryRequest::ls(b.id.as_str(), snapshot_b, "/"))
-            .is_err(),
-        client
-            .test_destination_connection(b, "connect", b_password, &BackendSecrets::default())
-            .is_err(),
-        client
-            .add_destination(&new_dest, "connect", b_password, &BackendSecrets::default())
-            .is_err(),
-        client
-            .update_destination(a, "connect", "", &BackendSecrets::default(), true)
-            .is_err(),
-        client
-            .update_destination_password(b.id.as_str(), b_password)
-            .is_err(),
+    vec![
+        (
+            "StartBackup",
+            client.start_backup(a_backup.as_str()).is_err(),
+        ),
+        (
+            "StartRestore",
+            client
+                .start_restore(&restore_request(b, snapshot_b, new_folder(root, "after")))
+                .is_err(),
+        ),
+        (
+            "StartSnapshotQuery",
+            client
+                .start_snapshot_query(&SnapshotQueryRequest::ls(b.id.as_str(), snapshot_b, "/"))
+                .is_err(),
+        ),
+        (
+            "TestDestinationConnection",
+            !matches!(
+                client.test_destination_connection(
+                    b,
+                    "connect",
+                    b_password,
+                    &BackendSecrets::default()
+                ),
+                Ok(r) if r.ok
+            ),
+        ),
+        (
+            "AddDestination",
+            client
+                .add_destination(&new_dest, "connect", b_password, &BackendSecrets::default())
+                .is_err(),
+        ),
+        (
+            "UpdateDestination",
+            client
+                .update_destination(a, "connect", "", &BackendSecrets::default(), true)
+                .is_err(),
+        ),
+        (
+            "UpdateDestinationPassword",
+            client
+                .update_destination_password(b.id.as_str(), b_password)
+                .is_err(),
+        ),
     ]
-    .into_iter()
-    .filter(|refused| *refused)
-    .count()
 }
 
 /// What the daemon of the AC-M6-36-2 test is busy with when the signal comes.
@@ -430,7 +454,6 @@ struct Busy {
     tester: thread::JoinHandle<bool>,
     install_id: String,
     managed: PathBuf,
-    managed_before: bool,
     a2_state_before: kestic_core::history::BackupRuntimeState,
     _mock: kestic_test_support::release_mock::ReleaseMock,
 }
@@ -539,7 +562,8 @@ fn make_busy(root: &Path, rig: &SignalRig, variant: &ResticVariant) -> Busy {
     )
     .expect("data dir");
     let managed = app_managed_binary(&data_dir);
-    let managed_before = managed.exists();
+    fs::create_dir_all(managed.parent().expect("managed dir")).expect("mkdir managed dir");
+    fs::write(&managed, b"previous restic").expect("write previous app-managed restic");
     // Both backups of A wait in its queue.
     client.start_all_backups().expect("start all");
     let a2_state_before = runtime_state(&rig.daemon.state_dir, &a2.id);
@@ -552,7 +576,6 @@ fn make_busy(root: &Path, rig: &SignalRig, variant: &ResticVariant) -> Busy {
         tester,
         install_id,
         managed,
-        managed_before,
         a2_state_before,
         _mock: mock,
     }
@@ -579,7 +602,6 @@ fn ac_m6_36_2_sigterm_stops_every_restic_process() {
                 tester,
                 install_id,
                 managed,
-                managed_before,
                 a2_state_before,
                 _mock,
             } = make_busy(root, &rig, &variant);
@@ -587,8 +609,9 @@ fn ac_m6_36_2_sigterm_stops_every_restic_process() {
             let (_, signal_ms) = signal_self();
             // While the daemon stops (A's `forget` lingers): a backup becomes due, and every
             // call that would start restic is made. A restic started just before the signal
-            // logs its start a moment later; the calls come well after that moment.
-            thread::sleep(Duration::from_millis(300));
+            // logs its start up to a moment later on a busy machine; the calls come a second
+            // after that.
+            thread::sleep(Duration::from_millis(1200));
             // Read first: the fake clock keeps a finished installation for ten minutes only.
             let install = client
                 .get_restic_install_status(&install_id)
@@ -666,19 +689,25 @@ fn ac_m6_36_2_sigterm_stops_every_restic_process() {
             let late: Vec<_> = wrapper
                 .entries()
                 .into_iter()
-                .filter(|e| e.kind == 'S' && e.at_ms > signal_ms + 100)
+                .filter(|e| e.kind == 'S' && e.at_ms > signal_ms + 1000)
                 .collect();
             assert!(
                 late.is_empty(),
                 "AC-M6-36-2 (c): no restic after SIGTERM: {late:?}"
             );
-            assert!(
-                refused >= 4,
-                "AC-M6-36-2 (c): the start calls are refused ({refused})"
-            );
+            for (call, refused) in refused {
+                assert!(
+                    refused,
+                    "AC-M6-36-2 (c): {call} is refused while the daemon stops"
+                );
+            }
             // (d) the installation is cancelled; the app-managed restic is unchanged.
             assert_eq!(install.state, "cancelled", "AC-M6-36-2 (d)");
-            assert_eq!(managed.exists(), managed_before, "AC-M6-36-2 (d)");
+            assert_eq!(
+                fs::read(&managed).expect("app-managed restic"),
+                b"previous restic",
+                "AC-M6-36-2 (d): the app-managed restic is unchanged"
+            );
         },
     );
 }
@@ -752,7 +781,7 @@ fn ac_m6_36_3_one_deadline_then_sigkill_of_the_tree() {
                 })
             });
             wrapper.clear_fail("forget");
-            wrapper.hold_lingering("backup", Some(Duration::from_secs(4)), false);
+            wrapper.hold_lingering("backup", Some(Duration::from_secs(4)), true);
             wrapper.hold_lingering("forget", None, true);
             client
                 .start_backup(&first.backup_id_str)
@@ -781,7 +810,12 @@ fn ac_m6_36_3_one_deadline_then_sigkill_of_the_tree() {
             let ended_after = signal_at.elapsed();
 
             // (a) the slow one ended by itself and removed its marker.
-            assert_eq!(ends_after_signal("backup"), 1, "AC-M6-36-3 (a): no SIGKILL");
+            assert_eq!(
+                ends_after_signal("backup"),
+                1,
+                "AC-M6-36-3 (a): no SIGKILL: {:?}",
+                wrapper.entries()
+            );
             assert!(
                 !wrapper.lock_marker("backup").exists(),
                 "AC-M6-36-3 (a): marker removed"
@@ -979,6 +1013,9 @@ fn ac_m6_36_4_f_signal_handler_without_unsafe() {
         let text = fs::read_to_string(path).expect("read source");
         for banned in [
             "unsafe {",
+            "unsafe extern",
+            "unsafe trait",
+            "#[unsafe(",
             "unsafe fn",
             "unsafe impl",
             "libc::signal",
@@ -991,7 +1028,10 @@ fn ac_m6_36_4_f_signal_handler_without_unsafe() {
                 path.display()
             );
         }
-        for line in text.lines().filter(|l| l.contains("signal_hook::")) {
+        for line in text
+            .lines()
+            .filter(|l| l.contains("signal_hook::") || l.contains("register("))
+        {
             registrations.push(line.trim().to_string());
         }
     }

@@ -83,14 +83,18 @@ fn begin_stop(core: &Arc<Mutex<DaemonCore>>, registry: &ChildRegistry) {
     registry.close();
 }
 
-/// Waits until no run and no child process is left, at most until `deadline`.
+/// Waits until no run, no start in its checks and no child process is left, at most until
+/// `deadline`.
 fn wait_until_idle(
     core: &Arc<Mutex<DaemonCore>>,
     registry: &ChildRegistry,
     deadline: Instant,
 ) -> bool {
     loop {
-        let idle = registry.live_count() == 0 && core.lock_unpoisoned().active_runs.is_empty();
+        let idle = registry.live_count() == 0 && {
+            let guard = core.lock_unpoisoned();
+            guard.active_runs.is_empty() && guard.claiming_destinations.is_empty()
+        };
         if idle {
             return true;
         }

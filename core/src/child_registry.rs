@@ -30,6 +30,9 @@ struct Inner {
     /// Set by the `SIGTERM` handler: from that moment on nothing starts, even before the daemon
     /// calls [`ChildRegistry::close`].
     stop_flag: Option<Arc<AtomicBool>>,
+    /// The processes below the live children when [`ChildRegistry::close`] ran, with their start
+    /// time: a child that ends leaves them to another parent, but they may still hold its output.
+    below: Vec<(u32, u64)>,
     /// Each live child and whether it got `SIGTERM` from Kestic already.
     live: HashMap<u32, bool>,
 }
@@ -105,9 +108,17 @@ impl ChildRegistry {
 
     /// Refuses every later start and sends `SIGTERM` to each live child that has not had one.
     pub fn close(&self) {
+        let table = process_table();
         let pids: Vec<u32> = {
             let mut inner = self.inner.lock_unpoisoned();
             inner.closed = true;
+            let below: Vec<(u32, u64)> = inner
+                .live
+                .keys()
+                .flat_map(|root| descendants(*root, &table))
+                .filter_map(|pid| start_time(pid).map(|start| (pid, start)))
+                .collect();
+            inner.below = below;
             inner
                 .live
                 .iter_mut()
@@ -133,20 +144,31 @@ impl ChildRegistry {
         self.inner.lock_unpoisoned().live.len()
     }
 
-    /// Sends `SIGKILL` to every live child that is still a child of this process and to all
-    /// processes below it; returns how many processes got it. The tree is read before anything
-    /// is killed, because the descendants of a killed process move to another parent.
+    /// Sends `SIGKILL` to every live child that is still a child of this process, to all
+    /// processes below it, and to the processes that were below the children at [`Self::close`]
+    /// and still run (same start time, so not a reused number); returns how many got it. The
+    /// tree is read before anything is killed, because the descendants of a killed process move
+    /// to another parent.
     pub fn kill_remaining(&self) -> usize {
-        let roots: Vec<u32> = self.inner.lock_unpoisoned().live.keys().copied().collect();
+        let (roots, below): (Vec<u32>, Vec<(u32, u64)>) = {
+            let inner = self.inner.lock_unpoisoned();
+            (inner.live.keys().copied().collect(), inner.below.clone())
+        };
         let table = process_table();
         let own = u32::try_from(getpid().as_raw_nonzero().get()).unwrap_or(0);
-        let mut targets = Vec::new();
+        let mut targets: Vec<u32> = below
+            .into_iter()
+            .filter(|(pid, start)| start_time(*pid) == Some(*start))
+            .map(|(pid, _)| pid)
+            .collect();
         for root in roots {
             if table.get(&root) == Some(&own) {
                 targets.extend(descendants(root, &table));
                 targets.push(root);
             }
         }
+        targets.sort_unstable();
+        targets.dedup();
         targets
             .into_iter()
             .filter(|pid| send(*pid, Signal::KILL))
@@ -199,6 +221,13 @@ pub(crate) fn process_table() -> HashMap<u32, u32> {
 pub(crate) fn parent_of_stat(stat: &str) -> Option<u32> {
     let rest = &stat[stat.rfind(')')? + 1..];
     rest.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// When process `pid` started (clock ticks since boot), from `/proc/<pid>/stat`.
+fn start_time(pid: u32) -> Option<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(19)?.parse().ok()
 }
 
 fn send(pid: u32, signal: Signal) -> bool {

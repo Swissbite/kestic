@@ -719,6 +719,14 @@ struct StartAllDispatchOutcome {
 }
 
 pub fn start_all_backups_async(shared: &Arc<Mutex<DaemonCore>>) -> StartAllResultDto {
+    // While the daemon stops, nothing starts, waits in the queue or is written down as skipped.
+    if shared.lock_unpoisoned().stopping() {
+        return StartAllResultDto {
+            started_run_ids: Vec::new(),
+            skipped: Vec::new(),
+            queued_backup_ids: Vec::new(),
+        };
+    }
     let entries = collect_start_all_entries(shared);
     let outcome = dispatch_start_all_entries(shared, entries);
     record_start_all_pending_and_skipped(
