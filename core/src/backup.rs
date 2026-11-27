@@ -501,14 +501,12 @@ where
     })
 }
 
-/// Builds a [`ResticCommandSpec`] for `restic forget` scoped to `backup.tag()`.
-/// Never passes `--unsafe-allow-remove-all`.
-/// Always passes `--no-lock` when `dry_run` / `no_lock` is requested.
-pub fn build_forget_command_spec(
+/// Builds the plan of a retention run, `restic forget --tag kestic:<backup-id> --group-by tags
+/// --keep-… --dry-run --no-lock`: the preview and the run use the same plan. Never passes
+/// `--unsafe-allow-remove-all`.
+pub fn build_forget_plan_command_spec(
     backup: &Backup,
     destination: &Destination,
-    dry_run: bool,
-    no_lock: bool,
     resolved: &ResolvedRestic,
     kestic_binary: &Path,
 ) -> Result<ResticCommandSpec, BackupRunError> {
@@ -522,17 +520,58 @@ pub fn build_forget_command_spec(
         "tags".to_string(),
     ];
     args.extend(backup.retention.to_forget_args());
-    if dry_run {
-        args.push("--dry-run".to_string());
-    }
-    if no_lock {
-        args.push("--no-lock".to_string());
-    }
+    args.push("--dry-run".to_string());
+    args.push("--no-lock".to_string());
 
     let mut spec =
         ResticCommandSpec::for_destination(&resolved.binary, kestic_binary, destination, args);
-    spec.low_priority = !dry_run;
+    spec.low_priority = false;
     Ok(spec)
+}
+
+/// Builds `restic forget <id…>`, which removes exactly the snapshots `ids` (full IDs, 64 hex
+/// digits) and nothing else: no rules and no filter.
+pub fn build_forget_ids_command_spec(
+    destination: &Destination,
+    ids: &[String],
+    resolved: &ResolvedRestic,
+    kestic_binary: &Path,
+) -> Result<ResticCommandSpec, BackupRunError> {
+    if ids.is_empty() {
+        return Err(
+            ModelError::InvalidBackup("forget needs at least one snapshot ID".into()).into(),
+        );
+    }
+    if let Some(bad) = ids.iter().find(|id| !is_full_snapshot_id(id)) {
+        return Err(ModelError::InvalidBackup(format!("not a full snapshot ID: {bad:?}")).into());
+    }
+    let args = std::iter::once("forget".to_string())
+        .chain(ids.iter().cloned())
+        .collect();
+    Ok(ResticCommandSpec::for_destination(
+        &resolved.binary,
+        kestic_binary,
+        destination,
+        args,
+    ))
+}
+
+/// A full restic snapshot ID: 64 lowercase hex digits.
+fn is_full_snapshot_id(id: &str) -> bool {
+    id.len() == 64 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Whether the retention of `backup_id` may remove `snap`: its only `kestic:` tag is the
+/// backup's own, and it is no metadata snapshot. A snapshot with more than one `kestic:` tag
+/// (another backup's, the same one twice, or one without an ID) is kept.
+fn removable_by(snap: &ResticSnapshot, backup_id: &BackupId) -> bool {
+    let own = format!("{BACKUP_TAG_PREFIX}{backup_id}");
+    let mut backup_tags = snap
+        .tags
+        .iter()
+        .filter(|t| t.starts_with(BACKUP_TAG_PREFIX));
+    let only_own = backup_tags.next() == Some(&own) && backup_tags.next().is_none();
+    only_own && !snap.is_meta()
 }
 
 /// Single snapshot verdict (keep or remove) in `restic forget --dry-run --json`.
@@ -556,6 +595,17 @@ pub struct ForgetPreviewResult {
     pub snapshots: Vec<ForgetPreviewSnapshot>,
     pub keep_count: usize,
     pub remove_count: usize,
+}
+
+impl ForgetPreviewResult {
+    /// Full IDs of the snapshots to remove, newest first.
+    pub fn removal_ids(&self) -> Vec<String> {
+        self.snapshots
+            .iter()
+            .filter(|s| s.action == "remove")
+            .map(|s| s.snapshot_id.clone())
+            .collect()
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -596,22 +646,9 @@ fn forget_preview_snapshot(
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct RawForgetRemoved {
-    #[serde(deserialize_with = "deserialize_null_default")]
-    remove: Vec<serde::de::IgnoredAny>,
-}
-
-/// Number of snapshots a real `restic forget --json` removed: the `remove` lists of all groups
-/// in its result line; `None` without a readable result line.
-pub fn parse_forget_removed_count(lines: &[String]) -> Option<u64> {
-    let result = lines.iter().find(|l| l.trim_start().starts_with('['))?;
-    let groups: Vec<RawForgetRemoved> = serde_json::from_str(result.trim()).ok()?;
-    u64::try_from(groups.iter().map(|g| g.remove.len()).sum::<usize>()).ok()
-}
-
-/// Parses JSON array lines emitted by `restic forget --json` (tolerant parsing).
+/// Parses JSON array lines emitted by `restic forget --json` (tolerant parsing). A snapshot
+/// restic would remove stays `keep` unless the retention of `backup_id` may remove it
+/// (only its own `kestic:` tag).
 pub fn parse_forget_json_output(
     backup_id: &BackupId,
     log_lines: &[String],
@@ -646,10 +683,16 @@ pub fn parse_forget_json_output(
             }
 
             for snap in group.remove {
-                result.remove_count += 1;
+                let action = if removable_by(&snap, backup_id) {
+                    result.remove_count += 1;
+                    "remove"
+                } else {
+                    result.keep_count += 1;
+                    "keep"
+                };
                 result
                     .snapshots
-                    .push(forget_preview_snapshot(snap, "remove", Vec::new()));
+                    .push(forget_preview_snapshot(snap, action, Vec::new()));
             }
         }
         break;
@@ -668,7 +711,7 @@ pub fn parse_forget_json_output(
     Ok(result)
 }
 
-/// Runs `restic forget --dry-run --no-lock` with explicit cancellation handle.
+/// Runs the plan `restic forget --dry-run --no-lock` for the retention preview.
 pub fn execute_forget_dry_run_with(
     backup: &Backup,
     destination: &Destination,
@@ -677,48 +720,119 @@ pub fn execute_forget_dry_run_with(
     extra_env: &[(&str, &str)],
 ) -> Result<ForgetPreviewResult, BackupRunError> {
     preflight_check_with_restic(destination, runtime)?;
-    let spec = build_forget_command_spec(
-        backup,
-        destination,
-        true,
-        true,
-        runtime.resolved,
-        runtime.kestic_binary,
-    )?
-    .with_cache_dir(runtime.cache_dir);
-
-    let res = runtime.run(&spec, destination, cancel, extra_env, |_| {})?;
-
+    let res = run_forget_plan(backup, destination, runtime, cancel, extra_env)?;
     if res.presentation.status == RunStatus::Cancelled {
         return Err(BackupRunError::Cancelled);
     }
-
     check_command_succeeded(&res)?;
-
-    Ok(parse_forget_json_output(&backup.id, &res.log_lines)?)
+    read_forget_plan(&backup.id, &res)
 }
 
-/// Runs real `restic forget` for `backup`.
-pub fn execute_forget(
+fn run_forget_plan(
     backup: &Backup,
     destination: &Destination,
     runtime: &ResticRuntime<'_>,
     cancel: Option<&CancelHandle>,
     extra_env: &[(&str, &str)],
 ) -> Result<ResticExecutionResult, BackupRunError> {
-    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
-    let spec = build_forget_command_spec(
+    let spec = build_forget_plan_command_spec(
         backup,
         destination,
-        false,
-        false,
         runtime.resolved,
         runtime.kestic_binary,
     )?
     .with_cache_dir(runtime.cache_dir);
+    Ok(runtime.run(&spec, destination, cancel, extra_env, |_| {})?)
+}
 
-    let res = runtime.run(&spec, destination, cancel, extra_env, |_| {})?;
-    Ok(res)
+/// Reads the plan from the JSON line as restic wrote it: redacting a secret that happens to
+/// equal a tag or part of an ID would change the data.
+fn read_forget_plan(
+    backup_id: &BackupId,
+    res: &ResticExecutionResult,
+) -> Result<ForgetPreviewResult, BackupRunError> {
+    let lines: Vec<String> = res
+        .stdout_json_array
+        .iter()
+        .map(|line| line.0.clone())
+        .collect();
+    Ok(parse_forget_json_output(backup_id, &lines)?)
+}
+
+/// One retention run of a backup: the plan, then one `restic forget <id…>` with the snapshots
+/// the plan removes, when there are any.
+#[derive(Debug)]
+pub struct RetentionRun {
+    pub plan: ResticExecutionResult,
+    pub forget: Option<ResticExecutionResult>,
+    /// The snapshot IDs passed to `forget`; empty when it did not run.
+    pub forget_ids: Vec<String>,
+    /// Cancelled during the plan, before `forget` or during it.
+    pub cancelled: bool,
+}
+
+impl RetentionRun {
+    /// The restic calls in the order they ran.
+    pub fn results(&self) -> impl Iterator<Item = &ResticExecutionResult> {
+        std::iter::once(&self.plan).chain(self.forget.as_ref())
+    }
+
+    /// The call that decides the outcome: `forget` when it ran, else the plan.
+    pub fn last(&self) -> &ResticExecutionResult {
+        self.forget.as_ref().unwrap_or(&self.plan)
+    }
+
+    /// Whether the retention is done: not cancelled and the deciding call ended with exit 0.
+    pub fn succeeded(&self) -> bool {
+        !self.cancelled && self.last().exit_code == 0
+    }
+
+    /// Number of snapshots removed; `None` unless the run succeeded.
+    pub fn removed_count(&self) -> Option<u64> {
+        if !self.succeeded() {
+            return None;
+        }
+        u64::try_from(self.forget_ids.len()).ok()
+    }
+}
+
+/// Runs the retention of `backup`: the plan, then `forget <id…>` with its remove list
+/// ([`ForgetPreviewResult::removal_ids`]); no `forget` when the list is empty, the plan failed
+/// or the run was cancelled.
+pub fn execute_retention(
+    backup: &Backup,
+    destination: &Destination,
+    runtime: &ResticRuntime<'_>,
+    cancel: Option<&CancelHandle>,
+    extra_env: &[(&str, &str)],
+) -> Result<RetentionRun, BackupRunError> {
+    preflight_check_destination(destination, DEFAULT_CONNECT_TIMEOUT)?;
+    let plan = run_forget_plan(backup, destination, runtime, cancel, extra_env)?;
+    let mut run = RetentionRun {
+        cancelled: plan.cancelled,
+        plan,
+        forget: None,
+        forget_ids: Vec::new(),
+    };
+    if run.cancelled || run.plan.exit_code != 0 {
+        return Ok(run);
+    }
+    let ids = read_forget_plan(&backup.id, &run.plan)?.removal_ids();
+    if ids.is_empty() {
+        return Ok(run);
+    }
+    if cancel.is_some_and(CancelHandle::is_cancelled) {
+        run.cancelled = true;
+        return Ok(run);
+    }
+    let spec =
+        build_forget_ids_command_spec(destination, &ids, runtime.resolved, runtime.kestic_binary)?
+            .with_cache_dir(runtime.cache_dir);
+    let forget = runtime.run(&spec, destination, cancel, extra_env, |_| {})?;
+    run.cancelled = forget.cancelled;
+    run.forget = Some(forget);
+    run.forget_ids = ids;
+    Ok(run)
 }
 
 /// Helper distinguishing Exit 11 (exclusive lock contention during `forget`).

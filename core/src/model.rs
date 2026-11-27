@@ -1088,11 +1088,12 @@ pub struct RunStats {
     pub snapshot_id: Option<String>,
 }
 
-/// Snapshots one `forget` of a maintenance run removed for one backup.
+/// Snapshots the retention of a maintenance run removed for one backup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MaintenanceForget {
     pub backup_id: BackupId,
-    /// `None` when `forget` succeeded but its output held no readable result.
+    /// Number of snapshots the successful `forget <id…>` was given (0 without one); `None` in
+    /// runs recorded before, whose `forget` output held no readable result.
     #[serde(default)]
     pub removed_snapshots: Option<u64>,
 }

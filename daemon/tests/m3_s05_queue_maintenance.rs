@@ -374,7 +374,14 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
             for variant in restic_variants() {
                 let rig = M3Rig::start(root, &variant, "M3Q4", FRIDAY, |_| {});
                 let client = &rig.daemon.client;
-                let alpha = backup_with_open_forget(&rig, root, |_| {});
+                // Keeping only the last snapshot gives the retention one to remove, so its
+                // `forget <id>` needs the exclusive lock the foreign backup holds.
+                let alpha = backup_with_open_forget(&rig, root, |b| {
+                    b.retention = RetentionPolicy {
+                        keep_last: Some(KeepCount::Count(1)),
+                        ..RetentionPolicy::empty()
+                    };
+                });
                 let alpha_id = alpha.backup.id.clone();
                 let seen = rig.wrapper.entries().len();
 
@@ -437,9 +444,8 @@ fn ac_m3_05_4_maintenance_runs_open_forget_before_prune() {
                     .expect("forget start");
                 let forget_end_idx = log
                     .iter()
-                    .skip(forget_start_idx)
-                    .position(|e| e.kind == 'E' && e.sub == "forget")
-                    .map(|i| i + forget_start_idx);
+                    .rposition(|e| e.kind == 'E' && e.sub == "forget")
+                    .filter(|end| *end > forget_start_idx);
                 let prune_start_idx = log
                     .iter()
                     .position(|e| e.kind == 'S' && e.sub == "prune")

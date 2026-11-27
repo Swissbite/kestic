@@ -14,7 +14,7 @@ use common::m3::{
 };
 use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
-use kestic_core::model::RunStatus;
+use kestic_core::model::{KeepCount, RetentionPolicy, RunStatus};
 use kestic_core::restic::SECRET_KIND_REPO;
 use kestic_core::secrets::{SecretStore, SecretValue};
 use kestic_test_support::password::strong_password;
@@ -312,6 +312,16 @@ fn ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff
                 let rig = start_lock_rig(root, &variant, "M3E8", 1);
                 let client = &rig.daemon.client;
                 let bid = &rig.fixture.backup.id;
+                // Keeping only the last snapshot gives the retention one to remove, so it calls
+                // `forget <id>`, which needs the exclusive lock.
+                let mut backup = rig.fixture.backup.clone();
+                backup.retention = RetentionPolicy {
+                    keep_last: Some(KeepCount::Count(1)),
+                    ..RetentionPolicy::empty()
+                };
+                client
+                    .update_backup(&backup)
+                    .expect("keep the last snapshot");
                 rig.seed_snapshot();
                 let backups_before = rig.wrapper.of('E', "backup").len();
                 let forgets_before = rig.wrapper.of('E', "forget").len();
@@ -352,8 +362,8 @@ fn ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff
                 );
                 assert_eq!(
                     forget_exits,
-                    vec!["11".to_string()],
-                    "{}: (b)",
+                    vec!["0".to_string(), "11".to_string()],
+                    "{}: (b) the plan runs without lock, the removal hits exit 11",
                     variant.label
                 );
                 let summary = backup_summary(&state, bid);

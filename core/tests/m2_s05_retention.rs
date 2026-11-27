@@ -10,8 +10,8 @@ use common::load_config;
 use kestic_test_support::tools::{assert_has_flag_pair, find_lock_file};
 
 use kestic_core::backup::{
-    build_forget_command_spec, execute_forget, execute_forget_dry_run_with,
-    list_snapshots_for_backup, parse_forget_json_output,
+    build_forget_ids_command_spec, build_forget_plan_command_spec, execute_forget_dry_run_with,
+    execute_retention, list_snapshots_for_backup, parse_forget_json_output,
 };
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{
@@ -171,7 +171,7 @@ fn ac_m2_05_1_all_keep_count_flags_numeric_and_unlimited() {
     );
 
     backup.retention = numeric_policy;
-    let spec_num = build_forget_command_spec(&backup, &dest, false, false, &resolved, kestic_bin)
+    let spec_num = build_forget_plan_command_spec(&backup, &dest, &resolved, kestic_bin)
         .expect("build forget spec");
     for pair in [
         ("--keep-last", "1"),
@@ -219,7 +219,7 @@ fn ac_m2_05_1_all_keep_count_flags_numeric_and_unlimited() {
     );
 
     backup.retention = unlimited_policy;
-    let spec_unlim = build_forget_command_spec(&backup, &dest, true, true, &resolved, kestic_bin)
+    let spec_unlim = build_forget_plan_command_spec(&backup, &dest, &resolved, kestic_bin)
         .expect("build forget spec unlimited");
     for flag in [
         "--keep-last",
@@ -286,7 +286,7 @@ fn ac_m2_05_2_keep_within_durations_passed_verbatim_and_invalid_rejected() {
         );
 
         backup.retention = policy;
-        let spec = build_forget_command_spec(&backup, &dest, false, false, &resolved, kestic_bin)
+        let spec = build_forget_plan_command_spec(&backup, &dest, &resolved, kestic_bin)
             .expect("build forget spec");
         for flag in [
             "--keep-within",
@@ -370,9 +370,8 @@ fn ac_m2_05_3_standard_preset_flags() {
     let (dest, mut backup) = dummy_dest_and_backup();
     backup.retention = policy;
     let resolved = dummy_resolved();
-    let spec =
-        build_forget_command_spec(&backup, &dest, false, false, &resolved, Path::new("kestic"))
-            .expect("build forget spec");
+    let spec = build_forget_plan_command_spec(&backup, &dest, &resolved, Path::new("kestic"))
+        .expect("build forget spec");
     assert_eq!(
         spec.subcommand_args,
         vec![
@@ -387,6 +386,8 @@ fn ac_m2_05_3_standard_preset_flags() {
             "4",
             "--keep-monthly",
             "12",
+            "--dry-run",
+            "--no-lock",
         ]
     );
 }
@@ -469,10 +470,13 @@ fn ac_m2_05_5_never_passes_unsafe_allow_remove_all() {
             "to_forget_args emitted forbidden flag: {args:?}"
         );
         backup.retention = policy;
-        for (dry_run, no_lock) in [(false, false), (true, false), (true, true)] {
-            let spec =
-                build_forget_command_spec(&backup, &dest, dry_run, no_lock, &resolved, kestic_bin)
-                    .expect("build spec");
+        let specs = [
+            build_forget_plan_command_spec(&backup, &dest, &resolved, kestic_bin)
+                .expect("build plan spec"),
+            build_forget_ids_command_spec(&dest, &["0".repeat(64)], &resolved, kestic_bin)
+                .expect("build ids spec"),
+        ];
+        for spec in specs {
             let argv = spec.restic_argv();
             assert!(
                 !argv.iter().any(|a| a == "--unsafe-allow-remove-all"),
@@ -553,15 +557,14 @@ fn ac_m2_05_6_forget_scoped_by_tag_and_leaves_other_backup_and_meta_untouched() 
             );
         }
 
-        let spec =
-            build_forget_command_spec(&backup_a, &dest, false, false, &rig.resolved, &rig.helper)
-                .expect("build forget spec");
+        let spec = build_forget_plan_command_spec(&backup_a, &dest, &rig.resolved, &rig.helper)
+            .expect("build forget spec");
         assert_has_flag_pair(&spec.subcommand_args, "--tag", backup_a.tag().as_str());
         assert_has_flag_pair(&spec.subcommand_args, "--group-by", "tags");
 
-        let res = execute_forget(&backup_a, &dest, &runtime, None, &[])
-            .unwrap_or_else(|e| panic!("{label}: execute_forget failed: {e}"));
-        assert_eq!(res.exit_code, 0, "{label}: forget exit code");
+        let res = execute_retention(&backup_a, &dest, &runtime, None, &[])
+            .unwrap_or_else(|e| panic!("{label}: retention failed: {e}"));
+        assert!(res.succeeded(), "{label}: retention succeeded: {res:?}");
 
         let snaps_a = list_snapshots_for_backup(
             &backup_a.id,
@@ -810,9 +813,9 @@ fn ac_m2_05_8_keep_within_anchors_at_newest_snapshot_not_wall_clock_now() {
         );
 
         // Also execute real `forget` to verify the 60-day-old newest snapshot remains in repo.
-        let res = execute_forget(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
-            .unwrap_or_else(|e| panic!("{label}: execute_forget failed: {e}"));
-        assert_eq!(res.exit_code, 0, "{label}");
+        let res = execute_retention(&backup, &dest, &runtime, None, &[("TZ", "UTC")])
+            .unwrap_or_else(|e| panic!("{label}: retention failed: {e}"));
+        assert!(res.succeeded(), "{label}: {res:?}");
         let remaining = list_snapshots_for_backup(
             &backup.id,
             &dest,
@@ -938,7 +941,7 @@ fn ac_m2_06_2_and_06_6_retention_preview_uses_no_lock_with_reasons_while_backup_
 
         // Verify spec passes `--dry-run` and `--no-lock` (AC-M2-06-6).
         let preview_spec =
-            build_forget_command_spec(&backup, &dest, true, true, &rig.resolved, &rig.helper)
+            build_forget_plan_command_spec(&backup, &dest, &rig.resolved, &rig.helper)
                 .expect("build preview spec");
         assert!(
             preview_spec

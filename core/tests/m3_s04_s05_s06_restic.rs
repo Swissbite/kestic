@@ -9,7 +9,9 @@ use common::execute_backup;
 
 use kestic_test_support::tools::find_lock_file;
 
-use kestic_core::backup::{build_backup_command_spec, build_forget_command_spec};
+use kestic_core::backup::{
+    build_backup_command_spec, build_forget_ids_command_spec, build_forget_plan_command_spec,
+};
 use kestic_core::maintenance::{
     RepoLockInfo, build_check_command_spec, build_prune_command_spec, classify_locks,
     detect_stale_locks, detect_stale_locks_with, execute_check, execute_prune,
@@ -64,9 +66,9 @@ fn ac_m3_04_9_no_command_spec_contains_retry_lock() {
 
     let specs = vec![
         build_backup_command_spec(&backup, &dest, &state_dir, &resolved, helper).expect("bk spec"),
-        build_forget_command_spec(&backup, &dest, false, false, &resolved, helper).expect("forget"),
-        build_forget_command_spec(&backup, &dest, true, true, &resolved, helper)
-            .expect("forget dry"),
+        build_forget_plan_command_spec(&backup, &dest, &resolved, helper).expect("forget plan"),
+        build_forget_ids_command_spec(&dest, &["a".repeat(64)], &resolved, helper)
+            .expect("forget ids"),
         build_prune_command_spec(&dest, false, false, &resolved, helper),
         build_prune_command_spec(&dest, true, true, &resolved, helper),
         build_check_command_spec(&dest, &resolved, helper),
