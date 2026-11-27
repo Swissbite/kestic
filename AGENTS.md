@@ -39,6 +39,7 @@ Projektspezifische Skills liegen agenten-neutral unter [.agents/skills/](.agents
 | i18n & Packaging | [kestic-i18n-packaging](.agents/skills/kestic-i18n-packaging/SKILL.md) | neue/geänderte UI-Strings (`po/de/kestic.po`), `packaging/`, `.deb` |
 | Manuelle Abnahme | [kestic-manual-acceptance](.agents/skills/kestic-manual-acceptance/SKILL.md) | Punkte in [docs/spec/manual-acceptance.md](docs/spec/manual-acceptance.md) mit dem Menschen geprüft werden |
 | Meilenstein-Autonomie | [kestic-milestone-autonomy](.agents/skills/kestic-milestone-autonomy/SKILL.md) | ein Meilenstein weitgehend selbstständig auf einem Integrationsbranch `m<n>` läuft (Milestone und Issues, Entscheidungsstufen, Merge und Sync, Berichte, geschützte Pfade) |
+| Leitstand | [leitstand](.agents/skills/leitstand/SKILL.md) | eine Session die Agenten eines Meilensteins überwacht und als Maintainer auf `m<n>` handelt; Instanz-Vorlage [.devcontainer/leitstand.env.example](.devcontainer/leitstand.env.example), das Projektwissen liegt dort, wo die Instanz-Datei `LEITSTAND_KNOWLEDGE` hinzeigt |
 
 ## Arbeitsweise
 
