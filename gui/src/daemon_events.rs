@@ -17,7 +17,7 @@ use kestic_i18n::codes::BlockedReason;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, Once, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zbus::export::ordered_stream::{self, OrderedStreamExt};
 
 /// How often an unreachable daemon is asked again for its state.
@@ -160,12 +160,16 @@ fn mark_unreachable() {
         guard.daemon_error = Some(daemon_unavailable_text());
         guard.state_fetched = true;
     }
-    // Under the refresher's lock, so the refresher cannot miss it between its check of the
-    // reachability and its wait.
+    retry_while_unreachable();
+    wake_gui();
+}
+
+/// Lets the refresher know that the daemon is unreachable, so it asks again every two seconds.
+/// Notified under the refresher's lock, so the refresher cannot miss it between its check of
+/// the reachability and its wait.
+pub fn retry_while_unreachable() {
     let _wanted = REFRESH_WANTED.lock_unpoisoned();
     REFRESH_CHANGED.notify_one();
-    drop(_wanted);
-    wake_gui();
 }
 
 /// Registers the GUI with the daemon and notes the daemon's signals and the changes of its bus
@@ -260,7 +264,9 @@ fn note_signal(msg: zbus::Message) {
             && let Ok(progress) = serde_json::from_str::<ActiveRunProgressDto>(args.progress_json)
         {
             note_progress(progress);
+            wake_gui_for_progress();
         }
+        return;
     } else if let Some(signal) = ManualRunBlocked::from_message(msg.clone()) {
         // A reason code this GUI does not know is ignored, never guessed.
         if let Ok(args) = signal.args()
@@ -285,6 +291,54 @@ fn note_signal(msg: zbus::Message) {
     wake_gui();
 }
 
+/// How often progress alone may wake the window: restic reports progress many times a second,
+/// and each wake-up updates every model on the Qt thread.
+const PROGRESS_EVERY: Duration = Duration::from_millis(150);
+
+/// Spaces the wake-ups for progress at least [`PROGRESS_EVERY`] apart.
+#[derive(Default)]
+struct ProgressPacer {
+    last: Option<Instant>,
+}
+
+impl ProgressPacer {
+    /// `None` when the window may be woken at `now` (noted as the last wake-up), otherwise how
+    /// long until it may.
+    fn admit(&mut self, now: Instant) -> Option<Duration> {
+        let since = self.last.map(|last| now.saturating_duration_since(last));
+        match since {
+            Some(since) if since < PROGRESS_EVERY => Some(PROGRESS_EVERY - since),
+            _ => {
+                self.last = Some(now);
+                None
+            }
+        }
+    }
+}
+
+static PROGRESS_PACER: Mutex<ProgressPacer> = Mutex::new(ProgressPacer { last: None });
+/// A delayed wake-up for progress is on its way.
+static PROGRESS_WAKE_SCHEDULED: AtomicBool = AtomicBool::new(false);
+
+/// Wakes the window for new progress, at most every [`PROGRESS_EVERY`]; progress that comes
+/// sooner is shown by one delayed wake-up, so the last value always reaches the window.
+fn wake_gui_for_progress() {
+    let wait = PROGRESS_PACER.lock_unpoisoned().admit(Instant::now());
+    let Some(wait) = wait else {
+        wake_gui();
+        return;
+    };
+    if PROGRESS_WAKE_SCHEDULED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    thread::spawn(move || {
+        thread::sleep(wait);
+        PROGRESS_WAKE_SCHEDULED.store(false, Ordering::SeqCst);
+        PROGRESS_PACER.lock_unpoisoned().admit(Instant::now());
+        wake_gui();
+    });
+}
+
 /// Keeps the progress of a running backup for the window.
 fn note_progress(progress: ActiveRunProgressDto) {
     let mut guard = shared_state().lock_unpoisoned();
@@ -301,3 +355,7 @@ fn note_progress(progress: ActiveRunProgressDto) {
         .insert(progress.run_id.clone(), progress);
     guard.progress_dirty = true;
 }
+
+#[cfg(test)]
+#[path = "daemon_events_tests.rs"]
+mod tests;

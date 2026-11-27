@@ -245,6 +245,39 @@ fn ac_m6_33_4_changes_arrive_by_signal_without_polling() {
                 polling.is_empty(),
                 "(b) no periodic timer in QML calls pollEvents: {polling:?}"
             );
+
+            // (a) in the window: the scene `m6-state-change` sees the change within 1 s.
+            let marker = root.join("state-change");
+            let scene = {
+                let root = root.to_path_buf();
+                let marker = marker.display().to_string();
+                let bus = bus.to_string();
+                thread::spawn(move || {
+                    SmokeContext {
+                        kestic_bin: &find_kestic_binary(),
+                        iso: &IsolatedEnv::adopt(&root),
+                        dbus_addr: &session_address(),
+                    }
+                    .run_with_env(
+                        "m6-state-change",
+                        "wide",
+                        "en",
+                        "target/smoke-artifacts/m6-state-change-wide-en.png",
+                        &["--bus-name", &bus, "--no-autostart"],
+                        &[("KESTIC_TEST_STATE_CHANGE_MARKER", &marker)],
+                    );
+                })
+            };
+            let ready = marker.with_extension("ready");
+            wait_until_within(Duration::from_secs(60), "the scene is up", || {
+                ready.exists()
+            });
+            let expert = client.get_state().expect("GetState").config.expert_mode;
+            fs::write(marker.with_extension("go"), b"1").expect("write go marker");
+            client.set_expert_mode(!expert).expect("SetExpertMode");
+            scene
+                .join()
+                .expect("(a) the window showed the change within 1 s");
             rig.daemon.stop();
         },
     );

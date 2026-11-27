@@ -5,6 +5,7 @@
 #include "src/smoke_common.h"
 #include <QColor>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QLocale>
 
 namespace kestic::smoke {
@@ -566,6 +567,49 @@ void run_transparent_command_scene(
     smoke_finish("M6", warnings.get(), window, out_path);
 }
 
+// AC-M6-33-4 (a): the test changes the daemon state; the window shows it within 1 s, with no
+// timer of its own. The scene writes `<marker>.ready` when it is up; the test writes
+// `<marker>.go` and then changes expert mode over D-Bus.
+void run_state_change_scene(
+    QQuickWindow* window,
+    QObject* backend,
+    const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path
+) {
+    const QString marker = qEnvironmentVariable("KESTIC_TEST_STATE_CHANGE_MARKER");
+    SMOKE_CHECK("M6", 30, !marker.isEmpty(), "precondition: marker path");
+    const bool before = backend->property("expert_mode").toBool();
+    QFile ready(marker + QStringLiteral(".ready"));
+    SMOKE_CHECK("M6", 31, ready.open(QIODevice::WriteOnly), "write the ready marker");
+    ready.close();
+    auto since_go = std::make_shared<QElapsedTimer>();
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (!since_go->isValid()) {
+            if (QFile::exists(marker + QStringLiteral(".go"))) {
+                since_go->start();
+            } else if (waited->elapsed() > 60000) {
+                poll->stop();
+                smoke_fail("M6", 32, QStringLiteral("the test never changed the daemon state"));
+            }
+            return;
+        }
+        if (backend->property("expert_mode").toBool() != before) {
+            poll->stop();
+            const qint64 ms = since_go->elapsed();
+            SMOKE_CHECK("M6", 33, ms <= 1000,
+                QStringLiteral("(a) the window showed the change after %1 ms").arg(ms));
+            smoke_finish("M6", warnings.get(), window, out_path);
+        } else if (since_go->elapsed() > 10000) {
+            poll->stop();
+            smoke_fail("M6", 34, QStringLiteral("(a) the change never reached the window"));
+        }
+    });
+    poll->start(20);
+}
+
 void run_m6_smoke_scenario(
     QQuickWindow* window,
     QObject* backend,
@@ -579,6 +623,8 @@ void run_m6_smoke_scenario(
         run_daemon_starting_scene(window, backend, warnings, out_path, lang, since_load_ms);
     } else if (scen == QLatin1String("m6-transparent-command")) {
         run_transparent_command_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-state-change")) {
+        run_state_change_scene(window, backend, warnings, out_path);
     } else {
         smoke_fail("M6", 99, QStringLiteral("unknown scenario %1").arg(scen));
     }

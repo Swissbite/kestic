@@ -250,12 +250,15 @@ pub fn make_client() -> Result<KesticClient, String> {
 /// not running yet is started in the background, so the window shows at once.
 pub fn initialize_and_sync() {
     daemon_events::start();
-    let must_start = !shared_state().lock_unpoisoned().launch.no_autostart_daemon
-        && make_client().is_ok_and(|c| !c.is_bus_owned().unwrap_or(false));
-    if must_start {
-        daemon_events::start_daemon_in_background();
-    } else {
+    let no_autostart = shared_state().lock_unpoisoned().launch.no_autostart_daemon;
+    let owned = make_client().is_ok_and(|c| c.is_bus_owned().unwrap_or(false));
+    if owned {
+        refresh_state_now();
+    } else if no_autostart {
+        // Nothing to start: this only reports that the daemon is missing.
         ensure_daemon_and_refresh();
+    } else {
+        daemon_events::start_daemon_in_background();
     }
 }
 
@@ -402,10 +405,13 @@ pub fn refresh_state_now() {
             }
         }
         Err(err) => {
-            let mut guard = shared_state().lock_unpoisoned();
-            guard.daemon_reachable = false;
-            guard.daemon_error = Some(err.to_string());
-            guard.state_fetched = true;
+            {
+                let mut guard = shared_state().lock_unpoisoned();
+                guard.daemon_reachable = false;
+                guard.daemon_error = Some(err.to_string());
+                guard.state_fetched = true;
+            }
+            daemon_events::retry_while_unreachable();
         }
     }
 }

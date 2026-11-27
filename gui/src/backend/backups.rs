@@ -59,10 +59,18 @@ impl qobject::KesticApp {
         }
         {
             let mut guard = shared_state().lock_unpoisoned();
-            if let Some((pending_id, _)) = &guard.pending_blocked
-                && pending_id == b_id
-            {
-                guard.pending_blocked = None;
+            // This call reports the block itself; the daemon's signal for it is not shown again.
+            let shared = &mut *guard;
+            for slot in [
+                &mut shared.pending_blocked,
+                &mut shared.blocked_after_refresh,
+            ] {
+                if slot
+                    .as_ref()
+                    .is_some_and(|(pending_id, _)| pending_id == b_id)
+                {
+                    *slot = None;
+                }
             }
         }
         let (backup_name, reason_code, unmet_text) = {
