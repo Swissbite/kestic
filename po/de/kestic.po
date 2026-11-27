@@ -4628,7 +4628,7 @@ msgstr "Ausschluss-Regeln und Aufbewahrung, jeweils mit Vorschau"
 
 #: packaging/net.daester.Kestic.metainfo.xml
 msgid "Browse, search and compare snapshots, and restore files to a new folder or, after a preview, to their original place"
-msgstr "Snapshots durchsehen, durchsuchen und vergleichen sowie Dateien in einen neuen Ordner wiederherstellen oder, nach einer Vorschau, an ihren ursprünglichen Ort"
+msgstr "Snapshots durchsuchen, in ihnen suchen und sie vergleichen; Dateien in einen neuen Ordner oder, nach einer Vorschau, an den ursprünglichen Ort wiederherstellen"
 
 #: packaging/net.daester.Kestic.metainfo.xml
 msgid "Kestic is an independent project, not affiliated with or endorsed by the restic project."
@@ -4648,4 +4648,4 @@ msgstr "Zeitplan eines Backups festlegen"
 
 #: packaging/net.daester.Kestic.metainfo.xml
 msgid "Browse a snapshot and mark what to restore"
-msgstr "Einen Snapshot durchsehen und markieren, was wiederhergestellt wird"
+msgstr "Einen Snapshot durchsuchen und markieren, was wiederhergestellt wird"

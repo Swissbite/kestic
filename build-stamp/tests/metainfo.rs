@@ -26,6 +26,9 @@ fn fresh_dir(name: &str) -> PathBuf {
 /// `SOURCE_DATE_EPOCH`, Git configured only by the test.
 fn run_metainfo(dir: &Path, source_date_epoch: Option<&str>) -> (Output, String) {
     fs::write(dir.join("template.xml"), TEMPLATE).expect("write template");
+    if dir.join("out.xml").exists() {
+        fs::remove_file(dir.join("out.xml")).expect("remove previous output");
+    }
     let mut command = Command::new(env!("CARGO_BIN_EXE_kestic-build-stamp"));
     command
         .args(["metainfo", "template.xml", "out.xml"])
@@ -60,8 +63,8 @@ fn ac_m6_23_3_metainfo_release_from_tag_version() {
     );
 }
 
-/// AC-M6-23-3 (b): without `SOURCE_DATE_EPOCH` the release is dated with the commit the build
-/// comes from.
+/// AC-M6-23-3 (b): without `SOURCE_DATE_EPOCH` (unset or empty) the release is dated with the
+/// commit the build comes from, as a UTC date: 23:30 at UTC−5 is the next day.
 #[test]
 fn ac_m6_23_3_release_date_is_the_commit_date() {
     let dir = fresh_dir("metainfo-commit-date");
@@ -72,8 +75,8 @@ fn ac_m6_23_3_release_date_is_the_commit_date() {
             .env("HOME", &dir)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_AUTHOR_DATE", "2026-03-04T10:00:00+00:00")
-            .env("GIT_COMMITTER_DATE", "2026-03-04T10:00:00+00:00")
+            .env("GIT_AUTHOR_DATE", "2026-03-04T23:30:00-05:00")
+            .env("GIT_COMMITTER_DATE", "2026-03-04T23:30:00-05:00")
             .status()
             .expect("run git");
         assert!(status.success(), "git {args:?}");
@@ -91,14 +94,16 @@ fn ac_m6_23_3_release_date_is_the_commit_date() {
         "-m",
         "release",
     ]);
-    let (output, written) = run_metainfo(&dir, None);
-    assert!(
-        output.status.success(),
-        "metainfo failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        written.contains("<release version=\"0.6.0\" date=\"2026-03-04\"/>"),
-        "release not dated with the commit:\n{written}"
-    );
+    for epoch in [None, Some("")] {
+        let (output, written) = run_metainfo(&dir, epoch);
+        assert!(
+            output.status.success(),
+            "metainfo with SOURCE_DATE_EPOCH {epoch:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            written.contains("<release version=\"0.6.0\" date=\"2026-03-05\"/>"),
+            "SOURCE_DATE_EPOCH {epoch:?}: release not dated with the commit in UTC:\n{written}"
+        );
+    }
 }

@@ -45,26 +45,35 @@ pub fn with_release(metainfo: &str, version: &str, date: &str) -> Result<String,
     ))
 }
 
-/// Date of the release entry: `SOURCE_DATE_EPOCH` when set, else the committer date of `HEAD`
-/// in the checkout at `workspace_root`.
+/// UTC date of the release entry: `SOURCE_DATE_EPOCH` when set and not empty, else the committer
+/// time of `HEAD` in the checkout at `workspace_root`.
 pub fn release_date(
     workspace_root: &Path,
     source_date_epoch: Option<&str>,
 ) -> Result<String, String> {
-    if let Some(value) = source_date_epoch {
-        let seconds: i64 = value
-            .parse()
-            .map_err(|_| format!("{SOURCE_DATE_VAR}={value:?} is no number of seconds"))?;
-        return Ok(date_of_epoch(seconds));
+    if let Some(value) = source_date_epoch.filter(|v| !v.is_empty()) {
+        return epoch_seconds(value)
+            .map(date_of_epoch)
+            .ok_or_else(|| format!("{SOURCE_DATE_VAR}={value:?} is no number of seconds"));
     }
     if !is_own_checkout(workspace_root) {
         return Err(format!(
             "no Git checkout to date the release; set {SOURCE_DATE_VAR}"
         ));
     }
-    git(workspace_root, &["log", "-1", "--format=%cs", "HEAD"])
-        .filter(|date| is_iso_date(date))
-        .ok_or_else(|| "git log gave no commit date".to_owned())
+    git(workspace_root, &["log", "-1", "--format=%ct", "HEAD"])
+        .as_deref()
+        .and_then(epoch_seconds)
+        .map(date_of_epoch)
+        .ok_or_else(|| "git log gave no commit time".to_owned())
+}
+
+/// Seconds since 1970 between year 0 and year 9999, so the date keeps four digits.
+fn epoch_seconds(value: &str) -> Option<i64> {
+    value
+        .parse()
+        .ok()
+        .filter(|s| (-62_167_219_200..=253_402_300_799).contains(s))
 }
 
 /// UTC calendar date of `seconds` since 1970-01-01 (proleptic Gregorian calendar).
@@ -167,6 +176,20 @@ mod tests {
             "(c)"
         );
         assert!(release_date(root, Some("yesterday")).is_err(), "(d)");
+    }
+
+    /// An empty `SOURCE_DATE_EPOCH` counts as unset, and a date beyond year 9999 is refused.
+    #[test]
+    fn empty_or_out_of_range_epoch() {
+        let root = Path::new("/nonexistent");
+        assert!(
+            release_date(root, Some("")).is_err_and(|e| e.contains("no Git checkout")),
+            "empty counts as unset"
+        );
+        assert!(
+            release_date(root, Some("253402300800")).is_err(),
+            "year 10000"
+        );
     }
 
     /// Without `SOURCE_DATE_EPOCH` and outside a Git checkout there is no date to use.
