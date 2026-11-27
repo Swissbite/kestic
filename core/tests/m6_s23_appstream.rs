@@ -72,3 +72,70 @@ fn ac_m6_23_3_repository_has_no_hand_written_release() {
         "(a) {TEMPLATE} must not contain a <release> or <releases> entry"
     );
 }
+
+/// The lines `name`, `source`, `caption` of `packaging/screenshots.tsv`.
+fn screenshot_list() -> Vec<(String, String, String)> {
+    read("packaging/screenshots.tsv")
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            let fields: Vec<&str> = l.split('\t').collect();
+            assert_eq!(fields.len(), 3, "malformed line {l:?}");
+            (
+                fields[0].to_owned(),
+                fields[1].to_owned(),
+                fields[2].to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// AC-M6-23-4 (b): the screenshots come from one list in the repository: the template has none of
+/// its own, every name is a fixed `screenshot-….png` independent of the test names, every source
+/// is a screenshot the GUI smoke tests write (`smoke_artifact("<name>", …)` in
+/// `daemon/tests/m<n>_gui_smoke.rs`), and every caption has a German translation.
+#[test]
+fn ac_m6_23_4_screenshots_come_from_one_list() {
+    assert!(
+        !read(TEMPLATE).contains("<screenshot"),
+        "(b) {TEMPLATE} must not list screenshots of its own"
+    );
+    let list = screenshot_list();
+    assert!(!list.is_empty(), "(b) the list names screenshots");
+    let catalog: std::collections::HashMap<String, String> =
+        kestic_test_support::po::catalog(&workspace_root())
+            .into_iter()
+            .filter(|e| !e.plural)
+            .map(|e| (e.msgid().to_owned(), e.german()[0].clone()))
+            .collect();
+    let mut names = std::collections::BTreeSet::new();
+    for (name, source, caption) in &list {
+        let stem = name
+            .strip_prefix("screenshot-")
+            .and_then(|n| n.strip_suffix(".png"));
+        assert!(
+            stem.is_some_and(|s| !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')),
+            "(b) {name} is no fixed screenshot-….png name"
+        );
+        assert!(names.insert(name.clone()), "(b) {name} listed twice");
+        assert_ne!(name, source, "(b) the name must not be the test file name");
+
+        let (milestone, rest) = source.split_once('-').expect("source m<n>-…");
+        let rest = rest.strip_suffix(".png").expect("source is a PNG");
+        let mut parts = rest.rsplitn(3, '-');
+        let (lang, layout, screen) = (parts.next(), parts.next(), parts.next());
+        let smoke = read(&format!("daemon/tests/{milestone}_gui_smoke.rs"));
+        assert!(
+            screen.is_some_and(|s| smoke.contains(&format!("smoke_artifact(\"{s}\"")))
+                && layout.is_some_and(|l| l == "wide" || l == "narrow")
+                && lang.is_some_and(|l| l == "en" || l == "de"),
+            "(b) {source} is no screenshot of daemon/tests/{milestone}_gui_smoke.rs"
+        );
+        assert!(
+            catalog.get(caption).is_some_and(|de| !de.is_empty()),
+            "(b) caption {caption:?} has no German translation in po/de/kestic.po"
+        );
+    }
+}

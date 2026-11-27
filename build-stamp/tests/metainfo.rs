@@ -3,7 +3,7 @@
 
 //! The `metainfo` command of `kestic-build-stamp` as `just deb` runs it in the release workflow:
 //! the version of the tag in `KESTIC_VERSION` becomes the release entry of the AppStream metainfo
-//! (AC-M6-23-3).
+//! (AC-M6-23-3), and its screenshots are assets of that release (AC-M6-23-4).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,6 +11,9 @@ use std::process::{Command, Output};
 
 const TEMPLATE: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
     <component type=\"desktop-application\">\n  <id>net.daester.Kestic</id>\n</component>\n";
+
+const LIST: &str = "# name, source, caption\n\
+    screenshot-overview.png\tm3-overview-status-wide-en.png\tOverview\n";
 
 /// An empty directory below Cargo's temp directory for integration tests.
 fn fresh_dir(name: &str) -> PathBuf {
@@ -26,12 +29,13 @@ fn fresh_dir(name: &str) -> PathBuf {
 /// `SOURCE_DATE_EPOCH`, Git configured only by the test.
 fn run_metainfo(dir: &Path, source_date_epoch: Option<&str>) -> (Output, String) {
     fs::write(dir.join("template.xml"), TEMPLATE).expect("write template");
+    fs::write(dir.join("screenshots.tsv"), LIST).expect("write screenshot list");
     if dir.join("out.xml").exists() {
         fs::remove_file(dir.join("out.xml")).expect("remove previous output");
     }
     let mut command = Command::new(env!("CARGO_BIN_EXE_kestic-build-stamp"));
     command
-        .args(["metainfo", "template.xml", "out.xml"])
+        .args(["metainfo", "template.xml", "screenshots.tsv", "out.xml"])
         .current_dir(dir)
         .env("KESTIC_VERSION", "0.6.0")
         .env("HOME", dir)
@@ -60,6 +64,25 @@ fn ac_m6_23_3_metainfo_release_from_tag_version() {
     assert!(
         written.contains("<release version=\"0.6.0\" date=\"2026-11-27\"/>"),
         "(b) no release entry for 0.6.0:\n{written}"
+    );
+}
+
+/// AC-M6-23-4 (a): the screenshots of a release build are assets of the release of its own tag,
+/// under the fixed names of the list.
+#[test]
+fn ac_m6_23_4_screenshots_of_the_tag_version() {
+    let dir = fresh_dir("metainfo-screenshots");
+    let (output, written) = run_metainfo(&dir, Some("1795780800"));
+    assert!(
+        output.status.success(),
+        "metainfo failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        written.contains(
+            "<image>https://github.com/Swissbite/kestic/releases/download/v0.6.0/screenshot-overview.png</image>"
+        ),
+        "(a) no release asset of v0.6.0:\n{written}"
     );
 }
 

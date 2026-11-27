@@ -217,3 +217,35 @@ fn ac_m6_23_3_deb_has_release_of_its_version() {
         "(b) release entry has a date"
     );
 }
+
+/// AC-M6-23-4 (a): the screenshots of the shipped metainfo are assets of the package's own
+/// release (`v<version>` with `~` as `-`); a development build without its own release (`+` in
+/// the version, as in the CI runs of `just verify`) ships none.
+#[test]
+fn ac_m6_23_4_deb_screenshots_are_assets_of_its_own_release() {
+    let control = deb_control();
+    let version = control
+        .lines()
+        .find_map(|l| l.strip_prefix("Version: "))
+        .and_then(|v| v.trim().strip_suffix("-1"))
+        .expect("package version with revision -1")
+        .to_owned();
+    let (_unpacked, root) = unpack_deb("kestic-m6-s23-screenshots");
+    let images = elements(&shipped_metainfo(&root), "image");
+    if version.contains('+') || version.starts_with("0.0.0~dev") {
+        assert!(images.is_empty(), "(a) a build without release ships no screenshots");
+    } else {
+        let prefix = format!(
+            "https://github.com/Swissbite/kestic/releases/download/v{}/screenshot-",
+            version.replace('~', "-")
+        );
+        assert!(!images.is_empty(), "(a) a release build ships screenshots");
+        for image in images {
+            assert!(
+                image.text.starts_with(&prefix),
+                "(a) {} is no asset of the release of {version}",
+                image.text
+            );
+        }
+    }
+}

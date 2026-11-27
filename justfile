@@ -24,8 +24,8 @@ verify:
 
 # Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE, the merge
 # rule, the watcher and the GitHub token of the agent container, the release version arithmetic,
-# the release asset names and flags, the job selection of the Verify workflow and the screenshot source of
-# the Pages site
+# the release asset names, screenshots and flags, the job selection of the Verify workflow and the
+# screenshot source of the Pages site
 _static-checks:
     cargo fmt --all -- --check
     just _check-file-sizes
@@ -36,6 +36,7 @@ _static-checks:
     .devcontainer/test-kestic-agent-token.sh
     .github/scripts/test-release-version.sh
     .github/scripts/test-release-assets.sh
+    .github/scripts/test-release-screenshots.sh
     .github/scripts/test-release-flags.sh
     .github/scripts/test-ci-scope.sh
     .github/scripts/test-pages-screenshots.sh
@@ -69,8 +70,9 @@ fmt:
 # C/C++ code are remapped to fixed prefixes, so the package neither leaks them nor depends on them.
 # A plain `cargo deb` skips this remapping. Flags from RUSTFLAGS are kept. The package version
 # comes from the Git tags or KESTIC_VERSION, the same one the binary shows
-# (build-stamp/src/version.rs), with Debian revision 1. The AppStream metainfo gets the German
-# texts of the catalog and the release entry of that version (build-stamp/src/metainfo.rs), and
+# (build-stamp/src/version.rs), with Debian revision 1. The AppStream metainfo gets the
+# screenshots of packaging/screenshots.tsv as assets of that version's release and its release
+# entry (build-stamp/src/screenshots.rs, metainfo.rs), then the German texts of the catalog, and
 # must pass `appstreamcli validate` without warnings; cargo-deb takes it from the release profile
 # directory like the binary.
 deb:
@@ -97,10 +99,11 @@ deb:
     trap 'rm -rf "$metainfo_tmp"' EXIT
     metainfo="$target/release/net.daester.Kestic.metainfo.xml"
     mkdir -p "$target/release"
-    msgfmt --xml -l de --template packaging/net.daester.Kestic.metainfo.xml \
-        -o "$metainfo_tmp/net.daester.Kestic.metainfo.xml" po/de/kestic.po
     KESTIC_VERSION="$version" cargo run --quiet -p kestic-build-stamp -- metainfo \
-        "$metainfo_tmp/net.daester.Kestic.metainfo.xml" "$metainfo"
+        packaging/net.daester.Kestic.metainfo.xml packaging/screenshots.tsv \
+        "$metainfo_tmp/net.daester.Kestic.metainfo.xml"
+    msgfmt --xml -l de --template "$metainfo_tmp/net.daester.Kestic.metainfo.xml" \
+        -o "$metainfo" po/de/kestic.po
     appstreamcli validate --no-net --explain "$metainfo"
     KESTIC_VERSION="$version" \
     CARGO_ENCODED_RUSTFLAGS="$(IFS=$'\x1f'; echo "${rust_flags[*]}")" \
