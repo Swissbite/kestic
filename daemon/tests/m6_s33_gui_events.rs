@@ -318,8 +318,9 @@ fn ac_m6_33_1_password_prompt_does_not_hold_back_other_actions() {
     );
 }
 
-/// AC-M6-33-1 (b): the window closes while a call is still on its way; the daemon still learns
-/// that the window closed (`WindowActive(false)`).
+/// AC-M6-33-1 (b): the window closes while calls are still on their way; the daemon still learns
+/// that the window closed (`WindowActive(false)`, not held back by an earlier `WindowActive`), and
+/// a call queued behind a slow one is still sent before the process ends.
 #[test]
 fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
     run_isolated_test(
@@ -333,12 +334,10 @@ fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
                 "Close",
                 "net.daester.KesticCloseBack",
                 front,
-                |member| {
-                    if member == "WindowActive" {
-                        Duration::from_secs(4)
-                    } else {
-                        Duration::ZERO
-                    }
+                |member| match member {
+                    "WindowActive" => Duration::from_secs(30),
+                    "PauseGlobal" => Duration::from_secs(2),
+                    _ => Duration::ZERO,
                 },
             );
             let me = rig
@@ -359,6 +358,11 @@ fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
                         .iter()
                         .any(|c| c.active == Some(false))
                 },
+            );
+            wait_until_within(
+                Duration::from_secs(5),
+                "(b) a call queued when the window closed was still sent",
+                || !calls_of(&seen, "ResumeGlobal", &me).is_empty(),
             );
             rig.daemon.stop();
         },

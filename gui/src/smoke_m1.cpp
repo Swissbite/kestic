@@ -777,9 +777,9 @@ void run_prompt_alone_scene(QQuickWindow* window, QObject* backend,
         });
 }
 
-// AC-M6-33-1: the window closes while an earlier WindowActive is still on its way (the test delays
-// each by 4 s, longer than the process waits at exit); the daemon still learns that the window
-// closed (the test watches for WindowActive(false)).
+// AC-M6-33-1: the window closes while calls are still on their way: an earlier WindowActive (the
+// test holds it back 30 s) and a resume queued behind a pause (held back 2 s). The daemon still
+// learns that the window closed, and the queued resume is still sent (the test watches for both).
 void run_close_window_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     wait_then(window, 30000, 63, QStringLiteral("the state never arrived"),
@@ -791,6 +791,8 @@ void run_close_window_scene(QQuickWindow* window, QObject* backend,
             }
             QMetaObject::invokeMethod(backend, "windowActive", Q_ARG(bool, true),
                 Q_ARG(QString, QStringLiteral("overview")));
+            QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
+            QMetaObject::invokeMethod(backend, "resumeGlobal");
             window->close();
         });
 }
