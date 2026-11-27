@@ -14,7 +14,7 @@ use cxx_qt::CxxQtThread;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{ActiveRunProgressDto, KESTIC_INTERFACE_V1, KesticClient};
 use kestic_i18n::codes::BlockedReason;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, Once, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -29,6 +29,8 @@ const RECONNECT_AFTER: Duration = Duration::from_secs(2);
 static GUI_THREAD: Mutex<Option<CxxQtThread<KesticApp>>> = Mutex::new(None);
 /// A wake-up is queued on the Qt thread and has not run yet.
 static WAKE_QUEUED: AtomicBool = AtomicBool::new(false);
+/// How often the window was asked to wake up, so tests can count the wake-ups of a signal.
+static WAKE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 /// Someone asked for the daemon state since the last fetch.
 static REFRESH_WANTED: Mutex<bool> = Mutex::new(false);
 static REFRESH_CHANGED: Condvar = Condvar::new();
@@ -43,6 +45,7 @@ pub fn attach_gui_thread(thread: CxxQtThread<KesticApp>) {
 /// Asks the Qt thread to take over what the background noted (`KesticApp::poll_events`).
 /// Requests made before it runs are served by one call.
 pub fn wake_gui() {
+    WAKE_REQUESTS.fetch_add(1, Ordering::SeqCst);
     if WAKE_QUEUED.swap(true, Ordering::SeqCst) {
         return;
     }
