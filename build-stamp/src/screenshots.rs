@@ -186,14 +186,6 @@ mod tests {
         assert_eq!(release_tag("0.0.0~dev"), None, "(d)");
         assert_eq!(release_tag("0.0.0~dev+gabc1234"), None, "(d) with commit");
         assert_eq!(release_tag("0.6.0~m6.10+3.gabc1234"), None, "(e)");
-        assert!(
-            parse_list("screenshot-a.png\ta.png\tA & B\n").is_err(),
-            "(e) markup"
-        );
-        assert!(
-            parse_list("screenshot-a.png\ta.png\tA  B\n").is_err(),
-            "(e) double blank"
-        );
     }
 
     /// AC-M6-23-4 (a), (b): the block lists the screenshots in list order, the first one as
@@ -242,6 +234,14 @@ mod tests {
             "(d)"
         );
         assert!(parse_list("screenshot-a.png\ta.png\t \n").is_err(), "(e)");
+        assert!(
+            parse_list("screenshot-a.png\ta.png\tA & B\n").is_err(),
+            "(e) markup"
+        );
+        assert!(
+            parse_list("screenshot-a.png\ta.png\tA  B\n").is_err(),
+            "(e) double blank"
+        );
         assert!(parse_list("# only a comment\n").is_err(), "(f)");
         assert!(
             parse_list("screenshot-a.png\ta.png\tA\tB\n").is_err(),
