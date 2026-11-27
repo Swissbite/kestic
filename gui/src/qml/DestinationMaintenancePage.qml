@@ -129,7 +129,9 @@ EditorPage {
             if (done) done(false);
             return;
         }
+        saving = true;
         rootWindow.afterDaemonCall(appBackend.updateDestinationMaintenance(destinationId, currentMaintJson()), function(ok) {
+            saving = false;
             if (ok) {
                 initialData = rootWindow.findDestinationData(destinationId);
                 if (initialData) {
@@ -137,7 +139,7 @@ EditorPage {
                     loadFromSaved(savedMaintenanceJson);
                 }
                 rootWindow.showPassiveNotification(i18n("Maintenance schedule saved"));
-                if (popOnSuccess) {
+                if (popOnSuccess && rootWindow.pageStack.currentItem === page) {
                     rootWindow.popSubPage();
                 }
             }

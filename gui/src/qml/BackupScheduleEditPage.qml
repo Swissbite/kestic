@@ -225,7 +225,9 @@ EditorPage {
             if (done) done(false);
             return;
         }
+        saving = true;
         rootWindow.afterDaemonCall(appBackend.updateBackupSchedule(backupId, currentScheduleJson(), effectiveOverdueThreshold), function(ok) {
+            saving = false;
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 if (initialData) {
@@ -234,7 +236,7 @@ EditorPage {
                     loadFromSaved(savedScheduleJson, savedOverdueThreshold);
                 }
                 rootWindow.showPassiveNotification(i18n("Schedule saved"));
-                if (popOnSuccess) {
+                if (popOnSuccess && rootWindow.pageStack.currentItem === page) {
                     rootWindow.popSubPage();
                 }
             }

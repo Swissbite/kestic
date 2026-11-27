@@ -20,15 +20,16 @@ pub struct DelayedDaemon {
 impl DelayedDaemon {
     /// Takes `front` on the bus at `address` and forwards each call to `back` after `delay`.
     pub fn start(address: &str, front: &str, back: &str, delay: Duration) -> Self {
-        Self::start_with(address, front, back, move |_| delay)
+        Self::start_with(address, front, back, move |_, _| delay)
     }
 
-    /// Like [`Self::start`], with the delay of each call chosen by its method name.
+    /// Like [`Self::start`], with the delay of each call chosen by its method name and its first
+    /// text argument (empty when it has none).
     pub fn start_with(
         address: &str,
         front: &str,
         back: &str,
-        delay_of: impl Fn(&str) -> Duration + Send + Sync + 'static,
+        delay_of: impl Fn(&str, &str) -> Duration + Send + Sync + 'static,
     ) -> Self {
         let delay_of = Arc::new(delay_of);
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -52,7 +53,10 @@ impl DelayedDaemon {
                         continue;
                     }
                     let (conn, back_conn, back) = (conn.clone(), back_conn.clone(), back.clone());
-                    let delay = delay_of(call.header().member().map_or("", |m| m.as_str()));
+                    let delay = delay_of(
+                        call.header().member().map_or("", |m| m.as_str()),
+                        &first_text(&call),
+                    );
                     thread::spawn(move || {
                         thread::sleep(delay);
                         zbus::block_on(forward(&conn, &back_conn, &back, &call));
@@ -67,6 +71,23 @@ impl DelayedDaemon {
             name: front.to_string(),
         }
     }
+}
+
+/// The first argument of `call` when it is a text, else empty.
+fn first_text(call: &zbus::Message) -> String {
+    let body = call.body();
+    if !body.signature().to_string().starts_with('s') {
+        return String::new();
+    }
+    body.deserialize::<Structure<'_>>()
+        .ok()
+        .and_then(|args| {
+            args.fields().first().and_then(|first| match first {
+                zbus::Variant::Str(text) => Some(text.to_string()),
+                _ => None,
+            })
+        })
+        .unwrap_or_default()
 }
 
 /// Sends `call` on to `back` and answers it with what `back` replied.

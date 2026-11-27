@@ -68,6 +68,7 @@ pub mod qobject {
         #[qproperty(QString, connection_test_note)]
         #[qproperty(QString, connection_test_host_key)]
         #[qproperty(bool, snapshots_loading)]
+        #[qproperty(QString, snapshots_backup_id)]
         #[qproperty(QString, snapshots_error)]
         #[qproperty(bool, snapshots_has_previous)]
         #[qproperty(QString, selected_run_id)]
@@ -685,6 +686,7 @@ pub struct KesticAppRust {
     /// empty.
     connection_test_host_key: QString,
     snapshots_loading: bool,
+    snapshots_backup_id: QString,
     snapshots_error: QString,
     snapshots_has_previous: bool,
     selected_run_id: QString,

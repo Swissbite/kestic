@@ -112,6 +112,8 @@ void scene_e2e_wizard_backup(const Scene& s) {
         }},
         {400, [s] {
             QQuickWindow* w = s.window;
+            // The wizard closes once the daemon has created the repository.
+            wait_until([w] { return !child_object(w, "addDestinationWizard"); }, 30000);
             SMOKE_CHECK("E2E", 60, !child_object(w, "addDestinationWizard"), "AddDestinationWizard did not close after Save Destination");
             auto* dm = model_named(w, "destinationsModel");
             SMOKE_CHECK("E2E", 61, dm, "destinationsModel missing");
@@ -914,6 +916,91 @@ void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
     poll->start(50);
 }
 
+// The row of `id` in the model `model_name` (role `id_role`), or -1.
+int row_of(QQuickWindow* window, const char* model_name, const char* id_role, const QString& id) {
+    QAbstractItemModel* model = model_named(window, model_name);
+    for (int row = 0; model && row < model->rowCount(); ++row) {
+        if (role_value(model, row, id_role).toString() == id) return row;
+    }
+    return -1;
+}
+
+// AC-M6-33-1: replies that arrive late or out of order do not show stale data or undo the user's
+// edits. The test holds back the detail of run A, the snapshot list of backup A and renaming.
+// The window asks for run A then B, backup A's list then B's, renames A and saves A's exclude
+// rules right after; once every reply is in, it shows run B, backup B's list and A's new name.
+void run_slow_order_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    const QString backup_a = qEnvironmentVariable("KESTIC_TEST_BACKUP_A");
+    const QString backup_b = qEnvironmentVariable("KESTIC_TEST_BACKUP_B");
+    const QString run_a = qEnvironmentVariable("KESTIC_TEST_RUN_A");
+    const QString run_b = qEnvironmentVariable("KESTIC_TEST_RUN_B");
+    SMOKE_CHECK("M6", 80, !backup_a.isEmpty() && !backup_b.isEmpty() && !run_a.isEmpty() && !run_b.isEmpty(),
+        "precondition: backup and run ids");
+    auto step = std::make_shared<int>(-1);
+    auto settled = std::make_shared<QElapsedTimer>();
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (waited->elapsed() > 60000) {
+            poll->stop();
+            smoke_fail("M6", 81, QStringLiteral("timed out at step %1").arg(*step));
+            return;
+        }
+        if (*step < 0) {
+            if (backend->property("daemon_reachable").toBool()
+                    && row_of(window, "backupsModel", "backupId", backup_a) >= 0) {
+                *step = 0;
+            }
+            return;
+        }
+        switch (*step) {
+        case 0:
+            QMetaObject::invokeMethod(backend, "loadRunDetail", Q_ARG(QString, run_a));
+            break;
+        case 1:
+            QMetaObject::invokeMethod(backend, "loadRunDetail", Q_ARG(QString, run_b));
+            break;
+        case 2:
+            QMetaObject::invokeMethod(backend, "loadBackupSnapshots", Q_ARG(QString, backup_a));
+            break;
+        case 3:
+            QMetaObject::invokeMethod(backend, "loadBackupSnapshots", Q_ARG(QString, backup_b));
+            break;
+        case 4:
+            QMetaObject::invokeMethod(backend, "renameBackup", Q_ARG(QString, backup_a), Q_ARG(QString, QStringLiteral("Renamed A")));
+            break;
+        case 5: {
+            const int row = row_of(window, "backupsModel", "backupId", backup_a);
+            const QString excludes = role_value(model_named(window, "backupsModel"), row, "excludesJson").toString();
+            QMetaObject::invokeMethod(backend, "updateBackupExcludes", Q_ARG(QString, backup_a), Q_ARG(QString, excludes));
+            settled->start();
+            break;
+        }
+        default: {
+            // Every held-back reply (at most 4 s) and the edits after it are in by now.
+            if (settled->elapsed() < 9000) return;
+            poll->stop();
+            const QString shown_run = backend->property("selected_run_id").toString();
+            SMOKE_CHECK("M6", 82, shown_run == run_b,
+                QStringLiteral("(b) the detail of run %1 shows instead of run B").arg(shown_run));
+            const QString shown_list = backend->property("snapshots_backup_id").toString();
+            SMOKE_CHECK2("M6", 83, shown_list == backup_b, !backend->property("snapshots_loading").toBool(),
+                QStringLiteral("(b) the snapshot list of %1 shows instead of backup B").arg(shown_list));
+            const int row = row_of(window, "backupsModel", "backupId", backup_a);
+            const QString name = role_value(model_named(window, "backupsModel"), row, "name").toString();
+            SMOKE_CHECK("M6", 84, name == QLatin1String("Renamed A"),
+                QStringLiteral("(b) saving the exclude rules undid the rename: '%1'").arg(name));
+            smoke_finish("M6", warnings.get(), window, out_path);
+            return;
+        }
+        }
+        ++*step;
+    });
+    poll->start(50);
+}
+
 // AC-M6-33-1: «Back Up Now» and «Back Up All Now» answered late (the test holds StartBackup and
 // StartAllBackups back 30 s) do not hold back pausing that backup or all backups.
 void run_slow_start_scene(QQuickWindow* window, QObject* backend,
@@ -1020,6 +1107,8 @@ void run_m6_smoke_scenario(
         run_prompt_alone_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-close-window")) {
         run_close_window_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-order")) {
+        run_slow_order_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-edits")) {
         run_slow_edits_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-start")) {

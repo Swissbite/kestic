@@ -115,7 +115,9 @@ EditorPage {
             if (done) done(false);
             return;
         }
+        saving = true;
         rootWindow.afterDaemonCall(appBackend.updateBackupConditions(backupId, currentConditionsJson()), function(ok) {
+            saving = false;
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 if (initialData) {
@@ -123,7 +125,7 @@ EditorPage {
                     loadFromSaved(savedConditionsJson);
                 }
                 rootWindow.showPassiveNotification(i18n("Run conditions saved"));
-                if (popOnSuccess) {
+                if (popOnSuccess && rootWindow.pageStack.currentItem === page) {
                     rootWindow.popSubPage();
                 }
             }

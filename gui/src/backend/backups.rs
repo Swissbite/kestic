@@ -11,7 +11,8 @@ use crate::state_cache::{
     build_new_backup, cached_destination_kind, clone_updated_backup_excludes,
     clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text, i18n,
     localized_condition_override_message, localized_manual_block_message,
-    localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, shared_state,
+    localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, not_found_text,
+    shared_state,
 };
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
@@ -19,7 +20,7 @@ use kestic_core::config::AppConfig;
 use kestic_core::model::{Backup, BackupId, ExcludeRules, RetentionPolicy};
 use kestic_core::provider::resolved_from_report;
 use kestic_core::sync::LockUnpoisoned;
-use kestic_daemon::dbus_api::KesticDbusError;
+use kestic_daemon::dbus_api::{KesticClient, KesticDbusError};
 use kestic_i18n::codes::{BlockedReason, ServiceErrorCode};
 use std::env;
 use std::path::PathBuf;
@@ -234,13 +235,9 @@ impl qobject::KesticApp {
         else {
             return 0;
         };
-        let Some(updated) = self
-            .as_mut()
-            .ok_or_show(clone_updated_backup_excludes(&existing, excludes))
-        else {
-            return 0;
-        };
-        self.save_backup(updated)
+        self.save_backup_edit(existing.id, move |backup, _| {
+            clone_updated_backup_excludes(backup, excludes).map_err(|err| err.to_string())
+        })
     }
 
     pub fn update_backup_retention(
@@ -257,13 +254,9 @@ impl qobject::KesticApp {
         else {
             return 0;
         };
-        let Some(updated) = self
-            .as_mut()
-            .ok_or_show(clone_updated_backup_retention(&existing, retention))
-        else {
-            return 0;
-        };
-        self.save_backup(updated)
+        self.save_backup_edit(existing.id, move |backup, _| {
+            clone_updated_backup_retention(backup, retention).map_err(|err| err.to_string())
+        })
     }
 
     pub fn update_backup_source(
@@ -275,33 +268,38 @@ impl qobject::KesticApp {
             return 0;
         };
         let trimmed = source_path.to_string().trim().to_string();
+        self.save_backup_edit(existing.id, move |backup, client| {
+            let source = client
+                .detect_source(&trimmed)
+                .unwrap_or_else(|_| kestic_core::model::Source::folder(PathBuf::from(&trimmed)));
+            clone_updated_backup_source(backup, source).map_err(|err| err.to_string())
+        })
+    }
+
+    /// Saves an edit of the backup `backup_id` (an editor page's «Save»); returns the request id.
+    /// `edit` makes the edited backup off the Qt thread, from the backup and its destination as
+    /// the daemon has them now: after the earlier calls about the same backup, which run first on
+    /// its lane, so an edit never undoes one the user made before it.
+    pub(super) fn save_backup_edit(
+        self: Pin<&mut Self>,
+        backup_id: BackupId,
+        edit: impl FnOnce(&Backup, &KesticClient) -> Result<Backup, String> + Send + 'static,
+    ) -> i32 {
         self.request_daemon(
-            Lane::backup(existing.id.as_str()),
+            Lane::backup(backup_id.as_str()),
             move |client| {
-                let source = client.detect_source(&trimmed).unwrap_or_else(|_| {
-                    kestic_core::model::Source::folder(PathBuf::from(&trimmed))
-                });
-                clone_updated_backup_source(&existing, source)
-                    .map_err(|err| err.to_string())
-                    .map(|updated| client.update_backup(&updated))
+                let state = match client.get_state() {
+                    Ok(state) => state,
+                    Err(err) => return Err(dbus_error_text(&err)),
+                };
+                let Some(backup) = state.config.backup(&backup_id) else {
+                    return Err(not_found_text());
+                };
+                edit(backup, client).map(|updated| client.update_backup(&updated))
             },
             |app, result| {
                 (
                     app.finish_checked(result, Finish::Saved).is_some(),
-                    String::new(),
-                )
-            },
-        )
-    }
-
-    /// Saves the edited backup `updated` (an editor page's «Save»); returns the request id.
-    pub(super) fn save_backup(self: Pin<&mut Self>, updated: Backup) -> i32 {
-        self.request_daemon(
-            Lane::backup(updated.id.as_str()),
-            move |client| client.update_backup(&updated),
-            |app, result| {
-                (
-                    app.finish_daemon_action(result, Finish::Saved).is_some(),
                     String::new(),
                 )
             },

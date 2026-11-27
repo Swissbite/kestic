@@ -99,14 +99,10 @@ impl qobject::KesticApp {
             return 0;
         };
         let threshold_opt = u32::try_from(overdue_threshold).ok().filter(|&t| t > 0);
-        let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup_schedule(
-            &existing,
-            schedule,
-            threshold_opt,
-        )) else {
-            return 0;
-        };
-        self.save_backup(updated)
+        self.save_backup_edit(existing.id, move |backup, _| {
+            clone_updated_backup_schedule(backup, schedule, threshold_opt)
+                .map_err(|err| err.to_string())
+        })
     }
 
     pub fn update_backup_conditions(
@@ -123,15 +119,12 @@ impl qobject::KesticApp {
         else {
             return 0;
         };
-        let dest_kind = cached_destination_kind(existing.destination_id.as_str());
-        let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup_conditions(
-            &existing,
-            conditions,
-            dest_kind.as_ref(),
-        )) else {
-            return 0;
-        };
-        self.save_backup(updated)
+        self.save_backup_edit(existing.id, move |backup, _| {
+            // The destination as it is now: an earlier reassign on the same lane is in effect.
+            let dest_kind = cached_destination_kind(backup.destination_id.as_str());
+            clone_updated_backup_conditions(backup, conditions, dest_kind.as_ref())
+                .map_err(|err| err.to_string())
+        })
     }
 
     pub fn update_settings(
@@ -248,11 +241,17 @@ impl qobject::KesticApp {
             self.as_mut().clear_run_detail(run_id);
         }
         let run_id = run_id.to_string();
+        let wanted = run_id.clone();
         self.request_daemon_with(
-            Lane::slow(&format!("run-detail:{run_id}")),
+            // A stale reply is dropped (below), so the requests need no order of their own.
+            Lane::Alone,
             move |client| client.get_run_detail(&run_id),
             |_| false,
-            |mut app, result| {
+            move |mut app, result| {
+                // A detail that arrives after the window asked for another run's is dropped.
+                if app.selected_run_id().to_string() != wanted {
+                    return (false, String::new());
+                }
                 let detail = match result {
                     Ok(reply) => app.as_mut().ok_or_show_dbus(reply),
                     Err(_) => {
@@ -389,7 +388,8 @@ impl qobject::KesticApp {
         qt_bridge::ffi::copy_to_clipboard(&text.to_string());
     }
 
-    /// Confirms quitting Kestic; QML quits once the daemon has answered (the request's result).
+    /// Confirms quitting Kestic. The dialog quits at once: the call is sent on a thread of its
+    /// own, and the process waits for pending calls before it ends.
     pub fn confirm_quit(self: Pin<&mut Self>) -> i32 {
         self.request_daemon(
             Lane::Alone,

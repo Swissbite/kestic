@@ -22,9 +22,15 @@ Kirigami.Dialog {
         renameBackupField.text = text;
     }
 
+    // A rename is on its way; the dialog takes no second one.
+    property bool busy: false
+
     // Renames; the dialog closes once the daemon has answered.
     function rename(name) {
+        if (dialog.busy) return;
+        dialog.busy = true;
         dialog.rootWindow.afterDaemonCall(dialog.appBackend.renameBackup(dialog.backupId, name), function(ok) {
+            dialog.busy = false;
             if (ok) {
                 dialog.close();
                 dialog.rootWindow.showPassiveNotification(i18n("Backup renamed"));
@@ -36,7 +42,7 @@ Kirigami.Dialog {
         Kirigami.Action {
             text: i18n("Rename")
             icon.name: "edit-rename"
-            enabled: renameBackupField.text.trim().length > 0 && renameBackupField.text.trim() !== dialog.currentName
+            enabled: !dialog.busy && renameBackupField.text.trim().length > 0 && renameBackupField.text.trim() !== dialog.currentName
             onTriggered: dialog.rename(renameBackupField.text.trim())
         }
     ]

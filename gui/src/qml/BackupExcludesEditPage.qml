@@ -182,7 +182,9 @@ EditorPage {
             return;
         }
         saveErrorText = "";
+        saving = true;
         rootWindow.afterDaemonCall(appBackend.updateBackupExcludes(backupId, currentExcludesJson()), function(ok) {
+            saving = false;
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 if (initialData) {
@@ -240,7 +242,7 @@ EditorPage {
 
     onUnsavedSaveRequested: {
         page.saveForGuard(function(ok) {
-            if (ok) {
+            if (ok && rootWindow.pageStack.currentItem === page) {
                 rootWindow.popSubPage();
             }
         });

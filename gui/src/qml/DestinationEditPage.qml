@@ -66,7 +66,9 @@ EditorPage {
                 destDraft.backendSecretsJson(),
                 page.needsVerification
             );
+        saving = true;
         rootWindow.afterDaemonCall(request, function(ok) {
+            saving = false;
             if (ok) {
                 initialData = rootWindow.findDestinationData(destinationId);
                 initialConnection = destDraft.connectionKey();
@@ -110,7 +112,7 @@ EditorPage {
     onUnsavedSaveRequested: {
         if (page.canSave) {
             page.saveForGuard(function(ok) {
-                if (ok) {
+                if (ok && rootWindow.pageStack.currentItem === page) {
                     rootWindow.popSubPage();
                 }
             });

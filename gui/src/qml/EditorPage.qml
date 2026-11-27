@@ -15,6 +15,10 @@ Kirigami.ScrollablePage {
     required property var appBackend
 
     property bool dirty: false
+    // A save is on its way to the daemon: the page takes no input until it has answered, so the
+    // answer cannot overwrite changes made meanwhile and a second save cannot start.
+    property bool saving: false
+    enabled: !saving
     property string unsavedObjectName: ""
     property string unsavedSubtitle: ""
     // Dialogs of the page that Escape closes before the «Save changes?» prompt.

@@ -26,6 +26,7 @@ Kirigami.Dialog {
     property int pendingRequest: 0
 
     function save(password) {
+        if (dialog.pendingRequest !== 0) return;
         dialog.pendingRequest = dialog.appBackend.updateDestinationPassword(dialog.destId, password);
     }
 
@@ -42,7 +43,7 @@ Kirigami.Dialog {
         Kirigami.Action {
             icon.name: "dialog-ok-apply"
             text: i18n("Verify and Save")
-            enabled: updatePasswordField.text.length > 0
+            enabled: updatePasswordField.text.length > 0 && dialog.pendingRequest === 0
             onTriggered: dialog.save(updatePasswordField.text)
         }
     ]

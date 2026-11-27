@@ -18,6 +18,8 @@ Kirigami.Dialog {
     required property var appBackend
     property string backupId: ""
     property string backupName: ""
+    // The removal is on its way; the dialog takes no second one.
+    property bool busy: false
 
     customFooterActions: [
         Kirigami.Action {
@@ -25,8 +27,11 @@ Kirigami.Dialog {
             objectName: "confirmRemoveBackupAction"
             icon.name: "list-remove"
             text: Texts.label("remove")
+            enabled: !dialog.busy
             onTriggered: {
+                dialog.busy = true;
                 dialog.rootWindow.afterDaemonCall(dialog.appBackend.removeBackup(dialog.backupId), function(ok) {
+                    dialog.busy = false;
                     if (ok) {
                         dialog.close();
                         dialog.rootWindow.showPassiveNotification(i18n("Backup removed from Kestic"));

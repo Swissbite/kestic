@@ -63,7 +63,9 @@ EditorPage {
             if (done) done(false);
             return;
         }
+        saving = true;
         rootWindow.afterDaemonCall(appBackend.updateBackupSource(backupId, sourcePath.trim()), function(ok) {
+            saving = false;
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 refreshSourceMetadata();

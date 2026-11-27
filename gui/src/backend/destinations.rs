@@ -16,10 +16,8 @@ use kestic_core::destination_types::cards_ready_first;
 use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};
 use kestic_core::model::DestinationKind;
 use kestic_core::sync::LockUnpoisoned;
-use kestic_daemon::dbus_api::{BackendSecrets, KesticDbusError};
-use kestic_i18n::codes::{
-    ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome, ServiceErrorCode,
-};
+use kestic_daemon::dbus_api::BackendSecrets;
+use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome};
 use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
 
@@ -192,15 +190,11 @@ impl qobject::KesticApp {
             return 0;
         };
         let (mode, repo_pw) = (mode.to_string(), repo_pw.to_string());
-        // A locked password store shows in the state, which is fetched before the answer.
-        self.request_daemon_with(
+        // The state is fetched before the answer: it holds the new destination (a backup added
+        // next needs its kind) or shows a locked password store.
+        self.request_daemon(
             Lane::slow("add-destination"),
             move |client| client.add_destination(&dest, &mode, &repo_pw, &backend),
-            |result| {
-                result.as_ref().err().is_some_and(|err| {
-                    KesticDbusError::from(err.clone()).code() == ServiceErrorCode::SecretStoreLocked
-                })
-            },
             |mut app, result| {
                 let id = app.as_mut().finish_daemon_action(result, Finish::Plain);
                 app.as_mut().apply_cached_state();
@@ -330,10 +324,17 @@ impl qobject::KesticApp {
         self.as_mut().set_snapshots_loading(true);
         self.as_mut().set_snapshots_error(QString::from(""));
         let b_id = backup_id.to_string();
+        shared_state().lock_unpoisoned().snapshots_wanted = b_id.clone();
+        let wanted = b_id.clone();
         self.call_daemon(
-            Lane::slow(&format!("snapshots:{b_id}")),
+            // A stale reply is dropped (below), so the requests need no order of their own.
+            Lane::Alone,
             move |client| client.list_backup_snapshots(&b_id),
-            |mut app, listed| {
+            move |mut app, listed| {
+                // A list that arrives after the window asked for another backup's is dropped.
+                if shared_state().lock_unpoisoned().snapshots_wanted != wanted {
+                    return;
+                }
                 let (dto, error) = match listed {
                     Ok(Ok(dto)) => {
                         let error = dto.current_error.clone().unwrap_or_default();
@@ -349,6 +350,7 @@ impl qobject::KesticApp {
                 app.as_mut().set_snapshots_loading(false);
                 app.as_mut().set_snapshots_error(QString::from(&error));
                 app.as_mut().set_snapshots_has_previous(has_prev);
+                app.as_mut().set_snapshots_backup_id(QString::from(&wanted));
                 app.as_mut().snapshots_updated();
             },
         );

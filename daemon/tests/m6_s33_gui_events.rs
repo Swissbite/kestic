@@ -14,6 +14,7 @@ use kestic_test_support::bus::PrivateDbusGuard;
 use kestic_test_support::delayed_daemon::DelayedDaemon;
 use kestic_test_support::gui::{IsolatedEnv, SmokeContext};
 use kestic_test_support::workspace::workspace_root;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -208,7 +209,7 @@ fn slow_rig(
     base: &str,
     back: &str,
     front: &str,
-    delay_of: impl Fn(&str) -> Duration + Send + Sync + 'static,
+    delay_of: impl Fn(&str, &str) -> Duration + Send + Sync + 'static,
 ) -> (M3Rig, Backup) {
     let variant = latest_variant();
     let rig = M3Rig::start_on(
@@ -267,7 +268,7 @@ fn ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon() {
                 "SlowEdits",
                 "net.daester.KesticSlowEditsBack",
                 front,
-                |_| SLOW_REPLY,
+                |_, _| SLOW_REPLY,
             );
             let client = rig.daemon.client.clone();
             client
@@ -290,6 +291,82 @@ fn ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon() {
     );
 }
 
+/// The id of a run that has finished and is not in `known`, once there is one.
+fn next_finished_run(client: &KesticClient, known: &BTreeSet<String>) -> String {
+    let mut found = String::new();
+    wait_until_within(Duration::from_secs(60), "a run finished", || {
+        let finished = client.get_state().ok().and_then(|s| {
+            s.recent_runs
+                .iter()
+                .find(|r| {
+                    r.status != kestic_core::model::RunStatus::Running
+                        && !known.contains(r.id.as_str())
+                })
+                .map(|r| r.id.as_str().to_string())
+        });
+        finished.map(|id| found = id).is_some()
+    });
+    found
+}
+
+/// AC-M6-33-1 (b): replies that arrive late or out of order: the window shows the run and the
+/// snapshot list it asked for last, and an edit saved while an earlier one (a rename) is still on
+/// its way does not undo it.
+#[test]
+fn ac_m6_33_1_late_replies_do_not_show_stale_data_or_undo_edits() {
+    run_isolated_test(
+        "ac_m6_33_1_late_replies_do_not_show_stale_data_or_undo_edits",
+        "KESTIC_M6_S33_SLOW_ORDER_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowOrderFront";
+            let held: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+            let held_for_delay = Arc::clone(&held);
+            let (rig, backup_a) = slow_rig(
+                root,
+                "SlowOrder",
+                "net.daester.KesticSlowOrderBack",
+                front,
+                move |member, first| {
+                    let late = held_for_delay
+                        .lock()
+                        .expect("held ids")
+                        .iter()
+                        .any(|id| id == first);
+                    match member {
+                        "RenameBackup" => Duration::from_secs(3),
+                        "GetRunDetail" | "ListBackupSnapshots" if late => Duration::from_secs(4),
+                        _ => Duration::ZERO,
+                    }
+                },
+            );
+            let dest = rig.add_destination("Order Vault B", |_| {});
+            let backup_b = rig.add_backup_to(&dest, "Pictures", |_| {});
+            let client = rig.daemon.client.clone();
+            client.start_backup(backup_a.id.as_str()).expect("start A");
+            let run_a = next_finished_run(&client, &BTreeSet::new());
+            client.start_backup(backup_b.id.as_str()).expect("start B");
+            let run_b = next_finished_run(&client, &BTreeSet::from([run_a.clone()]));
+            held.lock()
+                .expect("held ids")
+                .extend([run_a.clone(), backup_a.id.as_str().to_string()]);
+            run_slow_scene(
+                root,
+                "m6-slow-order",
+                front,
+                &[],
+                &[
+                    ("KESTIC_TEST_BACKUP_A", backup_a.id.as_str()),
+                    ("KESTIC_TEST_BACKUP_B", backup_b.id.as_str()),
+                    ("KESTIC_TEST_RUN_A", &run_a),
+                    ("KESTIC_TEST_RUN_B", &run_b),
+                ],
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// AC-M6-33-1 (b): the quit dialog of the tray opens before the first state arrived; the state
 /// that arrives later names the backup that runs.
 #[test]
@@ -305,7 +382,7 @@ fn ac_m6_33_1_quit_dialog_names_the_running_backup_once_the_state_arrives() {
                 "QuitRunning",
                 "net.daester.KesticQuitBack",
                 front,
-                |_| Duration::from_secs(2),
+                |_, _| Duration::from_secs(2),
             );
             rig.wrapper.hold("backup");
             rig.daemon
@@ -344,7 +421,7 @@ fn ac_m6_33_1_password_prompt_does_not_hold_back_other_actions() {
                 "Prompt",
                 "net.daester.KesticPromptBack",
                 front,
-                |member| {
+                |member, _| {
                     if member == "UnlockSecretStore" {
                         Duration::from_secs(30)
                     } else {
@@ -374,7 +451,7 @@ fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
                 "Close",
                 "net.daester.KesticCloseBack",
                 front,
-                |member| match member {
+                |member, _| match member {
                     "WindowActive" => Duration::from_secs(30),
                     "PauseGlobal" => Duration::from_secs(2),
                     _ => Duration::ZERO,
@@ -424,7 +501,7 @@ fn ac_m6_33_1_slow_start_does_not_hold_back_pausing() {
                 "SlowStart",
                 "net.daester.KesticSlowStartBack",
                 front,
-                |member| {
+                |member, _| {
                     if member == "StartBackup" || member == "StartAllBackups" {
                         Duration::from_secs(30)
                     } else {
@@ -453,7 +530,7 @@ fn ac_m6_33_1_refused_start_names_the_backup_and_the_reason() {
                 "Refused",
                 "net.daester.KesticRefusedBack",
                 front,
-                |_| Duration::from_secs(3),
+                |_, _| Duration::from_secs(3),
             );
             fs::remove_dir_all(&backup.source.path).expect("remove the source");
             run_slow_scene(

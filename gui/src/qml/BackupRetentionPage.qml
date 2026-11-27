@@ -223,7 +223,9 @@ EditorPage {
 
     // Saves; `done(ok)` runs once the daemon has answered.
     function commitSave(jsonStr, done) {
+        saving = true;
         rootWindow.afterDaemonCall(appBackend.updateBackupRetention(backupId, jsonStr), function(ok) {
+            saving = false;
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 if (initialData) {
@@ -241,7 +243,7 @@ EditorPage {
 
     function finishSave(jsonStr, popOnSuccess, done) {
         commitSave(jsonStr, function(ok) {
-            if (ok && popOnSuccess) {
+            if (ok && popOnSuccess && rootWindow.pageStack.currentItem === page) {
                 rootWindow.popSubPage();
             }
             if (done) done(ok);

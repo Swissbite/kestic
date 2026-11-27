@@ -50,19 +50,31 @@ fn counted(job: Job) -> Job {
     })
 }
 
-/// Queues `job` on the worker of `key`; the job comes back if that worker has ended.
+/// A new worker thread for one lane.
+fn start_worker() -> Sender<Job> {
+    let (jobs, queue) = mpsc::channel::<Job>();
+    thread::spawn(move || {
+        for job in queue {
+            job();
+        }
+    });
+    jobs
+}
+
+/// Queues `job` on the worker of `key`. A worker that has ended (a call on it panicked) is
+/// replaced, so the lane keeps working; the job comes back only if the new worker fails too.
 fn send_in_order(key: &str, job: Job) -> Result<(), Job> {
     let mut workers = WORKERS.lock_unpoisoned();
-    let worker = workers.entry(key.to_string()).or_insert_with(|| {
-        let (jobs, queue) = mpsc::channel::<Job>();
-        thread::spawn(move || {
-            for job in queue {
-                job();
-            }
-        });
-        jobs
-    });
-    worker.send(job).map_err(|returned| returned.0)
+    let worker = workers.entry(key.to_string()).or_insert_with(start_worker);
+    match worker.send(job) {
+        Ok(()) => Ok(()),
+        Err(returned) => {
+            let fresh = start_worker();
+            let sent = fresh.send(returned.0).map_err(|again| again.0);
+            workers.insert(key.to_string(), fresh);
+            sent
+        }
+    }
 }
 
 /// Waits until the calls asked for are made, at most `limit`: a window that closes still tells

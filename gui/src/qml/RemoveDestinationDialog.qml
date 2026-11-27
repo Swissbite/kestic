@@ -18,13 +18,18 @@ Kirigami.Dialog {
     required property var appBackend
     property string destId: ""
     property string destName: ""
+    // The removal is on its way; the dialog takes no second one.
+    property bool busy: false
 
     customFooterActions: [
         Kirigami.Action {
             icon.name: "list-remove"
             text: i18n("Remove Destination")
+            enabled: !dialog.busy
             onTriggered: {
+                dialog.busy = true;
                 dialog.rootWindow.afterDaemonCall(dialog.appBackend.removeDestination(dialog.destId), function(ok) {
+                    dialog.busy = false;
                     if (ok) {
                         dialog.close();
                         dialog.rootWindow.showPassiveNotification(i18n("Destination removed"));
