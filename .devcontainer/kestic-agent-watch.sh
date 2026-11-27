@@ -22,6 +22,9 @@
 # - Otherwise the open issue of the milestone with the lowest number that is not
 #   labelled needs-maintainer and has no open "blocked by" issue starts in a
 #   fresh session. Issue numbers give the order, so new issues queue at the end.
+# - With KESTIC_AGENT_LANE set to a label (for example lane:core), only issues
+#   with that label are started. Two agents on one milestone each get their own
+#   lane, so they never start the same issue.
 #
 # The maintainer hears about it in the log and, where notify-send exists, on the
 # desktop: an issue waiting for them, a session that does not come back, an
@@ -39,6 +42,9 @@ HOLD=needs-maintainer
 IDLE_ALERT=14400
 
 [[ $# -eq 2 ]] || { echo "usage: $0 <milestone title> <base branch>" >&2; exit 2; }
+LANE="${KESTIC_AGENT_LANE:-}"
+# The lane goes into a jq filter, so it is limited to plain label characters.
+[[ "$LANE" =~ ^[A-Za-z0-9:._-]*$ ]] || { echo "KESTIC_AGENT_LANE: only letters, digits and :._- allowed" >&2; exit 2; }
 milestone="$1"
 base="$2"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kestic-agent"
@@ -171,8 +177,8 @@ if ((issue > 0)); then
 fi
 
 candidates="$(gh issue list --repo "$REPO" --milestone "$milestone" --state open --limit 500 \
-    --json number,labels --jq ".[] | \"\(.number) \([.labels[].name] | index(\"$HOLD\") != null)\"" |
-    awk '$1 ~ /^[0-9]+$/ && $2 == "false" { print $1 }' | sort -n)"
+    --json number,labels --jq ".[] | \"\(.number) \([.labels[].name] | index(\"$HOLD\") != null) \([.labels[].name] | index(\"$LANE\") != null)\"" |
+    awk -v lane="$LANE" '$1 ~ /^[0-9]+$/ && $2 == "false" && (lane == "" || $3 == "true") { print $1 }' | sort -n)"
 for next in $candidates; do
     if ! open_blockers="$(gh api "repos/$REPO/issues/$next/dependencies/blocked_by" --paginate \
         --jq '.[] | select(.state == "open") | .number')"; then

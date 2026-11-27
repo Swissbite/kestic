@@ -110,6 +110,16 @@ fixture "open-M4 Restore" "4 false" "6 false"
 fixture issues_4_dependencies_blocked_by.fail
 expect "unreadable blockers skip that issue only" "none 0 0" "start 6 m4"
 
+# Lanes: the third field says whether the issue carries the lane label.
+fixture "open-M4 Restore" "4 false false" "6 false true" "8 true true"
+KESTIC_AGENT_LANE=lane:core expect "lane: only issues with the lane label" "none 0 0" "start 6 m4"
+fixture "open-M4 Restore" "4 false false"
+KESTIC_AGENT_LANE=lane:core expect "lane: nothing in the lane" "none 0 0" ""
+fixture "open-M4 Restore" "4 false false" "6 false true"
+expect "no lane: every issue" "none 0 0" "start 4 m4"
+out="$(KESTIC_AGENT_LANE='x" or true' "$here/kestic-agent-watch.sh" "M4 Restore" m4 2>&1 || true)"
+[[ "$out" == *"only letters, digits"* ]] || fail "lane with quotes is refused: $out"
+
 # Current story open and not held: it stays the only one; only the maintainer's
 # activity after the turn started continues the session.
 fixture issue-5 "OPEN false"

@@ -319,7 +319,15 @@ WantedBy=timers.target
 # ~/.config/kestic-agent/watch-<name>.env
 MILESTONE=<milestone title>
 BASE=<base branch>
+# Optional: start only issues with this label (one lane per agent).
+KESTIC_AGENT_LANE=<label>
 ```
+
+Two agents on the **same** milestone each need a lane: label every open issue
+with one lane label (for example `lane:core` and `lane:gui`) and set
+`KESTIC_AGENT_LANE` per instance. Without lanes both watchers would start the
+lowest free issue, which is the same one. An issue without a lane label is
+started by no laned watcher.
 
 ```bash
 systemctl --user daemon-reload && systemctl --user enable --now kestic-agent-watch@kestic-agent-2.timer
