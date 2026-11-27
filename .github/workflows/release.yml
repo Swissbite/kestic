@@ -18,9 +18,12 @@
 #   build        the .deb with the tag's version, same steps as job `release` in verify.yml
 #   screenshots  release only: waits for the green Verify run of the commit on main and bundles
 #                its smoke screenshots
-#   attest       SHA256SUMS and a build provenance attestation of the .deb
+#   sums         checks the package, names every asset as GitHub keeps it on upload (`~` becomes
+#                `.`) and writes SHA256SUMS (release-assets.sh)
+#   attest       a build provenance attestation of the .deb
 #   publish      GitHub's generated notes (pull requests since the previous tag, grouped by
-#                .github/release.yml), job summary, tag and release; for a branch, removes older
+#                .github/release.yml), job summary, tag and release; checks the uploaded assets
+#                against SHA256SUMS before the draft is published; for a branch, removes older
 #                pre-releases with their tags
 #   site         release only: starts the Pages workflow on main, so the showcase site names the
 #                new release and offers its .deb
@@ -289,7 +292,9 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
-  attest:
+  # The only job after the build that runs a script from the checkout, so it gets no write
+  # permission; attest and publish take its assets as they are.
+  sums:
     needs: [prepare, build, screenshots]
     # screenshots is skipped for a pre-release of an integration branch.
     if: >-
@@ -298,9 +303,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           name: release-deb
@@ -311,7 +317,7 @@ jobs:
           name: release-screenshots
           path: assets
 
-      - name: Check the package and write SHA256SUMS
+      - name: Check the package
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
@@ -329,17 +335,13 @@ jobs:
             echo "::error::${debs[0]} is $package $deb_version, expected kestic $VERSION-1"
             exit 1
           fi
-          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
-          mv "$RUNNER_TEMP/SHA256SUMS" .
-          cat SHA256SUMS
 
-      # The screenshots come from the Verify run, not from this workflow, so only the .deb gets a
-      # provenance attestation; SHA256SUMS covers every asset.
-      - name: Attest build provenance
-        if: needs.prepare.outputs.dry-run != 'true'
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: assets/*.deb
+      # GitHub replaces `~` in an uploaded file name with `.`; SHA256SUMS names the files as they
+      # are uploaded, so `sha256sum -c SHA256SUMS` passes next to the downloaded assets.
+      - name: Name the assets as uploaded and write SHA256SUMS
+        run: |
+          .github/scripts/release-assets.sh prepare assets
+          cat assets/SHA256SUMS
 
       - uses: actions/upload-artifact@v7
         with:
@@ -349,8 +351,31 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
+  attest:
+    needs: [prepare, sums]
+    if: ${{ !cancelled() && needs.sums.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        if: needs.prepare.outputs.dry-run != 'true'
+        with:
+          name: release-assets
+          path: assets
+
+      # The screenshots come from the Verify run, not from this workflow, so only the .deb gets a
+      # provenance attestation; SHA256SUMS covers every asset.
+      - name: Attest build provenance
+        if: needs.prepare.outputs.dry-run != 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: assets/*.deb
+
   publish:
-    needs: [prepare, attest]
+    needs: [prepare, sums, attest]
     if: ${{ !cancelled() && needs.attest.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -471,6 +496,25 @@ jobs:
           fi
           gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "$TITLE" --notes-file notes/notes.md "${create[@]}"
+          # What GitHub serves must be what job sums named and hashed: the same SHA256SUMS, the
+          # same file names, and every file matching. Inline, because this job may not run code
+          # from the checkout. On a difference the release stays a draft.
+          uploaded="$RUNNER_TEMP/uploaded"
+          rm -rf "$uploaded"
+          mkdir -p "$uploaded"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$uploaded"
+          if ! cmp -s assets/SHA256SUMS "$uploaded/SHA256SUMS"; then
+            echo "::error::The uploaded SHA256SUMS of $TAG differs from the one written; the release stays a draft"
+            exit 1
+          fi
+          if ! diff <(ls -A assets) <(ls -A "$uploaded"); then
+            echo "::error::GitHub names the assets of $TAG differently; the release stays a draft"
+            exit 1
+          fi
+          if ! (cd "$uploaded" && sha256sum --check --strict SHA256SUMS); then
+            echo "::error::The uploaded assets of $TAG do not match SHA256SUMS; the release stays a draft"
+            exit 1
+          fi
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${publish[@]}"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
 
