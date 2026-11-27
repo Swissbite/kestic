@@ -130,3 +130,65 @@ fn ac_m6_23_3_release_date_is_the_commit_date() {
         );
     }
 }
+
+/// AC-M6-23-2 (a): the metainfo of a release (with screenshots and German captions, which no
+/// development build of `just verify` has) passes `appstreamcli validate` without warnings, built
+/// like `just deb` builds it from the real template, list and catalog.
+#[test]
+fn ac_m6_23_2_release_metainfo_validates_without_warnings() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let dir = fresh_dir("metainfo-release-validate");
+    let generated = dir.join("generated/net.daester.Kestic.metainfo.xml");
+    let shipped = dir.join("net.daester.Kestic.metainfo.xml");
+    fs::create_dir_all(generated.parent().expect("parent")).expect("mkdir");
+    let status = Command::new(env!("CARGO_BIN_EXE_kestic-build-stamp"))
+        .arg("metainfo")
+        .arg(root.join("packaging/net.daester.Kestic.metainfo.xml"))
+        .arg(root.join("packaging/screenshots.tsv"))
+        .arg(&generated)
+        .env("KESTIC_VERSION", "0.6.0")
+        .env("SOURCE_DATE_EPOCH", "1795780800")
+        .status()
+        .expect("run kestic-build-stamp metainfo");
+    assert!(status.success(), "metainfo failed");
+    let status = Command::new("msgfmt")
+        .args(["--xml", "-l", "de", "--template"])
+        .arg(&generated)
+        .arg("-o")
+        .arg(&shipped)
+        .arg(root.join("po/de/kestic.po"))
+        .status()
+        .expect("run msgfmt");
+    assert!(status.success(), "msgfmt --xml failed");
+    let xml = fs::read_to_string(&shipped).expect("read translated metainfo");
+    let listed = fs::read_to_string(root.join("packaging/screenshots.tsv")).expect("read list");
+    let shots = listed
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .count();
+    assert_eq!(
+        xml.matches("<caption xml:lang=\"de\">").count(),
+        shots,
+        "(a) every caption has its German translation:\n{xml}"
+    );
+
+    let out = Command::new("appstreamcli")
+        .args(["validate", "--no-net", "--no-color"])
+        .arg(&shipped)
+        .output()
+        .expect("run appstreamcli (package appstream, scripts/bootstrap.sh)");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "(a) exit {:?}:\n{report}",
+        out.status.code()
+    );
+    let warnings: Vec<&str> = report.lines().filter(|l| l.starts_with("W:")).collect();
+    assert!(warnings.is_empty(), "(a) warnings: {warnings:#?}");
+}

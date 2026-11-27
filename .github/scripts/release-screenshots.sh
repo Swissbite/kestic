@@ -7,10 +7,11 @@
 # own release (build-stamp/src/screenshots.rs), so every listed image must be there.
 #
 #   release-screenshots.sh <list> <smoke screenshot dir> <asset dir>
-#       For each line `name<TAB>source<TAB>caption` of <list> (no empty line, no `#`), copies
-#       <smoke screenshot dir>/<source> to <asset dir>/<name>. Fails, before copying anything, when
-#       a source is missing, no regular file, a symlink or no PNG, or a name is not a plain
-#       `screenshot-….png`.
+#       For each line `name<TAB>source<TAB>caption` of <list> (blank lines and `#` lines skipped,
+#       the same rules as build-stamp/src/screenshots.rs), copies <smoke screenshot dir>/<source>
+#       to <asset dir>/<name>. Fails, before copying anything, for a line without exactly three
+#       fields, a name that is not a plain `screenshot-….png` or listed twice, or a source that is
+#       missing, no regular file, a symlink or no PNG.
 #
 # Sourced by test-release-screenshots.sh, which tests the function below.
 
@@ -19,15 +20,31 @@ set -euo pipefail
 readonly PNG_SIGNATURE="89504e470d0a1a0a"
 
 release_screenshots() {
-    local list="$1" smoke="$2" assets="$3" name source caption count=0
-    local -a names=() sources=()
-    while IFS=$'\t' read -r name source caption; do
-        [ -n "$name" ] || continue
-        [[ "$name" == \#* ]] && continue
-        if ! [[ "$name" =~ ^screenshot-[a-z0-9-]+\.png$ ]] || [ -z "$caption" ]; then
-            echo "::error::Malformed line in $list: '$name'" >&2
+    local list="$1" smoke="$2" assets="$3" line name source count=0
+    local -a fields=() names=() sources=()
+    local -A seen=()
+    # `|| [ -n "$line" ]` keeps a last line without newline; a CR of a CRLF list is dropped.
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        if [[ "$line" =~ ^[[:space:]]*$ ]] || [[ "$line" == \#* ]]; then
+            continue
+        fi
+        IFS=$'\t' read -r -a fields <<< "$line"
+        if [ "${#fields[@]}" -ne 3 ] || [[ "$line" == *$'\t\t'* ]]; then
+            echo "::error::Malformed line in $list (name, source and caption separated by tabs): '$line'" >&2
             return 1
         fi
+        name="${fields[0]}"
+        source="${fields[1]}"
+        if ! [[ "$name" =~ ^screenshot-[a-z0-9-]+\.png$ ]]; then
+            echo "::error::Screenshot name '$name' in $list is not screenshot-<a-z0-9->.png" >&2
+            return 1
+        fi
+        if [ -n "${seen[$name]+set}" ]; then
+            echo "::error::Screenshot name $name is listed twice in $list" >&2
+            return 1
+        fi
+        seen[$name]=1
         if ! [[ "$source" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*\.png$ ]] || [ -L "$smoke/$source" ] ||
             [ ! -f "$smoke/$source" ]; then
             echo "::error::Screenshot $source for $name is missing in $smoke" >&2

@@ -219,8 +219,9 @@ fn ac_m6_23_3_deb_has_release_of_its_version() {
 }
 
 /// AC-M6-23-4 (a): the screenshots of the shipped metainfo are assets of the package's own
-/// release (`v<version>` with `~` as `-`); a development build without its own release (`+` in
-/// the version, as in the CI runs of `just verify`) ships none.
+/// release (`v<version>` with `~` as `-`); a development build (`+` in the version, as in the CI
+/// runs of `just verify`) and a pre-release of an integration branch (`~m<n>.<k>`, published
+/// without screenshots) ship none.
 #[test]
 fn ac_m6_23_4_deb_screenshots_are_assets_of_its_own_release() {
     let control = deb_control();
@@ -232,7 +233,11 @@ fn ac_m6_23_4_deb_screenshots_are_assets_of_its_own_release() {
         .to_owned();
     let (_unpacked, root) = unpack_deb("kestic-m6-s23-screenshots");
     let images = elements(&shipped_metainfo(&root), "image");
-    if version.contains('+') || version.starts_with("0.0.0~dev") {
+    let integration_pre_release = version.split_once("~m").is_some_and(|(_, rest)| {
+        rest.split('.')
+            .all(|p| p.bytes().all(|b| b.is_ascii_digit()))
+    });
+    if version.contains('+') || version.starts_with("0.0.0~dev") || integration_pre_release {
         assert!(
             images.is_empty(),
             "(a) a build without release ships no screenshots"

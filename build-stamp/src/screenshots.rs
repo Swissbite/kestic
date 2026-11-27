@@ -47,9 +47,9 @@ pub fn parse_list(text: &str) -> Result<Vec<Screenshot>, String> {
         if !is_png_file_name(source) {
             return Err(format!("screenshot source {source:?} is no PNG file name"));
         }
-        if caption.trim().is_empty() || caption.trim() != *caption {
+        if !is_plain_caption(caption) {
             return Err(format!(
-                "screenshot {name}: caption empty or with blanks at the edges"
+                "screenshot {name}: caption must be plain text without blanks at the edges, double blanks or &, <, >"
             ));
         }
         if shots.iter().any(|s| s.name == *name) {
@@ -67,13 +67,32 @@ pub fn parse_list(text: &str) -> Result<Vec<Screenshot>, String> {
     Ok(shots)
 }
 
-/// The tag of the release of `version`, `None` for a build without its own release (a
-/// development build, or commits after a tag: `+` in the version).
+/// The tag of the release of `version` whose assets carry the screenshots. `None` for a build
+/// without such a release: a development build, commits after a tag (`+` in the version), and a
+/// pre-release of an integration branch (`~m<n>.<k>`), which the release workflow publishes
+/// without screenshots.
 pub fn release_tag(version: &str) -> Option<String> {
     if version.contains('+') || version == DEV_VERSION || version.is_empty() {
         return None;
     }
+    if version
+        .split_once('~')
+        .is_some_and(|(_, pre)| is_integration_pre_release(pre))
+    {
+        return None;
+    }
     Some(format!("v{}", version.replace('~', "-")))
+}
+
+/// `m<n>.<k>`, the pre-release part of a build of an integration branch.
+fn is_integration_pre_release(pre: &str) -> bool {
+    pre.strip_prefix('m')
+        .and_then(|rest| rest.split_once('.'))
+        .is_some_and(|(n, k)| {
+            [n, k]
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        })
 }
 
 /// `metainfo` with a `<screenshots>` block for `shots` added as the last child of `<component>`,
@@ -105,7 +124,7 @@ pub fn with_screenshots(
         });
         block.push_str(&format!(
             "      <caption>{}</caption>\n      <image>{RELEASE_DOWNLOAD}/{tag}/{}</image>\n    </screenshot>\n",
-            escape(&shot.caption),
+            shot.caption,
             shot.name
         ));
     }
@@ -134,10 +153,13 @@ fn is_png_file_name(name: &str) -> bool {
     })
 }
 
-fn escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+/// A caption that goes into the XML as it is and that msgfmt matches with its catalog entry:
+/// no markup characters, no blanks at the edges, no runs of whitespace.
+fn is_plain_caption(caption: &str) -> bool {
+    !caption.is_empty()
+        && caption.trim() == caption
+        && !caption.contains("  ")
+        && !caption.contains(['&', '<', '>', '\t', '\r', '\n'])
 }
 
 #[cfg(test)]
@@ -145,23 +167,33 @@ mod tests {
     use super::*;
 
     const LIST: &str = "# comment\n\
-        screenshot-overview.png\tm3-overview-status-wide-en.png\tOverview & status\n\
+        screenshot-overview.png\tm3-overview-status-wide-en.png\tOverview and status\n\
         screenshot-restore.png\tm4-restore-browse-wide-en.png\tRestore\n";
     const TEMPLATE: &str = "<component>\n  <id>x</id>\n</component>\n";
 
-    /// AC-M6-23-4 (a): a release (b) and a pre-release (c) version link the release assets of
-    /// their own tag; a development build (d) and commits after a tag (e) have no release.
+    /// AC-M6-23-4 (a): a release (b) and a release candidate (c) link the release assets of
+    /// their own tag; a development build (d), commits after a tag (e) and a pre-release of an
+    /// integration branch (f), published without screenshots, link none.
     #[test]
     fn ac_m6_23_4_release_tag_of_the_own_version() {
         assert_eq!(release_tag("0.6.0").as_deref(), Some("v0.6.0"), "(b)");
         assert_eq!(
-            release_tag("0.6.0~m6.11").as_deref(),
-            Some("v0.6.0-m6.11"),
+            release_tag("1.0.0~rc.1").as_deref(),
+            Some("v1.0.0-rc.1"),
             "(c)"
         );
+        assert_eq!(release_tag("0.6.0~m6.11"), None, "(f)");
         assert_eq!(release_tag("0.0.0~dev"), None, "(d)");
         assert_eq!(release_tag("0.0.0~dev+gabc1234"), None, "(d) with commit");
         assert_eq!(release_tag("0.6.0~m6.10+3.gabc1234"), None, "(e)");
+        assert!(
+            parse_list("screenshot-a.png\ta.png\tA & B\n").is_err(),
+            "(e) markup"
+        );
+        assert!(
+            parse_list("screenshot-a.png\ta.png\tA  B\n").is_err(),
+            "(e) double blank"
+        );
     }
 
     /// AC-M6-23-4 (a), (b): the block lists the screenshots in list order, the first one as
@@ -169,13 +201,13 @@ mod tests {
     #[test]
     fn ac_m6_23_4_screenshots_point_to_release_assets() {
         let shots = parse_list(LIST).expect("list");
-        let out = with_screenshots(TEMPLATE, &shots, "0.6.0~m6.11").expect("screenshots");
+        let out = with_screenshots(TEMPLATE, &shots, "0.6.0~rc.2").expect("screenshots");
         assert_eq!(
             out,
             "<component>\n  <id>x</id>\n  <screenshots>\n    <screenshot type=\"default\">\n      \
-             <caption>Overview &amp; status</caption>\n      <image>https://github.com/Swissbite/kestic/releases/download/v0.6.0-m6.11/screenshot-overview.png</image>\n    \
+             <caption>Overview and status</caption>\n      <image>https://github.com/Swissbite/kestic/releases/download/v0.6.0-rc.2/screenshot-overview.png</image>\n    \
              </screenshot>\n    <screenshot>\n      <caption>Restore</caption>\n      \
-             <image>https://github.com/Swissbite/kestic/releases/download/v0.6.0-m6.11/screenshot-restore.png</image>\n    \
+             <image>https://github.com/Swissbite/kestic/releases/download/v0.6.0-rc.2/screenshot-restore.png</image>\n    \
              </screenshot>\n  </screenshots>\n</component>\n"
         );
     }
@@ -194,7 +226,9 @@ mod tests {
     }
 
     /// AC-M6-23-4 (b): malformed lists are refused: (a) two fields, (b) a name outside the fixed
-    /// pattern, (c) a source with a path, (d) a repeated name, (e) an empty caption, (f) no entry.
+    /// pattern, (c) a source with a path, (d) a repeated name, (e) a caption that is empty or not
+    /// plain text, (f) no entry, (g) four fields. A list with CRLF line ends or without a final
+    /// newline is read completely.
     #[test]
     fn ac_m6_23_4_malformed_lists_are_refused() {
         assert!(parse_list("screenshot-a.png\ta.png\n").is_err(), "(a)");
@@ -209,5 +243,13 @@ mod tests {
         );
         assert!(parse_list("screenshot-a.png\ta.png\t \n").is_err(), "(e)");
         assert!(parse_list("# only a comment\n").is_err(), "(f)");
+        assert!(
+            parse_list("screenshot-a.png\ta.png\tA\tB\n").is_err(),
+            "(g)"
+        );
+        let read = parse_list("screenshot-a.png\ta.png\tA\r\nscreenshot-b.png\tb.png\tB")
+            .expect("CRLF, no final newline");
+        assert_eq!(read.len(), 2, "every line read");
+        assert_eq!(read[0].caption, "A", "no CR in the caption");
     }
 }
