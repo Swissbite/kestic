@@ -23,9 +23,12 @@ This skill holds only the method. The project knowledge (mandate, project rules,
 | Event | Meaning |
 | --- | --- |
 | `state:<agent>:<state>` | agent neither busy nor idle (stopped, crashed, logged out) |
+| `idle:<agent>:<since>` | agent idle longer than `LEITSTAND_IDLE_MAX_MIN` |
 | `prompt:<agent>:<hour>` | the agent's console shows a permission prompt |
 | `limit:<agent>:<reset>` | usage limit reached |
 | `subagent:<agent>:…` | a sub-agent runs longer than `LEITSTAND_SUBAGENT_MAX_MIN` |
+
+`prompt`, `limit` and `subagent` read the agent's console with patterns from the instance file; the defaults match Claude Code. For another agent tool, set `LEITSTAND_PROMPT_PATTERN`, `LEITSTAND_LIMIT_PATTERN`, `LEITSTAND_LIMIT_RESET_PATTERN` and `LEITSTAND_SUBAGENT_PATTERN`, or leave one empty to disable its check. The other events do not depend on the agent tool.
 | `question:<branch>:#<n>:<time>` | issue labelled `needs-maintainer` whose last comment is not the maintainer's |
 | `pr:<branch>:red:<n>:<sha>` | a required check failed on the head |
 | `pr:<branch>:ready:<n>:<sha>` | not a draft, all required checks green |
@@ -46,6 +49,8 @@ Merge with `--match-head-commit <full sha>`. Then **always**: close the issue by
 **red.** Find the cause first (logs, the forge's code-scanning alerts). A red security scan counts like a red test: fix in code, never dismiss. If the failure only happens in CI, reproduce it in the CI image before suspecting the code. Tell the agent what to fix by message.
 
 **prompt.** Look at the console. Never approve a permission prompt for the agent. Declining is allowed when the command is dangerous (for example `rm -rf` on a glob after a `cd`); then tell the agent why. A prompt that times out by itself needs nothing.
+
+**idle.** Look at the console and the agent's issue. An agent idle with open work is stuck: often a story part is merged and it did not start the next one, or a message waits unread. Tell it what to do next by message. If the milestone has no free issue left, there is nothing to do.
 
 **state / limit.** Restart or resume the agent with the instance's commands; on a usage limit, note the reset time and tell the human only if it changes their plans.
 
