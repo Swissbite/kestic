@@ -7,6 +7,11 @@
 #include <QElapsedTimer>
 #include <functional>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QQmlContext>
+#include <QQmlExpression>
 #include <QLocale>
 
 namespace kestic::smoke {
@@ -1001,6 +1006,82 @@ void run_slow_order_scene(QQuickWindow* window, QObject* backend,
     poll->start(50);
 }
 
+// Second half of the slow-save scene: the exclude rules of the first backup, saved twice.
+void run_double_save(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path) {
+    QMetaObject::invokeMethod(window, "openBackupExcludesPage", Q_ARG(QVariant, backup_id_at(window, 0)));
+    wait_then(window, 5000, 88, QStringLiteral("the exclude rules page did not open"),
+        [=]() { return child_item(window, "backupExcludesEditPage") != nullptr; },
+        [=]() {
+            QQuickItem* page = child_item(window, "backupExcludesEditPage");
+            QObject* save = child_object(window, "saveExcludesAction");
+            const bool caches = page->property("excludeCaches").toBool();
+            page->setProperty("excludeCaches", !caches);
+            QMetaObject::invokeMethod(page, "saveForGuard", Q_ARG(QVariant, QVariant()));
+            SMOKE_CHECK3("M6", 89, page->property("saving").toBool(), save, !save->property("enabled").toBool(),
+                "(b) «Save» stays on while the exclude rules are saved");
+            QMetaObject::invokeMethod(page, "saveForGuard", Q_ARG(QVariant, QVariant()));
+            wait_then(window, 20000, 90, QStringLiteral("the save never answered"),
+                [=]() { return !page->property("saving").toBool(); },
+                [=]() {
+                    page->setProperty("excludeCaches", caches);
+                    auto settled = std::make_shared<QElapsedTimer>();
+                    settled->start();
+                    // A second save, had it been sent, answers about 5 s after the first (it
+                    // reads the state, 2 s late, and saves, 3 s late).
+                    wait_then(window, 15000, 91, QStringLiteral("timed out"),
+                        [=]() { return settled->elapsed() > 8000; },
+                        [=]() {
+                            SMOKE_CHECK2("M6", 91, page->property("dirty").toBool(),
+                                page->property("excludeCaches").toBool() == caches,
+                                "(b) a second save discarded the change made after the first one answered");
+                            smoke_finish("M6", warnings.get(), window, out_path);
+                        });
+                });
+        });
+}
+
+// AC-M6-33-1: saving waits for the daemon's answer. The test holds back the state (2 s) and
+// saving a backup (3 s). (a) A backup added as soon as its new destination is saved, as the
+// wizard does it, sees that destination (the test checks its run conditions). (b) While the
+// exclude rules are saved, «Save» is off and a second save starts nothing, so a change made after
+// the answer stays.
+void run_slow_save_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    const QString repo = qEnvironmentVariable("KESTIC_TEST_REPO");
+    const QString source = qEnvironmentVariable("KESTIC_TEST_SOURCE");
+    SMOKE_CHECK("M6", 85, !repo.isEmpty() && !source.isEmpty(), "precondition: repository and source paths");
+    wait_then(window, 30000, 86, QStringLiteral("the state never arrived"),
+        [=]() { return backend->property("daemon_reachable").toBool() && !backup_id_at(window, 0).isEmpty(); },
+        [=]() {
+            QJsonObject fields{{"kind", "local"}, {"name", "Added Vault"}, {"location", repo}, {"username", ""},
+                {"endpoint", ""}, {"bucket", ""}, {"path", ""}, {"region", ""}, {"host", ""}, {"port", 22},
+                {"env", QJsonArray()}};
+            const QString args = QString::fromUtf8(QJsonDocument(QJsonArray{
+                QString::fromUtf8(QJsonDocument(fields).toJson(QJsonDocument::Compact)), source})
+                .toJson(QJsonDocument::Compact));
+            // The wizard's order: the backup is added in the answer of adding its destination.
+            QQmlExpression chain(qmlContext(window), window, QStringLiteral(
+                "(function(a) {"
+                "  afterDaemonCall(appBackend.addDestination(a[0], 'init', 'added-password', '{}'), function(ok, id) {"
+                "    if (ok) afterDaemonCall(appBackend.addBackup('Added', a[1], id, ''), function() {});"
+                "  });"
+                "})(%1)").arg(args));
+            chain.evaluate();
+            SMOKE_CHECK("M6", 87, !chain.hasError(), chain.error().toString());
+            wait_then(window, 30000, 87, QStringLiteral("the added backup never arrived"),
+                [=]() {
+                    return row_of(window, "backupsModel", "name", QStringLiteral("Added")) >= 0
+                        || !backend->property("last_action_error").toString().isEmpty();
+                },
+                [=]() {
+                    SMOKE_CHECK("M6", 87, row_of(window, "backupsModel", "name", QStringLiteral("Added")) >= 0,
+                        QStringLiteral("adding failed: %1").arg(backend->property("last_action_error").toString()));
+                    run_double_save(window, warnings, out_path);
+                });
+        });
+}
+
 // AC-M6-33-1: «Back Up Now» and «Back Up All Now» answered late (the test holds StartBackup and
 // StartAllBackups back 30 s) do not hold back pausing that backup or all backups.
 void run_slow_start_scene(QQuickWindow* window, QObject* backend,
@@ -1109,6 +1190,8 @@ void run_m6_smoke_scenario(
         run_close_window_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-order")) {
         run_slow_order_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-save")) {
+        run_slow_save_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-edits")) {
         run_slow_edits_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-start")) {

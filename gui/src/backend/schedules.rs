@@ -25,6 +25,10 @@ use kestic_core::scheduler::PauseDuration;
 use kestic_core::sync::LockUnpoisoned;
 use std::env;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// How many run details the window has asked for; a detail answers the latest one only.
+static RUN_DETAIL_ASKED: AtomicU64 = AtomicU64::new(0);
 
 /// Name of a configured backup from the cached daemon state.
 fn cached_backup_name(id: &BackupId) -> Option<String> {
@@ -241,15 +245,15 @@ impl qobject::KesticApp {
             self.as_mut().clear_run_detail(run_id);
         }
         let run_id = run_id.to_string();
-        let wanted = run_id.clone();
+        let asked = RUN_DETAIL_ASKED.fetch_add(1, Ordering::SeqCst) + 1;
         self.request_daemon_with(
             // A stale reply is dropped (below), so the requests need no order of their own.
             Lane::Alone,
             move |client| client.get_run_detail(&run_id),
             |_| false,
             move |mut app, result| {
-                // A detail that arrives after the window asked for another run's is dropped.
-                if app.selected_run_id().to_string() != wanted {
+                // Only the detail asked for last is shown, whichever run the earlier ones were for.
+                if RUN_DETAIL_ASKED.load(Ordering::SeqCst) != asked {
                     return (false, String::new());
                 }
                 let detail = match result {

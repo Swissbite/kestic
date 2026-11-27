@@ -367,6 +367,58 @@ fn ac_m6_33_1_late_replies_do_not_show_stale_data_or_undo_edits() {
     );
 }
 
+/// AC-M6-33-1 (b): the state comes 2 s late and saving a backup 3 s late. (a) A backup added in
+/// the answer of adding its local destination (as the wizard does) gets that destination's run
+/// conditions (no network needed); (b) while exclude rules are saved, «Save» is off and a second
+/// save starts nothing, so a change made after the answer stays (checked in the smoke scene).
+#[test]
+fn ac_m6_33_1_saves_wait_for_their_answer() {
+    run_isolated_test(
+        "ac_m6_33_1_saves_wait_for_their_answer",
+        "KESTIC_M6_S33_SLOW_SAVE_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowSaveFront";
+            let (rig, _) = slow_rig(
+                root,
+                "SlowSave",
+                "net.daester.KesticSlowSaveBack",
+                front,
+                |member, _| match member {
+                    "GetState" => Duration::from_secs(2),
+                    "UpdateBackup" => Duration::from_secs(3),
+                    _ => Duration::ZERO,
+                },
+            );
+            let repo = root.join("added-repo");
+            let source = root.join("added-source");
+            std::fs::create_dir_all(&source).expect("source folder");
+            std::fs::create_dir_all(&repo).expect("empty repository folder");
+            run_slow_scene(
+                root,
+                "m6-slow-save",
+                front,
+                &[],
+                &[
+                    ("KESTIC_TEST_REPO", repo.to_str().expect("utf-8 path")),
+                    ("KESTIC_TEST_SOURCE", source.to_str().expect("utf-8 path")),
+                ],
+            );
+            let state = rig.daemon.client.get_state().expect("state");
+            let added = state
+                .backups
+                .iter()
+                .find(|b| b.backup.name == "Added")
+                .expect("the added backup");
+            assert!(
+                !added.backup.run_conditions.require_network,
+                "(a) the backup added right after its local destination needs no network"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// AC-M6-33-1 (b): the quit dialog of the tray opens before the first state arrived; the state
 /// that arrives later names the backup that runs.
 #[test]

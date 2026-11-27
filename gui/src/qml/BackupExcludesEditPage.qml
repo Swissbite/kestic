@@ -177,7 +177,7 @@ EditorPage {
 
     // Saves; `done(ok)` runs once the daemon has answered.
     function saveForGuard(done) {
-        if (!initialData) {
+        if (!initialData || saving) {
             if (done) done(false);
             return;
         }
@@ -213,7 +213,7 @@ EditorPage {
             objectName: "saveExcludesAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
+            enabled: page.dirty && !page.saving && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.saveForGuard()
         },
         Kirigami.Action {

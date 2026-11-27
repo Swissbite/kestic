@@ -221,7 +221,7 @@ EditorPage {
 
     // Saves; `done(ok)` runs once the daemon has answered.
     function commitSave(popOnSuccess, done) {
-        if (!dirty || !valid) {
+        if (!dirty || !valid || saving) {
             if (done) done(false);
             return;
         }
@@ -265,7 +265,7 @@ EditorPage {
             objectName: "saveScheduleAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
+            enabled: page.dirty && page.valid && !page.saving && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.commitSave(false)
         },
         Kirigami.Action {

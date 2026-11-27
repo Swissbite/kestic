@@ -54,7 +54,7 @@ EditorPage {
 
     // Saves; `done(ok)` runs once the daemon has answered.
     function saveForGuard(done) {
-        if (!canSave || !initialData) {
+        if (!canSave || !initialData || saving) {
             if (done) done(false);
             return;
         }
@@ -94,7 +94,7 @@ EditorPage {
             objectName: "saveDestinationAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.canSave
+            enabled: page.canSave && !page.saving
             onTriggered: page.saveForGuard()
         },
         Kirigami.Action {

@@ -253,7 +253,7 @@ EditorPage {
     // Saves, first checking the rules with a preview where needed; `done(ok)` runs once the
     // daemon has answered (with `false` when the save waits for the preview).
     function triggerSave(popAfterSave, done) {
-        if (!hasAnyRule || saveBusy) {
+        if (!hasAnyRule || saveBusy || saving) {
             if (done) done(false);
             return false;
         }
@@ -329,7 +329,7 @@ EditorPage {
             objectName: "saveRetentionAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.dirty && page.hasAnyRule && !page.saveBusy && appBackend.blocking_kind !== "daemon_unreachable"
+            enabled: page.dirty && page.hasAnyRule && !page.saveBusy && !page.saving && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.triggerSave(false)
         },
         Kirigami.Action {

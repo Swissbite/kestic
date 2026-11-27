@@ -20,6 +20,10 @@ use kestic_daemon::dbus_api::BackendSecrets;
 use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome};
 use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// How many snapshot lists the window has asked for; a list answers the latest one only.
+static SNAPSHOTS_ASKED: AtomicU64 = AtomicU64::new(0);
 
 impl qobject::KesticApp {
     /// Cards of the wizard step «destination type», ready ones first, as
@@ -324,15 +328,15 @@ impl qobject::KesticApp {
         self.as_mut().set_snapshots_loading(true);
         self.as_mut().set_snapshots_error(QString::from(""));
         let b_id = backup_id.to_string();
-        shared_state().lock_unpoisoned().snapshots_wanted = b_id.clone();
         let wanted = b_id.clone();
+        let asked = SNAPSHOTS_ASKED.fetch_add(1, Ordering::SeqCst) + 1;
         self.call_daemon(
             // A stale reply is dropped (below), so the requests need no order of their own.
             Lane::Alone,
             move |client| client.list_backup_snapshots(&b_id),
             move |mut app, listed| {
-                // A list that arrives after the window asked for another backup's is dropped.
-                if shared_state().lock_unpoisoned().snapshots_wanted != wanted {
+                // Only the list asked for last is shown, whichever backup the earlier ones were for.
+                if SNAPSHOTS_ASKED.load(Ordering::SeqCst) != asked {
                     return;
                 }
                 let (dto, error) = match listed {

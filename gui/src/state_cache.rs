@@ -146,8 +146,6 @@ pub struct SharedGuiState {
     pub state: Option<DaemonStateDto>,
     pub active_progress: HashMap<String, ActiveRunProgressDto>,
     pub snapshots: Option<BackupSnapshotsDto>,
-    /// The backup whose snapshot list the window asked for last.
-    pub snapshots_wanted: String,
     pub run_detail: Option<RunDetailDto>,
     /// The cached state or the reachability changed: show it in the window.
     pub state_fetched: bool,
@@ -181,7 +179,6 @@ impl SharedGuiState {
             state: None,
             active_progress: HashMap::new(),
             snapshots: None,
-            snapshots_wanted: String::new(),
             run_detail: None,
             state_fetched: false,
             progress_dirty: false,
