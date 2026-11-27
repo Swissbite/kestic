@@ -1027,10 +1027,10 @@ void run_double_save(QQuickWindow* window, const std::shared_ptr<QStringList>& w
                     page->setProperty("excludeCaches", caches);
                     auto settled = std::make_shared<QElapsedTimer>();
                     settled->start();
-                    // A second save, had it been sent, answers about 5 s after the first (it
-                    // reads the state, 2 s late, and saves, 3 s late).
-                    wait_then(window, 15000, 91, QStringLiteral("timed out"),
-                        [=]() { return settled->elapsed() > 8000; },
+                    // A second save, had it been sent, answers about 7 s after the first: it
+                    // reads the state (2 s late), saves (3 s late) and reads the state again.
+                    wait_then(window, 20000, 91, QStringLiteral("timed out"),
+                        [=]() { return settled->elapsed() > 12000; },
                         [=]() {
                             SMOKE_CHECK2("M6", 91, page->property("dirty").toBool(),
                                 page->property("excludeCaches").toBool() == caches,
