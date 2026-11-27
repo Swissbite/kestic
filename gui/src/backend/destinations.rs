@@ -4,6 +4,7 @@
 //! Destination CRUD, connection testing, password updates, unlocking, and snapshot loading
 //! for [`super::qobject::KesticApp`].
 
+use super::daemon_call::Lane;
 use super::{Finish, dbus_error_text, qobject};
 use crate::destination_input::{
     build_destination, generic_credentials_error, generic_env_error, generic_url_error,
@@ -280,8 +281,11 @@ impl qobject::KesticApp {
 
     pub fn unlock_destination(self: Pin<&mut Self>, dest_id: &QString) {
         let dest_id = dest_id.to_string();
-        self.call_daemon(
+        // Removing the lock may take a while; other actions do not wait for it.
+        self.call_daemon_with(
+            Lane::Alone,
             move |client| client.unlock_destination(&dest_id),
+            |_| false,
             |mut app, result| {
                 let Some(count) = app
                     .as_mut()

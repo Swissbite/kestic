@@ -449,9 +449,11 @@ void scene_keyboard_navigation(const Scene& s) {
     QQuickItem* exp_sw = tab_to(sw, "expertModeSwitch", 10);
     SMOKE_CHECK("M1 keyboard", 146, exp_sw, "Tab did not reach expertModeSwitch in SettingsDialog");
     send_key(sw, Qt::Key_Return);
+    wait_until([&] { return backend->property("expert_mode").toBool() != exp0; }, 10000);
     SMOKE_CHECK("M1 keyboard", 147, backend->property("expert_mode").toBool() != exp0,
         "Return did not toggle expertModeSwitch in SettingsDialog (or double-toggled)");
     send_key(sw, Qt::Key_Return);
+    wait_until([&] { return backend->property("expert_mode").toBool() == exp0; }, 10000);
     SMOKE_CHECK("M1 keyboard", 148, backend->property("expert_mode").toBool() == exp0,
         "Second Return did not restore expertModeSwitch in SettingsDialog");
     SMOKE_CHECK("M1 keyboard", 149, tab_to(sw, "changeResticSourceButton", 10),
@@ -606,6 +608,20 @@ void run_slow_daemon_scene(
         QStringLiteral("(b) while the first state loads, no blocking state is shown: '%1'").arg(kind));
     QQuickItem* loading = child_item(window, "stateLoadingPlaceholder");
     SMOKE_CHECK_VISIBLE("M6", 43, loading, "(b) the overview shows that it loads");
+    QString loading_shot = out_path;
+    loading_shot.replace(QStringLiteral("m6-slow-daemon"), QStringLiteral("m6-slow-daemon-loading"));
+    SMOKE_CHECK("M6", 53, save_screenshot(window, loading_shot), "screenshot of the loading state");
+    // (b) no tab claims that nothing is configured while the state loads.
+    const std::vector<std::pair<int, const char*>> empty_texts = {
+        {1, "backupsEmptyPlaceholder"}, {2, "destinationsEmptyPlaceholder"}, {3, "historyEmptyPlaceholder"}};
+    for (const auto& [tab, name] : empty_texts) {
+        QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, tab));
+        QCoreApplication::processEvents();
+        QQuickItem* empty = child_item(window, name);
+        SMOKE_CHECK2("M6", 52, empty, !empty->property("visible").toBool(),
+            QStringLiteral("(b) %1 is shown while the state loads").arg(QLatin1String(name)));
+    }
+    QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 0));
 
     auto stop = std::make_shared<bool>(false);
     auto largest_gap = watch_main_thread_gaps(window, stop);
@@ -668,6 +684,87 @@ void run_slow_daemon_scene(
     poll->start(50);
 }
 
+// Polls `done` every 50 ms for at most `limit_ms`; then `finish` runs, or the scene fails with
+// `code` and `what`.
+void wait_then(QQuickWindow* window, int limit_ms, int code, const QString& what,
+    const std::function<bool()>& done, const std::function<void()>& finish) {
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (done()) {
+            poll->stop();
+            finish();
+        } else if (waited->elapsed() > limit_ms) {
+            poll->stop();
+            smoke_fail("M6", code, what);
+        }
+    });
+    poll->start(50);
+}
+
+// AC-M6-33-1: the quit dialog opens before the first state arrived (tray «Quit» without a
+// window); the state that arrives later names the running backup.
+void run_quit_running_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    wait_then(window, 30000, 60, QStringLiteral("the quit dialog never named the running backup"),
+        [=]() {
+            return backend->property("quit_has_running_run").toBool()
+                && backend->property("quit_running_backup_name").toString() == QLatin1String("Documents");
+        },
+        [=]() { smoke_finish("M6", warnings.get(), window, out_path); });
+}
+
+// AC-M6-33-1: the password prompt of the daemon (UnlockSecretStore, held back 30 s) does not hold
+// back the user's other actions.
+void run_prompt_alone_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    wait_then(window, 30000, 61, QStringLiteral("the state never arrived"),
+        [=]() { return backend->property("daemon_reachable").toBool(); },
+        [=]() {
+            QMetaObject::invokeMethod(backend, "unlockSecretStore");
+            QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
+            wait_then(window, 5000, 62, QStringLiteral("pausing waited for the password prompt"),
+                [=]() { return backend->property("global_paused").toBool(); },
+                [=]() { smoke_finish("M6", warnings.get(), window, out_path); });
+        });
+}
+
+// AC-M6-33-1: the window closes while a call is still on its way; the daemon still learns that
+// the window closed (the test watches for WindowActive(false)).
+void run_close_window_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    wait_then(window, 30000, 63, QStringLiteral("the state never arrived"),
+        [=]() { return backend->property("daemon_reachable").toBool(); },
+        [=]() {
+            if (!warnings->isEmpty() || !save_screenshot(window, out_path)) {
+                smoke_finish("M6", warnings.get(), window, out_path);
+                return;
+            }
+            QMetaObject::invokeMethod(backend, "checkAvailability", Q_ARG(bool, false));
+            window->close();
+        });
+}
+
+// AC-M6-33-1: «Back Up Now» before the first state arrived, for a backup whose source is gone:
+// the refusal names the backup and the reason the daemon gave.
+void run_refused_start_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP_ID");
+    SMOKE_CHECK("M6", 64, !bid.isEmpty(), "precondition: backup id");
+    QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
+    wait_then(window, 30000, 65, QStringLiteral("the refusal never arrived"),
+        [=]() { return !backend->property("manual_run_blocked_message").toString().isEmpty(); },
+        [=]() {
+            const QString shown = backend->property("manual_run_blocked_message").toString();
+            if (shown != QStringLiteral("Cannot back up 'Documents': source is unavailable.")) {
+                smoke_fail("M6", 66, QStringLiteral("the refusal reads '%1'").arg(shown));
+                return;
+            }
+            smoke_finish("M6", warnings.get(), window, out_path);
+        });
+}
+
 // AC-M6-33-4 (a): the test changes the daemon state; the window shows it within 1 s, with no
 // timer of its own. The scene writes `<marker>.ready` when it is up; the test writes
 // `<marker>.go` and then changes expert mode over D-Bus.
@@ -728,6 +825,14 @@ void run_m6_smoke_scenario(
         run_state_change_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-daemon")) {
         run_slow_daemon_scene(window, backend, warnings, out_path, since_load_ms);
+    } else if (scen == QLatin1String("m6-quit-running")) {
+        run_quit_running_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-prompt-alone")) {
+        run_prompt_alone_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-close-window")) {
+        run_close_window_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-refused-start")) {
+        run_refused_start_scene(window, backend, warnings, out_path);
     } else {
         smoke_fail("M6", 99, QStringLiteral("unknown scenario %1").arg(scen));
     }
@@ -975,6 +1080,8 @@ void install_m1_smoke_check(
                     "RunDetailPage 3 tabs or Show Command missing");
             } else if (scen == QLatin1String("manual-run-blocked")) {
                 QQuickItem* banner = child_item(window, "manualRunBlockedBanner");
+                // The refusal arrives once the daemon answered.
+                wait_until([&] { return banner && banner->isVisible(); }, 10000);
                 SMOKE_CHECK3("M1", 30, banner, banner->isVisible(), !backend->property("manual_run_blocked_message").toString().isEmpty(),
                     "ManualRunBlocked inline banner not shown");
             } else if (scen == QLatin1String("wizard-validation")) {

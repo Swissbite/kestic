@@ -154,6 +154,9 @@ pub struct SharedGuiState {
     pub daemon_starting: bool,
     /// The first state of the daemon is still on its way.
     pub first_fetch_pending: bool,
+    /// The quit dialog opened before the first state arrived; that state names the running
+    /// backup.
+    pub quit_dialog_waits_for_state: bool,
     pub pending_blocked: Option<(String, BlockedReason)>,
     /// A blocked manual run whose message waits for the state fetched after it, so the message
     /// names the backup and its unmet conditions as they are now.
@@ -181,6 +184,7 @@ impl SharedGuiState {
             progress_dirty: false,
             daemon_starting: false,
             first_fetch_pending: true,
+            quit_dialog_waits_for_state: false,
             pending_blocked: None,
             blocked_after_refresh: None,
             pending_show_window: false,

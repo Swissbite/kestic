@@ -8,12 +8,14 @@ mod common;
 
 use common::m3::{M3Rig, StdFakes, latest_variant, wait_until_within};
 use common::{find_kestic_binary, run_isolated_test};
+use kestic_core::model::Backup;
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient};
 use kestic_test_support::bus::PrivateDbusGuard;
 use kestic_test_support::delayed_daemon::DelayedDaemon;
 use kestic_test_support::gui::{IsolatedEnv, SmokeContext};
 use kestic_test_support::workspace::workspace_root;
 use std::fs;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -48,6 +50,8 @@ struct Call {
     sender: String,
     member: String,
     at: Instant,
+    /// The first argument of `WindowActive`.
+    active: Option<bool>,
 }
 
 /// The address of the test's own session bus.
@@ -84,10 +88,16 @@ fn monitor_kestic_calls(address: &str) -> Arc<Mutex<Vec<Call>>> {
                 let mut stream = zbus::MessageStream::from(&conn);
                 while let Some(Ok(msg)) = stream.next().await {
                     let header = msg.header();
+                    let member = header.member().map_or_else(String::new, |m| m.to_string());
+                    let active = (member == "WindowActive")
+                        .then(|| msg.body().deserialize::<(bool, String)>().ok())
+                        .flatten()
+                        .map(|(active, _)| active);
                     let call = Call {
                         sender: header.sender().map_or_else(String::new, |s| s.to_string()),
-                        member: header.member().map_or_else(String::new, |m| m.to_string()),
+                        member,
                         at: Instant::now(),
+                        active,
                     };
                     seen.lock().expect("seen calls").push(call);
                 }
@@ -165,18 +175,204 @@ fn ac_m6_33_1_window_does_not_wait_for_a_slow_daemon() {
             rig.add_backup_to(&dest, "Documents", |_| {});
             let _stand_in = DelayedDaemon::start(&session_address(), front, back, SLOW_REPLY);
 
-            SmokeContext {
-                kestic_bin: &find_kestic_binary(),
-                iso: &IsolatedEnv::adopt(root),
-                dbus_addr: &session_address(),
+            for lang in ["de", "en"] {
+                // Each language starts from a running, not paused daemon in plain mode.
+                rig.daemon.client.resume_global().expect("ResumeGlobal");
+                rig.daemon
+                    .client
+                    .set_expert_mode(false)
+                    .expect("SetExpertMode");
+                SmokeContext {
+                    kestic_bin: &find_kestic_binary(),
+                    iso: &IsolatedEnv::adopt(root),
+                    dbus_addr: &session_address(),
+                }
+                .run_with_env(
+                    "m6-slow-daemon",
+                    "wide",
+                    lang,
+                    &format!("target/smoke-artifacts/m6-slow-daemon-wide-{lang}.png"),
+                    &["--bus-name", front, "--no-autostart"],
+                    &[],
+                );
             }
-            .run_with_env(
-                "m6-slow-daemon",
-                "wide",
-                "en",
-                "target/smoke-artifacts/m6-slow-daemon-wide-en.png",
-                &["--bus-name", front, "--no-autostart"],
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// A daemon with the backup «Documents» on bus `back`, behind a stand-in on `front` that
+/// delays each call as `delay_of` says; returns the rig and the backup.
+fn slow_rig(
+    root: &Path,
+    base: &str,
+    back: &str,
+    front: &str,
+    delay_of: impl Fn(&str) -> Duration + Send + Sync + 'static,
+) -> (M3Rig, Backup) {
+    let variant = latest_variant();
+    let rig = M3Rig::start_on(
+        root,
+        &variant,
+        &variant.sub(base),
+        back,
+        datetime!(2026-12-01 09:00:00 UTC),
+        |opts| opts.enable_scheduler = false,
+    );
+    let dest = rig.add_destination("Slow Vault", |_| {});
+    let backup = rig.add_backup_to(&dest, "Documents", |_| {});
+    DelayedDaemon::start_with(&session_address(), front, back, delay_of);
+    (rig, backup)
+}
+
+/// Runs the smoke `scenario` in English against the daemon stand-in `front`.
+fn run_slow_scene(
+    root: &Path,
+    scenario: &str,
+    front: &str,
+    extra_args: &[&str],
+    env: &[(&str, &str)],
+) {
+    let mut args = vec!["--bus-name", front, "--no-autostart"];
+    args.extend_from_slice(extra_args);
+    SmokeContext {
+        kestic_bin: &find_kestic_binary(),
+        iso: &IsolatedEnv::adopt(root),
+        dbus_addr: &session_address(),
+    }
+    .run_with_env(
+        scenario,
+        "wide",
+        "en",
+        &format!("target/smoke-artifacts/{scenario}-wide-en.png"),
+        &args,
+        env,
+    );
+}
+
+/// AC-M6-33-1 (b): the quit dialog of the tray opens before the first state arrived; the state
+/// that arrives later names the backup that runs.
+#[test]
+fn ac_m6_33_1_quit_dialog_names_the_running_backup_once_the_state_arrives() {
+    run_isolated_test(
+        "ac_m6_33_1_quit_dialog_names_the_running_backup_once_the_state_arrives",
+        "KESTIC_M6_S33_QUIT_RUNNING_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticQuitFront";
+            let (rig, backup) = slow_rig(
+                root,
+                "QuitRunning",
+                "net.daester.KesticQuitBack",
+                front,
+                |_| Duration::from_secs(2),
+            );
+            rig.wrapper.hold("backup");
+            rig.daemon
+                .client
+                .start_backup(backup.id.as_str())
+                .expect("start the backup");
+            wait_until_within(
+                Duration::from_secs(20),
+                "precondition: the backup runs",
+                || {
+                    rig.daemon
+                        .client
+                        .get_state()
+                        .is_ok_and(|s| s.overall.active_run_progress.is_some())
+                },
+            );
+            run_slow_scene(root, "m6-quit-running", front, &["--confirm-quit"], &[]);
+            rig.wrapper.release("backup");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M6-33-1 (b): the daemon's password prompt (`UnlockSecretStore`, answered after 30 s)
+/// does not hold back the user's other actions.
+#[test]
+fn ac_m6_33_1_password_prompt_does_not_hold_back_other_actions() {
+    run_isolated_test(
+        "ac_m6_33_1_password_prompt_does_not_hold_back_other_actions",
+        "KESTIC_M6_S33_PROMPT_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticPromptFront";
+            let (rig, _) = slow_rig(
+                root,
+                "Prompt",
+                "net.daester.KesticPromptBack",
+                front,
+                |member| {
+                    if member == "UnlockSecretStore" {
+                        Duration::from_secs(30)
+                    } else {
+                        Duration::ZERO
+                    }
+                },
+            );
+            run_slow_scene(root, "m6-prompt-alone", front, &[], &[]);
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M6-33-1 (b): the window closes while a call is still on its way; the daemon still learns
+/// that the window closed (`WindowActive(false)`).
+#[test]
+fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
+    run_isolated_test(
+        "ac_m6_33_1_closing_window_still_reaches_the_daemon",
+        "KESTIC_M6_S33_CLOSE_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticCloseFront";
+            let (rig, _) = slow_rig(root, "Close", "net.daester.KesticCloseBack", front, |_| {
+                Duration::from_secs(1)
+            });
+            let me = rig
+                .daemon
+                .client
+                .connection()
+                .unique_name()
+                .expect("test client name")
+                .to_string();
+            let seen = monitor_kestic_calls(&session_address());
+            run_slow_scene(root, "m6-close-window", front, &[], &[]);
+            let closed = calls_of(&seen, "WindowActive", &me)
+                .iter()
+                .any(|c| c.active == Some(false));
+            assert!(closed, "(b) the daemon learned that the window closed");
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M6-33-1 (b): «Back Up Now» before the first state arrived, for a backup whose source is
+/// gone: the refusal names the backup and the reason the daemon gave.
+#[test]
+fn ac_m6_33_1_refused_start_names_the_backup_and_the_reason() {
+    run_isolated_test(
+        "ac_m6_33_1_refused_start_names_the_backup_and_the_reason",
+        "KESTIC_M6_S33_REFUSED_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticRefusedFront";
+            let (rig, backup) = slow_rig(
+                root,
+                "Refused",
+                "net.daester.KesticRefusedBack",
+                front,
+                |_| Duration::from_secs(3),
+            );
+            fs::remove_dir_all(&backup.source.path).expect("remove the source");
+            run_slow_scene(
+                root,
+                "m6-refused-start",
+                front,
                 &[],
+                &[("KESTIC_TEST_BACKUP_ID", backup.id.as_str())],
             );
             rig.daemon.stop();
         },

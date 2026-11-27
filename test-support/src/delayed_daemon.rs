@@ -5,7 +5,7 @@
 //! receives to the real daemon and passes the reply (or the error) on only after a delay. The
 //! real daemon's signals reach a GUI directly, since the GUI matches them by interface and path.
 
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 use zbus::Structure;
@@ -20,6 +20,17 @@ pub struct DelayedDaemon {
 impl DelayedDaemon {
     /// Takes `front` on the bus at `address` and forwards each call to `back` after `delay`.
     pub fn start(address: &str, front: &str, back: &str, delay: Duration) -> Self {
+        Self::start_with(address, front, back, move |_| delay)
+    }
+
+    /// Like [`Self::start`], with the delay of each call chosen by its method name.
+    pub fn start_with(
+        address: &str,
+        front: &str,
+        back: &str,
+        delay_of: impl Fn(&str) -> Duration + Send + Sync + 'static,
+    ) -> Self {
+        let delay_of = Arc::new(delay_of);
         let (ready_tx, ready_rx) = mpsc::channel();
         let (address, front_name, back) =
             (address.to_string(), front.to_string(), back.to_string());
@@ -34,13 +45,14 @@ impl DelayedDaemon {
                     .build()
                     .await
                     .expect("back connection");
-                ready_tx.send(()).expect("report ready");
                 let mut calls = zbus::MessageStream::from(&conn);
+                ready_tx.send(()).expect("report ready");
                 while let Some(Ok(call)) = calls.next().await {
                     if call.message_type() != Type::MethodCall {
                         continue;
                     }
                     let (conn, back_conn, back) = (conn.clone(), back_conn.clone(), back.clone());
+                    let delay = delay_of(call.header().member().map_or("", |m| m.as_str()));
                     thread::spawn(move || {
                         thread::sleep(delay);
                         zbus::block_on(forward(&conn, &back_conn, &back, &call));

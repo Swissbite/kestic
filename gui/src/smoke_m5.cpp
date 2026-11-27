@@ -1168,7 +1168,9 @@ int scenario_restic_versions(const Ctx& c) {
     M3_CHECK(5929, click_ui_item(sw, custom, "Custom path"), "click on «Custom path» failed");
     set_text(sw, "customResticPathField", QStringLiteral("/opt/restic/restic"));
     QMetaObject::invokeMethod(c.backend, "checkAvailability", Q_ARG(bool, true));
-    wait_ms(500);
+    // The check and the new state arrive off the main thread; this check shows that nothing
+    // changes, so it waits for them a fixed time.
+    wait_ms(2000);
     M3_CHECK(5930, custom->property("checked").toBool() && !automatic->property("checked").toBool(),
         "a new status reset the choice in the source dialog");
     M3_CHECK_EQ(5931, item_named(sw, "customResticPathField")->property("text").toString(), QStringLiteral("/opt/restic/restic"),

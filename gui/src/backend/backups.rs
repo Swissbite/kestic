@@ -4,11 +4,12 @@
 //! Backup CRUD, manual backup execution/cancellation, and exclude-rule helpers
 //! for [`super::qobject::KesticApp`].
 
+use super::daemon_call::Lane;
 use super::{Finish, dbus_error_text, qobject};
 use crate::daemon_events::request_refresh;
 use crate::state_cache::{
     build_new_backup, cached_destination_kind, clone_updated_backup_excludes,
-    clone_updated_backup_retention, clone_updated_backup_source, i18n,
+    clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text, i18n,
     localized_condition_override_message, localized_manual_block_message,
     localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, make_client,
     shared_state,
@@ -28,11 +29,14 @@ use std::pin::Pin;
 impl qobject::KesticApp {
     pub fn start_backup(self: Pin<&mut Self>, backup_id: &QString) {
         let b_id = backup_id.to_string();
-        self.call_daemon(
+        // A refused start is explained from the state as it is after the refusal.
+        self.call_daemon_with(
+            Lane::InOrder,
             move |client| {
                 let result = client.start_backup(&b_id);
                 (b_id, result)
             },
+            |(_, result)| result.is_err(),
             |mut app, outcome| match outcome {
                 Ok((_, Ok(_))) => {
                     app.as_mut()
@@ -40,7 +44,7 @@ impl qobject::KesticApp {
                     app.finish_daemon_action(Ok(Ok::<_, zbus::Error>(())), Finish::Plain);
                 }
                 Ok((b_id, Err(err))) => app.handle_start_backup_error(&b_id, &err),
-                Err(no_bus) => app.show_action_error(&no_bus),
+                Err(_) => app.show_action_error(&daemon_unavailable_text()),
             },
         );
     }
@@ -48,8 +52,8 @@ impl qobject::KesticApp {
     fn handle_start_backup_error(mut self: Pin<&mut Self>, b_id: &str, err: &zbus::Error) {
         let typed = KesticDbusError::from(err.clone());
         let is_blocked = typed.code() == ServiceErrorCode::ManualRunBlocked;
-        let err_is_condition = typed.blocked_reason() == Some(BlockedReason::ConditionNotMet);
-        request_refresh();
+        let err_reason = typed.blocked_reason();
+        self.as_mut().apply_cached_state();
         if !is_blocked {
             let msg = dbus_error_text(err);
             self.as_mut().show_action_error(&msg);
@@ -78,16 +82,17 @@ impl qobject::KesticApp {
                 .state
                 .as_ref()
                 .and_then(|s| lookup_backup_summary(s, b_id));
-            let code = match summary {
-                _ if err_is_condition => BlockedReason::ConditionNotMet,
-                Some(b) => b.availability.blocked_reason.unwrap_or({
+            // The reason the daemon gave comes first; the state explains the others.
+            let code = match (err_reason, summary) {
+                (Some(reason), _) => reason,
+                (None, Some(b)) => b.availability.blocked_reason.unwrap_or({
                     if b.has_unmet_run_condition {
                         BlockedReason::ConditionNotMet
                     } else {
                         BlockedReason::DestinationUnreachable
                     }
                 }),
-                None => BlockedReason::DestinationUnreachable,
+                (None, None) => BlockedReason::DestinationUnreachable,
             };
             match summary {
                 Some(b) => (b.backup.name.clone(), code, localized_unmet_conditions(b)),
@@ -150,7 +155,9 @@ impl qobject::KesticApp {
                 Ok(Err(err)) => app
                     .as_mut()
                     .passive_notification(QString::from(&dbus_error_text(&err))),
-                Err(no_bus) => app.as_mut().passive_notification(QString::from(&no_bus)),
+                Err(_) => app
+                    .as_mut()
+                    .passive_notification(QString::from(&daemon_unavailable_text())),
             },
         );
     }

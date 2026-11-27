@@ -126,10 +126,12 @@ fn ac_m6_33_2b_daemon_calls_go_through_generated_proxy() {
 
 /// Code that reaches the daemon synchronously; outside the daemon modules the Qt thread must
 /// not run it.
-const BLOCKING_DAEMON_CALLS: [&str; 3] = [
+const BLOCKING_DAEMON_CALLS: [&str; 5] = [
     "make_client(",
     "refresh_state_now(",
     "ensure_daemon_and_refresh(",
+    "gui_connection(",
+    "block_on(",
 ];
 
 /// The modules that call the daemon off the Qt thread: the state cache and its background
@@ -140,8 +142,7 @@ const DAEMON_MODULES: [&str; 3] = [
     "gui/src/backend/daemon_call.rs",
 ];
 
-/// Calls that the second pull request of the story moves off the Qt thread (the calls whose
-/// result QML uses at once), per file.
+/// Daemon calls whose result QML uses at once; they still run on the Qt thread. Per file.
 const NOT_YET_OFF_THE_QT_THREAD: [(&str, usize); 10] = [
     ("gui/src/backend.rs", 1),
     ("gui/src/backend/backups.rs", 8),
@@ -156,7 +157,7 @@ const NOT_YET_OFF_THE_QT_THREAD: [(&str, usize); 10] = [
 ];
 
 /// AC-M6-33-1 (a), source side: outside the daemon modules, no GUI code reaches the daemon
-/// synchronously, apart from the listed calls of the story's second pull request.
+/// synchronously, apart from the listed calls whose result QML uses at once.
 #[test]
 fn ac_m6_33_1_gui_reaches_the_daemon_only_off_the_qt_thread() {
     let root = workspace_root();

@@ -600,6 +600,7 @@ pub mod qobject {
 
 mod backups;
 mod daemon_call;
+pub use daemon_call::finish_pending_calls;
 mod destinations;
 mod previews;
 mod restic_install;

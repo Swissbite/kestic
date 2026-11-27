@@ -146,7 +146,9 @@ Kirigami.ScrollablePage {
             Controls.Label {
                 Kirigami.FormData.label: i18n("Location:")
                 text: currentData ? currentData.location : ""
-                wrapMode: Text.WordWrap
+                // A path or address has no spaces to break at; it wraps within the column.
+                Layout.fillWidth: true
+                wrapMode: Text.WrapAnywhere
             }
             Controls.Label {
                 visible: currentData !== null && currentData.kindName === "rest" && currentData.username !== ""

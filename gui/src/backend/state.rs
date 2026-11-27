@@ -4,6 +4,7 @@
 //! Daemon connection, state synchronization, event polling, and availability checks
 //! for [`super::qobject::KesticApp`].
 
+use super::daemon_call::Lane;
 use super::qobject;
 use crate::daemon_events::{attach_gui_thread, request_refresh, start_daemon_in_background};
 use crate::overall_text::{
@@ -41,15 +42,10 @@ impl qobject::KesticApp {
         self.as_mut().set_show_restore_on_start(show_restore);
         if show_quit {
             let (has_running, running_name) = {
-                let guard = shared_state().lock_unpoisoned();
-                let active = guard
-                    .state
-                    .as_ref()
-                    .and_then(|s| s.overall.active_run_progress.as_ref());
-                (
-                    active.is_some(),
-                    active.map_or_default(|a| a.backup_name.clone()),
-                )
+                let mut guard = shared_state().lock_unpoisoned();
+                // The first state may still be on its way; it fills in the running backup.
+                guard.quit_dialog_waits_for_state = guard.state.is_none();
+                running_backup(guard.state.as_ref())
             };
             self.as_mut().set_quit_has_running_run(has_running);
             self.as_mut()
@@ -253,6 +249,14 @@ impl qobject::KesticApp {
             self.as_mut().apply_unreachable_state();
             return;
         };
+        let quit_waits =
+            std::mem::take(&mut shared_state().lock_unpoisoned().quit_dialog_waits_for_state);
+        if quit_waits {
+            let (has_running, running_name) = running_backup(Some(&state));
+            self.as_mut().set_quit_has_running_run(has_running);
+            self.as_mut()
+                .set_quit_running_backup_name(QString::from(&running_name));
+        }
 
         let now = daemon_now(&state);
         self.as_mut().set_has_config_file(state.has_config_file);
@@ -354,8 +358,11 @@ impl qobject::KesticApp {
 
     pub fn unlock_secret_store(self: Pin<&mut Self>) {
         // Whether the user unlocked shows in the state the daemon publishes.
-        self.call_daemon(
+        // The daemon waits for the user to answer the password prompt.
+        self.call_daemon_with(
+            Lane::Alone,
             |client| client.unlock_secret_store().is_ok(),
+            |_| false,
             |_, _| request_refresh(),
         );
     }
@@ -374,10 +381,22 @@ impl qobject::KesticApp {
     }
 
     pub fn check_availability(self: Pin<&mut Self>, force: bool) {
-        // The result of the check arrives with the state.
-        self.call_daemon(
+        // The result of the check arrives with the state. A forced check probes every
+        // destination and may take a while; other actions do not wait for it.
+        self.call_daemon_with(
+            Lane::Alone,
             move |client| client.check_availability(force).is_ok(),
+            |_| false,
             |_, _| request_refresh(),
         );
     }
+}
+
+/// Whether a backup runs according to `state`, and its name, for the quit dialog.
+fn running_backup(state: Option<&kestic_daemon::dbus_api::DaemonStateDto>) -> (bool, String) {
+    let active = state.and_then(|s| s.overall.active_run_progress.as_ref());
+    (
+        active.is_some(),
+        active.map_or_default(|a| a.backup_name.clone()),
+    )
 }
