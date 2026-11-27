@@ -238,7 +238,8 @@ perl -CO -MJSON::PP -e '
         $t =~ s{<!--(?:-?>|(.*?)(?:--!?>|\z))}{"[html comment removed, " . length($1 // "") . " chars]"}gse;
         $t =~ s{<\?(.*?)(?:\?>|\z)}{"[processing instruction removed, " . length($1) . " chars]"}gse;
         $t =~ s{<!\[CDATA\[(.*?)(?:\]\]>|\z)}{"[cdata removed, " . length($1) . " chars]"}gse;
-        $t =~ s{^([ ]{0,3}\[[^\]\n]+\]:[ \t]*\S[^\n]*)$}{"[link reference definition removed, " . length($1) . " chars]"}gme;
+        # Only a complete definition (label, destination, optional title) is hidden by GitHub.
+        $t =~ s{^([ ]{0,3}\[[^\]\n]+\]:[ \t]*(?:<[^>\n]*>|\S+)(?:[ \t]+(?:"[^"\n]*"|\x27[^\x27\n]*\x27|\([^)\n]*\)))?[ \t]*)$}{"[link reference definition removed, " . length($1) . " chars]"}gme;
         $t =~ s{<([A-Za-z][A-Za-z0-9-]*)(\s[^<>]*=[^<>]*)>}{"<$1 [attributes removed, " . length($2) . " chars]>"}ge;
         # Characters that are invisible or reorder text.
         $t =~ s{([\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Cs}\p{Default_Ignorable_Code_Point}\p{Variation_Selector}\x{115F}\x{1160}\x{3164}\x{FFA0}\x{2800}]|[^\S\n\t ])}{$1 eq "\n" || $1 eq "\t" ? $1 : sprintf("<U+%04X>", ord $1)}ge;
@@ -260,11 +261,15 @@ perl -CO -MJSON::PP -e '
         delete $it->{shown};
         $it->{limited} = 1;
     }
-    # One-line items beyond the limit are counted, not listed.
-    my @lines = grep { !defined $_->{shown} && !$_->{limited} && $_->{class} ne "foreign" } @$items;
-    my $hidden = @lines > $lines_max ? @lines - $lines_max : 0;
-    $_->{unlisted} = 1 for @lines[0 .. $hidden - 1];
-    print "--- $hidden older one-line items (withheld items or events) not listed\n" if $hidden;
+    # One-line items beyond the limit are counted, not listed; withheld items
+    # and events each have their own limit, so neither pushes out the other.
+    for my $kind ("withheld items", "events") {
+        my @lines = grep { !defined $_->{shown} && !$_->{limited} && $_->{class} ne "foreign"
+            && (($_->{class} eq "event") == ($kind eq "events")) } @$items;
+        my $hidden = @lines > $lines_max ? @lines - $lines_max : 0;
+        $_->{unlisted} = 1 for @lines[0 .. $hidden - 1];
+        print "--- $hidden older $kind not listed\n" if $hidden;
+    }
     for my $it (@$items) {
         next if $it->{unlisted};
         my $who = "$it->{kind} by " . ($it->{login} // "?");

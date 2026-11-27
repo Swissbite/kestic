@@ -166,7 +166,7 @@ perl -CS -ne '$found = 1 if /[\x{200B}\x{202E}\x{2028}\x{E0041}]/; END { exit($f
 # Invisible default-ignorable characters and markup GitHub hides when it renders.
 reset
 body="$(printf 'cgj\xcd\x8f vs\xef\xb8\x8f vs17\xf3\xa0\x84\x80 hf\xe3\x85\xa4 br\xe2\xa0\x80 nb\xc2\xa0 em\xe2\x80\x83 ok')"
-body+=$'\nA <?php hidden one ?> B <![CDATA[hidden two]]> C\n[//]: # (hidden three)\n  [ref]: https://example.org "hidden four"\n<span title="hidden five">D</span> <img alt="hidden six" src=x>\nE <!--> F <!---> G\nVec<String> stays'
+body+=$'\nA <?php hidden one ?> B <![CDATA[hidden two]]> C\n[//]: # (hidden three)\n  [ref]: https://example.org "hidden four"\n<span title="hidden five">D</span> <img alt="hidden six" src=x>\nE <!--> F <!---> G\nVec<String> stays\n[AC1]: tests grün\n[Note]: see below'
 issue 5 "$M" '[]' "t" "$body"
 fixture issues_5_comments '[]'
 fixture "pulls_state_all_head_Swissbite_agent_issue-5_per_page_100" '[]'
@@ -174,7 +174,7 @@ thread 5
 for want in "cgj<U+034F>" "vs<U+FE0F>" "vs17<U+E0100>" "hf<U+3164>" "br<U+2800>" "nb<U+00A0>" "em<U+2003>" \
     "[processing instruction removed," "[cdata removed," "[link reference definition removed," \
     "<span [attributes removed," "<img [attributes removed," "E [html comment removed, 0 chars] F [html comment removed, 0 chars] G" \
-    "Vec<String> stays"; do
+    "Vec<String> stays" "[AC1]: tests grün" "[Note]: see below"; do
     grep -qF -- "$want" <<< "$out" || fail "hidden markup and characters: '$want' missing"
 done
 ! grep -q "hidden" <<< "$out" || fail "hidden markup and characters: hidden text printed: $(grep hidden <<< "$out")"
@@ -205,10 +205,12 @@ for i in $(seq 1 200); do
     comments+=("$(comment "$((1000 + i))" "$O" NONE "2026-11-21T10:00:00Z" "spam $i")")
 done
 fixture issues_5_comments "[$(IFS=,; echo "${comments[*]}")]"
+fixture issues_5_events "[{\"event\":\"closed\",\"actor\":$M,\"created_at\":\"2026-11-20T11:00:00Z\"}]"
 fixture "pulls_state_all_head_Swissbite_agent_issue-5_per_page_100" '[]'
 thread 5
+grep -qx -- "--- event: closed by Swissbite (maintainer) 2026-11-20T11:00:00Z" <<< "$out" || fail "withheld flood: event pushed out"
 [[ "$(grep -c '^--- withheld:' <<< "$out")" == 30 ]] || fail "withheld flood: not 30 lines listed"
-grep -qx -- "--- 170 older one-line items (withheld items or events) not listed" <<< "$out" || fail "withheld flood: no count"
+grep -qx -- "--- 170 older withheld items not listed" <<< "$out" || fail "withheld flood: no count"
 grep -q "issuecomment-1200\$" <<< "$out" || fail "withheld flood: newest not listed"
 
 # Label and state events as one line each, label names checked.

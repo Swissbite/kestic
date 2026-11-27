@@ -210,6 +210,10 @@ case "${1:-}" in
         while [[ "$path" == *//* ]]; do path="${path//\/\//\/}"; done
         # Text checks ignore case, as GitHub does for owner and repository.
         lpath="${path,,}"
+        # Dot segments and escapes would let an allowed prefix reach another endpoint.
+        if [[ "/$lpath/" == */./* || "/$lpath/" == */../* || "$lpath" == *%* ]]; then
+            refuse "gh api: path with dot segments or escapes refused: $path"
+        fi
         if [[ "$method" == GET || "$method" == HEAD ]]; then
             # Reads only from endpoints that carry no text written by people.
             [[ "$lpath" =~ ^(rate_limit|repos/[^/]+/[^/]+(/(pulls/[0-9]+/merge|issues/[0-9]+/labels|labels(/[^/]+)?|branches(/[^/]+)*|actions/jobs/[0-9]+(/logs)?|actions/runs/[0-9]+/(jobs|artifacts)|commits/[^/]+/(check-runs|check-suites|status|statuses)|installation|dependency-graph/.*|git/(refs|ref|matching-refs)/.*))?)$ ]] ||

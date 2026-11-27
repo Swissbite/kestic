@@ -220,6 +220,9 @@ expect refused api HTTPS://API.GITHUB.COM/repos/o/r/issues/5/comments
 expect passed api repos/Swissbite/kestic/actions/jobs/123
 expect passed api 'repos/{owner}/{repo}/commits/abc123/check-runs'
 expect passed api rate_limit
+expect refused api repos/Swissbite/kestic/branches/../issues/5
+expect refused api repos/Swissbite/kestic/git/refs/./../../issues/5/comments
+expect refused api repos/Swissbite/kestic/branches/main%2F..%2F..%2Fissues%2F5
 
 # The label adopted is the maintainer's
 expect refused issue edit 5 --add-label adopted
