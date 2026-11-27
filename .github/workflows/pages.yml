@@ -84,9 +84,8 @@ jobs:
         working-directory: site
         run: pnpm install --frozen-lockfile
 
-      # Every 0.x release is a pre-release on GitHub, so releases/latest does not find it:
-      # take the highest tag without suffix instead (pre-releases of integration branches
-      # are v0.<n>.0-m<n>.<k>). Drafts are left out.
+      # The highest tag without suffix (pre-releases are v0.<n>.0-m<n>.<k> and -rc.<k>),
+      # whichever release GitHub marks «Latest». Drafts are left out.
       - name: Find the newest release
         id: release
         env:

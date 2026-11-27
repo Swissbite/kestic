@@ -8,7 +8,9 @@
 # a bump. The next version follows the highest version tag on main; a release needs the highlights
 # file docs/releases/<tag>.md, everything else in its notes is generated. With `dry-run` (the
 # default) everything runs except creating tag, attestation and release; the job summary of
-# `publish` shows notes and assets. Every 0.x version is a pre-release on GitHub.
+# `publish` shows notes, assets and the planned flags. A version without suffix (v0.6.0, later v1.x)
+# is a normal release and becomes «Latest»; only the branch builds and the release candidates are
+# pre-releases, never «Latest».
 #
 # Pre-release: every push to an integration branch m<n> publishes v0.<n>.0-m<n>.<k> (k first-parent
 # commits since the tag m<n>-start); only the newest three of a branch are kept.
@@ -66,6 +68,7 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       version: ${{ steps.plan.outputs.version }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
+      latest: ${{ steps.plan.outputs.latest }}
       title: ${{ steps.plan.outputs.title }}
       previous-tag: ${{ steps.plan.outputs.previous-tag }}
     steps:
@@ -131,10 +134,28 @@ jobs:
               exit 1
             fi
           done
+
+          # The GitHub flags follow from the tag alone, not from the script: a tag without suffix
+          # is a normal release and becomes the latest; a branch build (-m<n>.<k>) or a release
+          # candidate (-rc.<k>) is a pre-release and never the latest. Any other tag stops here.
+          number='(0|[1-9][0-9]*)'
+          if [[ "${value[tag]}" =~ ^v$number\.$number\.$number$ ]]; then
+            prerelease=false latest=true
+          elif [[ "${value[tag]}" =~ ^v$number\.$number\.$number-(m[0-9]+|rc)\.[0-9]+$ ]]; then
+            prerelease=true latest=false
+          else
+            echo "::error::${value[tag]} is no tag v<major>.<minor>.<patch>, -m<n>.<k> or -rc.<k>"
+            exit 1
+          fi
+          if [ "${value[prerelease]}" != "$prerelease" ]; then
+            echo "::warning::release-notes.sh on main plans prerelease=${value[prerelease]} for ${value[tag]}; the tag gives prerelease=$prerelease"
+          fi
+          value[prerelease]="$prerelease"
+
           if [ "$kind" = branch ]; then
             n="${REF_NAME#m}"
-            if ! [[ "${value[tag]}" =~ ^v0\.$n\.0-m$n\.[0-9]+$ ]] || [ "${value[prerelease]}" != true ]; then
-              echo "::error::$REF_NAME may only publish pre-releases v0.$n.0-m$n.<k>, got ${value[tag]} (prerelease=${value[prerelease]})"
+            if ! [[ "${value[tag]}" =~ ^v0\.$n\.0-m$n\.[0-9]+$ ]]; then
+              echo "::error::$REF_NAME may only publish pre-releases v0.$n.0-m$n.<k>, got ${value[tag]}"
               exit 1
             fi
           fi
@@ -143,7 +164,10 @@ jobs:
             echo "kind=$kind"
             echo "commit=$GITHUB_SHA"
             echo "dry-run=$DRY_RUN"
-            printf '%s\n' "$plan"
+            for key in tag version prerelease title previous-tag; do
+              echo "$key=${value[$key]}"
+            done
+            echo "latest=$latest"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
@@ -413,6 +437,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          LATEST: ${{ needs.prepare.outputs.latest }}
           PREVIOUS_TAG: ${{ needs.prepare.outputs.previous-tag }}
         run: |
           set -euo pipefail
@@ -427,6 +452,7 @@ jobs:
             echo
             echo "- Package version: \`$VERSION-1\`"
             echo "- Pre-release: $PRERELEASE"
+            echo "- Latest: $LATEST"
             echo "- Pull requests since: ${PREVIOUS_TAG:-the first commit (no earlier release)}"
             echo
             echo "## Assets"
@@ -466,6 +492,7 @@ jobs:
           COMMIT: ${{ needs.prepare.outputs.commit }}
           TITLE: ${{ needs.prepare.outputs.title }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          LATEST: ${{ needs.prepare.outputs.latest }}
         run: |
           set -euo pipefail
           if tagged="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null)"; then
@@ -487,12 +514,15 @@ jobs:
               exit 1
               ;;
           esac
-          # A draft or pre-release cannot be the latest release; a final release becomes it on publishing.
+          # A draft cannot be the latest release. On publishing, only a normal release is made the
+          # latest; GitHub never makes a pre-release the latest.
           create=(--draft)
-          publish=(--draft=false --latest)
+          publish=(--draft=false)
           if [ "$PRERELEASE" = true ]; then
             create+=(--prerelease)
-            publish=(--draft=false)
+          fi
+          if [ "$LATEST" = true ]; then
+            publish+=(--latest)
           fi
           gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "$TITLE" --notes-file notes/notes.md "${create[@]}"
