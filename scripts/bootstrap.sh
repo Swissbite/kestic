@@ -20,7 +20,7 @@ REST_SERVER_VERSION="0.15.0"
 # renovate: datasource=github-releases depName=rclone/rclone
 RCLONE_VERSION="1.76.0"
 # renovate: datasource=crate depName=cargo-deny
-CARGO_DENY_VERSION="0.22.0"
+CARGO_DENY_VERSION="0.22.1"
 # renovate: datasource=crate depName=cargo-deb
 CARGO_DEB_VERSION="3.8.0"
 # A new nextest version also needs the SHA-256 of its release archive below.
