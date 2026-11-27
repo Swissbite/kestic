@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::m3::{M3Rig, StdFakes, daemon_paths, latest_variant};
+use common::m3::{M3Rig, StdFakes, daemon_paths, latest_variant, wait_until_within};
 use common::{run_isolated_test, wait_for_sni_service};
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{Destination, DestinationKind};
@@ -133,14 +133,11 @@ fn ac_m6_33_6_tray_menu_does_not_wait_for_destination_check() {
             rig.clock.advance(Duration::from_secs(61));
             let elapsed = time_about_to_show(&fakes.sni_conn, &sni_service);
 
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while server.held_count.load(Ordering::SeqCst) == 0 {
-                assert!(
-                    Instant::now() < deadline,
-                    "precondition: opening the menu starts the check, which waits on the server"
-                );
-                thread::sleep(Duration::from_millis(20));
-            }
+            wait_until_within(
+                Duration::from_secs(5),
+                "precondition: opening the menu starts the check, which waits on the server",
+                || server.held_count.load(Ordering::SeqCst) > 0,
+            );
             assert!(
                 elapsed < MENU_WITHIN,
                 "(a) AboutToShow replied after {elapsed:?}, not within {MENU_WITHIN:?}"

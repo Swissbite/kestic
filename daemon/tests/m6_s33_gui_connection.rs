@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::m3::{M3Rig, StdFakes, latest_variant};
+use common::m3::{M3Rig, StdFakes, latest_variant, wait_until_within};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_daemon::dbus_api::KESTIC_INTERFACE_V1;
 use std::collections::BTreeSet;
@@ -18,8 +18,11 @@ use zbus::export::ordered_stream::OrderedStreamExt;
 
 /// Bus name the GUI under test connects to (passed with `--bus-name`).
 const BUS: &str = "net.daester.KesticOneConnection";
-/// Daemon calls the GUI makes before the connections are counted.
+/// Daemon calls the GUI makes before the connections are counted (ten, as in the message of
+/// the precondition).
 const MIN_GUI_CALLS: usize = 10;
+/// How often the test changes the daemon state while it waits for the GUI's calls.
+const STATE_CHANGE_EVERY: Duration = Duration::from_millis(300);
 /// Interface of the desktop portal settings that Qt reads over its own connection.
 const QT_PORTAL_SETTINGS: &str = "org.freedesktop.portal.Settings";
 
@@ -80,11 +83,9 @@ fn monitor_method_calls() -> Arc<Mutex<Vec<Seen>>> {
             });
         });
     }
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !*ready.lock().expect("ready flag") {
-        assert!(Instant::now() < deadline, "monitor connection ready");
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_until_within(Duration::from_secs(5), "monitor connection ready", || {
+        *ready.lock().expect("ready flag")
+    });
     seen
 }
 
@@ -156,20 +157,21 @@ fn ac_m6_33_2a_gui_uses_one_session_bus_connection() {
             };
 
             // Every state change makes the GUI fetch the state again.
-            let deadline = Instant::now() + Duration::from_secs(40);
             let mut expert = false;
-            while gui_calls().len() < MIN_GUI_CALLS {
-                assert!(
-                    Instant::now() < deadline,
-                    "precondition: the GUI made {MIN_GUI_CALLS} daemon calls, saw {:?}",
-                    gui_calls()
-                );
-                if !gui_calls().is_empty() {
-                    expert = !expert;
-                    client.set_expert_mode(expert).expect("SetExpertMode");
-                }
-                thread::sleep(Duration::from_millis(300));
-            }
+            let mut last_change = Instant::now();
+            wait_until_within(
+                Duration::from_secs(40),
+                "precondition: the GUI made ten daemon calls",
+                || {
+                    let made = gui_calls().len();
+                    if made > 0 && last_change.elapsed() >= STATE_CHANGE_EVERY {
+                        expert = !expert;
+                        client.set_expert_mode(expert).expect("SetExpertMode");
+                        last_change = Instant::now();
+                    }
+                    made >= MIN_GUI_CALLS
+                },
+            );
 
             let calls = gui_calls();
             let senders: BTreeSet<String> = calls.iter().map(|s| s.sender.clone()).collect();

@@ -245,18 +245,21 @@ pub fn make_client() -> Result<KesticClient, String> {
 /// Ensures the daemon is running (spawning `kestic daemon` without `--autostart` when needed)
 /// and starts the background D-Bus signal listener.
 pub fn initialize_and_sync() {
+    ensure_signal_listener();
+    ensure_daemon_and_refresh();
+}
+
+/// Starts the signal listener unless one runs.
+fn ensure_signal_listener() {
     let launch = {
         let mut guard = shared_state().lock_unpoisoned();
-        let start_listener = !guard.listener_started;
+        if guard.listener_started {
+            return;
+        }
         guard.listener_started = true;
-        (guard.launch.clone(), start_listener)
+        guard.launch.clone()
     };
-
-    if launch.1 {
-        spawn_signal_listener(launch.0.bus_name.clone(), launch.0.object_path.clone());
-    }
-
-    ensure_daemon_and_refresh();
+    spawn_signal_listener(launch.bus_name, launch.object_path);
 }
 
 pub fn ensure_daemon_and_refresh() {
@@ -349,6 +352,7 @@ fn retain_active_progress(
 }
 
 pub fn refresh_state_now() {
+    ensure_signal_listener();
     shared_state().lock_unpoisoned().last_state_fetch = Some(Instant::now());
     let client = match make_client() {
         Ok(c) => c,
@@ -397,35 +401,45 @@ pub fn refresh_state_now() {
 /// in the shared state.
 fn spawn_signal_listener(bus_name: String, object_path: String) {
     thread::spawn(move || {
-        let Ok(conn) = gui_connection() else {
-            return;
-        };
-        zbus::block_on(async move {
-            let Ok(rule) = zbus::MatchRule::builder()
-                .msg_type(zbus::message::Type::Signal)
-                .interface(KESTIC_INTERFACE_V1)
-                .path(object_path.as_str())
-                .build()
-            else {
-                return;
-            };
-            let Ok(mut stream) = zbus::MessageStream::for_match_rule(rule, &conn, None).await
-            else {
-                return;
-            };
-            shared_state().lock_unpoisoned().listening = true;
-            let client = KesticClient::from_connection(conn.clone(), &bus_name, &object_path);
-            if let Ok(daemon) = client.proxy().await {
-                let _ = daemon.register_gui().await;
-            }
-
-            while let Some(msg_res) = stream.next().await {
-                if let Ok(msg) = msg_res {
-                    note_signal(msg);
-                }
-            }
-        });
+        let ended = gui_connection()
+            .is_ok_and(|conn| zbus::block_on(listen(conn, &bus_name, &object_path)));
+        // The stream ends only when the connection is gone (the session bus went away): the
+        // next call opens a new connection. Either way the next state refresh starts a new
+        // listener.
+        if ended {
+            *GUI_CONNECTION.lock_unpoisoned() = None;
+        }
+        let mut guard = shared_state().lock_unpoisoned();
+        guard.listening = false;
+        guard.listener_started = false;
     });
+}
+
+/// Registers the GUI and notes the daemon's signals until the stream ends; `false` when the
+/// stream could not be set up.
+async fn listen(conn: zbus::Connection, bus_name: &str, object_path: &str) -> bool {
+    let Ok(rule) = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface(KESTIC_INTERFACE_V1)
+        .path(object_path)
+        .build()
+    else {
+        return false;
+    };
+    let Ok(mut stream) = zbus::MessageStream::for_match_rule(rule, &conn, None).await else {
+        return false;
+    };
+    shared_state().lock_unpoisoned().listening = true;
+    let client = KesticClient::from_connection(conn, bus_name, object_path);
+    if let Ok(daemon) = client.proxy().await {
+        let _ = daemon.register_gui().await;
+    }
+    while let Some(msg_res) = stream.next().await {
+        if let Ok(msg) = msg_res {
+            note_signal(msg);
+        }
+    }
+    true
 }
 
 /// Notes one daemon signal in the shared state; the poll on the GUI thread acts on it.

@@ -11,13 +11,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Calls that name the D-Bus method as text, in source without whitespace.
-const TEXTUAL_CALLS: [&str; 6] = [
+const TEXTUAL_CALLS: [&str; 10] = [
     ".call(\"",
     ".call::<",
     ".call_noreply(",
     ".call_with_flags(",
     "call_method(",
+    "call_method_raw(",
+    "method_call(",
     "Proxy::new(",
+    "Proxy::new_owned(",
+    "Proxy::builder(",
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -31,12 +35,12 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Source text without line comments and without any whitespace, so a call split over lines
+/// Source text without comment lines and without any whitespace, so a call split over lines
 /// is found as well.
 fn compact(source: &str) -> String {
     source
         .lines()
-        .map(|l| l.split("//").next().unwrap_or_default())
+        .filter(|l| !l.trim_start().starts_with("//"))
         .collect::<String>()
         .chars()
         .filter(|c| !c.is_whitespace())
@@ -56,7 +60,8 @@ fn contains_call(source: &str, pattern: &str) -> bool {
 }
 
 /// AC-M6-33-2 (b): the GUI and the client it uses call the daemon through a client generated
-/// with `#[proxy]` for `net.daester.Kestic1`, not through method names as text.
+/// with `#[proxy]` for `net.daester.Kestic1`, not through method names as text. It also checks
+/// the source side of (a): the GUI opens its session-bus connection in one place only.
 #[test]
 fn ac_m6_33_2b_daemon_calls_go_through_generated_proxy() {
     let root = workspace_root();
@@ -78,6 +83,32 @@ fn ac_m6_33_2b_daemon_calls_go_through_generated_proxy() {
     assert!(
         offenders.is_empty(),
         "(b) daemon calls by method name as text: {offenders:#?}"
+    );
+
+    // One place opens the GUI's connection; a second one would bypass it.
+    let gui_files: Vec<&PathBuf> = files
+        .iter()
+        .filter(|f| f.starts_with(root.join("gui/src")))
+        .collect();
+    let session_opens: Vec<String> = gui_files
+        .iter()
+        .flat_map(|file| {
+            let source = compact(&fs::read_to_string(file).expect("read source"));
+            let count = source.matches("Connection::session(").count()
+                + source.matches("KesticClient::connect(").count();
+            std::iter::repeat_n(
+                file.strip_prefix(&root)
+                    .unwrap_or(file)
+                    .display()
+                    .to_string(),
+                count,
+            )
+        })
+        .collect();
+    assert_eq!(
+        session_opens,
+        vec!["gui/src/state_cache.rs".to_string()],
+        "(a) the GUI opens its session-bus connection in one place"
     );
 
     let generated = files.iter().any(|file| {
