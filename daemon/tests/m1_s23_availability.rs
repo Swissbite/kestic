@@ -17,7 +17,7 @@ use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use time::macros::datetime;
 use zbus::{Connection, block_on};
 
@@ -218,17 +218,25 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
                 "cache within 60 s must not re-probe yet"
             );
 
-            // Advance past 60 s (> 60 s) and call tray AboutToShow + GetLayout -> marks available again!
+            // Advance past 60 s (> 60 s) and open the tray menu: the check it starts runs in the
+            // background and re-enables the backup in the menu once it is done.
             clock.advance(Duration::from_secs(35));
-            let menu_recovered = fetch_dbusmenu_items(&client_conn, &sni_svc);
-            let entry_rec = menu_recovered
-                .iter()
-                .find(|m| m.label.starts_with("REST Backup"))
-                .expect("tray item for REST Backup");
-            assert!(
-                entry_rec.enabled,
-                "AboutToShow after >60 s must refresh availability and re-enable backup in tray"
-            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let menu_recovered = fetch_dbusmenu_items(&client_conn, &sni_svc);
+                let entry_rec = menu_recovered
+                    .iter()
+                    .find(|m| m.label.starts_with("REST Backup"))
+                    .expect("tray item for REST Backup");
+                if entry_rec.enabled {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "AboutToShow after >60 s must refresh availability and re-enable backup in tray"
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
 
             let state_rec = client.get_state().expect("GetState");
             assert!(state_rec.destinations[0].availability.reachable);

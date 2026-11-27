@@ -3,6 +3,7 @@
 
 //! The synchronous client of `net.daester.Kestic1`.
 
+use super::proxy::Kestic1Proxy;
 use super::*;
 
 /// Synchronous D-Bus client for `net.daester.Kestic1` used by the GUI and D-Bus integration tests.
@@ -49,59 +50,58 @@ impl KesticClient {
         .map_err(Into::into)
     }
 
-    async fn proxy(&self) -> zbus::Result<Proxy<'_>> {
-        Proxy::new(
-            &self.conn,
-            self.bus_name.as_str(),
-            self.object_path.as_str(),
-            KESTIC_INTERFACE_V1,
-        )
-        .await
+    /// The generated proxy of the daemon interface on this client's connection. It caches no
+    /// properties, so building it sends nothing on the bus.
+    pub async fn proxy(&self) -> zbus::Result<Kestic1Proxy<'_>> {
+        Kestic1Proxy::builder(&self.conn)
+            .destination(self.bus_name.as_str())
+            .path(self.object_path.as_str())
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await
     }
 
-    /// Calls `method` on the daemon interface and blocks for the reply.
-    fn call<B, R>(&self, method: &'static str, body: &B) -> zbus::Result<R>
-    where
-        B: Serialize + DynamicType,
-        R: for<'d> DynamicDeserialize<'d>,
-    {
-        block_on(async { self.proxy().await?.call(method, body).await })
+    /// Runs `call` on the daemon proxy and blocks for the reply.
+    fn with_proxy<R>(
+        &self,
+        call: impl AsyncFnOnce(&Kestic1Proxy<'_>) -> zbus::Result<R>,
+    ) -> zbus::Result<R> {
+        block_on(async { call(&self.proxy().await?).await })
     }
 
-    /// Calls a method that replies with a JSON string and parses the reply into `T`.
-    fn call_json<B, T>(&self, method: &'static str, body: &B) -> Result<T, KesticDbusError>
-    where
-        B: Serialize + DynamicType,
-        T: DeserializeOwned,
-    {
-        let raw: String = self.call(method, body).map_err(KesticDbusError::from)?;
+    /// Runs `call` for a method that replies with a JSON string and parses the reply into `T`.
+    fn call_json<T: DeserializeOwned>(
+        &self,
+        call: impl AsyncFnOnce(&Kestic1Proxy<'_>) -> zbus::Result<String>,
+    ) -> Result<T, KesticDbusError> {
+        let raw = self.with_proxy(call).map_err(KesticDbusError::from)?;
         serde_json::from_str(&raw).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
     pub fn daemon_version(&self) -> zbus::Result<String> {
-        self.call("DaemonVersion", &())
+        self.with_proxy(async |p| p.daemon_version().await)
     }
 
     pub fn get_state(&self) -> Result<DaemonStateDto, KesticDbusError> {
-        self.call_json("GetState", &())
+        self.call_json(async |p| p.get_state().await)
     }
 
     pub fn get_run_detail(&self, run_id: &str) -> Result<RunDetailDto, KesticDbusError> {
-        self.call_json("GetRunDetail", &(run_id,))
+        self.call_json(async |p| p.get_run_detail(run_id).await)
     }
 
     pub fn list_backup_snapshots(
         &self,
         backup_id: &str,
     ) -> Result<BackupSnapshotsDto, KesticDbusError> {
-        self.call_json("ListBackupSnapshots", &(backup_id,))
+        self.call_json(async |p| p.list_backup_snapshots(backup_id).await)
     }
 
     pub fn list_destination_snapshots(
         &self,
         destination_id: &str,
     ) -> Result<DestinationSnapshotsDto, KesticDbusError> {
-        self.call_json("ListDestinationSnapshots", &(destination_id,))
+        self.call_json(async |p| p.list_destination_snapshots(destination_id).await)
     }
 
     pub fn start_snapshot_query(
@@ -109,7 +109,7 @@ impl KesticClient {
         request: &SnapshotQueryRequest,
     ) -> Result<String, KesticDbusError> {
         let json = to_json_arg(request)?;
-        self.call("StartSnapshotQuery", &(json.as_str(),))
+        self.with_proxy(async |p| p.start_snapshot_query(json.as_str()).await)
             .map_err(KesticDbusError::from)
     }
 
@@ -119,17 +119,17 @@ impl KesticClient {
         page: &SnapshotQueryPage,
     ) -> Result<SnapshotQueryStatusDto, KesticDbusError> {
         let json = to_json_arg(page)?;
-        self.call_json("GetSnapshotQueryStatus", &(query_id, json.as_str()))
+        self.call_json(async |p| p.get_snapshot_query_status(query_id, json.as_str()).await)
     }
 
     pub fn cancel_snapshot_query(&self, query_id: &str) -> zbus::Result<()> {
-        self.call("CancelSnapshotQuery", &(query_id,))
+        self.with_proxy(async |p| p.cancel_snapshot_query(query_id).await)
     }
 
     /// Starts a restore run; returns its run ID.
     pub fn start_restore(&self, request: &RestoreRequest) -> Result<String, KesticDbusError> {
         let json = to_json_arg(request)?;
-        self.call("StartRestore", &(json.as_str(),))
+        self.with_proxy(async |p| p.start_restore(json.as_str()).await)
             .map_err(KesticDbusError::from)
     }
 
@@ -142,10 +142,10 @@ impl KesticClient {
     ) -> Result<ConnectionTestResultDto, KesticDbusError> {
         let json = to_json_arg(dest)?;
         let secrets = to_json_arg(backend)?;
-        self.call_json(
-            "TestDestinationConnection",
-            &(json.as_str(), mode, repo_password, secrets.as_str()),
-        )
+        self.call_json(async |p| {
+            p.test_destination_connection(json.as_str(), mode, repo_password, secrets.as_str())
+                .await
+        })
     }
 
     pub fn add_destination(
@@ -157,10 +157,10 @@ impl KesticClient {
     ) -> zbus::Result<String> {
         let json = to_failure_arg("dest", dest)?;
         let secrets = to_failure_arg("backend secrets", backend)?;
-        self.call(
-            "AddDestination",
-            &(json.as_str(), mode, repo_password, secrets.as_str()),
-        )
+        self.with_proxy(async |p| {
+            p.add_destination(json.as_str(), mode, repo_password, secrets.as_str())
+                .await
+        })
     }
 
     pub fn update_destination(
@@ -173,16 +173,16 @@ impl KesticClient {
     ) -> zbus::Result<DestinationUpdateResultDto> {
         let json = to_failure_arg("dest", dest)?;
         let secrets = to_failure_arg("backend secrets", backend)?;
-        let raw: String = self.call(
-            "UpdateDestination",
-            &(
+        let raw: String = self.with_proxy(async |p| {
+            p.update_destination(
                 json.as_str(),
                 mode,
                 repo_password,
                 secrets.as_str(),
                 verify_connection,
-            ),
-        )?;
+            )
+            .await
+        })?;
         serde_json::from_str(&raw)
             .map_err(|e| zbus::Error::Failure(format!("UpdateDestination reply: {e}")))
     }
@@ -192,37 +192,37 @@ impl KesticClient {
         dest_id: &str,
         new_password: &str,
     ) -> zbus::Result<()> {
-        self.call("UpdateDestinationPassword", &(dest_id, new_password))
+        self.with_proxy(async |p| p.update_destination_password(dest_id, new_password).await)
     }
 
     pub fn trust_host_key(&self, host_key_id: &str) -> zbus::Result<()> {
-        self.call("TrustHostKey", &(host_key_id,))
+        self.with_proxy(async |p| p.trust_host_key(host_key_id).await)
     }
 
     pub fn remove_destination(&self, dest_id: &str) -> zbus::Result<()> {
-        self.call("RemoveDestination", &(dest_id,))
+        self.with_proxy(async |p| p.remove_destination(dest_id).await)
     }
 
     pub fn add_backup(&self, backup: &Backup) -> zbus::Result<String> {
         let json = to_failure_arg("backup", backup)?;
-        self.call("AddBackup", &(json.as_str(),))
+        self.with_proxy(async |p| p.add_backup(json.as_str()).await)
     }
 
     pub fn update_backup(&self, backup: &Backup) -> zbus::Result<()> {
         let json = to_failure_arg("backup", backup)?;
-        self.call("UpdateBackup", &(json.as_str(),))
+        self.with_proxy(async |p| p.update_backup(json.as_str()).await)
     }
 
     pub fn rename_backup(&self, backup_id: &str, new_name: &str) -> zbus::Result<()> {
-        self.call("RenameBackup", &(backup_id, new_name))
+        self.with_proxy(async |p| p.rename_backup(backup_id, new_name).await)
     }
 
     pub fn reassign_backup(&self, backup_id: &str, new_dest_id: &str) -> zbus::Result<()> {
-        self.call("ReassignBackup", &(backup_id, new_dest_id))
+        self.with_proxy(async |p| p.reassign_backup(backup_id, new_dest_id).await)
     }
 
     pub fn remove_backup(&self, backup_id: &str) -> zbus::Result<()> {
-        self.call("RemoveBackup", &(backup_id,))
+        self.with_proxy(async |p| p.remove_backup(backup_id).await)
     }
 
     pub fn set_restic_provider(
@@ -230,54 +230,54 @@ impl KesticClient {
         provider: &kestic_core::model::ResticProvider,
     ) -> Result<ResticStatusDto, KesticDbusError> {
         let json = to_json_arg(provider)?;
-        self.call_json("SetResticProvider", &(json.as_str(),))
+        self.call_json(async |p| p.set_restic_provider(json.as_str()).await)
     }
 
     pub fn remove_app_managed_restic(&self) -> zbus::Result<()> {
-        self.call("RemoveAppManagedRestic", &())
+        self.with_proxy(async |p| p.remove_app_managed_restic().await)
     }
 
     pub fn set_expert_mode(&self, enabled: bool) -> zbus::Result<()> {
-        self.call("SetExpertMode", &(enabled,))
+        self.with_proxy(async |p| p.set_expert_mode(enabled).await)
     }
 
     pub fn start_backup(&self, backup_id: &str) -> zbus::Result<String> {
-        self.call("StartBackup", &(backup_id,))
+        self.with_proxy(async |p| p.start_backup(backup_id).await)
     }
 
     pub fn start_all_backups(&self) -> Result<StartAllResultDto, KesticDbusError> {
-        self.call_json("StartAllBackups", &())
+        self.call_json(async |p| p.start_all_backups().await)
     }
 
     pub fn cancel_run(&self, run_id: &str) -> zbus::Result<()> {
-        self.call("CancelRun", &(run_id,))
+        self.with_proxy(async |p| p.cancel_run(run_id).await)
     }
 
     pub fn check_availability(
         &self,
         force: bool,
     ) -> Result<AvailabilitySnapshotDto, KesticDbusError> {
-        self.call_json("CheckAvailability", &(force,))
+        self.call_json(async |p| p.check_availability(force).await)
     }
 
     pub fn window_active(&self, active: bool, page: &str) -> zbus::Result<()> {
-        self.call("WindowActive", &(active, page))
+        self.with_proxy(async |p| p.window_active(active, page).await)
     }
 
     pub fn register_gui(&self) -> zbus::Result<()> {
-        self.call("RegisterGui", &())
+        self.with_proxy(async |p| p.register_gui().await)
     }
 
     pub fn confirm_quit(&self) -> zbus::Result<()> {
-        self.call("ConfirmQuit", &())
+        self.with_proxy(async |p| p.confirm_quit().await)
     }
 
     pub fn unlock_secret_store(&self) -> zbus::Result<bool> {
-        self.call("UnlockSecretStore", &())
+        self.with_proxy(async |p| p.unlock_secret_store().await)
     }
 
     pub fn detect_source(&self, path: &str) -> Result<Source, KesticDbusError> {
-        self.call_json("DetectSource", &(path,))
+        self.call_json(async |p| p.detect_source(path).await)
     }
 
     pub fn check_nested_sources(
@@ -286,10 +286,10 @@ impl KesticClient {
         candidate_path: &str,
         destination_id: &str,
     ) -> Result<Vec<NestedSourceConflict>, KesticDbusError> {
-        self.call_json(
-            "CheckNestedSources",
-            &(candidate_id, candidate_path, destination_id),
-        )
+        self.call_json(async |p| {
+            p.check_nested_sources(candidate_id, candidate_path, destination_id)
+                .await
+        })
     }
 
     pub fn lint_excludes(
@@ -297,7 +297,7 @@ impl KesticClient {
         excludes: &ExcludeRules,
     ) -> Result<Vec<ExcludeLintWarning>, KesticDbusError> {
         let json = to_json_arg(excludes)?;
-        self.call_json("LintExcludes", &(json.as_str(),))
+        self.call_json(async |p| p.lint_excludes(json.as_str()).await)
     }
 
     pub fn test_exclude_path(
@@ -307,7 +307,10 @@ impl KesticClient {
         test_path: &str,
     ) -> Result<ExcludePathTestResult, KesticDbusError> {
         let json = to_json_arg(excludes)?;
-        self.call_json("TestExcludePath", &(backup_id, json.as_str(), test_path))
+        self.call_json(async |p| {
+            p.test_exclude_path(backup_id, json.as_str(), test_path)
+                .await
+        })
     }
 
     pub fn start_retention_preview(
@@ -316,18 +319,18 @@ impl KesticClient {
         retention: &RetentionPolicy,
     ) -> zbus::Result<String> {
         let json = to_failure_arg("retention", retention)?;
-        self.call("StartRetentionPreview", &(backup_id, json.as_str()))
+        self.with_proxy(async |p| p.start_retention_preview(backup_id, json.as_str()).await)
     }
 
     pub fn cancel_retention_preview(&self, preview_id: &str) -> zbus::Result<()> {
-        self.call("CancelRetentionPreview", &(preview_id,))
+        self.with_proxy(async |p| p.cancel_retention_preview(preview_id).await)
     }
 
     pub fn get_retention_preview_status(
         &self,
         preview_id: &str,
     ) -> Result<RetentionPreviewStatusDto, KesticDbusError> {
-        self.call_json("GetRetentionPreviewStatus", &(preview_id,))
+        self.call_json(async |p| p.get_retention_preview_status(preview_id).await)
     }
 
     pub fn start_backup_dry_run(
@@ -339,40 +342,40 @@ impl KesticClient {
             Some(ex) => to_failure_arg("excludes", ex)?,
             None => String::new(),
         };
-        self.call("StartBackupDryRun", &(backup_id, json.as_str()))
+        self.with_proxy(async |p| p.start_backup_dry_run(backup_id, json.as_str()).await)
     }
 
     pub fn cancel_backup_dry_run(&self, preview_id: &str) -> zbus::Result<()> {
-        self.call("CancelBackupDryRun", &(preview_id,))
+        self.with_proxy(async |p| p.cancel_backup_dry_run(preview_id).await)
     }
 
     pub fn get_backup_dry_run_status(
         &self,
         preview_id: &str,
     ) -> Result<BackupDryRunStatusDto, KesticDbusError> {
-        self.call_json("GetBackupDryRunStatus", &(preview_id,))
+        self.call_json(async |p| p.get_backup_dry_run_status(preview_id).await)
     }
 
     pub fn start_restic_install(&self) -> zbus::Result<String> {
-        self.call("StartResticInstall", &())
+        self.with_proxy(async |p| p.start_restic_install().await)
     }
 
     pub fn get_restic_install_status(
         &self,
         install_id: &str,
     ) -> Result<ResticInstallStatusDto, KesticDbusError> {
-        self.call_json("GetResticInstallStatus", &(install_id,))
+        self.call_json(async |p| p.get_restic_install_status(install_id).await)
     }
 
     pub fn cancel_restic_install(&self, install_id: &str) -> zbus::Result<()> {
-        self.call("CancelResticInstall", &(install_id,))
+        self.with_proxy(async |p| p.cancel_restic_install(install_id).await)
     }
 
     pub fn format_exclude_rule_for_item(
         &self,
         item_path: &str,
     ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
-        self.call_json("FormatExcludeRuleForItem", &(item_path,))
+        self.call_json(async |p| p.format_exclude_rule_for_item(item_path).await)
     }
 
     pub fn add_exclude_rule_for_item(
@@ -380,44 +383,44 @@ impl KesticClient {
         backup_id: &str,
         item_path: &str,
     ) -> Result<ExcludeRulePreviewDto, KesticDbusError> {
-        self.call_json("AddExcludeRuleForItem", &(backup_id, item_path))
+        self.call_json(async |p| p.add_exclude_rule_for_item(backup_id, item_path).await)
     }
 
     pub fn run_destination_maintenance(&self, destination_id: &str) -> zbus::Result<String> {
-        self.call("RunDestinationMaintenance", &(destination_id,))
+        self.with_proxy(async |p| p.run_destination_maintenance(destination_id).await)
     }
 
     pub fn pause_global(&self, duration: &PauseDuration) -> zbus::Result<()> {
         let json = to_failure_arg("duration", duration)?;
-        self.call("PauseGlobal", &(json.as_str(),))
+        self.with_proxy(async |p| p.pause_global(json.as_str()).await)
     }
 
     pub fn resume_global(&self) -> zbus::Result<()> {
-        self.call("ResumeGlobal", &())
+        self.with_proxy(async |p| p.resume_global().await)
     }
 
     pub fn pause_backup(&self, backup_id: &str, duration: &PauseDuration) -> zbus::Result<()> {
         let json = to_failure_arg("duration", duration)?;
-        self.call("PauseBackup", &(backup_id, json.as_str()))
+        self.with_proxy(async |p| p.pause_backup(backup_id, json.as_str()).await)
     }
 
     pub fn resume_backup(&self, backup_id: &str) -> zbus::Result<()> {
-        self.call("ResumeBackup", &(backup_id,))
+        self.with_proxy(async |p| p.resume_backup(backup_id).await)
     }
 
     pub fn start_backup_override(&self, backup_id: &str) -> zbus::Result<String> {
-        self.call("StartBackupOverride", &(backup_id,))
+        self.with_proxy(async |p| p.start_backup_override(backup_id).await)
     }
 
     pub fn unlock_destination(&self, destination_id: &str) -> zbus::Result<u32> {
-        self.call("UnlockDestination", &(destination_id,))
+        self.with_proxy(async |p| p.unlock_destination(destination_id).await)
     }
 
     pub fn preview_destination_maintenance(
         &self,
         destination_id: &str,
     ) -> Result<PrunePreviewSummary, KesticDbusError> {
-        self.call_json("PreviewDestinationMaintenance", &(destination_id,))
+        self.call_json(async |p| p.preview_destination_maintenance(destination_id).await)
     }
 
     pub fn update_destination_maintenance(
@@ -426,10 +429,10 @@ impl KesticClient {
         maintenance: &MaintenanceSchedule,
     ) -> zbus::Result<()> {
         let json = to_failure_arg("maintenance", maintenance)?;
-        self.call(
-            "UpdateDestinationMaintenance",
-            &(destination_id, json.as_str()),
-        )
+        self.with_proxy(async |p| {
+            p.update_destination_maintenance(destination_id, json.as_str())
+                .await
+        })
     }
 
     pub fn update_settings(
@@ -438,22 +441,22 @@ impl KesticClient {
         notifications: &NotificationSettings,
     ) -> zbus::Result<()> {
         let json = to_failure_arg("notifications", notifications)?;
-        self.call(
-            "UpdateSettings",
-            &(default_overdue_threshold, json.as_str()),
-        )
+        self.with_proxy(async |p| {
+            p.update_settings(default_overdue_threshold, json.as_str())
+                .await
+        })
     }
 
     pub fn list_known_networks(&self) -> Result<Vec<String>, KesticDbusError> {
-        self.call_json("ListKnownNetworks", &())
+        self.call_json(async |p| p.list_known_networks().await)
     }
 
     pub fn list_destination_types(&self) -> Result<Vec<DestinationTypeDto>, KesticDbusError> {
-        self.call_json("ListDestinationTypes", &())
+        self.call_json(async |p| p.list_destination_types().await)
     }
 
     pub fn list_removable_drives(&self) -> Result<Vec<RemovableDriveDto>, KesticDbusError> {
-        self.call_json("ListRemovableDrives", &())
+        self.call_json(async |p| p.list_removable_drives().await)
     }
 }
 

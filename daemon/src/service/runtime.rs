@@ -3,7 +3,10 @@
 
 //! Daemon runtime loop (`run_daemon`), system monitor event handling, and tray action dispatch.
 
-use super::availability::{drain_queued_backups_async, refresh_availability_unlocked};
+use super::availability::{
+    drain_queued_backups_async, refresh_availability_unlocked,
+    trigger_background_availability_probe,
+};
 use super::backup_runner::start_backup_async;
 use super::maintenance::start_all_backups_async;
 use super::scheduler::tick_scheduler_async;
@@ -71,21 +74,12 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     };
 
     let core_for_about = Arc::clone(&core);
-    // The hook takes the connection from the core when it runs and holds none itself: the tray
-    // service keeps the hook until its own executor has wound down, after the tray's shutdown,
-    // and a handle in it would make the shutdown wait for the D-Bus connection until its limit.
+    // Opening the menu shows the cached availability at once; a check that is due runs in the
+    // background and publishes its result, which updates the open menu.
     let about_to_show_hook: Arc<dyn Fn() -> Option<KesticTrayState> + Send + Sync> =
         Arc::new(move || {
-            let _ = refresh_availability_unlocked(&core_for_about, false);
-            let (state_dto, tray_state, conn) = {
-                let guard = core_for_about.lock_unpoisoned();
-                let (state_dto, tray_state) = guard.build_state_and_tray();
-                (state_dto, tray_state, guard.conn.clone())
-            };
-            if let Some(conn) = conn {
-                emit_status_changed(&conn, &state_dto);
-            }
-            Some(tray_state)
+            trigger_background_availability_probe(Arc::clone(&core_for_about));
+            Some(core_for_about.lock_unpoisoned().build_state_and_tray().1)
         });
 
     let tray = Arc::new(
