@@ -13,7 +13,7 @@ use common::m3::{
     write_incompressible_dataset,
 };
 use common::run_isolated_test;
-use kestic_core::model::RunStatus;
+use kestic_core::model::{KeepCount, RetentionPolicy, RunStatus};
 use kestic_test_support::tools::find_lock_file;
 use std::io::Write;
 use std::path::Path;
@@ -180,6 +180,16 @@ fn ac_m3_06_2_lock_of_running_backup_is_not_stale_and_not_unlocked() {
                 let (rig, fx) = start_rig(root, &variant, "M3L2");
                 let client = &rig.daemon.client;
                 let dest_id = &fx.dest.id;
+                // Keeping only the last snapshot gives the retention one to remove, so its
+                // `forget <id>` needs the exclusive lock the foreign backup holds.
+                let mut backup = fx.backup.clone();
+                backup.retention = RetentionPolicy {
+                    keep_last: Some(KeepCount::Count(1)),
+                    ..RetentionPolicy::empty()
+                };
+                client
+                    .update_backup(&backup)
+                    .expect("keep the last snapshot");
                 manual_run_ok(&rig, &fx);
 
                 let cmd = check_cmd(

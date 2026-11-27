@@ -168,6 +168,8 @@ impl Scenario {
     fn spy(&self) -> (ResolvedRestic, PathBuf) {
         let (script, log) =
             install_args_spy(self.dir.path(), "restic-spy", &self.rig.resolved.binary);
+        // `version` is not logged by the spy.
+        wait_until_executable(&script, "version");
         (
             ResolvedRestic {
                 binary: script,
@@ -515,6 +517,25 @@ struct FakePlan {
     b1: Backup,
 }
 
+/// Waits until the freshly written `script` can be started: while a test on another thread
+/// forks, its child still holds the file open for writing until it execs, and starting the
+/// script fails with «text file busy» meanwhile.
+fn wait_until_executable(script: &Path, probe_arg: &str) {
+    for _ in 0..100 {
+        match Command::new(script).arg(probe_arg).output() {
+            Ok(out) => {
+                assert!(out.status.success(), "probe of {}", script.display());
+                return;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(err) => panic!("start {}: {err}", script.display()),
+        }
+    }
+    panic!("{} stayed busy", script.display());
+}
+
 impl FakePlan {
     fn new(password: &str, forget_exit: i32) -> Self {
         let dir = TempDir::new().expect("tempdir");
@@ -550,11 +571,12 @@ impl FakePlan {
         write_executable(
             &script,
             &format!(
-                "#!/bin/sh\necho \"$*\" >> \"{log}\"\ncase \" $* \" in\n  *\" --dry-run \"*) cat \"{plan}\"; exit 0 ;;\nesac\nexit {forget_exit}\n",
+                "#!/bin/sh\n[ \"$1\" = --probe ] && exit 0\necho \"$*\" >> \"{log}\"\ncase \" $* \" in\n  *\" --dry-run \"*) cat \"{plan}\"; exit 0 ;;\nesac\nexit {forget_exit}\n",
                 log = log.display(),
                 plan = plan.display(),
             ),
         );
+        wait_until_executable(&script, "--probe");
         let resolved = ResolvedRestic {
             binary: script,
             version: rig.resolved.version.clone(),
@@ -612,13 +634,17 @@ impl FakePlan {
     }
 }
 
-/// AC-M6-17-2 (c): a plan restic cut off (exit 0, unreadable JSON) is an error and no `forget`
-/// runs; a plan whose groups remove nothing (`remove: null`) runs none either.
+/// AC-M6-17-2 (c): a plan restic cut off (exit 0, unreadable JSON) is an error kept with the
+/// plan's call, and no `forget` runs; a plan whose groups remove nothing (`remove: null`) runs
+/// none either.
 #[test]
 fn ac_m6_17_2_unreadable_plan_runs_no_forget() {
     let fake = FakePlan::new("unrelated", 0);
     fake.plan_raw(r#"[{"tags":["kestic:x"],"remove":[{"id":"#);
-    assert!(fake.retention().is_err(), "an unreadable plan is an error");
+    let run = fake.retention().expect("the plan ran");
+    assert!(run.error.is_some(), "an unreadable plan is an error");
+    assert!(!run.succeeded(), "an unreadable plan is not done");
+    assert_eq!(run.plan.exit_code, 0, "the plan's call stays on record");
     assert_eq!(
         fake.calls().len(),
         1,

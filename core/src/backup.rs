@@ -769,6 +769,9 @@ pub struct RetentionRun {
     pub forget_ids: Vec<String>,
     /// Cancelled during the plan, before `forget` or during it.
     pub cancelled: bool,
+    /// Why no `forget` could follow a plan that ran: its output was unreadable, or `forget`
+    /// could not be started.
+    pub error: Option<BackupRunError>,
 }
 
 impl RetentionRun {
@@ -782,9 +785,10 @@ impl RetentionRun {
         self.forget.as_ref().unwrap_or(&self.plan)
     }
 
-    /// Whether the retention is done: not cancelled and the deciding call ended with exit 0.
+    /// Whether the retention is done: not cancelled, no error and the deciding call ended with
+    /// exit 0.
     pub fn succeeded(&self) -> bool {
-        !self.cancelled && self.last().exit_code == 0
+        !self.cancelled && self.error.is_none() && self.last().exit_code == 0
     }
 
     /// Number of snapshots removed; `None` unless the run succeeded.
@@ -798,7 +802,8 @@ impl RetentionRun {
 
 /// Runs the retention of `backup`: the plan, then `forget <id…>` with its remove list
 /// ([`ForgetPreviewResult::removal_ids`]); no `forget` when the list is empty, the plan failed
-/// or the run was cancelled.
+/// or the run was cancelled. Once the plan ran, every later error is kept in
+/// [`RetentionRun::error`], so the plan stays on record.
 pub fn execute_retention(
     backup: &Backup,
     destination: &Destination,
@@ -813,11 +818,18 @@ pub fn execute_retention(
         plan,
         forget: None,
         forget_ids: Vec::new(),
+        error: None,
     };
     if run.cancelled || run.plan.exit_code != 0 {
         return Ok(run);
     }
-    let ids = read_forget_plan(&backup.id, &run.plan)?.removal_ids();
+    let ids = match read_forget_plan(&backup.id, &run.plan) {
+        Ok(plan) => plan.removal_ids(),
+        Err(err) => {
+            run.error = Some(err);
+            return Ok(run);
+        }
+    };
     if ids.is_empty() {
         return Ok(run);
     }
@@ -825,13 +837,20 @@ pub fn execute_retention(
         run.cancelled = true;
         return Ok(run);
     }
-    let spec =
-        build_forget_ids_command_spec(destination, &ids, runtime.resolved, runtime.kestic_binary)?
-            .with_cache_dir(runtime.cache_dir);
-    let forget = runtime.run(&spec, destination, cancel, extra_env, |_| {})?;
-    run.cancelled = forget.cancelled;
-    run.forget = Some(forget);
+    let forget =
+        build_forget_ids_command_spec(destination, &ids, runtime.resolved, runtime.kestic_binary)
+            .and_then(|spec| {
+                let spec = spec.with_cache_dir(runtime.cache_dir);
+                Ok(runtime.run(&spec, destination, cancel, extra_env, |_| {})?)
+            });
     run.forget_ids = ids;
+    match forget {
+        Ok(forget) => {
+            run.cancelled = forget.cancelled;
+            run.forget = Some(forget);
+        }
+        Err(err) => run.error = Some(err),
+    }
     Ok(run)
 }
 

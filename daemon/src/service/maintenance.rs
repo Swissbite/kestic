@@ -462,6 +462,12 @@ fn run_maintenance_operations(
                 record_retention(&retention, run, &mut out.combined_logs);
                 let res = retention.last();
                 out.last_exit = res.exit_code;
+                if let Some(err) = &retention.error {
+                    out.last_exit = 1;
+                    let msg = redact_secrets(&run_error_detail(err), secret_strs);
+                    out.failure_detail = Some(msg.clone());
+                    out.combined_logs.push(msg);
+                }
                 if retention.succeeded() {
                     out.cleared_ids.push(b.id.clone());
                     out.stats.forgets.push(MaintenanceForget {

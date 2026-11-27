@@ -883,6 +883,9 @@ fn run_post_backup_forget(
     match execute_retention(backup, dest, runtime, Some(cancel), &[]) {
         Ok(retention) => {
             record_retention(&retention, run, combined_logs);
+            if let Some(err) = &retention.error {
+                combined_logs.push(redact_secrets(&err.to_string(), secret_strs));
+            }
             if retention.succeeded() {
                 *out.primary_forget_state = Some(false);
                 for other in pending_other_backups {
