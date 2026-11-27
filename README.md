@@ -42,7 +42,7 @@ A KDE Plasma desktop app for easy backups with [restic](https://restic.net). Pic
 
 Kestic does not back up anything by itself: every backup, check and restore is done by [restic](https://restic.net), which Kestic runs and shows you the command for. Thanks to the restic authors and contributors for a backup tool that is fast, secure and well documented.
 
-Kestic is an independent project, not affiliated with or endorsed by the restic project. The name «restic» refers to that project and belongs to its authors.
+The name Kestic combines KDE and restic. Kestic is an independent project, not affiliated with or endorsed by the restic project. The name «restic» refers to that project and belongs to its authors.
 
 ## License
 
