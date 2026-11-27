@@ -24,11 +24,13 @@ Kirigami.Dialog {
             icon.name: "list-remove"
             text: i18n("Remove Destination")
             onTriggered: {
-                if (dialog.appBackend.removeDestination(dialog.destId)) {
-                    dialog.close();
-                    dialog.rootWindow.showPassiveNotification(i18n("Destination removed"));
-                    dialog.rootWindow.switchTab(2);
-                }
+                dialog.rootWindow.afterDaemonCall(dialog.appBackend.removeDestination(dialog.destId), function(ok) {
+                    if (ok) {
+                        dialog.close();
+                        dialog.rootWindow.showPassiveNotification(i18n("Destination removed"));
+                        dialog.rootWindow.switchTab(2);
+                    }
+                });
             }
         }
     ]

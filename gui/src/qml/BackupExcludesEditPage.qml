@@ -175,20 +175,26 @@ EditorPage {
         }
     }
 
-    function saveForGuard() {
-        if (!initialData) return false;
-        saveErrorText = "";
-        if (appBackend.updateBackupExcludes(backupId, currentExcludesJson())) {
-            initialData = rootWindow.findBackupData(backupId);
-            if (initialData) {
-                savedExcludesJson = initialData.excludesJson;
-                loadFromExcludesJson(savedExcludesJson);
-            }
-            rootWindow.showPassiveNotification(i18n("Exclude rules saved"));
-            return true;
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function saveForGuard(done) {
+        if (!initialData) {
+            if (done) done(false);
+            return;
         }
-        saveErrorText = appBackend.last_action_error;
-        return false;
+        saveErrorText = "";
+        rootWindow.afterDaemonCall(appBackend.updateBackupExcludes(backupId, currentExcludesJson()), function(ok) {
+            if (ok) {
+                initialData = rootWindow.findBackupData(backupId);
+                if (initialData) {
+                    savedExcludesJson = initialData.excludesJson;
+                    loadFromExcludesJson(savedExcludesJson);
+                }
+                rootWindow.showPassiveNotification(i18n("Exclude rules saved"));
+            } else {
+                saveErrorText = appBackend.last_action_error;
+            }
+            if (done) done(ok);
+        });
     }
 
     actions: [
@@ -233,9 +239,11 @@ EditorPage {
     extraDialogs: [enableExpertModeDialog]
 
     onUnsavedSaveRequested: {
-        if (page.saveForGuard()) {
-            rootWindow.popSubPage();
-        }
+        page.saveForGuard(function(ok) {
+            if (ok) {
+                rootWindow.popSubPage();
+            }
+        });
     }
     onUnsavedDiscardRequested: {
         page.loadFromExcludesJson(page.savedExcludesJson);

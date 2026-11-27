@@ -797,6 +797,123 @@ void run_close_window_scene(QQuickWindow* window, QObject* backend,
         });
 }
 
+// Calls `method` on the backend and fails the scene unless it returns a request id (> 0) within
+// 100 ms (AC-M6-33-1 (a)).
+bool requests_at_once(int code, const char* method, const std::function<int()>& call) {
+    QElapsedTimer took;
+    took.start();
+    const int request = call();
+    const qint64 ms = took.elapsed();
+    if (request <= 0) {
+        smoke_fail("M6", code, QStringLiteral("%1 returned no request").arg(QLatin1String(method)));
+        return false;
+    }
+    if (ms >= 100) {
+        smoke_fail("M6", code, QStringLiteral("(a) %1 kept the main thread for %2 ms").arg(QLatin1String(method)).arg(ms));
+        return false;
+    }
+    return true;
+}
+
+// AC-M6-33-1: every reply comes 5 s late. The edits and lists whose result the window waits for
+// return a request at once, the main thread never pauses longer than 100 ms, and the results
+// arrive: the new name, the new setting, the run's detail and the snapshot list.
+void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    auto stop = std::make_shared<bool>(false);
+    auto largest_gap = watch_main_thread_gaps(window, stop);
+    auto step = std::make_shared<int>(-1);
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (waited->elapsed() > 90000) {
+            poll->stop();
+            smoke_fail("M6", 70, QStringLiteral("timed out at step %1").arg(*step));
+            return;
+        }
+        if (*step < 0) {
+            if (backend->property("daemon_reachable").toBool() && !run_id_at(window, 0).isEmpty()) {
+                *step = 0;
+            }
+            return;
+        }
+        const QString bid = backup_id_at(window, 0);
+        const QString rid = run_id_at(window, 0);
+        // One call per tick, so each pause of the main thread belongs to one call.
+        bool ok = true;
+        switch ((*step)++) {
+        case 0:
+            ok = requests_at_once(71, "renameBackup", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "renameBackup", Q_RETURN_ARG(int, request),
+                    Q_ARG(QString, bid), Q_ARG(QString, QStringLiteral("Renamed Documents")));
+                return request;
+            });
+            break;
+        case 1:
+            ok = requests_at_once(72, "updateSettings", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "updateSettings", Q_RETURN_ARG(int, request),
+                    Q_ARG(int, 5), Q_ARG(bool, true), Q_ARG(bool, true), Q_ARG(bool, true),
+                    Q_ARG(bool, true), Q_ARG(bool, false));
+                return request;
+            });
+            break;
+        case 2:
+            ok = requests_at_once(73, "loadRunDetail", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "loadRunDetail", Q_RETURN_ARG(int, request), Q_ARG(QString, rid));
+                return request;
+            });
+            break;
+        case 3:
+            ok = requests_at_once(74, "destinationTypeCardsJson", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "destinationTypeCardsJson", Q_RETURN_ARG(int, request));
+                return request;
+            });
+            break;
+        case 4:
+            ok = requests_at_once(75, "listKnownNetworksJson", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "listKnownNetworksJson", Q_RETURN_ARG(int, request));
+                return request;
+            });
+            break;
+        case 5: {
+            QElapsedTimer took;
+            took.start();
+            QMetaObject::invokeMethod(backend, "loadBackupSnapshots", Q_ARG(QString, bid));
+            if (took.elapsed() >= 100) {
+                poll->stop();
+                smoke_fail("M6", 76, QStringLiteral("(a) loadBackupSnapshots kept the main thread for %1 ms").arg(took.elapsed()));
+            }
+            break;
+        }
+        default: {
+            const bool arrived = role_value(model_named(window, "backupsModel"), 0, "name").toString() == QLatin1String("Renamed Documents")
+                && backend->property("default_overdue_threshold").toInt() == 5
+                && !backend->property("selected_run_title").toString().isEmpty()
+                && !backend->property("snapshots_loading").toBool();
+            if (!arrived) {
+                return;
+            }
+            poll->stop();
+            *stop = true;
+            SMOKE_CHECK("M6", 77, *largest_gap <= 100,
+                QStringLiteral("(a) the main thread paused %1 ms while the daemon was slow").arg(*largest_gap));
+            smoke_finish("M6", warnings.get(), window, out_path);
+            return;
+        }
+        }
+        if (!ok) {
+            poll->stop();
+        }
+    });
+    poll->start(50);
+}
+
 // AC-M6-33-1: «Back Up Now» and «Back Up All Now» answered late (the test holds StartBackup and
 // StartAllBackups back 30 s) do not hold back pausing that backup or all backups.
 void run_slow_start_scene(QQuickWindow* window, QObject* backend,
@@ -903,6 +1020,8 @@ void run_m6_smoke_scenario(
         run_prompt_alone_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-close-window")) {
         run_close_window_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-edits")) {
+        run_slow_edits_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-start")) {
         run_slow_start_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-refused-start")) {

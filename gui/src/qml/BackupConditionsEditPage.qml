@@ -57,15 +57,18 @@ EditorPage {
     dirty: initialData !== null
         && normalizedConditionsJson(currentConditionsJson()) !== normalizedConditionsJson(savedConditionsJson)
 
+    // Asks the daemon for the known networks; the list fills in once it has answered.
     function loadKnownNetworks() {
-        var list = rootWindow.parseJsonOr(appBackend.listKnownNetworksJson(), []);
-        var merged = list.slice();
-        for (var i = 0; i < allowedNetworks.length; ++i) {
-            if (merged.indexOf(allowedNetworks[i]) < 0) {
-                merged.push(allowedNetworks[i]);
+        rootWindow.afterDaemonCall(appBackend.listKnownNetworksJson(), function(ok, json) {
+            var list = rootWindow.parseJsonOr(json, []);
+            var merged = list.slice();
+            for (var i = 0; i < allowedNetworks.length; ++i) {
+                if (merged.indexOf(allowedNetworks[i]) < 0) {
+                    merged.push(allowedNetworks[i]);
+                }
             }
-        }
-        knownNetworks = merged;
+            knownNetworks = merged;
+        });
     }
 
     function loadFromSaved(condJson) {
@@ -106,25 +109,30 @@ EditorPage {
         newNetworkField.text = "";
     }
 
-    function commitSave(popOnSuccess) {
-        if (!dirty) return false;
-        if (appBackend.updateBackupConditions(backupId, currentConditionsJson())) {
-            initialData = rootWindow.findBackupData(backupId);
-            if (initialData) {
-                savedConditionsJson = initialData.conditionsJson;
-                loadFromSaved(savedConditionsJson);
-            }
-            rootWindow.showPassiveNotification(i18n("Run conditions saved"));
-            if (popOnSuccess) {
-                rootWindow.popSubPage();
-            }
-            return true;
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function commitSave(popOnSuccess, done) {
+        if (!dirty) {
+            if (done) done(false);
+            return;
         }
-        return false;
+        rootWindow.afterDaemonCall(appBackend.updateBackupConditions(backupId, currentConditionsJson()), function(ok) {
+            if (ok) {
+                initialData = rootWindow.findBackupData(backupId);
+                if (initialData) {
+                    savedConditionsJson = initialData.conditionsJson;
+                    loadFromSaved(savedConditionsJson);
+                }
+                rootWindow.showPassiveNotification(i18n("Run conditions saved"));
+                if (popOnSuccess) {
+                    rootWindow.popSubPage();
+                }
+            }
+            if (done) done(ok);
+        });
     }
 
-    function saveForGuard() {
-        return commitSave(false);
+    function saveForGuard(done) {
+        commitSave(false, done);
     }
 
     Component.onCompleted: {

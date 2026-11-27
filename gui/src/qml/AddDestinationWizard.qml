@@ -50,23 +50,30 @@ WizardPage {
         }
     }
 
+    // The destination is on its way to the daemon; finishing waits for it.
+    property bool submitting: false
+
     function finishWizard() {
-        if (!canAdvance) return;
-        var createdId = appBackend.addDestination(
+        if (!canAdvance || submitting) return;
+        submitting = true;
+        var request = appBackend.addDestination(
             destDraft.fieldsJson(),
             destDraft.setupMode,
             destDraft.repoPassword,
             destDraft.backendSecretsJson()
         );
-        if (createdId !== "") {
-            rootWindow.showPassiveNotification(Texts.label("destination_saved"));
-            rootWindow.closeWizardLayer();
-            if (typeof destinationCreatedCallback === "function") {
-                destinationCreatedCallback(createdId, destDraft.name.trim());
+        rootWindow.afterDaemonCall(request, function(ok, createdId) {
+            submitting = false;
+            if (ok && createdId !== "") {
+                rootWindow.showPassiveNotification(Texts.label("destination_saved"));
+                rootWindow.closeWizardLayer();
+                if (typeof destinationCreatedCallback === "function") {
+                    destinationCreatedCallback(createdId, destDraft.name.trim());
+                }
+            } else {
+                destDraft.showError(appBackend.last_action_error);
             }
-        } else {
-            destDraft.showError(appBackend.last_action_error);
-        }
+        });
     }
 
     ColumnLayout {

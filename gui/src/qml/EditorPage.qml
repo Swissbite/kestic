@@ -41,10 +41,10 @@ Kirigami.ScrollablePage {
         }
     }
 
-    // Saves for the navigation guard; true when the page is clean afterwards. A page
+    // Saves for the navigation guard; `done(ok)` runs with true once the page is clean. A page
     // that can be dirty overrides it.
-    function saveForGuard() {
-        return false;
+    function saveForGuard(done) {
+        done(false);
     }
 
     function handleEscape() {

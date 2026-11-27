@@ -219,26 +219,31 @@ EditorPage {
         refreshPreview();
     }
 
-    function commitSave(popOnSuccess) {
-        if (!dirty || !valid) return false;
-        if (appBackend.updateBackupSchedule(backupId, currentScheduleJson(), effectiveOverdueThreshold)) {
-            initialData = rootWindow.findBackupData(backupId);
-            if (initialData) {
-                savedScheduleJson = initialData.scheduleJson;
-                savedOverdueThreshold = initialData.overdueThreshold;
-                loadFromSaved(savedScheduleJson, savedOverdueThreshold);
-            }
-            rootWindow.showPassiveNotification(i18n("Schedule saved"));
-            if (popOnSuccess) {
-                rootWindow.popSubPage();
-            }
-            return true;
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function commitSave(popOnSuccess, done) {
+        if (!dirty || !valid) {
+            if (done) done(false);
+            return;
         }
-        return false;
+        rootWindow.afterDaemonCall(appBackend.updateBackupSchedule(backupId, currentScheduleJson(), effectiveOverdueThreshold), function(ok) {
+            if (ok) {
+                initialData = rootWindow.findBackupData(backupId);
+                if (initialData) {
+                    savedScheduleJson = initialData.scheduleJson;
+                    savedOverdueThreshold = initialData.overdueThreshold;
+                    loadFromSaved(savedScheduleJson, savedOverdueThreshold);
+                }
+                rootWindow.showPassiveNotification(i18n("Schedule saved"));
+                if (popOnSuccess) {
+                    rootWindow.popSubPage();
+                }
+            }
+            if (done) done(ok);
+        });
     }
 
-    function saveForGuard() {
-        return commitSave(false);
+    function saveForGuard(done) {
+        commitSave(false, done);
     }
 
     Component.onCompleted: {

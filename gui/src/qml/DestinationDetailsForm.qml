@@ -219,15 +219,28 @@ ColumnLayout {
         property var drives: []
         property string loadError: ""
 
-        function reload() {
-            var reply = {};
-            try {
-                reply = JSON.parse(form.appBackend.removableDrivesJson());
-            } catch (e) {
-                reply = {};
+        // The request for the drives the picker waits for.
+        property int pendingDrives: 0
+
+        Connections {
+            target: form.appBackend
+            function onDaemonCallDone(request, ok, result) {
+                if (request !== drivePicker.pendingDrives) return;
+                drivePicker.pendingDrives = 0;
+                var reply = {};
+                try {
+                    reply = JSON.parse(result);
+                } catch (e) {
+                    reply = {};
+                }
+                drivePicker.drives = reply.drives || [];
+                drivePicker.loadError = reply.error || "";
             }
-            drivePicker.drives = reply.drives || [];
-            drivePicker.loadError = reply.error || "";
+        }
+
+        // Asks the daemon for the mounted drives; they show once it has answered.
+        function reload() {
+            drivePicker.pendingDrives = form.appBackend.removableDrivesJson();
         }
 
         objectName: form.namePrefix + "DrivePicker"

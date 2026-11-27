@@ -221,31 +221,40 @@ EditorPage {
         }
     }
 
-    function commitSave(jsonStr) {
-        if (appBackend.updateBackupRetention(backupId, jsonStr)) {
-            initialData = rootWindow.findBackupData(backupId);
-            if (initialData) {
-                savedPolicyJson = initialData.retentionJson;
-                loadFromPolicyJson(savedPolicyJson);
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function commitSave(jsonStr, done) {
+        rootWindow.afterDaemonCall(appBackend.updateBackupRetention(backupId, jsonStr), function(ok) {
+            if (ok) {
+                initialData = rootWindow.findBackupData(backupId);
+                if (initialData) {
+                    savedPolicyJson = initialData.retentionJson;
+                    loadFromPolicyJson(savedPolicyJson);
+                }
+                validationError = "";
+                rootWindow.showPassiveNotification(i18n("Retention rules saved"));
+            } else {
+                validationError = appBackend.last_action_error;
             }
-            validationError = "";
-            rootWindow.showPassiveNotification(i18n("Retention rules saved"));
-            return true;
-        }
-        validationError = appBackend.last_action_error;
-        return false;
+            if (done) done(ok);
+        });
     }
 
-    function finishSave(jsonStr, popOnSuccess) {
-        var ok = commitSave(jsonStr);
-        if (ok && popOnSuccess) {
-            rootWindow.popSubPage();
-        }
-        return ok;
+    function finishSave(jsonStr, popOnSuccess, done) {
+        commitSave(jsonStr, function(ok) {
+            if (ok && popOnSuccess) {
+                rootWindow.popSubPage();
+            }
+            if (done) done(ok);
+        });
     }
 
-    function triggerSave(popAfterSave) {
-        if (!hasAnyRule || saveBusy) return false;
+    // Saves, first checking the rules with a preview where needed; `done(ok)` runs once the
+    // daemon has answered (with `false` when the save waits for the preview).
+    function triggerSave(popAfterSave, done) {
+        if (!hasAnyRule || saveBusy) {
+            if (done) done(false);
+            return false;
+        }
         validationError = "";
         var jsonStr = currentPolicyJson();
         pendingSaveRetentionJson = jsonStr;
@@ -254,15 +263,16 @@ EditorPage {
         savePreviewId = appBackend.startRetentionPreview(backupId, jsonStr);
         if (savePreviewId === "") {
             saveBusy = false;
-            return finishSave(jsonStr, pendingPopAfterSave);
+            finishSave(jsonStr, pendingPopAfterSave, done);
+            return false;
         }
         savePollTimer.start();
+        if (done) done(false);
         return false;
     }
 
-    function saveForGuard() {
-        triggerSave(false);
-        return !appBackend.has_unsaved_changes && !dirty;
+    function saveForGuard(done) {
+        triggerSave(false, done);
     }
 
     function openPreviewPage() {

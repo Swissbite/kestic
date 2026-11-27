@@ -26,11 +26,13 @@ Kirigami.Dialog {
             icon.name: "list-remove"
             text: Texts.label("remove")
             onTriggered: {
-                if (dialog.appBackend.removeBackup(dialog.backupId)) {
-                    dialog.close();
-                    dialog.rootWindow.showPassiveNotification(i18n("Backup removed from Kestic"));
-                    dialog.rootWindow.switchTab(1);
-                }
+                dialog.rootWindow.afterDaemonCall(dialog.appBackend.removeBackup(dialog.backupId), function(ok) {
+                    if (ok) {
+                        dialog.close();
+                        dialog.rootWindow.showPassiveNotification(i18n("Backup removed from Kestic"));
+                        dialog.rootWindow.switchTab(1);
+                    }
+                });
             }
         }
     ]

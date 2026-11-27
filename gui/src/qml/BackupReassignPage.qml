@@ -64,11 +64,13 @@ Kirigami.ScrollablePage {
                 text: i18n("Switch Destination")
                 icon.name: "document-swap"
                 onTriggered: {
-                    if (appBackend.reassignBackup(backupId, page.selectedDestId)) {
-                        confirmReassignDialog.close();
-                        rootWindow.showPassiveNotification(i18n("Destination updated"));
-                        rootWindow.popSubPage();
-                    }
+                    rootWindow.afterDaemonCall(appBackend.reassignBackup(backupId, page.selectedDestId), function(ok) {
+                        if (ok) {
+                            confirmReassignDialog.close();
+                            rootWindow.showPassiveNotification(i18n("Destination updated"));
+                            rootWindow.popSubPage();
+                        }
+                    });
                 }
             }
         ]

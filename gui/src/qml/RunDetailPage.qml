@@ -38,9 +38,11 @@ Kirigami.ScrollablePage {
         addExcludeDialog.open();
     }
 
+    // Loads the run's detail; the log filter applies once it has arrived.
     function refreshDetail() {
-        appBackend.loadRunDetail(runId);
-        runLogsModel.setFilter(logLevelFilter(), logSearchField.text);
+        rootWindow.afterDaemonCall(appBackend.loadRunDetail(runId), function(ok) {
+            runLogsModel.setFilter(logLevelFilter(), logSearchField.text);
+        });
     }
 
     function logLevelFilter() {
@@ -110,10 +112,12 @@ Kirigami.ScrollablePage {
                 icon.name: "list-add"
                 text: i18n("Add and Save")
                 onTriggered: {
-                    if (appBackend.addExcludePathToBackup(appBackend.selected_run_backup_id, page.pendingExcludePath)) {
-                        addExcludeDialog.close();
-                        page.refreshDetail();
-                    }
+                    rootWindow.afterDaemonCall(appBackend.addExcludePathToBackup(appBackend.selected_run_backup_id, page.pendingExcludePath), function(ok) {
+                        if (ok) {
+                            addExcludeDialog.close();
+                            page.refreshDetail();
+                        }
+                    });
                 }
             }
         ]

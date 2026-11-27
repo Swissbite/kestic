@@ -250,6 +250,46 @@ fn run_slow_scene(
     );
 }
 
+/// AC-M6-33-1: every reply comes 5 s late. (a) The edits and lists whose result the window waits
+/// for (rename, settings, run detail, destination types, known networks, snapshot list) return at
+/// once and the main thread never pauses longer than 100 ms; (b) their results arrive in the
+/// window.
+#[test]
+fn ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon() {
+    run_isolated_test(
+        "ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon",
+        "KESTIC_M6_S33_SLOW_EDITS_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowEditsFront";
+            let (rig, backup) = slow_rig(
+                root,
+                "SlowEdits",
+                "net.daester.KesticSlowEditsBack",
+                front,
+                |_| SLOW_REPLY,
+            );
+            let client = rig.daemon.client.clone();
+            client
+                .start_backup(backup.id.as_str())
+                .expect("start the backup");
+            wait_until_within(
+                Duration::from_secs(60),
+                "precondition: one finished run",
+                || {
+                    client.get_state().is_ok_and(|s| {
+                        s.recent_runs
+                            .iter()
+                            .any(|r| r.status != kestic_core::model::RunStatus::Running)
+                    })
+                },
+            );
+            run_slow_scene(root, "m6-slow-edits", front, &[], &[]);
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// AC-M6-33-1 (b): the quit dialog of the tray opens before the first state arrived; the state
 /// that arrives later names the backup that runs.
 #[test]

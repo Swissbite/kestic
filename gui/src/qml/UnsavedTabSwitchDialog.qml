@@ -14,12 +14,14 @@ UnsavedChangesDialog {
     required property var appBackend
 
     onSaveRequested: {
-        if (dialog.rootWindow.saveActiveDirtyPage()) {
-            dialog.rootWindow.runPendingNavigation();
-        } else {
-            // Save failed (invalid input): stay on the page and resync the tab bar.
-            dialog.rootWindow.cancelPendingNavigation();
-        }
+        dialog.rootWindow.saveActiveDirtyPage(function(ok) {
+            if (ok) {
+                dialog.rootWindow.runPendingNavigation();
+            } else {
+                // Save failed (invalid input or refused): stay on the page and resync the tab bar.
+                dialog.rootWindow.cancelPendingNavigation();
+            }
+        });
     }
     onDiscardRequested: {
         dialog.appBackend.has_unsaved_changes = false;

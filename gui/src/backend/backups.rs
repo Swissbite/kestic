@@ -11,8 +11,7 @@ use crate::state_cache::{
     build_new_backup, cached_destination_kind, clone_updated_backup_excludes,
     clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text, i18n,
     localized_condition_override_message, localized_manual_block_message,
-    localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, make_client,
-    shared_state,
+    localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, shared_state,
 };
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
@@ -187,164 +186,200 @@ impl qobject::KesticApp {
     }
 
     pub fn add_backup(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         name: &QString,
         source_path: &QString,
         dest_id: &QString,
         excludes_text: &QString,
-    ) -> QString {
-        let Ok(client) = make_client() else {
-            return QString::from("");
-        };
-        let src_str = source_path.to_string();
-        let detected = client.detect_source(src_str.trim()).ok();
-        let Some(backup) = self.as_mut().ok_or_show(build_new_backup(
-            &name.to_string(),
-            &src_str,
-            &dest_id.to_string(),
-            &excludes_text.to_string(),
-            detected,
-            cached_destination_kind(&dest_id.to_string()).as_ref(),
-        )) else {
-            return QString::from("");
-        };
-        self.finish_action(client.add_backup(&backup), Finish::Plain)
-            .map_or_else(QString::default, |id| QString::from(&id))
+    ) -> i32 {
+        let (name, src_str, dest_id, excludes) = (
+            name.to_string(),
+            source_path.to_string(),
+            dest_id.to_string(),
+            excludes_text.to_string(),
+        );
+        self.request_daemon(
+            Lane::slow("add-backup"),
+            move |client| {
+                let detected = client.detect_source(src_str.trim()).ok();
+                build_new_backup(
+                    &name,
+                    &src_str,
+                    &dest_id,
+                    &excludes,
+                    detected,
+                    cached_destination_kind(&dest_id).as_ref(),
+                )
+                .map_err(|err| err.to_string())
+                .map(|backup| client.add_backup(&backup))
+            },
+            |app, result| match app.finish_checked(result, Finish::Plain) {
+                Some(id) => (true, id),
+                None => (false, String::new()),
+            },
+        )
     }
 
     pub fn update_backup_excludes(
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         excludes_json: &QString,
-    ) -> bool {
+    ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
-            return false;
+            return 0;
         };
         let Some(excludes) = self
             .as_mut()
             .parse_json_or_err::<ExcludeRules>(excludes_json)
         else {
-            return false;
+            return 0;
         };
         let Some(updated) = self
             .as_mut()
             .ok_or_show(clone_updated_backup_excludes(&existing, excludes))
         else {
-            return false;
+            return 0;
         };
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(client.update_backup(&updated), Finish::Saved)
-            .is_some()
+        self.save_backup(updated)
     }
 
     pub fn update_backup_retention(
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         retention_json: &QString,
-    ) -> bool {
+    ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
-            return false;
+            return 0;
         };
         let Some(retention) = self
             .as_mut()
             .parse_json_or_err::<RetentionPolicy>(retention_json)
         else {
-            return false;
+            return 0;
         };
         let Some(updated) = self
             .as_mut()
             .ok_or_show(clone_updated_backup_retention(&existing, retention))
         else {
-            return false;
+            return 0;
         };
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(client.update_backup(&updated), Finish::Saved)
-            .is_some()
+        self.save_backup(updated)
     }
 
     pub fn update_backup_source(
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         source_path: &QString,
-    ) -> bool {
+    ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
-            return false;
-        };
-        let Ok(client) = make_client() else {
-            return false;
+            return 0;
         };
         let trimmed = source_path.to_string().trim().to_string();
-        let source = client
-            .detect_source(&trimmed)
-            .unwrap_or_else(|_| kestic_core::model::Source::folder(PathBuf::from(&trimmed)));
-        let Some(updated) = self
-            .as_mut()
-            .ok_or_show(clone_updated_backup_source(&existing, source))
-        else {
-            return false;
-        };
-        self.finish_action(client.update_backup(&updated), Finish::Saved)
-            .is_some()
+        self.request_daemon(
+            Lane::backup(existing.id.as_str()),
+            move |client| {
+                let source = client.detect_source(&trimmed).unwrap_or_else(|_| {
+                    kestic_core::model::Source::folder(PathBuf::from(&trimmed))
+                });
+                clone_updated_backup_source(&existing, source)
+                    .map_err(|err| err.to_string())
+                    .map(|updated| client.update_backup(&updated))
+            },
+            |app, result| {
+                (
+                    app.finish_checked(result, Finish::Saved).is_some(),
+                    String::new(),
+                )
+            },
+        )
     }
 
-    pub fn rename_backup(self: Pin<&mut Self>, backup_id: &QString, new_name: &QString) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(
-            client.rename_backup(&backup_id.to_string(), &new_name.to_string()),
-            Finish::Plain,
+    /// Saves the edited backup `updated` (an editor page's «Save»); returns the request id.
+    pub(super) fn save_backup(self: Pin<&mut Self>, updated: Backup) -> i32 {
+        self.request_daemon(
+            Lane::backup(updated.id.as_str()),
+            move |client| client.update_backup(&updated),
+            |app, result| {
+                (
+                    app.finish_daemon_action(result, Finish::Saved).is_some(),
+                    String::new(),
+                )
+            },
         )
-        .is_some()
+    }
+
+    pub fn rename_backup(self: Pin<&mut Self>, backup_id: &QString, new_name: &QString) -> i32 {
+        let (b_id, name) = (backup_id.to_string(), new_name.to_string());
+        self.request_daemon(
+            Lane::backup(&b_id),
+            move |client| client.rename_backup(&b_id, &name),
+            |app, result| {
+                (
+                    app.finish_daemon_action(result, Finish::Plain).is_some(),
+                    String::new(),
+                )
+            },
+        )
     }
 
     pub fn reassign_backup(
         self: Pin<&mut Self>,
         backup_id: &QString,
         new_dest_id: &QString,
-    ) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(
-            client.reassign_backup(&backup_id.to_string(), &new_dest_id.to_string()),
-            Finish::Plain,
+    ) -> i32 {
+        let (b_id, dest_id) = (backup_id.to_string(), new_dest_id.to_string());
+        self.request_daemon(
+            Lane::backup(&b_id),
+            move |client| client.reassign_backup(&b_id, &dest_id),
+            |app, result| {
+                (
+                    app.finish_daemon_action(result, Finish::Plain).is_some(),
+                    String::new(),
+                )
+            },
         )
-        .is_some()
     }
 
-    pub fn remove_backup(self: Pin<&mut Self>, backup_id: &QString) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(client.remove_backup(&backup_id.to_string()), Finish::Plain)
-            .is_some()
+    pub fn remove_backup(self: Pin<&mut Self>, backup_id: &QString) -> i32 {
+        let b_id = backup_id.to_string();
+        self.request_daemon(
+            Lane::backup(&b_id),
+            move |client| client.remove_backup(&b_id),
+            |app, result| {
+                (
+                    app.finish_daemon_action(result, Finish::Plain).is_some(),
+                    String::new(),
+                )
+            },
+        )
     }
 
     pub fn add_exclude_path_to_backup(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         backup_id: &QString,
         path: &QString,
-    ) -> bool {
+    ) -> i32 {
         let id_str = backup_id.to_string();
         let trimmed = path.to_string().trim().to_string();
         if trimmed.is_empty() {
-            return false;
+            return 0;
         }
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        let result = client.add_exclude_rule_for_item(&id_str, &trimmed);
-        if self.as_mut().finish_action(result, Finish::Plain).is_none() {
-            return false;
-        }
-        self.as_mut()
-            .passive_notification(QString::from(&i18n("Exclude rule added").to_string()));
-        true
+        self.request_daemon(
+            Lane::backup(&id_str),
+            move |client| client.add_exclude_rule_for_item(&id_str, &trimmed),
+            |mut app, result| {
+                let ok = app
+                    .as_mut()
+                    .finish_daemon_action(result, Finish::Plain)
+                    .is_some();
+                if ok {
+                    app.as_mut().passive_notification(QString::from(
+                        &i18n("Exclude rule added").to_string(),
+                    ));
+                }
+                (ok, String::new())
+            },
+        )
     }
 
     pub fn get_backup_transparent_command(&self, backup_id: &QString) -> QString {

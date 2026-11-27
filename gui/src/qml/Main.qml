@@ -111,6 +111,30 @@ Kirigami.ApplicationWindow {
     function popSubPage() { focusManager.popSubPage(); }
     function replaceRootPage(pageObj) { focusManager.replaceRootPage(pageObj); }
 
+    // Daemon calls that QML waits for: request id → what to do with the answer.
+    property var pendingDaemonCalls: ({})
+
+    // Runs `done(ok, result)` once the daemon answered `request` (an id an invokable returned);
+    // at once with `ok` false for 0, a call that failed before it reached the daemon.
+    function afterDaemonCall(request, done) {
+        if (request <= 0) {
+            done(false, "");
+            return;
+        }
+        pendingDaemonCalls[request] = done;
+    }
+
+    Connections {
+        target: appBackend
+        function onDaemonCallDone(request, ok, result) {
+            const done = root.pendingDaemonCalls[request];
+            if (done) {
+                delete root.pendingDaemonCalls[request];
+                done(ok, result);
+            }
+        }
+    }
+
     // `JSON.parse(raw)`, or `fallback` for an empty or malformed text.
     function parseJsonOr(raw, fallback) {
         if (!raw) return fallback;
@@ -162,10 +186,18 @@ Kirigami.ApplicationWindow {
         return dirtyPageFrom(0) !== null;
     }
 
-    function saveActiveDirtyPage() {
+    // Saves the dirty page; `done(ok)` runs once it is saved or the save failed.
+    function saveActiveDirtyPage(done) {
         var page = dirtyPageFrom(0);
-        if (!page) return true;
-        return typeof page.saveForGuard === "function" && page.saveForGuard();
+        if (!page) {
+            done(true);
+            return;
+        }
+        if (typeof page.saveForGuard !== "function") {
+            done(false);
+            return;
+        }
+        page.saveForGuard(done);
     }
 
     // every navigation that would leave a dirty editor goes through this guard.
