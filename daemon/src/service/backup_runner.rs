@@ -27,8 +27,8 @@ use crate::monitors::LogindSleepInhibitor;
 use crate::notifications::{KesticEvent, send_configured_notification, send_event_notification};
 use crate::tray::TrayHandle;
 use kestic_core::backup::{
-    BackupExecutionContext, BackupRunError, execute_backup_with_inspector, execute_forget,
-    is_forget_lock_failure,
+    BackupExecutionContext, BackupRunError, RetentionRun, execute_backup_with_inspector,
+    execute_retention, is_forget_lock_failure,
 };
 use kestic_core::backup_progress::BackupProgressTracker;
 use kestic_core::clock::Clock;
@@ -880,34 +880,38 @@ fn run_post_backup_forget(
     extra: (&CancelHandle, i32, &[&str], &mut PostForgetOutcome<'_>),
 ) {
     let (cancel, backup_exit, secret_strs, out) = extra;
-    match execute_forget(backup, dest, runtime, Some(cancel), &[]) {
-        Ok(f_res) => {
-            run.commands.push(f_res.command_record.clone());
-            combined_logs.extend(f_res.log_lines.iter().cloned());
-            if f_res.exit_code == 0 {
+    match execute_retention(backup, dest, runtime, Some(cancel), &[]) {
+        Ok(retention) => {
+            record_retention(&retention, run, combined_logs);
+            if let Some(err) = &retention.error {
+                combined_logs.push(redact_secrets(&err.to_string(), secret_strs));
+            }
+            if retention.succeeded() {
                 *out.primary_forget_state = Some(false);
                 for other in pending_other_backups {
                     if cancel.is_cancelled() {
                         break;
                     }
-                    if let Ok(other_res) = execute_forget(other, dest, runtime, Some(cancel), &[]) {
-                        run.commands.push(other_res.command_record.clone());
-                        combined_logs.extend(other_res.log_lines.iter().cloned());
-                        if other_res.exit_code == 0 {
+                    if let Ok(other_res) =
+                        execute_retention(other, dest, runtime, Some(cancel), &[])
+                    {
+                        record_retention(&other_res, run, combined_logs);
+                        if other_res.succeeded() {
                             out.cleared_other_pending.push(other.id.clone());
                         }
                     }
                 }
             } else {
+                let f_res = retention.last();
                 *out.primary_forget_state = Some(true);
                 *out.status = RunStatus::Warning;
-                if is_forget_lock_failure(&f_res)
+                if is_forget_lock_failure(f_res)
                     && let Ok(lock_class) = detect_stale_locks(dest, runtime, &[])
                 {
                     *out.detected_stale_locks = Some(unlockable_stale_lock_count(&lock_class));
                 }
                 if backup_exit == 0 {
-                    *out.summary = Some(if is_forget_lock_failure(&f_res) {
+                    *out.summary = Some(if is_forget_lock_failure(f_res) {
                         i18n("Backed up; destination was locked, retention runs later").into()
                     } else {
                         tr(&ErrorKind::RetentionPending.message(None, false))
@@ -923,6 +927,19 @@ fn run_post_backup_forget(
             }
             combined_logs.push(redact_secrets(&f_err.to_string(), secret_strs));
         }
+    }
+}
+
+/// Adds the restic calls of a retention run (plan, then `forget <id…>`) to the run's commands
+/// and log.
+pub(super) fn record_retention(
+    retention: &RetentionRun,
+    run: &mut Run,
+    combined_logs: &mut Vec<String>,
+) {
+    for res in retention.results() {
+        run.commands.push(res.command_record.clone());
+        combined_logs.extend(res.log_lines.iter().cloned());
     }
 }
 

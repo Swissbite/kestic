@@ -7,6 +7,7 @@ use super::availability::{
     DestinationClaimGuard, check_source_status_bounded, drain_queued_backups_async,
     unlockable_stale_lock_count,
 };
+use super::backup_runner::record_retention;
 use super::backup_runner::{
     load_dest_secrets, secret_strs, start_backup_async, upsert_pending_run_entry,
 };
@@ -25,9 +26,7 @@ use crate::i18n::{i18n, tr, tr_text};
 use crate::monitors::LogindSleepInhibitor;
 use crate::notifications::{KesticEvent, send_configured_notification};
 use crate::tray::TrayHandle;
-use kestic_core::backup::{
-    BackupRunError, execute_forget, is_forget_lock_failure, parse_forget_removed_count,
-};
+use kestic_core::backup::{BackupRunError, execute_retention, is_forget_lock_failure};
 use kestic_core::clock::Clock;
 use kestic_core::destination::{DestinationError, preflight_check_with_restic};
 use kestic_core::maintenance::{
@@ -458,20 +457,26 @@ fn run_maintenance_operations(
         if cancel.is_cancelled() {
             break;
         }
-        match execute_forget(b, dest, runtime, Some(cancel), &[]) {
-            Ok(res) => {
-                run.commands.push(res.command_record.clone());
-                out.combined_logs.extend(res.log_lines.iter().cloned());
+        match execute_retention(b, dest, runtime, Some(cancel), &[]) {
+            Ok(retention) => {
+                record_retention(&retention, run, &mut out.combined_logs);
+                let res = retention.last();
                 out.last_exit = res.exit_code;
-                if res.exit_code == 0 {
+                if let Some(err) = &retention.error {
+                    out.last_exit = 1;
+                    let msg = redact_secrets(&run_error_detail(err), secret_strs);
+                    out.failure_detail = Some(msg.clone());
+                    out.combined_logs.push(msg);
+                }
+                if retention.succeeded() {
                     out.cleared_ids.push(b.id.clone());
                     out.stats.forgets.push(MaintenanceForget {
                         backup_id: b.id.clone(),
-                        removed_snapshots: parse_forget_removed_count(&res.log_lines),
+                        removed_snapshots: retention.removed_count(),
                     });
                 } else {
                     out.forget_failed = true;
-                    if is_forget_lock_failure(&res)
+                    if is_forget_lock_failure(res)
                         && let Ok(lock_class) = detect_stale_locks(dest, runtime, &[])
                     {
                         out.detected_stale_locks = Some(unlockable_stale_lock_count(&lock_class));

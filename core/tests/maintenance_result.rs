@@ -6,7 +6,7 @@
 //! with restic 0.18.0, 0.19.1 and, for `prune`, 0.20.0), the completed steps and storage in the
 //! run history.
 
-use kestic_core::backup::parse_forget_removed_count;
+use kestic_core::backup::parse_forget_json_output;
 use kestic_core::clock::FakeClock;
 use kestic_core::history::RunHistory;
 use kestic_core::maintenance::{
@@ -37,29 +37,48 @@ fn fixture_lines(name: &str) -> Vec<String> {
         .collect()
 }
 
-/// The `forget --json` output of both restic versions yields (a) the number of removed
-/// snapshots; (b) output without a JSON result (e.g. an error text) and (c) an unreadable
-/// result line yield none.
+/// The remove list of the retention plan (`forget --json` output of both restic versions, tag
+/// set to a configured backup) is what a maintenance run counts as removed: (a) the two
+/// snapshots; (b) output without a JSON result (e.g. an error text) yields none, and (c) a
+/// cut-off result line is an error, not an empty list.
 #[test]
 fn finding1_forget_json_yields_removed_snapshot_count() {
+    let backup = Backup::new(
+        "Fixture",
+        Source::folder("/tmp/kestic-fixture-src"),
+        Destination::new(
+            "Fixture",
+            DestinationKind::Local {
+                path: PathBuf::from("/tmp/kestic-fixture-repo"),
+            },
+        )
+        .expect("destination")
+        .id,
+    )
+    .expect("backup");
     for version in RESTIC_VERSIONS {
-        let lines = fixture_lines(&format!("forget_remove_two_restic_{version}.json"));
+        let lines: Vec<String> = fixture_lines(&format!("forget_remove_two_restic_{version}.json"))
+            .into_iter()
+            .map(|l| l.replace("kestic:bk_fixture", &backup.tag()))
+            .collect();
+        let plan = parse_forget_json_output(&backup.id, &lines).expect("parse plan");
         assert_eq!(
-            parse_forget_removed_count(&lines),
-            Some(2),
+            plan.removal_ids().len(),
+            2,
             "{version}: (a) two snapshots removed"
         );
     }
     let error_text = vec!["Fatal: unable to create lock in backend".to_string()];
-    assert_eq!(
-        parse_forget_removed_count(&error_text),
-        None,
+    assert!(
+        parse_forget_json_output(&backup.id, &error_text)
+            .expect("no JSON line")
+            .removal_ids()
+            .is_empty(),
         "(b) no result without JSON"
     );
     let cut_off = vec![r#"[{"tags":["kestic:x"],"remove":[{"id":"#.to_string()];
-    assert_eq!(
-        parse_forget_removed_count(&cut_off),
-        None,
+    assert!(
+        parse_forget_json_output(&backup.id, &cut_off).is_err(),
         "(c) no result from a cut-off line"
     );
 }

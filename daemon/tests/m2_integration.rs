@@ -836,18 +836,26 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                 let detail = client.get_run_detail(&r3).expect("GetRunDetail");
                 assert_eq!(
                     detail.run.commands.len(),
-                    2,
-                    "[{label}] expected backup + forget commands: {:?}",
+                    3,
+                    "[{label}] expected backup, retention plan and forget commands: {:?}",
                     detail.run.commands
                 );
-                let forget_cmd = &detail.run.commands[1];
+                let plan_cmd = &detail.run.commands[1];
+                assert!(
+                    plan_cmd.args.contains(&"forget".to_string())
+                        && plan_cmd.args.contains(&"--dry-run".to_string()),
+                    "[{label}] {:?}",
+                    plan_cmd.args
+                );
+                assert_has_flag_pair(&plan_cmd.args, "--tag", &format!("kestic:{backup_id}"));
+                assert_has_flag_pair(&plan_cmd.args, "--group-by", "tags");
+                assert_eq!(plan_cmd.exit_code, 0, "[{label}]");
+                let forget_cmd = &detail.run.commands[2];
                 assert!(
                     forget_cmd.args.contains(&"forget".to_string()),
                     "[{label}] {:?}",
                     forget_cmd.args
                 );
-                assert_has_flag_pair(&forget_cmd.args, "--tag", &format!("kestic:{backup_id}"));
-                assert_has_flag_pair(&forget_cmd.args, "--group-by", "tags");
                 assert_eq!(forget_cmd.exit_code, 0, "[{label}]");
 
                 let snaps_after = client
@@ -923,15 +931,14 @@ fn verify_forget_runs_after_exit_3(run: &Exit3Run<'_>) {
     assert_eq!(detail2.run.exit_code, Some(3), "[{label}]");
     assert_eq!(
         detail2.run.commands.len(),
-        2,
-        "[{label}] forget must still run after Exit 3: {:?}",
+        3,
+        "[{label}] retention plan and forget must still run after Exit 3: {:?}",
         detail2.run.commands
     );
-    assert!(
-        detail2.run.commands[1].args.contains(&"forget".to_string()),
-        "[{label}]"
-    );
-    assert_eq!(detail2.run.commands[1].exit_code, 0, "[{label}]");
+    for cmd in &detail2.run.commands[1..] {
+        assert!(cmd.args.contains(&"forget".to_string()), "[{label}]");
+        assert_eq!(cmd.exit_code, 0, "[{label}]");
+    }
     assert_eq!(
         run.client
             .list_backup_snapshots(run.backup_id_str)
@@ -1144,12 +1151,17 @@ fn verify_exit_11_under_non_exclusive_lock(ctx: &Lock11Ctx<'_>) {
     assert_eq!(fin2.exit_code, Some(0), "[{label}] backup exited 0");
 
     let detail2 = ctx.client.get_run_detail(&r2).expect("GetRunDetail 2");
-    assert_eq!(detail2.run.commands.len(), 2, "[{label}]");
+    assert_eq!(detail2.run.commands.len(), 3, "[{label}]");
     assert_eq!(detail2.run.commands[0].exit_code, 0, "[{label}]");
     assert_eq!(
-        detail2.run.commands[1].exit_code, 11,
-        "[{label}] forget must hit Exit 11 under non-exclusive lock: {:?}",
+        detail2.run.commands[1].exit_code, 0,
+        "[{label}] the retention plan runs without lock: {:?}",
         detail2.run.commands[1]
+    );
+    assert_eq!(
+        detail2.run.commands[2].exit_code, 11,
+        "[{label}] forget must hit Exit 11 under non-exclusive lock: {:?}",
+        detail2.run.commands[2]
     );
     let lock_summary = fin2.summary_message.as_deref().unwrap_or("");
     assert!(

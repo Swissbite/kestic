@@ -6,7 +6,7 @@
 //! M4-S07 without restic: the commands Kestic builds for a foreign or orphaned snapshot.
 
 use kestic_core::backup::{
-    SnapshotListAccess, build_forget_command_spec, list_destination_snapshots,
+    SnapshotListAccess, build_forget_plan_command_spec, list_destination_snapshots,
 };
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{
@@ -177,10 +177,10 @@ fn ac_m4_07_6_commands_on_foreign_snapshots_only_read() {
         );
     }
 
-    // The retention `forget` is built for the configured backup only and selects its snapshots
-    // by tag, so it cannot reach the foreign or the orphaned snapshot.
-    let forget = build_forget_command_spec(&backup, &dest, false, false, &resolved, &kestic_bin)
-        .expect("forget spec")
+    // The retention plans with `forget --dry-run` for the configured backup only and selects its
+    // snapshots by tag, so its remove list cannot reach the foreign or the orphaned snapshot.
+    let forget = build_forget_plan_command_spec(&backup, &dest, &resolved, &kestic_bin)
+        .expect("forget plan spec")
         .subcommand_args;
     let tag_filter = forget
         .iter()
