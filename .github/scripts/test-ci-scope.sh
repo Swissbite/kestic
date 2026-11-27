@@ -104,7 +104,7 @@ while read -r package binary; do
     check true "$([ -n "$file" ] && grep -qx "name = \"$package\"" "$root/$crate/Cargo.toml" &&
         echo true || echo false)" "AC-M6-14-2 (a): spec test $package $binary exists"
 done <<< "$CI_SPEC_TESTS"
-check 2 "$(grep -c . <<< "$CI_SPEC_TESTS")" "AC-M6-14-2 (a): number of spec tests"
+check 3 "$(grep -c . <<< "$CI_SPEC_TESTS")" "AC-M6-14-2 (a): number of spec tests"
 
 # AC-M6-14-2 (b): translations, code or anything else runs everything.
 full_lists=(
