@@ -52,7 +52,7 @@ Domänenmodell und Persistenz: [domain-model.md](domain-model.md). D-Bus-Schnitt
 **[verifiziert: Referenzsystem]** Referenzsystem TUXEDO OS 24.04.5 (Ubuntu-Basis noble): Plasma 6.6.6, KDE Frameworks 6.24.0, Kirigami 6.24.0 (`qml6-module-org-kde-kirigami`), Qt 6.10.2. Das restic aus den Ubuntu-24.04-Paketquellen ist 0.16.4 (zu alt, FR-33).
 
 - Ein auf dem Referenzsystem TUXEDO OS gebautes `.deb` braucht Qt ≥ 6.10 und KF ≥ 6.24.
-  - Bibliotheken: Abhängigkeiten berechnet `dpkg-shlibdeps`.
+  - Bibliotheken: Abhängigkeiten berechnet `dpkg-shlibdeps`; `libqt6core6t64` und `libqt6qml6 (>= 6.10)` stehen zusätzlich von Hand in `Depends`. QML wird nur als Bytecode kompiliert (`qmlcachegen --only-bytecode`), weil das C++ der AOT-Kompilierung private Qt-Symbole nutzt und das `.deb` an die exakte Qt-Patchversion bindet.
   - QML-Module (Kirigami, QtQuick) werden erst zur Laufzeit geladen → **manuell** als `Depends` mit Mindestversion, z. B. `qml6-module-org-kde-kirigami (>= 6.24)`, `qml6-module-org-kde-kirigamiaddons-datetime (>= 1.11)`, `qml6-module-org-kde-kirigamiaddons-tableview (>= 1.11)` (laut [ui/index.md](ui/index.md), freigegeben; Version 1.11.0 nur auf dem Referenzsystem TUXEDO OS verifiziert, für Ubuntu 26.04 und KDE neon nicht geprüft).
 - `Recommends: restic (>= 0.18.0)`. **[verifiziert: Referenzsystem, Test-Paket mit `apt-get -s install`]** apt listet restic unter «Empfohlene Pakete», installiert es nicht und installiert das Paket trotzdem.
 - **Passende Systeme** (laut packages.ubuntu.com / packages.debian.org / Release-News):
@@ -194,7 +194,7 @@ Stand recherchiert am 2026-11-15. Entscheid: [ADR 0001](adr/0001-tech-stack-rust
 | Qt-Brücke | `cxx-qt` | 0.10.0 |
 | Systemaufrufe ohne `unsafe` (`access(W_OK)`, uid des Benutzers beim Restore) | `rustix` (Features `fs`, `process`) | 1.1 |
 
-**Packaging-Fallstricke (`.deb`):** Gebaut wird gegen die Qt-/KF-Version des Build-Systems → das ist die Mindestanforderung; ein nicht erfüllbares `Recommends: paket (>= x)` überspringt apt ohne Fehler (geprüft mit `apt-get -s install`); App-ID im Reverse-DNS-Format einer eigenen Domain bzw. `io.github.<owner>.<App>`, `org.kde.*` ist offiziellen KDE-Projekten vorbehalten.
+**Packaging-Fallstricke (`.deb`):** Gebaut wird gegen die Qt-/KF-Version des Build-Systems → `dpkg-shlibdeps` leitet Mindestversionen aus den genutzten Symbolen ab; die Qt-Mindestversion (6.10) steht deshalb von Hand in `Depends`; ein nicht erfüllbares `Recommends: paket (>= x)` überspringt apt ohne Fehler (geprüft mit `apt-get -s install`); App-ID im Reverse-DNS-Format einer eigenen Domain bzw. `io.github.<owner>.<App>`, `org.kde.*` ist offiziellen KDE-Projekten vorbehalten.
 
 ## Code-Struktur
 
