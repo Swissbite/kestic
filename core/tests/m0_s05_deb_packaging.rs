@@ -4,8 +4,8 @@
 #![forbid(unsafe_code)]
 
 //! Unit and integration tests for M0-S05: `.deb` packaging, QML Depends, notifyrc, and autostart;
-//! plus the `Suggests` of M5-S04, and of M5-S06 the `gpgv` dependency and the trust anchor that
-//! only test builds can replace.
+//! plus the `Suggests` of M5-S04, of M5-S06 the `gpgv` dependency and the trust anchor that only
+//! test builds can replace, and of M6-S22 the Qt requirement without an exact Qt version.
 
 mod common;
 
@@ -375,6 +375,242 @@ fn m5_s06_deb_depends_on_gpgv() {
     assert!(
         control_field(&control, "Depends").contains(&"gpgv".to_string()),
         "Depends lacks gpgv:\n{control}"
+    );
+}
+
+/// One alternative of a `Depends` entry: package name and the version relation, if any
+/// (`("libqt6qml6", Some((">=", "6.10")))`).
+type Relation = (String, Option<(String, String)>);
+
+/// All alternatives of the `Depends` field, `a (>= 1) | b` split into its parts.
+fn depends_relations(control: &str) -> Vec<Relation> {
+    let Some(value) = control.lines().find_map(|l| l.strip_prefix("Depends: ")) else {
+        return Vec::new();
+    };
+    value
+        .split([',', '|'])
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|part| {
+            let (name, rest) = part.split_once(' ').unwrap_or((part, ""));
+            let version = rest
+                .trim()
+                .strip_prefix('(')
+                .and_then(|r| r.strip_suffix(')'))
+                .and_then(|r| r.trim().split_once(' '))
+                .map(|(op, v)| (op.to_string(), v.trim().to_string()));
+            (name.to_string(), version)
+        })
+        .collect()
+}
+
+/// `6.10.2` → `[6, 10, 2]`; a Debian revision or epoch is not expected in the Qt bounds.
+fn version_parts(version: &str) -> Vec<u32> {
+    version
+        .split('.')
+        .map(|p| p.parse().unwrap_or_else(|_| panic!("version {version}")))
+        .collect()
+}
+
+fn deb_control() -> String {
+    let out = Command::new("dpkg-deb")
+        .arg("-f")
+        .arg(find_deb_package())
+        .output()
+        .expect("run dpkg-deb -f");
+    assert!(out.status.success(), "dpkg-deb -f failed");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// AC-M6-22-1: the `.deb` installs next to any Qt from 6.10 on: (a) `Depends` names no
+/// `qt6-*-private-abi` package (they pin one exact Qt patch version), (b) the shipped binary
+/// imports no symbol of Qt's private API, and (c) the Qt libraries are bounded only from below,
+/// Qt core and QML with at least 6.10.
+#[test]
+fn ac_m6_22_1_deb_needs_qt_6_10_without_private_abi() {
+    let control = deb_control();
+    let depends = depends_relations(&control);
+    let (_extracted, shipped) = extract_shipped_binary("kestic-m6-s22-abi");
+
+    // (a)
+    let private_abi: Vec<&Relation> = depends
+        .iter()
+        .filter(|(name, _)| name.ends_with("-private-abi"))
+        .collect();
+    assert!(
+        private_abi.is_empty(),
+        "Depends pins a private Qt ABI {private_abi:?}:\n{control}"
+    );
+
+    // (b)
+    let objdump = Command::new("objdump")
+        .arg("-T")
+        .arg(&shipped)
+        .output()
+        .expect("run objdump -T");
+    assert!(objdump.status.success(), "objdump -T failed");
+    let private_symbols: Vec<String> = String::from_utf8_lossy(&objdump.stdout)
+        .lines()
+        .filter(|l| l.contains("Qt_6_PRIVATE_API"))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        private_symbols.is_empty(),
+        "shipped kestic imports private Qt symbols:\n{}",
+        private_symbols.join("\n")
+    );
+
+    // (c) no Qt package with an upper bound or an exact version
+    let qt: Vec<&Relation> = depends
+        .iter()
+        .filter(|(name, _)| name.starts_with("libqt6") || name.starts_with("qt6-"))
+        .collect();
+    let bounded_above: Vec<&&Relation> = qt
+        .iter()
+        .filter(|(_, v)| v.as_ref().is_some_and(|(op, _)| op != ">=" && op != ">>"))
+        .collect();
+    assert!(
+        bounded_above.is_empty(),
+        "Qt packages with an upper bound or exact version {bounded_above:?}:\n{control}"
+    );
+    // (c) Qt core and QML from 6.10 on
+    for library in ["libqt6core6", "libqt6qml6"] {
+        let floor = qt
+            .iter()
+            .filter(|(name, _)| name.starts_with(library))
+            .filter_map(|(_, v)| v.as_ref())
+            .filter(|(op, _)| op == ">=")
+            .map(|(_, v)| version_parts(v))
+            .max();
+        assert!(
+            floor
+                .as_ref()
+                .is_some_and(|f| f.as_slice() >= [6, 10].as_slice()),
+            "Depends does not require {library}* (>= 6.10), lower bound {floor:?}:\n{control}"
+        );
+    }
+}
+
+/// Mangled names of the functions that QML compiled ahead of time to C++ calls in QtQml.
+const AOT_SYMBOL: &str = "AOTCompiledContext";
+
+/// AC-M6-22-2 (a): the QML of the GUI is compiled to bytecode only, without the C++ that
+/// qmlcachegen generates by default: neither the shipped binary nor the test-harness build
+/// imports a function of `QQmlPrivate::AOTCompiledContext`, which every compiled binding calls.
+/// (b) is the GUI smoke of all milestones in `just verify`; (c) is manual.
+#[test]
+fn ac_m6_22_2_qml_compiled_to_bytecode_only() {
+    let (_extracted, shipped) = extract_shipped_binary("kestic-m6-s22-aot");
+    let harness = find_kestic_binary();
+
+    // (a) shipped binary
+    let shipped_aot: Vec<String> = undefined_dynamic_symbols(&shipped)
+        .lines()
+        .filter(|l| l.contains(AOT_SYMBOL))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        shipped_aot.is_empty(),
+        "shipped kestic carries AOT-compiled QML:\n{}",
+        shipped_aot.join("\n")
+    );
+    // (a) test-harness build, the one the GUI smoke runs
+    let harness_aot: Vec<String> = undefined_dynamic_symbols(&harness)
+        .lines()
+        .filter(|l| l.contains(AOT_SYMBOL))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        harness_aot.is_empty(),
+        "test-harness kestic carries AOT-compiled QML:\n{}",
+        harness_aot.join("\n")
+    );
+}
+
+/// The Qt versions a text requires: the number after «Qt ≥ » and before « or newer» in
+/// «Qt 6.10 or newer».
+fn qt_requirements(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for (i, _) in text.match_indices("Qt ") {
+        let rest = &text[i + 3..];
+        let (rest, from_ge) = match rest.strip_prefix("≥ ") {
+            Some(r) => (r, true),
+            None => (rest, false),
+        };
+        let version: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        let version = version.trim_end_matches('.').to_string();
+        if version.is_empty() {
+            continue;
+        }
+        let after = &rest[version.len()..];
+        if from_ge || after.starts_with(" or newer") {
+            found.push(version);
+        }
+    }
+    found
+}
+
+/// Every version-like mention of Qt in a text: «Qt 6.10.2», «Qt ≥ 6.10», «Qt 6.10 or newer».
+fn qt_versions_mentioned(text: &str) -> Vec<String> {
+    text.match_indices("Qt ")
+        .filter_map(|(i, _)| {
+            let rest = &text[i + 3..];
+            let rest = rest.strip_prefix("≥ ").unwrap_or(rest);
+            let version: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            let version = version.trim_end_matches('.').to_string();
+            version.contains('.').then_some(version)
+        })
+        .collect()
+}
+
+/// AC-M6-22-3 (a): NFR-01, the packaging part of architecture.md and the showcase site name the
+/// same Qt requirement, Qt 6.10 or newer; the site names no other Qt version.
+#[test]
+fn ac_m6_22_3_qt_requirement_same_everywhere() {
+    let root = workspace_root();
+    let read =
+        |rel: &str| fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+
+    let requirements = read("docs/spec/requirements.md");
+    let nfr_01 = requirements
+        .lines()
+        .find(|l| l.starts_with("| NFR-01 |"))
+        .expect("NFR-01 row in requirements.md");
+    let architecture = read("docs/spec/architecture.md");
+    let native_packages = architecture
+        .split("\n## ")
+        .find(|s| s.starts_with("Native Pakete"))
+        .expect("architecture.md §Native Pakete");
+    let site = read("site/src/pages/index.astro");
+
+    // (a) NFR-01
+    assert_eq!(qt_requirements(nfr_01), ["6.10"], "NFR-01: {nfr_01}");
+    // (a) architecture.md, packaging of the native packages
+    assert_eq!(
+        qt_requirements(native_packages),
+        ["6.10"],
+        "architecture.md §Native Pakete"
+    );
+    // (a) site: every Qt version it names is the requirement «Qt 6.10 or newer»
+    let site_requirements = qt_requirements(&site);
+    assert!(
+        !site_requirements.is_empty(),
+        "the site names no Qt requirement"
+    );
+    assert_eq!(
+        qt_versions_mentioned(&site),
+        site_requirements,
+        "the site names a Qt version that is not the requirement"
+    );
+    assert!(
+        site_requirements.iter().all(|v| v == "6.10"),
+        "the site requires Qt {site_requirements:?}, not 6.10"
     );
 }
 
