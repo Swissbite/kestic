@@ -31,7 +31,7 @@ impl qobject::KesticApp {
         let b_id = backup_id.to_string();
         // A refused start is explained from the state as it is after the refusal.
         self.call_daemon_with(
-            Lane::InOrder,
+            Lane::backup(&b_id),
             move |client| {
                 let result = client.start_backup(&b_id);
                 (b_id, result)
@@ -124,6 +124,7 @@ impl qobject::KesticApp {
     pub fn start_backup_override(self: Pin<&mut Self>, backup_id: &QString) {
         let b_id = backup_id.to_string();
         self.call_daemon(
+            Lane::backup(&b_id),
             move |client| client.start_backup_override(&b_id),
             |mut app, result| {
                 if matches!(result, Ok(Ok(_))) {
@@ -141,6 +142,7 @@ impl qobject::KesticApp {
 
     pub fn start_all_backups(self: Pin<&mut Self>) {
         self.call_daemon(
+            Lane::all_backups(),
             |client| client.start_all_backups(),
             |mut app, result| match result {
                 Ok(Ok(res)) => {
@@ -171,6 +173,7 @@ impl qobject::KesticApp {
         let run_id = run_id.to_string();
         // A run that ended meanwhile cannot be cancelled any more; the state shows how it ended.
         self.call_daemon(
+            Lane::Alone,
             move |client| client.cancel_run(&run_id).is_ok(),
             |_, _| request_refresh(),
         );

@@ -4,6 +4,7 @@
 //! Schedule/condition/maintenance editing, pause/resume controls, settings, run details,
 //! clipboard, and quit confirmation for [`super::qobject::KesticApp`].
 
+use super::daemon_call::Lane;
 use super::{Finish, qobject};
 use crate::qt_bridge;
 use crate::run_texts::{run_detail_subtitle, run_detail_title, run_result_summary, run_status};
@@ -49,6 +50,7 @@ impl qobject::KesticApp {
     pub fn run_destination_maintenance(self: Pin<&mut Self>, destination_id: &QString) {
         let dest_id = destination_id.to_string();
         self.call_daemon(
+            Lane::destination(&dest_id),
             move |client| client.run_destination_maintenance(&dest_id),
             |app, result| {
                 app.finish_daemon_action(result, Finish::Plain);
@@ -189,6 +191,7 @@ impl qobject::KesticApp {
 
     pub fn update_expert_mode(self: Pin<&mut Self>, enabled: bool) {
         self.call_daemon(
+            Lane::settings(),
             move |client| client.set_expert_mode(enabled),
             |app, result| {
                 app.finish_daemon_action(result, Finish::Plain);
@@ -199,6 +202,7 @@ impl qobject::KesticApp {
     pub fn pause_global(self: Pin<&mut Self>, duration_kind: &QString) {
         let duration = parse_pause_duration(&duration_kind.to_string());
         self.call_daemon(
+            Lane::all_backups(),
             move |client| client.pause_global(&duration),
             |app, result| {
                 app.finish_daemon_action(result, Finish::NotifyOnError);
@@ -208,6 +212,7 @@ impl qobject::KesticApp {
 
     pub fn resume_global(self: Pin<&mut Self>) {
         self.call_daemon(
+            Lane::all_backups(),
             |client| client.resume_global(),
             |app, result| {
                 app.finish_daemon_action(result, Finish::NotifyOnError);
@@ -219,6 +224,7 @@ impl qobject::KesticApp {
         let b_id = backup_id.to_string();
         let duration = parse_pause_duration(&duration_kind.to_string());
         self.call_daemon(
+            Lane::backup(&b_id),
             move |client| client.pause_backup(&b_id, &duration),
             |app, result| {
                 app.finish_daemon_action(result, Finish::NotifyOnError);
@@ -229,6 +235,7 @@ impl qobject::KesticApp {
     pub fn resume_backup(self: Pin<&mut Self>, backup_id: &QString) {
         let b_id = backup_id.to_string();
         self.call_daemon(
+            Lane::backup(&b_id),
             move |client| client.resume_backup(&b_id),
             |app, result| {
                 app.finish_daemon_action(result, Finish::NotifyOnError);

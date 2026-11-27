@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Daemon calls the window makes on behalf of the user, off the Qt thread: one worker thread
-//! makes them in the order they were asked for, and each result goes back to the Qt thread.
-//! Calls that may wait for the user (a password prompt) run on a thread of their own, so they
-//! do not hold back the others.
+//! Daemon calls the window makes on behalf of the user, off the Qt thread. Each call runs on a
+//! lane: calls about the same thing run in the order the user made them, calls about different
+//! things do not wait for each other. Each result goes back to the Qt thread.
 
 use super::{Finish, qobject};
 use crate::daemon_events::request_refresh;
@@ -13,9 +12,11 @@ use crate::state_cache::{
 };
 use cxx_qt::Threading;
 use cxx_qt_lib::QString;
+use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{KesticClient, KesticDbusError};
+use std::collections::BTreeMap;
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
@@ -23,13 +24,34 @@ use std::time::{Duration, Instant};
 
 type Job = Box<dyn FnOnce() + Send>;
 
-/// The worker thread's queue; the thread starts with the first call.
-static WORKER: OnceLock<Sender<Job>> = OnceLock::new();
-/// Calls asked for and not made yet, on the worker or on a thread of their own.
+/// One worker thread per lane key, each started with the first call on its lane.
+static WORKERS: Mutex<BTreeMap<String, Sender<Job>>> = Mutex::new(BTreeMap::new());
+/// Calls asked for and not made yet.
 static PENDING: AtomicUsize = AtomicUsize::new(0);
 
-fn worker() -> &'static Sender<Job> {
-    WORKER.get_or_init(|| {
+/// Holds one pending call; dropping it (the call ran, panicked or was never sent) releases it.
+struct Pending;
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        PENDING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Counts `job` as pending until it has run.
+fn counted(job: Job) -> Job {
+    PENDING.fetch_add(1, Ordering::SeqCst);
+    let pending = Pending;
+    Box::new(move || {
+        let _pending = pending;
+        job();
+    })
+}
+
+/// Queues `job` on the worker of `key`; the job comes back if that worker has ended.
+fn send_in_order(key: &str, job: Job) -> Result<(), Job> {
+    let mut workers = WORKERS.lock_unpoisoned();
+    let worker = workers.entry(key.to_string()).or_insert_with(|| {
         let (jobs, queue) = mpsc::channel::<Job>();
         thread::spawn(move || {
             for job in queue {
@@ -37,16 +59,8 @@ fn worker() -> &'static Sender<Job> {
             }
         });
         jobs
-    })
-}
-
-/// Counts `job` as pending until it has run.
-fn counted(job: Job) -> Job {
-    PENDING.fetch_add(1, Ordering::SeqCst);
-    Box::new(move || {
-        job();
-        PENDING.fetch_sub(1, Ordering::SeqCst);
-    })
+    });
+    worker.send(job).map_err(|returned| returned.0)
 }
 
 /// Waits until the calls asked for are made, at most `limit`: a window that closes still tells
@@ -58,29 +72,62 @@ pub fn finish_pending_calls(limit: Duration) {
     }
 }
 
-/// How a call is made.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Where a call runs. Calls on the same lane run one after the other, in the order the user made
+/// them; calls on different lanes do not wait for each other, so a slow call (a backup whose
+/// destination answers late, a password prompt) holds back only the calls about the same thing.
 pub(super) enum Lane {
-    /// On the worker, after the calls asked for before it.
-    InOrder,
-    /// On a thread of its own: the call may wait for the user.
+    /// After the earlier calls with the same key.
+    After(String),
+    /// On a thread of its own, after nothing: cancelling must never wait.
     Alone,
 }
 
+impl Lane {
+    /// The window's own state (`WindowActive`).
+    pub(super) fn window() -> Self {
+        Self::After("window".into())
+    }
+
+    /// Everything that concerns all backups (pause, resume, start all).
+    pub(super) fn all_backups() -> Self {
+        Self::After("all-backups".into())
+    }
+
+    /// Everything that concerns the backup `id`.
+    pub(super) fn backup(id: &str) -> Self {
+        Self::After(format!("backup:{id}"))
+    }
+
+    /// Everything that concerns the destination `id`.
+    pub(super) fn destination(id: &str) -> Self {
+        Self::After(format!("destination:{id}"))
+    }
+
+    /// Settings and the password store.
+    pub(super) fn settings() -> Self {
+        Self::After("settings".into())
+    }
+
+    /// The availability checks.
+    pub(super) fn availability() -> Self {
+        Self::After("availability".into())
+    }
+}
+
 impl qobject::KesticApp {
-    /// Runs `call` with a client of the daemon on the worker thread, then `then` with its result
-    /// on the Qt thread; `Err` means there is no connection to the bus. Calls run one
-    /// after the other, in the order the user made them.
+    /// Runs `call` with a client of the daemon on `lane`, off the Qt thread, then `then` with its
+    /// result on the Qt thread; `Err` means there is no connection to the bus.
     pub(super) fn call_daemon<T: Send + 'static>(
         self: Pin<&mut Self>,
+        lane: Lane,
         call: impl FnOnce(&KesticClient) -> T + Send + 'static,
         then: impl FnOnce(Pin<&mut Self>, Result<T, String>) + Send + 'static,
     ) {
-        self.call_daemon_with(Lane::InOrder, call, |_| false, then);
+        self.call_daemon_with(lane, call, |_| false, then);
     }
 
-    /// Like [`Self::call_daemon`], on `lane`; when `fetch_state(&result)` holds, the state is
-    /// fetched anew before `then` runs, so `then` reads the state as it is after the call.
+    /// Like [`Self::call_daemon`]; when `fetch_state(&result)` holds, the state is fetched anew
+    /// before `then` runs, so `then` reads the state as it is after the call.
     pub(super) fn call_daemon_with<T: Send + 'static>(
         self: Pin<&mut Self>,
         lane: Lane,
@@ -101,10 +148,9 @@ impl qobject::KesticApp {
             Lane::Alone => {
                 thread::spawn(job);
             }
-            Lane::InOrder => {
-                if worker().send(job).is_err() {
-                    PENDING.fetch_sub(1, Ordering::SeqCst);
-                    eprintln!("kestic: the thread for daemon calls has ended");
+            Lane::After(key) => {
+                if send_in_order(&key, job).is_err() {
+                    eprintln!("kestic: the thread for daemon calls on lane {key} has ended");
                 }
             }
         }

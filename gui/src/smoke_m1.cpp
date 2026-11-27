@@ -481,13 +481,20 @@ void scene_keyboard_navigation(const Scene& s) {
 }
 
 // Largest pause of the main thread (ms) between ticks of a 20 ms timer, until `stop` is set.
-std::shared_ptr<qint64> watch_main_thread_gaps(QQuickWindow* window, const std::shared_ptr<bool>& stop) {
+// While `skip` is set, the next pause is not counted and `skip` is cleared.
+std::shared_ptr<qint64> watch_main_thread_gaps(QQuickWindow* window, const std::shared_ptr<bool>& stop,
+    const std::shared_ptr<bool>& skip = std::make_shared<bool>(false)) {
     auto largest = std::make_shared<qint64>(0);
     auto since_tick = std::make_shared<QElapsedTimer>();
     since_tick->start();
     auto* ticker = new QTimer(window);
     QObject::connect(ticker, &QTimer::timeout, window, [=]() {
-        *largest = std::max(*largest, since_tick->restart());
+        const qint64 gap = since_tick->restart();
+        if (*skip) {
+            *skip = false;
+        } else {
+            *largest = std::max(*largest, gap);
+        }
         if (*stop) {
             ticker->stop();
         }
@@ -624,11 +631,13 @@ void run_slow_daemon_scene(
     QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 0));
 
     auto stop = std::make_shared<bool>(false);
-    auto largest_gap = watch_main_thread_gaps(window, stop);
+    auto building_page = std::make_shared<bool>(false);
+    auto largest_gap = watch_main_thread_gaps(window, stop, building_page);
     auto waited = std::make_shared<QElapsedTimer>();
     waited->start();
     auto stage = std::make_shared<int>(0);
     auto expert_before = std::make_shared<bool>(false);
+    auto bid = std::make_shared<QString>();
     auto* poll = new QTimer(window);
     QObject::connect(poll, &QTimer::timeout, window, [=]() {
         if (waited->elapsed() > 90000) {
@@ -640,35 +649,60 @@ void run_slow_daemon_scene(
             if (!backend->property("daemon_reachable").toBool()) {
                 return;
             }
-            *stage = 1;
             *expert_before = backend->property("expert_mode").toBool();
-            const QString bid = backup_id_at(window, 0);
-            const bool ok = !bid.isEmpty()
-                && returns_at_once(45, "windowActive", [&]() {
-                       return QMetaObject::invokeMethod(backend, "windowActive",
-                           Q_ARG(bool, true), Q_ARG(QString, QStringLiteral("overview")));
-                   })
-                && returns_at_once(46, "checkAvailability", [&]() {
-                       return QMetaObject::invokeMethod(backend, "checkAvailability", Q_ARG(bool, false));
-                   })
-                && returns_at_once(47, "pauseGlobal", [&]() {
-                       return QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
-                   })
-                && returns_at_once(48, "updateExpertMode", [&]() {
-                       return QMetaObject::invokeMethod(backend, "updateExpertMode", Q_ARG(bool, !*expert_before));
-                   })
-                && returns_at_once(49, "startBackup", [&]() {
-                       return QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
-                   });
-            if (!ok) {
+            *bid = backup_id_at(window, 0);
+            if (bid->isEmpty()) {
                 poll->stop();
+                smoke_fail("M6", 54, QStringLiteral("precondition: one backup"));
                 return;
             }
-            QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 2));
-            const int tab = window->property("activeTab").toInt();
-            if (tab != 2) {
+        }
+        // One step per tick, so each pause of the main thread belongs to one action.
+        if (*stage < 6) {
+            const int step = (*stage)++;
+            bool ok = true;
+            switch (step) {
+            case 0:
+                ok = returns_at_once(45, "windowActive", [&]() {
+                    return QMetaObject::invokeMethod(backend, "windowActive",
+                        Q_ARG(bool, true), Q_ARG(QString, QStringLiteral("overview")));
+                });
+                break;
+            case 1:
+                ok = returns_at_once(46, "checkAvailability", [&]() {
+                    return QMetaObject::invokeMethod(backend, "checkAvailability", Q_ARG(bool, false));
+                });
+                break;
+            case 2:
+                ok = returns_at_once(47, "pauseGlobal", [&]() {
+                    return QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
+                });
+                break;
+            case 3:
+                ok = returns_at_once(48, "updateExpertMode", [&]() {
+                    return QMetaObject::invokeMethod(backend, "updateExpertMode", Q_ARG(bool, !*expert_before));
+                });
+                break;
+            case 4:
+                ok = returns_at_once(49, "startBackup", [&]() {
+                    return QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, *bid));
+                });
+                break;
+            default: {
+                // Building the tab's page is QML work of its own, the same with any daemon; the
+                // pause it causes is not a wait for the daemon and is not counted.
+                *building_page = true;
+                QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 2));
+                const int tab = window->property("activeTab").toInt();
+                if (tab != 2) {
+                    poll->stop();
+                    smoke_fail("M6", 50, QStringLiteral("(b) the window did not switch tabs while calls were pending: %1").arg(tab));
+                }
+                return;
+            }
+            }
+            if (!ok) {
                 poll->stop();
-                smoke_fail("M6", 50, QStringLiteral("(b) the window did not switch tabs while calls were pending: %1").arg(tab));
             }
             return;
         }
@@ -730,8 +764,9 @@ void run_prompt_alone_scene(QQuickWindow* window, QObject* backend,
         });
 }
 
-// AC-M6-33-1: the window closes while a call is still on its way; the daemon still learns that
-// the window closed (the test watches for WindowActive(false)).
+// AC-M6-33-1: the window closes while an earlier WindowActive is still on its way (the test delays
+// it 2 s); the daemon still learns that the window closed (the test watches for
+// WindowActive(false)).
 void run_close_window_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     wait_then(window, 30000, 63, QStringLiteral("the state never arrived"),
@@ -741,8 +776,24 @@ void run_close_window_scene(QQuickWindow* window, QObject* backend,
                 smoke_finish("M6", warnings.get(), window, out_path);
                 return;
             }
-            QMetaObject::invokeMethod(backend, "checkAvailability", Q_ARG(bool, false));
+            QMetaObject::invokeMethod(backend, "windowActive", Q_ARG(bool, true),
+                Q_ARG(QString, QStringLiteral("overview")));
             window->close();
+        });
+}
+
+// AC-M6-33-1: «Back Up Now» for a backup whose destination answers late (the test holds StartBackup
+// back 30 s) does not hold back pausing all backups.
+void run_slow_start_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    wait_then(window, 30000, 67, QStringLiteral("the state never arrived"),
+        [=]() { return backend->property("daemon_reachable").toBool(); },
+        [=]() {
+            QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, backup_id_at(window, 0)));
+            QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
+            wait_then(window, 5000, 68, QStringLiteral("pausing waited for the slow start"),
+                [=]() { return backend->property("global_paused").toBool(); },
+                [=]() { smoke_finish("M6", warnings.get(), window, out_path); });
         });
 }
 
@@ -831,6 +882,8 @@ void run_m6_smoke_scenario(
         run_prompt_alone_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-close-window")) {
         run_close_window_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-start")) {
+        run_slow_start_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-refused-start")) {
         run_refused_start_scene(window, backend, warnings, out_path);
     } else {

@@ -23,6 +23,10 @@ use kestic_core::model::ResticProvider;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Counts the calls of `window_active`, so a queued call knows whether a newer one came.
+static WINDOW_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 impl qobject::KesticApp {
     pub fn initialize(mut self: Pin<&mut Self>) {
@@ -360,7 +364,7 @@ impl qobject::KesticApp {
         // Whether the user unlocked shows in the state the daemon publishes.
         // The daemon waits for the user to answer the password prompt.
         self.call_daemon_with(
-            Lane::Alone,
+            Lane::settings(),
             |client| client.unlock_secret_store().is_ok(),
             |_| false,
             |_, _| request_refresh(),
@@ -369,9 +373,17 @@ impl qobject::KesticApp {
 
     pub fn window_active(self: Pin<&mut Self>, active: bool, page: &QString) {
         let page = page.to_string();
-        // The daemon only notes the window; an activated window shows the state anew.
+        let generation = WINDOW_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        // The daemon only notes the window; an activated window shows the state anew. Only the
+        // newest state of the window counts: a call still queued when a newer one came is not
+        // sent. A window that closes says so at once, ahead of calls still on their way.
+        let lane = if active { Lane::window() } else { Lane::Alone };
         self.call_daemon(
-            move |client| client.window_active(active, &page).is_ok(),
+            lane,
+            move |client| {
+                WINDOW_GENERATION.load(Ordering::SeqCst) == generation
+                    && client.window_active(active, &page).is_ok()
+            },
             move |_, _| {
                 if active {
                     request_refresh();
@@ -384,7 +396,7 @@ impl qobject::KesticApp {
         // The result of the check arrives with the state. A forced check probes every
         // destination and may take a while; other actions do not wait for it.
         self.call_daemon_with(
-            Lane::Alone,
+            Lane::availability(),
             move |client| client.check_availability(force).is_ok(),
             |_| false,
             |_, _| request_refresh(),

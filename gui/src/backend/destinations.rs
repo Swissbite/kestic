@@ -283,7 +283,7 @@ impl qobject::KesticApp {
         let dest_id = dest_id.to_string();
         // Removing the lock may take a while; other actions do not wait for it.
         self.call_daemon_with(
-            Lane::Alone,
+            Lane::destination(&dest_id),
             move |client| client.unlock_destination(&dest_id),
             |_| false,
             |mut app, result| {

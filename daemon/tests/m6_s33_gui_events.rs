@@ -328,9 +328,19 @@ fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
         |root| {
             let _fakes = StdFakes::start();
             let front = "net.daester.KesticCloseFront";
-            let (rig, _) = slow_rig(root, "Close", "net.daester.KesticCloseBack", front, |_| {
-                Duration::from_secs(1)
-            });
+            let (rig, _) = slow_rig(
+                root,
+                "Close",
+                "net.daester.KesticCloseBack",
+                front,
+                |member| {
+                    if member == "WindowActive" {
+                        Duration::from_secs(2)
+                    } else {
+                        Duration::ZERO
+                    }
+                },
+            );
             let me = rig
                 .daemon
                 .client
@@ -340,10 +350,45 @@ fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
                 .to_string();
             let seen = monitor_kestic_calls(&session_address());
             run_slow_scene(root, "m6-close-window", front, &[], &[]);
-            let closed = calls_of(&seen, "WindowActive", &me)
-                .iter()
-                .any(|c| c.active == Some(false));
-            assert!(closed, "(b) the daemon learned that the window closed");
+            // The monitor reads the last calls of the ended GUI on its own thread.
+            wait_until_within(
+                Duration::from_secs(5),
+                "(b) the daemon learned that the window closed",
+                || {
+                    calls_of(&seen, "WindowActive", &me)
+                        .iter()
+                        .any(|c| c.active == Some(false))
+                },
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M6-33-1 (b): «Back Up Now» for a backup whose destination answers late (`StartBackup`
+/// held back 30 s) does not hold back pausing all backups.
+#[test]
+fn ac_m6_33_1_slow_start_does_not_hold_back_pausing() {
+    run_isolated_test(
+        "ac_m6_33_1_slow_start_does_not_hold_back_pausing",
+        "KESTIC_M6_S33_SLOW_START_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowStartFront";
+            let (rig, _) = slow_rig(
+                root,
+                "SlowStart",
+                "net.daester.KesticSlowStartBack",
+                front,
+                |member| {
+                    if member == "StartBackup" {
+                        Duration::from_secs(30)
+                    } else {
+                        Duration::ZERO
+                    }
+                },
+            );
+            run_slow_scene(root, "m6-slow-start", front, &[], &[]);
             rig.daemon.stop();
         },
     );
