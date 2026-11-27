@@ -18,6 +18,7 @@ use kestic_core::model::{
 use kestic_core::provider::ResolvedRestic;
 use kestic_core::restic::{CancelHandle, SECRET_KIND_REPO};
 use kestic_core::secrets::{SecretStore, SecretValue};
+use kestic_test_support::password::strong_password;
 use kestic_test_support::tools::{assert_has_flag_pair, install_args_spy, write_executable};
 use std::collections::BTreeSet;
 use std::fs;
@@ -639,7 +640,7 @@ impl FakePlan {
 /// none either.
 #[test]
 fn ac_m6_17_2_unreadable_plan_runs_no_forget() {
-    let fake = FakePlan::new("unrelated", 0);
+    let fake = FakePlan::new(&strong_password(), 0);
     fake.plan_raw(r#"[{"tags":["kestic:x"],"remove":[{"id":"#);
     let run = fake.retention().expect("the plan ran");
     assert!(run.error.is_some(), "an unreadable plan is an error");
@@ -652,7 +653,7 @@ fn ac_m6_17_2_unreadable_plan_runs_no_forget() {
         fake.calls()
     );
 
-    let fake = FakePlan::new("unrelated", 0);
+    let fake = FakePlan::new(&strong_password(), 0);
     fake.plan_raw(&format!(
         r#"[{{"tags":["{}"],"keep":null,"remove":null,"reasons":null}}]"#,
         fake.b1.tag()
@@ -671,7 +672,7 @@ fn ac_m6_17_2_unreadable_plan_runs_no_forget() {
 /// after the plan) leaves the retention not done and counts no removed snapshots.
 #[test]
 fn ac_m6_17_2_failed_forget_is_not_done() {
-    let fake = FakePlan::new("unrelated", 1);
+    let fake = FakePlan::new(&strong_password(), 1);
     let id = "ab".repeat(32);
     fake.plan_removing(&[&id]);
     let run = fake.retention().expect("retention ran");
@@ -690,8 +691,13 @@ fn ac_m6_17_2_failed_forget_is_not_done() {
 /// and in `forget`.
 #[test]
 fn ac_m6_17_3_plan_is_read_before_redaction() {
-    let password = "c0ffee42";
-    let fake = FakePlan::new(password, 0);
+    // A generated password made of hex digits, so it can be part of a snapshot ID.
+    let password: String = strong_password()
+        .bytes()
+        .take(4)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let fake = FakePlan::new(&password, 0);
     let id = format!("{password}{}", "0".repeat(56));
     fake.plan_removing(&[&id]);
 
