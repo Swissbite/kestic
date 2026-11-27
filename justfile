@@ -69,7 +69,10 @@ fmt:
 # C/C++ code are remapped to fixed prefixes, so the package neither leaks them nor depends on them.
 # A plain `cargo deb` skips this remapping. Flags from RUSTFLAGS are kept. The package version
 # comes from the Git tags or KESTIC_VERSION, the same one the binary shows
-# (build-stamp/src/version.rs), with Debian revision 1.
+# (build-stamp/src/version.rs), with Debian revision 1. The AppStream metainfo gets the German
+# texts of the catalog and the release entry of that version (build-stamp/src/metainfo.rs), and
+# must pass `appstreamcli validate` without warnings; cargo-deb takes it from the release profile
+# directory like the binary.
 deb:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -90,6 +93,15 @@ deb:
         rust_flags+=("--remap-path-prefix=$map")
         c_flags+=("-ffile-prefix-map=$map")
     done
+    metainfo_tmp="$(mktemp -d)"
+    trap 'rm -rf "$metainfo_tmp"' EXIT
+    metainfo="$target/release/net.daester.Kestic.metainfo.xml"
+    mkdir -p "$target/release"
+    msgfmt --xml -l de --template packaging/net.daester.Kestic.metainfo.xml \
+        -o "$metainfo_tmp/net.daester.Kestic.metainfo.xml" po/de/kestic.po
+    KESTIC_VERSION="$version" cargo run --quiet -p kestic-build-stamp -- metainfo \
+        "$metainfo_tmp/net.daester.Kestic.metainfo.xml" "$metainfo"
+    appstreamcli validate --no-net --explain "$metainfo"
     KESTIC_VERSION="$version" \
     CARGO_ENCODED_RUSTFLAGS="$(IFS=$'\x1f'; echo "${rust_flags[*]}")" \
     CFLAGS="${CFLAGS:-} ${c_flags[*]}" \

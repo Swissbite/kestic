@@ -42,6 +42,7 @@ APT_PACKAGES=(
     lld
     gettext
     desktop-file-utils
+    appstream
     gnome-keyring
     locales
     procps
