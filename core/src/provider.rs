@@ -371,6 +371,15 @@ pub fn parse_version_text(text: &str) -> Option<Version> {
     parse_semver_token(tokens.next()?).ok()
 }
 
+/// The restic another process already checked, from the path and version it reports
+/// (`0.18.0`), without running the program again; `None` when the version is unreadable.
+pub fn resolved_from_report(binary: &str, version: &str) -> Option<ResolvedRestic> {
+    Some(ResolvedRestic {
+        binary: PathBuf::from(binary),
+        version: parse_semver_token(version).ok()?,
+    })
+}
+
 /// Whether `a` and `b` are the same file, also through links.
 pub fn same_binary(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {

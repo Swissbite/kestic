@@ -789,13 +789,6 @@ Kirigami.ApplicationWindow {
         onVisibleChanged: if (!visible) root.requestActivate()
     }
 
-    Timer {
-        interval: 150
-        running: true
-        repeat: true
-        onTriggered: appBackend.pollEvents()
-    }
-
     Shortcut {
         sequence: "Ctrl+N"
         context: Qt.ApplicationShortcut

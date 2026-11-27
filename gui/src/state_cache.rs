@@ -70,6 +70,7 @@ where
     tr(&err.code().message())
 }
 
+use crate::daemon_events;
 use crate::overall_text::localized_availability_reason;
 use crate::retention_texts::within_text;
 use crate::time_texts::{format_datetime_display, format_time_short};
@@ -85,8 +86,8 @@ use kestic_core::scheduler::{TimezoneSpec, format_local_slot_hint, next_backup_s
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
     ActiveRunProgressDto, BackupAvailabilityDto, BackupSnapshotsDto, BackupSummaryDto,
-    DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME, KESTIC_INTERFACE_V1,
-    KESTIC_OBJECT_PATH, KesticClient, OverallStatusKind, RunDetailDto, StartAllResultDto,
+    DaemonStateDto, DestinationSummaryDto, KESTIC_BUS_NAME, KESTIC_OBJECT_PATH, KesticClient,
+    OverallStatusKind, RunDetailDto, StartAllResultDto,
 };
 use kestic_i18n::codes::{BlockedReason, PendingReasonCode, RunProgressPhase};
 use kestic_i18n::codes::{ErrorKind, ServiceErrorCode};
@@ -112,7 +113,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
-use zbus::export::ordered_stream::OrderedStreamExt;
 
 /// Runtime options passed from `main.rs` CLI parsing.
 #[derive(Debug, Clone)]
@@ -147,14 +147,11 @@ pub struct SharedGuiState {
     pub active_progress: HashMap<String, ActiveRunProgressDto>,
     pub snapshots: Option<BackupSnapshotsDto>,
     pub run_detail: Option<RunDetailDto>,
-    /// The daemon state changed (signal or action): fetch it with `GetState`.
-    pub state_dirty: bool,
     /// The cached state or the reachability changed: show it in the window.
     pub state_fetched: bool,
-    /// When the GUI last asked the daemon for its state (`None` before the first attempt).
-    pub last_state_fetch: Option<Instant>,
     pub progress_dirty: bool,
-    pub listener_started: bool,
+    /// The GUI started the daemon and waits for it to take its bus name.
+    pub daemon_starting: bool,
     pub pending_blocked: Option<(String, BlockedReason)>,
     pub pending_show_window: bool,
     pub pending_show_about: bool,
@@ -175,11 +172,9 @@ impl SharedGuiState {
             active_progress: HashMap::new(),
             snapshots: None,
             run_detail: None,
-            state_dirty: false,
             state_fetched: false,
-            last_state_fetch: None,
             progress_dirty: false,
-            listener_started: false,
+            daemon_starting: false,
             pending_blocked: None,
             pending_show_window: false,
             pending_show_about: false,
@@ -221,7 +216,7 @@ static GUI_CONNECTION: Mutex<Option<zbus::Connection>> = Mutex::new(None);
 
 /// The GUI's session-bus connection; opened on first use and kept for the whole session. A
 /// failed attempt is not cached, so the next call tries again.
-fn gui_connection() -> zbus::Result<zbus::Connection> {
+pub fn gui_connection() -> zbus::Result<zbus::Connection> {
     let mut slot = GUI_CONNECTION.lock_unpoisoned();
     if let Some(conn) = slot.as_ref() {
         return Ok(conn.clone());
@@ -229,6 +224,11 @@ fn gui_connection() -> zbus::Result<zbus::Connection> {
     let conn = zbus::block_on(zbus::Connection::session())?;
     *slot = Some(conn.clone());
     Ok(conn)
+}
+
+/// Forgets the GUI's connection after it was lost; the next call opens a new one.
+pub fn drop_gui_connection() {
+    *GUI_CONNECTION.lock_unpoisoned() = None;
 }
 
 /// A daemon client on the GUI's connection.
@@ -242,26 +242,22 @@ pub fn make_client() -> Result<KesticClient, String> {
     ))
 }
 
-/// Ensures the daemon is running (spawning `kestic daemon` without `--autostart` when needed)
-/// and starts the background D-Bus signal listener.
+/// Starts the background threads that follow the daemon and loads its state. A daemon that is
+/// not running yet is started in the background, so the window shows at once.
 pub fn initialize_and_sync() {
-    ensure_signal_listener();
-    ensure_daemon_and_refresh();
+    daemon_events::start();
+    let must_start = !shared_state().lock_unpoisoned().launch.no_autostart_daemon
+        && make_client().is_ok_and(|c| !c.is_bus_owned().unwrap_or(false));
+    if must_start {
+        daemon_events::start_daemon_in_background();
+    } else {
+        ensure_daemon_and_refresh();
+    }
 }
 
-/// Starts the signal listener unless one runs.
-fn ensure_signal_listener() {
-    let launch = {
-        let mut guard = shared_state().lock_unpoisoned();
-        if guard.listener_started {
-            return;
-        }
-        guard.listener_started = true;
-        guard.launch.clone()
-    };
-    spawn_signal_listener(launch.bus_name, launch.object_path);
-}
-
+/// Ensures the daemon is running (spawning `kestic daemon` without `--autostart` when needed,
+/// and waiting for it) and loads its state. It waits, so the Qt thread calls it only when the
+/// daemon already runs.
 pub fn ensure_daemon_and_refresh() {
     let launch = {
         let guard = shared_state().lock_unpoisoned();
@@ -352,8 +348,7 @@ fn retain_active_progress(
 }
 
 pub fn refresh_state_now() {
-    ensure_signal_listener();
-    shared_state().lock_unpoisoned().last_state_fetch = Some(Instant::now());
+    daemon_events::start();
     let client = match make_client() {
         Ok(c) => c,
         Err(err) => {
@@ -394,102 +389,6 @@ pub fn refresh_state_now() {
             guard.daemon_error = Some(err.to_string());
             guard.state_fetched = true;
         }
-    }
-}
-
-/// Receives the daemon's signals on the GUI's connection for the whole session and notes them
-/// in the shared state.
-fn spawn_signal_listener(bus_name: String, object_path: String) {
-    thread::spawn(move || {
-        let ended = gui_connection()
-            .is_ok_and(|conn| zbus::block_on(listen(conn, &bus_name, &object_path)));
-        // The stream ends only when the connection is gone (the session bus went away): the
-        // next call opens a new connection. Either way the next state refresh starts a new
-        // listener.
-        if ended {
-            *GUI_CONNECTION.lock_unpoisoned() = None;
-        }
-        let mut guard = shared_state().lock_unpoisoned();
-        guard.listening = false;
-        guard.listener_started = false;
-    });
-}
-
-/// Registers the GUI and notes the daemon's signals until the stream ends; `false` when the
-/// stream could not be set up.
-async fn listen(conn: zbus::Connection, bus_name: &str, object_path: &str) -> bool {
-    let Ok(rule) = zbus::MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .interface(KESTIC_INTERFACE_V1)
-        .path(object_path)
-        .build()
-    else {
-        return false;
-    };
-    let Ok(mut stream) = zbus::MessageStream::for_match_rule(rule, &conn, None).await else {
-        return false;
-    };
-    shared_state().lock_unpoisoned().listening = true;
-    let client = KesticClient::from_connection(conn, bus_name, object_path);
-    if let Ok(daemon) = client.proxy().await {
-        let _ = daemon.register_gui().await;
-    }
-    while let Some(msg_res) = stream.next().await {
-        if let Ok(msg) = msg_res {
-            note_signal(msg);
-        }
-    }
-    true
-}
-
-/// Notes one daemon signal in the shared state; the poll on the GUI thread acts on it.
-fn note_signal(msg: zbus::Message) {
-    use kestic_daemon::dbus_api::proxy::{
-        ManualRunBlocked, QuitConfirmationRequested, RunProgress, RunUpdated, ShowAboutRequested,
-        ShowRestoreRequested, ShowWindowRequested, StatusChanged,
-    };
-    if StatusChanged::from_message(msg.clone()).is_some()
-        || RunUpdated::from_message(msg.clone()).is_some()
-    {
-        shared_state().lock_unpoisoned().state_dirty = true;
-    } else if let Some(signal) = RunProgress::from_message(msg.clone()) {
-        if let Ok(args) = signal.args()
-            && let Ok(progress) = serde_json::from_str::<ActiveRunProgressDto>(args.progress_json)
-        {
-            let mut guard = shared_state().lock_unpoisoned();
-            if let Some(active) = guard
-                .state
-                .as_mut()
-                .and_then(|s| s.overall.active_run_progress.as_mut())
-                .filter(|a| a.run_id == progress.run_id)
-            {
-                *active = progress.clone();
-            }
-            guard
-                .active_progress
-                .insert(progress.run_id.clone(), progress);
-            guard.progress_dirty = true;
-        }
-    } else if let Some(signal) = ManualRunBlocked::from_message(msg.clone()) {
-        // A reason code this GUI does not know is ignored, never guessed.
-        if let Ok(args) = signal.args()
-            && let Some(reason) = BlockedReason::parse(args.reason)
-        {
-            let mut guard = shared_state().lock_unpoisoned();
-            guard.pending_blocked = Some((args.backup_id.to_string(), reason));
-            guard.state_dirty = true;
-        }
-    } else if ShowWindowRequested::from_message(msg.clone()).is_some() {
-        shared_state().lock_unpoisoned().pending_show_window = true;
-    } else if ShowAboutRequested::from_message(msg.clone()).is_some() {
-        shared_state().lock_unpoisoned().pending_show_about = true;
-    } else if ShowRestoreRequested::from_message(msg.clone()).is_some() {
-        shared_state().lock_unpoisoned().pending_show_restore = true;
-    } else if let Some(signal) = QuitConfirmationRequested::from_message(msg)
-        && let Ok(args) = signal.args()
-    {
-        shared_state().lock_unpoisoned().pending_quit =
-            Some((args.has_running_run, args.running_backup_name.to_string()));
     }
 }
 

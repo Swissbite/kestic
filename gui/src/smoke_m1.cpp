@@ -4,6 +4,7 @@
 #include "src/smoke_helper.h"
 #include "src/smoke_common.h"
 #include <QColor>
+#include <QElapsedTimer>
 #include <QLocale>
 
 namespace kestic::smoke {
@@ -473,6 +474,110 @@ void scene_keyboard_navigation(const Scene& s) {
     smoke_finish("M1 keyboard", warnings.get(), window, out_path);
 }
 
+// Largest pause of the main thread (ms) between ticks of a 20 ms timer, until `stop` is set.
+std::shared_ptr<qint64> watch_main_thread_gaps(QQuickWindow* window, const std::shared_ptr<bool>& stop) {
+    auto largest = std::make_shared<qint64>(0);
+    auto since_tick = std::make_shared<QElapsedTimer>();
+    since_tick->start();
+    auto* ticker = new QTimer(window);
+    QObject::connect(ticker, &QTimer::timeout, window, [=]() {
+        *largest = std::max(*largest, since_tick->restart());
+        if (*stop) {
+            ticker->stop();
+        }
+    });
+    ticker->start(20);
+    return largest;
+}
+
+// AC-M6-33-3: the daemon takes 6 s to start; the window is up long before and says so.
+void run_daemon_starting_scene(
+    QQuickWindow* window,
+    QObject* backend,
+    const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path,
+    const QString& lang,
+    qint64 since_load_ms
+) {
+    SMOKE_CHECK("M6", 1, since_load_ms < 3000,
+        QStringLiteral("(a) the window answered %1 ms after loading: the main thread waited for the daemon").arg(since_load_ms));
+    const QString kind = backend->property("blocking_kind").toString();
+    SMOKE_CHECK("M6", 2, kind == QLatin1String("daemon_starting"),
+        QStringLiteral("(b) expected blocking_kind 'daemon_starting', got '%1'").arg(kind));
+    const QString expected = lang == QLatin1String("de")
+        ? QStringLiteral("Hintergrunddienst startet…")
+        : QStringLiteral("Starting the background service…");
+    const QString shown = backend->property("blocking_message").toString();
+    SMOKE_CHECK("M6", 3, shown == expected,
+        QStringLiteral("(b) expected '%1', got '%2'").arg(expected, shown));
+    QQuickItem* banner = child_item(window, "blockingStatusBanner");
+    SMOKE_CHECK_VISIBLE("M6", 4, banner, "(b) the banner shows that the service starts");
+    QQuickItem* welcome = child_item(window, "welcomeView");
+    SMOKE_CHECK2("M6", 5, welcome, !welcome->property("visible").toBool(),
+        "no welcome view before the daemon said whether a configuration exists");
+    SMOKE_CHECK("M6", 6, save_screenshot(window, out_path), "screenshot of the starting state");
+
+    auto stop = std::make_shared<bool>(false);
+    auto largest_gap = watch_main_thread_gaps(window, stop);
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (backend->property("daemon_reachable").toBool()) {
+            poll->stop();
+            *stop = true;
+            SMOKE_CHECK("M6", 7, *largest_gap < 1000,
+                QStringLiteral("(a) the main thread paused %1 ms while the daemon started").arg(*largest_gap));
+            smoke_finish("M6", warnings.get(), nullptr, out_path);
+        } else if (waited->elapsed() > 30000) {
+            poll->stop();
+            smoke_fail("M6", 8, QStringLiteral("the daemon the GUI started never became reachable"));
+        }
+    });
+    poll->start(100);
+}
+
+// AC-M6-33-5: building the shown command of a backup does not run `restic version` (held by
+// the test for 8 s) in the main thread.
+void run_transparent_command_scene(
+    QQuickWindow* window,
+    QObject* backend,
+    const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path
+) {
+    const QString bid = backup_id_at(window, 0);
+    SMOKE_CHECK("M6", 20, !bid.isEmpty(), "precondition: one backup");
+    QString command;
+    QElapsedTimer took;
+    took.start();
+    QMetaObject::invokeMethod(backend, "getBackupTransparentCommand",
+        Q_RETURN_ARG(QString, command), Q_ARG(QString, bid));
+    const qint64 ms = took.elapsed();
+    SMOKE_CHECK("M6", 21, ms < 500,
+        QStringLiteral("(a) getBackupTransparentCommand took %1 ms in the main thread").arg(ms));
+    SMOKE_CHECK("M6", 22, command.contains(QStringLiteral("restic-wrapper.sh")),
+        QStringLiteral("the command names the configured restic: %1").arg(command));
+    smoke_finish("M6", warnings.get(), window, out_path);
+}
+
+void run_m6_smoke_scenario(
+    QQuickWindow* window,
+    QObject* backend,
+    const std::shared_ptr<QStringList>& warnings,
+    const QString& scen,
+    const QString& out_path,
+    const QString& lang,
+    qint64 since_load_ms
+) {
+    if (scen == QLatin1String("m6-daemon-starting")) {
+        run_daemon_starting_scene(window, backend, warnings, out_path, lang, since_load_ms);
+    } else if (scen == QLatin1String("m6-transparent-command")) {
+        run_transparent_command_scene(window, backend, warnings, out_path);
+    } else {
+        smoke_fail("M6", 99, QStringLiteral("unknown scenario %1").arg(scen));
+    }
+}
+
 } // namespace
 
 void install_m1_smoke_check(
@@ -490,6 +595,9 @@ void install_m1_smoke_check(
     // match its language, because the test image has only the en_US glibc locale.
     QLocale::setDefault(QLocale(lang));
     auto warnings = std::make_shared<QStringList>();
+    // Time since before the window loaded: a main thread that waits while loading shows here.
+    auto since_load = std::make_shared<QElapsedTimer>();
+    since_load->start();
     finish_incubation_on_quit(engine);
 
     QObject::connect(
@@ -503,7 +611,7 @@ void install_m1_smoke_check(
         }
     );
 
-    QTimer::singleShot(250, &engine, [&engine, warnings, scen, out_path, mode, lang]() {
+    QTimer::singleShot(250, &engine, [&engine, warnings, scen, out_path, mode, lang, since_load]() {
         const auto roots = engine.rootObjects();
         SMOKE_CHECK("M1", 2, !roots.isEmpty(), "no root objects loaded");
         auto* window = qobject_cast<QQuickWindow*>(roots.first());
@@ -555,7 +663,7 @@ void install_m1_smoke_check(
         }
 
         // Allow async QML creations / wizard advance / snapshots load
-        QTimer::singleShot(400, &engine, [&engine, window, backend, warnings, scen, out_path, mode, lang]() {
+        QTimer::singleShot(400, &engine, [&engine, window, backend, warnings, scen, out_path, mode, lang, since_load]() {
             if (!warnings->isEmpty()) {
                 smoke_finish("M1", warnings.get());
                 return;
@@ -653,6 +761,9 @@ void install_m1_smoke_check(
                 return;
             } else if (scen.startsWith(QLatin1String("m5-"))) {
                 run_m5_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
+                return;
+            } else if (scen.startsWith(QLatin1String("m6-"))) {
+                run_m6_smoke_scenario(window, backend, warnings, scen, out_path, lang, since_load->elapsed());
                 return;
             } else if (scen == QLatin1String("welcome")) {
                 QQuickItem* wv = child_item(window, "welcomeView");

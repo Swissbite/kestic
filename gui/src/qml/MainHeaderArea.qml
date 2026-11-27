@@ -25,7 +25,9 @@ ColumnLayout {
         position: Kirigami.InlineMessage.Position.Header
         type: headerArea.appBackend.blocking_kind === "secret_store_locked"
             ? Kirigami.MessageType.Warning
-            : Kirigami.MessageType.Error
+            : headerArea.appBackend.blocking_kind === "daemon_starting"
+                ? Kirigami.MessageType.Information
+                : Kirigami.MessageType.Error
         visible: headerArea.appBackend.blocking_kind !== ""
         text: headerArea.appBackend.blocking_message
 

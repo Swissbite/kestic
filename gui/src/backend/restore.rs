@@ -5,6 +5,7 @@
 //! in a background thread; `poll_restore` hands the results to QML.
 
 use super::qobject;
+use crate::daemon_events::wake_gui;
 use crate::state_cache::{daemon_unavailable_text, dbus_error_text, make_client, shared_state, tr};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{BackupSnapshotsDto, DestinationSnapshotsDto};
@@ -88,6 +89,8 @@ impl qobject::KesticApp {
                     cache.overview_changed = true;
                     cache.overview_done = cache.overview_pending == 0;
                 }
+                drop(cache);
+                wake_gui();
             });
         }
     }
@@ -113,6 +116,8 @@ impl qobject::KesticApp {
                 cache.backup_snapshots = Some((backup_id, result));
                 cache.snapshots_done = true;
             }
+            drop(cache);
+            wake_gui();
         });
     }
 

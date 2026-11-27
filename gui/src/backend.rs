@@ -599,6 +599,9 @@ pub mod qobject {
         fn format_maintenance_summary_json(self: &KesticApp, maintenance_json: &QString)
         -> QString;
     }
+
+    // Background threads hand the daemon's news to the object on the Qt thread.
+    impl cxx_qt::Threading for KesticApp {}
 }
 
 mod backups;

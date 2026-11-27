@@ -79,7 +79,9 @@ Kirigami.ScrollablePage {
         ColumnLayout {
             id: welcomeView
             objectName: "welcomeView"
-            visible: !appBackend.has_config_file || appBackend.backups_count === 0
+            // While the daemon starts, nothing is known about a configuration yet.
+            visible: (!appBackend.has_config_file || appBackend.backups_count === 0)
+                && appBackend.blocking_kind !== "daemon_starting"
             Layout.fillWidth: true
             Layout.topMargin: rootWindow.narrowMode ? Kirigami.Units.smallSpacing : Kirigami.Units.gridUnit * 2
             spacing: rootWindow.narrowMode ? Kirigami.Units.mediumSpacing : Kirigami.Units.largeSpacing

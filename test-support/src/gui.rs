@@ -204,14 +204,73 @@ impl SmokeContext<'_> {
         extra_args: &[&str],
         extra_env: &[(&str, &str)],
     ) {
-        let screenshot = workspace_root().join(screenshot_rel);
-        if let Some(parent) = screenshot.parent() {
-            fs::create_dir_all(parent).expect("create screenshot dir");
-        }
-        if screenshot.exists() {
-            fs::remove_file(&screenshot).expect("remove stale screenshot");
-        }
+        let screenshot = fresh_screenshot_path(screenshot_rel);
+        let output = self
+            .smoke_command(scenario, layout, lang, &screenshot, extra_args, extra_env)
+            .output()
+            .expect("run kestic --smoke-m1");
+        let outcome = SmokeOutcome {
+            success: output.status.success(),
+            status: output.status.to_string(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        };
+        outcome.assert_passed(&format!("{scenario} ({layout}/{lang})"), &screenshot);
+    }
 
+    /// Like [`Self::run_with_env`] for a scene in which the GUI starts the daemon itself. That
+    /// daemon outlives the GUI and inherits its output, so the output goes to files (waiting for
+    /// the end of a pipe would wait for the daemon) and the daemon's own lines are not counted.
+    pub fn run_starting_daemon(
+        &self,
+        scenario: &str,
+        layout: &str,
+        lang: &str,
+        screenshot_rel: &str,
+        extra_args: &[&str],
+        extra_env: &[(&str, &str)],
+    ) {
+        let screenshot = fresh_screenshot_path(screenshot_rel);
+        let out_path = self
+            .iso
+            .root
+            .join(format!("smoke-{scenario}-{lang}.stdout"));
+        let err_path = self
+            .iso
+            .root
+            .join(format!("smoke-{scenario}-{lang}.stderr"));
+        let status = self
+            .smoke_command(scenario, layout, lang, &screenshot, extra_args, extra_env)
+            .stdout(fs::File::create(&out_path).expect("create stdout file"))
+            .stderr(fs::File::create(&err_path).expect("create stderr file"))
+            .status()
+            .expect("run kestic --smoke-m1");
+        let gui_lines = |path: &Path| -> String {
+            fs::read_to_string(path)
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.starts_with("kestic-daemon"))
+                .map(|l| format!("{l}\n"))
+                .collect()
+        };
+        let outcome = SmokeOutcome {
+            success: status.success(),
+            status: status.to_string(),
+            stdout: gui_lines(&out_path),
+            stderr: gui_lines(&err_path),
+        };
+        outcome.assert_passed(&format!("{scenario} ({layout}/{lang})"), &screenshot);
+    }
+
+    fn smoke_command(
+        &self,
+        scenario: &str,
+        layout: &str,
+        lang: &str,
+        screenshot: &Path,
+        extra_args: &[&str],
+        extra_env: &[(&str, &str)],
+    ) -> Command {
         let mut cmd = Command::new(self.kestic_bin);
         cmd.args([
             "--smoke-m1",
@@ -222,28 +281,51 @@ impl SmokeContext<'_> {
             lang,
             "--screenshot",
         ])
-        .arg(&screenshot)
+        .arg(screenshot)
         .args(extra_args);
         self.iso.apply_env(&mut cmd, self.dbus_addr, lang);
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
+        cmd
+    }
+}
 
-        let output = cmd.output().expect("run kestic --smoke-m1");
-        let stderr = String::from_utf8_lossy(&output.stderr);
+/// The absolute screenshot path below the workspace, with its folder made and an old file gone.
+fn fresh_screenshot_path(screenshot_rel: &str) -> PathBuf {
+    let screenshot = workspace_root().join(screenshot_rel);
+    if let Some(parent) = screenshot.parent() {
+        fs::create_dir_all(parent).expect("create screenshot dir");
+    }
+    if screenshot.exists() {
+        fs::remove_file(&screenshot).expect("remove stale screenshot");
+    }
+    screenshot
+}
+
+/// What one smoke run of the GUI left behind.
+struct SmokeOutcome {
+    success: bool,
+    status: String,
+    stdout: String,
+    stderr: String,
+}
+
+impl SmokeOutcome {
+    /// The run ended successfully, without QML/Qt warnings, and wrote a real PNG.
+    fn assert_passed(&self, what: &str, screenshot: &Path) {
         assert!(
-            output.status.success(),
-            "smoke `{scenario}` ({layout}/{lang}) failed (status={}):\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            stderr
+            self.success,
+            "smoke `{what}` failed (status={}):\nstdout:\n{}\nstderr:\n{}",
+            self.status, self.stdout, self.stderr
         );
         assert!(
-            stderr.trim().is_empty(),
-            "smoke `{scenario}` ({layout}/{lang}) emitted QML/Qt warnings:\n{stderr}"
+            self.stderr.trim().is_empty(),
+            "smoke `{what}` emitted QML/Qt warnings:\n{}",
+            self.stderr
         );
 
-        let png = fs::read(&screenshot).expect("read captured PNG screenshot");
+        let png = fs::read(screenshot).expect("read captured PNG screenshot");
         assert!(
             png.starts_with(b"\x89PNG\r\n\x1a\n"),
             "screenshot {} must be a PNG",

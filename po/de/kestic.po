@@ -576,6 +576,10 @@ msgstr "Ungültiger Zeitplan."
 msgid "The background service is not running. Scheduled backups will not run."
 msgstr "Der Hintergrunddienst läuft nicht. Geplante Backups laufen nicht."
 
+#: gui/src/backend/state.rs
+msgid "Starting the background service…"
+msgstr "Hintergrunddienst startet…"
+
 #: gui/src/list_model.rs:40 gui/src/qml/NewBackupWizard.qml:154
 msgid "Personal folder"
 msgstr "Persönlicher Ordner"
