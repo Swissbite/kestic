@@ -1,6 +1,6 @@
 # Kestic
 
-A KDE Plasma desktop app for easy backups with [restic](https://restic.net). Pick what and where. Kestic does the rest and shows you the restic command behind every run.
+A KDE Plasma desktop app for easy backups with [restic](https://restic.net). Pick what and where. Kestic does the rest and shows you the restic command behind every run. The name combines KDE and restic.
 
 **Status:** Milestones M0 (Spike), M1 (Walking Skeleton), M2 (Backup Configuration: exclude rules with simple/expert modes & negation linter, dry-run preview, retention rules & preview, automatic post-backup `forget` with lock catch-up, Exit 3 unreadable file handling, drive mount/UUID source checks, nested source overlap warnings, and full configuration overview), M3 (Automation: schedules with catch-up after sleep or shutdown, run conditions for AC power, network, metered connections and allowed Wi-Fi networks, retries and overdue detection, per-destination maintenance with clean up and verify, pausing schedules, and sleep handling during runs: idle/suspend inhibit and a clean interruption on lid close) and M4 (Restore: a Restore tab with the snapshots of every backup, comparing two snapshots, browsing a snapshot folder by folder and searching the snapshots of a backup, restoring into a new folder by default or to the original location or a folder with files in it only after a preview, with existing files never overwritten unless you pick an overwrite mode, a home folder under a different user name mapped to yours, unassigned and orphaned snapshots that Kestic only reads, and «Restore Files…» in the tray) are complete and manually accepted on TUXEDO OS. M5 (Destinations and restic: SFTP with SSH key login and a host key you confirm, S3-compatible storage with its keys in the password store, a generic form with environment variables for Backblaze B2, Azure, Google Cloud, Swift and rclone, external drives listed when plugged in and a warning for CIFS/SMB folders, destination types that need a program named with their package, editing a connection only after checking it is the same repository, access data only from the destination itself (no credentials from the environment; Azure and Google Cloud need their own key, token or explicit CLI login), sizes and percentages that follow your locale, and the restic source «Automatic», «System», «Managed by Kestic» or a custom path, where Kestic downloads the official restic release on request, checks its signature and checksums, and never replaces it while a run uses it) is complete; its manual acceptance is pending.
 
@@ -42,7 +42,7 @@ A KDE Plasma desktop app for easy backups with [restic](https://restic.net). Pic
 
 Kestic does not back up anything by itself: every backup, check and restore is done by [restic](https://restic.net), which Kestic runs and shows you the command for. Thanks to the restic authors and contributors for a backup tool that is fast, secure and well documented.
 
-Kestic is an independent project, not affiliated with or endorsed by the restic project. The name «restic» refers to that project and belongs to its authors.
+Kestic is an independent project, not affiliated with or endorsed by KDE e.V. or the restic project. KDE is a registered trademark of KDE e.V. The name «restic» refers to that project and belongs to its authors.
 
 ## License
 
