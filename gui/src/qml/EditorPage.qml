@@ -15,6 +15,10 @@ Kirigami.ScrollablePage {
     required property var appBackend
 
     property bool dirty: false
+    // A save is on its way to the daemon: the page takes no input until it has answered, so the
+    // answer cannot overwrite changes made meanwhile and a second save cannot start.
+    property bool saving: false
+    enabled: !saving
     property string unsavedObjectName: ""
     property string unsavedSubtitle: ""
     // Dialogs of the page that Escape closes before the «Save changes?» prompt.
@@ -41,10 +45,10 @@ Kirigami.ScrollablePage {
         }
     }
 
-    // Saves for the navigation guard; true when the page is clean afterwards. A page
+    // Saves for the navigation guard; `done(ok)` runs with true once the page is clean. A page
     // that can be dirty overrides it.
-    function saveForGuard() {
-        return false;
+    function saveForGuard(done) {
+        done(false);
     }
 
     function handleEscape() {

@@ -57,19 +57,26 @@ EditorPage {
         refreshSourceMetadata();
     }
 
-    function commitSave() {
-        if (!initialData || !valid) return false;
-        if (appBackend.updateBackupSource(backupId, sourcePath.trim())) {
-            initialData = rootWindow.findBackupData(backupId);
-            refreshSourceMetadata();
-            rootWindow.showPassiveNotification(i18n("Source saved"));
-            return true;
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function commitSave(done) {
+        if (!initialData || !valid || saving) {
+            if (done) done(false);
+            return;
         }
-        return false;
+        saving = true;
+        rootWindow.afterDaemonCall(appBackend.updateBackupSource(backupId, sourcePath.trim()), function(ok) {
+            saving = false;
+            if (ok) {
+                initialData = rootWindow.findBackupData(backupId);
+                refreshSourceMetadata();
+                rootWindow.showPassiveNotification(i18n("Source saved"));
+            }
+            if (done) done(ok);
+        });
     }
 
-    function saveForGuard() {
-        return commitSave();
+    function saveForGuard(done) {
+        commitSave(done);
     }
 
     actions: [
@@ -78,7 +85,7 @@ EditorPage {
             objectName: "saveSourceAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
+            enabled: page.dirty && page.valid && !page.saving && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: confirmChangeDialog.open()
         },
         Kirigami.Action {

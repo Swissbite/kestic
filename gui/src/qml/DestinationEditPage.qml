@@ -52,31 +52,40 @@ EditorPage {
     )
     readonly property bool canSave: dirty && destDraft.detailsValid && (!needsVerification || destDraft.connectionAccepted) && appBackend.blocking_kind === ""
 
-    function saveForGuard() {
-        if (!canSave || !initialData) return false;
-        if (appBackend.updateDestination(
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function saveForGuard(done) {
+        if (!canSave || !initialData || saving) {
+            if (done) done(false);
+            return;
+        }
+        var request = appBackend.updateDestination(
                 destinationId,
                 destDraft.fieldsJson(),
                 destDraft.setupMode,
                 destDraft.repoPassword,
                 destDraft.backendSecretsJson(),
                 page.needsVerification
-            )) {
-            initialData = rootWindow.findDestinationData(destinationId);
-            initialConnection = destDraft.connectionKey();
-            destDraft.setupMode = "connect";
-            destDraft.clearSecrets();
-            destDraft.connectionVerified = false;
-            destDraft.testFeedback = "";
-            destDraft.testFeedbackOk = false;
-            rootWindow.showPassiveNotification(Texts.label("destination_saved"));
-            return true;
-        }
-        destDraft.showError(appBackend.last_action_error);
-        if (appBackend.connection_test_error_kind === "other_repository") {
-            destDraft.connectionVerified = false;
-        }
-        return false;
+            );
+        saving = true;
+        rootWindow.afterDaemonCall(request, function(ok) {
+            saving = false;
+            if (ok) {
+                initialData = rootWindow.findDestinationData(destinationId);
+                initialConnection = destDraft.connectionKey();
+                destDraft.setupMode = "connect";
+                destDraft.clearSecrets();
+                destDraft.connectionVerified = false;
+                destDraft.testFeedback = "";
+                destDraft.testFeedbackOk = false;
+                rootWindow.showPassiveNotification(Texts.label("destination_saved"));
+            } else {
+                destDraft.showError(appBackend.last_action_error);
+                if (appBackend.connection_test_error_kind === "other_repository") {
+                    destDraft.connectionVerified = false;
+                }
+            }
+            if (done) done(ok);
+        });
     }
 
     actions: [
@@ -85,7 +94,7 @@ EditorPage {
             objectName: "saveDestinationAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.canSave
+            enabled: page.canSave && !page.saving
             onTriggered: page.saveForGuard()
         },
         Kirigami.Action {
@@ -101,8 +110,12 @@ EditorPage {
     unsavedSubtitle: i18n("You have unsaved changes to this destination.")
 
     onUnsavedSaveRequested: {
-        if (page.canSave && page.saveForGuard()) {
-            rootWindow.popSubPage();
+        if (page.canSave) {
+            page.saveForGuard(function(ok) {
+                if (ok && rootWindow.pageStack.currentItem === page) {
+                    rootWindow.popSubPage();
+                }
+            });
         }
     }
     onUnsavedDiscardRequested: {

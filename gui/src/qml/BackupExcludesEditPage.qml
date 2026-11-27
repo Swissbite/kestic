@@ -175,20 +175,28 @@ EditorPage {
         }
     }
 
-    function saveForGuard() {
-        if (!initialData) return false;
-        saveErrorText = "";
-        if (appBackend.updateBackupExcludes(backupId, currentExcludesJson())) {
-            initialData = rootWindow.findBackupData(backupId);
-            if (initialData) {
-                savedExcludesJson = initialData.excludesJson;
-                loadFromExcludesJson(savedExcludesJson);
-            }
-            rootWindow.showPassiveNotification(i18n("Exclude rules saved"));
-            return true;
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function saveForGuard(done) {
+        if (!initialData || saving) {
+            if (done) done(false);
+            return;
         }
-        saveErrorText = appBackend.last_action_error;
-        return false;
+        saveErrorText = "";
+        saving = true;
+        rootWindow.afterDaemonCall(appBackend.updateBackupExcludes(backupId, currentExcludesJson()), function(ok) {
+            saving = false;
+            if (ok) {
+                initialData = rootWindow.findBackupData(backupId);
+                if (initialData) {
+                    savedExcludesJson = initialData.excludesJson;
+                    loadFromExcludesJson(savedExcludesJson);
+                }
+                rootWindow.showPassiveNotification(i18n("Exclude rules saved"));
+            } else {
+                saveErrorText = appBackend.last_action_error;
+            }
+            if (done) done(ok);
+        });
     }
 
     actions: [
@@ -205,7 +213,7 @@ EditorPage {
             objectName: "saveExcludesAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
+            enabled: page.dirty && !page.saving && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.saveForGuard()
         },
         Kirigami.Action {
@@ -233,9 +241,11 @@ EditorPage {
     extraDialogs: [enableExpertModeDialog]
 
     onUnsavedSaveRequested: {
-        if (page.saveForGuard()) {
-            rootWindow.popSubPage();
-        }
+        page.saveForGuard(function(ok) {
+            if (ok && rootWindow.pageStack.currentItem === page) {
+                rootWindow.popSubPage();
+            }
+        });
     }
     onUnsavedDiscardRequested: {
         page.loadFromExcludesJson(page.savedExcludesJson);

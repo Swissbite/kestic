@@ -14,6 +14,7 @@ use kestic_test_support::bus::PrivateDbusGuard;
 use kestic_test_support::delayed_daemon::DelayedDaemon;
 use kestic_test_support::gui::{IsolatedEnv, SmokeContext};
 use kestic_test_support::workspace::workspace_root;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -208,7 +209,7 @@ fn slow_rig(
     base: &str,
     back: &str,
     front: &str,
-    delay_of: impl Fn(&str) -> Duration + Send + Sync + 'static,
+    delay_of: impl Fn(&str, &str) -> Duration + Send + Sync + 'static,
 ) -> (M3Rig, Backup) {
     let variant = latest_variant();
     let rig = M3Rig::start_on(
@@ -250,6 +251,174 @@ fn run_slow_scene(
     );
 }
 
+/// AC-M6-33-1: every reply comes 5 s late. (a) The edits and lists whose result the window waits
+/// for (rename, settings, run detail, destination types, known networks, snapshot list) return at
+/// once and the main thread never pauses longer than 100 ms; (b) their results arrive in the
+/// window.
+#[test]
+fn ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon() {
+    run_isolated_test(
+        "ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon",
+        "KESTIC_M6_S33_SLOW_EDITS_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowEditsFront";
+            let (rig, backup) = slow_rig(
+                root,
+                "SlowEdits",
+                "net.daester.KesticSlowEditsBack",
+                front,
+                |_, _| SLOW_REPLY,
+            );
+            let client = rig.daemon.client.clone();
+            client
+                .start_backup(backup.id.as_str())
+                .expect("start the backup");
+            wait_until_within(
+                Duration::from_secs(60),
+                "precondition: one finished run",
+                || {
+                    client.get_state().is_ok_and(|s| {
+                        s.recent_runs
+                            .iter()
+                            .any(|r| r.status != kestic_core::model::RunStatus::Running)
+                    })
+                },
+            );
+            run_slow_scene(root, "m6-slow-edits", front, &[], &[]);
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// The id of a run that has finished and is not in `known`, once there is one.
+fn next_finished_run(client: &KesticClient, known: &BTreeSet<String>) -> String {
+    let mut found = String::new();
+    wait_until_within(Duration::from_secs(60), "a run finished", || {
+        let finished = client.get_state().ok().and_then(|s| {
+            s.recent_runs
+                .iter()
+                .find(|r| {
+                    r.status != kestic_core::model::RunStatus::Running
+                        && !known.contains(r.id.as_str())
+                })
+                .map(|r| r.id.as_str().to_string())
+        });
+        finished.map(|id| found = id).is_some()
+    });
+    found
+}
+
+/// AC-M6-33-1 (b): replies that arrive late or out of order: the window shows the run and the
+/// snapshot list it asked for last, and an edit saved while an earlier one (a rename) is still on
+/// its way does not undo it.
+#[test]
+fn ac_m6_33_1_late_replies_do_not_show_stale_data_or_undo_edits() {
+    run_isolated_test(
+        "ac_m6_33_1_late_replies_do_not_show_stale_data_or_undo_edits",
+        "KESTIC_M6_S33_SLOW_ORDER_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowOrderFront";
+            let held: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+            let held_for_delay = Arc::clone(&held);
+            let (rig, backup_a) = slow_rig(
+                root,
+                "SlowOrder",
+                "net.daester.KesticSlowOrderBack",
+                front,
+                move |member, first| {
+                    let late = held_for_delay
+                        .lock()
+                        .expect("held ids")
+                        .iter()
+                        .any(|id| id == first);
+                    match member {
+                        "RenameBackup" => Duration::from_secs(3),
+                        "GetRunDetail" | "ListBackupSnapshots" if late => Duration::from_secs(4),
+                        _ => Duration::ZERO,
+                    }
+                },
+            );
+            let dest = rig.add_destination("Order Vault B", |_| {});
+            let backup_b = rig.add_backup_to(&dest, "Pictures", |_| {});
+            let client = rig.daemon.client.clone();
+            client.start_backup(backup_a.id.as_str()).expect("start A");
+            let run_a = next_finished_run(&client, &BTreeSet::new());
+            client.start_backup(backup_b.id.as_str()).expect("start B");
+            let run_b = next_finished_run(&client, &BTreeSet::from([run_a.clone()]));
+            held.lock()
+                .expect("held ids")
+                .extend([run_a.clone(), backup_a.id.as_str().to_string()]);
+            run_slow_scene(
+                root,
+                "m6-slow-order",
+                front,
+                &[],
+                &[
+                    ("KESTIC_TEST_BACKUP_A", backup_a.id.as_str()),
+                    ("KESTIC_TEST_BACKUP_B", backup_b.id.as_str()),
+                    ("KESTIC_TEST_RUN_A", &run_a),
+                    ("KESTIC_TEST_RUN_B", &run_b),
+                ],
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M6-33-1 (b): the state comes 2 s late and saving a backup 3 s late. (a) A backup added in
+/// the answer of adding its local destination (as the wizard does) gets that destination's run
+/// conditions (no network needed); (b) while exclude rules are saved, «Save» is off and a second
+/// save starts nothing, so a change made after the answer stays (checked in the smoke scene).
+#[test]
+fn ac_m6_33_1_saves_wait_for_their_answer() {
+    run_isolated_test(
+        "ac_m6_33_1_saves_wait_for_their_answer",
+        "KESTIC_M6_S33_SLOW_SAVE_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowSaveFront";
+            let (rig, _) = slow_rig(
+                root,
+                "SlowSave",
+                "net.daester.KesticSlowSaveBack",
+                front,
+                |member, _| match member {
+                    "GetState" => Duration::from_secs(2),
+                    "UpdateBackup" => Duration::from_secs(3),
+                    _ => Duration::ZERO,
+                },
+            );
+            let repo = root.join("added-repo");
+            let source = root.join("added-source");
+            std::fs::create_dir_all(&source).expect("source folder");
+            std::fs::create_dir_all(&repo).expect("empty repository folder");
+            run_slow_scene(
+                root,
+                "m6-slow-save",
+                front,
+                &[],
+                &[
+                    ("KESTIC_TEST_REPO", repo.to_str().expect("utf-8 path")),
+                    ("KESTIC_TEST_SOURCE", source.to_str().expect("utf-8 path")),
+                ],
+            );
+            let state = rig.daemon.client.get_state().expect("state");
+            let added = state
+                .backups
+                .iter()
+                .find(|b| b.backup.name == "Added")
+                .expect("the added backup");
+            assert!(
+                !added.backup.run_conditions.require_network,
+                "(a) the backup added right after its local destination needs no network"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// AC-M6-33-1 (b): the quit dialog of the tray opens before the first state arrived; the state
 /// that arrives later names the backup that runs.
 #[test]
@@ -265,7 +434,7 @@ fn ac_m6_33_1_quit_dialog_names_the_running_backup_once_the_state_arrives() {
                 "QuitRunning",
                 "net.daester.KesticQuitBack",
                 front,
-                |_| Duration::from_secs(2),
+                |_, _| Duration::from_secs(2),
             );
             rig.wrapper.hold("backup");
             rig.daemon
@@ -304,7 +473,7 @@ fn ac_m6_33_1_password_prompt_does_not_hold_back_other_actions() {
                 "Prompt",
                 "net.daester.KesticPromptBack",
                 front,
-                |member| {
+                |member, _| {
                     if member == "UnlockSecretStore" {
                         Duration::from_secs(30)
                     } else {
@@ -334,7 +503,7 @@ fn ac_m6_33_1_closing_window_still_reaches_the_daemon() {
                 "Close",
                 "net.daester.KesticCloseBack",
                 front,
-                |member| match member {
+                |member, _| match member {
                     "WindowActive" => Duration::from_secs(30),
                     "PauseGlobal" => Duration::from_secs(2),
                     _ => Duration::ZERO,
@@ -384,7 +553,7 @@ fn ac_m6_33_1_slow_start_does_not_hold_back_pausing() {
                 "SlowStart",
                 "net.daester.KesticSlowStartBack",
                 front,
-                |member| {
+                |member, _| {
                     if member == "StartBackup" || member == "StartAllBackups" {
                         Duration::from_secs(30)
                     } else {
@@ -413,7 +582,7 @@ fn ac_m6_33_1_refused_start_names_the_backup_and_the_reason() {
                 "Refused",
                 "net.daester.KesticRefusedBack",
                 front,
-                |_| Duration::from_secs(3),
+                |_, _| Duration::from_secs(3),
             );
             fs::remove_dir_all(&backup.source.path).expect("remove the source");
             run_slow_scene(

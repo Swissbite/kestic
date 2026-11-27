@@ -68,6 +68,7 @@ pub mod qobject {
         #[qproperty(QString, connection_test_note)]
         #[qproperty(QString, connection_test_host_key)]
         #[qproperty(bool, snapshots_loading)]
+        #[qproperty(QString, snapshots_backup_id)]
         #[qproperty(QString, snapshots_error)]
         #[qproperty(bool, snapshots_has_previous)]
         #[qproperty(QString, selected_run_id)]
@@ -121,6 +122,12 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "modelsUpdated"]
         fn models_updated(self: Pin<&mut KesticApp>);
+
+        /// The daemon answered the call `request` that an invokable started: `ok` and, where the
+        /// call has one, its result (JSON or an id).
+        #[qsignal]
+        #[cxx_name = "daemonCallDone"]
+        fn daemon_call_done(self: Pin<&mut KesticApp>, request: i32, ok: bool, result: QString);
 
         #[qsignal]
         #[cxx_name = "snapshotsUpdated"]
@@ -217,11 +224,11 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "destinationTypeCardsJson"]
-        fn destination_type_cards_json(self: &KesticApp) -> QString;
+        fn destination_type_cards_json(self: Pin<&mut KesticApp>) -> i32;
 
         #[qinvokable]
         #[cxx_name = "removableDrivesJson"]
-        fn removable_drives_json(self: &KesticApp) -> QString;
+        fn removable_drives_json(self: Pin<&mut KesticApp>) -> i32;
 
         #[qinvokable]
         #[cxx_name = "localFolderFromUrl"]
@@ -257,7 +264,7 @@ pub mod qobject {
             mode: &QString,
             repo_pw: &QString,
             backend_secrets_json: &QString,
-        ) -> QString;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "updateDestination"]
@@ -269,7 +276,7 @@ pub mod qobject {
             repo_pw: &QString,
             backend_secrets_json: &QString,
             verify_connection: bool,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "updateDestinationPassword"]
@@ -277,15 +284,15 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             dest_id: &QString,
             new_pw: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "trustHostKey"]
-        fn trust_host_key(self: Pin<&mut KesticApp>, host_key_id: &QString) -> bool;
+        fn trust_host_key(self: Pin<&mut KesticApp>, host_key_id: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "removeDestination"]
-        fn remove_destination(self: Pin<&mut KesticApp>, dest_id: &QString) -> bool;
+        fn remove_destination(self: Pin<&mut KesticApp>, dest_id: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "addBackup"]
@@ -295,7 +302,7 @@ pub mod qobject {
             source_path: &QString,
             dest_id: &QString,
             excludes_text: &QString,
-        ) -> QString;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "updateBackupExcludes"]
@@ -303,7 +310,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             excludes_json: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "updateBackupRetention"]
@@ -311,7 +318,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             retention_json: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "updateBackupSource"]
@@ -319,15 +326,12 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             source_path: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "renameBackup"]
-        fn rename_backup(
-            self: Pin<&mut KesticApp>,
-            backup_id: &QString,
-            new_name: &QString,
-        ) -> bool;
+        fn rename_backup(self: Pin<&mut KesticApp>, backup_id: &QString, new_name: &QString)
+        -> i32;
 
         #[qinvokable]
         #[cxx_name = "reassignBackup"]
@@ -335,11 +339,11 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             new_dest_id: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "removeBackup"]
-        fn remove_backup(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
+        fn remove_backup(self: Pin<&mut KesticApp>, backup_id: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "addExcludePathToBackup"]
@@ -347,7 +351,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             path: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "formatBytes"]
@@ -429,7 +433,7 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "loadRunDetail"]
-        fn load_run_detail(self: Pin<&mut KesticApp>, run_id: &QString) -> bool;
+        fn load_run_detail(self: Pin<&mut KesticApp>, run_id: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "getBackupTransparentCommand"]
@@ -437,7 +441,7 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "loadBackupSnapshots"]
-        fn load_backup_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString) -> bool;
+        fn load_backup_snapshots(self: Pin<&mut KesticApp>, backup_id: &QString);
 
         #[qinvokable]
         #[cxx_name = "loadRestoreOverview"]
@@ -489,7 +493,7 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "confirmQuit"]
-        fn confirm_quit(self: Pin<&mut KesticApp>) -> bool;
+        fn confirm_quit(self: Pin<&mut KesticApp>) -> i32;
 
         #[qinvokable]
         #[cxx_name = "homeDir"]
@@ -541,7 +545,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             dest_id: &QString,
             maintenance_json: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "updateBackupSchedule"]
@@ -550,7 +554,7 @@ pub mod qobject {
             backup_id: &QString,
             schedule_json: &QString,
             overdue_threshold: i32,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "updateBackupConditions"]
@@ -558,7 +562,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             conditions_json: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "updateSettings"]
@@ -570,11 +574,11 @@ pub mod qobject {
             on_overdue: bool,
             on_maintenance_failed: bool,
             on_restic_update: bool,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "listKnownNetworksJson"]
-        fn list_known_networks_json(self: &KesticApp) -> QString;
+        fn list_known_networks_json(self: Pin<&mut KesticApp>) -> i32;
 
         #[qinvokable]
         #[cxx_name = "todayIsoDate"]
@@ -682,6 +686,7 @@ pub struct KesticAppRust {
     /// empty.
     connection_test_host_key: QString,
     snapshots_loading: bool,
+    snapshots_backup_id: QString,
     snapshots_error: QString,
     snapshots_has_previous: bool,
     selected_run_id: QString,

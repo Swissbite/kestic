@@ -6,6 +6,7 @@ import net.daester.kestic 1.0
 
 // Fields, checks and connection test of a destination that is being added or edited.
 QtObject {
+    id: draft
 
     required property var appBackend
     property string destinationId: ""
@@ -307,14 +308,28 @@ QtObject {
         connectionVerified = false;
     }
 
-    // Trusts the host key of the last connection test and tests again.
+    // The trust request the draft waits for before it tests again.
+    property int pendingTrust: 0
+
+    property Connections trustAnswer: Connections {
+        target: draft.appBackend
+        function onDaemonCallDone(request, ok, result) {
+            if (request !== draft.pendingTrust) return;
+            draft.pendingTrust = 0;
+            draft.runConnectionTest();
+        }
+    }
+
+    // Trusts the host key of the last connection test and tests again once the daemon answered.
     function trustHostKey() {
         var id = hostKey ? hostKey.host_key_id : "";
         hostKey = null;
         // Trusted or not (the shown key expired, the daemon restarted, a file got another key
         // meanwhile): a new test shows where the server stands now.
-        appBackend.trustHostKey(id);
-        return runConnectionTest();
+        pendingTrust = appBackend.trustHostKey(id);
+        if (pendingTrust === 0) {
+            runConnectionTest();
+        }
     }
 
     function showError(text) {

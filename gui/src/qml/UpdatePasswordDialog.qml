@@ -22,16 +22,29 @@ Kirigami.Dialog {
         updatePasswordField.text = "";
     }
 
+    // The request the dialog waits for; it closes once the daemon accepted the password.
+    property int pendingRequest: 0
+
+    function save(password) {
+        if (dialog.pendingRequest !== 0) return;
+        dialog.pendingRequest = dialog.appBackend.updateDestinationPassword(dialog.destId, password);
+    }
+
+    Connections {
+        target: dialog.appBackend
+        function onDaemonCallDone(request, ok, result) {
+            if (request !== dialog.pendingRequest) return;
+            dialog.pendingRequest = 0;
+            if (ok) dialog.close();
+        }
+    }
+
     customFooterActions: [
         Kirigami.Action {
             icon.name: "dialog-ok-apply"
             text: i18n("Verify and Save")
-            enabled: updatePasswordField.text.length > 0
-            onTriggered: {
-                if (dialog.appBackend.updateDestinationPassword(dialog.destId, updatePasswordField.text)) {
-                    dialog.close();
-                }
-            }
+            enabled: updatePasswordField.text.length > 0 && dialog.pendingRequest === 0
+            onTriggered: dialog.save(updatePasswordField.text)
         }
     ]
 
@@ -52,9 +65,7 @@ Kirigami.Dialog {
             Accessible.name: Texts.label("repository_password")
             Layout.fillWidth: true
             onAccepted: {
-                if (text.length > 0 && dialog.appBackend.updateDestinationPassword(dialog.destId, text)) {
-                    dialog.close();
-                }
+                if (text.length > 0) dialog.save(text);
             }
         }
 

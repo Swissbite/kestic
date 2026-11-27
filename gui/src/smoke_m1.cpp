@@ -7,6 +7,11 @@
 #include <QElapsedTimer>
 #include <functional>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QQmlContext>
+#include <QQmlExpression>
 #include <QLocale>
 
 namespace kestic::smoke {
@@ -112,6 +117,8 @@ void scene_e2e_wizard_backup(const Scene& s) {
         }},
         {400, [s] {
             QQuickWindow* w = s.window;
+            // The wizard closes once the daemon has created the repository.
+            wait_until([w] { return !child_object(w, "addDestinationWizard"); }, 30000);
             SMOKE_CHECK("E2E", 60, !child_object(w, "addDestinationWizard"), "AddDestinationWizard did not close after Save Destination");
             auto* dm = model_named(w, "destinationsModel");
             SMOKE_CHECK("E2E", 61, dm, "destinationsModel missing");
@@ -797,6 +804,326 @@ void run_close_window_scene(QQuickWindow* window, QObject* backend,
         });
 }
 
+// Calls `method` on the backend and fails the scene unless it returns a request id (> 0) within
+// 100 ms (AC-M6-33-1 (a)).
+bool requests_at_once(int code, const char* method, const std::function<int()>& call) {
+    QElapsedTimer took;
+    took.start();
+    const int request = call();
+    const qint64 ms = took.elapsed();
+    if (request <= 0) {
+        smoke_fail("M6", code, QStringLiteral("%1 returned no request").arg(QLatin1String(method)));
+        return false;
+    }
+    if (ms >= 100) {
+        smoke_fail("M6", code, QStringLiteral("(a) %1 kept the main thread for %2 ms").arg(QLatin1String(method)).arg(ms));
+        return false;
+    }
+    return true;
+}
+
+// AC-M6-33-1: every reply comes 5 s late. The edits and lists whose result the window waits for
+// return a request at once, the main thread never pauses longer than 100 ms, and the results
+// arrive: the new name, the new setting, the run's detail and the snapshot list.
+void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    auto stop = std::make_shared<bool>(false);
+    auto building_page = std::make_shared<bool>(false);
+    auto largest_gap = watch_main_thread_gaps(window, stop, building_page);
+    auto step = std::make_shared<int>(-1);
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (waited->elapsed() > 90000) {
+            poll->stop();
+            smoke_fail("M6", 70, QStringLiteral("timed out at step %1").arg(*step));
+            return;
+        }
+        if (*step < 0) {
+            if (backend->property("daemon_reachable").toBool() && !run_id_at(window, 0).isEmpty()) {
+                *step = 0;
+            }
+            return;
+        }
+        const QString bid = backup_id_at(window, 0);
+        const QString rid = run_id_at(window, 0);
+        // One call per tick, so each pause of the main thread belongs to one call.
+        bool ok = true;
+        switch ((*step)++) {
+        case 0:
+            ok = requests_at_once(71, "renameBackup", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "renameBackup", Q_RETURN_ARG(int, request),
+                    Q_ARG(QString, bid), Q_ARG(QString, QStringLiteral("Renamed Documents")));
+                return request;
+            });
+            break;
+        case 1:
+            ok = requests_at_once(72, "updateSettings", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "updateSettings", Q_RETURN_ARG(int, request),
+                    Q_ARG(int, 5), Q_ARG(bool, true), Q_ARG(bool, true), Q_ARG(bool, true),
+                    Q_ARG(bool, true), Q_ARG(bool, false));
+                return request;
+            });
+            break;
+        case 2:
+            ok = requests_at_once(73, "loadRunDetail", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "loadRunDetail", Q_RETURN_ARG(int, request), Q_ARG(QString, rid));
+                return request;
+            });
+            break;
+        case 3:
+            ok = requests_at_once(74, "destinationTypeCardsJson", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "destinationTypeCardsJson", Q_RETURN_ARG(int, request));
+                return request;
+            });
+            break;
+        case 4:
+            ok = requests_at_once(75, "listKnownNetworksJson", [&]() {
+                int request = 0;
+                QMetaObject::invokeMethod(backend, "listKnownNetworksJson", Q_RETURN_ARG(int, request));
+                return request;
+            });
+            break;
+        case 5: {
+            QElapsedTimer took;
+            took.start();
+            QMetaObject::invokeMethod(backend, "loadBackupSnapshots", Q_ARG(QString, bid));
+            if (took.elapsed() >= 100) {
+                poll->stop();
+                smoke_fail("M6", 76, QStringLiteral("(a) loadBackupSnapshots kept the main thread for %1 ms").arg(took.elapsed()));
+            }
+            break;
+        }
+        case 6:
+            // Building the wizard is QML work, not a wait for the daemon.
+            *building_page = true;
+            QMetaObject::invokeMethod(window, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QStringLiteral("init")));
+            break;
+        case 7: {
+            // The destination types are still on their way: the step says so instead of showing nothing.
+            QQuickItem* loading = child_item(window, "wizDestCardsLoading");
+            QQuickItem* ready = child_item(window, "wizDestReadySection");
+            SMOKE_CHECK3("M6", 78, loading, loading->isVisible(), ready && !ready->isVisible(),
+                "(b) the destination types show no loading state while they are on their way");
+            break;
+        }
+        case 8: {
+            QQuickItem* ready = child_item(window, "wizDestReadySection");
+            if (!ready || !ready->isVisible()) {
+                --*step;
+                return;
+            }
+            QQuickItem* loading = child_item(window, "wizDestCardsLoading");
+            SMOKE_CHECK2("M6", 78, loading, !loading->isVisible(), "(b) the loading state stays after the destination types arrived");
+            QObject* wizard = child_object(window, "addDestinationWizard");
+            SMOKE_CHECK("M6", 78, wizard, "addDestinationWizard missing");
+            auto* draft = wizard->property("draft").value<QObject*>();
+            SMOKE_CHECK("M6", 78, draft, "the wizard's draft missing");
+            *building_page = true;
+            draft->setProperty("typeCard", QStringLiteral("drive"));
+            wizard->setProperty("step", 2);
+            break;
+        }
+        case 9: {
+            // The drives are still on their way: no claim that none is plugged in.
+            QQuickItem* loading = child_item(window, "wizDestDrivesLoading");
+            QQuickItem* none = child_item(window, "wizDestNoDriveMessage");
+            SMOKE_CHECK3("M6", 79, loading, loading->isVisible(), none && !none->isVisible(),
+                "(b) the drive list shows no loading state or claims that no drive is plugged in");
+            break;
+        }
+        default: {
+            QQuickItem* drives_loading = child_item(window, "wizDestDrivesLoading");
+            const bool arrived = role_value(model_named(window, "backupsModel"), 0, "name").toString() == QLatin1String("Renamed Documents")
+                && backend->property("default_overdue_threshold").toInt() == 5
+                && !backend->property("selected_run_title").toString().isEmpty()
+                && !backend->property("snapshots_loading").toBool()
+                && drives_loading && !drives_loading->isVisible();
+            if (!arrived) {
+                return;
+            }
+            poll->stop();
+            *stop = true;
+            SMOKE_CHECK("M6", 77, *largest_gap <= 100,
+                QStringLiteral("(a) the main thread paused %1 ms while the daemon was slow").arg(*largest_gap));
+            // The drive message fades in; the screenshot shows it once it is there.
+            QTimer::singleShot(600, window, [=]() { smoke_finish("M6", warnings.get(), window, out_path); });
+            return;
+        }
+        }
+        if (!ok) {
+            poll->stop();
+        }
+    });
+    poll->start(50);
+}
+
+// The row of `id` in the model `model_name` (role `id_role`), or -1.
+int row_of(QQuickWindow* window, const char* model_name, const char* id_role, const QString& id) {
+    QAbstractItemModel* model = model_named(window, model_name);
+    for (int row = 0; model && row < model->rowCount(); ++row) {
+        if (role_value(model, row, id_role).toString() == id) return row;
+    }
+    return -1;
+}
+
+// AC-M6-33-1: replies that arrive late or out of order do not show stale data or undo the user's
+// edits. The test holds back the detail of run A, the snapshot list of backup A and renaming.
+// The window asks for run A then B, backup A's list then B's, renames A and saves A's exclude
+// rules right after; once every reply is in, it shows run B, backup B's list and A's new name.
+void run_slow_order_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    const QString backup_a = qEnvironmentVariable("KESTIC_TEST_BACKUP_A");
+    const QString backup_b = qEnvironmentVariable("KESTIC_TEST_BACKUP_B");
+    const QString run_a = qEnvironmentVariable("KESTIC_TEST_RUN_A");
+    const QString run_b = qEnvironmentVariable("KESTIC_TEST_RUN_B");
+    SMOKE_CHECK("M6", 80, !backup_a.isEmpty() && !backup_b.isEmpty() && !run_a.isEmpty() && !run_b.isEmpty(),
+        "precondition: backup and run ids");
+    auto step = std::make_shared<int>(-1);
+    auto settled = std::make_shared<QElapsedTimer>();
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (waited->elapsed() > 60000) {
+            poll->stop();
+            smoke_fail("M6", 81, QStringLiteral("timed out at step %1").arg(*step));
+            return;
+        }
+        if (*step < 0) {
+            if (backend->property("daemon_reachable").toBool()
+                    && row_of(window, "backupsModel", "backupId", backup_a) >= 0) {
+                *step = 0;
+            }
+            return;
+        }
+        switch (*step) {
+        case 0:
+            QMetaObject::invokeMethod(backend, "loadRunDetail", Q_ARG(QString, run_a));
+            break;
+        case 1:
+            QMetaObject::invokeMethod(backend, "loadRunDetail", Q_ARG(QString, run_b));
+            break;
+        case 2:
+            QMetaObject::invokeMethod(backend, "loadBackupSnapshots", Q_ARG(QString, backup_a));
+            break;
+        case 3:
+            QMetaObject::invokeMethod(backend, "loadBackupSnapshots", Q_ARG(QString, backup_b));
+            break;
+        case 4:
+            QMetaObject::invokeMethod(backend, "renameBackup", Q_ARG(QString, backup_a), Q_ARG(QString, QStringLiteral("Renamed A")));
+            break;
+        case 5: {
+            const int row = row_of(window, "backupsModel", "backupId", backup_a);
+            const QString excludes = role_value(model_named(window, "backupsModel"), row, "excludesJson").toString();
+            QMetaObject::invokeMethod(backend, "updateBackupExcludes", Q_ARG(QString, backup_a), Q_ARG(QString, excludes));
+            settled->start();
+            break;
+        }
+        default: {
+            // Every held-back reply (at most 4 s) and the edits after it are in by now.
+            if (settled->elapsed() < 9000) return;
+            poll->stop();
+            const QString shown_run = backend->property("selected_run_id").toString();
+            SMOKE_CHECK("M6", 82, shown_run == run_b,
+                QStringLiteral("(b) the detail of run %1 shows instead of run B").arg(shown_run));
+            const QString shown_list = backend->property("snapshots_backup_id").toString();
+            SMOKE_CHECK2("M6", 83, shown_list == backup_b, !backend->property("snapshots_loading").toBool(),
+                QStringLiteral("(b) the snapshot list of %1 shows instead of backup B").arg(shown_list));
+            const int row = row_of(window, "backupsModel", "backupId", backup_a);
+            const QString name = role_value(model_named(window, "backupsModel"), row, "name").toString();
+            SMOKE_CHECK("M6", 84, name == QLatin1String("Renamed A"),
+                QStringLiteral("(b) saving the exclude rules undid the rename: '%1'").arg(name));
+            smoke_finish("M6", warnings.get(), window, out_path);
+            return;
+        }
+        }
+        ++*step;
+    });
+    poll->start(50);
+}
+
+// Second half of the slow-save scene: the exclude rules of the first backup, saved twice.
+void run_double_save(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path) {
+    QMetaObject::invokeMethod(window, "openBackupExcludesPage", Q_ARG(QVariant, backup_id_at(window, 0)));
+    wait_then(window, 5000, 88, QStringLiteral("the exclude rules page did not open"),
+        [=]() { return child_item(window, "backupExcludesEditPage") != nullptr; },
+        [=]() {
+            QQuickItem* page = child_item(window, "backupExcludesEditPage");
+            QObject* save = child_object(window, "saveExcludesAction");
+            const bool caches = page->property("excludeCaches").toBool();
+            page->setProperty("excludeCaches", !caches);
+            QMetaObject::invokeMethod(page, "saveForGuard", Q_ARG(QVariant, QVariant()));
+            SMOKE_CHECK3("M6", 89, page->property("saving").toBool(), save, !save->property("enabled").toBool(),
+                "(b) «Save» stays on while the exclude rules are saved");
+            QMetaObject::invokeMethod(page, "saveForGuard", Q_ARG(QVariant, QVariant()));
+            wait_then(window, 20000, 90, QStringLiteral("the save never answered"),
+                [=]() { return !page->property("saving").toBool(); },
+                [=]() {
+                    page->setProperty("excludeCaches", caches);
+                    auto settled = std::make_shared<QElapsedTimer>();
+                    settled->start();
+                    // A second save, had it been sent, answers about 7 s after the first: it
+                    // reads the state (2 s late), saves (3 s late) and reads the state again.
+                    wait_then(window, 20000, 91, QStringLiteral("timed out"),
+                        [=]() { return settled->elapsed() > 12000; },
+                        [=]() {
+                            SMOKE_CHECK2("M6", 91, page->property("dirty").toBool(),
+                                page->property("excludeCaches").toBool() == caches,
+                                "(b) a second save discarded the change made after the first one answered");
+                            smoke_finish("M6", warnings.get(), window, out_path);
+                        });
+                });
+        });
+}
+
+// AC-M6-33-1: saving waits for the daemon's answer. The test holds back the state (2 s) and
+// saving a backup (3 s). (a) A backup added as soon as its new destination is saved, as the
+// wizard does it, sees that destination (the test checks its run conditions). (b) While the
+// exclude rules are saved, «Save» is off and a second save starts nothing, so a change made after
+// the answer stays.
+void run_slow_save_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    const QString repo = qEnvironmentVariable("KESTIC_TEST_REPO");
+    const QString source = qEnvironmentVariable("KESTIC_TEST_SOURCE");
+    SMOKE_CHECK("M6", 85, !repo.isEmpty() && !source.isEmpty(), "precondition: repository and source paths");
+    wait_then(window, 30000, 86, QStringLiteral("the state never arrived"),
+        [=]() { return backend->property("daemon_reachable").toBool() && !backup_id_at(window, 0).isEmpty(); },
+        [=]() {
+            QJsonObject fields{{"kind", "local"}, {"name", "Added Vault"}, {"location", repo}, {"username", ""},
+                {"endpoint", ""}, {"bucket", ""}, {"path", ""}, {"region", ""}, {"host", ""}, {"port", 22},
+                {"env", QJsonArray()}};
+            const QString args = QString::fromUtf8(QJsonDocument(QJsonArray{
+                QString::fromUtf8(QJsonDocument(fields).toJson(QJsonDocument::Compact)), source})
+                .toJson(QJsonDocument::Compact));
+            // The wizard's order: the backup is added in the answer of adding its destination.
+            QQmlExpression chain(qmlContext(window), window, QStringLiteral(
+                "(function(a) {"
+                "  afterDaemonCall(appBackend.addDestination(a[0], 'init', 'added-password', '{}'), function(ok, id) {"
+                "    if (ok) afterDaemonCall(appBackend.addBackup('Added', a[1], id, ''), function() {});"
+                "  });"
+                "})(%1)").arg(args));
+            chain.evaluate();
+            SMOKE_CHECK("M6", 87, !chain.hasError(), chain.error().toString());
+            wait_then(window, 30000, 87, QStringLiteral("the added backup never arrived"),
+                [=]() {
+                    return row_of(window, "backupsModel", "name", QStringLiteral("Added")) >= 0
+                        || !backend->property("last_action_error").toString().isEmpty();
+                },
+                [=]() {
+                    SMOKE_CHECK("M6", 87, row_of(window, "backupsModel", "name", QStringLiteral("Added")) >= 0,
+                        QStringLiteral("adding failed: %1").arg(backend->property("last_action_error").toString()));
+                    run_double_save(window, warnings, out_path);
+                });
+        });
+}
+
 // AC-M6-33-1: «Back Up Now» and «Back Up All Now» answered late (the test holds StartBackup and
 // StartAllBackups back 30 s) do not hold back pausing that backup or all backups.
 void run_slow_start_scene(QQuickWindow* window, QObject* backend,
@@ -903,6 +1230,12 @@ void run_m6_smoke_scenario(
         run_prompt_alone_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-close-window")) {
         run_close_window_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-order")) {
+        run_slow_order_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-save")) {
+        run_slow_save_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-edits")) {
+        run_slow_edits_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-start")) {
         run_slow_start_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-refused-start")) {

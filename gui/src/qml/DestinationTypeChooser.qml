@@ -42,10 +42,27 @@ ColumnLayout {
 
     spacing: Kirigami.Units.mediumSpacing
 
+    // The request for the cards the chooser waits for.
+    property int pendingCards: 0
+
+    Connections {
+        target: chooser.appBackend
+        function onDaemonCallDone(request, ok, result) {
+            if (request !== chooser.pendingCards) return;
+            chooser.pendingCards = 0;
+            chooser.showCards(result);
+        }
+    }
+
+    // Asks the daemon for the cards; they show once it has answered.
     function reload() {
+        chooser.pendingCards = chooser.appBackend.destinationTypeCardsJson();
+    }
+
+    function showCards(json) {
         var reply = {};
         try {
-            reply = JSON.parse(chooser.appBackend.destinationTypeCardsJson());
+            reply = JSON.parse(json);
         } catch (e) {
             reply = {};
         }
@@ -142,6 +159,14 @@ ColumnLayout {
                 onTriggered: chooser.reload()
             }
         ]
+    }
+
+    // The daemon has not answered with the destination types yet.
+    Kirigami.LoadingPlaceholder {
+        objectName: chooser.namePrefix + "CardsLoading"
+        Layout.fillWidth: true
+        visible: chooser.pendingCards !== 0 && chooser.cards.length === 0
+        text: Texts.label("loading")
     }
 
     Kirigami.ListSectionHeader {

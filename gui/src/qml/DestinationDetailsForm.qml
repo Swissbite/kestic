@@ -219,15 +219,28 @@ ColumnLayout {
         property var drives: []
         property string loadError: ""
 
-        function reload() {
-            var reply = {};
-            try {
-                reply = JSON.parse(form.appBackend.removableDrivesJson());
-            } catch (e) {
-                reply = {};
+        // The request for the drives the picker waits for.
+        property int pendingDrives: 0
+
+        Connections {
+            target: form.appBackend
+            function onDaemonCallDone(request, ok, result) {
+                if (request !== drivePicker.pendingDrives) return;
+                drivePicker.pendingDrives = 0;
+                var reply = {};
+                try {
+                    reply = JSON.parse(result);
+                } catch (e) {
+                    reply = {};
+                }
+                drivePicker.drives = reply.drives || [];
+                drivePicker.loadError = reply.error || "";
             }
-            drivePicker.drives = reply.drives || [];
-            drivePicker.loadError = reply.error || "";
+        }
+
+        // Asks the daemon for the mounted drives; they show once it has answered.
+        function reload() {
+            drivePicker.pendingDrives = form.appBackend.removableDrivesJson();
         }
 
         objectName: form.namePrefix + "DrivePicker"
@@ -282,11 +295,19 @@ ColumnLayout {
             }
         }
 
+        Kirigami.LoadingPlaceholder {
+            objectName: form.namePrefix + "DrivesLoading"
+            Layout.fillWidth: true
+            visible: drivePicker.drives.length === 0 && drivePicker.pendingDrives !== 0
+            text: Texts.label("loading")
+        }
+
         Kirigami.InlineMessage {
             objectName: form.namePrefix + "NoDriveMessage"
             Layout.fillWidth: true
             type: drivePicker.loadError !== "" ? Kirigami.MessageType.Error : Kirigami.MessageType.Information
-            visible: drivePicker.drives.length === 0
+            // Only once the daemon has answered: until then nobody knows whether a drive is there.
+            visible: drivePicker.drives.length === 0 && drivePicker.pendingDrives === 0
             text: drivePicker.loadError !== "" ? drivePicker.loadError : i18n("No removable drive is plugged in.")
         }
 

@@ -126,44 +126,61 @@ WizardPage {
         }
     }
 
+    // A save is on its way to the daemon; the finish buttons wait for it.
+    property bool submitting: false
+
+    // Saves the destination (integrated flow) and the backup, one after the other once the
+    // daemon has answered, then starts the backup when asked to.
     function submitBackup(startImmediately) {
-        if (!summaryValid) return;
+        if (!summaryValid || submitting) return;
         saveErrorText = "";
-        var targetDestId = selectedDestId;
-        if (integratedDestFlow) {
-            if (createdDestId === "") {
-                var newDestId = appBackend.addDestination(
-                    destDraft.fieldsJson(),
-                    destDraft.setupMode,
-                    destDraft.repoPassword,
-                    destDraft.backendSecretsJson()
-                );
-                if (newDestId === "") {
+        submitting = true;
+        if (integratedDestFlow && createdDestId === "") {
+            var request = appBackend.addDestination(
+                destDraft.fieldsJson(),
+                destDraft.setupMode,
+                destDraft.repoPassword,
+                destDraft.backendSecretsJson()
+            );
+            rootWindow.afterDaemonCall(request, function(ok, newDestId) {
+                if (!ok || newDestId === "") {
                     saveErrorText = appBackend.last_action_error;
+                    submitting = false;
                     return;
                 }
                 createdDestId = newDestId;
-            }
+                addBackupTo(startImmediately);
+            });
+            return;
+        }
+        addBackupTo(startImmediately);
+    }
+
+    function addBackupTo(startImmediately) {
+        var targetDestId = selectedDestId;
+        if (integratedDestFlow) {
             targetDestId = createdDestId;
             selectedDestId = createdDestId;
             selectedDestName = destDraft.name.trim();
         }
-
-        var createdId = appBackend.addBackup(
+        var request = appBackend.addBackup(
             backupName.trim(),
             sourcePath.trim(),
             targetDestId,
             excludesText
         );
-        if (createdId !== "") {
-            rootWindow.showPassiveNotification(i18n("Backup saved"));
-            rootWindow.closeWizardLayer();
-            if (startImmediately) {
-                appBackend.startBackup(createdId);
+        rootWindow.afterDaemonCall(request, function(ok, createdId) {
+            submitting = false;
+            if (ok && createdId !== "") {
+                rootWindow.showPassiveNotification(i18n("Backup saved"));
+                rootWindow.closeWizardLayer();
+                if (startImmediately) {
+                    appBackend.startBackup(createdId);
+                }
+            } else {
+                saveErrorText = appBackend.last_action_error;
             }
-        } else {
-            saveErrorText = appBackend.last_action_error;
-        }
+        });
     }
 
     Component.onCompleted: {
@@ -471,7 +488,7 @@ WizardPage {
             objectName: "wizBackupSaveLaterButton"
             visible: page.currentStage === "summary"
             text: i18n("Save, Back Up Later")
-            enabled: page.canAdvance
+            enabled: page.canAdvance && !page.submitting
             Accessible.name: i18n("Save, Back Up Later")
             onClicked: page.submitBackup(false)
         },
@@ -481,7 +498,7 @@ WizardPage {
             icon.name: "media-playback-start"
             text: Texts.label("back_up_now")
             highlighted: true
-            enabled: page.canAdvance
+            enabled: page.canAdvance && !page.submitting
             Accessible.name: i18n("Save and Back Up Now")
             onClicked: page.submitBackup(true)
         }

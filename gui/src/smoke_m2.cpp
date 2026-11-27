@@ -119,7 +119,8 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     QObject* confirm_exp = child_object(window, "confirmEnableExpertModeAction");
     SMOKE_CHECK3("M2", 210, exp_dlg, exp_dlg->property("visible").toBool(), confirm_exp, "enableExpertModeDialog did not open");
     trigger(confirm_exp);
-    wait_ms(200);
+    // Expert mode is on once the daemon has answered.
+    wait_until([backend, expert_sec] { return backend->property("expert_mode").toBool() && expert_sec->isVisible(); }, 15000);
     SMOKE_CHECK2("M2", 211, backend->property("expert_mode").toBool(), expert_sec->isVisible(),
         "confirming Enable Expert Mode did not unlock excludeExpertSection");
 
@@ -156,22 +157,24 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     QObject* save_act = child_object(window, "saveExcludesAction");
     SMOKE_CHECK_ENABLED("M2", 220, save_act, "saveExcludesAction should be enabled");
     trigger(save_act);
-    wait_ms(200);
+    // The save is done once the daemon has answered.
+    wait_until([excl_page] { return !excl_page->property("dirty").toBool(); }, 15000);
     SMOKE_CHECK("M2", 221, !excl_page->property("dirty").toBool(), "BackupExcludesEditPage still dirty after valid save");
 
     // AC-M2-02-6: Invalid D-Bus save preserves draft and shows error banner.
     excl_area->setProperty("text", QStringLiteral("*.tmp\ndraft-preserved\ndir/*\n!dir/inner"));
     wait_ms(80);
-    bool ok_invalid = true;
+    // Invalid input is refused before it reaches the daemon: no request (0) and the error at once.
+    int invalid_request = -1;
     QMetaObject::invokeMethod(
         backend,
         "updateBackupExcludes",
         Qt::DirectConnection,
-        Q_RETURN_ARG(bool, ok_invalid),
+        Q_RETURN_ARG(int, invalid_request),
         Q_ARG(QString, bid),
         Q_ARG(QString, QStringLiteral("{invalid-json"))
     );
-    SMOKE_CHECK2("M2", 222, !ok_invalid, !backend->property("last_action_error").toString().isEmpty(),
+    SMOKE_CHECK2("M2", 222, invalid_request == 0, !backend->property("last_action_error").toString().isEmpty(),
         "invalid updateBackupExcludes should fail with last_action_error");
     excl_page->setProperty("saveErrorText", backend->property("last_action_error"));
     wait_ms(80);
@@ -328,7 +331,8 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
             QStringLiteral("unexpected entry in the confirmation list: '%1'").arg(entry));
     }
     trigger(confirm_act);
-    wait_ms(200);
+    // The save is done once the daemon has answered.
+    wait_until([ret_page] { return !ret_page->property("dirty").toBool(); }, 15000);
     SMOKE_CHECK("M2", 250, !ret_page->property("dirty").toBool(), "retention rules still dirty after confirming save");
 
     // AC-M2-06-5: Saving policy that removes 0 snapshots saves immediately without confirmation dialog.
@@ -486,19 +490,23 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
     // D-Bus errors are shown by their error name in the GUI language, whatever language the
     // daemon runs in: removing an unknown backup fails with `NotFound`.
     {
-        bool removed = true;
+        backend->setProperty("last_action_error", QString());
+        int request = 0;
         QMetaObject::invokeMethod(
             backend,
             "removeBackup",
             Qt::DirectConnection,
-            Q_RETURN_ARG(bool, removed),
+            Q_RETURN_ARG(int, request),
             Q_ARG(QString, QStringLiteral("aaaaaaaa"))
         );
+        // The refusal arrives once the daemon has answered.
+        wait_until([backend] { return !backend->property("last_action_error").toString().isEmpty(); }, 15000);
+        const bool removed = backend->property("last_action_error").toString().isEmpty();
         const QString not_found_text = backend->property("last_action_error").toString();
         const QString expected_not_found = (lang == QLatin1String("de"))
             ? QStringLiteral("Der Eintrag existiert nicht mehr.")
             : QStringLiteral("The item no longer exists.");
-        SMOKE_CHECK("M2", 289, !removed, "removing an unknown backup must fail");
+        SMOKE_CHECK2("M2", 289, request > 0, !removed, "removing an unknown backup must fail");
         SMOKE_CHECK("M2", 289, not_found_text == expected_not_found, QStringLiteral("unexpected NotFound error text '%1'").arg(not_found_text));
     }
 

@@ -123,21 +123,28 @@ EditorPage {
         hydrating = false;
     }
 
-    function commitSave(popOnSuccess) {
-        if (!dirty) return false;
-        if (appBackend.updateDestinationMaintenance(destinationId, currentMaintJson())) {
-            initialData = rootWindow.findDestinationData(destinationId);
-            if (initialData) {
-                savedMaintenanceJson = initialData.maintenanceJson;
-                loadFromSaved(savedMaintenanceJson);
-            }
-            rootWindow.showPassiveNotification(i18n("Maintenance schedule saved"));
-            if (popOnSuccess) {
-                rootWindow.popSubPage();
-            }
-            return true;
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function commitSave(popOnSuccess, done) {
+        if (!dirty || saving) {
+            if (done) done(false);
+            return;
         }
-        return false;
+        saving = true;
+        rootWindow.afterDaemonCall(appBackend.updateDestinationMaintenance(destinationId, currentMaintJson()), function(ok) {
+            saving = false;
+            if (ok) {
+                initialData = rootWindow.findDestinationData(destinationId);
+                if (initialData) {
+                    savedMaintenanceJson = initialData.maintenanceJson;
+                    loadFromSaved(savedMaintenanceJson);
+                }
+                rootWindow.showPassiveNotification(i18n("Maintenance schedule saved"));
+                if (popOnSuccess && rootWindow.pageStack.currentItem === page) {
+                    rootWindow.popSubPage();
+                }
+            }
+            if (done) done(ok);
+        });
     }
 
     function formatPreviewSummary(rawJson) {
@@ -189,12 +196,14 @@ EditorPage {
         }
     }
 
-    function saveForGuard() {
+    function saveForGuard(done) {
         if (pruneDirty) {
+            // Saving waits for the confirmation of the pruning; the navigation does not.
             requestSave(false);
-            return false;
+            done(false);
+            return;
         }
-        return commitSave(false);
+        commitSave(false, done);
     }
 
     function indexOfOption(arr, key) {
@@ -220,7 +229,7 @@ EditorPage {
             objectName: "saveMaintenanceAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.dirty && appBackend.blocking_kind !== "daemon_unreachable"
+            enabled: page.dirty && !page.saving && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.requestSave(false)
         },
         Kirigami.Action {

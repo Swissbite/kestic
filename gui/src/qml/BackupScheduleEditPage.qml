@@ -219,26 +219,33 @@ EditorPage {
         refreshPreview();
     }
 
-    function commitSave(popOnSuccess) {
-        if (!dirty || !valid) return false;
-        if (appBackend.updateBackupSchedule(backupId, currentScheduleJson(), effectiveOverdueThreshold)) {
-            initialData = rootWindow.findBackupData(backupId);
-            if (initialData) {
-                savedScheduleJson = initialData.scheduleJson;
-                savedOverdueThreshold = initialData.overdueThreshold;
-                loadFromSaved(savedScheduleJson, savedOverdueThreshold);
-            }
-            rootWindow.showPassiveNotification(i18n("Schedule saved"));
-            if (popOnSuccess) {
-                rootWindow.popSubPage();
-            }
-            return true;
+    // Saves; `done(ok)` runs once the daemon has answered.
+    function commitSave(popOnSuccess, done) {
+        if (!dirty || !valid || saving) {
+            if (done) done(false);
+            return;
         }
-        return false;
+        saving = true;
+        rootWindow.afterDaemonCall(appBackend.updateBackupSchedule(backupId, currentScheduleJson(), effectiveOverdueThreshold), function(ok) {
+            saving = false;
+            if (ok) {
+                initialData = rootWindow.findBackupData(backupId);
+                if (initialData) {
+                    savedScheduleJson = initialData.scheduleJson;
+                    savedOverdueThreshold = initialData.overdueThreshold;
+                    loadFromSaved(savedScheduleJson, savedOverdueThreshold);
+                }
+                rootWindow.showPassiveNotification(i18n("Schedule saved"));
+                if (popOnSuccess && rootWindow.pageStack.currentItem === page) {
+                    rootWindow.popSubPage();
+                }
+            }
+            if (done) done(ok);
+        });
     }
 
-    function saveForGuard() {
-        return commitSave(false);
+    function saveForGuard(done) {
+        commitSave(false, done);
     }
 
     Component.onCompleted: {
@@ -258,7 +265,7 @@ EditorPage {
             objectName: "saveScheduleAction"
             icon.name: "document-save"
             text: Texts.label("save")
-            enabled: page.dirty && page.valid && appBackend.blocking_kind !== "daemon_unreachable"
+            enabled: page.dirty && page.valid && !page.saving && appBackend.blocking_kind !== "daemon_unreachable"
             onTriggered: page.commitSave(false)
         },
         Kirigami.Action {

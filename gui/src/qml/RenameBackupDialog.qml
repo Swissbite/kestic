@@ -22,17 +22,28 @@ Kirigami.Dialog {
         renameBackupField.text = text;
     }
 
+    // A rename is on its way; the dialog takes no second one.
+    property bool busy: false
+
+    // Renames; the dialog closes once the daemon has answered.
+    function rename(name) {
+        if (dialog.busy) return;
+        dialog.busy = true;
+        dialog.rootWindow.afterDaemonCall(dialog.appBackend.renameBackup(dialog.backupId, name), function(ok) {
+            dialog.busy = false;
+            if (ok) {
+                dialog.close();
+                dialog.rootWindow.showPassiveNotification(i18n("Backup renamed"));
+            }
+        });
+    }
+
     customFooterActions: [
         Kirigami.Action {
             text: i18n("Rename")
             icon.name: "edit-rename"
-            enabled: renameBackupField.text.trim().length > 0 && renameBackupField.text.trim() !== dialog.currentName
-            onTriggered: {
-                if (dialog.appBackend.renameBackup(dialog.backupId, renameBackupField.text.trim())) {
-                    dialog.close();
-                    dialog.rootWindow.showPassiveNotification(i18n("Backup renamed"));
-                }
-            }
+            enabled: !dialog.busy && renameBackupField.text.trim().length > 0 && renameBackupField.text.trim() !== dialog.currentName
+            onTriggered: dialog.rename(renameBackupField.text.trim())
         }
     ]
 
@@ -45,10 +56,8 @@ Kirigami.Dialog {
             Accessible.name: i18n("New backup name")
             Layout.fillWidth: true
             onAccepted: {
-                if (text.trim().length > 0 && text.trim() !== dialog.currentName
-                        && dialog.appBackend.renameBackup(dialog.backupId, text.trim())) {
-                    dialog.close();
-                    dialog.rootWindow.showPassiveNotification(i18n("Backup renamed"));
+                if (text.trim().length > 0 && text.trim() !== dialog.currentName) {
+                    dialog.rename(text.trim());
                 }
             }
         }

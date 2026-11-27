@@ -17,7 +17,7 @@ use kestic_daemon::dbus_api::{KesticClient, KesticDbusError};
 use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -28,6 +28,8 @@ type Job = Box<dyn FnOnce() + Send>;
 static WORKERS: Mutex<BTreeMap<String, Sender<Job>>> = Mutex::new(BTreeMap::new());
 /// Calls asked for and not made yet.
 static PENDING: AtomicUsize = AtomicUsize::new(0);
+/// The id of the next call QML waits for; 0 is never used (it means «failed before the call»).
+static NEXT_REQUEST: AtomicI32 = AtomicI32::new(1);
 
 /// Holds one pending call; dropping it (the call ran, panicked or was never sent) releases it.
 struct Pending;
@@ -48,19 +50,31 @@ fn counted(job: Job) -> Job {
     })
 }
 
-/// Queues `job` on the worker of `key`; the job comes back if that worker has ended.
+/// A new worker thread for one lane.
+fn start_worker() -> Sender<Job> {
+    let (jobs, queue) = mpsc::channel::<Job>();
+    thread::spawn(move || {
+        for job in queue {
+            job();
+        }
+    });
+    jobs
+}
+
+/// Queues `job` on the worker of `key`. A worker that has ended (a call on it panicked) is
+/// replaced, so the lane keeps working; the job comes back only if the new worker fails too.
 fn send_in_order(key: &str, job: Job) -> Result<(), Job> {
     let mut workers = WORKERS.lock_unpoisoned();
-    let worker = workers.entry(key.to_string()).or_insert_with(|| {
-        let (jobs, queue) = mpsc::channel::<Job>();
-        thread::spawn(move || {
-            for job in queue {
-                job();
-            }
-        });
-        jobs
-    });
-    worker.send(job).map_err(|returned| returned.0)
+    let worker = workers.entry(key.to_string()).or_insert_with(start_worker);
+    match worker.send(job) {
+        Ok(()) => Ok(()),
+        Err(returned) => {
+            let fresh = start_worker();
+            let sent = fresh.send(returned.0).map_err(|again| again.0);
+            workers.insert(key.to_string(), fresh);
+            sent
+        }
+    }
 }
 
 /// Waits until the calls asked for are made, at most `limit`: a window that closes still tells
@@ -150,6 +164,59 @@ impl qobject::KesticApp {
                     eprintln!("kestic: the thread for daemon calls on lane {key} has ended");
                 }
             }
+        }
+    }
+
+    /// Like [`Self::call_daemon`] for an edit whose result QML waits for: returns the id of the
+    /// request at once; `then` handles the result on the Qt thread and says whether it succeeded
+    /// and what to hand to QML, which then gets `daemonCallDone(id, ok, result)`. The state is
+    /// fetched anew once the call reached the daemon, so QML reads the edit's effect.
+    pub(super) fn request_daemon<T: Send + 'static>(
+        self: Pin<&mut Self>,
+        lane: Lane,
+        call: impl FnOnce(&KesticClient) -> T + Send + 'static,
+        then: impl FnOnce(Pin<&mut Self>, Result<T, String>) -> (bool, String) + Send + 'static,
+    ) -> i32 {
+        self.request_daemon_with(lane, call, |_| true, then)
+    }
+
+    /// Like [`Self::request_daemon`], with the state fetched anew before `then` only when
+    /// `fetch_state(&result)` holds (see [`Self::call_daemon_with`]); a list that changes nothing
+    /// passes `|_| false`.
+    pub(super) fn request_daemon_with<T: Send + 'static>(
+        self: Pin<&mut Self>,
+        lane: Lane,
+        call: impl FnOnce(&KesticClient) -> T + Send + 'static,
+        fetch_state: impl FnOnce(&T) -> bool + Send + 'static,
+        then: impl FnOnce(Pin<&mut Self>, Result<T, String>) -> (bool, String) + Send + 'static,
+    ) -> i32 {
+        let request = NEXT_REQUEST.fetch_add(1, Ordering::SeqCst);
+        self.call_daemon_with(lane, call, fetch_state, move |mut app, result| {
+            let (ok, answer) = then(app.as_mut(), result);
+            // The window shows the state that was fetched with the answer before QML reads it.
+            app.as_mut().apply_cached_state();
+            app.daemon_call_done(request, ok, QString::from(&answer));
+        });
+        request
+    }
+
+    /// Like [`Self::finish_daemon_action`] for a call that first checks the user's input off the
+    /// Qt thread: `Ok(Err(text))` is input the call refused before it reached the daemon.
+    pub(super) fn finish_checked<T, E>(
+        mut self: Pin<&mut Self>,
+        result: Result<Result<Result<T, E>, String>, String>,
+        how: Finish,
+    ) -> Option<T>
+    where
+        E: Clone + Into<KesticDbusError>,
+    {
+        match result {
+            Ok(Ok(reply)) => self.finish_daemon_action(Ok(reply), how),
+            Ok(Err(refused)) => {
+                self.as_mut().show_action_error(&refused);
+                None
+            }
+            Err(no_bus) => self.finish_daemon_action(Err::<Result<T, E>, String>(no_bus), how),
         }
     }
 

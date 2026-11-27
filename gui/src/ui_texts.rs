@@ -137,6 +137,7 @@ gui_texts! {
     ResticAppManaged = "restic_app_managed" => i18n_noop("Managed by Kestic"),
     ResticCustom = "restic_custom" => i18n_noop("Custom path"),
     EarlierSnapshotsOn = "earlier_snapshots_on" => i18n_noop("Earlier snapshots on '%1'"),
+    Loading = "loading" => i18n_noop("Loading…"),
     LoadingSnapshots = "loading_snapshots" => i18n_noop("Loading snapshots…"),
     NoEntriesMatchFilter = "no_entries_match_filter" => i18n_noop("No entries match the filter."),
     NoSnapshotsYet = "no_snapshots_yet" => i18n_noop("No snapshots yet. The first backup is still pending."),

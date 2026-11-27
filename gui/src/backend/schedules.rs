@@ -10,8 +10,9 @@ use crate::qt_bridge;
 use crate::run_texts::{run_detail_subtitle, run_detail_title, run_result_summary, run_status};
 use crate::state_cache::{
     build_provider, cached_destination_kind, clone_updated_backup_conditions,
-    clone_updated_backup_schedule, format_duration_ms, format_maintenance_summary, i18n, json_or,
-    make_client, preview_next_schedule_slots, shared_state,
+    clone_updated_backup_schedule, daemon_unavailable_text, format_duration_ms,
+    format_maintenance_summary, i18n, json_or, make_client, preview_next_schedule_slots,
+    shared_state,
 };
 use crate::time_texts::{cached_daemon_now, cached_today_iso_date};
 use crate::ui_texts::GuiText;
@@ -24,6 +25,10 @@ use kestic_core::scheduler::PauseDuration;
 use kestic_core::sync::LockUnpoisoned;
 use std::env;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// How many run details the window has asked for; a detail answers the latest one only.
+static RUN_DETAIL_ASKED: AtomicU64 = AtomicU64::new(0);
 
 /// Name of a configured backup from the cached daemon state.
 fn cached_backup_name(id: &BackupId) -> Option<String> {
@@ -62,24 +67,27 @@ impl qobject::KesticApp {
         mut self: Pin<&mut Self>,
         dest_id: &QString,
         maintenance_json: &QString,
-    ) -> bool {
+    ) -> i32 {
         let Some(maint) = self
             .as_mut()
             .parse_json_or_err::<MaintenanceSchedule>(maintenance_json)
         else {
-            return false;
+            return 0;
         };
         if self.as_mut().ok_or_show(maint.validate()).is_none() {
-            return false;
+            return 0;
         }
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(
-            client.update_destination_maintenance(&dest_id.to_string(), &maint),
-            Finish::Saved,
+        let dest_id = dest_id.to_string();
+        self.request_daemon(
+            Lane::settings(),
+            move |client| client.update_destination_maintenance(&dest_id, &maint),
+            |app, result| {
+                (
+                    app.finish_daemon_action(result, Finish::Saved).is_some(),
+                    String::new(),
+                )
+            },
         )
-        .is_some()
     }
 
     pub fn update_backup_schedule(
@@ -87,55 +95,40 @@ impl qobject::KesticApp {
         backup_id: &QString,
         schedule_json: &QString,
         overdue_threshold: i32,
-    ) -> bool {
+    ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
-            return false;
+            return 0;
         };
         let Some(schedule) = self.as_mut().parse_json_or_err::<Schedule>(schedule_json) else {
-            return false;
+            return 0;
         };
         let threshold_opt = u32::try_from(overdue_threshold).ok().filter(|&t| t > 0);
-        let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup_schedule(
-            &existing,
-            schedule,
-            threshold_opt,
-        )) else {
-            return false;
-        };
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(client.update_backup(&updated), Finish::Saved)
-            .is_some()
+        self.save_backup_edit(existing.id, move |backup, _| {
+            clone_updated_backup_schedule(backup, schedule, threshold_opt)
+                .map_err(|err| err.to_string())
+        })
     }
 
     pub fn update_backup_conditions(
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         conditions_json: &QString,
-    ) -> bool {
+    ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
-            return false;
+            return 0;
         };
         let Some(conditions) = self
             .as_mut()
             .parse_json_or_err::<RunConditions>(conditions_json)
         else {
-            return false;
+            return 0;
         };
-        let dest_kind = cached_destination_kind(existing.destination_id.as_str());
-        let Some(updated) = self.as_mut().ok_or_show(clone_updated_backup_conditions(
-            &existing,
-            conditions,
-            dest_kind.as_ref(),
-        )) else {
-            return false;
-        };
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(client.update_backup(&updated), Finish::Saved)
-            .is_some()
+        self.save_backup_edit(existing.id, move |backup, _| {
+            // The destination as it is now: an earlier reassign on the same lane is in effect.
+            let dest_kind = cached_destination_kind(backup.destination_id.as_str());
+            clone_updated_backup_conditions(backup, conditions, dest_kind.as_ref())
+                .map_err(|err| err.to_string())
+        })
     }
 
     pub fn update_settings(
@@ -146,10 +139,7 @@ impl qobject::KesticApp {
         on_overdue: bool,
         on_maintenance_failed: bool,
         on_restic_update: bool,
-    ) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
+    ) -> i32 {
         let threshold = u32::try_from(default_overdue_threshold).unwrap_or(0).max(1);
         let notifications = NotificationSettings {
             on_error,
@@ -158,11 +148,16 @@ impl qobject::KesticApp {
             on_maintenance_failed,
             on_restic_update,
         };
-        self.finish_action(
-            client.update_settings(threshold, &notifications),
-            Finish::Plain,
+        self.request_daemon(
+            Lane::settings(),
+            move |client| client.update_settings(threshold, &notifications),
+            |app, result| {
+                (
+                    app.finish_daemon_action(result, Finish::Plain).is_some(),
+                    String::new(),
+                )
+            },
         )
-        .is_some()
     }
 
     pub fn set_restic_provider(
@@ -243,18 +238,61 @@ impl qobject::KesticApp {
         );
     }
 
-    pub fn load_run_detail(mut self: Pin<&mut Self>, run_id: &QString) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        let Some(detail) = self
-            .as_mut()
-            .ok_or_show_dbus(client.get_run_detail(&run_id.to_string()))
-        else {
-            return false;
-        };
-        self.as_mut().apply_run_detail(detail);
-        true
+    /// Loads the detail of the run `run_id`; the request's result says whether it arrived (the
+    /// `selected_run_*` properties then hold it).
+    pub fn load_run_detail(mut self: Pin<&mut Self>, run_id: &QString) -> i32 {
+        if self.selected_run_id() != run_id {
+            self.as_mut().clear_run_detail(run_id);
+        }
+        let run_id = run_id.to_string();
+        let asked = RUN_DETAIL_ASKED.fetch_add(1, Ordering::SeqCst) + 1;
+        self.request_daemon_with(
+            // A stale reply is dropped (below), so the requests need no order of their own.
+            Lane::Alone,
+            move |client| client.get_run_detail(&run_id),
+            |_| false,
+            move |mut app, result| {
+                // Only the detail asked for last is shown, whichever run the earlier ones were for.
+                if RUN_DETAIL_ASKED.load(Ordering::SeqCst) != asked {
+                    return (false, String::new());
+                }
+                let detail = match result {
+                    Ok(reply) => app.as_mut().ok_or_show_dbus(reply),
+                    Err(_) => {
+                        app.as_mut().show_action_error(&daemon_unavailable_text());
+                        None
+                    }
+                };
+                let Some(detail) = detail else {
+                    return (false, String::new());
+                };
+                app.as_mut().apply_run_detail(detail);
+                (true, String::new())
+            },
+        )
+    }
+
+    /// Shows no run while the detail of `run_id` is on its way, never the previous run's.
+    fn clear_run_detail(mut self: Pin<&mut Self>, run_id: &QString) {
+        let empty = QString::from("");
+        self.as_mut().set_selected_run_id(run_id.clone());
+        self.as_mut().set_selected_run_title(empty.clone());
+        self.as_mut().set_selected_run_status_line(empty.clone());
+        self.as_mut().set_selected_run_subtitle(empty.clone());
+        self.as_mut().set_selected_run_status_icon(empty.clone());
+        self.as_mut().set_selected_run_status_color(empty.clone());
+        self.as_mut().set_selected_run_result_summary(empty.clone());
+        self.as_mut().set_selected_run_error_summary(empty.clone());
+        self.as_mut().set_selected_run_error_action(empty.clone());
+        self.as_mut().set_selected_run_error_raw(empty.clone());
+        self.as_mut()
+            .set_selected_run_unreadable_json(QString::from("[]"));
+        self.as_mut()
+            .set_selected_run_commands_json(QString::from("[]"));
+        self.as_mut()
+            .set_selected_run_transparent_command(empty.clone());
+        self.as_mut().set_selected_run_log_path(empty.clone());
+        self.as_mut().set_selected_run_backup_id(empty);
     }
 
     fn apply_run_detail(mut self: Pin<&mut Self>, detail: kestic_daemon::dbus_api::RunDetailDto) {
@@ -354,11 +392,20 @@ impl qobject::KesticApp {
         qt_bridge::ffi::copy_to_clipboard(&text.to_string());
     }
 
-    pub fn confirm_quit(self: Pin<&mut Self>) -> bool {
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.ok_or_show_dbus(client.confirm_quit()).is_some()
+    /// Confirms quitting Kestic. The dialog quits at once: the call is sent on a thread of its
+    /// own, and the process waits for pending calls before it ends.
+    pub fn confirm_quit(self: Pin<&mut Self>) -> i32 {
+        self.request_daemon(
+            Lane::Alone,
+            |client| client.confirm_quit(),
+            |mut app, result| match result {
+                Ok(reply) => (app.as_mut().ok_or_show_dbus(reply).is_some(), String::new()),
+                Err(_) => {
+                    app.as_mut().show_action_error(&daemon_unavailable_text());
+                    (false, String::new())
+                }
+            },
+        )
     }
 
     pub fn home_dir(&self) -> QString {
@@ -374,14 +421,18 @@ impl qobject::KesticApp {
         QString::from(&label)
     }
 
-    pub fn list_known_networks_json(&self) -> QString {
-        let Ok(client) = make_client() else {
-            return QString::from("[]");
-        };
-        match client.list_known_networks() {
-            Ok(list) => QString::from(&json_or(&list, "[]")),
-            Err(_) => QString::from("[]"),
-        }
+    /// The networks known to the system, as a JSON list in the request's result (empty when the
+    /// daemon cannot list them).
+    pub fn list_known_networks_json(self: Pin<&mut Self>) -> i32 {
+        self.request_daemon_with(
+            Lane::slow("known-networks"),
+            |client| client.list_known_networks(),
+            |_| false,
+            |_, listed| match listed {
+                Ok(Ok(list)) => (true, json_or(&list, "[]")),
+                _ => (true, "[]".to_string()),
+            },
+        )
     }
 
     pub fn today_iso_date(&self) -> QString {

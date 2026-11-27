@@ -21,6 +21,8 @@ Kirigami.ScrollablePage {
     property string selectedDestId: ""
     property string selectedDestName: ""
 
+    // The switch is on its way; the dialog takes no second one.
+    property bool switching: false
     readonly property bool canSwitch: selectedDestId !== "" && backupData !== null && selectedDestId !== backupData.destinationId
 
     function handleEscape() {
@@ -63,12 +65,17 @@ Kirigami.ScrollablePage {
             Kirigami.Action {
                 text: i18n("Switch Destination")
                 icon.name: "document-swap"
+                enabled: !page.switching
                 onTriggered: {
-                    if (appBackend.reassignBackup(backupId, page.selectedDestId)) {
-                        confirmReassignDialog.close();
-                        rootWindow.showPassiveNotification(i18n("Destination updated"));
-                        rootWindow.popSubPage();
-                    }
+                    page.switching = true;
+                    rootWindow.afterDaemonCall(appBackend.reassignBackup(backupId, page.selectedDestId), function(ok) {
+                        page.switching = false;
+                        if (ok) {
+                            confirmReassignDialog.close();
+                            rootWindow.showPassiveNotification(i18n("Destination updated"));
+                            if (rootWindow.pageStack.currentItem === page) rootWindow.popSubPage();
+                        }
+                    });
                 }
             }
         ]
