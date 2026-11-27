@@ -4633,19 +4633,3 @@ msgstr "Snapshots durchsuchen, in ihnen suchen und sie vergleichen; Dateien in e
 #: packaging/net.daester.Kestic.metainfo.xml
 msgid "Kestic is an independent project, not affiliated with or endorsed by the restic project."
 msgstr "Kestic ist ein unabhängiges Projekt und weder mit dem restic-Projekt verbunden noch von ihm empfohlen."
-
-#: packaging/net.daester.Kestic.metainfo.xml
-msgid "Overview of all backups and their status"
-msgstr "Übersicht über alle Backups und ihren Zustand"
-
-#: packaging/net.daester.Kestic.metainfo.xml
-msgid "Choose the type of a new destination"
-msgstr "Typ eines neuen Ziels wählen"
-
-#: packaging/net.daester.Kestic.metainfo.xml
-msgid "Set the schedule of a backup"
-msgstr "Zeitplan eines Backups festlegen"
-
-#: packaging/net.daester.Kestic.metainfo.xml
-msgid "Browse a snapshot and mark what to restore"
-msgstr "Einen Snapshot durchsuchen und markieren, was wiederhergestellt wird"

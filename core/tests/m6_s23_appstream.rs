@@ -6,7 +6,7 @@
 //! M6-S23: the AppStream metainfo as it lies in the repository and how `just verify` builds and
 //! checks it. The shipped file is checked in `m0_s05_deb_packaging` (its tests need the `.deb`).
 
-use kestic_test_support::metainfo::{TEMPLATE, elements};
+use kestic_test_support::metainfo::TEMPLATE;
 use kestic_test_support::workspace::workspace_root;
 use std::fs;
 
@@ -24,17 +24,6 @@ fn recipe(justfile: &str, name: &str) -> String {
         .take_while(|line| line.is_empty() || line.starts_with(' '))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// Value of `key: "…"` in the site's Astro configuration.
-fn astro_setting(config: &str, key: &str) -> String {
-    let start = config
-        .find(&format!("{key}: \""))
-        .unwrap_or_else(|| panic!("no {key} in site/astro.config.ts"))
-        + key.len()
-        + 3;
-    let len = config[start..].find('"').expect("closing quote");
-    config[start..start + len].to_owned()
 }
 
 /// AC-M6-23-2 (b): `just verify` builds the `.deb` with `just deb`, and that recipe validates the
@@ -82,37 +71,4 @@ fn ac_m6_23_3_repository_has_no_hand_written_release() {
         !template.contains("<release"),
         "(a) {TEMPLATE} must not contain a <release> or <releases> entry"
     );
-}
-
-/// AC-M6-23-4: the screenshots of the metainfo (a) are images of the website (its address and
-/// base from `site/astro.config.ts`, the folder the site copies them to) and (b) are listed in
-/// `site/src/screenshots.ts`, so the site keeps publishing them under the same address.
-#[test]
-fn ac_m6_23_4_screenshots_are_site_images() {
-    let config = read("site/astro.config.ts");
-    let prefix = format!(
-        "{}{}/screenshots/",
-        astro_setting(&config, "site"),
-        astro_setting(&config, "base")
-    );
-    assert!(
-        read("site/src/integrations/screenshots.ts")
-            .contains("join(fileURLToPath(config.publicDir), \"screenshots\")"),
-        "the site no longer publishes screenshots under /screenshots/"
-    );
-    let site_shots = read("site/src/screenshots.ts");
-    let images = elements(&read(TEMPLATE), "image");
-    assert!(images.len() >= 3, "expected several screenshots");
-    for image in images {
-        let Some(file) = image.text.strip_prefix(&prefix) else {
-            panic!(
-                "(a) {} is not an image of the website ({prefix}…)",
-                image.text
-            );
-        };
-        assert!(
-            site_shots.contains(&format!("file: \"{file}\"")),
-            "(b) {file} is not listed in site/src/screenshots.ts"
-        );
-    }
 }

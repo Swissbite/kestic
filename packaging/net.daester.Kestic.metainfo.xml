@@ -36,22 +36,4 @@ SPDX-License-Identifier: CC0-1.0
   <provides>
     <binary>kestic</binary>
   </provides>
-  <screenshots>
-    <screenshot type="default">
-      <caption>Overview of all backups and their status</caption>
-      <image>https://swissbite.github.io/kestic/screenshots/m3-overview-status-wide-en.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Choose the type of a new destination</caption>
-      <image>https://swissbite.github.io/kestic/screenshots/m5-destination-types-wide-en.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Set the schedule of a backup</caption>
-      <image>https://swissbite.github.io/kestic/screenshots/m3-schedule-defaults-wide-en.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Browse a snapshot and mark what to restore</caption>
-      <image>https://swissbite.github.io/kestic/screenshots/m4-restore-browse-wide-en.png</image>
-    </screenshot>
-  </screenshots>
 </component>
