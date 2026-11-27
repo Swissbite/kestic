@@ -15,7 +15,7 @@ mkdir -p "$tmp/bin" "$tmp/repo" "$tmp/config/leitstand"
 
 # Fake gh: `api [--paginate] repos/<o>/<r>/<rest>` reads fixture <rest> with / ? & = : replaced
 # by _, `pr list --base <b>` reads pr-list-<b>; the call's --jq filter runs over it. A missing
-# fixture is an empty list.
+# fixture is an empty list; a file <fixture>.fail makes the call fail.
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 key= filter=
@@ -29,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 file="$FAKE_FIXTURES/$key"
+[[ -f "$file.fail" ]] && exit 1
 [[ -f "$file" ]] || { echo '[]' | jq -r "$filter"; exit 0; }
 jq -r "$filter" "$file"
 FAKE
@@ -101,20 +102,28 @@ checks() {
 
 held='[{"name":"needs-maintainer"}]'
 
-# question: only when the agent's comment is the last one
+# question: only when the agent's comment is the last one by the maintainer or the agent
 reset
 echo "[$(issue 5 "$M" "$held" 2026-11-27T10:00:00Z), $(issue 6 "$M" "$held" 2026-11-27T10:00:00Z),
     $(issue 7 "$M" "$held" 2026-11-27T10:00:00Z), $(issue 8 "$M" '[]' 2026-11-27T10:00:00Z)]" \
     > "$fix/issues_milestone_3_state_open_per_page_100"
 comments 5 "2026-11-27T09:00:00Z M" "2026-11-27T09:30:00Z A"
 comments 6 "2026-11-27T09:00:00Z A" "2026-11-27T09:30:00Z M"
-comments 7 "2026-11-27T09:00:00Z A" "2026-11-27T09:30:00Z O"
+comments 7 "2026-11-27T09:00:00Z O"
 comments 8 "2026-11-27T09:00:00Z A"
 run
 grep -qx "question:m6:#5:2026-11-27T09:30:00Z" <<< "$out" || fail "question: the agent's last comment on a held issue not reported"
 ! grep -q "question:m6:#6:" <<< "$out" || fail "question: reported although the maintainer answered last"
-! grep -q "question:m6:#7:" <<< "$out" || fail "question: an outsider's last comment counts as a question"
+! grep -q "question:m6:#7:" <<< "$out" || fail "question: an outsider's comment counts as a question"
 ! grep -q "question:m6:#8:" <<< "$out" || fail "question: reported for an issue that is not held"
+
+# An outsider's comment after the agent's question does not hide it
+reset
+echo "[$(issue 5 "$M" "$held" 2026-11-27T10:00:00Z)]" > "$fix/issues_milestone_3_state_open_per_page_100"
+comments 5 "2026-11-27T09:00:00Z A" "2026-11-27T09:30:00Z O"
+run
+grep -qx "question:m6:#5:2026-11-27T09:00:00Z" <<< "$out" || fail "question: an outsider's later comment hides the agent's question"
+grep -qx "external:m6:#5:1" <<< "$out" || fail "question: the outsider's comment not counted"
 
 # external: withheld items on milestone issues, the outsider's issue body included
 reset
@@ -157,6 +166,13 @@ echo "[$(checks 21 FAILURE), $(checks 22 FAILURE true)]" > "$fix/pr-list-m6"
 run
 grep -qx "pr:m6:red:21:abcdef0" <<< "$out" || fail "pr: the agent's own red pull request not reported"
 ! grep -q "pr:m6:red:22:" <<< "$out" || fail "pr: a fork's red pull request reported"
+
+# A failing forge request is reported, not taken for «no news»
+reset
+echo "[$(issue 5 "$M" "$held" 2026-11-27T10:00:00Z)]" > "$fix/issues_milestone_3_state_open_per_page_100"
+echo "fail" > "$fix/issues_5_comments_per_page_100.fail"
+run
+grep -q "^forge-error:m6:" <<< "$out" || fail "forge error: not reported"
 
 # Without the trust file the loop does not start
 sed -i "s|^LEITSTAND_TRUST_JQ=.*|LEITSTAND_TRUST_JQ=$tmp/missing.jq|" "$tmp/config/leitstand/test.env"

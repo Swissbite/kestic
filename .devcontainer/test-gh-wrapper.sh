@@ -172,15 +172,62 @@ expect refused api -X PATCH repos/Swissbite/kestic/issues/5 -f state=closed
 expect passed api -X PATCH repos/Swissbite/kestic/issues/5 -f state=closed --silent
 expect passed api repos/Swissbite/kestic --jq .full_name
 expect passed api repos/Swissbite/kestic/actions/jobs/123/logs
-expect passed api repos/Swissbite/kestic/pulls/12/files
 expect passed api repos/Swissbite/kestic/issues/5/labels
-expect passed api repos/Swissbite/kestic/issues/5/events --paginate
+
+# Aliases, repeated flags and other endpoints that carry the same text
+expect refused issue ls --json title
+expect refused pr ls --json number,body
+expect passed pr ls --base m6 --json number
+expect refused pr view 5 --json number --json body
+expect refused pr view 5 --json body --json number
+expect passed pr view 5 --json number --json state
+expect refused pr co 50
+expect refused pr co 51
+expect passed pr co 34
+expect refused pr diff 50
+expect passed pr diff 34 --name-only
+expect refused pr merge -s 50
+expect refused pr merge -m -d 51
+expect refused pr merge -r 50 --delete-branch
+expect passed pr merge -s -d 34
+expect refused pr merge 34 50
+expect refused pr checkout --detach 50
+expect refused pr lock 5
+expect refused issue develop 5 --list
+expect refused issue transfer 5 o/other
+expect refused run list
+expect refused run list --json displayTitle
+expect passed run list --json databaseId,conclusion,headSha,workflowName,event
+expect refused run view 123
+expect passed run view 123 --log-failed
+expect passed run view 123 --job 456 --log
+expect passed run view 123 --json conclusion,headSha
+expect refused alias set iv 'issue view'
+expect refused alias import aliases.yml
+expect passed alias list
+expect refused api repositories/1234/issues/5
+expect refused api issues
+expect refused api user/issues
+expect refused api orgs/Swissbite/issues
+expect refused api users/mallory
+expect refused api repos/Swissbite/kestic/commits
+expect refused api repos/Swissbite/kestic/pulls/12/commits
+expect refused api repos/Swissbite/kestic/pulls/12/files
+expect refused api repos/Swissbite/kestic/issues/5/events
+expect refused api repos/Swissbite/kestic/actions/runs
+expect refused api repos/Swissbite/kestic/releases
+expect refused api HTTPS://API.GITHUB.COM/repos/o/r/issues/5/comments
+expect passed api repos/Swissbite/kestic/actions/jobs/123
+expect passed api 'repos/{owner}/{repo}/commits/abc123/check-runs'
+expect passed api rate_limit
 
 # The label adopted is the maintainer's
 expect refused issue edit 5 --add-label adopted
 expect refused issue edit 5 --add-label needs-maintainer,adopted
 expect refused issue edit 5 --add-label=adopted
 expect refused issue edit 5 --add-label 'level-2, adopted'
+expect refused issue edit 5 --add-label Adopted
+expect refused issue edit 5 --add-label ADOPTED
 expect refused issue create --title x --body y --label adopted
 expect refused pr edit 7 --add-label adopted
 expect refused api repos/Swissbite/kestic/issues/5/labels -f 'labels[]=adopted'

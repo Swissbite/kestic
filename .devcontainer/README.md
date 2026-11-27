@@ -133,16 +133,22 @@ instruction; text by anyone else does not reach it at all.
   BEGIN and END lines with a random token, replaces control and invisible
   characters (bidi, zero-width, Unicode tags, ESC, NUL, CR, line separators)
   by `<U+XXXX>` and HTML comments by a note, caps each item and the whole
-  output (the oldest comments go first), and never prints diff hunks. Every
-  other item is one line from checked fields (kind, login, association, time,
-  a link built from the ID). A failed request fails the whole call. It needs
-  `jq` and `perl` (`JSON::PP`), which the image and the host have.
+  output (the oldest comments go first), and never prints diff hunks. Markup
+  that GitHub hides when rendering (HTML comments, processing instructions,
+  CDATA, link reference definitions, tag attributes) is replaced by a note, so
+  the agent reads what the maintainer sees. Every other item is one line from
+  checked fields (kind, login, association, time, a link built from the ID);
+  at most 30 such lines (and label or close events) are listed, the newest.
+  A failed request fails the whole call and prints nothing. It needs `jq` and
+  `perl` (`JSON::PP`); the image build checks both.
 - [gh-wrapper.sh](gh-wrapper.sh) refuses the other ways to read that text:
-  `gh issue|pr view|list` only with `--json` and fields without people's text
-  (number, state, labels, branches, head commit, checks, …), no `gh api` reads
-  of comments, reviews, issues, pull requests or timelines, no
-  `gh api graphql`, no `gh search`. It also refuses adding the label
-  `adopted`.
+  `gh issue|pr view|list` (and `ls`) and `gh run list|view` only with `--json`
+  and fields without people's text (number, state, labels, branches, head
+  commit, checks, …; `run view --log` for job logs); other `issue`, `pr` and
+  `run` subcommands only from a list of those that print no such text;
+  `gh api` reads only from an allowlist (the repository, labels, branches,
+  checks, job logs); no `gh api graphql`, `gh search` or `gh alias set`. It
+  also refuses adding the label `adopted`, in any spelling.
 - Pull requests from forks never count as the agent's, whatever their branch
   name (`agent/issue-<n>`) or base: not for the watcher, not for the thread
   reader, not for the Leitstand, and the wrapper refuses to merge or check
@@ -156,7 +162,10 @@ instruction; text by anyone else does not reach it at all.
 
 The wrapper and the reader guard against habits and mistakes: the token is
 readable in the container, so `curl` bypasses both. The firewall and the App's
-permissions bound what a misled agent could do.
+permissions bound what a misled agent could do. On the host, the watcher and
+the Leitstand run the trust file and the reader from the checkout, like the
+watcher itself: keep that checkout on `main`, which the App cannot change; a
+checkout of `m<n>` would run what the agent merged there.
 [test-github-thread.sh](test-github-thread.sh) tests the trust rule and the
 reader in `just verify`.
 

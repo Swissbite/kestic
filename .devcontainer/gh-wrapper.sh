@@ -11,15 +11,16 @@
 # - Refuses to merge or check out a pull request that is not the agent's own:
 #   one from a fork, or one the App did not open (by numeric user ID,
 #   github-trust.jq).
-# - Refuses to read GitHub text (titles, bodies, comments, reviews): GitHub
-#   text reaches the agent only through `kestic-agent thread`, which frames
-#   and filters it. `issue view|list` and `pr view|list` pass only with
-#   `--json` and fields from an allowlist; `gh api` reads of comments,
-#   reviews, issues, pull requests and timelines, `gh api graphql`, `gh search`
-#   and `issue|pr status` are refused.
+# - Refuses to read GitHub text (titles, bodies, comments, reviews, commit
+#   messages of pull requests, run titles): GitHub text reaches the agent only
+#   through `kestic-agent thread`, which frames and filters it.
+#   `issue|pr view|list` and `run list` pass only with `--json` and fields
+#   from an allowlist; other `issue`, `pr` and `run` subcommands only when they
+#   print no such text; `gh api` reads only from an allowlist of endpoints;
+#   `gh search` and `gh alias set|import` are refused.
 # - Refuses to add the label `adopted`: only the maintainer adopts an issue.
 #
-# Everything else goes through unchanged. This guards against habits and
+# Other commands go through unchanged. This guards against habits and
 # mistakes only: the token is readable in the container, so curl bypasses it.
 
 set -euo pipefail
@@ -27,8 +28,10 @@ set -euo pipefail
 REAL_GH="${KESTIC_REAL_GH:-/usr/bin/gh}"
 TOKEN_FILE=/run/kestic-agent-token/gh-token
 TRUST_FILE="${KESTIC_TRUST_JQ:-/usr/local/lib/kestic-agent/github-trust.jq}"
-# --json fields without text written by people.
+# --json fields without text written by people, for issues and pull requests
+# and for workflow runs.
 JSON_FIELDS=" number state labels baseRefName headRefName headRefOid isCrossRepository isDraft mergeable mergeCommit mergedAt statusCheckRollup url "
+RUN_FIELDS=" databaseId status conclusion headSha workflowName event createdAt updatedAt url "
 
 if [[ -r "$TOKEN_FILE" ]]; then
     GH_TOKEN="$(<"$TOKEN_FILE")"
@@ -73,14 +76,40 @@ check_pr() {
     fi
 }
 
-# Refuses a --json value with a field outside the allowlist, and a view or
-# list without --json.
+# pr_target <subcommand> <arguments after `pr`…>: the pull request a merge,
+# checkout or diff acts on (empty = current branch), parsed with that
+# subcommand's own flags. Refuses more than one.
+pr_target() {
+    local sub="$1" values target="" found=0 seen_sub=0
+    shift
+    case "$sub" in
+        merge) values=" -A --author-email -b --body -F --body-file --match-head-commit -t --subject -R --repo " ;;
+        checkout | co) values=" -b --branch -R --repo " ;;
+        diff) values=" -R --repo --color " ;;
+    esac
+    while [[ $# -gt 0 ]]; do
+        if [[ "$1" == -* ]]; then
+            [[ "$1" != *=* && "$values" == *" $1 "* ]] && shift
+        elif [[ "$seen_sub" == 0 ]]; then
+            seen_sub=1
+        elif [[ "$found" == 0 ]]; then
+            target="$1" found=1
+        else
+            refuse "pr $sub: more than one pull request named"
+        fi
+        shift || true
+    done
+    printf '%s' "$target"
+}
+
+# check_json <fields> <what> <allowlist>: refuses a --json value with a field
+# outside the allowlist, and a view or list without --json.
 check_json() {
     local fields="$1" field
     [[ -n "$fields" ]] || refuse_read "$2 without --json"
     IFS=, read -ra list <<< "$fields"
     for field in "${list[@]}"; do
-        [[ "$JSON_FIELDS" == *" $field "* ]] || refuse_read "--json field '$field'"
+        [[ "$3" == *" $field "* ]] || refuse_read "--json field '$field'"
     done
 }
 
@@ -89,7 +118,8 @@ check_labels() {
     local label
     IFS=, read -ra list <<< "$1"
     for label in "${list[@]}"; do
-        [[ "${label// /}" != adopted ]] || refuse "only the maintainer adds the label 'adopted'"
+        label="${label// /}"
+        [[ "${label,,}" != adopted ]] || refuse "only the maintainer adds the label 'adopted'"
     done
 }
 
@@ -99,38 +129,52 @@ case "${1:-}" in
     search)
         refuse_read "gh search"
         ;;
-    issue | pr)
+    alias)
+        [[ "${2:-}" != set && "${2:-}" != import ]] || refuse "gh alias set|import is refused in the agent container"
+        ;;
+    issue | pr | run)
         group="$1"
-        words=() repo="" json="" has_json=0
+        words=() repo="" json="" log=0
         set -- "${@:2}"
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 -R | --repo) repo="${2:-}"; shift ;;
                 -R?* | --repo=*) repo="${1#-R}"; repo="${repo#--repo=}"; repo="${repo#=}" ;;
-                --json) has_json=1; json="${2:-}"; shift ;;
-                --json=*) has_json=1; json="${1#--json=}" ;;
+                # gh joins repeated --json flags.
+                --json) json+="${json:+,}${2:-}"; shift ;;
+                --json=*) json+="${json:+,}${1#--json=}" ;;
+                --log | --log-failed) log=1 ;;
                 -l | --label | --add-label) check_labels "${2:-}"; shift ;;
                 --label=* | --add-label=*) check_labels "${1#*=}" ;;
                 -l?*) check_labels "${1#-l}" ;;
-                -b | --body | -F | --body-file | -t | --title | --subject | -A | --author-email | \
-                    --match-head-commit | -q | --jq | -T | --template | -S | --search | -s | --state | \
-                    -L | --limit | -a | --assignee | --add-assignee | --remove-assignee | --remove-label | \
-                    -m | --milestone | -p | --project | --add-project | --remove-project | -B | --base | \
-                    -H | --head | -r | --reviewer | --add-reviewer | --remove-reviewer | --app | --author | \
-                    --mention | --type | --branch) shift ;;
+                # Flags that take a value in every issue, pr and run subcommand.
+                -b | --body | -F | --body-file | -t | --title | --subject | --author-email | \
+                    --match-head-commit | -q | --jq | -T | --template | --search | --state | -L | --limit | \
+                    --assignee | --add-assignee | --remove-assignee | --remove-label | --milestone | \
+                    --project | --add-project | --remove-project | --base | --head | --reviewer | \
+                    --add-reviewer | --remove-reviewer | --app | --author | --mention | --branch | --comment | \
+                    --job | --workflow | --user | --event | --commit | --created | --interval | --attempt | \
+                    --color) shift ;;
                 -*) ;;
                 *) words+=("$1") ;;
             esac
             shift || true
         done
-        case "${words[0]:-}" in
-            view | list)
-                [[ "$has_json" == 1 ]] || json=""
-                check_json "$json" "$group ${words[0]}"
-                ;;
-            status) refuse_read "$group status" ;;
-            merge) check_pr "${words[1]:-}" "$repo" merge ;;
-            checkout) [[ "$group" == pr ]] && check_pr "${words[1]:-}" "$repo" checkout ;;
+        case "$group ${words[0]:-}" in
+            "issue view" | "issue list" | "issue ls" | "pr view" | "pr list" | "pr ls")
+                check_json "$json" "$group ${words[0]}" "$JSON_FIELDS" ;;
+            "run list" | "run ls")
+                check_json "$json" "run ${words[0]}" "$RUN_FIELDS" ;;
+            "run view")
+                # A job's log (CI logs of the agent's own pull request) or allowlisted fields.
+                [[ "$log" == 1 ]] || check_json "$json" "run view" "$RUN_FIELDS" ;;
+            "pr merge" | "pr checkout" | "pr co" | "pr diff")
+                target="$(pr_target "${words[0]}" "${original_args[@]:1}")" || exit 1
+                check_pr "$target" "$repo" "${words[0]}" ;;
+            "issue create" | "issue new" | "issue comment" | "issue edit" | "issue close" | "issue reopen" | \
+                "pr create" | "pr new" | "pr comment" | "pr edit" | "pr close" | "pr reopen" | "pr ready" | \
+                "pr review" | "pr checks" | "pr update-branch" | "run watch" | "run rerun" | "run cancel") ;;
+            *) refuse_read "gh $group ${words[0]:-} is not on the list of commands without GitHub text" ;;
         esac
         ;;
     api)
@@ -143,11 +187,11 @@ case "${1:-}" in
                 --method=*) method="${1#--method=}" ;;
                 -f | --raw-field | -F | --field | --input)
                     has_fields=1
-                    [[ "${2:-}" == *adopted* ]] && labels_arg=1
+                    [[ "${2,,}" == *adopted* ]] && labels_arg=1
                     shift ;;
                 --raw-field=* | --field=* | --input=*)
                     has_fields=1
-                    [[ "$1" == *adopted* ]] && labels_arg=1 ;;
+                    [[ "${1,,}" == *adopted* ]] && labels_arg=1 ;;
                 -H | --header | -q | --jq | -t | --template | --cache | -p | --preview | --hostname) shift ;;
                 --silent) silent=1 ;;
                 -*) ;;
@@ -159,7 +203,7 @@ case "${1:-}" in
         [[ -n "$method" ]] || { if [[ "$has_fields" == 1 ]]; then method=POST; else method=GET; fi; }
         # The path without host, API prefix, leading slash and query.
         path="$endpoint"
-        [[ "$path" =~ ^https?://[^/]+/(api/v3/)?(.*)$ ]] && path="${BASH_REMATCH[2]}"
+        [[ "$path" =~ ^[Hh][Tt][Tt][Pp][Ss]?://[^/]+/([Aa][Pp][Ii]/[Vv]3/)?(.*)$ ]] && path="${BASH_REMATCH[2]}"
         path="${path#/}"
         path="${path%%\?*}"
         path="${path%/}"
@@ -167,15 +211,9 @@ case "${1:-}" in
         # Text checks ignore case, as GitHub does for owner and repository.
         lpath="${path,,}"
         if [[ "$method" == GET || "$method" == HEAD ]]; then
-            case "$lpath" in
-                graphql) refuse_read "gh api graphql" ;;
-                search/* | notifications* | gists* | */comments | */comments/* | repos/*/*/discussions*)
-                    refuse_read "GET $path" ;;
-                repos/*/*/issues* | repos/*/*/pulls*)
-                    # Under issues and pulls only reads without people's text pass.
-                    [[ "$lpath" =~ ^repos/[^/]+/[^/]+/(pulls/[0-9]+/(merge|files|commits)|issues/[0-9]+/(labels|events))$ ]] ||
-                        refuse_read "GET $path" ;;
-            esac
+            # Reads only from endpoints that carry no text written by people.
+            [[ "$lpath" =~ ^(rate_limit|repos/[^/]+/[^/]+(/(pulls/[0-9]+/merge|issues/[0-9]+/labels|labels(/[^/]+)?|branches(/[^/]+)*|actions/jobs/[0-9]+(/logs)?|actions/runs/[0-9]+/(jobs|artifacts)|commits/[^/]+/(check-runs|check-suites|status|statuses)|installation|dependency-graph/.*|git/(refs|ref|matching-refs)/.*))?)$ ]] ||
+                refuse_read "GET $path"
         elif [[ "$lpath" == graphql ]]; then
             refuse_read "gh api graphql"
         elif [[ "$lpath" =~ ^repos/[^/]+/[^/]+/(issues|pulls)/[0-9]+$ && "$silent" == 0 ]]; then

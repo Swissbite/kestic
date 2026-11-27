@@ -76,7 +76,7 @@ idle_since() {
 }
 
 # Counts per issue or pull request, recomputed only when its updated_at changes:
-# `<updated_at> <withheld> <class of the last comment> <time of the last comment>`.
+# `<updated_at> <withheld> <class of the last trusted comment> <its time>`.
 # withheld = items by anyone the trust file does not name (the body of an issue opened by
 # someone else counts unless it carries the label adopted; the thread reader decides whether
 # that adoption holds).
@@ -92,9 +92,10 @@ cached() {
     printf '%s %s\n' "$upd" "$lines" | tee "$file"
 }
 
-# `<withheld> <last class> <last time>` from lines `<time> <class>` on stdin, plus $1 more withheld.
+# `<withheld> <last trusted class> <its time>` from lines `<time> <class>` on stdin, plus $1 more
+# withheld. A withheld comment after the agent's question does not hide the question.
 summarise() {
-    sort | awk -v extra="$1" 'NF >= 2 { n += ($2 == "withheld"); last = $2; t = $1 }
+    sort | awk -v extra="$1" 'NF >= 2 { n += ($2 == "withheld") } NF >= 2 && $2 != "withheld" { last = $2; t = $1 }
         END { printf "%d %s %s\n", n + extra, (last == "" ? "none" : last), (t == "" ? "-" : t) }'
 }
 
@@ -122,7 +123,10 @@ milestone_events() {
     local branch="$1" number n upd author held adopted body withheld last t
     number=$(gh api --paginate "repos/{owner}/{repo}/milestones?state=all&per_page=100" \
         --jq '.[] | "\(.number)\t\(.title)"' 2>/dev/null | awk -F'\t' -v t="$2" '$2 == t { print $1; exit }')
-    [[ "$number" =~ ^[0-9]+$ ]] || return 0
+    if [[ ! "$number" =~ ^[0-9]+$ ]]; then
+        echo "forge-error:$branch:$(date +%Y%m%d%H)"
+        return 0
+    fi
     gh api --paginate "repos/{owner}/{repo}/issues?milestone=$number&state=open&per_page=100" \
         --jq "$TRUST"' .[] | select(has("pull_request") | not)
             | "\(.number) \(.updated_at) \(.user | trust_class) \(any(.labels[]; .name == "needs-maintainer")) \(any(.labels[]; .name == "adopted"))"' \
@@ -130,7 +134,10 @@ milestone_events() {
         [[ "$n" =~ ^[0-9]+$ ]] || continue
         body=0
         [[ "$author" == withheld && "$adopted" != true ]] && body=1
-        read -r _ withheld last t < <(cached "issue-$n" "$upd" issue_counts "$n" "$body") || continue
+        if ! read -r _ withheld last t < <(cached "issue-$n" "$upd" issue_counts "$n" "$body"); then
+            echo "forge-error:$branch:$(date +%Y%m%d%H)"
+            continue
+        fi
         # Only a question the agent asked last waits for the maintainer.
         [[ "$held" == true && "$last" == agent ]] && echo "question:$branch:#$n:$t"
         (( withheld > 0 )) && echo "external:$branch:#$n:$withheld"
@@ -141,14 +148,18 @@ milestone_events() {
 pr_events() {
     local branch="$1" own n upd withheld
     own=$(gh api --paginate "repos/{owner}/{repo}/pulls?base=$branch&state=open&per_page=100" \
-        --jq "$TRUST .[] | select(agent_pull) | \"\(.number) \(.updated_at)\"" 2>/dev/null) || return 0
+        --jq "$TRUST .[] | select(agent_pull) | \"\(.number) \(.updated_at)\"" 2>/dev/null) ||
+        { echo "forge-error:$branch:$(date +%Y%m%d%H)"; return 0; }
     [[ -n "$own" ]] || return 0
     while read -r n upd; do
         [[ "$n" =~ ^[0-9]+$ ]] || continue
-        read -r _ withheld _ < <(cached "pr-$n" "$upd" pr_counts "$n") || continue
+        if ! read -r _ withheld _ < <(cached "pr-$n" "$upd" pr_counts "$n"); then
+            echo "forge-error:$branch:$(date +%Y%m%d%H)"
+            continue
+        fi
         (( withheld > 0 )) && echo "external:$branch:#$n:$withheld"
     done <<<"$own"
-    gh pr list --base "$branch" --state open --json number,isCrossRepository,isDraft,headRefOid,statusCheckRollup \
+    gh pr list --base "$branch" --state open --limit 200 --json number,isCrossRepository,isDraft,headRefOid,statusCheckRollup \
         --jq ".[] | select(.isCrossRepository == false) | $pr_filter" 2>/dev/null |
         awk -F: -v own="$(cut -d' ' -f1 <<<"$own" | tr '\n' ' ')" \
             'BEGIN { split(own, a, " "); for (i in a) mine[a[i]] = 1 } ($2 in mine)' | sed "s/^/pr:$branch:/"
