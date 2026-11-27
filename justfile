@@ -24,7 +24,7 @@ verify:
 
 # Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE, the merge
 # rule, the watcher and the GitHub token of the agent container, the release version arithmetic,
-# the release asset names, the job selection of the Verify workflow and the screenshot source of
+# the release asset names and flags, the job selection of the Verify workflow and the screenshot source of
 # the Pages site
 _static-checks:
     cargo fmt --all -- --check
@@ -36,6 +36,7 @@ _static-checks:
     .devcontainer/test-kestic-agent-token.sh
     .github/scripts/test-release-version.sh
     .github/scripts/test-release-assets.sh
+    .github/scripts/test-release-flags.sh
     .github/scripts/test-ci-scope.sh
     .github/scripts/test-pages-screenshots.sh
 

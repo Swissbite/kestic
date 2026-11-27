@@ -205,8 +205,9 @@ case "$kind" in
         ;;
 esac
 
+# A tag without suffix is a normal release; a branch build or release candidate is a pre-release.
 prerelease=false
-if [ "$(tag_major "$tag")" -eq 0 ] || tag_is_prerelease "$tag"; then prerelease=true; fi
+if tag_is_prerelease "$tag"; then prerelease=true; fi
 
 echo "tag=$tag"
 echo "version=$(debian_version "$tag")"
