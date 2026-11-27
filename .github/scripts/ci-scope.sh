@@ -31,7 +31,8 @@ readonly CI_GATED_JOBS="clippy build release test deb-check spec-tests"
 # Tests that read the specification. test-ci-scope.sh fails when a test names a path under
 # docs/spec/ and is missing here.
 readonly CI_SPEC_TESTS="kestic-core m0_s03_cxx_qt_pin
-kestic-core m4_s00_code_structure"
+kestic-core m4_s00_code_structure
+kestic-core m6_s22_qt_requirement"
 
 # Scope of a run: `full`, `spec` or `docs`. $1 is the event name; the changed files come one per
 # line on stdin and count only for a pull request. An empty list counts as a full run.

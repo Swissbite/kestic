@@ -142,6 +142,7 @@ fn main() {
     }
 
     remove_stale_qmltypes("net/daester/kestic");
+    compile_qml_to_bytecode_only(&out_dir);
 
     let mut builder =
         CxxQtBuilder::new_qml_module(QmlModule::new("net.daester.kestic").qml_files(qml_files))
@@ -176,14 +177,112 @@ fn main() {
     builder.build();
 }
 
+/// Makes cxx-qt-build compile the QML module to bytecode only, without the C++ that
+/// qmlcachegen generates from the bindings by default.
+///
+/// That C++ calls functions of Qt's private API, so the binary and with it the `.deb`
+/// (`qt6-*-private-abi (= <version>)` from dpkg-shlibdeps) would install only next to the exact
+/// Qt patch version it was built with. Bytecode is loaded by any Qt; one whose bytecode format
+/// differs compiles the QML sources, which stay in the module's resources, at start instead.
+///
+/// qt-build-utils 0.10 offers no option for `--only-bytecode`. It finds its tools through
+/// `qmake -query QT_HOST_LIBEXECS` and takes qmake from `QMAKE`, so this writes a folder with a
+/// `qmlcachegen` that adds the flag, links to the other tools of that folder, and a `qmake` that
+/// names the new folder as `QT_HOST_LIBEXECS` and passes every other call to the real qmake.
+fn compile_qml_to_bytecode_only(out_dir: &Path) {
+    let real_qmake = real_qmake();
+    let output = Command::new(&real_qmake)
+        .args(["-query", "QT_HOST_LIBEXECS"])
+        .output()
+        .unwrap_or_else(|e| panic!("run {} -query: {e}", real_qmake.display()));
+    assert!(
+        output.status.success(),
+        "{} -query QT_HOST_LIBEXECS failed",
+        real_qmake.display()
+    );
+    let libexecs = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+
+    let tools = out_dir.join("qml-bytecode-tools");
+    if tools.exists() {
+        fs::remove_dir_all(&tools).expect("remove previous qml-bytecode-tools");
+    }
+    fs::create_dir_all(&tools).expect("create qml-bytecode-tools");
+    for entry in
+        fs::read_dir(&libexecs).unwrap_or_else(|e| panic!("read {}: {e}", libexecs.display()))
+    {
+        let entry = entry.expect("entry of QT_HOST_LIBEXECS");
+        if entry.file_name() != "qmlcachegen" {
+            std::os::unix::fs::symlink(entry.path(), tools.join(entry.file_name()))
+                .expect("link Qt tool");
+        }
+    }
+
+    let qmlcachegen = libexecs.join("qmlcachegen");
+    assert!(
+        qmlcachegen.is_file(),
+        "no qmlcachegen in QT_HOST_LIBEXECS {}",
+        libexecs.display()
+    );
+    write_script(
+        &tools.join("qmlcachegen"),
+        &format!(
+            "exec {} --only-bytecode \"$@\"\n",
+            shell_quote(&qmlcachegen)
+        ),
+    );
+    write_script(
+        &tools.join("qmake"),
+        &format!(
+            "case \"$*\" in\n\
+             \x20 \"-query QT_HOST_LIBEXECS\" | \"-query QT_HOST_LIBEXECS/get\") printf '%s\\n' {}; exit 0 ;;\n\
+             esac\n\
+             exec {} \"$@\"\n",
+            shell_quote(&tools),
+            shell_quote(&real_qmake)
+        ),
+    );
+
+    // SAFETY: The build script is single-threaded here; cxx-qt-build reads `QMAKE` afterwards.
+    unsafe { env::set_var("QMAKE", tools.join("qmake")) };
+}
+
+/// The qmake cxx-qt-build would use: `QMAKE` if set, else `qmake6` or `qmake` from `PATH`.
+fn real_qmake() -> PathBuf {
+    if let Some(qmake) = env::var_os("QMAKE") {
+        return PathBuf::from(qmake);
+    }
+    let path = env::var_os("PATH").unwrap_or_default();
+    ["qmake6", "qmake"]
+        .iter()
+        .flat_map(|name| env::split_paths(&path).map(move |dir| dir.join(name)))
+        .find(|candidate| candidate.is_file())
+        .expect("qmake6 or qmake in PATH, or QMAKE set")
+}
+
+/// Writes an executable `/bin/sh` script. qt-build-utils runs the tools with an empty
+/// environment, so the script names every program by its full path.
+fn write_script(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::write(path, format!("#!/bin/sh\n{body}"))
+        .unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .unwrap_or_else(|e| panic!("make {} executable: {e}", path.display()));
+}
+
+/// A path as one single-quoted shell word.
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
 /// Deletes the module's `plugin.qmltypes` left in `OUT_DIR` by a previous build.
 ///
 /// qt-build-utils 0.10 runs qmlcachegen *before* qmltyperegistrar writes the
 /// current `plugin.qmltypes`, while the generated `qmldir` already points at it.
 /// On a rebuild qmlcachegen therefore compiles QML against the C++ types of the
 /// previous build; when the bridges changed in between (e.g. a CI cache from
-/// another commit), the AOT-compiled bindings crash with SIGSEGV. Without the
-/// file every build behaves like a clean one.
+/// another commit), bindings compiled to C++ crashed with SIGSEGV. Bytecode is not
+/// compiled against these types, but without the file every build stays like a
+/// clean one.
 ///
 /// Upstream: KDAB/cxx-qt#1508, fixed by #1509 (not yet released as of 0.10.0).
 /// Remove this workaround once the cxx-qt version in use contains that fix.

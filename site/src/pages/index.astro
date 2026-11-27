@@ -135,7 +135,7 @@ const doneCount = milestones.filter((m) => m.done).length;
 const nextMilestone = milestones.find((m) => !m.done);
 const buildFromSource = `${repoUrl}#building--testing`;
 const requirements =
-  "Needs a Debian- or Ubuntu-based amd64 system with Plasma 6, KDE Frameworks 6.24 or newer, and Qt 6.10.2. Tested on TUXEDO OS 24.04.";
+  "Needs a Debian- or Ubuntu-based amd64 system with Plasma 6, KDE Frameworks 6.24 or newer, and Qt 6.10 or newer. Tested on TUXEDO OS 24.04.";
 ---
 
 <Base
@@ -208,7 +208,7 @@ const requirements =
           <dt>Runs on</dt>
           <dd>
             Debian- and Ubuntu-based amd64 systems with Plasma 6, KDE Frameworks 6.24 or newer,
-            and Qt 6.10.2. Tested on TUXEDO OS 24.04. Uses restic 0.18.0 or newer from the system,
+            and Qt 6.10 or newer. Tested on TUXEDO OS 24.04. Uses restic 0.18.0 or newer from the system,
             or downloads it for you.
           </dd>
         </dl>
