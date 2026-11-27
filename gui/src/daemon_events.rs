@@ -316,26 +316,53 @@ impl ProgressPacer {
     }
 }
 
-static PROGRESS_PACER: Mutex<ProgressPacer> = Mutex::new(ProgressPacer { last: None });
-/// A delayed wake-up for progress is on its way.
-static PROGRESS_WAKE_SCHEDULED: AtomicBool = AtomicBool::new(false);
+/// Turns progress into wake-ups of the window, at most one every [`PROGRESS_EVERY`].
+struct ProgressWaker {
+    pacer: Mutex<ProgressPacer>,
+    /// A delayed wake-up for progress is on its way.
+    scheduled: AtomicBool,
+}
 
-/// Wakes the window for new progress, at most every [`PROGRESS_EVERY`]; progress that comes
-/// sooner is shown by one delayed wake-up, so the last value always reaches the window.
-fn wake_gui_for_progress() {
-    let wait = PROGRESS_PACER.lock_unpoisoned().admit(Instant::now());
-    let Some(wait) = wait else {
-        wake_gui();
-        return;
-    };
-    if PROGRESS_WAKE_SCHEDULED.swap(true, Ordering::SeqCst) {
-        return;
+impl ProgressWaker {
+    const fn new() -> Self {
+        Self {
+            pacer: Mutex::new(ProgressPacer { last: None }),
+            scheduled: AtomicBool::new(false),
+        }
     }
-    thread::spawn(move || {
-        thread::sleep(wait);
-        PROGRESS_WAKE_SCHEDULED.store(false, Ordering::SeqCst);
-        PROGRESS_PACER.lock_unpoisoned().admit(Instant::now());
-        wake_gui();
+
+    /// Wakes the window at once, or, when the last wake-up is too recent, has `spawn_after`
+    /// deliver one delayed wake-up; a delayed one already on its way covers this progress too,
+    /// so the last value always reaches the window.
+    fn on_progress(&self, now: Instant, wake: impl Fn(), spawn_after: impl FnOnce(Duration)) {
+        let wait = self.pacer.lock_unpoisoned().admit(now);
+        match wait {
+            None => wake(),
+            Some(wait) => {
+                if !self.scheduled.swap(true, Ordering::SeqCst) {
+                    spawn_after(wait);
+                }
+            }
+        }
+    }
+
+    /// The delayed wake-up is due.
+    fn delayed_due(&self, now: Instant, wake: impl Fn()) {
+        self.scheduled.store(false, Ordering::SeqCst);
+        self.pacer.lock_unpoisoned().last = Some(now);
+        wake();
+    }
+}
+
+static PROGRESS_WAKER: ProgressWaker = ProgressWaker::new();
+
+/// Wakes the window for new progress, at most every [`PROGRESS_EVERY`].
+fn wake_gui_for_progress() {
+    PROGRESS_WAKER.on_progress(Instant::now(), wake_gui, |wait| {
+        thread::spawn(move || {
+            thread::sleep(wait);
+            PROGRESS_WAKER.delayed_due(Instant::now(), wake_gui);
+        });
     });
 }
 
