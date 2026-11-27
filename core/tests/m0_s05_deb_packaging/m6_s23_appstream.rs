@@ -233,7 +233,10 @@ fn ac_m6_23_4_deb_screenshots_are_assets_of_its_own_release() {
     let (_unpacked, root) = unpack_deb("kestic-m6-s23-screenshots");
     let images = elements(&shipped_metainfo(&root), "image");
     if version.contains('+') || version.starts_with("0.0.0~dev") {
-        assert!(images.is_empty(), "(a) a build without release ships no screenshots");
+        assert!(
+            images.is_empty(),
+            "(a) a build without release ships no screenshots"
+        );
     } else {
         let prefix = format!(
             "https://github.com/Swissbite/kestic/releases/download/v{}/screenshot-",
