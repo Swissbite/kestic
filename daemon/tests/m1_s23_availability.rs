@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::m3::connect_rest_repo;
+use common::m3::{connect_rest_repo, wait_until_within};
 use common::{
     fetch_dbusmenu_items, restic_test_binaries, run_isolated_test, sandbox_run_config,
     start_fake_notifications, start_fake_sni_watcher, wait_for_file, wait_for_sni_service,
@@ -218,16 +218,19 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
                 "cache within 60 s must not re-probe yet"
             );
 
-            // Advance past 60 s (> 60 s) and call tray AboutToShow + GetLayout -> marks available again!
+            // Advance past 60 s (> 60 s) and open the tray menu: the check it starts runs in the
+            // background and re-enables the backup in the menu once it is done.
             clock.advance(Duration::from_secs(35));
-            let menu_recovered = fetch_dbusmenu_items(&client_conn, &sni_svc);
-            let entry_rec = menu_recovered
-                .iter()
-                .find(|m| m.label.starts_with("REST Backup"))
-                .expect("tray item for REST Backup");
-            assert!(
-                entry_rec.enabled,
-                "AboutToShow after >60 s must refresh availability and re-enable backup in tray"
+            wait_until_within(
+                Duration::from_secs(10),
+                "AboutToShow after >60 s must refresh availability and re-enable backup in tray",
+                || {
+                    fetch_dbusmenu_items(&client_conn, &sni_svc)
+                        .iter()
+                        .find(|m| m.label.starts_with("REST Backup"))
+                        .expect("tray item for REST Backup")
+                        .enabled
+                },
             );
 
             let state_rec = client.get_state().expect("GetState");

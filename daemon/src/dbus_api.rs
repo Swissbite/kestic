@@ -41,8 +41,7 @@ use kestic_i18n::messages::{ActiveRunInfo, Message, OverallCounts, ResticStatusP
 use crate::tray::TrayStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{DynamicDeserialize, DynamicType};
-use zbus::{Connection, DBusError, Proxy, block_on};
+use zbus::{Connection, DBusError, block_on};
 
 /// Well-known session bus name used as the daemon single-instance lock.
 pub const KESTIC_BUS_NAME: &str = "net.daester.Kestic";
@@ -54,6 +53,7 @@ pub const KESTIC_OBJECT_PATH: &str = "/net/daester/Kestic";
 pub const KESTIC_INTERFACE_V1: &str = "net.daester.Kestic1";
 
 mod client;
+pub mod proxy;
 pub use client::KesticClient;
 pub(crate) use client::to_json_arg;
 
