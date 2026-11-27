@@ -343,9 +343,26 @@ QtObject {
         hostKey = null;
         if (!detailsValid) {
             showError(Texts.label("fill_required_fields"));
-            return false;
+            return;
         }
-        var ok = appBackend.testDestination(fieldsJson(), setupMode, repoPassword, backendSecretsJson());
+        connectionVerified = false;
+        testFeedbackOk = false;
+        testFeedback = "";
+        testAnswer.track(appBackend.testDestination(fieldsJson(), setupMode, repoPassword, backendSecretsJson()));
+    }
+
+    // The connection test is on its way to the daemon.
+    readonly property bool testing: testAnswer.waiting
+
+    property DaemonAnswer testAnswer: DaemonAnswer {
+        backend: draft.appBackend
+        onAnswered: function(ok, result) {
+            draft.showTestResult(ok);
+        }
+    }
+
+    // Shows the result of the connection test the backend published.
+    function showTestResult(ok) {
         testNote = ok ? appBackend.connection_test_note : "";
         connectionVerified = ok;
         testFeedbackOk = ok;
@@ -354,6 +371,5 @@ QtObject {
             hostKey = JSON.parse(appBackend.connection_test_host_key);
             hostKeyOffered();
         }
-        return ok;
     }
 }

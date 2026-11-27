@@ -165,6 +165,12 @@ pub mod qobject {
         type Texts = super::TextsRust;
     }
 
+    // The query lists and the restore dialog get the daemon's answers on the Qt thread.
+    impl cxx_qt::Threading for SnapshotBrowseModel {}
+    impl cxx_qt::Threading for SnapshotSearchModel {}
+    impl cxx_qt::Threading for SnapshotDiffModel {}
+    impl cxx_qt::Threading for RestorePreviewModel {}
+
     unsafe extern "RustQt" {
         #[cxx_name = "beginResetModel"]
         #[inherit]

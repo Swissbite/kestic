@@ -10,7 +10,7 @@ use crate::daemon_events::request_refresh;
 use crate::state_cache::{
     daemon_unavailable_text, dbus_error_text, make_client, refresh_state_now,
 };
-use cxx_qt::Threading;
+use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{KesticClient, KesticDbusError};
@@ -90,7 +90,7 @@ pub fn finish_pending_calls(limit: Duration) {
 /// them; calls on different lanes do not wait for each other. A call the daemon may answer only
 /// after a while (it checks destinations first or waits for the user) has a lane of its own, so
 /// the user's quick calls (pause, resume, settings, the window) never wait for it.
-pub(super) enum Lane {
+pub(crate) enum Lane {
     /// After the earlier calls with the same key.
     After(String),
     /// On a thread of its own, after nothing: cancelling must never wait.
@@ -99,29 +99,84 @@ pub(super) enum Lane {
 
 impl Lane {
     /// The window's own state (`WindowActive`).
-    pub(super) fn window() -> Self {
+    pub(crate) fn window() -> Self {
         Self::After("window".into())
     }
 
     /// The quick calls about all backups (pause, resume).
-    pub(super) fn all_backups() -> Self {
+    pub(crate) fn all_backups() -> Self {
         Self::After("all-backups".into())
     }
 
     /// The quick calls about the backup `id` (pause, resume).
-    pub(super) fn backup(id: &str) -> Self {
+    pub(crate) fn backup(id: &str) -> Self {
         Self::After(format!("backup:{id}"))
     }
 
     /// The settings.
-    pub(super) fn settings() -> Self {
+    pub(crate) fn settings() -> Self {
         Self::After("settings".into())
     }
 
     /// A call the daemon may answer only after a while, `what` naming the kind of call and its
     /// target: only calls of the same kind about the same thing wait for each other.
-    pub(super) fn slow(what: &str) -> Self {
+    pub(crate) fn slow(what: &str) -> Self {
         Self::After(format!("slow:{what}"))
+    }
+}
+
+/// Runs `call` with a client of the daemon on `lane`, off the Qt thread, then `then` with its
+/// result on the Qt thread of the object `qt` belongs to; `Err` means there is no connection to
+/// the bus. When `fetch_state(&result)` holds, the state is fetched anew before `then` runs.
+pub(crate) fn call_daemon_on<O, T>(
+    qt: &CxxQtThread<O>,
+    lane: Lane,
+    call: impl FnOnce(&KesticClient) -> T + Send + 'static,
+    fetch_state: impl FnOnce(&T) -> bool + Send + 'static,
+    then: impl FnOnce(Pin<&mut O>, Result<T, String>) + Send + 'static,
+) where
+    O: Threading + 'static,
+    T: Send + 'static,
+{
+    let qt = qt.clone();
+    run_on(
+        lane,
+        Box::new(move || {
+            let result = make_client().map(|client| call(&client));
+            if result.as_ref().is_ok_and(fetch_state) {
+                refresh_state_now();
+            }
+            // Fails only when the object is gone; then nobody waits for the result.
+            let _ = qt.queue(move |object| then(object, result));
+        }),
+    );
+}
+
+/// Runs `call` with a client of the daemon on `lane`, off the Qt thread; nobody waits for its
+/// result (a cancel whose effect the next status shows).
+pub(crate) fn send_to_daemon(lane: Lane, call: impl FnOnce(&KesticClient) + Send + 'static) {
+    run_on(
+        lane,
+        Box::new(move || {
+            if let Ok(client) = make_client() {
+                call(&client);
+            }
+        }),
+    );
+}
+
+/// Runs `job` on `lane`, counted as pending until it has run.
+fn run_on(lane: Lane, job: Job) {
+    let job = counted(job);
+    match lane {
+        Lane::Alone => {
+            thread::spawn(job);
+        }
+        Lane::After(key) => {
+            if send_in_order(&key, job).is_err() {
+                eprintln!("kestic: the thread for daemon calls on lane {key} has ended");
+            }
+        }
     }
 }
 
@@ -146,25 +201,7 @@ impl qobject::KesticApp {
         fetch_state: impl FnOnce(&T) -> bool + Send + 'static,
         then: impl FnOnce(Pin<&mut Self>, Result<T, String>) + Send + 'static,
     ) {
-        let qt = self.qt_thread();
-        let job = counted(Box::new(move || {
-            let result = make_client().map(|client| call(&client));
-            if result.as_ref().is_ok_and(fetch_state) {
-                refresh_state_now();
-            }
-            // Fails only when the window is gone; then nobody waits for the result.
-            let _ = qt.queue(move |app| then(app, result));
-        }));
-        match lane {
-            Lane::Alone => {
-                thread::spawn(job);
-            }
-            Lane::After(key) => {
-                if send_in_order(&key, job).is_err() {
-                    eprintln!("kestic: the thread for daemon calls on lane {key} has ended");
-                }
-            }
-        }
+        call_daemon_on(&self.qt_thread(), lane, call, fetch_state, then);
     }
 
     /// Like [`Self::call_daemon`] for an edit whose result QML waits for: returns the id of the

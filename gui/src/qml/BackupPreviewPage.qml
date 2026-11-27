@@ -29,19 +29,33 @@ Kirigami.ScrollablePage {
     property var retentionPreviewData: null
     property string retentionPreviewError: ""
 
+    // The requests the page waits for (0: none); answers arrive through `daemonCallDone`.
+    property int dryRunStartRequest: 0
+    property int dryRunPollRequest: 0
+    property int retentionStartRequest: 0
+    property int retentionPollRequest: 0
+
     function startDryRunIfNeeded() {
         if (mode !== "dry_run") return;
         retentionPollTimer.stop();
         dryRunState = "running";
         dryRunResult = null;
         dryRunError = "";
-        previewId = appBackend.startBackupDryRun(backupId, excludesJson);
-        if (previewId === "") {
+        previewId = "";
+        dryRunStartRequest = appBackend.startBackupDryRun(backupId, excludesJson);
+        if (dryRunStartRequest === 0) {
+            dryRunStarted(false, "");
+        }
+    }
+
+    function dryRunStarted(ok, id) {
+        if (!ok || id === "") {
             dryRunState = "error";
             dryRunError = appBackend.dry_run_error || appBackend.last_action_error || i18n("Preview could not be started.");
-        } else {
-            pollTimer.start();
+            return;
         }
+        previewId = id;
+        pollTimer.start();
     }
 
     function startRetentionPreviewIfNeeded() {
@@ -50,12 +64,41 @@ Kirigami.ScrollablePage {
         retentionPreviewState = "running";
         retentionPreviewData = null;
         retentionPreviewError = "";
-        retentionPreviewId = appBackend.startRetentionPreview(backupId, retentionJson);
-        if (retentionPreviewId === "") {
+        retentionPreviewId = "";
+        retentionStartRequest = appBackend.startRetentionPreview(backupId, retentionJson);
+        if (retentionStartRequest === 0) {
+            retentionPreviewStarted(false, "");
+        }
+    }
+
+    function retentionPreviewStarted(ok, id) {
+        if (!ok || id === "") {
             retentionPreviewState = "error";
             retentionPreviewError = appBackend.retention_preview_error || appBackend.last_action_error || i18n("Preview could not be started.");
-        } else {
-            retentionPollTimer.start();
+            return;
+        }
+        retentionPreviewId = id;
+        retentionPollTimer.start();
+    }
+
+    Connections {
+        target: appBackend
+        function onDaemonCallDone(request, ok, result) {
+            if (request === page.dryRunStartRequest) {
+                page.dryRunStartRequest = 0;
+                page.dryRunStarted(ok, result);
+            } else if (request === page.retentionStartRequest) {
+                page.retentionStartRequest = 0;
+                page.retentionPreviewStarted(ok, result);
+            } else if (request === page.dryRunPollRequest) {
+                page.dryRunPollRequest = 0;
+                page.handlePollAnswer(pollTimer, ok ? result : "",
+                                      appBackend.dry_run_error, page.applyDryRunAnswer);
+            } else if (request === page.retentionPollRequest) {
+                page.retentionPollRequest = 0;
+                page.handlePollAnswer(retentionPollTimer, ok ? result : "",
+                                      appBackend.retention_preview_error, page.applyRetentionAnswer);
+            }
         }
     }
 
@@ -108,6 +151,7 @@ Kirigami.ScrollablePage {
         if (error !== null) retentionPreviewError = error;
     }
 
+    // Asks for the status while no answer is on its way.
     Timer {
         id: pollTimer
         interval: 150
@@ -117,8 +161,9 @@ Kirigami.ScrollablePage {
                 stop();
                 return;
             }
-            page.handlePollAnswer(pollTimer, appBackend.pollBackupDryRun(page.previewId),
-                                  appBackend.dry_run_error, page.applyDryRunAnswer);
+            if (page.dryRunPollRequest === 0) {
+                page.dryRunPollRequest = appBackend.pollBackupDryRun(page.previewId);
+            }
         }
     }
 
@@ -131,8 +176,9 @@ Kirigami.ScrollablePage {
                 stop();
                 return;
             }
-            page.handlePollAnswer(retentionPollTimer, appBackend.pollRetentionPreview(page.retentionPreviewId),
-                                  appBackend.retention_preview_error, page.applyRetentionAnswer);
+            if (page.retentionPollRequest === 0) {
+                page.retentionPollRequest = appBackend.pollRetentionPreview(page.retentionPreviewId);
+            }
         }
     }
 

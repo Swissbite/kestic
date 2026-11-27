@@ -28,8 +28,16 @@ Kirigami.ApplicationWindow {
         if (settingsWindow.pendingProviderKind === "custom" && settingsWindow.pendingCustomPath.trim().length === 0) {
             return;
         }
-        if (appBackend.applyResticSource(settingsWindow.pendingProviderKind, settingsWindow.pendingCustomPath)) {
-            resticSourceDialog.close();
+        resticSourceAnswer.track(appBackend.applyResticSource(settingsWindow.pendingProviderKind, settingsWindow.pendingCustomPath));
+    }
+
+    DaemonAnswer {
+        id: resticSourceAnswer
+        backend: settingsWindow.appBackend
+        onAnswered: function(ok, result) {
+            if (ok) {
+                resticSourceDialog.close();
+            }
         }
     }
 
@@ -145,7 +153,8 @@ Kirigami.ApplicationWindow {
                 objectName: "applyResticSourceAction"
                 icon.name: "dialog-ok-apply"
                 text: i18n("Apply")
-                enabled: settingsWindow.pendingProviderKind !== "custom" || settingsWindow.pendingCustomPath.trim().length > 0
+                enabled: !resticSourceAnswer.waiting
+                    && (settingsWindow.pendingProviderKind !== "custom" || settingsWindow.pendingCustomPath.trim().length > 0)
                 onTriggered: settingsWindow.applyResticSourceChoice()
             }
         ]

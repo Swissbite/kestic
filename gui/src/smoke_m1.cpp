@@ -3,6 +3,7 @@
 
 #include "src/smoke_helper.h"
 #include "src/smoke_common.h"
+#include "src/smoke_m6.h"
 #include <QColor>
 #include <QElapsedTimer>
 #include <functional>
@@ -487,29 +488,6 @@ void scene_keyboard_navigation(const Scene& s) {
     smoke_finish("M1 keyboard", warnings.get(), window, out_path);
 }
 
-// Largest pause of the main thread (ms) between ticks of a 20 ms timer, until `stop` is set.
-// While `skip` is set, the next pause is not counted and `skip` is cleared.
-std::shared_ptr<qint64> watch_main_thread_gaps(QQuickWindow* window, const std::shared_ptr<bool>& stop,
-    const std::shared_ptr<bool>& skip = std::make_shared<bool>(false)) {
-    auto largest = std::make_shared<qint64>(0);
-    auto since_tick = std::make_shared<QElapsedTimer>();
-    since_tick->start();
-    auto* ticker = new QTimer(window);
-    QObject::connect(ticker, &QTimer::timeout, window, [=]() {
-        const qint64 gap = since_tick->restart();
-        if (*skip) {
-            *skip = false;
-        } else {
-            *largest = std::max(*largest, gap);
-        }
-        if (*stop) {
-            ticker->stop();
-        }
-    });
-    ticker->start(20);
-    return largest;
-}
-
 // AC-M6-33-3: the daemon takes 6 s to start; the window is up long before and says so.
 void run_daemon_starting_scene(
     QQuickWindow* window,
@@ -733,25 +711,6 @@ void run_slow_daemon_scene(
     poll->start(50);
 }
 
-// Polls `done` every 50 ms for at most `limit_ms`; then `finish` runs, or the scene fails with
-// `code` and `what`.
-void wait_then(QQuickWindow* window, int limit_ms, int code, const QString& what,
-    const std::function<bool()>& done, const std::function<void()>& finish) {
-    auto waited = std::make_shared<QElapsedTimer>();
-    waited->start();
-    auto* poll = new QTimer(window);
-    QObject::connect(poll, &QTimer::timeout, window, [=]() {
-        if (done()) {
-            poll->stop();
-            finish();
-        } else if (waited->elapsed() > limit_ms) {
-            poll->stop();
-            smoke_fail("M6", code, what);
-        }
-    });
-    poll->start(50);
-}
-
 // AC-M6-33-1: the quit dialog opens before the first state arrived (tray «Quit» without a
 // window); the state that arrives later names the running backup.
 void run_quit_running_scene(QQuickWindow* window, QObject* backend,
@@ -802,24 +761,6 @@ void run_close_window_scene(QQuickWindow* window, QObject* backend,
             QMetaObject::invokeMethod(backend, "resumeGlobal");
             window->close();
         });
-}
-
-// Calls `method` on the backend and fails the scene unless it returns a request id (> 0) within
-// 100 ms (AC-M6-33-1 (a)).
-bool requests_at_once(int code, const char* method, const std::function<int()>& call) {
-    QElapsedTimer took;
-    took.start();
-    const int request = call();
-    const qint64 ms = took.elapsed();
-    if (request <= 0) {
-        smoke_fail("M6", code, QStringLiteral("%1 returned no request").arg(QLatin1String(method)));
-        return false;
-    }
-    if (ms >= 100) {
-        smoke_fail("M6", code, QStringLiteral("(a) %1 kept the main thread for %2 ms").arg(QLatin1String(method)).arg(ms));
-        return false;
-    }
-    return true;
 }
 
 // AC-M6-33-1: every reply comes 5 s late. The edits and lists whose result the window waits for
@@ -1232,6 +1173,8 @@ void run_m6_smoke_scenario(
         run_close_window_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-order")) {
         run_slow_order_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-queries")) {
+        run_slow_queries_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-save")) {
         run_slow_save_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-edits")) {

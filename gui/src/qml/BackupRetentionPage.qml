@@ -74,6 +74,9 @@ EditorPage {
     property int pendingRemoveCount: 0
     property var pendingRemoveSnapshots: []
     property bool saveBusy: false
+    // The rules take no input while the preview before saving runs: the save commits the rules
+    // the preview checked.
+    enabled: !saving && !saveBusy
     property string savePreviewId: ""
     property bool pendingPopAfterSave: false
 
@@ -262,15 +265,45 @@ EditorPage {
         pendingSaveRetentionJson = jsonStr;
         pendingPopAfterSave = Boolean(popAfterSave);
         saveBusy = true;
-        savePreviewId = appBackend.startRetentionPreview(backupId, jsonStr);
-        if (savePreviewId === "") {
+        savePreviewId = "";
+        saveStartRequest = appBackend.startRetentionPreview(backupId, jsonStr);
+        if (saveStartRequest === 0) {
             saveBusy = false;
             finishSave(jsonStr, pendingPopAfterSave, done);
             return false;
         }
-        savePollTimer.start();
         if (done) done(false);
         return false;
+    }
+
+    // The preview before saving started (`id`), or could not start: then the rules are saved
+    // without it.
+    function savePreviewStarted(ok, id) {
+        if (!ok || id === "") {
+            saveBusy = false;
+            finishSave(pendingSaveRetentionJson, pendingPopAfterSave);
+            return;
+        }
+        savePreviewId = id;
+        savePollTimer.start();
+    }
+
+    // The requests of the preview before saving (0: none); answers arrive through
+    // `daemonCallDone`.
+    property int saveStartRequest: 0
+    property int savePollRequest: 0
+
+    Connections {
+        target: appBackend
+        function onDaemonCallDone(request, ok, result) {
+            if (request === page.saveStartRequest) {
+                page.saveStartRequest = 0;
+                page.savePreviewStarted(ok, result);
+            } else if (request === page.savePollRequest) {
+                page.savePollRequest = 0;
+                page.savePreviewAnswered(ok ? rootWindow.parseJsonOr(result, null) : null);
+            }
+        }
     }
 
     function saveForGuard(done) {
@@ -293,26 +326,32 @@ EditorPage {
                 page.saveBusy = false;
                 return;
             }
-            var dto = rootWindow.parseJsonOr(appBackend.pollRetentionPreview(page.savePreviewId), null);
-            if (dto && dto.state === "running") {
-                return;
+            if (page.savePollRequest === 0) {
+                page.savePollRequest = appBackend.pollRetentionPreview(page.savePreviewId);
             }
-            stop();
-            page.saveBusy = false;
-            page.savePreviewId = "";
-            if (dto && dto.state === "done" && dto.result && dto.result.remove_count && dto.result.remove_count > 0) {
-                page.pendingRemoveCount = dto.result.remove_count;
-                page.pendingRemoveSnapshots = (dto.result.snapshots || [])
-                    .filter(s => s.action === "remove")
-                    .map(s => s.short_id + " (" + s.time_text + ")");
-                confirmRemoveDialog.open();
-                return;
-            }
-            if (dto && dto.state === "cancelled") {
-                return;
-            }
-            page.finishSave(page.pendingSaveRetentionJson, page.pendingPopAfterSave);
         }
+    }
+
+    // One answer `dto` (null: none) of the preview before saving.
+    function savePreviewAnswered(dto) {
+        if (dto && dto.state === "running") {
+            return;
+        }
+        savePollTimer.stop();
+        saveBusy = false;
+        savePreviewId = "";
+        if (dto && dto.state === "done" && dto.result && dto.result.remove_count && dto.result.remove_count > 0) {
+            pendingRemoveCount = dto.result.remove_count;
+            pendingRemoveSnapshots = (dto.result.snapshots || [])
+                .filter(s => s.action === "remove")
+                .map(s => s.short_id + " (" + s.time_text + ")");
+            confirmRemoveDialog.open();
+            return;
+        }
+        if (dto && dto.state === "cancelled") {
+            return;
+        }
+        finishSave(pendingSaveRetentionJson, pendingPopAfterSave);
     }
 
     actions: [

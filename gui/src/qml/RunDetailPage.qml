@@ -30,12 +30,22 @@ Kirigami.ScrollablePage {
         page.pendingExcludePath = path;
         page.pendingExcludeRuleLabel = path;
         page.pendingExcludeIsDir = false;
-        var dto = rootWindow.parseJsonOr(appBackend.formatExcludeRuleForItem(path), null);
-        if (dto) {
-            page.pendingExcludeRuleLabel = dto.rule || path;
-            page.pendingExcludeIsDir = Boolean(dto.is_dir);
+        // The dialog opens once the daemon has said how the rule reads; without an answer it
+        // offers the path itself.
+        excludeRuleAnswer.track(appBackend.formatExcludeRuleForItem(path));
+    }
+
+    DaemonAnswer {
+        id: excludeRuleAnswer
+        backend: page.appBackend
+        onAnswered: function(ok, result) {
+            var dto = ok ? page.rootWindow.parseJsonOr(result, null) : null;
+            if (dto) {
+                page.pendingExcludeRuleLabel = dto.rule || page.pendingExcludePath;
+                page.pendingExcludeIsDir = Boolean(dto.is_dir);
+            }
+            addExcludeDialog.open();
         }
-        addExcludeDialog.open();
     }
 
     // Loads the run's detail; the log filter applies once it has arrived.

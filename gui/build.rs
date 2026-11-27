@@ -60,6 +60,7 @@ fn main() {
 
     let qml_files = [
         "src/qml/Main.qml",
+        "src/qml/DaemonAnswer.qml",
         "src/qml/MainHeaderArea.qml",
         "src/qml/MainAboutPage.qml",
         "src/qml/AboutWindow.qml",
@@ -136,6 +137,8 @@ fn main() {
         "src/smoke_m4.cpp",
         "src/smoke_main_menu.cpp",
         "src/smoke_m5.cpp",
+        "src/smoke_m6.cpp",
+        "src/smoke_m6.h",
         "src/smoke_m3_util.h",
     ] {
         println!("cargo:rerun-if-changed={cpp}");
@@ -164,7 +167,8 @@ fn main() {
             .cpp_file("src/smoke_m3_pages.cpp")
             .cpp_file("src/smoke_m4.cpp")
             .cpp_file("src/smoke_main_menu.cpp")
-            .cpp_file("src/smoke_m5.cpp");
+            .cpp_file("src/smoke_m5.cpp")
+            .cpp_file("src/smoke_m6.cpp");
     }
 
     // SAFETY: Configures an additional C++ include path during build-script compilation.

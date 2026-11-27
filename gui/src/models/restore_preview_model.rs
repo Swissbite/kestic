@@ -12,11 +12,12 @@ use super::snapshot_query::{
     QueryFailure, QueryList, QueryListModel, QueryListView, count_text, format_count, to_i32,
     too_large_text,
 };
+use crate::backend::{Lane, call_daemon_on, send_to_daemon};
 use crate::state_cache::{
-    dbus_error_text, format_bytes, i18n, i18np, make_client, shared_state, tr,
+    daemon_unavailable_text, dbus_error_text, format_bytes, i18n, i18np, shared_state, tr,
 };
 use crate::ui_texts::GuiText;
-use cxx_qt::CxxQtType;
+use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QStringList};
 use kestic_core::model::RunStatus;
 use kestic_core::mount::current_home_dir;
@@ -96,6 +97,8 @@ pub struct RestorePreviewModelRust {
     choice: Choice,
     result: Option<RestorePreviewResultDto>,
     run_id: Option<String>,
+    /// A check of the run was asked for and has not arrived yet.
+    run_polling: bool,
 }
 
 /// The overwrite mode at `index` of the dialog's list, which lists the modes in the order of
@@ -594,39 +597,68 @@ impl qobject::RestorePreviewModel {
             overwrite: mode_of(self.overwrite),
             preview_id: self.list.run.id().map(str::to_string),
         };
-        let started = make_client().and_then(|client| {
-            client
-                .start_restore(&request)
-                .map_err(|e| dbus_error_text(&e))
-        });
-        match started {
-            Ok(run_id) => {
-                // One run per preview: a second click must not start another restore.
-                self.as_mut().set_can_restore(false);
-                self.as_mut().rust_mut().run_id = Some(run_id);
-                self.as_mut()
-                    .set_run_target(QString::from(&result.target.check.detail));
-                self.as_mut()
-                    .set_run_text(QString::from(&i18n("Restoring files…").to_string()));
-                self.as_mut().set_run_state(QString::from("running"));
-            }
-            Err(text) => {
-                self.as_mut().set_run_text(QString::from(&text));
-                self.as_mut().set_run_state(QString::from("error"));
-            }
-        }
+        // One run per preview: a second click must not start another restore.
+        self.as_mut().set_can_restore(false);
+        let target = result.target.check.detail.clone();
+        call_daemon_on(
+            &self.qt_thread(),
+            Lane::slow("restore"),
+            move |client| {
+                client
+                    .start_restore(&request)
+                    .map_err(|e| dbus_error_text(&e))
+            },
+            |_| false,
+            move |mut model: Pin<&mut Self>, started| match started
+                .unwrap_or_else(|_| Err(daemon_unavailable_text()))
+            {
+                Ok(run_id) => {
+                    model.as_mut().rust_mut().run_id = Some(run_id);
+                    model.as_mut().set_run_target(QString::from(&target));
+                    model
+                        .as_mut()
+                        .set_run_text(QString::from(&i18n("Restoring files…").to_string()));
+                    model.as_mut().set_run_state(QString::from("running"));
+                }
+                Err(text) => {
+                    model.as_mut().set_run_text(QString::from(&text));
+                    model.as_mut().set_run_state(QString::from("error"));
+                }
+            },
+        );
     }
 
-    /// Checks the running restore (called by a timer while `run_state` is `running`).
+    /// Checks the running restore (called by a timer while `run_state` is `running`), unless
+    /// the answer to the last check is still on its way.
     pub fn poll_run(mut self: Pin<&mut Self>) {
         let Some(run_id) = self.run_id.clone() else {
             return;
         };
-        let Ok(detail) =
-            make_client().and_then(|c| c.get_run_detail(&run_id).map_err(|e| dbus_error_text(&e)))
-        else {
+        if self.run_polling {
             return;
-        };
+        }
+        self.as_mut().rust_mut().run_polling = true;
+        call_daemon_on(
+            &self.qt_thread(),
+            Lane::Alone,
+            move |client| client.get_run_detail(&run_id),
+            |_| false,
+            |mut model: Pin<&mut Self>, detail| {
+                model.as_mut().rust_mut().run_polling = false;
+                if let Ok(Ok(detail)) = detail {
+                    model.show_run(&detail);
+                }
+            },
+        );
+    }
+
+    /// Shows the state of the restore as `detail` has it.
+    fn show_run(mut self: Pin<&mut Self>, detail: &RunDetailDto) {
+        // A dismissed restore shows nothing any more.
+        if self.run_id.as_deref() != Some(detail.run.id.as_str()) {
+            return;
+        }
+        let run_id = detail.run.id.as_str().to_string();
         let state = match detail.run.status {
             RunStatus::Pending => {
                 let waiting = tr(&kestic_i18n::codes::PendingReasonCode::Queue.waiting_message(""));
@@ -649,15 +681,17 @@ impl qobject::RestorePreviewModel {
             status => run_state_of(status),
         };
         self.as_mut()
-            .set_run_text(QString::from(&run_end_text(&detail)));
+            .set_run_text(QString::from(&run_end_text(detail)));
         self.as_mut().set_run_state(QString::from(state));
     }
 
     /// Cancels the running restore; files written so far stay.
     pub fn cancel_run(self: Pin<&mut Self>) {
-        if let (Some(run_id), Ok(client)) = (self.run_id.as_deref(), make_client()) {
-            // A run that ended meanwhile needs no cancel.
-            let _ = client.cancel_run(run_id);
+        if let Some(run_id) = self.run_id.clone() {
+            send_to_daemon(Lane::Alone, move |client| {
+                // A run that ended meanwhile needs no cancel.
+                let _ = client.cancel_run(&run_id);
+            });
         }
     }
 

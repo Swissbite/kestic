@@ -360,70 +360,76 @@ impl qobject::SnapshotBrowseModel {
 
     /// Marks every entry of the list shown, also those not loaded yet (all pages, with the
     /// filter).
-    pub fn select_all(mut self: Pin<&mut Self>) {
+    pub fn select_all(self: Pin<&mut Self>) {
         // Everything shown is selected already: nothing to fetch (Ctrl+A held down).
         if self.header_check_state == 2 {
             return;
         }
-        let Some(paths) = self.as_mut().shown_paths() else {
-            return;
-        };
-        self.as_mut().rust_mut().selection.extend(paths);
-        self.as_mut().show_selection_in_rows();
+        self.with_shown_paths(|mut model, paths| {
+            model.as_mut().rust_mut().selection.extend(paths);
+            model.show_selection_in_rows();
+        });
     }
 
     /// The header check box: unmarks the entries of the list shown when all are marked,
     /// otherwise marks them all.
-    pub fn toggle_all(mut self: Pin<&mut Self>) {
+    pub fn toggle_all(self: Pin<&mut Self>) {
         if self.header_check_state != 2 {
             self.select_all();
             return;
         }
-        let Some(paths) = self.as_mut().shown_paths() else {
-            return;
-        };
-        {
-            let mut rust = self.as_mut().rust_mut();
-            for path in &paths {
-                rust.selection.remove(path);
+        self.with_shown_paths(|mut model, paths| {
+            {
+                let mut rust = model.as_mut().rust_mut();
+                for path in &paths {
+                    rust.selection.remove(path);
+                }
             }
-        }
-        self.as_mut().show_selection_in_rows();
+            model.show_selection_in_rows();
+        });
     }
 
-    /// The paths of every entry of the list shown, fetched from the daemon in pages without
-    /// adding them to the view; `None` while the list is not listed, when it is too large to
-    /// hold, or when a page cannot be fetched.
-    fn shown_paths(mut self: Pin<&mut Self>) -> Option<Vec<String>> {
+    /// Calls `then` with the paths of every entry of the list shown, fetched from the daemon in
+    /// pages without adding them to the view, once they arrived; not while the list is not
+    /// listed, when it is too large to hold, or when a page cannot be fetched.
+    fn with_shown_paths(
+        self: Pin<&mut Self>,
+        then: impl FnOnce(Pin<&mut Self>, Vec<String>) + Send + 'static,
+    ) {
         if self.list.state != Some(QueryState::Done) || self.too_large {
-            return None;
+            return;
         }
-        let matched = usize::try_from(self.matched).unwrap_or(0);
-        let mut paths = Vec::with_capacity(matched);
-        while paths.len() < matched {
-            let page = SnapshotQueryPage {
-                offset: paths.len() as u64,
+        let matched = u64::try_from(self.matched).unwrap_or(0);
+        let filter = self.list.filter.clone();
+        let pages = (0..matched)
+            .step_by(usize::try_from(MAX_PAGE_LIMIT).unwrap_or(usize::MAX))
+            .map(|offset| SnapshotQueryPage {
+                offset,
                 limit: MAX_PAGE_LIMIT,
-                filter: self.list.filter.clone(),
-            };
-            match self.as_mut().fetch(&page) {
-                Fetched::Page(ls) if !ls.entries.items.is_empty() => {
-                    paths.extend(ls.entries.items.into_iter().map(|e| e.path));
+                filter: filter.clone(),
+            })
+            .collect();
+        self.fetch_pages(pages, move |mut model, fetched| match fetched {
+            Fetched::Page(listed) => {
+                let paths: Vec<String> = listed
+                    .into_iter()
+                    .flat_map(|ls| ls.entries.items.into_iter().map(|e| e.path))
+                    .collect();
+                // The filter changed meanwhile: these are not the entries shown.
+                if model.list.filter != filter {
+                    return;
                 }
-                Fetched::Page(_) | Fetched::Running => return None,
-                Fetched::Gone => {
-                    self.restart();
-                    return None;
-                }
-                Fetched::Failed(failure) => {
-                    self.fail_query(&failure);
-                    return None;
-                }
+                model
+                    .as_mut()
+                    .rust_mut()
+                    .shown
+                    .insert(filter.text.clone(), paths.clone());
+                then(model, paths);
             }
-        }
-        let filter = self.list.filter.text.clone();
-        self.as_mut().rust_mut().shown.insert(filter, paths.clone());
-        Some(paths)
+            Fetched::Running => {}
+            Fetched::Gone => model.restart(),
+            Fetched::Failed(failure) => model.fail_query(&failure),
+        });
     }
 
     /// Shows the selection in the check boxes of the loaded rows and in the selection line.

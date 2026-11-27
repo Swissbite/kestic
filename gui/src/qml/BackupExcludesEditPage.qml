@@ -121,10 +121,26 @@ EditorPage {
         }
     }
 
+    // The lint and the path test asked for last; an older answer is not shown.
+    DaemonAnswer {
+        id: lintAnswer
+        backend: page.appBackend
+        onAnswered: function(ok, result) {
+            page.lintWarnings = page.rootWindow.parseJsonOr(result, []);
+        }
+    }
+
+    DaemonAnswer {
+        id: testPathAnswer
+        backend: page.appBackend
+        onAnswered: function(ok, result) {
+            page.showTestPathResult(ok ? page.rootWindow.parseJsonOr(result, null) : null);
+        }
+    }
+
     function refreshLint() {
         if (hydrating) return;
-        var raw = appBackend.lintExcludes(currentExcludesJson());
-        lintWarnings = rootWindow.parseJsonOr(raw, []);
+        lintAnswer.track(appBackend.lintExcludes(currentExcludesJson()));
     }
 
     function addExcludeFolder(rawPath) {
@@ -158,8 +174,10 @@ EditorPage {
     function runTestPath() {
         var tp = testExcludePathField.text.trim();
         if (tp === "") return;
-        var raw = appBackend.testExcludePath(backupId, currentExcludesJson(), tp);
-        var res = rootWindow.parseJsonOr(raw, null);
+        testPathAnswer.track(appBackend.testExcludePath(backupId, currentExcludesJson(), tp));
+    }
+
+    function showTestPathResult(res) {
         if (!res) return;
         testPathIncluded = Boolean(res.included);
         hasTestPathResult = true;

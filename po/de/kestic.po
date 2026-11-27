@@ -1319,6 +1319,10 @@ msgstr "Repository-Passwort*:"
 msgid "Existing repository password"
 msgstr "Passwort des bestehenden Repositorys"
 
+#: gui/src/qml/DestinationDetailsForm.qml
+msgid "Testing the connection…"
+msgstr "Verbindung wird getestet…"
+
 #: gui/src/qml/AddDestinationWizard.qml:342
 #: gui/src/qml/AddDestinationWizard.qml:344
 #: gui/src/qml/DestinationEditPage.qml:316

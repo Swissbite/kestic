@@ -3,12 +3,12 @@
 
 //! Fields of the destination form: the destination they make and its connection test.
 
-use crate::state_cache::{dbus_error_text, i18n, make_client, tr_text};
+use crate::state_cache::{dbus_error_text, i18n, tr_text};
 use crate::ui_texts::GuiText;
 use kestic_core::generic::{EnteredSecret, EnvVar, GenericInputError};
 use kestic_core::local_path::NotALocalPath;
 use kestic_core::model::{Destination, DestinationId, DestinationKind, ModelError};
-use kestic_daemon::dbus_api::{BackendSecrets, ConnectionTestResultDto};
+use kestic_daemon::dbus_api::{BackendSecrets, ConnectionTestResultDto, KesticDbusError};
 use kestic_i18n::codes::ConnectionTestCode;
 use std::path::PathBuf;
 
@@ -190,16 +190,16 @@ pub fn generic_credentials_error(url: &str, env_json: &str) -> Option<Destinatio
     })
 }
 
-pub fn test_destination_connection(
+/// The destination and its backend credentials from the form, or the result of a test that
+/// the form's input already fails.
+pub fn connection_test_input(
     fields_json: &str,
-    mode: &str,
-    repo_pw: &str,
     backend_secrets_json: &str,
-) -> ConnectionTestResultDto {
+) -> Result<(Destination, BackendSecrets), ConnectionTestResultDto> {
     let dest = match destination_from_fields(None, fields_json) {
         Ok(d) => d,
         Err(DestinationInputError::Coded(code, detail)) => {
-            return failed_test(code, detail);
+            return Err(failed_test(code, detail));
         }
         Err(DestinationInputError::Invalid(err)) => {
             let detail = if err.is_empty() {
@@ -207,21 +207,24 @@ pub fn test_destination_connection(
             } else {
                 err
             };
-            return failed_test(ConnectionTestCode::InvalidInput, detail);
+            return Err(failed_test(ConnectionTestCode::InvalidInput, detail));
         }
     };
-    let backend = match BackendSecrets::parse(backend_secrets_json) {
-        Ok(b) => b,
-        Err(err) => return failed_test(ConnectionTestCode::InvalidInput, err),
-    };
-    let client = match make_client() {
-        Ok(c) => c,
-        Err(err) => return failed_test(ConnectionTestCode::DaemonUnreachable, err),
-    };
-    match client.test_destination_connection(&dest, mode, repo_pw, &backend) {
-        Ok(res) => res,
+    let backend = BackendSecrets::parse(backend_secrets_json)
+        .map_err(|err| failed_test(ConnectionTestCode::InvalidInput, err))?;
+    Ok((dest, backend))
+}
+
+/// The result of the daemon's connection test as the form shows it: `Err` from the bus (no
+/// connection) or from the daemon becomes a failed test.
+pub fn connection_test_outcome(
+    answer: Result<Result<ConnectionTestResultDto, KesticDbusError>, String>,
+) -> ConnectionTestResultDto {
+    match answer {
+        Ok(Ok(res)) => res,
         // Already translated: the text of the D-Bus error name.
-        Err(err) => failed_test(ConnectionTestCode::Internal, dbus_error_text(&err)),
+        Ok(Err(err)) => failed_test(ConnectionTestCode::Internal, dbus_error_text(&err)),
+        Err(err) => failed_test(ConnectionTestCode::DaemonUnreachable, err),
     }
 }
 

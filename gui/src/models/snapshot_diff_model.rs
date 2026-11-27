@@ -128,12 +128,7 @@ impl QueryListModel for qobject::SnapshotDiffModel {
         let first_load = self.query_state() != Some(QueryState::Done);
         let changes = &diff.changes;
         if first_load && !changes.too_large && changes.total > 0 {
-            match self.as_mut().kind_counts() {
-                Fetched::Page(counts) => self.as_mut().apply_kind_counts(&counts),
-                Fetched::Running => {}
-                Fetched::Gone => return self.restart(),
-                Fetched::Failed(failure) => return self.fail_query(&failure),
-            }
+            self.as_mut().load_kind_counts();
         }
         let rows = self.page_rows(&diff);
         self.as_mut().reset_rows(rows);
@@ -204,29 +199,34 @@ impl qobject::SnapshotDiffModel {
         self.set_filter_kinds(kinds);
     }
 
-    /// The kinds of change present in the comparison with their number, in the order of
-    /// [`SnapshotChange::ALL`].
-    fn kind_counts(mut self: Pin<&mut Self>) -> Fetched<Vec<(SnapshotChange, u64)>> {
-        let mut out = Vec::new();
-        for change in SnapshotChange::ALL {
-            let page = SnapshotQueryPage {
+    /// Asks for the kinds of change present in the comparison with their number, in the order of
+    /// [`SnapshotChange::ALL`]; the chips show once they arrived.
+    fn load_kind_counts(self: Pin<&mut Self>) {
+        let pages = SnapshotChange::ALL
+            .iter()
+            .map(|change| SnapshotQueryPage {
                 offset: 0,
                 limit: 1,
                 filter: PageFilter {
                     text: String::new(),
                     kinds: vec![change.as_str().to_string()],
                 },
-            };
-            match self.as_mut().fetch(&page) {
-                Fetched::Page(diff) if diff.changes.matched > 0 => {
-                    out.push((change, diff.changes.matched));
-                }
-                Fetched::Page(_) | Fetched::Running => {}
-                Fetched::Gone => return Fetched::Gone,
-                Fetched::Failed(failure) => return Fetched::Failed(failure),
+            })
+            .collect();
+        self.fetch_pages(pages, |mut model, fetched| match fetched {
+            Fetched::Page(diffs) => {
+                let counts: Vec<(SnapshotChange, u64)> = SnapshotChange::ALL
+                    .into_iter()
+                    .zip(diffs)
+                    .filter(|(_, diff)| diff.changes.matched > 0)
+                    .map(|(change, diff)| (change, diff.changes.matched))
+                    .collect();
+                model.as_mut().apply_kind_counts(&counts);
             }
-        }
-        Fetched::Page(out)
+            Fetched::Running => {}
+            Fetched::Gone => model.restart(),
+            Fetched::Failed(failure) => model.fail_query(&failure),
+        });
     }
 
     fn apply_kind_counts(mut self: Pin<&mut Self>, counts: &[(SnapshotChange, u64)]) {

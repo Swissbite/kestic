@@ -291,6 +291,57 @@ fn ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon() {
     );
 }
 
+/// AC-M6-33-1: every reply comes 5 s late. (a) The previews, exclude helpers, source checks,
+/// connection test, restic source and the snapshot query of a folder list return at once and the
+/// main thread never pauses longer than 100 ms; (b) their answers arrive (the dry run's id, the
+/// source check, the folder list of the snapshot).
+#[test]
+fn ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon() {
+    run_isolated_test(
+        "ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon",
+        "KESTIC_M6_S33_SLOW_QUERIES_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowQueriesFront";
+            let (rig, backup) = slow_rig(
+                root,
+                "SlowQueries",
+                "net.daester.KesticSlowQueriesBack",
+                front,
+                |_, _| SLOW_REPLY,
+            );
+            let client = rig.daemon.client.clone();
+            client
+                .start_backup(backup.id.as_str())
+                .expect("start the backup");
+            next_finished_run(&client, &BTreeSet::new());
+            let snapshot = client
+                .list_backup_snapshots(backup.id.as_str())
+                .expect("list the snapshots")
+                .current_snapshots
+                .first()
+                .map(|s| s.id.clone())
+                .expect("precondition: one snapshot");
+            let probe = root.join("probe-repo");
+            let source = backup.source.path.to_string_lossy().to_string();
+            run_slow_scene(
+                root,
+                "m6-slow-queries",
+                front,
+                &[],
+                &[
+                    ("KESTIC_TEST_BACKUP", backup.id.as_str()),
+                    ("KESTIC_TEST_DEST", backup.destination_id.as_str()),
+                    ("KESTIC_TEST_SNAPSHOT", &snapshot),
+                    ("KESTIC_TEST_SOURCE", &source),
+                    ("KESTIC_TEST_PROBE", probe.to_str().expect("utf-8 path")),
+                ],
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// The id of a run that has finished and is not in `known`, once there is one.
 fn next_finished_run(client: &KesticClient, known: &BTreeSet<String>) -> String {
     let mut found = String::new();
