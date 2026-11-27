@@ -16,7 +16,7 @@ use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
 use kestic_core::config::AppConfig;
 use kestic_core::model::{Backup, BackupId, ExcludeRules, RetentionPolicy};
-use kestic_core::provider::resolve_and_check;
+use kestic_core::provider::resolved_from_report;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::KesticDbusError;
 use kestic_i18n::codes::{BlockedReason, ServiceErrorCode};
@@ -59,10 +59,18 @@ impl qobject::KesticApp {
         }
         {
             let mut guard = shared_state().lock_unpoisoned();
-            if let Some((pending_id, _)) = &guard.pending_blocked
-                && pending_id == b_id
-            {
-                guard.pending_blocked = None;
+            // This call reports the block itself; the daemon's signal for it is not shown again.
+            let shared = &mut *guard;
+            for slot in [
+                &mut shared.pending_blocked,
+                &mut shared.blocked_after_refresh,
+            ] {
+                if slot
+                    .as_ref()
+                    .is_some_and(|(pending_id, _)| pending_id == b_id)
+                {
+                    *slot = None;
+                }
             }
         }
         let (backup_name, reason_code, unmet_text) = {
@@ -331,14 +339,27 @@ impl qobject::KesticApp {
     }
 
     pub fn get_backup_transparent_command(&self, backup_id: &QString) -> QString {
+        // The restic the daemon checked last: running `restic version` here would block the
+        // window for as long as restic takes.
+        let restic = {
+            let guard = shared_state().lock_unpoisoned();
+            guard
+                .state
+                .as_ref()
+                .map(|s| &s.restic_status)
+                .filter(|status| status.valid)
+                .and_then(|status| {
+                    resolved_from_report(status.binary_path.as_deref()?, status.version.as_deref()?)
+                })
+        };
         with_cached_backup(backup_id, |config, backup| {
             let dest = config.destination(&backup.destination_id)?;
             let state_dir = kestic_core::backup::default_state_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("~/.local/state/kestic"));
             let exe = env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("kestic"));
-            if let Ok(resolved) = resolve_and_check(&config.restic_provider)
+            if let Some(resolved) = restic.as_ref()
                 && let Ok(spec) =
-                    build_backup_command_spec(backup, dest, &state_dir, &resolved, &exe)
+                    build_backup_command_spec(backup, dest, &state_dir, resolved, &exe)
             {
                 return Some(spec.to_transparent_shell_command());
             }

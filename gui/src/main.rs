@@ -5,6 +5,7 @@
 
 mod backend;
 mod build_info;
+mod daemon_events;
 mod destination_input;
 mod models;
 mod overall_text;
@@ -230,6 +231,14 @@ fn run_daemon_subcommand(args: &[String]) -> ExitCode {
     let config_path = flag_value(args, "--config-path").map(PathBuf::from);
     if autostart && !has_kestic_config(config_path.as_ref()) {
         return ExitCode::SUCCESS;
+    }
+    // Tests start the daemon late on purpose, to see the GUI while the daemon is starting.
+    #[cfg(feature = "test-harness")]
+    if let Some(ms) = env::var("KESTIC_TEST_DAEMON_START_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        std::thread::sleep(Duration::from_millis(ms));
     }
 
     configure_dev_locale_search_path();

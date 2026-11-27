@@ -5,28 +5,28 @@
 //! for [`super::qobject::KesticApp`].
 
 use super::qobject;
+use crate::daemon_events::{attach_gui_thread, request_refresh, start_daemon_in_background};
 use crate::overall_text::{
     back_up_all_availability, localized_blocking_message, overall_headline, overall_subtitle,
 };
 use crate::restic_section_view::restic_section_view;
 use crate::state_cache::{
-    daemon_unavailable_text, ensure_daemon_and_refresh, format_overall_visual, format_pause_line,
-    i18n, initialize_and_sync, localized_condition_override_message,
-    localized_manual_block_message, localized_unmet_conditions, lookup_backup_summary, make_client,
-    refresh_state_now, shared_state,
+    daemon_unavailable_text, format_overall_visual, format_pause_line, i18n, initialize_and_sync,
+    localized_condition_override_message, localized_manual_block_message,
+    localized_unmet_conditions, lookup_backup_summary, make_client, refresh_state_now,
+    shared_state,
 };
 use crate::time_texts::daemon_now;
+use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 use kestic_core::model::ResticProvider;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::BlockedReason;
 use std::pin::Pin;
 
-/// How often an unreachable daemon is asked again for its state.
-const UNREACHABLE_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
-
 impl qobject::KesticApp {
     pub fn initialize(mut self: Pin<&mut Self>) {
+        attach_gui_thread(self.qt_thread());
         initialize_and_sync();
         self.as_mut().set_initialized(true);
         self.as_mut().apply_cached_state();
@@ -61,25 +61,11 @@ impl qobject::KesticApp {
         }
     }
 
+    /// Takes over what the background threads noted: they wake the Qt thread for it.
     pub fn poll_events(mut self: Pin<&mut Self>) {
-        let (
-            fetch,
-            progress_dirty,
-            blocked,
-            show_win,
-            show_about,
-            quit_req,
-            maint_preview,
-            show_restore,
-        ) = {
+        let (progress_dirty, blocked, show_win, show_about, quit_req, maint_preview, show_restore) = {
             let mut guard = shared_state().lock_unpoisoned();
-            let retry_unreachable = !guard.daemon_reachable
-                && guard
-                    .last_state_fetch
-                    .is_some_and(|t| t.elapsed() >= UNREACHABLE_RETRY);
-            let sd = guard.state_dirty || retry_unreachable;
             let pd = guard.progress_dirty;
-            guard.state_dirty = false;
             guard.progress_dirty = false;
             let blocked = guard.pending_blocked.take();
             let sw = guard.pending_show_window;
@@ -88,12 +74,9 @@ impl qobject::KesticApp {
             let show_restore = std::mem::take(&mut guard.pending_show_restore);
             let qr = guard.pending_quit.take();
             let mp = guard.maintenance_preview.take();
-            (sd, pd, blocked, sw, sa, qr, mp, show_restore)
+            (pd, blocked, sw, sa, qr, mp, show_restore)
         };
 
-        if fetch {
-            refresh_state_now();
-        }
         let fetched = std::mem::take(&mut shared_state().lock_unpoisoned().state_fetched);
         if fetched {
             self.as_mut().apply_cached_state();
@@ -180,21 +163,32 @@ impl qobject::KesticApp {
     }
 
     fn apply_unreachable_state(mut self: Pin<&mut Self>) {
-        self.as_mut()
-            .set_blocking_kind(QString::from("daemon_unreachable"));
-        self.as_mut().set_blocking_message(QString::from(
-            &i18n("The background service is not running. Scheduled backups will not run.")
-                .to_string(),
-        ));
+        let starting = shared_state().lock_unpoisoned().daemon_starting;
+        if starting {
+            let text = i18n("Starting the background service…").to_string();
+            self.as_mut()
+                .set_blocking_kind(QString::from("daemon_starting"));
+            self.as_mut().set_blocking_message(QString::from(&text));
+            self.as_mut().set_overall_headline(QString::from(&text));
+            self.as_mut().set_overall_icon(QString::from("state-sync"));
+            self.as_mut().set_overall_color_kind(QString::from("text"));
+        } else {
+            self.as_mut()
+                .set_blocking_kind(QString::from("daemon_unreachable"));
+            self.as_mut().set_blocking_message(QString::from(
+                &i18n("The background service is not running. Scheduled backups will not run.")
+                    .to_string(),
+            ));
+            self.as_mut()
+                .set_overall_headline(QString::from(&daemon_unavailable_text()));
+            self.as_mut().set_overall_icon(QString::from("state-error"));
+            self.as_mut()
+                .set_overall_color_kind(QString::from("negative"));
+        }
         self.as_mut().set_has_config_file(false);
         self.as_mut().set_daemon_version(QString::from(""));
         self.as_mut().set_daemon_build_commit(QString::from(""));
-        self.as_mut()
-            .set_overall_headline(QString::from(&daemon_unavailable_text()));
         self.as_mut().set_overall_subtitle(QString::from(""));
-        self.as_mut().set_overall_icon(QString::from("state-error"));
-        self.as_mut()
-            .set_overall_color_kind(QString::from("negative"));
         self.as_mut().set_backups_have_attention(false);
         self.as_mut().set_destinations_have_attention(false);
         self.as_mut().set_backups_count(0);
@@ -340,7 +334,7 @@ impl qobject::KesticApp {
     }
 
     pub fn retry_start_daemon(mut self: Pin<&mut Self>) {
-        ensure_daemon_and_refresh();
+        start_daemon_in_background();
         self.as_mut().apply_cached_state();
     }
 
@@ -349,8 +343,7 @@ impl qobject::KesticApp {
             if let Ok(client) = make_client() {
                 let _ = client.unlock_secret_store();
             }
-            let mut guard = shared_state().lock_unpoisoned();
-            guard.state_dirty = true;
+            request_refresh();
         });
     }
 

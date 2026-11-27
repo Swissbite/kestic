@@ -23,8 +23,26 @@ pub struct PrivateDbusGuard {
 
 impl PrivateDbusGuard {
     pub fn start() -> Self {
-        let out = Command::new("dbus-daemon")
-            .arg(format!("--config-file={}", PRIVATE_SESSION_BUS_CONFIG))
+        Self::spawn(None)
+    }
+
+    /// A private session bus at `address` (`unix:path=…`), so a test can stop it and start a new
+    /// one where its clients look for the bus. A socket file left by a bus that was stopped is
+    /// removed first.
+    pub fn start_at(address: &str) -> Self {
+        if let Some(path) = address.strip_prefix("unix:path=") {
+            let _ = std::fs::remove_file(path);
+        }
+        Self::spawn(Some(address))
+    }
+
+    fn spawn(address: Option<&str>) -> Self {
+        let mut cmd = Command::new("dbus-daemon");
+        cmd.arg(format!("--config-file={}", PRIVATE_SESSION_BUS_CONFIG));
+        if let Some(address) = address {
+            cmd.arg(format!("--address={address}"));
+        }
+        let out = cmd
             .args(["--fork", "--print-address=1", "--print-pid=1"])
             .stdin(Stdio::null())
             .stderr(Stdio::piped())

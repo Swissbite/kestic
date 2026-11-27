@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! An idle main window asks the daemon for its state only when something changed: it must not
-//! poll `GetState` on its 150 ms event timer.
+//! poll `GetState` while nothing changes.
 
 mod common;
 
@@ -80,8 +80,8 @@ fn count_get_state_calls() -> Arc<AtomicUsize> {
     calls
 }
 
-/// An idle GUI: (a) loads the daemon state at start, then (b) does not call `GetState` on every
-/// event-timer tick while nothing changes.
+/// An idle GUI: (a) loads the daemon state at start, then (b) does not call `GetState` again
+/// while nothing changes.
 #[test]
 fn idle_gui_does_not_poll_daemon_state() {
     run_isolated_test(

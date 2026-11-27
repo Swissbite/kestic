@@ -5,6 +5,7 @@
 //! and source detection / nested-warning checks for [`super::qobject::KesticApp`].
 
 use super::{dbus_error_text, qobject};
+use crate::daemon_events::wake_gui;
 use crate::retention_texts::retention_preview_view;
 use crate::state_cache::{
     daemon_unavailable_text, format_bytes, json_or, make_client, shared_state, tr_text,
@@ -270,8 +271,8 @@ impl qobject::KesticApp {
                 },
                 Err(_) => Err(daemon_unavailable_text()),
             };
-            let mut guard = shared_state().lock_unpoisoned();
-            guard.maintenance_preview = Some((dest, outcome));
+            shared_state().lock_unpoisoned().maintenance_preview = Some((dest, outcome));
+            wake_gui();
         });
     }
 
