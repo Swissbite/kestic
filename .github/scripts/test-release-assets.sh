@@ -178,6 +178,63 @@ check true "$([ "$download" -lt "$compare" ] && [ "$download" -lt "$names" ] && 
     "AC-M6-15-1 (c): checks after the download"
 check true "$([ "$compare" -lt "$release" ] && [ "$names" -lt "$release" ] && [ "$verify" -lt "$release" ] && echo true || echo false)" \
     "AC-M6-15-1 (c): checks before the draft is published"
+
+# AC-M6-15-1 (c): run the check of job publish, from the download to the publishing of the draft,
+# with a fake `gh` that serves folder $1 as the uploaded assets and logs `release edit`. Prints
+# `<pass|fail> <published|draft>`.
+check_block="$(job_block publish |
+    sed -n '/^ *uploaded="\$RUNNER_TEMP\/uploaded"$/,/^ *gh release edit "\$TAG"/p' | sed 's/^          //')"
+mkdir -p "$tmp/bin"
+cat > "$tmp/bin/gh" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2" in
+    "release download")
+        shift 2
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = --dir ]; then dir="$2"; fi
+            shift
+        done
+        cp -a "$FAKE_UPLOADED/." "$dir/"
+        ;;
+    "release edit") echo edit >> "$FAKE_GH_LOG" ;;
+    *) exit 2 ;;
+esac
+EOF
+chmod +x "$tmp/bin/gh"
+run_publish_check() {
+    local work="$tmp/publish" result state=draft
+    rm -rf "$work"
+    mkdir -p "$work/runner"
+    cp -a "$pre" "$work/assets"
+    if (cd "$work" && PATH="$tmp/bin:$PATH" RUNNER_TEMP="$work/runner" TAG=v0.6.0-m6.3 \
+        GITHUB_REPOSITORY=owner/kestic FAKE_UPLOADED="$1" FAKE_GH_LOG="$work/gh.log" \
+        bash -c "set -euo pipefail; publish=(--draft=false); $check_block") > /dev/null 2>&1; then
+        result=pass
+    else
+        result=fail
+    fi
+    if [ -s "$work/gh.log" ]; then state=published; fi
+    echo "$result $state"
+}
+check true "$([ -n "$check_block" ] && echo true || echo false)" "AC-M6-15-1 (c): publish has the check block"
+check "pass published" "$(run_publish_check "$pre")" "AC-M6-15-1 (c): matching upload is published"
+dir="$(variant)"
+echo tampered > "$dir/kestic_0.6.0.m6.3-1_amd64.deb"
+check "fail draft" "$(run_publish_check "$dir")" "AC-M6-15-1 (c): a changed asset stays a draft"
+dir="$(variant)"
+echo extra > "$dir/kestic_0.6.0.m6.3-1_arm64.deb"
+check "fail draft" "$(run_publish_check "$dir")" "AC-M6-15-1 (c): an unlisted asset stays a draft"
+dir="$(variant)"
+mv "$dir/kestic_0.6.0.m6.3_screenshots.zip" "$dir/kestic_0.6.0.m6.3_screenshots.ZIP"
+check "fail draft" "$(run_publish_check "$dir")" "AC-M6-15-1 (c): an asset GitHub renamed stays a draft"
+dir="$(variant)"
+sed -i "s/^\([0-9a-f]\{64\}\)  /\1 */" "$dir/SHA256SUMS"
+check "fail draft" "$(run_publish_check "$dir")" "AC-M6-15-1 (c): another SHA256SUMS stays a draft"
+dir="$(variant)"
+find "$dir" -mindepth 1 -delete
+check "fail draft" "$(run_publish_check "$dir")" "AC-M6-15-1 (c): an empty download stays a draft"
+
 check true "$(grep -qF '.github/scripts/test-release-assets.sh' "$root/justfile" && echo true || echo false)" \
     "this test runs in just _static-checks"
 
