@@ -348,7 +348,16 @@ QtObject {
         connectionVerified = false;
         testFeedbackOk = false;
         testFeedback = "";
+        testedInput = testInput();
         testAnswer.track(appBackend.testDestination(fieldsJson(), setupMode, repoPassword, backendSecretsJson()));
+    }
+
+    // What the connection test checks; an answer for other input than the form holds now is
+    // not shown.
+    property string testedInput: ""
+
+    function testInput() {
+        return JSON.stringify([connectionKey(), setupMode, repoPassword, backendSecretsJson()]);
     }
 
     // The connection test is on its way to the daemon.
@@ -361,8 +370,12 @@ QtObject {
         }
     }
 
-    // Shows the result of the connection test the backend published.
+    // Shows the result of the connection test the backend published, unless the form changed
+    // since the test was asked for.
     function showTestResult(ok) {
+        if (testInput() !== testedInput) {
+            return;
+        }
         testNote = ok ? appBackend.connection_test_note : "";
         connectionVerified = ok;
         testFeedbackOk = ok;

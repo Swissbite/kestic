@@ -81,6 +81,27 @@ Kirigami.ScrollablePage {
         retentionPollTimer.start();
     }
 
+    // Cancels the dry run; one still starting is cancelled once the daemon has started it.
+    function cancelDryRun() {
+        if (previewId !== "") {
+            appBackend.cancelBackupDryRun(previewId);
+            return;
+        }
+        appBackend.forgetDaemonCall(dryRunStartRequest);
+        dryRunStartRequest = 0;
+        dryRunState = "cancelled";
+    }
+
+    function cancelRetentionPreview() {
+        if (retentionPreviewId !== "") {
+            appBackend.cancelRetentionPreview(retentionPreviewId);
+            return;
+        }
+        appBackend.forgetDaemonCall(retentionStartRequest);
+        retentionStartRequest = 0;
+        retentionPreviewState = "cancelled";
+    }
+
     Connections {
         target: appBackend
         function onDaemonCallDone(request, ok, result) {
@@ -110,6 +131,9 @@ Kirigami.ScrollablePage {
     Component.onDestruction: {
         pollTimer.stop();
         retentionPollTimer.stop();
+        // A preview still starting is cancelled once the daemon has started it.
+        appBackend.forgetDaemonCall(dryRunStartRequest);
+        appBackend.forgetDaemonCall(retentionStartRequest);
         if (mode === "dry_run" && dryRunState === "running" && previewId !== "") {
             appBackend.cancelBackupDryRun(previewId);
         }
@@ -237,7 +261,7 @@ Kirigami.ScrollablePage {
                     icon.name: "process-stop"
                     text: Texts.label("cancel")
                     Accessible.name: i18n("Cancel backup preview")
-                    onClicked: appBackend.cancelBackupDryRun(page.previewId)
+                    onClicked: page.cancelDryRun()
                 }
             }
 
@@ -379,7 +403,7 @@ Kirigami.ScrollablePage {
                     icon.name: "process-stop"
                     text: Texts.label("cancel")
                     Accessible.name: i18n("Cancel retention preview")
-                    onClicked: appBackend.cancelRetentionPreview(page.retentionPreviewId)
+                    onClicked: page.cancelRetentionPreview()
                 }
             }
 

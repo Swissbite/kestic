@@ -4,7 +4,7 @@
 //! Exclude lint/path testing, dry-run previews, retention previews, maintenance previews,
 //! and source detection / nested-warning checks for [`super::qobject::KesticApp`].
 
-use super::daemon_call::Lane;
+use super::daemon_call::{Lane, send_to_daemon, take_forgotten};
 use super::{dbus_error_text, qobject};
 use crate::daemon_events::wake_gui;
 use crate::retention_texts::{RetentionPreviewView, retention_preview_view};
@@ -17,6 +17,8 @@ use serde::Serialize;
 use std::env;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 type Setter = fn(Pin<&mut qobject::KesticApp>, QString);
 
@@ -26,6 +28,8 @@ struct PreviewSlots {
     state: Setter,
     result_json: Setter,
     error: Setter,
+    /// Cancels a preview of this kind in the daemon.
+    cancel: fn(&KesticClient, &str) -> zbus::Result<()>,
 }
 
 const DRY_RUN: PreviewSlots = PreviewSlots {
@@ -33,6 +37,7 @@ const DRY_RUN: PreviewSlots = PreviewSlots {
     state: qobject::KesticApp::set_dry_run_state,
     result_json: qobject::KesticApp::set_dry_run_result_json,
     error: qobject::KesticApp::set_dry_run_error,
+    cancel: |client, pid| client.cancel_backup_dry_run(pid).map(drop),
 };
 
 const RETENTION: PreviewSlots = PreviewSlots {
@@ -40,6 +45,7 @@ const RETENTION: PreviewSlots = PreviewSlots {
     state: qobject::KesticApp::set_retention_preview_state,
     result_json: qobject::KesticApp::set_retention_preview_result_json,
     error: qobject::KesticApp::set_retention_preview_error,
+    cancel: |client, pid| client.cancel_retention_preview(pid).map(drop),
 };
 
 impl qobject::KesticApp {
@@ -60,11 +66,22 @@ impl qobject::KesticApp {
         (slots.result_json)(self.as_mut(), QString::from(""));
         (slots.error)(self.as_mut(), QString::from(""));
         (slots.state)(self.as_mut(), QString::from("running"));
-        self.request_daemon_with(
+        let asked = Arc::new(AtomicI32::new(0));
+        let asked_in_answer = Arc::clone(&asked);
+        let request = self.request_daemon_with(
             lane,
             start,
             |_| false,
             move |mut app, started| match started {
+                // The page that asked has gone: nobody follows the preview, so it stops.
+                Ok(Ok(preview_id)) if take_forgotten(asked_in_answer.load(Ordering::SeqCst)) => {
+                    send_to_daemon(Lane::Alone, move |client| {
+                        if let Err(err) = (slots.cancel)(client, &preview_id) {
+                            eprintln!("kestic: cancelling a preview nobody follows failed: {err}");
+                        }
+                    });
+                    (false, String::new())
+                }
                 Ok(Ok(preview_id)) => {
                     (slots.id)(app.as_mut(), QString::from(&preview_id));
                     (true, preview_id)
@@ -78,7 +95,10 @@ impl qobject::KesticApp {
                     (false, String::new())
                 }
             },
-        )
+        );
+        // The answer runs on the Qt thread after this returns, so it reads the id.
+        asked.store(request, Ordering::SeqCst);
+        request
     }
 
     /// Fetches the status of a preview with `fetch`; publishes it and answers the request with it
@@ -95,7 +115,7 @@ impl qobject::KesticApp {
         if pid.is_empty() {
             return 0;
         }
-        let lane = Lane::slow(&format!("preview:{pid}"));
+        let lane = Lane::slow("preview-status");
         self.request_daemon_with(
             lane,
             move |client| fetch(client, &pid),
@@ -140,7 +160,7 @@ impl qobject::KesticApp {
     /// The exclude rule for `item_path` as JSON in the request's result (empty after a failure).
     pub fn format_exclude_rule_for_item(self: Pin<&mut Self>, item_path: &QString) -> i32 {
         let path = item_path.to_string().trim().to_string();
-        self.ask_daemon(Lane::slow("exclude-rules"), move |client| {
+        self.ask_daemon(Lane::Alone, move |client| {
             client
                 .format_exclude_rule_for_item(&path)
                 .ok()
@@ -152,7 +172,7 @@ impl qobject::KesticApp {
     /// failure).
     pub fn lint_excludes(self: Pin<&mut Self>, excludes_json: &QString) -> i32 {
         let excludes = serde_json::from_str::<ExcludeRules>(&excludes_json.to_string()).ok();
-        self.ask_daemon(Lane::slow("exclude-rules"), move |client| {
+        self.ask_daemon(Lane::Alone, move |client| {
             let warnings = excludes.and_then(|e| client.lint_excludes(&e).ok());
             Some(warnings.map_or_else(|| "[]".to_string(), |w| json_or(&w, "[]")))
         })
@@ -168,7 +188,7 @@ impl qobject::KesticApp {
     ) -> i32 {
         let excludes = serde_json::from_str::<ExcludeRules>(&excludes_json.to_string()).ok();
         let (backup_id, test_path) = (backup_id.to_string(), test_path.to_string());
-        self.ask_daemon(Lane::slow("exclude-rules"), move |client| {
+        self.ask_daemon(Lane::Alone, move |client| {
             let excludes = excludes?;
             client
                 .test_exclude_path(&backup_id, &excludes, &test_path)
@@ -238,9 +258,9 @@ impl qobject::KesticApp {
         if pid.is_empty() {
             return;
         }
-        let lane = Lane::slow(&format!("preview:{pid}"));
+        // Alone: a cancel never waits for the polls.
         self.call_daemon(
-            lane,
+            Lane::Alone,
             move |client| {
                 // A preview that ended meanwhile needs no cancel; the status tells.
                 if let Err(err) = client.cancel_backup_dry_run(&pid) {
@@ -294,9 +314,9 @@ impl qobject::KesticApp {
         if pid.is_empty() {
             return;
         }
-        let lane = Lane::slow(&format!("preview:{pid}"));
+        // Alone: a cancel never waits for the polls.
         self.call_daemon(
-            lane,
+            Lane::Alone,
             move |client| {
                 // A preview that ended meanwhile needs no cancel; the status tells.
                 if let Err(err) = client.cancel_retention_preview(&pid) {
@@ -339,7 +359,7 @@ impl qobject::KesticApp {
     /// (empty after a failure).
     pub fn detect_source(self: Pin<&mut Self>, path: &QString) -> i32 {
         let path = path.to_string().trim().to_string();
-        self.ask_daemon(Lane::slow("source"), move |client| {
+        self.ask_daemon(Lane::Alone, move |client| {
             client
                 .detect_source(&path)
                 .ok()
@@ -358,7 +378,7 @@ impl qobject::KesticApp {
         let candidate_id = candidate_id.to_string();
         let candidate_path = candidate_path.to_string().trim().to_string();
         let destination_id = destination_id.to_string().trim().to_string();
-        self.ask_daemon(Lane::slow("source"), move |client| {
+        self.ask_daemon(Lane::Alone, move |client| {
             let conflicts = client
                 .check_nested_sources(&candidate_id, &candidate_path, &destination_id)
                 .ok();

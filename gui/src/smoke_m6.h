@@ -74,9 +74,23 @@ inline bool requests_at_once(int code, const char* method, const std::function<i
     return true;
 }
 
+// Waits until the connection test of the form `prefix` (its «Testing the connection…» line) has
+// answered, at most `limit_ms`.
+inline bool wait_for_connection_test(QQuickWindow* window, const QString& prefix, int limit_ms = 30000) {
+    const QByteArray name = (prefix + QStringLiteral("TestingMessage")).toUtf8();
+    return wait_until([&] {
+        QQuickItem* testing = child_item(window, name.constData());
+        return !testing || !testing->isVisible();
+    }, limit_ms);
+}
+
 // AC-M6-33-1 with every daemon reply late: the previews, exclude helpers, source checks,
 // connection test, restic source and snapshot queries.
 void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path);
+
+// AC-M6-33-1 with every daemon reply late: answers that arrive after the window moved on.
+void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path);
 
 } // namespace kestic::smoke

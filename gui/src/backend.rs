@@ -415,6 +415,10 @@ pub mod qobject {
         fn cancel_retention_preview(self: Pin<&mut KesticApp>, preview_id: &QString);
 
         #[qinvokable]
+        #[cxx_name = "forgetDaemonCall"]
+        fn forget_daemon_call(self: &KesticApp, request: i32);
+
+        #[qinvokable]
         #[cxx_name = "detectSource"]
         fn detect_source(self: Pin<&mut KesticApp>, path: &QString) -> i32;
 

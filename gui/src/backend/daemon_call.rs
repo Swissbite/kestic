@@ -14,11 +14,11 @@ use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{KesticClient, KesticDbusError};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::pin::Pin;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -30,6 +30,19 @@ static WORKERS: Mutex<BTreeMap<String, Sender<Job>>> = Mutex::new(BTreeMap::new(
 static PENDING: AtomicUsize = AtomicUsize::new(0);
 /// The id of the next call QML waits for; 0 is never used (it means «failed before the call»).
 static NEXT_REQUEST: AtomicI32 = AtomicI32::new(1);
+
+/// Requests whose asker has gone (`forgetDaemonCall`): what their answer started is undone.
+static FORGOTTEN: Mutex<BTreeSet<i32>> = Mutex::new(BTreeSet::new());
+
+/// Notes that nobody waits for `request` any more.
+pub(super) fn forget_request(request: i32) {
+    FORGOTTEN.lock_unpoisoned().insert(request);
+}
+
+/// Whether nobody waits for `request` any more; forgets the note.
+pub(super) fn take_forgotten(request: i32) -> bool {
+    FORGOTTEN.lock_unpoisoned().remove(&request)
+}
 
 /// Holds one pending call; dropping it (the call ran, panicked or was never sent) releases it.
 struct Pending;
@@ -228,13 +241,31 @@ impl qobject::KesticApp {
         then: impl FnOnce(Pin<&mut Self>, Result<T, String>) -> (bool, String) + Send + 'static,
     ) -> i32 {
         let request = NEXT_REQUEST.fetch_add(1, Ordering::SeqCst);
+        let fetched = Arc::new(AtomicBool::new(false));
+        let fetched_in_worker = Arc::clone(&fetched);
+        let fetch_state = move |result: &T| {
+            let fetch = fetch_state(result);
+            fetched_in_worker.store(fetch, Ordering::SeqCst);
+            fetch
+        };
         self.call_daemon_with(lane, call, fetch_state, move |mut app, result| {
             let (ok, answer) = then(app.as_mut(), result);
             // The window shows the state that was fetched with the answer before QML reads it.
-            app.as_mut().apply_cached_state();
+            if fetched.load(Ordering::SeqCst) {
+                app.as_mut().apply_cached_state();
+            }
+            take_forgotten(request);
             app.daemon_call_done(request, ok, QString::from(&answer));
         });
         request
+    }
+
+    /// Nobody waits for `request` any more (its page closed); a preview its answer started is
+    /// cancelled.
+    pub fn forget_daemon_call(&self, request: i32) {
+        if request > 0 {
+            forget_request(request);
+        }
     }
 
     /// Like [`Self::finish_daemon_action`] for a call that first checks the user's input off the

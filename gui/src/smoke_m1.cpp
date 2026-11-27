@@ -107,6 +107,7 @@ void scene_e2e_wizard_backup(const Scene& s) {
             SMOKE_ENTER_TEXT("E2E", 54, w, child_item(w, "wizDestLocationField"), repo_dir, "Dest Location");
             SMOKE_CHECK("E2E", 55, !next_btn->isEnabled(), "Next must be disabled before connection test");
             SMOKE_CLICK("E2E", 56, w, child_item(w, "wizDestTestButton"), "E2E Test Connection");
+            SMOKE_CHECK("E2E", 57, wait_for_connection_test(w, QStringLiteral("wizDest")), "the connection test never answered");
             SMOKE_CHECK("E2E", 57, next_btn->isEnabled(), "Test Connection did not enable Next");
             SMOKE_CLICK("E2E", 57, w, next_btn, "E2E Dest Step 2 Next");
         }},
@@ -182,6 +183,8 @@ void scene_e2e_first_backup(const Scene& s) {
             SMOKE_ENTER_TEXT("E2E first-backup", 84, w, child_item(w, "wizBackupDestNameField"), QStringLiteral("First Local Repo"), "First Dest Name");
             SMOKE_ENTER_TEXT("E2E first-backup", 84, w, child_item(w, "wizBackupDestLocationField"), repo_dir, "First Dest Location");
             SMOKE_CLICK("E2E first-backup", 84, w, child_item(w, "wizBackupDestTestButton"), "First Dest Test Connection");
+            SMOKE_CHECK("E2E first-backup", 84, wait_for_connection_test(w, QStringLiteral("wizBackupDest")),
+                "the connection test never answered");
             SMOKE_CHECK("E2E first-backup", 84, next_btn->isEnabled(), "Test Connection did not enable Next");
             SMOKE_CLICK("E2E first-backup", 84, w, next_btn, "First Backup Step 3 Next");
         }},
@@ -210,6 +213,8 @@ void scene_e2e_edit_reinit(const Scene& s) {
     QQuickItem* edit_page = child_item(w, "destinationEditPage");
     SMOKE_CHECK("E2E edit-reinit", 90, edit_page, "DestinationEditPage missing");
     SMOKE_CLICK("E2E edit-reinit", 90, w, child_item(w, "destEditTestButton"), "Edit Dest Test Connection");
+    SMOKE_CHECK("E2E edit-reinit", 90, wait_for_connection_test(w, QStringLiteral("destEdit")),
+        "the connection test never answered");
     const QString kind = s.backend->property("connection_test_error_kind").toString();
     SMOKE_CHECK("E2E edit-reinit", 91, !s.backend->property("connection_test_ok").toBool(),
         "expected the connection test to fail for a missing repository");
@@ -219,6 +224,8 @@ void scene_e2e_edit_reinit(const Scene& s) {
     SMOKE_CHECK_VISIBLE("E2E edit-reinit", 92, switch_init_act, "destEditSwitchToInitAction missing or not visible");
     trigger(switch_init_act);
     QCoreApplication::processEvents();
+    SMOKE_CHECK("E2E edit-reinit", 93, wait_for_connection_test(w, QStringLiteral("destEdit")),
+        "the connection test never answered");
     SMOKE_CHECK("E2E edit-reinit", 93, s.backend->property("connection_test_ok").toBool(), "switching to init did not pass connection test");
     SMOKE_CHECK("E2E edit-reinit", 93, edit_page->property("setupMode").toString() == QLatin1String("init"),
         "switching to init did not change setupMode to init");
@@ -1173,6 +1180,8 @@ void run_m6_smoke_scenario(
         run_close_window_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-order")) {
         run_slow_order_scene(window, backend, warnings, out_path);
+    } else if (scen == QLatin1String("m6-slow-stale")) {
+        run_slow_stale_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-queries")) {
         run_slow_queries_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-slow-save")) {

@@ -219,6 +219,8 @@ EditorPage {
 
     Component.onDestruction: {
         savePollTimer.stop();
+        // A preview still starting is cancelled once the daemon has started it.
+        appBackend.forgetDaemonCall(saveStartRequest);
         if (saveBusy && savePreviewId !== "") {
             appBackend.cancelRetentionPreview(savePreviewId);
         }

@@ -37,6 +37,11 @@ import net.daester.kestic 1.0
 SnapshotBrowseModel {}
 )";
 
+const char* const DRAFT_QML = R"(
+import net.daester.kestic 1.0
+DestinationDraft { appBackend: root.backendRef }
+)";
+
 // Creates the QML object `source` in the context of the main window.
 QObject* create_in_window(QQuickWindow* window, const char* source) {
     QQmlContext* context = qmlContext(window);
@@ -60,7 +65,100 @@ bool answered(QObject* answers, int request) {
     return map.contains(QString::number(request));
 }
 
+bool can_fetch_more(QObject* model) {
+    auto* listed = qobject_cast<QAbstractItemModel*>(model);
+    return listed && listed->canFetchMore(QModelIndex());
+}
+
+int rows_of(QObject* model) {
+    auto* listed = qobject_cast<QAbstractItemModel*>(model);
+    return listed ? listed->rowCount() : -1;
+}
+
 } // namespace
+
+// AC-M6-33-1: every reply comes 5 s late. Answers that arrive after the window moved on do not
+// count: (a) a connection test answered after the form changed leaves the form untested; (b) a
+// dry run whose page closed before it started is cancelled (the test watches for the cancel);
+// (c) a further page answered after the filter changed does not stop the list from loading more.
+void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
+    const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP");
+    const QString dest = qEnvironmentVariable("KESTIC_TEST_DEST");
+    const QString snapshot = qEnvironmentVariable("KESTIC_TEST_SNAPSHOT");
+    const QString source = qEnvironmentVariable("KESTIC_TEST_SOURCE");
+    const QString probe = qEnvironmentVariable("KESTIC_TEST_PROBE");
+    SMOKE_CHECK("M6", 120, !bid.isEmpty() && !dest.isEmpty() && !snapshot.isEmpty() && !source.isEmpty() && !probe.isEmpty(),
+        "precondition: backup, destination, snapshot and paths");
+    QObject* answers = create_in_window(window, ANSWERS_QML);
+    QObject* draft = create_in_window(window, DRAFT_QML);
+    QObject* browse = create_in_window(window, BROWSE_QML);
+    SMOKE_CHECK3("M6", 120, answers, draft, browse, "precondition: the QML helpers");
+    auto step = std::make_shared<int>(-1);
+    auto dry_run = std::make_shared<int>(0);
+    auto waited = std::make_shared<QElapsedTimer>();
+    waited->start();
+    auto* poll = new QTimer(window);
+    QObject::connect(poll, &QTimer::timeout, window, [=]() {
+        if (waited->elapsed() > 120000) {
+            poll->stop();
+            smoke_fail("M6", 121, *step == 4
+                ? QStringLiteral("(c) the list loads no further pages after a further page arrived for an old filter")
+                : QStringLiteral("timed out at step %1").arg(*step));
+            return;
+        }
+        switch (*step) {
+        case -1:
+            if (!backend->property("daemon_reachable").toBool() || backup_id_at(window, 0).isEmpty()) return;
+            break;
+        case 0:
+            draft->setProperty("name", QStringLiteral("Probe"));
+            draft->setProperty("location", probe + QStringLiteral("/a"));
+            draft->setProperty("repoPassword", QStringLiteral("probe-password"));
+            QMetaObject::invokeMethod(draft, "runConnectionTest");
+            draft->setProperty("location", probe + QStringLiteral("/b"));
+            *dry_run = 0;
+            QMetaObject::invokeMethod(backend, "startBackupDryRun", Q_RETURN_ARG(int, *dry_run), Q_ARG(QString, bid),
+                Q_ARG(QString, QString()));
+            QMetaObject::invokeMethod(backend, "forgetDaemonCall", Q_ARG(int, *dry_run));
+            QMetaObject::invokeMethod(browse, "open", Q_ARG(QString, dest), Q_ARG(QString, snapshot), Q_ARG(QString, source));
+            break;
+        case 1:
+            if (browse->property("state").toString() == QLatin1String("running")) {
+                QMetaObject::invokeMethod(browse, "poll");
+                return;
+            }
+            SMOKE_CHECK2("M6", 122, rows_of(browse) > 0, can_fetch_more(browse),
+                "precondition: the folder list holds more than one page");
+            qobject_cast<QAbstractItemModel*>(browse)->fetchMore(QModelIndex());
+            QMetaObject::invokeMethod(browse, "setFilter", Q_ARG(QString, QStringLiteral("file-1")));
+            break;
+        case 2: {
+            // Both answers (the further page, then the filtered list) are in.
+            const int filtered = rows_of(browse);
+            if (filtered <= 0 || can_fetch_more(browse) || filtered >= 200) return;
+            QMetaObject::invokeMethod(browse, "setFilter", Q_ARG(QString, QString()));
+            break;
+        }
+        case 3:
+            if (rows_of(browse) < 200 || draft->property("testing").toBool() || !answered(answers, *dry_run)) return;
+            SMOKE_CHECK("M6", 123, !draft->property("connectionVerified").toBool(),
+                "(a) a connection test answered for the old location marks the changed form as tested");
+            SMOKE_CHECK("M6", 124, answer_of(answers, *dry_run).isEmpty(),
+                "(b) the dry run nobody follows was handed to the window");
+            qobject_cast<QAbstractItemModel*>(browse)->fetchMore(QModelIndex());
+            break;
+        case 4:
+            // The timeout fails the scene when no further page arrives.
+            if (rows_of(browse) <= 200) return;
+            poll->stop();
+            smoke_finish("M6", warnings.get(), window, out_path);
+            return;
+        }
+        ++*step;
+    });
+    poll->start(250);
+}
 
 // AC-M6-33-1: every reply comes 5 s late. (a) The previews, exclude helpers, source checks,
 // connection test, restic source and the snapshot query of a folder list return at once and the

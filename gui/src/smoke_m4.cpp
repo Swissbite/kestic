@@ -2099,6 +2099,8 @@ int scenario_list_tab_stop(const Ctx& c) {
     M4_CHECK(7050, tab_into(w, list, 80), "Tab reaches the folder list again");
     M4_CHECK(7059, b.model->rowCount() < 1000, "not every entry is loaded yet");
     press_and_wait(w, Qt::Key_End, 120);
+    // The list moves to the last row once its pages have arrived.
+    wait_until([&] { return list->property("currentIndex").toInt() == 999 && focused_row_of(w, list) == 999; }, 10000);
     M4_CHECK(7051, list->property("currentIndex").toInt() == 999 && focused_row_of(w, list) == 999,
         qPrintable(QStringLiteral("(b) one End press moves to the last of 1 000 entries (%1 loaded): %2")
             .arg(b.model->rowCount()).arg(focus_name(w))));
@@ -2383,7 +2385,8 @@ int scenario_restore_all(const Ctx& c) {
     M4_CHECK_EQ(7316, action->property("text").toString(), all_text, "(a) also while a subfolder is shown");
     QMetaObject::invokeMethod(b.model, "clearSelection");
     QMetaObject::invokeMethod(b.model, "selectAll");
-    M4_CHECK(7317, b.model->property("selection_count").toInt() == 2, "both entries of «docs» selected");
+    M4_CHECK(7317, wait_until([&] { return b.model->property("selection_count").toInt() == 2; }, 5000),
+        "both entries of «docs» selected");
     M4_CHECK_EQ(7318, action->property("text").toString(), selection_text, "(c) all of a subfolder: «Restore Selection…»");
 
     const int cut = top.lastIndexOf(QLatin1Char('/'));
@@ -2393,7 +2396,8 @@ int scenario_restore_all(const Ctx& c) {
     QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, top));
     M4_CHECK(7320, wait_for_dir(w, top), "the top folder opens again");
     QMetaObject::invokeMethod(b.model, "selectAll");
-    M4_CHECK(7321, b.model->property("selection_count").toInt() == 6, "the top folder and «docs» selected");
+    M4_CHECK(7321, wait_until([&] { return b.model->property("selection_count").toInt() == 6; }, 5000),
+        "the top folder and «docs» selected");
     M4_CHECK_EQ(7322, action->property("text").toString(), all_text,
         "(a) entries below a selected one change nothing");
     QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, above));
@@ -2459,8 +2463,10 @@ int restore_all_from_hit(const Ctx& c, const QString& text, bool is_dir, int cod
     QMetaObject::invokeMethod(b.page, "openDir", Q_ARG(QVariant, QStringLiteral("/")));
     M4_CHECK(code + 15, wait_for_dir(w, QStringLiteral("/")), "`/` opens");
     QMetaObject::invokeMethod(b.model, "selectAll");
-    M4_CHECK(code + 16, b.model->property("selection_count").toInt() == b.model->property("total").toInt()
-            && b.model->property("selection_count").toInt() > 0,
+    M4_CHECK(code + 16, wait_until([&] {
+            return b.model->property("selection_count").toInt() == b.model->property("total").toInt()
+                && b.model->property("selection_count").toInt() > 0;
+        }, 5000),
         "every entry of `/` selected");
     QObject* action = object_named(w, "restoreSelectionAction");
     M4_CHECK(code + 17, action != nullptr, "restoreSelectionAction missing");

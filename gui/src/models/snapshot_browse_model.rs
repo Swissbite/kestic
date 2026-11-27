@@ -14,7 +14,7 @@ use crate::state_cache::{format_bytes, i18np};
 use crate::time_texts::{iso_date, to_local};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QModelIndex, QString, QStringList};
-use kestic_core::query_list::{MAX_PAGE_LIMIT, QueryState};
+use kestic_core::query_list::{MAX_PAGE_LIMIT, PageFilter, QueryState};
 use kestic_core::restore::{selection_is_whole_folder, top_folder_seen_from};
 use kestic_core::snapshot_ls::{parent_dir, path_segments};
 use kestic_daemon::dbus_api::{
@@ -69,6 +69,8 @@ pub struct SnapshotBrowseModelRust {
     top_entries: Option<(String, u64)>,
     /// Every entry the list shows with a filter, by filter text, once fetched in this folder.
     shown: HashMap<String, Vec<String>>,
+    /// The entries of the list shown are being fetched for «select all»; a second one waits.
+    fetching_shown: bool,
 }
 
 /// Size column: «–» for folders and links, the size for files.
@@ -281,6 +283,7 @@ impl qobject::SnapshotBrowseModel {
         }
         self.as_mut().clear_list();
         self.as_mut().rust_mut().shown.clear();
+        self.as_mut().rust_mut().fetching_shown = false;
         self.as_mut().set_dir(dir.clone());
         self.as_mut().set_dir_exists(true);
         self.as_mut().set_too_large(false);
@@ -393,12 +396,18 @@ impl qobject::SnapshotBrowseModel {
     /// pages without adding them to the view, once they arrived; not while the list is not
     /// listed, when it is too large to hold, or when a page cannot be fetched.
     fn with_shown_paths(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         then: impl FnOnce(Pin<&mut Self>, Vec<String>) + Send + 'static,
     ) {
-        if self.list.state != Some(QueryState::Done) || self.too_large {
+        // While the list of a new filter is on its way, `matched` still counts the old one.
+        if self.list.state != Some(QueryState::Done)
+            || self.too_large
+            || self.list.run.loading_first_page()
+            || self.fetching_shown
+        {
             return;
         }
+        self.as_mut().rust_mut().fetching_shown = true;
         let matched = u64::try_from(self.matched).unwrap_or(0);
         let filter = self.list.filter.clone();
         let pages = (0..matched)
@@ -409,14 +418,28 @@ impl qobject::SnapshotBrowseModel {
                 filter: filter.clone(),
             })
             .collect();
-        self.fetch_pages(pages, move |mut model, fetched| match fetched {
+        self.fetch_pages(pages, move |mut model, fetched| {
+            model.as_mut().rust_mut().fetching_shown = false;
+            model.show_shown_paths(fetched, &filter, then);
+        });
+    }
+
+    /// Hands the entries fetched for «select all» with `filter` to `then`.
+    fn show_shown_paths(
+        mut self: Pin<&mut Self>,
+        fetched: Fetched<Vec<LsResultDto>>,
+        filter: &PageFilter,
+        then: impl FnOnce(Pin<&mut Self>, Vec<String>),
+    ) {
+        let mut model = self.as_mut();
+        match fetched {
             Fetched::Page(listed) => {
                 let paths: Vec<String> = listed
                     .into_iter()
                     .flat_map(|ls| ls.entries.items.into_iter().map(|e| e.path))
                     .collect();
                 // The filter changed meanwhile: these are not the entries shown.
-                if model.list.filter != filter {
+                if model.list.filter != *filter {
                     return;
                 }
                 model
@@ -429,7 +452,7 @@ impl qobject::SnapshotBrowseModel {
             Fetched::Running => {}
             Fetched::Gone => model.restart(),
             Fetched::Failed(failure) => model.fail_query(&failure),
-        });
+        }
     }
 
     /// Shows the selection in the check boxes of the loaded rows and in the selection line.

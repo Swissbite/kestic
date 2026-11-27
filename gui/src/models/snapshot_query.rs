@@ -92,8 +92,6 @@ pub(crate) struct QueryRun {
     generation: u64,
     /// Counts the first pages asked for: an answer to an earlier one is ignored.
     page_generation: u64,
-    /// `StartSnapshotQuery` is on its way.
-    starting: bool,
     /// The first page is asked for and has not arrived yet (the timer asks no second time).
     first_page_pending: bool,
     /// A further page is asked for and has not arrived yet.
@@ -106,11 +104,15 @@ impl QueryRun {
         self.query_id.as_deref()
     }
 
+    /// Whether the first page (after the query ended or the filter changed) is on its way.
+    pub(crate) fn loading_first_page(&self) -> bool {
+        self.first_page_pending
+    }
+
     /// Cancels the query while it still runs, so restic stops; one whose start has not arrived
     /// yet is cancelled once it does.
     pub(crate) fn abandon(&mut self) {
         self.generation += 1;
-        self.starting = false;
         self.first_page_pending = false;
         self.next_page_pending = false;
         if let Some(id) = self.query_id.take() {
@@ -197,7 +199,6 @@ pub(super) trait QueryListModel: QueryListView + Threading + Sized + 'static {
         let generation = {
             let run = &mut self.as_mut().list_mut().run;
             run.abandon();
-            run.starting = true;
             run.generation
         };
         self.as_mut().set_query_state(Some(QueryState::Running));
@@ -214,23 +215,18 @@ pub(super) trait QueryListModel: QueryListView + Threading + Sized + 'static {
                         let _ = client.cancel_snapshot_query(&id);
                     }),
                     (false, _) => {}
-                    (true, started) => {
-                        model.as_mut().list_mut().run.starting = false;
-                        match started {
-                            Ok(Ok(id)) => {
-                                model.as_mut().list_mut().run.query_id = Some(id);
-                                model.load_first_page();
-                            }
-                            Ok(Err(err)) => {
-                                model.fail_query(&QueryFailure::from_text(dbus_error_text(&err)));
-                            }
-                            Err(_) => {
-                                model.fail_query(&QueryFailure::from_text(
-                                    daemon_unavailable_text(),
-                                ));
-                            }
+                    (true, started) => match started {
+                        Ok(Ok(id)) => {
+                            model.as_mut().list_mut().run.query_id = Some(id);
+                            model.load_first_page();
                         }
-                    }
+                        Ok(Err(err)) => {
+                            model.fail_query(&QueryFailure::from_text(dbus_error_text(&err)));
+                        }
+                        Err(_) => {
+                            model.fail_query(&QueryFailure::from_text(daemon_unavailable_text()));
+                        }
+                    },
                 }
             },
         );
@@ -297,16 +293,21 @@ pub(super) trait QueryListModel: QueryListView + Threading + Sized + 'static {
             move |client| client.get_snapshot_query_status(&query_id, &page),
             |_| false,
             move |mut model: Pin<&mut Self>, status| {
-                let run = &model.list().run;
-                if run.generation != generation || run.page_generation != page_generation {
+                if model.list().run.generation != generation {
                     return;
                 }
                 {
                     let run = &mut model.as_mut().list_mut().run;
+                    // A newer first page (the filter changed) replaces this answer; a next page
+                    // has arrived either way, so further pages can be asked for.
+                    if !first {
+                        run.next_page_pending = false;
+                    }
+                    if run.page_generation != page_generation {
+                        return;
+                    }
                     if first {
                         run.first_page_pending = false;
-                    } else {
-                        run.next_page_pending = false;
                     }
                 }
                 let fetched = match status {
@@ -427,15 +428,14 @@ pub(super) trait QueryListModel: QueryListView + Threading + Sized + 'static {
         self.reload_if_done();
     }
 
-    /// Whether the daemon holds further pages of a finished query (none while a page is on its
-    /// way).
+    /// Whether the daemon holds further pages of a finished query (also while one is on its way,
+    /// so a view that asks again keeps waiting for it; none while the first page of a new filter
+    /// is on its way).
     fn can_fetch_page(&self, parent: &QModelIndex) -> bool {
         let (too_large, matched) = self.too_large_and_matched();
-        let run = &self.list().run;
         !parent.is_valid()
             && self.query_state() == Some(QueryState::Done)
-            && !run.first_page_pending
-            && !run.next_page_pending
+            && !self.list().run.first_page_pending
             && !too_large
             && row_count(&self.list().rows) < matched
     }
@@ -443,7 +443,8 @@ pub(super) trait QueryListModel: QueryListView + Threading + Sized + 'static {
     /// Appends the next page (at most [`DEFAULT_PAGE_LIMIT`] entries) at the end of the list
     /// once it arrived.
     fn fetch_next_page(self: Pin<&mut Self>, parent: &QModelIndex) {
-        if !self.can_fetch_page(parent) {
+        // One further page at a time; asking again while it is on its way changes nothing.
+        if !self.can_fetch_page(parent) || self.list().run.next_page_pending {
             return;
         }
         let offset = self.list().rows.len() as u64;

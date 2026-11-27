@@ -25,6 +25,9 @@ Kirigami.ApplicationWindow {
     // Applies the choice of the source dialog and closes it when the daemon accepted it or the
     // download of the restic managed by Kestic started.
     function applyResticSourceChoice() {
+        if (resticSourceAnswer.waiting) {
+            return;
+        }
         if (settingsWindow.pendingProviderKind === "custom" && settingsWindow.pendingCustomPath.trim().length === 0) {
             return;
         }
