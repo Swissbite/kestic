@@ -20,7 +20,7 @@ SPDX-License-Identifier: CC0-1.0
       <li>Exclude rules and retention, each with a preview</li>
       <li>Browse, search and compare snapshots, and restore files to a new folder or, after a preview, to their original place</li>
     </ul>
-    <p>Kestic is an independent project, not affiliated with or endorsed by the restic project.</p>
+    <p>Kestic is an independent project, not affiliated with or endorsed by KDE e.V. or the restic project.</p>
   </description>
   <launchable type="desktop-id">net.daester.Kestic.desktop</launchable>
   <icon type="stock">kestic</icon>

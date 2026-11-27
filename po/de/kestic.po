@@ -4631,8 +4631,8 @@ msgid "Browse, search and compare snapshots, and restore files to a new folder o
 msgstr "Snapshots durchsuchen, in ihnen suchen und sie vergleichen; Dateien in einen neuen Ordner oder, nach einer Vorschau, an den ursprünglichen Ort wiederherstellen"
 
 #: packaging/net.daester.Kestic.metainfo.xml
-msgid "Kestic is an independent project, not affiliated with or endorsed by the restic project."
-msgstr "Kestic ist ein unabhängiges Projekt und weder mit dem restic-Projekt verbunden noch von ihm empfohlen."
+msgid "Kestic is an independent project, not affiliated with or endorsed by KDE e.V. or the restic project."
+msgstr "Kestic ist ein unabhängiges Projekt und weder mit KDE e.V. noch mit dem restic-Projekt verbunden oder von ihnen empfohlen."
 
 #: packaging/screenshots.tsv
 msgid "Overview of all backups and their status"
