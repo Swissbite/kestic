@@ -11,6 +11,7 @@ pub mod bus;
 pub mod delayed_daemon;
 pub mod gui;
 pub mod keyring;
+pub mod metainfo;
 pub mod password;
 pub mod po;
 mod random;

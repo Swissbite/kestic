@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: CC0-1.0
+#
+# Screenshots of the AppStream metainfo, one per line, separated by tabs: the fixed name of the
+# release asset, the GUI smoke screenshot it is taken from, and the caption (translated in
+# po/de/kestic.po). The first line is the default screenshot. `just deb` links each name as an
+# asset of the package's own release; the release workflow attaches the images under these names
+# (.github/scripts/release-screenshots.sh).
+screenshot-overview.png	m3-overview-status-wide-en.png	Overview of all backups and their status
+screenshot-destination-types.png	m5-destination-types-wide-en.png	Choose the type of a new destination
+screenshot-schedule.png	m3-schedule-defaults-wide-en.png	Set the schedule of a backup
+screenshot-restore.png	m4-restore-browse-wide-en.png	Browse a snapshot and mark what to restore

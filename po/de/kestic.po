@@ -4601,3 +4601,55 @@ msgstr "Das von Kestic verwaltete restic wird nicht mehr verwendet."
 
 msgid "Delete"
 msgstr "Löschen"
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "Kestic"
+msgstr "Kestic"
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "Simple and powerful backups with restic"
+msgstr "Einfache und mächtige Backups mit restic"
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "David Däster"
+msgstr "David Däster"
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "Kestic makes backups with restic easy. Pick what and where. Kestic does the rest and shows you the restic command behind every run."
+msgstr "Kestic macht Backups mit restic einfach. Wählen Sie, was und wohin. Kestic erledigt den Rest und zeigt zu jedem Lauf den restic-Befehl dahinter."
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "Destinations: external drives, folders, SSH servers, REST servers, cloud storage and cloud services via rclone"
+msgstr "Ziele: externe Laufwerke, Ordner, SSH-Server, REST-Server, Cloud-Speicher und Cloud-Dienste über rclone"
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "Schedules that catch up after sleep or shutdown, with run conditions for AC power and the network"
+msgstr "Zeitpläne, die nach Ruhezustand oder Herunterfahren nachholen, mit Laufbedingungen für Netzstrom und Netzwerk"
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "Exclude rules and retention, each with a preview"
+msgstr "Ausschluss-Regeln und Aufbewahrung, jeweils mit Vorschau"
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "Browse, search and compare snapshots, and restore files to a new folder or, after a preview, to their original place"
+msgstr "Snapshots durchsuchen, in ihnen suchen und sie vergleichen; Dateien in einen neuen Ordner oder, nach einer Vorschau, an den ursprünglichen Ort wiederherstellen"
+
+#: packaging/net.daester.Kestic.metainfo.xml
+msgid "Kestic is an independent project, not affiliated with or endorsed by KDE e.V. or the restic project."
+msgstr "Kestic ist ein unabhängiges Projekt und weder mit KDE e.V. noch mit dem restic-Projekt verbunden oder von ihnen empfohlen."
+
+#: packaging/screenshots.tsv
+msgid "Overview of all backups and their status"
+msgstr "Übersicht über alle Backups und ihren Zustand"
+
+#: packaging/screenshots.tsv
+msgid "Choose the type of a new destination"
+msgstr "Typ eines neuen Ziels wählen"
+
+#: packaging/screenshots.tsv
+msgid "Set the schedule of a backup"
+msgstr "Zeitplan eines Backups festlegen"
+
+#: packaging/screenshots.tsv
+msgid "Browse a snapshot and mark what to restore"
+msgstr "Einen Snapshot durchsuchen und markieren, was wiederhergestellt wird"

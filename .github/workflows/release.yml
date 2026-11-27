@@ -18,8 +18,9 @@
 #   prepare      plans tag and version and writes highlights and stories (release-notes.sh)
 #   ci-image     the CI image of verify.yml
 #   build        the .deb with the tag's version, same steps as job `release` in verify.yml
-#   screenshots  release only: waits for the green Verify run of the commit on main and bundles
-#                its smoke screenshots
+#   screenshots  release only: waits for the green Verify run of the commit on main, bundles
+#                its smoke screenshots and attaches those of packaging/screenshots.tsv under their
+#                fixed names, which the metainfo in the .deb links (release-screenshots.sh)
 #   sums         checks the package, names every asset as GitHub keeps it on upload (`~` becomes
 #                `.`) and writes SHA256SUMS (release-assets.sh)
 #   attest       a build provenance attestation of the .deb
@@ -295,6 +296,20 @@ jobs:
           run-id: ${{ steps.run.outputs.run-id }}
           github-token: ${{ github.token }}
 
+      # Only the list and the script come from the checkout; the job can only read.
+      - if: steps.run.outputs.run-id != ''
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The metainfo in the .deb links these images as assets of this release (AC-M6-23-4).
+      # Nothing from the artifact is executed.
+      - name: Screenshots of the metainfo
+        if: steps.run.outputs.run-id != ''
+        run: |
+          .github/scripts/release-screenshots.sh packaging/screenshots.tsv \
+            "$RUNNER_TEMP/smoke-artifacts" "$RUNNER_TEMP/bundle"
+
       # Only PNG files go into the bundle; nothing from the artifact is executed.
       - name: Bundle screenshots
         if: steps.run.outputs.run-id != ''
@@ -311,13 +326,13 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: release-screenshots
-          path: ${{ runner.temp }}/bundle/*.zip
+          path: ${{ runner.temp }}/bundle/*
           compression-level: 0
           overwrite: true
           if-no-files-found: error
 
-  # The only job after the build that runs a script from the checkout, so it gets no write
-  # permission; attest and publish take its assets as they are.
+  # Like screenshots, this job runs a script from the checkout, so it gets no write permission;
+  # attest and publish take its assets as they are.
   sums:
     needs: [prepare, build, screenshots]
     # screenshots is skipped for a pre-release of an integration branch.
