@@ -32,6 +32,12 @@ pub const REST_ADDRESS_WITH_LOGIN: &str = i18n_noop(
     "The address must not contain a user name or password. Enter them in the ‘Username’ and ‘Server password’ fields.",
 );
 
+/// Refusal of an SFTP path with a `..` folder in it: with symbolic links on the server it may
+/// lead elsewhere than it reads, so two destinations could share one repository unnoticed.
+pub const SFTP_PATH_WITH_PARENT: &str = i18n_noop(
+    "The path must not contain ‘..’ as a folder name. Enter the path to the repository without it.",
+);
+
 /// An argument of a [`Message`]: text as it is, or a percentage that each side formats for its
 /// own language with [`PERCENT_PATTERN`].
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -88,6 +88,8 @@ QtObject {
     readonly property bool portValid: fieldChecks.port
     readonly property bool sftpUserValid: fieldChecks.username
     readonly property bool sftpPathValid: fieldChecks.sftpPath
+    // Why `core` refuses the SFTP path as entered (a `..` folder in it), else empty.
+    readonly property string sftpPathError: fieldChecks.sftpPathError
     // A new S3 destination needs both keys; when editing, empty keys keep the saved ones.
     readonly property bool keysValid: kindIsGeneric
         ? destinationId !== "" || envList().every(function(v) { return !v.secret || v.value.length > 0; })

@@ -10,7 +10,7 @@ use kestic_core::local_path::NotALocalPath;
 use kestic_core::model::{Destination, DestinationId, DestinationKind, ModelError};
 use kestic_daemon::dbus_api::{BackendSecrets, ConnectionTestResultDto, KesticDbusError};
 use kestic_i18n::codes::ConnectionTestCode;
-use kestic_i18n::messages::{Message, REST_ADDRESS_WITH_LOGIN};
+use kestic_i18n::messages::{Message, REST_ADDRESS_WITH_LOGIN, SFTP_PATH_WITH_PARENT};
 use std::path::PathBuf;
 
 #[derive(serde::Deserialize)]
@@ -102,6 +102,9 @@ fn input_error(err: ModelError) -> DestinationInputError {
         ModelError::Generic(generic) => generic_error(generic),
         ModelError::LoginInRestAddress => {
             DestinationInputError::Invalid(tr(&Message::new(REST_ADDRESS_WITH_LOGIN)))
+        }
+        ModelError::ParentSegmentInSftpPath => {
+            DestinationInputError::Invalid(tr(&Message::new(SFTP_PATH_WITH_PARENT)))
         }
         other => DestinationInputError::Invalid(other.to_string()),
     }
@@ -262,11 +265,15 @@ struct FieldsToCheck {
 }
 
 /// Which S3 and SFTP fields `core` accepts, each as a boolean of the same name, for the form's
-/// messages next to the fields; unreadable input accepts nothing.
+/// messages next to the fields; unreadable input accepts nothing. `sftpPathError` holds the
+/// message for a `..` folder in the SFTP path in the GUI language, else is empty.
 pub fn field_checks(fields_json: &str) -> serde_json::Value {
     use kestic_core::{s3, sftp};
     let f: FieldsToCheck = serde_json::from_str(fields_json).unwrap_or_default();
     let s3_path = f.s3_path.trim();
+    let sftp_path_error = sftp::refuse_parent_segments(&f.sftp_path)
+        .err()
+        .map(|err| input_error(err).text());
     serde_json::json!({
         "endpoint": s3::normalized_endpoint(&f.endpoint).is_ok(),
         "bucket": s3::is_valid_bucket_name(f.bucket.trim()),
@@ -275,7 +282,8 @@ pub fn field_checks(fields_json: &str) -> serde_json::Value {
         "host": sftp::is_valid_host(&f.host),
         "port": sftp::parse_port(&f.port).is_some(),
         "username": sftp::is_valid_user(&f.username),
-        "sftpPath": sftp::check_path(&f.sftp_path).is_ok(),
+        "sftpPath": sftp::check_path(&f.sftp_path).is_ok() && sftp_path_error.is_none(),
+        "sftpPathError": sftp_path_error.unwrap_or_default(),
     })
 }
 
@@ -380,6 +388,26 @@ mod tests {
         }
         assert_eq!(field_checks(r#"{"s3Path":""}"#)["s3Path"], true, "no path");
         assert_eq!(field_checks("not json")["port"], false, "unreadable");
+    }
+
+    /// AC-M6-19-2: (a) a whole `..` folder in the SFTP path gives the path field its message and
+    /// (b) marks the path as refused, which keeps «Test Connection», and so «Next» and «Save»,
+    /// locked; a name such as `a..b` stays allowed.
+    #[test]
+    fn ac_m6_19_2_parent_segment_locks_the_sftp_path() {
+        let fields = |path: &str| serde_json::json!({ "sftpPath": path }).to_string();
+        let refused = field_checks(&fields("/srv/x/../repo"));
+        assert_eq!(
+            refused["sftpPathError"],
+            kestic_i18n::messages::SFTP_PATH_WITH_PARENT,
+            "(a) message"
+        );
+        assert_eq!(refused["sftpPath"], false, "(b) path refused");
+        for path in ["/srv/a..b/repo", "backups/..x"] {
+            let allowed = field_checks(&fields(path));
+            assert_eq!(allowed["sftpPathError"], "", "(a) no message: {path}");
+            assert_eq!(allowed["sftpPath"], true, "(b) accepted: {path}");
+        }
     }
 
     /// AC-M5-03-1 (c): the form check behind «Test Connection» (and so «Anlegen») refuses an

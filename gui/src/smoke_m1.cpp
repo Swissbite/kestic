@@ -1199,6 +1199,8 @@ void run_m6_smoke_scenario(
         run_refused_start_scene(window, backend, warnings, out_path);
     } else if (scen == QLatin1String("m6-rest-login")) {
         run_rest_login_scene(window, warnings, out_path, lang);
+    } else if (scen == QLatin1String("m6-sftp-parent")) {
+        run_sftp_parent_scene(window, warnings, out_path, lang);
     } else {
         smoke_fail("M6", 99, QStringLiteral("unknown scenario %1").arg(scen));
     }

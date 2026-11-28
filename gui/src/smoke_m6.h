@@ -97,4 +97,9 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
 void run_rest_login_scene(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
     const QString& out_path, const QString& lang);
 
+// AC-M6-19-2: a `..` folder in the path of the SFTP form, in «Add Destination» and on the edit
+// page.
+void run_sftp_parent_scene(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path, const QString& lang);
+
 } // namespace kestic::smoke

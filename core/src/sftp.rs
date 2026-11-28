@@ -60,6 +60,16 @@ pub fn check_path(path: &str) -> Result<(), ModelError> {
     Ok(())
 }
 
+/// Refuses a path with a `..` folder in it (`/srv/x/../repo`). With symbolic links on the server
+/// `..` need not lead to the folder the text suggests, so the path cannot be compared with
+/// others; a name such as `a..b` is an ordinary folder.
+pub fn refuse_parent_segments(path: &str) -> Result<(), ModelError> {
+    if path.trim().split('/').any(|segment| segment == "..") {
+        return Err(ModelError::ParentSegmentInSftpPath);
+    }
+    Ok(())
+}
+
 /// The port in `text`: only digits, 1 to 65535.
 pub fn parse_port(text: &str) -> Option<u16> {
     let text = text.trim();
