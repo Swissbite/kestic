@@ -7,13 +7,19 @@
 
 mod common;
 
-use common::m3::{M3DaemonOpts, M3Rig, assert_dbus_error_name, latest_variant, spawn_m3_daemon};
+use common::m3::{
+    M3DaemonOpts, M3Rig, assert_dbus_error_name, connect_rest_repo, latest_variant, spawn_m3_daemon,
+};
 use common::revision::{backup_revision, destination_revision};
 use common::{isolated_secret_store, load_config};
-use kestic_core::model::{Backup, Destination, MaintenanceEntrySchedule, MaintenanceSchedule};
+use kestic_core::backend_credentials::SECRET_KIND_REST;
+use kestic_core::model::{
+    Backup, Destination, DestinationKind, MaintenanceEntrySchedule, MaintenanceSchedule,
+};
 use kestic_core::secrets::SecretStore;
 use kestic_daemon::dbus_api::{BackendSecrets, KESTIC_OBJECT_PATH, KesticClient};
 use kestic_i18n::codes::DestinationUpdateOutcome;
+use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::path::Path;
 use std::thread;
@@ -389,9 +395,13 @@ fn ac_m6_36_9_c_d_change_during_the_connection_check() {
                 .expect("read secret")
                 .map(|s| s.as_str().expect("utf-8").to_string());
 
-            for (round, (target, change)) in [(&dest, "maintenance"), (&spare, "remove")]
-                .into_iter()
-                .enumerate()
+            for (round, (target, change)) in [
+                (&dest, "maintenance"),
+                (&dest, "rename"),
+                (&spare, "remove"),
+            ]
+            .into_iter()
+            .enumerate()
             {
                 let read = destination_revision(client, target);
                 let before = load_config(&rig.daemon.config_path).expect("config");
@@ -419,6 +429,21 @@ fn ac_m6_36_9_c_d_change_during_the_connection_check() {
                     client
                         .update_destination_maintenance(target.id.as_str(), &maintenance)
                         .expect("change during the check");
+                } else if change == "rename" {
+                    // A save without a connection check needs no restic, so it goes through
+                    // while the first one is held.
+                    let current = saved_destination(&rig, target);
+                    let elsewhere = renamed(&current, |d| d.name = "Renamed elsewhere".to_string());
+                    client
+                        .update_destination(
+                            &elsewhere,
+                            "connect",
+                            "",
+                            &BackendSecrets::default(),
+                            false,
+                            &destination_revision(client, target),
+                        )
+                        .expect("rename during the check");
                 } else {
                     client
                         .remove_destination(target.id.as_str())
@@ -426,10 +451,10 @@ fn ac_m6_36_9_c_d_change_during_the_connection_check() {
                 }
                 rig.wrapper.release("cat");
                 let err = saving.join().expect("saving thread").expect_err("refused");
-                let expected = if change == "maintenance" {
-                    CONFLICT
-                } else {
+                let expected = if change == "remove" {
                     "net.daester.Kestic.Error.NotFound"
+                } else {
+                    CONFLICT
                 };
                 assert_dbus_error_name(&err, expected);
                 let after = load_config(&rig.daemon.config_path).expect("config");
@@ -439,13 +464,15 @@ fn ac_m6_36_9_c_d_change_during_the_connection_check() {
                         .map(|d| d.name.clone())
                         .collect::<Vec<_>>()
                 };
-                assert_eq!(
-                    names(&after),
-                    names(&before)
-                        .into_iter()
-                        .filter(|n| change != "remove" || n != &target.name)
-                        .collect::<Vec<_>>(),
-                    "AC-M6-36-9 (d): the refused save wrote no name ({change})"
+                let renamed_by_it = format!("{} renamed", target.name);
+                assert!(
+                    !names(&after).contains(&renamed_by_it),
+                    "AC-M6-36-9 (d): the refused save wrote no name ({change}): {:?}",
+                    names(&after)
+                );
+                assert!(
+                    change == "remove" || names(&after).len() == names(&before).len(),
+                    "precondition: only the removal removes a destination"
                 );
                 rig.wrapper
                     .wait_for('E', "cat", round + 1, Duration::from_secs(10));
@@ -506,6 +533,185 @@ fn ac_m6_36_9_g_init_with_a_stale_revision_creates_nothing() {
             assert!(
                 !repo_dir.join("config").exists(),
                 "AC-M6-36-9 (g): no repository at the location"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M6-36-7 (e) and AC-M6-36-9 (d) with credentials: new credentials alone keep the revision,
+/// and a save refused with `Conflict` writes none of the credentials it brought.
+#[test]
+fn ac_m6_36_7_e_9_d_credentials_of_a_rest_destination() {
+    common::run_isolated_test(
+        "ac_m6_36_7_e_9_d_credentials_of_a_rest_destination",
+        "KESTIC_M6_36_7E_INNER",
+        |root| {
+            let rig = rig(root, "S36R7E");
+            let client = &rig.daemon.client;
+            let server = RestServerGuard::start_with_auth(&root.join("rest-data"));
+            let (user, password) = server.auth().expect("server with a user");
+            let (user, password) = (user.to_string(), password.to_string());
+            let dest = Destination::new(
+                "REST",
+                DestinationKind::Rest {
+                    url: server.url.clone(),
+                    username: Some(user),
+                },
+            )
+            .expect("rest destination");
+            connect_rest_repo(client, &rig.variant.bin, &server, &dest);
+            let saved = saved_destination(&rig, &dest);
+            let store = isolated_secret_store();
+            let stored_rest = || {
+                store
+                    .get_secret(dest.id.as_str(), SECRET_KIND_REST)
+                    .expect("read secret")
+                    .map(|s| s.as_str().expect("utf-8").to_string())
+            };
+
+            // AC-7 (e): the same destination with credentials entered again.
+            let before = destination_revision(client, &dest);
+            let result = client
+                .update_destination(
+                    &saved,
+                    "connect",
+                    "",
+                    &BackendSecrets::rest(&password),
+                    true,
+                    &before,
+                )
+                .expect("credentials only");
+            assert_eq!(
+                result.outcome,
+                DestinationUpdateOutcome::Saved,
+                "precondition"
+            );
+            assert_eq!(
+                result.revision, before,
+                "AC-M6-36-7 (e): the returned revision"
+            );
+            assert_eq!(
+                destination_revision(client, &dest),
+                before,
+                "AC-M6-36-7 (e)"
+            );
+
+            // AC-9 (d): a refused save writes none of its credentials.
+            rig.wrapper.hold("cat");
+            let bus = rig.variant.bus_name("S36R7E");
+            let attempt = saved.clone();
+            let saving = thread::spawn(move || {
+                let other = KesticClient::connect(&bus, KESTIC_OBJECT_PATH).expect("client");
+                other.update_destination(
+                    &attempt,
+                    "connect",
+                    "",
+                    &BackendSecrets::rest("a-new-password"),
+                    true,
+                    &before,
+                )
+            });
+            rig.wrapper.wait_for('S', "cat", 1, Duration::from_secs(10));
+            client
+                .update_destination_maintenance(
+                    dest.id.as_str(),
+                    &MaintenanceSchedule {
+                        prune: MaintenanceEntrySchedule::Daily { hour: 6, minute: 0 },
+                        ..MaintenanceSchedule::default()
+                    },
+                )
+                .expect("change during the check");
+            rig.wrapper.release("cat");
+            let err = saving.join().expect("saving thread").expect_err("refused");
+            assert_dbus_error_name(&err, CONFLICT);
+            assert_eq!(
+                stored_rest().as_deref(),
+                Some(password.as_str()),
+                "AC-M6-36-9 (d): the entered credential is not stored"
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M6-36-9 (d), exception: a repository `init` already created when the destination changed
+/// keeps the password it was created with; the config stays unchanged, and the next save with the
+/// current revision recognises that repository.
+#[test]
+fn ac_m6_36_9_d_init_keeps_the_password_of_its_new_repository() {
+    common::run_isolated_test(
+        "ac_m6_36_9_d_init_keeps_the_password_of_its_new_repository",
+        "KESTIC_M6_36_9DI_INNER",
+        |root| {
+            let rig = rig(root, "S36R9DI");
+            let client = &rig.daemon.client;
+            let dest = rig.add_destination("Fresh", |_| {});
+            let repo_dir = root.join(&rig.sub).join("repo-Fresh");
+            fs::remove_dir_all(&repo_dir).expect("delete repository");
+            fs::create_dir_all(&repo_dir).expect("empty folder");
+            let read = destination_revision(client, &dest);
+            rig.wrapper.hold("init");
+            let bus = rig.variant.bus_name("S36R9DI");
+            let attempt = renamed(&dest, |d| d.name = "Fresh renamed".to_string());
+            let saving = thread::spawn(move || {
+                let other = KesticClient::connect(&bus, KESTIC_OBJECT_PATH).expect("client");
+                other.update_destination(
+                    &attempt,
+                    "init",
+                    "the-new-password",
+                    &BackendSecrets::default(),
+                    true,
+                    &read,
+                )
+            });
+            rig.wrapper
+                .wait_for('S', "init", 1, Duration::from_secs(10));
+            client
+                .update_destination_maintenance(
+                    dest.id.as_str(),
+                    &MaintenanceSchedule {
+                        prune: MaintenanceEntrySchedule::Daily { hour: 7, minute: 0 },
+                        ..MaintenanceSchedule::default()
+                    },
+                )
+                .expect("change during init");
+            rig.wrapper.release("init");
+            let err = saving.join().expect("saving thread").expect_err("refused");
+            assert_dbus_error_name(&err, CONFLICT);
+            assert!(
+                repo_dir.join("config").exists(),
+                "precondition: init created the repository"
+            );
+            assert_eq!(
+                saved_destination(&rig, &dest).name,
+                "Fresh",
+                "AC-M6-36-9 (d): config.toml unchanged"
+            );
+            let stored = isolated_secret_store()
+                .get_secret(dest.id.as_str(), "repo")
+                .expect("read secret")
+                .map(|s| s.as_str().expect("utf-8").to_string());
+            assert_eq!(
+                stored.as_deref(),
+                Some("the-new-password"),
+                "AC-M6-36-9 (d): the new repository keeps its password"
+            );
+            let current = saved_destination(&rig, &dest);
+            let again = client
+                .update_destination(
+                    &current,
+                    "connect",
+                    "",
+                    &BackendSecrets::default(),
+                    true,
+                    &destination_revision(client, &dest),
+                )
+                .expect("save again");
+            assert_eq!(
+                again.outcome,
+                DestinationUpdateOutcome::Saved,
+                "the new repository is the destination's own"
             );
             rig.daemon.stop();
         },

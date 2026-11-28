@@ -3,48 +3,58 @@
 
 //! Revisions of the backups and destinations the editor pages show. A page keeps the revision it
 //! opened with and sends it when it saves; the daemon refuses with `Conflict` when the backup or
-//! destination changed meanwhile. A save of this window moves its own revision on: the next save
-//! of the same or another page, sent before the window has the new state, takes the revision the
-//! save returned instead of conflicting with itself.
+//! destination changed meanwhile. A page that only missed saves of this window (a second save
+//! queued while the first was on its way, a page opened before the window had the new state)
+//! sends the daemon's current revision instead of conflicting with the window itself.
 
 use crate::state_cache::shared_state;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::KesticDbusError;
 use kestic_i18n::codes::ServiceErrorCode;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 /// The answer of a save that the daemon refused with `Conflict`; the page reloads and says so.
 pub(crate) const CONFLICT_ANSWER: &str = "conflict";
 
-/// How many own saves in a row are followed; more than a window makes before it has the state.
-const MAX_CHAIN: usize = 64;
-
-fn own_saves() -> &'static Mutex<HashMap<String, String>> {
-    static OWN: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+/// The saves of this window: each revision it saved from, with the revisions it led to.
+fn own_saves() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    static OWN: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
     OWN.get_or_init(Mutex::default)
 }
 
-/// The revision to send for a page that opened with `revision`: the newest one the window's own
-/// saves led to from it.
-pub(crate) fn latest_own(revision: &str) -> String {
+/// The revision to send for a page that opened with `opened` while the daemon holds `current`:
+/// `current` when the window's own saves lead from `opened` to it (the page only missed saves of
+/// this window), else `opened`, so the daemon answers `Conflict` for a change made elsewhere.
+pub(crate) fn sent_revision(opened: &str, current: &str) -> String {
+    if opened == current || opened.is_empty() {
+        return opened.to_string();
+    }
     let saves = own_saves().lock_unpoisoned();
-    let mut current = revision.to_string();
-    for _ in 0..MAX_CHAIN {
-        match saves.get(&current) {
-            Some(next) if next != &current => current.clone_from(next),
-            _ => break,
+    let mut seen = HashSet::from([opened.to_string()]);
+    let mut queue = vec![opened.to_string()];
+    while let Some(from) = queue.pop() {
+        for to in saves.get(&from).into_iter().flatten() {
+            if to == current {
+                return current.to_string();
+            }
+            if seen.insert(to.clone()) {
+                queue.push(to.clone());
+            }
         }
     }
-    current
+    opened.to_string()
 }
 
 /// Records that a save of this window turned `from` into `to`.
 pub(crate) fn record_own(from: &str, to: &str) {
-    if !from.is_empty() && !to.is_empty() && from != to {
-        own_saves()
-            .lock_unpoisoned()
-            .insert(from.to_string(), to.to_string());
+    if from.is_empty() || to.is_empty() || from == to {
+        return;
+    }
+    let mut saves = own_saves().lock_unpoisoned();
+    let next = saves.entry(from.to_string()).or_default();
+    if !next.iter().any(|t| t == to) {
+        next.push(to.to_string());
     }
 }
 

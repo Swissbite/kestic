@@ -6,7 +6,7 @@
 
 use super::daemon_call::Lane;
 use super::revisions::{
-    CONFLICT_ANSWER, cached_destination_revision, is_conflict_reply, latest_own, record_own,
+    CONFLICT_ANSWER, cached_destination_revision, is_conflict_reply, record_own, sent_revision,
 };
 use super::{Finish, dbus_error_text, qobject};
 use crate::destination_input::{
@@ -237,7 +237,17 @@ impl qobject::KesticApp {
         self.request_daemon(
             Lane::slow(&format!("update-destination:{}", dest.id)),
             move |client| {
-                let sent = latest_own(&revision);
+                let current = client
+                    .get_state()
+                    .ok()
+                    .and_then(|s| {
+                        s.destinations
+                            .into_iter()
+                            .find(|d| d.destination.id == dest.id)
+                            .map(|d| d.revision)
+                    })
+                    .unwrap_or_default();
+                let sent = sent_revision(&revision, &current);
                 let saved = client.update_destination(
                     &dest,
                     &mode,

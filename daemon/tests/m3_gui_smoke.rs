@@ -28,7 +28,7 @@ use kestic_core::model::{
     MaintenanceForget, MaintenanceSchedule, MaintenanceStats, Run, RunConditions, RunId, RunStatus,
     Schedule, Source,
 };
-use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, RunProgressPhase};
+use kestic_daemon::dbus_api::{BackendSecrets, KESTIC_BUS_NAME, RunProgressPhase};
 use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1236,13 +1236,14 @@ impl Drop for SetOnDrop<'_> {
 }
 
 /// Changes made by a second D-Bus client while the smoke `m3-revision-conflict` runs: for each
-/// file `change-<n>` the smoke writes, step 1–5 renames the backup and step 6 sets the
-/// destination's `prune` to daily at `prune_hour`. Returns how many changes it made.
+/// file `change-<n>` the smoke writes, step 1 renames the backup and switches «skip on metered
+/// networks» on, steps 2–5 rename the backup and step 6 renames the destination to `dest_name`.
+/// Returns how many changes it made.
 fn change_elsewhere_on_request(
     sync: &Path,
     backup: &BackupId,
     dest: &Destination,
-    prune_hour: u8,
+    dest_name: &str,
     stop: &AtomicBool,
 ) -> usize {
     let client = kestic_daemon::dbus_api::KesticClient::connect(
@@ -1258,21 +1259,23 @@ fn change_elsewhere_on_request(
             }
             std::thread::sleep(Duration::from_millis(25));
         }
-        if step <= 5 {
+        if step == 1 {
+            let mut current = load_backup(&client, backup);
+            current.name = "Documents 1".to_string();
+            current.run_conditions.skip_on_metered_network = true;
+            client
+                .update_backup_now(&current)
+                .expect("change backup elsewhere");
+        } else if step <= 5 {
             client
                 .rename_backup(backup.as_str(), &format!("Documents {step}"))
                 .expect("rename backup elsewhere");
         } else {
-            let maintenance = MaintenanceSchedule {
-                prune: MaintenanceEntrySchedule::Daily {
-                    hour: prune_hour,
-                    minute: 0,
-                },
-                ..MaintenanceSchedule::default()
-            };
+            let mut current = load_destination(&client, &dest.id);
+            current.name = dest_name.to_string();
             client
-                .update_destination_maintenance(dest.id.as_str(), &maintenance)
-                .expect("change destination elsewhere");
+                .update_destination_now(&current, "connect", "", &BackendSecrets::default(), false)
+                .expect("rename destination elsewhere");
         }
         done += 1;
     }
@@ -1290,13 +1293,14 @@ fn ac_m6_36_10_editor_pages_refuse_to_overwrite_a_change_made_elsewhere() {
         "KESTIC_M6_36_10_INNER",
         |root| {
             let (rig, _fakes, dest, id) = editor_env(root);
-            for (lang, prune_hour) in [("en", 3), ("de", 4)] {
+            for lang in ["en", "de"] {
+                let dest_name = format!("Vault elsewhere {lang}");
                 let sync = root.join(format!("revision-sync-{lang}"));
                 fs::create_dir_all(&sync).expect("mkdir sync");
                 let stop = AtomicBool::new(false);
                 let changes = std::thread::scope(|scope| {
                     let changer = scope.spawn(|| {
-                        change_elsewhere_on_request(&sync, &id, &dest, prune_hour, &stop)
+                        change_elsewhere_on_request(&sync, &id, &dest, &dest_name, &stop)
                     });
                     // Also when the smoke fails, so the changer ends and the failure shows.
                     let stop_changer = SetOnDrop(&stop);
@@ -1314,16 +1318,38 @@ fn ac_m6_36_10_editor_pages_refuse_to_overwrite_a_change_made_elsewhere() {
                 assert_eq!(changes, 6, "every change elsewhere was asked for ({lang})");
                 // The changes made elsewhere stay: the refused saves overwrote nothing.
                 assert_eq!(saved_backup(&rig, &id).name, "Documents 5", "({lang})");
-                assert_eq!(
-                    saved_maintenance_of(&rig, &dest).prune,
-                    MaintenanceEntrySchedule::Daily {
-                        hour: prune_hour,
-                        minute: 0
-                    },
-                    "({lang})"
-                );
+                let saved_dest = load_config(&rig.daemon.config_path)
+                    .expect("config")
+                    .destinations
+                    .into_iter()
+                    .find(|d| d.id == dest.id)
+                    .expect("destination");
+                assert_eq!(saved_dest.name, dest_name, "({lang})");
             }
             rig.daemon.stop();
         },
     );
+}
+
+fn load_backup(client: &kestic_daemon::dbus_api::KesticClient, id: &BackupId) -> Backup {
+    client
+        .get_state()
+        .expect("state")
+        .config
+        .backup(id)
+        .cloned()
+        .expect("backup")
+}
+
+fn load_destination(
+    client: &kestic_daemon::dbus_api::KesticClient,
+    id: &kestic_core::model::DestinationId,
+) -> Destination {
+    client
+        .get_state()
+        .expect("state")
+        .config
+        .destination(id)
+        .cloned()
+        .expect("destination")
 }

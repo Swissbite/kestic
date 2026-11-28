@@ -6,7 +6,7 @@
 
 use super::daemon_call::Lane;
 use super::revisions::{
-    CONFLICT_ANSWER, cached_backup_revision, is_conflict, latest_own, record_own,
+    CONFLICT_ANSWER, cached_backup_revision, is_conflict, record_own, sent_revision,
 };
 use super::{Finish, dbus_error_text, qobject};
 use crate::daemon_events::request_refresh;
@@ -304,7 +304,12 @@ impl qobject::KesticApp {
                 let Some(backup) = state.config.backup(&backup_id) else {
                     return Err(not_found_text());
                 };
-                let sent = latest_own(&revision);
+                let current = state
+                    .backups
+                    .iter()
+                    .find(|b| b.backup.id == backup_id)
+                    .map_or("", |b| b.revision.as_str());
+                let sent = sent_revision(&revision, current);
                 edit(backup, client).map(|updated| {
                     let saved = client.update_backup(&updated, &sent);
                     if let Ok(new_revision) = &saved {

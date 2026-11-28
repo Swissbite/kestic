@@ -303,16 +303,8 @@ type UpdateReply = (
     KesticTrayState,
 );
 
-fn reply(
-    guard: &DaemonCore,
-    dest_id: &DestinationId,
-    outcome: DestinationUpdateOutcome,
-) -> UpdateReply {
+fn reply(guard: &DaemonCore, outcome: DestinationUpdateOutcome, revision: String) -> UpdateReply {
     let (state_dto, tray_state) = guard.build_state_and_tray();
-    let revision = guard
-        .config
-        .destination(dest_id)
-        .map_or_else(String::new, revision_of);
     (
         DestinationUpdateResultDto { outcome, revision },
         guard.conn.clone(),
@@ -399,12 +391,7 @@ pub(crate) fn update_destination_unlocked(
     let accepted = if setup_mode == DestinationSetupMode::InitNew {
         if changed {
             // A new repository has a new ID: at another address it is another destination.
-            let guard = shared.lock_unpoisoned();
-            return Ok(reply(
-                &guard,
-                &updated.id,
-                DestinationUpdateOutcome::OtherRepository,
-            ));
+            return other_repository(shared, &updated.id, revision);
         }
         init_in_place(&updated, repo_password, &entered, &deps)?
     } else if changed || !entered.is_empty() || verify_connection {
@@ -424,14 +411,7 @@ pub(crate) fn update_destination_unlocked(
                 repository_id: Some(repository_id),
                 new_repository: false,
             },
-            EditVerdict::Other => {
-                let guard = shared.lock_unpoisoned();
-                return Ok(reply(
-                    &guard,
-                    &updated.id,
-                    DestinationUpdateOutcome::OtherRepository,
-                ));
-            }
+            EditVerdict::Other => return other_repository(shared, &updated.id, revision),
         }
     } else {
         Accepted {
@@ -441,21 +421,81 @@ pub(crate) fn update_destination_unlocked(
         }
     };
 
-    let dest_id = updated.id.clone();
-    save_update(
+    let new_repository_id = accepted
+        .new_repository
+        .then(|| accepted.repository_id.clone());
+    // Bound first: the lock taken for the save ends with this statement, before the error arm
+    // takes it again.
+    let save_result = save_update(
         &mut shared.lock_unpoisoned(),
         &saved,
         updated,
         accepted,
         revision,
-    )?;
+    );
+    let saved_revision = match save_result {
+        Ok(saved_revision) => saved_revision,
+        Err(err) => {
+            if let Some(id) = new_repository_id {
+                keep_new_repository_id(&shared.lock_unpoisoned(), &saved, id.as_ref());
+            }
+            return Err(err);
+        }
+    };
     // An SFTP destination moved to another server leaves the old server's lines in Kestic's
     // `known_hosts` only while another destination uses it.
     if changed {
         super::host_keys::forget_unused_host(shared, &saved);
     }
     let guard = shared.lock_unpoisoned();
-    Ok(reply(&guard, &dest_id, DestinationUpdateOutcome::Saved))
+    Ok(reply(
+        &guard,
+        DestinationUpdateOutcome::Saved,
+        saved_revision,
+    ))
+}
+
+/// `OtherRepository`: nothing is saved. Also here a destination changed or removed meanwhile is
+/// `Conflict` or `NotFound`, so the answer never names a state the caller did not see.
+fn other_repository(
+    shared: &Arc<Mutex<DaemonCore>>,
+    dest_id: &DestinationId,
+    revision: &str,
+) -> Result<UpdateReply, KesticServiceErr> {
+    let guard = shared.lock_unpoisoned();
+    let current = guard
+        .config
+        .destination(dest_id)
+        .ok_or_else(|| KesticServiceErr::NotFound(dest_id.as_str().to_string()))?;
+    refuse_stale_revision(current, revision)?;
+    let current_revision = revision_of(current);
+    Ok(reply(
+        &guard,
+        DestinationUpdateOutcome::OtherRepository,
+        current_revision,
+    ))
+}
+
+/// After a refused save, the repository `init` already created at the unchanged address keeps
+/// its ID in the history (its password is stored already), so the next save recognises it.
+fn keep_new_repository_id(guard: &DaemonCore, saved: &Destination, id: Option<&RepositoryId>) {
+    let Some(current) = guard.config.destination(&saved.id) else {
+        return;
+    };
+    if current.kind != saved.kind {
+        return;
+    }
+    match id {
+        Some(id) => store_repository_id(guard, current, id),
+        None => {
+            if let Err(err) = guard.history.forget_repository_id(&current.id) {
+                eprintln!(
+                    "kestic-daemon: failed to forget the repository ID of destination {}: {err}",
+                    current.id
+                );
+            }
+        }
+    }
 }
 
 /// `Conflict` unless `revision` is the one of `saved` (also when it is empty or unknown).
@@ -546,7 +586,7 @@ fn save_update(
     updated: Destination,
     accepted: Accepted,
     revision: &str,
-) -> Result<(), KesticServiceErr> {
+) -> Result<String, KesticServiceErr> {
     let idx = guard
         .config
         .destinations
@@ -602,5 +642,8 @@ fn save_update(
         }
         None => {}
     }
-    Ok(())
+    Ok(guard
+        .config
+        .destination(&updated.id)
+        .map_or_else(String::new, revision_of))
 }

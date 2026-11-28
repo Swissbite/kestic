@@ -3,11 +3,24 @@
 
 #include "src/smoke_m3_util.h"
 
+#include <qsignalspy.h>
+
 namespace kestic::smoke {
 
 namespace {
 
 using namespace m3;
+
+// The row of `id` (role `id_role`) in the model `model_name`, or -1.
+int model_row(QQuickWindow* w, const char* model_name, const char* id_role, const QString& id) {
+    QAbstractItemModel* model = model_named(w, model_name);
+    for (int row = 0; model && row < model->rowCount(); ++row) {
+        if (role_value(model, row, id_role).toString() == id) {
+            return row;
+        }
+    }
+    return -1;
+}
 
 // The revision of the backup or destination `id` in the window's state.
 QString backend_revision(QObject* backend, const char* kind, const QString& id) {
@@ -785,12 +798,29 @@ int check_conflict(QObject* backend, QQuickItem* page, const char* kind, const Q
     return 0;
 }
 
-int check_reloaded(QObject* backend, QQuickItem* page, const char* kind, const QString& id, int base) {
+// The message of AC-M6-36-10 (b) for `kind` in `lang`.
+QString changed_elsewhere_text(const char* kind, const QString& lang) {
+    const bool dest = qstrcmp(kind, "destination") == 0;
+    if (lang == QLatin1String("de")) {
+        return dest ? QStringLiteral("Dieses Ziel wurde inzwischen an anderer Stelle geändert. Der aktuelle Stand ist "
+                                     "geladen; Ihre Änderung ist nicht gespeichert.")
+                    : QStringLiteral("Dieses Backup wurde inzwischen an anderer Stelle geändert. Der aktuelle Stand ist "
+                                     "geladen; Ihre Änderung ist nicht gespeichert.");
+    }
+    return dest ? QStringLiteral("This destination was changed elsewhere in the meantime. The current version is loaded; "
+                                 "your change was not saved.")
+                : QStringLiteral("This backup was changed elsewhere in the meantime. The current version is loaded; "
+                                 "your change was not saved.");
+}
+
+int check_reloaded(QObject* backend, QQuickItem* page, const char* kind, const QString& id, const QString& lang,
+    int base) {
     QQuickItem* message = find_visual_item(page->window(), QStringLiteral("editorChangedElsewhereMessage"));
     M3_CHECK(base, message && message->isVisible(), "(b) the page must say the backup or destination changed");
-    const QString text = message->property("text").toString();
-    M3_CHECK(base + 1, text.contains(QStringLiteral("changed elsewhere")) || text.contains(QStringLiteral("an anderer Stelle")),
-        "(b) the message must name the change elsewhere");
+    M3_CHECK(base + 1, message->property("text").toString() == changed_elsewhere_text(kind, lang),
+        "(b) the message must be the text of AC-M6-36-10 (b)");
+    // Kirigami.MessageType.Warning
+    M3_CHECK(base + 8, message->property("type").toInt() == 2, "(b) the message is a warning");
     M3_CHECK(base + 2, !page->property("dirty").toBool(), "(c) the page must show the current state again");
     M3_CHECK(base + 3, page->property("revision").toString() == backend_revision(backend, kind, id),
         "(c) the page must hold the current revision");
@@ -807,8 +837,8 @@ int scenario_revision_conflict(const Ctx& c) {
         { "openBackupConditionsPage", "backupConditionsEditPage", "saveForGuard", "requireAcPower", false },
         { "openBackupSchedulePage", "backupScheduleEditPage", "saveForGuard", "hour", 13 },
         { "openBackupExcludesPage", "backupExcludesEditPage", "saveForGuard", "excludeCaches", true },
-        { "openBackupRetentionPage", "backupRetentionPage", "commitSave", nullptr, QVariant() },
-        { "openBackupSourcePage", "backupSourceEditPage", "saveForGuard", nullptr, QVariant() },
+        { "openBackupRetentionPage", "backupRetentionPage", "commitSave", "keepDailyNum", 9 },
+        { "openBackupSourcePage", "backupSourceEditPage", "saveForGuard", "sourcePath", QStringLiteral("/tmp") },
     };
     int step = 1;
     int base = 6110;
@@ -819,7 +849,9 @@ int scenario_revision_conflict(const Ctx& c) {
             return rc;
         }
         if (e.field) {
-            page->setProperty(e.field, e.value);
+            // A switch flips, so the page is dirty also when an earlier run left it at the value.
+            const QVariant current = page->property(e.field);
+            page->setProperty(e.field, current.typeId() == QMetaType::Bool ? QVariant(!current.toBool()) : e.value);
             wait_ms(100);
         }
         QVariantList args;
@@ -829,9 +861,13 @@ int scenario_revision_conflict(const Ctx& c) {
             args << json;
         }
         save_page(page, e.save, args);
-        rc = check_reloaded(backend, page, "backup", bid, base + 4);
+        rc = check_reloaded(backend, page, "backup", bid, c.lang, base + 4);
         if (rc != 0) {
             return rc;
+        }
+        // The first change elsewhere also switched «skip on metered networks» on: the page shows it.
+        if (step == 1) {
+            M3_CHECK(6119, page->property("skipOnMetered").toBool(), "(c) the page must show the change made elsewhere");
         }
         ++step;
         base += 10;
@@ -859,15 +895,24 @@ int scenario_revision_conflict(const Ctx& c) {
         }
     }
     M3_CHECK(6178, draft != nullptr, "destination draft missing");
-    const QString saved_name = draft->property("name").toString();
-    draft->setProperty("name", saved_name + QStringLiteral(" renamed"));
+    const QString typed_name = draft->property("name").toString() + QStringLiteral(" typed");
+    draft->setProperty("name", typed_name);
+    // A typed password makes the save check the connection; the page treats it as tested.
+    draft->setProperty("repoPassword", QStringLiteral("typed-password"));
+    draft->setProperty("connectionVerified", true);
     wait_ms(100);
+    M3_CHECK(6176, dest_page->property("canSave").toBool(), "precondition: the destination form can save");
     save_page(dest_page, "saveForGuard", {});
-    rc = check_reloaded(backend, dest_page, "destination", did, 6174);
+    rc = check_reloaded(backend, dest_page, "destination", did, c.lang, 6160);
     if (rc != 0) {
         return rc;
     }
-    M3_CHECK(6179, draft->property("name").toString() == saved_name, "(c) the form must show the saved name again");
+    const QString daemon_name =
+        role_value(model_named(w, "destinationsModel"), model_row(w, "destinationsModel", "destinationId", did), "name")
+            .toString();
+    M3_CHECK(6177, draft->property("repoPassword").toString().isEmpty(), "(c) the typed password must be cleared");
+    M3_CHECK(6179, draft->property("name").toString() == daemon_name && daemon_name != typed_name,
+        "(c) the form must show the name the destination got elsewhere");
 
     // AC-M6-36-10 (d): two saves right after another on one page, and (e) a second page opened
     // right after a save: no `Conflict` with the window's own saves.
@@ -885,6 +930,33 @@ int scenario_revision_conflict(const Ctx& c) {
     save_page(cond, "saveForGuard", {});
     M3_CHECK(6182, !cond->property("changedElsewhere").toBool(), "(d) the next save takes the returned revision");
     M3_CHECK(6183, !cond->property("dirty").toBool(), "(d) the save went through");
+    // A save of another page queued while the first is on its way, with the revision from before
+    // the first: it only missed the window's own save, so it must not conflict.
+    const QString before_both = backend_revision(backend, "backup", bid);
+    const QString schedule_json =
+        role_value(model_named(w, "backupsModel"), model_row(w, "backupsModel", "backupId", bid), "scheduleJson").toString();
+    QSignalSpy answers(backend, SIGNAL(daemonCallDone(int, bool, QString)));
+    cond->setProperty("requireAcPower", !cond->property("requireAcPower").toBool());
+    wait_ms(100);
+    QMetaObject::invokeMethod(cond, "saveForGuard", Q_ARG(QVariant, QVariant()));
+    int queued = 0;
+    QMetaObject::invokeMethod(backend, "updateBackupSchedule", Q_RETURN_ARG(int, queued), Q_ARG(QString, bid),
+        Q_ARG(QString, schedule_json), Q_ARG(int, 0), Q_ARG(QString, before_both));
+    M3_CHECK(6190, queued > 0, "the queued save was not sent");
+    bool queued_ok = false;
+    M3_CHECK(6191, wait_until([&] {
+        for (const QList<QVariant>& answer : answers) {
+            if (answer.at(0).toInt() == queued) {
+                queued_ok = answer.at(1).toBool();
+                return true;
+            }
+        }
+        return false;
+    }, 15000), "the queued save got no answer");
+    M3_CHECK(6192, queued_ok, "(d) a save queued behind the window's own save must not conflict");
+    wait_until([&] { return !cond->property("saving").toBool(); }, 15000);
+    wait_ms(200);
+
     QQuickItem* sched = open_backup_editor(w, bid, "openBackupSchedulePage", "backupScheduleEditPage");
     M3_CHECK(6184, sched != nullptr, "schedule page did not open");
     sched->setProperty("hour", sched->property("hour").toInt() == 14 ? 15 : 14);
