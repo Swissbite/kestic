@@ -8,7 +8,7 @@ use super::daemon_call::Lane;
 use super::{Finish, dbus_error_text, qobject};
 use crate::destination_input::{
     build_destination, connection_test_input, connection_test_outcome, generic_credentials_error,
-    generic_env_error, generic_url_error,
+    generic_env_error, generic_url_error, rest_url_error,
 };
 use crate::state_cache::{daemon_unavailable_text, i18n, i18np, shared_state, tr, tr_text};
 use cxx_qt_lib::QString;
@@ -99,6 +99,12 @@ impl qobject::KesticApp {
             "env": text(env_error),
         });
         QString::from(&reply.to_string())
+    }
+
+    /// Why the address of the REST form is refused, in the GUI language; empty when it is
+    /// accepted.
+    pub fn rest_url_error(&self, url: &QString) -> QString {
+        QString::from(&rest_url_error(&url.to_string()).map_or_else(String::new, |e| e.text()))
     }
 
     /// Which S3 and SFTP fields of `fields_json` `core` accepts (JSON object of booleans).

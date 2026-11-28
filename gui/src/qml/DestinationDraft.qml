@@ -64,6 +64,8 @@ QtObject {
     readonly property var genericErrors: kindIsGeneric
         ? JSON.parse(appBackend.genericFieldsErrors(location, JSON.stringify(envChecks())))
         : ({ url: "", env: "" })
+    // Why `core` refuses the REST address as entered (a user name or password in it), else empty.
+    readonly property string restUrlError: kindIsRest ? appBackend.restUrlError(location) : ""
     readonly property bool nameValid: name.trim().length > 0
     readonly property bool locationValid: kindIsS3
         ? endpointValid && bucketValid && s3PathValid && regionValid
@@ -71,7 +73,7 @@ QtObject {
         : kindIsGeneric
             ? genericErrors.url === "" && genericErrors.env === ""
             : kindIsRest
-                ? /^https?:\/\//i.test(location.trim())
+                ? /^https?:\/\//i.test(location.trim()) && restUrlError === ""
                 : location.trim().length > 0
     // Which S3 and SFTP fields `core` accepts.
     readonly property var fieldChecks: JSON.parse(appBackend.destinationFieldChecks(JSON.stringify({

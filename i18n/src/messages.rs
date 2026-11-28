@@ -26,6 +26,12 @@ pub const fn i18n_noop(msgid: &'static str) -> &'static str {
 /// languages («25%», «25 %»), so the catalog holds it, as in KDE's own catalogs.
 pub const PERCENT_PATTERN: &str = i18n_noop("%1%");
 
+/// Refusal of a REST address with a user name or password in it: they would stand in the config
+/// and in restic's arguments, so they belong in the form's own fields.
+pub const REST_ADDRESS_WITH_LOGIN: &str = i18n_noop(
+    "The address must not contain a user name or password. Enter them in the fields 'Username' and 'Server password'.",
+);
+
 /// An argument of a [`Message`]: text as it is, or a percentage that each side formats for its
 /// own language with [`PERCENT_PATTERN`].
 #[derive(Debug, Clone, PartialEq, Eq)]

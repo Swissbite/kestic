@@ -239,6 +239,10 @@ pub mod qobject {
         fn generic_fields_errors(self: &KesticApp, url: &QString, env_json: &QString) -> QString;
 
         #[qinvokable]
+        #[cxx_name = "restUrlError"]
+        fn rest_url_error(self: &KesticApp, url: &QString) -> QString;
+
+        #[qinvokable]
         #[cxx_name = "envVarSecretByDefault"]
         fn env_var_secret_by_default(self: &KesticApp, name: &QString) -> bool;
 
