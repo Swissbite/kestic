@@ -2595,24 +2595,23 @@ msgstr "Letzter"
 msgid "Maintenance schedule saved"
 msgstr "Wartungszeitplan gespeichert"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:166
+#: gui/src/backend/forms.rs:148
 msgid "Data blocks to remove: %1"
 msgstr "Zu entfernende Datenblöcke: %1"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:169
+#: gui/src/backend/forms.rs:151
 msgid "Data blocks to keep: %1"
 msgstr "Zu behaltende Datenblöcke: %1"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:176
+#: gui/src/backend/forms.rs:154
 msgid "Space to free: %1"
 msgstr "Frei werdender Speicher: %1"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:179
+#: gui/src/backend/forms.rs:157
 msgid "The preview reported no data to remove."
 msgstr "Die Vorschau meldet keine Daten, die entfernt würden."
 
-#: gui/src/qml/DestinationMaintenancePage.qml:186
-#: gui/src/qml/DestinationMaintenancePage.qml:197
+#: gui/src/backend/forms.rs:143
 msgid "The preview could not read the repository. It may be unreachable or locked."
 msgstr "Die Vorschau konnte das Repository nicht lesen. Es ist vielleicht nicht erreichbar oder gesperrt."
 
