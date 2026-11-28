@@ -724,7 +724,7 @@ fn execute_probe_command(
     // Held until restic has ended, so the app-managed binary is not replaced meanwhile; an
     // early return stops restic before the lease ends.
     let _lease = crate::restic_gate::ResticBinaryGate::global().read_for(&spec.restic_binary);
-    let mut guard = ChildGuard::new(cmd.spawn()?);
+    let mut guard = ChildGuard::spawn(&mut cmd)?;
     let (stdout, stderr) = {
         let mut started = guard.lock();
         (started.stdout.take(), started.stderr.take())

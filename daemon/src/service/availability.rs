@@ -6,7 +6,7 @@
 use super::backup_runner::start_backup_async;
 use super::error::{KesticServiceErr, map_destination_err};
 use super::state::{
-    AVAILABILITY_CACHE_TTL_SECS, DaemonCore, ResticDeps, probe_for_run,
+    AVAILABILITY_CACHE_TTL_SECS, DaemonCore, ResticDeps, STOPPING, probe_for_run,
     refresh_restic_probe_unlocked,
 };
 use crate::dbus_api::{AvailabilitySnapshotDto, BackupAvailabilityDto, DestinationAvailabilityDto};
@@ -176,6 +176,9 @@ impl DaemonCore {
         dest: &Destination,
         is_scheduled: bool,
     ) -> Result<DestinationClaimGuard, KesticServiceErr> {
+        if self.stopping() {
+            return Err(KesticServiceErr::Internal(STOPPING.to_string()));
+        }
         if is_scheduled && self.sleep_in_progress {
             return Err(KesticServiceErr::SleepInProgress);
         }
@@ -450,7 +453,7 @@ pub(crate) fn drain_queued_backups_async(shared: &Arc<Mutex<DaemonCore>>) {
     loop {
         let next_backup_id = {
             let mut guard = shared.lock_unpoisoned();
-            if guard.sleep_in_progress || guard.queued_backups.is_empty() {
+            if guard.sleep_in_progress || guard.stopping() || guard.queued_backups.is_empty() {
                 None
             } else {
                 let mut picked_idx = None;

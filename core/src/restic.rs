@@ -853,13 +853,14 @@ impl CancelHandle {
     }
 
     /// Marks the run cancelled and sends `SIGTERM` if the child process is currently running.
+    /// A process gets one `SIGTERM` only, also when the daemon stops it as well: a second one
+    /// could cut short restic's own clean-up.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
         let pid_opt = *self.child_pid.lock_unpoisoned();
         if let Some(pid) = pid_opt {
-            // If `ionice`/`nice` wrapped `restic`, try signalling both the process group / child tree
-            // as well as the direct PID. First look up direct child `restic` processes if any.
-            send_sigterm_to_tree(pid);
+            // If `ionice`/`nice` wrapped `restic`, the registry signals the direct children too.
+            crate::child_registry::ChildRegistry::global().terminate(pid);
         }
     }
 
@@ -1224,7 +1225,7 @@ where
     // Held until restic has ended, so the app-managed binary is not replaced meanwhile; an
     // early return stops restic before the lease ends.
     let _lease = crate::restic_gate::ResticBinaryGate::global().read_for(&spec.restic_binary);
-    let mut child = ChildGuard::new(prepared.cmd.spawn()?);
+    let mut child = ChildGuard::spawn(&mut prepared.cmd)?;
     // On an early return or a panic it is dropped before `child`, so the pid is forgotten
     // before the process is reaped and its pid can be reused.
     let registration = PidRegistration(cancel);
